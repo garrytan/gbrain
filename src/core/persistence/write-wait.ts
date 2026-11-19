@@ -12,6 +12,7 @@ import { pinRouting, type FixRouting } from '../fix-routing.ts';
 import { admittedPendingReceipt, type WriteReceipt } from './types.ts';
 import { WIRE_WRITE_WAIT_MAX_MS } from './params.ts';
 import { shellQuote } from '../shell-quote.ts';
+import { commandText } from '../brand.ts';
 
 /** Agent and server callers keep the historical bounded wait. */
 export const AGENT_WRITE_WAIT_MS = 5_000;
@@ -29,7 +30,7 @@ export const WRITE_EXIT_DOCS = 'docs/protocol/MEMORY_VERBS_v1.md#cli-exit-status
 function invalidWriteWait(where: string, value: unknown): OperationError {
   return new OperationError('invalid_write_wait',
     `${where} must be a whole number of milliseconds from 0 to ${MAX_WRITE_WAIT_MS} (got ${JSON.stringify(value)}).`,
-    where === WRITE_WAIT_ENV ? `unset ${WRITE_WAIT_ENV}, or set it to e.g. 30000` : `gbrain config set ${WRITE_WAIT_CONFIG_KEY} 30000`,
+    where === WRITE_WAIT_ENV ? `unset ${WRITE_WAIT_ENV}, or set it to e.g. 30000` : `foresights config set ${WRITE_WAIT_CONFIG_KEY} 30000`,
     'docs/guides/write-refusals.md#invalid_write_wait');
 }
 
@@ -135,7 +136,7 @@ export function writeErrorExitCode(error: unknown, acceptPending: boolean): numb
 
 /**
  * The copy-paste poll command for a pending receipt (#6255): the same
- * `gbrain write-request [--brain <id>] -- <request_id>` argv the error
+ * `foresights write-request [--brain <id>] -- <request_id>` argv the error
  * envelope's `fix` carries. A `fix.argv` that reads this receipt wins, so the
  * two never disagree; otherwise the receipt command is pinned to `routing`.
  * Each argument is shell-quoted, so the line pastes as the argv it names.
@@ -143,7 +144,7 @@ export function writeErrorExitCode(error: unknown, acceptPending: boolean): numb
 export function pollCommand(requestId: string, fix?: { argv?: readonly string[] }, routing?: FixRouting): string {
   const argv = fix?.argv?.[0] === 'gbrain' && fix.argv[1] === 'write-request' && fix.argv.includes(requestId)
     ? fix.argv : pinRouting(['gbrain', 'write-request', '--', requestId], routing);
-  return argv.map(shellQuote).join(' ');
+  return commandText(argv.map(shellQuote));
 }
 
 /**

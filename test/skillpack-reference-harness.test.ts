@@ -96,7 +96,7 @@ describe('trichotomy', () => {
     const dest = tmp('gb-ref-dest-');
     const statePath = join(tmp('gb-ref-st-'), 's.json');
     install(root, dest, statePath, 'full');
-    // gbrain moves on; the installed file is untouched.
+    // foresights moves on; the installed file is untouched.
     writeFileSync(join(root, 'skills', 'alpha', 'SKILL.md'), SKILL_MD('alpha').replace('line three', 'line three UPSTREAM'));
     const d = REF(root, dest, statePath).files.find(f => f.status === 'differs')!;
     expect(d.differsKind).toBe('upstream_drift');

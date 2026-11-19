@@ -302,9 +302,9 @@ test('#6798: --status prints the stale-epoch hint only for a superseded enrollme
   expect(current).toContain('native activation unverified.');
   expect(current).not.toContain('--refresh-skills');
   expect(await statusText(async () => { throw new Error('brain unavailable'); }))
-    .toContain('(if the brain reports a newer enrollment epoch: gbrain bootstrap harness --refresh-skills)');
+    .toContain('(if the brain reports a newer enrollment epoch: foresights bootstrap harness --refresh-skills)');
   expect(await statusText(async () => [{ host: entry.host, installation_id: installationId, local_epoch: 1, server_epoch: 2, active: false }]))
-    .toContain('enrollment superseded (server epoch 2, inactive): gbrain bootstrap harness --refresh-skills');
+    .toContain('enrollment superseded (server epoch 2, inactive): foresights bootstrap harness --refresh-skills');
 });
 
 test('implicit source binding preserves the existing federated source ceiling for each principal', async () => {

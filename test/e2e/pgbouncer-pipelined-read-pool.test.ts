@@ -1,5 +1,5 @@
 /**
- * #6543 (A3): gbrain's read-side pools stop pipelining on a transaction-mode
+ * #6543 (A3): foresights's read-side pools stop pipelining on a transaction-mode
  * pooler URL (`?prepare=false` or port 6543), which turns pipelining off for
  * every pooled E2E pass, because the PgBouncer lane pins `?prepare=false`.
  * PgBouncer carries pipelined statements correctly (measured: no wrong rows,

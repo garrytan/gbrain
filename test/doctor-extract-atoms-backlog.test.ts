@@ -133,7 +133,7 @@ describe('computeExtractAtomsBacklogCheck (issue #1678)', () => {
     const check = await withEnv({ GBRAIN_HOME: EMPTY_HOME, GBRAIN_SCHEMA_PACK: undefined }, () =>
       computeExtractAtomsBacklogCheck(engine));
     expect(check.status).toBe('warn');
-    expect(check.message).toContain('gbrain config set cycle.extract_atoms.enabled true');
+    expect(check.message).toContain('foresights config set cycle.extract_atoms.enabled true');
     expect(check.details?.pack_declares_phase).toBe(false);
   });
 
@@ -148,7 +148,7 @@ describe('computeExtractAtomsBacklogCheck (issue #1678)', () => {
     const check = await withEnv({ GBRAIN_HOME: EMPTY_HOME }, () =>
       computeExtractAtomsBacklogCheck(engine));
     expect(check.status).toBe('warn');
-    expect(check.message).toContain('gbrain dream --phase extract_atoms --drain --source gbrain-raw --window 120');
+    expect(check.message).toContain('foresights dream --phase extract_atoms --drain --source gbrain-raw --window 120');
     expect((check.details as { fix_hint: string }).fix_hint).toContain('--source gbrain-raw');
     expect((check.details as { backlog_by_source: Array<{ source_id: string; backlog: number }> }).backlog_by_source)
       .toEqual([{ source_id: 'gbrain-raw', backlog: 11 }]);
@@ -242,8 +242,8 @@ describe('computeExtractAtomsBacklogCheck — declared branch verifies a runner 
     const check = await withEnv(PACK_ENV, () => computeExtractAtomsBacklogCheck(engine));
     expect(check.status).toBe('warn');
     expect(check.message).toContain('no full cycle has ever completed');
-    expect(check.message).toContain('gbrain autopilot --install');
-    expect(check.message).toContain('gbrain dream --phase extract_atoms --drain');
+    expect(check.message).toContain('foresights autopilot --install');
+    expect(check.message).toContain('foresights dream --phase extract_atoms --drain');
     const details = check.details as { pack_declares_phase: boolean; cycle_evidence: string };
     expect(details.pack_declares_phase).toBe(true);
     expect(details.cycle_evidence).toBe('never');
@@ -255,7 +255,7 @@ describe('computeExtractAtomsBacklogCheck — declared branch verifies a runner 
     const check = await withEnv(PACK_ENV, () => computeExtractAtomsBacklogCheck(engine));
     expect(check.status).toBe('warn');
     expect(check.message).toContain('no full cycle has completed in 48h');
-    expect(check.message).toContain('gbrain autopilot --install');
+    expect(check.message).toContain('foresights autopilot --install');
     expect((check.details as { cycle_evidence: string }).cycle_evidence).toBe('stale');
   });
 
@@ -277,7 +277,7 @@ describe('computeExtractAtomsBacklogCheck — declared branch verifies a runner 
     const check = await withEnv(PACK_ENV, () => computeExtractAtomsBacklogCheck(engine));
     expect(check.status).toBe('warn');
     expect(check.message).toContain('extract_atoms has not run in the last 48h for source(s) default');
-    expect(check.message).toContain('gbrain dream --phase extract_atoms --drain --source default');
+    expect(check.message).toContain('foresights dream --phase extract_atoms --drain --source default');
     const details = check.details as { cycle_evidence: string; phase_evidence: string; phase_stale_sources: Array<{ source_id: string; backlog: number; last_extract_atoms_at: string | null }> };
     expect(details.cycle_evidence).toBe('fresh');
     expect(details.phase_evidence).toBe('stale');

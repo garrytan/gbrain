@@ -199,7 +199,7 @@ describe('chat() with chat_fallback_chain (#5490)', () => {
     expect(err.apiErrorStatus).toBe(429);
   });
 
-  test('a gbrain policy refusal is never retried on another model', async () => {
+  test('a foresights policy refusal is never retried on another model', async () => {
     configureGateway({ chat_model: PRIMARY, chat_fallback_chain: [FALLBACK], env: ENV });
     installTransport({});
     const denied: string[] = [];
@@ -458,7 +458,7 @@ describe('fallback safety audit (fix wave 9 lane B, #6012)', () => {
     expect(err).toBeInstanceOf(BudgetExhausted);
     expect(err.reason).toBe('no_pricing');
     expect(err.modelId).toBe('deepseek:deepseek-unpriced-example');
-    expect(String(err.message)).toContain('gbrain pricing set');
+    expect(String(err.message)).toContain('foresights pricing set');
   });
 
   test('an unpriced chain entry under a default cap warns and runs', async () => {

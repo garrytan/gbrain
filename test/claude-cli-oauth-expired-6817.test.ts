@@ -1,7 +1,7 @@
 /**
  * #6817: an expired claude-cli login reports `Failed to authenticate: OAuth session expired and could not be
  * refreshed` in an error envelope with no API status. The classifier read it as an unknown (transient) failure,
- * so `gbrain dream --drain` exited 11 and a retry loop restarted it until the login was fixed. It is an auth
+ * so `foresights dream --drain` exited 11 and a retry loop restarted it until the login was fixed. It is an auth
  * failure: the drain must exit 1 and name the blocker.
  *
  * A POSIX shell stub at GBRAIN_CLAUDE_CLI_BIN plays the CLI, and the drain runs through the real gateway `chat()`

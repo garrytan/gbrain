@@ -217,7 +217,7 @@ export async function extractTimelineFromMeetings(
     // remote private-event filter could never hide it. Fail closed: skip.
     if (isDerivationPrivate({ frontmatter, folder_restricted: meeting.folder_restricted })) { privateSkipped++; continue; }
     // put_page-written pages never get effective_date computed (column stays
-    // NULL); derive it exactly as `gbrain backfill effective_date` would —
+    // NULL); derive it exactly as `foresights backfill effective_date` would —
     // same filename recipe (import_filename, else the slug tail) — so a later
     // backfill + re-run dedups against this row instead of doubling it. The
     // 'fallback' source is updated_at/created_at: an import timestamp, never
@@ -324,7 +324,7 @@ export async function extractTimelineFromMeetings(
   if (dateFallbacks > 0) {
     console.error(
       `[extract timeline] ${dateFallbacks} meeting(s) have no effective_date column value; dated from their frontmatter date or filename instead. ` +
-      `Run \`gbrain backfill effective_date\` to persist it.`,
+      `Run \`foresights backfill effective_date\` to persist it.`,
     );
   }
   if (undated > 0) {
@@ -441,7 +441,7 @@ async function submitPageRows(engine: BrainEngine, authority: MaintenanceAuthori
 
 function meetingRowsRefused(row: WriteRequest, message: string): OperationError {
   return opError('invalid_params', message,
-    `The queued meeting timeline request for ${row.slug} in source ${row.source_id} carries rows this extractor never builds, so nothing was written. Run gbrain extract timeline --from-meetings --source db again; it rebuilds the rows from the meeting pages.`);
+    `The queued meeting timeline request for ${row.slug} in source ${row.source_id} carries rows this extractor never builds, so nothing was written. Run foresights extract timeline --from-meetings --source db again; it rebuilds the rows from the meeting pages.`);
 }
 
 /**
@@ -460,7 +460,7 @@ export async function prepareMeetingTimeline(engine: BrainEngine, row: WriteRequ
   }
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
   if (!snapshot || snapshot.page.id !== Number(row.page_id)) throw opError('page_identity_changed', 'The page was deleted or replaced before its meeting timeline was written.',
-    `Page ${row.slug} in source ${row.source_id} changed before its queued meeting timeline rows ran, so nothing was written. Run gbrain extract timeline --from-meetings --source db again.`);
+    `Page ${row.slug} in source ${row.source_id} changed before its queued meeting timeline rows ran, so nothing was written. Run foresights extract timeline --from-meetings --source db again.`);
   await authorizeWrite(engine, row.authority, 'submit_job', row.slug);
   const queued = rows as MeetingTimelineRow[];
   return { observedRevision: snapshot.revision, noop: true,

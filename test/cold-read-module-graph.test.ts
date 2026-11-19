@@ -1,7 +1,7 @@
 /**
  * #7147 follow-up: what a cold read verb's module graph leaves out.
  *
- * 1. Protects: loading the module behind `gbrain get` (src/core/ops/pages.ts)
+ * 1. Protects: loading the module behind `foresights get` (src/core/ops/pages.ts)
  *    does not load the page write path (persistence/page-mutations.ts, which
  *    pulled the journal, the persistence service, sync and PGLite WAL repair
  *    into every cold read on a Postgres brain), and the active-pack loader

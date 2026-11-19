@@ -2,7 +2,7 @@
  * #6948: duplicate-origin twins. Two or more live pages of one source recording the same origin (`source_id`,
  * `source_path`) used to make managed sync refuse the whole source. This module holds the one rule that decides what
  * happens to such a group, shared by sync discovery (src/core/persistence/sync-discovery.ts), the sync-time heal and
- * `gbrain repair origin-twins`, so the three never disagree.
+ * `foresights repair origin-twins`, so the three never disagree.
  *
  * A group resolves on its own only when the claimants are positively verified duplicates: exactly one claimant's slug is
  * the slug the file's path gives (`resolveSlugForPath`, the canonical page), every claimant holds the same inline body
@@ -30,7 +30,7 @@ export async function isOriginTwinPage(engine: Pick<BrainEngine, 'executeRaw'>, 
   return row?.database_only_reason === ORIGIN_TWIN_REASON;
 }
 
-/** The read-only preview of every twin group of a source (`gbrain repair origin-twins`). */
+/** The read-only preview of every twin group of a source (`foresights repair origin-twins`). */
 export const originTwinsPreviewArgv = (sourceId: string) => ['gbrain', 'repair', 'origin-twins', '--source', sourceId];
 
 /** One live page recording the origin. */

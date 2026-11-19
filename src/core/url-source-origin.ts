@@ -9,7 +9,7 @@
  * records `false`; only an explicit `true` reads as a remote caller's add, and no record stays undecided.
  *
  * `urlSourcesWithoutOrigin` lists the undecided ones for the `url_source_origin` doctor check, read-only.
- * `recordSourceOrigin` (`gbrain sources record-origin`, trusted local CLI only) records the operator's answer:
+ * `recordSourceOrigin` (`foresights sources record-origin`, trusted local CLI only) records the operator's answer:
  * `remote` writes `true` and turns git-lfs downloads and hooks off in the existing checkout's own .git/config, the
  * settings a remote add's clone gets, so the checkout is locked down now rather than at a reclone that may never come;
  * `local` writes `false`. It previews unless `apply`. `remote` refuses a checkout that tracks files with git-lfs or
@@ -166,11 +166,11 @@ function lfsRefusal(id: string, root: string, relock: boolean): RecordOriginResu
   const lfs = lfsTracked(root);
   if (relock && lfs.state !== 'unknown') return null;
   const why = 'A clone with git-lfs downloads off holds pointer files where this checkout holds their content, so its next reclone would not match the canonical manifest, '
-    + `and converting the checkout rewrites its files, which this command does not do; nothing changed. If the source should not keep these files, check that nothing in its checkout is unpushed or only local, then remove it (gbrain sources remove ${id} --confirm-destructive).`;
+    + `and converting the checkout rewrites its files, which this command does not do; nothing changed. If the source should not keep these files, check that nothing in its checkout is unpushed or only local, then remove it (foresights sources remove ${id} --confirm-destructive).`;
   if (lfs.state === 'tracked') return refusal(id, 'lfs_tracked', `Source ${id} tracks files with git-lfs. ${why}`);
   if (lfs.state === 'declared') return refusal(id, 'lfs_tracked', `A committed .gitattributes in source ${id} declares a git-lfs filter (filter=lfs), so a reclone would store matching files with git-lfs. ${why}`);
   if (lfs.state !== 'unknown') return null;
-  const unconfirmed = relock ? 'so gbrain cannot turn git-lfs downloads and hooks off in it; nothing changed.' : 'so gbrain cannot confirm that no file is tracked with git-lfs; nothing changed.';
+  const unconfirmed = relock ? 'so foresights cannot turn git-lfs downloads and hooks off in it; nothing changed.' : 'so foresights cannot confirm that no file is tracked with git-lfs; nothing changed.';
   if (lfs.cause === 'missing') return refusal(id, 'lfs_unknown', `Source ${id}'s checkout at ${root} is missing, ${unconfirmed} Restore the checkout, then run this again.`);
   if (lfs.cause === 'not_top_level') return refusal(id, 'lfs_unknown', `Source ${id}'s clone directory ${root} is not the top level of its own Git repository (Git resolves it to an enclosing repository, or to none), ${unconfirmed} Check what that directory holds before you run this again.`);
   if (lfs.cause === 'unsafe_owner') return refusal(id, 'lfs_unknown', `Git refuses to read source ${id}'s checkout at ${root} because another user owns it (safe.directory), ${unconfirmed} Check who owns that checkout, then run this again as that user or after fixing its ownership.`);
@@ -182,7 +182,7 @@ function check(row: SourceRowLike | undefined, id: string, origin: SourceOrigin)
   if (!row) return refusal(id, 'not_found', `No source ${id} is registered.`);
   if (row.archived) return refusal(id, 'archived', `Source ${id} is archived; restore it first if its origin still matters.`);
   const state = originState(row);
-  if (state === 'not_url_clone') return refusal(id, 'not_url_clone', `Source ${id} is not a URL clone gbrain made, so it has no clone settings to record.`);
+  if (state === 'not_url_clone') return refusal(id, 'not_url_clone', `Source ${id} is not a URL clone foresights made, so it has no clone settings to record.`);
   if (state === 'custom_clone_dir') return origin === 'local'
     ? { source_id: id, status: 'already_recorded', reason: `Source ${id} was cloned into a directory only the local CLI can choose, so it is already treated as a local add.` }
     : refusal(id, 'custom_clone_dir', `Source ${id} was cloned into a directory only the local CLI can choose, so a remote caller did not add it; nothing changed.`);
@@ -251,7 +251,7 @@ export async function recordSourceOrigin(engine: BrainEngine, ids: string[], opt
       const unchanged = lockdown ? `the record was not written.${lockdown}` : 'nothing changed.';
       const code = (error as { code?: string }).code;
       results.push(code === 'write_pending'
-        ? refusal(id, 'source_busy', `Another gbrain process (a reclone, refresh or write) holds source ${id}'s worktree locks, so its origin was not recorded; ${unchanged} Run this again once that process finishes.`)
+        ? refusal(id, 'source_busy', `Another foresights process (a reclone, refresh or write) holds source ${id}'s worktree locks, so its origin was not recorded; ${unchanged} Run this again once that process finishes.`)
         : code === 'refresh_in_progress'
           ? refusal(id, 'source_busy', `${message} So source ${id}'s origin was not recorded; ${unchanged} Run this again once that refresh has finished or been recovered.`)
           : refusal(id, 'write_failed', `Recording source ${id}'s origin failed: ${message} The record was not written.${lockdown} The other ids in this run keep their own results; run this again for ${id}.`));

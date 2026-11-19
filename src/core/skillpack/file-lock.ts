@@ -68,8 +68,8 @@ export async function acquireFileLock(
     const lock = tryAcquire(path, staleMs);
     if (lock) return lock;
     if (Date.now() >= deadline) {
-      throw new OperationError(opts.code, `Another gbrain skillpack command holds ${path}.`,
-        `Wait for it to finish and run the command again. If no gbrain skillpack command is running, the lock is left from a crash and is reclaimed after ${Math.round(staleMs / 60000)} minutes.`);
+      throw new OperationError(opts.code, `Another foresights skillpack command holds ${path}.`,
+        `Wait for it to finish and run the command again. If no foresights skillpack command is running, the lock is left from a crash and is reclaimed after ${Math.round(staleMs / 60000)} minutes.`);
     }
     await new Promise(resolve => setTimeout(resolve, 50));
   }

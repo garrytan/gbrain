@@ -5,7 +5,7 @@
  * 1. Protects: the budget meters large pages only (planPageEmbedding treats a
  *    page at or under 1 MiB as unmetered), so a held row left on a page that
  *    shrank no longer applies: the stale-chunk queue (staleChunkWhere and the
- *    stale lists), the held lists (`gbrain embed --held`, doctor
+ *    stale lists), the held lists (`foresights embed --held`, doctor
  *    `partial_embedding`) and the write receipts' size state ignore it, and
  *    the stale sweep embeds the page's chunks. Covers an inline page shrinking
  *    inline, a segmented page shrinking within the demotion hysteresis (it

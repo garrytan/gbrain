@@ -1006,7 +1006,7 @@ test('a recovery-blocked pending head is classified as blocked with its request 
   try {
     const waited = await awaitWrite(engine, row, { engine: 'pglite' }, { waitMs: 600 });
     expect(waited).toMatchObject({ kind: 'blocked', request_id: row.request_id, cause: 'recovery_required',
-      command: `gbrain sources writer status ${sources[0].id} --json` });
+      command: `foresights sources writer status ${sources[0].id} --json` });
     expect(await waitForWrite(engine, row, { engine: 'pglite' }, 100)).toMatchObject({ id: row.id, state: 'queued', blocked_reason: 'recovery_required' });
   } finally {
     await disposePersistenceConsumer(engine);

@@ -40,7 +40,7 @@ function resumeFix(input: CompanyBrainDestination, why: string): Action {
 }
 
 function resumeCommand(input: CompanyBrainDestination): string {
-  return `gbrain sync --brain ${input.brainId} --source ${input.sourceId} --no-embed --no-pull`;
+  return `foresights sync --brain ${input.brainId} --source ${input.sourceId} --no-embed --no-pull`;
 }
 
 export async function connectCompanyBrain(engine: BrainEngine, input: CompanyBrainConnectInput): Promise<CompanyBrainResult> {
@@ -89,7 +89,7 @@ async function execute(engine: BrainEngine, input: CompanyBrainDestination, opts
   let receipt = await getSourceIngestionReceipt(engine, { sourceId: input.sourceId, sourceIncarnation: source.incarnation, receiptId: profile.receiptId });
   if (!receipt || receipt.outcome === 'discarded') {
     throw opError('checkpoint_missing', 'The active source receipt is missing or discarded.',
-      `Source ${input.sourceId} has no active ingestion receipt, so gbrain will not resume from a different revision. Check its status; starting over means previewing removal with gbrain sources remove ${input.sourceId} --brain ${input.brainId} --dry-run and reconnecting, a destructive step the user approves.`,
+      `Source ${input.sourceId} has no active ingestion receipt, so foresights will not resume from a different revision. Check its status; starting over means previewing removal with foresights sources remove ${input.sourceId} --brain ${input.brainId} --dry-run and reconnecting, a destructive step the user approves.`,
       { fix: sourceStatusFix(input.brainId, `Shows source ${input.sourceId}'s receipt state (missing, discarded, or incomplete).`) });
   }
   const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
@@ -108,14 +108,14 @@ async function execute(engine: BrainEngine, input: CompanyBrainDestination, opts
     const validation = await validateCompanyBrainPlan(plan, { path: source.local_path, mode: 'resume' });
     if (!validation.valid) {
       throw opError(validation.code as RegistryCode, 'The approved source or schema changed; inspect it before resuming.',
-        `The checkout at ${source.local_path} no longer matches approved commit ${receipt.approvedRevision} or its schema. Inspect it; gbrain never substitutes current HEAD, so a missing commit or changed schema needs a new reviewed connection.`,
+        `The checkout at ${source.local_path} no longer matches approved commit ${receipt.approvedRevision} or its schema. Inspect it; foresights never substitutes current HEAD, so a missing commit or changed schema needs a new reviewed connection.`,
         { fix: reinspectFix(source.local_path) });
     }
   }
   const schema = profile.schema;
   if (plan.revision && digest(companyBrainRepository(plan.revision)) !== digest(profile.repository)) {
     throw opError('source_changed', 'The approved repository identity changed; reconnect explicitly.',
-      `The checkout at ${source.local_path} is no longer the repository approved for source ${input.sourceId}. Restore the original checkout, or preview removal with gbrain sources remove ${input.sourceId} --brain ${input.brainId} --dry-run and reconnect once the user approves.`,
+      `The checkout at ${source.local_path} is no longer the repository approved for source ${input.sourceId}. Restore the original checkout, or preview removal with foresights sources remove ${input.sourceId} --brain ${input.brainId} --dry-run and reconnect once the user approves.`,
       { fix: sourceStatusFix(input.brainId, `Shows source ${input.sourceId}'s approved revision and receipt.`) });
   }
   const { pack } = await checkApprovedSchemaForEngine(engine, { name: schema.name, identity: schema.identity, resolvedManifestHash: schema.resolved_digest },
@@ -200,7 +200,7 @@ async function execute(engine: BrainEngine, input: CompanyBrainDestination, opts
         if (graph.complete) break;
         if (!graph.nextAfterSlug || graph.nextAfterSlug === afterSlug) {
           throw opError('graph_incomplete', 'Graph reconciliation did not advance.',
-            `Check source ${input.sourceId}'s receipt, then resume with ${resumeCommand(input)}; if it stalls at the same point again, run gbrain doctor --brain ${input.brainId} --json and report it to the user.`,
+            `Check source ${input.sourceId}'s receipt, then resume with ${resumeCommand(input)}; if it stalls at the same point again, run foresights doctor --brain ${input.brainId} --json and report it to the user.`,
             { fix: sourceStatusFix(input.brainId, `Shows receipt ${receipt.id}'s graph counts and outstanding phase.`) });
         }
         afterSlug = graph.nextAfterSlug;

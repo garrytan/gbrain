@@ -1,5 +1,5 @@
 /**
- * #6650 (L3): `gbrain sources writer failures <source>`.
+ * #6650 (L3): `foresights sources writer failures <source>`.
  *
  * Protects: the verb parses and dispatches through local administration (the same path a resident owner runs);
  * every option is validated with the usage it takes and an unknown or archived source is refused; the human table
@@ -80,19 +80,19 @@ describe('sources writer failures', () => {
     expect([...page.rows!, ...rest.rows!].map(r => r.request_id).filter(id => ids.includes(id)).sort()).toEqual([...ids].sort());
 
     const json = JSON.parse(renderWriterFailures(page, true));
-    expect(json.rows[0].inspect).toMatchObject({ next: 'run', command: `gbrain write-request ${page.rows![0].request_id} --json` });
+    expect(json.rows[0].inspect).toMatchObject({ next: 'run', command: `foresights write-request ${page.rows![0].request_id} --json` });
     expect(typeof json.rows[0].fix.next).toBe('string');
     const table = renderWriterFailures(page, false);
     expect(table).toContain(`Source ${SOURCE}: 2 unresolved receipts of the last 7 d.`);
     expect(table).toContain(page.rows![0].request_id);
-    expect(table).toContain(`More: gbrain sources writer failures ${SOURCE} --limit 2 --before ${page.next_cursor} --json`);
+    expect(table).toContain(`More: foresights sources writer failures ${SOURCE} --limit 2 --before ${page.next_cursor} --json`);
 
     const grouped = await runPersistenceAdministration(engine, 'writer_failures', { source_id: SOURCE, group_by: 'category' }) as TerminalFailureListing & { status: 'ok' };
     const owner = grouped.groups!.find(g => g.category === 'owner_exception')!;
     expect(owner.rows).toBe(3);
     expect(owner.drill_down).toEqual(['gbrain', 'sources', 'writer', 'failures', SOURCE, '--category', 'owner_exception', '--code', owner.code, '--origin', 'owner_exception', '--json']);
     const groupedJson = JSON.parse(renderWriterFailures(grouped, true));
-    expect(groupedJson.groups[0].samples[0].inspect.command).toStartWith('gbrain write-request ');
+    expect(groupedJson.groups[0].samples[0].inspect.command).toStartWith('foresights write-request ');
     expect(renderWriterFailures(grouped, false)).toContain(`rows: ${owner.drill_down.join(' ')}`);
   });
 

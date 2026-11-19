@@ -10,7 +10,7 @@
  *
  * Continuity pairs (writer fixture → production write-back → reader fixture)
  * run on a shared brain; scores land on the READER's cell. The write path is
- * gbrain's pipeline — harness-INDEPENDENT in v1 (disclosed in
+ * foresights's pipeline — harness-INDEPENDENT in v1 (disclosed in
  * docs/eval/BRAINBENCH.md) — so each pair preps ONCE (reset + seed +
  * write-back) and every requested harness replays the read-only reader against
  * that shared state. The per-(writer×reader)-ordering loop this replaces
@@ -434,7 +434,7 @@ function assembleCell(
 ): SuiteMetrics | null {
   if (suite === 'write-back') {
     if (writeBackAgg.fixtures.length === 0) return null;
-    // The write path is gbrain's pipeline — identical for every harness seam
+    // The write path is foresights's pipeline — identical for every harness seam
     // in v1, so each harness cell carries the same (once-computed) numbers.
     // When harness-specific write paths land, this is where they diverge.
     const metrics: Record<string, number> = {

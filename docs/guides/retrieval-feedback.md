@@ -1,14 +1,14 @@
 # Retrieval feedback: teach the brain which evidence helped
 
-GBrain learns from use. Every answer from `query`, `search`, `think`,
+Foresights learns from use. Every answer from `query`, `search`, `think`,
 `synthesize` and `recall` (when it searched pages) records which pages it used
 and the revision of each page it read. When your agent rates an answer, the
 weights of those pages move a little, and later searches rank them up or down.
 It costs no LLM calls: a rating is a small database update.
 
 Retrieval feedback is **off by default**. Turn it on with
-`gbrain config set feedback.enabled true`; ratings are then explicit only, and
-`gbrain config set feedback.implicit true` also learns from `think` citations.
+`foresights config set feedback.enabled true`; ratings are then explicit only, and
+`foresights config set feedback.implicit true` also learns from `think` citations.
 Held-out tests with consistent ratings showed a gain on entity-centric brains
 (people, companies, deals: +2.0 NDCG@10, CI [+1.0, +3.3]) and no gain on
 chat-history brains (−0.1, CI [−1.0, +0.6]); results:
@@ -23,7 +23,7 @@ chat-history brains (−0.1, CI [−1.0, +0.6]); results:
 
 - An answer carries an `answer_id` (`ans_…`) and `feedback: { rateable: true }`
   in its response meta. On the CLI, `query`, `search` and `think` print
-  `answer: ans_… (rate with: gbrain rate ans_… 1-5)` on stderr, and `--json`
+  `answer: ans_… (rate with: foresights rate ans_… 1-5)` on stderr, and `--json`
   rows carry `answer_id`. Over MCP, `search` and `query` also put the id in
   the tool result text the model sees (hosts often hide `_meta`): `Rate after
   use: rate_answer { answer_id: "ans_…", rating: 1-5 }` on every rateable
@@ -58,10 +58,10 @@ chat-history brains (−0.1, CI [−1.0, +0.6]); results:
 Whole answer:
 
 ```bash
-gbrain query "who leads the acme-example renewal" --json
-# stderr: answer: ans_01J9Z8Q6W5K3M7T2R4V8X0Y1ZC (rate with: gbrain rate ans_01J9Z8Q6W5K3M7T2R4V8X0Y1ZC 1-5)
-gbrain rate ans_01J9Z8Q6W5K3M7T2R4V8X0Y1ZC 2
-gbrain search "who leads the acme-example renewal" --explain   # shows "+ feedback ×0.99"
+foresights query "who leads the acme-example renewal" --json
+# stderr: answer: ans_01J9Z8Q6W5K3M7T2R4V8X0Y1ZC (rate with: foresights rate ans_01J9Z8Q6W5K3M7T2R4V8X0Y1ZC 1-5)
+foresights rate ans_01J9Z8Q6W5K3M7T2R4V8X0Y1ZC 2
+foresights search "who leads the acme-example renewal" --explain   # shows "+ feedback ×0.99"
 ```
 
 Single pages, over MCP:
@@ -83,12 +83,12 @@ an answer: fix the page itself when it is wrong.
 ## Inspecting and resetting
 
 ```bash
-gbrain feedback status                 # counts, weight spread, lowest-weighted pages with a next step
-gbrain feedback reset --page notes/old-renewal-plan
-gbrain feedback reset --source default
-gbrain config set feedback.enabled true    # on (default off): recording, ratings and the ranking effect
-gbrain config set feedback.enabled false   # off: no recording, no ratings, no ranking effect
-gbrain config set feedback.learn false     # keep learned weights, stop learning
+foresights feedback status                 # counts, weight spread, lowest-weighted pages with a next step
+foresights feedback reset --page notes/old-renewal-plan
+foresights feedback reset --source default
+foresights config set feedback.enabled true    # on (default off): recording, ratings and the ranking effect
+foresights config set feedback.enabled false   # off: no recording, no ratings, no ranking effect
+foresights config set feedback.learn false     # keep learned weights, stop learning
 ```
 
 | Key | Default | Meaning |
@@ -105,11 +105,11 @@ gbrain config set feedback.learn false     # keep learned weights, stop learning
 Doctor `retrieval_feedback_health` warns when feedback is on, at least 50
 answers were recorded and none was rated: the agent's host is probably not
 showing tool result text, so the agent never sees the answer id. Its fix is
-the read-only `gbrain feedback status --json`.
+the read-only `foresights feedback status --json`.
 
 ## Refusals
 
-Every refusal carries `code`, `message` and `fix`; `gbrain errors <code>`
+Every refusal carries `code`, `message` and `fix`; `foresights errors <code>`
 explains it offline.
 
 ### invalid_rating

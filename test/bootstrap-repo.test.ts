@@ -783,7 +783,7 @@ describe('repo helpers', () => {
 // A repo created from inside a proxied cloud session is never attached to the
 // session's GitHub scope — REST verification 403s and pushes are denied — so
 // createPrivateRepo must fail FAST with the flow that works (create outside,
-// open the session ON the repo, `gbrain bootstrap attach`) instead of leaving
+// open the session ON the repo, `foresights bootstrap attach`) instead of leaving
 // a half-created, unpushable repo behind.
 
 describe('createPrivateRepo cloud-sandbox guard [CLOUD_SANDBOX_REPO]', () => {
@@ -793,7 +793,7 @@ describe('createPrivateRepo cloud-sandbox guard [CLOUD_SANDBOX_REPO]', () => {
       expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan })),
     );
     expect(err.code).toBe('CLOUD_SANDBOX_REPO');
-    expect(err.message).toContain('gbrain bootstrap attach');
+    expect(err.message).toContain('foresights bootstrap attach');
     // No repo was created and nothing was pushed.
     expect(calls.some((c) => c.join(' ').includes('repo create'))).toBe(false);
     expect(calls.some((c) => c.join(' ').includes('push'))).toBe(false);

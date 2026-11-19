@@ -1,16 +1,16 @@
 /**
- * F4 status-only serve (agent operator contract v1): a second `gbrain serve`
+ * F4 status-only serve (agent operator contract v1): a second `foresights serve`
  * on a PGLite brain another serve holds, and a serve with no brain at all,
  * complete the MCP handshake with exactly one `gbrain_status` tool that names
  * the lock owner / missing brain path, the fix and the relay text. Then the
  * documented recoveries end in a successful recall:
  *   (a) the owner closes → the next gbrain_status call opens the brain in
  *       place, tools/list_changed fires and the full catalog answers recall;
- *   (b) both harnesses move to one shared `gbrain serve --http` with no prior
+ *   (b) both harnesses move to one shared `foresights serve --http` with no prior
  *       HTTP credentials (tokens minted before the shared owner starts): the
  *       stale stdio server then names the HTTP owner and the rewiring fix, and
  *       both HTTP sessions recall;
- *   no brain → `gbrain init` (the fix) → recovery in place → recall.
+ *   no brain → `foresights init` (the fix) → recovery in place → recall.
  * `--fail-fast` keeps the pre-F4 exit for supervisors. H2 mid-transition row:
  * `serve --http` on a taken port fails fast (serve_port_in_use) instead of
  * holding the brain while serving nothing, and both stdio harnesses recover.
@@ -240,7 +240,7 @@ describe('status-only serve: lock contention → one shared serve --http (b)', (
     const after = body(await stale.client.callTool({ name: 'gbrain_status', arguments: {} }));
     expect(after.status).toBe('unavailable');
     expect(after.lock_owner.transport).toBe('http');
-    expect(after.why).toContain('gbrain serve --http');
+    expect(after.why).toContain('foresights serve --http');
     expect(after.fix.argv).toEqual(['gbrain', 'bootstrap', 'harness', '--harness', 'all', '--yes']);
 
     // Step 3: each harness, rewired to the shared server, recalls.
@@ -292,7 +292,7 @@ describe('status-only serve: the shared-HTTP transition fails midway (H2)', () =
     opened.shift();
     // Step 2 fails: the port is taken, so the shared server cannot start.
     const http = await import('node:http');
-    blocker = http.createServer((_q, r) => { r.end('not gbrain'); });
+    blocker = http.createServer((_q, r) => { r.end('not foresights'); });
     await new Promise<void>((r, reject) => { blocker!.once('error', reject); blocker!.listen(0, '127.0.0.1', () => r()); });
     const PORT = (blocker.address() as import('node:net').AddressInfo).port;
     const started = spawnSync('bun', ['--no-env-file', 'run', 'src/cli.ts', 'serve', '--http', '--bind', '127.0.0.1', '--port', String(PORT)],

@@ -1,6 +1,6 @@
 /**
  * #6574: a publish transaction locks the request rows it publishes, so a lease renewal from another connection waited on
- * that lock and the claim read lapsed ("owner missing") for a publish that was still working; `gbrain sync` then stopped
+ * that lock and the claim read lapsed ("owner missing") for a publish that was still working; `foresights sync` then stopped
  * `drain_stalled`. The claim is now stamped once, committed, before the transaction opens, for the publication's whole
  * bound. This holds a put_pages group inside its open transaction and reads each member's claim from another connection:
  * still running, stamped `publishing`, and leased past the ceiling, not the 30 s renewal lease. Synthetic content only.

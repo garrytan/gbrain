@@ -26,7 +26,7 @@ function receiptOwnershipRefusal(message: string, snapshot: PageSnapshot | null,
 /** The Gmail page moved under an admitted receipt patch: the receipt is read first, then the repair re-reads the current page. */
 function receiptRaceRefusal(message: string, row: WriteRequest): OperationError {
   return opError('revision_conflict', message, `Page ${row.slug} in ${row.source_id} changed while its attachment receipts were being patched, so request ${row.request_id} was refused and the content was preserved. `
-    + `Read its receipt first (gbrain write-request -- ${row.request_id}); once it is final, gbrain google attachments backfill --source ${row.source_id} --retry-failed re-reads the current page.`, {
+    + `Read its receipt first (foresights write-request -- ${row.request_id}); once it is final, foresights google attachments backfill --source ${row.source_id} --retry-failed re-reads the current page.`, {
     fix: { argv: ['gbrain', 'write-request', '--', row.request_id], consent: [], actor: 'agent', requires_exclusive: false,
       why: 'The receipt confirms whether the metadata patch published before anything is resubmitted.' },
   });

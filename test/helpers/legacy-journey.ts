@@ -6,7 +6,7 @@
  * an unkeyed live SQL NULL row and an active row the upgrade orphaned.
  * Terminal rows need no operator step. `POST /ingest` returns 409 with a
  * hint; the journey then runs the commands the product prints, verbatim,
- * through the real `gbrain jobs` dispatcher, counts them, and proves
+ * through the real `foresights jobs` dispatcher, counts them, and proves
  * restored operation: `/ingest` returns 202, a worker starts and completes
  * the queued synthesize and ingest work, and `search` finds the memory.
  */
@@ -29,7 +29,7 @@ import type { OperationContext } from '../../src/core/ops/contract.ts';
 
 export const JOURNEY_CLIENT = 'journey-client';
 
-/** A minimal `gbrain serve --http` stand-in: the real /ingest route on an ephemeral port. */
+/** A minimal `foresights serve --http` stand-in: the real /ingest route on an ephemeral port. */
 export async function startIngestServer(engine: BrainEngine): Promise<{ base: string; stop(): Promise<void> }> {
   const app = express();
   const pass: express.RequestHandler = (_req, _res, next) => next();
@@ -54,12 +54,12 @@ export function postIngest(base: string, content: string) {
   return fetch(`${base}/ingest`, { method: 'POST', headers: { authorization: 'Bearer test-only', 'content-type': 'text/markdown' }, body: content });
 }
 
-/** Splits one printed `gbrain ...` command into argv, honoring double quotes. */
+/** Splits one printed `foresights ...` command into argv, honoring double quotes. */
 export function argv(command: string): string[] {
   return [...command.matchAll(/"([^"]*)"|(\S+)/g)].map(m => m[1] ?? m[2]!);
 }
 
-/** Runs a printed `gbrain jobs …` command verbatim through the real dispatcher. */
+/** Runs a printed `foresights jobs …` command verbatim through the real dispatcher. */
 export async function runPrinted(engine: BrainEngine, command: string): Promise<{ out: string; err: string; exit: number }> {
   const args = argv(command);
   expect(args.slice(0, 2)).toEqual(['gbrain', 'jobs']);
@@ -104,7 +104,7 @@ async function drain(engine: BrainEngine, ids: number[]): Promise<Record<number,
 
 export interface JourneyResult { commands: string[] }
 
-/** `gbrain search <query>` through the search operation, as a trusted local caller; returns hit slugs. */
+/** `foresights search <query>` through the search operation, as a trusted local caller; returns hit slugs. */
 async function searchSlugs(engine: BrainEngine, query: string): Promise<string[]> {
   const op = operations.find(o => o.name === 'search')!;
   const ctx: OperationContext = { engine, config: {} as OperationContext['config'], dryRun: false, remote: false, sourceId: 'default', logger: { info() {}, warn() {}, error() {} } };
@@ -149,17 +149,17 @@ export async function runLegacyJourney(engine: BrainEngine): Promise<JourneyResu
 
   const commands: string[] = [];
   // 1. Stop producers and workers: the hint's first instruction.
-  expect(body.hint).toStartWith('Stop producers (gbrain serve, gbrain autopilot) and workers');
+  expect(body.hint).toStartWith('Stop producers (foresights serve, foresights autopilot) and workers');
   await serve.stop();
-  commands.push('stop gbrain serve');
+  commands.push('stop foresights serve');
   // 2. Cancel the active job the hint names.
-  const cancel = /cancel active jobs \((gbrain jobs cancel \d+)\)/.exec(body.hint)?.[1];
-  expect(cancel).toBe(`gbrain jobs cancel ${orphan.id}`);
+  const cancel = /cancel active jobs \(((?:foresights|gbrain) jobs cancel \d+)\)/.exec(body.hint)?.[1];
+  expect(cancel).toBe(`foresights jobs cancel ${orphan.id}`);
   expect((await runPrinted(engine, cancel!)).exit).toBe(0);
   commands.push(cancel!);
   // 3. Preview with the hint's filled --select.
-  const preview = /preview with (gbrain jobs authorize-legacy --select "[^"]+")/.exec(body.hint)?.[1];
-  expect(preview).toBe('gbrain jobs authorize-legacy --select "status=waiting|delayed|waiting-children|paused"');
+  const preview = /preview with ((?:foresights|gbrain) jobs authorize-legacy --select "[^"]+")/.exec(body.hint)?.[1];
+  expect(preview).toBe('foresights jobs authorize-legacy --select "status=waiting|delayed|waiting-children|paused"');
   const previewed = await runPrinted(engine, preview!);
   expect(previewed.exit).toBe(0);
   expect(previewed.out).toContain('(SQL NULL authority, authorizable): 2');
@@ -171,7 +171,7 @@ export async function runLegacyJourney(engine: BrainEngine): Promise<JourneyResu
   commands.push(apply!);
   // 5. Restart serve.
   serve = await startIngestServer(engine);
-  commands.push('restart gbrain serve');
+  commands.push('restart foresights serve');
 
   await assertNoUnreviewedJobs(engine);
   expect((await legacyJobAuthorityCheck(engine)).status).toBe('ok');
@@ -186,7 +186,7 @@ export async function runLegacyJourney(engine: BrainEngine): Promise<JourneyResu
 
   // 6. search finds the ingested memory.
   const hits = await searchSlugs(engine, 'zebra-journey-marker');
-  commands.push('gbrain search zebra-journey-marker');
+  commands.push('foresights search zebra-journey-marker');
   expect(hits.some(slug => slug.startsWith('inbox/'))).toBe(true);
   expect(commands.length).toBeLessThanOrEqual(6);
   return { commands };
@@ -207,7 +207,7 @@ export async function runUnsupportedRowRecovery(engine: BrainEngine): Promise<st
 
   const doctor = await legacyJobAuthorityCheck(engine);
   const commands: string[] = [];
-  const preview = /preview with (gbrain jobs authorize-legacy --select "[^"]+")/.exec(doctor.message)![1]!;
+  const preview = /preview with ((?:foresights|gbrain) jobs authorize-legacy --select "[^"]+")/.exec(doctor.message)![1]!;
   const previewed = await runPrinted(engine, preview);
   expect(previewed.out).toContain(`Unsupported non-NULL authority (not authorizable; cancel locally): ${future.id}`);
   commands.push(preview);
@@ -215,7 +215,7 @@ export async function runUnsupportedRowRecovery(engine: BrainEngine): Promise<st
   expect((await runPrinted(engine, apply)).exit).toBe(0);
   commands.push(apply);
   await expect(assertNoUnreviewedJobs(engine)).rejects.toThrow('1 legacy jobs');
-  const cancel = new RegExp(`gbrain jobs cancel ${future.id}\\b`).exec(doctor.message)![0];
+  const cancel = new RegExp(`foresights jobs cancel ${future.id}\\b`).exec(doctor.message)![0];
   expect((await runPrinted(engine, cancel)).exit).toBe(0);
   commands.push(cancel);
   await assertNoUnreviewedJobs(engine);

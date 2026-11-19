@@ -2,7 +2,7 @@
  * v0.41.39 (issue #1700) — cycle phase `enrich_thin`.
  *
  * Opt-in autopilot trickle around `runEnrichCore`. Default OFF; enable with
- * `gbrain config set cycle.enrich_thin.enabled true`. Each tick develops a few
+ * `foresights config set cycle.enrich_thin.enabled true`. Each tick develops a few
  * thin (stub) pages per source so the brain gets smarter over time, not just
  * bigger — the issue's explicit payoff.
  *
@@ -46,7 +46,7 @@ export interface EnrichThinPhaseOpts {
   dryRun?: boolean;
   signal?: AbortSignal;
   /**
-   * issue #2860 — `gbrain dream --phase enrich_thin --once`. Bypasses the
+   * issue #2860 — `foresights dream --phase enrich_thin --once`. Bypasses the
    * `cycle.enrich_thin.enabled` gate for THIS call only; never reads or
    * writes config. Per-source + brain-wide cost/walltime caps still apply.
    */
@@ -102,7 +102,7 @@ async function loadCfg(engine: BrainEngine): Promise<ResolvedConfig> {
     return Number.isFinite(n) && n > 0 ? n : fallback;
   };
   // #2504 — cost knobs accept 'off'/'unlimited'/'none' (the same spellings
-  // `gbrain enrich --max-usd` takes) → Infinity sentinel. Per-source 'off'
+  // `foresights enrich --max-usd` takes) → Infinity sentinel. Per-source 'off'
   // leaves the brain-wide total governing; both 'off' reaches runEnrichCore
   // as Infinity, which it maps to an uncapped tracker. parseFloat('off') used
   // to silently become the default cap — the operator's opt-out was ignored.
@@ -164,7 +164,7 @@ export async function runPhaseEnrichThin(
         summary: 'cycle.enrich_thin.enabled=false (default OFF)',
         details: {
           reason: 'disabled',
-          enable_hint: 'gbrain config set cycle.enrich_thin.enabled true',
+          enable_hint: 'foresights config set cycle.enrich_thin.enabled true',
         },
       };
     }

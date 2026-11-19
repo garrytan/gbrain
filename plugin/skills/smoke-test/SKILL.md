@@ -1,7 +1,7 @@
 ---
 name: smoke-test
 description: |
-  Health smoke tests + auto-fix for gbrain installs (and OpenClaw services
+  Health smoke tests + auto-fix for foresights installs (and OpenClaw services
   when present). Run after machine/container restarts or whenever something
   seems broken. Tests critical services, auto-fixes bounded local issues,
   and reports worker topology without starting daemons. Extensible via
@@ -22,13 +22,13 @@ when_to_use: "Use when the user asks: \"smoke test\", \"run smoke tests\", \"con
 
 # Smoke Test Skillpack
 
-> Run `gbrain smoke-test` after any machine or container restart, or whenever
+> Run `foresights smoke-test` after any machine or container restart, or whenever
 > something seems broken.
 
 ## Contract
 
 This skill guarantees:
-- 8 core tests verify gbrain health after restart (plus OpenClaw services when
+- 8 core tests verify foresights health after restart (plus OpenClaw services when
   present; skipped otherwise)
 - Bounded local failures are auto-fixed before reporting; worker repair is
   explicit because process topology and shell-job policy are operator choices
@@ -41,9 +41,9 @@ This skill guarantees:
 | # | Test | Auto-Fix |
 |---|------|----------|
 | 1 | Bun runtime | Install from bun.sh |
-| 2 | GBrain CLI loads | Reinstall deps |
-| 3 | GBrain database (engine identity via `gbrain engine status --json`, then `doctor --json`'s `connection` check) | `gbrain db-repair --yes`, re-test |
-| 4 | GBrain worker process | — (native supervisor status + duplicate detection) |
+| 2 | Foresights CLI loads | Reinstall deps |
+| 3 | Foresights database (engine identity via `foresights engine status --json`, then `doctor --json`'s `connection` check) | `foresights db-repair --yes`, re-test |
+| 4 | Foresights worker process | — (native supervisor status + duplicate detection) |
 | 5 | OpenClaw Codex plugin (Zod CJS); skips if OpenClaw absent | `npm install zod@4 --force` |
 | 6 | OpenClaw gateway; skips if OpenClaw absent | — (may not be started yet) |
 | 7 | Embedding API key | — (check .env) |
@@ -53,7 +53,7 @@ This skill guarantees:
 
 ### CLI
 ```bash
-gbrain smoke-test
+foresights smoke-test
 ```
 
 This is the invocation for all installs; it resolves the test script from the
@@ -61,7 +61,7 @@ installed package.
 
 ### From any startup script or login hook
 ```bash
-gbrain smoke-test >> /tmp/bootstrap.log 2>&1
+foresights smoke-test >> /tmp/bootstrap.log 2>&1
 ```
 
 ### From OpenClaw bootstrap (OpenClaw deployments only)
@@ -72,10 +72,10 @@ bash /path/to/gbrain/scripts/smoke-test.sh >> /tmp/bootstrap.log 2>&1
 
 ### From an agent
 ```
-exec: gbrain smoke-test
+exec: foresights smoke-test
 ```
 
-Contributor note: inside a gbrain repo checkout you can also run the script
+Contributor note: inside a foresights repo checkout you can also run the script
 directly with `bash scripts/smoke-test.sh`.
 
 ## Adding Custom Tests
@@ -94,9 +94,9 @@ Rules:
 - Keep tests fast (< 10s each)
 - Tests run in alphabetical order
 
-## Adding Built-in Tests (gbrain contributors)
+## Adding Built-in Tests (foresights contributors)
 
-This section is for contributors working in the gbrain source repo. Plugin
+This section is for contributors working in the foresights source repo. Plugin
 installs ship the script read-only and upgrades overwrite it; if you just want
 extra checks, use the `~/.gbrain/smoke-tests.d/` drop-in scripts above.
 
@@ -131,7 +131,7 @@ fi
 | Var | Default | Description |
 |-----|---------|-------------|
 | `GBRAIN_SMOKE_LOG` | `/tmp/gbrain-smoke-test.log` | Log file path |
-| `GBRAIN_DIR_OVERRIDE` | (auto-detect) | Force gbrain install path |
+| `GBRAIN_DIR_OVERRIDE` | (auto-detect) | Force foresights install path |
 | `GBRAIN_BUN_PATH` | (auto-detect) | Force Bun binary path |
 | `GBRAIN_DATABASE_URL` | (from .env) | Database connection URL |
 | `GBRAIN_SMOKE_WORKER_PID_FILE` | `/tmp/gbrain-worker.pid` | Legacy bare-worker PID path |
@@ -149,17 +149,17 @@ not the OpenAI Codex CLI.)
 - **Persistence:** Does NOT survive container restart (gateway reinstalls deps)
 - This is why smoke tests must run on every restart
 
-### GBrain Worker Auth Failure
+### Foresights Worker Auth Failure
 - **Symptom:** Worker can't connect to DB
 - **Cause:** `GBRAIN_DATABASE_URL` not propagated to worker subprocess
 - **Auto-fix:** Script explicitly passes both `DATABASE_URL` and `GBRAIN_DATABASE_URL`
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - Exit code = number of unfixed failures: report each by name and the attempted fix; never report all-green when a test was skipped.
-- The database test fails with a `GBRAIN_DB_ACCESS` marker: run `gbrain db-repair` and re-test; the rewrite tier needs the user's agreement.
+- The database test fails with a `GBRAIN_DB_ACCESS` marker: run `foresights db-repair` and re-test; the rewrite tier needs the user's agreement.
 - The embedding API key check fails: there is no auto-fix. Tell the user which key is missing and that search runs keyword-only until it is set.
 
 ## Anti-Patterns

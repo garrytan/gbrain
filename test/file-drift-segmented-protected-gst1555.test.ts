@@ -1,7 +1,7 @@
 /**
- * GST-1555: `gbrain repair file-drift --prefer file` on a page stored in segments whose database copy keeps protected parts.
+ * GST-1555: `foresights repair file-drift --prefer file` on a page stored in segments whose database copy keeps protected parts.
  *
- * 1. Protects: a held `file_drift` page (side unknown: an older gbrain forgot its import record) whose body is stored in
+ * 1. Protects: a held `file_drift` page (side unknown: an older foresights forgot its import record) whose body is stored in
  *    segments (`pages.segmented_storage`), with a protected frontmatter key and a timeline row only the database has. Its
  *    preview listed both exceptions (`protected_metadata`, `protected_takes_or_private_facts`) and an apply command, and that
  *    apply refused every time with `invalid_params` "Unsupported or missing reconciliation fields." and no fix: the preview's
@@ -71,7 +71,7 @@ async function protectedParts(engine: BrainEngine, root: string): Promise<void> 
 async function assertImported(engine: BrainEngine, root: string, before: string): Promise<void> {
   const after = readFileSync(join(root, `${SLUG}.md`), 'utf8');
   // The file keeps its own bytes; only the protected key (before the closing ---) and the database-only row (at the end) are added.
-  let kept = after.replace(/\nembed_skip: true\n---\n/, '\n---\n').replace(/<!-- gbrain:materialized v1 [0-9a-f]+ -->\n- \*\*2026-02-01\*\* \| example — A database-only event\.\n$/, '');
+  let kept = after.replace(/\nembed_skip: true\n---\n/, '\n---\n').replace(/<!-- (?:foresights|gbrain):materialized v1 [0-9a-f]+ -->\n- \*\*2026-02-01\*\* \| example — A database-only event\.\n$/, '');
   if (!before.includes('<!-- timeline -->')) kept = kept.replace('<!-- timeline -->\n\n', '');
   expect(kept).toBe(before);
   expect(after).not.toBe(before);
@@ -189,14 +189,14 @@ describe('GST-1555 reconcile field refusals name the fields', () => {
   test('the text output prints each row\'s fix with its consent, and never the fix as a detail value', () => {
     const text = renderRepairResult({ kind: 'file-drift', mode: 'apply', affected: 1, sample: [], residuals: {}, scope: { kind: 'all' },
       cost: { lifetime_ids: 0, receipt_bytes: 0, embedding_pages: 0, embedding_usd: null }, capacity: [], resumed_from: null, applied: 0, skipped: 0, failed: [],
-      complete: true, apply_command: 'gbrain repair file-drift --source default --slug notes/alpha --apply',
+      complete: true, apply_command: 'foresights repair file-drift --source default --slug notes/alpha --apply',
       listing: [{ item: 'default:notes/alpha', class: 'refused', detail: 'invalid_params: example', fix: { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'agent', why: 'example', requires_exclusive: false } }],
       outcomes: { changed_since_preview: 1 },
       outcome_items: [{ item: 'default:notes/alpha', outcome: 'changed_since_preview', detail: { request_id: 'example',
         fix: { argv: ['gbrain', 'repair', 'file-drift', '--source', 'default', '--slug', 'notes/alpha', '--prefer', 'file'], consent: ['destructive'], actor: 'agent', why: 'example', requires_exclusive: false } } }],
     } as unknown as RepairResult);
-    expect(text).toContain('    fix: gbrain doctor --json\n');
-    expect(text).toContain('    fix: gbrain repair file-drift --source default --slug notes/alpha --prefer file (asks the user first: destructive)');
+    expect(text).toContain('    fix: foresights doctor --json\n');
+    expect(text).toContain('    fix: foresights repair file-drift --source default --slug notes/alpha --prefer file (asks the user first: destructive)');
     expect(text).not.toContain('fix=');
   });
 });

@@ -2,7 +2,7 @@
 
 > **Scope:** this file covers skill-fork diffs through v0.36.5.0. **The
 > canonical upgrade channel is `skills/migrations/v*.md`** (the agent-executed
-> migration files that `gbrain upgrade` / `gbrain post-upgrade` route through),
+> migration files that `foresights upgrade` / `foresights post-upgrade` route through),
 > plus `CHANGELOG.md` for release history. Use this file to catch a
 > long-diverged fork up through the versions it covers; for anything after
 > v0.36.5.0, walk the migration files and CHANGELOG. For an unsupported
@@ -10,10 +10,10 @@
 > brain, preview a supported target and obtain explicit approval before any
 > schema change or paid re-embed. Upgrading alone does not migrate vectors.
 
-GBrain ships skills in `skills/`. Downstream agents (custom OpenClaw deployments,
+Foresights ships skills in `skills/`. Downstream agents (custom OpenClaw deployments,
 agent forks of any kind) often **copy** these skill files into their own workspace and
 diverge over time — adding agent-specific phases, removing irrelevant ones, tightening
-language. Once that happens, gbrain can't push updates to those forks. The agent has
+language. Once that happens, foresights can't push updates to those forks. The agent has
 to apply the diffs by hand.
 
 This doc lists the exact diffs each downstream agent needs to apply when upgrading.
@@ -21,14 +21,14 @@ Cross-reference against your fork's local skill files.
 
 ## Why this exists
 
-`gbrain upgrade` ships the new binary and runs `gbrain post-upgrade`, which applies
-the schema migrations and backfills the data (`gbrain apply-migrations --yes` runs
+`foresights upgrade` ships the new binary and runs `foresights post-upgrade`, which applies
+the schema migrations and backfills the data (`foresights apply-migrations --yes` runs
 them by hand). But the **skill files themselves**
 that tell the agent how to behave — those are user-owned. If your `~/git/<your-agent>/workspace/skills/brain-ops/SKILL.md`
-says `# Based on gbrain v0.10.0` at the top, it doesn't know about v0.12.0 features.
+says `# Based on foresights v0.10.0` at the top, it doesn't know about v0.12.0 features.
 
-The agent will keep manually calling `gbrain link` after every `put_page` (redundant —
-auto-link does it), miss out on `gbrain graph-query` for relationship questions, and
+The agent will keep manually calling `foresights link` after every `put_page` (redundant —
+auto-link does it), miss out on `foresights graph-query` for relationship questions, and
 not know to backfill the structured timeline.
 
 ## How to apply
@@ -36,18 +36,18 @@ not know to backfill the structured timeline.
 1. Identify your forked skill files. Typically at `~/git/<your-agent>/workspace/skills/` or wherever your agent's skill directory lives.
 2. For each skill listed below, find the matching phase/section in your fork.
 3. Apply the diff (paste the new block in the indicated location).
-4. Update the version banner at the top of your fork (`# Based on gbrain v0.12.0`).
+4. Update the version banner at the top of your fork (`# Based on foresights v0.12.0`).
 5. Verify: ask the agent to write a test page and confirm the response includes
    `auto_links: { created, removed, errors }`. (Local CLI writes only — MCP
    writes, stdio included, return `auto_links: { skipped: "remote" }` and are
-   reconciled later by the serve maintenance sweep or `gbrain sweep --once`.)
+   reconciled later by the serve maintenance sweep or `foresights sweep --once`.)
 
 Total time: ~10 minutes for all four skills.
 
 ## Upgrading a production agent's brain: the stable channel
 
 A downstream agent whose brain is large or always on (an OpenClaw deployment, a
-team brain behind `gbrain serve --http`) should not track every PATCH release,
+team brain behind `foresights serve --http`) should not track every PATCH release,
 and by default it doesn't: installs follow the **stable channel**, the newest
 release promoted after the production-shaped soak passed on that
 release's exact git tree. A twice-daily scheduled check promotes important
@@ -56,46 +56,46 @@ by hand ([daily stable check](RELEASING.md#daily-stable-check)). `git show stabl
 prints the promoted version, the soak run and its scoreboard link.
 
 ```bash
-gbrain self-upgrade --check-only --json   # channel, its source and the stable release offered
-gbrain upgrade                            # installs the stable release, then restarts every gbrain process onto it
+foresights self-upgrade --check-only --json   # channel, its source and the stable release offered
+foresights upgrade                            # installs the stable release, then restarts every foresights process onto it
 ```
 
-`gbrain config set self_upgrade.channel alpha` (or `--channel alpha` for one
+`foresights config set self_upgrade.channel alpha` (or `--channel alpha` for one
 run) follows every release instead. The stable channel never downgrades: a
 build at or above the stable release changes nothing
 ([channels](guides/upgrades-auto-update.md#stable-channel)).
 
-**Restarts are part of the upgrade.** `gbrain upgrade` restarts serve, autopilot,
+**Restarts are part of the upgrade.** `foresights upgrade` restarts serve, autopilot,
 the jobs supervisor and its worker onto the new build, then verifies that every
-gbrain process on the host reports one build and that serve's warm CLI socket
+foresights process on the host reports one build and that serve's warm CLI socket
 accepts it. When a process cannot be restarted automatically it refuses before
 installing anything (`restart_refused`, exit 3) and names the exact step for
 each one. Teach your agent's upgrade skill to handle that refusal:
 
 1. Read the refusal's `fix`. When it is `ask_user` (only MCP servers block the
    restart), relay `user_message`; after the user agrees, run the `fix.argv` it
-   names (the same upgrade with `--stop-mcp`) and reconnect gbrain in each
+   names (the same upgrade with `--stop-mcp`) and reconnect foresights in each
    harness afterwards.
 2. When it is `tell_user_to_run`, a serve, worker or autopilot was started by
-   hand, or a `gbrain sync` is running: give the user the listed steps, then run
+   hand, or a `foresights sync` is running: give the user the listed steps, then run
    the upgrade again. Run serve and autopilot under their installed services
-   (`gbrain autopilot --install`) and workers under
-   `gbrain jobs supervisor start --detach` so later upgrades restart them on
+   (`foresights autopilot --install`) and workers under
+   `foresights jobs supervisor start --detach` so later upgrades restart them on
    their own.
-3. A process that starts from another gbrain install (a second Bun global copy
+3. A process that starts from another foresights install (a second Bun global copy
    the serve service points at, often pinned to a tag or commit) would come back
    on the old build, so the upgrade replaces that copy first (`bun remove -g`,
    then `bun add -g` the release tag, under the copy's own `BUN_INSTALL`; a
    plain `bun add` or `bun update` keeps a pin) and refuses for any other kind
    of install (a git clone) with its exact commands. If a process still comes
    back on another build, `restart_unverified` names the install it runs from
-   and its `fix` is that replacement followed by `gbrain upgrade --restart-only`
+   and its `fix` is that replacement followed by `foresights upgrade --restart-only`
    (`ask_user`: relay `user_message`, run the chain after the user agrees).
-4. Verify with `gbrain doctor --only runtime_build_skew --json`: it fails while
-   two builds run, and its fix (`gbrain upgrade --restart-only`, after the user
+4. Verify with `foresights doctor --only runtime_build_skew --json`: it fails while
+   two builds run, and its fix (`foresights upgrade --restart-only`, after the user
    agrees) restarts every process onto the installed build.
 
-`gbrain upgrade --restart-only --dry-run --json` lists every gbrain process on
+`foresights upgrade --restart-only --dry-run --json` lists every foresights process on
 the host with its build and how it restarts, and changes nothing. A routine
 upgrade-and-restart onto the stable release is a good candidate for a standing
 approval from the operator; data-changing repairs still need a yes each time.
@@ -109,7 +109,7 @@ Full reference: [upgrades](guides/upgrades-auto-update.md#stable-channel) and
 **Where:** Insert a new `### Phase 2.5` section immediately after `### Phase 2: On Every Inbound Signal`.
 
 **Why:** Phase 2.5 declares that auto-link runs automatically. Without this, the
-agent's mental model says it must call `gbrain link` after every `put_page`, which
+agent's mental model says it must call `foresights link` after every `put_page`, which
 is redundant and can cause double-add warnings.
 
 ```markdown
@@ -120,21 +120,21 @@ them to the graph (`links` table) with inferred relationship types; stale
 links (refs no longer in the page text) are removed. WHO runs it depends on
 the write path:
 
-- **Trusted local writes** (`gbrain put`, `gbrain capture`,
-  `gbrain call put_page`) auto-link inline and return
+- **Trusted local writes** (`foresights put`, `foresights capture`,
+  `foresights call put_page`) auto-link inline and return
   `auto_links: { created, removed, errors }`.
 - **MCP callers (stdio AND HTTP)** return `auto_links: { skipped: "remote", hint }`
   and `auto_timeline: { skipped: "remote" }`. Body wikilinks are saved as text;
   edges are reconciled asynchronously by the serve's maintenance sweep
   (at startup and on 10-minute idle ticks), or on demand with
-  `gbrain sweep --once` / `gbrain extract links --source db`. Use `add_link`
+  `foresights sweep --once` / `foresights extract links --source db`. Use `add_link`
   for relationships you need immediately. Untrusted body text can plant
   ranking-boosting edges, which is why the inline path is local-only.
 - Inferred link types: `attended` (meeting -> person), `works_at`, `invested_in`,
   `founded`, `advises`, `source` (frontmatter), `mentions` (default).
-- To disable: `gbrain config set auto_link false`. Default is on.
-- Timeline entries with specific dates still need explicit `gbrain timeline-add`
-  (or batch via `gbrain extract timeline --source db`).
+- To disable: `foresights config set auto_link false`. Default is on.
+- Timeline entries with specific dates still need explicit `foresights timeline-add`
+  (or batch via `foresights extract timeline --source db`).
 ```
 
 **Also update the Iron Law section.** If your fork still says "Back-links maintained
@@ -155,14 +155,14 @@ relationships you can't express in markdown content.
 
 **Where:** Append to the end of `### Phase 3: Attendee enrichment`.
 
-**Why:** Eliminates redundant `gbrain link` calls per attendee (auto-link handles them
+**Why:** Eliminates redundant `foresights link` calls per attendee (auto-link handles them
 when the meeting page references attendees as `[Name](people/slug)`).
 
 ```markdown
-**Note (v0.12.0):** Once the meeting page is written via `gbrain put`, the
+**Note (v0.12.0):** Once the meeting page is written via `foresights put`, the
 auto-link post-hook automatically creates `attended` links from the meeting
 to each attendee whose page is referenced as `[Name](people/slug)`. You don't
-need to call `gbrain link` for attendees. You DO still need `gbrain timeline-add`
+need to call `foresights link` for attendees. You DO still need `foresights timeline-add`
 for dated events (auto-link only handles links, not timeline entries).
 ```
 
@@ -182,14 +182,14 @@ to meeting page" can be replaced with:
 
 **Where:** Append to the end of `### Phase 2: Entity Detection`.
 
-**Why:** Same logic as brain-ops — eliminates manual `gbrain link` after writing
+**Why:** Same logic as brain-ops — eliminates manual `foresights link` after writing
 originals/ideas pages that reference people or companies.
 
 ```markdown
 **Auto-link (v0.12.0):** When you write/update an originals or ideas page that
 references a person or company, the auto-link post-hook on `put_page`
 automatically creates the link from the new page to that entity. You don't
-need to call `gbrain link` manually. Timeline entries still need explicit calls.
+need to call `foresights link` manually. Timeline entries still need explicit calls.
 ```
 
 ---
@@ -208,7 +208,7 @@ Old (delete):
 - Update company pages from person enrichment (and vice versa)
 - Update related project/deal pages if relevant context surfaced
 - Check index files if the brain uses them
-- Add back-links manually via `gbrain link` for any new entity references
+- Add back-links manually via `foresights link` for any new entity references
 ```
 
 New (paste):
@@ -226,8 +226,8 @@ from this enrichment), not on creating links. On a trusted local write the
 put_page response carries `auto_links: { created, removed, errors }`; MCP
 writes (stdio and HTTP) return `auto_links: { skipped: "remote", hint }`
 instead — edges are reconciled by the serve maintenance sweep or
-`gbrain sweep --once`, and `add_link` covers an edge you need immediately.
-Timeline entries still need explicit `gbrain timeline-add` calls.
+`foresights sweep --once`, and `add_link` covers an edge you need immediately.
+Timeline entries still need explicit `foresights timeline-add` calls.
 ```
 
 ---
@@ -236,12 +236,12 @@ Timeline entries still need explicit `gbrain timeline-add` calls.
 
 1. **Bump the version banner** at the top of each forked file:
    ```
-   # Based on gbrain v0.12.0 skills/<skill-name>, extended with <your-agent>-specific config
+   # Based on foresights v0.12.0 skills/<skill-name>, extended with <your-agent>-specific config
    ```
 
 2. **Run the v0.12.0 backfill** (this populates the graph for your existing brain):
    ```bash
-   gbrain post-upgrade
+   foresights post-upgrade
    ```
    `post-upgrade` calls `apply-migrations --yes` automatically, which runs the
    `v0_12_0` orchestrator (schema → config check →
@@ -252,11 +252,11 @@ Timeline entries still need explicit `gbrain timeline-add` calls.
    `[Some Person](people/some-person)`. Confirm the put_page response includes
    `auto_links: { created: 1, removed: 0, errors: 0 }`. (Local CLI write; an
    MCP write returns `auto_links: { skipped: "remote" }` — run
-   `gbrain sweep --once`, then check the edge with `gbrain graph-query`.)
+   `foresights sweep --once`, then check the edge with `foresights graph-query`.)
 
 4. **Verify graph traversal works:**
    ```bash
-   gbrain graph-query people/some-well-connected-person --depth 2
+   foresights graph-query people/some-well-connected-person --depth 2
    ```
    Should return an indented tree of typed edges.
 
@@ -271,10 +271,10 @@ and there is one markdown-parsing behavior to know about.
 ### 1. Run the migration (Postgres-backed brains)
 
 ```bash
-gbrain upgrade
+foresights upgrade
 ```
 
-The `v0_12_2` orchestrator runs `gbrain repair-jsonb` automatically. It rewrites
+The `v0_12_2` orchestrator runs `foresights repair-jsonb` automatically. It rewrites
 rows where `jsonb_typeof = 'string'` across `pages.frontmatter`, `raw_data.data`,
 `ingest_log.pages_updated`, `files.metadata`, and `page_versions.frontmatter`.
 Idempotent, safe to re-run. PGLite brains no-op cleanly.
@@ -282,7 +282,7 @@ Idempotent, safe to re-run. PGLite brains no-op cleanly.
 Verify after upgrade:
 
 ```bash
-gbrain repair-jsonb --dry-run --json    # expect totalRepaired: 0
+foresights repair-jsonb --dry-run --json    # expect totalRepaired: 0
 ```
 
 ### 2. Recover any truncated wiki articles
@@ -292,7 +292,7 @@ silently truncated (any standalone `---` in body content was treated as a
 timeline separator). Re-import from source:
 
 ```bash
-gbrain sync --full
+foresights sync --full
 ```
 
 `splitBody` rebuilds `compiled_truth` correctly.
@@ -349,7 +349,7 @@ If `unresolved.length > 0`:
 - Option 1 (create pages now): trigger an enrichment pass to build the missing people pages.
 - Option 2 (defer): log the unresolved names to the enrichment queue for later.
 - Option 3 (accept the gap): the attendee edge will not be created until a page exists.
-  Re-running `gbrain extract links --source db --include-frontmatter` after creating
+  Re-running `foresights extract links --source db --include-frontmatter` after creating
   the page fills in the missing edges.
 ```
 
@@ -397,7 +397,7 @@ Frontmatter-derived edges carry these `link_type` values. If your fork has graph
 
 ### Migration timing
 
-`gbrain upgrade` takes 2-5 min on a 46K-page brain (one-time). Runs out-of-process via `gbrain post-upgrade`. If your agent holds a DB connection during the upgrade, reconnect after; otherwise keep serving.
+`foresights upgrade` takes 2-5 min on a 46K-page brain (one-time). Runs out-of-process via `foresights post-upgrade`. If your agent holds a DB connection during the upgrade, reconnect after; otherwise keep serving.
 
 ### Type names
 
@@ -414,7 +414,7 @@ do not opt in are unaffected.
 
 To adopt, follow `skills/migrations/v0.14.0.md`. The short version:
 
-1. Start the worker with `gbrain jobs work --allow-shell-jobs` (equivalently,
+1. Start the worker with `foresights jobs work --allow-shell-jobs` (equivalently,
    export `GBRAIN_ALLOW_SHELL_JOBS=1` on the worker process; a `.env` in the
    worker's directory cannot set it) (Postgres). On PGLite, every crontab
    invocation uses `--follow` for inline
@@ -429,11 +429,11 @@ To adopt, follow `skills/migrations/v0.14.0.md`. The short version:
 3. For each deterministic cron, rewrite as:
    ```cron
    3 13,16,19,22,1,4,7,10 * * * \
-     gbrain jobs submit shell \
+     foresights jobs submit shell \
        --params '{"cmd":"node scripts/your-script.mjs","cwd":"/data/.openclaw/workspace"}' \
        --max-attempts 3 --timeout-ms 300000
    ```
-4. Watch `gbrain jobs get <id>` for exit_code / stdout_tail / stderr_tail on each
+4. Watch `foresights jobs get <id>` for exit_code / stdout_tail / stderr_tail on each
    fire. Compare against pre-migration behavior before approving the next batch.
 
 **No skill edits required.** The handler runs worker-side; skill files don't
@@ -441,14 +441,14 @@ change. If your host exposes custom handlers via the plugin contract, they
 work unchanged.
 
 Iron rule: **never auto-rewrite the operator's crontab.** Every rewrite is
-per-cron, human-approved, with a diff. gbrain ships no crontab-rewriting
+per-cron, human-approved, with a diff. foresights ships no crontab-rewriting
 helper; every rewrite is manual.
 
 ---
 
 ## v0.16.0: durable agent runtime
 
-gbrain ships `gbrain agent run` / `gbrain agent logs`, a `subagent` handler
+foresights ships `foresights agent run` / `foresights agent logs`, a `subagent` handler
 type in Minions, and a plugin contract for host-repo subagent defs. None of the
 existing skills need surgery. The question for downstream agents is *how* to
 adopt the runtime, not how to patch around a breaking change.
@@ -459,11 +459,11 @@ The subagent handlers (`subagent` and `subagent_aggregator`) are always
 registered on the worker. No separate opt-in flag — `ANTHROPIC_API_KEY` is
 the natural cost gate (no key, the SDK call fails on the first turn), and
 who-can-submit is already protected (`PROTECTED_JOB_NAMES` + trusted-submit:
-MCP callers get `permission_denied`; only `gbrain agent run` can insert
+MCP callers get `permission_denied`; only `foresights agent run` can insert
 these rows).
 
 ```bash
-ANTHROPIC_API_KEY=sk-ant-... gbrain jobs work
+ANTHROPIC_API_KEY=sk-ant-... foresights jobs work
 ```
 
 Worker startup prints:
@@ -474,7 +474,7 @@ Worker startup prints:
 
 ### 2. Ship your subagents as a plugin (OpenClaw + similar)
 
-Move your custom subagent definitions out of your gbrain fork and into your own
+Move your custom subagent definitions out of your foresights fork and into your own
 repo as a plugin. Concretely:
 
 ```
@@ -515,15 +515,15 @@ time failure. See `docs/guides/plugin-authors.md` for the full contract.
 
 If your agent currently spawns ephemeral subagents (OpenClaw `Agent()`, ad-hoc
 Anthropic API calls, etc.) for work that should survive crashes, sleeps, or
-worker restarts, migrate those to `gbrain agent run`. The durability is free:
+worker restarts, migrate those to `foresights agent run`. The durability is free:
 
 ```bash
-gbrain agent run "analyze my last 50 journal pages for recurring themes" \
+foresights agent run "analyze my last 50 journal pages for recurring themes" \
   --subagent-def analyzer --fanout-manifest manifests/journal-pages.json
 ```
 
 Every turn persists to `subagent_messages`, every tool call is a two-phase
-ledger, and `gbrain agent logs <job>` shows where it died + what the last
+ledger, and `foresights agent logs <job>` shows where it died + what the last
 successful call returned. No more "re-run from scratch because the session
 context evaporated."
 
@@ -551,18 +551,18 @@ in depth, not the primary boundary.
 ### 1. Stop hand-rolling frontmatter validators
 
 If your fork has scripts that call `js-yaml` directly to validate brain page
-frontmatter, replace them with `gbrain frontmatter validate` calls. The CLI
+frontmatter, replace them with `foresights frontmatter validate` calls. The CLI
 covers the seven canonical error classes and ships a `--json` envelope that's
 stable across releases.
 
 ```diff
 - # Custom validator script
 - node scripts/validate-frontmatter.mjs <path>
-+ gbrain frontmatter validate <path> --json
++ foresights frontmatter validate <path> --json
 ```
 
 For consumers that need the validator inside another script, import from
-gbrain's `markdown` export instead of duplicating logic:
+foresights's `markdown` export instead of duplicating logic:
 
 ```ts
 import { parseMarkdown } from 'gbrain/markdown';
@@ -577,25 +577,25 @@ for (const err of parsed.errors ?? []) {
 ### 2. Drop any references to `lib/brain-writer.mjs`
 
 If your fork's skills or scripts referenced an aspirational
-`lib/brain-writer.mjs` (gbrain does not ship it), replace those references
-with the gbrain CLI. The `frontmatter-guard`
+`lib/brain-writer.mjs` (foresights does not ship it), replace those references
+with the foresights CLI. The `frontmatter-guard`
 skill lives at `skills/frontmatter-guard/SKILL.md` and points at
-`gbrain frontmatter validate` / `audit` / `install-hook`.
+`foresights frontmatter validate` / `audit` / `install-hook`.
 
 ### 3. Wire the doctor subcheck into your health pipeline
 
-`gbrain doctor` reports `frontmatter_integrity` automatically. If your
+`foresights doctor` reports `frontmatter_integrity` automatically. If your
 fork has a custom health pipeline (e.g. a daily Slack post about brain
-health), pull from `gbrain doctor --json` and surface the
+health), pull from `foresights doctor --json` and surface the
 `frontmatter_integrity` row counts.
 
 ### 4. (Optional) Install the pre-commit hook on brain repos
 
-For sources backed by git, `gbrain frontmatter install-hook` drops a
+For sources backed by git, `foresights frontmatter install-hook` drops a
 pre-commit script that blocks commits with malformed frontmatter:
 
 ```bash
-gbrain frontmatter install-hook
+foresights frontmatter install-hook
 ```
 
 Skip this if your brain isn't a git repo or if your downstream agent already
@@ -604,10 +604,10 @@ the full recipe.
 
 ### 5. Migration ergonomics — read pending-host-work.jsonl
 
-After `gbrain apply-migrations --yes` runs the v0.22.4 audit, your agent
+After `foresights apply-migrations --yes` runs the v0.22.4 audit, your agent
 should read `~/.gbrain/migrations/pending-host-work.jsonl` (filter to
 `migration === "0.22.4"`) and walk each entry's `command` field. Each entry
-points to a per-source `gbrain frontmatter validate <source_path> --fix`
+points to a per-source `foresights frontmatter validate <source_path> --fix`
 command — surface counts to the user, get explicit consent, then run.
 
 The migration is **audit-only**. It never mutates brain content during
@@ -623,7 +623,7 @@ up multiple versions at once.
 
 To check what your fork is missing:
 ```bash
-diff <(grep -A3 "Based on gbrain" ~/<your-fork>/skills/brain-ops/SKILL.md) \
+diff <(grep -A3 "Based on foresights" ~/<your-fork>/skills/brain-ops/SKILL.md) \
      <(grep "v[0-9]" ~/gbrain/skills/migrations/ | tail -3)
 ```
 
@@ -647,7 +647,7 @@ resolves values at spawn time.
 
 ```jsonc
 {
-  "cmd": "gbrain sync --skip-failed && gbrain embed --stale",
+  "cmd": "foresights sync --skip-failed && foresights embed --stale",
   "cwd": "/data/gbrain",
   "inherit": ["database_url", "anthropic_api_key", "voyage_api_key"]
 }
@@ -666,7 +666,7 @@ correlation token, or a secret you know is OK to persist), pass it via
 
 **Worker setup** (one-time, per host):
 
-- `gbrain config set database_url postgresql://...` — file-plane routed
+- `foresights config set database_url postgresql://...` — file-plane routed
   (writes `~/.gbrain/config.json`, which is where inherit's `loadConfig()`
   resolution looks; works even when the DB is unreachable). The vendor API
   keys (`anthropic_api_key`, `voyage_api_key`, ...) route to the file plane
@@ -677,14 +677,14 @@ correlation token, or a secret you know is OK to persist), pass it via
   worker process
 
 If the worker can't resolve a requested name, the validator fail-fasts at
-submit time with a `gbrain config set <X>` hint, instead of a silent "No
+submit time with a `foresights config set <X>` hint, instead of a silent "No
 database URL" failure in child stderr minutes after submission.
 
-**Related.** A `gbrain doctor` check `home_dir_in_worktree` warns if
+**Related.** A `foresights doctor` check `home_dir_in_worktree` warns if
 `~/.gbrain/` lives inside a git worktree. A `~/.gbrain/.gitignore`
 (single line `*`) is laid down by every `saveConfig()` call AND by
-`gbrain post-upgrade`, so existing installs get coverage without re-running
-`gbrain init`. Honest scope: the `.gitignore` covers casual `git add` but does
+`foresights post-upgrade`, so existing installs get coverage without re-running
+`foresights init`. Honest scope: the `.gitignore` covers casual `git add` but does
 NOT cover already-tracked files, screenshots, backups, or `git add -f`.
 
 **Strategy framing.** For agent-to-gbrain calls, the canonical guide is
@@ -700,4 +700,4 @@ job + `inherit:` for `localOnly` admin ops (`sync`, `embed`, `dream`,
 | `shell: inherit must be an array of config-key names` | `inherit` wasn't an array. | Pass `"inherit": ["database_url", ...]`. |
 | `shell: inherit entries must be non-empty strings` | Element was empty, non-string, or null. | Use snake_case config-key names. |
 | `shell: inherit name "<X>" must match [a-z][a-z0-9_]*` | Name failed snake_case regex (uppercase, leading underscore, etc.). | Use the config-key verbatim — `database_url`, not `DATABASE_URL`. |
-| `shell: inherit requested "<X>" but worker has no <X> configured` | Worker can't resolve the name from its `loadConfig()`. | Run `gbrain config set <X> <value>` on the worker host. |
+| `shell: inherit requested "<X>" but worker has no <X> configured` | Worker can't resolve the name from its `loadConfig()`. | Run `foresights config set <X> <value>` on the worker host. |

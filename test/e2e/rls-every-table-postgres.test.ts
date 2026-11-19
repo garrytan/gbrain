@@ -4,11 +4,11 @@
  * shipped with RLS off on Postgres).
  *
  * Supabase grants anon and authenticated default privileges on public tables,
- * so a gbrain table without RLS is readable and writable with the anon key
- * whenever the Data API is on. gbrain enables RLS in three places: the schema
+ * so a foresights table without RLS is readable and writable with the anon key
+ * whenever the Data API is on. foresights enables RLS in three places: the schema
  * blob's DO blocks (replayed by a full initSchema), per-migration DO blocks,
  * and v35's auto-RLS event trigger. The trigger is superuser-only and absent
- * or inert on many managed brains, and `gbrain apply-migrations --yes` runs
+ * or inert on many managed brains, and `foresights apply-migrations --yes` runs
  * migrations without replaying the blob, so a migration that creates a table
  * must enable RLS itself. On a superuser test database the trigger exists and
  * hides that gap, so each case here starts from a scratch database where the
@@ -111,7 +111,7 @@ describeE2E('RLS on every public table (Postgres, no auto-RLS event trigger)', (
     }
   }, 300_000);
 
-  test('a brain at v272 upgraded with `gbrain apply-migrations --yes` (no blob replay) leaves no public table without RLS', async () => {
+  test('a brain at v272 upgraded with `foresights apply-migrations --yes` (no blob replay) leaves no public table without RLS', async () => {
     const { url, conn } = await scratchDatabase();
     try {
       await freshInit(url);
@@ -141,7 +141,7 @@ describeE2E('RLS on every public table (Postgres, no auto-RLS event trigger)', (
     }
   }, 300_000);
 
-  test('every public table with RLS turned off at the version before v275, upgraded with `gbrain apply-migrations --yes`, ends with RLS on', async () => {
+  test('every public table with RLS turned off at the version before v275, upgraded with `foresights apply-migrations --yes`, ends with RLS on', async () => {
     // The upgrade path for tables older than v273: a table whose RLS came only from the blob's blocks or the event
     // trigger is off on a trigger-less brain however old it is. A later migration that creates a table without its own
     // RLS block leaves it off here too.
@@ -274,7 +274,7 @@ describeE2E('RLS on every public table (Postgres, no auto-RLS event trigger)', (
     }
   }, 300_000);
 
-  test('gbrain repair missing-tables recreates a cache table with RLS on', async () => {
+  test('foresights repair missing-tables recreates a cache table with RLS on', async () => {
     const { url, conn } = await scratchDatabase();
     const engine = new PostgresEngine();
     try {

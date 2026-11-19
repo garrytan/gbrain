@@ -1,7 +1,7 @@
 /**
  * GBRA-218 (PR A2): the folder-rule grammar, shared by the git policy file
- * (`<source root>/.gbrain/access.yml`), `gbrain access rule export|import|migrate`
- * and `gbrain export` / `import`. One parser, so every path accepts and refuses
+ * (`<source root>/.gbrain/access.yml`), `foresights access rule export|import|migrate`
+ * and `foresights export` / `import`. One parser, so every path accepts and refuses
  * exactly the same rules.
  *
  *   version: 1
@@ -28,7 +28,7 @@
  * classifyRulebook() compares the applied rulebook with a desired one rule by
  * rule: an added rule and removed readers narrow and apply at once; a removed
  * rule and added readers widen and wait for an operator's
- * `gbrain access apply --yes`. Turning covers_derived off (a rule stops closing its pages' lineage) widens; turning it
+ * `foresights access apply --yes`. Turning covers_derived off (a rule stops closing its pages' lineage) widens; turning it
  * back on narrows. A moved prefix is both: the rule applies at its
  * new prefix at once, and its old prefix keeps the old readers under a held
  * rule (heldRuleId) whose release waits for apply. Its target (what is applied
@@ -284,7 +284,7 @@ export interface Classification {
   /** What to apply now: the applied rulebook with every narrowing change and none of the widening ones. */
   target: FolderRule[];
   changes: RuleChange[];
-  /** The widening changes the target leaves out (held for gbrain access apply). */
+  /** The widening changes the target leaves out (held for foresights access apply). */
   held: RuleChange[];
   kind: 'narrowing' | 'widening' | 'mixed' | 'unchanged';
 }

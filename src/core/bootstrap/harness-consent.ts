@@ -1,5 +1,5 @@
 /**
- * Consent for `gbrain bootstrap harness` (agent operator wave C6). The user
+ * Consent for `foresights bootstrap harness` (agent operator wave C6). The user
  * decides: `--yes` is the approval; otherwise a TTY prompt (EOF/timeout =
  * decline) when a human can answer, and with no human at the terminal
  * nothing is written and the refusal (exit 3, consent payload) is printed.
@@ -33,11 +33,11 @@ export async function askHarnessConsent(input: HarnessConsentInput, d: { isTTY: 
     command: 'bootstrap harness',
     effects: flags.token === undefined ? ['persistent_install', 'credentials'] : ['persistent_install'],
     actor: 'agent',
-    what: `Wire ${harnesses} to the gbrain serve at ${url}`,
+    what: `Wire ${harnesses} to the foresights serve at ${url}`,
     why: 'Registers the brain\'s memory tools (and the session hooks) in the agent harness so new sessions recall from and save to this brain.',
     risk: `${flags.token === undefined ? `Mints a bearer token "${flags.tokenName}" with scopes ${scopes} and stores it in the harness config. ` : 'Stores the supplied token in the harness config (pass the same --token again). '}`
-      + `Changes the harness configuration persistently${wireHooks ? `, including session hooks (${hookScope})` : ''}. Undo: gbrain bootstrap harness --remove.`,
-    user_message: `Connect ${harnesses} to your brain at ${url}? It adds gbrain's memory tools${wireHooks ? ' and session hooks' : ''} to the harness configuration; gbrain bootstrap harness --remove undoes it.`,
+      + `Changes the harness configuration persistently${wireHooks ? `, including session hooks (${hookScope})` : ''}. Undo: foresights bootstrap harness --remove.`,
+    user_message: `Connect ${harnesses} to your brain at ${url}? It adds foresights's memory tools${wireHooks ? ' and session hooks' : ''} to the harness configuration; foresights bootstrap harness --remove undoes it.`,
     argv,
     args: flags.yes ? ['--yes'] : [],
   }, {

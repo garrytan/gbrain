@@ -117,7 +117,7 @@ export function modelNotFoundFix(context: string | undefined, routeHint = ''): s
   const provider = model?.slice(0, model.indexOf(':'));
   const rename = model ? KNOWN_MODEL_RENAMES[model] : undefined;
   return `Check the model id: ${model ? `the ${provider} provider does not serve ${model}` : 'the provider does not serve this model'}, or this key has no access to it. ` +
-    'Run `gbrain models` to see the configured model routes, then set a model the provider lists.' +
+    'Run `foresights models` to see the configured model routes, then set a model the provider lists.' +
     (rename ? ` ${model} was renamed: use ${rename}.` : '') +
     (routeHint ? ` ${routeHint}` : '');
 }
@@ -168,7 +168,7 @@ export function normalizeAIError(err: unknown, context?: string, redact?: (text:
     return Object.assign(carryStatusFields(err, new AIConfigError(
       `${ctxPrefix}The provider answered with a success status, but the response body could not be parsed as one JSON document.`,
       'Check that this provider route returns one JSON body for a non-streaming request; a route that streams when `stream` is omitted is the common cause. '
-        + 'Send the field the route needs for that model with gbrain config set provider_chat_options.<provider>:<model> \'{"stream": false}\', or fix the route.',
+        + 'Send the field the route needs for that model with foresights config set provider_chat_options.<provider>:<model> \'{"stream": false}\', or fix the route.',
       err,
     )), { code: UNPARSEABLE_RESPONSE_CODE, retryable: false });
   }

@@ -65,9 +65,9 @@ describe('#8484: concurrent installs keep every ledger entry', () => {
     await withEnv({ GBRAIN_HOME: home, HOME: home }, async () => {
       const ledger = brainFirstLedgerPath();
       const otherPath = join(home, 'other', 'AGENTS.md');
-      const { exited } = await otherInstall(home, ledger, { harness: 'codex', path: otherPath, status: 'installed', block_version: 2, access: { kind: 'mcp', server: 'gbrain' }, writer: 'gbrain setup codex', created_file: false, updated_at: '2026-11-03T00:00:00.000Z' });
+      const { exited } = await otherInstall(home, ledger, { harness: 'codex', path: otherPath, status: 'installed', block_version: 2, access: { kind: 'mcp', server: 'gbrain' }, writer: 'foresights setup codex', created_file: false, updated_at: '2026-11-03T00:00:00.000Z' });
       const file = join(home, '.claude', 'CLAUDE.md');
-      const out = syncBrainFirst({ target: brainFirstTargetAt('claude-code', file), access: { kind: 'mcp', server: 'gbrain' }, decision: { value: 'accepted', source: 'flag' }, writer: 'gbrain setup claude-code', dryRun: false });
+      const out = syncBrainFirst({ target: brainFirstTargetAt('claude-code', file), access: { kind: 'mcp', server: 'gbrain' }, decision: { value: 'accepted', source: 'flag' }, writer: 'foresights setup claude-code', dryRun: false });
       expect(await exited).toBe(0);
       expect(out.action).toBe('write');
       expect(entries(ledger)).toEqual([`claude-code ${file}`, `codex ${otherPath}`].sort());
@@ -79,9 +79,9 @@ describe('#8484: concurrent installs keep every ledger entry', () => {
     await withEnv({ GBRAIN_HOME: home, HOME: home }, async () => {
       const ledger = skillLoadingLedgerPath();
       const otherPath = join(home, 'other', 'AGENTS.md');
-      const { exited } = await otherInstall(home, ledger, { harness: 'codex', path: otherPath, mode: 'off', block_version: SKILL_INDEX_VERSION, writer: 'gbrain setup codex', created_file: false, updated_at: '2026-11-03T00:00:00.000Z' });
+      const { exited } = await otherInstall(home, ledger, { harness: 'codex', path: otherPath, mode: 'off', block_version: SKILL_INDEX_VERSION, writer: 'foresights setup codex', created_file: false, updated_at: '2026-11-03T00:00:00.000Z' });
       const file = join(home, '.claude', 'CLAUDE.md');
-      const out = syncSkillsBlock({ target: brainFirstTargetAt('claude-code', file), launcher: '/usr/local/bin/gbrain', decision: { value: 'off', source: 'flag' }, writer: 'gbrain setup claude-code', dryRun: false, settingsPath: join(home, '.claude', 'settings.json') });
+      const out = syncSkillsBlock({ target: brainFirstTargetAt('claude-code', file), launcher: '/usr/local/bin/gbrain', decision: { value: 'off', source: 'flag' }, writer: 'foresights setup claude-code', dryRun: false, settingsPath: join(home, '.claude', 'settings.json') });
       expect(await exited).toBe(0);
       expect(out.action).toBe('skip');
       expect(entries(ledger)).toEqual([`claude-code ${file}`, `codex ${otherPath}`].sort());
@@ -123,14 +123,14 @@ describe('#8484: an install that waited acts on what the other one recorded', ()
     await withEnv({ GBRAIN_HOME: home, HOME: home, GBRAIN_SKILL_LOADING: undefined }, async () => {
       const file = join(home, '.codex', 'AGENTS.md');
       const target = brainFirstTargetAt('codex', file);
-      const first = syncSkillsBlock({ target, launcher: LAUNCHER, decision: { value: 'spring', source: 'flag' }, writer: 'gbrain setup codex', dryRun: false });
+      const first = syncSkillsBlock({ target, launcher: LAUNCHER, decision: { value: 'spring', source: 'flag' }, writer: 'foresights setup codex', dryRun: false });
       expect(first.action).toBe('write');
       const stale = resolveSkillLoading(undefined, priorSkillLoading('codex', file));
       expect(stale).toEqual({ value: 'spring', source: 'prior' });
       const ledger = skillLoadingLedgerPath();
-      const optOut = { ...readSkillLoadingLedger()[0], mode: 'off', writer: 'gbrain setup codex --skill-loading off' };
+      const optOut = { ...readSkillLoadingLedger()[0], mode: 'off', writer: 'foresights setup codex --skill-loading off' };
       const { exited } = await otherInstall(home, ledger, optOut);
-      const out = syncSkillsBlock({ target, launcher: LAUNCHER, decision: stale, writer: 'gbrain setup codex', dryRun: false });
+      const out = syncSkillsBlock({ target, launcher: LAUNCHER, decision: stale, writer: 'foresights setup codex', dryRun: false });
       expect(await exited).toBe(0);
       expect(out.decision).toEqual({ value: 'off', source: 'prior' });
       expect(readSkillLoadingLedger()[0]!.mode).toBe('off');
@@ -143,13 +143,13 @@ describe('#8484: an install that waited acts on what the other one recorded', ()
       const file = join(home, '.claude', 'CLAUDE.md');
       const target = brainFirstTargetAt('claude-code', file);
       const access = { kind: 'mcp' as const, server: 'gbrain' };
-      expect(syncBrainFirst({ target, access, decision: { value: 'accepted', source: 'flag' }, writer: 'gbrain setup claude-code', dryRun: false }).action).toBe('write');
+      expect(syncBrainFirst({ target, access, decision: { value: 'accepted', source: 'flag' }, writer: 'foresights setup claude-code', dryRun: false }).action).toBe('write');
       const stale = resolveBrainFirstDecision(undefined, priorBrainFirst('claude-code', file));
       expect(stale).toEqual({ value: 'accepted', source: 'prior' });
       writeFileSync(file, '# My rules\n');
-      const declined = { harness: 'claude-code', path: file, status: 'declined', block_version: 2, access, writer: 'gbrain setup claude-code --no-instructions', created_file: false, updated_at: '2026-11-03T00:00:00.000Z' };
+      const declined = { harness: 'claude-code', path: file, status: 'declined', block_version: 2, access, writer: 'foresights setup claude-code --no-instructions', created_file: false, updated_at: '2026-11-03T00:00:00.000Z' };
       const { exited } = await otherInstall(home, brainFirstLedgerPath(), declined);
-      const out = syncBrainFirst({ target, access, decision: stale, writer: 'gbrain setup claude-code', dryRun: false });
+      const out = syncBrainFirst({ target, access, decision: stale, writer: 'foresights setup claude-code', dryRun: false });
       expect(await exited).toBe(0);
       expect(out.decision).toEqual({ value: 'declined', source: 'prior' });
       expect(readFileSync(file, 'utf8')).toBe('# My rules\n');
@@ -162,7 +162,7 @@ describe('#8484: an install that waited acts on what the other one recorded', ()
     await withEnv({ GBRAIN_HOME: home, HOME: home, GBRAIN_SKILL_LOADING: undefined }, async () => {
       const file = join(home, '.codex', 'AGENTS.md');
       const target = brainFirstTargetAt('codex', file);
-      expect(syncSkillsBlock({ target, launcher: LAUNCHER, decision: { value: 'spring', source: 'flag' }, writer: 'gbrain setup codex --skill-loading spring', dryRun: false }).action).toBe('write');
+      expect(syncSkillsBlock({ target, launcher: LAUNCHER, decision: { value: 'spring', source: 'flag' }, writer: 'foresights setup codex --skill-loading spring', dryRun: false }).action).toBe('write');
       const springEntry = readSkillLoadingLedger()[0];
       rmSync(skillLoadingLedgerPath());
       rmSync(file);
@@ -171,7 +171,7 @@ describe('#8484: an install that waited acts on what the other one recorded', ()
       writeFileSync(probe, `#!/bin/sh\nif [ -f '${join(home, 'held.done')}' ]; then echo under-lock >> '${asked}'; else echo before-lock >> '${asked}'; fi\nexec '${LAUNCHER}' "$@"\n`);
       chmodSync(probe, 0o755);
       const { exited } = await otherInstall(home, skillLoadingLedgerPath(), springEntry);
-      const out = syncSkillsBlock({ target, launcher: probe, decision: { value: 'off', source: 'default' }, writer: 'gbrain setup codex', dryRun: false });
+      const out = syncSkillsBlock({ target, launcher: probe, decision: { value: 'off', source: 'default' }, writer: 'foresights setup codex', dryRun: false });
       expect(await exited).toBe(0);
       expect(out.decision).toEqual({ value: 'spring', source: 'prior' });
       expect(out.action).toBe('write');
@@ -188,7 +188,7 @@ describe('#8484: a lock refusal on an unreadable instruction file reports preser
       const file = join(home, '.claude', 'CLAUDE.md');
       mkdirSync(file, { recursive: true });
       const access = { kind: 'mcp' as const, server: 'gbrain' };
-      const sync = syncBrainFirst({ target: brainFirstTargetAt('claude-code', file), access, decision: { value: 'accepted', source: 'flag' }, writer: 'gbrain setup claude-code', dryRun: false });
+      const sync = syncBrainFirst({ target: brainFirstTargetAt('claude-code', file), access, decision: { value: 'accepted', source: 'flag' }, writer: 'foresights setup claude-code', dryRun: false });
       expect(sync).toMatchObject({ action: 'preserve', state_before: 'damaged' });
       expect(sync.detail).toContain('could not be locked');
       const removed = removeBrainFirst({ harness: 'claude-code', path: file, dryRun: false });

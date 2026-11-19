@@ -164,8 +164,8 @@ for (const kind of testBackends()) describe(`physical root device change (${kind
     const binding = await reboot(f.root, f.source, String(BigInt(f.live) + 1n));
     const refusal = await acquireWorktree(binding).then(() => null, (error: unknown) => error as { code: string; detail?: string; suggestion?: string });
     expect(refusal).toMatchObject({ code: 'recovery_required', detail: 'physical_root_device_changed' });
-    expect(refusal!.suggestion).toContain(`gbrain sources writer transfer prepare ${f.source} --self-transfer`);
-    expect(refusal!.suggestion).toContain(`gbrain sources writer transfer accept ${f.source} --path ${f.root} --expected-epoch ${binding.owner_epoch}`);
+    expect(refusal!.suggestion).toContain(`foresights sources writer transfer prepare ${f.source} --self-transfer`);
+    expect(refusal!.suggestion).toContain(`foresights sources writer transfer accept ${f.source} --path ${f.root} --expected-epoch ${binding.owner_epoch}`);
     expect(() => assertPhysicalRoot(f.root, { worktreeId: binding.worktree_id, coordinationPath: binding.coordination_path }))
       .toThrow(expect.objectContaining({ code: 'recovery_required', detail: 'physical_root_device_changed' }));
     expect(readJson(join(f.root, PHYSICAL_ROOT_MARKER)).device).toBe(String(BigInt(f.live) + 1n));

@@ -1,5 +1,5 @@
 /**
- * #6082: `harness_wiring` counts a harness whose config enables a gbrain
+ * #6082: `harness_wiring` counts a harness whose config enables a foresights
  * plugin as wired, through the same enabledPluginLanes() list
  * `plugin_lane_collision` reads, so the two checks agree. Hermetic temp HOME,
  * CODEX_HOME, CLAUDE_CONFIG_DIR and GBRAIN_HOME; no serve is spawned (the
@@ -85,7 +85,7 @@ describe('harness_wiring with an enabled plugin lane (#6082)', () => {
     await withEnv(b.env, async () => {
       const check = await harnessWiringCheck({ smoke: false });
       expect(check.status).toBe('warn');
-      expect(check.message).toMatch(/^Claude Code is installed but has no gbrain MCP registration/);
+      expect(check.message).toMatch(/^Claude Code is installed but has no (?:foresights|gbrain) MCP registration/);
       expect(check.message).not.toContain('Codex');
     });
   });
@@ -97,7 +97,7 @@ describe('harness_wiring with an enabled plugin lane (#6082)', () => {
     await withEnv(b.env, async () => {
       const check = await harnessWiringCheck({ smoke: false });
       expect(check.status).toBe('warn');
-      expect(check.message).toMatch(/^Codex is installed but has no gbrain MCP registration/);
+      expect(check.message).toMatch(/^Codex is installed but has no (?:foresights|gbrain) MCP registration/);
       expect(enabledPluginLanes()).toEqual([]);
     });
   });

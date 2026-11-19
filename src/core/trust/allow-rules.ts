@@ -4,9 +4,9 @@
  * optionally only for this reason family) is benign; stop quarantining it",
  * so recurring external content does not re-quarantine after every sync.
  *
- * Rules are local-only owner state (`gbrain trust allow`), receipted by their
+ * Rules are local-only owner state (`foresights trust allow`), receipted by their
  * own row (who added it, when, why; removal keeps the row with `removed_at`),
- * and listed in `gbrain trust review`. They match only server-stamped fields:
+ * and listed in `foresights trust review`. They match only server-stamped fields:
  * the `pages.source_id`, `pages.source_uri` and `pages.source_kind` columns the
  * write path records, never frontmatter an author controls.
  *
@@ -70,12 +70,12 @@ export interface TrustAllowRuleInput {
 /** Validates a rule as the CLI or the owner IPC received it; returns the normalized fields. */
 export function normalizeTrustAllowRule(input: TrustAllowRuleInput): { sourceId: string; uriPrefix: string | null; reasonFamily: TrustAllowReasonFamily | null; reason: string | null } {
   if (!isValidSourceId(input.sourceId)) {
-    throw opError('invalid_params', 'trust allow needs --source <id> naming an active source.', 'Pass --source with a source id; gbrain sources list shows them.');
+    throw opError('invalid_params', 'trust allow needs --source <id> naming an active source.', 'Pass --source with a source id; foresights sources list shows them.');
   }
   const uriPrefix = input.uriPrefix ?? null;
   if (uriPrefix !== null && (uriPrefix.length < 1 || uriPrefix.length > 2048 || /[\s\u0000-\u001f\u007f]/.test(uriPrefix))) {
     throw opError('invalid_params', '--uri-prefix must be 1 to 2048 characters with no whitespace or control characters.',
-      'Pass the stored source URI prefix exactly, e.g. --uri-prefix https://calendar.example.com/; gbrain trust explain shows a page\'s source_uri.');
+      'Pass the stored source URI prefix exactly, e.g. --uri-prefix https://calendar.example.com/; foresights trust explain shows a page\'s source_uri.');
   }
   const reasonFamily = input.reasonFamily ?? null;
   if (reasonFamily !== null && !(TRUST_ALLOW_REASON_FAMILIES as readonly string[]).includes(reasonFamily)) {
@@ -103,7 +103,7 @@ export async function addTrustAllowRule(engine: Pick<BrainEngine, 'executeRaw'>,
   const rule = normalizeTrustAllowRule(input);
   const [source] = await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE id = $1 AND NOT archived', [rule.sourceId]);
   if (!source) {
-    throw opError('invalid_params', `Source ${rule.sourceId} is not an active source on this brain.`, 'Pass --source with an active source id; gbrain sources list shows them.');
+    throw opError('invalid_params', `Source ${rule.sourceId} is not an active source on this brain.`, 'Pass --source with an active source id; foresights sources list shows them.');
   }
   const [inserted] = await engine.executeRaw<Record<string, unknown>>(
     `INSERT INTO trust_allow_rules (source_id, uri_prefix, reason_family, created_by, reason) VALUES ($1, $2, $3, $4, $5)

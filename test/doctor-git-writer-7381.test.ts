@@ -100,7 +100,7 @@ test('a clean checkout is ok on all four; each problem warns with its fix', asyn
   expect(checks.dirty_age).toMatchObject({ status: 'warn', fix: { ask_user: true, actor: 'user' } });
   git(work, ['restore', '--staged', 'brain/staged.md']);
 
-  // An unpushed commit (made around gbrain) that changes a file outside the source root.
+  // An unpushed commit (made around foresights) that changes a file outside the source root.
   writeFileSync(join(work, 'other.md'), 'swept\n');
   git(work, ['commit', '-q', '-am', 'cron: swept']);
   checks = await run();
@@ -108,7 +108,7 @@ test('a clean checkout is ok on all four; each problem warns with its fix', asyn
   const found = (outside.details as { checkouts: Array<{ roots: string[]; configured: boolean; commits: Array<{ paths: string[] }> }> }).checkouts;
   expect(found.map(f => ({ roots: f.roots, configured: f.configured, paths: f.commits.map(x => x.paths) }))).toEqual([{ roots: ['brain'], configured: false, paths: [['other.md']] }]);
   expect(outside).toMatchObject({ status: 'warn', fix: { ask_user: true } });
-  expect(checks.commits_outside_source_root!.message).toContain('gbrain sources harden');
+  expect(checks.commits_outside_source_root!.message).toContain('foresights sources harden');
   git(work, ['reset', '-q', '--hard', '@{u}']);
 
   // A conflict the opt-in quarantine parked: the remote's version published, this machine's under a ref.

@@ -3,7 +3,7 @@
   "recipe": "agent-voice",
   "version": "0.1.1",
   "install_kind": "copy-into-host-repo",
-  "description": "src → target mapping consumed by `gbrain integrations install agent-voice`. The install command reads this manifest, computes SHA-256 of each source file at copy time, writes the per-file hash to <host>/services/voice-agent/.gbrain-source.json so --refresh can do three-way classification (unchanged-identical / unchanged-stale / locally-modified).",
+  "description": "src → target mapping consumed by `foresights integrations install agent-voice`. The install command reads this manifest, computes SHA-256 of each source file at copy time, writes the per-file hash to <host>/services/voice-agent/.gbrain-source.json so --refresh can do three-way classification (unchanged-identical / unchanged-stale / locally-modified).",
   "target_root_relative_to_host_repo": "services/voice-agent",
   "skills_target_root_relative_to_host_repo": "skills",
   "files": [

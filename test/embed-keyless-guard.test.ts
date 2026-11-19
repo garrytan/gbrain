@@ -1,8 +1,8 @@
 /**
- * The keyless clean-refusal predicate for `gbrain embed`.
+ * The keyless clean-refusal predicate for `foresights embed`.
  *
  * The documented always-current chain for external agent schedulers is
- * `gbrain sync ... && gbrain embed --stale`; on a keyless brain that chain
+ * `foresights sync ... && foresights embed --stale`; on a keyless brain that chain
  * must exit 0 (nothing to backfill is not a failure). Every OTHER spelling is
  * an explicit request for something impossible on a keyless brain and keeps
  * exiting 1 via EmbeddingDisabledError — the predicate's exclusions mirror

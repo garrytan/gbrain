@@ -1,5 +1,5 @@
 /**
- * `gbrain trust claim-sources` (#5575, legacy content) and the asks around it.
+ * `foresights trust claim-sources` (#5575, legacy content) and the asks around it.
  *
  * Protects: the owner claims a source only by typing its id on a terminal
  * (--yes never counts; without a terminal the command refuses with an
@@ -183,7 +183,7 @@ describe('trust claim-sources', () => {
     expect(fix.next).toBe('tell_user_to_run');
     expect(fix.consent).toEqual([]);
     expect(fix.argv).toEqual(['gbrain', 'trust', 'claim-sources']);
-    expect(fix.user_message).toContain('gbrain trust claim-sources');
+    expect(fix.user_message).toContain('foresights trust claim-sources');
     expect(fix.user_message).toContain('your notes');
   });
 
@@ -324,11 +324,11 @@ describe('the asks around claiming', () => {
     await seed();
     const lines = (await trustClaimUpgradeNotice(engine))!.join('\n');
     expect(lines).toContain('[AGENT]');
-    expect(lines).toContain('next: tell_user_to_run: gbrain trust claim-sources');
+    expect(lines).toContain('next: tell_user_to_run: foresights trust claim-sources');
     expect(lines).toContain('[SHOW USER]');
-    expect(lines).not.toContain('gbrain trust scan --');
+    expect(lines).not.toContain('foresights trust scan --');
     const notice = await withTrustClaimAsk(engine, { code: 'behavior_changes', kind: 'safety', why: 'w', fix: { argv: ['gbrain', 'doctor', '--only', 'behavior_changes', '--json'], consent: [], actor: 'agent', requires_exclusive: false, why: 'x' } });
     expect(render(notice!.fix)).toMatchObject({ next: 'tell_user_to_run', consent: [] });
-    expect(notice!.user_message).toContain('gbrain trust claim-sources');
+    expect(notice!.user_message).toContain('foresights trust claim-sources');
   });
 });

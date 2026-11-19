@@ -1,6 +1,6 @@
 /**
  * MarkdownGreenfieldSource — one-shot bulk importer for the v0.41
- * your OpenClaw → gbrain epistemology migration.
+ * your OpenClaw → foresights epistemology migration.
  *
  * @one-shot — this module is intentionally long-lived after the
  * single production migration completes. Per D10, future similar
@@ -13,7 +13,7 @@
  * trickle dedup window. mode: 'migration' on this source signals the
  * daemon's handleEmit branch to bypass DedupWindow.mark(); we own dedup
  * via the imported_from frontmatter marker + op_checkpoint (which the
- * caller wires via gbrain capture --source markdown-greenfield).
+ * caller wires via foresights capture --source markdown-greenfield).
  *
  * Walk:
  *   - ~/git/brain/atoms/{YYYY-MM-DD}/*.md (~13K files, atoms)
@@ -36,7 +36,7 @@
  *     YYYY-Www.jsonl with {path, error, ts} per D12
  *   - Continue with remaining files (don't fail-fast on one bad row)
  *
- * CLI activation: gbrain capture --source markdown-greenfield
+ * CLI activation: foresights capture --source markdown-greenfield
  *   --repo ~/git/brain [--dry-run] [--limit N]
  *
  * The --repo path is the brain directory containing atoms/, concepts/,
@@ -292,7 +292,7 @@ export class MarkdownGreenfieldSource implements IngestionSource {
   }
 
   /**
-   * Derive the gbrain page slug from the absolute file path. Strips
+   * Derive the foresights page slug from the absolute file path. Strips
    * the repo prefix and the .md suffix. Preserves the directory
    * hierarchy so atoms/{date}/foo.md → atoms/{date}/foo.
    */

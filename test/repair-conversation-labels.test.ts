@@ -1,5 +1,5 @@
 /**
- * `gbrain repair conversation-labels` (wave 9 follow-ups, item 2), on PGLite
+ * `foresights repair conversation-labels` (wave 9 follow-ups, item 2), on PGLite
  * and, with a safe DATABASE_URL, Postgres
  * (test/e2e/repair-conversation-labels-postgres.test.ts).
  *
@@ -213,7 +213,7 @@ test('--include-ambiguous widens the hashed set to every label-page row', async 
 test('under a live serve the refusal names stop → repair → restart', () => {
   // acquireLock throws LiveServeLockError at once for a live serve holder (no 30 s wait);
   // the fatal CLI seam wraps the rerun in this two-step plan.
-  const error = new LiveServeLockError('GBrain\'s local database is already open through `gbrain serve`.', { pid: 4242, transport: 'stdio' });
+  const error = new LiveServeLockError('Foresights\'s local database is already open through `foresights serve`.', { pid: 4242, transport: 'stdio' });
   const argv = ['gbrain', 'repair', 'conversation-labels', '--apply', '--expect', 'abc', '--yes', '--json'];
   const fix = exclusiveFix({ argv, consent: [], actor: 'agent', requires_exclusive: true, why: 'Re-runs this command once it has the brain to itself.' }, liveServeOwner(error));
   expect(fix).toMatchObject({ argv: ['kill', '4242'], actor: 'user', then: { argv } });

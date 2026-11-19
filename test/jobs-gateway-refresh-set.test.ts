@@ -5,7 +5,7 @@
  * its name is in GATEWAY_REFRESH_JOB_NAMES. Two silent drift modes exist:
  *
  *   1. A gateway-using handler registered via bare `worker.register(...)`
- *      never refreshes — a worker booted before `gbrain config set` ran with
+ *      never refreshes — a worker booted before `foresights config set` ran with
  *      a stale gateway. chronicle_extract hit exactly this: the DB-plane chat
  *      model never reached the judge, so every extraction silently returned
  *      no_events (#3387).

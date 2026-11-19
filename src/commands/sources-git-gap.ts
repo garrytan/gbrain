@@ -1,5 +1,5 @@
 /**
- * `gbrain sources git-gap <source-id>` (git-canonical memory, wave G1, docs/designs/GIT_CANONICAL_MEMORY.md): a read-only
+ * `foresights sources git-gap <source-id>` (git-canonical memory, wave G1, docs/designs/GIT_CANONICAL_MEMORY.md): a read-only
  * census of how far one source's database is from the commit its checkout has at HEAD. Every live page lands in exactly
  * one state: equal to its committed blob, database_ahead or git_ahead of it, declared database-only (with its class),
  * undeclared database-only (no blob at HEAD and no declared reason), worktree_only (a file that is not committed),
@@ -29,7 +29,7 @@ import { scannerSlugRootMode, scannerSourcePath } from '../core/write-through.ts
 import { compareInlineExportFile, compareSegmentedExportBlob, DECLARED_CLASSES, declaredDatabaseOnly, DIRECTION_EVIDENCE, ignoredPaths, readBlobs, readDirectionEvidence, readHeadTree, worktreeBlobOid,
   type DeclaredClass, type DirectionEvidence, type Evidence, type ExportFileComparison, type HeadTree, type TreeBlob, type UnparseableReason } from '../core/persistence/git-gap.ts';
 
-const USAGE = 'Usage: gbrain sources git-gap <source-id> [--sample <n>] [--json]';
+const USAGE = 'Usage: foresights sources git-gap <source-id> [--sample <n>] [--json]';
 export const GIT_GAP_DOCS = 'docs/designs/GIT_CANONICAL_MEMORY.md#the-git-gap-census';
 const BATCH = 256;
 
@@ -159,7 +159,7 @@ export async function censusGitGap(engine: BrainEngine, sourceId: string, opts: 
   if (root) {
     const head = await readHeadTree(root);
     if (!head) throw refuse(`Git could not list HEAD of the checkout at ${root}, so nothing can be compared.`,
-      `Nothing changed. Check that ${root} is a Git checkout (git -C ${root} rev-parse HEAD), then rerun gbrain sources git-gap ${sourceId}.`);
+      `Nothing changed. Check that ${root} is a Git checkout (git -C ${root} rev-parse HEAD), then rerun foresights sources git-gap ${sourceId}.`);
     const scope = relative(head.gitRoot, realpathSync(root)).split(sep).join('/');
     checkout = { root, head, mode: await scannerSlugRootMode(engine, sourceId, root), scope };
   }
@@ -265,10 +265,10 @@ async function censusBatch(tx: BrainEngine, batch: Key[], census: GitGapCensus, 
     // plan, which discards it as ignore_status_unknown instead of adopting it; the census report refuses, as it did before #7617.
     const status = await ignoredPaths(checkout.root, rows.flatMap(row => row.rel === null ? [] : [row.rel]));
     if (!status) throw refuse(`Git could not say which paths the checkout at ${checkout.root} ignores, so the declared classes are unknown.`,
-      `Nothing changed. Check that ${checkout.root} is a Git checkout (git -C ${checkout.root} rev-parse HEAD), then rerun gbrain sources git-gap ${batch[0]!.source_id}.`);
+      `Nothing changed. Check that ${checkout.root} is a Git checkout (git -C ${checkout.root} rev-parse HEAD), then rerun foresights sources git-gap ${batch[0]!.source_id}.`);
     const [unknown] = status.unknown;
     if (unknown && !ctx.collect) throw refuse(`Git could not say whether ${unknown[0]} in the checkout at ${checkout.root} is ignored (${unknown[1]}), so the declared classes are unknown.`,
-      `Nothing changed. Check the path with git -C ${checkout.root} check-ignore -- ${unknown[0]} (Git cannot check a path beyond a symlinked directory), then rerun gbrain sources git-gap ${batch[0]!.source_id}.`);
+      `Nothing changed. Check the path with git -C ${checkout.root} check-ignore -- ${unknown[0]} (Git cannot check a path beyond a symlinked directory), then rerun foresights sources git-gap ${batch[0]!.source_id}.`);
     ctx.policy.ignored = status.ignored;
   }
   const noFile = { undeclared: [] as Key[], declared: [] as Key[] };
@@ -326,7 +326,7 @@ async function compareBatch(tx: BrainEngine, compare: Array<{ key: Key; path: st
   const sourceId = compare[0]!.key.source_id;
   const blobs = await readBlobs(checkout.root, compare.filter(item => !item.key.segmented).map(item => item.blob));
   if (!blobs) throw refuse(`Git could not read committed files of the checkout at ${checkout.root}.`,
-    `Nothing changed. Check the checkout with git -C ${checkout.root} fsck, then rerun gbrain sources git-gap ${sourceId}.`);
+    `Nothing changed. Check the checkout with git -C ${checkout.root} fsck, then rerun foresights sources git-gap ${sourceId}.`);
   const withdrawals: ExportWithdrawal[] = await readExportWithdrawals(tx, sourceId);
   const differs: Array<{ key: Key; path: string; rel: string; blob: TreeBlob; worktree: WorktreeState; fields: string[]; snapshot: ExportSnapshot }> = [];
   const snapshots = await readExportPages(tx, compare.map(item => item.key), withdrawals);
@@ -404,7 +404,7 @@ async function countSourceRows(tx: BrainEngine, census: GitGapCensus): Promise<v
 /**
  * GST-2492 PR 2: the fact rows the census counts with no Git home on a page that should have one: unfenced, fenced on a
  * missing page, or fenced on a page without a file that no declared class covers. Doctor `strict_facts_outside_git` and
- * `gbrain repair facts-home` judge a strict source by it.
+ * `foresights repair facts-home` judge a strict source by it.
  */
 export function factsWithoutGitHome(rows: GitGapCensus['rows_without_git_home']): number {
   return rows.facts_unfenced + rows.facts_fence_page_missing + rows.facts_on_pages_without_file.undeclared;

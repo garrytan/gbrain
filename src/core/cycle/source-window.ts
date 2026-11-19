@@ -13,7 +13,7 @@
  * per cycle. A cycle that lists the rest of the window stamps its listing
  * instant; one that stops at the limit stamps its last page, so the next cycle
  * resumes there. A source with no recorded cycle starts from its oldest page.
- * A page edited while a cycle runs, or by an explicit `gbrain sync --source`
+ * A page edited while a cycle runs, or by an explicit `foresights sync --source`
  * between cycles, moves past the cursor and falls in a later window.
  */
 import type { BrainEngine } from '../engine.ts';

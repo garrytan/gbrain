@@ -89,7 +89,7 @@ export const registeredLatestVersion = (): number => Math.max(1, ...MIGRATIONS.m
 
 /**
  * Row returned by `getIdleBlockers`. The shape is the public contract
- * for both `gbrain doctor --locks` output and the internal DDL pre-flight.
+ * for both `foresights doctor --locks` output and the internal DDL pre-flight.
  */
 export interface IdleBlocker {
   pid: number;
@@ -107,7 +107,7 @@ export interface IdleBlocker {
  *
  * Single source of truth shared by:
  *   - `checkForBlockingConnections` (DDL pre-flight warning)
- *   - `gbrain doctor --locks` (CLI diagnostic)
+ *   - `foresights doctor --locks` (CLI diagnostic)
  *   - any future `--exclusive` drain-wait logic
  */
 export async function getIdleBlockers(engine: BrainEngine): Promise<IdleBlocker[]> {
@@ -422,7 +422,7 @@ async function runMigrationsLocked(engine: BrainEngine): Promise<{ applied: numb
       console.error(
         `[migrate] cannot restore pages_source_slug_key: ${p.duplicateGroups} duplicate ` +
         `(source_id, slug) group(s) exist — page upserts will keep failing until the ` +
-        `duplicates are resolved (#550). See \`gbrain doctor\`.`,
+        `duplicates are resolved (#550). See \`foresights doctor\`.`,
       );
     }
   } catch { /* best-effort; doctor reports the drift if this couldn't run */ }
@@ -440,7 +440,7 @@ async function runMigrationsLocked(engine: BrainEngine): Promise<{ applied: numb
       } else if (l.reason === 'violations') {
         console.error(
           `[migrate] cannot restore links_link_source_check: ${l.violations} links row(s) have a ` +
-          `non-kebab link_source — fix or delete them, then re-run (#4613). See \`gbrain doctor\`.`,
+          `non-kebab link_source — fix or delete them, then re-run (#4613). See \`foresights doctor\`.`,
         );
       }
     } catch (e) {
@@ -449,7 +449,7 @@ async function runMigrationsLocked(engine: BrainEngine): Promise<{ applied: numb
   }
 
   const backfill = () => resumePageRevisionBackfill(engine).catch(e => console.error(`[migrate] page revision backfill paused (#5216): ${e instanceof Error ? e.message : String(e)}`));
-  // #7632: a migration that re-creates a gbrain function from a historical body resets its search_path, a failing
+  // #7632: a migration that re-creates a foresights function from a historical body resets its search_path, a failing
   // migration can stop the run before v277, and a failed earlier attempt leaves one behind; put pg_temp back on every
   // run. At head (nothing pending) it still runs, for a function a failed earlier run left (e2e case 9), but does not
   // name functions another role owns: doctor's function_search_path does, so a non-owner role is not told on every
@@ -461,7 +461,7 @@ async function runMigrationsLocked(engine: BrainEngine): Promise<{ applied: numb
         process.stderr.write('  search_path: pg_temp put back on gbrain functions, but listing any left without it failed; gbrain doctor (function_search_path) names them\n');
       } else if (nameLeftovers && left.length > 0) {
         process.stderr.write(`  search_path: ${left.length} function(s) left without pg_temp on their search_path (${left.join(', ')}): `
-          + 'ALTER FUNCTION needs the owner. Run gbrain doctor for the SQL to run as that role.\n');
+          + 'ALTER FUNCTION needs the owner. Run foresights doctor for the SQL to run as that role.\n');
       }
     } catch (e) {
       process.stderr.write(`  search_path: pg_temp not restored on gbrain functions (${e instanceof Error ? e.message : String(e)}); gbrain doctor (function_search_path) names them\n`);
@@ -490,7 +490,7 @@ async function runMigrationsLocked(engine: BrainEngine): Promise<{ applied: numb
   setQuietMigrationNotices(quietReplay);
 
   // Progress messages route to stderr so callers parsing stdout (e.g.
-  // `gbrain jobs submit --json | jq`) aren't polluted by migration noise.
+  // `foresights jobs submit --json | jq`) aren't polluted by migration noise.
   if (quietReplay) {
     process.stderr.write(`  Setting up brain schema (v${LATEST_VERSION})...\n`);
   } else {
@@ -533,7 +533,7 @@ async function runMigrationsLocked(engine: BrainEngine): Promise<{ applied: numb
     // covers every exit path from here on (incl. the pre-flight probe).
     setQuietMigrationNotices(false);
     // A run stopped by a lock it could not take would wait a second lock_timeout here before its own error surfaced.
-    if (lockRefused) process.stderr.write('  search_path: not put back on gbrain functions after the lock refusal; the next migration run does it, and gbrain doctor (function_search_path) names what is left\n');
+    if (lockRefused) process.stderr.write('  search_path: not put back on foresights functions after the lock refusal; the next migration run does it, and foresights doctor (function_search_path) names what is left\n');
     else await harden(true);
   }
   await clearMigrationTimeout(engine);
@@ -573,13 +573,13 @@ async function applyOneMigration(engine: BrainEngine, m: Migration): Promise<voi
             console.error('   A plain rerun with this release repeats the failure (#7108).');
             console.error('');
             console.error('   Fix:');
-            console.error('     1. gbrain doctor --locks    # confirm no session holds a lock on the table');
-            console.error('     2. If a newer release exists: gbrain upgrade, then gbrain apply-migrations --yes');
-            console.error("     3. Otherwise, with the user's agreement: gbrain apply-migrations --yes --statement-timeout 120, and report it");
+            console.error('     1. foresights doctor --locks    # confirm no session holds a lock on the table');
+            console.error('     2. If a newer release exists: foresights upgrade, then foresights apply-migrations --yes');
+            console.error("     3. Otherwise, with the user's agreement: foresights apply-migrations --yes --statement-timeout 120, and report it");
             console.error('');
           }
           console.error('   Verify:');
-          console.error('     gbrain doctor              # schema_version should match latest');
+          console.error('     foresights doctor              # schema_version should match latest');
           console.error('');
         }
         throw err;

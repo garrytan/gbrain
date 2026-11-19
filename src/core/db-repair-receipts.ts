@@ -1,5 +1,5 @@
 /**
- * db-repair receipts — the shared seam between `gbrain db-repair` (writer)
+ * db-repair receipts — the shared seam between `foresights db-repair` (writer)
  * and doctor's `db_repair_recurrence` check (reader). ENGINE-FREE by
  * design: the reader must run in doctor's dead-DB filesystem lane, which is
  * exactly when repairs are repeating.

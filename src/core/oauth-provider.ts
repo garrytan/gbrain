@@ -1,5 +1,5 @@
 /**
- * GBrain OAuth 2.1 Provider — implements MCP SDK's OAuthServerProvider.
+ * Foresights OAuth 2.1 Provider — implements MCP SDK's OAuthServerProvider.
  *
  * Backed by raw SQL (PGLite or Postgres), not the BrainEngine interface.
  * OAuth is infrastructure, not brain operations.
@@ -76,7 +76,7 @@ export interface AgentClientBindings {
 // ---------------------------------------------------------------------------
 
 /**
- * Allow-list of RFC 7591 §2 `token_endpoint_auth_method` values gbrain
+ * Allow-list of RFC 7591 §2 `token_endpoint_auth_method` values foresights
  * accepts at registration. Three values, chosen because the SDK's
  * `mcpAuthRouter` advertises exactly these three in
  * `token_endpoint_auth_methods_supported`:
@@ -86,7 +86,7 @@ export interface AgentClientBindings {
  * - `none` — public PKCE-only client (Claude Code, Cursor, ChatGPT custom connector)
  *
  * Three call sites enforce this set:
- *   1. CLI `gbrain auth register-client` (src/commands/auth.ts)
+ *   1. CLI `foresights auth register-client` (src/commands/auth.ts)
  *   2. Admin `POST /admin/api/register-client` (src/commands/serve-http.ts)
  *   3. DCR `POST /register` (this file, GBrainClientsStore.registerClient)
  *
@@ -145,7 +145,7 @@ function asClientMetadataError(err: unknown): never {
   // base class — keeps the dependency surface stable across SDK versions.
   if (err && typeof err === 'object' && 'errorCode' in err) throw err;
   const message = err instanceof Error ? err.message : String(err);
-  console.warn(`[gbrain dcr] rejected registration: ${message}`);
+  console.warn(`[foresights dcr] rejected registration: ${message}`);
   throw new InvalidClientMetadataError(message);
 }
 
@@ -277,7 +277,7 @@ interface GBrainOAuthProviderOptions {
 /**
  * Default lower clamp bound for DCR-requested token TTLs (#2179). Admins
  * override via the `oauth.dcr_ttl_min_seconds` / `oauth.dcr_ttl_max_seconds`
- * config keys, read once by `gbrain serve --http` at startup. There is
+ * config keys, read once by `foresights serve --http` at startup. There is
  * deliberately NO fixed default max: an unset max derives fail-closed from
  * the operator's --token-ttl (`max(tokenTtl, min)`), so a self-registering
  * client can never out-live the server default without explicit admin opt-in.
@@ -360,7 +360,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     // DCR is unauthenticated network input. Every validation failure here
     // MUST become InvalidClientMetadataError (HTTP 400) — plain Errors are
     // converted to opaque 500 server_error by the MCP SDK register handler,
-    // which is what broke Warp/rmcp clients against gbrain.
+    // which is what broke Warp/rmcp clients against foresights.
     let authMethod: TokenEndpointAuthMethod;
     let registeredScope: string;
     let grantTypes: string[];
@@ -383,7 +383,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
         throw new InvalidClientMetadataError(
           'client_credentials grant is not permitted via dynamic client registration; ' +
           'restart the server with --enable-dcr-insecure to allow it, or register the ' +
-          'client via the gbrain CLI / admin API.',
+          'client via the foresights CLI / admin API.',
         );
       }
 
@@ -400,7 +400,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
       const { allowed, dropped } = filterAllowedScopes(requestedScopes);
       if (dropped.length > 0) {
         console.warn(
-          `[gbrain dcr] dropping unknown scopes from registration ` +
+          `[foresights dcr] dropping unknown scopes from registration ` +
           `(client_name=${client.client_name || 'unnamed'}): ${dropped.join(' ')}`,
         );
       }
@@ -815,7 +815,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       const issuedScopes = Array.isArray(row.scopes) ? row.scopes as string[] : [];
       const effectiveScopes = intersectGrantedScopes(issuedScopes, parseScopeString(String(row.current_scopes)));
       const grantProjectionDegraded = row.grant_profile != null && (row.grant_projection_present !== true || !Array.isArray(row.allowed_operations));
-      if (grantProjectionDegraded) throw new InvalidTokenError('Client grant schema incomplete; run gbrain apply-migrations --yes');
+      if (grantProjectionDegraded) throw new InvalidTokenError('Client grant schema incomplete; run foresights apply-migrations --yes');
       // NULL expires_at is treated as expired (fail-closed). Schema permits NULL,
       // and the SDK's bearerAuth requires `typeof expiresAt === 'number'` — we
       // throw here rather than return an undefined-bearing AuthInfo.
@@ -1135,7 +1135,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       return { clientId, clientSecret };
     }
     if (grantPatch || hasScope(parseScopeString(scopes), 'agent')) {
-      throw new Error('Client grants require an up-to-date OAuth schema; run gbrain apply-migrations --yes');
+      throw new Error('Client grants require an up-to-date OAuth schema; run foresights apply-migrations --yes');
     }
     try {
       if (agentBindings) {
@@ -1174,7 +1174,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         isUndefinedColumnError(err, 'bound_max_concurrent') ||
         isUndefinedColumnError(err, 'budget_usd_per_day')
       )) {
-        throw new Error('register-client --bound-* flags require an up-to-date OAuth schema; run `gbrain apply-migrations --yes` and retry.');
+        throw new Error('register-client --bound-* flags require an up-to-date OAuth schema; run `foresights apply-migrations --yes` and retry.');
       }
       // Pre-v60 / pre-v61 brain: column missing. Fall back through both
       // projections so registration still works until apply-migrations.
@@ -1223,7 +1223,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
    * DCR clients self-register with source_id='default' +
    * federated_read=['default'] and MUST NOT be able to widen their own
    * scope (fail-closed trust). This is the trusted-operator surface that
-   * changes it afterward: `gbrain auth rescope-client` (local CLI) and
+   * changes it afterward: `foresights auth rescope-client` (local CLI) and
    * POST /admin/api/rescope-client (requireAdmin) both route here.
    *
    * Omitted fields are left untouched (COALESCE). Takes effect on the

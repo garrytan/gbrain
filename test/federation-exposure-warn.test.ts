@@ -37,7 +37,7 @@ describe('#8982 federation exposure read never changes the federation', () => {
 describe('#8982 pagesExposedLines', () => {
   const exposed = (count: number, n: number): PagesExposed => ({
     count, examples: Array.from({ length: n }, (_, i) => ({ slug: `notes/page-${i}`, member: i === 0 ? 'alice-example' : null })),
-    check: 'gbrain access who-can-read notes/page-0 --source source-a', restrict: 'gbrain access rule add --prefix notes/ --readers alice-example --source source-a',
+    check: 'foresights access who-can-read notes/page-0 --source source-a', restrict: 'foresights access rule add --prefix notes/ --readers alice-example --source source-a',
   });
 
   test('more pages than examples name the rest as a count', () => {

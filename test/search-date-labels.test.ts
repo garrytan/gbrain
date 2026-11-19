@@ -45,7 +45,7 @@ describe('labels by source', () => {
       { effective_date: '2026-05-10', effective_date_source: 'date' },
       { effective_date: '2026-01-02', effective_date_source: 'fallback' },
     ])!;
-    expect(line).toBe("[gbrain dates] effective_date by effective_date_source: date = document date; fallback = fallback (page created/imported, not from its text). Never a contract's effective or validity date (read the text).");
+    expect(line).toBe("[foresights dates] effective_date by effective_date_source: date = document date; fallback = fallback (page created/imported, not from its text). Never a contract's effective or validity date (read the text).");
     expect(dateLabelLine([{ effective_date: null }, { slug: 'x' }])).toBeNull();
     expect(dateLabelLine([{ effective_date: '2026-05-10' }])).toContain('no source = date of unrecorded origin');
   });
@@ -61,7 +61,7 @@ describe('over MCP (model-visible content only)', () => {
       const bySlug = new Map(rows.map(r => [r.slug, r]));
       expect(bySlug.get('contracts/widget-co-amendment')).toMatchObject({ effective_date: '2026-05-10', effective_date_source: 'date' });
       expect(bySlug.get('meetings/widget-co-review')).toMatchObject({ effective_date: '2026-05-12', effective_date_source: 'event_date' });
-      const line = res.content.map(c => c.text).find(t => t.startsWith('[gbrain dates] '));
+      const line = res.content.map(c => c.text).find(t => t.startsWith('[foresights dates] '));
       expect(line).toBeDefined();
       expect(line).toContain('date = document date');
       expect(line).toContain('event_date = event date');

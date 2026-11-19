@@ -221,7 +221,7 @@ describe('budget (C2/E4)', () => {
     expect(calls).toBe(0);
     expect(r.status).toBe('warn');
     expect(r.details.reason).toBe('no_pricing');
-    expect(JSON.stringify(r.details.no_pricing)).toContain('gbrain pricing set openai:gpt-unpriced-example --input');
+    expect(JSON.stringify(r.details.no_pricing)).toContain('foresights pricing set openai:gpt-unpriced-example --input');
     expect((await rows(engine))[0].state).toBe('pending');
   }), 120_000);
 });

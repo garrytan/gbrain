@@ -17,8 +17,8 @@ Each part's held-out result, measured by the custodian (P0) against the gates in
 ## Quote grounding
 
 The new quote grounding (think answers and the `synthesize` verb, `think --save`, concept narratives, pattern
-pages) is on by default after its retest passed; `gbrain config set think.quote_verify false` and
-`gbrain config set dream.quote_verify false` turn it off. The dream synthesis quote check that predates P8
+pages) is on by default after its retest passed; `foresights config set think.quote_verify false` and
+`foresights config set dream.quote_verify false` turn it off. The dream synthesis quote check that predates P8
 (`dream.synthesize.quote_verify`, default on) matches master byte for byte: the matching tolerance P8 adds applies
 only to the new coverage's sources (`groundSource(…, { tolerant: true })`).
 
@@ -43,7 +43,7 @@ The record, in order:
    (upper bound 6.6%). Cost about $15. Record: gbrain-evals
    `docs/benchmarks/2026-10-05-heldout-verdicts/p8-quotes-retest2-2026-10-05.json` (gbrain-evals#85).
 
-What the gate does not show: of the 7 spans the judge labeled unsupported, gbrain flagged 2 and kept 5. The run is
+What the gate does not show: of the 7 spans the judge labeled unsupported, foresights flagged 2 and kept 5. The run is
 sized to measure false flags only, so quote grounding is not yet a measured safety net against made-up quotes.
 Follow-up: a run sized to measure how often unsupported quotes are caught.
 
@@ -83,7 +83,7 @@ dated timeline bullet and `[[people/alice-example]] … works at [[companies/acm
 
 With `mcp.remote_auto_links=false` no mention pass is queued. Times are one local run on a small PGLite brain and
 include no worker scheduling delay; on a served brain the mention links wait for the effect worker and typed edges
-for the next extract (dream cycle or `gbrain extract`). #6025's own contract tests cover confinement, revoked
+for the next extract (dream cycle or `foresights extract`). #6025's own contract tests cover confinement, revoked
 clients, restarts, superseded revisions and reconcile on PGLite and Postgres.
 
 Lock order: #6025's effects take the brain row before the source row (`guardEffectSource`). P8's write paths take

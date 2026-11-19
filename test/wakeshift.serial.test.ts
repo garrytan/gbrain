@@ -153,7 +153,8 @@ describe('access', () => {
     const a = await dispatchToolCall(engine, 'watch_job', { id: foreign }, agent('client-b'));
     const b = await dispatchToolCall(engine, 'watch_job', { id: missing }, agent('client-b'));
     expect(a.isError).toBe(true);
-    expect(a.content[0]!.text.replaceAll(String(foreign), 'N')).toBe(b.content[0]!.text.replaceAll(String(missing), 'N'));
+    const mask = (text: string, id: number) => text.replace(new RegExp(`\\b${id}\\b`, 'g'), 'N'); // whole numbers only: an id never masks digits inside a URL
+    expect(mask(a.content[0]!.text, foreign)).toBe(mask(b.content[0]!.text, missing));
     expect(fake.calls).toHaveLength(0);
     const own = await seedJob('active', 'client-b');
     expect((await dispatchToolCall(engine, 'watch_job', { id: own }, agent('client-b'))).isError).toBeFalsy();
@@ -406,11 +407,11 @@ describe('off means inert', () => {
     }
   });
 
-  test('a local CLI caller is told to use gbrain jobs wait', async () => {
+  test('a local CLI caller is told to use foresights jobs wait', async () => {
     const id = await seedJob('active');
     const r = await dispatchToolCall(engine, 'watch_job', { id }, { remote: false });
     expect(r.isError).toBe(true);
-    expect(r.content[0]!.text).toContain('gbrain jobs wait');
+    expect(r.content[0]!.text).toContain('foresights jobs wait');
     expect(fake.calls).toHaveLength(0);
   });
 });
@@ -422,7 +423,7 @@ async function cli(args: string[]): Promise<{ out: string; error?: unknown }> {
   try { await runWakeshift(engine, args); return { out }; } catch (error) { return { out, error }; } finally { console.log = orig; }
 }
 
-describe('gbrain wakeshift', () => {
+describe('foresights wakeshift', () => {
   test('enable checks the key, merges the manifest and writes only the file plane; status shows the kid, never the key', async () => {
     writeConfig(null);
     const r = await cli(['enable', '--yes', '--url', fake.url, '--json']);

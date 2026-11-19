@@ -1,5 +1,5 @@
 /**
- * Refactor wave 1 (W0): `gbrain doctor --json` goldens on PGLite.
+ * Refactor wave 1 (W0): `foresights doctor --json` goldens on PGLite.
  *
  * Real CLI subprocesses (the path agents and smoke tests consume), hermetic
  * env from test/helpers/doctor-json-golden.ts, normalizer `doctor-json-v1`.
@@ -7,7 +7,7 @@
  * normalize to identical bytes (expectNormalizerStable) before it is compared.
  *
  * Variants:
- *   - pglite-fresh:     `gbrain init --pglite --no-embedding`, then doctor --json
+ *   - pglite-fresh:     `foresights init --pglite --no-embedding`, then doctor --json
  *   - pglite-fast:      same home, doctor --json --fast (DB checks skipped)
  *   - pglite-degraded:  same home, config declares openai:text-embedding-3-large
  *                       at 3072 dims (no key, column is vector(1024)) — warns
@@ -54,7 +54,7 @@ const ALL = defineNormalizer<Captures>(DOCTOR_JSON.name, (c) =>
 async function capturePglite(): Promise<Captures> {
   const h = home('doctor-golden-pglite');
   const init = await runGbrain(h, ['init', '--pglite', '--no-embedding']);
-  if (init.exitCode !== 0) throw new Error(`gbrain init failed (${init.exitCode}): ${init.stderr}`);
+  if (init.exitCode !== 0) throw new Error(`foresights init failed (${init.exitCode}): ${init.stderr}`);
   const fresh = await runGbrain(h, ['doctor', '--json', '--skills-dir', h.skillsDir]);
   const fast = await runGbrain(h, ['doctor', '--json', '--fast', '--skills-dir', h.skillsDir]);
   patchConfig(h, (cfg) => {
@@ -84,7 +84,7 @@ async function captureEarlyStops(): Promise<Captures> {
   return { noConfig, unreachable, unreachableFast };
 }
 
-describe('gbrain doctor --json goldens (PGLite + early stops)', () => {
+describe('foresights doctor --json goldens (PGLite + early stops)', () => {
   test('PGLite fresh / --fast / degraded config', async () => {
     const c = await expectNormalizerStable(capturePglite, ALL);
     expect(c.fresh.json).not.toBeNull();

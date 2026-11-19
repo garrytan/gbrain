@@ -1,5 +1,5 @@
 /**
- * `gbrain init --json`'s first-run decision bundle (agent contract v1 D2,
+ * `foresights init --json`'s first-run decision bundle (agent contract v1 D2,
  * spec G5): ONE `kind: 'ask'` notice whose `decisions[]` carry what the human
  * output relays through `[AGENT]` lines, plus one `user_message`. Init stays
  * non-blocking (exit 0); the agent relays the message and applies the chosen
@@ -37,7 +37,7 @@ export interface InitFirstRunInputs {
   writeback?: boolean;
   /** Recommended skills missing from the agent workspace (`initSkillsScaffold`). */
   skillsScaffold?: { missing: string[]; argv: string[] } | null;
-  /** `gbrain init --surface`: the surface the harness registration pins (default REGISTRATION_SURFACE). */
+  /** `foresights init --surface`: the surface the harness registration pins (default REGISTRATION_SURFACE). */
   surface?: McpSurface;
   /** GBRA-438: the upkeep line, relayed with the block as a setting in effect; `embedding` says the capped embedding step applies. */
   upkeep?: { embedding: boolean };
@@ -47,25 +47,25 @@ export interface InitFirstRunInputs {
 
 /** GBRA-438: what runs on its own, stated as a setting in effect (the plan's wording; the keyed form names the one capped paid step). */
 export function upkeepLine(embedding: boolean): string {
-  return "Upkeep: free upkeep runs on its own while your agent's gbrain session is open. "
+  return "Upkeep: free upkeep runs on its own while your agent's foresights session is open. "
     + (embedding
       ? 'Nothing is deleted without you, and the only paid step is embedding new text, capped at $1 a day (maintenance.embed_daily_usd). '
       : 'Nothing is deleted or paid for without you. ')
-    + 'Turn off: gbrain config set maintenance.auto false. Optional schedule: gbrain maintain --schedule.';
+    + 'Turn off: foresights config set maintenance.auto false. Optional schedule: foresights maintain --schedule.';
 }
 
 /** GST-2768: the conversation archive as a setting in effect: what it keeps, where, what leaves the machine, how to change it. */
 export function archiveLine(state: 'on' | 'offered', embedding: boolean): string {
   if (state === 'offered') {
-    return 'Conversation archive: off on this shared brain. Turn it on with gbrain transcripts archive on: one redacted page per conversation per day from '
+    return 'Conversation archive: off on this shared brain. Turn it on with foresights transcripts archive on: one redacted page per conversation per day from '
       + 'your agent sessions, kept to the owner member, in the conversations source.';
   }
-  return 'Conversation archive: on. gbrain keeps one redacted page per conversation per day from your agent sessions (Claude Code, Codex, OpenClaw, Hermes, Grok) '
+  return 'Conversation archive: on. foresights keeps one redacted page per conversation per day from your agent sessions (Claude Code, Codex, OpenClaw, Hermes, Grok) '
     + 'in the conversations source, written by the maintenance pass. '
     + (embedding
-      ? 'New days are embedded like any new page (unattended upkeep caps that at maintenance.embed_daily_usd); older history is keyword-only until you approve its cost (gbrain embed --held --dry-run). '
+      ? 'New days are embedded like any new page (unattended upkeep caps that at maintenance.embed_daily_usd); older history is keyword-only until you approve its cost (foresights embed --held --dry-run). '
       : 'Without an embedding key nothing leaves this machine. ')
-    + 'Turn off: gbrain transcripts archive off.';
+    + 'Turn off: foresights transcripts archive off.';
 }
 
 function archiveDecision(state: 'on' | 'offered', embedding: boolean): Decision {
@@ -92,7 +92,7 @@ function upkeepDecision(embedding: boolean): Decision {
       { id: 'off', label: 'Turn free upkeep off', argv: ['gbrain', 'config', 'set', 'maintenance.auto', 'false'] },
     ],
     default: 'on',
-    default_reason: 'In effect now: the agent\'s gbrain serve runs the free upkeep tier while idle; nothing needs an answer.',
+    default_reason: 'In effect now: the agent\'s foresights serve runs the free upkeep tier while idle; nothing needs an answer.',
   };
 }
 
@@ -108,7 +108,7 @@ function searchModeDecision(applied: { mode: SearchMode; reason: string }): Deci
 }
 
 /**
- * Connecting gbrain to the agent is an install step, never a setting waiting
+ * Connecting foresights to the agent is an install step, never a setting waiting
  * for the user's OK (Garry's G, GST-2719): its own notice, so an agent that
  * relays the settings has already connected memory.
  */
@@ -121,14 +121,14 @@ function harnessWiringNotice(config: GBrainConfig, surface?: McpSurface): Notice
     return {
       code: 'harness_wiring',
       kind: 'info',
-      why: `gbrain is not connected to an agent here, and this step is not a command the agent runs by itself; say so in the reply that reports the install, without waiting on it. ${fix.user_message ?? ''} ${fix.why ?? ''}`.trim(),
+      why: `foresights is not connected to an agent here, and this step is not a command the agent runs by itself; say so in the reply that reports the install, without waiting on it. ${fix.user_message ?? ''} ${fix.why ?? ''}`.trim(),
       fix,
     };
   }
   return {
     code: 'harness_wiring',
     kind: 'info',
-    why: 'Connect gbrain to the agent now, as part of this install: it is an install step, not a setting, so do it before reporting the install. The fix names the command for this host.',
+    why: 'Connect foresights to the agent now, as part of this install: it is an install step, not a setting, so do it before reporting the install. The fix names the command for this host.',
     fix: { ...fix, actor: 'agent', consent: [], user_message: undefined },
   };
 }
@@ -138,7 +138,7 @@ function writebackDecision(): Decision {
   return {
     id: 'writeback',
     question: 'Should agents save important facts the user states (preferences, decisions, commitments) automatically, with provenance? '
-      + 'Saved facts are readable by agents connected to this brain; transient facts expire. Off any time with `gbrain config set memory.auto_writeback off`.',
+      + 'Saved facts are readable by agents connected to this brain; transient facts expire. Off any time with `foresights config set memory.auto_writeback off`.',
     options: [
       { id: 'salient', label: 'Save durable facts the user states directly (recommended)', argv: set('salient') },
       { id: 'all', label: 'Every direct factual statement (more low-value facts, more extraction spend)', argv: set('all') },
@@ -153,7 +153,7 @@ function skillsScaffoldDecision(scaffold: { missing: string[]; argv: string[] })
   const preview = scaffold.missing.slice(0, 4).join(', ') + (scaffold.missing.length > 4 ? ', …' : '');
   return {
     id: 'skills_scaffold',
-    question: `Install ${scaffold.missing.length} recommended gbrain skill(s) into the agent workspace (${preview})? Optional; \`gbrain advisor\` lists what each does.`,
+    question: `Install ${scaffold.missing.length} recommended foresights skill(s) into the agent workspace (${preview})? Optional; \`foresights advisor\` lists what each does.`,
     options: [
       { id: 'skip', label: 'Skip for now.' },
       { id: 'scaffold', label: 'Scaffold the recommended skills into the workspace.', argv: scaffold.argv },
@@ -186,7 +186,7 @@ export function buildInitFirstRunNotices(inputs: InitFirstRunInputs): Notice[] {
     why: 'The brain is ready and these first-run settings are in effect as listed; none blocks memory. '
       + 'Relay them once, in the reply that reports the install, as the current settings and how to change them; do not hold the install open or end it waiting on an answer. '
       + 'When the user picks an option, run its command. Nothing paid turns on from these settings without a key the user supplied.',
-    user_message: `gbrain is installed.${inEffect.length ? ` In effect: ${inEffect.join('; ')}.` : ''}${upkeep ? ` ${upkeep.question}` : ''}${archive ? ` ${archive.question}` : ''}${searchMode ? ` ${costMatrixSentence()}` : ''} Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.`,
+    user_message: `foresights is installed.${inEffect.length ? ` In effect: ${inEffect.join('; ')}.` : ''}${upkeep ? ` ${upkeep.question}` : ''}${archive ? ` ${archive.question}` : ''}${searchMode ? ` ${costMatrixSentence()}` : ''} Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.`,
     decisions,
   }];
 }
@@ -194,13 +194,13 @@ export function buildInitFirstRunNotices(inputs: InitFirstRunInputs): Notice[] {
 const WRITEBACK_IN_EFFECT = 'agents save only what you ask them to remember, until you turn on automatic saving (salient is recommended: durable facts you state, saved with provenance)';
 
 /**
- * `gbrain setup <harness>`'s form of init's bundle (read from `init --json`).
+ * `foresights setup <harness>`'s form of init's bundle (read from `init --json`).
  * Setup has already wired the harness, so `harness_wiring` is dropped, and
  * the rest is framed as settings in effect that the user can change at any
  * time: the agent relays them in the reply that reports the install instead
  * of ending it on a question whose answer needs another turn (Cat 41 wave 2).
  * Open decisions keep returning in later sessions until answered or muted.
- * The Report back (Wakeshift) row states whether gbrain wakes the agent's
+ * The Report back (Wakeshift) row states whether foresights wakes the agent's
  * conversation when a job finishes (`opts.reportBack`: published) and the
  * one command that flips it.
  */
@@ -219,15 +219,15 @@ export function setupFirstRunNotices(initNotices: readonly unknown[], harness: s
   ];
   if (inEffect.length === 0 && !upkeep && !archive) return [];
   const reportBack = opts.reportBack
-    ? 'Report back (Wakeshift): on. gbrain wakeshift disable turns it off.'
-    : 'Report back (Wakeshift): off. gbrain wakeshift enable turns it on.';
+    ? 'Report back (Wakeshift): on. foresights wakeshift disable turns it off.'
+    : 'Report back (Wakeshift): off. foresights wakeshift enable turns it on.';
   return [{
     code: 'first_run_decisions',
     kind: 'ask',
     why: `Setup is complete: the brain is ready and ${harness} is wired, so memory works now. These first-run settings are in effect as listed; none blocks memory or needs a new session to answer. `
       + 'Relay them once, in the reply that reports this install, as the current settings and how to change them; do not hold the install open or end it waiting on an answer. '
       + 'When the user picks an option, run its command. Automatic saving (`writeback`) is separate from setup\'s capture decision (Stop/SessionEnd hooks); while unanswered it comes back in a later session until the user answers or mutes it.',
-    user_message: `gbrain is set up and ${harness} is wired, so memory works now.${inEffect.length ? ` In effect: ${inEffect.join('; ')}.` : ''} ${reportBack}${upkeep ? ` ${upkeep.question}` : ''}${archive ? ` ${archive.question}` : ''}${searchMode ? ` ${matrix}` : ''} Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.`,
+    user_message: `foresights is set up and ${harness} is wired, so memory works now.${inEffect.length ? ` In effect: ${inEffect.join('; ')}.` : ''} ${reportBack}${upkeep ? ` ${upkeep.question}` : ''}${archive ? ` ${archive.question}` : ''}${searchMode ? ` ${matrix}` : ''} Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.`,
     decisions,
   }];
 }
@@ -239,8 +239,8 @@ export function setupFirstRunNotices(initNotices: readonly unknown[], harness: s
  */
 export function deferredEmbeddingHint(cfg: GBrainConfig): string {
   const enable = embeddingEnablement(cfg);
-  const step = enable.argv ? shellQuote(enable.argv) : 'gbrain doctor --only embeddings --json';
-  return `  --no-embedding: deferred setup — enable later with \`${step}\` (setting embedding_model through \`gbrain config set\` is refused by design)`;
+  const step = enable.argv ? shellQuote(enable.argv) : 'foresights doctor --only embeddings --json';
+  return `  --no-embedding: deferred setup — enable later with \`${step}\` (setting embedding_model through \`foresights config set\` is refused by design)`;
 }
 
 /** init's bundle for this brain: reads the writeback gate and the agent workspace's missing skills. */
@@ -268,8 +268,8 @@ export function firstRunJson(bundle: Notice[]): { notices?: unknown[]; contract_
 /**
  * The harness registration line for init's quickstart: the readiness
  * `harness_wiring` fix (absolute binary, `--surface starter --advertise verbs`
- * unless `gbrain init --surface` names another) for the detected harness, else the
- * Claude Code registration built the same way. Null when the gbrain binary
+ * unless `foresights init --surface` names another) for the detected harness, else the
+ * Claude Code registration built the same way. Null when the foresights binary
  * has no absolute path (never registered bare).
  */
 export function harnessRegistrationCommand(surface?: McpSurface): string | null {

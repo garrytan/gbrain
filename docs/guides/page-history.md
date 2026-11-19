@@ -2,7 +2,7 @@
 
 **Say to your agent:** *"Update the refund policy to a 30-day window, and record that the client asked for it."*
 
-Every page write in gbrain keeps the text it replaced as a version. A write can
+Every page write in foresights keeps the text it replaced as a version. A write can
 also carry a short human reason, so the history says why the text changed, not
 only that it did. This guide covers how to give a reason, where it is stored,
 who can read it, and what happens on a brain with no Git repository.
@@ -20,7 +20,7 @@ Pass `reason` on `put_page`, `edit_page`, `revert_version` or on any item of
 The parameter is listed on the full MCP tool surface. The starter surface leaves
 it out of the tool schemas to keep them small, but still accepts it, so an agent
 on the starter surface can pass it too. On the CLI the same parameter is `--reason`, for example
-`gbrain put policies/refunds --reason "Client asked for the 30-day window." < refunds.md`.
+`foresights put policies/refunds --reason "Client asked for the 30-day window." < refunds.md`.
 
 A reason is one line of at most 500 characters. Tabs and line breaks become
 spaces, other control characters are removed, and an empty reason counts as
@@ -46,7 +46,7 @@ copies with different reasons are refused.
 A version is the page as it was before a write. So the reason is stored on the
 version that write archived, and `get_versions` shows it on that version as
 `replaced_because`. The newest version's `replaced_because` explains the text
-you read now. `gbrain history <slug>` prints it as `changed because: …` under
+you read now. `foresights history <slug>` prints it as `changed because: …` under
 each version.
 
 A page's first write archives nothing, so its reason has no version to sit on.
@@ -65,7 +65,7 @@ Every write result says where its reason went in `reason_recorded`:
 - `queued`: the file's commit is queued and will carry the reason.
 - `superseded`: a newer write to the same file committed first (shown on the
   receipt, `get_write_request`, with a `reason_not_committed` notice). The
-  reason stays in gbrain's history but is in no commit. Nothing needs fixing,
+  reason stays in foresights's history but is in no commit. Nothing needs fixing,
   and retrying the write would be wrong.
 - `private`: the page is private, so its reason stays out of every commit
   message, group commits for other pages included. Visibility is checked when
@@ -73,7 +73,7 @@ Every write result says where its reason went in `reason_recorded`:
   made private (through `derived_from`, for example) commits without its
   reason, and so does a queued commit whose page a later write made private.
 - `not_file_backed`: the page has no file (database-only), so the reason is in
-  gbrain's history only.
+  foresights's history only.
 - `no_repository`: the brain has no Git repository (below).
 - `none`: the write changed nothing.
 
@@ -120,7 +120,7 @@ callers. Remote reasons go through the same text sanitizer as version bodies.
 
 ## Reasons from Git
 
-When `gbrain sync` imports a changed file from a Git checkout, it reads the
+When `foresights sync` imports a changed file from a Git checkout, it reads the
 `gbrain-reason` trailers of the commits it is importing and stores the
 file's reason on the version that import archives. A commit you make yourself
 with `git commit --trailer "gbrain-reason: <path>: <text>"` therefore shows up
@@ -172,12 +172,12 @@ A commit and file that a purge has tombstoned (below) never gives a reason
 again, not even on a full re-import.
 
 A source with no Git checkout (a repo-less brain, or a folder imported with
-`gbrain import`) reads no trailers, prints none of these notices and marks no
+`foresights import`) reads no trailers, prints none of these notices and marks no
 gap. Its reasons come only from the writes that carry them.
 
 ## Purge and reasons
 
-`gbrain forget <id> --purge` ([expire versus purge](memory-boundaries.md#purge))
+`foresights forget <id> --purge` ([expire versus purge](memory-boundaries.md#purge))
 reaches every copy of a reason that quotes the claim:
 
 - **Versions.** The reason is replaced with `[purged]` on every version that
@@ -214,7 +214,7 @@ A source counts as having no Git checkout only when it has no folder, or when
 Git itself says its folder is in no repository. Then there is no history to
 read, so purge redacts the database copies and never raises either refusal.
 
-`gbrain delete <slug> --purge` also reaches the purged page's own reasons. Before
+`foresights delete <slug> --purge` also reaches the purged page's own reasons. Before
 anything is deleted it reads every reason the page's versions and write
 receipts recorded, then removes them from the page's receipts and stored
 intents, and drops the commit line and trailers from every Git effect of the
@@ -251,7 +251,7 @@ valid_until: '2027-01-01'
 ```
 
 The dates are part of the page, so on a brain with a Git repository they live
-in the file and in every commit, and gbrain keeps them on each retained version.
+in the file and in every commit, and foresights keeps them on each retained version.
 The interval is half-open: the text is in force from `valid_from` up to, but
 not including, `valid_until`, the same rule links use. Write the dates quoted.
 An unquoted YAML date also works; a partial date (`2026-07`), a time of day or
@@ -259,7 +259,7 @@ another zone does not, and the write result warns `valid_from_unparsed`.
 
 **Say to your agent:** *"What did our refund policy say on March 1?"* The agent
 reads the page with `get_page {slug, as_of: '2026-03-01'}` (CLI:
-`gbrain get <slug> --as-of 2026-03-01`).
+`foresights get <slug> --as-of 2026-03-01`).
 
 Nothing changes until a page carries `valid_from` or a caller passes `as_of`.
 There is no config key.
@@ -299,7 +299,7 @@ older edition it may see. Reasons follow the same rule as `get_versions`.
 | Field | Meaning |
 |---|---|
 | `as_of` | the date asked about, echoed |
-| `status` | `in_force`, `not_in_force` (its `valid_until` has passed), `not_yet_in_force` (every edition starts later, and gbrain holds the page's whole history), `before_recorded_history` (every known edition starts later, but earlier editions may exist outside gbrain) |
+| `status` | `in_force`, `not_in_force` (its `valid_until` has passed), `not_yet_in_force` (every edition starts later, and foresights holds the page's whole history), `before_recorded_history` (every known edition starts later, but earlier editions may exist outside foresights) |
 | `chosen_version_id`, `chosen_is_current` | which edition was picked (`null` id for the current page) |
 | `valid_from`, `valid_until` | the chosen edition's dates |
 | `introduced_because`, `replaced_because` | the reasons given for the write that produced the edition and the one that replaced it |
@@ -307,7 +307,7 @@ older edition it may see. Reasons follow the same rule as `get_versions`.
 | `uncertain`, `why` | whether to trust the pick, and the one reason not to |
 | `undated_versions` | versions with no readable `valid_from`; they are never picked |
 | `amendments_not_applied` | amendment records in force on the date that the text does not include |
-| `recorded_since` | when gbrain recorded the chosen edition |
+| `recorded_since` | when foresights recorded the chosen edition |
 
 Only `in_force` returns the text at the top level. Any other status puts the
 edition under `last_in_force` or `earliest_known`, so a reader that ignores
@@ -317,18 +317,18 @@ A large edition is returned in windows. Each `next` call carries the slug,
 source, date and a cursor pinned to that edition, so the read stays on it even
 if the page changes meanwhile.
 
-On the CLI, `gbrain get --as-of` prints a `[gbrain] valid_time` line on
+On the CLI, `foresights get --as-of` prints a `[foresights] valid_time` line on
 stderr. An `in_force` answer prints the page on stdout and exits 0. Any other
 status prints `status:` and `why:` on stdout, no page, and exits 15
 ([exit codes](exit-codes.md)).
 
-A plain read (`get_page`, `gbrain get`) of a page whose own `valid_from` is
+A plain read (`get_page`, `foresights get`) of a page whose own `valid_from` is
 after today, or whose `valid_until` has passed, also carries `valid_time`
 (`status`, `as_of` today and both dates), and the CLI prints it on stderr.
 
 ### When history is incomplete
 
-gbrain can only answer from the versions it kept. The answer says when that is
+foresights can only answer from the versions it kept. The answer says when that is
 not enough, and only when it matters for the date asked about:
 
 - `history_pruned` or `history_gap`: versions were pruned, or a sync imported
@@ -336,9 +336,9 @@ not enough, and only when it matters for the date asked about:
   date is before every retained edition). Dates the retained editions cover
   after the gap stay certain.
 - `history_unknown`: the page has enough large or segmented versions that a
-  prune may have run before gbrain recorded prunes.
+  prune may have run before foresights recorded prunes.
 - `before_recorded_history`: the page came from a file, so editions before
-  its first gbrain version may exist in Git.
+  its first foresights version may exist in Git.
 - `edition_pruned`: the edition a window cursor pinned is no longer retained;
   no text is returned.
 
@@ -365,11 +365,11 @@ A write result can carry a `valid_time` advisory:
 - `valid_time_date_only`: only `valid_from` changed. That is a question, not
   an error: is this a correction of the earlier date, or a renewal of unchanged
   text? as_of reads around those dates are marked `ambiguous_edition_dates`.
-- `valid_from_unparsed`: `valid_from` is not a date gbrain can read.
+- `valid_from_unparsed`: `valid_from` is not a date foresights can read.
 
 ### valid_time_undeclared
 
-No retained version of the page has a readable `valid_from`. gbrain does not
+No retained version of the page has a readable `valid_from`. foresights does not
 invent one. The `fix` asks the user when the text took effect, then offers an
 `edit_page` that adds a quoted `valid_from`. To ask what the brain had
 recorded at a moment instead, read with `known_as_of` (recorded time).
@@ -385,9 +385,9 @@ A slug that exists in two sources you can read is refused until you pass
 
 ### host_upgrade_required
 
-The gbrain CLI or an MCP client asked a host for `as_of`, and the reply did
+The foresights CLI or an MCP client asked a host for `as_of`, and the reply did
 not echo `valid_time.as_of`. An older host ignores the parameter and returns
 the current page, so the client prints nothing and exits 16. The error names
 the client version, the host version and the minimum host version. Run
-`gbrain upgrade` on the brain host, or ask whoever runs it. Without
+`foresights upgrade` on the brain host, or ask whoever runs it. Without
 `valid_time` in a reply, the reply is the current page.

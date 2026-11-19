@@ -93,7 +93,7 @@ function parseRpc(text: string): Record<string, any> {
   return JSON.parse(data ?? text);
 }
 
-/** One stateless JSON-RPC tools/call against `gbrain serve --http`. */
+/** One stateless JSON-RPC tools/call against `foresights serve --http`. */
 export async function mcpHttpCall(base: string, token: string, tool: string, args: Record<string, unknown> = {}): Promise<{ status: number; rpc: Record<string, any> | null }> {
   const res = await fetch(`${base}/mcp`, { method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
@@ -111,7 +111,7 @@ export interface StdioSession {
   exited: Promise<GbrainResult>;
 }
 
-/** `gbrain serve` over stdio, initialized, as an MCP host would launch it. */
+/** `foresights serve` over stdio, initialized, as an MCP host would launch it. */
 export async function mcpStdioSession(opts: GbrainOpts & { argv?: string[] }): Promise<StdioSession> {
   const started = Date.now();
   const child = Bun.spawn(command(['serve', ...(opts.argv ?? [])], opts), { cwd: REPO, env: childEnv(opts), stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });

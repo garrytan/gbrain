@@ -14,7 +14,7 @@
  *   - deny_paths optional
  *   - isPathAllowed: prefix match + deny override + prefix boundary
  *
- * PLATFORM NOTE: these tests must run on both POSIX (gbrain CI is
+ * PLATFORM NOTE: these tests must run on both POSIX (foresights CI is
  * 100% ubuntu-latest) and Windows. POSIX path literals cannot be
  * shared across both, because `/home/user` is NOT a drive-qualified
  * absolute path on Windows — `path.resolve('/home/user')` returns

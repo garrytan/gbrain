@@ -1,5 +1,5 @@
 /**
- * #5886 follow-up: `gbrain repair take-supersession` rebuilds
+ * #5886 follow-up: `foresights repair take-supersession` rebuilds
  * `takes.superseded_by` for chains written before the pointer moved onto the
  * old fence row.
  *
@@ -17,7 +17,7 @@
  * Why existing coverage misses it: test/takes-supersede-pointer.test.ts covers
  * new supersessions only; nothing repairs chains already stored.
  * Seams: none; real PGLite (and Postgres through the e2e registration), the
- * shared `managedBrain`, and the same repair runner `gbrain repair` uses.
+ * shared `managedBrain`, and the same repair runner `foresights repair` uses.
  */
 import { describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -151,7 +151,7 @@ for (const backend of testBackends()) {
         ['notes/journal', 'link #2->#3 (journal); drop self-pointer on #3'],
       ]);
       expect(details.ambiguous).toEqual([{ source_id: 'default', slug: 'notes/ambiguous',
-        rows: [{ new_row: 3, candidates: [1, 2] }, { new_row: 4, candidates: [1, 2] }], fix: expect.stringContaining('gbrain get --source default -- notes/ambiguous') }]);
+        rows: [{ new_row: 3, candidates: [1, 2] }, { new_row: 4, candidates: [1, 2] }], fix: expect.stringContaining('foresights get --source default -- notes/ambiguous') }]);
       expect(await revisions()).toEqual(before.revisions);
       expect(await requests()).toBe(before.requests);
       expect(await takeRows(engine, 'default', 'notes/chain')).toEqual(before.chain);

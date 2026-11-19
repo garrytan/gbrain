@@ -1,5 +1,5 @@
 /**
- * #6543 (A4): the real gbrain paths that lift or raise a statement timeout keep
+ * #6543 (A4): the real foresights paths that lift or raise a statement timeout keep
  * running past the pool's in-flight budget on the ordinary pool, because the
  * driver budgets each statement from the timeout its operation declared:
  * the deferred ANN build (`SET statement_timeout = 0` on a reserved connection

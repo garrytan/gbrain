@@ -18,7 +18,7 @@ export const dashscope: Recipe = {
   tier: 'openai-compat',
   implementation: 'openai-compatible',
   // No shipped rate for these yet: they warn and run under a default cap; a
-  // user cap refuses them until `gbrain pricing set` registers one (X1 guard).
+  // user cap refuses them until `foresights pricing set` registers one (X1 guard).
   unpriced_models: [
     'text-embedding-v3',
     'text-embedding-v2',

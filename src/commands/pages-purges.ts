@@ -1,5 +1,5 @@
 /**
- * `gbrain pages purges list` and `gbrain pages unpurge <slug>` (#5575 CEO-8,
+ * `foresights pages purges list` and `foresights pages unpurge <slug>` (#5575 CEO-8,
  * DX-11): the owner's view of page purge tombstones. Both run the owner-only
  * operations as the trusted local CLI.
  */
@@ -23,7 +23,7 @@ export async function runPagePurges(engine: BrainEngine, sub: 'purges' | 'unpurg
   const ctx = { engine, config: loadConfig() ?? { engine: engine.kind }, remote: false as const, dryRun: false, sourceId,
     logger: { info: console.log, warn: console.warn, error: console.error } };
   if (sub === 'purges') {
-    if (args[0] !== 'list') { process.stdout.write(`Usage: gbrain pages purges list [--source <id>] [--json]\n\n${PURGE_FAMILY_HELP}`); return; }
+    if (args[0] !== 'list') { process.stdout.write(`Usage: foresights pages purges list [--source <id>] [--json]\n\n${PURGE_FAMILY_HELP}`); return; }
     const result = await operations.find(o => o.name === 'list_page_purges')!.handler(ctx, explicitSource ? { source_id: sourceId } : {}) as
       { purges: Array<{ source_id: string; slug: string; content_hash8: string; request_id: string | null; purged_at: string }>; next: string };
     if (json) { console.log(JSON.stringify(result, null, 2)); return; }
@@ -32,7 +32,7 @@ export async function runPagePurges(engine: BrainEngine, sub: 'purges' | 'unpurg
     return;
   }
   const slug = args.find(a => !a.startsWith('--') && a !== explicitSource);
-  if (!slug) { process.stdout.write(`Usage: gbrain pages unpurge <slug> [--source <id>] [--json]\n\n${PURGE_FAMILY_HELP}`); return; }
+  if (!slug) { process.stdout.write(`Usage: foresights pages unpurge <slug> [--source <id>] [--json]\n\n${PURGE_FAMILY_HELP}`); return; }
   const result = await operations.find(o => o.name === 'unpurge_page')!.handler(ctx, { slug, source_id: sourceId }) as Record<string, unknown>;
   if (json) console.log(JSON.stringify(result, null, 2));
   else console.log(`Cleared ${result.cleared} page tombstone(s) for ${slug}. ${result.next}`);

@@ -38,8 +38,8 @@ const v = parseSemver(VERSION)!;
 const AHEAD = `${v[0]}.${v[1]}.${v[2] + 5}.0`;
 const AHEAD2 = `${v[0]}.${v[1]}.${v[2] + 9}.0`;
 const BEHIND = `${v[0]}.${v[1]}.${Math.max(0, v[2] - 5)}.0`;
-const SOAK = 'https://github.com/garrytan/gbrain/actions/runs/42';
-const MATRIX = 'https://github.com/garrytan/gbrain/actions/runs/43';
+const SOAK = 'https://github.com/aimonk2025/gbrain/actions/runs/42';
+const MATRIX = 'https://github.com/aimonk2025/gbrain/actions/runs/43';
 const record = (version: string, over: Record<string, unknown> = {}) => JSON.stringify({ schema: 1, channel: 'stable', version, commit: 'a'.repeat(40), tree: 'b'.repeat(40), soak_run: SOAK, known_bad: [], ...over });
 
 const realFetch = globalThis.fetch;
@@ -99,7 +99,7 @@ describe('evidence record generations', () => {
     expect(requiredEvidenceKeys('0.60.499.0', cut)).toEqual(['soak_run']);
     expect(requiredEvidenceKeys('0.60.500.0', cut)).toEqual(['soak_run', 'matrix_run']);
     expect(parseStableRecord(record('0.60.499.0'), cut)).toMatchObject({ ok: true, record: { matrix_run: null } });
-    expect(parseStableRecord(record('0.60.500.0'), cut)).toEqual({ ok: false, cause: 'the record for 0.60.500.0 lacks the evidence key matrix_run (a run of garrytan/gbrain)' });
+    expect(parseStableRecord(record('0.60.500.0'), cut)).toEqual({ ok: false, cause: 'the record for 0.60.500.0 lacks the evidence key matrix_run (a run of aimonk2025/gbrain)' });
     expect(parseStableRecord(record('0.60.501.0', { matrix_run: MATRIX }), cut)).toMatchObject({ ok: true, record: { matrix_run: MATRIX } });
   });
 
@@ -235,7 +235,7 @@ for (const brain of ['repo-less', 'repo'] as const) {
       expect(lines).toEqual([`${CHANNEL_NOTICE_TEXT}\n`]);
       expect(lines[0]).toStartWith('[gbrain notice release_channel] ');
       expect(lines[0]).toContain('stable channel');
-      expect(lines[0]).toContain('gbrain config set self_upgrade.channel alpha');
+      expect(lines[0]).toContain('foresights config set self_upgrade.channel alpha');
       expect(parseMarker(lines[0]!)).toBeNull();
       expect(lines[0]).not.toContain('UPGRADE_AVAILABLE');
     });
@@ -246,7 +246,7 @@ for (const brain of ['repo-less', 'repo'] as const) {
       console.log = (...a: unknown[]) => { out.push(a.join(' ')); };
       serve({});
       await runSelfUpgrade(['--check-only', '--json']);
-      expect(JSON.parse(out.pop()!)).toMatchObject({ channel: 'stable', channel_source: 'default', update_available: false, error: { code: 'stable_missing', fix: expect.stringContaining('gbrain config set self_upgrade.channel alpha') } });
+      expect(JSON.parse(out.pop()!)).toMatchObject({ channel: 'stable', channel_source: 'default', update_available: false, error: { code: 'stable_missing', fix: expect.stringContaining('foresights config set self_upgrade.channel alpha') } });
       serve({ record: record(BEHIND, { known_bad: [VERSION] }) });
       await runSelfUpgrade(['--check-only', '--json']);
       expect(JSON.parse(out.pop()!)).toMatchObject({ channel: 'stable', update_available: true, latest_version: BEHIND, withdrawn: true });
@@ -284,7 +284,7 @@ for (const brain of ['repo-less', 'repo'] as const) {
       const failing = checkSelfUpgradeHealth();
       expect(failing.status).toBe('warn');
       expect(failing.message).toContain('stable_missing');
-      expect(failing.message).toContain('gbrain config set self_upgrade.channel alpha');
+      expect(failing.message).toContain('foresights config set self_upgrade.channel alpha');
       writeConfig({ self_upgrade: { channel: 'nightly' } }, brain);
       expect(checkSelfUpgradeHealth()).toMatchObject({ status: 'warn', message: expect.stringContaining("self_upgrade.channel is 'nightly'") });
     });

@@ -1,5 +1,5 @@
 /**
- * Hermetic table test for `gbrain eval longmemeval` argument validation: every
+ * Hermetic table test for `foresights eval longmemeval` argument validation: every
  * invalid value exits 1 from parseArgs BEFORE any work (no dataset read, no
  * output file, no engine), and `--help` exits 0 without touching anything.
  *
@@ -38,7 +38,7 @@ async function run(args: string[]): Promise<{ code: number | null; stderr: strin
   return { code, stderr };
 }
 
-describe('gbrain eval longmemeval — invalid flag values exit 1 before any work', () => {
+describe('foresights eval longmemeval — invalid flag values exit 1 before any work', () => {
   const dataset = () => join(tmp, 'does-not-exist.jsonl');
   const out = () => join(tmp, 'never-written.jsonl');
 
@@ -56,7 +56,7 @@ describe('gbrain eval longmemeval — invalid flag values exit 1 before any work
     { name: 'a value that is another flag (--top-k --by-type)', args: ['--top-k', '--by-type'], message: '--top-k requires a value (K)' },
     { name: 'a second positional argument', args: ['extra.jsonl'], message: 'unexpected extra argument "extra.jsonl"' },
     { name: '--judge with --retrieval-only', args: ['--judge', '--retrieval-only'], message: '--judge cannot be combined with --retrieval-only' },
-    { name: 'an unknown flag', args: ['--frobnicate'], message: "unknown flag --frobnicate for 'gbrain eval longmemeval'" },
+    { name: 'an unknown flag', args: ['--frobnicate'], message: "unknown flag --frobnicate for 'foresights eval longmemeval'" },
   ];
 
   for (const c of cases) {
@@ -76,7 +76,7 @@ describe('gbrain eval longmemeval — invalid flag values exit 1 before any work
   test('--help exits 0 (no process.exit) and prints the flag table to stderr', async () => {
     const { code, stderr } = await run(['--help']);
     expect(code).toBeNull();
-    expect(stderr).toContain('gbrain eval longmemeval <dataset.jsonl> [options]');
+    expect(stderr).toContain('foresights eval longmemeval <dataset.jsonl> [options]');
     expect(stderr).toContain('--search-pin KEY=VALUE');
     expect(stderr).toContain('--expansion-variant-budget beat a pin');
     expect(stderr).toContain('max_tokens 16');

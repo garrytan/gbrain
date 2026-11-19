@@ -5,10 +5,10 @@
  *
  * 1. Protects: a page rule (slug: <exact slug>) restricts exactly one page, through the same applied rulebook, trigger
  *    stamp and read predicate as folder rules, with no page file written or committed; the owner keeps reading it;
- *    removing the rule is the undo (a widening, held until gbrain access apply).
+ *    removing the rule is the undo (a widening, held until foresights access apply).
  * 2. Fails when: a page rule is refused, leaks to an unbound caller, covers a sibling (a folder of the same name, a
  *    longer slug) or writes the page's file; or the TS and SQL matchers disagree.
- * 3. Real seams: the managed git source and its door, the gbrain access rule CLI module, the trigger stamp, MCP
+ * 3. Real seams: the managed git source and its door, the foresights access rule CLI module, the trigger stamp, MCP
  *    dispatch with tokens from the token service, PGLite and Postgres; a repo-less brain for the database store.
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
@@ -42,7 +42,7 @@ async function cli(engine: BrainEngine, args: string[]): Promise<any> {
   const spy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { lines.push(a.map(String).join(' ')); });
   try { await runAccessRules(engine, args[0]!, [...args.slice(1), '--json'], true); } finally { spy.mockRestore(); }
   const text = lines.join('\n');
-  try { return JSON.parse(text); } catch { throw new Error(`gbrain access ${args.join(' ')} printed no JSON: ${text}`); }
+  try { return JSON.parse(text); } catch { throw new Error(`foresights access ${args.join(' ')} printed no JSON: ${text}`); }
 }
 
 /** Mints an unbound token and one bound to the owner member; returns a reader that says whether get_page shows the slug. */
@@ -117,7 +117,7 @@ for (const backend of testBackends()) {
       for (const slug of ['projects', 'notes/secret-example']) {
         const refused = await put(ctx, slug, page(slug, body(slug), 'visibility: private\n'), revs[slug]).catch(e => ({ ...e, message: e.message }));
         expect(JSON.stringify(refused)).toContain('source_changed');
-        expect(JSON.stringify(refused)).toContain(`gbrain access rule add --slug ${slug}`);
+        expect(JSON.stringify(refused)).toContain(`foresights access rule add --slug ${slug}`);
       }
 
       for (const slug of ['projects', 'notes/secret-example']) {

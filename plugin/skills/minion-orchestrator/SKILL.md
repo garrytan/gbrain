@@ -4,14 +4,16 @@ version: 1.1.0
 description: |
   Unified Minions skill for both deterministic shell jobs and LLM subagent
   orchestration. Replaces the older `gbrain-jobs` routing intent. Use when:
-  submitting gbrain jobs, shell/background tasks, spawning subagents,
+  submitting foresights jobs, shell/background tasks, spawning subagents,
   checking progress, steering running work, pausing/resuming, parallel
   fan-out. One durable, observable, steerable queue interface. Also carries
   the durable-execution doctrine for any operation expected to exceed ~2
   minutes: capability ladder, deadman checks that verify the result was
   reported, and content-addressed stage checkpoints for expensive pipelines.
 triggers:
+  - "foresights jobs submit"
   - "gbrain jobs submit"
+  - "submit a foresights job"
   - "submit a gbrain job"
   - "submit a shell job"
   - "shell job"
@@ -50,7 +52,7 @@ tools:
   - get_job_progress
 mutating: true
 upstream: long-ops@fc834ee, subagent-deadman@fc834ee, pipeline-stage-cache@fc834ee
-when_to_use: "Use when the user asks: \"gbrain jobs submit\", \"submit a gbrain job\", \"submit a shell job\", \"shell job\", \"run shell command in background\"."
+when_to_use: "Use when the user asks: \"foresights jobs submit\", \"gbrain jobs submit\", \"submit a foresights job\", \"submit a gbrain job\", \"submit a shell job\"."
 ---
 
 # Minion Orchestrator
@@ -59,8 +61,8 @@ when_to_use: "Use when the user asks: \"gbrain jobs submit\", \"submit a gbrain 
 
 Minions is a Postgres-native job queue for durable, observable background work.
 This single skill handles two lanes:
-- Deterministic shell jobs (`gbrain jobs submit shell ...`)
-- LLM subagent jobs (`gbrain agent run ...`)
+- Deterministic shell jobs (`foresights jobs submit shell ...`)
+- LLM subagent jobs (`foresights agent run ...`)
 
 When to route to Minions: durable, observable work that must survive restarts,
 fan out across many parallel tasks, or persist across sessions. Routing policy
@@ -84,7 +86,7 @@ mechanically enforces it; see "Durable execution" below):
   a dead job from the user's side.
 - The deadman is second-line insurance, not a delivery guarantee: it can
   itself die before firing (scheduler restart, deleted entry). Backstop:
-  on the next turn, sweep `gbrain jobs list --status active` and recent
+  on the next turn, sweep `foresights jobs list --status active` and recent
   completions for overdue work whose result never reached the user.
 - Deadman checks are idempotent. A double-fire, or a fire that races the
   normal completion report, produces silence — it checks reported-state
@@ -93,20 +95,20 @@ mechanically enforces it; see "Durable execution" below):
 - A checkpoint or progress file is trusted only with a freshness check.
   A stale checkpoint reads as "still running" forever; compare its
   timestamp against the expected progress interval and against
-  `gbrain jobs get <id>`.
+  `foresights jobs get <id>`.
 
 ## Route the Request: Shell Job vs Subagent
 
 | Condition | Action |
 |---|---|
-| User asks for deterministic command/script run | Shell job (CLI: `gbrain jobs submit shell ...`) |
+| User asks for deterministic command/script run | Shell job (CLI: `foresights jobs submit shell ...`) |
 | User asks to "run in minions" + explicit command/argv | Shell job (CLI, `--params` with `cmd` or `argv`) |
-| User asks for research/reasoning/iterative agent | Subagent job (CLI: `gbrain agent run`) |
+| User asks for research/reasoning/iterative agent | Subagent job (CLI: `foresights agent run`) |
 | User asks to steer/pause/resume an agent | Subagent job lifecycle tools (MCP-callable) |
 | Single simple operation under ~30s | Consider inline execution first |
 | Needs restart durability/observability | Submit as Minion job |
 | Operation expected to exceed ~2 minutes | Route through the Durable execution ladder (below) |
-| Parallel work (2+ streams) | `gbrain agent run --fanout-manifest` or parent + child subagents |
+| Parallel work (2+ streams) | `foresights agent run --fanout-manifest` or parent + child subagents |
 
 If intent is ambiguous, ask one clarification:
 "Do you want a deterministic shell command job, or an LLM agent job?"
@@ -118,19 +120,19 @@ tasks where no LLM reasoning loop is needed.
 
 ### Preconditions (read before submitting your first shell job)
 
-- **The worker must be started with `gbrain jobs work --allow-shell-jobs`** (equivalently `GBRAIN_ALLOW_SHELL_JOBS=1` exported on the worker; a `.env` in the worker's directory cannot set it).
+- **The worker must be started with `foresights jobs work --allow-shell-jobs`** (equivalently `GBRAIN_ALLOW_SHELL_JOBS=1` exported on the worker; a `.env` in the worker's directory cannot set it).
   The shell handler is always registered but guarded: an unflagged worker that
   claims a shell job dead-letters it immediately (`UnrecoverableError`, straight
   to `dead`, no retries) with the flag named in `error_text`. A job that sits in
   `waiting` means NO worker is running at all — check
-  `gbrain jobs supervisor status`. Gate lives in `src/core/minions/handlers/shell.ts`.
+  `foresights jobs supervisor status`. Gate lives in `src/core/minions/handlers/shell.ts`.
 - **Security:** flipping `GBRAIN_ALLOW_SHELL_JOBS=1` authorizes arbitrary
   command execution on the worker. On a shared queue, this is a remote code
   execution surface. Treat as privileged infrastructure authorization.
 - **Execution mode — pick one:**
-  - **Postgres + daemon:** `gbrain jobs work` runs a persistent worker that
+  - **Postgres + daemon:** `foresights jobs work` runs a persistent worker that
     claims and executes jobs from the queue.
-  - **PGLite + --follow:** `gbrain jobs submit ... --follow` runs inline.
+  - **PGLite + --follow:** `foresights jobs submit ... --follow` runs inline.
     The daemon mode is not available on PGLite (exclusive file lock). See
     `docs/guides/minions-shell-jobs.md`.
 - **MCP boundary:** shell-job submission is CLI-only. `submit_job name="shell"`
@@ -139,7 +141,7 @@ tasks where no LLM reasoning loop is needed.
   Agents CAN observe shell jobs via `get_job` / `list_jobs` / `get_job_progress`
   (not protected), but cannot submit them. Operator or autopilot submits;
   agent observes.
-- **Verify setup:** after configuration, run `gbrain jobs stats` (CLI) to
+- **Verify setup:** after configuration, run `foresights jobs stats` (CLI) to
   confirm the worker is registered and consuming the queue.
 
 ### Submit (CLI, operator or autopilot)
@@ -149,20 +151,20 @@ or `argv` (array), plus `cwd` and optional `env`.
 
 Command string form:
 ```
-gbrain jobs submit shell --params '{"cmd":"echo hello","cwd":"/abs/path"}'
+foresights jobs submit shell --params '{"cmd":"echo hello","cwd":"/abs/path"}'
 ```
 
 Argv form (no shell expansion):
 ```
-gbrain jobs submit shell --params '{"argv":["bash","-lc","echo hello"],"cwd":"/abs/path"}'
+foresights jobs submit shell --params '{"argv":["bash","-lc","echo hello"],"cwd":"/abs/path"}'
 ```
 
 Inline execution on PGLite or any one-shot deployment:
 ```
-gbrain jobs submit shell --params '{"cmd":"echo hello","cwd":"/tmp"}' --follow
+foresights jobs submit shell --params '{"cmd":"echo hello","cwd":"/tmp"}' --follow
 ```
 
-Queue/lifecycle flags exposed by `gbrain jobs submit --help`: `--queue`,
+Queue/lifecycle flags exposed by `foresights jobs submit --help`: `--queue`,
 `--priority`, `--delay`, `--max-attempts`, `--max-stalled`, `--backoff-type`,
 `--backoff-delay`, `--backoff-jitter`, `--timeout-ms`, `--idempotency-key`,
 `--dry-run`.
@@ -178,7 +180,7 @@ get_job_progress ID
 ```
 
 Check structured result fields (exit code, stdout/stderr tails, attempts,
-timings) from `get_job`. Use `get_job_stats` (MCP) or `gbrain jobs stats`
+timings) from `get_job`. Use `get_job_stats` (MCP) or `foresights jobs stats`
 (CLI) for the worker/queue health dashboard incl. the wedged-queue signal.
 
 ### Control (MCP-callable)
@@ -197,7 +199,7 @@ Use idempotency keys for recurring shell workloads to avoid duplicate runs.
 
 Use for open-ended reasoning, tool-using research, and fan-out synthesis.
 
-**User-facing entrypoint:** `gbrain agent run <prompt>` is the canonical way
+**User-facing entrypoint:** `foresights agent run <prompt>` is the canonical way
 to submit subagent work. It handles the elevated-trust plumbing — `subagent`
 and `subagent_aggregator` are protected job names. Remote agents use the
 dedicated `submit_agent` operation with their configured source, tools, and
@@ -206,7 +208,7 @@ slug binding; generic `submit_job` does not accept these job names.
 ## Phase 1: Submit
 
 ```
-gbrain agent run --tools "search,query" "Research Acme Corp revenue"
+foresights agent run --tools "search,query" "Research Acme Corp revenue"
 ```
 
 `--tools` accepts a comma-separated subset of `BRAIN_TOOL_ALLOWLIST` (see
@@ -220,7 +222,7 @@ empty local tool list grants no tools.
 
 For parallel work with a fan-out manifest:
 ```
-gbrain agent run --fanout-manifest companies.json
+foresights agent run --fanout-manifest companies.json
 ```
 
 The manifest describes N children + 1 aggregator. Each child runs
@@ -239,20 +241,20 @@ Flags (from `src/commands/agent.ts`):
 - `--follow` / `--no-follow` — stream logs + wait (default on TTY)
 - `--detach` — submit and return immediately
 
-Queue/priority/retry tuning is not exposed by `gbrain agent run`; submit the
-raw `subagent` handler via `gbrain jobs submit` (requires CLI trust) if you
+Queue/priority/retry tuning is not exposed by `foresights agent run`; submit the
+raw `subagent` handler via `foresights jobs submit` (requires CLI trust) if you
 need those knobs.
 
 **Admission control (v0.46.11.0).** Identical parentless `subagent` submits
 (same owner lane, payload, and execution options) coalesce onto the existing
-waiting job: `gbrain agent run` prints `coalesced` with the matched job id,
+waiting job: `foresights agent run` prints `coalesced` with the matched job id,
 and the `submit_agent` MCP response carries `coalesced: true`. Treat that as
 success — monitor the matched id, do NOT resubmit. Jobs still waiting after
 the TTL (48h default for `subagent`; `minions.ttl_waiting_hours.<name>`)
 are cancelled with reason prefix `waiting_ttl_expired`. If an operator has
 configured a waiting quota (`minions.quota_max_waiting.<name>`), a submit
 past the cap returns a structured, retryable `rate_limited` error — back
-off and check `gbrain jobs stats` for a `DIVERGENT QUEUE` line before
+off and check `foresights jobs stats` for a `DIVERGENT QUEUE` line before
 retrying.
 
 ## Phase 2: Monitor
@@ -261,8 +263,8 @@ retrying.
 list_jobs --status active          # MCP — what's running?
 get_job ID                         # MCP — full details + logs + tokens
 get_job_progress ID                # MCP — structured progress snapshot
-gbrain jobs stats                  # CLI — queue health dashboard
-gbrain agent logs ID --follow      # CLI — streaming transcript + heartbeat
+foresights jobs stats                  # CLI — queue health dashboard
+foresights agent logs ID --follow      # CLI — streaming transcript + heartbeat
 ```
 
 Progress includes: step count, total steps, message, token usage, last tool called.
@@ -303,7 +305,7 @@ Child tokens roll up to parent automatically on completion.
 ## Durable execution (operations >2 minutes)
 
 Background shells die silently: session compaction, harness restart, tool
-timeout. Long gbrain operations (`extract all`, `embed --stale`, a full
+timeout. Long foresights operations (`extract all`, `embed --stale`, a full
 `sync --all`) routinely run 10-60 minutes — past every one of those
 ceilings. And even when the work survives, the *completion event* can be
 swallowed (worker restart, dropped notification), leaving the user staring
@@ -319,18 +321,18 @@ bare background shell except this skill saying don't.
 terminal, so a paid command (`embed --stale`, or anything else that calls a
 model provider) stops with exit 3 and a consent payload unless it already
 carries the user's approval. Get that approval first, in the conversation:
-run the command's preview (for example `gbrain embed --stale --dry-run`),
+run the command's preview (for example `foresights embed --stale --dry-run`),
 relay the estimate, and only after the user agrees put the approval in the
-submitted command (`gbrain embed --stale --yes --max-usd <cap>` with the cap
+submitted command (`foresights embed --stale --yes --max-usd <cap>` with the cap
 they approved), or rely on a standing approval the user set with
-`gbrain config set consent.preapprove.paid.max_usd_per_run <usd>`. Never add
+`foresights config set consent.preapprove.paid.max_usd_per_run <usd>`. Never add
 `--yes` without the user's answer. When a job ends with exit 3 or the
 `confirmation_required` code, relay its message to the
 user and stop; don't resubmit it with `--yes`.
 
 ### Rung 1 — Minion job + deadman (Postgres + worker)
 
-Requires: Postgres engine, a running `gbrain jobs work` worker, and — for
+Requires: Postgres engine, a running `foresights jobs work` worker, and — for
 the shell lane — a worker started with `--allow-shell-jobs` (or
 `GBRAIN_ALLOW_SHELL_JOBS=1` exported on it). All the
 Preconditions above still hold: the flag defaults OFF, shell submission is
@@ -340,13 +342,13 @@ CLI-only across the MCP trust boundary, and PGLite has no worker daemon
 1. **Submit as a job** so the work survives restarts:
 
    ```
-   gbrain jobs submit shell \
+   foresights jobs submit shell \
      --timeout-ms 3600000 \
-     --params '{"cmd":"gbrain extract all","cwd":"/abs/path","inherit":["database_url"]}'
+     --params '{"cmd":"foresights extract all","cwd":"/abs/path","inherit":["database_url"]}'
    ```
 
    Work that needs LLM judgment goes through the subagent lane
-   (`gbrain agent run`, above) instead — a submitted agent job you never
+   (`foresights agent run`, above) instead — a submitted agent job you never
    check on is the same bug as an unwatched shell job.
 
 2. **Arm a deadman in the same action block** (pattern below). Submitting
@@ -367,7 +369,7 @@ entire value of this rung.
 ### Rung 3 — foreground + output buffering (PGLite / no worker / no scheduler)
 
 Run the operation inline in the foreground — on PGLite that's
-`gbrain jobs submit ... --follow`, or just the raw command — and buffer
+`foresights jobs submit ... --follow`, or just the raw command — and buffer
 all output to a file, reading bounded slices, per
 `skills/conventions/exec-output.md`. An empty tool result after a long
 command is truncation, not a dead shell. This rung has no silent-death
@@ -389,18 +391,18 @@ submission** (not after, not "if I remember").
 3. Create the check with whatever one-shot scheduler the host offers: a
    harness cron tool with delete-after-run semantics, `at`, or a crontab
    entry the check removes on first fire. The check's instruction:
-   - Verify the result was **already reported to the user**. `gbrain jobs
+   - Verify the result was **already reported to the user**. `foresights jobs
      get <id>` gives the job state; the reported-check asks whether a
      completion message actually reached the user.
    - **Reported** → do nothing, stay silent, self-delete.
    - **Completed but unreported** (swallowed event) → pull the result via
-     `gbrain jobs get <id>` and post the recovery report now, tagged with
+     `foresights jobs get <id>` and post the recovery report now, tagged with
      the job ID.
    - **Still running** → post a one-line status with a new ETA and arm ONE
      follow-up deadman at +50% of the original estimate. One follow-up
      max — no infinite chains.
    - **Dead/failed** → report what it produced before dying (`stderr_tail`
-     from `gbrain jobs get <id>`) and offer `gbrain jobs retry <id>`.
+     from `foresights jobs get <id>`) and offer `foresights jobs retry <id>`.
 4. **Disarm on normal completion.** When the completion arrives and you
    report it, remove the deadman. If it fires anyway, the reported-check
    makes it a silent no-op — belt and suspenders.
@@ -434,7 +436,7 @@ process dies with the session — the exact failure being insured against).
 Maintenance operations share locks (`sync`, `embed`, `extract`,
 `integrity`). Run them **sequentially, chained**: submit job 1, arm its
 deadman; on completion, submit job 2, arm the next; finish with
-`gbrain doctor` and report the health delta. If a job dies mid-operation
+`foresights doctor` and report the health delta. If a job dies mid-operation
 its lock expires at TTL (a live, recently-refreshed holder is protected by
 the steal grace) — never hand-delete lock rows to "unstick" a queue.
 
@@ -518,21 +520,21 @@ Total tokens so far: 4.3k
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
-- `gbrain jobs submit` over MCP for a protected job returns `permission_denied`: it must run from the trusted local CLI on the brain host; tell the user.
+- `foresights jobs submit` over MCP for a protected job returns `permission_denied`: it must run from the trusted local CLI on the brain host; tell the user.
 - A shell job dead-letters immediately with the flag named in `error_text` (shell jobs disabled): tell the user which env flag the host operator must set; do not retry.
 - `rate_limited` from the submission cap: back off for the stated delay before resubmitting; do not fan out more submissions meanwhile.
-- A job sits in `waiting` with no worker: confirm a worker is registered (`gbrain jobs get <id>`) before resubmitting.
+- A job sits in `waiting` with no worker: confirm a worker is registered (`foresights jobs get <id>`) before resubmitting.
 
 ## Anti-Patterns
 
 - Don't spawn a Minion for a single search query (use search tool directly)
 - Don't fire-and-forget without checking results
-- Don't spawn > 5 concurrent agents without checking `gbrain jobs stats` first
+- Don't spawn > 5 concurrent agents without checking `foresights jobs stats` first
 - Don't resubmit when a submit reports `coalesced` — the work is already queued; monitor the matched job id instead
-- For subagent work, don't use `sessions_spawn` with `runtime: "subagent"` when Minions is available (use `gbrain agent run` instead)
-- Don't poll `get_job` in a tight loop: after a long submit, offer `watch_job` when it's listed so gbrain reports back when the job finishes (else `get_job_progress`); on OpenClaw offer `gbrain setup openclaw --wakeshift`, never run it unasked
+- For subagent work, don't use `sessions_spawn` with `runtime: "subagent"` when Minions is available (use `foresights agent run` instead)
+- Don't poll `get_job` in a tight loop: after a long submit, offer `watch_job` when it's listed so foresights reports back when the job finishes (else `get_job_progress`); on OpenClaw offer `foresights setup openclaw --wakeshift`, never run it unasked
 - Don't run an operation expected to exceed ~2 minutes as a bare background shell — it dies with the session; route through the Durable execution ladder
 - Don't say "I'll report back when it finishes" without an armed deadman or a scheduled check that will actually fire
 - Don't let a deadman post noise when the completion arrived normally — check reported-state first, stay silent, self-delete
@@ -552,4 +554,4 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 - Send sidechannel message — `send_job_message` (MCP)
 - Get structured progress — `get_job_progress` (MCP)
 - Queue stats — `get_job_stats` (MCP; admin scope over HTTP, same as the other
-  jobs ops here — includes the wedged-queue silent-halt signal) or `gbrain jobs stats` (CLI)
+  jobs ops here — includes the wedged-queue silent-halt signal) or `foresights jobs stats` (CLI)

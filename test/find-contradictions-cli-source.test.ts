@@ -1,5 +1,5 @@
 /**
- * N2-2 — bare `gbrain find-contradictions` reads the latest run.
+ * N2-2 — bare `foresights find-contradictions` reads the latest run.
  *
  * skills/correction-pipeline/SKILL.md documents the bare command as reading
  * the latest probe run. makeContext always populates ctx.sourceId (falling

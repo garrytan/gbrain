@@ -1,5 +1,5 @@
 /**
- * GST-327: `gbrain repair secret-spans` redacts only the secret spans in every database copy of the named pages.
+ * GST-327: `foresights repair secret-spans` redacts only the secret spans in every database copy of the named pages.
  *
  * Repo-less brain (no worktree, the database is the record): an inline page whose title, frontmatter value, body,
  * timeline rows, fact, take, link context and raw data hold credentials (one glued to an existing marker, one only an
@@ -102,7 +102,7 @@ async function seed(engine: BrainEngine) {
     [alpha.id, JSON.stringify({ request: { headers: { authorization: `Bearer ${BEARER}` }, ids: [1, 2] }, note: 'kept as is' })]);
 }
 
-describe('GST-327 gbrain repair secret-spans on a repo-less brain', () => {
+describe('GST-327 foresights repair secret-spans on a repo-less brain', () => {
   test('preview writes nothing; refusals; preview_changed; the apply redacts only the spans; a second preview is empty', () => withEnv({ GBRAIN_HOME: home }, async () => {
     for (const { name, engine } of repoLess) {
       {
@@ -213,7 +213,7 @@ describe('GST-327 gbrain repair secret-spans on a repo-less brain', () => {
   }), 300_000);
 });
 
-describe('GST-327 gbrain repair secret-spans: resume and refusals', () => {
+describe('GST-327 foresights repair secret-spans: resume and refusals', () => {
   test('an apply stopped by --limit resumes in page-id order and finishes; colliding timeline rows and ontology values refuse their page', () => withEnv({ GBRAIN_HOME: home }, async () => {
     const { engine } = repoLess[0]!;
     const AWS2 = 'AKIA' + 'EXAMPLENOTREAL01';
@@ -248,7 +248,7 @@ describe('GST-327 gbrain repair secret-spans: resume and refusals', () => {
   }), 120_000);
 });
 
-for (const backend of testBackends()) describe(`GST-327 gbrain repair secret-spans on a managed brain (${backend})`, () => {
+for (const backend of testBackends()) describe(`GST-327 foresights repair secret-spans on a managed brain (${backend})`, () => {
   test('a held page is redacted in the database; its file, its hold and Git stay as they are', () => managedBrain(async ({ engine, ctx, root }) => {
     const slug = 'notes/held-example';
     await submitPageMutation(ctx, { operation: 'put_page', params: { slug, source_id: 'default', request_id: randomUUID(),
@@ -286,7 +286,7 @@ for (const backend of testBackends()) describe(`GST-327 gbrain repair secret-spa
     databaseUrl: backend === 'postgres' ? requirePostgresTestDatabase() : undefined }), 120_000);
 });
 
-describe('GST-327 gbrain repair secret-spans command line', () => {
+describe('GST-327 foresights repair secret-spans command line', () => {
   test('--rules is parsed, sorted and checked before anything runs, and belongs to secret-spans only', () => {
     expect(parseRepairArgs(['secret-spans', '--source', 'default', '--slug', 'notes/a', '--rules', 'openai, aws_access_key']).rules).toEqual(['aws_access_key', 'openai']);
     expect(() => parseRepairArgs(['secret-spans', '--source', 'default', '--slug', 'notes/a', '--rules', 'openai,not_a_rule'])).toThrow(/Unknown secret rule/);

@@ -115,7 +115,7 @@ describe('connectEngineForServe', () => {
   }, 60_000);
 });
 
-describe('gbrain call sizes its connect by the operation scope', () => {
+describe('foresights call sizes its connect by the operation scope', () => {
   const stub = {
     executeRaw: async (sql: string) => sql.includes('FROM sources') ? [{ id: 'default' }] : [],
     getStats: async () => ({ pages: 1, chunks: 1 }),

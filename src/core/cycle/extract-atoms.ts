@@ -655,7 +655,7 @@ export async function tombstonedTranscriptsForHashes(
       // Un-migrated brain: the table lands with v146. Once per process, not a
       // full error line on every cycle until the operator migrates.
       warnOncePerProcess('extract_atoms.transcript_state_missing',
-        `[extract_atoms] extract_atoms_transcript_state is missing (run gbrain migrate); transcript failure counts and tombstones are off until then.`);
+        `[extract_atoms] extract_atoms_transcript_state is missing (run foresights migrate); transcript failure counts and tombstones are off until then.`);
       return new Set();
     }
     const msg = err instanceof Error ? err.message : String(err);
@@ -668,7 +668,7 @@ export const EXTRACT_ATOMS_MODEL_KEY = 'models.dream.extract_atoms';
 
 /**
  * The model resolution `runPhaseExtractAtoms` uses, shared with the
- * `gbrain models` row so the two cannot diverge (`source` and `label` come
+ * `foresights models` row so the two cannot diverge (`source` and `label` come
  * from the SAME call as `model`). Chain (#6675, decision D3 option B):
  * `models.dream.extract_atoms` > `models.tier.utility` > the key-aware
  * `resolveTierDefault('utility')`. `models.default` and `GBRAIN_MODEL` are
@@ -996,7 +996,7 @@ export async function runPhaseExtractAtoms(
     }
   }
 
-  // ── gbrain#4148 helpers ────────────────────────────────────────────
+  // ── foresights#4148 helpers ────────────────────────────────────────────
   let malformedOutputs = 0, stoppedOutputs = 0; // #6260: stopped = clipped, or empty under an unconfirmed stop
   const tombstonedForFailures: string[] = [];
   // v146: transcript tombstones ride a SEPARATE array. `tombstoned_for_failures`
@@ -1016,7 +1016,7 @@ export async function runPhaseExtractAtoms(
   let hardFailureCount = 0;
   let writesPending = 0; // #5601: accepted atom batches still publishing (progress, not failures)
   let heldFailed = 0;
-  // GBRA-161: one run id for the receipt and every generation this run publishes (`gbrain repair generations --run`).
+  // GBRA-161: one run id for the receipt and every generation this run publishes (`foresights repair generations --run`).
   const runId = `atoms-${Date.now().toString(36)}-${sourceId.slice(0, 4)}`;
   let inputTruncated = 0; // #6503: items cut at the input cap this run (partial disposition, see extract-atoms-input.ts)
 
@@ -1078,7 +1078,7 @@ export async function runPhaseExtractAtoms(
     }
   }
 
-  // gbrain#4148 content-deterministic classes: hash-keyed bounded tombstone (v146: transcripts too).
+  // foresights#4148 content-deterministic classes: hash-keyed bounded tombstone (v146: transcripts too).
   async function recordDeterministicFailure(item: WorkItem, source: string, error: string): Promise<void> {
     hardFailureCount++;
     const failCount = await recordItemFailureCount(item);
@@ -1146,7 +1146,7 @@ export async function runPhaseExtractAtoms(
 
       estimatedSpendUsd = budgetTracker.totalSpent;
 
-      // gbrain#4148: typed outcome — malformed output is a FAILURE (counted
+      // foresights#4148: typed outcome — malformed output is a FAILURE (counted
       // toward the bounded tombstone below), never a zero-yield success.
       const parseOutcome = parseAtomsOutcome(result.text, result.stopReason);
       if (!parseOutcome.ok) {
@@ -1166,7 +1166,7 @@ export async function runPhaseExtractAtoms(
         // unchanged (edits re-eligibilize, mirroring atom-row staleness).
         // Only stamped after a SUCCESSFUL chat call — LLM failures take the
         // catch path below and stay retryable, and malformed output is
-        // counted above (gbrain#4148), never stamped as success.
+        // counted above (foresights#4148), never stamped as success.
         //
         // v146: transcripts now stamp too, IMMEDIATELY, exactly as pages do —
         // a zero-yield is a settled answer about this content, not a failure,
@@ -1189,7 +1189,7 @@ export async function runPhaseExtractAtoms(
       }
 
       if (!opts.dryRun) {
-        // gbrain#4148 completion receipt: atoms import with a PROVISIONAL
+        // foresights#4148 completion receipt: atoms import with a PROVISIONAL
         // source_hash (`pending:<hash>`) that discovery's NOT-EXISTS check
         // can never match, then ONE flip UPDATE marks the whole item done
         // after every atom persisted. Pre-fix, atom writes were per-atom
@@ -1303,7 +1303,7 @@ export async function runPhaseExtractAtoms(
           }
           if (!managed) totalAtomsExtracted++;
         }
-        // #3961: bank the provenance edges so `gbrain backlinks <source-page>`
+        // #3961: bank the provenance edges so `foresights backlinks <source-page>`
         // and the graph surface atom lineage. ON CONFLICT-deduped by the
         // batch write, so a retry after either this write or the completion
         // flip converges instead of duplicating. #4733: this MUST precede the
@@ -1357,7 +1357,7 @@ export async function runPhaseExtractAtoms(
       if (concurrent) { if (concurrent === 'done') duplicatesSkipped++; else if (concurrent === 'held') heldFailed++; else writesPending++; continue; }
       const written = managed && origin ? await atomWriteFailure(engine, managed, origin, err) : null; // #7514: never a provider error
       if (written) { hardFailureCount++; failures.push({ source: originLabel, ...written }); continue; }
-      // gbrain#4148: classify. Transient provider/infra errors (timeouts,
+      // foresights#4148: classify. Transient provider/infra errors (timeouts,
       // rate limits, 5xx, network) stay retryable and are NOT counted toward
       // any tombstone. A provider content block (prompt-level refusal) is
       // content-deterministic: it takes the bounded tombstone path before the
@@ -1421,7 +1421,7 @@ export async function runPhaseExtractAtoms(
     }
   }
   if (!opts.dryRun && !hardStopped) {
-    // gbrain#4148 / TRANSIENT_EXTRACT_ERROR_RE: transient provider/infra
+    // foresights#4148 / TRANSIENT_EXTRACT_ERROR_RE: transient provider/infra
     // failures (rate limits, timeouts, 5xx, network) are "retryable, never
     // counted" by design — count only hardFailureCount here, not
     // failures.length (which stays inclusive, for CLI/receipt reporting),

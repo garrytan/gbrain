@@ -17,7 +17,7 @@ when_to_use: "Use when the user asks: \"share this page\", \"publish page\", \"c
 Share brain pages as beautiful, self-contained HTML documents. Optionally
 password-protected with client-side AES-256-GCM encryption. No server needed.
 
-This is a **code + skill pair**: the deterministic code (`gbrain publish`) does
+This is a **code + skill pair**: the deterministic code (`foresights publish`) does
 the stripping, encrypting, and HTML generation. This skill tells you when and
 how to use it. See [Thin Harness, Fat Skills](https://x.com/garrytan/status/2042925773300908103)
 for the architecture philosophy.
@@ -49,19 +49,19 @@ channel than the URL.
 
 ```bash
 # Basic publish (outputs local HTML file)
-gbrain publish brain/companies/acme.md
+foresights publish brain/companies/acme.md
 
 # Password protected (auto-generate password)
-gbrain publish brain/companies/acme.md --password
+foresights publish brain/companies/acme.md --password
 
 # Password protected (specific password)
-gbrain publish brain/companies/acme.md --password "secret123"
+foresights publish brain/companies/acme.md --password "secret123"
 
 # Custom title
-gbrain publish brain/companies/acme.md --password --title "Acme -- Deal Analysis"
+foresights publish brain/companies/acme.md --password --title "Acme -- Deal Analysis"
 
 # Custom output path
-gbrain publish brain/companies/acme.md --out /tmp/acme-share.html
+foresights publish brain/companies/acme.md --out /tmp/acme-share.html
 ```
 
 ## What Gets Stripped
@@ -84,7 +84,7 @@ The publish command automatically removes all private/internal data:
 ### Option A: Local file (simplest)
 
 ```bash
-gbrain publish brain/people/jane-doe.md --password --out ~/Desktop/jane-briefing.html
+foresights publish brain/people/jane-doe.md --password --out ~/Desktop/jane-briefing.html
 ```
 
 Share the HTML file via email, Slack, Airdrop. Share the password separately.
@@ -93,13 +93,13 @@ Share the HTML file via email, Slack, Airdrop. Share the password separately.
 
 ```bash
 # Publish locally first
-gbrain publish brain/companies/acme.md --password "secret" --out /tmp/acme.html
+foresights publish brain/companies/acme.md --password "secret" --out /tmp/acme.html
 
 # Upload to Supabase Storage
-gbrain files upload /tmp/acme.html --page shares/acme
+foresights files upload /tmp/acme.html --page shares/acme
 
 # Get a signed URL (1-hour expiry)
-gbrain files signed-url shares/acme/acme.html
+foresights files signed-url shares/acme/acme.html
 ```
 
 Share the signed URL + password. URL expires in 1 hour. Re-generate as needed.
@@ -113,7 +113,7 @@ Web Crypto API.
 ### Option D: GitHub Pages / Gist
 
 ```bash
-gbrain publish brain/trips/japan-2026.md --out trip.html
+foresights publish brain/trips/japan-2026.md --out trip.html
 # Upload to a GitHub Gist or Pages repo
 ```
 
@@ -134,7 +134,7 @@ not present anywhere in the file.
 
 Re-run the publish command with the same output path:
 ```bash
-gbrain publish brain/companies/acme.md --password "same-password" --out shares/acme.html
+foresights publish brain/companies/acme.md --password "same-password" --out shares/acme.html
 ```
 
 Same file, same URL (if hosted), updated content.
@@ -146,16 +146,16 @@ If using static hosting, remove the file from the host.
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - The source page returns `page_not_found`: resolve the real slug first; never publish a guessed page.
-- `gbrain files upload` / `gbrain files signed-url` fails (storage not configured, `bucket_not_found`): tell the user publishing needs storage and run `gbrain doctor --json`; do not paste private page content instead.
+- `foresights files upload` / `foresights files signed-url` fails (storage not configured, `bucket_not_found`): tell the user publishing needs storage and run `foresights doctor --json`; do not paste private page content instead.
 
 ## Anti-Patterns
 
 - **Publishing without encryption.** Brain content is private. Default to password-protected unless the user explicitly says "open", "no password", or "public".
 - **Sharing password and URL in the same channel.** Always share the password via a different channel than the URL for security.
-- **Assuming the user wants raw markdown.** The publish command produces beautiful HTML. Don't copy-paste markdown when `gbrain publish` exists.
+- **Assuming the user wants raw markdown.** The publish command produces beautiful HTML. Don't copy-paste markdown when `foresights publish` exists.
 - **Including internal metadata.** Never manually share content that contains frontmatter, source citations, or timeline sections. Let the publish command strip it.
 
 ## Output Format
@@ -175,6 +175,6 @@ Share the password via: [a different channel]
 
 ## Tools Used
 
-- `gbrain publish` -- deterministic HTML generation (no LLM calls)
-- `gbrain files upload` -- upload to cloud storage (optional)
-- `gbrain files signed-url` -- generate access links (optional)
+- `foresights publish` -- deterministic HTML generation (no LLM calls)
+- `foresights files upload` -- upload to cloud storage (optional)
+- `foresights files signed-url` -- generate access links (optional)

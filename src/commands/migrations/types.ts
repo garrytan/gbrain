@@ -88,7 +88,7 @@ export interface Migration {
    */
   effects?: readonly Effect[];
   /**
-   * True only when the orchestrator changes nothing on a brain `gbrain init`
+   * True only when the orchestrator changes nothing on a brain `foresights init`
    * just created: schema already current, no data to backfill, no files,
    * preferences or services to write. Init records these as complete
    * (`fresh_install: true` ledger entries, `./fresh-install.ts`); every other

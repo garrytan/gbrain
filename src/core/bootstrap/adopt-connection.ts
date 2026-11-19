@@ -1,9 +1,9 @@
 /**
- * `gbrain bootstrap hooks --adopt --harness codex [--name <server>]` (#4082):
+ * `foresights bootstrap hooks --adopt --harness codex [--name <server>]` (#4082):
  * record an operator-managed Codex project connection as the wire phase's
  * evidence instead of registering a user-global `codex mcp add` entry it does
  * not need. Adoption needs proof the connection works, and the proof is the
- * install contract: the newest `gbrain bootstrap verify` run must have passed
+ * install contract: the newest `foresights bootstrap verify` run must have passed
  * and must be newer than the project config it vouches for. Nothing is written
  * to `.codex/config.toml`, no receipt registration is fabricated, and the
  * recorded fingerprint carries no header values or tokens.
@@ -24,7 +24,7 @@ export interface AdoptConnectionResult { code: number; lines: string[] }
 
 export function adoptConnection(ws: string, gbrainHomeDir: string, harness: Harness, name = DEFAULT_CODEX_SERVER_NAME): AdoptConnectionResult {
   if (harness !== 'codex') {
-    return { code: 2, lines: [`--adopt applies to a Codex project config (${CODEX_PROJECT_CONFIG}); ${harness} registrations are bootstrap-owned — run \`gbrain bootstrap hooks --harness ${harness}\` without --adopt`] };
+    return { code: 2, lines: [`--adopt applies to a Codex project config (${CODEX_PROJECT_CONFIG}); ${harness} registrations are bootstrap-owned — run \`foresights bootstrap hooks --harness ${harness}\` without --adopt`] };
   }
   let detected: ReturnType<typeof detectCodexProjectServer>;
   try {
@@ -33,17 +33,17 @@ export function adoptConnection(ws: string, gbrainHomeDir: string, harness: Harn
     return { code: 1, lines: [`${CODEX_PROJECT_CONFIG} does not parse: ${error instanceof Error ? error.message : String(error)} — fix the file, then re-run`] };
   }
   if (!detected) {
-    return { code: 1, lines: [`nothing to adopt: ${CODEX_PROJECT_CONFIG} does not define mcp_servers.${name} in this workspace (pass --name <server> for another table, or run \`gbrain bootstrap hooks --harness codex\` for a bootstrap-owned registration)`] };
+    return { code: 1, lines: [`nothing to adopt: ${CODEX_PROJECT_CONFIG} does not define mcp_servers.${name} in this workspace (pass --name <server> for another table, or run \`foresights bootstrap hooks --harness codex\` for a bootstrap-owned registration)`] };
   }
   const verify = listVerifyRuns(gbrainHomeDir)[0] ?? null;
   if (!verify || !verify.ok) {
     return { code: 1, lines: [verify
-      ? `the newest \`gbrain bootstrap verify\` run (${verify.ts}) failed: ${verify.checks_failed.join(', ')} — fix it and re-run verify before adopting`
-      : 'no `gbrain bootstrap verify` run on record — adoption needs a passing verify as evidence; run it from this workspace first'] };
+      ? `the newest \`foresights bootstrap verify\` run (${verify.ts}) failed: ${verify.checks_failed.join(', ')} — fix it and re-run verify before adopting`
+      : 'no `foresights bootstrap verify` run on record — adoption needs a passing verify as evidence; run it from this workspace first'] };
   }
   const configMtime = statSync(join(ws, CODEX_PROJECT_CONFIG)).mtime.toISOString();
   if (configMtime > verify.ts) {
-    return { code: 1, lines: [`${CODEX_PROJECT_CONFIG} changed at ${configMtime}, after the newest passing verify (${verify.ts}) — re-run \`gbrain bootstrap verify\`, then adopt`] };
+    return { code: 1, lines: [`${CODEX_PROJECT_CONFIG} changed at ${configMtime}, after the newest passing verify (${verify.ts}) — re-run \`foresights bootstrap verify\`, then adopt`] };
   }
   recordAdoptedConnection(gbrainHomeDir, {
     harness: 'codex',
@@ -60,7 +60,7 @@ export function adoptConnection(ws: string, gbrainHomeDir: string, harness: Harn
     code: 0,
     lines: [
       `adopted codex project connection mcp_servers.${name} (${detected.transport} ${detected.target}) — evidence: verify ${verify.ts}`,
-      `recorded in ${adoptedConnectionsPath(gbrainHomeDir)} (fingerprint ${detected.fingerprint.slice(0, 12)}…; no tokens stored); \`gbrain bootstrap status\` now reports the wire phase done`,
+      `recorded in ${adoptedConnectionsPath(gbrainHomeDir)} (fingerprint ${detected.fingerprint.slice(0, 12)}…; no tokens stored); \`foresights bootstrap status\` now reports the wire phase done`,
     ],
   };
 }

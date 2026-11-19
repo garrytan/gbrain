@@ -16,11 +16,11 @@ describe('summarizeTransition (5-cell matrix + invalid fallthrough)', () => {
     const s = summarizeTransition('balanced', 'tokenmax');
     expect(s.kind).toBe('tokenmax_opt_in');
     expect(s.reindex_required).toBe(true);
-    expect(s.reindex_command).toBe('gbrain reindex --synopsis');
+    expect(s.reindex_command).toBe('foresights reindex --synopsis');
     expect(s.cost_estimate_per_query_cents).toBeGreaterThan(0);
     expect(s.callout_lines.some((l) => l.includes('tokenmax'))).toBe(true);
     // #8744: import and reindex --markdown embed at the title tier; only the synopsis sweep backfills.
-    expect(s.callout_lines.some((l) => l.includes('`gbrain reindex --synopsis`'))).toBe(true);
+    expect(s.callout_lines.some((l) => l.includes('`foresights reindex --synopsis`'))).toBe(true);
     expect(s.callout_lines.join('\n')).not.toContain('reindex --markdown');
   });
 
@@ -89,8 +89,8 @@ describe('runModeSwitchUx without a TTY', () => {
   test('balanced → tokenmax: the banner names the free synopsis sweep preview, not reindex --markdown', async () => {
     const lines = await capture('tokenmax');
     expect(lines[0]).toBe('[mode-switch] Switched to tokenmax. Per-chunk Haiku synopsis enabled.');
-    expect(lines.some((l) => l.includes('`gbrain reindex --synopsis`'))).toBe(true);
-    expect(lines.at(-1)).toBe('[mode-switch] Preview the backfill (spends nothing): gbrain reindex --synopsis');
+    expect(lines.some((l) => l.includes('`foresights reindex --synopsis`'))).toBe(true);
+    expect(lines.at(-1)).toBe('[mode-switch] Preview the backfill (spends nothing): foresights reindex --synopsis');
     expect(lines.join('\n')).not.toContain('reindex --markdown');
   });
 

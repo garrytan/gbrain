@@ -154,7 +154,7 @@ async function checkAnySource(req: Precondition, ctx: PreconditionContext): Prom
       : `no source holds any pages`,
     hint: met
       ? `corpus present (${ids.length} source(s))`
-      : `ingest a corpus first (gbrain sync / gbrain import), then re-run`,
+      : `ingest a corpus first (foresights sync / foresights import), then re-run`,
   };
 }
 
@@ -168,7 +168,7 @@ async function checkSpecificSource(req: Precondition, ctx: PreconditionContext):
     detail: met ? `source '${id}' exists` : `source '${id}' not found (have: ${ids.join(', ') || 'none'})`,
     hint: met
       ? `source '${id}' present`
-      : `add or ingest source '${id}' first (gbrain sources add ${id} / gbrain sync --source ${id}), then re-run`,
+      : `add or ingest source '${id}' first (foresights sources add ${id} / foresights sync --source ${id}), then re-run`,
   };
 }
 
@@ -210,7 +210,7 @@ async function checkConfig(req: Precondition, ctx: PreconditionContext): Promise
     req,
     met,
     detail: met ? `${key} is set` : `${key} is not set (empty or missing)`,
-    hint: met ? `${key} is set` : `set it: gbrain config set ${key} <value>`,
+    hint: met ? `${key} is set` : `set it: foresights config set ${key} <value>`,
   };
 }
 

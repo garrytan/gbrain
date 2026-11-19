@@ -23,7 +23,7 @@ export function keepStoredStamps(parsed: ParsedMarkdown, stored?: { type: string
 }
 
 /**
- * GST-2603: the stamps gbrain wrote into a page's stored frontmatter and never into its file, kept for a file that carries
+ * GST-2603: the stamps foresights wrote into a page's stored frontmatter and never into its file, kept for a file that carries
  * none of its own, so every file-versus-page comparison (page-prepare.ts fileMatchesSnapshot, labelEditFile) and every
  * import of the file reads them the same way: the grandfather stamp (`keepGrandfatherStamp`), and with `retypeRecord` the
  * rollback record of a schema-pack retype (`legacy_type`, the type the page had) once the file's type is the page's type
@@ -55,8 +55,8 @@ export function keepRetypeStamp(parsed: ParsedMarkdown, stored?: { type: string;
 }
 
 /**
- * GST-2584: a page type gbrain itself named and later renamed. Before #6454 an import kept the reserved `type` key in the
- * stored frontmatter, and gbrain wrote that type into the file, with the name gbrain-base 1.0.0 infers from the path
+ * GST-2584: a page type foresights itself named and later renamed. Before #6454 an import kept the reserved `type` key in the
+ * stored frontmatter, and foresights wrote that type into the file, with the name gbrain-base 1.0.0 infers from the path
  * (`writing/` is `writing`). A later pack infers another type for the same path and the column took it, so the file and the
  * stored copy still say the 1.0.0 name. A file whose explicit type is that name, equal to the stored copy and to what
  * gbrain-base 1.0.0 infers for its path, while the column says otherwise, is the page as renamed: it keeps the stored type.

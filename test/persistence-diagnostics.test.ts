@@ -67,7 +67,7 @@ for (const reason of ['writer_busy', 'database_contention']) test.each([0, 18000
   const [blocker] = (await readWriterDiagnostics(engine)).blockers;
   expect(blocker.diagnostic?.next_action).toBe(age >= 120000 ? 'inspect_owner' : 'poll');
   expect(blocker.next_action).toContain(WRITER_NEXT_ACTIONS[reason]);
-  if (age >= 120000) expect(blocker.next_action).toContain('Inspect gbrain sources writer status');
+  if (age >= 120000) expect(blocker.next_action).toContain('Inspect foresights sources writer status');
   else expect(blocker.next_action).toBe(WRITER_NEXT_ACTIONS[reason]);
 });
 

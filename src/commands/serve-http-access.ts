@@ -9,8 +9,8 @@ import { executeRawJsonb } from '../core/sql-query.ts';
 /**
  * GST-1094 gap 4: owner administration of the people a trusted system serves, over the running server: the attest
  * right on a client, members, and the canonical ids linked to them. Owner session only (requireAdmin); never an MCP
- * operation or an OAuth scope. Every refusal is the library's, as on the local CLI (gbrain auth rescope --attest-actor,
- * gbrain access member add|disable|enable|link|unlink).
+ * operation or an OAuth scope. Every refusal is the library's, as on the local CLI (foresights auth rescope --attest-actor,
+ * foresights access member add|disable|enable|link|unlink).
  *
  * GST-1158: a member's declared email is set on add or with action set, and a link may name the member by that email
  * instead of its id. Only here and on the brain host: no MCP operation or OAuth scope reads or sets it.
@@ -91,7 +91,7 @@ const PROPOSAL_DECISION_FIELDS = ['action', 'reason', 'dryRun'];
 
 /**
  * GST-2407: the owner's review of memory proposals (memory_propose) over the running server, the remote twin of
- * gbrain memory-proposals list|show|approve|deny. Approve and deny run the command's own library calls (one transaction,
+ * foresights memory-proposals list|show|approve|deny. Approve and deny run the command's own library calls (one transaction,
  * the stored actor and page revision re-checked, publication through the writer door) with decided_by admin-api. The
  * proposed text is shown only inside the transcript fence, each decision names exactly one request id, and each
  * applied decision leaves one audit row that never carries the proposed text.

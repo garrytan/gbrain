@@ -5,7 +5,7 @@
  * `buildIndexOnline` (CONCURRENTLY on Postgres, inline on PGLite). DDL only:
  * no `ALTER TABLE … ADD COLUMN` (DECISIONS.md D2 keeps the cap column out).
  * The Postgres schema blob omits the index; PGLite's blob carries it, so a fresh
- * PGLite brain needs no build. `gbrain repair request-indexes` rebuilds a
+ * PGLite brain needs no build. `foresights repair request-indexes` rebuilds a
  * dropped (both engines) or INVALID (Postgres) index on a current schema, and a
  * concurrent writer keeps committing while the Postgres build runs.
  *
@@ -75,7 +75,7 @@ for (const backend of testBackends()) describe(`[${backend}] #6511 the slug inde
     expect(await state()).toBe('valid');
   });
 
-  test('a dropped index is rebuilt by the migration handler and by gbrain repair request-indexes; a second repair is a no-op', async () => {
+  test('a dropped index is rebuilt by the migration handler and by foresights repair request-indexes; a second repair is a no-op', async () => {
     await engine.executeRaw(`DROP INDEX ${INDEX.name}`);
     expect(await state()).toBe('missing');
     await migration!.handler!(engine);
@@ -83,7 +83,7 @@ for (const backend of testBackends()) describe(`[${backend}] #6511 the slug inde
     await engine.executeRaw(`DROP INDEX ${INDEX.name}`);
     const scope = await resolveRepairScope(engine);
     const preview = await runRepair(ctx(), requestIndexesRepair, scope, { apply: false });
-    expect(preview).toMatchObject({ affected: 1, apply_command: 'gbrain repair request-indexes --apply' });
+    expect(preview).toMatchObject({ affected: 1, apply_command: 'foresights repair request-indexes --apply' });
     expect(await state()).toBe('missing');
     expect(await runRepair(ctx(), requestIndexesRepair, scope, { apply: true })).toMatchObject({ applied: 1, complete: true });
     expect(await state()).toBe('valid');

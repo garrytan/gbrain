@@ -30,7 +30,7 @@ bun evals/pinned-questions/benefit-gate.ts --run --yes --max-usd <cap> \
 
 `--run` refuses (exit 3) without `--yes` and a `--max-usd` at or above the
 plan's estimate. `--entities N` and `--batches N` size the workload; `--seed`
-fixes it. Paid runs follow the model-selection rules for gbrain evals (newest
+fixes it. Paid runs follow the model-selection rules for foresights evals (newest
 frontier models of each family) and are scheduled by the wave's owner;
 `test/pinned-questions-benefit-gate.test.ts` covers the offline plumbing.
 

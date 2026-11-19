@@ -1,5 +1,5 @@
 /**
- * #4778 — `GBRAIN_SOURCE=<id> gbrain dream` scopes the cycle like `--source <id>`.
+ * #4778 — `GBRAIN_SOURCE=<id> foresights dream` scopes the cycle like `--source <id>`.
  *
  * Pre-fix, dream entered the shared 6-tier source resolver only behind the
  * `--source` flag gate, so tier 2 (GBRAIN_SOURCE: validate + assertSourceExists)
@@ -93,7 +93,7 @@ async function runExpectingExit1(args: string[]): Promise<string[]> {
   }
 }
 
-describe('gbrain dream honors GBRAIN_SOURCE like --source (#4778)', () => {
+describe('foresights dream honors GBRAIN_SOURCE like --source (#4778)', () => {
   test('two-source brain: GBRAIN_SOURCE=source-a stamps source-a only', async () => {
     await seedSource('source-a', dirA);
     await seedSource('source-b', dirB);

@@ -21,10 +21,10 @@
  * the resident consumer's idle tick, and `refreshProjectionStatistics` (full
  * ANALYZE, then watermarks for every table). `planner.auto_analyze=false`
  * (env GBRAIN_PLANNER_AUTO_ANALYZE) disables all of them; doctor
- * `planner_stats_stale` and `gbrain repair planner-stats` keep working.
+ * `planner_stats_stale` and `foresights repair planner-stats` keep working.
  * Postgres: every refresh here is a no-op (autovacuum owns statistics);
  * doctor and repair read autovacuum's counters and the expression-index probe,
- * and an operator runs `gbrain repair planner-stats --apply`.
+ * and an operator runs `foresights repair planner-stats --apply`.
  */
 import type { BrainEngine } from './engine.ts';
 import { lockTableForAnalyze } from './analyze-lock.ts';
@@ -35,7 +35,7 @@ export const PLANNER_STATS_PENDING_RATIO = 0.1;
 export const PLANNER_STATS_THROTTLE_MS = 2000;
 export const DEFAULT_FIRST_READ_BUDGET_MS = 2000;
 export const DEFAULT_IMPORT_ANALYZE_EVERY_PAGES = 500;
-export const PLANNER_STATS_REPAIR_COMMAND = 'gbrain repair planner-stats --apply';
+export const PLANNER_STATS_REPAIR_COMMAND = 'foresights repair planner-stats --apply';
 
 export type PlannerRefreshReason = 'first_read' | 'import' | 'managed_sync' | 'extract' | 'cycle' | 'idle' | 'repair';
 
@@ -194,7 +194,7 @@ export async function readPlannerTableStates(engine: BrainEngine): Promise<Plann
 }
 
 /**
- * `gbrain repair planner-stats --apply`: one bounded ANALYZE on the brain host (Postgres: 60 s statement; a table
+ * `foresights repair planner-stats --apply`: one bounded ANALYZE on the brain host (Postgres: 60 s statement; a table
  * another session holds, such as a running autovacuum, throws `lockTableForAnalyze`'s 55P03 at once instead of
  * waiting and cancelling the vacuum, #7083).
  */

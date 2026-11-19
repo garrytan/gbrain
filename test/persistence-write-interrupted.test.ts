@@ -19,7 +19,7 @@
  *    persistence-preparation-deadline tests bound preparation deadlines, never a publication's interruptions.
  *    A managed sync member that ends `write_interrupted` is a page-class hold, like `preparation_stalled` (SYNC_FAULT_TABLE):
  *    the run moves past it and the rest of the source lands; sync status lists the hold with the read-only
- *    `gbrain sources writer status` as its fix, and `gbrain sources retry-held` re-admits it.
+ *    `foresights sources writer status` as its fix, and `foresights sources retry-held` re-admits it.
  *    The charge is atomic with the claim's release or failure: a crash right after it (the
  *    `persistence:interruption_charged` seam) leaves no claim for the expired-owner sweep to charge again, so the one
  *    promised re-preparation survives. On the recovery route the charge commits before the request is marked
@@ -72,7 +72,7 @@ import { withEnv } from './helpers/with-env.ts';
 const op = (name: string) => operations.find(o => o.name === name)!;
 const interruption = (code: string) => Object.assign(new Error(code === '57014' ? 'canceling statement due to statement timeout' : `database interruption ${code}`), { code });
 const page = (title: string) => `---\ntitle: ${title}\ntype: note\n---\n# ${title}\n\nBody of ${title}.\n`;
-const WRITER_STATUS = 'gbrain sources writer status';
+const WRITER_STATUS = 'foresights sources writer status';
 
 test('write_interrupted is a page-class hold whose escalation names the read-only writer status', () => {
   expect(classifySyncFault({ code: 'write_interrupted' })).toEqual({ class: 'page', safe_actions: ['retry'], needs_human: false });

@@ -1,5 +1,5 @@
 /**
- * `gbrain agent` CLI tests. Covers arg parsing, --since parser, and the
+ * `foresights agent` CLI tests. Covers arg parsing, --since parser, and the
  * submit path end-to-end against PGLite so we verify trusted submission,
  * protected-name guard, and fan-out wiring.
  *
@@ -463,8 +463,8 @@ describe('#2922: submit-time source resolution', () => {
       });
       expect(spy).toHaveBeenCalledWith(1);
       const errOut = errSpy.mock.calls.flat().join(' ');
-      expect(errOut).toMatch(/gbrain agent run: Source "does-not-exist" not found or is archived/);
-      expect(errOut).toMatch(/gbrain sources list/);
+      expect(errOut).toMatch(/(?:foresights|gbrain) agent run: Source "does-not-exist" not found or is archived/);
+      expect(errOut).toMatch(/(?:foresights|gbrain) sources list/);
       const rows = await engine.executeRaw<{ id: number }>(
         `SELECT id FROM minion_jobs WHERE name = 'subagent'`,
       );
@@ -490,7 +490,7 @@ describe('#2922: submit-time source resolution', () => {
       });
       expect(spy).toHaveBeenCalledWith(1);
       const errOut = errSpy.mock.calls.flat().join(' ');
-      expect(errOut).toMatch(/gbrain agent run: Source "corporate" not found or is archived/);
+      expect(errOut).toMatch(/(?:foresights|gbrain) agent run: Source "corporate" not found or is archived/);
       expect(errOut).toMatch(/restore|sources list/);
       const rows = await engine.executeRaw<{ id: number }>(
         `SELECT id FROM minion_jobs WHERE name = 'subagent'`,
@@ -578,7 +578,7 @@ describe('dispatcher routes register (cathedral-6)', () => {
       console.log = orig;
     }
     const out = logs.join('\n');
-    expect(out).toContain('gbrain agent register');
+    expect(out).toContain('foresights agent register');
     expect(out).toContain('--preset daily-driver|coding-agent');
   });
 

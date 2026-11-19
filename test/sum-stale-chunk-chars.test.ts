@@ -2,7 +2,7 @@
  * v0.41.31 — BrainEngine.sumStaleChunkChars tests (PGLite).
  *
  * Sibling of countStaleChunks: sums LENGTH(chunk_text) over stale chunks so
- * the `gbrain sync --all` cost preview can price the embedding backlog.
+ * the `foresights sync --all` cost preview can price the embedding backlog.
  * Validates: empty brain → 0, exact char sum, sourceId scope, embed_skip
  * exclusion, and that non-null (already-embedded) chunks are NOT counted.
  *

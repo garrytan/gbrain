@@ -37,7 +37,7 @@ const SLUG = 'notes/upgrade-probe';
 const TITLE = 'Upgrade probe';
 const BODY = 'Written by the previous release.';
 
-/** The keyless config file the previous release's init writes (gbrain init --pglite --no-embedding), database fields aside. */
+/** The keyless config file the previous release's init writes (foresights init --pglite --no-embedding), database fields aside. */
 export const PREVIOUS_RELEASE_KEYLESS_CONFIG = {
   embedding_disabled: true,
   schema_pack: 'gbrain-base-v2',
@@ -46,21 +46,21 @@ export const PREVIOUS_RELEASE_KEYLESS_CONFIG = {
   protocol_installed_at: '2026-10-31T00:00:00.000Z',
 };
 
-/** Frozen golden: what gbrain config show resolves for that brain and config (a database URL prints with its credentials redacted). */
+/** Frozen golden: what foresights config show resolves for that brain and config (a database URL prints with its credentials redacted). */
 export function expectedConfigShow(engine: UpgradeEngine): string[] {
   return [
-    'GBrain config:',
+    'Foresights config:',
     '  engine: ' + engine,
     engine === 'pglite' ? '  database_path: <BRAIN>' : '  database_url: <BRAIN, credentials redacted>',
     '  embedding_disabled: true    (effective value (file: true, db: unset); either plane\'s true turns embedding off)',
-    '  schema_pack: gbrain-base-v2    (file plane (~/.gbrain/config.json); the tier gbrain schema active resolves)',
+    '  schema_pack: gbrain-base-v2    (file plane (~/.gbrain/config.json); the tier foresights schema active resolves)',
     '  mcp: {"publish_skills":true}',
     '  self_upgrade: {"mode":"notify","mode_prompted":true}',
     '  protocol_installed_at: 2026-10-31T00:00:00.000Z',
   ];
 }
 
-/** Frozen golden: the default source as gbrain sources list --json reports it. */
+/** Frozen golden: the default source as foresights sources list --json reports it. */
 export function expectedDefaultSource(shape: BrainShape): Record<string, unknown> {
   return {
     id: 'default',

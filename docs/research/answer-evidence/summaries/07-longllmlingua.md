@@ -9,7 +9,7 @@ compression, document reordering, and subsequence recovery for entity fidelity. 
 NaturalQuestions multi-document QA, the paper reports a "21.4%" performance boost
 for GPT-3.5-Turbo when the answer-bearing passage is tenth, with about four times
 fewer input tokens (Abstract; §5). This preserves the paper's percentage notation;
-it is not a predicted percentage-point gain for GBrain. LongChat-13B is also evaluated.
+it is not a predicted percentage-point gain for Foresights. LongChat-13B is also evaluated.
 The setup deliberately places the ground-truth passage late among distractors. The
 method’s key mechanism is not simple lexical overlap: the question conditions learned
 relevance scoring, while reordering and compression increase the density and position of
@@ -20,7 +20,7 @@ prompts, models, and token budgets, not as universal rankings.
 A central tradeoff is explicit in the authors’ limitations: because compression is
 question-aware, the same context must be recompressed for each question, and compression
 itself costs more compute than LLMLingua. The method uses LLaMA-2-7B-Chat as compressor
-and older answer models; it is not evaluated on GBrain’s conversational evidence. GBrain
+and older answer models; it is not evaluated on Foresights’s conversational evidence. Foresights
 should treat it as motivation for a query-conditioned selection experiment, not
 validation of the failed lexical round selector. Any such experiment should compare
 answer quality, evidence retention, latency, and provenance against uncompressed

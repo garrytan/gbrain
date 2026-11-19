@@ -12,7 +12,7 @@
  *
  * Import installs the chosen rulebook before it publishes any page, through
  * proposeRevision: narrowing applies at once (with durable pending coverage
- * until restamped), widening is held for gbrain access apply. Source-qualified
+ * until restamped), widening is held for foresights access apply. Source-qualified
  * files are mapped explicitly with --access-policy <exported-source> (a lone
  * one is taken as is); with several and no choice, the import refuses before
  * writing anything.
@@ -25,7 +25,7 @@ import { parsePolicyYaml, serializePolicyYaml, type FolderRule } from './folder-
 import { appliedRules, coverageRows, proposeRevision, readAccessStore, type ProposalResult } from './policy.ts';
 import { APPROVED_FILE, POLICY_FILE, isGitWorkTree, sourcePolicyRoot } from './policy-git.ts';
 
-const EXPORT_HEADER = 'Folder rules exported by gbrain export (the applied rulebook).';
+const EXPORT_HEADER = 'Folder rules exported by foresights export (the applied rulebook).';
 export const SOURCE_POLICY_DIR = '.gbrain/access';
 
 /** The policy files an export carries for one source, or for every source with folder rules when sourceId is null. */
@@ -37,7 +37,7 @@ export async function exportPolicyFiles(engine: BrainEngine, sourceId: string | 
     const invalid = (await coverageRows(engine, source)).filter(c => c.reason === 'invalid');
     if (invalid.length) {
       throw opError('access_policy_invalid', `Source ${source}'s committed folder-rule file does not validate, so ${invalid.map(c => c.prefix || 'the whole source').join(', ')} read as nobody and no exported rulebook can carry that; nothing was exported.`,
-        `See the problems with gbrain access rule list --source ${source}, fix .gbrain/access.yml, commit it and sync, then export again; other sources export one at a time with gbrain export --source.`);
+        `See the problems with foresights access rule list --source ${source}, fix .gbrain/access.yml, commit it and sync, then export again; other sources export one at a time with foresights export --source.`);
     }
     const rules = await appliedRules(engine, source);
     if (!rules.length) continue;
@@ -50,7 +50,7 @@ export async function exportPolicyFiles(engine: BrainEngine, sourceId: string | 
 
 /** The rulebook an import tree carries for its destination, or null when it carries none (or the caller chose none). */
 export function importPolicyChoice(dir: string, choice: string | undefined): { file: string; rules: FolderRule[] } | null {
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- dir is the import tree itself, which gbrain import already reads whole; POLICY_FILE is a constant
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- dir is the import tree itself, which foresights import already reads whole; POLICY_FILE is a constant
   const single = join(dir, POLICY_FILE);
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- same: constant suffix under the import tree
   const qualifiedDir = join(dir, SOURCE_POLICY_DIR);
@@ -81,13 +81,13 @@ export function importPolicyChoice(dir: string, choice: string | undefined): { f
   return { file, rules: parsed.rules };
 }
 
-/** gbrain import's barrier: reads --access-policy from the import argv, installs the rulebook and reports it; a refusal is printed before it is rethrown. */
+/** foresights import's barrier: reads --access-policy from the import argv, installs the rulebook and reports it; a refusal is printed before it is rethrown. */
 export async function importPolicyBarrier(engine: BrainEngine, sourceId: string, dir: string, args: readonly string[], log: (line: string) => void): Promise<void> {
   const flag = args.indexOf('--access-policy');
   try {
     const policy = await installImportedPolicy(engine, sourceId, dir, flag === -1 ? undefined : args[flag + 1]);
     if (!policy) return;
-    log(`Folder rules from ${policy.file}: revision ${policy.revision} ${policy.state}${policy.held.length ? ` (widening held: preview with gbrain access apply --source ${sourceId})` : ''}`);
+    log(`Folder rules from ${policy.file}: revision ${policy.revision} ${policy.state}${policy.held.length ? ` (widening held: preview with foresights access apply --source ${sourceId})` : ''}`);
   } catch (error) {
     const e = error as Error & { suggestion?: string };
     console.error(`${e.message}${e.suggestion ? ` ${e.suggestion}` : ''}`);

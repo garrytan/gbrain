@@ -1,11 +1,11 @@
 /**
  * GBRA-130 C-5: a writer transfer that was prepared and never accepted.
  *
- * Protects: `gbrain sources writer transfer prepare` drains the worktree;
+ * Protects: `foresights sources writer transfer prepare` drains the worktree;
  * until now the only exit was `accept` on a successor, so a lost successor (or
  * a change of mind) left maintenance, fence repair, managed repair roots and
  * lifecycle changes refusing `owner_unavailable/transfer_in_progress` with
- * "wait 30 s" forever. `gbrain sources writer transfer cancel <source>
+ * "wait 30 s" forever. `foresights sources writer transfer cancel <source>
  * --expected-epoch <n>` (admin-intent bound, owner host, native lock, FOR
  * UPDATE) returns the worktree to active and clears the prepared manifest; a
  * racing accept with the old epoch then refuses `writer_transfer_conflict`;
@@ -72,19 +72,19 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       const stale = render(await refusal(engine));
       expect({ reason: stale.reason, next: stale.fix?.next, argv: stale.fix?.argv }).toEqual({ reason: 'transfer_in_progress', next: 'ask_user', argv: cancelArgv(prepared.owner_epoch) });
       expect(stale.fix?.preview_argv).toEqual(['gbrain', 'sources', 'writer', 'transfer', 'cancel', SOURCE, '--expected-epoch', prepared.owner_epoch, '--dry-run', '--json']);
-      expect(stale.fix?.user_message).toContain(`gbrain sources writer transfer accept ${SOURCE}`);
-      expect(stale.fix?.user_message).toContain(`gbrain sources writer transfer cancel ${SOURCE} --expected-epoch ${prepared.owner_epoch}`);
+      expect(stale.fix?.user_message).toContain(`foresights sources writer transfer accept ${SOURCE}`);
+      expect(stale.fix?.user_message).toContain(`foresights sources writer transfer cancel ${SOURCE} --expected-epoch ${prepared.owner_epoch}`);
       // A drain an older release prepared records no time: its age is unknown, so it keeps the wait, whose why names the cancel.
       await topology(engine, "UPDATE persistence_worktrees SET manifest=manifest-'prepared_at' WHERE id=$1::uuid", [binding.worktree_id]);
       const unknown = render(await refusal(engine));
-      expect({ next: unknown.fix?.next, names_cancel: unknown.fix?.why.includes(`gbrain sources writer transfer cancel ${SOURCE} --expected-epoch ${prepared.owner_epoch}`) })
+      expect({ next: unknown.fix?.next, names_cancel: unknown.fix?.why.includes(`foresights sources writer transfer cancel ${SOURCE} --expected-epoch ${prepared.owner_epoch}`) })
         .toEqual({ next: 'wait', names_cancel: true });
     }, { setup: seed, databaseUrl }), 120_000);
 
     test('C-5 item: cancel returns a stuck drain to active, maintenance runs again, and nothing else changes', () => managedBrain(async ({ engine }) => {
       const prepared = await prepare(engine);
       const failure = await refusal(engine);
-      expectItemFailure({ key: SOURCE, code: failure.reason, fix: failure.fix }, { key: SOURCE, code: 'transfer_in_progress', fix: /gbrain sources writer status --source default/ });
+      expectItemFailure({ key: SOURCE, code: failure.reason, fix: failure.fix }, { key: SOURCE, code: 'transfer_in_progress', fix: /(?:foresights|gbrain) sources writer status --source default/ });
       const before = await snapshotItems(engine, SOURCE);
       const drained = await worktree(engine);
       const preview = await runPersistenceAdministration(engine, 'writer_transfer_cancel', { source_id: SOURCE, expected_epoch: prepared.owner_epoch, dry_run: true });

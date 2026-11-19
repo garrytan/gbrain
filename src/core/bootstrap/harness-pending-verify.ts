@@ -1,5 +1,5 @@
 /**
- * #6661 option B: `gbrain bootstrap harness --token` on a PGLite brain while no serve answers.
+ * #6661 option B: `foresights bootstrap harness --token` on a PGLite brain while no serve answers.
  *
  * The serve holds the PGLite single-writer lock, so a stopped serve is the normal state for wiring. When
  * `/health` gets no response at all and no serve holds the brain, the run wires every target and ends
@@ -32,8 +32,8 @@ export function harnessVerifyPending(health: ServeHealth, flags: { token?: strin
   const pending = health.unreachable === true && flags.token !== undefined && !registrarMode &&
     d.loadFileConfig()?.engine === 'pglite' && !d.pgliteLiveServe();
   d.logError(pending
-    ? `no gbrain serve answers at ${url} and none holds this PGLite brain: wiring with the supplied --token now; verification waits for the serve (pending_verify).`
-    : `no healthy gbrain serve at ${url} (${health.detail ?? 'unreachable'}) — start \`gbrain serve --http\` on this box first (or pass --url/--port).`);
+    ? `no foresights serve answers at ${url} and none holds this PGLite brain: wiring with the supplied --token now; verification waits for the serve (pending_verify).`
+    : `no healthy foresights serve at ${url} (${health.detail ?? 'unreachable'}) — start \`foresights serve --http\` on this box first (or pass --url/--port).`);
   return pending;
 }
 
@@ -53,8 +53,8 @@ export function harnessPendingVerifyFix(raw: readonly string[], url: string, res
     consent: [],
     actor: 'user',
     why: 'The smoke test needs a running serve; the re-run verifies the wiring over HTTP while the serve holds the PGLite brain.',
-    user_message: `Start \`gbrain serve --http\` for this brain (it must answer at ${url}), then re-run this command with the same --token. ` +
-      '`gbrain bootstrap harness --status` reports partial until that run passes its smoke test.',
+    user_message: `Start \`foresights serve --http\` for this brain (it must answer at ${url}), then re-run this command with the same --token. ` +
+      '`foresights bootstrap harness --status` reports partial until that run passes its smoke test.',
     verify: { argv: ['gbrain', 'bootstrap', 'harness', '--status', '--json'] },
     docs: 'docs/guides/bootstrap.md#pending-verify',
     requires_exclusive: false,
@@ -78,6 +78,6 @@ export function harnessOutcomeFields(pendingFix: Action | null, ok: boolean): { 
 }
 
 export function pendingVerifyStatusLine(pending: NonNullable<HarnessReceipt['verify_pending']>): string {
-  return `  partial: wired ${pending.since} while no serve answered (pending_verify) — with \`gbrain serve --http\` running, ` +
-    're-run the same `gbrain bootstrap harness --token <TOKEN>` command to verify and finish.';
+  return `  partial: wired ${pending.since} while no serve answered (pending_verify) — with \`foresights serve --http\` running, ` +
+    're-run the same `foresights bootstrap harness --token <TOKEN>` command to verify and finish.';
 }

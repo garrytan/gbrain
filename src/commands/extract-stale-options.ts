@@ -1,5 +1,5 @@
 /**
- * #6803 (D2): `gbrain extract --stale` source-option validation, run before both direct dispatch and the PGLite-owner
+ * #6803 (D2): `foresights extract --stale` source-option validation, run before both direct dispatch and the PGLite-owner
  * hand-off (`writer_extract_stale`). `--source fs|db` is extract's read-mode selector, never a source id: stale
  * extraction reads the database, so `--source db` is accepted (refused as ambiguous when a registered source is named
  * `db`), `--source fs` is refused, and any other `--source <x>` is refused with the `--source-id <x>` command that scopes

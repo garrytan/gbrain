@@ -1,5 +1,5 @@
 /**
- * The one canonical list of `gbrain facts relink` skip reasons (#5836). Human
+ * The one canonical list of `foresights facts relink` skip reasons (#5836). Human
  * output, `--json`, the attempt memo and the relink guide table all come from
  * this table; `memoized` reasons are model verdicts that stop the model tier
  * from paying for the same fact again unless `--retry-model` is passed.
@@ -10,12 +10,12 @@ export const RELINK_REASONS = {
   unverified_match: { memoized: true, fix: 'The only match is a bare first name or a name that is not in the fact. Add an alias to the right entity page, then rerun.' },
   no_mention: { memoized: false, fix: 'The fact names no entity. Rerun with the model tier (drop --no-llm), or link it by hand with remember --entity.' },
   no_page: { memoized: false, fix: 'The fact names an entity that has no page. Create the entity page, then rerun.' },
-  model_unavailable: { memoized: false, fix: 'The extraction model could not be reached. Configure it with gbrain config set facts.extraction_model <provider:model>. To skip the model tier, run gbrain facts relink --no-llm.' },
+  model_unavailable: { memoized: false, fix: 'The extraction model could not be reached. Configure it with foresights config set facts.extraction_model <provider:model>. To skip the model tier, run foresights facts relink --no-llm.' },
   model_unparseable: { memoized: false, fix: 'The model returned output relink could not read. Rerun; if it persists, set a different facts.extraction_model.' },
   withdrawn: { memoized: false, fix: 'This claim was explicitly forgotten for that entity, so relink will not attach it there.' },
   not_user_attributed: { memoized: false, fix: 'The fact records what the assistant or a third party said, not your own claim, so relink never attaches it to an entity page. Nothing to fix: it stays saved and recall still finds it.' },
-  page_file_missing: { memoized: false, fix: 'The entity page exists in the database but its file is missing from the source tree. Restore the file or run gbrain sync, then rerun.' },
-  unfenceable: { memoized: false, fix: 'The source writes through to files but has no canonical owner. Bind the source (gbrain sources writer status <source> --json, then gbrain sources writer claim <source> --path <checkout> --admin-intent writer_claim --expected-state <admin_state>), then rerun.' },
+  page_file_missing: { memoized: false, fix: 'The entity page exists in the database but its file is missing from the source tree. Restore the file or run foresights sync, then rerun.' },
+  unfenceable: { memoized: false, fix: 'The source writes through to files but has no canonical owner. Bind the source (foresights sources writer status <source> --json, then foresights sources writer claim <source> --path <checkout> --admin-intent writer_claim --expected-state <admin_state>), then rerun.' },
   fence_malformed: { memoized: false, fix: 'The entity page has a ## Facts fence that cannot be normalized. Preview the fence repair of that page (`repair fences --slug <entity-slug>` on the brain host; read-only, and it names the exact edit for anything it will not repair), apply it, then rerun.' },
   claim_unfenceable: { memoized: false, fix: 'The claim text cannot be written to a fence row unchanged (for example it is wrapped in ~~). Forget it and remember a cleaned-up claim with --entity.' },
   visibility_conflict: { memoized: false, fix: 'The entity already has the same claim from the same source with the other visibility, and a page indexes only one. Forget the copy you do not want, then rerun.' },
@@ -24,7 +24,7 @@ export const RELINK_REASONS = {
   revision_conflict: { memoized: false, fix: 'The fact or the entity page changed while relink ran. Rerun.' },
 } as const satisfies Record<string, { memoized: boolean; fix: string }>;
 
-/** #6764: the `fact_relink_attempts` outcome `gbrain facts relink --conversation` records for a derived row it could not resolve. */
+/** #6764: the `fact_relink_attempts` outcome `foresights facts relink --conversation` records for a derived row it could not resolve. */
 export const CONVERSATION_UNRESOLVED = 'conversation_unresolved';
 
 export type RelinkReason = keyof typeof RELINK_REASONS;

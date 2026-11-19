@@ -4,8 +4,8 @@
  * The context_pack/delta verbs only deliver value if the shipped guidance
  * points agents at them. HEARTBEAT.md.template is rendered into users'
  * workspaces, so it must carry the ambient-delta row (heartbeats pull
- * `gbrain delta`; session start / post-compaction pairs with
- * `gbrain context-pack`). The rendered template-repo copy is byte-diffed
+ * `foresights delta`; session start / post-compaction pairs with
+ * `foresights context-pack`). The rendered template-repo copy is byte-diffed
  * against the generator by scripts/check-bootstrap-templates.sh. The guide the
  * row points at must exist.
  *
@@ -22,11 +22,11 @@ function read(rel: string): string {
 }
 
 describe('HEARTBEAT ambient-delta row', () => {
-  test('source template points heartbeats at gbrain delta + context-pack', () => {
+  test('source template points heartbeats at foresights delta + context-pack', () => {
     const tpl = read('templates/bootstrap/HEARTBEAT.md.template');
     expect(tpl).toContain('ambient-delta');
-    expect(tpl).toContain('gbrain delta');
-    expect(tpl).toContain('gbrain context-pack');
+    expect(tpl).toContain('foresights delta');
+    expect(tpl).toContain('foresights context-pack');
     expect(tpl).toContain('docs/guides/ambient-recall.md');
     expect(existsSync(join(ROOT, 'docs/guides/ambient-recall.md'))).toBe(true);
   });

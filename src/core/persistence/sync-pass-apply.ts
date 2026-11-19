@@ -592,7 +592,7 @@ export function remoteReconcile(level: ShadowLevel, input: { committed: number; 
   if (input.grantPrefixes) unsettled.grant_scope = 1;
   const verify = { argv: ['gbrain', 'sync', 'status', '--source', level.sourceId, '--json'] };
   return { committed: input.committed, unsettled, fix: { argv: ['gbrain', 'sync', '--source', level.sourceId], consent: [], actor: 'user', requires_exclusive: false, verify,
-    user_message: `Run gbrain sync --source ${level.sourceId} on the brain host that owns this source: it settles what a remote caller cannot (${Object.keys(unsettled).join(', ') || 'the converged stamp'}).`,
+    user_message: `Run foresights sync --source ${level.sourceId} on the brain host that owns this source: it settles what a remote caller cannot (${Object.keys(unsettled).join(', ') || 'the converged stamp'}).`,
     why: `This remote sync committed ${input.committed} one-sided write(s). Holds, deletion markers, keep_db writes and the converged stamp are written only by the owner host's own sync, so the source is not stamped until it runs there.` } };
 }
 

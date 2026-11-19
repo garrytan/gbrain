@@ -218,7 +218,7 @@ Before any external verification, search the brain for entities mentioned in
 the content:
 
 ```
-gbrain search "<entity>"
+foresights search "<entity>"
 ```
 
 for each person, company, concept, or product referenced in claims.
@@ -252,9 +252,9 @@ producer's query reproduces the producer's bug. Each atomic claim is
 
 | Producer used | Verify with |
 |---|---|
-| `gbrain query` (expansion/synthesis) | `gbrain search "<exact token>"` + `gbrain get <slug>` to read the page itself |
-| `gbrain search` (hybrid retrieval) | `gbrain graph-query <slug> --type <edge>` or `gbrain backlinks <slug>` |
-| graph traversal (`gbrain graph` / `graph-query`) | direct page read (`gbrain get <slug>`) — does the page actually assert this? |
+| `foresights query` (expansion/synthesis) | `foresights search "<exact token>"` + `foresights get <slug>` to read the page itself |
+| `foresights search` (hybrid retrieval) | `foresights graph-query <slug> --type <edge>` or `foresights backlinks <slug>` |
+| graph traversal (`foresights graph` / `graph-query`) | direct page read (`foresights get <slug>`) — does the page actually assert this? |
 | raw SQL / an aggregate | a second query on a different key or grouping, or per-row page reads |
 
 Never trust the output's own emitted numbers or names. If the report says
@@ -269,8 +269,8 @@ in widget-co," "charlie-example wrote the memo" — must resolve through
 appearing in the same document:
 
 ```
-gbrain graph-query alice-example --type founded
-gbrain graph-query fund-a --type invested_in --direction out
+foresights graph-query alice-example --type founded
+foresights graph-query fund-a --type invested_in --direction out
 ```
 
 Someone who WORKED AT a company did not necessarily FOUND it. Someone who
@@ -415,10 +415,10 @@ folk history survive fact-checking because nobody thinks to check them.
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - A claim's supporting page returns `page_not_found`, or the search is empty with a degraded notice: mark the claim UNSUPPORTED (it blocks delivery), and say the search was keyword-only when it was.
-- A `gbrain graph-query` walk returns nothing: verify the slug and link type before concluding a relationship does not exist.
+- A `foresights graph-query` walk returns nothing: verify the slug and link type before concluding a relationship does not exist.
 - Applying a correction returns `revision_conflict`: re-read and apply it to the current text.
 
 ## Anti-Patterns

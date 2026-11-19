@@ -1,5 +1,5 @@
 /**
- * #7423 / #7378: `gbrain sources writer settle-effects <source> (--request-id <id> | --parked-code <code>) [--unsettle]
+ * #7423 / #7378: `foresights sources writer settle-effects <source> (--request-id <id> | --parked-code <code>) [--unsettle]
  * [--dry-run | --apply --expect <plan_hash>]`, the operator exit for a parked or failed Git effect whose retry can never
  * succeed. A settlement is a disposition recorded on the effect row (`data.settled`, with every settle and unsettle
  * appended to `data.settlements`); the failure, its parked targets, the request, its intent and the target bytes are
@@ -18,7 +18,7 @@
  *   and nothing current owes its bytes: the source was archived, removed or re-created after it (`source_replaced`; the
  *   original writer is not re-checked, its source is gone), or each target's page is gone, deleted, replaced by another
  *   page or at a later revision than the one the effect owed (`page_moved`; a revision changes only when a write commits). A page still at that revision refuses `page_not_moved`
- *   (write it through gbrain, then preview again); an effect of the current binding refuses `not_former_binding`.
+ *   (write it through foresights, then preview again); an effect of the current binding refuses `not_former_binding`.
  * Unknown targets, a withdrawal or other non-Git effect, a claimed effect, an open recovery record, a revoked original
  * writer, a replaced source and a binding this host does not own are refused. An effect of the current binding that is
  * not db_only is refused as `retry_instead`: `retry-effects` can still run it.
@@ -75,7 +75,7 @@ async function remoteProof(tx: BrainEngine, effect: PersistenceEffect, binding: 
     `SELECT r.request_id::text AS request_id,e.state,e.data,e.outcome FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id
       WHERE e.kind='git' AND e.source_id=$1 AND e.worktree_id=$2::uuid AND e.id>$3 AND e.data->>'slug'=$4 AND e.data ? 'relative_path'
       ORDER BY e.id DESC LIMIT 1`, [effect.source_id, binding.worktree_id, effect.id, slug]);
-  if (!receipt) return { code: 'no_covering_receipt', message: `No later Git effect of source ${effect.source_id}'s current worktree committed page ${slug}, so nothing shows its current bytes were backed up. Write the page through gbrain (its Git effect commits and pushes it), then preview again.` };
+  if (!receipt) return { code: 'no_covering_receipt', message: `No later Git effect of source ${effect.source_id}'s current worktree committed page ${slug}, so nothing shows its current bytes were backed up. Write the page through foresights (its Git effect commits and pushes it), then preview again.` };
   const path = receipt.data.relative_path!;
   if (effect.data.relative_path !== undefined && !effect.data.source_scan && effect.data.relative_path !== path) {
     return { code: 'unknown_target', message: `Page ${slug} is now filed at ${path}, not at ${effect.data.relative_path}, the path this effect owes; no exact target links them.` };
@@ -84,7 +84,7 @@ async function remoteProof(tx: BrainEngine, effect: PersistenceEffect, binding: 
   const page = await tx.readPageSnapshot(slug, { sourceId: effect.source_id });
   if (!page || !existsSync(file) || !statSync(file).isFile()) return { code: 'content_missing', message: `Page ${slug} or its canonical file ${path} is gone, so there are no current bytes to prove.` };
   if (persistenceFileHash(file) !== receipt.data.expected_hash) return { code: 'content_changed', message: `The canonical file ${path} no longer holds the bytes the latest Git effect of page ${slug} (request ${receipt.request_id}) wrote; inspect the checkout before preview again.` };
-  if (receipt.state !== 'committed' || receipt.outcome?.push !== 'committed') return { code: 'bytes_unpushed', message: `The latest Git effect of page ${slug} (request ${receipt.request_id}) has not pushed (state ${receipt.state}), so its bytes are on this host only. Let it push (gbrain sources writer status shows it), then preview again.` };
+  if (receipt.state !== 'committed' || receipt.outcome?.push !== 'committed') return { code: 'bytes_unpushed', message: `The latest Git effect of page ${slug} (request ${receipt.request_id}) has not pushed (state ${receipt.state}), so its bytes are on this host only. Let it push (foresights sources writer status shows it), then preview again.` };
   const ref = await gitRead(binding.local_path, ['rev-parse', '--symbolic-full-name', '@{upstream}']);
   const commit = ref ? await gitRead(binding.local_path, ['rev-parse', '--verify', '-q', `${ref}^{commit}`]) : null;
   if (!ref || !commit) return { code: 'remote_ref_missing', message: `The checkout of source ${effect.source_id} has no fetched remote-tracking ref for its branch, so the remote cannot be read without fetching. Fetch in the checkout, then preview again.` };
@@ -101,7 +101,7 @@ async function retiredTarget(tx: BrainEngine, effect: PersistenceEffect, slug: s
   if (snapshot.page.deleted_at) return { slug, page: 'deleted', owed_revision: owed, current_revision: snapshot.revision };
   if (owed !== null && effect.data.page_id !== undefined && String(snapshot.page.id) !== String(effect.data.page_id)) return { slug, page: 'replaced', owed_revision: owed, current_revision: snapshot.revision };
   if (owed !== null && snapshot.revision !== owed) return { slug, page: 'moved', owed_revision: owed, current_revision: snapshot.revision };
-  return { code: 'page_not_moved', message: `Page ${slug} is still at the revision this effect owes (or the effect records no revision for it), so its bytes are still owed to Git and it is not retired. Write the page through gbrain (its Git effect commits and pushes it), then preview again.` };
+  return { code: 'page_not_moved', message: `Page ${slug} is still at the revision this effect owes (or the effect records no revision for it), so its bytes are still owed to Git and it is not retired. Write the page through foresights (its Git effect commits and pushes it), then preview again.` };
 }
 
 /** The exact-target proof for one effect, or why it cannot settle. */
@@ -163,14 +163,14 @@ async function settleProof(tx: BrainEngine, row: Row, hostId: string, binding: W
 export async function settleEffects(engine: BrainEngine, input: SettleEffectsInput): Promise<Record<string, unknown> & { plan_hash: string; effects: Entry[] }> {
   const { sourceId, requestId, parkedCode, unsettle = false, retire = false, apply = false } = input;
   if ((requestId === undefined) === (parkedCode === undefined)) throw opError('invalid_params', 'settle-effects selects with exactly one of --request-id or --parked-code.',
-    `Preview with gbrain sources writer settle-effects ${sourceId} and one parked code doctor parked_effects names (--parked-code), or name one request with --request-id.`, { fix: statusFix(sourceId) });
+    `Preview with foresights sources writer settle-effects ${sourceId} and one parked code doctor parked_effects names (--parked-code), or name one request with --request-id.`, { fix: statusFix(sourceId) });
   if (retire && unsettle) throw opError('invalid_params', 'settle-effects takes --retire or --unsettle, not both.',
     'A retired effect is un-settled like any other: preview --unsettle with the same selector, without --retire.', { fix: statusFix(sourceId) });
   if (apply && !input.expect) throw opError('invalid_params', 'settle-effects --apply needs --expect <plan_hash> from its preview.',
     'Run the preview (--dry-run), show the user the plan, and run the apply_command it prints after they agree.', { fix: statusFix(sourceId) });
   const hostId = existingHostIdFor(engine);
   if (!hostId) throw opError('permission_denied', 'Settling effects requires the registered local CLI host.',
-    `This machine has no registered gbrain host identity, so it cannot settle effects of source ${sourceId}; nothing changed. Run it on the brain host that owns ${sourceId}.`, { fix: statusFix(sourceId) });
+    `This machine has no registered foresights host identity, so it cannot settle effects of source ${sourceId}; nothing changed. Run it on the brain host that owns ${sourceId}.`, { fix: statusFix(sourceId) });
   const selector = requestId !== undefined ? ['--request-id', requestId] : ['--parked-code', parkedCode!];
   const mode = unsettle ? 'unsettle' : retire ? 'retire' : 'settle';
   const modeFlags = unsettle ? ['--unsettle'] : retire ? ['--retire'] : [];

@@ -26,7 +26,7 @@ export function connectorConfigDigest(config: object): string {
  * #6803: active connector sources whose last sync refused with
  * `connector_account_changed` and whose connector config has not changed
  * since. Autopilot classifies them unavailable-path until the operator repins
- * (`gbrain sync --source <id>` passes the account check), changes the config,
+ * (`foresights sync --source <id>` passes the account check), changes the config,
  * or archives the source.
  */
 export async function connectorAccountMismatches(engine: Pick<BrainEngine, 'executeRaw'>): Promise<Map<string, ConnectorAccountMismatch>> {
@@ -53,6 +53,6 @@ export async function connectorAccountMismatches(engine: Pick<BrainEngine, 'exec
 export function connectorAccountMismatchSkipWarning(sourceId: string, mismatch: Pick<ConnectorAccountMismatch, 'at' | 'detail'>): string {
   const what = mismatch.detail === 'account_unresolved' ? 'its credential resolves to no account' : 'its credential resolves to a different account than the source is pinned to';
   return `[dispatch] ${sourceId}: connector source skipped (unavailable): ${what} (connector_account_changed since ${mismatch.at}). `
-    + `Restore the credential for the pinned account, then run: gbrain sync --source ${sourceId}. For a deliberate account change, add a new source and archive this one: gbrain sources archive ${sourceId}. `
+    + `Restore the credential for the pinned account, then run: foresights sync --source ${sourceId}. For a deliberate account change, add a new source and archive this one: foresights sources archive ${sourceId}. `
     + `Autopilot retries it by itself only after its connector config changes.`;
 }

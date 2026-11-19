@@ -10,7 +10,7 @@
  *   - a path deleted, re-added with other bytes and deleted again is judged against the re-added bytes, its last
  *     committed blob, so a page holding the first version is kept (`content_differs`);
  *   - with the switch off nothing changes: all four stay held. A refused hold is not screened again while its page stays.
- * Before: no switch existed, so every proven held deletion waited for `gbrain repair file-drift`.
+ * Before: no switch existed, so every proven held deletion waited for `foresights repair file-drift`.
  * Real PGLite (and Postgres when DATABASE_URL is set), real managed syncs and real Git; older imports are modelled as
  * pages whose revision no import record or write request produced, last written an hour before the deleting commit.
  */

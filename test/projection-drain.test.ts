@@ -202,11 +202,11 @@ test('doctor names the drain command when no PGLite resident holds the brain, an
     const sourceId = await backlog(engine, 1);
     const local = await checkProjectionReadiness(engine, { sourceId });
     expect(local.status).toBe('warn');
-    expect(local.message).toContain('Run `gbrain projections drain`');
+    expect(local.message).toContain('Run `foresights projections drain`');
     expect(local.message).not.toContain('Restart the upgraded resident');
     const resident = await checkProjectionReadiness(engine, { sourceId }, { resident: true });
-    expect(resident.message).toContain('resident gbrain process that holds this PGLite brain is rebuilding');
-    expect(resident.message).not.toContain('Run `gbrain projections drain`');
+    expect(resident.message).toContain('resident foresights process that holds this PGLite brain is rebuilding');
+    expect(resident.message).not.toContain('Run `foresights projections drain`');
     await drainProjections(engine);
     expect((await checkProjectionReadiness(engine, { sourceId })).status).toBe('ok');
   }

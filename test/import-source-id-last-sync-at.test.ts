@@ -1,8 +1,8 @@
 /**
- * #1691 — `gbrain import --source-id <id>` never touched `sources.last_sync_at`
+ * #1691 — `foresights import --source-id <id>` never touched `sources.last_sync_at`
  * for the target source. A source registered with `local_path` but ingested
- * only via `gbrain import` (no `gbrain sync`) reported "never synced" forever
- * in `gbrain doctor`'s `sync_freshness` check, even immediately after a clean,
+ * only via `foresights import` (no `foresights sync`) reported "never synced" forever
+ * in `foresights doctor`'s `sync_freshness` check, even immediately after a clean,
  * current import. This stamps `last_sync_at` on a CLEAN (zero-failure,
  * zero-malformed-skip) import for a non-git, non-remote, non-connector source
  * whose registered `local_path` IS the canonical import target, fail-closed on
@@ -150,8 +150,8 @@ describe('import stamps sources.last_sync_at for a local_path-registered source 
   });
 
   test('git-tracked local_path → last_sync_at stays untouched (scoped to non-git sources per #1691)', async () => {
-    // `gbrain import` never advances the source's own last_commit — only
-    // `gbrain sync` does. Stamping last_sync_at for a git checkout would
+    // `foresights import` never advances the source's own last_commit — only
+    // `foresights sync` does. Stamping last_sync_at for a git checkout would
     // mask real commit-level staleness that sync (not import) is the
     // correct pipeline to detect.
     const repo = mkdtempSync(join(tmpdir(), 'gbrain-import-git-'));
@@ -202,7 +202,7 @@ describe('import stamps sources.last_sync_at for a local_path-registered source 
   test('connector-managed source (config.kind: google) → last_sync_at stays untouched', async () => {
     // v0.47 google sources register a real, non-git local_path with no
     // remote_url — the connector owns last_sync_at via its own sync path,
-    // and `gbrain waiting`'s freshness gate reads it for google sources.
+    // and `foresights waiting`'s freshness gate reads it for google sources.
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-import-google-'));
     writeFileSync(join(dir, 'seed.md'), '---\ntype: note\n---\n# Seed\n\nbody\n');
     await engine.executeRaw(

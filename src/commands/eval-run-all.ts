@@ -1,5 +1,5 @@
 /**
- * v0.32.3 — `gbrain eval run-all` orchestrator.
+ * v0.32.3 — `foresights eval run-all` orchestrator.
  *
  * Sweeps every requested mode × suite combination and writes per-run
  * results to `<repo>/.gbrain-evals/eval-results.jsonl` [CDX-23]. Personal
@@ -36,6 +36,7 @@ import { OperationError, opError } from '../core/ops/contract.ts';
 import type { Action } from '../core/agent-output.ts';
 import { usageError } from '../cli/cli-error.ts';
 import { intFlagValue, numberFlagValue } from '../cli/flag-values.ts';
+import { commandText } from '../core/brand.ts';
 
 export interface RunAllOpts {
   help: boolean;
@@ -132,7 +133,7 @@ export function parseRunAllArgs(args: string[]): RunAllOpts {
 
 function printHelp(): void {
   process.stderr.write(
-    `gbrain eval run-all [flags]\n\n` +
+    `foresights eval run-all [flags]\n\n` +
     `Runs the eval suites wired into the orchestrator (brainbench, once per sweep)\n` +
     `and writes per-run results to <repo>/.gbrain-evals/eval-results.jsonl. Exits 1\n` +
     `when a suite fails (its record is kept). Personal brain is never touched.\n\n` +
@@ -182,7 +183,7 @@ export function unwiredSuiteError(suites: string[], modes: SearchMode[]): Operat
   const commands = unwired.map(s => UNWIRED_SUITE_ARGV[s].join(' ')).join('; ');
   return opError(
     'eval_suite_unwired',
-    `gbrain eval run-all does not run ${unwired.join(' or ')}; nothing ran.`,
+    `foresights eval run-all does not run ${unwired.join(' or ')}; nothing ran.`,
     `Run ${unwired.length > 1 ? 'each suite' : 'it'} with its own command, once per mode: ${commands}. Or drop ${unwired.join(', ')} from --suites.`,
     { fix: unwiredSuiteFix(unwired, modes) },
   );
@@ -344,7 +345,7 @@ export async function runEvalRunAll(_engine: BrainEngine | null, args: string[])
   try {
     opts = parseRunAllArgs(args);
   } catch (e) {
-    throw e instanceof OperationError ? e : usageError((e as Error).message, 'Run `gbrain eval run-all --help` for the accepted flags and examples.');
+    throw e instanceof OperationError ? e : usageError((e as Error).message, 'Run `foresights eval run-all --help` for the accepted flags and examples.');
   }
   if (opts.help) {
     printHelp();
@@ -377,7 +378,7 @@ export async function runEvalRunAll(_engine: BrainEngine | null, args: string[])
   if (!opts.suitesExplicit) {
     process.stderr.write(
       `[eval run-all] running the wired suites (${WIRED_SUITES.join(', ')}). longmemeval and replay run through their own commands, once per mode:\n` +
-      Object.values(UNWIRED_SUITE_ARGV).map(argv => `[eval run-all]   ${argv.join(' ')}\n`).join(''),
+      Object.values(UNWIRED_SUITE_ARGV).map(argv => `[eval run-all]   ${commandText(argv)}\n`).join(''),
     );
   }
 

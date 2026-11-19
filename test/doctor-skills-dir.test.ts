@@ -1,5 +1,5 @@
 /**
- * #4673 — `gbrain doctor --skills-dir <path>` must be HONORED, not silently
+ * #4673 — `foresights doctor --skills-dir <path>` must be HONORED, not silently
  * ignored. Pre-fix, doctor accepted the flag (the registry declares it legal)
  * and then unconditionally auto-detected, so every skill check graded whatever
  * workspace auto-detect landed on — and `--fix` could write SKILL.md edits
@@ -139,7 +139,7 @@ describe('doctor --skills-dir (#4673)', () => {
 
     // Run from a NEUTRAL cwd (sibling of the fixture, no skills/ anywhere on
     // its walk-up path). Without the flag being honored, auto-detect falls
-    // through to the gbrain install tree (source install_path) and --fix is
+    // through to the foresights install tree (source install_path) and --fix is
     // refused — the fixture stays untouched. With the fix, the explicit flag
     // targets the fixture (source 'explicit' bypasses the install-path
     // refusal, which is exactly the operator signal that gate wants).

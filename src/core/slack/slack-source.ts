@@ -82,14 +82,14 @@ export function slackConnectorAccount(account: SlackAccount): ConnectorAccount {
 export function slackAuthRequired(sourceId: string, cfg: Pick<SlackSourceConfig, 'tokenEnv'>, detail?: string): OperationError {
   return new OperationError('connector_auth_required',
     `Slack source ${sourceId} has no working Slack app token${detail ? ` (${detail})` : ''}. Nothing was imported.`,
-    cfg.tokenEnv ? `Set ${cfg.tokenEnv} to the app's Bot User OAuth Token in the environment that runs the sync, then run: gbrain sync --source ${sourceId}`
-      : `Ask the user for their Slack app's Bot User OAuth Token and save it on stdin: gbrain connectors auth slack --token - ; then run: gbrain sync --source ${sourceId}. The token was read from GBRAIN_CONNECTOR_SLACK_TOKEN or ~/.gbrain/connectors/slack.json.`,
+    cfg.tokenEnv ? `Set ${cfg.tokenEnv} to the app's Bot User OAuth Token in the environment that runs the sync, then run: foresights sync --source ${sourceId}`
+      : `Ask the user for their Slack app's Bot User OAuth Token and save it on stdin: foresights connectors auth slack --token - ; then run: foresights sync --source ${sourceId}. The token was read from GBRAIN_CONNECTOR_SLACK_TOKEN or ~/.gbrain/connectors/slack.json.`,
     'docs/guides/meeting-and-slack-sources.md#connector_auth_required');
 }
 
 export function slackChannelRefused(sourceId: string, error: SlackChannelUnavailableError): OperationError {
   return new OperationError('connector_access_denied', `Slack source ${sourceId} cannot read channel ${error.channelId}: ${error.message}. Nothing was imported.`,
-    `Invite the app to that channel (type /invite @<your app> in it), or check the channel id; then run gbrain sync --source ${sourceId}.`,
+    `Invite the app to that channel (type /invite @<your app> in it), or check the channel id; then run foresights sync --source ${sourceId}.`,
     'docs/guides/meeting-and-slack-sources.md#connector_access_denied');
 }
 
@@ -98,13 +98,13 @@ function translate(sourceId: string, cfg: SlackSourceConfig, error: unknown): un
   if (error instanceof SlackChannelUnavailableError) return slackChannelRefused(sourceId, error);
   if (error instanceof ConnectorAccessDeniedError) {
     return new OperationError('connector_access_denied', `The Slack token for ${sourceId} may not do this: ${error.message}. Nothing more was imported.`,
-      `Grant the app the scopes the source needs (channels:read, channels:history, groups:read, groups:history, users:read), reinstall it, save the new token with gbrain connectors auth slack --token -, then run gbrain sync --source ${sourceId}.`,
+      `Grant the app the scopes the source needs (channels:read, channels:history, groups:read, groups:history, users:read), reinstall it, save the new token with foresights connectors auth slack --token -, then run foresights sync --source ${sourceId}.`,
       'docs/guides/meeting-and-slack-sources.md#connector_access_denied');
   }
   if (error instanceof ConnectorRateLimitedError) {
     const at = error.retryAt ? new Date(error.retryAt).toISOString() : null;
     return new OperationError('rate_limited', `Slack rate-limited ${sourceId}${at ? ` until ${at}` : ''}; progress so far was saved.`,
-      `Wait${at ? ` until ${at}` : ''}; autopilot resumes it by itself, or run gbrain sync --source ${sourceId} after that.`,
+      `Wait${at ? ` until ${at}` : ''}; autopilot resumes it by itself, or run foresights sync --source ${sourceId} after that.`,
       'docs/guides/meeting-and-slack-sources.md#rate_limited');
   }
   return error;
@@ -126,7 +126,7 @@ async function runSlackSyncInner(engine: BrainEngine, sourceId: string, cfg: Sla
   if (!api) {
     const key = resolveApiToken('slack', cfg.tokenEnv);
     if (!key) throw slackAuthRequired(sourceId, cfg);
-    api = slackApi({ token: key.token, userAgent: `gbrain/${VERSION} (+https://github.com/garrytan/gbrain)`, now, maxRequests: cfg.maxRequests });
+    api = slackApi({ token: key.token, userAgent: `gbrain/${VERSION} (+https://github.com/aimonk2025/gbrain)`, now, maxRequests: cfg.maxRequests });
   }
   const signal = opts.signal;
   let account: SlackAccount;

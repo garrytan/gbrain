@@ -31,9 +31,9 @@ retrieval gaps plus one contract gap produced the miss.
 
 These were checked in code during the fix; several change the remedy:
 
-1. **`gbrain search` was keyword-only**, not hybrid — so the RFC's cosine scores
+1. **`foresights search` was keyword-only**, not hybrid — so the RFC's cosine scores
    (0.64/0.98) came from the hybrid `query`/MCP path the agent actually hit, not
-   `gbrain search`. The repro command in the RFC was mislabeled.
+   `foresights search`. The repro command in the RFC was mislabeled.
 2. **`--mode` was never a CLI param** — mode resolves server-side from the
    `search.mode` config key, which is why all three "modes" returned identical
    results (the flag was silently dropped; `thorough` isn't a real mode).
@@ -56,7 +56,7 @@ These were checked in code during the fix; several change the remedy:
 | **Alias hop** (T3) | true synonyms with zero surface overlap ("Hall of Light" → Mingtang) | `page_aliases` table, `applyAliasHop`, ingest projection + `reindex --aliases` backfill |
 | **Evidence contract** (T4) | the agent keyed "don't duplicate" off a fuzzy score | `evidence` + `create_safety` on every result; the agent keys off `create_safety='exists'`, not a threshold |
 
-Plus: `gbrain search "<text>"` is now cheap-hybrid (the obvious verb gives the
+Plus: `foresights search "<text>"` is now cheap-hybrid (the obvious verb gives the
 good path); `modes/stats/tune` stay subcommands; `--mode` works per-call for
 local callers; rank-1 score drift telemetry; and **NamedThingBench**, a CI gate
 that hard-gates the families that ARE this incident.
@@ -65,16 +65,16 @@ that hard-gates the families that ARE this incident.
 
 ```
 # Which layer surfaces (or misses) the target page?
-gbrain search diagnose "Greek amphitheater" --target projects/new-greek-theater/concept_v0
+foresights search diagnose "Greek amphitheater" --target projects/new-greek-theater/concept_v0
 
 # Backfill aliases for existing pages whose frontmatter predates the alias layer:
-gbrain reindex --aliases
+foresights reindex --aliases
 
 # Watch retrieval quality over time (a downward avg rank-1 score = regressing):
-gbrain search stats --days 30
+foresights search stats --days 30
 
 # The gate that prevents silent reintroduction:
-gbrain eval retrieval-quality test/fixtures/retrieval-quality/namedthing.jsonl
+foresights eval retrieval-quality test/fixtures/retrieval-quality/namedthing.jsonl
 ```
 
 For a page to be reliably found by its chosen name, give it `aliases:` frontmatter:

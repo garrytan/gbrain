@@ -29,7 +29,7 @@ import { join } from 'node:path';
 // preserves it.
 //
 //   - consolidate.ts (v0.35.4 — chronological writeback)
-//   - facts/forget.ts (v0.32.2 — user-initiated `gbrain forget`; user is
+//   - facts/forget.ts (v0.32.2 — user-initiated `foresights forget`; user is
 //     the supersession authority, not the probe)
 //   - facts/withdrawal.ts — durable user-initiated forget closes every
 //     matching active claim in the same source and visibility lane. It
@@ -59,23 +59,23 @@ import { join } from 'node:path';
 //     auto-supersession.ts:4 invariant is preserved. Deliberate design
 //     change per the #2390 eng review (G1: ontology extends facts).
 //   - facts/proposal-supersede.ts (System One S9) — applies or undoes a
-//     contradiction PROPOSAL only when the user runs `gbrain decide proposals
+//     contradiction PROPOSAL only when the user runs `foresights decide proposals
 //     accept|undo <id>` (local CLI); the sweep and the inline fact write path
 //     never call it, so a probe still never mutates (auto-supersession.ts:4).
 //   - persistence/loop-fact-retirement.ts (#5869) — retires a commitment fact
-//     only when its loop is closed through `loops_close` or `gbrain repair
+//     only when its loop is closed through `loops_close` or `foresights repair
 //     loop-facts` (expired_at + valid_until with the struck fence row); the
 //     contradiction sweep and probes never call it.
-//   - repair/consolidate-ties.ts (#6023) — `gbrain repair consolidate-ties`
+//   - repair/consolidate-ties.ts (#6023) — `foresights repair consolidate-ties`
 //     reopens (valid_until back to NULL) only the preview-approved facts the
 //     pre-#6023 consolidate writeback closed at their own instant; local CLI,
 //     explicit-only, and the contradiction probe never calls it.
 //   - generations/adapters/fact-rows.ts (GBRA-161 PR 2) — `restoreFactRow`
 //     writes back a fact's recorded before-state (valid_until included) only in
-//     a preview-approved `gbrain repair generations --mode restore` of a
+//     a preview-approved `foresights repair generations --mode restore` of a
 //     consolidation chain or a fence generation; local CLI, and the
 //     contradiction probe never calls it.
-//   - repair/unwithdrawn-facts.ts (#8819) — `gbrain repair unwithdrawn-facts`
+//   - repair/unwithdrawn-facts.ts (#8819) — `foresights repair unwithdrawn-facts`
 //     writes back the ledger preimage (valid_until included) of a fact the
 //     first managed fence generation retired though no fence held it; local
 //     CLI, explicit-only, preview-bound, and the contradiction probe never

@@ -345,6 +345,6 @@ describe('which release GitHub calls Latest', () => {
       expect({ file, reads: body.includes('releases/latest') }).toEqual({ file, reads: false });
     }
     const mac = readFileSync(join(dir, 'macos-validation.yml'), 'utf8');
-    expect(mac).toContain('https://raw.githubusercontent.com/garrytan/gbrain/latest-stable/VERSION');
+    expect(mac).toContain('https://raw.githubusercontent.com/aimonk2025/gbrain/latest-stable/VERSION');
   });
 });

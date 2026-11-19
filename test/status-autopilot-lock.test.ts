@@ -32,11 +32,11 @@ describe('buildAutopilotStatus', () => {
     });
   });
 
-  test('reports a live gbrain autopilot process as running', () => {
+  test('reports a live foresights autopilot process as running', () => {
     writeFileSync(lockPath, '1234');
     const status = buildAutopilotStatus(lockPath, {
       isPidAlive: (pid) => pid === 1234,
-      readProcessCommand: () => 'gbrain autopilot --repo repo',
+      readProcessCommand: () => 'foresights autopilot --repo repo',
     });
 
     expect(status.running).toBe(true);

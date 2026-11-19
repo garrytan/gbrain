@@ -59,13 +59,13 @@ This skill guarantees:
 
 Routine maintenance, startup checks, `doctor --fix`, and a request to "fix what's
 broken" do not authorize writer topology changes. On `owner_unavailable` or a
-writer coordination refusal, inspect `gbrain sources writer status --brain <id>
+writer coordination refusal, inspect `foresights sources writer status --brain <id>
 --json` on the selected host first and report the owner, epoch, enabled state and
 blocked recovery to the operator. Do not claim a checkout, activate managed mode,
 transfer an owner, replace identities, or remove ownership markers as a repair.
 When the status reads `enabled: false` and the refusal says `unbound_source`,
 the brain is in classic mode on purpose: report that writes go through the
-checkout (file, commit, `gbrain sync`) and leave it classic.
+checkout (file, commit, `foresights sync`) and leave it classic.
 Deliberate administration requires a separately approved topology change and the
 action-specific intent plus reviewed state precondition described in
 `docs/architecture/topologies.md`. Neither a TTY nor `--yes` nor
@@ -78,16 +78,16 @@ If the user asks "get my brain to 90/100" or "fix what's broken", preview first
 and ask before applying anything:
 
 ```bash
-gbrain doctor --remediation-plan --json              # preview: job steps + repair steps
+foresights doctor --remediation-plan --json              # preview: job steps + repair steps
 # Show the user the repair steps (each "requires user agreement") and the cost.
 # Only after the user agrees (plan_hash from the preview binds the approval):
-gbrain doctor --remediate --yes --include-repairs --expect <plan_hash> --target-score 90 --max-usd 5
+foresights doctor --remediate --yes --include-repairs --expect <plan_hash> --target-score 90 --max-usd 5
 ```
 
 `--remediation-plan` prints a dependency-ordered list of job steps (sync before
 extract, embed after consolidate, etc.) with per-step `est_seconds` and
 `est_usd_cost`, and, independent of the score target, the PROTECTED repair steps
-for every `gbrain repair` kind with pending items. Each step carries the exact
+for every `foresights repair` kind with pending items. Each step carries the exact
 command that applies it, and the plan ends with one combined command.
 `--remediate` runs the repair steps only with `--include-repairs` (the user's
 agreement; without it they are listed as skipped), then walks the job plan,
@@ -111,31 +111,31 @@ Use the per-dimension walk below (Phase 2 onward) when:
 
 ### Manual path
 
-1. **Run health check.** Check gbrain health (`get_health`) to get the dashboard. `get_health` needs admin scope; without it, call `get_brain_health` (read scope), which returns bands only (write capacity, write failures, ghost pages, unsearchable chunks), and skip the dimensions it cannot answer: stale pages, orphan pages, dead links, embed coverage, link and timeline counts and the brain score. Name the skipped dimensions in the report and ask for an admin token, or for `gbrain doctor --json` on the brain host, to cover them.
+1. **Run health check.** Check foresights health (`get_health`) to get the dashboard. `get_health` needs admin scope; without it, call `get_brain_health` (read scope), which returns bands only (write capacity, write failures, ghost pages, unsearchable chunks), and skip the dimensions it cannot answer: stale pages, orphan pages, dead links, embed coverage, link and timeline counts and the brain score. Name the skipped dimensions in the report and ask for an admin token, or for `foresights doctor --json` on the brain host, to cover them.
 2. **Check each dimension:**
 
 ### Stale pages
 Pages where compiled_truth is older than the latest timeline entry. The assessment hasn't been updated to reflect recent evidence.
 - Check the health output for stale page count
-- For each stale page: read the page from gbrain, review timeline, determine if compiled_truth needs rewriting
+- For each stale page: read the page from foresights, review timeline, determine if compiled_truth needs rewriting
 
 ### Orphan pages
 Pages with zero inbound links. Nobody references them.
 - Review orphans: are they genuinely isolated or just missing links?
-- Add links in gbrain from related pages or flag for deletion
+- Add links in foresights from related pages or flag for deletion
 
 ### Dead links
 Links pointing to pages that don't exist.
-- Remove dead links in gbrain
+- Remove dead links in foresights
 
 ### Missing cross-references
 Pages that mention entity names but don't have formal links.
-- Read compiled_truth from gbrain, extract entity mentions, create links in gbrain
+- Read compiled_truth from foresights, extract entity mentions, create links in foresights
 
 ### Link graph extraction
 If link_count is 0 or low relative to page_count, run batch extraction:
 ```bash
-gbrain extract links --dir ~/brain
+foresights extract links --dir ~/brain
 ```
 This scans all markdown files for entity references, See Also sections, and
 frontmatter fields, then creates typed links in the database.
@@ -143,12 +143,12 @@ frontmatter fields, then creates typed links in the database.
 ### Timeline extraction
 If timeline_entry_count is 0, extract structured timeline from markdown:
 ```bash
-gbrain extract timeline --dir ~/brain
+foresights extract timeline --dir ~/brain
 ```
 
 ### Dream cycle (v0.23): synthesize + patterns
 
-`gbrain dream` runs the full maintenance cycle (core phases shown; opt-in
+`foresights dream` runs the full maintenance cycle (core phases shown; opt-in
 phases like atoms/concepts/drift slot in between):
 
 ```
@@ -157,20 +157,20 @@ lint -> backlinks -> sync -> synthesize -> extract -> patterns -> embed -> orpha
 
 `fence_repair` runs right after `sync`, once per maintenance pass: it repairs
 the facts and takes fences sync held or pages store malformed (the same plan
-`gbrain repair fences` previews), for at most 300 s or a third of the job's
+`foresights repair fences` previews), for at most 300 s or a third of the job's
 remaining time, and resumes on the next run. `content_repair` runs right after
 it (#6377): the rest of the content-repair lane, today the `slug-conflicts`
 kind that removes a stray frontmatter `slug:` or records a recommended merge
-for a person (`gbrain repair content` previews both kinds), for at most 120 s
+for a person (`foresights repair content` previews both kinds), for at most 120 s
 or a third of the remaining time. Pause both with
-`gbrain config set fences.repair.enabled false`.
+`foresights config set fences.repair.enabled false`.
 
 The two new phases consolidate yesterday's conversations into long-term memory:
 
 **Synthesize phase (two-stage cascade):** reads the cycle source's transcripts from
 `dream.synthesize.session_corpus_dir` (another source's sessions wait for their own
-`gbrain dream --source <id> --phase synthesize`; unresolved or legacy files are held,
-already-extracted ones included, until `gbrain sweep --assign-corpus <source>`), then triages before it spends: a cheap
+`foresights dream --source <id> --phase synthesize`; unresolved or legacy files are held,
+already-extracted ones included, until `foresights sweep --assign-corpus <source>`), then triages before it spends: a cheap
 utility-tier judge (`models.dream.triage`) scores every new file 0–1 for
 salience and pre-extracts candidate quotes + entities, cached in
 `dream_verdicts` with the judging model + prompt version (bounded per cycle
@@ -194,7 +194,7 @@ write allow-list, validated end-to-end (slug fences, task shapes, wikilinks)
 before any page is written programmatically. A response that fails validation
 falls back to the classic agentic loop in the same job, where the
 `dream.synthesize.max_turns` cap (default 16) applies; revert dial:
-`gbrain config set dream.synthesize.mode agentic`. Each child writes reflections
+`foresights config set dream.synthesize.mode agentic`. Each child writes reflections
 (`wiki/personal/reflections/...`) and originals (`wiki/originals/ideas/...`);
 people timeline entries are written only on the agentic path (fallback or
 `mode agentic`), where the child has the `add_timeline_entry` tool. The orchestrator collects the slugs from
@@ -202,8 +202,8 @@ people timeline entries are written only on the agentic path (fallback or
 unrelated writes), runs the quote verify pass over them (below), and
 reverse-renders each new page from DB → markdown on disk. To re-apply the
 gate after retuning the threshold or the rescue knobs, or to drain a queued
-backlog, run `gbrain dream retriage --dry-run` (zero LLM calls, cached
-scores only) then `gbrain dream retriage --reconcile-queue`; `--force`
+backlog, run `foresights dream retriage --dry-run` (zero LLM calls, cached
+scores only) then `foresights dream retriage --reconcile-queue`; `--force`
 re-judges everything from scratch. Retriage reads the SAME gate the cycle
 does, so a reconcile sweep never cancels a job the rescue admitted.
 
@@ -230,7 +230,7 @@ pages to `wiki/personal/patterns/<theme>` when ≥`dream.patterns.min_evidence`
 (default 3) reflections support a pattern. A completed run records the newest
 reflection it consumed (`dream.patterns.last_evidence_ts`); until a reflection
 in the window is newer than that, re-runs skip with `no_new_evidence` instead
-of paying for another model pass — `gbrain dream --phase patterns --once`
+of paying for another model pass — `foresights dream --phase patterns --once`
 forces one.
 
 **Quality bar (Iron Law for synthesis):**
@@ -278,43 +278,43 @@ To cap spend, use
 **`--dry-run` semantics:** runs the scored triage pass (judges + caches
 verdicts for new files) but skips the synthesis subagents. NOT zero LLM
 calls — for a zero-call preview from cached scores use
-`gbrain dream retriage --dry-run` instead.
+`foresights dream retriage --dry-run` instead.
 
 **Configure synthesize on a fresh brain:**
 ```bash
-gbrain config set dream.synthesize.session_corpus_dir /path/to/transcripts
-gbrain config set dream.synthesize.enabled true
-gbrain dream --phase synthesize --dry-run --json   # preview
-gbrain dream                                       # full cycle
+foresights config set dream.synthesize.session_corpus_dir /path/to/transcripts
+foresights config set dream.synthesize.enabled true
+foresights dream --phase synthesize --dry-run --json   # preview
+foresights dream                                       # full cycle
 ```
 
 **Invocation patterns:**
 ```bash
-gbrain dream                                          # full cycle
-gbrain dream --phase synthesize                       # just synthesize
-gbrain dream --phase patterns                         # just patterns
-gbrain dream --input ~/transcripts/2026-04-25.txt     # ad-hoc one transcript
-gbrain dream --from 2026-04-01 --to 2026-04-25        # backfill range
-gbrain dream --json                                   # CycleReport JSON
+foresights dream                                          # full cycle
+foresights dream --phase synthesize                       # just synthesize
+foresights dream --phase patterns                         # just patterns
+foresights dream --input ~/transcripts/2026-04-25.txt     # ad-hoc one transcript
+foresights dream --from 2026-04-01 --to 2026-04-25        # backfill range
+foresights dream --json                                   # CycleReport JSON
 ```
 
 **Auto-commit deferred to v1.1:** v1 writes files to `brain_dir` but does NOT
-`git add` / `commit` / `push`. Either commit yourself or let `gbrain autopilot`
+`git add` / `commit` / `push`. Either commit yourself or let `foresights autopilot`
 handle it.
 Parses `- **YYYY-MM-DD** | Source — Summary` and `### YYYY-MM-DD — Title` formats.
 The `Source — Summary` dash may be an em dash, an en dash or a spaced hyphen (` - `);
 a colon (`Source: Summary`) is prose, so the row keeps `source: markdown` and the
 whole text as its summary.
-Note: extracted entries improve structured queries (`gbrain timeline`), not vector search.
+Note: extracted entries improve structured queries (`foresights timeline`), not vector search.
 
 ### Upkeep and autopilot check
-`gbrain maintain --status` shows the last free-upkeep run, which an open
-`gbrain serve` does while idle; an item serve could not finish in 30 slices is
-listed as parked, and `gbrain maintain --unattended` finishes it. For a brain
-no agent opens most days, offer `gbrain maintain --schedule` (asks consent). On a Postgres brain with a repo,
+`foresights maintain --status` shows the last free-upkeep run, which an open
+`foresights serve` does while idle; an item serve could not finish in 30 slices is
+listed as parked, and `foresights maintain --unattended` finishes it. For a brain
+no agent opens most days, offer `foresights maintain --schedule` (asks consent). On a Postgres brain with a repo,
 verify autopilot:
 ```bash
-gbrain autopilot --status
+foresights autopilot --status
 ```
 The exit code is trustworthy for gating: 0 fresh (or nothing installed),
 1 needs attention (stale heartbeat, never ran, or paused by a migration),
@@ -325,7 +325,7 @@ when the database is down.
 
 If not running, install it:
 ```bash
-gbrain autopilot --install --repo ~/brain
+foresights autopilot --install --repo ~/brain
 ```
 Autopilot runs sync, extract, and embed in a continuous loop with adaptive scheduling.
 In v0.11.1+, autopilot dispatches each cycle as a single `autopilot-cycle`
@@ -340,10 +340,10 @@ doesn't exist, autopilot runs inline, host manifests still reference
 
 ```bash
 # Check migration status
-gbrain apply-migrations --list
+foresights apply-migrations --list
 
 # Apply pending migrations (idempotent; safe on healthy installs)
-gbrain apply-migrations --yes
+foresights apply-migrations --yes
 
 # If host-specific handlers are flagged in ~/.gbrain/migrations/pending-host-work.jsonl:
 # walk them per skills/migrations/v0.11.0.md + docs/guides/plugin-handlers.md,
@@ -364,7 +364,7 @@ Check that the back-linking iron law is being followed:
 Check for common misfiling patterns (see `skills/_brain-filing-rules.md`):
 - Content with clear primary subjects filed in `sources/` instead of the
   appropriate directory (people/, companies/, concepts/, etc.)
-- Use gbrain search to find pages in `sources/` that reference specific
+- Use foresights search to find pages in `sources/` that reference specific
   people, companies, or concepts -- these may be misfiled
 - Flag misfiled pages for review or re-filing
 
@@ -377,42 +377,42 @@ Spot-check pages for missing `[Source: ...]` citations:
 
 ### Tag consistency
 Inconsistent tagging (e.g., "vc" vs "venture-capital", "ai" vs "artificial-intelligence").
-- Standardize to the most common variant using gbrain tag operations
+- Standardize to the most common variant using foresights tag operations
 
 ### Graph population (v0.10.3+)
 
 The `links` and `timeline_entries` tables are the structured graph layer.
 Populate them periodically or after major imports:
 
-- `gbrain extract links --source db` — backfill structured links by walking pages
+- `foresights extract links --source db` — backfill structured links by walking pages
   from the engine. Reads `[Name](people/slug)` / `[Name](companies/slug)` references
   and infers relationship types (`attended`, `works_at`, `invested_in`, `founded`,
   `advises`, `mentions`, `source`). Idempotent. Use `--source fs --dir <brain>`
   if you have a markdown checkout to walk instead.
-- `gbrain extract timeline --source db` — backfill structured timeline entries.
+- `foresights extract timeline --source db` — backfill structured timeline entries.
   Parses `- **YYYY-MM-DD** | summary` lines from page content. Idempotent (DB
   UNIQUE constraint).
-- `gbrain extract all --source db` — both in one run.
-- `gbrain graph-query <slug> --depth 2` — verify connectivity (use any well-known
+- `foresights extract all --source db` — both in one run.
+- `foresights graph-query <slug> --depth 2` — verify connectivity (use any well-known
   entity slug as a probe).
-- `gbrain stats` — verify `link_count > 0` and `timeline_entry_count > 0` after extraction.
-- `gbrain health` — review `link_coverage` and `timeline_coverage` percentages
+- `foresights stats` — verify `link_count > 0` and `timeline_entry_count > 0` after extraction.
+- `foresights health` — review `link_coverage` and `timeline_coverage` percentages
   on entity pages (person/company). Below 50% means more extraction is needed.
   On brains with very few entity pages these report "too few to grade"
   (`null` in JSON, with `entity_page_count` carrying the denominator) instead
   of a misleading 0%/100% — grow the entity set before acting on coverage.
 
-Available link types (use with `gbrain graph-query --type`):
+Available link types (use with `foresights graph-query --type`):
 `attended`, `works_at`, `invested_in`, `founded`, `advises`, `mentions`, `source`.
 
-Going forward, every `gbrain put` call auto-creates and reconciles links via the
-auto-link post-hook (default on; disable: `gbrain config set auto_link false`).
+Going forward, every `foresights put` call auto-creates and reconciles links via the
+auto-link post-hook (default on; disable: `foresights config set auto_link false`).
 So link-extract is mostly a one-time backfill. timeline-extract should be re-run
 after bulk imports or content edits that add new dated entries.
 
 ### Feature adoption check (weekly)
 ```bash
-gbrain features --json    # scan for underused features + recommendations
+foresights features --json    # scan for underused features + recommendations
 ```
 Run weekly alongside lint. Surfaces missing embeddings, unused integrations,
 and configuration improvements.
@@ -421,9 +421,9 @@ and configuration improvements.
 Chunks without an embedding yet (`--stale` selects exactly those). Embedding
 calls the configured provider, which bills per token, so this is paid work
 that needs the user's approval first:
-1. Preview with no provider calls: `gbrain embed --stale --dry-run`.
+1. Preview with no provider calls: `foresights embed --stale --dry-run`.
 2. Relay the chunk count and cost estimate to the user and wait for an answer.
-3. Only after they agree, run `gbrain embed --stale --yes --max-usd <cap>`
+3. Only after they agree, run `foresights embed --stale --yes --max-usd <cap>`
    with the cap they approved.
 
 Without approval the command stops with exit 3 and an `[AGENT]` block asking
@@ -433,25 +433,25 @@ durable ladder in `skills/minion-orchestrator/SKILL.md` instead of a bare
 background shell, which hides that exit 3 in a log file.
 
 To see what search cannot reach on one source, run
-`gbrain pages unsearchable --source <id> --json` (read-only). Read
+`foresights pages unsearchable --source <id> --json` (read-only). Read
 `semantic_unsearchable`, not only `unsearchable`: it adds `keyword_only`
 pages, which keyword search finds but vector search misses. `awaiting_sync`
 counts files sync still holds, which no embedding state includes; follow
-`gbrain sync status --source <id> --json` for those. Each row carries its `fix`.
+`foresights sync status --source <id> --json` for those. Each row carries its `fix`.
 
 ### Security (RLS verification)
-Run `gbrain doctor --json` and check the RLS status.
-All tables should show RLS enabled. If not, run `gbrain init` again.
+Run `foresights doctor --json` and check the RLS status.
+All tables should show RLS enabled. If not, run `foresights init` again.
 
 ### Schema health
-Check that the schema version is up to date. `gbrain doctor --json` reports
-the current version vs expected. If behind, `gbrain init` runs migrations
+Check that the schema version is up to date. `foresights doctor --json` reports
+the current version vs expected. If behind, `foresights init` runs migrations
 automatically.
 
 ### File storage health
 Check the integrity of stored files and redirect pointers:
-- Run `gbrain files verify` to check all DB records have valid data
-- Run `gbrain files status` to see migration state (local, mirrored, redirected)
+- Run `foresights files verify` to check all DB records have valid data
+- Run `foresights files status` to see migration state (local, mirrored, redirected)
 - Check for orphan `.redirect.yaml` pointers that reference missing storage files
 - Check for large binary files (>= 100 MB) still in git that should be in cloud storage
 - If storage backend is configured: verify redirect pointers resolve (download test)
@@ -470,51 +470,51 @@ queries across difficulty tiers:
 - **Tier 3 (semantic):** queries with no exact keyword match -- needs embeddings
 - **Tier 4 (cross-domain):** relational/connection queries -- only semantic handles
 
-Compare results from `gbrain search` (keyword) vs `gbrain query` (hybrid).
+Compare results from `foresights search` (keyword) vs `foresights query` (hybrid).
 Quality matters more than speed (2.5s right > 200ms wrong).
 
 When to run benchmarks:
 - After major brain imports or re-imports
-- After gbrain version upgrades
+- After foresights version upgrades
 - After embedding regeneration
 - Monthly to track quality drift
 
 ## Heartbeat Integration
 
-For production agents running on a schedule, integrate gbrain health checks into
+For production agents running on a schedule, integrate foresights health checks into
 your operational heartbeat.
 
 ### On every heartbeat (hourly or per-session)
 
-Run `gbrain doctor --alert --json`. Exit 0: report nothing. Exit 17: report each
+Run `foresights doctor --alert --json`. Exit 0: report nothing. Exit 17: report each
 `alert.items` entry with its fix. Exit 18: report only when
 `alert.consecutive_unknown` is 2 or more. Never alert on `health_score`.
 
 ### Weekly maintenance
 
 Refresh embeddings for chunks that have none yet, with the same consent steps
-as "Embedding freshness" above: `gbrain embed --stale --dry-run`, relay the
-estimate, and after the user agrees `gbrain embed --stale --yes --max-usd <cap>`
+as "Embedding freshness" above: `foresights embed --stale --dry-run`, relay the
+estimate, and after the user agrees `foresights embed --stale --yes --max-usd <cap>`
 (or a standing approval the user set with
 `consent.preapprove.paid.max_usd_per_run`). For large brains (>5000 pages),
 submit the approved command through the minion-orchestrator durable ladder;
 if you must background it in a shell, keep the exit code:
 ```bash
-(gbrain embed --stale --yes --max-usd <cap>; echo "exit=$?") > /tmp/gbrain-embed.log 2>&1 &
+(foresights embed --stale --yes --max-usd <cap>; echo "exit=$?") > /tmp/gbrain-embed.log 2>&1 &
 tail -2 /tmp/gbrain-embed.log   # later: the last line is exit=<code>
 ```
 Exit 3 in that log means the run needs the user's approval: relay it and stop.
 
 ### Monthly backup check
 
-Run `gbrain backup status` and relay anything red. It verifies every knowledge
+Run `foresights backup status` and relay anything red. It verifies every knowledge
 repo (and the agent workspace) has a git remote — local-only means a disk loss
-loses it. Fixes are printed inline (`gbrain bootstrap repo`, `git remote add`,
-`gbrain sources harden <id>`).
+loses it. Fixes are printed inline (`foresights bootstrap repo`, `git remote add`,
+`foresights sources harden <id>`).
 
 ### Daily verification
 
-Verify sync is running: check `gbrain stats` and confirm `last_sync` is within
+Verify sync is running: check `foresights stats` and confirm `last_sync` is within
 the last 24 hours. If sync has stopped, the brain is drifting from the repo.
 
 ### Stale compiled truth detection
@@ -539,17 +539,17 @@ This creates an audit trail for brain health over time.
 
 - Never delete pages without confirmation
 - Log all changes via timeline entries
-- Check gbrain health before and after to show improvement
+- Check foresights health before and after to show improvement
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
-- `gbrain doctor --remediate` steps marked "requires user agreement" (PROTECTED repairs, paid steps): show the plan and cost, and run with `--yes --include-repairs --expect <plan_hash> --max-usd <n>` (the hash from `--remediation-plan --json`) only after the user agrees; `preview_changed` means the plan moved, so preview and ask again. A step that would exceed the cap is not started.
+- `foresights doctor --remediate` steps marked "requires user agreement" (PROTECTED repairs, paid steps): show the plan and cost, and run with `--yes --include-repairs --expect <plan_hash> --max-usd <n>` (the hash from `--remediation-plan --json`) only after the user agrees; `preview_changed` means the plan moved, so preview and ask again. A step that would exceed the cap is not started.
 - A finding classified `operator_required`: follow its instruction or relay it to the brain host's operator. `consent_required`: ask the user.
-- A writer-coordination refusal (`writer_coordinator_required`, `writer_not_quiesced`, `recovery_required`): inspect `gbrain sources writer status` and hand the blocked recovery to the operator; never claim a checkout or delete a lock.
-- Doctor warns `persistence_terminal_failures`: run its `fix.command` (an active blocker: a recovery record or a sync checkpoint blocker; or an unresolved gbrain-defect class to report with the receipt ids). For the rest of the pile, `gbrain sources writer failures <source> --group-by category` (read-only) groups receipts with a fix and drill-down per group; historical rows need nothing. Never cancel or edit receipts to clear the count. Runbook: [terminal write failures](https://github.com/garrytan/gbrain/blob/master/docs/guides/troubleshooting.md#terminal-write-failures).
-- `gbrain dream` stops on a budget (exit 11): run the printed `resume_command` within the agreed budget.
+- A writer-coordination refusal (`writer_coordinator_required`, `writer_not_quiesced`, `recovery_required`): inspect `foresights sources writer status` and hand the blocked recovery to the operator; never claim a checkout or delete a lock.
+- Doctor warns `persistence_terminal_failures`: run its `fix.command` (an active blocker: a recovery record or a sync checkpoint blocker; or an unresolved gbrain-defect class to report with the receipt ids). For the rest of the pile, `foresights sources writer failures <source> --group-by category` (read-only) groups receipts with a fix and drill-down per group; historical rows need nothing. Never cancel or edit receipts to clear the count. Runbook: [terminal write failures](https://github.com/aimonk2025/gbrain/blob/master/docs/guides/troubleshooting.md#terminal-write-failures).
+- `foresights dream` stops on a budget (exit 11): run the printed `resume_command` within the agreed budget.
 
 ## Anti-Patterns
 
@@ -597,13 +597,13 @@ The maintenance report follows this structure:
 
 ## Tools Used
 
-- Check gbrain health (get_health; admin scope)
+- Check foresights health (get_health; admin scope)
 - Check banded brain health without admin scope (get_brain_health)
-- List pages in gbrain with filters (list_pages)
-- Read a page from gbrain (get_page)
-- Check backlinks in gbrain (get_backlinks)
-- Link entities in gbrain (add_link)
-- Remove links in gbrain (remove_link)
-- Tag a page in gbrain (add_tag)
-- Remove a tag in gbrain (remove_tag)
-- View timeline in gbrain (get_timeline)
+- List pages in foresights with filters (list_pages)
+- Read a page from foresights (get_page)
+- Check backlinks in foresights (get_backlinks)
+- Link entities in foresights (add_link)
+- Remove links in foresights (remove_link)
+- Tag a page in foresights (add_tag)
+- Remove a tag in foresights (remove_tag)
+- View timeline in foresights (get_timeline)

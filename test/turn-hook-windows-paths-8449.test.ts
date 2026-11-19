@@ -1,8 +1,8 @@
 /**
- * #8449: a Windows gbrain install (drive-letter paths) gets the per-turn rule
+ * #8449: a Windows foresights install (drive-letter paths) gets the per-turn rule
  * hook. Claude Code runs hook commands through Git Bash on Windows, so the
  * command names the launcher and binary in Git Bash's /c/... form, which the
- * POSIX launcher's own absolute-path check accepts; gbrain maps that form back
+ * POSIX launcher's own absolute-path check accepts; foresights maps that form back
  * to the native path when it reads the launcher file or the session directory. Codex runs hooks on
  * Windows without a POSIX shell, so it still gets the printed step. Paths are
  * passed in, so this runs the same on every platform.
@@ -26,7 +26,7 @@ describe('per-turn rule hook with Windows drive-letter paths (#8449)', () => {
   test('claude-code: a drive-letter --gbrain-bin is accepted and the command names Git Bash paths', () => {
     const settings = join(mkdtempSync(join(tmpdir(), 'gbrain-win-hook-')), 'settings.json');
     roots.push(settings.slice(0, -'/settings.json'.length));
-    const o = syncTurnRuleHook({ harness: 'claude-code', gbrainBin, paths: { claudeSettings: settings, hookLauncher: winLauncher }, dryRun: true, rerun: 'gbrain setup claude-code --instructions-only' });
+    const o = syncTurnRuleHook({ harness: 'claude-code', gbrainBin, paths: { claudeSettings: settings, hookLauncher: winLauncher }, dryRun: true, rerun: 'foresights setup claude-code --instructions-only' });
     expect(o.action).toBe('write');
     const command = claudeTurnRuleCommand(gbrainBin, undefined, winLauncher);
     expect(shellWords(command)).toEqual(['env', 'GBRAIN_HOOK_LANE=turn-rule', '/c/Users/alice example/.gbrain/hook-launcher/gbrain-hook', '/c/Users/alice example/.bun/bin/gbrain.exe', 'hook', 'user-prompt']);
@@ -57,15 +57,15 @@ describe('per-turn rule hook with Windows drive-letter paths (#8449)', () => {
     });
   });
 
-  test('codex: a drive-letter binary prints the step with the reason, not "no absolute gbrain binary"', () => {
-    const o = syncTurnRuleHook({ harness: 'codex', gbrainBin, paths: { codexHooks: join(tmpdir(), 'gbrain-win-no-such', 'hooks.json'), codexConfig: join(tmpdir(), 'gbrain-win-no-such', 'config.toml'), hookLauncher: winLauncher }, dryRun: true, rerun: 'gbrain setup codex --instructions-only' });
+  test('codex: a drive-letter binary prints the step with the reason, not "no absolute foresights binary"', () => {
+    const o = syncTurnRuleHook({ harness: 'codex', gbrainBin, paths: { codexHooks: join(tmpdir(), 'gbrain-win-no-such', 'hooks.json'), codexConfig: join(tmpdir(), 'gbrain-win-no-such', 'config.toml'), hookLauncher: winLauncher }, dryRun: true, rerun: 'foresights setup codex --instructions-only' });
     expect(o.action).toBe('print');
     expect(o.detail).toContain('POSIX shell');
-    expect(o.detail).not.toContain('no absolute gbrain binary');
+    expect(o.detail).not.toContain('no absolute foresights binary');
   });
 
   test('a relative binary is still refused', () => {
     const o = syncTurnRuleHook({ harness: 'claude-code', gbrainBin: 'gbrain.exe', paths: { hookLauncher: winLauncher }, dryRun: true, rerun: 'x' });
-    expect(o.detail).toContain('no absolute gbrain binary');
+    expect(o.detail).toContain('no absolute foresights binary');
   });
 });

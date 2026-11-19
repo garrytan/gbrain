@@ -6,7 +6,7 @@
  * in beforeAll, resetPgliteState in beforeEach, disconnect in afterAll) —
  * import depths adjusted for this file living in test/helpers/ rather than
  * test/. Scratch tables (narrow_a / narrow_b) keep the assertions independent
- * of the gbrain schema; the full reset wipes their rows between tests.
+ * of the foresights schema; the full reset wipes their rows between tests.
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';

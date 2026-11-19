@@ -1,5 +1,5 @@
 /**
- * `gbrain export` reads each page's raw_data with `includeDeleted: true` —
+ * `foresights export` reads each page's raw_data with `includeDeleted: true` —
  * the page list decides which rows export, raw follows its page. Pins the
  * opt-in against the engine-side soft-delete filter so a page the list
  * carries can never export with a silently vanished sidecar. Real PGLite;

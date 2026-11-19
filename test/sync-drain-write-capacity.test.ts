@@ -34,7 +34,7 @@ import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const base: SyncResult = { status: 'synced', fromCommit: 'a', toCommit: 'b', added: 0, modified: 0, deleted: 0, renamed: 0, chunksCreated: 0, embedded: 0, pagesAffected: [] };
-const RESUME = 'gbrain sync --source s --no-pull';
+const RESUME = 'foresights sync --source s --no-pull';
 const refused = () => capacityError('principal outstanding requests', { used: 99, limit: 100 });
 
 function captureStderr(): { lines: string[]; waiting: () => string[]; restore(): void } {
@@ -77,16 +77,16 @@ describe('write-capacity refusals at admission', () => {
     expect(result.drain).toMatchObject({ outcome: 'blocked', stop_reason: 'write_capacity', capacity: { outstanding: 99, limit: 100, scope: 'principal' } });
     expect(result.drain!.capacity!.waited_seconds).toBeGreaterThanOrEqual(0);
     const next = drainNext(result, RESUME, 's')!;
-    expect(next).toMatchObject({ command: 'gbrain sources writer status --source s --json', safe_to_loop: false, docs: ERROR_CATALOGUE.sync_drain_write_capacity.docs });
+    expect(next).toMatchObject({ command: 'foresights sources writer status --source s --json', safe_to_loop: false, docs: ERROR_CATALOGUE.sync_drain_write_capacity.docs });
     expect(next.why).toContain('99 of the write principal\'s 100 outstanding-request slots');
     expect(next.why).toContain(RESUME);
     expect(next.why).toContain('persistence.limits.principal_outstanding');
     expect(ERROR_CATALOGUE.sync_drain_write_capacity).toEqual({ code: 'queue_capacity', docs: 'docs/guides/write-refusals.md#drain-write-capacity' });
-    expect(drainJsonFields(result, RESUME, 's')).toMatchObject({ outcome: 'blocked', next: { command: 'gbrain sources writer status --source s --json' } });
+    expect(drainJsonFields(result, RESUME, 's')).toMatchObject({ outcome: 'blocked', next: { command: 'foresights sources writer status --source s --json' } });
     const summary = formatDrainSummary(result, RESUME, 's');
     expect(summary[0]).toMatch(/^Managed sync blocked: 0 entries this run/);
     expect(summary.join('\n')).toContain('Waited');
-    expect(summary.join('\n')).toContain('Next: gbrain sources writer status --source s --json');
+    expect(summary.join('\n')).toContain('Next: foresights sources writer status --source s --json');
   });
 
   test('a pass that succeeded before the refusal keeps its result on the blocked report; a cumulative cap still ends the drain with the error', async () => {
@@ -154,7 +154,7 @@ describe('forced probe: a real managed sync refused for write capacity', () => {
         const blocked = await runDrain({ announce: false, stallMs: 300, backoffMs: 10, pass: (signal, onProgress) => import('../src/core/persistence/sync-run.ts')
           .then(m => m.performManagedSync(engine, { ...opts, signal, onProgress, drainStartedAt: Date.now() })) });
         expect(blocked.drain).toMatchObject({ outcome: 'blocked', stop_reason: 'write_capacity', capacity: { outstanding: 4, limit: 4, scope: 'principal' } });
-        expect(drainNext(blocked, `gbrain sync --source ${id} --no-pull`, id)!.command).toBe(`gbrain sources writer status --source ${id} --json`);
+        expect(drainNext(blocked, `foresights sync --source ${id} --no-pull`, id)!.command).toBe(`foresights sources writer status --source ${id} --json`);
         expect(await ledger()).toEqual([]);
         expect(await engine.getPage('notes/d', { sourceId: id })).toBeNull();
         await outstanding(0);

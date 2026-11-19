@@ -1,6 +1,6 @@
 /**
  * Keyset-batched rebuilds of stored keyword vectors, shared by
- * `gbrain reindex-search-vector` (every row, new language) and the
+ * `foresights reindex-search-vector` (every row, new language) and the
  * fts-cjk-boundary migration (only rows whose text has a CJK/ASCII boundary).
  *
  * Each batch is its own statement, never one transaction: on Postgres one

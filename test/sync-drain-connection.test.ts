@@ -20,7 +20,7 @@ import { CODES } from '../src/core/error-registry.ts';
 import type { SyncResult } from '../src/commands/sync.ts';
 
 const base: SyncResult = { status: 'synced', fromCommit: 'a', toCommit: 'b', added: 0, modified: 0, deleted: 0, renamed: 0, chunksCreated: 0, embedded: 0, pagesAffected: [] };
-const RESUME = 'gbrain sync --source s --no-pull --retry-failed';
+const RESUME = 'foresights sync --source s --no-pull --retry-failed';
 const dropped = (errno = 'ECONNABORTED') => Object.assign(new Error(`write ${errno} db.example.invalid:5432`), { code: errno });
 
 function captureStderr(): { lines: string[]; restore(): void } {

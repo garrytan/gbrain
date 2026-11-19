@@ -1,18 +1,18 @@
 /**
- * openclaw-skill-plugin.ts — `gbrain setup openclaw --skill-loading
+ * openclaw-skill-plugin.ts — `foresights setup openclaw --skill-loading
  * resolve|shadow|off`: the generated OpenClaw plugin `gbrain-skill-resolver`,
  * a sibling of the brain-first `gbrain-turn-rule` plugin (a resolver bug can
  * never take the rule down with it).
  *
  * What setup writes:
- *  - the Node library, content-addressed at <gbrain home>/lib/<sha256>.mjs
- *    (built from this gbrain's own source, mode 0644);
+ *  - the Node library, content-addressed at <foresights home>/lib/<sha256>.mjs
+ *    (built from this foresights's own source, mode 0644);
  *  - one catalog per agent, `openclaw-<agent>`, over the agent's skill
  *    directories (<workspace>/skills and <OpenClaw state dir>/skills);
- *  - a data-only state file, <gbrain home>/openclaw-skill-resolver.json
+ *  - a data-only state file, <foresights home>/openclaw-skill-resolver.json
  *    (mode 0600): per agent its mode, catalog, top_k, floor, live fraction
  *    and rendered pinned block, plus the library's sha256. It never names a
- *    path to code: the library directory and the gbrain bin are baked into
+ *    path to code: the library directory and the foresights bin are baked into
  *    the plugin's index.js;
  *  - the plugin itself under <OpenClaw state dir>/gbrain/gbrain-skill-resolver.
  *
@@ -152,7 +152,7 @@ export function readOpenclawSkillState(home: string): OpenclawSkillState | null 
 function pluginFiles(home: string, gbrainBin: string, gbrainHomeEnv: string | null): Record<string, string> {
   return {
     'package.json': `${JSON.stringify({ name: OPENCLAW_SKILL_PLUGIN_ID, version: '1.0.0', private: true, type: 'module', openclaw: { extensions: ['./index.js'] } }, null, 2)}\n`,
-    'openclaw.plugin.json': `${JSON.stringify({ id: OPENCLAW_SKILL_PLUGIN_ID, name: 'GBrain skill resolver', description: 'Suggests the installed skills that fit each user message, plus the operator\'s pinned skills (managed by gbrain setup openclaw).', configSchema: { type: 'object', additionalProperties: false } }, null, 2)}\n`,
+    'openclaw.plugin.json': `${JSON.stringify({ id: OPENCLAW_SKILL_PLUGIN_ID, name: 'Foresights skill resolver', description: 'Suggests the installed skills that fit each user message, plus the operator\'s pinned skills (managed by foresights setup openclaw).', configSchema: { type: 'object', additionalProperties: false } }, null, 2)}\n`,
     'index.js': openclawSkillLoaderJs({ home, libDir: openclawSkillLibDir(home), statePath: openclawSkillStatePath(home), logDir: logsDir(home), gbrainBin, gbrainHomeEnv }),
     'worker.js': openclawSkillWorkerJs(),
   };
@@ -174,7 +174,7 @@ export function openclawSkillPluginRegistered(dir = openclawSkillPluginDir()): b
   } catch { return false; }
 }
 
-/** Build the library from this gbrain's source and keep it at <lib>/<sha256>.mjs, writable by its owner only; the prune keeps every library a consumer's state (OpenClaw, Pi) still names. */
+/** Build the library from this foresights's source and keep it at <lib>/<sha256>.mjs, writable by its owner only; the prune keeps every library a consumer's state (OpenClaw, Pi) still names. */
 export async function ensureResolverLibrary(home: string): Promise<{ sha256: string; wrote: boolean; path: string }> {
   const { buildResolverLibrary, LIBRARY_FILE } = await import('../../commands/skill-resolver-library.ts');
   const dir = openclawSkillLibDir(home);
@@ -253,9 +253,9 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
   const fail = (e: OpenclawSkillError) => ({ ...out, error: e });
   const bin = deps.openclawBin !== undefined ? deps.openclawBin : which('openclaw');
   if (!bin && !existsSync(openclawStateDir())) {
-    return fail({ code: 'skill_resolver_host_not_local', message: `No openclaw on PATH and no OpenClaw state directory at ${openclawStateDir()}, so this is not the OpenClaw host. The plugin runs inside the gateway and needs this gbrain home, library and bin on the same machine.` });
+    return fail({ code: 'skill_resolver_host_not_local', message: `No openclaw on PATH and no OpenClaw state directory at ${openclawStateDir()}, so this is not the OpenClaw host. The plugin runs inside the gateway and needs this foresights home, library and bin on the same machine.` });
   }
-  if (!opts.gbrainBin.startsWith('/')) return fail({ code: 'skill_resolver_setup_incomplete', message: 'No absolute gbrain binary was found for the plugin (the gateway inherits no PATH); pass --gbrain-bin. Nothing was written.' });
+  if (!opts.gbrainBin.startsWith('/')) return fail({ code: 'skill_resolver_setup_incomplete', message: 'No absolute foresights binary was found for the plugin (the gateway inherits no PATH); pass --gbrain-bin. Nothing was written.' });
 
   const prior = readOpenclawSkillState(home);
   const roster = openclawRoster();
@@ -350,15 +350,15 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
   const commands = installArgv(bin ?? 'openclaw', dir);
   if (!changed && registered) out.steps.push({ step: 'install', action: 'skip', detail: 'already installed, enabled and allowed in OpenClaw; mode and pins are read from the state file, so nothing reloads' });
   else {
-    if (!bin) return fail({ code: 'skill_resolver_plugin_not_installed', message: `The plugin was written to ${dir}, but there is no openclaw on PATH, so OpenClaw has not installed it.`, commands: commands.map(shown), argv: commands[0], recovery: `partial: files written, 0 of ${commands.length} commands ran; run them on the OpenClaw host, restart the gateway, then gbrain doctor --only skill_resolver` });
+    if (!bin) return fail({ code: 'skill_resolver_plugin_not_installed', message: `The plugin was written to ${dir}, but there is no openclaw on PATH, so OpenClaw has not installed it.`, commands: commands.map(shown), argv: commands[0], recovery: `partial: files written, 0 of ${commands.length} commands ran; run them on the OpenClaw host, restart the gateway, then foresights doctor --only skill_resolver` });
     for (const [i, argv] of commands.entries()) {
       const r = run(argv);
-      if (!r.ok) return fail({ code: 'skill_resolver_plugin_not_installed', message: `\`${shown(argv)}\` failed (${lastLine(r.output)}).`, commands: commands.slice(i).map(shown), argv: argv, recovery: `partial: files written, ${i} of ${commands.length} commands ran; run the rest, restart the gateway, then gbrain doctor --only skill_resolver` });
+      if (!r.ok) return fail({ code: 'skill_resolver_plugin_not_installed', message: `\`${shown(argv)}\` failed (${lastLine(r.output)}).`, commands: commands.slice(i).map(shown), argv: argv, recovery: `partial: files written, ${i} of ${commands.length} commands ran; run the rest, restart the gateway, then foresights doctor --only skill_resolver` });
     }
     out.steps.push({ step: 'install', action: 'run', detail: `installed, enabled and allowed with the openclaw CLI; restart the gateway once to load new plugin code` });
     const inspect = run([bin, 'plugins', 'inspect', OPENCLAW_SKILL_PLUGIN_ID, '--runtime', '--json']);
     const loaded = inspect.ok && inspect.output.includes('before_prompt_build') && /"status"\s*:\s*"loaded"|"imported"\s*:\s*true/.test(inspect.output) && !/"status"\s*:\s*"(?:error|disabled)"/.test(inspect.output);
-    if (!loaded) return fail({ code: 'skill_resolver_plugin_not_installed', message: `\`openclaw plugins inspect ${OPENCLAW_SKILL_PLUGIN_ID} --runtime --json\` does not show the plugin loaded with before_prompt_build (${lastLine(inspect.output)}).`, commands: [shown([bin, 'plugins', 'inspect', OPENCLAW_SKILL_PLUGIN_ID, '--runtime', '--json'])], argv: [bin, 'plugins', 'inspect', OPENCLAW_SKILL_PLUGIN_ID, '--runtime', '--json'], recovery: `partial: files written, ${commands.length} of ${commands.length} commands ran, but OpenClaw does not load the plugin; check the inspect output, then gbrain doctor --only skill_resolver` });
+    if (!loaded) return fail({ code: 'skill_resolver_plugin_not_installed', message: `\`openclaw plugins inspect ${OPENCLAW_SKILL_PLUGIN_ID} --runtime --json\` does not show the plugin loaded with before_prompt_build (${lastLine(inspect.output)}).`, commands: [shown([bin, 'plugins', 'inspect', OPENCLAW_SKILL_PLUGIN_ID, '--runtime', '--json'])], argv: [bin, 'plugins', 'inspect', OPENCLAW_SKILL_PLUGIN_ID, '--runtime', '--json'], recovery: `partial: files written, ${commands.length} of ${commands.length} commands ran, but OpenClaw does not load the plugin; check the inspect output, then foresights doctor --only skill_resolver` });
     out.steps.push({ step: 'verify', action: 'run', detail: 'openclaw loads it with before_prompt_build' });
   }
   const node = deps.nodeBin !== undefined ? deps.nodeBin : which('node');
@@ -374,7 +374,7 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
 
 /**
  * Re-render every OpenClaw agent's pinned block from config.json into the
- * state file (gbrain skills pin add|remove). The plugin re-reads the state on
+ * state file (foresights skills pin add|remove). The plugin re-reads the state on
  * its next turn, so nothing reloads and no OpenClaw command runs. Returns the
  * agents whose block changed.
  */

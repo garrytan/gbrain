@@ -1,8 +1,8 @@
 /**
- * `gbrain repair legacy-twins --source <id>` (#6885): converge the page pairs older syncs forked before #6857.
+ * `foresights repair legacy-twins --source <id>` (#6885): converge the page pairs older syncs forked before #6857.
  *
  * A pair is a legacy page (live, no recorded origin, not database-only, a slug the current `slugifyPath` folds
- * differently: an older gbrain imported the file under its raw name) and its twin (live, the folded slug, recording
+ * differently: an older foresights imported the file under its raw name) and its twin (live, the folded slug, recording
  * the file as its origin). Since #6727 sync imports a never-forked file into the legacy page; already forked pairs
  * stay forked, and soft-deleting the twin by hand withdraws the file because no other live page records it.
  *
@@ -16,7 +16,7 @@
  * on the twin, holding the legacy page's key too; an unmanaged brain does the same in one maintenance transaction):
  *
  *   1. the legacy page records the file as its origin, keeping its id, slug, links, timeline, versions and aliases;
- *   2. the shared twin merge (#6948, persistence/twin-merge.ts `mergeTwinInto`, the one `gbrain repair origin-twins`
+ *   2. the shared twin merge (#6948, persistence/twin-merge.ts `mergeTwinInto`, the one `foresights repair origin-twins`
  *      uses) moves the twin's links in every role and their dated transitions (links between the pair stay), timeline
  *      rows, raw data, file attachments, user-added tags, slug aliases and facts other pages assert about it to the
  *      legacy page, and the twin's slug becomes a `slug_aliases` row for it. A twin row that would land on a legacy row
@@ -85,7 +85,7 @@ interface PairItem extends RepairItem { pair: LegacyTwinPair; owner: GhostOwner;
 interface PageRow { id: number | string; slug: string; revision: string; content_hash: string | null; source_path: string | null; source_uri: string | null }
 type OwnerContext = { ok: true; root: string; owner: GhostOwner } | { ok: false; status: 'unknown' | 'not_applicable'; reason: string };
 
-export const legacyTwinsPreviewCommand = (sourceId: string) => `gbrain repair legacy-twins --source ${sourceId}`;
+export const legacyTwinsPreviewCommand = (sourceId: string) => `foresights repair legacy-twins --source ${sourceId}`;
 const previewFix = (sourceId: string) => readFix('Previews the legacy twin pairs of the source again; writes nothing.',
   { argv: ['gbrain', 'repair', 'legacy-twins', '--source', sourceId, '--json'] });
 const writerStatusFix = (sourceId: string) => readFix('Shows the source\'s canonical binding and owner host, read-only.',
@@ -141,18 +141,18 @@ export function massRefusal(sourceId: string, pairs: number, fileBacked: number)
 
 /** What a person runs to decide a pair the repair does not merge on its own. */
 function decisionCommands(sourceId: string, reason: TwinDecisionReason, twin: TwinPage, legacy: TwinPage[]): string[] {
-  const show = [twin, ...legacy].map(p => `gbrain get --source ${sourceId} -- '${p.slug}'`);
+  const show = [twin, ...legacy].map(p => `foresights get --source ${sourceId} -- '${p.slug}'`);
   const preview = legacyTwinsPreviewCommand(sourceId);
   switch (reason) {
     case 'content_differs': return [...show, `Keep the legacy page: make its content and the twin's the same (edit the file and sync, or edit the legacy page), then run ${preview}.`,
-      `Keep the twin instead: gbrain delete '${legacy[0]!.slug}' --source-id ${sourceId} (its id, links and history go with it).`];
-    case 'several_legacy': return [...show, `Keep one legacy page: soft-delete the others with gbrain delete '<slug>' --source-id ${sourceId}, then run ${preview}.`];
-    case 'file_missing': return [`gbrain repair ghost-pages --source ${sourceId} (the twin's file is gone: restore it from Git and sync, or remove the twin), then run ${preview}.`];
-    case 'file_drift': return [`gbrain repair file-drift --source ${sourceId} --slug ${twin.slug} --prefer file (or --prefer database), then run ${preview}.`];
-    case 'file_unverified': return [`gbrain sources writer status --source ${sourceId} --json (check the checkout), then run ${preview}.`];
+      `Keep the twin instead: foresights delete '${legacy[0]!.slug}' --source-id ${sourceId} (its id, links and history go with it).`];
+    case 'several_legacy': return [...show, `Keep one legacy page: soft-delete the others with foresights delete '<slug>' --source-id ${sourceId}, then run ${preview}.`];
+    case 'file_missing': return [`foresights repair ghost-pages --source ${sourceId} (the twin's file is gone: restore it from Git and sync, or remove the twin), then run ${preview}.`];
+    case 'file_drift': return [`foresights repair file-drift --source ${sourceId} --slug ${twin.slug} --prefer file (or --prefer database), then run ${preview}.`];
+    case 'file_unverified': return [`foresights sources writer status --source ${sourceId} --json (check the checkout), then run ${preview}.`];
     case 'twin_slug_path_occupied': return [`A file exists at the twin's own slug path (${twin.slug}.md), which the twin's purge would compare or remove: rename or remove that file and commit, sync, then run ${preview}.`];
-    case 'legacy_records_file_uri': return [...show, `The legacy page records a file URI of its own; decide which file it belongs to with gbrain sources reconcile ${sourceId} '${legacy[0]!.slug}' --brain host --preview.`];
-    case 'twin_has_withdrawals': return [...show, `Claims were forgotten on ${twin.slug}: forget the same claims on '${legacy[0]!.slug}' (gbrain forget), or soft-delete the twin by hand, then run ${preview}.`];
+    case 'legacy_records_file_uri': return [...show, `The legacy page records a file URI of its own; decide which file it belongs to with foresights sources reconcile ${sourceId} '${legacy[0]!.slug}' --brain host --preview.`];
+    case 'twin_has_withdrawals': return [...show, `Claims were forgotten on ${twin.slug}: forget the same claims on '${legacy[0]!.slug}' (foresights forget), or soft-delete the twin by hand, then run ${preview}.`];
     case 'twin_slug_unwritable': return show;
     case 'twin_evidence_conflicts': return [...show, `The twin holds a link, relationship date, timeline entry or raw data row the legacy page holds differently, which the merge would lose: make them agree (or soft-delete the twin by hand), then run ${preview}.`];
   }
@@ -239,10 +239,10 @@ export const legacyTwinsRepair: RepairHandler = {
   kind: 'legacy-twins',
   embeds: false,
   async plan(engine, scope, after, opts): Promise<RepairPlan> {
-    if (opts?.remote === true) throw trustedCliRequired('gbrain repair legacy-twins runs only from the trusted local CLI on the brain host.');
+    if (opts?.remote === true) throw trustedCliRequired('foresights repair legacy-twins runs only from the trusted local CLI on the brain host.');
     if (scope.source_ids.length !== 1) {
-      throw opError('invalid_params', 'gbrain repair legacy-twins needs --source <id>.',
-        'Legacy twin pairs are checked on each source\'s own canonical owner host; name one source, e.g. gbrain repair legacy-twins --source default.',
+      throw opError('invalid_params', 'foresights repair legacy-twins needs --source <id>.',
+        'Legacy twin pairs are checked on each source\'s own canonical owner host; name one source, e.g. foresights repair legacy-twins --source default.',
         { fix: readFix('Lists the registered sources.', { argv: ['gbrain', 'sources', 'list', '--json'] }), docs: DOCS });
     }
     const sourceId = scope.source_ids[0]!;
@@ -267,7 +267,7 @@ export const legacyTwinsRepair: RepairHandler = {
         details: { decisions: scan.decisions, mass_merge: mass, truncated: scan.truncated, purge_fuse_hours: LEGACY_TWINS_PURGE_FUSE_HOURS, docs: DOCS } };
     }
     if (!opts.expect) {
-      throw opError('invalid_params', 'gbrain repair legacy-twins --apply merges only the set a preview printed.',
+      throw opError('invalid_params', 'foresights repair legacy-twins --apply merges only the set a preview printed.',
         `Preview first: ${command} — then, after the user agrees, run the apply command it prints: ${command} --apply --expect <preview-hash> --yes`,
         { fix: previewFix(sourceId), docs: DOCS });
     }

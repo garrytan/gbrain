@@ -34,7 +34,7 @@ Locator: §6, Limitation..
 ## Limits on interpretation
 
 - Uses question-conditioned learned compressor and older target LMs; context must be recompressed for each question and compression adds compute overhead.
-- The reported gain is specific to the NaturalQuestions setup with ground-truth document at rank/position 10; it is not a result on conversational memory or GBrain.
+- The reported gain is specific to the NaturalQuestions setup with ground-truth document at rank/position 10; it is not a result on conversational memory or Foresights.
 
 [Summary](../summaries/07-longllmlingua.md) · [Compendium](../compendium.md) ·
 [Index](../index.md)

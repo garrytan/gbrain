@@ -6,13 +6,13 @@ import { readAllSourceHolds } from '../../../core/connectors/item-holds-store.ts
  * Fix wave 4 (#5752, #5740): connector items held after repeated item-scoped
  * failures, per source. A held item does not block freshness, so this is the
  * doctor surface that keeps it from being skipped silently. Counts and keys
- * only; `gbrain sources status <id>` lists sender, subject or title.
+ * only; `foresights sources status <id>` lists sender, subject or title.
  */
 export async function connectorHeldItemsCheck(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
   try {
     const holds = await readAllSourceHolds(engine, sourceIds ? { sourceIds } : {});
     const sources = holds.map(entry => ({ source_id: entry.sourceId, kind: entry.kind, held: entry.held.length,
-      retry: `gbrain sources retry-held ${entry.sourceId}`, status: `gbrain sources status ${entry.sourceId}` }));
+      retry: `foresights sources retry-held ${entry.sourceId}`, status: `foresights sources status ${entry.sourceId}` }));
     const held = sources.reduce((sum, source) => sum + source.held, 0);
     const details = { held, sources, docs: 'docs/guides/repair.md#connector-held-items' };
     if (!held) return { name: 'connector_held_items', status: 'ok', message: 'No connector items are held.', details };

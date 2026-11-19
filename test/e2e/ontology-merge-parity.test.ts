@@ -6,7 +6,7 @@
  * valid_from) WHERE dimension IS NOT NULL) and a current-open supersession UPDATE.
  * Postgres binds through postgres.js sql`` (BIGSERIAL ids arrive as strings,
  * Number()-normalized in the engine); PGLite through positional $N params.
- * A drift means `gbrain migrate --to supabase` silently changes how an
+ * A drift means `foresights migrate --to supabase` silently changes how an
  * entity's ontology evolves.
  *
  * Reality pins (spec adjusted to code — the REAL action names):

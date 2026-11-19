@@ -4,7 +4,7 @@
  * connect…`). The fatal seam ran every error through the database access
  * classifier first, so a thin client whose remote MCP host was down printed
  * `GBRAIN_DB_ACCESS conn_refused` and "switch to the transaction pooler …
- * Run: gbrain db-repair". A remote MCP failure renders as itself; a real
+ * Run: foresights db-repair". A remote MCP failure renders as itself; a real
  * refused Postgres connection still gets the marker and the db-repair line.
  */
 import { describe, expect, spyOn, test } from 'bun:test';
@@ -23,7 +23,7 @@ describe('the fatal seam on a refused connection', () => {
     const { code, text } = stderrOf(() => writeFatalCliError(error, { argv: ['takes', 'list'] }));
     expect(code).toBe(1);
     expect(text).toContain('Error [unavailable]: OAuth discovery failed');
-    expect(text).toContain('Fix: gbrain remote doctor');
+    expect(text).toContain('Fix: foresights remote doctor');
     expect(text).not.toContain('GBRAIN_DB_ACCESS');
     expect(text).not.toContain('database_error');
     expect(text).not.toContain('db-repair');
@@ -34,6 +34,6 @@ describe('the fatal seam on a refused connection', () => {
     const { code, text } = stderrOf(() => writeFatalCliError(error, { argv: ['takes', 'list'], dbUrl: 'postgresql://postgres@127.0.0.1:5432/brain' }));
     expect(code).toBe(1);
     expect(text).toContain('Error [database_error]: connect ECONNREFUSED');
-    expect(text).toContain('Run: gbrain db-repair');
+    expect(text).toContain('Run: foresights db-repair');
   });
 });

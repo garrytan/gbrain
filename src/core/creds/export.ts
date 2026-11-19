@@ -1,10 +1,10 @@
 /**
  * creds/export — encrypted credential bundles for hosted-upgrade transfer.
  *
- * `gbrain creds export` produces a passphrase-encrypted JSON bundle carrying
+ * `foresights creds export` produces a passphrase-encrypted JSON bundle carrying
  * selected vault entries PLUS the provider client records they depend on
  * (Google refresh tokens are bound to the client that minted them — moving
- * one without the other produces dead tokens). `gbrain creds import` is the
+ * one without the other produces dead tokens). `foresights creds import` is the
  * inverse; hosted gbrain.io's /api/creds/import accepts the same format.
  *
  * Crypto: scrypt (N=2^15, r=8, p=1) key derivation → AES-256-GCM. The format
@@ -85,7 +85,7 @@ export function exportBundle(
 
 export function importBundle(bundle: EncryptedBundle, passphrase: string): BundlePayload {
   if (bundle.kind !== BUNDLE_KIND || bundle.version !== BUNDLE_VERSION || bundle.kdf !== 'scrypt') {
-    throw new Error('Not a gbrain credential bundle (or an unsupported version).');
+    throw new Error('Not a foresights credential bundle (or an unsupported version).');
   }
   const salt = Buffer.from(bundle.salt, 'base64');
   const key = scryptSync(passphrase, salt, KEY_LEN, {
@@ -101,7 +101,7 @@ export function importBundle(bundle: EncryptedBundle, passphrase: string): Bundl
   // message honest (a truncated tag is tampering, not a wrong passphrase).
   const tag = Buffer.from(bundle.tag, 'base64');
   if (tag.length !== 16) {
-    throw new Error('Not a gbrain credential bundle (or an unsupported version).');
+    throw new Error('Not a foresights credential bundle (or an unsupported version).');
   }
   const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(bundle.iv, 'base64'), {
     authTagLength: 16,

@@ -54,9 +54,9 @@ interface CheckUpdateResult {
 
 function upgradeCommandForMethod(method: string): string {
   switch (method) {
-    case 'bun': return 'bun update gbrain';
-    case 'binary': return 'gbrain self-upgrade';
-    default: return 'gbrain upgrade';
+    case 'bun': return 'bun update foresights';
+    case 'binary': return 'foresights self-upgrade';
+    default: return 'foresights upgrade';
   }
 }
 
@@ -74,9 +74,9 @@ function upgradeCommandForMethod(method: string): string {
  * library (#505), so it would produce false upgrade prompts pointing at a
  * stranger's package. The stable channel (the default, GBRA-224) never reads a
  * bare VERSION file: it reads the evidence record (core/stable-channel.ts). */
-const RELEASE_REF_RAW = 'https://raw.githubusercontent.com/garrytan/gbrain/latest-stable';
+const RELEASE_REF_RAW = 'https://raw.githubusercontent.com/aimonk2025/gbrain/latest-stable';
 const ALPHA_VERSION_URL = `${RELEASE_REF_RAW}/VERSION`;
-const RELEASE_NOTES_URL = 'https://github.com/garrytan/gbrain/blob/latest-stable/CHANGELOG.md';
+const RELEASE_NOTES_URL = 'https://github.com/aimonk2025/gbrain/blob/latest-stable/CHANGELOG.md';
 
 /** Extract a version from the raw VERSION file body: first line, optional `v`
  * prefix, optional `-suffix` channel tag (`0.31.1.1-fixwave` compares as its
@@ -214,7 +214,7 @@ function recordCheck(channel: ReleaseChannel, release: Extract<LatestReleaseResu
 /**
  * Fetch the channel's version and write its cache partition (read by the CLI startup hook). On fetch failure the
  * last-known-good answer is preserved (see recordFailedCheck) — never a fabricated `up_to_date`, and never an alpha
- * answer on stable. This is the function the detached single-flight refresh (`gbrain check-update --refresh-cache`)
+ * answer on stable. This is the function the detached single-flight refresh (`foresights check-update --refresh-cache`)
  * invokes. An invalid configured channel refreshes nothing.
  */
 export async function refreshUpdateCache(channel: ReleaseChannel | null = currentReleaseChannel()): Promise<void> {
@@ -227,7 +227,7 @@ export async function refreshUpdateCache(channel: ReleaseChannel | null = curren
 
 export async function runCheckUpdate(args: string[]) {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('Usage: gbrain check-update [--json] [--refresh-cache]\n\nCheck for new GBrain versions on this install\'s release channel (stable by default;\nGBRAIN_RELEASE_CHANNEL or self_upgrade.channel selects alpha, every release).\n\nReports any strictly newer release, including patch and micro updates.\nFails silently on network errors.\n\n--refresh-cache  Fetch + update the self-upgrade cache, print nothing (used by\n                 the CLI startup hook\'s detached refresh).');
+    console.log('Usage: foresights check-update [--json] [--refresh-cache]\n\nCheck for new Foresights versions on this install\'s release channel (stable by default;\nGBRAIN_RELEASE_CHANNEL or self_upgrade.channel selects alpha, every release).\n\nReports any strictly newer release, including patch and micro updates.\nFails silently on network errors.\n\n--refresh-cache  Fetch + update the self-upgrade cache, print nothing (used by\n                 the CLI startup hook\'s detached refresh).');
     return;
   }
 
@@ -251,11 +251,11 @@ export async function runCheckUpdate(args: string[]) {
   const json = args.includes('--json');
   const resolution = resolveReleaseChannel(loadConfig());
   if (!resolution.ok) {
-    setCliExitVerdict(writeCliError(opError('invalid_params', invalidChannelMessage(resolution), `Set a valid channel: gbrain config set self_upgrade.channel stable (or alpha).`), 'check-update', { json }));
+    setCliExitVerdict(writeCliError(opError('invalid_params', invalidChannelMessage(resolution), `Set a valid channel: foresights config set self_upgrade.channel stable (or alpha).`), 'check-update', { json }));
     return;
   }
   const { channel } = resolution;
-  const upgradeCmd = channel === 'stable' ? 'gbrain upgrade' : upgradeCommandForMethod(detectInstallMethod());
+  const upgradeCmd = channel === 'stable' ? 'foresights upgrade' : upgradeCommandForMethod(detectInstallMethod());
   const checkedAt = Date.now();
   const release = await fetchLatestRelease(channel);
   const channelFields = { channel, channel_source: resolution.source };
@@ -278,17 +278,17 @@ export async function runCheckUpdate(args: string[]) {
         ...(stable ?? {}),
       }, null, 2));
     } else if (stable) {
-      console.log(`GBrain ${VERSION} — ${stable.message} ${stable.fix}`);
+      console.log(`Foresights ${VERSION} — ${stable.message} ${stable.fix}`);
     } else if (release.reason === 'network_error') {
-      console.log(`GBrain ${VERSION} — could not check for updates (network unavailable).`);
+      console.log(`Foresights ${VERSION} — could not check for updates (network unavailable).`);
     } else {
-      console.log(`GBrain ${VERSION} — could not determine the latest published version.`);
+      console.log(`Foresights ${VERSION} — could not determine the latest published version.`);
     }
     return;
   }
 
   const latestVersion = release.tag.replace(/^v/, '');
-  // Warm the self-upgrade cache so the next `gbrain <cmd>` startup hook can emit
+  // Warm the self-upgrade cache so the next `foresights <cmd>` startup hook can emit
   // the marker without a network call.
   const offered = recordCheck(channel, release, checkedAt);
   const updateAvailable = offered !== null;
@@ -313,13 +313,13 @@ export async function runCheckUpdate(args: string[]) {
   if (json) {
     console.log(JSON.stringify({ ...result, ...channelFields, ...(withdrawn ? { withdrawn: true } : {}) }, null, 2));
   } else if (withdrawn) {
-    console.log(`GBrain ${VERSION} was withdrawn from the stable channel; the current stable release is ${latestVersion}.`);
+    console.log(`Foresights ${VERSION} was withdrawn from the stable channel; the current stable release is ${latestVersion}.`);
     console.log(`Run: ${upgradeCmd}`);
   } else if (updateAvailable) {
-    console.log(`GBrain update available (${channel} channel): ${VERSION} → ${latestVersion}`);
+    console.log(`Foresights update available (${channel} channel): ${VERSION} → ${latestVersion}`);
     console.log(`Run: ${upgradeCmd}`);
     console.log(`Release: ${release.url}`);
   } else {
-    console.log(`GBrain ${VERSION} is up to date on the ${channel} channel.`);
+    console.log(`Foresights ${VERSION} is up to date on the ${channel} channel.`);
   }
 }

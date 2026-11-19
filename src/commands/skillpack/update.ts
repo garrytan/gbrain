@@ -1,5 +1,5 @@
 /**
- * `gbrain skillpack reference <name>|--all --update-untouched`, `skillpack pin|unpin`
+ * `foresights skillpack reference <name>|--all --update-untouched`, `skillpack pin|unpin`
  * and `skillpack restore` — the safe-update lane (core: src/core/skillpack/safe-update.ts).
  *
  * Never prompts: `--dry-run` is the preview. Exit 0 when nothing failed
@@ -20,15 +20,15 @@ import { exitCliError } from '../../cli/cli-error.ts';
 import { findGbrainOrDie, resolveWorkspace } from './shared.ts';
 
 export const UPDATE_HELP =
-  'gbrain skillpack reference <name>|--all --update-untouched [--workspace PATH] [--dry-run] [--json]\n' +
+  'foresights skillpack reference <name>|--all --update-untouched [--workspace PATH] [--dry-run] [--json]\n' +
   '    [--no-diff] [--accept-historical] [--fail-on-skipped]\n\n' +
-  'Take gbrain\'s current version of installed skills you never edited, one whole\n' +
+  'Take foresights\'s current version of installed skills you never edited, one whole\n' +
   'skill at a time. A skill updates only when every file still matches the hash\n' +
   'recorded at install (or, with --accept-historical, a released version when\n' +
   'no hash was recorded) and the skill is not pinned. Anything else\n' +
   'is skipped with a reason and a diff. Never prompts; --dry-run is the preview.\n' +
   'Every update is journaled under ~/.gbrain/skillpack-backups/<id>/ and can be\n' +
-  'undone with gbrain skillpack restore <id>.\n\n' +
+  'undone with foresights skillpack restore <id>.\n\n' +
   'Exit: 0 nothing failed; 1 with --fail-on-skipped when a skill was skipped;\n' +
   '2 a skill failed and was rolled back (files touched and restore command printed).';
 
@@ -59,7 +59,7 @@ function printUpdate(result: UpdateResult): void {
   const verb = result.dry_run ? 'skillpack update-untouched (dry run)' : 'skillpack update-untouched';
   console.log(`${verb}: ${result.skills_root}`);
   if (!result.history.verified) console.log(`  history UNVERIFIED (${result.history.reason}): whole-file updates are disabled (history_unverified)`);
-  for (const id of result.pending_journals) console.log(`  an earlier update did not finish: gbrain skillpack restore ${id}`);
+  for (const id of result.pending_journals) console.log(`  an earlier update did not finish: foresights skillpack restore ${id}`);
   for (const s of result.skills) {
     if (s.result === 'current' || s.result === 'not_installed') continue;
     const detail = s.result === 'skipped' ? s.reason : s.result === 'failed' ? s.failure : `${s.changes.length} file(s)`;
@@ -75,8 +75,8 @@ function printUpdate(result: UpdateResult): void {
   }
   const diffs = result.skills.filter(s => s.diffs?.length);
   if (diffs.length) {
-    console.log('\nSkipped skills, your copy (a/) against gbrain\'s (b/); first 200 lines per file, secret-looking values redacted.');
-    console.log('Merge by hand what you want; gbrain skillpack reference <name> shows the full diff.');
+    console.log('\nSkipped skills, your copy (a/) against foresights\'s (b/); first 200 lines per file, secret-looking values redacted.');
+    console.log('Merge by hand what you want; foresights skillpack reference <name> shows the full diff.');
     for (const s of diffs) for (const d of s.diffs!) console.log(`\n${d.diff}`);
   }
   const failed = result.skills.filter(s => s.result === 'failed');
@@ -98,7 +98,7 @@ export async function cmdUpdateUntouched(args: string[]): Promise<void> {
   }
   for (const bad of ['--apply-clean-hunks', '--since', '--harness']) {
     if (args.some(a => a === bad || a.startsWith(`${bad}=`))) {
-      console.error(`Error: --update-untouched does not combine with ${bad}. Run gbrain skillpack reference --help for the read-only lens.`);
+      console.error(`Error: --update-untouched does not combine with ${bad}. Run foresights skillpack reference --help for the read-only lens.`);
       process.exit(2);
     }
   }
@@ -137,18 +137,18 @@ export async function cmdUpdateUntouched(args: string[]): Promise<void> {
 export async function cmdPin(args: string[], pinned: boolean): Promise<void> {
   const sub = pinned ? 'pin' : 'unpin';
   if (args.includes('--help') || args.includes('-h')) {
-    console.log(`gbrain skillpack ${sub} <skill> [--workspace PATH] [--json]\n\n` +
+    console.log(`foresights skillpack ${sub} <skill> [--workspace PATH] [--json]\n\n` +
       (pinned ? 'Pin an installed skill: --update-untouched never updates it.' : 'Unpin a skill so --update-untouched may update it again.'));
     process.exit(0);
   }
   const [slug, extra] = positionals(args, ['--workspace']);
   if (!slug || extra) {
-    console.error(`Error: gbrain skillpack ${sub} takes exactly one skill name.`);
+    console.error(`Error: foresights skillpack ${sub} takes exactly one skill name.`);
     process.exit(2);
   }
   const gbrainRoot = findGbrainOrDie();
   if (!bundledSkillSlugs(loadBundleManifest(gbrainRoot)).includes(slug)) {
-    console.error(`Error: '${slug}' is not a bundled skill (gbrain skillpack list shows them).`);
+    console.error(`Error: '${slug}' is not a bundled skill (foresights skillpack list shows them).`);
     process.exit(2);
   }
   const skillsRoot = workspaceSkillsRoot(readValue(args, '--workspace'));
@@ -165,7 +165,7 @@ export async function cmdPin(args: string[], pinned: boolean): Promise<void> {
 
 export async function cmdRestore(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('gbrain skillpack restore <id> [--skip <file>]... [--json]\ngbrain skillpack restore --list [--json]\n\n' +
+    console.log('foresights skillpack restore <id> [--skip <file>]... [--json]\ngbrain skillpack restore --list [--json]\n\n' +
       'Undo a --update-untouched run: put back each file it replaced, and remove each file it\n' +
       'added, when the file still holds the update\'s bytes. A file you changed since the update\n' +
       'refuses the whole restore unless you name it with --skip <file> (path under the skills\n' +
@@ -187,7 +187,7 @@ export async function cmdRestore(args: string[]): Promise<void> {
   for (let i = 0; i < args.length; i++) if (args[i] === '--skip' && args[i + 1]) skip.push(args[++i]!);
   const [id, extra] = positionals(args, ['--skip']);
   if (!id || extra) {
-    console.error('Error: gbrain skillpack restore takes one backup id (gbrain skillpack restore --list).');
+    console.error('Error: foresights skillpack restore takes one backup id (foresights skillpack restore --list).');
     process.exit(2);
   }
   let lock: FileLock | null = null;

@@ -1,5 +1,5 @@
 /**
- * `gbrain sources reconcile` for a database-only page that collides with a
+ * `foresights sources reconcile` for a database-only page that collides with a
  * canonical file at its slug-derived path (fix wave 3, Lane D; the #5254
  * unbound_source collision after a source is bound). Preview shows both sides
  * and changes neither; apply writes the chosen resolution through the owner

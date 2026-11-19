@@ -1,6 +1,6 @@
 {
   "name": "gbrain",
-  "description": "GBrain — a persistent knowledge brain for your coding agent: hybrid search, synthesis, and cross-session memory.",
+  "description": "Foresights — a persistent knowledge brain for your coding agent: hybrid search, synthesis, and cross-session memory.",
   "owner": { "name": "Garry Tan" },
   "plugins": [
     {
@@ -12,13 +12,13 @@
     {
       "name": "gbrain-coding",
       "source": "./plugin-variants/gbrain-coding",
-      "description": "gbrain persona variant for coding agents: the brain-first coding skill set (retrieval, routing, ingest discipline, correction hygiene) — a curated subset of the full plugin. Install exactly one gbrain plugin per machine.",
+      "description": "foresights persona variant for coding agents: the brain-first coding skill set (retrieval, routing, ingest discipline, correction hygiene) — a curated subset of the full plugin. Install exactly one foresights plugin per machine.",
       "category": "productivity"
     },
     {
       "name": "gbrain-daily",
       "source": "./plugin-variants/gbrain-daily",
-      "description": "gbrain persona variant for daily personal-brain use: meetings, tasks, briefings, reading, research — a curated subset of the full plugin. Install exactly one gbrain plugin per machine.",
+      "description": "foresights persona variant for daily personal-brain use: meetings, tasks, briefings, reading, research — a curated subset of the full plugin. Install exactly one foresights plugin per machine.",
       "category": "productivity"
     }
   ]

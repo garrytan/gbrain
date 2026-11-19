@@ -1,8 +1,8 @@
 /**
- * `gbrain autopilot pause [--reason <text>]` and `gbrain autopilot resume`:
+ * `foresights autopilot pause [--reason <text>]` and `foresights autopilot resume`:
  * the operator's own hold on this host's autopilot daemon and job workers.
  * Engine-free (a live PGLite daemon holds the database lock). The pause is
- * its own marker, so `gbrain upgrade` and `gbrain autopilot --install` keep it,
+ * its own marker, so `foresights upgrade` and `foresights autopilot --install` keep it,
  * and resume clears only it — never a migration or backup-restore hold.
  */
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
@@ -40,7 +40,7 @@ export function runAutopilotPauseCommand(args: string[]): void {
   if (action === 'paused' || action === 'already_paused') {
     console.log(`Autopilot ${action === 'paused' ? 'paused' : 'is already paused'} on this host: ${operatorPause}`);
     console.log('The daemon skips cycles and workers stop claiming jobs at their next poll; an in-flight job finishes.');
-    console.log('`gbrain upgrade` and `gbrain autopilot --install` keep this pause. Resume with: gbrain autopilot resume');
+    console.log('`foresights upgrade` and `foresights autopilot --install` keep this pause. Resume with: foresights autopilot resume');
   } else {
     console.log(action === 'resumed' ? 'Operator pause cleared; autopilot resumes at its next poll.' : 'No operator pause was set on this host.');
   }

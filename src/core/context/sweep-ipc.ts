@@ -1,8 +1,8 @@
 /**
  * Serve-delegated maintenance sweep IPC — wire types + validation (#677).
  *
- * A live `gbrain serve` holds a PGLite brain's single-writer connection for
- * its lifetime, so a concurrent `gbrain sweep --once` process cannot open the
+ * A live `foresights serve` holds a PGLite brain's single-writer connection for
+ * its lifetime, so a concurrent `foresights sweep --once` process cannot open the
  * brain (LiveServeLockError). These kinds let the sweep CLI delegate the run
  * to the serve process over the existing resolve-IPC socket — the lock owner
  * does the work, the CLI polls. Same trust posture as the sync kinds: narrow

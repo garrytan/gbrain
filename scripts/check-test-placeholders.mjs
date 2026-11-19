@@ -69,7 +69,7 @@ const ALLOWLIST = [
   },
   {
     path: 'test/e2e/sync-credential-preflight.test.ts',
-    test: 'v0.41.6.0 D1 E2E — gbrain sync preflight rejects missing OPENAI_API_KEY > does NOT write 565 identical entries to sync-failures.jsonl',
+    test: 'v0.41.6.0 D1 E2E — foresights sync preflight rejects missing OPENAI_API_KEY > does NOT write 565 identical entries to sync-failures.jsonl',
     reason: 'an absent sync-failures.jsonl is the correct outcome; the other branch asserts the file contents',
   },
 ];

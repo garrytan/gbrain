@@ -235,7 +235,7 @@ export async function writeFenceRepair(ctx: OperationContext, src: FenceSource, 
   };
   const fileContent = target.content !== null && target.path ? spliceFileSections(target.content, target.path, target.page, after) : null;
   if (target.content !== null && fileContent === null) {
-    return { ok: false, reason: 'unparseable', message: `gbrain could not place the repaired fence back into ${target.path}; edit the fence there by hand.` };
+    return { ok: false, reason: 'unparseable', message: `foresights could not place the repaired fence back into ${target.path}; edit the fence there by hand.` };
   }
   if (target.mode === 'managed') {
     const receipt: FenceRepairReceipt = { ...parts, before_sha256: target.before, after_sha256: sha256(Buffer.from(fileContent!, 'utf8')) };
@@ -267,7 +267,7 @@ export async function writeFenceRepair(ctx: OperationContext, src: FenceSource, 
     const root = src.root!;
     let abs: string;
     try { abs = confinedRepairTarget(root, target.path!, src.id, 'fences'); } catch (error) {
-      if (error instanceof OperationError) return { ok: false, reason: 'unsafe_path', message: `${target.path} is a symlink, sits under one, or resolves outside the source root; gbrain never writes through one.` };
+      if (error instanceof OperationError) return { ok: false, reason: 'unsafe_path', message: `${target.path} is a symlink, sits under one, or resolves outside the source root; foresights never writes through one.` };
       throw error;
     }
     if (sha256(readFileSync(abs)) !== target.before) return { ok: false, reason: 'changed_since_read', message: `${target.path} changed after the repair read it, so nothing was written.` };

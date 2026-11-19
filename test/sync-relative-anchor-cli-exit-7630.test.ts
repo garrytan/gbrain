@@ -1,5 +1,5 @@
 /**
- * #7630 through the real CLI: `gbrain sync --source default` run from an unrelated folder, on a brain whose default source
+ * #7630 through the real CLI: `foresights sync --source default` run from an unrelated folder, on a brain whose default source
  * has the relative local_path ".", exits 3 (stop and ask the user) with `sync_anchor_relative` and leaves the folder alone.
  *
  * /ship coverage audit (GBRA-207, #7630).
@@ -46,7 +46,7 @@ afterAll(() => {
 });
 
 describe('#7630 CLI: a relative stored anchor', () => {
-  test('gbrain sync --source default from an unrelated folder exits 3 sync_anchor_relative and creates no .git', async () => {
+  test('foresights sync --source default from an unrelated folder exits 3 sync_anchor_relative and creates no .git', async () => {
     const r = await runCli(['sync', '--source', 'default', '--no-pull', '--no-embed'], { home, cwd: folder, timeoutMs: 110_000 });
     expect(r.exitCode, `${r.stdout}\n${r.stderr}`).toBe(3);
     expect(`${r.stdout}\n${r.stderr}`).toContain('sync_anchor_relative');

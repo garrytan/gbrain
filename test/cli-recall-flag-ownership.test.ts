@@ -40,7 +40,7 @@ describe('recall and degraded serve flag ownership', () => {
     try {
       const result = await runCli(['recall', '--query', 'example', flag, '--json'], { home, cwd: home });
       expect(result.exitCode).toBe(2);
-      expect(result.stderr).toContain(`unknown flag ${flag} for 'gbrain recall'`);
+      expect(result.stderr).toContain(`unknown flag ${flag} for 'foresights recall'`);
       expect(JSON.parse(result.stdout)).toMatchObject({ status: 'error', reason: 'invalid_flag' });
       expect(result.stderr).not.toContain('database_url is missing');
       expect(result.stdout + result.stderr).not.toContain('Setting up brain schema');

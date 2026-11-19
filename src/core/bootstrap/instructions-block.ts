@@ -3,7 +3,7 @@
  * (WP3 of the ambient-writeback plan; targets `kind: 'instructions'` in the
  * harness receipt).
  *
- * `gbrain bootstrap harness` splices ONE marker-delimited block into the
+ * `foresights bootstrap harness` splices ONE marker-delimited block into the
  * user-global instruction files the harnesses actually load (Claude Code
  * `~/.claude/CLAUDE.md`, codex `$CODEX_HOME/AGENTS.md` — paths owned by
  * host-specs.ts) so harnesses that never surface the MCP `instructions`
@@ -35,7 +35,7 @@ const AMBIENT_MARKERS: BlockMarkers = {
   begin: AMBIENT_WRITEBACK_BLOCK_BEGIN,
   end: AMBIENT_WRITEBACK_BLOCK_END,
   label: 'ambient-writeback',
-  rerun: 'gbrain bootstrap harness',
+  rerun: 'foresights bootstrap harness',
 };
 
 /** Non-throwing probe for status/doctor surfaces: one vocabulary for the
@@ -89,7 +89,7 @@ export interface AmbientInstructionBlockOpts {
  */
 export function renderAmbientInstructionBlock(opts: AmbientInstructionBlockOpts): string {
   const header =
-    `<!-- managed by \`gbrain bootstrap harness\` — mode: ${opts.mode}; serve: ${opts.serveUrl}; ` +
+    `<!-- managed by \`foresights bootstrap harness\` — mode: ${opts.mode}; serve: ${opts.serveUrl}; ` +
     `re-run after config changes; do not hand-edit inside markers -->`;
   const section = buildAmbientWritebackSection({
     mode: opts.mode,

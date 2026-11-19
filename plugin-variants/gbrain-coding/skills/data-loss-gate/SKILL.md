@@ -34,7 +34,7 @@ when_to_use: "Use when the user asks: \"bulk delete\", \"wipe the\", \"rm -rf\",
 
 > **Convention:** see [conventions/brain-first.md](../conventions/brain-first.md) —
 > inspect the actual target before proposing deletion: `get_backlinks`,
-> `gbrain graph <slug>`, `git log` on the underlying files. The confirmation
+> `foresights graph <slug>`, `git log` on the underlying files. The confirmation
 > card below is only as good as the inspection behind it.
 >
 > **Convention:** see [_brain-filing-rules.md](../_brain-filing-rules.md) —
@@ -47,11 +47,11 @@ confirmation. The agent stops, presents a recoverability card, and waits.
 
 **Scope honesty:** this gate is a routing convention — the harness resolves it
 into context when a destructive intent matches, and a well-behaved agent
-follows it. It is NOT an operation-boundary enforcement: nothing in the gbrain
+follows it. It is NOT an operation-boundary enforcement: nothing in the foresights
 runtime mechanically blocks a delete if the skill never loads. (A native
 confirm gate at the operation boundary is a filed TODO; until it lands, this
 convention is the line of defense.) Some CLI surfaces carry their own flag
-gates — e.g. `gbrain sources remove` requires `--confirm-destructive` — but
+gates — e.g. `foresights sources remove` requires `--confirm-destructive` — but
 the flag confirms that the AGENT is sure. This skill exists to confirm that
 the USER is.
 
@@ -71,35 +71,35 @@ Shell / filesystem level:
 
 Brain / database level (gbrain-specific):
 
-- **Bulk forget** — scripting or looping `gbrain forget <fact-id>` over many
+- **Bulk forget** — scripting or looping `foresights forget <fact-id>` over many
   facts. One forget is a considered, idempotent act; a forget sweep is data loss.
-- **Page-delete sweeps** — `gbrain delete <slug>` in a loop, or any script that
+- **Page-delete sweeps** — `foresights delete <slug>` in a loop, or any script that
   sweeps `delete_page` across a set of slugs. Deletes are soft (recoverable via
-  `gbrain restore <slug>`) until purged — say so on the card, then gate anyway:
+  `foresights restore <slug>`) until purged — say so on the card, then gate anyway:
   a sweep that's wrong in bulk is expensive to un-wrong in bulk.
-- **`gbrain delete --purge`** — skips the 72-hour soft delete and removes the
+- **`foresights delete --purge`** — skips the 72-hour soft delete and removes the
   page at once with its chunks, versions, takes, timeline, links, raw data and
-  the facts filed on it. `gbrain restore` cannot undo it. Every purge needs the
+  the facts filed on it. `foresights restore` cannot undo it. Every purge needs the
   user's explicit go for that purge: a request to "scrub the repo", "clean up
   the files" or "remove it from Git" is not a go to purge database pages. After
   the go, purge one page at a time (never a parallel `xargs` or a background
-  loop), confirm each one is gone (`gbrain get <slug> --include-deleted` reports
+  loop), confirm each one is gone (`foresights get <slug> --include-deleted` reports
   `page_not_found`; a receipt with `purge_held` was kept soft-deleted to keep its derived pages private) before the next, and stop the batch at the first refusal. A purge batch that was
   stopped (SIGTERM, a write freeze, a timeout) stays stopped: report what
   finished and ask again before relaunching it.
-- **`gbrain pages purge-deleted`** — permanently removes soft-deleted pages
+- **`foresights pages purge-deleted`** — permanently removes soft-deleted pages
   from every source of the brain. This is the point of no return for the
-  soft-delete safety net. Show the user `gbrain pages purge-deleted --dry-run --json`
+  soft-delete safety net. Show the user `foresights pages purge-deleted --dry-run --json`
   first; the command itself asks (exit 3 without a terminal) and runs with
   `--yes` only after the user agrees. It keeps a file committed at the source's
   last synced commit or at HEAD (the page waits or goes database-only), unless a
   person's delete of the page never removed the file (e.g. another page shared it).
-- **Source removal** — `gbrain sources remove <id>` deletes the source AND
+- **Source removal** — `foresights sources remove <id>` deletes the source AND
   every page in it. The `--confirm-destructive` flag does not substitute for
   the card. A managed removal deletes pages in committed batches: one that
   stops early (`write_pending`) has already deleted some, so say so and rerun it
   to finish.
-- **Mount removal** — `gbrain mounts remove <id>` only removes the local
+- **Mount removal** — `foresights mounts remove <id>` only removes the local
   registration (the mounted brain's database survives; re-add to recover). Gate
   it anyway when the flow ALSO plans to delete the mount's underlying database
   or files — then the full card applies to those.
@@ -131,7 +131,7 @@ Why: [the reason for the deletion]
 Recoverable?
 - [ ] Backed up to a remote (git remote, database backup, object storage)
 - [ ] In git history (can git checkout)
-- [ ] Soft-deleted in the brain (restorable via `gbrain restore` until purged)
+- [ ] Soft-deleted in the brain (restorable via `foresights restore` until purged)
 - [ ] Re-fetchable from an upstream source (which one, how long)
 - [ ] NOT recoverable — permanent data loss
 
@@ -195,11 +195,11 @@ still wrong because:
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - A destructive command exits 3 (`confirmation_required`) or asks for `--confirm-destructive`: that flag confirms the agent is sure, not the user. Show the recoverability card and wait for the user's explicit yes.
-- `gbrain pages purge-deleted` removes soft-deleted pages for good, so `gbrain restore` cannot bring them back afterwards: say so on the card. Never promise physical erasure or a recovery you cannot verify.
-- A delete or forget returns `write_pending` (exit 10): it was accepted and is still pending, so it may still commit. It is not "not found" or "failed": poll the receipt (`gbrain write-request <request_id>`) before writing the deletion log entry, and never re-run the deletion or move to a wider one because of it.
+- `foresights pages purge-deleted` removes soft-deleted pages for good, so `foresights restore` cannot bring them back afterwards: say so on the card. Never promise physical erasure or a recovery you cannot verify.
+- A delete or forget returns `write_pending` (exit 10): it was accepted and is still pending, so it may still commit. It is not "not found" or "failed": poll the receipt (`foresights write-request <request_id>`) before writing the deletion log entry, and never re-run the deletion or move to a wider one because of it.
 
 ## Anti-Patterns
 

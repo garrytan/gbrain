@@ -143,7 +143,7 @@ function noWorkerSurface(ctx: OperationContext, e: NoEmbedBackfillWorkerSurfaceE
     'Embeds the stale chunks inline in the CLI process; this engine has no worker to drain a queued backfill.', { consent: ['paid'] });
   return opError('no_worker_surface', e.message,
     'Nothing was queued. Drain the embeddings inline with the command in fix instead of submitting a job.',
-    { fix: known ? fix : { ...fix, inputs: [{ name: 'source-id', how: 'The source to embed (`gbrain sources list` shows them).' }] } });
+    { fix: known ? fix : { ...fix, inputs: [{ name: 'source-id', how: 'The source to embed (`foresights sources list` shows them).' }] } });
 }
 
 const submit_job: Operation = {
@@ -278,7 +278,7 @@ const submit_job: Operation = {
 
 /**
  * Queue honesty (agent-first operator wave E5): an accepted job on a queue no
- * worker serves (always on PGLite unless a `gbrain jobs work` drain is live)
+ * worker serves (always on PGLite unless a `foresights jobs work` drain is live)
  * gets a model-visible `no_worker` notice with the drain/supervisor fix; a
  * PGLite fix behind a running serve becomes the stop-serve-then-run plan.
  * Best-effort: advice never fails a committed submission.
@@ -323,7 +323,7 @@ async function probeQueueStateSafe(
 function agentRunFix(ctx: OperationContext): Action {
   return {
     ...hostFix(ctx, ['gbrain', 'agent', 'run', '--', '<prompt>'],
-      'Runs the agent loop in a local gbrain process; submit_agent is the entry point for OAuth clients over HTTP MCP.', { consent: ['paid'] }),
+      'Runs the agent loop in a local foresights process; submit_agent is the entry point for OAuth clients over HTTP MCP.', { consent: ['paid'] }),
     inputs: [{ name: 'prompt', how: 'The prompt you meant to submit.' }],
   };
 }
@@ -378,10 +378,10 @@ const submit_agent: Operation = {
   handler: async (ctx, p) => {
     // Remote-callable but only when the OAuth client has scope=agent AND
     // a binding row. Local CLI callers (ctx.remote === false) skip the
-    // binding check — `gbrain agent run` already runs through subagent.ts
+    // binding check — `foresights agent run` already runs through subagent.ts
     // directly without going through this op.
     if (ctx.remote === false) {
-      throw opError('invalid_request', 'submit_agent over the local CLI: use `gbrain agent run` instead.',
+      throw opError('invalid_request', 'submit_agent over the local CLI: use `foresights agent run` instead.',
         'On the local CLI, run the agent directly with the command in fix.', { fix: agentRunFix(ctx) });
     }
 
@@ -947,7 +947,7 @@ const send_job_message: Operation = {
 
 
 /**
- * CLI→MCP gap-closure wave — `gbrain jobs stats` was the one jobs verb with
+ * CLI→MCP gap-closure wave — `foresights jobs stats` was the one jobs verb with
  * no MCP equivalent (skills/minion-orchestrator documented the gap). Admin
  * scope for jobs-family consistency (every op above is admin; HTTP callers
  * need an admin-scope token). User story: an orchestrating agent checking
@@ -964,12 +964,12 @@ const get_job_stats: Operation = {
     'the queue param. wedged: true is the silent-halt signal (a worker is alive but claiming ' +
     'nothing while work waits) — suggest restarting the jobs supervisor on the brain host. ' +
     'no_worker: true means work is waiting and NO worker is running for the queue (always on PGLite ' +
-    'unless a gbrain jobs work drain is live); wedged is then false and the no_worker notice names the fix. ' +
+    'unless a foresights jobs work drain is live); wedged is then false and the no_worker notice names the fix. ' +
     'private_queue: true means the queue is a parent-owned dream-inline queue: wedged is ' +
     'NEVER true for it and a worker restart cannot help — recovery runs automatically at ' +
-    'worker spawn / dream-cycle start; suggest gbrain doctor for the per-queue verdict. ' +
+    'worker spawn / dream-cycle start; suggest foresights doctor for the per-queue verdict. ' +
     'by_queue has one row per queue (every dream-inline-* queue folded into one dream-inline row). ' +
-    'Host-process diagnostics (renice, backpressure hints) stay on the gbrain jobs stats CLI.',
+    'Host-process diagnostics (renice, backpressure hints) stay on the foresights jobs stats CLI.',
   params: {
     queue: { type: 'string', required: false, description: "Queue for the wedge signature (default 'default'). The other blocks stay global/windowed." },
     since_hours: { type: 'number', required: false, description: 'Window for the by_type rollup in hours (default 24, clamped 1..720).' },

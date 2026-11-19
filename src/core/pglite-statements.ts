@@ -193,7 +193,7 @@ export class PgliteStatementCache {
 /**
  * Codec setup after connect. PGlite copies `db.parsers` into a fresh object for every query result. Its
  * array-type init registers one parser per composite (table row) array type,
- * most of the map in a gbrain schema, and gbrain never selects those arrays;
+ * most of the map in a foresights schema, and foresights never selects those arrays;
  * the per-query copy then dominated short statements. Their values would only
  * have been split into unparsed strings, so drop them. Then install the
  * Buffer bytea codec below.

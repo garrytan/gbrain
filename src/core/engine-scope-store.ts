@@ -1,5 +1,5 @@
 /**
- * The store engine-scope.ts reads, the local scope the CLI, gbrain serve and the jobs worker enter at their entry
+ * The store engine-scope.ts reads, the local scope the CLI, foresights serve and the jobs worker enter at their entry
  * points, and the embedded-engine lookup for leaf readers (search/private-visibility.ts). A leaf (no imports beyond
  * node), so the CLI entry and the chunker graph pay nothing for it.
  */

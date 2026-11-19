@@ -124,7 +124,7 @@ describe('WAL auto-repair — real-brain regression (#223/#1670/#2575)', () => {
       }
       expect(message).toContain('PGLite failed to initialize');
       expect(message).toContain('GBRAIN_PGLITE_WAL_REPAIR=off');
-      expect(message).toContain('gbrain pglite-repair');
+      expect(message).toContain('foresights pglite-repair');
       expect(message).toContain('Original error:');
     });
     // No surgery happened…
@@ -157,7 +157,7 @@ describe('WAL auto-repair — real-brain regression (#223/#1670/#2575)', () => {
     }
     expect(message).toContain('PGLite failed to initialize');
     expect(message).toContain('Auto-repair skipped');
-    expect(message).toContain('gbrain pglite-repair');
+    expect(message).toContain('foresights pglite-repair');
     expect(backupDirs(dir).length).toBe(0);
   }, COLD_START_TIMEOUT);
 

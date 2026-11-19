@@ -187,7 +187,7 @@ describe('checkPreconditions — config', () => {
       fakeCtx({ getConfig: async () => undefined }),
     );
     expect(r.met).toBe(false);
-    expect(r.hint).toContain('gbrain config set embedding.model');
+    expect(r.hint).toContain('foresights config set embedding.model');
   });
 
   test('unmet when config is whitespace-only', async () => {

@@ -50,7 +50,7 @@ async function userPrompt(root: string, harness?: string, extra: Record<string, 
 
 describe('per-turn rule: text and decision', () => {
   test('names the tools of the recorded access', () => {
-    expect(renderBrainFirstTurnRule({ kind: 'mcp', server: 'gbrain' })).toContain('before answering this turn, check GBrain first (`search` or `query` on the `gbrain` MCP server)');
+    expect(renderBrainFirstTurnRule({ kind: 'mcp', server: 'gbrain' })).toContain('before answering this turn, check Foresights first (`search` or `query` on the `gbrain` MCP server)');
     expect(renderBrainFirstTurnRule({ kind: 'mcp', server: 'brain', surface: 'verbs' })).toContain('`recall` or `entity` on the `brain` MCP server');
     expect(renderBrainFirstTurnRule({ kind: 'cli', launcher: '/opt/gbrain' })).toContain('`/opt/gbrain search "<names>"`');
   });
@@ -82,7 +82,7 @@ describe('per-turn rule: Claude Code and Codex user-prompt hook', () => {
 
   test('codex reads its own ledger entry', async () => {
     const root = home([{ harness: 'codex', status: 'installed' }]);
-    expect(await userPrompt(root, 'codex')).toContain('check GBrain first');
+    expect(await userPrompt(root, 'codex')).toContain('check Foresights first');
     expect(await userPrompt(root)).toBe('');
   });
 
@@ -99,7 +99,7 @@ describe('per-turn rule: Claude Code and Codex user-prompt hook', () => {
 });
 
 describe('per-turn rule names the tools where tool_search hides them', () => {
-  test('OpenClaw: names the gbrain tools and the tool_search / tool_call route; Hermes: names mcp__<server>__<tool>', () => {
+  test('OpenClaw: names the foresights tools and the tool_search / tool_call route; Hermes: names mcp__<server>__<tool>', () => {
     const starter = { kind: 'mcp', server: 'gbrain', surface: 'starter' } as const;
     const openclaw = renderBrainFirstTurnRule(starter, 'openclaw');
     expect(openclaw).toContain('find them with `tool_search` (search "gbrain recall") and run them with `tool_call`');
@@ -129,7 +129,7 @@ describe('per-turn rule: Hermes pre_llm_call hook in config.yaml', () => {
   const cfg = (d: string) => readFileSync(join(d, 'config.yaml'), 'utf8');
   const approvals = (d: string) => JSON.parse(readFileSync(join(d, 'shell-hooks-allowlist.json'), 'utf8')).approvals as Array<Record<string, unknown>>;
 
-  test('the command echoes Hermes\'s {"context": ...} wire shape on its own: no shell, no gbrain process', () => {
+  test('the command echoes Hermes\'s {"context": ...} wire shape on its own: no shell, no foresights process', () => {
     const quoted: BrainFirstAccess = { kind: 'cli', launcher: "/opt/it's/gbrain" };
     const c = hermesTurnHookCommand(quoted);
     expect(c.startsWith("/bin/echo '")).toBe(true);
@@ -140,7 +140,7 @@ describe('per-turn rule: Hermes pre_llm_call hook in config.yaml', () => {
     expect(JSON.parse(cmd.slice("/bin/echo '".length, -1))).toEqual({ context: renderBrainFirstTurnRule(access, 'hermes') });
   });
 
-  test('a flow-style config.yaml, or an allowlist gbrain cannot read, gets the entry printed and both files left as they are', () => {
+  test('a flow-style config.yaml, or an allowlist foresights cannot read, gets the entry printed and both files left as they are', () => {
     const flow = '{model: alice-example-model, agent: {max_turns: 4}}\n';
     const d = hermes(flow);
     expect(syncHermesTurnHook({ hermesHome: d, access, dryRun: false }).action).toBe('print');
@@ -361,7 +361,7 @@ describe('per-turn rule: OpenClaw before_prompt_build plugin', () => {
       const other = syncOpenclawTurnPlugin({ access: { kind: 'mcp', server: 'gbrain-a' }, workspace: '/ws/a', dryRun: false, openclawBin: '/bin/openclaw', run: rec.run });
       expect(other.action).toBe('print');
       expect(other.detail).toContain('names the `gbrain` MCP server');
-      expect(other.commands).toEqual(['gbrain setup openclaw --remove --workspace /ws/a']);
+      expect(other.commands).toEqual(['foresights setup openclaw --remove --workspace /ws/a']);
       expect(readFileSync(join(openclawTurnPluginDir(), 'index.js'), 'utf8')).toBe(index);
       expect(rec.calls).toEqual([]);
       expect(syncOpenclawTurnPlugin({ access, workspace: '/ws/a', dryRun: false, openclawBin: '/bin/openclaw', run: recorder().run }).action).toBe('keep');
@@ -372,7 +372,7 @@ describe('per-turn rule: OpenClaw before_prompt_build plugin', () => {
     });
   });
 
-  test('a plugin an older gbrain wrote (no recorded access): a same-server --workspace run rewrites it; another server or an unreadable rule is left', async () => {
+  test('a plugin an older foresights wrote (no recorded access): a same-server --workspace run rewrites it; another server or an unreadable rule is left', async () => {
     const legacy = (rule: string) => {
       const dir = openclawTurnPluginDir();
       mkdirSync(dir, { recursive: true });
@@ -398,11 +398,11 @@ describe('per-turn rule: OpenClaw before_prompt_build plugin', () => {
       expect(readFileSync(join(dir, 'index.js'), 'utf8')).toBe(index);
     });
     await withEnv({ OPENCLAW_STATE_DIR: state(), OPENCLAW_PROFILE: undefined }, async () => {
-      const dir = legacy('not a gbrain rule');
+      const dir = legacy('not a foresights rule');
       const unreadable = syncOpenclawTurnPlugin({ access, workspace: '/ws/a', dryRun: false, openclawBin: '/bin/openclaw', run: recorder().run });
       expect(unreadable.action).toBe('print');
-      expect(unreadable.detail).toContain('gbrain cannot read');
-      expect(readFileSync(join(dir, 'index.js'), 'utf8')).toContain('not a gbrain rule');
+      expect(unreadable.detail).toContain('foresights cannot read');
+      expect(readFileSync(join(dir, 'index.js'), 'utf8')).toContain('not a foresights rule');
     });
   });
 

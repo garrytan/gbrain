@@ -1,6 +1,6 @@
 # Connecting Google (Gmail, Calendar, Contacts)
 
-gbrain's google connector ingests your Gmail threads, calendar events, and
+foresights's google connector ingests your Gmail threads, calendar events, and
 contacts into your brain and runs the [open-loop engine](open-loops.md) on
 top: *who is waiting on you, what you promised, and the context needed to
 respond.*
@@ -14,28 +14,28 @@ account (`gmail.readonly`, `calendar.readonly`, `contacts.readonly`).
 ## The fast path (one command)
 
 ```bash
-gbrain google setup
+foresights google setup
 ```
 
 `setup` walks the whole chain idempotently: guided credential intake →
 consent → source registration → a first sync (newest mail first, budgeted so
 it finishes fast; the deep backfill resumes automatically on later syncs) →
-your first `gbrain waiting` digest. Re-running it is always safe — it
+your first `foresights waiting` digest. Re-running it is always safe — it
 detects what's done and continues.
 
 The pieces, if you want them separately:
 
 ```bash
-gbrain google connect                 # credentials + consent only
-gbrain sources add gmail-you --kind google --account you@example.com
-gbrain sync --source gmail-you
-gbrain waiting
+foresights google connect                 # credentials + consent only
+foresights sources add gmail-you --kind google --account you@example.com
+foresights sync --source gmail-you
+foresights waiting
 ```
 
 ## One-time Google Cloud setup (~7 minutes)
 
 You need a Desktop-app OAuth client in your own Google Cloud project.
-`gbrain google connect` prints this exact checklist when no credentials are
+`foresights google connect` prints this exact checklist when no credentials are
 on file:
 
 1. Create (or pick) a project: <https://console.cloud.google.com/projectcreate>
@@ -58,7 +58,7 @@ on file:
 Then:
 
 ```bash
-gbrain google connect --client-json ~/Downloads/client_secret_*.json
+foresights google connect --client-json ~/Downloads/client_secret_*.json
 ```
 
 You can also paste the JSON contents on stdin (`--client-json -`), export
@@ -66,7 +66,7 @@ You can also paste the JSON contents on stdin (`--client-json -`), export
 Pasted values are sanitized (smart quotes, stray whitespace) and validated
 by shape before anything talks to Google.
 
-gbrain records the scopes Google *actually granted* (the consent screen lets
+foresights records the scopes Google *actually granted* (the consent screen lets
 you uncheck scopes), so a narrower-than-needed grant surfaces immediately as
 `scope_missing` with the reauth fix attached — never as opaque per-sweep 403s.
 
@@ -83,8 +83,8 @@ page's full address-bar URL and paste it back (interactive prompt), or
 complete non-interactively:
 
 ```bash
-gbrain google connect --paste          # prints the URL, stores flow state
-gbrain google connect --code "http://127.0.0.1:41999/?code=...&state=..."
+foresights google connect --paste          # prints the URL, stores flow state
+foresights google connect --code "http://127.0.0.1:41999/?code=...&state=..."
 ```
 
 Force it anytime with `--paste` or `GBRAIN_FORCE_PASTE=1`.
@@ -95,8 +95,8 @@ supported path.
 
 ## Multiple accounts
 
-Repeat `gbrain google connect --account work@yourco.com` per account; each
-account becomes its own source (`gbrain sources add gmail-work --kind google
+Repeat `foresights google connect --account work@yourco.com` per account; each
+account becomes its own source (`foresights sources add gmail-work --kind google
 --account work@yourco.com`) with independent sync cursors and locks.
 
 ## Contacts next to your own person pages
@@ -105,7 +105,7 @@ A Google source renders each contact as a near-empty person page under
 `people/<slug>` by default, the same directory a brain repo uses for its own
 hand-written profiles. On a multi-source brain that collision has two
 costs: mentions in the Gmail source bind to the contact stub instead of the
-real profile, and `gbrain doctor` lists the stubs under `junk_entity_hubs`.
+real profile, and `foresights doctor` lists the stubs under `junk_entity_hubs`.
 Two remedies, independent of each other:
 
 - **Keep contacts out of `people/`.** Add the source with
@@ -115,12 +115,12 @@ Two remedies, independent of each other:
   changes moves every contact on its next sweep: the new page lands first,
   then the page under the old directory is retired. The default stays
   `people` for every existing source.
-- **Let the stub yield.** With `gbrain config set link_resolution.cross_source
+- **Let the stub yield.** With `foresights config set link_resolution.cross_source
   true`, a mention in the Gmail source of a name that has a real page in
   another source binds to that page instead of the connector's stub (one
   canonical page, or the one sharing the stub's slug; a tie keeps the stub).
-  The next mention pass (`gbrain extract --stale`, or autopilot) re-binds
-  pages it reaches; `gbrain doctor --only junk_entity_hubs` names the
+  The next mention pass (`foresights extract --stale`, or autopilot) re-binds
+  pages it reaches; `foresights doctor --only junk_entity_hubs` names the
   canonical twin of each stub and the next step.
 
 ### What a contact page carries
@@ -139,7 +139,7 @@ title, phone numbers and user-created contact groups:
   when that read fails the sweep uses the names it cached last time, and a
   group it cannot name at all is carried as its raw `contactGroups/<id>`. A
   renamed or deleted group reaches a page when that contact next changes, or
-  on `gbrain sync --full`.
+  on `foresights sync --full`.
 - A contact with phones but no email gets a page too; one with no name
   either lives at `contact-<id-hash>` (never at its phone number). A contact
   with neither emails nor phones renders nothing.
@@ -161,17 +161,17 @@ Shared, subscribed, and secondary calendars the granted `calendar.readonly`
 scope already covers are ingested by pointing an additional source at them:
 
 ```bash
-gbrain google calendars                 # list every calendar the account can
+foresights google calendars                 # list every calendar the account can
                                         # read (* marks the primary), with ids
-gbrain google calendars --json          # { ok, status, account, calendars[],
+foresights google calendars --json          # { ok, status, account, calendars[],
                                         #   next_action.command } for agents
-gbrain sources add family-cal --kind google --account you@example.com \
+foresights sources add family-cal --kind google --account you@example.com \
   --services calendar --calendar-id "family0123456789@group.calendar.google.com"
 ```
 
 **Say to your agent:** *"list the calendars my google account can read"* —
 *"ingest my family calendar into the brain"* (your agent runs
-`gbrain google calendars`, then `gbrain sources add … --calendar-id <id>`).
+`foresights google calendars`, then `foresights sources add … --calendar-id <id>`).
 
 Each source's incremental sync token is bound to the calendar it was minted
 for. Re-pointing an existing source at a different calendar (its
@@ -180,7 +180,7 @@ for. Re-pointing an existing source at a different calendar (its
 re-lists the new calendar from a fresh window instead of replaying the old
 calendar's delta. Pages already imported from the previous calendar stay in
 the brain until you remove them — they are not reconciled automatically.
-`gbrain sources set-calendar <source> <calendar-id>` makes that change in one
+`foresights sources set-calendar <source> <calendar-id>` makes that change in one
 step and prints the sync to run. On a managed brain the source's sync cursor
 is keyed by its configuration, so when the source also syncs Gmail or
 Contacts the change makes their next sync re-read history from the start; the
@@ -199,20 +199,20 @@ looked like an empty calendar. Now:
   `[google] calendar_unreadable: <account> cannot read calendar "<id>"`
   with both fix commands. The run itself does not fail, so Gmail and Contacts
   keep syncing; a readable list clears the record;
-- `gbrain google status` probes each linked calendar live (one `events.list`
+- `foresights google status` probes each linked calendar live (one `events.list`
   read; `--no-probe` reports what the last sync recorded instead), names the
   unreadable one with the fix, and reports `ok: false` and exits 1;
-- `gbrain doctor` warns `google_calendar_readable` from the recorded state,
+- `foresights doctor` warns `google_calendar_readable` from the recorded state,
   with no network call.
 
 The fix: list the calendars the account can read, then point the source at
 one.
 
 ```bash
-gbrain google calendars --account you@example.com
-gbrain sources set-calendar <source> <calendar-id>   # e.g. primary
-gbrain sync --source <source>
-gbrain doctor --only google_calendar_readable --json # verify
+foresights google calendars --account you@example.com
+foresights sources set-calendar <source> <calendar-id>   # e.g. primary
+foresights sync --source <source>
+foresights doctor --only google_calendar_readable --json # verify
 ```
 
 ### API access
@@ -223,43 +223,43 @@ Contacts through `people.googleapis.com`. Every one must be enabled once in
 the project that owns your OAuth client, and its scope must be granted at
 consent. When one is not:
 
-- `gbrain google setup` probes every service it is about to register before
+- `foresights google setup` probes every service it is about to register before
   it registers anything. A disabled API or an ungranted scope stops setup
   with one report (exit 2, `status: api_access_blocked` under `--json`)
   that names each API, the Google Cloud project, and the enable link from
   Google's own error, plus the narrower `--services` command for the
   services that already work;
-- `gbrain google status` probes the services each linked source syncs
+- `foresights google status` probes the services each linked source syncs
   (every granted service when no source is linked yet) and reports them under
   `accounts[].api_access` (`problems` and a `fix`), with `ok: false` and
   exit 1 while any remains;
 - the sync records the services it could not reach in the source's state.
   The other services keep syncing and the run is `partial`; a service leaves
-  the record once its sweep reaches the API again. `gbrain doctor` warns
+  the record once its sweep reaches the API again. `foresights doctor` warns
   `google_api_access` from that record, with no network call.
 
 The fix's `next` is `ask_user` when an API is disabled (only the project
 owner can enable it in the console) and `tell_user_to_run` with
-`gbrain google connect --reauth <email>` when only a scope is missing.
+`foresights google connect --reauth <email>` when only a scope is missing.
 
 ```bash
-gbrain google status --json   # names every disabled API with its enable link
+foresights google status --json   # names every disabled API with its enable link
 # enable each one at its link, or reauth for a missing scope, then:
-gbrain google status --json   # verify: api_access.problems is empty
-gbrain sync --source <source>
+foresights google status --json   # verify: api_access.problems is empty
+foresights sync --source <source>
 ```
 
 A managed source resolves its account before any service runs. When no
 enabled service can name the account (Gmail profile, Calendar primary
 calendar, People `me`), it asks the OAuth userinfo endpoint, which the
-`email` scope gbrain always requests can read. So a disabled API is reported
+`email` scope foresights always requests can read. So a disabled API is reported
 as itself, and `connector_account_changed` means a credential that resolved
 to a different account than the source is pinned to.
 
 ## Calendar window
 
 Calendar pages cover events from `--history-days` ago up to 60 days from
-now (`gbrain sources add … --future-days <n>`, stored as the source's
+now (`foresights sources add … --future-days <n>`, stored as the source's
 `g_future_days`, 1..3650, moves that horizon per source), and each sweep
 applies that range on its own. That matters for
 incremental syncs: after any edit to a recurring series, Google sends back
@@ -270,7 +270,7 @@ touched still appear. If a meeting moves beyond 60 days out, its page goes
 away until the meeting is back within range. Meetings that have aged out of
 the range keep their pages.
 
-`gbrain sync --source <id> --full` re-lists the whole window and removes the
+`foresights sync --source <id> --full` re-lists the whole window and removes the
 pages of events that start inside it but are no longer listed (cancelled or
 deleted since), and the pages this source wrote for events that start at or
 past the horizon (instances a series edit imported years ahead before the
@@ -282,30 +282,30 @@ reported partial; if that many are genuinely gone, run it once with
 `GBRAIN_ALLOW_MASS_RECONCILE=1`.
 
 **Say to your agent:** *"re-sync my calendar from scratch"* (your agent runs
-`gbrain sync --source <id> --full`).
+`foresights sync --source <id> --full`).
 
 ## Continuous sync
 
-Google sources are ordinary gbrain sources: `gbrain sync --source <id>`,
-`gbrain sync --all`, autopilot, and the dream cycle all pick them up. A bare
-un-targeted `gbrain sync` (repo mode) does not — target it or use `--all`.
-Health: `gbrain google status` (live refresh probe per account) and
-`gbrain doctor` (the `google_oauth` check warns once a Testing-mode account
+Google sources are ordinary foresights sources: `foresights sync --source <id>`,
+`foresights sync --all`, autopilot, and the dream cycle all pick them up. A bare
+un-targeted `foresights sync` (repo mode) does not — target it or use `--all`.
+Health: `foresights google status` (live refresh probe per account) and
+`foresights doctor` (the `google_oauth` check warns once a Testing-mode account
 goes 5+ days without a successful refresh — note an account that refreshes
 daily gets no pre-warning before Google kills Testing-mode tokens at day 7;
 publishing to Production is the real fix). Once you publish the app to
 Production, record it by re-running consent —
-`gbrain google connect --reauth <email> --consent-state production` — so the
+`foresights google connect --reauth <email> --consent-state production` — so the
 weekly-expiry warning stops firing. Less-common flags
 (`--via`, `--no-browser`, `--no-probe`, `--purge-client`, and setup's
-`--history-days` / `--sync-budget-ms`): `gbrain google --help`. The `--via`
+`--history-days` / `--sync-budget-ms`): `foresights google --help`. The `--via`
 hosted fast path (a verified OAuth client brokering consent, tokens still
 stored locally) is feature-gated off until the relay server exists; its full
 design lives at
 [`docs/designs/HOSTED_OAUTH_RELAY.md`](../designs/HOSTED_OAUTH_RELAY.md).
 
 Sync freshness is honest by construction: the GMAIL sweep's success gates the
-source's synced stamp (it protects loop freshness — the thing `gbrain
+source's synced stamp (it protects loop freshness — the thing `foresights
 waiting`'s staleness gate exists to guard); contacts/calendar failures mark
 the run partial without blocking it. Current mail comes first: each sync
 drains the history delta (and any gap left by an expired history token)
@@ -314,7 +314,7 @@ delta is drained, no gap is open and the last 14 days are imported, while the
 deep backfill carries on. A thread that keeps failing is held (see
 [Held items](#held-items)) instead of wedging the sync. Autopilot keeps a
 source synced after its first sync; a source that has never synced stays idle
-until you run `gbrain sync --source <id>` once.
+until you run `foresights sync --source <id>` once.
 
 ### What runs on synced mail and calendar pages
 
@@ -327,7 +327,7 @@ calendar pages."*
   source has no checkout), source-scoped and bounded by the cycle's 3-minute
   stale-drain budget; a large backlog finishes over later cycles. The cycle
   reports `extract: ok` with `database_only: true`. On demand:
-  `gbrain extract --stale`.
+  `foresights extract --stale`.
 - **Open loops.** Every Gmail sweep queues commitment extraction for the
   threads it touched, on managed and unmanaged brains. The sync result carries
   `loops_enqueue` (`enqueued`, `deferred`, `skipped_reason`), and every skip is
@@ -347,11 +347,11 @@ calendar pages."*
 - **Atoms (on by default).** Atom extraction covers Gmail threads and Calendar
   events like other pages: the text of each extracted email thread or calendar
   event is sent to the configured `extract_atoms` model under the daily
-  auto-drain cap. `gbrain config set cycle.extract_atoms.connector_pages false`
+  auto-drain cap. `foresights config set cycle.extract_atoms.connector_pages false`
   opts out and stops new extraction. Caps, the off switch and exactly what leaves the machine:
   [spend controls](../operations/spend-controls.md#atom-extraction-auto-drain-cap-and-connector-pages).
 
-`gbrain doctor`'s `orphan_ratio` reports orphaned email and meeting renders of
+`foresights doctor`'s `orphan_ratio` reports orphaned email and meeting renders of
 a connector source apart (`connector_renders_excluded`), since a mail page
 with no links is normal, and leaves them out of the ratio.
 
@@ -381,13 +381,13 @@ syncs is **held**: it is recorded in the source's cursor state, and the sync
 moves on past it instead of wedging the whole source. A held item is never
 skipped silently:
 
-- `gbrain sources status` lists up to 10 held items per source (key, sender and
+- `foresights sources status` lists up to 10 held items per source (key, sender and
   subject or title when known, error code, class, first and last failure,
   attempts, next automatic retry), then `+N more; --json lists all`;
-- `gbrain doctor` reports a per-source count in the `connector_held_items`
+- `foresights doctor` reports a per-source count in the `connector_held_items`
   check;
 - the sync summary prints the held count and the retry command;
-- for Gmail, `gbrain waiting` returns `completeness: "partial"` and names each
+- for Gmail, `foresights waiting` returns `completeness: "partial"` and names each
   held thread from the last 14 days (or with an unknown date).
 
 Contacts and Calendar items are held the same way, keyed
@@ -401,20 +401,20 @@ that service's sync token stays where it is, so the next sync lists the item
 again; once it is held, the token moves past it. On a managed brain a failed
 coordinator write still ends the run, as before, and `--retry-failed`
 re-admits it. Because a sync token never lists an
-unchanged item again, `gbrain sources retry-held` re-fetches a held contact or
+unchanged item again, `foresights sources retry-held` re-fetches a held contact or
 event by its id on the next sync. Contacts and Calendar holds do not change the
-coverage `gbrain waiting` reports, which is about mail.
+coverage `foresights waiting` reports, which is about mail.
 
 A held item does not block the source's freshness stamp. To re-attempt:
 
 ```bash
-gbrain sources status <id>          # what is held and why
-gbrain sources retry-held <id>      # schedule every held item (add --dry-run to preview)
-gbrain sync --source <id>           # run the re-attempt now
-gbrain sources status <id>          # a recovered item leaves the list
+foresights sources status <id>          # what is held and why
+foresights sources retry-held <id>      # schedule every held item (add --dry-run to preview)
+foresights sync --source <id>           # run the re-attempt now
+foresights sources status <id>          # a recovered item leaves the list
 ```
 
-`gbrain sync --source <id> --full` also clears every hold. A held item whose
+`foresights sync --source <id> --full` also clears every hold. A held item whose
 upstream copy changes is re-attempted once automatically.
 
 **The thresholds are fixed** so every brain behaves the same way and a held
@@ -428,39 +428,39 @@ item always means the same thing:
 | Transient retry | A held item whose error was transient (5xx, network, unknown) is retried after 1 h, 6 h, 24 h, then daily, for 7 days; after that it stays held like a content error | Recovers on its own from a provider incident |
 | Cap | 100 held items per source; a sync that would hold more stops advancing its cursor and fails with `connector_holds_exhausted` | Many held items means something is wrong with the source, not with items |
 
-The overrides are `gbrain sources retry-held <id>` and
-`gbrain sync --source <id> --full`. See
+The overrides are `foresights sources retry-held <id>` and
+`foresights sync --source <id> --full`. See
 [write refusal reasons](write-refusals.md) for `connector_holds_exhausted`,
 `invalid_connector_text` and `connector_fence_below_timeline`.
 
-## Other ways to reach Google (no gbrain OAuth)
+## Other ways to reach Google (no foresights OAuth)
 
 If your stack already holds Google access another way — a Google CLI with its
 own auth store, `gcloud`, or a credential gateway that can mint short-lived
-access tokens — the source can use it directly and skip gbrain's OAuth flow
+access tokens — the source can use it directly and skip foresights's OAuth flow
 entirely. `--account` stays required as the IDENTITY (it drives "is this
 message mine" loop direction and the Gmail deep links' `authuser`); no
-credential is stored in gbrain for these modes.
+credential is stored in foresights for these modes.
 
 **Say to your agent:** *"connect my gmail through my existing Google CLI —
-your agent runs `gbrain sources add <id> --kind google --access command
+your agent runs `foresights sources add <id> --kind google --access command
 --token-command \"<your token command>\" --account <email>`"*
 
 ```bash
 # Any command that prints an access token (bare token, or JSON with a
-# token/access_token field and optional expiry/expires_in). gbrain runs it
+# token/access_token field and optional expiry/expires_in). foresights runs it
 # at sync time and caches the token until it expires; it never stores it.
-gbrain sources add gmail-work --kind google --account you@example.com \
+foresights sources add gmail-work --kind google --account you@example.com \
   --access command --token-command "gcloud auth print-access-token"
 
-# Or read a live token from an env var refreshed by something outside gbrain
+# Or read a live token from an env var refreshed by something outside foresights
 # (a gateway sidecar, a cron job). The var NAME goes in config, never a value.
-gbrain sources add gmail-work --kind google --account you@example.com \
+foresights sources add gmail-work --kind google --account you@example.com \
   --access env --token-env GOOGLE_ACCESS_TOKEN
 ```
 
-What changes vs the vault flow: `gbrain google status`'s refresh probe and
-`gbrain doctor`'s `google_oauth` check cover vault accounts only (your
+What changes vs the vault flow: `foresights google status`'s refresh probe and
+`foresights doctor`'s `google_oauth` check cover vault accounts only (your
 external tool owns token health); the scope preflight trusts `--services`
 (a token missing a scope surfaces per sweep as Google's 403, reported as
 `scope_missing`, rather than up front); send-as aliases are fetched live when the token
@@ -488,19 +488,19 @@ attached. The catalog (also emitted as structured JSON with `--json`):
 | `wrong_account_consented` | A different Google account approved | Re-run; the URL now pre-selects the right account |
 | `port_in_use` | Loopback port taken | Re-run (fresh ephemeral port), `--port <n>`, or `--paste` |
 | `consent_timeout` | Consent never completed within 10 minutes | Re-run connect |
-| `invalid_grant_testing_expiry` | Refresh token dead ≈7 days after connect | Publish the app to Production, then `gbrain google connect --reauth <email>` |
-| `invalid_grant_revoked` | Access revoked (password change, manual revoke, client rotated) | `gbrain google connect --reauth <email>` |
+| `invalid_grant_testing_expiry` | Refresh token dead ≈7 days after connect | Publish the app to Production, then `foresights google connect --reauth <email>` |
+| `invalid_grant_revoked` | Access revoked (password change, manual revoke, client rotated) | `foresights google connect --reauth <email>` |
 | `invalid_grant_clock_skew` | Your system clock is off by >60s | Fix time sync, retry |
 | `code_reused` | Authorization code used twice | Re-run connect (codes are single-use) |
 | `invalid_client` | Client secret rotated/deleted in the console | Download the current JSON, reconnect |
 | `no_refresh_token` | Google returned no refresh token | Re-run connect; if persistent, revoke at <https://myaccount.google.com/permissions> and reconnect |
-| `api_not_enabled` | An API isn't enabled in your project | The error carries the project and the enable link from Google's error; `gbrain google status` names every disabled API at once (see [API access](#api-access)) |
+| `api_not_enabled` | An API isn't enabled in your project | The error carries the project and the enable link from Google's error; `foresights google status` names every disabled API at once (see [API access](#api-access)) |
 | `rate_limited` | Google quota hit | Automatic backoff; nothing to do |
-| `scope_missing` | Connected with narrower `--scopes` than needed, or Google answered a request with "insufficient authentication scopes" | `gbrain google connect --reauth <email>` |
-| `relay_unreachable` / `relay_session_expired` / `claim_already_used` / `relay_disabled` | Hosted fast-path (gbrain.io relay) issues | BYO connect always works: `gbrain google connect` |
-| `not_connected` | No vault entry for the account | `gbrain google connect` |
-| `calendar_unreadable` | Google answered the source's calendar read with HTTP 403 or 404: the account cannot read that calendar | `gbrain google calendars --account <email>`, then `gbrain sources set-calendar <source> <calendar-id>`; see [Unreadable calendar](#unreadable-calendar) |
-| `upstream` | Google returned an unexpected error | Retry; if it persists, run `gbrain google status --json` and file the output |
+| `scope_missing` | Connected with narrower `--scopes` than needed, or Google answered a request with "insufficient authentication scopes" | `foresights google connect --reauth <email>` |
+| `relay_unreachable` / `relay_session_expired` / `claim_already_used` / `relay_disabled` | Hosted fast-path (gbrain.io relay) issues | BYO connect always works: `foresights google connect` |
+| `not_connected` | No vault entry for the account | `foresights google connect` |
+| `calendar_unreadable` | Google answered the source's calendar read with HTTP 403 or 404: the account cannot read that calendar | `foresights google calendars --account <email>`, then `foresights sources set-calendar <source> <calendar-id>`; see [Unreadable calendar](#unreadable-calendar) |
+| `upstream` | Google returned an unexpected error | Retry; if it persists, run `foresights google status --json` and file the output |
 | `access_command_failed` | The `--access command` token command exited non-zero, timed out, or printed nothing token-shaped | Run it by hand; it must print a bare token or JSON with `token`/`access_token` |
 | `access_env_missing` | The `--access env` variable is unset/blank in this process | Export a live token into it (refresh externally), or switch back to the vault flow |
 
@@ -524,30 +524,30 @@ upstream failure rather than triggering a re-list.
 ## Custody, privacy, spend
 
 - Tokens: local vault only, 0600, atomic writes. `sources.config` stores an
-  account *pointer*, never a secret. `gbrain creds list` is always redacted.
+  account *pointer*, never a secret. `foresights creds list` is always redacted.
 - Mail, calendar and contact pages and the sync state: 0600 files in 0700
-  directories gbrain creates. See [File permissions](#file-permissions).
-- Disconnect: `gbrain google disconnect <email>` removes local tokens; revoke
+  directories foresights creates. See [File permissions](#file-permissions).
+- Disconnect: `foresights google disconnect <email>` removes local tokens; revoke
   Google-side at <https://myaccount.google.com/permissions>.
-- Upgrade/transfer: `gbrain creds export` produces a passphrase-encrypted
+- Upgrade/transfer: `foresights creds export` produces a passphrase-encrypted
   bundle (a loud per-credential warning when a Testing-mode consent screen
   would travel with it — those tokens die within 7 days on the target).
 - LLM spend: commitment extraction sends recent email text (last 30 days,
   capped per sweep) to your configured chat provider, under a daily cap of
   $2.00 (`loops.extraction_max_usd_per_day`; see
   [open loops](open-loops.md#which-threads-reach-the-extractor)). Kill switch:
-  `gbrain config set loops.extraction_enabled false`. The deterministic
+  `foresights config set loops.extraction_enabled false`. The deterministic
   unanswered-thread detector is free and always on.
 - Atom extraction from email and calendar pages is on by default: page text
   goes to the `extract_atoms` model under the auto-drain cap. Opt out with
-  `gbrain config set cycle.extract_atoms.connector_pages false`
+  `foresights config set cycle.extract_atoms.connector_pages false`
   ([spend controls](../operations/spend-controls.md#atom-extraction-auto-drain-cap-and-connector-pages)).
 
 ## File permissions
 
 A Google source keeps its files in one directory: by default
 `~/.gbrain/clones/<source-id>-google`, or the directory you passed with
-`gbrain sources add <id> --kind google --account <email> --dir <path>`. gbrain
+`foresights sources add <id> --kind google --account <email> --dir <path>`. foresights
 writes these files there:
 
 - `.google-source.json`, the sync cursors (and `.google-source.json.corrupt`
@@ -556,13 +556,13 @@ writes these files there:
   `calendar/` and per contact under `people/`.
 
 Each of those files is written with mode 0600 (readable only by you).
-Directories gbrain creates for the source, including the source directory
+Directories foresights creates for the source, including the source directory
 itself when it does not exist yet, are created 0700. A directory that
 already exists, such as one you chose with `--dir`, is never chmod-ed. The
 same modes apply when managed persistence publishes the pages. On Windows
-gbrain does not set modes.
+foresights does not set modes.
 
-**gbrain enforces 0600.** Every time gbrain rewrites one of these files it
+**foresights enforces 0600.** Every time foresights rewrites one of these files it
 sets 0600 again, so a looser mode you set by hand (for example
 `chmod 644` to share a page with a group) is reverted on the next rewrite.
 Pages that did not change are not rewritten and keep whatever mode they have.
@@ -572,33 +572,33 @@ this rule prevents. There is no per-source setting for a looser mode yet.
 
 ### Files readable by other local users
 
-gbrain releases before v0.60.31.0 wrote these files with your umask, typically
+foresights releases before v0.60.31.0 wrote these files with your umask, typically
 0644 (readable by every local user), and an upgrade does not rewrite them. In
-the default directory that is harmless, because gbrain keeps `~/.gbrain` at
+the default directory that is harmless, because foresights keeps `~/.gbrain` at
 0700. In a custom `--dir` outside `~/.gbrain`, those pages stay readable by
 other local users until they are rewritten.
 
 The upgrade prints a one-time notice for each Google source outside
 `~/.gbrain`, naming the directory, how many readable entries it found and
-the repair commands. `gbrain doctor` checks the same thing on every run:
+the repair commands. `foresights doctor` checks the same thing on every run:
 
 ```text
-  [WARN] google_file_modes: Google source gmail-you: 412 file(s) and 9 directories gbrain wrote under /data/mail are readable by other local users (written before this release). Preview: gbrain repair google-file-modes --source gmail-you — apply after the user agrees: gbrain repair google-file-modes --source gmail-you --apply
+  [WARN] google_file_modes: Google source gmail-you: 412 file(s) and 9 directories foresights wrote under /data/mail are readable by other local users (written before this release). Preview: foresights repair google-file-modes --source gmail-you — apply after the user agrees: foresights repair google-file-modes --source gmail-you --apply
 ```
 
 The check reports counts per directory, never file names (Gmail page names
-contain subject words). `gbrain doctor --json` carries `source_id`, `dir`,
+contain subject words). `foresights doctor --json` carries `source_id`, `dir`,
 `loose_files`, `loose_dirs` and both commands under `details.sources`.
 
-**Fix it with gbrain (recommended):**
+**Fix it with foresights (recommended):**
 
 ```bash
-gbrain repair google-file-modes --source <id>          # preview: counts and up to 10 sample paths
-gbrain repair google-file-modes --source <id> --apply  # clear group and other permission bits
+foresights repair google-file-modes --source <id>          # preview: counts and up to 10 sample paths
+foresights repair google-file-modes --source <id> --apply  # clear group and other permission bits
 ```
 
-The repair only touches gbrain's own layout: `.google-source.json*`, the
-pages gbrain recorded for that source under `emails/`, `calendar/` and
+The repair only touches foresights's own layout: `.google-source.json*`, the
+pages foresights recorded for that source under `emails/`, `calendar/` and
 `people/` (and their leftover `.tmp` files), and the directories between the
 source directory and those pages. It clears the group and other bits and
 keeps your own. It never changes the source directory itself, never follows
@@ -606,7 +606,7 @@ a symlink, and skips files owned by another user (counted as residuals).
 Without `--source` it covers every Google source outside `~/.gbrain`. The
 preview's sample paths are relative to the source directory, so they can
 show subject words; run it on the brain host. See
-[`gbrain repair`](repair.md#what-each-kind-fixes).
+[`foresights repair`](repair.md#what-each-kind-fixes).
 
 **Or fix it with chmod.** If the directory holds only this source:
 
@@ -615,7 +615,7 @@ chmod -R go-rwx /path/to/google/dir
 ```
 
 If the directory also holds other files you want to keep shared, limit the
-change to gbrain's files:
+change to foresights's files:
 
 ```bash
 DIR=/path/to/google/dir
@@ -627,32 +627,32 @@ chmod -R go-rwx "$DIR"/emails "$DIR"/calendar "$DIR"/people
 
 ```bash
 find /path/to/google/dir \( -perm -040 -o -perm -004 \) -print | head   # prints nothing
-gbrain doctor   # [OK] google_file_modes
+foresights doctor   # [OK] google_file_modes
 ```
 
 ### Related messages
 
 - `[google] could not secure the quarantined state file <path>: <chmod|rename> failed (<error>). It may be readable by other local users; run chmod 600 <path> or delete it.`
-  A damaged state file was set aside, but gbrain could not make the copy
+  A damaged state file was set aside, but foresights could not make the copy
   private. The sync continues from empty cursors. Run the printed `chmod` or
   delete the file.
 - `Stale temporary path <path>.tmp is a directory; remove it and re-run the sync.`
-  A directory sits where gbrain writes a page's temporary file. That item
+  A directory sits where foresights writes a page's temporary file. That item
   fails until you remove the directory.
 
 ## For agents ([SHOW USER] protocol)
 
-Every `gbrain google`/`creds`/`waiting` command supports `--json` and emits
+Every `foresights google`/`creds`/`waiting` command supports `--json` and emits
 `{ ok, status, next_action: { command?, user_message? }, error? }`. Human
 copy the harness should relay verbatim is fenced in `[SHOW USER]` blocks.
 The whole setup is exactly two user interactions: (1) the GCP checklist +
 client JSON hand-back, (2) one consent click. Never pass secrets via argv —
 use `--client-json <path>`, stdin, or env.
 
-**Exit codes (contract v1 legacy).** `gbrain google` exits 0 when done, 1 when
+**Exit codes (contract v1 legacy).** `foresights google` exits 0 when done, 1 when
 it failed, and 2 both for usage errors and when it is waiting on the user (for
 example `status: "awaiting_consent"` after printing the consent URL, or
-`status: "no_brain"`). Other gbrain commands use exit 3 for "the user must agree
+`status: "no_brain"`). Other foresights commands use exit 3 for "the user must agree
 first"; `google` keeps 2 under contract v1 and moves to 3 in a future contract
 version. Branch on the JSON `status`, not on exit 2 alone. `next_action` is the
 legacy name for `fix` ([legacy advice names](../protocol/AGENT_OPERATOR_v1.md#legacy-advice-names)).
@@ -696,8 +696,8 @@ historical page. Ordinary incremental sync only revisits changed threads and its
 historical inspection. To repair already-imported pages without replaying bodies:
 
 ```sh
-gbrain google attachments backfill --brain host --source gmail-example --json
-gbrain google attachments backfill --brain host --source gmail-example --yes --limit 25 --json
+foresights google attachments backfill --brain host --source gmail-example --json
+foresights google attachments backfill --brain host --source gmail-example --yes --limit 25 --json
 ```
 
 This is a trusted **local, managed-persistence-only** command for both PGLite and
@@ -752,7 +752,7 @@ owners and malformed metadata are not successful inspection.
 Verify with the preview command above and an authorized page read:
 
 ```sh
-gbrain get emails/2026/09/example-thread --brain host --source gmail-example
+foresights get emails/2026/09/example-thread --brain host --source gmail-example
 ```
 
 Inspect `frontmatter.gmail_attachment_receipts.messages[].inspection` for the

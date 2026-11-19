@@ -1,6 +1,6 @@
 /**
  * #5216 / #4738: doctor's child_table_orphans used to print cleanup SQL that
- * no gbrain command could run. `gbrain repair orphan-children` previews and
+ * no foresights command could run. `foresights repair orphan-children` previews and
  * removes orphaned child rows (clearing the two ON DELETE SET NULL
  * references), and its preview probes every page body for torn TOAST values.
  */
@@ -35,7 +35,7 @@ afterAll(async () => { await engine.disconnect(); });
 test('preview lists orphan groups, apply removes them and clears dangling references, doctor goes ok', async () => {
   const before = await childTableOrphansCheck(engine);
   expect(before.status).toBe('warn');
-  expect(before.message).toContain('gbrain repair orphan-children');
+  expect(before.message).toContain('foresights repair orphan-children');
   const scope = await resolveRepairScope(engine);
   await expect(runRepair(ctx(), orphanChildrenRepair, scope, { apply: false })).rejects.toThrow();
   const preview = await runRepair(ctx(), orphanChildrenRepair, scope, { apply: false, explicit: true });

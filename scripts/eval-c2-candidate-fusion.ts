@@ -474,7 +474,7 @@ function pickThreshold(rows: SweepRow[]) {
 }
 
 /**
- * One-shot calibration for `gbrain doctor`'s supersession_calibration fix:
+ * One-shot calibration for `foresights doctor`'s supersession_calibration fix:
  * embed the fixture with the brain's model (paid, about a cent), sweep the
  * default arm over 0.80-0.97, print the key, the rows and the guarded pick.
  */
@@ -488,7 +488,7 @@ async function calibrate(model: string, dims: number, outPath: string): Promise<
   for (const tau of thresholdRange('0.80:0.97:0.01')) rows.push(sweepRow(await replay(dims, model, t => store.get(t), companies, 'rrf_free', tau), tau, 'rrf_free'));
   const pick = pickThreshold(rows);
   console.log(JSON.stringify({ key: calibrationKey(model, dims), threshold_pick: pick, threshold_sweep: rows,
-    register: pick.guarded === null ? null : `gbrain config set ${SUPERSESSION_THRESHOLDS_KEY} '{"${calibrationKey(model, dims)}": ${pick.guarded}}'` }, null, 2));
+    register: pick.guarded === null ? null : `foresights config set ${SUPERSESSION_THRESHOLDS_KEY} '{"${calibrationKey(model, dims)}": ${pick.guarded}}'` }, null, 2));
 }
 
 /** `0.80:0.97:0.01` (inclusive range) or `0.85,0.9,0.95`. */

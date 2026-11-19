@@ -1,5 +1,5 @@
 /**
- * The one source of gbrain's search-mode recommendation and the copy that
+ * The one source of foresights's search-mode recommendation and the copy that
  * states it: the install picker's reasons, menu and `[AGENT]` banner, init's
  * first-run `search_mode` decision, the post-upgrade banner, and the cost
  * matrix they all print. Prices come from the canonical chat-pricing table
@@ -19,7 +19,7 @@ import type { SearchMode } from './mode.ts';
 export const SEARCH_MODE_SOURCE_KEY = 'search.mode_source';
 export type SearchModeSource = 'auto' | 'operator';
 
-/** The mode gbrain recommends for a brain with a chat key when nothing argues for another. */
+/** The mode foresights recommends for a brain with a chat key when nothing argues for another. */
 export const RECOMMENDED_SEARCH_MODE: SearchMode = 'tokenmax';
 
 const MODES: readonly SearchMode[] = ['conservative', 'balanced', 'tokenmax'];
@@ -92,9 +92,9 @@ export function costMatrixSentence(models = COST_MATRIX_MODELS): string {
 
 /** How `query` and `search` expand, stated once. */
 export const QUERY_EXPANSION_LINE =
-  '`gbrain query` does not expand by default in any mode; --expand forces it and --no-expand skips it. ' +
-  '`gbrain config set search.expansion true` turns the default on for the brain in any mode (false turns it off; ' +
-  'an explicit --expand or --no-expand still wins). `gbrain search` never expands. An expansion is one call to the ' +
+  '`foresights query` does not expand by default in any mode; --expand forces it and --no-expand skips it. ' +
+  '`foresights config set search.expansion true` turns the default on for the brain in any mode (false turns it off; ' +
+  'an explicit --expand or --no-expand still wins). `foresights search` never expands. An expansion is one call to the ' +
   'configured chat model, a separate provider charge; keyless brains never expand.';
 
 /** The picker's reason for each recommendation branch. */
@@ -111,21 +111,21 @@ export function agentBannerLines(applied: SearchMode, reason: string): string[] 
   return [
     '',
     '═══════════════════════════════════════════════════════════════',
-    `[gbrain] search mode tentatively set to: ${applied}`,
-    `[gbrain] Reason: ${reason}`,
+    `[foresights] search mode tentatively set to: ${applied}`,
+    `[foresights] Reason: ${reason}`,
     '═══════════════════════════════════════════════════════════════',
     '',
     ...agentBlock({
       why: `Search mode ${applied} is in effect, auto-selected from the Reason line. Tell the operator the mode in effect and this matrix in the reply that reports the install; nothing waits on an answer (INSTALL_FOR_AGENTS.md Step 3.5).`,
-      next: 'If the operator picks another mode, run `gbrain config set search.mode <conservative|balanced|tokenmax>`.',
-      verify: 'gbrain search modes',
+      next: 'If the operator picks another mode, run `foresights config set search.mode <conservative|balanced|tokenmax>`.',
+      verify: 'foresights search modes',
     }).trimEnd().split('\n'),
     '',
     ...costMatrixLines('   '),
     `   ${QUERY_EXPANSION_LINE}`,
     '',
-    'To change later: gbrain config set search.mode <mode>',
-    'To see what is running: gbrain search modes',
+    'To change later: foresights config set search.mode <mode>',
+    'To see what is running: foresights search modes',
     '',
   ];
 }
@@ -135,24 +135,24 @@ export function upgradeBannerLines(): string[] {
   return [
     '',
     '═══════════════════════════════════════════════════════════════',
-    '[gbrain] This brain has no search.mode set, so it runs balanced',
-    '[gbrain] (named modes: conservative / balanced / tokenmax).',
+    '[foresights] This brain has no search.mode set, so it runs balanced',
+    '[foresights] (named modes: conservative / balanced / tokenmax).',
     '═══════════════════════════════════════════════════════════════',
     '',
     ...agentBlock({
       ask: 'Which search mode should this brain use: conservative, balanced or tokenmax?',
       why: `Relay this matrix to your operator and ask which mode they want. Recommended for a brain with a chat key: ${RECOMMENDED_SEARCH_MODE}.`,
-      next: 'ask_user: run `gbrain config set search.mode <mode>` after they decide.',
-      verify: 'gbrain search modes',
+      next: 'ask_user: run `foresights config set search.mode <mode>` after they decide.',
+      verify: 'foresights search modes',
     }).trimEnd().split('\n'),
     '',
     ...costMatrixLines('  '),
     `  ${QUERY_EXPANSION_LINE}`,
     '',
     'To pick:',
-    '  gbrain search modes              # see what is running',
-    '  gbrain config set search.mode <conservative|balanced|tokenmax>',
-    '  gbrain search tune               # data-driven recommendations',
+    '  foresights search modes              # see what is running',
+    '  foresights config set search.mode <conservative|balanced|tokenmax>',
+    '  foresights search tune               # data-driven recommendations',
     '',
   ];
 }

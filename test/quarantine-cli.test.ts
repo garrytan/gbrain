@@ -1,5 +1,5 @@
 /**
- * gbrain quarantine CLI (issue #1699) — list / clear / scan.
+ * foresights quarantine CLI (issue #1699) — list / clear / scan.
  * PGLite + captured console; no API keys.
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
@@ -51,7 +51,7 @@ async function capture(fn: () => Promise<void>): Promise<string> {
   return lines.join('\n');
 }
 
-describe('gbrain quarantine list', () => {
+describe('foresights quarantine list', () => {
   test('lists quarantined by default; --include-flagged adds content_flag pages', async () => {
     await withHome(async () => {
       await importFromContent(engine, 'notes/junk', `---\ntitle: B\ntype: note\n---\n\nCloudflare Ray ID: x. body.`, { noEmbed: true });
@@ -72,7 +72,7 @@ describe('gbrain quarantine list', () => {
   });
 });
 
-describe('gbrain quarantine clear', () => {
+describe('foresights quarantine clear', () => {
   test('clear (no --force) on still-junk content re-quarantines (--json, no exit)', async () => {
     await withHome(async () => {
       await importFromContent(engine, 'notes/jstill', `---\ntitle: B\ntype: note\n---\n\nCloudflare Ray ID: w. still junk.`, { noEmbed: true });
@@ -112,7 +112,7 @@ describe('gbrain quarantine clear', () => {
   });
 });
 
-describe('gbrain quarantine clear — multi-source ambiguity + --source-id', () => {
+describe('foresights quarantine clear — multi-source ambiguity + --source-id', () => {
   const JUNK = (t: string) => `---\ntitle: ${t}\ntype: note\n---\n\nCloudflare Ray ID: q. junk body.`;
 
   /** Same slug quarantined in BOTH 'default' and 'work'. */
@@ -195,7 +195,7 @@ describe('engine.getContentFlagsByPageIds', () => {
   });
 });
 
-describe('gbrain quarantine scan', () => {
+describe('foresights quarantine scan', () => {
   test('dry-run reports would-quarantine for pre-gate junk; --apply marks it', async () => {
     await withHome(async () => {
       // Seed junk that predates the gate by writing directly via putPage

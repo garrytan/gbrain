@@ -1,5 +1,5 @@
 /**
- * #6803 C5 (Decision 1): a plain non-interactive CLI `gbrain doctor --json`
+ * #6803 C5 (Decision 1): a plain non-interactive CLI `foresights doctor --json`
  * (stderr not a terminal; no `--budget-ms`, `--tier`, `--remediate`,
  * `--remediation-plan` or `--fix`) caps its check run at
  * `doctor.default_budget_ms` (default 90000 ms, 0 off), so an agent's tool call
@@ -38,12 +38,12 @@ export function nonInteractiveDefaultBudget(args: readonly string[], opts: { std
 
 /** The one stderr line a capped run prints when its check run starts. */
 export function defaultBudgetNotice(ms: number): string {
-  return `[gbrain doctor] non-interactive run: the check run (not connect or migrations) is capped at ${ms} ms (${DEFAULT_BUDGET_KEY}); `
-    + 'checks past it report health unknown. Off for one run: --budget-ms 0; off for good: gbrain config set doctor.default_budget_ms 0. '
+  return `[foresights doctor] non-interactive run: the check run (not connect or migrations) is capped at ${ms} ms (${DEFAULT_BUDGET_KEY}); `
+    + 'checks past it report health unknown. Off for one run: --budget-ms 0; off for good: foresights config set doctor.default_budget_ms 0. '
     + 'On PGLite a statement already running cannot be stopped, so a check can finish late.\n';
 }
 
-/** `gbrain config set doctor.default_budget_ms <n>` (file plane). */
+/** `foresights config set doctor.default_budget_ms <n>` (file plane). */
 export function setDoctorDefaultBudget(cfg: GBrainConfig, value: string, saveConfig: (cfg: GBrainConfig) => void): void {
   const n = parseDefaultBudgetValue(value);
   if (n === null) {

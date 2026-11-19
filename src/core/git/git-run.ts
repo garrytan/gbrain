@@ -31,7 +31,7 @@ export function gitOk(root: string, args: string[], what: string, opts: Paramete
   const r = git(root, args, opts);
   if (r.code !== 0) {
     throw opError('git_unavailable', `git ${what} failed in ${root}: ${r.stderr.trim().slice(0, 300) || `exit ${r.code}`}`,
-      `Run git status in ${root}, fix what git reports, then rerun the same gbrain git commit-push command.`);
+      `Run git status in ${root}, fix what git reports, then rerun the same foresights git commit-push command.`);
   }
   return r.stdout.trim();
 }

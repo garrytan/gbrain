@@ -2,7 +2,7 @@
  * E2E Sync Tests — Tier 1 (no API keys required)
  *
  * Tests the full git-to-DB sync pipeline: create a git repo, commit
- * markdown files, run gbrain sync, verify pages appear in the database.
+ * markdown files, run foresights sync, verify pages appear in the database.
  * Covers first sync, incremental add/modify/delete, and the critical
  * "edit → sync → search returns corrected text" flow.
  *

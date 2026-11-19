@@ -1,6 +1,6 @@
 /**
  * #7900: after a host move, apply-migrations stopped at v0.53.0 content-checkpoints with "The canonical root changed
- * after setup began", forever, and `gbrain repair content-receipt-root` found nothing to repair.
+ * after setup began", forever, and `foresights repair content-receipt-root` found nothing to repair.
  *
  * Shape: content setup on the old host created an owned root and stopped at stage `owner` (an existing brain waits
  * for the writer to be claimed and shared-skill persistence activated). The brain then moved: the content was copied
@@ -80,7 +80,7 @@ for (const { backend, databaseUrl } of arms) for (const git of [false, true]) {
 
             const refused = await refusal(() => runSharedSkillsMigration(ctxOf(engine)));
             expect(refused.message).toBe('The canonical root changed after setup began.');
-            expect(refused.suggestion).toContain('gbrain repair content-receipt-root --source default');
+            expect(refused.suggestion).toContain('foresights repair content-receipt-root --source default');
             expect((refused as { fix?: { argv?: string[] } }).fix?.argv).toEqual(['gbrain', 'repair', 'content-receipt-root', '--source', 'default']);
             expect(await checkpoint(engine)).toMatchObject({ root: oldRoot, stage: 'owner' });
 
@@ -164,7 +164,7 @@ describe('#7900 branches the host-move walk-through does not reach (pglite)', ()
     } finally { await close(); rmSync(base, { recursive: true, force: true }); }
   }, 120_000);
 
-  // Value: protects=a resumed setup for a moved source that no host has claimed names the claim as its first step, since the repair lists only bound sources; fails_when=the refusal points only at gbrain repair content-receipt-root, whose preview is empty for an unclaimed source, so apply-migrations stops with a fix that does nothing; why_new=#7915; seam=none; no_claim=Postgres arm, the claim's own preview output
+  // Value: protects=a resumed setup for a moved source that no host has claimed names the claim as its first step, since the repair lists only bound sources; fails_when=the refusal points only at foresights repair content-receipt-root, whose preview is empty for an unclaimed source, so apply-migrations stops with a fix that does nothing; why_new=#7915; seam=none; no_claim=Postgres arm, the claim's own preview output
   test('#7915: an unclaimed moved source refuses naming the claim, then the activation; once both ran, the repair lists it', async () => {
     const base = mkdtempSync(join(tmpdir(), 'gbrain-7915-'));
     const oldRoot = join(base, 'old-host', 'content'), newRoot = join(base, 'new-host', 'content');
@@ -185,10 +185,10 @@ describe('#7900 branches the host-move walk-through does not reach (pglite)', ()
             const refused = await refusal(run);
             expect(refused.message).toBe('The canonical root changed after setup began.');
             expect(refused.suggestion).toContain('has no canonical owner, so the repair has nothing to list yet');
-            expect(refused.suggestion).toContain(`gbrain sources writer claim default --path ${newRoot} --dry-run --json`);
-            expect(refused.suggestion).toContain(`gbrain sources writer claim default --path ${newRoot} --admin-intent writer_claim --expected-state <admin_state>`);
-            expect(refused.suggestion).toContain('gbrain sources writer activate --confirm-quiesced --shared-skills --dry-run --json');
-            expect(refused.suggestion).toContain('Then preview gbrain repair content-receipt-root --source default');
+            expect(refused.suggestion).toContain(`foresights sources writer claim default --path ${newRoot} --dry-run --json`);
+            expect(refused.suggestion).toContain(`foresights sources writer claim default --path ${newRoot} --admin-intent writer_claim --expected-state <admin_state>`);
+            expect(refused.suggestion).toContain('foresights sources writer activate --confirm-quiesced --shared-skills --dry-run --json');
+            expect(refused.suggestion).toContain('Then preview foresights repair content-receipt-root --source default');
             expect((refused as { fix?: { argv?: string[] } }).fix?.argv).toEqual(['gbrain', 'sources', 'writer', 'claim', 'default', '--path', newRoot, '--dry-run', '--json']);
           }
           expect(await checkpoint(engine)).toMatchObject({ root: oldRoot, stage: 'owner' });
@@ -197,7 +197,7 @@ describe('#7900 branches the host-move walk-through does not reach (pglite)', ()
           expect((await repairPreview(engine)).listing).toEqual([]);
           const claimed = await refusal(() => setupSharedBrainContent(ctxOf(engine), { sourceId: 'default' }));
           expect(claimed.suggestion).toContain('is claimed but persistence is not activated');
-          expect(claimed.suggestion).not.toContain('gbrain sources writer claim');
+          expect(claimed.suggestion).not.toContain('foresights sources writer claim');
           expect((claimed as { fix?: { argv?: string[] } }).fix?.argv).toEqual(['gbrain', 'sources', 'writer', 'activate', '--confirm-quiesced', '--shared-skills', '--dry-run', '--json']);
 
           await activateSharedSkillPersistence(engine, { confirmQuiesced: true });

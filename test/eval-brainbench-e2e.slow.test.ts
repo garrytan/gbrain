@@ -275,7 +275,7 @@ describe('anti-vacuous-pass + error paths (always exit 2, never 0)', () => {
   test('usage error (unknown flag): exit 2 with usage', () => {
     const r = batch['usage-error'];
     expect(r.exitCode).toBe(2);
-    expect(r.stderr).toContain('Usage: gbrain eval brainbench');
+    expect(r.stderr).toContain('Usage: foresights eval brainbench');
   }, 30_000);
 
   test('seed failure (duplicate slug across seed pages in one source): exit 2, fixture named', () => {

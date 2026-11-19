@@ -1,5 +1,5 @@
 /**
- * gbrain backfill — first-class bulk operations (v0.30.1 Fix 3).
+ * foresights backfill — first-class bulk operations (v0.30.1 Fix 3).
  *
  * Generalizes the keyset+checkpoint pattern from backfill-effective-date.ts
  * so future backfills (embedding_voyage in v0.30.2, etc.) reuse one tested
@@ -8,9 +8,9 @@
  * the emotional_weight predicate via a new recomputed_at column.
  *
  * Usage:
- *   gbrain backfill <kind> [--batch-size N] [--concurrency N] [--resume]
+ *   foresights backfill <kind> [--batch-size N] [--concurrency N] [--resume]
  *                          [--dry-run] [--keep-index] [--max-errors N]
- *   gbrain backfill list
+ *   foresights backfill list
  *
  * X5: --concurrency clamps to GBRAIN_DIRECT_POOL_SIZE - 1 with a warning,
  * always reserving 1 connection for HNSW + heartbeat + doctor probes.
@@ -73,11 +73,11 @@ function parseArgs(args: string[]): BackfillArgs {
 }
 
 function printHelp(): void {
-  console.log(`gbrain backfill — first-class bulk operations.
+  console.log(`foresights backfill — first-class bulk operations.
 
 Usage:
-  gbrain backfill <kind> [flags]      Run a registered backfill.
-  gbrain backfill list                 Show registered backfills + checkpoints.
+  foresights backfill <kind> [flags]      Run a registered backfill.
+  foresights backfill list                 Show registered backfills + checkpoints.
 
 Backfills (v0.30.1):
   effective_date     Compute effective_date for pages imported pre-v0.29.1.
@@ -118,7 +118,7 @@ function clampConcurrency(requested: number | undefined): { effective: number; w
  * #1963 (same class as reindex-frontmatter): takes the ALREADY-CONNECTED
  * engine from cli.ts's dispatch. Building a second engine here deadlocked on
  * the PGLite data-dir lock (cli.ts's `connectEngine()` already holds it in
- * this same process) — every `gbrain backfill <kind>` on PGLite timed out
+ * this same process) — every `foresights backfill <kind>` on PGLite timed out
  * after 30s. Engine lifecycle belongs to cli.ts's connect + teardown.
  */
 export async function runBackfillCommand(engine: BrainEngine, args: string[]): Promise<void> {
@@ -137,13 +137,13 @@ export async function runBackfillCommand(engine: BrainEngine, args: string[]): P
   }
 
   if (!cli.kind) {
-    console.error('Usage: gbrain backfill <kind> [flags]   |   gbrain backfill list');
+    console.error('Usage: foresights backfill <kind> [flags]   |   foresights backfill list');
     process.exit(2);
   }
 
   const reg = getBackfill(cli.kind);
   if (!reg) {
-    console.error(`No backfill registered with name "${cli.kind}". Run \`gbrain backfill list\`.`);
+    console.error(`No backfill registered with name "${cli.kind}". Run \`foresights backfill list\`.`);
     process.exit(2);
   }
   if (reg.v030_1_status === 'declared-only') {

@@ -1,6 +1,6 @@
 /**
  * GST-2767: a source whose registered path is a symlink to a subdirectory of its Git checkout (repo-a/brain, reached
- * as <dir>/source-a-link). A scheduled writer called `gbrain git commit-push --path <link> -- <link>/<folder>/<sub>/<year>`
+ * as <dir>/source-a-link). A scheduled writer called `foresights git commit-push --path <link> -- <link>/<folder>/<sub>/<year>`
  * with new and modified tracked files under that directory. The absolute pathspec spelled through the symlink was
  * refused as "outside the checkout", an empty `.git` left under the source path made every named directory report
  * `commit_paths_skipped` (not_staged) although git committed it, and the refusal named no reason a person could act on.

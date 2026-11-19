@@ -38,9 +38,9 @@
     "answer_and_refresh": "anthropic:claude-opus-4-7",
     "think": "anthropic:claude-opus-4-7",
     "reader": "anthropic:claude-sonnet-5-5",
-    "selection": "answer/refresh and think: gbrain's default for questions (models.standing_questions -> deep tier); reader: the B-suite fixed reader",
+    "selection": "answer/refresh and think: foresights's default for questions (models.standing_questions -> deep tier); reader: the B-suite fixed reader",
     "refresh_cost_lever": "anthropic:claude-sonnet-5-5",
-    "embedding": "voyage:voyage-4 (1024d, gbrain default; run 3 only)"
+    "embedding": "voyage:voyage-4 (1024d, foresights default; run 3 only)"
   },
   "sources": [
     {

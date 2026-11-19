@@ -9,7 +9,7 @@
  * 3 cases:
  *   1. Seed brain with known orphan ratio. Run --by-mention. Assert
  *      orphan count drops materially.
- *   2. Cross-check: gbrain orphans --count and doctor JSON orphan_ratio
+ *   2. Cross-check: foresights orphans --count and doctor JSON orphan_ratio
  *      report the same underlying number (D1 single-source contract).
  *   3. Re-run --by-mention: 0 new links, no double-counting (idempotency
  *      end-to-end across runs).
@@ -115,7 +115,7 @@ describe('v0.42.0.0 e2e — orphan reduction via --by-mention', () => {
     expect(delta).toBeGreaterThanOrEqual(10);
   });
 
-  test('2. cross-check — gbrain orphans count matches doctor JSON orphan_ratio numerator', async () => {
+  test('2. cross-check — foresights orphans count matches doctor JSON orphan_ratio numerator', async () => {
     await seedBrain(100, 10, 5); // 100 entities, 50 mentioned
     captureCli();
     try { await runExtract(engine, ['links', '--by-mention', '--source', 'db']); }
@@ -123,7 +123,7 @@ describe('v0.42.0.0 e2e — orphan reduction via --by-mention', () => {
     finally { restoreCli(); }
     // Direct pure-fn call.
     const direct = await getOrphansData(engine, { includePseudo: false });
-    // CLI `gbrain orphans --count` output.
+    // CLI `foresights orphans --count` output.
     captureCli();
     try { await runOrphans(engine, ['--count']); }
     catch (e) { if (!(e instanceof Error && e.message === '__exit')) throw e; }

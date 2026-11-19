@@ -1,4 +1,4 @@
-// #4501 — `gbrain schema lint <name>` must lint the MERGED manifest
+// #4501 — `foresights schema lint <name>` must lint the MERGED manifest
 // (extends chain resolved), matching the no-name branch's loadActivePack
 // path. Pre-fix, the named-pack branch linted the raw loadPackFromFile
 // manifest, so a child pack referencing inherited parent types (e.g.
@@ -72,7 +72,7 @@ function gbrain(args: string[]): { stdout: string; stderr: string; code: number 
   };
 }
 
-describe('gbrain schema lint <name> resolves the extends chain (#4501)', () => {
+describe('foresights schema lint <name> resolves the extends chain (#4501)', () => {
   test('child pack referencing inherited parent type lints clean', () => {
     const r = gbrain(['schema', 'lint', 'lint-child']);
     expect(r.stdout + r.stderr).not.toContain('enrichable_types_undeclared');

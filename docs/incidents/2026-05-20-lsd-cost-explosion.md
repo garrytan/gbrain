@@ -2,13 +2,13 @@
 
 **Date:** 2026-05-20
 **Severity:** High (financial — $50.71 actual vs $0.96 estimated)
-**Component:** `gbrain lsd` / `gbrain brainstorm`
+**Component:** `foresights lsd` / `foresights brainstorm`
 **Brain size:** 13,690 pages, 16,314 links, ~2,000 unique directory prefixes
 **Version:** v0.37.1.0 (first release of brainstorm/lsd)
 
 ## What Happened
 
-A user ran `gbrain lsd "what story should Garry's List write next" --yes` on a 13,690-page brain. The command:
+A user ran `foresights lsd "what story should Garry's List write next" --yes` on a 13,690-page brain. The command:
 
 1. **Estimated cost: $0.96** (2×12 = 24 crosses × 4 ideas + judge)
 2. **Actual cost: $50.71** — 53× over estimate
@@ -101,13 +101,13 @@ Split ideas into batches of ~100 before calling the judge LLM. Each batch is a s
 
 ### P4: Unicode Sanitization (Medium — prevents cross failures)
 
-Strip unpaired UTF-16 surrogates from page content before building cross prompts. This is a general problem for any gbrain function that serializes user-generated page content into JSON for API calls.
+Strip unpaired UTF-16 surrogates from page content before building cross prompts. This is a general problem for any foresights function that serializes user-generated page content into JSON for API calls.
 
 **Status:** Implemented in `dc080ac2`.
 
 ### P5: Global Token & Time Budgets for All Analysis Functions (Proposed)
 
-**This is the bigger architectural ask.** Every gbrain command that makes LLM calls should respect configurable budgets:
+**This is the bigger architectural ask.** Every foresights command that makes LLM calls should respect configurable budgets:
 
 ```yaml
 # Proposed config additions to ~/.gbrain/config.json
@@ -241,7 +241,7 @@ Also shipped alongside the wave (folded inline):
   real ceiling; `--max-cost` is an alias for `--max-usd`. On
   BudgetExhausted, the orchestrator persists a checkpoint at
   `~/.gbrain/remediation/<plan_hash>.json` and tells the user the exact
-  `gbrain doctor --remediate --resume` command. The resumed run skips
+  `foresights doctor --remediate --resume` command. The resumed run skips
   already-completed steps.
 - **Audit-week-file consolidation (Q1):** four call sites
   (shell-jobs / phantoms / slug-fallback / dream-budget) now share one
@@ -255,7 +255,7 @@ What did NOT make this wave (filed in TODOS for a follow-up):
 - The schema fix for `page_links` on PGLite. The brainstorm domain-bank
   queries reference `page_links` but the embedded schema only defines
   `links`; the E2E works around this with a view in test setup, but
-  real PGLite users currently can't run `gbrain brainstorm`. Schema fix
+  real PGLite users currently can't run `foresights brainstorm`. Schema fix
   needed.
 - `--max-cost` flag on `extract`, `enrich`, `integrity auto`. The
   gateway-layer enforcement covers them when wrapped at the entrypoint,

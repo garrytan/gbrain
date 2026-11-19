@@ -58,14 +58,14 @@ export async function globalMaintenanceTimeoutsCheck(engine: BrainEngine): Promi
     ];
     const cause = causes.join('; ');
     const childAdvice = childTimeouts.map(c =>
-      `Rerunning the phase with gbrain dream --phase ${c.phase} is paid. Raise its child timeout with: gbrain config set dream.${c.phase}.subagent_timeout_ms <ms>. `).join('');
+      `Rerunning the phase with foresights dream --phase ${c.phase} is paid. Raise its child timeout with: foresights config set dream.${c.phase}.subagent_timeout_ms <ms>. `).join('');
     return {
       name: 'global_maintenance_timeouts',
       status: 'warn',
       message: `Brain-wide maintenance is not finishing: ${cause}. `
-        + (phase && childTimeouts.length === 0 ? `Run the phase without the job deadline: gbrain dream --phase ${phase}. ` : '')
+        + (phase && childTimeouts.length === 0 ? `Run the phase without the job deadline: foresights dream --phase ${phase}. ` : '')
         + childAdvice
-        + `Raise the job deadline with: gbrain config set autopilot.global_maintenance_timeout_ms <ms> (or GBRAIN_GLOBAL_MAINTENANCE_TIMEOUT_MS). See ${DOCS}.`,
+        + `Raise the job deadline with: foresights config set autopilot.global_maintenance_timeout_ms <ms> (or GBRAIN_GLOBAL_MAINTENANCE_TIMEOUT_MS). See ${DOCS}.`,
       details: { code: 'global_maintenance_timeouts', cause, fix, docs: DOCS, recent_job_ids: recent.map(j => j.id), phases, child_timeouts: childTimeouts,
         resume_phase: progress.next_phase ?? null },
     };

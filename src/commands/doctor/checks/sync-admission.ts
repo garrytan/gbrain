@@ -35,9 +35,9 @@ async function runSyncAdmissionCheck(ctx: DoctorContext): Promise<Check[]> {
     const age = ageSeconds === null ? 'set at an unknown time' : `set ${formatAge(ageSeconds)} ago (${setting.set_at})`;
     checks.push({ name: 'sync_admission_restricted', status: 'warn', details,
       message: `${SYNC_ADMISSION_KEY} is ${value}${stored}, ${age}: managed sync ${PAUSED[value]}. Ask the user whether the reason for restricting it still holds; `
-        + `gbrain config set ${SYNC_ADMISSION_KEY} normal restores it, and the next sync admits what waited.`,
+        + `foresights config set ${SYNC_ADMISSION_KEY} normal restores it, and the next sync admits what waited.`,
       fix: { argv: ['gbrain', 'config', 'set', SYNC_ADMISSION_KEY, 'normal'], consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify('sync_admission_restricted'), docs: DOCS,
-        why: `Restores the default, so managed sync admits deletes and keep_db writes again. The owner chose ${value}; only they restore it, and gbrain never runs this on its own.` } });
+        why: `Restores the default, so managed sync admits deletes and keep_db writes again. The owner chose ${value}; only they restore it, and foresights never runs this on its own.` } });
   } catch (error) {
     checks.push(checkError('sync_admission_restricted', 'read sync.admission', error, { details: { docs: DOCS } }));
   }

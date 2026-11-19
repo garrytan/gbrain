@@ -1084,7 +1084,7 @@ describe('embed --stale time-budget stop is loud (large-brain ceiling)', () => {
     expect(result.pages_processed).toBeLessThan(10);
     expect(result.reason).toBe('time_budget');
     expect(result.remaining_stale).toBe(10);
-    expect(result.resume_command).toBe('gbrain embed --stale --catch-up --source default');
+    expect(result.resume_command).toBe('foresights embed --stale --catch-up --source default');
   });
 
   test('the CLI prints the verdict on stdout and exits with the budget-stop status', async () => {
@@ -1113,7 +1113,7 @@ describe('embed --stale time-budget stop is loud (large-brain ceiling)', () => {
     }
     const verdict = lines.find(l => l.includes('reason: time_budget'));
     expect(verdict).toContain('with 10 stale chunk(s) left');
-    expect(verdict).toContain('Finish without a time cap: gbrain embed --stale --catch-up');
+    expect(verdict).toContain('Finish without a time cap: foresights embed --stale --catch-up');
   });
 
   test('a run that drains everything before the budget reports no stop', async () => {
@@ -1175,7 +1175,7 @@ describe('embedAllStale --source threading (D7)', () => {
 // Code metadata preservation across re-embed (regression for #769)
 // ────────────────────────────────────────────────────────────────
 //
-// gbrain v0.30.1 and earlier silently clobbered code-chunk metadata
+// foresights v0.30.1 and earlier silently clobbered code-chunk metadata
 // (language, symbol_name, symbol_type, start_line, end_line,
 // parent_symbol_path, doc_comment, symbol_name_qualified) on every
 // re-embed pass. The chunker populated those columns at import time,

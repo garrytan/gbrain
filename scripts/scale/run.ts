@@ -11,7 +11,7 @@
  * it into a fresh brain under a temporary GBRAIN_HOME (never ~/.gbrain):
  * PGLite in a fresh data dir, or Postgres in a fresh database created from
  * DATABASE_URL and dropped afterwards. `--import-mode cli` (default) writes the
- * Markdown corpus once into --corpus-dir and runs the real `gbrain import`
+ * Markdown corpus once into --corpus-dir and runs the real `foresights import`
  * per source, timing each file from its progress events; `--import-mode
  * content` keeps the per-page `importFromContent` loop. Then it extracts
  * links, timeline, facts and takes, writes deterministic vectors onto every
@@ -213,7 +213,7 @@ async function writeConfig(): Promise<void> {
 }
 
 interface CliImport { perFileMs: number[]; perFileCpuMs: number[]; result: Record<string, unknown>; wallMs: number }
-/** Run the real `gbrain import` for one source; per-file cost comes from its JSON progress ticks (one per file at interval 0). */
+/** Run the real `foresights import` for one source; per-file cost comes from its JSON progress ticks (one per file at interval 0). */
 async function cliImport(sourceId: string): Promise<CliImport> {
   const sourceDir = join(corpusDir, sourceId);
   const onDisk = corpusMarkdownFiles(sourceDir).length;
@@ -228,18 +228,18 @@ async function cliImport(sourceId: string): Promise<CliImport> {
   const wallMs = performance.now() - started;
   const lastJson = stdout.trim().split('\n').reverse().find(l => l.startsWith('{'));
   if (code !== 0 || !lastJson) {
-    throw new Error(`gbrain import of source ${sourceId} exited ${code}. stdout: ${stdout.slice(-2000)} stderr: ${stderr.slice(-2000)}`);
+    throw new Error(`foresights import of source ${sourceId} exited ${code}. stdout: ${stdout.slice(-2000)} stderr: ${stderr.slice(-2000)}`);
   }
   const totalFiles = Number(JSON.parse(lastJson).total_files);
   if (totalFiles !== onDisk) {
-    throw new Error(`code=scale_import_file_count: gbrain import saw ${totalFiles} of the ${onDisk} Markdown files under ${sourceDir}. `
+    throw new Error(`code=scale_import_file_count: foresights import saw ${totalFiles} of the ${onDisk} Markdown files under ${sourceDir}. `
       + 'Its file listing skipped the rest (a .gitignore or hidden-path rule of an enclosing repository is the usual cause). '
       + `Fix: check \`git -C ${sourceDir} check-ignore -v .\`, or pass a --corpus-dir outside any repository.`);
   }
   const { wallMs: perFileMs, cpuMs: perFileCpuMs } = importProgressPerFile(stderr);
   const usable = perFileMs.filter((ms, i) => Number.isFinite(ms) && Number.isFinite(perFileCpuMs[i])).length;
   if (perFileMs.length !== totalFiles || usable !== totalFiles) {
-    throw new Error(`gbrain import of source ${sourceId} emitted ${usable} usable per-file progress ticks for `
+    throw new Error(`foresights import of source ${sourceId} emitted ${usable} usable per-file progress ticks for `
       + `${totalFiles} files; the rate gate needs one tick per file with elapsed_ms and cpu_ms (--progress-json --progress-interval 0).`);
   }
   return { perFileMs, perFileCpuMs, result: JSON.parse(lastJson) as Record<string, unknown>, wallMs };
@@ -297,11 +297,11 @@ async function main(): Promise<FullReport> {
         const run = await cliImport(sourceId);
         const expected = fixture.pages.filter(p => p.sourceId === sourceId).length;
         if (run.result.imported !== expected || Number(run.result.errors) !== 0) {
-          throw new Error(`gbrain import of source ${sourceId} imported ${String(run.result.imported)}/${expected} with ${String(run.result.errors)} errors: ${JSON.stringify(run.result).slice(0, 2000)}`);
+          throw new Error(`foresights import of source ${sourceId} imported ${String(run.result.imported)}/${expected} with ${String(run.result.errors)} errors: ${JSON.stringify(run.result).slice(0, 2000)}`);
         }
         perPage = perPage.concat(run.perFileMs);
         perPageCpu = perPageCpu.concat(run.perFileCpuMs);
-        console.log(`[scale] gbrain import --source ${sourceId}: ${expected} files in ${Math.round(run.wallMs)} ms wall`);
+        console.log(`[scale] foresights import --source ${sourceId}: ${expected} files in ${Math.round(run.wallMs)} ms wall`);
       }
       engine = await openEngine();
     } else {

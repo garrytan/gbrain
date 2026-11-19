@@ -1,7 +1,7 @@
 /**
- * #7490: `gbrain google status` probes Contacts with a People request that
+ * #7490: `foresights google status` probes Contacts with a People request that
  * `contacts.readonly` covers. `people/me` now needs the `profile` scope,
- * which `gbrain google connect` never requests, so probing it reported a 403
+ * which `foresights google connect` never requests, so probing it reported a 403
  * error on a healthy, fully consented account. The probe lists one connection
  * instead, the request the contacts sweep itself makes.
  *

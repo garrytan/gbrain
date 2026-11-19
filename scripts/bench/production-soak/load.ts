@@ -8,7 +8,7 @@
  * 1. Starts the topology (lib.ts): Postgres, the session and transaction
  *    PgBouncers and toxiproxy (no latency while loading).
  * 2. Checks the default source out at its import-base tag and the other sources at HEAD,
- *    registers each with gbrain sources add and imports it with gbrain's own
+ *    registers each with foresights sources add and imports it with foresights's own
  *    classic sync, then federates it.
  * 3. Writes the drift (fixture drift.jsonl) through the importer, database
  *    only: db_only pages no commit ever held, and kept_deleted pages whose
@@ -19,7 +19,7 @@
  *    provider (keyless; nothing leaves the machine).
  * 5. Fast-forwards the default source to the final history, so the soak starts with the
  *    backlog a production brain carries (commits after import-base, including
- *    merges whose side branches move and delete files, and files gbrain holds).
+ *    merges whose side branches move and delete files, and files foresights holds).
  *
  * Writes <work>/ready.json with every phase's timing and the starting counts
  * (pages, chunks, holds, drift rows written). Reuses nothing: every run is a

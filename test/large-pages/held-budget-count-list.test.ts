@@ -1,8 +1,8 @@
 /**
  * PR 2 fix lane W (GBRA-117): the held count and the held list agree.
  *
- * 1. Protects: `readBudgetLimited` (doctor `partial_embedding`, `gbrain embed
- *    --stale`, the embed-backfill job) and `listBudgetLimitedPages` (`gbrain
+ * 1. Protects: `readBudgetLimited` (doctor `partial_embedding`, `foresights embed
+ *    --stale`, the embed-backfill job) and `listBudgetLimitedPages` (`foresights
  *    embed --held`) apply one rule for when a held or capped budget row still
  *    applies: its page is above the inline bound (budgetRowAppliesFilter). Rows
  *    on large inline and segmented pages count; rows on pages that shrank to
@@ -12,7 +12,7 @@
  *    count below). The list still includes embed_skip pages and pages with no
  *    pending chunks, which the count leaves out; the fixture has neither.
  * 2. Fails when: either side applies a held row the other skips, so doctor
- *    reports held pages `gbrain embed --held` cannot list, or the reverse.
+ *    reports held pages `foresights embed --held` cannot list, or the reverse.
  * 3. Why existing coverage misses it: held-budget-shrink.test.ts checks the
  *    list and the stale queue only, and the budget tests hold pages that stay
  *    large.

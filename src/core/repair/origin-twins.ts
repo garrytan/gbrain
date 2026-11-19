@@ -1,5 +1,5 @@
 /**
- * `gbrain repair origin-twins --source <id>` (#6948): resolve live pages that record the same origin (`source_path`).
+ * `foresights repair origin-twins --source <id>` (#6948): resolve live pages that record the same origin (`source_path`).
  *
  * Explicit-only, preview-bound, trusted local CLI on the source's owner host. The preview lists every twin group of the
  * source (the stored spelling, and the legacy `<scope>/<origin>` spelling of a scoped source-root source), each with
@@ -45,6 +45,7 @@ import { syncGit } from '../persistence/sync-discovery.ts';
 import { MASS_RECONCILE_MIN_PAGES, MASS_RECONCILE_RATIO, massReconcileAllowed } from '../sync-reconcile.ts';
 import type { GhostOwner } from '../ghost-pages.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
+import { commandText } from '../brand.ts';
 
 export const ORIGIN_TWINS_INTENT = 'managed_maintenance_resolve_origin_twin';
 /** Groups one preview lists; a larger set is applied in rounds (preview, apply, preview again). */
@@ -70,7 +71,7 @@ const previewFix = (sourceId: string) => readFix('Previews the duplicate-origin 
 export const ORIGIN_TWINS_CONSENT_TEXT = {
   what: 'Resolve each previewed duplicate-origin group: the canonical page keeps the file; each other page gives it up',
   why: 'Several live pages record the same file, which held that file out of every sync; the preview listed each group with its pages, revisions and verdict.',
-  risk: `A merged twin's inbound links, aliases, tags and facts others assert move to the surviving page, its slug becomes an alias, and it is soft-deleted (the file stays) and purged ${ORIGIN_TWINS_PURGE_FUSE_HOURS} h later; gbrain restore brings back its text as a database-only page, and moved references stay on the survivor. A detached page only forgets the file and stays live.`,
+  risk: `A merged twin's inbound links, aliases, tags and facts others assert move to the surviving page, its slug becomes an alias, and it is soft-deleted (the file stays) and purged ${ORIGIN_TWINS_PURGE_FUSE_HOURS} h later; foresights restore brings back its text as a database-only page, and moved references stay on the survivor. A detached page only forgets the file and stays live.`,
   user_message: `Resolve the previewed duplicate-origin groups? Merged twins are soft-deleted (the file stays) and purged after ${ORIGIN_TWINS_PURGE_FUSE_HOURS} h`,
 };
 
@@ -183,7 +184,7 @@ export function groupPairs(group: OriginTwinGroup, keep?: string): OriginTwinPai
 }
 
 function decisionCommands(group: OriginTwinGroup): string[] {
-  return [...group.claimants.map(page => `gbrain get --source ${group.source_id} -- '${page.slug}'`),
+  return [...group.claimants.map(page => `foresights get --source ${group.source_id} -- '${page.slug}'`),
     `Pick the page that is ${group.source_path}'s, then: ${originTwinsRepairCommand(group.source_id)} --slug '<kept-slug>' (the others forget the file and stay live; nothing is deleted)`];
 }
 
@@ -203,16 +204,16 @@ export const originTwinsRepair: RepairHandler = {
   kind: 'origin-twins',
   embeds: false,
   async plan(engine, scope, after, opts): Promise<RepairPlan> {
-    if (opts?.remote === true) throw trustedCliRequired('gbrain repair origin-twins runs only from the trusted local CLI on the brain host.');
+    if (opts?.remote === true) throw trustedCliRequired('foresights repair origin-twins runs only from the trusted local CLI on the brain host.');
     if (scope.source_ids.length !== 1) {
-      throw opError('invalid_params', 'gbrain repair origin-twins needs --source <id>.',
-        'Duplicate-origin groups are checked on each source\'s own canonical owner host; name one source, e.g. gbrain repair origin-twins --source default.',
+      throw opError('invalid_params', 'foresights repair origin-twins needs --source <id>.',
+        'Duplicate-origin groups are checked on each source\'s own canonical owner host; name one source, e.g. foresights repair origin-twins --source default.',
         { fix: readFix('Lists the registered sources.', { argv: ['gbrain', 'sources', 'list', '--json'] }), docs: DOCS });
     }
     const sourceId = scope.source_ids[0]!;
     const command = originTwinsRepairCommand(sourceId);
     const keep = opts?.slugs?.length ? opts.slugs : undefined;
-    if (keep && keep.length !== 1) throw opError('invalid_params', 'gbrain repair origin-twins --slug names the one page that keeps a file.', `Name one slug per run: ${command} --slug '<kept-slug>'.`, { fix: previewFix(sourceId), docs: DOCS });
+    if (keep && keep.length !== 1) throw opError('invalid_params', 'foresights repair origin-twins --slug names the one page that keeps a file.', `Name one slug per run: ${command} --slug '<kept-slug>'.`, { fix: previewFix(sourceId), docs: DOCS });
     const context = await originOwnerContext(engine, sourceId);
     if (!context.ok) {
       // Off the owner host (or with no checkout bound) a source that holds no twin has nothing to resolve; the index needs no checkout.
@@ -248,7 +249,7 @@ export const originTwinsRepair: RepairHandler = {
         details: { decisions: decisions.map(group => ({ ...group, commands: decisionCommands(group) })), mass_merge: mass, truncated: scan.truncated, purge_fuse_hours: ORIGIN_TWINS_PURGE_FUSE_HOURS, docs: DOCS } };
     }
     if (!opts.expect) {
-      throw opError('invalid_params', 'gbrain repair origin-twins --apply resolves only the set a preview printed.',
+      throw opError('invalid_params', 'foresights repair origin-twins --apply resolves only the set a preview printed.',
         `Preview first: ${command} — then, after the user agrees, run the apply command it prints: ${command} --apply --expect <preview-hash> --yes`, { fix: previewFix(sourceId), docs: DOCS });
     }
     const approved = await loadApprovedSet<ApprovedPair>(engine, { command: 'origin-twins', hash: opts.expect, previewCommand: command,
@@ -363,7 +364,7 @@ async function applyOriginTwin(tx: BrainEngine, pair: OriginTwinPair, incarnatio
   const merged = await mergeTwinInto(tx, { sourceId: pair.source_id, incarnation, survivor: { page_id: pair.survivor.page_id, slug: pair.survivor.slug }, twin: { page_id: pair.twin.page_id, slug: pair.twin.slug } });
   return { status: 'origin_twin_resolved', ...base, links_moved: merged.links_moved.length, link_ids: merged.links_moved, facts_moved: merged.facts_moved.length,
     transitions_moved: merged.transitions_moved, tags_moved: merged.tags_moved, deduplicated: merged.deduplicated, dropped_frontmatter: dropped, restore_argv: restore,
-    restore_note: `${restore.join(' ')} brings back ${pair.twin.slug}'s own text as a database-only page within ${ORIGIN_TWINS_PURGE_FUSE_HOURS} h; references moved to ${pair.survivor.slug} stay there. `
+    restore_note: `${commandText(restore)} brings back ${pair.twin.slug}'s own text as a database-only page within ${ORIGIN_TWINS_PURGE_FUSE_HOURS} h; references moved to ${pair.survivor.slug} stay there. `
       + `${pair.survivor.slug}'s frontmatter comes from ${pair.source_path}, so each key in dropped_frontmatter (the twin's value) is kept only in the twin's page version; `
       + 'its free-text aliases answer for the survivor until the file is next imported. Add any of them to the file to keep them.' };
 }

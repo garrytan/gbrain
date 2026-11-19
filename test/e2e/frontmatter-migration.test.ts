@@ -9,7 +9,7 @@
  *   - emit-todo phase appends one entry per source-with-issues to
  *     ~/.gbrain/migrations/pending-host-work.jsonl, each pointing at
  *     skills/migrations/v0.22.4.md (dotted convention) with the exact
- *     gbrain frontmatter validate <source-path> --fix command.
+ *     foresights frontmatter validate <source-path> --fix command.
  *   - The migration is audit-only — no fixture page is mutated during
  *     apply-migrations.
  *
@@ -174,7 +174,7 @@ describe('E2E: v0.22.4 frontmatter-guard migration', () => {
       // migration doc at skills/migrations/v0.22.4.md, NOT the underscored
       // TS module path.
       expect(e.skill).toBe('skills/migrations/v0.22.4.md');
-      expect(e.command).toContain('gbrain frontmatter validate');
+      expect(e.command).toContain('foresights frontmatter validate');
       expect(e.command).toContain('--fix');
       expect(e.command).toContain(e.source_path);
     }

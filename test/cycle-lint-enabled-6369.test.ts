@@ -2,8 +2,8 @@
  * PR #6369 shape (wave 15 P7.3): `cycle.lint.enabled` is the off switch for
  * the cycle's lint phase. Default on; only an explicit falsy value (`false`,
  * `0`, `off`, `no`) skips the phase, which then reports `skipped` with an
- * enable hint and never scans the brain directory. `gbrain dream --phase lint
- * --once` runs the phase once while it is off. `gbrain lint` is unaffected.
+ * enable hint and never scans the brain directory. `foresights dream --phase lint
+ * --once` runs the phase once while it is off. `foresights lint` is unaffected.
  *
  * Protects: the phase result and the brain files under a disabled lint phase.
  * Fails when: the key is ignored (the phase scans and repairs anyway), when
@@ -60,7 +60,7 @@ describe('cycle.lint.enabled (#6369, P7.3)', () => {
         const result = await runPhaseLint(brainDir, false, engine);
         expect(result.status).toBe('skipped');
         expect(result.summary).toBe('lint skipped: cycle.lint.enabled=false');
-        expect(result.details).toEqual({ reason: 'disabled', enable_hint: 'gbrain config set cycle.lint.enabled true' });
+        expect(result.details).toEqual({ reason: 'disabled', enable_hint: 'foresights config set cycle.lint.enabled true' });
         expect(result.error).toBeUndefined();
         expect(page()).toBe(WRAPPED);
       } finally { cleanup(); }

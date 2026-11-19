@@ -1,4 +1,4 @@
-# Connect GBrain to Claude Code
+# Connect Foresights to Claude Code
 
 For an existing agent, start with the [memory-only walkthrough](../tutorials/connect-coding-agent.md); a personal-agent identity and private repository are optional. For an existing hosted brain, choose [native OAuth or a private machine handoff](../guides/hosted-harness-access.md). Owner login and client management use [MCP administration](ADMIN.md), independently of the harness's OAuth scopes.
 
@@ -8,16 +8,16 @@ For an existing agent, start with the [memory-only walkthrough](../tutorials/con
 > the connection reference.
 >
 > Want the **full agent** — identity, per-turn context, schedules, and a private
-> repo as its durable body — not just a memory? That's `gbrain bootstrap`:
+> repo as its durable body — not just a memory? That's `foresights bootstrap`:
 > see the paste block in the README and [docs/guides/bootstrap.md](../guides/bootstrap.md).
 > Open a new empty folder (bootstrap creates the private repo for you), or make an
 > empty private repo under your own account and open the clone — bootstrap adopts it.
 
-## Fastest: `gbrain setup claude-code`
+## Fastest: `foresights setup claude-code`
 
 ```bash
-gbrain setup claude-code --dry-run   # the brain, source, launcher and owner it resolved; writes nothing
-gbrain setup claude-code             # keyless brain if none, stdio MCP entry, read-context hooks, verified
+foresights setup claude-code --dry-run   # the brain, source, launcher and owner it resolved; writes nothing
+foresights setup claude-code             # keyless brain if none, stdio MCP entry, read-context hooks, verified
 ```
 
 Setup writes the same stdio entry as Option 1 into `~/.claude.json` plus the
@@ -26,15 +26,15 @@ owned by hash through a connection receipt, and smoke-tests the registration.
 Capture hooks (`--capture`) and providers (`--providers`) stay off unless you
 accept them; `--remove` deletes only unchanged entries it wrote. It refuses
 instead of starting a second owner on a live PGLite brain or creating a local
-brain next to a hosted one. Details: [gbrain setup](../guides/setup.md).
+brain next to a hosted one. Details: [foresights setup](../guides/setup.md).
 
 ## Option 0: Install as a Claude Code plugin
 
-gbrain ships as a native Claude Code plugin — MCP server + the curated
+foresights ships as a native Claude Code plugin — MCP server + the curated
 brain-first skill set:
 
 ```
-/plugin marketplace add garrytan/gbrain
+/plugin marketplace add aimonk2025/gbrain
 /plugin install gbrain@gbrain
 ```
 
@@ -46,61 +46,61 @@ for sessions that don't want all 67 skills in the native manifest:
 /plugin install gbrain-daily@gbrain     # daily personal-brain persona
 ```
 
-Install exactly ONE gbrain plugin per machine — every variant serves the same
+Install exactly ONE foresights plugin per machine — every variant serves the same
 `gbrain` MCP server name, so two installed variants would double-serve.
 Curation lives in `skills/plugin-lanes.json#personas` (one recorded reason
 per skill). Alternative without a marketplace round-trip:
-`gbrain skillpack scaffold --harness claude-code` copies the same persona set
+`foresights skillpack scaffold --harness claude-code` copies the same persona set
 into your user-scope skills dir with a local-edit-respecting update lens
 (see docs/guides/skillpacks-as-scaffolding.md).
 
-(CLI form: `claude plugin marketplace add garrytan/gbrain` +
+(CLI form: `claude plugin marketplace add aimonk2025/gbrain` +
 `claude plugin install gbrain@gbrain`.) Prerequisites and behavior match the
-[Codex plugin](CODEX.md#install-as-a-codex-plugin-recommended): the gbrain CLI
-installed (`bun install -g github:garrytan/gbrain#stable`), a brain
-(`gbrain init`), `full` MCP surface with `--source-guard`, and the same
+[Codex plugin](CODEX.md#install-as-a-codex-plugin-recommended): the foresights CLI
+installed (`bun install -g github:aimonk2025/gbrain#stable`), a brain
+(`foresights init`), `full` MCP surface with `--source-guard`, and the same
 routing rules (`GBRAIN_SOURCE`/`GBRAIN_BRAIN_ID` env — dotfiles don't apply
 to a plugin-launched serve). Positioning: the plugin is the lightweight
-brain+skills path; `gbrain bootstrap` remains the deep lane (identity, hooks,
+brain+skills path; `foresights bootstrap` remains the deep lane (identity, hooks,
 push protocol). One approval-UX difference: the bootstrap lane pre-approves
 `mcp__gbrain` via `permissions.allow` for headless runs; plugin-provided MCP
 tools use the plugin lane's own approval flow.
 
-**Per-turn hook.** Every gbrain plugin declares the `UserPromptSubmit` hook
-`gbrain setup claude-code` writes (`gbrain hook user-prompt`, 3 s), run through
+**Per-turn hook.** Every foresights plugin declares the `UserPromptSubmit` hook
+`foresights setup claude-code` writes (`foresights hook user-prompt`, 3 s), run through
 the launcher with `GBRAIN_HOOK_LANE=plugin`. While a brain-first block is
-installed it puts the brain-first rule beside each turn (`gbrain setup
+installed it puts the brain-first rule beside each turn (`foresights setup
 claude-code --instructions-only` writes the block; doctor `harness_wiring` and
-`gbrain post-upgrade` name that command when it's missing), and it adds the
+`foresights post-upgrade` name that command when it's missing), and it adds the
 setup hook's read-context block when a serve is running. When setup,
-`gbrain bootstrap` or a workspace install already wires the event in your
+`foresights bootstrap` or a workspace install already wires the event in your
 user settings or the project's `.claude` settings, the plugin's hook exits
-without output, so each turn gets it once. `GBRAIN_HOOKS=0`, or a recorded `gbrain setup claude-code --no-hooks`, turns it off.
+without output, so each turn gets it once. `GBRAIN_HOOKS=0`, or a recorded `foresights setup claude-code --no-hooks`, turns it off.
 
 ## Option 1: Local (recommended, zero server needed)
 
 ```bash
-gbrain setup claude-code
+foresights setup claude-code
 ```
 
-Setup registers `gbrain serve --surface starter --advertise verbs`, adds the
+Setup registers `foresights serve --surface starter --advertise verbs`, adds the
 [brain-first instructions](#brain-first-instructions) and hooks, and runs a
 smoke test; `--no-hooks` skips the hooks. The MCP entry starts serve through
-gbrain's launcher (`<gbrain config dir>/hook-launcher/gbrain-hook`): Claude
+foresights's launcher (`<foresights config dir>/hook-launcher/gbrain-hook`): Claude
 Code starts a stdio server in the session's directory, where a script-mode Bun
 install would load that directory's `bunfig.toml` and `.env`. Don't register
-`gbrain serve` with a bare `claude mcp add` for that reason.
-Claude Code spawns `gbrain serve` as a stdio subprocess. No server, no
+`foresights serve` with a bare `claude mcp add` for that reason.
+Claude Code spawns `foresights serve` as a stdio subprocess. No server, no
 tunnel, no token needed. Works with both PGLite and Supabase engines.
 
 > **PGLite brains are single-process.** PGLite is a single-writer embedded
-> Postgres: the first running `gbrain serve` owns the brain's data directory
+> Postgres: the first running `foresights serve` owns the brain's data directory
 > via the data-dir lock, for its whole lifetime. A second `serve` (e.g. a
 > second harness or session registering the same stdio command) — or any CLI
 > command that opens the DB — fails on the lock while that serve is live
-> (`gbrain sync` is the one exception: it delegates to the live serve). If
+> (`foresights sync` is the one exception: it delegates to the live serve). If
 > more than one process needs the brain at once, run ONE shared
-> `gbrain serve --http` and point every client at it (Options 2/3 below), or
+> `foresights serve --http` and point every client at it (Options 2/3 below), or
 > migrate to the Postgres/Supabase engine, which tolerates concurrent
 > connections. Details:
 > [serve ↔ sync concurrency](../architecture/serve-sync-concurrency.md).
@@ -108,17 +108,17 @@ tunnel, no token needed. Works with both PGLite and Supabase engines.
 `--surface starter` lists the daily-driver tools: the seven memory verbs
 ([MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md)), `search`, `query`,
 `get_page`, `put_page`, `capture`, graph reads and skills. It is the surface every
-new registration gbrain writes pins (a bare `serve` still defaults to full). A parameter it leaves out is still accepted,
+new registration foresights writes pins (a bare `serve` still defaults to full). A parameter it leaves out is still accepted,
 and `request_tools` returns full schemas or widens the session to a left-out tool. `--surface full` lists every
 operation (`put_pages`, admin and tuning ops) and is the opt-in; `--surface verbs`
 lists only the seven verbs.
 
 ## Option 2: Remote, one command (fastest from a bearer token)
 
-If GBrain is running somewhere as an HTTP server and you have a bearer token,
-let `gbrain connect` generate the wire-up for you using that configured endpoint.
+If Foresights is running somewhere as an HTTP server and you have a bearer token,
+let `foresights connect` generate the wire-up for you using that configured endpoint.
 If the brain still needs publishing, on the brain host,
-`gbrain mcp expose` publishes the server on your Tailscale tailnet and prints
+`foresights mcp expose` publishes the server on your Tailscale tailnet and prints
 `https://your-machine.your-tailnet.ts.net/mcp` (tailnet-only is enough for
 your own laptops; [remote MCP guide](../guides/remote-mcp.md)). ngrok stays an
 alternative ([ngrok-tunnel recipe](../../recipes/ngrok-tunnel.md)) — substitute
@@ -126,22 +126,22 @@ its URL below.
 
 **Say to your agent:** *"use my brain over mcp"* — *"put my brain on tailscale"*.
 
-Mint the token on the brain host. Run `gbrain connect` in the intended client
+Mint the token on the brain host. Run `foresights connect` in the intended client
 environment to print its setup block:
 
 ```bash
-gbrain auth create "claude-code"
-gbrain connect https://your-machine.your-tailnet.ts.net/mcp --token gbrain_xxx
+foresights auth create "claude-code"
+foresights connect https://your-machine.your-tailnet.ts.net/mcp --token gbrain_xxx
 ```
 
-> **PGLite brains:** `gbrain auth create` opens the database, which fails with
+> **PGLite brains:** `foresights auth create` opens the database, which fails with
 > `live_serve` while the expose-managed service holds it. Mint the token
-> **before** the service runs (ahead of `gbrain mcp expose`, or while the service
+> **before** the service runs (ahead of `foresights mcp expose`, or while the service
 > is stopped briefly), or provision through the running server instead —
-> `gbrain mcp grant … --admin-token-file ~/.gbrain/serve/admin-token` or the
+> `foresights mcp grant … --admin-token-file ~/.gbrain/serve/admin-token` or the
 > `/admin` dashboard. Postgres brains mint fine while the server runs.
 
-`gbrain connect` prints a short, copy-paste block. Paste it into Claude Code — it
+`foresights connect` prints a short, copy-paste block. Paste it into Claude Code — it
 runs the `claude mcp add` for you and tells the agent to call `get_brain_identity`
 and `list_skills` so it immediately knows what the brain can do.
 
@@ -149,7 +149,7 @@ Already on the machine you want to wire up? Skip the copy-paste and let `connect
 do it directly, with a built-in token smoke-test:
 
 ```bash
-gbrain connect https://your-machine.your-tailnet.ts.net --token gbrain_xxx --install
+foresights connect https://your-machine.your-tailnet.ts.net --token gbrain_xxx --install
 ```
 
 (`--install` runs `claude mcp add`, then verifies the token by calling
@@ -160,23 +160,23 @@ appended; pass an explicit `https://` scheme.)
 Pipe-friendly machine output (token redacted unless `--show-token`):
 
 ```bash
-gbrain connect https://your-machine.your-tailnet.ts.net/mcp --token gbrain_xxx --json
+foresights connect https://your-machine.your-tailnet.ts.net/mcp --token gbrain_xxx --json
 ```
 
 ## Option 3: Remote, manual `claude mcp add`
 
-Equivalent to what `gbrain connect` generates, if you'd rather run it yourself:
+Equivalent to what `foresights connect` generates, if you'd rather run it yourself:
 
 ```bash
-claude mcp add gbrain -t http \
+claude mcp add foresights -t http \
   https://your-machine.your-tailnet.ts.net/mcp \
   -H "Authorization: Bearer YOUR_TOKEN"
 ```
 
 Replace the host with your MagicDNS name (or your ngrok domain) and
-`YOUR_TOKEN` with a token from `gbrain auth create "claude-code"`.
+`YOUR_TOKEN` with a token from `foresights auth create "claude-code"`.
 
-> A `gbrain auth create` token is a long-lived, full-access secret. Keep it
+> A `foresights auth create` token is a long-lived, full-access secret. Keep it
 > private (it lands in `~/.claude.json`), and prefer a scoped/short-lived token
 > where your host supports one.
 
@@ -186,7 +186,7 @@ Registering the MCP server only makes the tools available. Agents seldom call a
 brain nobody told them about, so finish the install with:
 
 ```bash
-gbrain setup claude-code --instructions-only
+foresights setup claude-code --instructions-only
 ```
 
 It writes one short marked block into `~/.claude/CLAUDE.md` (with `--scope project`, `./CLAUDE.local.md`): before answering any turn,
@@ -194,18 +194,18 @@ search the brain first, read the best hit, fill gaps with other tools, apply you
 access rules, then finish the task. Text outside the markers is never touched, a
 re-run upgrades the block in place, `--dry-run` previews it,
 `--no-instructions` opts out (and is remembered) and `--remove` takes it out.
-`gbrain setup claude-code` and `gbrain connect --install` write it for you.
+`foresights setup claude-code` and `foresights connect --install` write it for you.
 While the block is installed, setup's UserPromptSubmit hook also leads every turn
-with the same rule, beside the user's message, whether or not `gbrain serve` has
+with the same rule, beside the user's message, whether or not `foresights serve` has
 context to add (`--no-hooks` installs no hook). After a plain `claude mcp add`,
 `--instructions-only` adds that hook on its own (a `turn-rule-v1` entry in
 `~/.claude/settings.json` that prints only the rule and reads no brain data),
-unless setup, bootstrap or a gbrain plugin already carries it. It runs the hook
+unless setup, bootstrap or a foresights plugin already carries it. It runs the hook
 once to prove it loads and exits non-zero with `turn_hook_not_loaded` when it
 does not ([repair](../guides/repair.md#turn-hook-not-loaded)); `/hooks` inside a
-session lists it. With no absolute gbrain binary to put in the hook, it prints
+session lists it. With no absolute foresights binary to put in the hook, it prints
 the step instead.
-`gbrain doctor` warns when the block is missing or out of date, or its per-turn
+`foresights doctor` warns when the block is missing or out of date, or its per-turn
 hook is missing or untrusted.
 
 ## Verify
@@ -216,12 +216,12 @@ In Claude Code, try:
 search for [any topic in your brain]
 ```
 
-You should see results from your GBrain knowledge base.
+You should see results from your Foresights knowledge base.
 
 > **`list_skills` returns nothing?** Skill discovery is gated by `mcp.publish_skills`
-> on the host. `gbrain init` sets it ON for new brains; a brain whose config never
+> on the host. `foresights init` sets it ON for new brains; a brain whose config never
 > set the key stays OFF until you opt in. Enable it on the host with
-> `gbrain config set mcp.publish_skills true`. Skill discovery and the core tools
+> `foresights config set mcp.publish_skills true`. Skill discovery and the core tools
 > named here (search, query, get_page, put_page, think, find_experts) are
 > full-surface — on `--surface verbs` the agent sees only the seven memory verbs,
 > and `list_skills` isn't on the surface at all. `capture` is on the starter and
@@ -237,7 +237,7 @@ Two frozen verbs close the "no question fired" gap for long-lived sessions:
 `delta` ("what changed since my last wake" for heartbeats). Both are zero-LLM,
 sub-second, world-visibility by default, and available on `--surface verbs`.
 
-- **Automatic (PGLite brains via `gbrain bootstrap`):** the bootstrap hook
+- **Automatic (PGLite brains via `foresights bootstrap`):** the bootstrap hook
   installer wires `SessionStart` (injects a warm pack; also fires on
   post-compaction re-entry, `source=compact`) and `PreCompact` (banks the
   window's standing entities so that rehydration pack is warm) into
@@ -253,7 +253,7 @@ sub-second, world-visibility by default, and available on `--surface verbs`.
 ## Remove
 
 ```bash
-claude mcp remove gbrain     # the Option 1 local/stdio registration
+claude mcp remove foresights     # the Option 1 local/stdio registration
 # Installed as the Option 0 plugin instead? Remove it with:
 #   claude plugin uninstall gbrain@gbrain
 ```

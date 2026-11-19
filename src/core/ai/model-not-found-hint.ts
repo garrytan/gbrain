@@ -19,9 +19,9 @@ export function modelRouteHint(route: GatewayModelSource, touchpoint: Touchpoint
     case 'config_key':
     case 'models_default':
     case 'tier_config':
-      return `Selected via ${origin}. Fix: gbrain config set ${origin} <provider>:<model>`;
+      return `Selected via ${origin}. Fix: foresights config set ${origin} <provider>:<model>`;
     case 'deprecated_key':
-      return `Selected via ${origin} (deprecated key). Fix: gbrain config unset ${origin}, then gbrain config set ${CONFIG_KEY[touchpoint]} <provider>:<model>`;
+      return `Selected via ${origin} (deprecated key). Fix: foresights config unset ${origin}, then foresights config set ${CONFIG_KEY[touchpoint]} <provider>:<model>`;
     case 'cli_flag':
       return `Selected via ${origin}. Fix: pass a model the provider serves.`;
     case 'env':
@@ -32,7 +32,7 @@ export function modelRouteHint(route: GatewayModelSource, touchpoint: Touchpoint
     }
     case 'tier_default':
     case 'fallback':
-      return `Selected via the built-in default. Fix: gbrain config set ${TIER_KEY[touchpoint]} <provider>:<model>`;
+      return `Selected via the built-in default. Fix: foresights config set ${TIER_KEY[touchpoint]} <provider>:<model>`;
   }
 }
 
@@ -44,5 +44,5 @@ export function gatewayModelNotFoundHint(touchpoint: Touchpoint, model: string):
 
 /** The embedding model is always `embedding_model`, a schema-sizing key: changing it re-embeds the brain, so the fix routes through doctor. */
 export function embeddingModelNotFoundHint(): string {
-  return 'Selected via embedding_model. Changing it changes the vector column, so check `gbrain doctor --only embedding_health` and `gbrain config get embedding_model` before setting another model.';
+  return 'Selected via embedding_model. Changing it changes the vector column, so check `foresights doctor --only embedding_health` and `foresights config get embedding_model` before setting another model.';
 }

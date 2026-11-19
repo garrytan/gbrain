@@ -2,7 +2,7 @@
  * Wave B PR 2 fix lane R, gap 2: a restore-time purge replay cleans segment storage as purge_fact does.
  *
  * 1. Protects: replaying a committed fact purge into a restored brain (replayPurgesInRestore, the step both the PGLite
- *    restore and gbrain beliefs replay-purges run) rewrites a segmented page's live body and retained generation and then
+ *    restore and foresights beliefs replay-purges run) rewrites a segmented page's live body and retained generation and then
  *    deletes, in the same transaction, every segment text that held the purged claim and is no longer referenced: the
  *    texts the rewrites replaced, and a text only an in-flight create recorded (page_body_staging_texts), whose staging
  *    is aborted as purge_fact aborts it. An unrelated in-flight create keeps its staging and texts. Afterwards no row of

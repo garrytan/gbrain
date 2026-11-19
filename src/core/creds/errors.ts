@@ -49,7 +49,7 @@ export type CredentialErrorCode =
   | 'not_connected'
   | 'upstream';
 
-const DOC_BASE = 'https://github.com/garrytan/gbrain/blob/master/docs/guides/google-connect.md';
+const DOC_BASE = 'https://github.com/aimonk2025/gbrain/blob/master/docs/guides/google-connect.md';
 
 interface CatalogEntry {
   problem: string;
@@ -65,7 +65,7 @@ const CATALOG: Record<CredentialErrorCode, CatalogEntry> = {
   client_json_wrong_type: {
     problem: 'This OAuth client is a Web application, but the loopback flow needs a Desktop app client.',
     cause: 'The downloaded client_secret.json has a top-level "web" key instead of "installed". Web clients only allow pre-registered redirect URIs, so the local loopback redirect is rejected.',
-    fix: 'In Google Cloud console → APIs & Services → Credentials, create a new OAuth client ID with application type "Desktop app", download its JSON, and re-run `gbrain google connect --client-json <path>`.',
+    fix: 'In Google Cloud console → APIs & Services → Credentials, create a new OAuth client ID with application type "Desktop app", download its JSON, and re-run `foresights google connect --client-json <path>`.',
   },
   client_shape_invalid: {
     problem: 'The client ID or secret looks malformed.',
@@ -95,7 +95,7 @@ const CATALOG: Record<CredentialErrorCode, CatalogEntry> = {
   state_mismatch: {
     problem: 'The redirect did not match this connect attempt.',
     cause: 'The state parameter differs — the paste came from an older attempt, or something interfered with the flow.',
-    fix: 'Re-run `gbrain google connect` and use the freshly printed URL.',
+    fix: 'Re-run `foresights google connect` and use the freshly printed URL.',
   },
   admin_policy_enforced: {
     problem: 'Your Google Workspace admin has blocked this app (Error 400: admin_policy_enforced).',
@@ -115,17 +115,17 @@ const CATALOG: Record<CredentialErrorCode, CatalogEntry> = {
   consent_timeout: {
     problem: 'Timed out waiting for the consent redirect.',
     cause: 'The consent URL was never opened, or the browser session stalled.',
-    fix: 'Re-run `gbrain google connect` and open the printed URL within 10 minutes. On a remote/SSH machine use --paste and paste the redirect URL back.',
+    fix: 'Re-run `foresights google connect` and open the printed URL within 10 minutes. On a remote/SSH machine use --paste and paste the redirect URL back.',
   },
   invalid_grant_testing_expiry: {
     problem: 'Google revoked the refresh token (invalid_grant) — this looks like the 7-day Testing-mode expiry.',
     cause: 'Consent screens left in "Testing" with user type External expire refresh tokens after 7 days, every time.',
-    fix: 'Publish the app to Production at https://console.cloud.google.com/auth/audience (safe for personal use; you\'ll click through an "unverified app" warning once), then run `gbrain google connect --reauth <email>`. Workspace accounts can instead set the consent screen to "Internal", which never expires.',
+    fix: 'Publish the app to Production at https://console.cloud.google.com/auth/audience (safe for personal use; you\'ll click through an "unverified app" warning once), then run `foresights google connect --reauth <email>`. Workspace accounts can instead set the consent screen to "Internal", which never expires.',
   },
   invalid_grant_revoked: {
     problem: 'Google rejected the refresh token (invalid_grant).',
     cause: 'Access was revoked — a password change, a security event, manual revocation at myaccount.google.com/permissions, or the OAuth client was deleted/rotated.',
-    fix: 'Run `gbrain google connect --reauth <email>` to re-authorize.',
+    fix: 'Run `foresights google connect --reauth <email>` to re-authorize.',
   },
   invalid_grant_clock_skew: {
     problem: 'Token request rejected (invalid_grant) and this machine\'s clock is off.',
@@ -135,12 +135,12 @@ const CATALOG: Record<CredentialErrorCode, CatalogEntry> = {
   code_reused: {
     problem: 'The authorization code was already used.',
     cause: 'Authorization codes are single-use; the exchange ran twice (double paste, page reload).',
-    fix: 'Re-run `gbrain google connect` to start a fresh consent.',
+    fix: 'Re-run `foresights google connect` to start a fresh consent.',
   },
   invalid_client: {
     problem: 'Google rejected the OAuth client credentials (invalid_client).',
     cause: 'The client secret was rotated or the client was deleted in Google Cloud console — the stored copy no longer matches.',
-    fix: 'Download the current client JSON from the Credentials page and re-run `gbrain google connect --client-json <path>`.',
+    fix: 'Download the current client JSON from the Credentials page and re-run `foresights google connect --client-json <path>`.',
   },
   no_refresh_token: {
     problem: 'Google did not return a refresh token.',
@@ -160,49 +160,49 @@ const CATALOG: Record<CredentialErrorCode, CatalogEntry> = {
   scope_missing: {
     problem: 'The stored credential is missing a required scope.',
     cause: 'The account was connected with --scopes narrower than what this operation needs.',
-    fix: 'Run `gbrain google connect --reauth <email>` to grant the full scope set (incremental auth keeps existing grants).',
+    fix: 'Run `foresights google connect --reauth <email>` to grant the full scope set (incremental auth keeps existing grants).',
   },
   relay_unreachable: {
     problem: 'The gbrain.io connect fast path is unreachable.',
     cause: 'Network failure or a relay outage.',
-    fix: 'Retry later, or connect without the relay: `gbrain google connect` (BYO client) always works.',
+    fix: 'Retry later, or connect without the relay: `foresights google connect` (BYO client) always works.',
   },
   relay_session_expired: {
     problem: 'The relay connect session expired before the consent completed.',
     cause: 'Relay sessions are valid for 10 minutes.',
-    fix: 'Re-run `gbrain google connect --via gbrain.io` and complete the consent within 10 minutes.',
+    fix: 'Re-run `foresights google connect --via gbrain.io` and complete the consent within 10 minutes.',
   },
   claim_already_used: {
     problem: 'This relay session was already claimed.',
     cause: 'Tokens are handed over exactly once; a second claim is refused by design.',
-    fix: 'If you did not receive the tokens, re-run `gbrain google connect --via gbrain.io` for a fresh session.',
+    fix: 'If you did not receive the tokens, re-run `foresights google connect --via gbrain.io` for a fresh session.',
   },
   relay_disabled: {
     problem: 'The hosted connect fast path is not enabled in this build.',
     cause: 'GBRAIN_OAUTH_RELAY_URL is not set.',
-    fix: 'Use the standard flow: `gbrain google connect` (bring-your-own OAuth client).',
+    fix: 'Use the standard flow: `foresights google connect` (bring-your-own OAuth client).',
   },
   not_connected: {
     problem: 'No Google account is connected%s.',
     cause: 'The credential vault has no matching entry.',
-    fix: 'Run `gbrain google connect` (or `gbrain google setup` for the full guided flow).',
+    fix: 'Run `foresights google connect` (or `foresights google setup` for the full guided flow).',
   },
   access_command_failed: {
     problem: 'The configured token command did not produce a Google access token%s.',
     cause:
-      'This source uses `--access command`: gbrain runs your command (e.g. a gog/gcloud/gateway CLI) and expects an access token on stdout. It exited non-zero, timed out, or printed nothing usable.',
-    fix: 'Run the command by hand and confirm it prints a bare token (or JSON with a `token`/`access_token` field). Update it: `gbrain sources add <id> --kind google --access command --token-command "<cmd>" ...`.',
+      'This source uses `--access command`: foresights runs your command (e.g. a gog/gcloud/gateway CLI) and expects an access token on stdout. It exited non-zero, timed out, or printed nothing usable.',
+    fix: 'Run the command by hand and confirm it prints a bare token (or JSON with a `token`/`access_token` field). Update it: `foresights sources add <id> --kind google --access command --token-command "<cmd>" ...`.',
   },
   access_env_missing: {
     problem: 'The configured token environment variable is empty%s.',
     cause:
-      'This source uses `--access env`: gbrain reads a Google access token from the named env var, refreshed by something outside gbrain. The variable is unset or blank in this process.',
-    fix: 'Export the variable with a live access token before running the sync (short-lived tokens: refresh them externally, e.g. via cron), or switch the source back to the vault flow: `gbrain google setup`.',
+      'This source uses `--access env`: foresights reads a Google access token from the named env var, refreshed by something outside foresights. The variable is unset or blank in this process.',
+    fix: 'Export the variable with a live access token before running the sync (short-lived tokens: refresh them externally, e.g. via cron), or switch the source back to the vault flow: `foresights google setup`.',
   },
   upstream: {
     problem: 'Google returned an unexpected error%s.',
     cause: 'Transient upstream failure or an unhandled response shape.',
-    fix: 'Retry; if it persists, run `gbrain google status --json` and file the output.',
+    fix: 'Retry; if it persists, run `foresights google status --json` and file the output.',
   },
 };
 

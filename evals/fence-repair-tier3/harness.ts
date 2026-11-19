@@ -20,9 +20,9 @@
  *     [--max-usd 10] [--only id1,id2]
  * One throwaway PGLite brain per invocation (fresh ledger and attempt
  * memo). `models.fence_repair` is set to the model (left unset for
- * `default`, so gbrain's own resolution picks it: the first measured model
+ * `default`, so foresights's own resolution picks it: the first measured model
  * with a provider key, refused when there is none), `pricing.overrides`
- * registers list prices gbrain's table lacks (as `gbrain pricing set`
+ * registers list prices foresights's table lacks (as `foresights pricing set`
  * would), and `fences.repair.max_usd_per_day` is set to --max-usd, which the
  * daily ledger enforces as a hard ceiling. The per-page cap stays at the
  * production default. Each fixture goes through `run-case.ts`. A
@@ -45,7 +45,7 @@ const args = process.argv.slice(2);
 const flag = (name: string) => { const i = args.indexOf(name); return i === -1 ? null : args[i + 1] ?? null; };
 
 /**
- * List prices (USD per 1M tokens) registered on the eval brain like `gbrain pricing set`, only for a model gbrain's own price table lacks.
+ * List prices (USD per 1M tokens) registered on the eval brain like `foresights pricing set`, only for a model foresights's own price table lacks.
  * Empty: every model this eval runs is in the table (round 1 registered `openai:gpt-6.1-sol` at $2/$10 before it joined the table).
  */
 export const REGISTERED_PRICES: Record<string, { input: number; output: number; source: string }> = {};

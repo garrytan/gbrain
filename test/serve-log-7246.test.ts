@@ -2,7 +2,7 @@
  * #7246: serve's log was never rotated, and about 98% of it was the same
  * no-action warnings printed again on every managed pass. When serve's
  * stdout or stderr is a regular file (the launchd / systemd / nohup installs
- * `gbrain mcp expose` writes, or any `>>` redirect), serve now rotates that
+ * `foresights mcp expose` writes, or any `>>` redirect), serve now rotates that
  * file at a size bound with a capped number of copies, and collapses a line
  * repeated inside the dedupe window into its first occurrence plus one
  * "repeated N more time(s)" line.
@@ -35,7 +35,7 @@ describe('LineDeduper (#7246)', () => {
     now = 61_000;
     const after = dedupe.accept(warning);
     expect(after).toHaveLength(2);
-    expect(after[0]).toBe(`[gbrain serve-log] repeated 2 more time(s) in the last 60s: ${warning}`);
+    expect(after[0]).toBe(`[foresights serve-log] repeated 2 more time(s) in the last 60s: ${warning}`);
     expect(after[1]).toBe(warning);
   });
 
@@ -45,7 +45,7 @@ describe('LineDeduper (#7246)', () => {
     expect(dedupe.accept('2026-10-21T10:00:00.000Z content-sanity warn: x.md (9 bytes)')).toHaveLength(1);
     now = 5;
     expect(dedupe.accept('2026-10-21T10:00:05.123Z content-sanity warn: x.md (9 bytes)')).toEqual([]);
-    expect(dedupe.flush(true)).toEqual(['[gbrain serve-log] repeated 1 more time(s) in the last 60s: 2026-10-21T10:00:00.000Z content-sanity warn: x.md (9 bytes)']);
+    expect(dedupe.flush(true)).toEqual(['[foresights serve-log] repeated 1 more time(s) in the last 60s: 2026-10-21T10:00:00.000Z content-sanity warn: x.md (9 bytes)']);
     expect(dedupe.flush(true)).toEqual([]);
   });
 
@@ -83,7 +83,7 @@ describe('resolveServeLogPolicy (#7246)', () => {
     const warnings: string[] = [];
     const policy = resolveServeLogPolicy({ GBRAIN_SERVE_LOG_MAX_BYTES: '0', GBRAIN_SERVE_LOG_MAX_FILES: 'three', GBRAIN_SERVE_LOG_DEDUPE_SECONDS: '30' }, line => warnings.push(line));
     expect(policy).toEqual({ maxBytes: 0, maxFiles: 5, dedupeWindowMs: 30_000 });
-    expect(warnings).toEqual(['[gbrain serve] ignoring invalid GBRAIN_SERVE_LOG_MAX_FILES="three" — using default 5']);
+    expect(warnings).toEqual(['[foresights serve] ignoring invalid GBRAIN_SERVE_LOG_MAX_FILES="three" — using default 5']);
   });
 });
 
@@ -94,7 +94,7 @@ describe('installServeLogSink on redirected streams (#7246)', () => {
     await Bun.write(script, [
       `import { installServeLogSink } from ${JSON.stringify(resolve('src/core/serve-log.ts'))};`,
       "installServeLogSink({ http: true });",
-      "for (let i = 0; i < 100; i++) console.warn('[gbrain] markdown fence cap hit (100 fences/page); skipping additional fences.');",
+      "for (let i = 0; i < 100; i++) console.warn('[foresights] markdown fence cap hit (100 fences/page); skipping additional fences.');",
       "console.error('a different warning');",
       "for (let i = 0; i < 40; i++) console.log(`request ${i} ${'y'.repeat(80)}`);",
     ].join('\n'));
@@ -104,9 +104,9 @@ describe('installServeLogSink on redirected streams (#7246)', () => {
     expect(await child.exited).toBe(0);
     const err = readFileSync(join(dir, 'serve.err'), 'utf8').split('\n').filter(Boolean);
     expect(err).toEqual([
-      '[gbrain] markdown fence cap hit (100 fences/page); skipping additional fences.',
+      '[foresights] markdown fence cap hit (100 fences/page); skipping additional fences.',
       'a different warning',
-      '[gbrain serve-log] repeated 99 more time(s) in the last 600s: [gbrain] markdown fence cap hit (100 fences/page); skipping additional fences.',
+      '[foresights serve-log] repeated 99 more time(s) in the last 600s: [foresights] markdown fence cap hit (100 fences/page); skipping additional fences.',
     ]);
     expect(statSync(join(dir, 'serve.log')).size).toBeLessThanOrEqual(1024);
     expect(existsSync(join(dir, 'serve.log.1'))).toBe(true);

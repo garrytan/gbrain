@@ -1,5 +1,5 @@
 /**
- * Stamp label provenance onto a `gbrain decide dataset` output.
+ * Stamp label provenance onto a `foresights decide dataset` output.
  *
  *   bun docs/eval/system-one/generators/label-source.ts <in.jsonl> <out.jsonl> <label_source> [design.json | source.jsonl]
  *

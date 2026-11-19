@@ -181,4 +181,4 @@ No schema migration is required because source IDs already live on the joined `p
 
 ## Operational constraints
 
-The implementation phase does not deploy, restart GBrain, run production migrations, or alter the atomic conditional-write branch. Release, migration, and restart operations are a separate verified workflow and do not change this design's engine or validator semantics.
+The implementation phase does not deploy, restart Foresights, run production migrations, or alter the atomic conditional-write branch. Release, migration, and restart operations are a separate verified workflow and do not change this design's engine or validator semantics.

@@ -46,5 +46,5 @@ export async function recordInitEmbedding(engine: BrainEngine, model: string, di
 export function keptEmbeddingNotice(kept: KeptEmbedding): string {
   let key = 'the provider API key';
   try { key = resolveRecipe(kept.model.includes(':') ? kept.model : `openai:${kept.model}`).recipe.auth_env?.required?.[0] ?? key; } catch { /* unknown provider: generic wording */ }
-  return `  Embedding: kept this database's ${kept.model} (${kept.dimensions}d) instead of disabling embeddings; no provider key was found. Set ${key}, then run gbrain embed --stale to embed pages written meanwhile.`;
+  return `  Embedding: kept this database's ${kept.model} (${kept.dimensions}d) instead of disabling embeddings; no provider key was found. Set ${key}, then run foresights embed --stale to embed pages written meanwhile.`;
 }

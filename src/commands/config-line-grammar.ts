@@ -1,5 +1,5 @@
 /**
- * `gbrain config` for line-grammar keys and gbrain's internal rows: a
+ * `foresights config` for line-grammar keys and foresights's internal rows: a
  * line-grammar setting commits with the extraction generation
  * (core/line-grammar-config.ts), so the graph follows the setting, and
  * `_internal.*` keys are never set or unset by hand.
@@ -17,7 +17,7 @@ async function changeLineGrammarConfig(engine: BrainEngine, mutate: (tx: BrainEn
 /** Handles `config set` for an internal or line-grammar key; returns false for any other key. */
 export async function setLineGrammarConfig(engine: BrainEngine, key: string, value: string): Promise<boolean> {
   if (isInternalConfigKey(key)) {
-    console.error(`[config] ${key} is internal state gbrain maintains itself; it cannot be set. For the line grammar, set line_grammar.enabled instead.`);
+    console.error(`[config] ${key} is internal state foresights maintains itself; it cannot be set. For the line grammar, set line_grammar.enabled instead.`);
     process.exit(1);
   }
   if (!isLineGrammarKey(key)) return false;
@@ -29,11 +29,11 @@ export async function setLineGrammarConfig(engine: BrainEngine, key: string, val
 
 /**
  * Delete config rows; line-grammar keys commit with the extraction generation in one transaction.
- * `_internal.*` keys are gbrain's own state: a single unset refuses one, a pattern unset skips them.
+ * `_internal.*` keys are foresights's own state: a single unset refuses one, a pattern unset skips them.
  */
 export async function unsetConfigKeys(engine: BrainEngine, keys: string[], opts: { single?: boolean } = {}): Promise<number> {
   if (opts.single && keys.some(isInternalConfigKey)) {
-    console.error(`[config] ${keys[0]} is internal state gbrain maintains itself; it cannot be unset.`);
+    console.error(`[config] ${keys[0]} is internal state foresights maintains itself; it cannot be unset.`);
     process.exit(1);
   }
   let deleted = 0;

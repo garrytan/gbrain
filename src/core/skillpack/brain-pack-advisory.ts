@@ -70,12 +70,12 @@ export function buildBrainPackAdvisory(input: BrainPackAdvisoryInput): string | 
     // One-line escalating reminder.
     lines.push('');
     lines.push(
-      `[gbrain] This brain ships ${m.skills.length} skill${m.skills.length === 1 ? '' : 's'} ` +
-        `you haven't installed (${m.name} ${m.version}). Install: gbrain skillpack scaffold ${input.scaffoldSource}`,
+      `[foresights] This brain ships ${m.skills.length} skill${m.skills.length === 1 ? '' : 's'} ` +
+        `you haven't installed (${m.name} ${m.version}). Install: foresights skillpack scaffold ${input.scaffoldSource}`,
     );
     if (mismatch) {
       lines.push(
-        `[gbrain] NOTE: pack targets schema_pack "${m.schema_pack}" but this brain is on ` +
+        `[foresights] NOTE: pack targets schema_pack "${m.schema_pack}" but this brain is on ` +
           `"${input.activeSchemaPack}". Skills may assume a different schema.`,
       );
     }
@@ -85,7 +85,7 @@ export function buildBrainPackAdvisory(input: BrainPackAdvisoryInput): string | 
 
   lines.push('');
   lines.push(bar);
-  lines.push(`gbrain — THIS BRAIN SHIPS A SKILLPACK (${m.name} ${m.version})`);
+  lines.push(`foresights — THIS BRAIN SHIPS A SKILLPACK (${m.name} ${m.version})`);
   lines.push(bar);
   lines.push('');
   lines.push(m.description);
@@ -102,7 +102,7 @@ export function buildBrainPackAdvisory(input: BrainPackAdvisoryInput): string | 
     lines.push(
       `SCHEMA NOTE: this pack targets schema_pack "${m.schema_pack}", but this brain is on ` +
         `"${input.activeSchemaPack}". The skills may assume a different schema; review before installing ` +
-        `(see \`gbrain list_schema_packs\`).`,
+        `(see \`foresights list_schema_packs\`).`,
     );
     lines.push('');
   }
@@ -112,7 +112,7 @@ export function buildBrainPackAdvisory(input: BrainPackAdvisoryInput): string | 
   lines.push('  2. Ask the user explicitly: "Want me to install these brain skills now?"');
   lines.push('  3. If YES, run this command:');
   lines.push('');
-  lines.push(`         gbrain skillpack scaffold ${input.scaffoldSource}`);
+  lines.push(`         foresights skillpack scaffold ${input.scaffoldSource}`);
   lines.push('');
   lines.push('  Do NOT scaffold without asking. The user owns this decision.');
   lines.push(bar);

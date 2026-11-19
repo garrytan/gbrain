@@ -1,7 +1,7 @@
 /**
  * Registered numeric knobs for dream-cycle phases that a phase reads through
  * `engine.getConfig` at run time. One spec per key carries the accepted
- * range, so `gbrain config set` refuses a value the phase would not apply, and
+ * range, so `foresights config set` refuses a value the phase would not apply, and
  * the phase names the key when a stored value is invalid or out of range
  * instead of falling back silently. Neither the refusal nor the warning
  * echoes the stored or rejected value.
@@ -127,7 +127,7 @@ function invalidPhaseConfig(key: string, spec: PhaseConfigSpec): OperationError 
 
 function storedValueWarning(key: string, spec: PhaseConfigSpec, using: string): string {
   return `${key} is set to an invalid value (expected ${spec.expected}); using ${using}. ` +
-    `Fix: gbrain config set ${key} <value>, or gbrain config unset ${key}. Verify: gbrain config get ${key}`;
+    `Fix: foresights config set ${key} <value>, or foresights config unset ${key}. Verify: foresights config get ${key}`;
 }
 
 /**

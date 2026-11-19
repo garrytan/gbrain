@@ -4,15 +4,15 @@
 
 Status: design only, no production change. Every switch named here ships off.
 Revision: 3, after two rounds of the gstack /autoplan review (see "Review record").
-Author: GBRA-176 (GBrain Minder crew). Review: see "Review record" at the end.
+Author: GBRA-176 (Foresights Minder crew). Review: see "Review record" at the end.
 Citation convention: repo-relative paths on master b247a4c4 (v0.60.361.0).
 
 ## Recommendation
 
 Build it, as an opt-in mode chosen per source, and leave every existing brain
 on its current mode. In the new mode (`canonical: database`) agents write only
-to the database, one exporter per source is the only gbrain writer and
-committer of page files, and file edits made outside gbrain come back through
+to the database, one exporter per source is the only foresights writer and
+committer of page files, and file edits made outside foresights come back through
 an import lane. The first import lane is deliberately conservative: it imports
 an edit only when the database page has not changed since that file was
 exported, and records every two-sided edit as a per-page conflict that keeps
@@ -43,7 +43,7 @@ and cost" section makes that an exit criterion.
 | An agent write is acknowledged when | the owner host has published the file and the row together (managed), or the row and then the file (classic) | the row commits |
 | A person edits a file the database also changed | the page is held (`file_drift`, `concurrent_write`) and every coordinated write to it refuses `source_changed` until someone picks a side | the import lane imports the edit if the page did not change since it was exported; otherwise the edit is kept as one conflict row and the page stays writable |
 | A file is missing | the sync has to guess whether that is a deletion (`file_gone`, provenance, delete caps) | only a path the ledger exported and that then disappeared can mean deletion; everything else is "export pending" |
-| Commits to page files | the managed Git effect, `gbrain git commit-push`, hooks, crons, agents, people | the exporter (plus people's own commits, which are imported) |
+| Commits to page files | the managed Git effect, `foresights git commit-push`, hooks, crons, agents, people | the exporter (plus people's own commits, which are imported) |
 | Freshness | the git import watermark, which disagreement can stall | export lag and import lag, neither of which a conflict can stall |
 
 ## Why it matters
@@ -70,7 +70,7 @@ frozen for days while each sync pass ended blocked with thousands of held
 deletions; several processes syncing the same source at once; an auto-commit
 cron committing every untracked file; a file-drift repair that recreated files
 at paths people had deliberately deleted; and an agent that spent most of its
-memory effort checking whether gbrain was current and falling back to grep.
+memory effort checking whether foresights was current and falling back to grep.
 The stabilization plan (one writer, freshness that never freezes, backlog
 cleanup) treats those symptoms this week. This document is the structural
 step it names: one source of truth for agent-written memory.
@@ -81,7 +81,7 @@ step it names: one source of truth for agent-written memory.
 
 | Mode | Copy of record | Order on a page write | Inbound file edits |
 |---|---|---|---|
-| Classic | the file (`docs/architecture/system-of-record.md:3-5`) | row first, then the file is rendered from the row under a per-source native lock (`src/core/write-through.ts:3-9`) | `gbrain sync` imports any file whose hash changed; no revision precondition on import (`src/core/import-file.ts:556-587`) |
+| Classic | the file (`docs/architecture/system-of-record.md:3-5`) | row first, then the file is rendered from the row under a per-source native lock (`src/core/write-through.ts:3-9`) | `foresights sync` imports any file whose hash changed; no revision precondition on import (`src/core/import-file.ts:556-587`) |
 | Managed (persistence active) | both, kept equal by one owner per canonical worktree | durable recovery record, then the file, then the row and receipt in one transaction (`src/core/persistence/coordinator.ts:386-394`) | managed sync imports a file only when its recorded baseline proves the import cannot overwrite a database edit; otherwise it holds the file (`src/core/persistence/sync-prescreen.ts:50-62`, `sync-run.ts:464-468`) |
 | Database-only (`sync.write_through=false`, unbound sources) | the row, for pages written that way (`src/core/persistence/unbound-source.ts:8-15`) | row only | sync still imports files and can write frontmatter back (#7084); a committed file edit once silently overwrote a newer database-only edit (PR #6887) |
 
@@ -101,10 +101,10 @@ import semantics have to change.
 | Connectors (Google, GitHub, chat transcripts) | yes | yes unless database-only (`src/core/google/sweep-shared.ts:150-195`, `src/core/github-source.ts:970-1035`) | no | managed: coordinator; classic: compare-before-replace guard, item held on mismatch |
 | Facts fence and takes writers | yes | yes (classic: file first, then rows; `src/core/facts/fence-write.ts:378-635`, `src/core/takes-write.ts`) | no | page lock or filesystem lock |
 | Dream/cycle phases (atoms, concepts, synthesize, patterns, lint fix, extract_facts, fence and content repair) | yes | yes (managed through maintenance requests; classic through derived write-through) | classic lint fix commits | 20 overwrite sites needed the compare-before-replace guard added by PR #7000 (#6982 class) |
-| `gbrain git commit-push` / `scripts/brain-commit-push.sh` / post-commit hook | no | no | yes, named paths, in-memory merge on a moved remote (`src/core/git/commit-push.ts`) | commit lock and publish lock per checkout |
-| `gbrain sources push` | no | no | `git add -A`, commit, pull, push (`src/core/workspace-push.ts`) | its own lock directory |
+| `foresights git commit-push` / `scripts/brain-commit-push.sh` / post-commit hook | no | no | yes, named paths, in-memory merge on a moved remote (`src/core/git/commit-push.ts`) | commit lock and publish lock per checkout |
+| `foresights sources push` | no | no | `git add -A`, commit, pull, push (`src/core/workspace-push.ts`) | its own lock directory |
 | Resident drivers (serve, jobs worker, autopilot, commit notifier) | via sync | no | pull (autopilot) | notifier lease per host and brain (`src/core/commit-notifier.ts`) |
-| External committers (people, agents editing files, an auto-commit cron) | no | yes | yes | none that gbrain can see |
+| External committers (people, agents editing files, an auto-commit cron) | no | yes | yes | none that foresights can see |
 
 ```mermaid
 flowchart LR
@@ -193,10 +193,10 @@ of record for pages agents also write.
 | Store | Written by | How |
 |---|---|---|
 | Database (pages, versions, fence rows, tags, links, timeline) | every agent and server, connectors, dream/cycle phases, the import lane | the existing journaled write path (`put_page`, `capture`, `remember`, maintenance requests, connector checkpoints), published database-only for this source through a dedicated publication branch (below) |
-| Page files in the source checkout | the source's exporter, nothing else in gbrain | a per-source export outbox drained in batches, each batch committed through one Git effect, compare-before-replace against the export ledger |
+| Page files in the source checkout | the source's exporter, nothing else in foresights | a per-source export outbox drained in batches, each batch committed through one Git effect, compare-before-replace against the export ledger |
 | Git commits touching page paths | the exporter | one commit per batch, then a push under the existing publish lock |
-| Non-page files (`AGENTS.md`, scripts, notes outside the source's page roots) | the operator, as today | plain git or `gbrain git commit-push` |
-| Edits to page files made outside gbrain | a person (or a straggling agent) in the checkout or another clone | never written to the database directly: the import lane turns each one into a revision-checked page write, or into a conflict |
+| Non-page files (`AGENTS.md`, scripts, notes outside the source's page roots) | the operator, as today | plain git or `foresights git commit-push` |
+| Edits to page files made outside foresights | a person (or a straggling agent) in the checkout or another clone | never written to the database directly: the import lane turns each one into a revision-checked page write, or into a conflict |
 
 Four rules make the model work.
 
@@ -266,7 +266,7 @@ branch that only a source in database mode reaches.
 ### The exporter
 
 - **One per source, on the source's canonical owner host,** inside the
-  resident owner (`gbrain serve` or the jobs worker) under the existing
+  resident owner (`foresights serve` or the jobs worker) under the existing
   worktree lease. Losing the lease stops it; it never takes over on a stale
   heartbeat. On PGLite without a resident, the one-shot command that committed
   a write drains its export targets before it exits.
@@ -302,7 +302,7 @@ branch that only a source in database mode reaches.
   re-rendered, never pushed. So a page that becomes private after rendering,
   between commit and push, or during recovery never reaches the remote, and
   its existing file is removed in the next batch. No current reader provides this:
-  `readExportPage` (`src/core/export-snapshot.ts:28-40`) and `gbrain export`
+  `readExportPage` (`src/core/export-snapshot.ts:28-40`) and `foresights export`
   (`src/commands/export.ts:123-150`) select any live page, which is right for a
   trusted local snapshot and wrong for an automatic git publication.
 - **Compare before replace, in one place.** The exporter never writes a path
@@ -347,7 +347,7 @@ branch that only a source in database mode reaches.
   person's plain `git commit` would revert the export. A test checks that
   `diff-index --cached HEAD` is clean after a batch. The soak records commit
   time against index size.
-- **Locks.** The checkout's commit lock (the one `gbrain git commit-push`
+- **Locks.** The checkout's commit lock (the one `foresights git commit-push`
   takes) is held only for the index, commit and fast-forward steps, and never
   while waiting for the publish lock, matching commit-push's own order. Fetch
   and import run with no Git lock held. An operator committing non-page files
@@ -408,12 +408,12 @@ A conflict blocks only its own path's export:
   every database backup;
 - agents keep reading and writing the page through the database, so
   `source_changed` refusals for drift disappear;
-- `gbrain sync status`, `get_brain_health` and doctor count open conflicts by
+- `foresights sync status`, `get_brain_health` and doctor count open conflicts by
   kind and age; an MCP read op lists them under the caller's source grant,
   slug fence and page visibility, returns summaries without file bytes to
   remote callers, and binds each conflict id to the page's lifetime;
-- resolution is `gbrain sources conflicts <id> resolve <conflict> --take file|database --expect <hash>`
-  (preview-bound like every repair; `gbrain import` already names a command, so
+- resolution is `foresights sources conflicts <id> resolve <conflict> --take file|database --expect <hash>`
+  (preview-bound like every repair; `foresights import` already names a command, so
   the verb lives with the source admin verbs), or an agent's `put_page` that
   carries `resolves_conflict` for that page and the expected revision. The
   `put_page` route is allowed only for `both_changed`, `unexported_collision`
@@ -440,7 +440,7 @@ becomes a conflict, which is the honest outcome for an agent that bypassed the
 write path. The skills an agent loads should say "write memory with
 `put_page` / `remember`; edit files only for content you would otherwise
 hand-edit". Automated committers stop committing page paths:
-`gbrain git commit-push` keeps refusing managed worktrees as it does today,
+`foresights git commit-push` keeps refusing managed worktrees as it does today,
 and a database-canonical worktree is one of them, so no new page-path marker
 or loosening is needed; the refusal names `put_page` for page paths. Doctor's
 `git_convergence` check learns the mode: it stops advising plain-git commits
@@ -512,8 +512,8 @@ Preconditions, each checked by the conversion's dry run:
 1. The brain is managed (persistence active) and the source has one canonical
    owner. The mode is not offered to classic sources: their writers bypass the
    journal, so there is nothing to make authoritative.
-2. Every gbrain process on every host runs a version that knows the mode, and
-   every other writer of the source is stopped: crons that run `gbrain sync`,
+2. Every foresights process on every host runs a version that knows the mode, and
+   every other writer of the source is stopped: crons that run `foresights sync`,
    hooks, and any external committer of page paths. This is the Step 1 "one
    writer" state. After the flip the per-source protocol fence keeps it that
    way; the dry run only checks the starting point.
@@ -525,7 +525,7 @@ The conversion is a small state machine, so live writes cannot slip between
 adoption and the flip:
 
 1. **Census (read-only).**
-   `gbrain sources canonical <id> --to database --dry-run --json` counts:
+   `foresights sources canonical <id> --to database --dry-run --json` counts:
    pages whose file is equal to the database (adopt as exported), drifted pages
    by class, holds by code, side, state and provenance, pages with no file
    (detached, never committed, never exported), files with no page, existing
@@ -570,7 +570,7 @@ adoption and the flip:
 6. **Resolve conflicts in batches,** in the order the person chooses, with the
    existing selectors (provenance, path globs, class, since). Each batch is
    preview-bound and every resolution is an ordinary page write or soft delete,
-   so `gbrain restore` and page history work as they do today.
+   so `foresights restore` and page history work as they do today.
 
 Rollback:
 
@@ -638,9 +638,9 @@ that committed the write, with the same ledger. The mode needs no Postgres.
   that are not yet pushed, plus everything that was always database-only
   (receipts, attribution, the belief ledger, withdrawals) and now conflict
   bytes. Activation requires a verified backup, defined per engine: for a
-  self-managed database, a `gbrain backup create` archive that passed
-  `gbrain backup check` or a restore drill within a configured age; for a
-  provider's point-in-time recovery, which gbrain cannot inspect, an operator
+  self-managed database, a `foresights backup create` archive that passed
+  `foresights backup check` or a restore drill within a configured age; for a
+  provider's point-in-time recovery, which foresights cannot inspect, an operator
   attestation with an expiry. Doctor's `database_canonical_backup` check
   reports which kind it saw and when it expires.
 - **The git export is the human-readable, offsite copy,** with per-page
@@ -649,13 +649,13 @@ that committed the write, with the same ledger. The mode needs no Postgres.
   file-backed content is the pushed coverage, not the backup interval: a batch
   committed locally but not yet pushed is not offsite.
 - **Rebuild drill.** "Rebuild a brain from its export" stays a supported
-  disaster path for file-backed knowledge: `gbrain sync` of the pushed export
+  disaster path for file-backed knowledge: `foresights sync` of the pushed export
   into a scratch brain in files mode reproduces pages, fences and links, as
   `docs/architecture/system-of-record.md` promises today. The soak runs that
   drill from the remote with one page parked and one push failed, and the
   result must name exactly those gaps. A nightly `export verify` samples pages
   and checks the committed blob against the rendering of the ledger revision.
-- **What does not change.** `gbrain export` stays a point-in-time snapshot.
+- **What does not change.** `foresights export` stays a point-in-time snapshot.
   Forgetting a fact removes it from active memory and from later exports, but
   git history and backups keep earlier copies; we never promise physical
   erasure. The same holds for a page that becomes private: its file is removed
@@ -746,7 +746,7 @@ serial merge slot and one full gate):
 | Rendering is lossy or unstable, so exports churn or drop fields | correctness | one equality contract; a property test that `parse(render(page))` equals the canonical export view (empty fields, tags, metadata, timeline, overlays, malformed fences, segmented pages), then that rendering is a fixed point |
 | Private or `db_only` content reaches a git remote | privacy | the new `exportEligible` predicate, evaluated at render time and bound to the batch by an eligibility generation rechecked after commit and before push; the renderer reads the withdrawal overlay, so forgotten facts are never rendered; tests for initial exclusion, a page that turns private after render, between commit and push, and during recovery, and a forgotten fact on inline and segmented pages; tracked private files handled by big decision 7 |
 | Conflict listings leak private pages or other sources' content to remote tokens | privacy | source, slug and visibility fences before listing and counting; no file bytes for remote callers; `remote=true` tests |
-| The import lane or a crash mistakes gbrain's own write for an outside edit | correctness | durable batch manifest with compare-and-set ledger updates; crash tests at each effect fault point |
+| The import lane or a crash mistakes foresights's own write for an outside edit | correctness | durable batch manifest with compare-and-set ledger updates; crash tests at each effect fault point |
 | Configured clean or textconv filters run during change detection | security | hardened plumbing only; a test with a configured filter driver that must never run |
 | People keep committing page files from other clones | process | supported; each foreign commit is imported or becomes a conflict, and status names its author so the operator can move that writer to `put_page` |
 | Conflicts pile up unresolved | operability | listed by age on the daily scoreboard; no conflict blocks anything else |
@@ -782,7 +782,7 @@ admin verb. Nothing converts on upgrade.
 | 0 | this design, with the maintainer's decisions | approval of the direction and of the big decisions below |
 | 1 | export ledger, seeded in shadow from managed sync's per-page import provenance (raw blob id and revision, `src/core/persistence/sync-holds.ts:1077-1085`) so it has a base before any export, with seed coverage reported per field (revision, raw hash, disk hash) per source; renderer with the equality contract and the withdrawal overlay; `exportEligible`; the export outbox trigger feeding a shadow diff for opted-in sources; the soak-brain generator if the scale soak has not delivered one | property test green on PGLite and Postgres; shadow diff on the fixture corpus plus synthetic holds shows only expected rows, including two requests that commit in reverse sequence order; shadow overhead measured |
 | 2 | import lane in observe mode on opted-in managed sources: records the conflict each hold would have been and which fields a merge would have resolved; a published hold-code to conflict-kind mapping table; foreign-edit census | on a labeled fixture set, where each case carries the outcome a person would choose, the lane agrees with the label; cases where the lane is right and managed sync is not count as agreement |
-| 3a | database publication branch, export outbox and exporter commits and pushes, protocol fence, conflict resolution, status/doctor/MCP surfaces, `gbrain sources canonical <id> --to database` for a provably empty source; **new or empty sources only**, no adoption | on PGLite and Postgres and on the soak brain, through the real operator verb: agent writes commit with the export owner down; export lag p95 under 60 s; zero writes refused for file state; restore drill from the remote names exactly the parked and unpushed gaps |
+| 3a | database publication branch, export outbox and exporter commits and pushes, protocol fence, conflict resolution, status/doctor/MCP surfaces, `foresights sources canonical <id> --to database` for a provably empty source; **new or empty sources only**, no adoption | on PGLite and Postgres and on the soak brain, through the real operator verb: agent writes commit with the export owner down; export lag p95 under 60 s; zero writes refused for file state; restore drill from the remote names exactly the parked and unpushed gaps |
 | 3b | the conversion state machine for non-empty sources (census, adopting, adopt, database, flip back) | on the production-shaped soak brain (several hundred thousand pages, years of moves and culls, thousands of synthetic holds of every kind, 65 ms injected latency, pool 25): adopt completes under live writes, freshness never freezes, zero files recreated at deleted paths, flip back restores every hold byte for byte, idle scan cost and outage catch-up within the measured envelope |
 | 4 | opt-in on a test brain, then on the smallest production source, after the maintainer approves that source | 7 days: no unexpected shadow diff, conflicts only from real edits, scoreboard green. Then the default-mode decision for new agent-first and hosted brains |
 | 5 | the largest sources; page-path auto-commits retired; skills updated to `put_page`-first; the retirement list in "Retirement and cost" | 14 days green on the scoreboard; no held-deletion or drift incidents |
@@ -819,7 +819,7 @@ but Phases 3a and 3b do.
    already detached pages left database-only. Flips if the census shows they
    are mostly bulk or private content.
 6. **Automated committers: refuse page paths.** Options: allow and import, or
-   refuse. Pick refuse for `gbrain git commit-push`, which already refuses
+   refuse. Pick refuse for `foresights git commit-push`, which already refuses
    managed worktrees and keeps doing so, and import for anything else that
    commits. The refusal names `put_page`.
 7. **Private pages whose files are tracked today.** Options: keep their files
@@ -939,15 +939,15 @@ existing behavior.
    recovery. Short-circuits when the brain has no database-mode source.
 9. **Surfaces (Phase 3a).** Export lag (seconds, from the outbox), import lag,
    processed, committed and pushed coverage, parked paths with age, conflicts
-   by kind and age in `gbrain sync status` and `get_brain_health`; doctor
+   by kind and age in `foresights sync status` and `get_brain_health`; doctor
    checks `database_canonical_backup`, `export_lag`, `import_conflicts`, and a
    mode-aware `git_convergence`; an MCP read op with remote fences;
-   `gbrain sources conflicts <id> list|show|resolve`; `put_page` gains
+   `foresights sources conflicts <id> list|show|resolve`; `put_page` gains
    `resolves_conflict` (op ledger and contract goldens updated, allowed only
    for `both_changed`, `unexported_collision` and `protected_metadata`, tested
    with `remote=true`).
 10. **Mode verb (empty sources in Phase 3a, conversion in Phase 3b).**
-    `gbrain sources canonical <id> --to database|files` with `--dry-run`
+    `foresights sources canonical <id> --to database|files` with `--dry-run`
     (census), `--admin-intent source_canonical` and `--expected-state`
     (fingerprint including mode and hold-set digest). Phase 3a accepts only a
     source that is empty by an explicit test (zero live pages, zero holds, no
@@ -1023,7 +1023,7 @@ findings; new sources before conversions, one finding). The main corrections:
   committed and pushed with explicit parked gaps.
 - Change detection uses hardened plumbing only and runs on its own schedule.
 - A "Retirement and cost" section makes stopping two-way growth an exit
-  criterion; `gbrain import conflicts` became `gbrain sources conflicts`.
+  criterion; `foresights import conflicts` became `foresights sources conflicts`.
 
 **Approval of revision 2.** The maintainer answered the round-1 gate on
 2026-10-22 (UTC) with "Rec": the plan approved with every recommendation

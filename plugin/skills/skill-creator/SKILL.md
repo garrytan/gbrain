@@ -2,7 +2,7 @@
 name: skill-creator
 version: 1.0.0
 description: |
-  Create new skills following the GBrain conformance standard. Generates SKILL.md
+  Create new skills following the Foresights conformance standard. Generates SKILL.md
   with frontmatter, Contract, Phases, Output Format, and Anti-Patterns. Checks
   MECE against existing skills. Updates manifest and resolver.
 triggers:
@@ -61,14 +61,14 @@ mutating: {true|false}
 {What good output looks like}
 
 ## When it fails
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 {2-5 concrete failures this skill hits — error codes, refusals, notices — and what to do and tell the user}
 
 ## Anti-Patterns
 {What NOT to do — 3-5 items}
 
 ## Tools Used
-{GBrain operations used, with descriptions}
+{Foresights operations used, with descriptions}
 ```
 
 4. **Add to manifest.** Update `skills/manifest.json` with name, path, description.
@@ -81,10 +81,10 @@ New `skills/{name}/SKILL.md` file + updated manifest + updated resolver.
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `bun test test/skills-conformance.test.ts` fails: the new SKILL.md lacks a required section (Contract, Anti-Patterns, Output Format, When it fails) or frontmatter; add it and re-run.
-- `gbrain check-resolvable` reports the skill unreachable: add the RESOLVER row in a fitting category, then re-run.
+- `foresights check-resolvable` reports the skill unreachable: add the RESOLVER row in a fitting category, then re-run.
 
 ## Anti-Patterns
 

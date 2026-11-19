@@ -1,7 +1,7 @@
 /**
- * GBRA-133 doctor `session_lane_budget`: every gbrain process opens its own pools, and a pooler's per-role session limit
+ * GBRA-133 doctor `session_lane_budget`: every foresights process opens its own pools, and a pooler's per-role session limit
  * (Supavisor `pool_size`) is shared by all of them, so a host could exhaust it (`EMAXCONNSESSION`) with no warning before
- * the first refusal. The check counts this role's backends by `application_name`, attributes gbrain's to a process kind
+ * the first refusal. The check counts this role's backends by `application_name`, attributes foresights's to a process kind
  * and (through the live consumer row) a host, and warns at 80% of the limit. Pure census cases, plus real PGLite (not
  * applicable) and real Postgres (backends a second process holds are counted, attributed and warned about) when
  * DATABASE_URL is set.
@@ -21,15 +21,15 @@ import { withEnv } from './helpers/with-env.ts';
 describe('GBRA-133: the session-lane census', () => {
   const owners = [{ pid: 101, nonce: 'aaaaaaaa-1111', host_id: 'host-a' }, { pid: 202, nonce: 'bbbbbbbb-2222', host_id: 'host-b' }];
   const rows = [
-    { application_name: 'gbrain serve:101:aaaaaaaa', connections: 13 },
-    { application_name: 'gbrain sync:202:bbbbbbbb', connections: 7 },
-    { application_name: 'gbrain jobs:303:cccccccc', connections: 2 },
+    { application_name: 'foresights serve:101:aaaaaaaa', connections: 13 },
+    { application_name: 'foresights sync:202:bbbbbbbb', connections: 7 },
+    { application_name: 'foresights jobs:303:cccccccc', connections: 2 },
     { application_name: 'Supavisor', connections: 1 },
     { application_name: 'psql', connections: 1 },
     { application_name: null, connections: 1 },
   ];
 
-  test('gbrain backends are attributed to a kind and, through the consumer row, a host; the rest are counted apart', () => {
+  test('foresights backends are attributed to a kind and, through the consumer row, a host; the rest are counted apart', () => {
     const census = summarizeSessionLane({ rows, owners, serverClients: 40, serverLimit: 97, envLimit: 25, pooledUrl: true });
     expect(census).toMatchObject({ total: 25, gbrain: 22, pooler: 1, other: 2, by_kind: { serve: 13, sync: 7, jobs: 2 }, limit: 25, limit_source: 'env', used: 25, behind_pooler: true });
     expect(census.processes.map(p => [p.kind, p.pid, p.host_id, p.connections])).toEqual([['serve', 101, 'host-a', 13], ['sync', 202, 'host-b', 7], ['jobs', 303, null, 2]]);
@@ -37,7 +37,7 @@ describe('GBRA-133: the session-lane census', () => {
   });
 
   test('a nonce that does not match the consumer row leaves the host unknown (a reused pid is not the same process)', () => {
-    const census = summarizeSessionLane({ rows: [{ application_name: 'gbrain serve:101:deadbeef', connections: 3 }], owners, serverClients: 3, serverLimit: 97, envLimit: null, pooledUrl: false });
+    const census = summarizeSessionLane({ rows: [{ application_name: 'foresights serve:101:deadbeef', connections: 3 }], owners, serverClients: 3, serverLimit: 97, envLimit: null, pooledUrl: false });
     expect(census.processes[0]!.host_id).toBeNull();
   });
 
@@ -78,13 +78,13 @@ for (const backend of testBackends()) describe(`[${backend}] GBRA-133: doctor se
     const host = randomUUID();
     await engine.executeRaw(
       `INSERT INTO persistence_consumers (host_id, pid, nonce, kind, mode, host_json_path, persistence_home, version) VALUES ($1, 4242, $2, 'gbra133probe', 'full', '/x', '/x', 'test')`, [host, nonce]);
-    const other = postgres(databaseUrl, { max: 2, prepare: false, connection: { application_name: 'gbrain gbra133probe:4242:abcdef12' } });
+    const other = postgres(databaseUrl, { max: 2, prepare: false, connection: { application_name: 'foresights gbra133probe:4242:abcdef12' } });
     const held = [await other.reserve(), await other.reserve()];
     await Promise.all(held.map(c => c`SELECT 1`));
     try {
       const census = await readSessionLane(engine, [databaseUrl], {});
       expect(census.by_kind.gbra133probe).toBe(2);
-      expect(census.processes).toContainEqual({ application_name: 'gbrain gbra133probe:4242:abcdef12', kind: 'gbra133probe', pid: 4242, host_id: host, connections: 2 });
+      expect(census.processes).toContainEqual({ application_name: 'foresights gbra133probe:4242:abcdef12', kind: 'gbra133probe', pid: 4242, host_id: host, connections: 2 });
       expect(census.limit_source).toBe('max_connections');
 
       const [warn] = await withEnv({ [SESSION_LANE_LIMIT_ENV]: String(census.total) }, run);

@@ -6,7 +6,7 @@
  * non-default convenience and finally `default`, and froze the answer: a
  * session captured anywhere else on a multi-source brain was pinned to the
  * fallback for good. A session with no tier-4 evidence now stays held as
- * `corpus_source_unresolved` (nothing frozen) until `gbrain sweep
+ * `corpus_source_unresolved` (nothing frozen) until `foresights sweep
  * --assign-corpus <source>` maps it. A single-source brain still resolves its
  * only source, without freezing, so a second source added later holds the
  * session instead of inheriting a stale pin.

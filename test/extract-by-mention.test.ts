@@ -1,5 +1,5 @@
 /**
- * Integration tests for `gbrain extract links --by-mention`.
+ * Integration tests for `foresights extract links --by-mention`.
  *
  * Hermetic PGLite. Drives runExtract via the same dispatcher the CLI uses,
  * captures stdout/stderr, asserts side-effects against the engine.
@@ -109,7 +109,7 @@ async function runCli(args: string[]): Promise<void> {
   }
 }
 
-describe('gbrain extract links --by-mention — integration', () => {
+describe('foresights extract links --by-mention — integration', () => {
   test('1. end-to-end happy path — links created with link_source=mentions', async () => {
     await seedEntities();
     await seedContentPage('writing/post-1', 'We met with Acme Corp and Alice Example yesterday.');
@@ -167,7 +167,7 @@ describe('gbrain extract links --by-mention — integration', () => {
     expect(exitedWith).toBe(2);
     const stderrText = stderrBuffer.join('\n');
     expect(stderrText).toContain('--by-mention requires --source db');
-    expect(stderrText).toContain('gbrain extract links --by-mention --source db');
+    expect(stderrText).toContain('foresights extract links --by-mention --source db');
   });
 
   test('7b. --by-mention timeline rejected', async () => {

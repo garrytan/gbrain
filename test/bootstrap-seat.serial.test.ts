@@ -1,6 +1,6 @@
 /**
- * #4618 `gbrain bootstrap hooks --seat <label>` / `bootstrap harness --seat`:
- * the seat label is rendered as `GBRAIN_SEAT=<label>` into every gbrain hook
+ * #4618 `foresights bootstrap hooks --seat <label>` / `bootstrap harness --seat`:
+ * the seat label is rendered as `GBRAIN_SEAT=<label>` into every foresights hook
  * command, survives a re-install that omits the flag, is cleared by
  * `--no-seat`, and an invalid label is refused with the fix spelled out.
  *
@@ -78,7 +78,7 @@ function freshWorkspace(): { ws: string; parent: string } {
   return { ws, parent };
 }
 
-/** Every gbrain hook command in a settings file. */
+/** Every foresights hook command in a settings file. */
 function hookCommands(settingsPath: string): string[] {
   const hooks = JSON.parse(readFileSync(settingsPath, 'utf8')).hooks as Record<string, Array<{ hooks: Array<{ command: string; _gbrain?: string }> }>>;
   return Object.values(hooks).flatMap((groups) => groups.flatMap((g) => g.hooks.filter((h) => h._gbrain).map((h) => h.command)));

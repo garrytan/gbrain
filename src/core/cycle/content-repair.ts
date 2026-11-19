@@ -26,6 +26,7 @@ import type { RepairKindSpec } from '../repair/registry.ts';
 import { CONTENT_REPAIR_KINDS, contentLaneArgv, runContentLane, type ContentLaneResult } from '../repair/content-lane.ts';
 import { FENCE_REPAIR_ENABLED_KEY, fenceRepairEnabled } from '../fence-repair/config.ts';
 import { isUncontainedPhaseError } from './phase-containment.ts';
+import { commandText } from '../brand.ts';
 
 /** The longest one phase run spends on the lane; inside a maintenance job it is also at most a third of the job's remaining time. */
 export const CONTENT_REPAIR_PHASE_BUDGET_MS = 120_000;
@@ -33,7 +34,7 @@ export const CONTENT_REPAIR_PHASE_BUDGET_MS = 120_000;
 export interface ContentRepairPhaseOpts {
   dryRun: boolean;
   signal?: AbortSignal;
-  /** The enclosing maintenance job's absolute deadline (epoch ms); null or unset for a direct `gbrain dream`. */
+  /** The enclosing maintenance job's absolute deadline (epoch ms); null or unset for a direct `foresights dream`. */
   deadlineAtMs?: number | null;
   /** The lane kinds to run (default: `CONTENT_REPAIR_KINDS` without `fences`); tests name a stub kind here. */
   kinds?: readonly RepairKind[];
@@ -61,7 +62,7 @@ export async function runContentRepairPhase(engine: BrainEngine | null, opts: Co
   const base = { phase: 'content_repair' as const, duration_ms: 0 };
   if (!engine) return { ...base, status: 'skipped', summary: 'no database connected', details: { reason: 'no_database' } };
   const kinds = [...(opts.kinds ?? contentRepairPhaseKinds())];
-  const preview = contentLaneArgv({}).join(' ');
+  const preview = commandText(contentLaneArgv({}));
   if (!kinds.length) {
     return { ...base, status: 'skipped', details: { reason: 'no_kinds', kinds },
       summary: 'no content-repair kind beyond fence_repair is registered in this release, so the phase ran nothing; fence holds were handled by fence_repair.' };
@@ -69,7 +70,7 @@ export async function runContentRepairPhase(engine: BrainEngine | null, opts: Co
   if (!(await fenceRepairEnabled(engine))) {
     return { ...base, status: 'skipped', details: { reason: 'disabled', kinds },
       summary: `content repair is paused (${FENCE_REPAIR_ENABLED_KEY} false), so nothing was repaired. Turn it back on with `
-        + `\`gbrain config set ${FENCE_REPAIR_ENABLED_KEY} true\`, or preview and apply by hand with \`${preview}\`.` };
+        + `\`foresights config set ${FENCE_REPAIR_ENABLED_KEY} true\`, or preview and apply by hand with \`${preview}\`.` };
   }
   const now = opts.now ?? Date.now;
   const start = now();
@@ -127,7 +128,7 @@ export async function runContentRepairPhase(engine: BrainEngine | null, opts: Co
     kindError ? `${kindError.kind} stopped on an error (${kindError.code ?? 'internal'}) and the next maintenance run retries; the other kinds ran. Run \`${preview}\` on the brain host to see the plan and the error; ask the user if it keeps failing.`
       : hardStop ? `Stopped (${hardStop.kind}: ${hardStop.reason}): ${hardStop.message}` : '',
     failed ? `${failed} item(s) refused and left unchanged (first: ${lane.failed[0]!.kind} ${lane.failed[0]!.item}, ${lane.failed[0]!.reason}); the next full scan retries them.` : '',
-    needsHuman ? `${needsHuman} wait for a person: gbrain sync status --source <id> --json names each with its paragraph.` : '',
+    needsHuman ? `${needsHuman} wait for a person: foresights sync status --source <id> --json names each with its paragraph.` : '',
   ].filter(Boolean);
   const fix = hardStop ? hardStop.fix ?? previewFix('A lane kind stopped; the preview shows each kind\'s plan on the brain host.')
     : needsHuman ? previewFix('Some holds wait for a person; the preview names each with its exact next step.') : undefined;

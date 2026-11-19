@@ -9,7 +9,7 @@
  * automatically covered on the other (dream_verdicts exists only in the
  * Postgres blob).
  *
- * Background: gbrain ships an "embedded latest schema" blob
+ * Background: foresights ships an "embedded latest schema" blob
  * (`pglite-schema.ts`) for fast bootstraps, alongside a numbered migration
  * chain (`migrate.ts`) for incremental upgrades. Across 2 years and 6 schema
  * versions, every release that added a column-with-index in the schema blob
@@ -218,7 +218,7 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // v0.42.7 (v112) — forward-referenced by `CREATE INDEX
   // pages_links_extracted_at_idx ON pages (source_id, links_extracted_at)`.
   // Pre-v112 brains have pages without this column; bootstrap adds it before
-  // SCHEMA_SQL replay creates the index. Powers `gbrain extract --stale` + the
+  // SCHEMA_SQL replay creates the index. Powers `foresights extract --stale` + the
   // `links_extraction_lag` doctor check.
   { kind: 'column', table: 'pages', column: 'links_extracted_at' },
   // v121 — referenced by the timeline event lookup and dedup indexes before
@@ -1068,7 +1068,7 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // facts.claim_metric et al: no forward-reference index in
   // PGLITE_SCHEMA_SQL, no downstream filter breaks on old brains
   // (existing callers — founder-scorecard, eval-trajectory,
-  // gbrain think trajectory injection — all defensively skip
+  // foresights think trajectory injection — all defensively skip
   // NULL-metric rows in per-metric math, so event_type=NULL on old
   // brains is invisible to them). Migration is column-only, no FK,
   // no index — bootstrap probe would be pure overhead.

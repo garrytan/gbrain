@@ -35,14 +35,14 @@ import { atomMovedOriginPrivateSql, atomOriginSlugsSql } from '../persistence/at
 export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
 
 /**
- * GST-2059: the member who owns this brain (`gbrain access owner set <member>`). A remote credential or stdio server
+ * GST-2059: the member who owns this brain (`foresights access owner set <member>`). A remote credential or stdio server
  * bound to that live member reads as the owner: its privacy is relaxed in every source its grant reads (CallerAccess.owner).
  * Written only by the trusted local CLI, like mcp.stdio_member; unset, ill-formed or unreadable names no owner.
  */
 export const OWNER_MEMBER_KEY = 'access.owner_member';
 
 /**
- * GST-2490 (G6 of GST-2476): the owner opt-in. Set to '1' only by the trusted local operator (`gbrain access owner
+ * GST-2490 (G6 of GST-2476): the owner opt-in. Set to '1' only by the trusted local operator (`foresights access owner
  * reads-restricted on`); with it on, a read by a credential bound to the owner (CallerAccess.ownerReadsRestricted) reads
  * pages a readers list, folder rule or page rule would close to the owner, and their derived pages and facts, except
  * another member's own member page (memory/members/<id>) and anything derived from it. Off or unset changes nothing.
@@ -50,7 +50,7 @@ export const OWNER_MEMBER_KEY = 'access.owner_member';
 export const OWNER_READS_RESTRICTED_KEY = 'access.owner_reads_restricted';
 
 /**
- * GBRA-108 design 3: listed members read lineage. Set to '1' only by the trusted local operator (`gbrain access
+ * GBRA-108 design 3: listed members read lineage. Set to '1' only by the trusted local operator (`foresights access
  * members-read-lineage on`, access/lineage.ts); with it on, a read by a credential bound to one member speaking for itself (or for an audience of that
  * one member) passes a derived page or fact when that member reads every origin of it, as an owner read does
  * (CallerAccess.lineage). Never an audience of several, an unbound credential or an attested call. Off or unset
@@ -165,7 +165,7 @@ function satisfiedFor(identity: readonly string[]): readonly string[] {
  * derived `page_readers` column (a trigger keeps it equal to
  * gbrain_access_readers(frontmatter)); a row that names readers but has no
  * derived value yet (written before the migration, not yet repaired by
- * `gbrain repair access`) reads as nobody. `row: 'snapshot'` evaluates a
+ * `foresights repair access`) reads as nobody. `row: 'snapshot'` evaluates a
  * version snapshot's own frontmatter directly (bounded to one page's versions).
  */
 export function readersAllowedSql(alias: string, identity: readonly string[], row: 'page' | 'snapshot' = 'page'): string {
@@ -695,7 +695,7 @@ export function privateSnapshotFilterFragment(alias: string): string {
  * before any repair runs: an atom whose origin page is explicitly private, and
  * a synthesized concept with a private input atom (or an input atom whose
  * origin is private), are private whatever their own field says.
- * `gbrain repair visibility` then stamps the stricter value on the rows.
+ * `foresights repair visibility` then stamps the stricter value on the rows.
  * An atom whose origin a sync rename moved (#7462) is private when the page at
  * its `source_slug` or the page the rename moved it to is private, including a
  * move whose alias a later rename onto the old slug dropped (#8920). A concept's
@@ -1067,11 +1067,11 @@ let cache = new WeakMap<BrainEngine, { at: number; expose: boolean }>();
 const exposeEngines = new Set<BrainEngine>();
 const strictEngines = new Set<BrainEngine>();
 
-/** GBRA-218: set once a page names readers or a member exists (sticky; a trigger and `gbrain access` write it). */
+/** GBRA-218: set once a page names readers or a member exists (sticky; a trigger and `foresights access` write it). */
 export const ACCESS_RESTRICTIONS_KEY = 'access.restrictions_present';
 
 /**
- * GST-363: whom the brain serves. SERVES_KEY is the explicit `one` or `several` (`gbrain setup --serves several`
+ * GST-363: whom the brain serves. SERVES_KEY is the explicit `one` or `several` (`foresights setup --serves several`
  * writes it, and it wins); SERVES_DERIVED_KEY is `several` while two or more members are enabled, `one` otherwise;
  * SERVES_SINCE_KEY is when the brain first served several people, set once and never cleared. A trigger on
  * access_members and on config access.serves keeps the last two (migration v309), so a request reads them from its

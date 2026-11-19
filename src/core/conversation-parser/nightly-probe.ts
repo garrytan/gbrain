@@ -12,7 +12,7 @@
  * for the doctor check to read.
  *
  * Opt-IN via:
- *   gbrain config set autopilot.conversation_parser_probe.enabled true
+ *   foresights config set autopilot.conversation_parser_probe.enabled true
  *
  * Cost: ~$0.05/night with default fixtures × Haiku polish. Bounded
  * by the active BudgetTracker the autopilot loop creates per-tick.
@@ -20,7 +20,7 @@
  * Wired into the autopilot loop (step 4.6 in autopilot.ts), following
  * the same shape as `src/core/cycle/nightly-quality-probe.ts`
  * (v0.40.1.0 Track D / T6): the wiring resolves fixtures from the
- * gbrain package root, writes real outcomes to the parser-probe audit
+ * foresights package root, writes real outcomes to the parser-probe audit
  * trail (`audit-parser-probe.ts`), and never crashes the loop.
  *
  * Test seam: all dependencies are injected via NightlyProbeDeps so
@@ -149,7 +149,7 @@ export async function runConversationParserNightlyProbe(
       outcome: 'skipped',
       reason:
         `fixture_unavailable: ${!existsSync(fixturePath) ? fixturePath : adversarialPath} is not readable, ` +
-        'so the probe gave no parser signal. Reinstall gbrain (bun install -g github:garrytan/gbrain) and run gbrain doctor.',
+        'so the probe gave no parser signal. Reinstall foresights (bun install -g github:aimonk2025/gbrain) and run foresights doctor.',
     };
   }
 

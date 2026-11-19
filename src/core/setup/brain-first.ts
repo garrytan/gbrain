@@ -3,19 +3,19 @@
  * harness install writes into the harness's own instruction surface.
  *
  * Why: registering the MCP server is not enough. In a preregistered harness
- * run, agents with gbrain registered and no instruction reached for it in
+ * run, agents with foresights registered and no instruction reached for it in
  * 1 trial of 100 (no harness acts on the MCP `initialize` instructions),
  * and 92 of 100 once one short rule sat in the agent's own instructions.
- * So `gbrain setup <harness>`, `gbrain connect --install` and
- * `gbrain bootstrap harness` write this block by default; `--no-instructions`
+ * So `foresights setup <harness>`, `foresights connect --install` and
+ * `foresights bootstrap harness` write this block by default; `--no-instructions`
  * (or GBRAIN_AGENT_INSTRUCTIONS=0) opts out and removes it.
  *
  * Ownership is by markers (src/core/managed-block.ts): the interior is
- * gbrain's and is replaced on upgrade; text outside the markers is never
+ * foresights's and is replaced on upgrade; text outside the markers is never
  * touched. The ledger at <configDir>/agent-instructions.json records each
  * surface's decision (installed or declined), the access the block names and
- * whether gbrain created the file, so a re-run keeps an opt-out, `--remove`
- * deletes a file only gbrain created, and doctor's harness_wiring check can
+ * whether foresights created the file, so a re-run keeps an opt-out, `--remove`
+ * deletes a file only foresights created, and doctor's harness_wiring check can
  * tell current from stale.
  *
  * The text stays short on purpose: it is loaded into every turn.
@@ -36,11 +36,11 @@ export const BRAIN_FIRST_VERSION = 2;
 export const BRAIN_FIRST_BEGIN = '<!-- gbrain:brain-first:begin -->';
 export const BRAIN_FIRST_END = '<!-- gbrain:brain-first:end -->';
 export const BRAIN_FIRST_OPT_OUT_ENV = 'GBRAIN_AGENT_INSTRUCTIONS';
-const MARKERS: BlockMarkers = { begin: BRAIN_FIRST_BEGIN, end: BRAIN_FIRST_END, label: 'brain-first', rerun: 'gbrain setup <harness> --instructions-only' };
+const MARKERS: BlockMarkers = { begin: BRAIN_FIRST_BEGIN, end: BRAIN_FIRST_END, label: 'brain-first', rerun: 'foresights setup <harness> --instructions-only' };
 const LEDGER_FILE = 'agent-instructions.json';
 const LEDGER_LOCK_FILE = 'agent-instructions.lock';
 
-/** Harnesses whose instruction surface gbrain can write. */
+/** Harnesses whose instruction surface foresights can write. */
 export const BRAIN_FIRST_HARNESSES = ['claude-code', 'codex', 'opencode', 'openclaw', 'hermes', 'cursor'] as const;
 export type BrainFirstHarness = (typeof BRAIN_FIRST_HARNESSES)[number];
 export function isBrainFirstHarness(v: string | undefined): v is BrainFirstHarness {
@@ -54,17 +54,17 @@ export type BrainFirstAccess = { kind: 'mcp'; server: string; surface?: McpSurfa
 export const SERVES_SEVERAL_LINE = 'This connection reads only what the person asking may read.';
 
 /** The block interior (without markers). */
-export function renderBrainFirstBlock(harness: string, access: BrainFirstAccess, optOut = `gbrain setup ${harness} --instructions-only --no-instructions`): string {
+export function renderBrainFirstBlock(harness: string, access: BrainFirstAccess, optOut = `foresights setup ${harness} --instructions-only --no-instructions`): string {
   const tool = (mcp: string, cli: string) => (access.kind === 'mcp' ? `\`${mcp}\`` : `\`${access.launcher} ${cli}\``);
   const where = access.kind === 'mcp' ? `the \`${access.server}\` MCP server` : `the \`${access.launcher}\` command`;
   const lookup = access.kind === 'mcp' && access.surface === 'verbs'
-    ? '- Before answering any turn, check GBrain first, before files, mail or other sources: `recall` for what was said or decided, `entity` for a person or company.'
-    : `- Before answering any turn, check GBrain first, before files, mail or other sources: ${tool('search', 'search "<names or phrases>"')} for names and phrases, ${tool('query', 'query "<question>"')} for questions. Then read the best hit with ${tool('get_page', 'get <slug>')}.`;
+    ? '- Before answering any turn, check Foresights first, before files, mail or other sources: `recall` for what was said or decided, `entity` for a person or company.'
+    : `- Before answering any turn, check Foresights first, before files, mail or other sources: ${tool('search', 'search "<names or phrases>"')} for names and phrases, ${tool('query', 'query "<question>"')} for questions. Then read the best hit with ${tool('get_page', 'get <slug>')}.`;
   return [
-    `<!-- gbrain brain-first v${BRAIN_FIRST_VERSION}: managed by gbrain and replaced on upgrade; edit outside these markers. Opt out: ${optOut} -->`,
-    '## Memory: check GBrain first',
+    `<!-- gbrain brain-first v${BRAIN_FIRST_VERSION}: managed by foresights and replaced on upgrade; edit outside these markers. Opt out: ${optOut} -->`,
+    '## Memory: check Foresights first',
     '',
-    `GBrain (${where}) holds this user's notes, people, companies, meetings and decisions.`,
+    `Foresights (${where}) holds this user's notes, people, companies, meetings and decisions.`,
     '',
     lookup,
     '- Fill gaps with your other tools. On an empty or thin result, retry with words the notes would use: synonyms, the formal name, the owner, several joined with OR.',
@@ -96,11 +96,11 @@ export function renderBrainFirstTurnRule(access: BrainFirstAccess, harness?: str
   const how = access.kind === 'cli' ? `\`${access.launcher} search "<names>"\` or \`${access.launcher} query "<question>"\``
     : access.surface === 'verbs' ? `\`recall\` or \`entity\` on the \`${access.server}\` MCP server`
       : `\`search\` or \`query\` on the \`${access.server}\` MCP server`;
-  return `GBrain: before answering this turn, check GBrain first (${how}) for the people, companies, projects, meetings and decisions it touches.${access.kind === 'mcp' ? turnRuleDiscovery(harness, access) : ''} ${access.kind === 'mcp' && access.serves === 'several' ? SERVES_SEVERAL_LINE : 'Results span every source it holds: use only what the current requester may see.'}${opts.reply === false ? '' : ' Then answer and finish the task.'}`;
+  return `Foresights: before answering this turn, check Foresights first (${how}) for the people, companies, projects, meetings and decisions it touches.${access.kind === 'mcp' ? turnRuleDiscovery(harness, access) : ''} ${access.kind === 'mcp' && access.serves === 'several' ? SERVES_SEVERAL_LINE : 'Results span every source it holds: use only what the current requester may see.'}${opts.reply === false ? '' : ' Then answer and finish the task.'}`;
 }
 
 /**
- * OpenClaw and Hermes list no gbrain tool after a plain MCP registration: the
+ * OpenClaw and Hermes list no foresights tool after a plain MCP registration: the
  * tools sit behind tool_search (harness-evals anatomy note v1), and OpenClaw
  * wraps tool_search results as untrusted data. The per-turn rule therefore
  * names the tools and the route to them.
@@ -212,7 +212,7 @@ export function resolveOpenclawWorkspace(): { path: string } | { error: string }
     const cfg = parseJson5ish(readFileSync(configPath, 'utf8')) as { agents?: { defaults?: { workspace?: unknown }; list?: unknown; entries?: unknown } } | undefined;
     if (!cfg || typeof cfg !== 'object') return { error: `${configPath} could not be read as JSON, so the workspace is unknown. Pass --workspace <dir>.` };
     const roster = Array.isArray(cfg.agents?.list) ? cfg.agents.list.length : cfg.agents?.entries && typeof cfg.agents.entries === 'object' ? Object.keys(cfg.agents.entries).length : 0;
-    if (roster > 1) return { error: `${configPath} defines ${roster} agents, each with its own workspace. Pass --workspace <dir> for the agent that should use gbrain.` };
+    if (roster > 1) return { error: `${configPath} defines ${roster} agents, each with its own workspace. Pass --workspace <dir> for the agent that should use foresights.` };
     const sole = roster === 1 ? (Array.isArray(cfg.agents?.list) ? cfg.agents.list[0] : Object.values(cfg.agents?.entries as object)[0]) as { workspace?: unknown } | undefined : undefined;
     const workspace = [sole?.workspace, cfg.agents?.defaults?.workspace].find((w): w is string => typeof w === 'string' && w.trim() !== '');
     if (workspace) configured = workspace.trim();
@@ -261,7 +261,7 @@ export interface BrainFirstLedgerEntry {
   access: BrainFirstAccess;
   /** The command that last wrote or declined it. */
   writer: string;
-  /** gbrain created the file, so removal may delete it once nothing else is left. */
+  /** foresights created the file, so removal may delete it once nothing else is left. */
   created_file: boolean;
   updated_at: string;
 }
@@ -304,7 +304,7 @@ export function underInstructionLedgerLock<T>(dryRun: boolean, fn: (outermost: b
   } catch (e) {
     return refused(`${path} could not be locked (${e instanceof Error ? e.message : String(e)})`);
   }
-  if (!lock) return refused(`another gbrain install is updating the instruction ledgers (it holds ${path}); re-run once it finishes`);
+  if (!lock) return refused(`another foresights install is updating the instruction ledgers (it holds ${path}); re-run once it finishes`);
   ledgerLockHeld = true;
   try {
     return fn(true);
@@ -349,12 +349,12 @@ export function resolveBrainFirstDecision(flag: boolean | undefined, prior: Pick
 
 export type BrainFirstState = 'no_file' | 'absent' | 'current' | 'stale' | 'damaged';
 
-/** Is the block in `path` the one gbrain would write for this access? */
+/** Is the block in `path` the one foresights would write for this access? */
 export function inspectBrainFirst(path: string, expected?: string): { state: BrainFirstState; version?: number } {
   if (!existsSync(path)) return { state: 'no_file' };
   const probe = probeBlock(MARKERS, readFileSync(path, 'utf8'));
   if (probe.state !== 'present') return { state: probe.state };
-  const version = Number(/gbrain brain-first v(\d+)/.exec(probe.interior ?? '')?.[1] ?? 0);
+  const version = Number(/(?:foresights|gbrain) brain-first v(\d+)/.exec(probe.interior ?? '')?.[1] ?? 0);
   const current = expected !== undefined ? probe.interior === expected : version === BRAIN_FIRST_VERSION;
   return { state: current ? 'current' : 'stale', version };
 }
@@ -383,7 +383,7 @@ export function direntExists(path: string): boolean {
   try { lstatSync(path); return true; } catch { return false; }
 }
 
-/** gbrain created this file, it is still a plain file, and nothing but our block was in it. */
+/** foresights created this file, it is still a plain file, and nothing but our block was in it. */
 function ownedEmptyFile(prior: BrainFirstLedgerEntry | undefined, path: string, stripped: string): boolean {
   return (prior?.created_file ?? false) && !lstatSync(path).isSymbolicLink() && (stripped.trim() === '' || stripped === CURSOR_HEAD);
 }
@@ -396,7 +396,7 @@ function ownedEmptyFile(prior: BrainFirstLedgerEntry | undefined, path: string, 
  */
 export function writeUnlessChanged(path: string, read: string, wasMissing: boolean, next: string): void {
   const now = direntExists(path) && existsSync(path) ? readFileSync(path, 'utf8') : null;
-  if (wasMissing ? now !== null : now !== read) throw new Error('the file changed while gbrain was updating it; re-run to apply the block to the new contents');
+  if (wasMissing ? now !== null : now !== read) throw new Error('the file changed while foresights was updating it; re-run to apply the block to the new contents');
   atomicWriteTextFile(path, next, { freshMode: 0o644 });
 }
 
@@ -476,7 +476,7 @@ function syncBrainFirstLocked(opts: { target: BrainFirstTarget; access: BrainFir
   }
 }
 
-/** The uninstall path: strip the block, delete the file only when gbrain created it and nothing else is left, forget the record. */
+/** The uninstall path: strip the block, delete the file only when foresights created it and nothing else is left, forget the record. */
 export function removeBrainFirst(opts: { harness: string; path: string; dryRun: boolean; server?: string }): BrainFirstOutcome {
   return underInstructionLedgerLock(opts.dryRun, () => removeBrainFirstLocked(opts), (why) => ({
     harness: opts.harness, path: opts.path, role: 'instruction file', decision: { value: 'declined', source: 'flag' }, action: 'preserve',
@@ -506,7 +506,7 @@ function removeBrainFirstLocked(opts: { harness: string; path: string; dryRun: b
       if (deleteFile) unlinkSync(opts.path);
       else writeUnlessChanged(opts.path, existing, false, stripped);
       dropLedger(opts.harness, opts.path);
-      return out('remove', `brain-first block from ${opts.path}${deleteFile ? ' (file removed: gbrain created it and nothing else was in it)' : ''}`);
+      return out('remove', `brain-first block from ${opts.path}${deleteFile ? ' (file removed: foresights created it and nothing else was in it)' : ''}`);
     }
     return out('remove', `brain-first block from ${opts.path}`);
   } catch (e) {
@@ -521,7 +521,7 @@ export function brainFirstTargetAt(harness: BrainFirstHarness, path: string): Br
 }
 
 /**
- * The installer lanes (`gbrain connect --install`, `gbrain bootstrap harness`):
+ * The installer lanes (`foresights connect --install`, `foresights bootstrap harness`):
  * write or upgrade the block unless opted out, or strip it on removal.
  */
 export function installerBrainFirst(opts: { target: BrainFirstTarget; access: BrainFirstAccess; writer: string; instructions?: boolean; remove?: boolean; dryRun?: boolean }): BrainFirstOutcome {

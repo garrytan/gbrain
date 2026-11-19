@@ -23,7 +23,7 @@ describe('endPoolBounded', () => {
     expect(calledWith).toEqual({ timeout: POOL_END_TIMEOUT_SECONDS });
   });
 
-  test('resolves within the gbrain bound even when .end() NEVER settles', async () => {
+  test('resolves within the foresights bound even when .end() NEVER settles', async () => {
     // This is the PgBouncer hang: .end() returns a promise that never resolves.
     // The bare `await pool.end()` would hang until the CLI's 10s force-exit.
     const pool = { end: () => new Promise<void>(() => { /* never resolves */ }) };

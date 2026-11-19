@@ -1,7 +1,7 @@
 /**
  * Repair steps in the doctor remediation plan and run (fix wave 3, Lane D).
  *
- * Every registered `gbrain repair` kind is previewed brain-wide; a kind with
+ * Every registered `foresights repair` kind is previewed brain-wide; a kind with
  * pending items becomes a PROTECTED, local-only step that needs the user's
  * agreement (`--include-repairs`). Repair steps are independent of the brain
  * score target: `--target-score` governs job steps only, and an included
@@ -11,7 +11,7 @@
  * runs with what is left of the cap as its paid-model allowance, under the
  * caller's own budget tracker, and its actual model spend is reconciled into
  * the caller's accounting once. Repairs run in-process on the brain host through the
- * same runner `gbrain repair` uses, never as Minion jobs. Explicit-only kinds
+ * same runner `foresights repair` uses, never as Minion jobs. Explicit-only kinds
  * are never planned or run here: the plan lists them with their preview
  * command, and `runRepairSteps` refuses a supplied step that names one.
  * The remediation plan and run use `planRepairStepsReport`, which isolates
@@ -92,7 +92,7 @@ export function describePreviewFailure(kind: RepairKind, error: unknown): Repair
 }
 
 /**
- * GBRA-130 (A-45, A-46): a kind whose plan or apply threw an item-scoped error inside a multi-kind loop (`gbrain repair`,
+ * GBRA-130 (A-45, A-46): a kind whose plan or apply threw an item-scoped error inside a multi-kind loop (`foresights repair`,
  * `--all`, the content lane), as an empty result that stops with reason `error`, the redacted message and the kind's
  * read-only preview as its fix, so the loop reports it and runs the next kind.
  */
@@ -142,7 +142,7 @@ async function collectRepairPlan(
       paid: embedPaid || llmUsd !== undefined, embeds: spec.embeds,
       est_usd_cost: embedUsd === null || llmUsd === null ? null : embedUsd + (llmUsd ?? 0), ...(llmUsd !== undefined ? { llm_usd: llmUsd } : {}),
       lifetime_ids: preview.cost.lifetime_ids, checks: spec.checks,
-      rationale: `${preview.affected} item(s) pending for gbrain repair ${spec.kind}${unlocked ? `, plus up to ${unlocked} after safe-chunks re-seals them` : ''}` });
+      rationale: `${preview.affected} item(s) pending for foresights repair ${spec.kind}${unlocked ? `, plus up to ${unlocked} after safe-chunks re-seals them` : ''}` });
   }
   return report;
 }
@@ -179,7 +179,7 @@ export async function runRepairSteps(engine: BrainEngine, steps: RepairPlanStep[
   registry?: readonly RepairKindSpec[];
 }): Promise<RepairStepResult[]> {
   if (opts.remote !== false) throw new OperationError('permission_denied', 'Repair steps are PROTECTED: only a trusted local caller on the brain host can run them.',
-    'On the brain host, run: gbrain doctor --remediation-plan');
+    'On the brain host, run: foresights doctor --remediation-plan');
   const explicit = steps.find(step => repairSpec(step.kind, opts.registry)?.explicit_only);
   if (explicit) throw explicitKindRequired(explicit.kind);
   const { BudgetExhausted } = await import('../budget/budget-tracker.ts');
@@ -201,7 +201,7 @@ export async function runRepairSteps(engine: BrainEngine, steps: RepairPlanStep[
       if (step.paid && step.embeds === 'effect' && step.est_usd_cost) opts.charge?.(step.est_usd_cost - (step.llm_usd ?? 0));
       const spentBefore = opts.spentUsd?.() ?? 0;
       try {
-        // #6696 (A5): an approved repair step is the operator's own write, like gbrain repair; an enclosing background scope still wins.
+        // #6696 (A5): an approved repair step is the operator's own write, like foresights repair; an enclosing background scope still wins.
         const applied = await withAdmissionOrigin('interactive', () => llm ? runner.run(step.kind, scope, { maxLlmUsd: opts.remainingUsd() })
           : step.paid && step.embeds === 'inline' && opts.stepBudget ? opts.stepBudget(() => runner.run(step.kind, scope)) : runner.run(step.kind, scope));
         if (llm) opts.charge?.(Math.max(0, (applied.cost.llm_usd ?? 0) - ((opts.spentUsd?.() ?? 0) - spentBefore)));
@@ -213,7 +213,7 @@ export async function runRepairSteps(engine: BrainEngine, steps: RepairPlanStep[
           ...(applied.stopped ? { message: failedMessage ? `${applied.stopped.message} ${failedMessage}` : applied.stopped.message } : failedMessage ? { message: failedMessage } : {}) };
         // A callee (for example the stale-embedding pass) may swallow BudgetExhausted; the tracker still knows.
         if (step.paid && step.embeds === 'inline' && opts.exhausted?.()) result = { ...result, status: 'budget_exhausted',
-          message: 'The --max-usd budget ran out during the step; re-sealed pages keep their text, and the rest of their embeddings resume with the printed resume command or gbrain embed --stale.' };
+          message: 'The --max-usd budget ran out during the step; re-sealed pages keep their text, and the rest of their embeddings resume with the printed resume command or foresights embed --stale.' };
       } catch (error) {
         if (error instanceof BudgetExhausted) result = { ...base, status: 'budget_exhausted', message: `Budget exhausted during the step: ${error.message}` };
         else result = { ...base, status: 'failed', message: error instanceof Error ? error.message.slice(0, 300) : String(error) };

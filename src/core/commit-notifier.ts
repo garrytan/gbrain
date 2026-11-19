@@ -2,7 +2,7 @@
  * GBRA-133 PR 2a: CommitNotifier, the one place a commit becomes a sync without anyone running one. Extracted from the
  * serve's on-commit watcher (serve-head-watcher.ts, #6858 ask 6), which is now the serve's adapter over this loop.
  *
- * Residents: `gbrain serve` (stdio and http), `gbrain jobs work` and the autopilot daemon start it (notifier/resident.ts).
+ * Residents: `foresights serve` (stdio and http), `foresights jobs work` and the autopilot daemon start it (notifier/resident.ts).
  * Ownership: one owner per host and brain. On Postgres the owner holds the host's row in sync_notifier_leases (atomic
  * claim, conditional renew, a fencing token re-checked before every start, takeover once a lease interval is missed);
  * a non-owner keeps its fs.watch and forwards a HEAD move as a freshness wanted marker. On PGLite the process holding
@@ -301,7 +301,7 @@ async function readOwedMarkers(opts: CommitNotifierOptions, guard: ReturnType<ty
   if (!markers) return;
   const jobIds = markers.flatMap(m => m.job_id === null ? [] : [m.job_id]);
   const live = jobIds.length ? await guard('reading queued sync jobs', () => opts.store.liveJobs(jobIds), new Set<number>()) : new Set<number>();
-  // A managed source never pulls: its pull markers (a push webhook) wait for gbrain sources refresh, not for this loop.
+  // A managed source never pulls: its pull markers (a push webhook) wait for foresights sources refresh, not for this loop.
   for (const rt of sources.values()) rt.markers = markers.filter(m => m.source_id === rt.sourceId && (m.job_id === null || !live.has(m.job_id))
     && !(m.intent === 'pull' && rt.kind === 'managed'));
 }
@@ -415,7 +415,7 @@ export function startCommitNotifier(opts: CommitNotifierOptions): CommitNotifier
     await transition(rt, { state: 'retry', reason: stalled ? 'notifier_stalled' : code, firstDue: 'keep', attempts, nextRetryInMs: wait, progress: progressed,
       error: { code: stalled ? 'notifier_stalled' : code, message, tracePath } });
     decide(rt.sourceId, stalled ? 'stalled' : 'retry', { waitMs: wait, detail: code });
-    if (stalled) logOnce(`stalled\u0000${rt.sourceId}`, `${rt.sourceId}: notifier_stalled: no progress after ${attempts} attempts (last: ${code}: ${message}); retrying every ${Math.round(wait / 1000)} s. Run gbrain sync --source ${rt.sourceId} --no-pull to see the error${tracePath ? `; trace: ${tracePath}` : ''}`);
+    if (stalled) logOnce(`stalled\u0000${rt.sourceId}`, `${rt.sourceId}: notifier_stalled: no progress after ${attempts} attempts (last: ${code}: ${message}); retrying every ${Math.round(wait / 1000)} s. Run foresights sync --source ${rt.sourceId} --no-pull to see the error${tracePath ? `; trace: ${tracePath}` : ''}`);
     else logOnce(`fail\u0000${rt.sourceId}\u0000${code}\u0000${message}`, `${rt.sourceId}: ${code}: ${message}; the source stays due, retry in ${Math.round(wait / 1000)} s`);
     armFire(wait);
   };
@@ -434,7 +434,7 @@ export function startCommitNotifier(opts: CommitNotifierOptions): CommitNotifier
       await transition(rt, { state: 'operator_blocked', reason: st.reason ?? 'blocked', firstDue: 'keep', progress: progressed,
         error: { code: 'sync_blocked', message: `the sync stopped blocked (${st.reason ?? 'unknown'})`, tracePath } });
       decide(rt.sourceId, 'operator_blocked', { detail: st.reason });
-      logOnce(`job-blocked\u0000${rt.sourceId}\u0000${st.reason ?? ''}`, `${rt.sourceId}: the sync stopped blocked (${st.reason ?? 'unknown'}); see gbrain sync status --source ${rt.sourceId} (retried when HEAD moves or a new request arrives)`);
+      logOnce(`job-blocked\u0000${rt.sourceId}\u0000${st.reason ?? ''}`, `${rt.sourceId}: the sync stopped blocked (${st.reason ?? 'unknown'}); see foresights sync status --source ${rt.sourceId} (retried when HEAD moves or a new request arrives)`);
       return;
     }
     if (st?.state === 'done' && st.outcome === 'resumable') {

@@ -191,7 +191,7 @@ describe('logLeasePressure (Eng D8 audit writer)', () => {
       job_name: 'temp',
       model: 'claude-sonnet-4-6',
     });
-    // Hard-delete the job (simulating `gbrain jobs prune`).
+    // Hard-delete the job (simulating `foresights jobs prune`).
     await engine.executeRaw('DELETE FROM minion_jobs WHERE id = $1', [job.id]);
     // Audit row survives.
     const rows = await engine.executeRaw<{

@@ -41,8 +41,8 @@ export async function imageEmbeddingCoverageCheck(engine: BrainEngine): Promise<
       return { name, status: 'ok', details, message: `All ${details.image_pages} image page(s) have an image vector.` };
     }
     return { name, status: 'warn', details, message: `${parts.join('; ')}. Text coverage counts these pages as embedded, but image search does not see them. `
-      + 'Fix: run gbrain embed --stale --images (gbrain embed --stale runs it first on this install; a page with no source_path is found by its slug and gets it recorded), '
-      + 'and gbrain sync --no-pull --source <id> imports held images now that multimodal embedding is on.' };
+      + 'Fix: run foresights embed --stale --images (foresights embed --stale runs it first on this install; a page with no source_path is found by its slug and gets it recorded), '
+      + 'and foresights sync --no-pull --source <id> imports held images now that multimodal embedding is on.' };
   } catch (e) {
     return { name, status: 'warn', message: `image embedding coverage scan skipped: ${e instanceof Error ? e.message : String(e)}` };
   }

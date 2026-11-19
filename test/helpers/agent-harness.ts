@@ -1,6 +1,6 @@
 /**
  * Shared harness for the REAL-agent "door" E2E tests — the ones that drive the
- * ACTUAL `claude` and `codex` binaries against a live gbrain brain (over MCP
+ * ACTUAL `claude` and `codex` binaries against a live foresights brain (over MCP
  * for Claude Code, over CLI for Codex). No PATH shims, no SDK: the door tests
  * spawn the operator's installed binaries and pay real API cost, so every entry
  * point here is written to fail-SKIP (never fail-HARD) on a machine that lacks
@@ -21,7 +21,7 @@
  *     exported so the companion unit test exercises extraction with ZERO real
  *     binaries.
  *   - seedBrainForAgent + writeGbrainMcpConfig wire a real keyless PGLite brain
- *     to a spawned `gbrain serve` so a Claude Code door test can assert recall.
+ *     to a spawned `foresights serve` so a Claude Code door test can assert recall.
  *
  * The drop-list is the security contract: CONDUCTOR_* / CLAUDE_* / GSTACK_* /
  * MCP_* / GBRAIN_* never reach a child except via the explicit overrides the
@@ -999,7 +999,7 @@ export function seedGrokConfig(home: string, opts?: { defaultModel?: string }): 
 
 /**
  * Stage a `gbrain` binary into a fresh bin dir so the DOCUMENTED registration
- * shape (`grok mcp add gbrain -- gbrain serve --surface verbs`, bare command
+ * shape (`grok mcp add foresights -- foresights serve --surface verbs`, bare command
  * resolved via PATH — observed working v1.0.4) is what the door exercises.
  * Compiled binary copy when available; otherwise an executable sh wrapper
  * exec'ing `bun run src/cli.ts` so the fallback lane survives staging.
@@ -1032,7 +1032,7 @@ export interface GrokTurnOpts {
   model?: string;
   /** Disable grok's built-in web search + fetch tools (observed flag). */
   disableWebSearch?: boolean;
-  /** Staged gbrain bin dir — PATH-prepended so the bare-`gbrain` MCP
+  /** Staged foresights bin dir — PATH-prepended so the bare-`gbrain` MCP
    *  registration resolves when grok spawns the server DURING the turn
    *  (without this the doctor preflight passes but the paid turn cannot
    *  start the server on a clean runner). */
@@ -1172,7 +1172,7 @@ export interface OpencodeTurnOpts {
   model?: string;
   /** 'json' emits the NDJSON event stream parseOpencodeJsonl pins. */
   format?: 'default' | 'json';
-  /** Staged gbrain bin dir — PATH-prepended so a PATH-resolved registration
+  /** Staged foresights bin dir — PATH-prepended so a PATH-resolved registration
    *  resolves when opencode spawns the server during the turn. */
   binDir?: string;
   paid?: boolean;
@@ -1251,15 +1251,15 @@ export async function opencodeOneShotTurn(opts: OpencodeTurnOpts): Promise<Openc
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// 5b. Fast gbrain MCP server command (compiled binary, cached; bun-run fallback)
+// 5b. Fast foresights MCP server command (compiled binary, cached; bun-run fallback)
 // ────────────────────────────────────────────────────────────────────────────
 
 /**
- * A resolved launch spec for the gbrain MCP stdio server. The door tests
+ * A resolved launch spec for the foresights MCP stdio server. The door tests
  * register THIS as their MCP server so the child agent's first tool call finds
  * a server that is already up. A compiled binary starts fast; `bun run
  * src/cli.ts serve` cold-transpiles the whole CLI on every spawn and can miss
- * an agent's tool-call window (the source of the codex "the available gbrain
+ * an agent's tool-call window (the source of the codex "the available foresights
  * mcp calls were cancelled" flake). `kind` lets the caller widen the turn
  * timeout when we fell back to the slow path.
  */
@@ -1282,7 +1282,7 @@ let _compileBuildDir: string | null = null;
  * build --compile` binaries DO carry PGLite's WASM runtime + extension tarballs
  * (`pglite.wasm`, `initdb.wasm`, `pglite.data`, `vector.tar.gz`,
  * `pg_trgm.tar.gz`) — embedded via `with { type: 'file' }` and fed to PGLite
- * through PGliteOptions — so a compiled `gbrain init --pglite` now succeeds
+ * through PGliteOptions — so a compiled `foresights init --pglite` now succeeds
  * where it used to ENOENT on those assets (Bun vfs #1340). This probe is the
  * runtime backstop: it confirms the embedding held for THIS binary before we
  * trust it as the door-test MCP server (the brain is keyless PGLite). If the
@@ -1302,7 +1302,7 @@ function probeCompiledPglite(binPath: string): { ok: boolean; reason: string } {
     });
     const stderr = `${res.stdout ?? ''}\n${res.stderr ?? ''}`;
     const wasmBroken = /PGLite failed to initialize|Extension bundle not found|\$bunfs|pglite\.data/.test(stderr);
-    if (res.error) return { ok: false, reason: `compiled \`gbrain init --pglite\` probe error: ${res.error.message}` };
+    if (res.error) return { ok: false, reason: `compiled \`foresights init --pglite\` probe error: ${res.error.message}` };
     if (wasmBroken || res.status !== 0) {
       const lines = stderr.split('\n').map((l) => l.trim()).filter(Boolean);
       const markerLine =
@@ -1312,7 +1312,7 @@ function probeCompiledPglite(binPath: string): { ok: boolean; reason: string } {
       return {
         ok: false,
         reason:
-          `compiled \`gbrain\` cannot open a PGLite brain — \`bun build --compile\` does not embed ` +
+          `compiled \`foresights\` cannot open a PGLite brain — \`bun build --compile\` does not embed ` +
           `PGLite's WASM/extension payload (Bun vfs #1340): ${markerLine.slice(0, 160)}`,
       };
     }
@@ -1381,7 +1381,7 @@ process.on('exit', () => {
 });
 
 /**
- * Resolve the gbrain MCP server launch spec: a compiled binary
+ * Resolve the foresights MCP server launch spec: a compiled binary
  * (`{command:<bin>, args:['serve', ...extra]}`) when `bun build --compile`
  * both succeeds AND can open a PGLite brain, else the `bun run src/cli.ts
  * serve` fallback. `extraArgs` are appended after `serve` (e.g.
@@ -1402,7 +1402,7 @@ export function resolveGbrainServerCommand(repoRoot: string, extraArgs: string[]
     return { command: binPath, args: ['serve', ...extraArgs], kind: 'compiled' };
   }
   console.error(
-    `[agent-harness] compiled gbrain unavailable, falling back to \`bun run src/cli.ts\` ` +
+    `[agent-harness] compiled foresights unavailable, falling back to \`bun run src/cli.ts\` ` +
       `(slower MCP startup, wider readiness window): ${reason}`,
   );
   return {
@@ -1425,12 +1425,12 @@ export interface GbrainMcpConfigOpts {
 }
 
 /**
- * Write a Claude Code `--mcp-config` JSON that runs THIS repo's gbrain over
+ * Write a Claude Code `--mcp-config` JSON that runs THIS repo's foresights over
  * stdio, pinned to a hermetic GBRAIN_HOME + source. The server command comes
  * from `resolveGbrainServerCommand` (compiled binary preferred, `bun run
  * src/cli.ts serve` fallback) so startup is fast enough that the child agent's
- * first tool call doesn't get cancelled. Mirrors `claude mcp add gbrain --
- * gbrain serve` from docs/mcp/CLAUDE_CODE.md.
+ * first tool call doesn't get cancelled. Mirrors `claude mcp add foresights --
+ * foresights serve` from docs/mcp/CLAUDE_CODE.md.
  */
 export function writeGbrainMcpConfig(opts: GbrainMcpConfigOpts): void {
   const cfg = {
@@ -1450,7 +1450,7 @@ export function writeGbrainMcpConfig(opts: GbrainMcpConfigOpts): void {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// 7. Seed a real keyless PGLite brain the spawned `gbrain serve` will read
+// 7. Seed a real keyless PGLite brain the spawned `foresights serve` will read
 // ────────────────────────────────────────────────────────────────────────────
 
 const put_page = operations.find((o) => o.name === 'put_page') as Operation | undefined;
@@ -1464,7 +1464,7 @@ export interface SeededBrain {
 /**
  * Initialize a keyless PGLite brain at GBRAIN_HOME=<home> and seed ONE page
  * with a distinctive, 100%-synthetic fact so a door test can assert the agent
- * recalls it over MCP. Persistent on disk (so the spawned `gbrain serve`
+ * recalls it over MCP. Persistent on disk (so the spawned `foresights serve`
  * subprocess reads the same brain), keyless (embedding_disabled) so it runs
  * with no API key, skills published so the verbs surface is available.
  *
@@ -1524,12 +1524,12 @@ export async function seedBrainForAgent(
         content: `# ${entity}\n\n${fact}\n`,
       });
     } finally {
-      // Release the PGLite lock so the spawned `gbrain serve` can open the
+      // Release the PGLite lock so the spawned `foresights serve` can open the
       // same data dir.
       await engine.disconnect();
     }
 
-    // Persist a keyless config so the spawned `gbrain serve` reads the same
+    // Persist a keyless config so the spawned `foresights serve` reads the same
     // engine + path and doesn't try to reach an embedding provider.
     const config: GBrainConfig = {
       engine: 'pglite',

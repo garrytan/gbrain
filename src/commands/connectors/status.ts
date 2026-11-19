@@ -1,5 +1,5 @@
 /**
- * commands/connectors/status.ts — `gbrain connectors status [provider] [--json]`.
+ * commands/connectors/status.ts — `foresights connectors status [provider] [--json]`.
  *
  * Reuses the `connectors_status` op handler shape via the same helpers, but runs
  * locally (trusted). Never prints the raw cookie/token — only provenance,
@@ -21,6 +21,7 @@ import {
   sourceIdKey,
 } from '../../core/connectors/config-keys.ts';
 import { fullSyncArgv, readFailedLedger } from '../../core/connectors/failed-ledger.ts';
+import { commandText } from '../../core/brand.ts';
 
 export async function runConnectorStatus(engine: BrainEngine, args: string[]): Promise<void> {
   const json = args.includes('--json');
@@ -29,7 +30,7 @@ export async function runConnectorStatus(engine: BrainEngine, args: string[]): P
     const key = resolveApiToken(only);
     const row = { provider: only, credential_present: !!key, credential_source: key?.source ?? null, credential_file_mode: credentialMode(only) };
     if (json) console.log(JSON.stringify({ providers: [row] }, null, 2));
-    else console.log(key ? `${only}  credential: ${key.source}` : `${only}  no credential (gbrain connectors auth ${only} --token -)`);
+    else console.log(key ? `${only}  credential: ${key.source}` : `${only}  no credential (foresights connectors auth ${only} --token -)`);
     if (!key) setCliExitVerdict(1);
     return;
   }
@@ -88,7 +89,7 @@ export async function runConnectorStatus(engine: BrainEngine, args: string[]): P
     const needsFull = r.unresolved.filter((u) => u.needs_full_sync).length;
     console.log(
       `  ⚠ archive incomplete: ${r.unresolved.length} conversation(s) not archived yet; sync retries them automatically` +
-        (needsFull ? `; ${needsFull} need one full re-sync (re-downloads the whole history; ask first): ${fullSyncArgv(r.provider, r.source_id).join(' ')}` : ''),
+        (needsFull ? `; ${needsFull} need one full re-sync (re-downloads the whole history; ask first): ${commandText(fullSyncArgv(r.provider, r.source_id))}` : ''),
     );
   }
 }

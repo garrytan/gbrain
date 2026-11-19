@@ -1,5 +1,5 @@
 /**
- * GST-2515: a source with sync turned off (`config.syncEnabled=false`, `gbrain sources set-sync <id> off`) kept being
+ * GST-2515: a source with sync turned off (`config.syncEnabled=false`, `foresights sources set-sync <id> off`) kept being
  * synced by the commit notifier whenever its HEAD moved, and a run it owed (retry, or due after a restart) kept
  * restarting it. The notifier now leaves such a source unwatched and owes it nothing; explicit wanted markers (a sync
  * trigger, a webhook) still run, and turning sync back on restores the HEAD watch. Synthetic content, injected clock.

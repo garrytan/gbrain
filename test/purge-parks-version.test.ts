@@ -1,8 +1,8 @@
 /**
- * A purge park (purge-parks.ts) left by another gbrain version. A tombstone parked after PURGE_PARK_LIMIT failed purges
- * stayed parked until an operator ran `gbrain pages purge-deleted --retry-parked`, even when the refusal behind it was
+ * A purge park (purge-parks.ts) left by another foresights version. A tombstone parked after PURGE_PARK_LIMIT failed purges
+ * stayed parked until an operator ran `foresights pages purge-deleted --retry-parked`, even when the refusal behind it was
  * gone in the running version (#7311: the shared-origin refusal), so the purge phase warned and doctor
- * `purge_parked_pages` stayed warning. A park now records the gbrain version that wrote it, as a global-maintenance phase
+ * `purge_parked_pages` stayed warning. A park now records the foresights version that wrote it, as a global-maintenance phase
  * streak does: a park another version wrote, or one written before parks recorded a version, gets one automatic
  * attempt, and a failure re-parks it under the running version. A park the running version wrote is not retried
  * automatically; `--retry-parked` still retries it once.
@@ -47,14 +47,14 @@ async function parkedTombstone(engine: BrainEngine, ctx: OperationContext): Prom
   expect(await purgeRequests(engine)).toBe(PURGE_PARK_LIMIT);
 }
 const allowPurge = (engine: BrainEngine) => engine.executeRaw('DROP TRIGGER IF EXISTS purge_parks_version_refuse ON pages');
-/** Rewrites the park as an older gbrain left it: another version's stamp, or (null) none at all. */
+/** Rewrites the park as an older foresights left it: another version's stamp, or (null) none at all. */
 const parkedBy = (engine: BrainEngine, version: string | null) => engine.executeRaw(
   `UPDATE op_checkpoints SET completed_keys = jsonb_build_array(CASE WHEN $2::text IS NULL THEN (completed_keys->0) - 'version'
     ELSE (completed_keys->0) || jsonb_build_object('version', $2::text) END) WHERE op=$1`, [PURGE_PARK_OP, version]);
 
 for (const backend of testBackends()) {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
-  describe(`purge parks across gbrain versions (${backend})`, () => {
+  describe(`purge parks across foresights versions (${backend})`, () => {
     test('a park the running version wrote records it and is not retried automatically; --retry-parked still retries it once', () => managedBrain(async ({ engine, ctx }) => {
       await parkedTombstone(engine, ctx);
       expect(await park(engine)).toMatchObject({ failures: PURGE_PARK_LIMIT, version: VERSION });

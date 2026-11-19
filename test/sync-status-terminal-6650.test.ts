@@ -1,5 +1,5 @@
 /**
- * #6650 (L3): `gbrain sync status` summarizes the source's terminal write receipts.
+ * #6650 (L3): `foresights sync status` summarizes the source's terminal write receipts.
  *
  * Protects: the status carries `terminal_failures` (active blockers apart from the unresolved pile and the historical
  * rows, with the drill-down command); a receipt still holding a recovery record is an active blocker and becomes
@@ -86,7 +86,7 @@ describe('sync status terminal_failures', () => {
     expect(out).toContain('1 active blocker(s), 2 unresolved (2 page(s)');
     expect(out).toContain('2 gbrain-defect row(s)');
     expect(out).toContain(`BLOCKING recovery: request ${held} (notes/held) [recovery_pending]`);
-    expect(out).toContain(`drill down: gbrain sources writer failures ${SOURCE} --group-by category --json`);
+    expect(out).toContain(`drill down: foresights sources writer failures ${SOURCE} --group-by category --json`);
     expect(out).not.toContain('notes/elsewhere');
   });
 });

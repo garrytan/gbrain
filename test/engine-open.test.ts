@@ -445,7 +445,7 @@ describe('embedding identity', () => {
     try {
       const refusal = await wider.initSchema().then(() => null, (error: unknown) => error as { code?: string; message?: string; suggestion?: string });
       expect(refusal?.code).toBe('engine_embedding_mismatch');
-      expect(`${refusal?.message} ${refusal?.suggestion}`).toContain('gbrain migrate embeddings --status');
+      expect(`${refusal?.message} ${refusal?.suggestion}`).toContain('foresights migrate embeddings --status');
       expect(await readStoredEmbeddingIdentity(wider)).toEqual({ model: 'voyage:voyage-4-lite', dimensions: 512 });
     } finally {
       await wider.disconnect();
@@ -501,7 +501,7 @@ describe('repo source', () => {
     });
     // The checkout's native coordination lock still lives in the process's persistence home (coordination-lock.ts);
     // no host.json and no writer credential file is created for the embedded engine.
-    expect(filesUnder(gbrainHome).filter(path => !/^\.gbrain\/persistence\/locks\/[0-9a-f-]{36}\.lock$/.test(path))).toEqual([]);
+    expect(filesUnder(gbrainHome).filter(path => !/^\.(?:foresights|gbrain)\/persistence\/locks\/[0-9a-f-]{36}\.lock$/.test(path))).toEqual([]);
   }, 180_000);
 });
 
@@ -513,7 +513,7 @@ describe('repo source', () => {
  */
 const FILE_IDENTITY_ALLOWLIST: Record<string, string> = {
   'persistence/coordination-lock.ts': 'fallback only when a caller passes no host id; every claim and reservation passes hostIdFor(engine)',
-  'persistence/engine-graduation.ts': 'PGLite to Postgres graduation, run only by gbrain migrate on the brain host',
+  'persistence/engine-graduation.ts': 'PGLite to Postgres graduation, run only by foresights migrate on the brain host',
   'git/commit-ledger.ts': 'PR B commit ledger: written by the git commit sites, which hold no engine; stamps the host that made the commit, null when it has none',
 };
 

@@ -1,13 +1,13 @@
 /**
- * session-cwd.ts — the session directory for a gbrain process the hook
+ * session-cwd.ts — the session directory for a foresights process the hook
  * launcher started (#8424, #8426). The launcher
  * (src/core/setup/hook-launcher.ts) records the harness session's directory
- * in GBRAIN_HOOK_CWD and starts gbrain from its own directory, so Bun never
- * reads the session's bunfig.toml or .env. `gbrain hook` and `gbrain serve`
+ * in GBRAIN_HOOK_CWD and starts foresights from its own directory, so Bun never
+ * reads the session's bunfig.toml or .env. `foresights hook` and `foresights serve`
  * capture it at start; every read that means "the user's working directory"
  * (.gbrain-source, .gbrain-mount, the upload root, the skills dir) defaults
  * to sessionCwd(), which is process.cwd() for every other command. Nothing
- * here changes the process's working directory: a gbrain child started from
+ * here changes the process's working directory: a foresights child started from
  * the session directory would load its bunfig.toml again.
  */
 import { realpathSync } from 'node:fs';

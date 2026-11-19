@@ -5,12 +5,12 @@
  * (config `shared_skills.content.v1.<source>.<incarnation>`) naming its root and
  * the root's device/inode. A cross-host transfer (or `sources set-path`) moved the
  * checkout but left the receipt on the old root, so doctor `sync_freshness`
- * failed forever and prescribed `gbrain sync --no-pull`, which refuses
+ * failed forever and prescribed `foresights sync --no-pull`, which refuses
  * `sync_not_applicable`. Now accept and set-path rebind every owned receipt of
  * the moved sources (nested ones by relative_path) in their own transaction, so
  * a failed accept rolls the receipt back with it; a receipt that is already
  * stale gets doctor's typed `content_receipt_stale` with the explicit,
- * preview-bound `gbrain repair content-receipt-root`, which rebinds only when
+ * preview-bound `foresights repair content-receipt-root`, which rebinds only when
  * the owner's tree still hashes to the recorded worktree manifest and otherwise
  * refuses naming the mismatch and its exit.
  * Fails when: accept or set-path leaves a receipt on the old root, a failed
@@ -117,10 +117,10 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         default: { root: successor, root_identity: identityOf(successor) }, nested: { root: join(successor, 'sub'), root_identity: identityOf(join(successor, 'sub')) } });
       // Until set-path moves sources.local_path the receipt and the source disagree: doctor names the repair, whose preview names set-path.
       const never = await noSuccessfulSync(engine, 'default', "'default'", true);
-      expectItemFailure({ key: never.entry.source_id, code: never.entry.code, fix: never.entry.fix }, { key: 'default', code: 'content_receipt_stale', fix: /^gbrain repair content-receipt-root --source default$/ });
+      expectItemFailure({ key: never.entry.source_id, code: never.entry.code, fix: never.entry.fix }, { key: 'default', code: 'content_receipt_stale', fix: /^(?:foresights|gbrain) repair content-receipt-root --source default$/ });
       const preview = await repairKind(engine, { apply: false });
       expect(preview.listing).toEqual([expect.objectContaining({ item: 'default', class: 'source_path_mismatch' })]);
-      expect(refusedFix(preview)).toBe(`gbrain sources set-path default ${successor}`);
+      expect(refusedFix(preview)).toBe(`foresights sources set-path default ${successor}`);
       expectOthersUnchanged(before, await snapshotItems(engine, 'default'));
     }, { setup: brain => seed(brain, true), databaseUrl }), 180_000);
 
@@ -167,7 +167,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       await topology(engine, 'UPDATE persistence_worktrees SET manifest=$2::text::jsonb WHERE id=$1::uuid', [worktree_id, JSON.stringify(worktreeManifest(root))]);
       expect(await fresh(engine)).toEqual([]);
       const never = await noSuccessfulSync(engine, 'default', "'default'", true);
-      expectItemFailure({ key: never.entry.source_id, code: never.entry.code, fix: never.entry.fix }, { key: 'default', code: 'content_receipt_stale', fix: /^gbrain repair content-receipt-root --source default$/ });
+      expectItemFailure({ key: never.entry.source_id, code: never.entry.code, fix: never.entry.fix }, { key: 'default', code: 'content_receipt_stale', fix: /^(?:foresights|gbrain) repair content-receipt-root --source default$/ });
       const before = await snapshotItems(engine, 'default');
       const configBefore = await engine.executeRaw<{ key: string; value: string }>("SELECT key,value FROM config WHERE key<>$1 ORDER BY key", [key]);
       const preview = await repairKind(engine, { apply: false });
@@ -200,7 +200,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       expect(preview.listing).toEqual([expect.objectContaining({ item: 'default', class: 'tree_mismatch' })]);
       expect(preview.listing![0]!.detail).toContain(recorded.digest);
       expect(preview.listing![0]!.detail).toContain(worktreeManifest(root).digest);
-      expect(refusedFix(preview)).toStartWith('gbrain sources writer transfer prepare default --self-transfer');
+      expect(refusedFix(preview)).toStartWith('foresights sources writer transfer prepare default --self-transfer');
       expect(await receipt(engine, 'default')).toMatchObject({ root: OLD_ROOT });
       const prepared = await runPersistenceAdministration(engine, 'writer_transfer_prepare',
         { source_id: 'default', self_transfer: true, ...await reviewedWriterIntent(engine, 'writer_transfer_prepare') }) as { owner_epoch: string; manifest: { digest: string } };

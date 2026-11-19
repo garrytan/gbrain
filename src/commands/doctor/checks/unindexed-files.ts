@@ -1,9 +1,9 @@
 /**
  * #6865 `unindexed_files`: committed files of a managed Git source with no
  * page and no hold, so they are absent from search and nothing else reports
- * them (typically files an older gbrain refused before refusals became holds).
+ * them (typically files an older foresights refused before refusals became holds).
  * The check never scans: it reads the result the maintenance phase
- * `unindexed_files` or `gbrain sources retry-held <id> --unindexed` stored
+ * `unindexed_files` or `foresights sources retry-held <id> --unindexed` stored
  * (`judgeUnindexedFiles`), plus the re-screen schedule and, for scheduled
  * paths a sync already re-screened, whether each now has a page or a hold.
  *
@@ -34,7 +34,7 @@ async function scheduleFix(ctx: DoctorContext, sourceId: string, why: string): P
   const sync = await gitFollowUpSync(connectedEngine(ctx), sourceId, []);
   return agentFix(['gbrain', 'sources', 'retry-held', sourceId, '--unindexed'], why, 'unindexed_files', { docs: DOCS,
     then: { argv: sync, consent: [], actor: 'agent', requires_exclusive: false, verify: doctorVerify('unindexed_files'), docs: DOCS,
-      why: `The sync re-screens the scheduled files of ${sourceId}: each one that passes imports, each one that refuses is recorded as a hold that gbrain sources status ${sourceId} lists.` } });
+      why: `The sync re-screens the scheduled files of ${sourceId}: each one that passes imports, each one that refuses is recorded as a hold that foresights sources status ${sourceId} lists.` } });
 }
 
 /** One source's finding as a line: how many are missing or waiting, what the stored pass found, and the first paths. */
@@ -54,7 +54,7 @@ function blockedNote(states: UnindexedState[]): string {
   const samples = found.flatMap(state => state.record!.samples.filter(sample => sample.slug_taken || sample.deleted_page).slice(0, 3)
     .map(sample => `${state.source_id}:${sample.path} (${sample.slug_taken ? 'its slug belongs to another page' : 'its page was deleted'})`)).slice(0, 5).join(', ');
   return `${found.reduce((n, state) => n + state.blocked, 0)} committed file(s) cannot be imported as they are${samples ? ` (e.g. ${samples})` : ''}: `
-    + 'rename one of two files that share a slug, or delete the file of a deleted page (or restore the page with gbrain restore), commit, then sync.';
+    + 'rename one of two files that share a slug, or delete the file of a deleted page (or restore the page with foresights restore), commit, then sync.';
 }
 
 /** The read-only note on scaffolding-named files sync skips on purpose, or '' when there are none. */
@@ -100,7 +100,7 @@ async function runUnindexedFiles(ctx: DoctorContext): Promise<Check[]> {
           'unindexed_files', { docs: DOCS });
       checks.push({ name: 'unindexed_files', status: 'warn', details, fix,
         message: `Committed files in managed Git sources have no page and no hold, so they are missing from search: ${[...unindexed, ...waiting].map(sourceLine).join('; ')}. `
-          + 'Usually an older gbrain refused them before refusals became holds. Schedule them with gbrain sources retry-held <id> --unindexed, then run the sync it prints: '
+          + 'Usually an older foresights refused them before refusals became holds. Schedule them with foresights sources retry-held <id> --unindexed, then run the sync it prints: '
           + 'each file then imports or is held with its reason.'
           + (scaffolding ? ` ${scaffolding}` : '') });
       return checks;
@@ -111,7 +111,7 @@ async function runUnindexedFiles(ctx: DoctorContext): Promise<Check[]> {
       const why = (state: UnindexedState) => state.state === 'missing' ? 'not computed yet' : state.state === 'stale' ? `computed ${hours(state.age_ms)} h ago, older than 7 days`
         : `incomplete: ${state.record!.scanned} file(s) checked so far, none missing`;
       checks.push(infoCheck('unindexed_files', `Unindexed files are not known for ${unknown.map(state => `${state.source_id} (${why(state)})`).join(', ')}. `
-        + 'The maintenance phase unindexed_files computes them on each run and continues an incomplete scan; to compute them now, run gbrain sources retry-held <id> --unindexed.'
+        + 'The maintenance phase unindexed_files computes them on each run and continues an incomplete scan; to compute them now, run foresights sources retry-held <id> --unindexed.'
         + (scaffolding ? ` ${scaffolding}` : ''),
         'unknown', await scheduleFix(ctx, first.source_id, `Finds the committed files of ${first.source_id} with no page and no hold (bounded; it continues an incomplete scan), schedules them for a re-screen and stores the result this check reads.`), details));
       return checks;

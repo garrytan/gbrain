@@ -13,7 +13,7 @@
  * is acceptable for stats.
  *
  * Path: ~/.gbrain/integrations/memory-verbs/usage.jsonl via gbrainPath, so
- * GBRAIN_HOME is honored and brain_id (the resolved gbrain home) is a true
+ * GBRAIN_HOME is honored and brain_id (the resolved foresights home) is a true
  * per-brain disambiguator [c11/m1].
  */
 
@@ -83,7 +83,7 @@ export function usageLogPath(): string {
   return _pathOverride ?? gbrainPath('integrations', 'memory-verbs', 'usage.jsonl');
 }
 
-/** The resolved gbrain home — the per-brain disambiguator for multi-brain stats. */
+/** The resolved foresights home — the per-brain disambiguator for multi-brain stats. */
 export function brainId(): string {
   return gbrainPath();
 }
@@ -116,7 +116,7 @@ export function logVerbUsage(event: Omit<VerbUsageEvent, 'ts' | 'brain_id'>): vo
 }
 
 /**
- * Read events for `gbrain protocol stats` + the doctor check. Tolerates
+ * Read events for `foresights protocol stats` + the doctor check. Tolerates
  * malformed lines (torn writes on non-POSIX appends) by skipping them.
  */
 export async function readVerbUsage(opts: { days?: number } = {}): Promise<VerbUsageEvent[]> {

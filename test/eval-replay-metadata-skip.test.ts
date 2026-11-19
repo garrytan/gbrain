@@ -1,6 +1,6 @@
 /**
  * v0.41 IRON-RULE regression: `eval replay` MUST skip the
- * `_kind: 'baseline_metadata'` header line that `gbrain bench publish`
+ * `_kind: 'baseline_metadata'` header line that `foresights bench publish`
  * writes. Codex round-1 #3 caught that without the skip, the header
  * would be parsed as a fake captured row and pollute counts.
  *

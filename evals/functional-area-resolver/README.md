@@ -3,8 +3,8 @@
 Maintainer-side eval evidence for the `functional-area-resolver` skill. Lives
 outside `skills/` deliberately — the skillpack bundler walks `skills/<skill>/`
 recursively, so an eval surface in there would ship to every downstream
-`gbrain skillpack install`. This directory is NOT bundled. The pattern (in
-SKILL.md) ships everywhere; the eval evidence stays in the gbrain repo where
+`foresights skillpack install`. This directory is NOT bundled. The pattern (in
+SKILL.md) ships everywhere; the eval evidence stays in the foresights repo where
 maintainers can re-baseline.
 
 ## What this proves
@@ -96,7 +96,7 @@ Strict numbers and the per-fixture failure traces are in the receipts.
 
 ## How to reproduce
 
-From the gbrain repo root with `ANTHROPIC_API_KEY` set:
+From the foresights repo root with `ANTHROPIC_API_KEY` set:
 
 ```bash
 cd evals/functional-area-resolver
@@ -118,7 +118,7 @@ node rescore.mjs baseline-runs/2026-05-11-opus-4-7.jsonl
 bun test harness-runner.test.ts
 ```
 
-The harness routes through gbrain's gateway, so it inherits gbrain's auth,
+The harness routes through foresights's gateway, so it inherits foresights's auth,
 rate-lease, and cost-meter behavior. Without `ANTHROPIC_API_KEY` it exits with
 a clear error.
 
@@ -179,7 +179,7 @@ evals/functional-area-resolver/
 │   ├── functional-areas.md                         # 13KB, PII-scrubbed from production
 │   └── resolver-of-resolvers.md                    # 10KB, derived ablation
 ├── harness.mjs                                     # thin Node CLI shim
-├── harness-runner.ts                               # TS runner via gbrain gateway
+├── harness-runner.ts                               # TS runner via foresights gateway
 ├── harness-runner.test.ts                          # 45 unit tests (no API key)
 ├── rescore.mjs                                     # zero-cost lenient re-score
 └── baseline-runs/

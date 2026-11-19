@@ -8,7 +8,7 @@ fence PRs):
 - **Lane R+F:** receipted managed writes for conversation facts (batched),
   fence facts, deleted-page expiry, takes reextract and take reprojection, the
   receipt coverage table, the 80% admission stop, and
-  `gbrain repair conversation-labels` (items 1 and 2).
+  `foresights repair conversation-labels` (items 1 and 2).
 - **Lane T:** concept file recheck, take row reservation, shutdown errors,
   supervisor stop, `takes rebuild` under serve (items 3, 4, 6, 7, 8).
 - **Lane J:** the judge thinking capability table and judge cost preflights
@@ -118,7 +118,7 @@ The managed logic lives in `src/core/facts/conversation-publication.ts`.
   page rechecked on its own under its lock; the apply reports one `retired`
   outcome per batch with per-page outcomes in its detail.
 
-- Under a live `gbrain serve` on PGLite the lock refusal is already immediate
+- Under a live `foresights serve` on PGLite the lock refusal is already immediate
   (`acquireLock` throws `LiveServeLockError` without waiting), and the fatal
   CLI seam's fix is the stop → rerun → restart plan; the test pins it for this
   command. Owner delegation for repair kinds stays a TODO.

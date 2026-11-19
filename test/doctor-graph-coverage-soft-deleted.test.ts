@@ -7,7 +7,7 @@
  * rest of the system treats as gone.
  *
  * Without the deleted_at filter the WARN is unclearable: doctor recommends
- * `gbrain extract all`, but buildGazetteer (src/core/by-mention.ts) already
+ * `foresights extract all`, but buildGazetteer (src/core/by-mention.ts) already
  * filters soft-deleted pages, so `extract links --by-mention` answers "No
  * linkable entity pages found" on the same brain. The two disagree about
  * whether entity pages exist at all.

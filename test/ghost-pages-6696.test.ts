@@ -3,7 +3,7 @@
  *
  * A ghost is a live page whose canonical file is gone on the owner host (`liveFileDrift` reason
  * `canonical_file_missing`). Protects: the classifier per state (agrees, drift, missing file, declared db_only, deleted
- * page), doctor `ghost_pages`, `gbrain pages ghosts --json`, and `gbrain repair ghost-pages`: preview, consent refusal
+ * page), doctor `ghost_pages`, `foresights pages ghosts --json`, and `foresights repair ghost-pages`: preview, consent refusal
  * (exit 3, nothing changed), apply of exactly the previewed set, refusal off the owner host, the mass-delete valve, a file
  * restored between preview and apply (before the run, before preparation, before filesystem publication), the unmanaged
  * soft delete, and the exact argv the terminal-receipt classifier prints. Every case drives a real PGLite brain with a
@@ -161,7 +161,7 @@ for (const backend of testBackends()) describe(`#6696 B5 ghost pages (${backend}
     expect(check.details.samples.map((s: { slug: string }) => s.slug)).toEqual(['notes/ghost']);
     expect(check.fix).toMatchObject({ argv: ['gbrain', 'repair', 'ghost-pages', '--source', f.sourceId, '--json'], consent: [], actor: 'agent',
       requires_exclusive: false, verify: { argv: ['gbrain', 'doctor', '--only', 'ghost_pages', '--json'] }, docs: 'docs/guides/repair.md#ghost-pages' });
-    expect(check.message).toContain(`gbrain repair ghost-pages --source ${f.sourceId}`);
+    expect(check.message).toContain(`foresights repair ghost-pages --source ${f.sourceId}`);
     expect(categorizeCheck('ghost_pages')).toBe('brain');
     expect(repairForCheck('ghost_pages')?.kind).toBe('ghost-pages');
   }));
@@ -197,7 +197,7 @@ for (const backend of testBackends()) describe(`#6696 B5 ghost pages (${backend}
     const out = JSON.parse(await capture(() => runPagesGhosts(engine, ['--source', f.sourceId, '--json'])));
     expect(out).toMatchObject({ source_id: f.sourceId, status: 'known', count: 1, inspected: 4, truncated: false, exact: true });
     expect(out.ghosts).toEqual([{ source_id: f.sourceId, slug: 'notes/ghost', path: 'notes/ghost.md', revision: expect.any(String), page_id: expect.any(Number) }]);
-    expect(out.next[0]).toContain(`gbrain repair ghost-pages --source ${f.sourceId}`);
+    expect(out.next[0]).toContain(`foresights repair ghost-pages --source ${f.sourceId}`);
   }));
 
   test('the exact argv the terminal classifier prints is a read-only preview that prints the apply command with its hash', () => fixture(async f => {
@@ -208,8 +208,8 @@ for (const backend of testBackends()) describe(`#6696 B5 ghost pages (${backend}
     const out = await capture(() => runRepairCommand(engine, verdict.action.argv!.slice(2)));
     expect(out).toContain('ghost-pages: 1 item(s) to repair');
     expect(out).toContain(`canonical_file_missing: ${f.sourceId}:notes/ghost (file notes/ghost.md is missing`);
-    expect(out).toMatch(new RegExp(`apply: gbrain repair ghost-pages --source ${f.sourceId} --apply --expect [0-9a-f]{64} --yes`));
-    expect(out).toContain('gbrain restore <slug> --force');
+    expect(out).toMatch(new RegExp(`apply: foresights repair ghost-pages --source ${f.sourceId} --apply --expect [0-9a-f]{64} --yes`));
+    expect(out).toContain('foresights restore <slug> --force');
     expect(out).toContain('72 h');
     expect(await live(f.sourceId, 'notes/ghost')).toBe(true);
   }));
@@ -221,7 +221,7 @@ for (const backend of testBackends()) describe(`#6696 B5 ghost pages (${backend}
     expect(AUTO_REPAIR_REGISTRY.map(spec => spec.kind)).not.toContain('ghost-pages');
     const preview = JSON.parse(await capture(() => runRepairCommand(engine, ['ghost-pages', '--source', f.sourceId, '--json']))).results[0];
     expect(preview.listing.map((entry: { item: string }) => entry.item)).toEqual([`${f.sourceId}:notes/ghost`]);
-    expect(preview.apply_command).toBe(`gbrain repair ghost-pages --source ${f.sourceId} --apply --expect ${preview.preview_hash} --yes`);
+    expect(preview.apply_command).toBe(`foresights repair ghost-pages --source ${f.sourceId} --apply --expect ${preview.preview_hash} --yes`);
     const requests = async () => Number((await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM persistence_requests WHERE source_id=$1', [f.sourceId]))[0]!.n);
     const before = await requests();
 
@@ -231,7 +231,7 @@ for (const backend of testBackends()) describe(`#6696 B5 ghost pages (${backend}
     expect(currentExitCode()).toBe(3);
     process.exitCode = priorExitCode ?? 0;
     expect(refused).toContain('user_message');
-    expect(refused).toContain('gbrain restore <slug> --force');
+    expect(refused).toContain('foresights restore <slug> --force');
     expect(await live(f.sourceId, 'notes/ghost')).toBe(true);
     expect(await requests()).toBe(before);
     _resetCliExitVerdictForTests();
@@ -263,7 +263,7 @@ for (const backend of testBackends()) describe(`#6696 B5 ghost pages (${backend}
     writeFileSync(join(f.root, 'notes/ghost.md'), bytes);
     const applied = await repair(f.sourceId, { apply: true, expect: preview.preview_hash });
     expect(applied).toMatchObject({ applied: 0, skipped: 1, outcomes: { file_restored: 1 } });
-    expect(applied.outcome_items![0]!.reason).toContain(`gbrain repair ghost-pages --source ${f.sourceId}`);
+    expect(applied.outcome_items![0]!.reason).toContain(`foresights repair ghost-pages --source ${f.sourceId}`);
     expect(await live(f.sourceId, 'notes/ghost')).toBe(true);
   }));
 

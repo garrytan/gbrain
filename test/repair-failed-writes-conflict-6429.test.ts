@@ -1,6 +1,6 @@
 /**
  * #6429: a caller write that ended `conflict` with `source_changed` because
- * the page's file and database differed is a `gbrain repair failed-writes`
+ * the page's file and database differed is a `foresights repair failed-writes`
  * candidate. On the reported brain the
  * v0.13.1 grandfather stamped `validate: false` into the database only, so
  * every `remember` on those pages bounced and the fact was lost; once the
@@ -125,7 +125,7 @@ async function conflictCase(engine: BrainEngine): Promise<void> {
       expect(lost.status).toBe('warn');
       expect(lost.message).toContain(`1 caller write(s) never landed (1 remember; 1 refused source_changed`);
       expect(lost.message).not.toContain('compacted');
-      expect(lost.message).toContain(`gbrain repair failed-writes --source ${sourceId}`);
+      expect(lost.message).toContain(`foresights repair failed-writes --source ${sourceId}`);
       expect(lost.details).toMatchObject({ count: 1, repair: 'failed-writes', writes: [{ source_id: sourceId, operation: 'remember', reason: 'source_changed', count: 1 }], compacted_unreplayable: 0 });
 
       const scope = await resolveRepairScope(engine, sourceId);

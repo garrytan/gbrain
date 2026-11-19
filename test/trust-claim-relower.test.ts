@@ -50,7 +50,7 @@ test('relower lowers only claim-lifted rows whose own signals rank lower, and do
 
   const check = await doctor();
   expect(check.status).toBe('warn');
-  expect(check.message).toContain('gbrain trust claim-sources --relower');
+  expect(check.message).toContain('foresights trust claim-sources --relower');
   expect(check.fix?.argv).toEqual(['gbrain', 'trust', 'claim-sources', '--relower']);
 
   const before = JSON.stringify(await engine.executeRaw(`SELECT id, trust_tier, write_origin FROM pages ORDER BY id`));

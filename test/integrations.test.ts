@@ -813,7 +813,7 @@ describe('secret resolution folds config plane (#2789)', () => {
   });
 
   test('falls back to process.env when no config file exists (pre-init)', () => {
-    // No config.json written — pre-`gbrain init` shape.
+    // No config.json written — pre-`foresights init` shape.
     process.env.OPENAI_API_KEY = 'sk-env-only';
     const { set } = checkSecrets([secret]);
     expect(set).toEqual(['OPENAI_API_KEY']);

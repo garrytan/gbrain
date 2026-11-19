@@ -1,3 +1,4 @@
+import { commandText } from '../../brand.ts';
 /**
  * The resolver's one error type. Engine-free: it carries a stable code, a
  * message without turn text, safe context and a recovery (a suggestion and, when
@@ -45,7 +46,7 @@ export class ResolverError extends Error {
   get usage(): boolean { return USAGE_CODES.has(this.code); }
   /** The `error` object of the turn output contract. */
   toJSON(): { code: ResolverErrorCode; message: string; fix: { suggestion: string; command?: string } } {
-    return { code: this.code, message: this.message, fix: { suggestion: this.fix.suggestion, ...(this.fix.argv ? { command: this.fix.argv.map(shellQuote).join(' ') } : {}) } };
+    return { code: this.code, message: this.message, fix: { suggestion: this.fix.suggestion, ...(this.fix.argv ? { command: commandText(this.fix.argv.map(shellQuote)) } : {}) } };
   }
 }
 

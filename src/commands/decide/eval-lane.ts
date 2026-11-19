@@ -1,5 +1,5 @@
 /**
- * Eval-only `gbrain decide` subcommands (judge harness). Loaded by
+ * Eval-only `foresights decide` subcommands (judge harness). Loaded by
  * `loadDecideLanes()`; the module behind the subcommand loads lazily so help
  * stays cheap.
  */

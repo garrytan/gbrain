@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://github.com/garrytan/gbrain/evals/brainbench/schema/result.schema.json",
   "title": "BrainBench run result (result_schema_version 1)",
-  "description": "The JSON document `gbrain eval brainbench --json` / `--out FILE` emits. Foreign runners (gbrain-evals) parse this; additive-only within a version.",
+  "description": "The JSON document `foresights eval brainbench --json` / `--out FILE` emits. Foreign runners (gbrain-evals) parse this; additive-only within a version.",
   "type": "object",
   "additionalProperties": false,
   "required": ["receipt", "cells", "turn_rows", "seed_failures"],

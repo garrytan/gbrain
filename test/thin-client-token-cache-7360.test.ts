@@ -5,7 +5,7 @@
  * live only in process memory, so each call minted a fresh
  * client_credentials token. A per-prompt hook then spent the host's /token
  * budget (50 per 15 minutes by default) and locked itself out with 429s.
- * The token is now cached on disk (mode 0600) under the gbrain home, keyed by
+ * The token is now cached on disk (mode 0600) under the foresights home, keyed by
  * the issuer, MCP URL, client id and a hash of the secret, and re-minted
  * shortly before it expires.
  *
@@ -15,7 +15,7 @@
  * cached token never acts with more scope than the client holds now, and a
  * different client or secret never reuses another client's token.
  *
- * Servers: production `gbrain serve --http` (buildServeHttpApp) on an
+ * Servers: production `foresights serve --http` (buildServeHttpApp) on an
  * ephemeral loopback port over an in-memory keyless PGLite brain.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
@@ -44,7 +44,7 @@ async function mintedTokens(clientId: string): Promise<number> {
   return Number(rows[0]!.n);
 }
 
-/** A new CLI process: the in-process token map is gone, the gbrain home stays. */
+/** A new CLI process: the in-process token map is gone, the foresights home stays. */
 const newProcess = () => _clearMcpClientTokenCache({ keepDisk: true });
 
 async function errorOf(fn: () => Promise<unknown>): Promise<RemoteMcpError> {

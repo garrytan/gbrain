@@ -124,7 +124,7 @@ for (const arm of pathologicalArms()) {
       const before = await snapshotVerdicts(engine, p);
       const pass = await expectUnitNotAborted(() => runTriagePass(engine, [bad!, healthy!, other!, cached!], cfg(judge)));
       const failure = pass.verdictCacheFailures[0];
-      expectItemFailure(failure && { key: failure.file, code: failure.code, fix: failure.fix.argv?.join(' ') }, { key: bad!.filePath, code: 'invalid_data', fix: /^gbrain dream retriage --force$/ });
+      expectItemFailure(failure && { key: failure.file, code: failure.code, fix: failure.fix.argv?.join(' ') }, { key: bad!.filePath, code: 'invalid_data', fix: /^(?:foresights|gbrain) dream retriage --force$/ });
       expect(pass.verdictCacheFailures.length).toBe(1);
       expect(pass.reports[0]).toMatchObject({ filePath: bad!.filePath, score: 0.8, worth: true, cached: false });
       const marker = (await engine.getDreamVerdict(bad!.filePath, bad!.contentHash))!;

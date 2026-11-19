@@ -1,5 +1,5 @@
 /**
- * `gbrain extract timeline --source db` on PGLite refreshes planner statistics
+ * `foresights extract timeline --source db` on PGLite refreshes planner statistics
  * every `import.analyze_every_pages` pages while it fills timeline_entries.
  *
  * Protects: the PGLite scale tier at 20k pages. The walk starts with an empty

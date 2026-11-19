@@ -72,7 +72,7 @@ export interface ProviderCapabilities {
 
   /**
    * Provider supports an extended-thinking / reasoning block in responses.
-   * Not load-bearing for the loop; surfaced so callers (e.g. `gbrain agent run`)
+   * Not load-bearing for the loop; surfaced so callers (e.g. `foresights agent run`)
    * can decide whether to surface the reasoning trace in `--follow` output.
    */
   supportsThinking: boolean;
@@ -125,7 +125,7 @@ export function getProviderCapabilities(modelString: string): ProviderCapabiliti
     // Subsequent waves can split this into its own recipe field if a provider
     // ever supports tools without parallel dispatch.
     supportsParallelTools: chat.supports_tools === true,
-    // Recipe-declared thinking-by-default (gbrain#4172): true when the model
+    // Recipe-declared thinking-by-default (foresights#4172): true when the model
     // reasons without being asked and bills that reasoning as output tokens.
     // Boolean or per-model predicate, mirroring supports_prompt_cache.
     supportsThinking: typeof chat.thinking_by_default === 'function'

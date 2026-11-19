@@ -13,6 +13,7 @@ import { describeChronicleActivity, readChronicleLedgerStats } from '../chronicl
 import { CHRONICLE_REASONS, chronicleBackfillArgv } from '../chronicle/reasons.ts';
 import { chroniclePageDate } from '../chronicle/eligibility.ts';
 import type { Action } from '../agent-output.ts';
+import { commandText } from '../brand.ts';
 
 const daysAgo = (now: Date, days: number) => new Date(now.getTime() - days * 86_400_000).toISOString().slice(0, 10);
 
@@ -34,7 +35,7 @@ async function collectAutoChronicle(ctx: AdvisorContext): Promise<AdvisorFinding
       severity: 'warn',
       title: `auto_chronicle is '${raw}', which reads as off`,
       detail: 'Ask the user whether automatic event extraction should be on (one paid chat call per eligible page) or off, ' +
-        `then run \`${AUTO_CHRONICLE_KEEP_ARGV.join(' ')}\` or \`${AUTO_CHRONICLE_OPT_OUT_ARGV.join(' ')}\`.`,
+        `then run \`${commandText(AUTO_CHRONICLE_KEEP_ARGV)}\` or \`${commandText(AUTO_CHRONICLE_OPT_OUT_ARGV)}\`.`,
       fix: { command_argv: [...AUTO_CHRONICLE_KEEP_ARGV] },
       collector: 'chronicle',
       ask_user: true,
@@ -53,7 +54,7 @@ async function collectAutoChronicle(ctx: AdvisorContext): Promise<AdvisorFinding
       detail: `Each eligible new or changed meeting, conversation or calendar page gets one paid chat call (cap $${settings.jobBudgetUsd.toFixed(2)} per page, ` +
         `at most ${settings.dailyLimit} calls per day: $${(settings.dailyLimit * settings.jobBudgetUsd).toFixed(2)} per day at most for a priced model; ` +
         'an unpriced model has no cap). Page text goes to the configured chat provider. ' +
-        `Keep it: \`${AUTO_CHRONICLE_KEEP_ARGV.join(' ')}\`. Opt out: \`${AUTO_CHRONICLE_OPT_OUT_ARGV.join(' ')}\`.` +
+        `Keep it: \`${commandText(AUTO_CHRONICLE_KEEP_ARGV)}\`. Opt out: \`${commandText(AUTO_CHRONICLE_OPT_OUT_ARGV)}\`.` +
         (activity ? ` ${activity}` : ''),
       fix: { command_argv: [...AUTO_CHRONICLE_KEEP_ARGV] },
       collector: 'chronicle',

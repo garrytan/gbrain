@@ -1,8 +1,8 @@
 /**
- * #5532: the restore command `gbrain storage status` prints must restore the
+ * #5532: the restore command `foresights storage status` prints must restore the
  * files it lists as missing. Status counted the source that owns the repo
  * path (dotfile, then longest registered prefix, else every source) while
- * `gbrain export --restore-only` picks its source by another rule, so on a
+ * `foresights export --restore-only` picks its source by another rule, so on a
  * multi-source brain the printed command restored another source's pages or
  * refused. Each row runs `storage status`, follows its `Use:` line (with an
  * output dir appended), and compares the restored files with the list.
@@ -121,7 +121,7 @@ function shellWords(line: string): string[] {
 }
 
 async function followHint(hint: string): Promise<string[]> {
-  const argv = shellWords(hint.replace(/^Use: gbrain export /, ''));
+  const argv = shellWords(hint.replace(/^Use: (?:foresights|gbrain) export /, ''));
   logged = [];
   await runExport(engine, [...argv, '--dir', out]);
   const files: string[] = [];
@@ -171,7 +171,7 @@ describe('storage status names a restore command that restores its list (#5532)'
       const status = await storageStatus(args());
       // Only the default source's page: connector-a's never lived in this repo.
       expect(status.missing).toEqual(['media/x/default-clip']);
-      expect(status.hint).toStartWith('Use: gbrain export --restore-only --source default ');
+      expect(status.hint).toStartWith('Use: foresights export --restore-only --source default ');
       expect(await followHint(status.hint)).toEqual(['media/x/default-clip']);
     });
   });
@@ -197,7 +197,7 @@ describe('storage status names a restore command that restores its list (#5532)'
         await dbOnlyPage('media/x/default-clip', 'default');
       },
       reason: 'The restore repo belongs to archived source "old". '
-        + 'Run gbrain sources restore old first. Or pass --source <id> and --repo <path> for an active source.',
+        + 'Run foresights sources restore old first. Or pass --source <id> and --repo <path> for an active source.',
     },
   ])('$name: status prints the refusal and export refuses it', async ({ seed, reason }) => {
     await seed();
@@ -239,7 +239,7 @@ describe('storage status names a restore command that restores its list (#5532)'
     await withEnv({ GBRAIN_SOURCE: undefined }, async () => {
       const status = await storageStatus(['--repo', repo]);
       expect(status.missing).toEqual(['media/x/fresh-clip']);
-      expect(status.hint).toStartWith('Use: gbrain export --restore-only --source fresh ');
+      expect(status.hint).toStartWith('Use: foresights export --restore-only --source fresh ');
       expect(await followHint(status.hint)).toEqual(['media/x/fresh-clip']);
     });
   });

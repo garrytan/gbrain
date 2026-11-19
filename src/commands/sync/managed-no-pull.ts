@@ -13,7 +13,7 @@ export async function implyManagedNoPull(engine: BrainEngine, flags: { noPull: b
   if (flags.noPull || flags.dryRun || !await routedManagedMode(engine, sourceId).catch(() => false)) return;
   flags.noPull = true;
   process.stderr.write(`[sync] managed brain: importing ${sourceId ? `source ${sourceId}'s` : "each source's"} checkout at its local HEAD without git pull (--no-pull is implied); `
-    + `to fast-forward from the remote first, run gbrain sources refresh ${sourceId ?? '<id>'}\n`);
+    + `to fast-forward from the remote first, run foresights sources refresh ${sourceId ?? '<id>'}\n`);
 }
 
 /**

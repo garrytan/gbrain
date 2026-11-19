@@ -46,7 +46,7 @@ describe('doctor command', () => {
     expect(src).toContain("name: 'frontmatter_integrity'");
     expect(src).toContain('scanBrainSources');
     // Fix hint points at the right CLI command.
-    expect(src).toContain('gbrain frontmatter validate');
+    expect(src).toContain('foresights frontmatter validate');
   });
 
   test('Check interface supports issues array', async () => {
@@ -233,7 +233,7 @@ describe('doctor command', () => {
         } as any);
         expect(check.status).toBe('warn');
         expect(check.message).toContain('budget/pricing');
-        // E1: the fix registers the rate with `gbrain pricing set`, never an edit to gbrain's source.
+        // E1: the fix registers the rate with `foresights pricing set`, never an edit to foresights's source.
         expect(check.message).not.toContain('embedding-pricing.ts');
         expect(check.fix).toMatchObject({ argv: expect.arrayContaining(['gbrain', 'pricing', 'set']) });
         expect(check.message).toContain('--max-cost');
@@ -377,15 +377,15 @@ describe('doctor command', () => {
   });
 
   // v0.12.2 reliability wave — doctor detects JSONB double-encode + truncated
-  // bodies and points users at the standalone `gbrain repair-jsonb` command.
+  // bodies and points users at the standalone `foresights repair-jsonb` command.
   // Detection only; repair lives in src/commands/repair-jsonb.ts.
   test('doctor source contains jsonb_integrity and markdown_body_completeness checks', async () => {
     const source = doctorSource();
     expect(source).toContain('jsonb_integrity');
     expect(source).toContain('markdown_body_completeness');
-    // 0.48.5.1: the truncated-page hint must not name a flag `gbrain sync` does not have.
-    expect(source).not.toContain('gbrain sync --force');
-    expect(source).toContain('gbrain repair-jsonb');
+    // 0.48.5.1: the truncated-page hint must not name a flag `foresights sync` does not have.
+    expect(source).not.toContain('foresights sync --force');
+    expect(source).toContain('foresights repair-jsonb');
   });
 
   test('jsonb_integrity check covers the four JSONB sites fixed in v0.12.1', async () => {
@@ -537,7 +537,7 @@ describe('doctor command', () => {
       source.indexOf('// 5. RLS'),
       source.indexOf('// 6. Schema version'),
     );
-    // Severity upgraded from 'warn' to 'fail' so `gbrain doctor` exits 1 on gaps.
+    // Severity upgraded from 'warn' to 'fail' so `foresights doctor` exits 1 on gaps.
     expect(rlsBlock).toMatch(/status:\s*'fail'/);
     // Remediation SQL uses quoted identifiers — safe for names with hyphens,
     // reserved words, mixed case.
@@ -585,7 +585,7 @@ describe('doctor command', () => {
     // PGLite skip path is required (no event triggers there).
     expect(block).toMatch(/engine\.kind\s*===\s*'pglite'/);
     // Recovery hint points at the doc that carries the recreate SQL.
-    // (`gbrain apply-migrations --force-retry 35` was the old hint; it can't
+    // (`foresights apply-migrations --force-retry 35` was the old hint; it can't
     // work — --force-retry targets the vX.Y.Z orchestrator registry, and the
     // v35 trigger lives in the numeric MIGRATIONS array which the flag can't
     // reach. Pin against regression.)
@@ -594,19 +594,19 @@ describe('doctor command', () => {
   });
 
   // v0.31.7 IRON-RULE regression test for #376 + #536.
-  // The graph_coverage WARN message used to suggest stale verbs (`gbrain
-  // link-extract` / `gbrain timeline-extract`) that were removed in v0.16
-  // when extraction was consolidated into `gbrain extract <links|timeline|all>`.
+  // The graph_coverage WARN message used to suggest stale verbs (`foresights
+  // link-extract` / `foresights timeline-extract`) that were removed in v0.16
+  // when extraction was consolidated into `foresights extract <links|timeline|all>`.
   // PR #376 (FUSED-ID) flagged the stale hint; PR #536 (mayazbay) replaced it
-  // with the canonical `gbrain extract all`. Pin the user-facing copy so a
+  // with the canonical `foresights extract all`. Pin the user-facing copy so a
   // future edit can't silently re-regress to a stale verb.
-  test('graph_coverage hint uses canonical `gbrain extract all`, not removed verbs', async () => {
+  test('graph_coverage hint uses canonical `foresights extract all`, not removed verbs', async () => {
     const src = doctorSource();
     // Canonical form (post-v0.16 single-verb consolidation).
-    expect(src).toContain('Run: gbrain extract all');
+    expect(src).toContain('Run: foresights extract all');
     // Stale verb names removed in v0.16 must not return.
-    expect(src).not.toContain('gbrain link-extract');
-    expect(src).not.toContain('gbrain timeline-extract');
+    expect(src).not.toContain('foresights link-extract');
+    expect(src).not.toContain('foresights timeline-extract');
   });
 
   // takes_weight_grid pure helper: the 4 branches (no-takes / fail / warn / ok)
@@ -746,7 +746,7 @@ describe('doctor command', () => {
 // v0.31.8 D19 — wedge migration force-retry hint.
 //
 // The pre-v0.31.8 minions_migration check emitted a generic
-// `gbrain apply-migrations --yes` hint regardless of how partial the
+// `foresights apply-migrations --yes` hint regardless of how partial the
 // migration was. Operators wedged on v0.29.1 (3 consecutive partials)
 // needed `--force-retry <v>` first because the apply-migrations runner's
 // 3-consecutive-partials guard rejected plain --yes. The v0.31.8 fix
@@ -789,7 +789,7 @@ describe('v0.31.8 — wedge migration force-retry hint (D19)', () => {
     // versions render as a single copy-pasteable command line. Match BOTH
     // engine.ts blocks (local doctor + remote doctor) — the regex finds
     // either occurrence.
-    expect(source).toMatch(/wedged\.map\(v\s*=>\s*`gbrain apply-migrations --force-retry [^`]+`\)\.join\(' && '\)/);
+    expect(source).toMatch(/wedged\.map\(v\s*=>\s*`(?:foresights|gbrain) apply-migrations --force-retry [^`]+`\)\.join\(' && '\)/);
   });
 
   test('remote doctor (doctorReportRemote) also emits the force-retry hint (D14)', async () => {
@@ -848,17 +848,17 @@ describe('v0.32.4 — sync_freshness check', () => {
     expect(result.status).toBe('fail');
     expect(result.message).toContain('no successful sync recorded');
     expect(result.message).toContain(`'wiki'`); // source.id embedded
-    expect(result.message).toContain('gbrain sync --source wiki');
+    expect(result.message).toContain('foresights sync --source wiki');
   });
 
   test('#5477: a managed brain is told to sync with --no-pull; unmanaged wording is unchanged', async () => {
     const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
     const rows = [{ id: 'wiki', name: '', local_path: '/tmp/wiki', last_sync_at: null }];
     const unmanaged = await checkSyncFreshness(makeStubEngine(rows));
-    expect(unmanaged.message).toBe("Source 'wiki': no successful sync recorded; no attempt recorded; run `gbrain sync --source wiki`");
+    expect(unmanaged.message).toBe("Source 'wiki': no successful sync recorded; no attempt recorded; run `foresights sync --source wiki`");
     const managed = await checkSyncFreshness(makeStubEngine(rows, true));
     expect(managed.status).toBe('fail');
-    expect(managed.message).toMatch(/^Source 'wiki': no successful sync recorded; .*run `gbrain sync --source wiki --no-pull`$/);
+    expect(managed.message).toMatch(/^Source 'wiki': no successful sync recorded; .*run `(?:foresights|gbrain) sync --source wiki --no-pull`$/);
   });
 
   test('last_sync_at > 72h ago → fail with day-rounded "Nd ago"', async () => {
@@ -974,7 +974,7 @@ describe('v0.32.4 — sync_freshness check', () => {
       { id: 'wiki-id', name: 'My Wiki', local_path: '/tmp/wiki', last_sync_at: null },
     ]));
     expect(result.status).toBe('fail');
-    // User copy-pastes `gbrain sync --source wiki-id` (NOT "My Wiki"). Message
+    // User copy-pastes `foresights sync --source wiki-id` (NOT "My Wiki"). Message
     // must include the id so the CLI command actually works.
     expect(result.message).toContain(`'wiki-id'`);
   });
@@ -1175,7 +1175,7 @@ describe('v0.41.27.0 — sync_freshness git short-circuit', () => {
       { id: 'preupgrade', name: '', local_path: '/tmp/pre',
         last_sync_at: agoMs(30 * 60 * 60 * 1000),
         last_commit: 'abc',
-        chunker_version: '0',  // STALE — bumped via gbrain upgrade since last sync
+        chunker_version: '0',  // STALE — bumped via foresights upgrade since last sync
       },
     ]), { localOnly: true });
 
@@ -1381,7 +1381,7 @@ describe('v0.41.32.0 — commit-relative staleness', () => {
 // Supervisor crash classifier wiring. Pre-fix, doctor.ts:1013 counted every
 // `worker_exited` event as a crash regardless of `likely_cause`, inflating
 // `crashes_24h` to 120+/day from RSS-watchdog drains and SIGTERM stops.
-// These tests pin the read-side wiring so doctor and `gbrain jobs supervisor
+// These tests pin the read-side wiring so doctor and `foresights jobs supervisor
 // status` (jobs.ts:805) cannot drift: both go through `summarizeCrashes`.
 describe('supervisor crash classifier wiring (v0.35.x)', () => {
   test('doctor.ts uses summarizeCrashes — no ad-hoc worker_exited filter', async () => {
@@ -1524,7 +1524,7 @@ describe('v0.40.4 — graph_signals_coverage check', () => {
     const check = await checkGraphSignalsCoverage(engine);
     expect(check.status).toBe('warn');
     expect(check.message).toContain('0.0%');
-    expect(check.message).toContain('gbrain extract all');
+    expect(check.message).toContain('foresights extract all');
   });
 
   test('graph_signals enabled + >=30% coverage → ok with metric', async () => {
@@ -1689,7 +1689,7 @@ describe('issue #972 — link_resolution_opportunity check', () => {
     expect(check.message).toContain('5 of 5');
     expect(check.message).toContain('100%');
     expect(check.message).toContain(
-      'gbrain config set link_resolution.global_basename true',
+      'foresights config set link_resolution.global_basename true',
     );
   });
 

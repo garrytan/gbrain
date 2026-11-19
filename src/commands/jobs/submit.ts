@@ -1,4 +1,4 @@
-/** `gbrain jobs submit` (dispatched by runJobs in src/commands/jobs.ts). */
+/** `foresights jobs submit` (dispatched by runJobs in src/commands/jobs.ts). */
 import { hasFlag, parseFlag, parseMaxWaitingFlag, type JobsCommandContext } from './shared.ts';
 import { isProtectedJobName } from '../../core/minions/protected-names.ts';
 import { assertEmbedBackfillQueueAdmission } from '../../core/minions/embed-backfill-admission.ts';
@@ -13,7 +13,7 @@ export async function runJobsSubmit({ args, engine, queue }: JobsCommandContext)
   const { registerBuiltinHandlers } = await import('../jobs.ts');
   const name = args[1]?.trim();
   if (!name) {
-    console.error('Error: job name required. Usage: gbrain jobs submit <name>');
+    console.error('Error: job name required. Usage: foresights jobs submit <name>');
     process.exit(1);
   }
 
@@ -212,10 +212,10 @@ export async function runJobsSubmit({ args, engine, queue }: JobsCommandContext)
       `   (--allow-shell-jobs, or GBRAIN_ALLOW_SHELL_JOBS=1 exported from your shell).\n` +
       `   Your job was queued (id=${job.id}). It waits until a worker starts; a worker\n` +
       `   WITHOUT shell jobs enabled dead-letters it immediately (no retries). To run now:\n\n` +
-      `     GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs submit shell \\\n` +
+      `     GBRAIN_ALLOW_SHELL_JOBS=1 foresights jobs submit shell \\\n` +
       `       --params '...' --follow\n\n` +
       `   Or start a persistent worker (Postgres only — PGLite uses --follow):\n\n` +
-      `     gbrain jobs work --allow-shell-jobs\n\n`,
+      `     foresights jobs work --allow-shell-jobs\n\n`,
     );
   }
 
@@ -312,7 +312,7 @@ async function authorizePaidSubmit(engine: JobsCommandContext['engine'], name: s
  * Queue honesty (agent-first operator wave E5): PGLite has no background
  * worker, so a plain submit would leave the job waiting with no error. Refuse
  * with `no_worker` and the exact `--follow` command; `--queue-only` queues it
- * deliberately for a later `gbrain jobs work` drain.
+ * deliberately for a later `foresights jobs work` drain.
  */
 async function refuseNoWorker(args: string[], name: string, queueName: string): Promise<void> {
   const { opError } = await import('../../core/ops/contract.ts');
@@ -320,10 +320,10 @@ async function refuseNoWorker(args: string[], name: string, queueName: string): 
   const { setCliExitVerdict, writeStdoutFinal } = await import('../../core/cli-force-exit.ts');
   const err = opError('no_worker',
     `PGLite has no background worker, so job '${name}' would wait in queue '${queueName}' until something runs it. Nothing was queued.`,
-    'Run it now with --follow, or pass --queue-only to queue it for a later `gbrain jobs work` drain.',
-    { why: 'PGLite brains have no background worker (the database is single-writer), so a queued job waits with no error until a `gbrain jobs work` drain runs it.',
+    'Run it now with --follow, or pass --queue-only to queue it for a later `foresights jobs work` drain.',
+    { why: 'PGLite brains have no background worker (the database is single-writer), so a queued job waits with no error until a `foresights jobs work` drain runs it.',
       fix: { argv: ['gbrain', 'jobs', ...args, '--follow'], consent: [], actor: 'agent', requires_exclusive: true,
-      why: '--follow runs the job in this process and waits for its result; it needs the brain to itself, so any running `gbrain serve` must stop first.' } });
+      why: '--follow runs the job in this process and waits for its result; it needs the brain to itself, so any running `foresights serve` must stop first.' } });
   const out = renderCliError(err, { json: hasFlag(args, '--json'), command: 'jobs submit', tty: !!process.stderr.isTTY });
   if (out.stdout) await writeStdoutFinal(out.stdout);
   if (out.stderr) process.stderr.write(out.stderr);

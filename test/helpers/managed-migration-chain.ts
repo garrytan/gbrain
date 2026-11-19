@@ -28,7 +28,7 @@ export interface ManagedChainFixture {
   seed: LegacySeed;
   /** Open a fresh engine on the fixture's database; the caller closes it before the next runner. */
   open(): Promise<BrainEngine>;
-  /** The real `gbrain apply-migrations` runner in a child process: keyless, no service install. */
+  /** The real `foresights apply-migrations` runner in a child process: keyless, no service install. */
   applyMigrations(): Promise<ChainRun>;
   ledger(): CompletedMigrationEntry[];
   close(): Promise<void>;

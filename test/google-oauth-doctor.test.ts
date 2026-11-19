@@ -106,7 +106,7 @@ describe('computeGoogleOauthCheck', () => {
       expect(r.message).toContain('a@example.com');
       expect(r.message).toContain('3d ago');
       // Actionable fix in the message.
-      expect(r.message).toContain('gbrain google connect --reauth');
+      expect(r.message).toContain('foresights google connect --reauth');
     });
   });
 

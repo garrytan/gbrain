@@ -2,7 +2,7 @@
  * MEMORY_VERBS v1 — conformance fixtures (E2).
  *
  * The canonical, embedded fixture set the conformance runner executes against
- * ANY MCP endpoint (default: gbrain's own server). Deterministic by
+ * ANY MCP endpoint (default: foresights's own server). Deterministic by
  * construction: every check is SHAPE (required fields, enum validity, const),
  * CONTRACT BEHAVIOR (provenance rejected, idempotent forget, miss→found:false),
  * or ROUND-TRIP (remember → recall by entity, a plain indexed read — no
@@ -10,7 +10,7 @@
  *
  * These double as BrainBench seeds: `test/fixtures/memory-verbs/cases.json` is
  * the generated data-file mirror (drift-guarded by the conformance test) so
- * the eval suite imports the same cases without importing gbrain source.
+ * the eval suite imports the same cases without importing foresights source.
  *
  * Stateful round-trips share a per-run marker (substituted for `{{marker}}`)
  * and thread ids via `saveAs`/`{{id:<key>}}` substitution.

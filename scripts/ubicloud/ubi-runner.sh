@@ -69,10 +69,10 @@
 # names outside the ubirun- prefix are never reaped, expired or not; reap only
 # counts other owners' expired VMs in its log (cloud deletes stay owner-scoped,
 # GST-573). Every `up` runs it first when UBI_REAP=1 (gbrain: off by default
-# until gbrain's TTL-less VMs older than 4 h are gone; the operator reaper,
+# until foresights's TTL-less VMs older than 4 h are gone; the operator reaper,
 # scripts/ubicloud/reap-expired.ts, still destroys expired TTL VMs of every
 # owner), so a lane killed by a sleeping machine has its leftovers destroyed by
-# its own next `up`. --ttl-hours H (gbrain) sets one VM's TTL.
+# its own next `up`. --ttl-hours H (foresights) sets one VM's TTL.
 #
 # Leftover line: `run` and `verify` end with
 #   UBICLOUD: left=<0|1|unknown> owner=<owner> vm=<name> others=<n>

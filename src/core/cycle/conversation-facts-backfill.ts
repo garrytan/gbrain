@@ -3,7 +3,7 @@
  *
  * Opt-in autopilot wrapper around `runExtractConversationFactsCore`.
  * Default OFF; user enables explicitly via
- * `gbrain config set cycle.conversation_facts_backfill.enabled true`.
+ * `foresights config set cycle.conversation_facts_backfill.enabled true`.
  *
  * Architecture (per CEO + eng review + Codex outside voice):
  *
@@ -70,7 +70,7 @@ export interface ConversationFactsBackfillPhaseOpts {
   dryRun?: boolean;
   signal?: AbortSignal;
   /**
-   * issue #2860 — `gbrain dream --phase conversation_facts_backfill --once`.
+   * issue #2860 — `foresights dream --phase conversation_facts_backfill --once`.
    * Bypasses the `cycle.conversation_facts_backfill.enabled` gate for THIS
    * call only; never reads or writes config. Per-source + brain-wide cost/
    * walltime caps still apply — the override lifts the on/off switch, not
@@ -192,7 +192,7 @@ export async function runPhaseConversationFactsBackfill(
         details: {
           reason: 'disabled',
           enable_hint:
-            'gbrain config set cycle.conversation_facts_backfill.enabled true',
+            'foresights config set cycle.conversation_facts_backfill.enabled true',
         },
       };
     }

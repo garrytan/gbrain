@@ -1,5 +1,5 @@
 /**
- * Real CLI against a fresh `gbrain init --pglite` brain (a managed brain):
+ * Real CLI against a fresh `foresights init --pglite` brain (a managed brain):
  * - #5877: the command doctor's `orphan_ratio` hint prints runs and exits 0
  *   (the bare `--by-mention` hint exited 2 on the default fs source).
  * - #5904 probe (E28, GBRA-40): `extract timeline --source db` no longer
@@ -60,7 +60,7 @@ async function doctorHintCommand(): Promise<string> {
     try {
       const report = JSON.parse(out[i]!) as DoctorReport;
       const check = report.checks?.find(c => c.name === 'orphan_ratio');
-      const match = check?.message.match(/Run: (gbrain extract links[^(]*?)\s{2,}/);
+      const match = check?.message.match(/Run: ((?:foresights|gbrain) extract links[^(]*?)\s{2,}/);
       if (match) return match[1]!.trim();
     } catch { /* not the report */ }
   }
@@ -78,10 +78,10 @@ beforeAll(() => {
 
 afterAll(() => { rmSync(home, { recursive: true, force: true }); });
 
-describe('fresh gbrain init brain', () => {
+describe('fresh foresights init brain', () => {
   test('#5877: the printed orphan_ratio fix command runs and exits 0', async () => {
     const command = await doctorHintCommand();
-    expect(command).toBe('gbrain extract links --by-mention --source db');
+    expect(command).toBe('foresights extract links --by-mention --source db');
     const r = cli(command.split(' ').slice(1));
     expect(r.stderr).not.toContain('requires --source db');
     expect(r.status).toBe(0);

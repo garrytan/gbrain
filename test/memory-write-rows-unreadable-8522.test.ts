@@ -48,7 +48,7 @@ test('a remember refused by unreadable segment rows tells its caller which page 
     expect({ code: error.code, writeError: error.writeError, detail: error.detail, state: error.writeRequest?.state }).toEqual({ code: 'unavailable',
       writeError: 'page_body_rows_unreadable', detail: 'page_body_rows_unreadable', state: 'failed' });
     expect(error.message).toContain(SLUG);
-    expect(error.suggestion).toContain('gbrain repair segmented-tiling');
+    expect(error.suggestion).toContain('foresights repair segmented-tiling');
     expect(toAgentError(error, { transport: 'cli', op: 'remember', render: cliRenderContext() })).toMatchObject({ code: 'page_body_rows_unreadable', class: 'server', retryable: false });
   });
 }, 120_000);

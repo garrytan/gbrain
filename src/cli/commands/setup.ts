@@ -1,8 +1,8 @@
 /**
- * `gbrain setup <harness>`: pre-connect dispatch (engine-free), run by
+ * `foresights setup <harness>`: pre-connect dispatch (engine-free), run by
  * handleCliOnly before the connectEngine() terminator; the record lives in
  * src/cli/command-table.ts. Setup never opens the database itself: a new
- * brain is created by the `gbrain init` child it runs.
+ * brain is created by the `foresights init` child it runs.
  */
 import { setCliExitVerdict } from '../../core/cli-force-exit.ts';
 

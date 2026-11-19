@@ -76,7 +76,7 @@ describe('normalizeMcpUrl', () => {
   test('a non-/mcp base path errors and suggests the full URL', () => {
     const r = normalizeMcpUrl('https://brain.example.com/gbrain');
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toMatch(/\/gbrain\/mcp/);
+    if (!r.ok) expect(r.error).toMatch(/\/(?:foresights|gbrain)\/mcp/);
   });
 
   test('credentials in the URL are rejected', () => {
@@ -163,11 +163,11 @@ describe('resolveToken', () => {
   test('print mode without token returns placeholder', () => {
     expect(resolveToken({ tokenFlag: null, env: null, mode: 'print' })).toEqual({ kind: 'placeholder' });
   });
-  test('install mode without token errors with a gbrain auth create hint', () => {
+  test('install mode without token errors with a foresights auth create hint', () => {
     const r = resolveToken({ tokenFlag: null, env: null, mode: 'install' });
     expect(r.kind).toBe('error');
     if (r.kind === 'error') {
-      expect(r.error).toMatch(/gbrain auth create/);
+      expect(r.error).toMatch(/(?:foresights|gbrain) auth create/);
       expect(r.error).toMatch(ENV_VAR);
     }
   });
@@ -242,7 +242,7 @@ describe('buildConnectBlock', () => {
   test('claude-code without a token emits a placeholder + replace hint', () => {
     const block = buildConnectBlock({ agent: 'claude-code', name: 'gbrain', url: 'https://h/mcp', token: null });
     expect(block).toContain(PLACEHOLDER_TOKEN);
-    expect(block).toMatch(/gbrain auth create/);
+    expect(block).toMatch(/(?:foresights|gbrain) auth create/);
   });
   test('generic agent emits URL + header lines, no claude command', () => {
     const block = buildConnectBlock({ agent: 'generic', name: 'gbrain', url: 'https://h/mcp', token: 'TOK' });
@@ -521,7 +521,7 @@ describe('runConnect --install', () => {
       installDeps(),
     );
     expect(r.exitCode).toBeUndefined();
-    expect(r.err.join('\n')).toMatch(/Added MCP server 'gbrain'/);
+    expect(r.err.join('\n')).toMatch(/Added MCP server '(?:foresights|gbrain)'/);
     expect(r.err.join('\n')).toMatch(/Verified/);
     expect(r.err.join('\n')).toContain(LEARN_INSTRUCTION);
   });
@@ -567,7 +567,7 @@ describe('runConnect --install', () => {
   test('a per-turn hook that does not load fails the install loudly (turn_hook_not_loaded)', async () => {
     const r = await runWithExitCapture(
       ['https://brain.example.com/mcp', '--token', 'gbrain_tok', '--install', '--yes'],
-      installDeps({ writeTurnHook: () => ({ lines: ['error turn_hook_not_loaded (hook_failed): the per-turn gbrain hook is not active'], ok: false }) }),
+      installDeps({ writeTurnHook: () => ({ lines: ['error turn_hook_not_loaded (hook_failed): the per-turn foresights hook is not active'], ok: false }) }),
     );
     expect(r.exitCode).toBe(1);
     expect(r.err.join('\n')).toContain('turn_hook_not_loaded');
@@ -598,7 +598,7 @@ describe('runConnect --install', () => {
       installDeps(),
     );
     expect(r.exitCode).toBe(1);
-    expect(r.err.join('\n')).toMatch(/gbrain auth create/);
+    expect(r.err.join('\n')).toMatch(/(?:foresights|gbrain) auth create/);
   });
 
   test('--force replaces an existing server then verifies', async () => {
@@ -761,7 +761,7 @@ describe('runConnect print mode', () => {
   test('--help prints command-specific HELP, no exit', async () => {
     const r = await runWithExitCapture(['--help'], installDeps());
     expect(r.exitCode).toBeUndefined();
-    expect(r.out.join('\n')).toMatch(/gbrain connect/);
+    expect(r.out.join('\n')).toMatch(/(?:foresights|gbrain) connect/);
   });
 
   test('unknown --agent fails fast', async () => {
@@ -900,7 +900,7 @@ describe('runConnect --oauth', () => {
       installDeps({ registerOAuthClient: () => ({ ok: false, message: 'No database connection' }) }),
     );
     expect(r.exitCode).toBe(1);
-    expect(r.err.join('\n')).toMatch(/gbrain auth register-client/);
+    expect(r.err.join('\n')).toMatch(/(?:foresights|gbrain) auth register-client/);
   });
 
   test('--oauth is rejected for claude-code (uses bearer)', async () => {
@@ -988,7 +988,7 @@ describe('opencode lane', () => {
     expect(r.exitCode).toBeUndefined();
     expect(writes).toEqual([{ name: 'gbrain', url: 'https://brain.example.com/mcp' }]);
     const err = r.err.join('\n');
-    expect(err).toMatch(/Added MCP entry 'gbrain'/);
+    expect(err).toMatch(/Added MCP entry '(?:foresights|gbrain)'/);
     expect(err).toMatch(/Restart opencode/);
     expect(err).toMatch(/export GBRAIN_REMOTE_TOKEN/); // env not set in fixture → profile note
     expect(err).toMatch(/Verified/);
@@ -1069,7 +1069,7 @@ describe('opencode lane', () => {
         installDeps({ writeOpencodeRemoteEntry: writeThrough }),
       );
       expect(r.exitCode).toBeUndefined();
-      expect(r.err.join('\n')).toContain('replaced the prior gbrain entry'); // the note
+      expect(r.err.join('\n')).toContain('replaced the prior foresights entry'); // the note
       const after = parseOpencodeConfig(readFileSync(cfg, 'utf8'), cfg);
       expect(((after.mcp as Record<string, unknown>).gbrain as { url: string }).url).toBe('https://new.example/mcp');
     } finally {

@@ -18,7 +18,7 @@ import { drainJsonFields, jobDisposition, runDrain, syncOutcome, type JobDisposi
 import { settleJobDrain } from '../src/core/minions/handlers/sync-job-drain.ts';
 import { defineNormalizer, expectGolden } from './helpers/golden.ts';
 
-const RESUME = 'gbrain sync --source default --no-pull';
+const RESUME = 'foresights sync --source default --no-pull';
 const passResult = (status: SyncResult['status'], reason: SyncResult['reason'] | undefined, streak = 0): SyncResult => ({ status, fromCommit: 'a', toCommit: 'b',
   added: 0, modified: 0, deleted: 0, renamed: 0, chunksCreated: 0, embedded: 0, pagesAffected: [], filesImported: 0, bankedFiles: 0, ...(reason ? { reason } : {}),
   pass: { pass_id: '00000000-0000-4000-8000-000000006712', kind: 'full', round: 4, outcome: status === 'synced' ? 'synced' : 'resumable', stop_reason: reason ?? null,

@@ -149,7 +149,7 @@ describe('BudgetTracker.reserve', () => {
 
   test('v0.41.20.0: slash-prefix anthropic/claude-* under --max-cost does NOT no_pricing throw (THE FIX)', () => {
     // Pre-v0.41.20.0: lookupPricing only split modelId on ':'. CLI users
-    // running `gbrain brainstorm --judge-model anthropic/claude-sonnet-4-6
+    // running `foresights brainstorm --judge-model anthropic/claude-sonnet-4-6
     // --max-cost 5` hit TX2 no_pricing because the slash-form id silently
     // missed ANTHROPIC_PRICING (closes #1540).
     const t = new BudgetTracker({ maxCostUsd: 10.0, label: 'test', auditPath });
@@ -231,7 +231,7 @@ describe('BudgetTracker.reserve', () => {
   });
 
   test('claude-cli:<alias> chat model under a cap prices at the canonical model rate (no no_pricing throw)', () => {
-    // `gbrain enrich --thin` with chat_model = claude-cli:haiku TX2 hard-failed
+    // `foresights enrich --thin` with chat_model = claude-cli:haiku TX2 hard-failed
     // at reserve() with reason no_pricing at EVERY --max-usd tried: the
     // gateway reserves with the pre-alias-resolution model string, and
     // `haiku` is a recipe alias, not a pricing key. lookupPricing resolves

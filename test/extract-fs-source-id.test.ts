@@ -1,7 +1,7 @@
 /**
  * #1747 — fs-walk extract on a non-default source.
  *
- * `gbrain import --source-id wiki` puts pages under source 'wiki', but the
+ * `foresights import --source-id wiki` puts pages under source 'wiki', but the
  * fs-walk extractors (extractLinksFromDir / extractTimelineFromDir /
  * extractForSlugs) built batch rows with no source_id. addLinksBatch /
  * addTimelineEntriesBatch map missing → literal 'default', and their

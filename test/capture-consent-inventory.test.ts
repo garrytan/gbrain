@@ -79,11 +79,11 @@ describe('ambient capture inventory', () => {
 });
 
 describe('operator text names what stopped and only commands that exist', () => {
-  const commandsIn = (lines: readonly string[]) => [...lines.join(' ').matchAll(/`(gbrain [^`]+)`/g)].flatMap((m) => gbrainInvocations(m[1]));
+  const commandsIn = (lines: readonly string[]) => [...lines.join(' ').matchAll(/`((?:foresights|gbrain) [^`]+)`/g)].flatMap((m) => gbrainInvocations(m[1]));
   test('config set off names the stopped lanes, what keeps working, the restart list, review and full-removal commands', () => {
     const text = writebackOffMessage().join('\n');
     for (const needle of ['Stop-hook turn capture', 'compaction harvest', 'SessionEnd transcript', 'Not stopped', 'remember / extract_facts',
-      'gbrain serve', 'OpenClaw gateway', 'hook:compact', 'sweep:corpus', 'gbrain bootstrap harness --remove']) {
+      'foresights serve', 'OpenClaw gateway', 'hook:compact', 'sweep:corpus', 'foresights bootstrap harness --remove']) {
       expect(text).toContain(needle);
     }
   });

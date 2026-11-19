@@ -84,12 +84,12 @@ Phase 5: Curation cull (rubric + reversible merge)
 
 ## Invocation
 
-The skill is markdown agent instructions. The agent uses gbrain's
+The skill is markdown agent instructions. The agent uses foresights's
 existing operations + LLM passes:
 
 ```bash
 # 1. List all concept pages
-gbrain query "type:concept" --limit 10000 --json
+foresights query "type:concept" --limit 10000 --json
 
 # 2. Phase 1 dedup — agent applies Jaccard + substring locally,
 #    then LLM passes to identify semantic duplicates.
@@ -373,7 +373,7 @@ mechanisms/examples/registers → separate canonicals. Similarity proposes;
 judgment disposes.
 
 **Finding merge candidates — qualitative bands, not numeric cutoffs.** Do
-not hardcode a similarity threshold: `gbrain search` returns hybrid
+not hardcode a similarity threshold: `foresights search` returns hybrid
 (RRF-fused) scores, not raw cosine similarity, and any pinned number rots as
 the corpus and search mode shift. Work qualitatively: search each concept's
 title + first paragraph and treat another concept as a merge CANDIDATE when
@@ -386,28 +386,28 @@ keep. Calibrate on your own corpus distribution before the bulk pass.
 
 ```bash
 # 0. Inventory the stratum being culled
-gbrain query "type:concept" --limit 10000 --json
+foresights query "type:concept" --limit 10000 --json
 
 # 1. Probe for merge candidates (mutual top-of-list hits)
-gbrain search "concept title + first paragraph" --limit 10
+foresights search "concept title + first paragraph" --limit 10
 
 # 2. Archive the absorbed page verbatim under _merged/ BEFORE touching it
 #    (add merged_into: <canonical-slug> to its frontmatter). The _merged/
 #    tree is the undo button.
-gbrain get concepts/absorbed-stub
-gbrain put concepts/_merged/cluster-name/absorbed-stub
+foresights get concepts/absorbed-stub
+foresights put concepts/_merged/cluster-name/absorbed-stub
 
 # 3. Grow the canonical head: merge_count, independent_sources,
 #    backlinks, and the ## Facets section
-gbrain put concepts/canonical-slug
+foresights put concepts/canonical-slug
 
 # 4. Soft-delete the absorbed original (restorable until purge)
-gbrain delete concepts/absorbed-stub
+foresights delete concepts/absorbed-stub
 
-# Undo paths: gbrain restore <slug> (within the purge window),
+# Undo paths: foresights restore <slug> (within the purge window),
 # the _merged/ copy (survives purge), and per-page version history:
-gbrain history concepts/canonical-slug
-gbrain revert concepts/canonical-slug <version_id>
+foresights history concepts/canonical-slug
+foresights revert concepts/canonical-slug <version_id>
 ```
 
 Commit incrementally. Nothing is hard-deleted during a cull; the `_merged/`
@@ -428,7 +428,7 @@ has earned its tier.
 ### Dedup quality
 - No two concept pages should be "the same idea in different words."
 - Aliases preserved in frontmatter for search.
-- Run `gbrain query "type:concept"` and spot-check the count reduction.
+- Run `foresights query "type:concept"` and spot-check the count reduction.
 
 ### Tier quality
 - T1 should feel like "yes, that IS one of my recurring frameworks" —
@@ -469,10 +469,10 @@ This is heavy work. Run on a cadence, not on every signal:
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - The LLM judge or synthesis run stops on a cost cap (`cost_cap_exceeded`, or exit 11 with a `resume_command`): report what finished; resume with the printed command only within the budget the user agreed.
-- `no_pricing` under a user cap: tell the user, look up the model's per-token rate, and after they agree ask the brain host's operator to register it with `gbrain pricing set <model> --input <usd-per-1M> --output <usd-per-1M>`.
+- `no_pricing` under a user cap: tell the user, look up the model's per-token rate, and after they agree ask the brain host's operator to register it with `foresights pricing set <model> --input <usd-per-1M> --output <usd-per-1M>`.
 - `revision_conflict` when rewriting a concept page: re-read and merge; never collapse a page you did not re-read.
 
 ## Anti-Patterns

@@ -5,7 +5,7 @@
  *
  * Each test stores a secret-bearing config (`webhook_secret`, the only
  * secret-valued key in SECRET_KEYS) and drives the real surface: the
- * `gbrain sources` CLI, `gbrain call`, MCP source operations for remote
+ * `foresights sources` CLI, `foresights call`, MCP source operations for remote
  * callers, `doctor --json`, managed source administration and its retained
  * receipts, and parse warnings. The secret must never appear in their
  * output. The two intentional reveals, `sources webhook set` and
@@ -200,7 +200,7 @@ describe('intentional one-time reveals', () => {
 });
 
 describe('operation surfaces never return a stored webhook secret', () => {
-  test('gbrain call sources_add attaching a path to a secret-bearing source', () => inHome(async () => {
+  test('foresights call sources_add attaching a path to a secret-bearing source', () => inHome(async () => {
     const dir = gitRepo(join(home, 'attach'));
     await insertSource(HOOKED, null, hookedConfig());
     let printed = '';

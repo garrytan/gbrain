@@ -14,7 +14,7 @@
  *    the resident's queue route does not chunk it a second time). A create
  *    within the bound that dies inside its publication leaves nothing behind.
  *    A larger create whose post-commit build died is named by doctor and
- *    built by `gbrain projections drain` once the dead build's claim lapses
+ *    built by `foresights projections drain` once the dead build's claim lapses
  *    (exactly one build; a live claim is left alone), and the receipt's
  *    `searchable_fix` names that drain as its fallback.
  * 2. Fails when: a small create publishes unsealed (its reply would depend on
@@ -155,7 +155,7 @@ for (const kind of testBackends()) {
       const reset = () => { for (const k of Object.keys(projectionDrainWork) as Array<keyof typeof projectionDrainWork>) projectionDrainWork[k] = 0; segmentChunkWork.chunks = 0; };
 
       const doctor = await checkProjectionReadiness(engine);
-      expect(doctor.message).toContain('`gbrain projections drain` builds them as well');
+      expect(doctor.message).toContain('`foresights projections drain` builds them as well');
       expect((doctor.details as { segmented_pending?: number }).segmented_pending).toBe(1);
 
       // A build another process holds (its claim is live) is left to it.

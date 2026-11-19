@@ -1,5 +1,5 @@
 /**
- * GBRA-377 PR B: `gbrain setup <claude-code|codex> --skill-loading resolve`
+ * GBRA-377 PR B: `foresights setup <claude-code|codex> --skill-loading resolve`
  * (src/core/setup/skill-resolver-setup.ts) and the skills.resolver.* config
  * keys (src/core/setup/skill-resolver-config.ts).
  *
@@ -277,7 +277,7 @@ describe('doctor: an install from before the SessionStart entry', () => {
       expect(outdated.status).toBe('warn');
       expect(outdated.details.harnesses[0]).toMatchObject({ harness, hook: 'outdated' });
       expect(outdated.message).toContain('SessionStart');
-      expect(outdated.message).toContain(`gbrain setup ${harness} --skill-loading resolve`);
+      expect(outdated.message).toContain(`foresights setup ${harness} --skill-loading resolve`);
       expect(outdated.fix.argv).toEqual(['gbrain', 'setup', harness, '--skill-loading', 'resolve']);
       const repair = await setup(b, harness, ['--skill-loading', 'resolve', '--json']);
       expect(repair.exitCode, repair.stderr).toBe(0);

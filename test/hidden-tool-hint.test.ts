@@ -43,7 +43,7 @@ describe('hidden-tool hint', () => {
     expect(fix.argv?.slice(0, 3)).toEqual(['gbrain', 'doctor', '--json']);
     expect(hint.fix.why).toContain('GBRAIN_SURFACE=full');
     expect(hint.fix.why).toContain('An inherited GBRAIN_SURFACE overrides a pinned --surface');
-    expect(hint.fix.why).toContain('claude mcp add gbrain -e GBRAIN_SURFACE=full');
+    expect(hint.fix.why).toContain('claude mcp add foresights -e GBRAIN_SURFACE=full');
   });
 
   test('verbs (request_tools absent) or widening off: the persistent route, relayed to the user', () => {
@@ -112,7 +112,7 @@ describe('D2 hidden-takes scenario, installed configurations', () => {
     r.isError ? JSON.parse(r.content[0].text).notices ?? [] : (r._meta?.gbrain_notices as Notices | undefined) ?? [];
   const hiddenNotice = (r: Parameters<typeof noticesOf>[0]) => noticesOf(r).find(n => n.code === 'hidden_tool_content');
 
-  /** A stdio server as `gbrain serve` builds it: one session surface, a listing over the advertised surface, a reveal hook. */
+  /** A stdio server as `foresights serve` builds it: one session surface, a listing over the advertised surface, a reveal hook. */
   function stdioConnection(opts: { surface: McpSurface; advertised?: McpSurface | null; readOnly?: boolean; widenAllowed?: boolean }) {
     const reveals: string[][] = [];
     const listChanged = { count: 0 };

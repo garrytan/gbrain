@@ -8,7 +8,7 @@
  * cwd = <tmpdir>/gbrain-claude-cli-cwd-<pid> (context isolation — no local
  * CLAUDE.md to auto-discover), and Claude Code records a session transcript
  * for that cwd under ~/.claude/projects/<slugified-cwd>/. Those sessions are
- * gbrain's OWN internal LLM calls — importing them back into the brain is a
+ * foresights's OWN internal LLM calls — importing them back into the brain is a
  * self-ingestion feedback loop (prompt scaffolding + page content re-entering
  * as "conversations"). The prefix is lowercase [a-z-] only, so it survives
  * Claude Code's cwd slugification verbatim and a substring match on the
@@ -38,7 +38,7 @@ export function claudeCliConfigDir(pid: number = process.pid): string {
 }
 
 /**
- * True when a discovered transcript path belongs to a gbrain claude-cli
+ * True when a discovered transcript path belongs to a foresights claude-cli
  * subprocess session (the slugified scratch-cwd fingerprint appears in the
  * harness project dir).
  */
@@ -47,7 +47,7 @@ export function isClaudeCliSelfTranscriptPath(path: string): boolean {
 }
 
 /**
- * #5413 — session ids of gbrain's own claude-cli subprocess sessions, read
+ * #5413 — session ids of foresights's own claude-cli subprocess sessions, read
  * from the harness transcripts Claude Code keeps under
  * `<projectsRoot>/<slugified scratch cwd>/<session id>.jsonl`. The
  * session-end hook names each corpus file `<session id>.txt`, so a corpus
@@ -82,7 +82,7 @@ export function claudeCliSelfSessions(projectsRoot: string = claudeProjectsDir()
   return sessions;
 }
 
-/** The harness project dirs of gbrain claude-cli scratch cwds (one listing of
+/** The harness project dirs of foresights claude-cli scratch cwds (one listing of
  * the projects root; no project's files are read). */
 export function claudeCliSelfProjectDirs(projectsRoot: string = claudeProjectsDir()): string[] {
   try {
@@ -120,7 +120,7 @@ function isPidAlive(pid: number): boolean {
 
 /**
  * Sweep dead-PID scratch dirs (cwd + hermetic-config) left behind by
- * crashed/killed gbrain processes — the per-PID naming means nothing ever
+ * crashed/killed foresights processes — the per-PID naming means nothing ever
  * reclaimed them. Called once at provider init; every step is best-effort
  * (a sweep failure must never break a chat call). Returns the number of
  * dirs removed. `baseDir` is injectable for tests.

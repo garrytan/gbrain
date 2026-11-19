@@ -1,5 +1,5 @@
 /**
- * #7085: a managed `gbrain import --source <id>` on a brain with
+ * #7085: a managed `foresights import --source <id>` on a brain with
  * `sync.write_through=false` admitted every file as a write request (spending
  * write capacity) that its publication then refused with `owner_unavailable`:
  * the admission records no worktree when write-through is off, and a managed
@@ -9,7 +9,7 @@
  * first. Protects: the import refuses once, before its per-file loop, with a
  * typed refusal (`owner_unavailable`, `detail: disabled_by_config`, not
  * retryable) whose fix names the supported path (commit the files, then
- * `gbrain sync --source <id>`); it admits no write request and spends no write
+ * `foresights sync --source <id>`); it admits no write request and spends no write
  * capacity. With write-through on, the same import still lands.
  * Seams: none; PGLite always, Postgres when DATABASE_URL is set.
  */
@@ -83,10 +83,10 @@ test('write_through=false: managed import refuses once before admitting any file
       const cause = (run.error as ImportAbortError).cause;
       expect(cause).toBeInstanceOf(OperationError);
       expect(cause).toMatchObject({ code: 'owner_unavailable', detail: 'disabled_by_config', retryable: false });
-      expect((cause as OperationError).suggestion).toContain(`gbrain sync --source ${f.sourceId}`);
+      expect((cause as OperationError).suggestion).toContain(`foresights sync --source ${f.sourceId}`);
       expect((cause as OperationError).fix?.argv).toEqual(['gbrain', 'sync', '--source', f.sourceId]);
       expect(run.stderr.match(/owner_unavailable/g)).toHaveLength(1);
-      expect(run.stderr).toContain(`gbrain sync --source ${f.sourceId}`);
+      expect(run.stderr).toContain(`foresights sync --source ${f.sourceId}`);
     } finally {
       await engine.setConfig('sync.write_through', 'true');
     }

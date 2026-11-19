@@ -86,7 +86,7 @@ const WHY: Record<Exclude<CoverageState, 'complete'>, (c: MentionCoverage) => st
     'a short or empty list is not proof that nothing else mentions this entity.',
   disabled: () => 'Mention linking is off (auto_link or mentions.auto_link is false), so only explicit links are listed, not pages that name this entity.',
   type_not_linkable: () => 'This page type is not a linkable entity type, so pages that only name it are not listed; explicit links are. ' +
-    'Add the type with `gbrain config set mentions.entity_types +<type>` to link it.',
+    'Add the type with `foresights config set mentions.entity_types +<type>` to link it.',
   failed: () => 'The last mention pass could not build the name index, so references may be missing or stale.',
 };
 
@@ -100,12 +100,12 @@ export function mentionCoverageNotice(coverage: MentionCoverage, entityType?: st
   const why = WHY[coverage.state](coverage);
   if (coverage.state === 'disabled') {
     return { code: 'mention_index', kind: 'degraded', why, fix: { argv: ['gbrain', 'config', 'set', 'mentions.auto_link', 'true'], consent: [],
-      actor: 'user', requires_exclusive: false, why: 'Turns mention linking back on; the next `gbrain extract --stale` links every page.',
+      actor: 'user', requires_exclusive: false, why: 'Turns mention linking back on; the next `foresights extract --stale` links every page.',
       verify: { argv: ['gbrain', 'config', 'get', 'mentions.auto_link'] } } };
   }
   if (coverage.state === 'type_not_linkable') {
     return { code: 'mention_index', kind: 'degraded', why, fix: { argv: ['gbrain', 'config', 'set', 'mentions.entity_types', `+${entityType ?? '<type>'}`],
-      consent: [], actor: 'user', requires_exclusive: false, why: 'Makes this page type linkable; the next `gbrain extract --stale` links pages that name it.',
+      consent: [], actor: 'user', requires_exclusive: false, why: 'Makes this page type linkable; the next `foresights extract --stale` links pages that name it.',
       verify: { argv: ['gbrain', 'config', 'get', 'mentions.entity_types'] } } };
   }
   return {

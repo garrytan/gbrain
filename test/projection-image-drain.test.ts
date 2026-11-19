@@ -1,5 +1,5 @@
 /**
- * #6803 part 2: `gbrain projections drain` makes the projection queue v153 left
+ * #6803 part 2: `foresights projections drain` makes the projection queue v153 left
  * drainable and truthful. Every queued row falls in exactly one class
  * (text, sealable, reimport, protected, archived); the drain rebuilds the text
  * rows and restores the importer's own seal on `sealable` images in place (no
@@ -170,7 +170,7 @@ for (const backend of backends) {
       expect(await projectionBacklog(engine)).toMatchObject({ reimport: 101, sealable: 2 });
       const limited = await drainProjections(engine, { media: true, limit: 1 });
       expect(limited).toMatchObject({ sealed: 1, limited: true, remaining_by_class: expect.objectContaining({ sealable: 1, reimport: 101 }) });
-      expect(formatDrainResult(limited, 1)).toContain('run `gbrain projections drain --limit 1` again to continue');
+      expect(formatDrainResult(limited, 1)).toContain('run `foresights projections drain --limit 1` again to continue');
       expect(await drainProjections(engine, { media: true })).toMatchObject({ sealed: 1, limited: false });
     }, 180_000);
 
@@ -209,9 +209,9 @@ for (const backend of backends) {
       const jobs = await queued(engine);
       const notice = (await projectionUpgradeNotice(engine))!.join('\n');
       expect(notice).toContain('[AGENT]');
-      expect(notice).toContain(`2 image page(s) the importer already attested can be sealed keyless by gbrain projections drain (about 1 minute(s) at ${IMAGE_SEAL_PAGES_PER_SECOND} pages/s, the rate measured`);
+      expect(notice).toContain(`2 image page(s) the importer already attested can be sealed keyless by foresights projections drain (about 1 minute(s) at ${IMAGE_SEAL_PAGES_PER_SECOND} pages/s, the rate measured`);
       expect(notice).toContain('3 image page(s) need their importer');
-      expect(notice).toContain('next: run: gbrain projections drain --dry-run');
+      expect(notice).toContain('next: run: foresights projections drain --dry-run');
       expect(await queued(engine)).toEqual(jobs);
       await engine.executeRaw("UPDATE pages SET deleted_at = now() WHERE slug IN ('images/pre-fence.png','images/distrusted.png','images/multi-chunk.png')");
       await drainProjections(engine, { media: true });

@@ -8,7 +8,7 @@
  * doctor-run / search event. Best-effort writes — never throws; failures
  * log a stderr warning.
  *
- * `gbrain doctor`'s skillpack_activity check reads the last 7 days to
+ * `foresights doctor`'s skillpack_activity check reads the last 7 days to
  * surface "installed N packs in the last week" as info.
  */
 
@@ -90,7 +90,7 @@ export function logSkillpackEvent(event: Omit<SkillpackAuditEvent, 'ts'>): void 
   }
 }
 
-/** Read recent events. Used by `gbrain doctor` for the activity surface. */
+/** Read recent events. Used by `foresights doctor` for the activity surface. */
 export function readRecentSkillpackEvents(days: number): SkillpackAuditEvent[] {
   const auditDir = resolveAuditDir();
   if (!existsSync(auditDir)) return [];

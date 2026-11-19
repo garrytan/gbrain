@@ -14,7 +14,7 @@ import { opError } from './ops/contract.ts';
 
 /** Statuses of a valid-time answer. Only `in_force` carries the edition's text at the top level. */
 export type ValidTimeStatus = 'in_force' | 'not_in_force' | 'not_yet_in_force' | 'before_recorded_history';
-/** Whether gbrain still holds every edition the answer depends on. */
+/** Whether foresights still holds every edition the answer depends on. */
 export type ValidTimeHistory = 'retained' | 'incomplete' | 'unknown';
 /** Why an answer is uncertain; null when it is not. */
 export type ValidTimeWhy = 'history_pruned' | 'history_gap' | 'history_unknown' | 'before_recorded_history'
@@ -76,7 +76,7 @@ export interface PickFacts {
   undatedVersions: number;
   /** pages.version_history_gap_at, ISO. */
   gapAt: string | null;
-  /** No edition has a file behind it: gbrain wrote the page's first recorded version, so nothing predates it. */
+  /** No edition has a file behind it: foresights wrote the page's first recorded version, so nothing predates it. */
   gbrainWritten: boolean;
   /** No gap is marked, but the page has enough large or segmented versions that a prune may have run before the marker existed. */
   couldHaveBeenPruned: boolean;
@@ -144,12 +144,12 @@ export function assertValidTimeEcho(params: Record<string, unknown>, result: unk
   if (echoed === params.as_of) return;
   const host = versions.host ?? 'unknown';
   throw opError('host_upgrade_required',
-    `The brain host (gbrain ${host}) answered get_page without valid time, so its reply is the current page, not the edition in force on ${String(params.as_of)}. Nothing was printed.`,
-    `Upgrade gbrain on the brain host to ${VALID_TIME_MIN_HOST_VERSION} or later (gbrain upgrade), or ask its operator to, then run the same read again.`,
+    `The brain host (foresights ${host}) answered get_page without valid time, so its reply is the current page, not the edition in force on ${String(params.as_of)}. Nothing was printed.`,
+    `Upgrade foresights on the brain host to ${VALID_TIME_MIN_HOST_VERSION} or later (foresights upgrade), or ask its operator to, then run the same read again.`,
     { detail: JSON.stringify({ client_version: versions.client, host_version: host, min_host_version: VALID_TIME_MIN_HOST_VERSION }),
       fix: { argv: ['gbrain', 'upgrade'], consent: [], actor: 'host_admin', requires_exclusive: false,
         why: 'The host predates get_page as_of; an upgraded host answers the date read with valid_time.',
-        user_message: `This brain's host runs an older gbrain that cannot read a page by date. Please run gbrain upgrade on the brain host (it needs ${VALID_TIME_MIN_HOST_VERSION} or later), or ask whoever runs it.` } });
+        user_message: `This brain's host runs an older foresights that cannot read a page by date. Please run foresights upgrade on the brain host (it needs ${VALID_TIME_MIN_HOST_VERSION} or later), or ask whoever runs it.` } });
 }
 
 /** A write's valid-time advisory: what the write result tells the writer about the edition dates it kept or changed. */

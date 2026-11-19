@@ -6,7 +6,7 @@
  * `applyReranker` in src/core/search/rerank.ts catches a RerankError from
  * the gateway. Failure is fail-open at the search layer (results pass
  * through in RRF order); the audit row is the cross-process signal that
- * `gbrain doctor reranker_health` reads.
+ * `foresights doctor reranker_health` reads.
  *
  * Success events are intentionally NOT logged here. Per the plan (CDX2-F22):
  *   1) writing once per tokenmax search is hot-path I/O churn — the
@@ -96,7 +96,7 @@ export function logRerankFailure(event: Omit<RerankFailureEvent, 'ts' | 'severit
 
 /**
  * Read recent (`days` window, default 7) rerank-failure events. Used by
- * `gbrain doctor`'s `reranker_health` check. Missing file / corrupt rows
+ * `foresights doctor`'s `reranker_health` check. Missing file / corrupt rows
  * are skipped silently — the audit trail is informational.
  */
 export function readRecentRerankFailures(days = 7, now: Date = new Date()): RerankFailureEvent[] {
@@ -106,7 +106,7 @@ export function readRecentRerankFailures(days = 7, now: Date = new Date()): Rera
 // stderr label "gbrain" + qualifier "rerank-failure audit " preserve the
 // pre-v0.40.4 message byte-for-byte:
 //
-//   `[gbrain] rerank-failure audit write failed (${msg}); search continues`
+//   `[foresights] rerank-failure audit write failed (${msg}); search continues`
 //
 // The `errorMessagePrefix` option on createAuditWriter restores the
 // qualifier that would otherwise be dropped by the refactor. Operators

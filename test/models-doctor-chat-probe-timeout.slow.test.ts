@@ -1,5 +1,5 @@
 /**
- * `gbrain models doctor` chat probe timeout — end-to-end wall-clock proof.
+ * `foresights models doctor` chat probe timeout — end-to-end wall-clock proof.
  *
  * Companion to `models-doctor-chat-probe-timeout.test.ts` (the fast,
  * zero-wait unit tests for `resolveChatProbeTimeoutMs`). These two tests

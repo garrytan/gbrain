@@ -6,7 +6,7 @@
  *   2. GBRAIN_SOURCE env var
  *   3. .gbrain-source dotfile in CWD or any ancestor directory
  *   4. Registered source whose local_path contains CWD
- *   5. Brain-level default via `gbrain sources default <id>`
+ *   5. Brain-level default via `foresights sources default <id>`
  *   6. Literal 'default' (backward compat for pre-v0.17 brains)
  *
  * This helper is shared by the sources CLI, future sync/extract/query
@@ -248,7 +248,7 @@ async function resolveSourceIdChain(
   //      When NO brain_default is set AND exactly one registered source has
   //      local_path set AND it isn't 'default', route there. This closes
   //      the "532 silent edit failures" bug class where users with a single
-  //      Vault-mounted source ran `gbrain sync` without --source and routed
+  //      Vault-mounted source ran `foresights sync` without --source and routed
   //      to source_id='default' (which held 0 pages). Conservative: fires
   //      only when there's literally one option AND 'default' is empty
   //      (#3070) — multi-source brains and established default corpora
@@ -400,7 +400,7 @@ async function pickSoleNonDefaultSource(
       const federated = (parseSourceConfig(rows[0].config) as { federated?: unknown }).federated === true;
       if (!opts.quiet && !federated && process.env.GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE !== '1') {
         console.error(
-          `[gbrain] sole non-default source '${rows[0].id}' exists, but 'default' is non-empty — routing to 'default' (#3070 emptiness guard). Pass --source ${rows[0].id} or set sources.default to target it.`,
+          `[foresights] sole non-default source '${rows[0].id}' exists, but 'default' is non-empty — routing to 'default' (#3070 emptiness guard). Pass --source ${rows[0].id} or set sources.default to target it.`,
         );
       }
       return null;
@@ -444,9 +444,9 @@ export async function resolveImplicitDefaultSourceId(engine: BrainEngine): Promi
       if (!warnedStaleImplicitDefaults.has(globalDefault)) {
         warnedStaleImplicitDefaults.add(globalDefault);
         console.error(
-          `[gbrain] config sources.default points at '${globalDefault}', which is not an active source — ` +
-          `ignoring it for this run. Fix with \`gbrain config set sources.default <id>\` ` +
-          `(see \`gbrain sources list\`) or restore it: \`gbrain sources restore ${globalDefault}\`.`,
+          `[foresights] config sources.default points at '${globalDefault}', which is not an active source — ` +
+          `ignoring it for this run. Fix with \`foresights config set sources.default <id>\` ` +
+          `(see \`foresights sources list\`) or restore it: \`foresights sources restore ${globalDefault}\`.`,
         );
       }
     }
@@ -465,7 +465,7 @@ export async function resolveImplicitDefaultSourceId(engine: BrainEngine): Promi
  */
 export function formatSoleNonDefaultNudge(sourceId: string): string | null {
   if (process.env.GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE === '1') return null;
-  return `[gbrain] routing to source '${sourceId}' (sole non-default source registered; pass --source to override).`;
+  return `[foresights] routing to source '${sourceId}' (sole non-default source registered; pass --source to override).`;
 }
 
 // ---------------------------------------------------------------------------
@@ -621,14 +621,14 @@ export function formatDefaultWriteRefusal(
   sourceFlag: string = '--source',
 ): string {
   return [
-    `[gbrain] Refusing unscoped ${command}: it would write to source 'default'.`,
+    `[foresights] Refusing unscoped ${command}: it would write to source 'default'.`,
     `  This brain keeps its content in ${a.nonDefaultSources} non-default source(s) ` +
       `(${a.nonDefaultPages} pages); 'default' holds ${a.defaultPages}.`,
     `  An unscoped write to 'default' re-creates cross-source duplicate slugs.`,
     `  Choose a target:`,
-    `    gbrain ${command} ${sourceFlag} <id>      route to a real source (see: gbrain sources list)`,
-    `    gbrain ${command} ${sourceFlag} default   write to 'default' on purpose (escape hatch)`,
-    `    ${GBRAIN_ALLOW_DEFAULT_WRITE_ENV}=1 gbrain ${command}  allow, for scripted pipelines`,
+    `    foresights ${command} ${sourceFlag} <id>      route to a real source (see: foresights sources list)`,
+    `    foresights ${command} ${sourceFlag} default   write to 'default' on purpose (escape hatch)`,
+    `    ${GBRAIN_ALLOW_DEFAULT_WRITE_ENV}=1 foresights ${command}  allow, for scripted pipelines`,
   ].join('\n');
 }
 
@@ -642,7 +642,7 @@ export function formatDefaultWriteWarning(a: DefaultWriteAssessment, sourceFlag?
     ? `Pass ${sourceFlag} <id>`
     : `Set ${'GBRAIN_SOURCE'}=<id>`;
   return (
-    `[gbrain] WARNING: writing to source 'default' on a multi-source brain ` +
+    `[foresights] WARNING: writing to source 'default' on a multi-source brain ` +
     `(${a.nonDefaultSources} non-default source(s), ${a.nonDefaultPages} pages). ` +
     `${escape} to scope writes and avoid cross-source duplicate slugs.` +
     (sourceFlag ? ` GBRAIN_SOURCE=<id> works too; GBRAIN_ALLOW_DEFAULT_WRITE=1 keeps 'default' on purpose.` : '')
@@ -690,7 +690,7 @@ async function assertSourceExists(engine: BrainEngine, id: string): Promise<void
     const nearest = await nearestSourceId(engine, id);
     throw new SourceTargetError(
       `Source "${id}" not found or is archived. Available active sources: ` +
-      `run \`gbrain sources list\` to see registered sources, ` +
+      `run \`foresights sources list\` to see registered sources, ` +
       `or create/restore "${id}" before retrying.${nearest ? ` Did you mean "${nearest}"?` : ''}`,
     );
   }
@@ -739,7 +739,7 @@ export function isResolverUserError(e: unknown): boolean {
 /**
  * #3765 — resolve the source id for an EXPLICIT repo path (`sync --repo <dir>`
  * / the sync_brain op's `repo` param), anchored at the REPO DIR instead of
- * process.cwd(). Without this, `gbrain sync --repo ~/other-vault` parsed the
+ * process.cwd(). Without this, `foresights sync --repo ~/other-vault` parsed the
  * path but resolved the SOURCE from the caller's cwd — anchors, page writes,
  * and the per-source sync lock all routed to whatever source the cwd implied.
  *
@@ -790,7 +790,7 @@ export async function resolveSourceForRepoPath(
  * Get the local_path of the resolved source (per the resolveSourceId chain).
  *
  * Returns the on-disk brain repo path for the source the user is currently
- * operating against. Used by `gbrain storage status` and `gbrain export
+ * operating against. Used by `foresights storage status` and `foresights export
  * --restore-only` to find the brain repo without raw SQL or bare try/catch.
  *
  * Resolution order:
@@ -820,14 +820,14 @@ export async function getDefaultSourcePath(
   // Legacy fallback: pre-v0.18 brains stored the repo path in the global
   // config table under sync.repo_path. The sources table exists but its
   // local_path is NULL for the seeded 'default' row. Fall back so storage
-  // tiering works without forcing a `gbrain sources add . --path .` migration.
+  // tiering works without forcing a `foresights sources add . --path .` migration.
   const legacyPath = await engine.getConfig('sync.repo_path');
   return legacyPath ?? null;
 }
 
 /**
  * v0.37.7.0 — tier labels for `resolveSourceWithTier()`. Exported so
- * `gbrain sources current --json` and downstream consumers share a
+ * `foresights sources current --json` and downstream consumers share a
  * canonical vocabulary instead of redefining strings inline.
  *
  * Order matches the 1-6 priority of `resolveSourceId()`.
@@ -846,7 +846,7 @@ export type SourceTier = typeof SOURCE_TIER_NAMES[number];
 /**
  * Same resolution chain as `resolveSourceId()`, but also returns
  * WHICH tier won. Additive — does not duplicate the logic; runs the
- * same six steps in the same order. Used by `gbrain sources current`
+ * same six steps in the same order. Used by `foresights sources current`
  * so users can verify the resolved source AND the reason it resolved
  * before destructive ops.
  *
@@ -980,7 +980,7 @@ export async function noGrantFloorReads(engine: BrainEngine, sourceId: string): 
  * #2561 — compute the federated read scope for an UNQUALIFIED local CLI call.
  *
  * `sources add --federated` promises that a `config.federated = true` source
- * "participates in unqualified `gbrain search` results"
+ * "participates in unqualified `foresights search` results"
  * (docs/guides/multi-source-brains.md). This helper turns that promise into a
  * scope: given the resolved source and WHICH tier resolved it, return
  * `[resolvedSource, ...other federated source ids]` — or `undefined` when the
@@ -1077,7 +1077,7 @@ function federatedSetFor(
 }
 
 /**
- * Source-guard write policy (`gbrain serve --source-guard`) — the plugin
+ * Source-guard write policy (`foresights serve --source-guard`) — the plugin
  * lanes' fail-closed routing rule.
  *
  * A plugin-managed MCP server is user-global and runs with the plugin

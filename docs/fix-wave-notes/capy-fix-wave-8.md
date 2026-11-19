@@ -3,7 +3,7 @@
 One integrated PR. Eight lanes (A-G, with D split into D1 and D2) were built in
 parallel on master v0.60.31.0, merged here, then merged with master v0.60.32.0
 (fix wave 7, #5908) before the items that touch fix wave 7's files were built.
-Lane H (explicit-cap `no_pricing` guidance and `gbrain pricing`) was built on
+Lane H (explicit-cap `no_pricing` guidance and `foresights pricing`) was built on
 v0.60.32.0 and merged last. The branch also folds in community PR #5587 and
 GBRA-35's `capy/gbra35-defaults-on` (see [its notes](capy-gbra35-defaults-on.md)).
 
@@ -136,7 +136,7 @@ in fix wave 7), skipped (owner named), closed as already fixed.
 | #4578 | G | 5e7cff18d, 11f147c12, 3f68931e2 | `test/autopilot-global-maintenance-resume-4578.test.ts` | fixed |
 | #5088 | G | a66fbdbcf, cc9a872d0 | `test/migrate-embeddings-ann-deferred-5088.serial.test.ts`, `test/e2e/migrate-embeddings-ann-build-5088-postgres.test.ts` | fixed (takes join the deferred worklist at integration) |
 | #5216, #4738 | G + integrator | 61ae59fe5, 70afd929a, 592c48f1a, ca6a21f95; cc7c9956a | `test/page-revision-backfill-5216.test.ts`, `test/e2e/page-revision-rollout-5216-postgres.test.ts`, `test/pg-access-storage-corrupt-5216.test.ts`, `test/revision-backfill-pending-request-error.test.ts` | fixed |
-| `no_pricing` under an explicit cap; `gbrain pricing set/list/unset` | H | 181ac34fa, fec4875a8, 4e126ce5e, b078f584d, 81631b879 | `test/budget/no-pricing-registration.test.ts`, `test/extract-atoms-explicit-cap-no-pricing.test.ts`, `test/extract-atoms-embed-cost-gate.test.ts` | fixed (product change approved) |
+| `no_pricing` under an explicit cap; `foresights pricing set/list/unset` | H | 181ac34fa, fec4875a8, 4e126ce5e, b078f584d, 81631b879 | `test/budget/no-pricing-registration.test.ts`, `test/extract-atoms-explicit-cap-no-pricing.test.ts`, `test/extract-atoms-embed-cost-gate.test.ts` | fixed (product change approved) |
 | (no issue) PGLite generic-plan stall: the sixth and later searches in a process took ~7 s at 2k pages | integrator | 9aa88eb31 | `test/search/adjacency-generic-plan.test.ts` | fixed (found while measuring the headline metric) |
 | #5587 (community PR) | integrator | 658d6109e | skill tests, `scripts/check-plugin-tree.sh` | absorbed; close as superseded |
 | #5856 follow-up (GBRA-35) | GBRA-35 | 7530e1d4a | `test/connector-atom-pages.test.ts`, `test/autopilot-auto-drain-dispatch.test.ts`, `test/managed-connector-job-contract.test.ts` | fixed (connector atoms on by default) |

@@ -97,7 +97,7 @@ export async function runCell(spec: CellSpec): Promise<Record<string, unknown>> 
     source: spec.harnessRoot, mirrorDir: join(dir, 'mirror.git'), archiveDir: join(spec.cacheDir, 'archives'), certDir: join(spec.cacheDir, 'certs'),
     forward: mock ? { 'api.voyageai.com': mock.url } : {},
   });
-  writeFileSync(join(dir, 'gitconfig'), '[url "' + fx.mirror + '"]\n\tinsteadOf = https://github.com/garrytan/gbrain\n[user]\n\tname = upgrade-matrix\n\temail = upgrade-matrix@example.invalid\n[init]\n\tdefaultBranch = main\n');
+  writeFileSync(join(dir, 'gitconfig'), '[url "' + fx.mirror + '"]\n\tinsteadOf = https://github.com/garrytan/gbrain\n\tinsteadOf = https://github.com/aimonk2025/gbrain\n[user]\n\tname = upgrade-matrix\n\temail = upgrade-matrix@example.invalid\n[init]\n\tdefaultBranch = main\n');
 
   let databaseUrl: string | undefined;
   const dbName = 'um_' + createHash('sha1').update(id + process.pid + started).digest('hex').slice(0, 16);

@@ -1,8 +1,9 @@
 // One-shot post-upgrade notice for retrieval feedback. The feature ships off; the notice says what it does,
-// how to turn it on, and what held-out results showed. Printed by `gbrain post-upgrade` once, and not at all when
+// how to turn it on, and what held-out results showed. Printed by `foresights post-upgrade` once, and not at all when
 // the operator already set `feedback.enabled`.
 import type { BrainEngine } from '../engine.ts';
 import { agentBlock } from '../agent-markers.ts';
+import { commandText } from '../brand.ts';
 
 export const FEEDBACK_NOTICE_SHOWN_KEY = 'feedback.notice_shown';
 export const FEEDBACK_ENABLE_ARGV = ['gbrain', 'config', 'set', 'feedback.enabled', 'true'] as const;
@@ -14,9 +15,9 @@ export async function retrievalFeedbackUpgradeNotice(engine: BrainEngine): Promi
   return [
     '',
     '═══════════════════════════════════════════════════════════════',
-    '[gbrain] Retrieval feedback is available and OFF. When on, an agent can rate',
-    '[gbrain] an answer (rate_answer / gbrain rate) and the pages it used rank a',
-    '[gbrain] little higher or lower next time. No model call, local only.',
+    '[foresights] Retrieval feedback is available and OFF. When on, an agent can rate',
+    '[foresights] an answer (rate_answer / foresights rate) and the pages it used rank a',
+    '[foresights] little higher or lower next time. No model call, local only.',
     '═══════════════════════════════════════════════════════════════',
     ...agentBlock({
       ask: 'Turn on retrieval feedback for this brain?',
@@ -26,11 +27,11 @@ export async function retrievalFeedbackUpgradeNotice(engine: BrainEngine): Promi
       consent: 'none',
       actor: 'user',
       next: 'ask_user',
-      if_yes: `Run ${FEEDBACK_ENABLE_ARGV.join(' ')}. Guide: docs/guides/retrieval-feedback.md`,
+      if_yes: `Run ${commandText(FEEDBACK_ENABLE_ARGV)}. Guide: docs/guides/retrieval-feedback.md`,
       if_no: 'Nothing to run; it stays off.',
-      verify: 'gbrain feedback status --json',
+      verify: 'foresights feedback status --json',
     }, {
-      showUser: 'GBrain can learn which pages actually helped when you or your agent rate answers. It is off by default: it helped on ' +
+      showUser: 'Foresights can learn which pages actually helped when you or your agent rate answers. It is off by default: it helped on ' +
         'brains about people and companies but not on chat-history brains. Turn it on?',
     }).trimEnd().split('\n'),
     '',

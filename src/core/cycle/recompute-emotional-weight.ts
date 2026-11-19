@@ -17,7 +17,7 @@
  * In incremental mode (`affectedSlugs` non-empty), only those pages are
  * touched. In full mode (`affectedSlugs` undefined or null) every page in
  * the brain is recomputed — this is the path users hit on first upgrade
- * via `gbrain dream --phase recompute_emotional_weight`.
+ * via `foresights dream --phase recompute_emotional_weight`.
  *
  * Target wall-clock budget: <5s on a 1000-page fixture; <60s on a 50K-page
  * real brain. Catastrophic-exception path returns a 'fail' PhaseResult so
@@ -38,7 +38,7 @@ export interface RecomputeEmotionalWeightOpts {
    * the incremental path.
    */
   affectedSlugs?: string[];
-  /** GBrain config for high_emotion_tags + user_holder overrides. */
+  /** Foresights config for high_emotion_tags + user_holder overrides. */
   config?: GBrainConfig;
   /** Cooperative abort — checked before every write slice. */
   signal?: AbortSignal;

@@ -1,10 +1,11 @@
 /**
- * #6650 (L3): output of `gbrain sources writer failures <source>` (`terminal-failures.ts` reads, `administration.ts`
+ * #6650 (L3): output of `foresights sources writer failures <source>` (`terminal-failures.ts` reads, `administration.ts`
  * dispatches, locally or through the resident owner). A person gets a table; `--json` gets one document. Fixes and
  * inspect actions are rendered for the CLI in both, so `fix.next` and `fix.command` follow the agent operator contract.
  */
 import { cliRenderContext, renderAction, type RenderedAction } from '../core/agent-output.ts';
 import type { TerminalFailureGroup, TerminalFailureListing, TerminalFailureRow } from '../core/persistence/terminal-failures.ts';
+import { commandText } from '../core/brand.ts';
 
 type Rendered<T> = Omit<T, 'inspect' | 'fix'> & { inspect: RenderedAction; fix: RenderedAction };
 type RenderedGroup = Omit<TerminalFailureGroup, 'fix' | 'samples'> & { fix: RenderedAction; samples: Array<Omit<TerminalFailureGroup['samples'][number], 'inspect'> & { inspect: RenderedAction }> };
@@ -47,9 +48,9 @@ export function renderWriterFailures(listing: TerminalFailureListing, json: bool
     }
     if (rows.some(r => r.blocking)) lines.push('  * holds a publication recovery record: it blocks its root now.');
     const first = rows[0];
-    if (first) lines.push(`  Next for the newest: ${first.fix.command ?? first.fix.why}`, `  Inspect one: gbrain write-request <request> --json`);
+    if (first) lines.push(`  Next for the newest: ${first.fix.command ?? first.fix.why}`, `  Inspect one: foresights write-request <request> --json`);
   }
-  if (rendered.truncated && rendered.next) lines.push(`  More: ${rendered.next.join(' ')}`);
+  if (rendered.truncated && rendered.next) lines.push(`  More: ${commandText(rendered.next)}`);
   if (!rendered.groups?.length && !rendered.rows?.length) lines.push('  Nothing to show: no receipt in the window ended without committing.');
   return `${lines.join('\n')}\n`;
 }

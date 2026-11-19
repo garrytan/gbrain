@@ -1,5 +1,5 @@
 /**
- * `gbrain apply-migrations` — migration runner CLI.
+ * `foresights apply-migrations` — migration runner CLI.
  *
  * Reads ~/.gbrain/migrations/completed.jsonl, diffs against the TS migration
  * registry, runs any pending orchestrators. Resumes `status: "partial"`
@@ -7,8 +7,8 @@
  * cheap when nothing is pending.
  *
  * Invoked from:
- *   - `gbrain upgrade` → runPostUpgrade() tail (Lane A-5)
- *   - `gbrain setup <harness>` on the brain it just created
+ *   - `foresights upgrade` → runPostUpgrade() tail (Lane A-5)
+ *   - `foresights setup <harness>` on the brain it just created
  *   - explicit user / host-agent after registering new handlers (Lane C-1)
  */
 
@@ -100,24 +100,24 @@ function parseArgs(args: string[]): ApplyMigrationsArgs {
   const exporting = has('--export-db-only');
   if (exporting && !val('--content-root') || has('--backup-confirmed') && has('--acknowledge-no-backup')) {
     exitCliError(usageError('DB-only export requires --content-root and exactly one explicit backup choice for a non-dry run.',
-      'Example: gbrain apply-migrations --migration <version> --export-db-only --content-root <path> --backup-confirmed --dry-run --json'), COMMAND);
+      'Example: foresights apply-migrations --migration <version> --export-db-only --content-root <path> --backup-confirmed --dry-run --json'), COMMAND);
   }
   const accepted: Record<string, string> = {};
   args.forEach((arg, i) => {
     if (arg !== '--accept-reviewed-inventory') return;
     const match = /^([^=\s]+)=([a-f0-9]{64})$/.exec(args[i + 1] ?? '');
     if (!match) exitCliError(usageError('--accept-reviewed-inventory takes <source-id>=<64-hex inventory digest>, copied from the migration\'s conflict message.',
-      'Example: gbrain apply-migrations --migration 0.53.0 --accept-reviewed-inventory default=<digest> --yes'), COMMAND);
+      'Example: foresights apply-migrations --migration 0.53.0 --accept-reviewed-inventory default=<digest> --yes'), COMMAND);
     accepted[match![1]] = match![2];
   });
   const budget = val('--statement-timeout');
   if (has('--statement-timeout') && !/^\d+$/.test(budget ?? '')) {
     exitCliError(usageError('--statement-timeout takes whole minutes (0 removes the limit) for this run\'s schema migrations.',
-      'Example: gbrain apply-migrations --yes --statement-timeout 120'), COMMAND);
+      'Example: foresights apply-migrations --yes --statement-timeout 120'), COMMAND);
   }
   if (mode && !['always', 'pain_triggered', 'off'].includes(mode)) {
     exitCliError(usageError(`Invalid --mode "${mode}". Allowed: always, pain_triggered, off.`,
-      'Example: gbrain apply-migrations --yes --mode pain_triggered'), COMMAND);
+      'Example: foresights apply-migrations --yes --mode pain_triggered'), COMMAND);
   }
   return {
     list: has('--list'),
@@ -145,28 +145,28 @@ function parseArgs(args: string[]): ApplyMigrationsArgs {
 }
 
 function printHelp(): void {
-  console.log(`gbrain apply-migrations — run pending migration orchestrators.
+  console.log(`foresights apply-migrations — run pending migration orchestrators.
 
 Usage:
-  gbrain apply-migrations                Run all pending migrations interactively.
-  gbrain apply-migrations --yes          Non-interactive; uses default mode (pain_triggered).
-  gbrain apply-migrations --dry-run      Print the plan; take no action.
-  gbrain apply-migrations --dry-run --json
+  foresights apply-migrations                Run all pending migrations interactively.
+  foresights apply-migrations --yes          Non-interactive; uses default mode (pain_triggered).
+  foresights apply-migrations --dry-run      Print the plan; take no action.
+  foresights apply-migrations --dry-run --json
                                         Include read-only content inventories and conflicts.
-  gbrain apply-migrations --migration 0.53.0 --export-db-only --content-root <path>
+  foresights apply-migrations --migration 0.53.0 --export-db-only --content-root <path>
     [--export-source <id>] --dry-run --json
                                         Preview a lossless host-side DB-only content export.
     --confirm-quiesced                   Attest old writers and skill servers are stopped.
     --backup-confirmed                   Attest an operational backup was verified by you.
     --acknowledge-no-backup               Explicitly proceed without a verified backup.
-  gbrain apply-migrations --migration 0.53.0 --accept-reviewed-inventory <source>=<digest> --yes
+  foresights apply-migrations --migration 0.53.0 --accept-reviewed-inventory <source>=<digest> --yes
                                         Accept a skill-pack change the user reviewed; the
                                         digest comes from the conflict message and stops
                                         matching if the files change again. Repeatable.
-  gbrain apply-migrations --list [--json]
+  foresights apply-migrations --list [--json]
                                          Show applied + pending migrations.
                                          pending_fresh_install = setup work a
-                                         brain created by gbrain init has not
+                                         brain created by foresights init has not
                                          run yet (expected; apply with --yes).
                                          applied_pending_host_work = the
                                          checkpoint is recorded but host work
@@ -176,21 +176,21 @@ Usage:
                                          records it (doctor minions_migration).
                                          Unenrolled members and opted-out
                                          sources are not host work.
-  gbrain apply-migrations --migration vX.Y.Z
+  foresights apply-migrations --migration vX.Y.Z
                                          Force-run a specific migration by version.
-  gbrain apply-migrations --force-retry vX.Y.Z
+  foresights apply-migrations --force-retry vX.Y.Z
                                          Clear a wedged migration (3+ consecutive
                                          partials). Writes a 'retry' marker so the
                                          next run treats it as fresh.
-  gbrain apply-migrations --force-orchestrator
+  foresights apply-migrations --force-orchestrator
                                          Reset every wedged orchestrator migration
                                          in one shot (writes 'retry' for each).
-  gbrain apply-migrations --force-schema
+  foresights apply-migrations --force-schema
                                          Reset schema-version drift; re-runs
                                          runMigrations from current config.version.
-  gbrain apply-migrations --force        (alias --force-all) Apply both
+  foresights apply-migrations --force        (alias --force-all) Apply both
                                          --force-orchestrator and --force-schema.
-  gbrain apply-migrations --skip-verify  Bypass post-condition verify hooks on
+  foresights apply-migrations --skip-verify  Bypass post-condition verify hooks on
                                          non-idempotent migrations (D6 escape hatch).
 
 Flags:
@@ -218,7 +218,7 @@ Exit codes:
   1  An orchestrator failed, the migration lease stopped matching this run
      (migration_lease_lost), or the run left the schema behind
      (migrations_pending: not_applied → apply them with --yes; still_behind or
-     schema_unreadable → run gbrain doctor --json and report, not --yes again;
+     schema_unreadable → run foresights doctor --json and report, not --yes again;
      wedged → a migration ended partial 3+ times in a row: ask the user, fix
      the cause, then --force-retry <version>).
      An unreachable Postgres stays 0 (GBRAIN_DB_ACCESS on stderr) unless --require-db.
@@ -231,7 +231,7 @@ Exit codes:
 
 interface CompletedIndex {
   byVersion: Map<string, CompletedMigrationEntry[]>;
-  /** The version whose `gbrain init` created this brain (fresh-install stamps), or null. */
+  /** The version whose `foresights init` created this brain (fresh-install stamps), or null. */
   freshVersion: string | null;
 }
 
@@ -255,7 +255,7 @@ interface Plan {
   applied_pending_host_work: Migration[];
   partial: Migration[];
   pending: Migration[];
-  /** Never run on a brain gbrain init created at or after its version: expected setup work, not an interrupted upgrade. */
+  /** Never run on a brain foresights init created at or after its version: expected setup work, not an interrupted upgrade. */
   pending_fresh_install: Migration[];
   skippedFuture: Migration[];
   wedged: Migration[];
@@ -272,7 +272,7 @@ interface Plan {
  * - partial:  has only `status: "partial"` entries (stopgap wrote one) →
  *             orchestrator runs to finish missing phases.
  * - pending:  has no entries at all and migration.version ≤ installed VERSION.
- * - pending_fresh_install: pending, on a brain `gbrain init` created at or
+ * - pending_fresh_install: pending, on a brain `foresights init` created at or
  *             after this version (fresh-install stamps). Runs like pending.
  * - skippedFuture: migration.version > installed VERSION (binary is older
  *                  than the migration; wait for a newer install).
@@ -339,7 +339,7 @@ function listRows(plan: Plan): Array<{ status: string; m: Migration }> {
 }
 
 function printList(plan: Plan, installed: string, dbProbe: DbProbeOutcome): void {
-  console.log(`Installed gbrain version: ${installed}`);
+  console.log(`Installed foresights version: ${installed}`);
   console.log(`${formatDbProbeLine(dbProbe)}\n`);
   console.log('  Status                 Version   Headline');
   console.log('  ---------------------  --------  -----------------------------------------');
@@ -353,19 +353,19 @@ function printList(plan: Plan, installed: string, dbProbe: DbProbeOutcome): void
   console.log('');
   const needsWork = plan.pending.length + plan.partial.length;
   const setup = plan.pending_fresh_install.length;
-  for (const m of plan.declined) console.log(`v${m.version} is declined by config (${m.optOut?.key} is false); turn it back on: gbrain config set ${m.optOut?.key} true`);
+  for (const m of plan.declined) console.log(`v${m.version} is declined by config (${m.optOut?.key} is false); turn it back on: foresights config set ${m.optOut?.key} true`);
   for (const m of plan.wedged) console.log(`v${m.version} is wedged (${MAX_CONSECUTIVE_PARTIALS}+ consecutive partial runs). Read ${wedgedLedgerHint()}, fix the cause, then: ${shellQuote(forceRetryArgv(m.version))}`);
   for (const m of plan.applied_pending_host_work) {
     console.log(`v${m.version} is applied_pending_host_work: its mechanical checkpoint is recorded, but host publication or client activation is not done. `
-      + `Inspect each source's next step: ${shellQuote(hostWorkInspectArgv(m.version))}; once that work is done, \`gbrain apply-migrations --yes\` records it in the migration's report.`);
+      + `Inspect each source's next step: ${shellQuote(hostWorkInspectArgv(m.version))}; once that work is done, \`foresights apply-migrations --yes\` records it in the migration's report.`);
   }
   if (needsWork === 0 && setup === 0 && plan.wedged.length === 0) {
     if (plan.applied_pending_host_work.length === 0) console.log('All migrations up to date.');
     return;
   }
-  if (needsWork > 0) console.log(`${needsWork} migration(s) need action. Run \`gbrain apply-migrations --yes\` to apply.`);
+  if (needsWork > 0) console.log(`${needsWork} migration(s) need action. Run \`foresights apply-migrations --yes\` to apply.`);
   if (setup > 0) {
-    console.log(`${setup} setup migration(s) are pending_fresh_install: this brain was created by gbrain init and has not run them yet. `
+    console.log(`${setup} setup migration(s) are pending_fresh_install: this brain was created by foresights init and has not run them yet. `
       + `This is expected setup work, not a failed upgrade. Finish setup: ${shellQuote(FINISH_SETUP_ARGV)}`);
   }
 }
@@ -394,7 +394,7 @@ function listJson(plan: Plan, idx: CompletedIndex, installed: string, dbProbe: D
 }
 
 function printDryRun(plan: Plan, installed: string, dbProbe: DbProbeOutcome): void {
-  console.log(`Dry run — installed gbrain version: ${installed}`);
+  console.log(`Dry run — installed foresights version: ${installed}`);
   console.log(formatDbProbeLine(dbProbe));
   console.log('');
   if (plan.applied.length) {
@@ -413,12 +413,12 @@ function printDryRun(plan: Plan, installed: string, dbProbe: DbProbeOutcome): vo
     console.log('');
   }
   if (plan.pending_fresh_install.length) {
-    console.log('Would APPLY (pending_fresh_install — setup a brain created by gbrain init has not run yet; expected, not a failed upgrade):');
+    console.log('Would APPLY (pending_fresh_install — setup a brain created by foresights init has not run yet; expected, not a failed upgrade):');
     for (const m of plan.pending_fresh_install) console.log(`  → v${m.version} — ${m.featurePitch.headline}`);
     console.log('');
   }
   if (plan.declined.length) {
-    console.log('Declined by config (not run; turn one back on with gbrain config set <key> true):');
+    console.log('Declined by config (not run; turn one back on with foresights config set <key> true):');
     for (const m of plan.declined) console.log(`  ⊘ v${m.version} — ${m.optOut?.key} is false`);
     console.log('');
   }
@@ -464,7 +464,7 @@ async function resolveSchemaBehind(opts: {
   }
   console.warn(
     `\n⚠️  Schema version ${schemaVer} is behind latest ${latest}.\n` +
-    `   Run \`gbrain apply-migrations --yes\` to apply now, or \`gbrain init --migrate-only\`.\n`,
+    `   Run \`foresights apply-migrations --yes\` to apply now, or \`foresights init --migrate-only\`.\n`,
   );
   return true;
 }
@@ -498,7 +498,7 @@ interface RunReport {
 
 function unknownMigrationError(version: string): OperationError {
   return usageError(`No migration registered with version "${version}".`,
-    'Run `gbrain apply-migrations --list` to see registered versions.',
+    'Run `foresights apply-migrations --list` to see registered versions.',
     { fix: { argv: ['gbrain', COMMAND, '--list'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Lists every registered migration and its status.' } });
 }
 
@@ -518,7 +518,7 @@ function finishReport(cli: ApplyMigrationsArgs, report: RunReport, exitCode: num
   if (exitCode === 3) return exitCode;
   if (exitCode !== undefined && exitCode !== 0) {
     const failure = report.failure ?? opError('migration_failed', `apply-migrations exited with status ${exitCode}.`,
-      'Read the stderr lines above for the failing migration, fix it, then run `gbrain apply-migrations` again.');
+      'Read the stderr lines above for the failing migration, fix it, then run `foresights apply-migrations` again.');
     return writeCliError(failure, COMMAND, { json: cli.json, ...(cli.json ? { legacy: report.doc } : {}) });
   }
   if (cli.json) void writeJsonDocument(JSON.stringify(report.doc));
@@ -559,14 +559,14 @@ async function applyParsed(cli: ApplyMigrationsArgs, args: string[]): Promise<{ 
   const report: RunReport = { doc: { status: 'ok', installed } };
 
   // First-install guard (an older release's postinstall calls us even on `bun add gbrain`
-  // before the user has run `gbrain init`). No config = no brain = nothing
+  // before the user has run `foresights init`). No config = no brain = nothing
   // to migrate. Exit silently for --yes / --non-interactive so postinstall
   // stays quiet; mention the init step when invoked interactively.
   const config = loadConfig();
   if (!config) {
     if (cli.json) await writeJsonDocument(JSON.stringify({ status: 'unconfigured', previews: [], message: 'No brain configured; nothing to migrate.' }));
-    else if (cli.list) console.log('No brain configured. Run `gbrain init` to set one up.');
-    else if (cli.dryRun) console.log('No brain configured (run `gbrain init` first). Nothing to migrate.');
+    else if (cli.list) console.log('No brain configured. Run `foresights init` to set one up.');
+    else if (cli.dryRun) console.log('No brain configured (run `foresights init` first). Nothing to migrate.');
     return { exitCode: undefined };
   }
 
@@ -608,7 +608,7 @@ async function applyParsed(cli: ApplyMigrationsArgs, args: string[]): Promise<{ 
       report.doc.status = 'lease_lost';
       report.doc.lease = error.details;
       report.failure = opError('migration_lease_lost', error.message,
-        'Run `gbrain doctor --json` and report this to the user with the lease details; do not delete the lease row or rerun in a loop.',
+        'Run `foresights doctor --json` and report this to the user with the lease details; do not delete the lease row or rerun in a loop.',
         { why: 'The migration lease row still names this run, but its fenced refresh matched nothing, so mutual exclusion can no longer be proven (#6028).',
           fix: { consent: [], actor: 'agent', requires_exclusive: false, why: 'Tell the user the migration lease no longer matched its own fence and what doctor reports.',
             verify: { argv: ['gbrain', 'doctor', '--json'] } } });
@@ -617,7 +617,7 @@ async function applyParsed(cli: ApplyMigrationsArgs, args: string[]): Promise<{ 
       console.error(`apply-migrations refused: ${error.message}`);
       report.doc.status = 'refused';
       report.failure = opError('migrations_running', error.message,
-        'Wait for the other apply-migrations run to finish, then run `gbrain apply-migrations` again (it resumes where that run stopped).');
+        'Wait for the other apply-migrations run to finish, then run `foresights apply-migrations` again (it resumes where that run stopped).');
       exitCode = MIGRATIONS_RUNNING_EXIT_CODE;
     } else {
       throw error;
@@ -646,7 +646,7 @@ async function runLockedMigrations(
   const refusal: SchemaRefusal = {};
   const migrateSchema = (eng: BrainEngine, from: number) => migrateSchemaThroughInit(eng, from, refusal);
   // Bug 3 — --force-retry: write an explicit reset marker for a wedged
-  // migration, then return. User re-runs `gbrain apply-migrations --yes`
+  // migration, then return. User re-runs `foresights apply-migrations --yes`
   // to actually re-attempt.
   if (cli.forceRetry) {
     const target = migrations.find(m => m.version === cli.forceRetry);
@@ -656,13 +656,13 @@ async function runLockedMigrations(
     }
     appendCompletedMigration({ version: cli.forceRetry, status: 'retry' });
     doc.retry_markers = [cli.forceRetry];
-    console.log(`Wrote 'retry' marker for v${cli.forceRetry}. Run \`gbrain apply-migrations --yes\` to re-attempt.`);
+    console.log(`Wrote 'retry' marker for v${cli.forceRetry}. Run \`foresights apply-migrations --yes\` to re-attempt.`);
     return;
   }
 
   // v0.30.1 (codex T5): --force-orchestrator OR --force-all writes a 'retry'
   // marker for EVERY wedged orchestrator migration in one shot. User re-runs
-  // `gbrain apply-migrations --yes` to actually re-attempt.
+  // `foresights apply-migrations --yes` to actually re-attempt.
   if (cli.forceOrchestrator || cli.forceAll) {
     const completed = loadCompletedMigrations();
     const idx = indexCompleted(completed);
@@ -681,7 +681,7 @@ async function runLockedMigrations(
     if (resetCount === 0) {
       console.log('No wedged orchestrator migrations found.');
     } else {
-      console.log(`\nReset ${resetCount} wedged orchestrator migration(s). Run \`gbrain apply-migrations --yes\` to re-attempt.`);
+      console.log(`\nReset ${resetCount} wedged orchestrator migration(s). Run \`foresights apply-migrations --yes\` to re-attempt.`);
     }
     if (!cli.forceAll) return; // --force-schema continues below if --force-all is set
   }
@@ -695,7 +695,7 @@ async function runLockedMigrations(
       const cfg = loadConfig();
       if (!cfg) {
         console.error('No brain configured for --force-schema.');
-        fail('failed', opError('no_brain', 'No brain configured for --force-schema.', 'Create a brain first: `gbrain init` (`gbrain init --help` lists the options).'));
+        fail('failed', opError('no_brain', 'No brain configured for --force-schema.', 'Create a brain first: `foresights init` (`foresights init --help` lists the options).'));
         return 2;
       }
       const { engine: eng, version, behind } = await connectForForcedSchema(cfg);
@@ -708,7 +708,7 @@ async function runLockedMigrations(
     } catch (err) {
       console.error(`--force-schema failed: ${(err as Error).message}`);
       fail('failed', err instanceof OperationError && err.code === 'foreign_table' ? err : opError('migration_failed', `--force-schema failed: ${(err as Error).message}`,
-        'Fix the database error above, then run `gbrain apply-migrations --force-schema` again.', { reason: 'schema_failed' }));
+        'Fix the database error above, then run `foresights apply-migrations --force-schema` again.', { reason: 'schema_failed' }));
       return 1;
     }
     return; // --force-schema alone, or --force-all with both surfaces flushed
@@ -732,7 +732,7 @@ async function runLockedMigrations(
   reportWedgedMigrations(plan.wedged, plan.wedged_superseded, completed);
 
   if (cli.specificMigration && plan.applied.length + plan.partial.length + plan.pending.length + plan.pending_fresh_install.length + plan.skippedFuture.length + plan.declined.length === 0) {
-    console.error(`No migration registered with version "${cli.specificMigration}". Run \`gbrain apply-migrations --list\` to see registered versions.`);
+    console.error(`No migration registered with version "${cli.specificMigration}". Run \`foresights apply-migrations --list\` to see registered versions.`);
     fail('invalid', unknownMigrationError(cli.specificMigration));
     return 2;
   }
@@ -764,7 +764,7 @@ async function runLockedMigrations(
     }
     const failedPreview = previews.find(preview => preview.error);
     if (!listExit && failedPreview) fail('preview_failed', opError('migration_failed', `The v${failedPreview.version} preview could not be computed: ${failedPreview.error}`,
-      'Read the previews array for the failing inventory, fix it, then preview again with `gbrain apply-migrations --dry-run --json`.', { reason: 'preview_failed' }));
+      'Read the previews array for the failing inventory, fix it, then preview again with `foresights apply-migrations --dry-run --json`.', { reason: 'preview_failed' }));
     return listExit || (previews.some(preview => preview.error) ? 1 : 0);
   }
   if (cli.requireDb && dbProbe.status === 'unreachable') {
@@ -811,7 +811,7 @@ async function runLockedMigrations(
   if (owned?.engine === 'pglite' && !owned.database_url) {
     const peek = peekLock(owned.database_path ?? gbrainPath('brain.pglite'));
     if (peek.held && peek.isServe && peek.pid !== undefined && peek.pid !== process.pid) {
-      throw new LiveServeLockError(`GBrain's local database is already open through \`gbrain serve\` (MCP, PID ${peek.pid}); apply-migrations needs it to itself. Nothing was applied.`,
+      throw new LiveServeLockError(`Foresights's local database is already open through \`foresights serve\` (MCP, PID ${peek.pid}); apply-migrations needs it to itself. Nothing was applied.`,
         { pid: peek.pid, transport: peek.http ? 'http' : 'stdio' });
     }
   }
@@ -851,7 +851,7 @@ async function runLockedMigrations(
         const failedPhases = result.phases.filter(p => p.status === 'failed').map(p => `${p.name}: ${p.detail ?? '(no detail)'}`);
         fail('failed', opError('migration_failed',
           `Migration v${m.version} failed${failedPhases.length ? ` (${failedPhases.join('; ')})` : ''}; the chain stopped there.`,
-          'Fix the failing phase named above, then run `gbrain apply-migrations` again; it resumes from this migration.',
+          'Fix the failing phase named above, then run `foresights apply-migrations` again; it resumes from this migration.',
           { reason: 'orchestrator_failed', fix: rerunFix(args, `Resumes the chain from v${m.version} once the failing phase is fixed.`) }));
         // Record the attempt as 'partial' (not 'complete') so the cap counts
         // it. Don't let a failed orchestrator look like it never ran.
@@ -889,7 +889,7 @@ async function runLockedMigrations(
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Failed to persist ledger entry for v${m.version}: ${msg}. Stopping to prevent silent drift.`);
         fail('failed', opError('migration_failed', `Failed to persist the ledger entry for v${m.version}: ${msg}.`,
-          'Check that ~/.gbrain/migrations is writable, then run `gbrain apply-migrations` again.', { reason: 'ledger_write_failed' }));
+          'Check that ~/.gbrain/migrations is writable, then run `foresights apply-migrations` again.', { reason: 'ledger_write_failed' }));
         failed = true;
         break;
       }
@@ -897,7 +897,7 @@ async function runLockedMigrations(
       results.push({ version: m.version, status: result.status });
       if (result.status === 'partial') {
         doc.status = 'partial';
-        console.log(`Migration v${m.version} finished as PARTIAL. Run \`gbrain apply-migrations\` again after resolving any pending host-work items.`);
+        console.log(`Migration v${m.version} finished as PARTIAL. Run \`foresights apply-migrations\` again after resolving any pending host-work items.`);
       } else if (m.reconcile && result.pending_host_work) {
         console.log(`Migration v${m.version} mechanical checks complete; host publication or client actions remain pending.`);
       } else {
@@ -909,7 +909,7 @@ async function runLockedMigrations(
       if (e instanceof PgliteBusyError) throw e;
       results.push({ version: m.version, status: 'failed' });
       fail('failed', opError('migration_failed', `Migration v${m.version} threw: ${msg}`,
-        'Fix the error above, then run `gbrain apply-migrations` again; it resumes from this migration.',
+        'Fix the error above, then run `foresights apply-migrations` again; it resumes from this migration.',
         { reason: 'orchestrator_threw', fix: rerunFix(args, `Resumes the chain from v${m.version} once the error is fixed.`) }));
       // Same partial-on-throw treatment so the cap counts runaway failures.
       try {
@@ -982,7 +982,7 @@ async function preflightSchema(
     if (cfg) {
       // v0.36.x #1100: skip the pre-flight warning on PGLite. The probe
       // briefly holds the single-writer lock; if a downstream orchestrator
-      // phase spawns `gbrain init --migrate-only` as a subprocess (the
+      // phase spawns `foresights init --migrate-only` as a subprocess (the
       // legacy v0.11.0 phase A path), the child can race the parent's
       // lock release and hit a 30s timeout. The orchestrators handle
       // schema lifecycle internally on PGLite (phase A routes in-process).
@@ -1018,7 +1018,7 @@ async function preflightSchema(
       access: classifyPgAccessError(err, { url: cfg?.database_url ?? null }).reason,
     };
   }
-  // #7776: an older binary runs no orchestrator (or its schema replay) on a database a newer gbrain migrated.
+  // #7776: an older binary runs no orchestrator (or its schema replay) on a database a newer foresights migrated.
   const behind = cfg && !cli.list && !cli.dryRun ? await schemaAheadRefusal(cfg, dbProbe.status === 'connected' ? dbProbe.schemaVer : null) : null;
   if (behind) throw behind;
   return { schemaBehind, dbProbe, schemaTimeout };
@@ -1045,7 +1045,7 @@ function failWedged(report: RunReport): number | undefined {
   report.doc.wedged = wedged.map(m => m.version);
   report.failure = opError('migrations_pending',
     `Migration ${versions} is wedged (${MAX_CONSECUTIVE_PARTIALS}+ consecutive partial runs with no completion), so the run did not complete every migration.`,
-    `Read ${wedgedLedgerHint()} for the last failure, fix its cause, then clear it with \`${shellQuote(forceRetryArgv(wedged[0]!.version))}\` and run \`gbrain apply-migrations --yes\` again. Ask the user first.`,
+    `Read ${wedgedLedgerHint()} for the last failure, fix its cause, then clear it with \`${shellQuote(forceRetryArgv(wedged[0]!.version))}\` and run \`foresights apply-migrations --yes\` again. Ask the user first.`,
     { reason: 'wedged', fix: wedgedMigrationFix(wedged.map(m => m.version)) });
   return 1;
 }
@@ -1055,7 +1055,7 @@ export function wedgedMigrationFix(wedged: readonly string[]): Action {
   const versions = wedged.map(v => `v${v}`).join(', ');
   return { ask_user: true, argv: forceRetryArgv(wedged[0]!), consent: [], actor: 'agent', requires_exclusive: true,
     why: `Writes a 'retry' marker so the next run re-attempts v${wedged[0]!}; without fixing the cause the run partials again.`,
-    user_message: `gbrain migration ${versions} failed ${MAX_CONSECUTIVE_PARTIALS} or more times in a row. Fix the cause recorded in ${wedgedLedgerHint()}, then clear it with ${shellQuote(forceRetryArgv(wedged[0]!))} and run gbrain apply-migrations --yes. Clear it now?`,
+    user_message: `foresights migration ${versions} failed ${MAX_CONSECUTIVE_PARTIALS} or more times in a row. Fix the cause recorded in ${wedgedLedgerHint()}, then clear it with ${shellQuote(forceRetryArgv(wedged[0]!))} and run foresights apply-migrations --yes. Clear it now?`,
     verify: { argv: ['gbrain', COMMAND, '--list', '--json'] } };
 }
 
@@ -1069,15 +1069,15 @@ function reportWedgedMigrations(wedged: readonly Migration[], superseded: readon
     console.error(
       `\nMigration v${m.version} is WEDGED (${MAX_CONSECUTIVE_PARTIALS}+ consecutive partials with no completion). ` +
       `Check ${wedgedLedgerHint()} for the last failure reasons, fix the underlying issue, then run:\n` +
-      `  gbrain apply-migrations --force-retry ${m.version}\n` +
-      `Then run \`gbrain apply-migrations\` again (it asks for any approval the migration needs).`,
+      `  foresights apply-migrations --force-retry ${m.version}\n` +
+      `Then run \`foresights apply-migrations\` again (it asks for any approval the migration needs).`,
     );
   }
 }
 
 function requireDbError(dbProbe: DbProbeOutcome): OperationError {
   return opError('database_error', `${formatDbProbeLine(dbProbe)}; --require-db stops the run before any orchestrator runs.`,
-    'Fix the database connection (run `gbrain db-repair` to diagnose it), then run apply-migrations again.',
+    'Fix the database connection (run `foresights db-repair` to diagnose it), then run apply-migrations again.',
     { fix: { argv: ['gbrain', 'db-repair', '--json'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Diagnoses the database access failure and names the repair.' } });
 }
 
@@ -1095,9 +1095,9 @@ function migrationConsentRequest(cli: ApplyMigrationsArgs, toRun: readonly Migra
   return {
     command: COMMAND, effects, actor: 'agent' as const, args,
     what: `Apply migration ${versions}`,
-    why: `Migration ${versions} installs the gbrain autopilot background service (launchd, systemd or cron) so brain maintenance keeps running on a schedule.`,
-    risk: 'Adds a persistent background service on this machine. Remove it with `gbrain autopilot --uninstall`, or skip it now with --no-autopilot-install.',
-    user_message: 'The gbrain upgrade wants to install the autopilot background service so brain maintenance runs on a schedule. Install it? (If not, migrations can still run without it.)',
+    why: `Migration ${versions} installs the foresights autopilot background service (launchd, systemd or cron) so brain maintenance keeps running on a schedule.`,
+    risk: 'Adds a persistent background service on this machine. Remove it with `foresights autopilot --uninstall`, or skip it now with --no-autopilot-install.',
+    user_message: 'The foresights upgrade wants to install the autopilot background service so brain maintenance runs on a schedule. Install it? (If not, migrations can still run without it.)',
     argv: ['gbrain', COMMAND, ...args.filter(a => a !== '--json')],
     preview_argv: ['gbrain', COMMAND, '--dry-run'],
   };

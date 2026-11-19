@@ -73,7 +73,7 @@ describe('compile-context core arm', () => {
     expect(a.code).toBe(0);
     expect(b.stdout).toBe(a.stdout);
     expect(compiledCoreRevision(a.stdout)).toMatch(/^[0-9a-f]{16}$/);
-    expect(a.stdout).toContain('refresh="gbrain compile-context --target claude-code --include-core"');
+    expect(a.stdout).toContain('refresh="foresights compile-context --target claude-code --include-core"');
     const coreAt = a.stdout.indexOf('Prefers short answers');
     expect(coreAt).toBeGreaterThan(0);
     expect(coreAt).toBeLessThan(a.stdout.indexOf('people/ada-example'));
@@ -124,6 +124,6 @@ describe('core_memory doctor check sees compiled copies', () => {
     });
     const check = await coreMemoryCheck(engine);
     expect(check.status).toBe('warn');
-    expect(check.message).toContain('gbrain-context.md carries an older core revision; refresh it with gbrain compile-context --target claude-code --include-core');
+    expect(check.message).toContain('gbrain-context.md carries an older core revision; refresh it with foresights compile-context --target claude-code --include-core');
   });
 });

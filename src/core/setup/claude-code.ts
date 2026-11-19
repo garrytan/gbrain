@@ -1,10 +1,10 @@
 /**
- * Claude Code wiring for `gbrain setup claude-code`: the MCP entry in
+ * Claude Code wiring for `foresights setup claude-code`: the MCP entry in
  * Claude Code's own config (`~/.claude.json`, user scope, or that file's
  * `projects[<dir>]` block for project scope) and the hook entries in its
  * settings file, owned by exact hash through a connection receipt.
  *
- * The receipt is the connection receipt `gbrain connect --install` already
+ * The receipt is the connection receipt `foresights connect --install` already
  * writes next to the harness config (`.gbrain-connection-claude-code-<name>.json`,
  * `entry_hash` / `pending_entry_hash`, `status: prepared | installed`), with a
  * `connection: 'local-stdio'` marker and the hook hashes added. A hosted
@@ -75,7 +75,7 @@ export interface ClaudeSetupReceipt {
   pending_entry_hash: string | null;
   /** The entry existed byte-identical before setup ran; `--remove` keeps it. */
   mcp_adopted?: boolean;
-  /** The gbrain plugin serves the MCP name; setup wrote no MCP entry. */
+  /** The foresights plugin serves the MCP name; setup wrote no MCP entry. */
   mcp_plugin?: string;
   hooks: { settings_path: string; owned: HookHashes; pending: HookHashes; edited: HookHashes };
   consent: SetupConsent & { recorded_at: string };
@@ -110,11 +110,11 @@ export interface ClaudeInspection {
   settingsPath: string;
   receiptPath: string;
   prior: ClaudeSetupReceipt | null;
-  /** A hosted `gbrain connect --install` receipt sits at this name. */
+  /** A hosted `foresights connect --install` receipt sits at this name. */
   hostedReceipt: { mcp_url?: string } | null;
   /** stdioMember: the --stdio-member of an entry setup owns (current or owned), which a rewrite carries forward. */
   mcp: { state: 'absent' | 'current' | 'owned' | 'remote' | 'unowned'; url?: string; stdioMember?: string };
-  /** Events wired by another gbrain lane in this settings file. */
+  /** Events wired by another foresights lane in this settings file. */
   otherLaneEvents: string[];
   /** Owned events whose entry the user edited: preserved, never rewritten. */
   edited: HookHashes;
@@ -152,7 +152,7 @@ export function readSetupReceipt(receiptPath: string): { setup: ClaudeSetupRecei
   try { raw = readJsonObject(receiptPath); } catch { throw new Error(`the connection receipt ${receiptPath} is unreadable; move it aside only if you know which install wrote it, then run setup again.`); }
   if (raw.client_id) return { setup: null, hosted: { mcp_url: typeof raw.mcp_url === 'string' ? raw.mcp_url : undefined } };
   if (raw.connection === 'local-stdio' && raw.setup_receipt_version === 1) return { setup: raw as unknown as ClaudeSetupReceipt, hosted: null };
-  throw new Error(`the connection receipt ${receiptPath} was not written by gbrain setup; it is left untouched. Choose another --name.`);
+  throw new Error(`the connection receipt ${receiptPath} was not written by foresights setup; it is left untouched. Choose another --name.`);
 }
 
 function writeSetupReceipt(path: string, receipt: ClaudeSetupReceipt): void {
@@ -281,7 +281,7 @@ export async function applyClaudeSetup(
   const paths = claudeSetupPaths(plan);
   const lock = await acquireBootstrapLock(dirname(paths.configPath));
   try {
-    // The MCP entry and every hook command start gbrain through the launcher, so it goes down before anything names it (#8424, #8426).
+    // The MCP entry and every hook command start foresights through the launcher, so it goes down before anything names it (#8424, #8426).
     ensureHookLauncher(hookLauncherPath(plan.brainHome));
     const found = inspectClaudeSetup(plan);
     // post-upgrade's refresh: it rewrites only the install it planned from, and the MCP entry only while it is still setup's, both read again under the lock (#8426).

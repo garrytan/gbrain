@@ -7,7 +7,7 @@
  * small generic corpus (pages, chunks with deterministic stub embeddings,
  * links, tags, timeline, a fact and a take), then tars the data dir to
  * test/fixtures/goldens/pglite-upgrade-replay/brain.tar.gz next to a
- * MANIFEST.json (gbrain version, schema_version, PGLite version, build
+ * MANIFEST.json (foresights version, schema_version, PGLite version, build
  * command, row counts, data fingerprint).
  *
  * The fixture is a W0 golden: build it on master, commit it, and never

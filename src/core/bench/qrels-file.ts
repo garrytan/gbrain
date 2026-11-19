@@ -1,5 +1,5 @@
 /**
- * Qrels file format for `gbrain eval gate --qrels`.
+ * Qrels file format for `foresights eval gate --qrels`.
  *
  * Wire shape: JSON OBJECT (NOT bare array — preserves the existing fixture
  * shape at `test/fixtures/eval-baselines/qrels-search.json` per eng-D7).
@@ -100,7 +100,7 @@ export function parseQrelsFile(content: string): QrelsFile {
   const file = parsed as Partial<QrelsFile> & { queries?: unknown };
   if (file.schema_version !== QRELS_FILE_SCHEMA_VERSION) {
     throw new QrelsParseError(
-      `Unsupported schema_version ${file.schema_version} (this gbrain build expects ${QRELS_FILE_SCHEMA_VERSION})`,
+      `Unsupported schema_version ${file.schema_version} (this foresights build expects ${QRELS_FILE_SCHEMA_VERSION})`,
     );
   }
   if (!Array.isArray(file.queries)) {

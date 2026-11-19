@@ -57,8 +57,8 @@ describe('codex plugin.json', () => {
     expect(i.longDescription.length).toBeGreaterThan(100);
     // The longDescription is the recovery path's storefront: it must carry
     // the pinned install ref and the init requirement.
-    expect(i.longDescription).toContain('github:garrytan/gbrain#stable');
-    expect(i.longDescription).toContain('gbrain init');
+    expect(i.longDescription).toContain('github:aimonk2025/gbrain#stable');
+    expect(i.longDescription).toContain('foresights init');
   });
 });
 
@@ -187,7 +187,7 @@ describe('persona variant trees (committed, generated, self-contained)', () => {
         expect(claudeVariant.skills).toBe('./skills/');
         expect(codexVariant.skills).toBe('./skills/');
         // Same MCP server name as the full plugin (tool names stay
-        // mcp__gbrain__*) — docs say install exactly one gbrain plugin.
+        // mcp__gbrain__*) — docs say install exactly one foresights plugin.
         expect(Object.keys(claudeVariant.mcpServers)).toEqual(['gbrain']);
         expect(claudeVariant.mcpServers.gbrain.command).toBe('${CLAUDE_PLUGIN_ROOT}/.agents/gbrain-launcher');
         expect(claudeVariant.mcpServers.gbrain.args).toEqual(EXPECTED_ARGS);
@@ -215,7 +215,7 @@ describe('persona variant trees (committed, generated, self-contained)', () => {
       test('README carries the version stamp and the one-plugin rule', () => {
         const readme = read(`${root}/README.md`);
         expect(readme).toContain(`<!-- gbrain-plugin-tree-stamp: ${pkg.version} -->`);
-        expect(readme).toContain('exactly ONE gbrain plugin');
+        expect(readme).toContain('exactly ONE foresights plugin');
       });
     });
   }
@@ -231,8 +231,8 @@ describe('launcher (static)', () => {
   });
 
   test('carries the sanctioned install ref, never the squatted npm name', () => {
-    expect(text).toContain('github:garrytan/gbrain#stable');
-    expect(text).not.toMatch(/npm install -g gbrain(?!['\w-])(?![^\n]*unrelated)/);
+    expect(text).toContain('github:aimonk2025/gbrain#stable');
+    expect(text).not.toMatch(/npm install -g (?:foresights|gbrain)(?!['\w-])(?![^\n]*unrelated)/);
   });
 
   test('all three manifests reference the shared launcher (#4841)', () => {
@@ -257,7 +257,7 @@ describe('launcher (behavioral — every resolver branch, hermetic HOME)', () =>
   const launcher = join(ROOT, '.agents/gbrain-launcher');
 
   // HOME is pinned to a tempdir in EVERY case: without it the ~/.bun/bin
-  // fallback would exec the dev machine's real gbrain against their brain.
+  // fallback would exec the dev machine's real foresights against their brain.
   function run(env: Record<string, string>, args: string[], home: string) {
     return spawnSync(launcher, args, {
       encoding: 'utf8',
@@ -279,7 +279,7 @@ describe('launcher (behavioral — every resolver branch, hermetic HOME)', () =>
     try {
       const r = run({}, ['serve'], home);
       expect(r.status).toBe(127);
-      expect(r.stderr).toContain('bun install -g github:garrytan/gbrain#stable');
+      expect(r.stderr).toContain('bun install -g github:aimonk2025/gbrain#stable');
       expect(r.stderr).toContain('setup');
       expect(r.stderr).toContain('GBRAIN_BIN');
     } finally {

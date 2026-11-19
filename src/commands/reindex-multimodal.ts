@@ -1,5 +1,5 @@
 /**
- * v0.36 Phase 3 — `gbrain reindex --multimodal` sweep.
+ * v0.36 Phase 3 — `foresights reindex --multimodal` sweep.
  *
  * Walks `content_chunks` where `embedding_multimodal IS NULL`, batches
  * through `embedMultimodalSafe` (partial-failure-aware from Commit 0), and
@@ -19,7 +19,7 @@
  *     post-upgrade-reembed primitive shape.
  *
  * Not extracted as shared reindex-core in this commit (D10): the existing
- * `gbrain reindex --markdown` walks markdown pages and re-imports via
+ * `foresights reindex --markdown` walks markdown pages and re-imports via
  * importFromFile; this walks content_chunks and re-embeds via the gateway.
  * The patterns rhyme but the cores diverge enough that extraction would
  * balloon the diff. D10 is filed as a follow-up TODO.
@@ -73,7 +73,7 @@ export interface ReindexMultimodalResult {
 }
 
 /**
- * Entry point for `gbrain reindex --multimodal`.
+ * Entry point for `foresights reindex --multimodal`.
  */
 export async function runReindexMultimodal(
   engine: BrainEngine,
@@ -100,7 +100,7 @@ export async function runReindexMultimodal(
         progress.finish();
         throw new Error(
           `Refusing to reindex: ${pre.error}\n` +
-          `Fix with \`gbrain config set embedding_multimodal_model <provider>:<model>\`.`,
+          `Fix with \`foresights config set embedding_multimodal_model <provider>:<model>\`.`,
         );
       }
     }
@@ -321,14 +321,14 @@ export async function runReindexMultimodal(
       if (process.stdout.isTTY) {
         process.stderr.write(
           `\n[reindex-multimodal] Coverage now 100%. ` +
-          `Run \`gbrain config set search.unified_multimodal true\` to route all queries ` +
+          `Run \`foresights config set search.unified_multimodal true\` to route all queries ` +
           `through the unified column.\n`,
         );
         unifiedFlagPrompted = true;
       } else {
         process.stderr.write(
           `[reindex-multimodal] Coverage now 100%. ` +
-          `gbrain config set search.unified_multimodal true\n`,
+          `foresights config set search.unified_multimodal true\n`,
         );
         unifiedFlagPrompted = true;
       }

@@ -15,6 +15,7 @@ import { exportBodyLedger, inlineExportMarkdown, readExportPage, readExportWithd
 import { segmentedPageCeiling } from '../core/page-body/limits.ts';
 import { exportPolicyFiles } from '../core/access/policy-transfer.ts';
 import { isSegmentedPage } from '../core/page-body/page-shape.ts';
+import { commandText } from '../core/brand.ts';
 
 function option(args: string[], name: string): string | undefined {
   const indices = args.flatMap((arg, i) => arg === name || arg.startsWith(name + '=') ? [i] : []);
@@ -48,7 +49,7 @@ function collisionRefusal(collisions: ExportCollision[], owners: Map<string, { s
   const lines = collisions.map(collision => {
     const owner = owners.get(collision.prior) ?? [...owners].find(([path]) => path.startsWith(collision.prior + '/'))?.[1];
     const fix = owner && owner.source_id !== collision.source_id
-      ? `gbrain export --source ${collision.source_id} --dir ${outDir.replace(/\/+$/, '')}-${collision.source_id}`
+      ? `foresights export --source ${collision.source_id} --dir ${outDir.replace(/\/+$/, '')}-${collision.source_id}`
       : `move one of the pages: put_page its content under a new slug, then delete_page ${collision.slug}`;
     return `  - ${collision.key} -> ${collision.path} collides with ${owner?.label ?? collision.prior} (export_path_collision); fix: ${fix}`;
   });
@@ -64,14 +65,14 @@ function printEscaped(escaped: EscapedExportPage[]): void {
   }
   if (shortened.length) {
     console.log(`${shortened.length} page(s) have a slug segment longer than a file name may be and were exported under a shortened name; import refuses those files until the page moves to a shorter slug:`);
-    for (const page of shortened) console.log(`  - ${page.source_id}:${page.slug} -> ${page.path}; fix: ${page.fix!.argv.join(' ')}, then delete_page ${page.slug}`);
+    for (const page of shortened) console.log(`  - ${page.source_id}:${page.slug} -> ${page.path}; fix: ${commandText(page.fix!.argv)}, then delete_page ${page.slug}`);
   }
 }
 
 export async function runExport(engine: BrainEngine, args: string[]): Promise<ExportReport | undefined> {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log(`Usage: gbrain export [--dir <path>] [--source <id>] [--type <type>] [--slug-prefix <prefix>]
-       gbrain export --restore-only [--source <id>] [--repo <path>] [--dir <path>] [--slug-prefix <prefix>]
+    console.log(`Usage: foresights export [--dir <path>] [--source <id>] [--type <type>] [--slug-prefix <prefix>]
+       foresights export --restore-only [--source <id>] [--repo <path>] [--dir <path>] [--slug-prefix <prefix>]
 
 Export a coherent point-in-time Markdown snapshot; this is not a database backup.
   --dir <path>           Output directory (default: ./export).

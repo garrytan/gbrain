@@ -50,7 +50,7 @@ export async function undeclaredPageTypeWarning(ctx: OperationContext, intent: R
     type,
     pack: pack.manifest.name,
     cause: `${undeclaredPageTypeMessage(type, pack, 'put_page')} The page was stored with this type as-is.`,
-    fix: `${undeclaredPageTypeSuggestion(pack)} To declare it: gbrain schema add-type ${safeCliToken(parsed.type) ?? '<type>'} (with its primitive and prefix)`,
+    fix: `${undeclaredPageTypeSuggestion(pack)} To declare it: foresights schema add-type ${safeCliToken(parsed.type) ?? '<type>'} (with its primitive and prefix)`,
     docs: 'docs/architecture/schema-packs.md#undeclared-page-types',
   };
   ctx.logger.warn(`[${warning.code}] ${warning.cause} ${warning.fix}`);

@@ -17,13 +17,13 @@ A fine-grained PAT with read permission on `Issues` and `Pull requests`
 (plus `Metadata`, which is mandatory) for the repos you want to track. The
 token must be reachable via an environment variable, by default `GH_TOKEN`.
 It is never stored in the brain; set it in the environment that runs
-`gbrain sync` (and `gbrain serve --http` if you use the webhook).
+`foresights sync` (and `foresights serve --http` if you use the webhook).
 
 ### 2. Register the source
 
 ```bash
 export GH_TOKEN=github_pat_...
-gbrain sources add gh \
+foresights sources add gh \
   --kind github \
   --scope auto
 ```
@@ -32,7 +32,7 @@ gbrain sources add gh \
 an org member. Pin an explicit list instead:
 
 ```bash
-gbrain sources add gh \
+foresights sources add gh \
   --kind github \
   --scope repos \
   --repos owner/one,owner/two
@@ -55,8 +55,8 @@ ignored by the sync.
 ### 3. Sync
 
 ```bash
-gbrain sync --source gh          # delta sweep since the last run
-gbrain sync --source gh --full   # full reconcile incl. deletions
+foresights sync --source gh          # delta sweep since the last run
+foresights sync --source gh --full   # full reconcile incl. deletions
 ```
 
 The first sync is a full bootstrap and may take a while on large histories
@@ -75,11 +75,11 @@ Three layers, fastest to cheapest:
 1. **Webhook (recommended)**: event-driven, sub-second item refreshes.
    GitHub pushes the change to you the moment it happens; no polling, no
    standing API traffic. See below.
-2. **Poll sweeps** (fallback): `gbrain sync --source gh` on your own cron or
+2. **Poll sweeps** (fallback): `foresights sync --source gh` on your own cron or
    via autopilot. Zero standing infrastructure. A sweep is one list call per
    repo plus detail calls for changed items. Use it where a webhook cannot
    reach the brain (no public URL, locked-down network).
-3. **Full reconcile** (daily recommended): `gbrain sync --source gh --full`
+3. **Full reconcile** (daily recommended): `foresights sync --source gh --full`
    re-enumerates everything, refreshes strays and deletes pages for items
    that vanished. Backed by the same mass-delete guard as git sources.
    It is the audit that catches anything the webhook or sweeps missed.
@@ -88,8 +88,8 @@ Every page carries `synced_at` and the API `updated_at` in frontmatter, so
 staleness is measurable and the next sweep skips fresh pages.
 
 A sweep with a failing item is partial: it keeps its cursor and does not stamp
-the source as freshly synced, so `gbrain doctor`'s `sync_freshness` shows it.
-`gbrain sync` prints `Sync PARTIAL [connector_item_failures]` with the failed
+the source as freshly synced, so `foresights doctor`'s `sync_freshness` shows it.
+`foresights sync` prints `Sync PARTIAL [connector_item_failures]` with the failed
 item count and pages written (the failure reasons print above it) and exits 1,
 on `--source`, `--all` and delegated runs alike; a connector that stops early
 without naming a cause prints `[connector_partial]` and also exits 1. Only a
@@ -97,7 +97,7 @@ sweep cut short by `--timeout` or cancellation stays `reason=timeout` with
 exit 0, because the next sweep continues it.
 An item that fails three sweeps in a row is held (below) and the cursor moves
 past it. Autopilot keeps a source synced after its first sync; a source that
-has never synced stays idle until you run `gbrain sync --source <id>` once.
+has never synced stays idle until you run `foresights sync --source <id>` once.
 
 ## Held items
 
@@ -106,23 +106,23 @@ syncs is **held**: it is recorded in the source's cursor state, and the sync
 moves on past it instead of wedging the whole source. A held item is never
 skipped silently:
 
-- `gbrain sources status` lists up to 10 held items per source (key, sender and
+- `foresights sources status` lists up to 10 held items per source (key, sender and
   subject or title when known, error code, class, first and last failure,
   attempts, next automatic retry), then `+N more; --json lists all`;
-- `gbrain doctor` reports a per-source count in the `connector_held_items`
+- `foresights doctor` reports a per-source count in the `connector_held_items`
   check;
 - the sync summary prints the held count and the retry command;
 
 A held item does not block the source's freshness stamp. To re-attempt:
 
 ```bash
-gbrain sources status <id>          # what is held and why
-gbrain sources retry-held <id>      # schedule every held item (add --dry-run to preview)
-gbrain sync --source <id>           # run the re-attempt now
-gbrain sources status <id>          # a recovered item leaves the list
+foresights sources status <id>          # what is held and why
+foresights sources retry-held <id>      # schedule every held item (add --dry-run to preview)
+foresights sync --source <id>           # run the re-attempt now
+foresights sources status <id>          # a recovered item leaves the list
 ```
 
-`gbrain sync --source <id> --full` also clears every hold. A held item whose
+`foresights sync --source <id> --full` also clears every hold. A held item whose
 upstream copy changes is re-attempted once automatically.
 
 **The thresholds are fixed** so every brain behaves the same way and a held
@@ -136,18 +136,18 @@ item always means the same thing:
 | Transient retry | A held item whose error was transient (5xx, network, unknown) is retried after 1 h, 6 h, 24 h, then daily, for 7 days; after that it stays held like a content error | Recovers on its own from a provider incident |
 | Cap | 100 held items per source; a sync that would hold more stops advancing its cursor and fails with `connector_holds_exhausted` | Many held items means something is wrong with the source, not with items |
 
-The overrides are `gbrain sources retry-held <id>` and
-`gbrain sync --source <id> --full`. See
+The overrides are `foresights sources retry-held <id>` and
+`foresights sync --source <id> --full`. See
 [write refusal reasons](write-refusals.md) for `connector_holds_exhausted`,
 `invalid_connector_text` and `connector_fence_below_timeline`.
 
 
 ## Webhook (recommended: instant sync)
 
-Point GitHub webhooks at your `gbrain serve --http` instance:
+Point GitHub webhooks at your `foresights serve --http` instance:
 
 ```bash
-gbrain sources webhook set gh --secret <your-secret>
+foresights sources webhook set gh --secret <your-secret>
 ```
 
 The command prints the payload URL, secret and the exact event list to
@@ -182,8 +182,8 @@ repos are acknowledged but never materialized.
 
 ## Retrieval
 
-Mirrored items are fully searchable through the normal `gbrain query` /
-`gbrain search` paths (hybrid keyword + vector over title, description,
+Mirrored items are fully searchable through the normal `foresights query` /
+`foresights search` paths (hybrid keyword + vector over title, description,
 comments, reviews and checks). Two behaviors worth knowing:
 
 - **Empty-body items** (an issue or PR with no description) render a
@@ -211,5 +211,5 @@ sweeps use a few dozen calls per hour.
 ## Removing the source
 
 ```bash
-gbrain sources remove gh --confirm-destructive
+foresights sources remove gh --confirm-destructive
 ```

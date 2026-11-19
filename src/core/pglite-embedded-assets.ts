@@ -6,7 +6,7 @@
  * `pglite.wasm`, `initdb.wasm`, `pglite.data`, and the per-extension tarballs
  * (`vector.tar.gz`, `pg_trgm.tar.gz`). PGLite resolves those relative to its
  * own `import.meta.url`, which points inside `/$bunfs` in a compiled binary, so
- * a compiled `gbrain serve`/`init` on a PGLite brain used to fail with a bunfs
+ * a compiled `foresights serve`/`init` on a PGLite brain used to fail with a bunfs
  * ENOENT (Bun vfs #1340 — see classifyPgliteInitError's `bunfs` verdict).
  *
  * Fix: embed every asset with Bun's `import ... with { type: 'file' }` (the same
@@ -17,7 +17,7 @@
  * binary. Those file-typed imports live in pglite-embedded-asset-paths.ts (the
  * bundler ANCHOR) and are reached through resolvePgliteAssetPaths()'s tiered
  * lookup, because a bun-global install hoists @electric-sql/pglite out of
- * gbrain's own node_modules on upgrade and the anchor's repo-relative
+ * foresights's own node_modules on upgrade and the anchor's repo-relative
  * specifiers stop resolving (#4116) — tier 2 then derives the dist dir from
  * module resolution instead. We hand PGLite the assets via PGliteOptions:
  *
@@ -133,11 +133,11 @@ export async function resolvePgliteAssetPaths(): Promise<{ paths: PgliteAssetPat
   throw new Error(
     'PGLite runtime assets not found. ' +
     `Tried the embedded bundle (${embeddedTried}) and module resolution of ` +
-    `@electric-sql/pglite (${dist ? `dist dir ${dist} is incomplete` : 'package not resolvable from gbrain'}). ` +
-    'This usually means the install is missing or hoisted in a way gbrain cannot reach. ' +
-    'Reinstall from the canonical source: bun install -g github:garrytan/gbrain ' +
+    `@electric-sql/pglite (${dist ? `dist dir ${dist} is incomplete` : 'package not resolvable from foresights'}). ` +
+    'This usually means the install is missing or hoisted in a way foresights cannot reach. ' +
+    'Reinstall from the canonical source: bun install -g github:aimonk2025/gbrain ' +
     '(or bun install in a source checkout). Never install from the npm registry: ' +
-    'the npm package named gbrain is unrelated (see gbrain doctor).',
+    'the npm package named foresights is unrelated (see foresights doctor).',
   );
 }
 

@@ -1,6 +1,6 @@
 /**
  * Foundations 2 (Lane C) bounded maintenance transactions at scale: on an
- * unmanaged brain with 10k pages, `gbrain extract timeline --source db`
+ * unmanaged brain with 10k pages, `foresights extract timeline --source db`
  * commits one maintenanceTransaction per 100-row batch (never one transaction
  * for the run, so no 10k-row transaction holds locks), and every row names
  * the local maintenance principal. Rows of one transaction share

@@ -1,7 +1,7 @@
 /**
  * maybeRunWorkerStartupRecovery (src/commands/jobs.ts) — the bare-worker
  * arm of the orphaned-private-queue recovery net. A deployment that starts
- * `gbrain jobs work` directly (no supervisor) must still recover crashed
+ * `foresights jobs work` directly (no supervisor) must still recover crashed
  * dream-inline-* queues; supervised children (GBRAIN_SUPERVISED=1) skip it
  * because their supervisor already ran the scan. Pins:
  *   - unsupervised env → orphan cancelled with the worker-startup reason;

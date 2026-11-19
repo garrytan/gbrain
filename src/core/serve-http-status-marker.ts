@@ -1,8 +1,8 @@
 /**
- * The per-instance marker a status-only `gbrain serve --http` writes while it
+ * The per-instance marker a status-only `foresights serve --http` writes while it
  * cannot open its brain: `GBRAIN_HOME/serve-http-status-<port>.json`. It holds
  * the detailed reason the unauthenticated HTTP responses never state, so
- * readiness, doctor and `gbrain mcp expose` on the host can say why the
+ * readiness, doctor and `foresights mcp expose` on the host can say why the
  * shared server answers 503 and give the reason's fix.
  *
  * Live means: the PID is alive and `since` is after the last boot (config
@@ -81,7 +81,7 @@ export function liveStatusMarkers(): HttpStatusMarker[] {
   return readStatusMarkers().filter(m => statusMarkerLive(m));
 }
 
-/** The marker for one port when it is live (`gbrain mcp expose` reads its own port). */
+/** The marker for one port when it is live (`foresights mcp expose` reads its own port). */
 export function liveStatusMarkerFor(port: number): HttpStatusMarker | null {
   const m = parseMarker(statusMarkerPath(port));
   return m && statusMarkerLive(m) ? m : null;

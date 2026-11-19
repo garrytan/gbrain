@@ -7,7 +7,7 @@
  *     versions carried, the hold cleared, the old page soft-deleted and restorable, a receipt per page, no file written;
  *   - kept, with the reason: two candidates, a near-equal body, a first commit that differs, a database edit after the
  *     move, a frontmatter id alone, a shallow history;
- *   - gbrain's own database-only artefacts are derived, not a page-side edit: a file naming the type gbrain-base 1.0.0 gave
+ *   - foresights's own database-only artefacts are derived, not a page-side edit: a file naming the type gbrain-base 1.0.0 gave
  *     its path, equal to the stored `type` copy, while the column took a later pack's type; and the grandfather stamp;
  *   - the file_gone hold says when the page simply has no import record.
  * Real PGLite (and Postgres when DATABASE_URL is set), a managed worktree with real Git commits; no seams.
@@ -99,7 +99,7 @@ for (const backend of testBackends()) {
     // file-drift lists it moved_to and prints the fold, not the recreate.
     const drift = await runner(engine, 'file-drift', { held: true, side: 'deleted', state: 'file_gone', prefer: 'database' });
     expect(drift.affected).toBe(0);
-    expect(listed(drift, 'notes/alpha')).toMatchObject({ class: 'moved_to', detail: expect.stringContaining('gbrain repair moved-pages --source default --slug notes/alpha') });
+    expect(listed(drift, 'notes/alpha')).toMatchObject({ class: 'moved_to', detail: expect.stringContaining('foresights repair moved-pages --source default --slug notes/alpha') });
     expect(String(listed(drift, 'notes/alpha')!.detail)).not.toContain('recreates');
 
     const preview = JSON.parse((await repairCli(engine, ['moved-pages', '--source', 'default'])).out).results[0];
@@ -138,7 +138,7 @@ for (const backend of testBackends()) {
     await performManagedSync(engine, SYNC);
     expect(await holds(engine)).toEqual([]);
 
-    // gbrain restore brings the old page back within the window, database-only; the alias stops answering for it.
+    // foresights restore brings the old page back within the window, database-only; the alias stops answering for it.
     const [deleted] = await engine.executeRaw<{ revision: string }>("SELECT knowledge_revision::text AS revision FROM pages WHERE source_id='default' AND slug='notes/alpha'");
     await cli(engine, () => operationsByName.restore_page!.handler(ctx, { slug: 'notes/alpha', expected_revision: deleted!.revision, request_id: randomUUID() }));
     expect(await page(engine, 'notes/alpha')).toMatchObject({ deleted: false, source_path: null });
@@ -235,7 +235,7 @@ for (const backend of testBackends()) {
     await registerLocalWriter(engine, 'cli');
     expect((await performManagedSync(engine, SYNC)).status).toBe('first_sync');
     expect((await page(engine, 'writing/essay'))!.type).toBe('writing');
-    // What an older gbrain left: the reserved type copy in the stored frontmatter, and a column a later pack retyped.
+    // What an older foresights left: the reserved type copy in the stored frontmatter, and a column a later pack retyped.
     await raw(engine, `UPDATE pages SET type='media', frontmatter=frontmatter || '{"type":"writing","validate":false}'::jsonb, knowledge_revision=gen_random_uuid() WHERE source_id='default' AND slug='writing/essay'`);
     const snapshot = (await engine.readPageSnapshot('writing/essay', { sourceId: 'default' }))!;
     const file = readFileSync(join(root, 'writing/essay.md'), 'utf8');
@@ -257,7 +257,7 @@ for (const backend of testBackends()) {
     expect((await page(engine, 'writing/essay'))!.type).toBe('media');
     const after = (await engine.readPageSnapshot('writing/essay', { sourceId: 'default' }))!;
     expect(await fileMatchesSnapshot(engine, 'writing/essay', readFileSync(join(root, 'writing/essay.md'), 'utf8'), after, 'writing/essay.md')).toBe(true);
-  }, opts(backend, { 'writing/essay.md': '---\ntype: writing\ntitle: Essay\n---\n\nAn essay gbrain wrote out.\n', 'notes/beta.md': BETA })), 240_000);
+  }, opts(backend, { 'writing/essay.md': '---\ntype: writing\ntitle: Essay\n---\n\nAn essay foresights wrote out.\n', 'notes/beta.md': BETA })), 240_000);
 
   test(`${backend}: a moved page carrying the type rename and the grandfather stamp folds`, () => managedBrain(async ({ engine, root }) => {
     await registerLocalWriter(engine, 'cli');
@@ -269,7 +269,7 @@ for (const backend of testBackends()) {
     const preview = await runner(engine, 'moved-pages', {});
     expect(listed(preview, 'writing/essay')).toMatchObject({ class: 'moved_to' });
     expect((await runner(engine, 'moved-pages', { expect: preview.preview_hash })).outcomes).toEqual({ folded: 1 });
-  }, opts(backend, { 'writing/essay.md': '---\ntype: writing\ntitle: Essay\n---\n\nAn essay gbrain wrote out.\n', 'notes/beta.md': BETA })), 240_000);
+  }, opts(backend, { 'writing/essay.md': '---\ntype: writing\ntitle: Essay\n---\n\nAn essay foresights wrote out.\n', 'notes/beta.md': BETA })), 240_000);
 
   test(`${backend}: a page edited between the preview and the apply is not folded`, () => managedBrain(async ({ engine, root }) => {
     await movedAway(engine, root, mv(root, 'archive/alpha.md'));

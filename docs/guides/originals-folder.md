@@ -25,7 +25,7 @@ on user_message(message):
         slug = slugify(user_exact_phrase)
 
         # Step 2: Create the originals page
-        gbrain put originals/{slug} --content """
+        foresights put originals/{slug} --content """
             # {User's Exact Phrase}
 
             ## The Idea
@@ -47,11 +47,11 @@ on user_message(message):
 
         # Step 3: Cross-link to everything that shaped the thinking
         for entity in idea.influences:
-            gbrain link originals/{slug} <entity_slug>
-            gbrain link <entity_slug> originals/{slug}
+            foresights link originals/{slug} <entity_slug>
+            foresights link <entity_slug> originals/{slug}
 
         # Step 4: Sync
-        gbrain sync
+        foresights sync
 
 # What counts as original thinking:
 #   - Novel frameworks ("the meatsuit maintenance tax")
@@ -77,11 +77,11 @@ on user_message(message):
 
 ## How to Verify
 
-1. Generate an original idea in conversation (e.g., "I call this the 'ambition debt' problem -- every year you delay going big, the compound interest works against you"). Confirm a new page appears at `brain/originals/ambition-debt` with `gbrain get originals/ambition-debt`.
+1. Generate an original idea in conversation (e.g., "I call this the 'ambition debt' problem -- every year you delay going big, the compound interest works against you"). Confirm a new page appears at `brain/originals/ambition-debt` with `foresights get originals/ambition-debt`.
 2. Check that the page uses the user's exact phrasing for the title and slug -- not a sanitized version.
-3. Run `gbrain call get_links '{"slug": "originals/ambition-debt"}'`. Confirm cross-links exist to related people, meetings, or other originals.
+3. Run `foresights call get_links '{"slug": "originals/ambition-debt"}'`. Confirm cross-links exist to related people, meetings, or other originals.
 4. Express a take on someone else's idea (e.g., "I think Thiel's contrarian question is wrong because..."). Confirm it goes to `originals/` (synthesis is original), not `concepts/`.
-5. Run `gbrain search "ambition debt"`. Confirm the originals page appears in search results and is discoverable.
+5. Run `foresights search "ambition debt"`. Confirm the originals page appears in search results and is discoverable.
 
 ---
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md).*
+*Part of the [Foresights Skillpack](../GBRAIN_SKILLPACK.md).*

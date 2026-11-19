@@ -1,5 +1,5 @@
 /**
- * `gbrain mcp expose` end-to-end against a stateful fake tailnet: a recording
+ * `foresights mcp expose` end-to-end against a stateful fake tailnet: a recording
  * runner stands in for tailscale/systemctl/launchctl, fetch is injected, every
  * path lives in a tmpdir. No network, no real supervisor, no process.env writes.
  */
@@ -219,7 +219,7 @@ describe('dispatch + argument shape', () => {
     expect(MCP_EXPOSE_HELP).not.toMatch(/service, verify, receipt/);
     const f = fakeTailnet();
     expect(await runMcpExpose(['--help'], f.deps)).toBe(0);
-    expect(f.stdout.join('\n')).toContain('gbrain mcp expose --status');
+    expect(f.stdout.join('\n')).toContain('foresights mcp expose --status');
   });
   test('unknown, duplicate, exclusive and malformed flags fail loud (exit 1, JSON envelope under --json)', async () => {
     expect(() => parseExposeArgs(['--bogus'])).toThrow('Unknown setup argument');
@@ -234,7 +234,7 @@ describe('dispatch + argument shape', () => {
     const f = fakeTailnet();
     expect(await runMcpExpose(['--bogus', '--json'], f.deps)).toBe(1);
     expect(jsonDoc(f)).toMatchObject({ status: 'error', reason: 'invalid_arguments' });
-    expect(f.stderr.join('\n')).toContain('gbrain mcp expose --help');
+    expect(f.stderr.join('\n')).toContain('foresights mcp expose --help');
   });
   test('runMcp dispatches expose: --help prints MCP_EXPOSE_HELP (exit verdict untouched); --bogus --json yields invalid_arguments + verdict 1', async () => {
     const savedExitCode = process.exitCode;
@@ -251,7 +251,7 @@ describe('dispatch + argument shape', () => {
       await runMcp(['expose', '--bogus', '--json']);
       const doc = JSON.parse(out.join('').trim());
       expect(doc).toMatchObject({ status: 'error', reason: 'invalid_arguments' });
-      expect(err.join('')).toContain('gbrain mcp expose --help');
+      expect(err.join('')).toContain('foresights mcp expose --help');
       expect(currentExitCode()).toBe(1);
     } finally {
       outSpy.mockRestore();
@@ -285,20 +285,20 @@ describe('plan + consent', () => {
     expect(await runMcpExpose(['--json'], f.deps)).toBe(2);
     const doc = jsonDoc(f);
     expect(doc).toMatchObject({ status: 'pending', reason: 'confirmation_required' });
-    expect(doc.next_actions).toContain('gbrain mcp expose --yes');
+    expect(doc.next_actions).toContain('foresights mcp expose --yes');
     // The consent payload's agent fields ride the legacy document (exit 2 stays under contract v1).
     expect(doc).toMatchObject({
       code: 'confirmation_required', effects: ['persistent_install', 'egress'], actor: 'agent', contract_version: 1,
       fix: { argv: ['gbrain', 'mcp', 'expose', '--yes'], next: 'ask_user' },
     });
-    expect(doc.user_message).toContain('publish your gbrain MCP server');
+    expect(doc.user_message).toContain('publish your foresights MCP server');
     expect(doc.error).toBeUndefined();
     const human = fakeTailnet();
     expect(await runMcpExpose([], human.deps)).toBe(2);
     const out = human.stdout.join('\n');
     expect(out).toContain('[AGENT]');
     expect(out).toContain('next: ask_user');
-    expect(out).toContain('if_yes: gbrain mcp expose --yes');
+    expect(out).toContain('if_yes: foresights mcp expose --yes');
     expect(out).not.toMatch(/re-?run[^.\n]{0,40}--yes/i);
     expect(existsSync(f.serveDir)).toBe(false);
     expect(joinedCalls(f).some(c => c.includes('--bg'))).toBe(false);
@@ -390,7 +390,7 @@ describe('tailscale steps', () => {
     expect(calls.some(c => c.includes('up --operator'))).toBe(false);
     expect(f.stderr.join('\n')).toContain('sudo tailscale set --operator=alice-example');
     expect(doc.next_actions).toContain(`sudo ${TS} up`);
-    expect(doc.next_actions).toContain('gbrain mcp expose --funnel --yes');
+    expect(doc.next_actions).toContain('foresights mcp expose --funnel --yes');
     expect(existsSync(receiptPath(f.serveDir))).toBe(false);
   });
   test('NeedsLogin → up succeeds → continues to a full publish', async () => {
@@ -432,7 +432,7 @@ describe('tailscale steps', () => {
     const doc = jsonDoc(f);
     expect(doc).toMatchObject({ status: 'pending', reason: 'tailscale_https_not_enabled' });
     expect(doc.message).toContain(TAILSCALE_ADMIN_DNS_URL);
-    expect(doc.message).toContain('gbrain mcp expose --yes');
+    expect(doc.message).toContain('foresights mcp expose --yes');
     expect(checkOf(doc, 'tailscale.identity')?.status).toBe('pending');
     expect(checkOf(doc, 'tailscale.publish')).toBeUndefined();
     expect(joinedCalls(f).some(c => c.includes('--bg') || c.includes('serve status'))).toBe(false);
@@ -611,17 +611,17 @@ describe('happy path: linux-systemd', () => {
     expect(f.fetches).toContain(`https://${DNS}/health`);
     // human summary on stderr (json mode)
     const prose = f.stderr.join('\n');
-    expect(prose).toContain('GBrain MCP server published on your tailnet');
+    expect(prose).toContain('Foresights MCP server published on your tailnet');
     expect(prose).toContain(`MCP URL   https://${DNS}/mcp`);
     expect(prose).toContain('PGLite (single-writer)');
     expect(prose).toContain('fail with `live_serve`');
     expect(prose).not.toContain('wait on this server');
-    expect(prose).toContain('gbrain mcp expose --status');
+    expect(prose).toContain('foresights mcp expose --status');
     expect(prose).toContain('owner session required');
     expect(prose).toContain('Native OAuth');
     expect(prose).toContain('Machine install');
-    expect(doc.next_actions).toContain(`gbrain mcp admin login-link --url https://${DNS}/mcp --admin-token-file ${adminTokenPath(f.serveDir)}`);
-    expect(doc.next_actions).toContain('gbrain mcp admin register --help');
+    expect(doc.next_actions).toContain(`foresights mcp admin login-link --url https://${DNS}/mcp --admin-token-file ${adminTokenPath(f.serveDir)}`);
+    expect(doc.next_actions).toContain('foresights mcp admin register --help');
     expect(doc.next_actions.join('\n')).toContain(`--url https://${DNS}/mcp`);
   });
   test('PGLite banner: local agents get the pre-mint + --token guidance and the scoped grant path, never a bare bootstrap harness', async () => {
@@ -629,13 +629,13 @@ describe('happy path: linux-systemd', () => {
     expect(await runMcpExpose(['--yes', '--json'], f.deps)).toBe(0);
     const doc = jsonDoc(f);
     const prose = f.stderr.join('\n');
-    expect(prose).toContain('gbrain auth create local-agents --scopes read,write');
-    expect(prose).toContain('gbrain bootstrap harness --yes --port 3131 --token <value>');
-    expect(prose).toContain(`gbrain mcp grant local-agents --harness <id> --profile memory-writer --source default --url http://127.0.0.1:3131/mcp --admin-token-file`);
-    expect(prose).toContain('gbrain connect http://127.0.0.1:3131/mcp --harness <id> --credentials-file /private/local-agents.json --install');
+    expect(prose).toContain('foresights auth create local-agents --scopes read,write');
+    expect(prose).toContain('foresights bootstrap harness --yes --port 3131 --token <value>');
+    expect(prose).toContain(`foresights mcp grant local-agents --harness <id> --profile memory-writer --source default --url http://127.0.0.1:3131/mcp --admin-token-file`);
+    expect(prose).toContain('foresights connect http://127.0.0.1:3131/mcp --harness <id> --credentials-file /private/local-agents.json --install');
     const actions: string[] = doc.next_actions;
-    expect(actions.some(a => a.startsWith('gbrain bootstrap harness --yes --port 3131 --token'))).toBe(true);
-    expect(actions).not.toContain('gbrain bootstrap harness --yes --port 3131');
+    expect(actions.some(a => a.startsWith('foresights bootstrap harness --yes --port 3131 --token'))).toBe(true);
+    expect(actions).not.toContain('foresights bootstrap harness --yes --port 3131');
     expect(actions.some(a => a.includes('--url http://127.0.0.1:3131/mcp --admin-token-file'))).toBe(true);
   });
   test('Postgres banner: plain bootstrap harness, no pre-mint talk', async () => {
@@ -645,11 +645,11 @@ describe('happy path: linux-systemd', () => {
     const doc = jsonDoc(f);
     expect(doc.receipt.engine).toBe('postgres');
     const prose = f.stderr.join('\n');
-    expect(prose).toContain('Local agents     gbrain bootstrap harness --yes --port 3131');
+    expect(prose).toContain('Local agents     foresights bootstrap harness --yes --port 3131');
     expect(prose).not.toContain('auth create');
     expect(prose).not.toContain('--token <value>');
     expect(prose).toContain('Engine    Postgres');
-    expect(doc.next_actions).toContain('gbrain bootstrap harness --yes --port 3131');
+    expect(doc.next_actions).toContain('foresights bootstrap harness --yes --port 3131');
   });
   test('--funnel publishes via funnel, bakes GBRAIN_HOME + surface + DCR, and the summary says public', async () => {
     const f = fakeTailnet();
@@ -672,7 +672,7 @@ describe('happy path: linux-systemd', () => {
     expect(doc).toMatchObject({ status: 'pending', reason: 'tailnet_health_pending' });
     expect(checkOf(doc, 'verify.tailnet')?.status).toBe('pending');
     expect(existsSync(receiptPath(f.serveDir))).toBe(true);
-    expect(f.stderr.join('\n')).toContain('re-run `gbrain mcp expose --status` in a minute');
+    expect(f.stderr.join('\n')).toContain('re-run `foresights mcp expose --status` in a minute');
   });
   test('local health timeout → exit 2 local_health_timeout, verify.local warn, verify.tailnet skipped', async () => {
     const f = fakeTailnet({ localHealthyAfterStart: false });
@@ -749,7 +749,7 @@ describe('hosted_option', () => {
     expect(hostedOf(doc)?.user_message).toContain('?ref=cli-mcp-expose-friction');
     const login = fakeTailnet({ backendState: 'NeedsLogin', afterUp: 'NeedsLogin' });
     expect(await runMcpExpose(['--yes'], login.deps)).toBe(2);
-    expect(login.stdout.join('\n')).toContain('Hosted option: gbrain.io runs GBrain for you, nothing to keep online: https://gbrain.io/?ref=cli-mcp-expose-friction  (hide: gbrain notices mute hosted_option)');
+    expect(login.stdout.join('\n')).toContain('Hosted option: gbrain.io runs Foresights for you, nothing to keep online: https://gbrain.io/?ref=cli-mcp-expose-friction  (hide: foresights notices mute hosted_option)');
   });
   test('a muted owner sees nothing', async () => {
     const f = fakeTailnet();
@@ -853,9 +853,9 @@ describe('service edge cases', () => {
     const doc = jsonDoc(f);
     expect(doc.reason).toBe('foreign_listener');
     expect(doc.message).toContain('Something already answers on 127.0.0.1:3131');
-    expect(doc.message).toContain('If this is a gbrain server left behind by an interrupted `gbrain mcp expose`, run `gbrain mcp expose --remove --yes` first.');
-    expect(doc.next_actions).toContain('gbrain mcp expose --yes --no-service');
-    expect(doc.next_actions).toContain('gbrain mcp expose --remove --yes');
+    expect(doc.message).toContain('If this is a foresights server left behind by an interrupted `foresights mcp expose`, run `foresights mcp expose --remove --yes` first.');
+    expect(doc.next_actions).toContain('foresights mcp expose --yes --no-service');
+    expect(doc.next_actions).toContain('foresights mcp expose --remove --yes');
     expect(joinedCalls(f).some(c => c.includes('--bg'))).toBe(false);
     expect(joinedCalls(f).some(c => c.includes('serve status'))).toBe(false);
     expect(checkOf(doc, 'tailscale.publish')).toBeUndefined();
@@ -887,7 +887,7 @@ describe('service edge cases', () => {
     expect(checkOf(doc, 'verify.tailnet')?.status).toBe('skipped');
     expect(f.stderr.join('\n')).toContain('Nothing listens on 127.0.0.1:3131 yet');
     expect(f.stderr.join('\n')).toContain('--no-service does not change it');
-    expect(doc.next_actions).toContain(`gbrain mcp admin login-link --url https://${DNS}/mcp --admin-token-file <existing-server-admin-token-file>`);
+    expect(doc.next_actions).toContain(`foresights mcp admin login-link --url https://${DNS}/mcp --admin-token-file <existing-server-admin-token-file>`);
     expect(doc.next_actions.filter((action: string) => action.includes('--admin-token-file')).every((action: string) => action.includes('<existing-server-admin-token-file>'))).toBe(true);
   });
   test('--no-service re-run after a full install keeps the service block and does not rewrite the wrapper', async () => {
@@ -940,7 +940,7 @@ describe('service edge cases', () => {
     expect(receipt.service).toMatchObject({ target: 'linux-systemd', state: 'stopped', unit_path: f.deps.unitPath });
     expect(receipt.port).toBe(3131);
     expect(doc.receipt).toEqual(receipt);
-    expect(doc.next_actions).toContain('gbrain mcp expose --remove --yes');
+    expect(doc.next_actions).toContain('foresights mcp expose --remove --yes');
     // --remove sees it and clears the published handler
     f.calls.length = 0;
     f.stdout.length = 0;
@@ -987,7 +987,7 @@ describe('--status', () => {
     const bad = jsonDoc(f);
     expect(bad.status).toBe('error');
     expect(checkOf(bad, 'tailscale.publish')?.status).toBe('fail');
-    expect(bad.next_actions).toContain('gbrain mcp expose --yes');
+    expect(bad.next_actions).toContain('foresights mcp expose --yes');
   });
   test('a stopped service → service check fails, exit 1', async () => {
     const f = fakeTailnet();
@@ -1155,12 +1155,12 @@ describe('engine detection + summary variants', () => {
       expect(await runMcpExpose(['--yes', '--json'], f.deps)).toBe(1);
       const doc = jsonDoc(f);
       expect(doc).toMatchObject({ status: 'error', reason: 'no_brain_config' });
-      expect(doc.message).toBe('No brain is configured on this host (gbrain init first), so a service would only crash-loop; pass --no-service to publish a server you run yourself.');
+      expect(doc.message).toBe('No brain is configured on this host (foresights init first), so a service would only crash-loop; pass --no-service to publish a server you run yourself.');
       expect(checkOf(doc, 'plan')).toMatchObject({ status: 'fail' });
       expect(checkOf(doc, 'plan')?.detail).toContain('REFUSED: no brain is configured on this host');
       expect(checkOf(doc, 'consent')).toBeUndefined();
-      expect(doc.next_actions).toContain('gbrain init');
-      expect(doc.next_actions).toContain('gbrain mcp expose --yes --no-service');
+      expect(doc.next_actions).toContain('foresights init');
+      expect(doc.next_actions).toContain('foresights mcp expose --yes --no-service');
       expect(joinedCalls(f).some(c => c.includes('--bg') || c.startsWith('systemctl --user enable'))).toBe(false);
       expect(f.fetches).toEqual([]);
       expect(existsSync(f.serveDir)).toBe(false);
@@ -1173,7 +1173,7 @@ describe('engine detection + summary variants', () => {
     expect(gdoc.receipt.engine).toBe('unknown');
     expect(checkOf(gdoc, 'plan')?.status).toBe('ok');
     expect(g.stderr.join('\n')).toContain('unknown (no brain config found');
-    expect(gdoc.next_actions).toContain('gbrain bootstrap harness --yes --port 3131');
+    expect(gdoc.next_actions).toContain('foresights bootstrap harness --yes --port 3131');
     expect(g.stderr.join('\n')).not.toContain('auth create');
     // --dry-run still prints the plan (with the refusal marked) and exits 0
     const h = fakeTailnet();
@@ -1200,15 +1200,15 @@ describe('engine detection + summary variants', () => {
   test('the re-run hint re-renders every non-default publish flag (never --yes/--json); a non-JSON argument error goes to stderr only', async () => {
     const f = fakeTailnet();
     expect(await runMcpExpose(['--port', '4000', '--surface', 'verbs', '--enable-dcr', '--no-install', '--no-service', '--json'], f.deps)).toBe(2);
-    expect(jsonDoc(f).next_actions).toContain('gbrain mcp expose --port 4000 --surface verbs --enable-dcr --no-service --no-install --yes');
+    expect(jsonDoc(f).next_actions).toContain('foresights mcp expose --port 4000 --surface verbs --enable-dcr --no-service --no-install --yes');
     const g = fakeTailnet();
     expect(await runMcpExpose(['--no-tailscale', '--json'], g.deps)).toBe(2);
-    expect(jsonDoc(g).next_actions).toContain('gbrain mcp expose --no-tailscale --yes');
+    expect(jsonDoc(g).next_actions).toContain('foresights mcp expose --no-tailscale --yes');
     const h = fakeTailnet();
     expect(await runMcpExpose(['--dry-run', '--remove'], h.deps)).toBe(1);
     expect(h.stdout).toEqual([]);
     expect(h.stderr.join('\n')).toContain('Conflicting setup arguments: --dry-run and --remove');
-    expect(h.stderr.join('\n')).toContain('gbrain mcp expose --help');
+    expect(h.stderr.join('\n')).toContain('foresights mcp expose --help');
   });
 });
 
@@ -1290,7 +1290,7 @@ describe('tailscale binary + login step edges', () => {
     const hdoc = jsonDoc(h);
     expect(hdoc).toMatchObject({ status: 'pending', reason: 'tailscale_daemon_not_running' });
     expect(checkOf(hdoc, 'tailscale.login')?.detail).toContain('daemon not running');
-    expect(hdoc.next_actions).toEqual(['sudo systemctl enable --now tailscaled', 'gbrain mcp expose --yes']);
+    expect(hdoc.next_actions).toEqual(['sudo systemctl enable --now tailscaled', 'foresights mcp expose --yes']);
     expect(h.recorded.find(r => r.argv.join(' ') === `${TS} status --json`)!.opts?.timeoutMs).toBe(15_000);
   });
   test('GBRAIN_TAILSCALE_LOGIN_TIMEOUT_MS that is not a positive number (abc, 0, -5, empty) falls back to the 300000ms default for `tailscale up`', async () => {
@@ -1486,7 +1486,7 @@ describe('--remove edges', () => {
     expect(checkOf(gdoc, 'service')).toMatchObject({ status: 'ok' });
     expect(checkOf(gdoc, 'receipt')).toMatchObject({ status: 'skipped' });
     expect(checkOf(gdoc, 'receipt')?.detail).toContain('kept: the wrapper and the receipt');
-    expect(gdoc.next_actions).toEqual(['tailscale serve status', 'gbrain mcp expose --remove --yes']);
+    expect(gdoc.next_actions).toEqual(['tailscale serve status', 'foresights mcp expose --remove --yes']);
     expect(g.stderr.join('\n')).toContain('Stopped here: the service was stopped and removed, but the tailscale handler for port 3131 is still present. Left in place: the wrapper and the receipt.');
     expect(joinedCalls(g)).toContain('systemctl --user disable --now gbrain-serve.service');
     expect(existsSync(g.deps.unitPath!)).toBe(false);
@@ -1538,10 +1538,10 @@ describe('runMcp dispatch regression', () => {
       _resetCliExitVerdictForTests();
       await runMcp([]);
       const help = out.join('\n');
-      expect(help).toContain('gbrain mcp expose --status [--json]');
-      expect(help).toContain('gbrain mcp expose --remove [--yes] [--json]');
-      expect(help).toContain('See: gbrain mcp expose --help');
-      expect(help).toContain('gbrain mcp admin --help');
+      expect(help).toContain('foresights mcp expose --status [--json]');
+      expect(help).toContain('foresights mcp expose --remove [--yes] [--json]');
+      expect(help).toContain('See: foresights mcp expose --help');
+      expect(help).toContain('foresights mcp admin --help');
       expect(currentExitCode()).toBe(0);
     } finally {
       logSpy.mockRestore();
@@ -1600,7 +1600,7 @@ describe('receipt shape guard, rollback, binary + path confinement', () => {
     expect(checkOf(doc, 'service')).toMatchObject({ status: 'fail' });
     expect(checkOf(doc, 'service')?.detail).toContain('stopped');
     expect(checkOf(doc, 'tailscale.publish')?.status).toBe('ok');
-    expect(doc.next_actions).toContain('gbrain mcp expose --yes');
+    expect(doc.next_actions).toContain('foresights mcp expose --yes');
   });
   test('rollback: a throw after this run published (no handler before) turns the fresh handler off, writes no receipt, exit 1; funnel uses funnel off; a pre-existing handler is left alone', async () => {
     const f = fakeTailnet();
@@ -1864,12 +1864,12 @@ describe('tailscale serve status fails closed', () => {
     expect(checkOf(doc, 'tailscale.publish')?.detail).toContain('handler left as is');
     expect(checkOf(doc, 'receipt')).toMatchObject({ status: 'skipped' });
     expect(doc.receipt).not.toBeNull();
-    expect(doc.next_actions).toContain('gbrain mcp expose --remove --yes');
+    expect(doc.next_actions).toContain('foresights mcp expose --remove --yes');
     expect(joinedCalls(f).some(c => c.includes('--https=443 --set-path=/ off'))).toBe(false);
     expect(existsSync(receiptPath(f.serveDir))).toBe(true);
     expect(existsSync(wrapperPath(f.serveDir))).toBe(true);
     expect((await inner([TS, 'serve', 'status', '--json'])).stdout).toContain('127.0.0.1:3131');
-    expect(f.stderr.join('\n')).toContain('run the removal again (the user already approved it: `gbrain mcp expose --remove --yes`)');
+    expect(f.stderr.join('\n')).toContain('run the removal again (the user already approved it: `foresights mcp expose --remove --yes`)');
     // Tailscale is back → the same command completes the removal
     broken = false;
     f.calls.length = 0;
@@ -1923,7 +1923,7 @@ describe('tailscale serve status fails closed', () => {
     expect(checkOf(doc, 'tailscale.publish')?.detail).toContain('could not re-read');
     expect(checkOf(doc, 'service')).toMatchObject({ status: 'ok' });
     expect(checkOf(doc, 'receipt')).toMatchObject({ status: 'skipped' });
-    expect(doc.next_actions).toContain('gbrain mcp expose --remove --yes');
+    expect(doc.next_actions).toContain('foresights mcp expose --remove --yes');
     expect(f.stderr.join('\n')).toContain('Stopped here: the service was stopped and removed, but the tailscale handler for port 3131 could not be confirmed gone');
     expect(joinedCalls(f)).toContain(`${TS} serve --https=443 --set-path=/ off`);
     expect(existsSync(receiptPath(f.serveDir))).toBe(true);
@@ -1943,7 +1943,7 @@ describe('tailscale serve status fails closed', () => {
     expect(doc).toMatchObject({ status: 'error', reason: 'tailscale_publish_unconfirmed' });
     expect(doc.message).toContain('could not be read afterwards');
     expect(doc.message).toContain('--force');
-    expect(doc.next_actions).toContain('gbrain mcp expose --remove --yes');
+    expect(doc.next_actions).toContain('foresights mcp expose --remove --yes');
     expect(checkOf(doc, 'tailscale.publish')?.detail).toContain('exited 0 but could not read tailscale serve status (exit 1): needs_operator');
     expect(joinedCalls(f)).toContain(`${TS} serve --bg 3131`);
     expect(checkOf(doc, 'admin_token')).toBeUndefined();
@@ -1983,7 +1983,7 @@ describe('early receipt + receipt-less recovery', () => {
     expect(doc.message).toContain('the receipt was already written');
     expect(checkOf(doc, 'rollback')).toMatchObject({ status: 'skipped' });
     expect(checkOf(doc, 'rollback')?.detail).toContain('receipt already written');
-    expect(doc.next_actions).toContain('gbrain mcp expose --remove --yes');
+    expect(doc.next_actions).toContain('foresights mcp expose --remove --yes');
     expect(joinedCalls(f).some(c => c.includes('--https=443 --set-path=/ off'))).toBe(false);
     expect(existsSync(receiptPath(f.serveDir))).toBe(true);
     expect((await f.run([TS, 'serve', 'status', '--json'])).stdout).toContain('127.0.0.1:3131');
@@ -2009,7 +2009,7 @@ describe('early receipt + receipt-less recovery', () => {
     expect(checkOf(pending, 'plan')?.detail).toContain('turn off the :443 handler proxying http://127.0.0.1:3131');
     expect(checkOf(pending, 'plan')?.detail).toContain(`delete ~/.gbrain/serve/gbrain-serve.sh`);
     expect(checkOf(pending, 'plan')?.detail).toContain('leave ~/.gbrain/serve/admin-token');
-    expect(pending.next_actions).toContain('gbrain mcp expose --remove --yes');
+    expect(pending.next_actions).toContain('foresights mcp expose --remove --yes');
     expect(f.stderr.join('\n')).toContain('Recovering without a receipt');
     expect(joinedCalls(f).some(c => c.includes('off') || c.includes('disable'))).toBe(false);
     expect(existsSync(wrapperPath(f.serveDir))).toBe(true);
@@ -2101,7 +2101,7 @@ describe('early receipt + receipt-less recovery', () => {
     expect(checkOf(hdoc, 'files')?.detail).toContain('kept: the wrapper');
     expect(checkOf(hdoc, 'plan')?.detail).toContain('cannot be checked — stops after the service step (exit 1)');
     expect(checkOf(hdoc, 'plan')?.detail).toContain('Files     keep ');
-    expect(hdoc.next_actions).toEqual(['tailscale serve status --json', 'gbrain mcp expose --remove --yes']);
+    expect(hdoc.next_actions).toEqual(['tailscale serve status --json', 'foresights mcp expose --remove --yes']);
     expect(h.stderr.join('\n')).toContain('Stopped here: no service was found, but `tailscale serve status` could not be read');
     expect(h.stderr.join('\n')).not.toContain('Removed the leftovers');
     expect(existsSync(wrapperPath(h.serveDir))).toBe(true);
@@ -2148,16 +2148,16 @@ describe('early receipt + receipt-less recovery', () => {
     expect(idoc).toMatchObject({ status: 'not_exposed' });
     expect(checkOf(idoc, 'tailscale.publish')?.detail).toContain('could not be checked');
   });
-  test('a :443 handler for --port with NO other gbrain evidence is not proven ours: left alone (exit 0, note names the proxy target and --force); --force turns it off; a wrapper next to it is evidence enough', async () => {
+  test('a :443 handler for --port with NO other foresights evidence is not proven ours: left alone (exit 0, note names the proxy target and --force); --force turns it off; a wrapper next to it is evidence enough', async () => {
     // handler only: another tool may proxy the same port — never turned off on a guess
     const f = fakeTailnet({ existingHandlers: { 3131: false } });
     expect(await runMcpExpose(['--remove', '--yes', '--json'], f.deps)).toBe(0);
     const doc = jsonDoc(f);
     expect(doc).toMatchObject({ status: 'not_exposed', reason: 'not_exposed' });
     expect(checkOf(doc, 'tailscale.publish')).toMatchObject({ status: 'warn' });
-    expect(checkOf(doc, 'tailscale.publish')?.detail).toContain('a :443 handler proxies http://127.0.0.1:3131 but nothing else of gbrain\'s is here');
+    expect(checkOf(doc, 'tailscale.publish')?.detail).toContain('a :443 handler proxies http://127.0.0.1:3131 but nothing else of foresights\'s is here');
     expect(checkOf(doc, 'tailscale.publish')?.detail).toContain('pass --force to turn it off');
-    expect(doc.next_actions).toContain('gbrain mcp expose --remove --yes --force');
+    expect(doc.next_actions).toContain('foresights mcp expose --remove --yes --force');
     expect(f.stderr.join('\n')).toContain('not proven to be ours');
     expect(f.stderr.join('\n')).toContain('not exposed — nothing to remove');
     expect(joinedCalls(f).some(c => c.includes('--https=443 --set-path=/ off') || c.includes('disable'))).toBe(false);
@@ -2186,7 +2186,7 @@ describe('early receipt + receipt-less recovery', () => {
     // a non-TTY plan without --yes carries --force forward in the re-run hint
     const i = fakeTailnet({ existingHandlers: { 3131: false } });
     expect(await runMcpExpose(['--remove', '--force', '--json'], i.deps)).toBe(2);
-    expect(jsonDoc(i).next_actions).toContain('gbrain mcp expose --remove --yes --force');
+    expect(jsonDoc(i).next_actions).toContain('foresights mcp expose --remove --yes --force');
   });
 });
 
@@ -2199,19 +2199,19 @@ describe('PGLite lock-holder warning', () => {
     const doc = jsonDoc(f);
     expect(asked).toEqual([join(f.home, 'brain.pglite')]);
     expect(checkOf(doc, 'pglite_lock')).toMatchObject({ status: 'warn' });
-    expect(checkOf(doc, 'pglite_lock')?.detail).toBe('a live process holds this PGLite brain (pid 4242, gbrain serve): the service cannot start until it exits — stop it, or move to Postgres');
-    expect(f.stderr.join('\n')).toContain('  Lock      a live process holds this PGLite brain (pid 4242, gbrain serve)');
+    expect(checkOf(doc, 'pglite_lock')?.detail).toBe('a live process holds this PGLite brain (pid 4242, foresights serve): the service cannot start until it exits — stop it, or move to Postgres');
+    expect(f.stderr.join('\n')).toContain('  Lock      a live process holds this PGLite brain (pid 4242, foresights serve)');
     expect(doc.checks.findIndex((c: { name: string }) => c.name === 'pglite_lock')).toBe(doc.checks.findIndex((c: { name: string }) => c.name === 'plan') + 1);
     expect(doc.status).toBe('exposed');
-    // a command string wins over the serve flag; a non-serve holder says gbrain
+    // a command string wins over the serve flag; a non-serve holder says foresights
     const g = fakeTailnet();
-    g.deps.pgliteHolder = () => ({ pid: 7, serve: false, command: 'gbrain doctor' });
+    g.deps.pgliteHolder = () => ({ pid: 7, serve: false, command: 'foresights doctor' });
     expect(await runMcpExpose(['--dry-run', '--json'], g.deps)).toBe(0);
-    expect(jsonDoc(g).plan.join('\n')).toContain('(pid 7, gbrain doctor)');
+    expect(jsonDoc(g).plan.join('\n')).toContain('(pid 7, foresights doctor)');
     const g2 = fakeTailnet();
     g2.deps.pgliteHolder = () => ({ pid: 8, serve: false });
     expect(await runMcpExpose(['--dry-run', '--json'], g2.deps)).toBe(0);
-    expect(jsonDoc(g2).plan.join('\n')).toContain('(pid 8, gbrain)');
+    expect(jsonDoc(g2).plan.join('\n')).toContain('(pid 8, foresights)');
     // our own managed service (receipt present, state running) is expected to hold the lock → no warning
     const h = fakeTailnet();
     expect(await runMcpExpose(['--yes'], h.deps)).toBe(0);
@@ -2244,7 +2244,7 @@ describe('PGLite lock-holder warning', () => {
     writeFileSync(join(lockDir, 'lock'), JSON.stringify({ pid: process.pid, subcommand: 'serve' }));
     expect(await runMcpExpose(['--dry-run', '--json'], f.deps)).toBe(0);
     const doc = jsonDoc(f);
-    expect(checkOf(doc, 'pglite_lock')?.detail).toContain(`(pid ${process.pid}, gbrain serve)`);
+    expect(checkOf(doc, 'pglite_lock')?.detail).toContain(`(pid ${process.pid}, foresights serve)`);
     const g = fakeTailnet();
     expect(await runMcpExpose(['--dry-run', '--json'], g.deps)).toBe(0);
     expect(checkOf(jsonDoc(g), 'pglite_lock')).toBeUndefined();
@@ -2305,11 +2305,11 @@ describe('scoped off + honest recovery (adversarial-review batch)', () => {
     expect(await runMcpExpose(['--yes', '--no-tailscale', '--json'], f.deps)).toBe(1);
     const doc = jsonDoc(f);
     expect(doc).toMatchObject({ status: 'error', reason: 'tailscale_receipt_present' });
-    expect(doc.message).toBe(`This brain is already published on your tailnet at https://${DNS}; run \`gbrain mcp expose --remove --yes\` first, or re-run without --no-tailscale.`);
+    expect(doc.message).toBe(`This brain is already published on your tailnet at https://${DNS}; run \`foresights mcp expose --remove --yes\` first, or re-run without --no-tailscale.`);
     expect(checkOf(doc, 'plan')).toMatchObject({ status: 'fail' });
     expect(checkOf(doc, 'plan')?.detail).toContain(`Tailscale REFUSED (--no-tailscale): this brain is already published on your tailnet at https://${DNS}`);
     expect(checkOf(doc, 'consent')).toBeUndefined();
-    expect(doc.next_actions).toEqual(['gbrain mcp expose --remove --yes', 'gbrain mcp expose --yes']);
+    expect(doc.next_actions).toEqual(['foresights mcp expose --remove --yes', 'foresights mcp expose --yes']);
     expect(doc.receipt).toEqual(before);
     expect(readExposeReceipt(receiptPath(f.serveDir))).toEqual(before);
     expect(joinedCalls(f).some(c => c.includes('--bg') || c.startsWith('systemctl --user enable') || c.startsWith('systemctl --user restart'))).toBe(false);
@@ -2403,11 +2403,11 @@ describe('scoped off + honest recovery (adversarial-review batch)', () => {
     const doc = jsonDoc(g);
     expect(doc).toMatchObject({ status: 'pending', reason: 'tailscale_login_manual' });
     // the manual command names the discovered binary (it is outside sudo's secure_path, so a bare `sudo tailscale` would not find it) and says the operator is choosing to trust it
-    expect(doc.message).toBe(`tailscale at ${local} is not a system install, so gbrain will not run it with sudo. If you trust that binary, sign in yourself (this runs it as root): \`sudo ${local} set --operator=$USER && sudo ${local} up\`, then re-run: gbrain mcp expose --yes`);
+    expect(doc.message).toBe(`tailscale at ${local} is not a system install, so foresights will not run it with sudo. If you trust that binary, sign in yourself (this runs it as root): \`sudo ${local} set --operator=$USER && sudo ${local} up\`, then re-run: foresights mcp expose --yes`);
     expect(checkOf(doc, 'tailscale.binary')?.detail).toBe(local);
     expect(checkOf(doc, 'tailscale.login')).toMatchObject({ status: 'pending' });
     expect(checkOf(doc, 'tailscale.login')?.detail).toContain('not a system install');
-    expect(doc.next_actions).toEqual([`sudo ${local} set --operator=$USER && sudo ${local} up`, 'gbrain mcp expose --yes']);
+    expect(doc.next_actions).toEqual([`sudo ${local} set --operator=$USER && sudo ${local} up`, 'foresights mcp expose --yes']);
     expect(joinedCalls(g).some(c => c.startsWith('sudo'))).toBe(false);
     expect(joinedCalls(g).some(c => c.includes(' up') || c.includes('--bg'))).toBe(false);
     expect(existsSync(g.serveDir)).toBe(false);
@@ -2476,21 +2476,21 @@ describe('scoped off + honest recovery (adversarial-review batch)', () => {
     expect(checkOf(doc, 'service')).toMatchObject({ status: 'warn', detail: 'systemd (user) gbrain-serve.service is installed (running) without a receipt' });
     expect(checkOf(doc, 'tailscale.publish')).toMatchObject({ status: 'warn', detail: 'a :443 handler proxies http://127.0.0.1:3131 without a receipt' });
     expect(checkOf(doc, 'files')).toMatchObject({ status: 'warn', detail: 'wrapper ~/.gbrain/serve/gbrain-serve.sh exists without a receipt' });
-    expect(doc.next_actions).toEqual(['gbrain mcp expose --remove --yes']);
-    expect(doc.message).toContain('run gbrain mcp expose --remove --yes');
+    expect(doc.next_actions).toEqual(['foresights mcp expose --remove --yes']);
+    expect(doc.message).toContain('run foresights mcp expose --remove --yes');
     expect(f.fetches).toEqual([]); // read-only probes, no health fetches
     expect(joinedCalls(f).every(c => c === 'systemctl --user is-system-running' || c === 'systemctl --user is-active gbrain-serve.service' || c === `${TS} serve status --json`)).toBe(true);
-    expect(f.stderr.join('\n')).toContain('Clean up: gbrain mcp expose --remove --yes');
+    expect(f.stderr.join('\n')).toContain('Clean up: foresights mcp expose --remove --yes');
     // human mode exits 1 too
     f.stdout.length = 0;
     expect(await runMcpExpose(['--status'], f.deps)).toBe(1);
-    expect(f.stdout.join('\n')).toContain('an interrupted `gbrain mcp expose` left these behind');
+    expect(f.stdout.join('\n')).toContain('an interrupted `foresights mcp expose` left these behind');
     // and the suggested command really cleans it up → then the plain not_exposed
     expect(await runMcpExpose(['--remove', '--yes'], f.deps)).toBe(0);
     f.stdout.length = 0;
     expect(await runMcpExpose(['--status', '--json'], f.deps)).toBe(2);
     expect(jsonDoc(f)).toMatchObject({ status: 'not_exposed', reason: 'not_exposed' });
-    // a handler alone (nothing else of gbrain's) → --force in the recovery command; --port is honored
+    // a handler alone (nothing else of foresights's) → --force in the recovery command; --port is honored
     const g = fakeTailnet({ existingHandlers: { 4000: true } });
     expect(await runMcpExpose(['--status', '--port', '4000', '--json'], g.deps)).toBe(1);
     const gdoc = jsonDoc(g);
@@ -2498,7 +2498,7 @@ describe('scoped off + honest recovery (adversarial-review batch)', () => {
     expect(checkOf(gdoc, 'tailscale.publish')?.detail).toBe('a :443 handler proxies http://127.0.0.1:4000 (funnel) without a receipt');
     expect(checkOf(gdoc, 'service')).toBeUndefined();
     expect(checkOf(gdoc, 'files')).toBeUndefined();
-    expect(gdoc.next_actions).toEqual(['gbrain mcp expose --remove --yes --force --port 4000']);
+    expect(gdoc.next_actions).toEqual(['foresights mcp expose --remove --yes --force --port 4000']);
     // the default port does not see a handler for another port
     g.stdout.length = 0;
     expect(await runMcpExpose(['--status', '--json'], g.deps)).toBe(2);
@@ -2554,7 +2554,7 @@ describe('scoped off + honest recovery (adversarial-review batch)', () => {
     expect(checkOf(hdoc, 'service')).toMatchObject({ status: 'warn' });
     expect(checkOf(hdoc, 'files')).toMatchObject({ status: 'skipped' });
     expect(checkOf(hdoc, 'files')?.detail).toContain('kept: the wrapper');
-    expect(hdoc.next_actions).toEqual(['tailscale serve status', 'gbrain mcp expose --remove --yes']);
+    expect(hdoc.next_actions).toEqual(['tailscale serve status', 'foresights mcp expose --remove --yes']);
     expect(h.stderr.join('\n')).toContain('Stopped here: the service files were removed but the launchd bootout failed, but the tailscale handler for port 3131 is still present. Left in place: the wrapper.');
     expect(existsSync(wrapperPath(h.serveDir))).toBe(true);
     expect(existsSync(h.deps.plistPath!)).toBe(false);
@@ -2573,7 +2573,7 @@ describe('scoped off + honest recovery (adversarial-review batch)', () => {
     expect(checkOf(doc, 'service')).toMatchObject({ status: 'ok' });
     expect(checkOf(doc, 'tailscale.publish')).toMatchObject({ status: 'fail' });
     expect(checkOf(doc, 'files')?.detail).toContain('kept: the wrapper');
-    expect(doc.next_actions).toEqual(['tailscale serve status', 'gbrain mcp expose --remove --yes']);
+    expect(doc.next_actions).toEqual(['tailscale serve status', 'foresights mcp expose --remove --yes']);
     expect(existsSync(wrapperPath(f.serveDir))).toBe(true);
     expect(existsSync(f.deps.unitPath!)).toBe(false);
     // handler + --force, no wrapper: nothing to keep, the re-run needs --force again
@@ -2584,7 +2584,7 @@ describe('scoped off + honest recovery (adversarial-review batch)', () => {
     const gdoc = jsonDoc(g);
     expect(gdoc.reason).toBe('handler_not_removed');
     expect(gdoc.message).toBe('the tailscale handler for port 3131 is still present; left in place: nothing (no wrapper was found)');
-    expect(gdoc.next_actions).toEqual(['tailscale serve status', 'gbrain mcp expose --remove --yes --force']);
+    expect(gdoc.next_actions).toEqual(['tailscale serve status', 'foresights mcp expose --remove --yes --force']);
     expect(g.stderr.join('\n')).toContain('Stopped here: no service was found, but the tailscale handler for port 3131 is still present.');
   });
 

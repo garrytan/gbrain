@@ -55,7 +55,7 @@ This skill guarantees:
 - Every ingested media item has a brain page with analysis (not just a transcript dump)
 - Transcripts (video/audio) saved in raw and human-readable formats
 - Entity extraction: every person and company mentioned gets back-linked
-- Raw source files preserved via `gbrain files upload-raw`
+- Raw source files preserved via `foresights files upload-raw`
 - Filing by primary subject, not by media format
 
 > **Convention:** See `skills/conventions/quality.md` for Iron Law back-linking.
@@ -77,7 +77,7 @@ Every mention of a person or company with a brain page MUST create a back-link.
 
 ### Phase 2: Upload raw source
 
-Save the original file for provenance: `gbrain files upload-raw <file> --page <slug>`
+Save the original file for provenance: `foresights files upload-raw <file> --page <slug>`
 
 ### Phase 3: Create brain page
 
@@ -115,7 +115,7 @@ A media item is NOT fully ingested until entity propagation is complete.
 
 ### Phase 5: Sync
 
-`gbrain sync` to update the index.
+`foresights sync` to update the index.
 
 ## Output Format
 
@@ -140,7 +140,7 @@ Brain page created with summary, highlights, and entity cross-links. Report to u
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - Transcription fails: write `[transcript unavailable]` and continue with metadata; never fabricate content.
 - A transient API failure (network, `timeout`, `rate_limited`): retry once. On an auth failure, abort and tell the user which provider key is missing.

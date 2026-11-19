@@ -1,5 +1,5 @@
 /**
- * #8510: `gbrain dream --help --json` runs under the CLI's --json document guard (dream declares
+ * #8510: `foresights dream --help --json` runs under the CLI's --json document guard (dream declares
  * `json: 'document'`), which sends console.log to stderr. The help went out through console.log, so fd 1
  * carried nothing, the run exited 0 and recorded a json_document_missing agent-contract event that doctor
  * counts. The real CLI, spawned with an empty GBRAIN_HOME, for the command and both subverbs.
@@ -23,9 +23,9 @@ async function runCli(home: string, argv: string[]) {
 
 describe('#8510 dream --help --json', () => {
   for (const [command, argv, usage] of [
-    ['dream', ['dream'], 'Usage: gbrain dream [options]'],
-    ['dream retriage', ['dream', 'retriage'], 'gbrain dream retriage'],
-    ['dream reset-key', ['dream', 'reset-key'], 'gbrain dream reset-key'],
+    ['dream', ['dream'], 'Usage: foresights dream [options]'],
+    ['dream retriage', ['dream', 'retriage'], 'foresights dream retriage'],
+    ['dream reset-key', ['dream', 'reset-key'], 'foresights dream reset-key'],
   ] as const) {
     test(`${command} --help --json prints one help document; plain --help keeps its text`, async () => {
       const home = mkdtempSync(join(tmpdir(), 'gbrain-8510-'));

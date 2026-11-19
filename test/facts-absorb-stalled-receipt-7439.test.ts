@@ -59,7 +59,7 @@ async function refusedPageBatch({ engine, ctx, root }: ManagedBrain) {
   return { file, pristine, receipt, retry, write: write!.id };
 }
 
-/** The `gbrain repair failed-writes` preview rows for the target's fact requests. */
+/** The `foresights repair failed-writes` preview rows for the target's fact requests. */
 async function factsListing(engine: ManagedBrain['engine']) {
   const preview = await (await repairRunner(engine, { apply: false, logger: { info() {}, warn() {}, error() {} } }))
     .run('failed-writes', await resolveRepairScope(engine, 'default'), { explicit: true, sourceFlag: 'default' });
@@ -86,7 +86,7 @@ for (const backend of testBackends()) {
     const [listed, ...others] = await factsListing(engine);
     expect(others).toEqual([]);
     expect(listed!.class).toBe('producer_owned');
-    expect(listed!.detail).toStartWith(`recover: gbrain facts retry-dead --reset 'facts-absorb:write:${write}'`);
+    expect(listed!.detail).toStartWith(`recover: foresights facts retry-dead --reset 'facts-absorb:write:${write}'`);
     expect(listed!.detail).toContain('once the file check passes');
     writeFileSync(file, pristine);
     await withVerifiedLocalRegistration(engine, await registerLocalWriter(engine, 'cli'), async () => {

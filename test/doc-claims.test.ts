@@ -30,7 +30,7 @@ interface Claim {
 
 const RETRACTED: Claim[] = [
   { claim: '~/.openclaw/config.json', why: '#4842: OpenClaw reads ~/.openclaw/openclaw.json `mcp.servers`; registration goes through `openclaw mcp add`' },
-  { claim: "Don't store user preferences in GBrain", why: 'durable preferences belong in shared memory (docs/guides/brain-vs-memory.md)' },
+  { claim: "Don't store user preferences in Foresights", why: 'durable preferences belong in shared memory (docs/guides/brain-vs-memory.md)' },
   { claim: 'it should return nothing', why: 'recall of a stored preference is expected to return it (brain-vs-memory guidance)' },
   { claim: /Every (?:future )?`put_page` (?:auto-creates|extracts)/, why: '#4679: remote put_page skips inline graph extraction (owner: test/put-page-remote-autolink-hint.test.ts)' },
   { claim: 'auto-linking on every write', why: '#4679: remote writes return `skipped: "remote"` and rely on a sweep' },
@@ -38,8 +38,8 @@ const RETRACTED: Claim[] = [
   { claim: 'Verify via the `auto_links` field in the put_page response (`{ created', why: '#4679: same retracted inline auto_links promise' },
   { claim: 'No manual `add_link` calls needed for ordinary page writes', why: '#4679: HTTP writers need a host sweep or explicit add_link' },
   { claim: 'nobody else ships together', why: 'exclusivity claim retracted from the primary docs' },
-  { claim: 'post-upgrade [--execute', why: '`gbrain post-upgrade` has no --execute flag; `gbrain upgrade` runs it, `gbrain apply-migrations --yes` runs migrations by hand' },
-  { claim: '`gbrain upgrade` is the whole fix', why: 'an upgrade can need follow-up steps (migrations, repair previews); docs name the verify step instead (agent operator wave G3)' },
+  { claim: 'post-upgrade [--execute', why: '`foresights post-upgrade` has no --execute flag; `foresights upgrade` runs it, `foresights apply-migrations --yes` runs migrations by hand' },
+  { claim: '`foresights upgrade` is the whole fix', why: 'an upgrade can need follow-up steps (migrations, repair previews); docs name the verify step instead (agent operator wave G3)' },
   { claim: 'keychain and survives', why: '#4741: the empty-dir hermetic config does not keep the macOS keychain login across logout' },
 ];
 

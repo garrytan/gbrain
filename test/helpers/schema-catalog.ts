@@ -95,7 +95,7 @@ export function postgresCatalogQuery(conn: { unsafe: (sql: string) => Promise<un
   return async (sql) => (await conn.unsafe(sql)) as Array<Record<string, unknown>>;
 }
 
-/** Raw `prosrc` of gbrain's own public functions, keyed like the catalog (`name(identity args)`). */
+/** Raw `prosrc` of foresights's own public functions, keyed like the catalog (`name(identity args)`). */
 export const FUNCTION_BODIES_SQL = `
   SELECT p.proname::text || '(' || pg_get_function_identity_arguments(p.oid) || ')' AS key,
          COALESCE(p.prosrc, '') AS body

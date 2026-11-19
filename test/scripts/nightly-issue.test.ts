@@ -24,7 +24,7 @@ import {
 const ROOT = join(import.meta.dir, '../..');
 const FIX = join(ROOT, 'test/fixtures/nightly-watch');
 const load = <T>(name: string): T => JSON.parse(readFileSync(join(FIX, name), 'utf8')) as T;
-const REPO = 'garrytan/gbrain';
+const REPO = 'aimonk2025/gbrain';
 const TODAY = '2026-10-05';
 
 interface Call { method: string; path: string; body?: Record<string, unknown> }
@@ -78,7 +78,7 @@ describe('nightly-watch incidents', () => {
     expect(body).toContain('| `Heavy tests` | `Bootstrap offline Docker e2e (placeholder)` | failure | no |');
     expect(body).toContain('### Next step for the agent');
     expect(body).toContain('owner action');
-    expect(body).toContain('https://github.com/garrytan/gbrain/compare/');
+    expect(body).toContain('https://github.com/aimonk2025/gbrain/compare/');
     const record = recordOf(body);
     expect(record.failing.map(f => f.job).sort()).toEqual(['Heavy tests', 'Hermes door e2e (credentialed, real binary, loud-fail)', 'Plugin doors (codex + claude, install tier)']);
     expect(record.first_red).toEqual({ run_id: 37195155240, sha: record.head_sha });

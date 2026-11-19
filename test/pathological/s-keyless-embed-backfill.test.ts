@@ -75,7 +75,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         await withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
           const { engine, close } = await isolatedSharedSkillsEngine(databaseUrl);
           try {
-            // A keyless brain as `gbrain init --no-embedding` leaves it, and the worker's gateway as the CLI builds it.
+            // A keyless brain as `foresights init --no-embedding` leaves it, and the worker's gateway as the CLI builds it.
             await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
             await engine.setConfig('embedding_disabled', 'true');
             configureGateway(buildGatewayConfig({ engine: engine.kind, embedding_disabled: true } as never));

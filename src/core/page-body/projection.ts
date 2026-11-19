@@ -220,7 +220,7 @@ async function buildClaimedProjection(engine: BrainEngine, ref: { sourceId: stri
  * `rebuild_failed` like the inline route; a page whose revision moved is
  * left to the row the trigger queued for its new revision. `listed` names
  * every row this call took (`<source_incarnation>/<slug>`), for a caller that
- * tries each row once (`exclude`: `gbrain projections drain`).
+ * tries each row once (`exclude`: `foresights projections drain`).
  */
 export async function rebuildPendingSegmentedProjections(engine: BrainEngine, limit: number,
   opts: { deadlineMs?: number; now?: () => number; notAfter?: string; reasons?: readonly string[]; retryCooldown?: boolean; exclude?: readonly string[];

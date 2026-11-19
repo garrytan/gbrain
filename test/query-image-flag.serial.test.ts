@@ -1,4 +1,4 @@
-// v0.27.1 follow-up: end-to-end smoke for `gbrain query --image <path>`.
+// v0.27.1 follow-up: end-to-end smoke for `foresights query --image <path>`.
 //
 // Exercises the full op-layer wiring without going through the CLI dispatch:
 // seed two image pages with known 1024-dim image vectors, invoke the `query`

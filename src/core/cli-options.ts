@@ -2,7 +2,7 @@
  * Global CLI flags parsed before command dispatch.
  *
  * Keeping this separate from per-command flag parsing so that
- * `gbrain --progress-json doctor` works: the global flag is stripped
+ * `foresights --progress-json doctor` works: the global flag is stripped
  * before cli.ts looks at argv[0] for the subcommand.
  *
  * Threading: every command handler receives a resolved CliOptions object.
@@ -24,13 +24,13 @@ export interface CliOptions {
    */
   timeoutMs: number | null;
   /**
-   * v0.40.4 — `--explain` flag for `gbrain search/query`. Switches the
+   * v0.40.4 — `--explain` flag for `foresights search/query`. Switches the
    * default formatter to a per-stage attribution view that shows
    * base_score + each boost stage's multiplier + rank delta from
    * the reranker. Has no effect on other commands.
    */
   explain: boolean;
-  /** `--timings` on `gbrain search/query`: per-phase `timings_ms` and model-call `cost` (cli/search-timings.ts). */
+  /** `--timings` on `foresights search/query`: per-phase `timings_ms` and model-call `cost` (cli/search-timings.ts). */
   timings?: boolean;
   /**
    * `--brain <id>` — which BRAIN (database) this invocation targets: 'host'
@@ -53,7 +53,7 @@ export interface CliOptions {
   /**
    * GBRA-218: `--as <member>` — preview an operation's reads as that member
    * (src/cli/main.ts validates the member and sets the caller-access record).
-   * Unset when the flag is absent. `gbrain access` owns its own `--as`.
+   * Unset when the flag is absent. `foresights access` owns its own `--as`.
    */
   as?: string;
   /**
@@ -88,13 +88,13 @@ function parseWaitSeconds(val: string | undefined): number {
  * Brain-id shape. Same regex as brain-registry's BRAIN_ID_RE (kept in sync;
  * brain-resolver.ts follows the same convention). 'host' matches. Validated
  * at parse time so an invalid id fails LOUDLY here — and so childGlobalFlags
- * can safely splice the value into execSync('gbrain ...') command strings.
+ * can safely splice the value into execSync('foresights ...') command strings.
  */
 const BRAIN_ID_RE = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
 
 function parseBrainValue(val: string | undefined): string {
   if (val === undefined || val.length === 0 || val.startsWith('-')) {
-    throw new Error('--brain requires a value (a mount id from `gbrain mounts list`, or "host").');
+    throw new Error('--brain requires a value (a mount id from `foresights mounts list`, or "host").');
   }
   if (!BRAIN_ID_RE.test(val)) {
     throw new Error(
@@ -138,7 +138,7 @@ export const TIMEOUT_OWNING_COMMANDS = new Set(['sync', 'remote']);
  * --explain timeline` fell through to the WRITE-pass extraction instead of
  * the explain view.
  *
- * wave-g: `call` claims it too — `gbrain call <op>` maps leftover argv into
+ * wave-g: `call` claims it too — `foresights call <op>` maps leftover argv into
  * op params, so a handed-back --explain would surface as an
  * unknown-parameter error instead of being ignored (the pre-#4541 global
  * behavior for `call query --explain`).
@@ -222,7 +222,7 @@ export function parseGlobalFlags(argv: string[]): { cliOpts: CliOptions; rest: s
       slots.push({ timingsFlag: true });
       continue;
     }
-    // v0.40.4 — --explain for `gbrain search/query` per-stage attribution.
+    // v0.40.4 — --explain for `foresights search/query` per-stage attribution.
     // #4541: like --timeout, whether the global parser claims it depends on
     // the command, which is only known after the full scan — slot it.
     if (a === '--explain') {
@@ -255,10 +255,10 @@ export function parseGlobalFlags(argv: string[]): { cliOpts: CliOptions; rest: s
       slots.push({ waitValue: a.slice('--wait='.length) });
       continue;
     }
-    // GBRA-218: --as <member>. Slotted like --wait: `gbrain access check` owns its own --as list.
+    // GBRA-218: --as <member>. Slotted like --wait: `foresights access check` owns its own --as list.
     if (a === '--as' || a.startsWith('--as=')) {
       const value = a === '--as' ? argv[++i] : a.slice('--as='.length);
-      if (value === undefined || value.length === 0 || value.startsWith('-')) throw new Error('--as requires a member id (gbrain access member list).');
+      if (value === undefined || value.length === 0 || value.startsWith('-')) throw new Error('--as requires a member id (foresights access member list).');
       slots.push({ asValue: value });
       continue;
     }
@@ -304,7 +304,7 @@ export function parseGlobalFlags(argv: string[]): { cliOpts: CliOptions; rest: s
   const rest: string[] = [];
   const handback: string[] = [];
   // #4557: a handed-back --explain that arrived BEFORE the command token
-  // (`gbrain --explain extract timeline`, the documented global-flag-first
+  // (`foresights --explain extract timeline`, the documented global-flag-first
   // invocation style) must not be re-inserted at its original position —
   // that puts it at rest[0], and cli.ts dispatches on `args[0]` as the
   // command, so the literal string '--explain' gets treated as the command
@@ -446,7 +446,7 @@ export function _resetCliOptionsForTest(): void {
 }
 
 /**
- * Build the global-flag suffix to append to child `gbrain …` subprocess
+ * Build the global-flag suffix to append to child `foresights …` subprocess
  * commands so children inherit the parent's progress-mode.
  *
  * Returns a string ready to concat onto an execSync command string, with
@@ -463,7 +463,7 @@ export function childGlobalFlags(cliOpts?: CliOptions): string {
   if (opts.progressInterval !== DEFAULT_CLI_OPTIONS.progressInterval) {
     parts.push(`--progress-interval=${opts.progressInterval}`);
   }
-  // Brain routing must survive into child `gbrain ...` subprocesses: the env
+  // Brain routing must survive into child `foresights ...` subprocesses: the env
   // and dotfile tiers self-propagate (children inherit env + cwd), but an
   // explicit --brain does not — without this, a parent routed to a mount
   // spawns children that silently operate on the host brain. The value is
@@ -479,10 +479,10 @@ export function childGlobalFlags(cliOpts?: CliOptions): string {
 // Per the locked decision: --background means submit-and-exit ALWAYS.
 // Same semantics in TTY and cron. Composable in shell pipelines:
 //
-//   JOB=$(gbrain embed --stale --background | grep -oE 'job_id=[0-9]+' | cut -d= -f2)
-//   gbrain jobs get $JOB
+//   JOB=$(foresights embed --stale --background | grep -oE 'job_id=[0-9]+' | cut -d= -f2)
+//   foresights jobs get $JOB
 //
-// `--background --follow` submits then execs `gbrain jobs follow <id>`
+// `--background --follow` submits then execs `foresights jobs follow <id>`
 // so the user sees live stream while still getting durable queue
 // semantics (worker survives if user disconnects).
 //
@@ -558,7 +558,7 @@ export async function maybeBackground(opts: MaybeBackgroundOpts): Promise<boolea
     lastBackgroundJobId = job.id;
 
     if (follow) {
-      // exec `gbrain jobs follow <id>` so the user sees live stream
+      // exec `foresights jobs follow <id>` so the user sees live stream
       // without losing the durable-queue submission.
       const { spawnCliChild } = await import('./cli-force-exit.ts');
       const cmd = process.argv[0] ?? 'bun';

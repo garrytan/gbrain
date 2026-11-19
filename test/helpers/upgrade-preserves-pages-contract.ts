@@ -40,10 +40,10 @@ async function pageState(engine: BrainEngine) {
 }
 
 /**
- * #7814: a brain created by v0.59.2.0 (before `gbrain init` stamped
+ * #7814: a brain created by v0.59.2.0 (before `foresights init` stamped
  * fresh-install migrations) carries pages written by that release and an
  * empty migration ledger, so every orchestrator lists as pending. Upgrading
- * it runs the real `gbrain apply-migrations` runner over the whole registry;
+ * it runs the real `foresights apply-migrations` runner over the whole registry;
  * the run must complete and change no page: same content_hash, frontmatter
  * and body for every page and, on a repo brain, the same files and Git HEAD.
  *
@@ -51,7 +51,7 @@ async function pageState(engine: BrainEngine) {
  * upgrade matrix's job, scripts/upgrade-matrix); what makes it v0.59.2.0-shaped
  * is the ledger with no fresh-install stamps. `repo` is a Git checkout
  * claimed as the default source's canonical worktree with managed
- * persistence activated, as `gbrain init --git` leaves it.
+ * persistence activated, as `foresights init --git` leaves it.
  */
 export async function runUpgradePreservesPages(databaseUrl: string | undefined, shape: BrainShape, expect: typeof bunExpect): Promise<void> {
   const home = realpathSync.native(mkdtempSync(join(tmpdir(), 'gbrain-upgrade-7814-')));

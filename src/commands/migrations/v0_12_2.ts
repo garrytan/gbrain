@@ -13,10 +13,10 @@
  * rows) and safe to re-run. PGLite engines no-op cleanly.
  *
  * Phases (all idempotent):
- *   A. Schema   — gbrain init --migrate-only (no schema changes in v0.12.2
+ *   A. Schema   — foresights init --migrate-only (no schema changes in v0.12.2
  *                 but we still apply for consistency with v0.12.0).
- *   B. Repair   — gbrain repair-jsonb (the actual JSONB fix).
- *   C. Verify   — gbrain repair-jsonb --dry-run --json; assert 0 remaining.
+ *   B. Repair   — foresights repair-jsonb (the actual JSONB fix).
+ *   C. Verify   — foresights repair-jsonb --dry-run --json; assert 0 remaining.
  *   D. Record   — append completed.jsonl.
  */
 
@@ -48,7 +48,7 @@ function phaseBRepair(opts: OrchestratorOpts): OrchestratorPhaseResult {
   if (opts.dryRun) return { name: 'jsonb_repair', status: 'skipped', detail: 'dry-run' };
   try {
     // stdio: 'inherit' — child's stderr progress streams straight through.
-    runGbrainSubprocess('gbrain repair-jsonb' + childGlobalFlags(), { timeoutMs: 600_000 });
+    runGbrainSubprocess('foresights repair-jsonb' + childGlobalFlags(), { timeoutMs: 600_000 });
     return { name: 'jsonb_repair', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -129,12 +129,12 @@ export const v0_12_2: Migration = {
   featurePitch: {
     headline: 'Postgres frontmatter queries now work — JSONB double-encode bug fixed and existing rows auto-repaired',
     description:
-      'gbrain v0.12.0-and-earlier silently stored JSONB columns as quoted string literals on ' +
+      'foresights v0.12.0-and-earlier silently stored JSONB columns as quoted string literals on ' +
       'Postgres/Supabase (PGLite was unaffected). Every `frontmatter->>\'key\'` returned NULL ' +
       'and GIN indexes were inert. v0.12.2 fixes the writes AND auto-repairs every existing ' +
       'string-typed row in pages.frontmatter, raw_data.data, ingest_log.pages_updated, ' +
       'files.metadata, and page_versions.frontmatter. The migration is idempotent. Pages ' +
-      'truncated by the splitBody horizontal-rule bug can be recovered with `gbrain sync --full`.',
+      'truncated by the splitBody horizontal-rule bug can be recovered with `foresights sync --full`.',
   },
   orchestrator,
 };

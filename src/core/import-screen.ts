@@ -86,7 +86,7 @@ async function readImportSanityConfig(engine: BrainEngine): Promise<ImportSanity
     effectiveCfg = await loadConfigWithEngine(reader, baseCfg);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[gbrain] content-sanity: DB config lift failed (${msg}); falling back to file/env\n`);
+    process.stderr.write(`[foresights] content-sanity: DB config lift failed (${msg}); falling back to file/env\n`);
   }
   const [externalMode, agentMode] = await gateKeys;
   const cs = effectiveCfg?.content_sanity ?? {};
@@ -148,7 +148,7 @@ export interface ContentDisposition {
  *     `junk_disposition: reject`: throw ContentSanityBlockError, the single
  *     throw point every wrapper (import errors, put_page envelope, sync
  *     failure record) already handles; otherwise quarantine (hidden, zero
- *     chunks, reviewable via `gbrain quarantine list`).
+ *     chunks, reviewable via `foresights quarantine list`).
  *   - soft-block (oversize without a junk hit): `embed_skip` plus a
  *     `content_flag`, so chunks stay empty and old chunks are purged.
  *   - markup-heavy: `content_flag`, page stays searchable.
@@ -187,7 +187,7 @@ export async function settleContentDisposition(engine: BrainEngine, parsed: Pars
     });
     if (sanityResult.shouldQuarantine || sanityResult.shouldFlag) {
       process.stderr.write(
-        `[gbrain] content-sanity bypass (GBRAIN_NO_SANITY=1): ${slug} — ${sanityResult.reason_messages.join('; ')}\n`,
+        `[foresights] content-sanity bypass (GBRAIN_NO_SANITY=1): ${slug} — ${sanityResult.reason_messages.join('; ')}\n`,
       );
     }
   } else if (sanityResult.shouldQuarantine) {
@@ -213,7 +213,7 @@ export async function settleContentDisposition(engine: BrainEngine, parsed: Pars
     // Default: quarantine (hide). Page lands with the marker, writes
     // zero chunks (chunking guard below widens to isQuarantined), is
     // excluded from search via QUARANTINE_FILTER_FRAGMENT, reviewable
-    // via get_page / `gbrain quarantine list`.
+    // via get_page / `foresights quarantine list`.
     parsed.frontmatter[QUARANTINE_KEY] = buildQuarantineMarker(reason, detail, {
       bytes: sanityResult.bytes,
     });
@@ -222,7 +222,7 @@ export async function settleContentDisposition(engine: BrainEngine, parsed: Pars
       disposition: 'quarantine',
     });
     process.stderr.write(
-      `[gbrain] content-sanity quarantine: ${slug} — ${detail} (hidden from search, reviewable via 'gbrain quarantine list')\n`,
+      `[foresights] content-sanity quarantine: ${slug} — ${detail} (hidden from search, reviewable via 'foresights quarantine list')\n`,
     );
   } else if (sanityResult.shouldFlag) {
     // Fuzzy markup-heavy OR oversize. The page stays usable; the agent
@@ -246,7 +246,7 @@ export async function settleContentDisposition(engine: BrainEngine, parsed: Pars
       // soft_block silently drops embedding, and console-level warns are
       // what operator log hooks and collectors can observe.
       console.warn(
-        `[gbrain] content-sanity flag (oversized): ${slug} (${sanityResult.bytes} bytes) — page lands, embedding skipped, agent warned`,
+        `[foresights] content-sanity flag (oversized): ${slug} (${sanityResult.bytes} bytes) — page lands, embedding skipped, agent warned`,
       );
     } else {
       // markup_heavy: page ingests NORMALLY (keeps chunks, embeds). The
@@ -255,7 +255,7 @@ export async function settleContentDisposition(engine: BrainEngine, parsed: Pars
         disposition: 'flag',
       });
       process.stderr.write(
-        `[gbrain] content-sanity flag (markup_heavy): ${slug} (ratio ${sanityResult.markup_ratio?.toFixed(2)}) — stays searchable, agent warned\n`,
+        `[foresights] content-sanity flag (markup_heavy): ${slug} (ratio ${sanityResult.markup_ratio?.toFixed(2)}) — stays searchable, agent warned\n`,
       );
     }
   } else if (sanityResult.reasons.includes('oversize_warn')) {
@@ -264,7 +264,7 @@ export async function settleContentDisposition(engine: BrainEngine, parsed: Pars
       disposition: 'warn',
     });
     process.stderr.write(
-      `[gbrain] content-sanity warn: ${slug} (${sanityResult.bytes} bytes) — exceeds warn threshold; stored and searchable, no action needed\n`,
+      `[foresights] content-sanity warn: ${slug} (${sanityResult.bytes} bytes) — exceeds warn threshold; stored and searchable, no action needed\n`,
     );
   }
   const gate = ctx.writeGate ? await applyTrustAllowRules(engine, assessPageForGate(parsed, ctx.writeGate, sanityCfg.writeGate ?? DEFAULT_WRITE_GATE_CONFIG),
@@ -278,7 +278,7 @@ export async function settleContentDisposition(engine: BrainEngine, parsed: Pars
     if (gate.verdict === 'quarantine' && !pageQuarantined) {
       parsed.frontmatter[QUARANTINE_KEY] = buildQuarantineMarker('instruction_like', detail);
       pageQuarantined = true;
-      process.stderr.write(`[gbrain] ${detail}: ${slug} quarantined (hidden from search, reviewable via 'gbrain quarantine list')\n`);
+      process.stderr.write(`[foresights] ${detail}: ${slug} quarantined (hidden from search, reviewable via 'foresights quarantine list')\n`);
     } else if (gate.verdict === 'flag' && !pageQuarantined) {
       parsed.frontmatter[CONTENT_FLAG_KEY] = buildContentFlagMarker('instruction_like', detail);
       pageFlagged = true;
@@ -517,7 +517,7 @@ export function contentRefusalFromReceipt(code: string | null | undefined, messa
   const suggestion = typed === 'invalid_frontmatter' ? `The content itself was refused, so resubmitting it unchanged refuses again. Correct ${where}: one line per key with its whole value quoted, then submit the corrected content with a new request_id.`
     : typed === 'frontmatter_slug_conflict' ? 'The content declares a slug that conflicts with its path. Remove the `slug:` line or make it match, then submit with a new request_id.'
     : typed === 'content_rejected' ? 'The content-sanity gate rejects this content under the operator\'s junk_disposition=reject setting. Remove the matched junk, then submit with a new request_id.'
-    : typed === 'purged_content' ? 'This content was purged by the owner and stays out of the brain. Do not resubmit it; write new content, or ask the user to clear the tombstone on the brain host (gbrain pages unpurge).'
+    : typed === 'purged_content' ? 'This content was purged by the owner and stays out of the brain. Do not resubmit it; write new content, or ask the user to clear the tombstone on the brain host (foresights pages unpurge).'
     : typed === 'write_gate_rejected' ? 'The write gate refuses this external instruction-like content under the operator\'s write_gate.external_mode=reject setting, so it refuses on every retry. Tell the user; changing that setting is their decision.'
     : typed === 'tag_too_long' ? TAG_TOO_LONG_SUGGESTION
     : typed === 'visibility_noncanonical' ? 'The content asks for visibility: private in a spelling page privacy does not read, so it refuses on every retry. Write visibility: private on its own frontmatter line (lowercase key and value), then submit with a new request_id.'
@@ -544,7 +544,7 @@ const LEGACY_CONTENT_MESSAGES: Array<[code: string, pattern: RegExp]> = [
  * True when a stored refusal (receipt `error_code` + `error_message`) is a
  * deterministic content refusal no retry can fix: the new typed codes, the
  * #6188 fence grammar (`Fence <reason>: ...` under wire `invalid_params` or
- * `take_row_collision`), and the exact strings older gbrain versions stored
+ * `take_row_collision`), and the exact strings older foresights versions stored
  * for the same causes. Cursor-size and admission-capacity
  * `request_too_large`, every transient or conflict code, and any other
  * `invalid_params` message never match.

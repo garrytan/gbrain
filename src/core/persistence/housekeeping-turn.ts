@@ -1,7 +1,7 @@
 /**
  * GBRA-156: one housekeeping turn per host for one-shot commands.
  *
- * A one-shot command (`gbrain put`, `gbrain remember`, any shared operation the CLI runs once and exits) starts a full
+ * A one-shot command (`foresights put`, `foresights remember`, any shared operation the CLI runs once and exits) starts a full
  * consumer to publish its own write. The consumer's housekeeping (recovery and expired-claim scans, dead-owner and topology
  * recovery, compaction and queue upkeep, the resident projection pass) is not what that write waits on. Many brains have no
  * resident process, so these commands are also the only thing that runs it: it is rationed, not removed, and it runs after

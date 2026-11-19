@@ -1,5 +1,5 @@
 /**
- * v0.31 E2E — `gbrain recall --today` markdown render against real Postgres.
+ * v0.31 E2E — `foresights recall --today` markdown render against real Postgres.
  * Mostly a parity check: same shape as the PGLite test, on PG.
  */
 
@@ -13,7 +13,7 @@ const d = RUN ? describe : describe.skip;
 beforeAll(async () => { if (RUN) await setupDB(); });
 afterAll(async () => { if (RUN) await teardownDB(); });
 
-d('gbrain recall --today (Postgres)', () => {
+d('foresights recall --today (Postgres)', () => {
   test('renders markdown with kind icons', async () => {
     if (!RUN) return;
     const engine = getEngine();

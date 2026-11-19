@@ -1,6 +1,6 @@
 /**
  * GST-1113 (gaps 1+2 of the internal QM provider): scope sources. Each shared QM scope (a project, channel, team or org)
- * is its own gbrain source, marked `config.qm_scope: true`. The mark is sticky: it is set when the source first enters a
+ * is its own foresights source, marked `config.qm_scope: true`. The mark is sticky: it is set when the source first enters a
  * credential's `attest_sources` and no credential change clears it, so the scope's memory stays fenced after the scope
  * credential is revoked, rotated or narrowed. An attested memory_write may name a marked source its credential lists
  * (source_id) and lands on that source's scope page (`memory/scope`, world facts read by whoever holds read on the
@@ -46,7 +46,7 @@ export function storedPerCallWriteSource(a: Pick<WriteAuthority, 'actingFor' | '
 
 export function sourceNotAttested(sourceId: string): OperationError {
   return opError('permission_denied', `Source ${sourceId} is not one of this connection's scope sources, so nothing was saved.`,
-    'Send source_id only for a scope source the brain operator listed for this credential with gbrain auth rescope --attest-sources, or omit it to save on the person\'s own member page.',
+    'Send source_id only for a scope source the brain operator listed for this credential with foresights auth rescope --attest-sources, or omit it to save on the person\'s own member page.',
     { reason: 'source_not_attested', why: 'A scope source holds memory every member of that scope reads; only the sources the operator listed may receive it.' });
 }
 
@@ -138,7 +138,7 @@ function attestInvalid(message: string, suggestion: string): OperationError {
 }
 
 /**
- * Checks an attest_sources change for one credential (gbrain auth rescope --attest-sources) and marks each newly listed
+ * Checks an attest_sources change for one credential (foresights auth rescope --attest-sources) and marks each newly listed
  * source, and each listed source that lost its mark (a restore), inside the caller's transaction. The mark is never
  * cleared here. Returns whether anything was checked.
  */
@@ -155,14 +155,14 @@ export async function applyAttestSources(db: Db, self: CredentialRef, next: read
   const stillRead = dropped.filter(s => mine?.reads.includes(s));
   if (stillRead.length) {
     throw attestInvalid(`This credential still reads ${stillRead.join(', ')}, so it cannot leave --attest-sources; nothing changed.`,
-      'Remove it from the read grant first (gbrain auth rescope ... --federated-read <list without it>), then from --attest-sources.');
+      'Remove it from the read grant first (foresights auth rescope ... --federated-read <list without it>), then from --attest-sources.');
   }
   if (added.length && mine?.privatePages) {
-    throw attestInvalid('This credential holds the private-pages grant, so it cannot list scope sources; nothing changed.', 'Clear it first (gbrain auth rescope ... --private-pages none): a scope credential reads only shared memory.');
+    throw attestInvalid('This credential holds the private-pages grant, so it cannot list scope sources; nothing changed.', 'Clear it first (foresights auth rescope ... --private-pages none): a scope credential reads only shared memory.');
   }
   for (const s of added) {
     const [row] = await sql`SELECT archived, config FROM sources WHERE id = ${s}`;
-    if (!row || row.archived === true) throw attestInvalid(`--attest-sources names ${s}, which is not an active source.`, 'Add a dedicated source for the scope first (gbrain sources add <id>: with a path on a repo brain, without one on a repo-less brain), then list it.');
+    if (!row || row.archived === true) throw attestInvalid(`--attest-sources names ${s}, which is not an active source.`, 'Add a dedicated source for the scope first (foresights sources add <id>: with a path on a repo brain, without one on a repo-less brain), then list it.');
     if (s === 'default' || parseSourceConfig(row.config).federated === true) throw attestInvalid(`--attest-sources names ${s}, which every connection without a source grant reads (${s === 'default' ? 'the default source' : 'a federated source'}).`, 'Use a dedicated, unfederated source per scope.');
     if (mine?.write === s) throw attestInvalid(`--attest-sources names ${s}, this credential's own write source (where member pages live).`, 'Keep member pages and each scope in separate sources: list only scope sources.');
     const readers = all.filter(c => !same(c.ref, self) && c.reads.includes(s) && !c.attest.includes(s));
@@ -186,7 +186,7 @@ export async function withoutScopeSources(ctx: Pick<OperationContext, 'remote' |
   return marked.size ? sources.filter(s => !marked.has(s)) : sources;
 }
 
-/** Refuses `gbrain sources federate` on a scope source: federation would let every connection without a source grant read it. */
+/** Refuses `foresights sources federate` on a scope source: federation would let every connection without a source grant read it. */
 export async function assertNotScopeSource(db: Db, sourceId: string): Promise<void> {
   if ((await markedScopeSources(db, [sourceId])).size) {
     throw attestInvalid(`Source ${sourceId} is a QM scope source, so it cannot be federated.`, 'Leave it unfederated; the scope credential reads it by grant.');

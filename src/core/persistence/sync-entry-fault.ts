@@ -83,7 +83,7 @@ export function nullBytesRefusal(path: string, content: string): { code: 'conten
   // A UTF-16 byte order mark (FF FE or FE FF) reads as two replacement characters in UTF-8.
   const utf16 = content.startsWith('\uFFFD\uFFFD');
   return { code: 'content_null_bytes', line, message: `${path} holds a NUL byte (U+0000) on line ${line}${utf16 ? ' and starts with a UTF-16 byte order mark, so it is UTF-16 text, not UTF-8' : ''}; `
-    + 'gbrain stores page text as UTF-8 without NUL bytes, so sync held this file and the rest of the source synced. '
+    + 'foresights stores page text as UTF-8 without NUL bytes, so sync held this file and the rest of the source synced. '
     + `${utf16 ? 'Save it as UTF-8' : 'Remove the NUL bytes (or, for a binary file, remove it or exclude it with sync.exclude)'}, then commit and sync again.` };
 }
 
@@ -99,9 +99,9 @@ export function filterOwnedRefusal(path: string, content: string, driver: string
   const gitCrypt = content.startsWith(GIT_CRYPT_HEADER);
   if (!gitCrypt && (driver === null || driver === 'lfs')) return null;
   return { code: 'content_filter_owned', message: `${path} is ${gitCrypt ? 'encrypted with git-crypt' : `stored through the Git filter "${driver}"`}, so its committed bytes are not the text in your checkout. `
-    + `gbrain does not run a repository's filter programs during sync, so ${held ? 'sync held this file and the rest of the source synced' : 'this sync stopped at this file'}. `
+    + `foresights does not run a repository's filter programs during sync, so ${held ? 'sync held this file and the rest of the source synced' : 'this sync stopped at this file'}. `
     + 'Leave it out with sync.exclude, or commit it without the filter so Git stores its text, then sync again.'
-    + (gitCrypt || !held ? '' : ` If no filter "${driver}" is in use and the file is plain text, remove the filter attribute from .gitattributes, commit, and run gbrain sources retry-held ${sourceId}: a commit that changes only .gitattributes does not re-screen the file.`) };
+    + (gitCrypt || !held ? '' : ` If no filter "${driver}" is in use and the file is plain text, remove the filter attribute from .gitattributes, commit, and run foresights sources retry-held ${sourceId}: a commit that changes only .gitattributes does not re-screen the file.`) };
 }
 
 /**
@@ -112,7 +112,7 @@ export function missingAttributesRefusal(cursor: { gitRoot: string; sourceId: st
   return opError('git_object_missing', `The .gitattributes that applies to ${path} at the synced commit is missing from the repository.`,
     `${lost.attributes} is committed as blob ${lost.oid}, but the repository of source ${cursor.sourceId} does not have that object, as in a partial clone (git clone --filter) that never fetched it. `
       + `Sync reads a file's Git filter attribute without fetching anything, so it cannot tell whether a filter owns ${path}, and nothing was imported from it. `
-      + `Fetch the object in the checkout (git cat-file -p ${lost.oid} fetches it from the partial clone's remote) or use a clone without --filter, then run gbrain sync --source ${cursor.sourceId} --no-pull.`,
+      + `Fetch the object in the checkout (git cat-file -p ${lost.oid} fetches it from the partial clone's remote) or use a clone without --filter, then run foresights sync --source ${cursor.sourceId} --no-pull.`,
     { detail: lost.oid, fix: { argv: ['git', '-C', cursor.gitRoot, 'cat-file', '-p', lost.oid], consent: [], actor: 'user', requires_exclusive: false,
       why: 'Fetches the missing .gitattributes from the partial clone\'s remote, so the next sync can read the attribute.', verify: { argv: ['gbrain', 'sources', 'status', cursor.sourceId, '--json'] } } });
 }
@@ -128,7 +128,7 @@ export function committedContentOrMissing(cursor: { root: string; gitRoot: strin
   if (entry.path.includes('\uFFFD') && !existsAt(cursor.root, entry.path)) {
     throw opError('path_not_utf8', `The committed name of ${entry.path} is not valid UTF-8.`,
       `${entry.path} is shown with U+FFFD where its name has bytes that are not UTF-8 (a Latin-1 name from an older system, an archive or a network share), so sync cannot read it by name and imported nothing from it. `
-        + `Rename it to a UTF-8 name (for example git mv with the name as git ls-files shows it, or convmv -f latin1 -t utf8), commit, then run gbrain sync --source ${cursor.sourceId} --no-pull.`,
+        + `Rename it to a UTF-8 name (for example git mv with the name as git ls-files shows it, or convmv -f latin1 -t utf8), commit, then run foresights sync --source ${cursor.sourceId} --no-pull.`,
       { fix: { argv: ['git', '-C', cursor.gitRoot, '-c', 'core.quotePath=true', 'ls-files', '--', entry.path.slice(0, Math.max(0, entry.path.lastIndexOf('/') + 1)) || '.'], consent: [], actor: 'user', requires_exclusive: false,
         why: 'Lists the names in that folder with their bytes escaped (read-only), so the one to rename can be typed exactly.', verify: { argv: ['gbrain', 'sources', 'status', cursor.sourceId, '--json'] } } });
   }
@@ -140,12 +140,12 @@ export function committedContentOrMissing(cursor: { root: string; gitRoot: strin
   if (syncPartialClone(cursor.gitRoot)) throw opError('git_object_missing', `The Git object of ${entry.path} at the synced commit is missing from the repository.`,
     `${entry.path} is committed as blob ${blob.oid}, which the repository of source ${cursor.sourceId}, a partial clone (git clone --filter), never fetched${copy}. `
       + 'Sync fetches nothing from a remote, so nothing was imported from it. '
-      + `Fetch the object in the checkout (git cat-file -p ${blob.oid} fetches it from the partial clone's remote) or check the file out, then run gbrain sync --source ${cursor.sourceId} --no-pull.`,
+      + `Fetch the object in the checkout (git cat-file -p ${blob.oid} fetches it from the partial clone's remote) or check the file out, then run foresights sync --source ${cursor.sourceId} --no-pull.`,
     { detail: blob.oid, fix: { argv: ['git', '-C', cursor.gitRoot, 'cat-file', '-p', blob.oid], consent: [], actor: 'user', requires_exclusive: false,
       why: 'Fetches the missing blob from the partial clone\'s remote, so the next sync can read the file.', verify: { argv: ['gbrain', 'sources', 'status', cursor.sourceId, '--json'] } } });
   throw opError('git_object_missing', `The Git object of ${entry.path} at the synced commit is missing from the repository.`,
     `${entry.path} is committed as blob ${blob.oid}, but the repository of source ${cursor.sourceId} no longer has that object${copy}, so nothing was imported from it. `
-      + `Run git fsck in the checkout to see what is missing, restore it with git fetch (a shallow clone) or from a backup, then run gbrain sync --source ${cursor.sourceId} --no-pull.`,
+      + `Run git fsck in the checkout to see what is missing, restore it with git fetch (a shallow clone) or from a backup, then run foresights sync --source ${cursor.sourceId} --no-pull.`,
     { detail: blob.oid, fix: { argv: ['git', '-C', cursor.gitRoot, 'fsck', '--connectivity-only'], consent: [], actor: 'user', requires_exclusive: false,
       why: 'Lists the missing objects (read-only); git fetch, or a restore from a backup, brings them back.', verify: { argv: ['gbrain', 'sources', 'status', cursor.sourceId, '--json'] } } });
 }
@@ -204,8 +204,8 @@ export function freezeFaultHold(run: object, entry: HoldEntry, slug: string, pag
   return { path: entry.path, source_path: entry.sourcePath, slug, page_id: pageId, code: 'page_write_failed',
     message: `${entry.path}: sync could not prepare its ${entry.action === 'delete' ? 'deletion' : 'import'} (${name}: ${text}), so it is held and the rest of the source synced. `
       + ((error as OperationError | null)?.code === 'page_body_rows_unreadable' && pageBody
-        ? `The page's segment rows do not cover its body, so no retry clears it: preview gbrain repair segmented-tiling --source <source> --slug ${slug}.`
-        : 'The next syncs re-test it; if it stays held, report it with the gbrain version or fix the file when the error names it, then gbrain sources retry-held.'),
+        ? `The page's segment rows do not cover its body, so no retry clears it: preview foresights repair segmented-tiling --source <source> --slug ${slug}.`
+        : 'The next syncs re-test it; if it stays held, report it with the foresights version or fix the file when the error names it, then foresights sources retry-held.'),
     upstream_version: null,
     meta: { ...meta, write_failure: { code: pageBody ? (error as OperationError).code : 'storage_error', origin: 'freeze', error_class: name, errno: typeof errno === 'string' ? errno.slice(0, 32) : null, request_id: null, attempts: 1, gbrain_version: VERSION } } };
 }

@@ -25,7 +25,7 @@ const search_by_image: Operation = {
     'Image-as-query retrieval. Accepts a local path (CLI), data: URI, or http(s):// URL ' +
     '(SSRF-defended). Returns visually-similar image chunks plus any OCR text they carry. Optional `query` text ' +
     'refinement merges via weighted RRF. Matching images to full-text knowledge needs multimodal ' +
-    'indexing (`gbrain reindex --multimodal` + `search.unified_multimodal: true`).',
+    'indexing (`foresights reindex --multimodal` + `search.unified_multimodal: true`).',
   params: {
     image_path: { type: 'string', description: 'Absolute path to image (local CLI callers only — rejected for remote MCP per D18).' },
     image_url: { type: 'string', description: 'http(s):// URL to image. SSRF-defended; max 3 redirect hops; 10MB cap.' },

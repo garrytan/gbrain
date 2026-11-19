@@ -4,7 +4,7 @@
  * The `query` op's help text promises `__all__` spans every source for
  * trusted local callers, and the keyword + vector arms honor it. The
  * relational arm's `scopeSources` fell back to `['default']` for an unscoped
- * caller, so on a multi-source brain `gbrain query --source __all__ "who
+ * caller, so on a multi-source brain `foresights query --source __all__ "who
  * invested in widget-co"` answered relationally from `default` alone — a
  * shipped-contract bug when the edge lives in another source.
  *

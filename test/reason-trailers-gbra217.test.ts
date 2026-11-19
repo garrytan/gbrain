@@ -167,7 +167,7 @@ describe('A6: sync mirrors gbrain-reason trailers', () => {
       const s = await classicSource(engine, { 'notes/a.md': page('Edition one.'), 'notes/b.md': page('B one.'), 'notes/c.md': page('C one.') });
       expect((await sync(engine, s)).status).toBe('first_sync');
       write(s.root, { 'notes/a.md': page('Edition two.'), 'notes/b.md': page('B two.'), 'notes/c.md': page('C two.') });
-      const head = commit(s.root, 'edit from outside gbrain', ['notes/a.md: Client asked for the 30-day window.',
+      const head = commit(s.root, 'edit from outside foresights', ['notes/a.md: Client asked for the 30-day window.',
         'notes/missing.md: Names a file this commit never touched.', `notes/b.md: rotated token ${SECRET}`]);
       const result = await sync(engine, s);
 

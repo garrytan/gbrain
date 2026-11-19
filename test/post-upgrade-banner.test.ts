@@ -1,5 +1,5 @@
 /**
- * `gbrain post-upgrade` recovery banner (fix wave 3, Lane D): one [AGENT]
+ * `foresights post-upgrade` recovery banner (fix wave 3, Lane D): one [AGENT]
  * block on a brain with wave findings, naming the brain, each finding's count
  * and the read-only preview; nothing on a clean brain; never an applying
  * command. The banner runs the full wave checks, not doctor --fast.
@@ -19,7 +19,7 @@ import { put, waveBrain } from './helpers/wave-fixture.ts';
 import { bannerFindingLine } from '../src/commands/doctor/upgrade-banner.ts';
 import { WAVE_CHECKS } from '../src/commands/doctor/wave-checks.ts';
 
-/** A CLAUDE_CONFIG_DIR holding one gbrain claude-cli scratch-project transcript (session `sess-self`). */
+/** A CLAUDE_CONFIG_DIR holding one foresights claude-cli scratch-project transcript (session `sess-self`). */
 function selfCaptureHost(): string {
   const claude = mkdtempSync(join(tmpdir(), 'gbrain-banner-claude-'));
   const scratch = join(claude, 'projects', '-tmp-gbrain-claude-cli-cwd-4242');
@@ -38,7 +38,7 @@ describe('post-upgrade recovery banner', () => {
       expect(text).toContain('timeline_history: 1 (repairable after the user agrees)');
       expect(text).toContain('self_capture: 1 (needs an operator action)');
       expect(text).toContain('stale_embedding_effects: 1 (repairable after the user agrees)');
-      expect(text).toContain('Preview (read-only): gbrain doctor --remediation-plan');
+      expect(text).toContain('Preview (read-only): foresights doctor --remediation-plan');
       expect(text).toContain('Ask the user before applying');
       expect(text).not.toContain('--yes');
       expect(text).not.toContain('--apply');
@@ -53,7 +53,7 @@ describe('post-upgrade recovery banner', () => {
     });
   }, 180_000);
 
-  test('captured facts from gbrain\'s own sessions name the captured-facts preview (D14)', async () => {
+  test('captured facts from foresights\'s own sessions name the captured-facts preview (D14)', async () => {
     const claude = selfCaptureHost();
     try {
       await withEnv({ CLAUDE_CONFIG_DIR: claude }, () => managedBrain(async ({ engine }) => {
@@ -61,7 +61,7 @@ describe('post-upgrade recovery banner', () => {
           await writeSingleFact(engine, 'default', { fact, entity: 'people/alice-example', provenance: 'hook:writeback', sessionId: 'sess-self' });
         }
         const text = (await postUpgradeRecoveryBanner(engine, 'host')).join('\n');
-        expect(text).toContain('[AGENT]   captured_facts_active: 2 (explicit_kind_required; preview with: gbrain repair captured-facts)');
+        expect(text).toContain('[AGENT]   captured_facts_active: 2 (explicit_kind_required; preview with: foresights repair captured-facts)');
         expect(text).not.toContain('loop_facts_drift');
         expect(text).not.toContain('--apply');
       }));
@@ -76,7 +76,7 @@ describe('post-upgrade recovery banner', () => {
       // What loops_close left before #5869: the loop closed, its fact still active.
       await engine.executeRaw("UPDATE open_loops SET status='done', closed_at=now(), closed_by='manual' WHERE id=$1", [loopId]);
       const text = (await postUpgradeRecoveryBanner(engine, 'host')).join('\n');
-      expect(text).toContain('[AGENT]   loop_facts_drift: 1 (explicit_kind_required; preview with: gbrain repair loop-facts)');
+      expect(text).toContain('[AGENT]   loop_facts_drift: 1 (explicit_kind_required; preview with: foresights repair loop-facts)');
       expect(text).not.toContain('captured_facts_active');
       expect(text).not.toContain('--apply');
     });
@@ -91,9 +91,9 @@ describe('fence findings in the banner (#6188, D7)', () => {
 
   test('fence_integrity is repaired automatically by the next maintenance run while one is active, and says why not otherwise', () => {
     expect(line('fence_integrity', { total: 3, sources, auto_repair: { enabled: true, active: true } }))
-      .toBe('[AGENT]   fence_integrity: 3 (repaired automatically by the next maintenance run, except 1 that need a manual edit; preview with: gbrain repair fences)');
+      .toBe('[AGENT]   fence_integrity: 3 (repaired automatically by the next maintenance run, except 1 that need a manual edit; preview with: foresights repair fences)');
     expect(line('fence_integrity', { total: 3, sources, auto_repair: { enabled: true, active: false } }))
-      .toBe('[AGENT]   fence_integrity: 3 (not repaired automatically (no maintenance run is active); preview with: gbrain repair fences)');
+      .toBe('[AGENT]   fence_integrity: 3 (not repaired automatically (no maintenance run is active); preview with: foresights repair fences)');
     expect(line('fence_integrity', { total: 3, sources, auto_repair: { enabled: false, active: false } })).toContain('(not repaired automatically (fences.repair.enabled is false)');
     for (const details of [{ total: 3, auto_repair: { active: true } }, { total: 3, auto_repair: { active: false } }]) {
       expect(line('fence_integrity', details)).not.toMatch(/after the user agrees|--apply|--yes/);
@@ -102,15 +102,15 @@ describe('fence findings in the banner (#6188, D7)', () => {
 
   test('a fence-only git_held_files finding names the fence repair; a mixed one names both previews', () => {
     const fenceOnly = line('git_held_files', { held: 2, fences: 2, source_ids: ['notes-example'], auto_repair: { enabled: true, active: true } });
-    expect(fenceOnly).toBe('[AGENT]   git_held_files: 2 (fence holds: repaired automatically by the next maintenance run; preview with: gbrain repair content --source notes-example)');
+    expect(fenceOnly).toBe('[AGENT]   git_held_files: 2 (fence holds: repaired automatically by the next maintenance run; preview with: foresights repair content --source notes-example)');
     const mixed = line('git_held_files', { held: 3, fences: 1, source_ids: ['notes-example'], auto_repair: { enabled: true, active: false } });
-    expect(mixed).toContain('explicit_kind_required; preview with: gbrain repair frontmatter --source notes-example');
-    expect(mixed).toContain('fence holds: not repaired automatically (no maintenance run is active); preview with: gbrain repair content --source notes-example');
-    expect(line('git_held_files', { held: 2, source_ids: ['notes-example'] })).toBe('[AGENT]   git_held_files: 2 (explicit_kind_required; preview with: gbrain repair frontmatter --source notes-example)');
+    expect(mixed).toContain('explicit_kind_required; preview with: foresights repair frontmatter --source notes-example');
+    expect(mixed).toContain('fence holds: not repaired automatically (no maintenance run is active); preview with: foresights repair content --source notes-example');
+    expect(line('git_held_files', { held: 2, source_ids: ['notes-example'] })).toBe('[AGENT]   git_held_files: 2 (explicit_kind_required; preview with: foresights repair frontmatter --source notes-example)');
   });
 });
 
-describe('gbrain post-upgrade', () => {
+describe('foresights post-upgrade', () => {
   const home = mkdtempSync(join(tmpdir(), 'gbrain-banner-cli-'));
   const claude = selfCaptureHost();
   const cli = async (...args: string[]) => {
@@ -145,7 +145,7 @@ describe('gbrain post-upgrade', () => {
     const upgraded = await cli('post-upgrade', '--no-autopilot-install');
     expect(upgraded.code, upgraded.stderr).toBe(0);
     expect(upgraded.stdout).toContain('[AGENT] Relay this to your operator');
-    expect(upgraded.stdout).toContain('[AGENT]   captured_facts_active: 2 (explicit_kind_required; preview with: gbrain repair captured-facts)');
+    expect(upgraded.stdout).toContain('[AGENT]   captured_facts_active: 2 (explicit_kind_required; preview with: foresights repair captured-facts)');
     expect(`${upgraded.stdout}${upgraded.stderr}`).not.toMatch(/safe[- ]chunk/i);
     expect(upgraded.stdout).not.toContain('--apply');
   }, 180_000);

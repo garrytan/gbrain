@@ -2,7 +2,7 @@
  * One provider call per chunk content version (gbrain-evals#180, N14).
  *
  * Every path that embeds a page's vector-less chunks (the post-write embedding
- * effect, `gbrain embed --stale`, the embed-backfill job, phase-end embeds)
+ * effect, `foresights embed --stale`, the embed-backfill job, phase-end embeds)
  * reads which chunks lack a vector, calls the provider and installs. Two paths
  * that read the same page before either installs both send its chunks, so
  * each path holds this page's lease from that read through its install. A

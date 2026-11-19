@@ -324,7 +324,7 @@ for (const kind of testBackends()) {
     test("a private fact on a page kept from remote writers stays with the brain host, and the refusal names it", async () => {
       const id = await hostFact('Initech host kept a sealed audit canaryhostinitech', { entity: INITECH });
       const out = await h.call('owner', 'forget', { id });
-      expect([out.isError, out.json.error, out.text.includes('brain host'), out.text.includes('gbrain forget ' + id)]).toEqual([true, 'scope_denied', true, true]);
+      expect([out.isError, out.json.error, out.text.includes('brain host'), out.text.includes('foresights forget ' + id)]).toEqual([true, 'scope_denied', true, true]);
       expect((await h.row('canaryhostinitech'))!.active).toBe(true);
     }, 120_000);
 

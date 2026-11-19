@@ -1,5 +1,5 @@
 // v0.27.1 follow-up: CLI helper that loads + base64-encodes an image path
-// for `gbrain query --image <path>`. Verifies MIME derivation, oversize
+// for `foresights query --image <path>`. Verifies MIME derivation, oversize
 // rejection, and explicit-MIME override.
 
 import { describe, expect, test, beforeAll, afterAll } from 'bun:test';

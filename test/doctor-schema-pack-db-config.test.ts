@@ -3,7 +3,7 @@
  * op) must resolve the active pack with the FULL 7-tier input, including the
  * DB-plane `schema_pack` config (tier 4). Pre-fix they resolved from
  * file/env only, so a brain whose active pack was flipped via
- * `gbrain config set schema_pack` (or the unify-types migration) had doctor
+ * `foresights config set schema_pack` (or the unify-types migration) had doctor
  * reporting one pack while every query ran another.
  */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';

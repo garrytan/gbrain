@@ -270,7 +270,7 @@ test('GST-2407: memory-proposals list, show, approve and deny mirror the owner p
   expect(closed.exitCode).toBe(1);
   _resetCliExitVerdictForTests();
   const unknown = await capture(['memory-proposals', 'deny', id, '--reason', 'no'], () => Response.json({ error: 'administration_unavailable', code: 'administration_unavailable', message: 'The change outcome is unknown.', outcome: 'unknown' }, { status: 503 }));
-  expect(unknown.result).toMatchObject({ status: 'error', outcome: 'unknown', next_action: 'gbrain mcp admin memory-proposals show ' + id + ' --url ' + base });
+  expect(unknown.result).toMatchObject({ status: 'error', outcome: 'unknown', next_action: 'foresights mcp admin memory-proposals show ' + id + ' --url ' + base });
   expect(unknown.exitCode).toBe(1);
   _resetCliExitVerdictForTests();
   const preview = await capture(['memory-proposals', 'approve', id, '--dry-run'], () => Response.json({ applied: false, dry_run: true, would: 'failed', error_code: 'actor_unlinked' }));

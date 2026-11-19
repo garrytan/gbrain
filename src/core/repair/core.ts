@@ -1,5 +1,5 @@
 /**
- * `gbrain repair <kind>` core: one scope resolver, a resumable per-kind cursor,
+ * `foresights repair <kind>` core: one scope resolver, a resumable per-kind cursor,
  * the capacity stop, and the dry-run / apply loop shared by every kind.
  *
  * Every applied item is one coordinated page write (a `put_page` bound to the
@@ -217,7 +217,7 @@ export const REPAIR_ITEM_FAILURE_CODES: ReadonlySet<string> = new Set(['invalid_
  * GBRA-443: the item failures that are the page's own state declining the write (its file differs from the database or is
  * gone, its body is stored in segments, or, GST-2603, its file cannot take a label edit line by line), never a fault of the
  * run: nothing was written, and the next preview lists the item again with its state. A preview-bound apply whose only
- * failures are these is complete (`gbrain repair` exits 0) and counts them in `declined`. A `label_edit_refused` page is
+ * failures are these is complete (`foresights repair` exits 0) and counts them in `declined`. A `label_edit_refused` page is
  * never counted by the run's systemic-failure breaker: it is that page's own file.
  */
 export const REPAIR_DECLINE_CODES: ReadonlySet<string> = new Set(['source_changed', 'page_body_segmented', 'label_edit_refused']);
@@ -285,7 +285,7 @@ export async function resolveRepairScope(engine: BrainEngine, source?: string): 
   const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1').catch(() => []);
   const rows = await engine.executeRaw<{ id: string }>(
     `SELECT id FROM sources WHERE archived IS NOT TRUE ${source ? 'AND id=$1' : ''} ORDER BY id`, source ? [source] : []);
-  if (source && !rows.length) throw new OperationError('invalid_params', `Source '${source}' does not exist or is archived.`, 'Run `gbrain sources list` and pass an active source id.');
+  if (source && !rows.length) throw new OperationError('invalid_params', `Source '${source}' does not exist or is archived.`, 'Run `foresights sources list` and pass an active source id.');
   return { brain_id: brain?.brain_id ?? 'host', source_ids: rows.map(row => row.id) };
 }
 
@@ -432,7 +432,7 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
       llm_cap_remaining_usd: llmLeft(0) } : {}) },
     capacity: counters.map(({ scope: key, resource, used, limit, stop_at }) => ({ scope: key, resource, used, limit, stop_at })),
     resumed_from: resumed, applied: 0, skipped: 0, failed: [], complete: false, ...(plan.warnings?.length ? { warnings: plan.warnings } : {}),
-    apply_command: `gbrain repair ${handler.kind}${opts.sourceFlag ? ` --source ${opts.sourceFlag}` : ''}${(opts.applyArgs ?? []).map(arg => ` ${arg}`).join('')}`
+    apply_command: `foresights repair ${handler.kind}${opts.sourceFlag ? ` --source ${opts.sourceFlag}` : ''}${(opts.applyArgs ?? []).map(arg => ` ${arg}`).join('')}`
       + `${opts.requestId ? ` --request-id ${opts.requestId}` : ''}${opts.keep ? ` --keep ${opts.keep}` : ''}`
       + `${[...(opts.only ?? []).flatMap(path => ['--only', path]), ...(opts.skip ?? []).flatMap(path => ['--skip', path]),
         ...(opts.slugs ?? []).flatMap(slug => ['--slug', slug]), ...(opts.from ? ['--from', opts.from] : []), ...(opts.close ? ['--close'] : []),
@@ -567,7 +567,7 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
         const perItem = full.resource === 'lifetime_ids' ? 1 : RECEIPT_RESERVATION_FLOOR;
         const needed = Math.ceil((full.used + remaining * perItem) / STOP_RATIO) + 1;
         return stopAfterSettle({ reason: 'capacity', message: `Stopped before crossing 90% of ${full.scope} ${full.resource} (${full.used} of ${full.limit} used; `
-          + `${remaining} item(s) still need ${remaining * perItem} more). Run: gbrain config set ${full.config_key} ${needed} — then rerun \`${result.apply_command}\` to resume.` });
+          + `${remaining} item(s) still need ${remaining * perItem} more). Run: foresights config set ${full.config_key} ${needed} — then rerun \`${result.apply_command}\` to resume.` });
       }
       // GBRA-443: the items from here that fit the admission window, the capacity stop line and one write per page, applied as one run.
       if (handler.applyBatch && !llm && batchCap > 1) {
@@ -636,7 +636,7 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
       }
       if (writerHeld(error)) {
         return stopAfterSettle({ reason: error.code, message: `The canonical writer for source '${item.source_id}' is held (${error.code}). `
-          + `Inspect it with: gbrain sources writer status ${item.source_id} — then rerun \`${result.apply_command}\` to resume.` });
+          + `Inspect it with: foresights sources writer status ${item.source_id} — then rerun \`${result.apply_command}\` to resume.` });
       }
       // GBRA-133: a deadlock, a serialization failure or a lost database connection stops the run with what it applied and
       // the resume command in the result (the cursor stays before this item), instead of ending the command with no record.

@@ -26,7 +26,7 @@ beforeAll(async () => {
 
 afterAll(async () => { await engine?.disconnect(); });
 
-const countLine = (res: ToolResult) => res.content.map(c => c.text).find(t => t.startsWith('[gbrain search] ')) ?? '';
+const countLine = (res: ToolResult) => res.content.map(c => c.text).find(t => t.startsWith('[foresights search] ')) ?? '';
 const mcp = (args: Record<string, unknown>) => withEnv({ GBRAIN_BACKUP_CHECK: '0' }, () => dispatchToolCall(engine, 'search', args, REMOTE));
 
 describe('a remote caller paging to the cap', () => {

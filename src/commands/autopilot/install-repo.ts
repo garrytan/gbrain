@@ -1,5 +1,5 @@
 /**
- * The repo `gbrain autopilot --install` bakes into the daemon when no --repo
+ * The repo `foresights autopilot --install` bakes into the daemon when no --repo
  * is given (#6755): sync.repo_path, else the default source's local_path. A
  * brain whose repo is a managed source keeps it only in sources.local_path,
  * so the config key alone refused an install the brain could name.

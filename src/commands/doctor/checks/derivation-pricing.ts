@@ -11,6 +11,7 @@ import { connectedEngine, type DoctorContext, type DoctorEntry } from '../contex
 import { agentFix, checkError } from '../check-fix.ts';
 import { loadPricingOverrides } from '../../../core/budget/budget-tracker.ts';
 import { reservationCostUsd } from '../../../core/budget/reservation-cost.ts';
+import { commandText } from '../../../core/brand.ts';
 
 /** The command that registers `model`'s price in pricing.overrides (src/commands/pricing.ts merges it into the existing map). */
 export const pricingCommand = (model: string) => ['gbrain', 'pricing', 'set', model, '--input', '<inputUsdPer1M>', '--output', '<outputUsdPer1M>', '--source', '<pricingPageUrl>'];
@@ -26,7 +27,7 @@ async function runDerivationUnpricedModelCheck(ctx: DoctorContext): Promise<Chec
         GROUP BY 1 ORDER BY 3 DESC, 1`);
     // A model priced since (pricing.overrides) no longer holds anything back: the next run meters it.
     const overrides = await loadPricingOverrides(connectedEngine(ctx));
-    const models = rows.filter(r => reservationCostUsd(r.model, 'chat', 1, 1, overrides) === null).map(r => ({ model: r.model, pipelines: r.pipelines ?? [], pages: Number(r.pages), samples: r.samples ?? [], fix: pricingCommand(r.model).join(' ') }));
+    const models = rows.filter(r => reservationCostUsd(r.model, 'chat', 1, 1, overrides) === null).map(r => ({ model: r.model, pipelines: r.pipelines ?? [], pages: Number(r.pages), samples: r.samples ?? [], fix: commandText(pricingCommand(r.model)) }));
     if (!models.length) {
       checks.push({ name: 'derivation_unpriced_model', status: 'ok', message: 'No segmented page derivation is held back by a model without a price.', details: { models } });
       return checks;

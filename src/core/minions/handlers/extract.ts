@@ -11,7 +11,7 @@ export function makeExtractHandler(engine: BrainEngine): MinionHandler {
     const { staleExtractionCounts } = await import('../../extraction-lag.ts');
     // #2849: stale mode — the durable follow-up for extraction deferred by
     // performSync's size gate (totalChanges > 100). Runs the same DB-source
-    // watermark sweep as `gbrain extract --stale`, scoped to the source the
+    // watermark sweep as `foresights extract --stale`, scoped to the source the
     // sync that deferred it was scoped to (job.data.sourceId; absent =
     // unscoped, matching what the CLI hint tells a default-brain operator
     // to run). The sweep is checkout-less + idempotent, so retries and
@@ -63,7 +63,7 @@ export function makeExtractHandler(engine: BrainEngine): MinionHandler {
     const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined;
     const result = await runExtractCore(engine, { mode, dir, dryRun: !!job.data.dryRun, sourceId });
     // #5904: refused timeline writes fail the job instead of completing over rows that were never written.
-    if (result.timeline_refused) throw new Error(`extract: ${result.timeline_refused} timeline write(s) refused; nothing written for them. Run gbrain extract --stale.`);
+    if (result.timeline_refused) throw new Error(`extract: ${result.timeline_refused} timeline write(s) refused; nothing written for them. Run foresights extract --stale.`);
     return result;
   };
 }

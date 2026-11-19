@@ -80,7 +80,7 @@ import { readGarbageCollector } from './segment-blocks.ts';
 import type { JsonObject } from './types.ts';
 
 const READ_BYTES = 1024 * 1024;
-const FENCE_MARKER = /gbrain:(facts|takes):begin/;
+const FENCE_MARKER = /(?:foresights|gbrain):(facts|takes):begin/;
 
 /**
  * @internal Work the checked reads after pass 1 do, for the drift test: file blocks read and hashed against their
@@ -99,7 +99,7 @@ type StreamedImportOptions = {
   /** GBRA-217: a sync import's reason from Git and history-gap marker for the snapshot this import archives. */
   history?: import('../page-state/versions.ts').VersionHistory;
   /**
-   * A page write of the file's content (`gbrain put|capture --file` on the trusted local CLI), not a file import: the
+   * A page write of the file's content (`foresights put|capture --file` on the trusted local CLI), not a file import: the
    * file records no origin (no source_path or file source_uri), no other file's slug claim applies, the staging is a
    * `put`, and `head` replaces the file's first `skip` bytes after its BOM (capture's merged frontmatter). The
    * caller passes `<slug>.md` as the relative path.

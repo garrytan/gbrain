@@ -1290,7 +1290,7 @@ function incompleteNotice(reason: string, escalate: boolean, consecutive: number
       : `delta could not complete this read (${reason}); no cursor moved past content it did not deliver. Retry the same call in about ${DELTA_RETRY_SECONDS} seconds and the held cursor re-reads the same window.`,
     fix: escalate
       ? { consent: [], actor: 'agent', requires_exclusive: false,
-          why: 'Tell the user delta keeps failing, then run gbrain doctor --json to find the failing store.',
+          why: 'Tell the user delta keeps failing, then run foresights doctor --json to find the failing store.',
           verify: { argv: ['gbrain', 'doctor', '--json'] }, docs: DELTA_REPLAY_DOCS }
       : { argv: deltaArgv(retryArgs), mcp: { tool: 'delta', arguments: retryArgs }, consent: [], actor: 'provider', requires_exclusive: false,
           why: `Retry the same read after about ${DELTA_RETRY_SECONDS} seconds; nothing was skipped.`, docs: DELTA_REPLAY_DOCS },
@@ -1303,13 +1303,13 @@ function sessionUnavailableError(ctx: OperationContext, escalate: boolean, retry
     'unavailable',
     'delta: the session cursor could not be read, so this wake delivered nothing and moved nothing.',
     escalate
-      ? 'The session store has failed on several consecutive wakes: tell the user and run `gbrain doctor --json`.'
+      ? 'The session store has failed on several consecutive wakes: tell the user and run `foresights doctor --json`.'
       : `Retry the same call in about ${DELTA_RETRY_SECONDS} seconds, or replay statelessly with ${paramUse(ctx, 'since', '2026-08-11T00:00:00Z')}.`,
     {
       reason: 'session_state',
       why: 'Treating a failed read as a new session would restart the cursor at now and silently skip everything since its checkpoint.',
       fix: escalate
-        ? { consent: [], actor: 'agent', requires_exclusive: false, why: 'Tell the user the session store keeps failing, then run gbrain doctor --json.', verify: { argv: ['gbrain', 'doctor', '--json'] }, docs: DELTA_REPLAY_DOCS }
+        ? { consent: [], actor: 'agent', requires_exclusive: false, why: 'Tell the user the session store keeps failing, then run foresights doctor --json.', verify: { argv: ['gbrain', 'doctor', '--json'] }, docs: DELTA_REPLAY_DOCS }
         : { argv: deltaArgv(retryArgs), mcp: { tool: 'delta', arguments: retryArgs }, consent: [], actor: 'provider', requires_exclusive: false,
             why: `Retry the same read after about ${DELTA_RETRY_SECONDS} seconds; the checkpoint is intact.`, docs: DELTA_REPLAY_DOCS },
     },

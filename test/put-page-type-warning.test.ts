@@ -1,7 +1,7 @@
 /**
  * #5880 — put_page warns (never rejects) when its explicit page type is not
  * declared by the write source's active schema pack. Pre-fix an ordinary
- * put_page (MCP, `gbrain put`, `gbrain call put_page`) stored any type
+ * put_page (MCP, `foresights put`, `foresights call put_page`) stored any type
  * silently, while capture rejected it and subagent writes normalized it.
  * The committed result now carries `type_warning` (stable code, cause, fix,
  * docs) and the caller's logger gets the same line; the page is still
@@ -80,7 +80,7 @@ describe('#5880 put_page undeclared type warning', () => {
       pack: 'gbrain-base-v2',
       docs: 'docs/architecture/schema-packs.md#undeclared-page-types',
     });
-    expect(result.type_warning.fix).toContain('gbrain schema add-type meeting-transcript');
+    expect(result.type_warning.fix).toContain('foresights schema add-type meeting-transcript');
     expect(warns.some((w) => w.includes('page_type_undeclared') && w.includes('meeting-transcript'))).toBe(true);
     const [row] = await engine.executeRaw<{ type: string }>(`SELECT type FROM pages WHERE slug = 'notes/undeclared-local'`);
     expect(row.type).toBe('meeting-transcript');

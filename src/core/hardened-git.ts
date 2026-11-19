@@ -1,5 +1,5 @@
 /**
- * Git invocation for directories gbrain does not trust (a user-chosen checkout,
+ * Git invocation for directories foresights does not trust (a user-chosen checkout,
  * a candidate clone): the repository's own configuration must not run code or
  * reach the network. Every call scrubs `GIT_*` from the environment, ignores
  * system and global config, and disables fsmonitor, hooks, the untracked
@@ -105,7 +105,7 @@ export function hardenedGitEnvironment(operatorSafeDirectories: string[] = opera
 export type HardenedGitResult = { ok: true; stdout: Buffer } | { ok: false; reason: 'exit' | 'timeout' | 'too_large' | 'unavailable'; status?: number; stderr?: string };
 
 /**
- * GBRA-217: the one `git log` gbrain runs in an untrusted checkout, the reason-trailer read (`reason-trailers.ts`). A
+ * GBRA-217: the one `git log` foresights runs in an untrusted checkout, the reason-trailer read (`reason-trailers.ts`). A
  * name-only listing of the first-parent line with no renames compares tree entries only, so no filter, textconv or
  * external diff runs; signatures are not verified (no gpg). Every option is required, so no other `log` passes.
  */
@@ -113,7 +113,7 @@ export const REASON_LOG_OPTIONS: readonly string[] = ['-z', '--first-parent', '-
   '--no-ext-diff', '--no-textconv', '--no-show-signature', '--format=%x00%H%x00%(trailers:key=gbrain-reason,valueonly,unfold)'];
 
 /**
- * The second `git log` gbrain runs in an untrusted checkout, the direction-evidence history read (persistence/git-gap.ts
+ * The second `git log` foresights runs in an untrusted checkout, the direction-evidence history read (persistence/git-gap.ts
  * `readPathHistory`): a raw listing (modes and full blob ids, no patch) of every commit, merges against their first
  * parent, with no renames, so only tree entries are compared and no filter, textconv or external diff runs. Every option
  * is required.

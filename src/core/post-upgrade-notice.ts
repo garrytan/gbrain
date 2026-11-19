@@ -1,7 +1,7 @@
 /**
  * The post-upgrade summary as a notice (agent operator contract v1, F7):
  * `kind: safety`, carrying contract_version (rendered) and the behavior-table
- * URL, emitted once by `gbrain post-upgrade` (terminal lines, or an [AGENT]
+ * URL, emitted once by `foresights post-upgrade` (terminal lines, or an [AGENT]
  * block for an agent) and once per upgraded version to the first stdio MCP
  * session (persisted under GBRAIN_HOME, so restarts do not repeat it).
  * GBRAIN_NO_ONBOARD_NUDGE=1 silences both. Never throws.
@@ -19,7 +19,7 @@ export function postUpgradeNotice(from: string | undefined, to: string = VERSION
   return {
     code: 'post_upgrade',
     kind: 'safety',
-    why: `gbrain was upgraded${from ? ` from v${from}` : ''} to v${to}. Agent contract v1 is in effect: errors carry \`code\` and a structured \`fix\` (follow fix.next), notices arrive as extra blocks, and exit 3 now means confirmation_required only. Scripts and agent instructions written for the old behavior should be checked against the behavior table.`,
+    why: `foresights was upgraded${from ? ` from v${from}` : ''} to v${to}. Agent contract v1 is in effect: errors carry \`code\` and a structured \`fix\` (follow fix.next), notices arrive as extra blocks, and exit 3 now means confirmation_required only. Scripts and agent instructions written for the old behavior should be checked against the behavior table.`,
     fix: {
       argv: ['gbrain', 'errors', '--changed'], consent: [], actor: 'agent', requires_exclusive: false,
       why: 'Lists the error codes renamed in this release (old error value → new code); read-only.',
@@ -28,7 +28,7 @@ export function postUpgradeNotice(from: string | undefined, to: string = VERSION
   };
 }
 
-/** The last upgrade gbrain recorded (`~/.gbrain/upgrade-state.json`, written by `gbrain upgrade`). */
+/** The last upgrade foresights recorded (`~/.gbrain/upgrade-state.json`, written by `foresights upgrade`). */
 function lastUpgrade(): { from?: string; to?: string } | null {
   try {
     const path = gbrainPath('upgrade-state.json');
@@ -71,7 +71,7 @@ export function takePostUpgradeMcpNotice(): Notice | null {
   }
 }
 
-/** `gbrain post-upgrade`: write the summary notice once (terminal lines or an [AGENT] block). */
+/** `foresights post-upgrade`: write the summary notice once (terminal lines or an [AGENT] block). */
 export function writePostUpgradeCliNotice(): void {
   if (process.env.GBRAIN_NO_ONBOARD_NUDGE === '1') return;
   writeCliNotices([postUpgradeNotice(lastUpgrade()?.from)]);

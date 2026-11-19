@@ -5,7 +5,7 @@
  * claimed it and it reached the conversation page verbatim.
  *
  * OPT-IN (`ScanOpts.transcriptRules`): only the transcript page lane and
- * `gbrain transcripts audit-secrets` turn it on; the push gate and every other
+ * `foresights transcripts audit-secrets` turn it on; the push gate and every other
  * surface keep it off.
  *
  * After a `Cookie:` header (any case, optionally quoted or JSON-escaped) or a

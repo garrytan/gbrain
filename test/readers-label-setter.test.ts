@@ -1,5 +1,5 @@
 /**
- * GST-2059 / GST-2476 (D1): gbrain repair visibility --readers sets a page's readable_by through the label-only door.
+ * GST-2059 / GST-2476 (D1): foresights repair visibility --readers sets a page's readable_by through the label-only door.
  *
  * 1. Protects: the operator command that names a page's readers on one page (--slug) or a listed set (--slugs-file),
  *    preview-bound (--apply --expect <hash>, a changed plan refuses preview_changed). Every reader must be an enabled
@@ -13,7 +13,7 @@
  *    leaves page_readers stale, accepts an unknown member or group, drops the owner without the flag, applies a plan that
  *    changed since its preview, or writes a database label ahead of Git on a managed page with no file.
  * 3. Real seams: the managed-brain harness (claimed Git worktree, managed sync, the maintenance door, the Git effect), a
- *    repo-less brain, the gbrain repair command entry (remote:false), and tokens bound to members read through MCP dispatch
+ *    repo-less brain, the foresights repair command entry (remote:false), and tokens bound to members read through MCP dispatch
  *    (remote:true, transport http). PGLite, and Postgres with DATABASE_URL.
  */
 import { describe, expect, test } from 'bun:test';

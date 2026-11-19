@@ -6,7 +6,7 @@
  *    (`event:<calendarId>:<eventId>`) is counted per item through the
  *    connector item holds; its siblings and the Gmail sweep land in the same
  *    run; the service's sync token stays put while the item still counts and
- *    commits once only held items remain; `gbrain sources retry-held`
+ *    commits once only held items remain; `foresights sources retry-held`
  *    re-fetches a held item directly (people.get / events.get) with no
  *    upstream edit; a transient item failure is reported and retried, never
  *    held.
@@ -198,7 +198,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
           // Only held items remain: the next run completes and both tokens move past them.
           const fourth = await expectUnitNotAborted(() => f.run(fx));
           expect(fourth.status).not.toBe('partial');
-          expect(fourth.connectorHolds).toMatchObject({ held: 2, retry_command: `gbrain sources retry-held ${f.id}` });
+          expect(fourth.connectorHolds).toMatchObject({ held: 2, retry_command: `foresights sources retry-held ${f.id}` });
           const moved = await tokens(engine, f);
           expect(moved.contacts).not.toBe(seededTokens.contacts);
           expect(moved.calendar).not.toBe(seededTokens.calendar);

@@ -100,7 +100,7 @@ export function classicFileHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'pa
   const reason = record.meta.reason as ClassicFileHoldReason | undefined;
   const verify = { argv: ['gbrain', 'sources', 'status', source, '--json'] };
   const docs = `docs/guides/write-refusals.md#${record.code}${reason ? `-${reason}` : ''}`;
-  const checkout = [{ name: 'checkout', how: `the source's checkout: local_path of ${source} in gbrain sources list --json` }];
+  const checkout = [{ name: 'checkout', how: `the source's checkout: local_path of ${source} in foresights sources list --json` }];
   const sync: Action = { argv: ['gbrain', 'sync', '--source', source, '--no-pull'], consent: [], actor: 'agent', requires_exclusive: false, verify,
     why: `Re-screens ${path} (every sync re-screens it, no commit needed): a readable regular file imports and the hold clears.` };
   const rest = `the rest of source ${source} keeps syncing`;
@@ -109,24 +109,24 @@ export function classicFileHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'pa
     return { ask_user: true, argv: ['git', '-C', '<checkout>', 'sparse-checkout', 'add', dir], inputs: checkout, consent: [], actor: 'agent', requires_exclusive: false, docs,
       user_message: `${path} is committed but the sparse checkout (or a skip-worktree bit) keeps it off disk, so sync holds it and ${rest}. Choose: widen the sparse checkout to include it `
         + `(git -C <checkout> sparse-checkout add ${dir}; for a file whose skip-worktree bit was set by hand, clear the bit and restore the file as ${docs} shows), `
-        + `and the next sync imports it; or leave it out of the brain with sync.exclude (gbrain config get sync.exclude, then gbrain config set sync.exclude '<current list>,${path}'). Keeping it held is also safe.`,
+        + `and the next sync imports it; or leave it out of the brain with sync.exclude (foresights config get sync.exclude, then foresights config set sync.exclude '<current list>,${path}'). Keeping it held is also safe.`,
       why: 'Which files a sparse checkout leaves out is the user\'s choice; sync never imports a file it cannot read from the working tree.', then: sync, verify };
   }
   if (record.code === 'absent_from_worktree') {
     return { ask_user: true, argv: ['git', '-C', '<checkout>', 'restore', '--', path], inputs: checkout, consent: [], actor: 'agent', requires_exclusive: false, docs,
       user_message: `${path} is committed but was deleted from the checkout and the deletion is not committed, so sync holds it and ${rest}. Choose: restore it `
-        + `(git -C <checkout> restore -- ${path}) and the next sync imports it; or commit the deletion (gbrain git commit-push --path <checkout> -m 'Delete ${path}' -- ${path}) and the next sync clears the hold.`,
+        + `(git -C <checkout> restore -- ${path}) and the next sync imports it; or commit the deletion (foresights git commit-push --path <checkout> -m 'Delete ${path}' -- ${path}) and the next sync clears the hold.`,
       why: 'Whether the file was deleted on purpose is the user\'s call; restoring brings back the committed bytes, committing the deletion removes it from Git.', then: sync, verify };
   }
   if (reason === 'permission_denied') {
     return { argv: ['chmod', 'u+r', '--', `<checkout>/${path}`], inputs: checkout, consent: [], actor: 'user', requires_exclusive: false, docs,
-      user_message: `gbrain cannot read ${path} (permission denied), so sync holds it and ${rest}. Make it readable to the account gbrain runs as (this chmod, or fix the file's owner or a parent directory's permissions); `
+      user_message: `foresights cannot read ${path} (permission denied), so sync holds it and ${rest}. Make it readable to the account foresights runs as (this chmod, or fix the file's owner or a parent directory's permissions); `
         + 'the next sync re-screens it and imports it with no commit needed.',
       why: 'File permissions on the host are the user\'s to change; sync never reads around them.', then: sync, verify };
   }
   const what = SYMLINK_WHAT[reason ?? ''] ?? 'not a readable regular file';
   return { argv: ['gbrain', 'config', 'get', 'sync.exclude'], consent: [], actor: 'user', requires_exclusive: false, docs,
     user_message: `${path} is ${what}, so sync holds it without following it and ${rest}. Replace it in the checkout with the regular file it stands for (or delete it), `
-      + `or leave it out of the brain with sync.exclude: read the current list with this command, then gbrain config set sync.exclude '<current list>,${path}'. The next sync re-screens it with no commit needed.`,
+      + `or leave it out of the brain with sync.exclude: read the current list with this command, then foresights config set sync.exclude '<current list>,${path}'. The next sync re-screens it with no commit needed.`,
     why: 'Sync reads only regular files inside the source root and never follows a symlink (a link can point anywhere on the host); which file belongs in the brain is the user\'s call.', then: sync, verify };
 }

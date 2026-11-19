@@ -501,9 +501,9 @@ describe('review, explain and accept-all (CEO-2, DX-10, DX-15, DX-16)', () => {
       finally { console.log = original; process.exitCode = 0; _resetCliExitVerdictForTests(); }
       expect(io.prompt()).toContain('Accept 1 item(s)');
       expect(io.prompt()).toContain(`${ref} skipped: a page flagged as instructions is confirmed only after you read it`);
-      expect(out).toContain(`${ref}: skipped, a page flagged as instructions is confirmed only after you read it; run gbrain trust confirm ${ref} on its own`);
+      expect(out).toContain(`${ref}: skipped, a page flagged as instructions is confirmed only after you read it; run foresights trust confirm ${ref} on its own`);
       expect(io.prompt()).toContain(`${loweredRef.padEnd(6)} skipped: a page flagged as instructions is confirmed only after you read it`);
-      expect(out).toContain(`${loweredRef}: skipped, a page flagged as instructions is confirmed only after you read it; run gbrain trust confirm ${loweredRef} on its own`);
+      expect(out).toContain(`${loweredRef}: skipped, a page flagged as instructions is confirmed only after you read it; run foresights trust confirm ${loweredRef} on its own`);
       expect(code).toBe(1);
       expect((await pageRow(b, 'notes/flagged-a-example')).trust_tier).toBe('agent_written');
       expect((await pageRow(b, 'notes/lowered-flag-example')).trust_tier).not.toBe('user_confirmed');
@@ -554,7 +554,7 @@ describe('review, explain and accept-all (CEO-2, DX-10, DX-15, DX-16)', () => {
         review: async () => ({ items: [{ kind: 'hold', ref: 'h7', source_id: 'default' }, { kind: 'hold', ref: 'h8', source_id: 'default' },
           ...('flagged' in c ? [{ kind: 'flagged_page', ref: 'p:default/notes/flagged-example', source_id: 'default' }] : [])] }),
         explain: async () => [],
-        preview: async (input: OwnerActionInput) => ({ action: 'release', ref: input.ref, token: input.ref, command: `gbrain trust release ${input.ref}`, raises: true, binding: `b-${input.ref}`, summary: `Release held fact ${input.ref}` }),
+        preview: async (input: OwnerActionInput) => ({ action: 'release', ref: input.ref, token: input.ref, command: `foresights trust release ${input.ref}`, raises: true, binding: `b-${input.ref}`, summary: `Release held fact ${input.ref}` }),
         apply: async (input: OwnerActionInput) => {
           if (input.ref === 'h7') throw pending;
           if (c.h8 === 'fails') throw new OperationError('page_not_found', 'The page is deleted; nothing was changed.');
@@ -581,7 +581,7 @@ describe('review, explain and accept-all (CEO-2, DX-10, DX-15, DX-16)', () => {
     const backend = {
       review: async () => ({ items: [{ kind: 'hold', ref: 'h7', source_id: 'default' }, { kind: 'hold', ref: 'h8', source_id: 'default' }] }),
       explain: async () => [],
-      preview: async (input: OwnerActionInput) => ({ action: 'release', ref: input.ref, token: input.ref, command: `gbrain trust release ${input.ref}`, raises: true, binding: `b-${input.ref}`, summary: `Release held fact ${input.ref}` }),
+      preview: async (input: OwnerActionInput) => ({ action: 'release', ref: input.ref, token: input.ref, command: `foresights trust release ${input.ref}`, raises: true, binding: `b-${input.ref}`, summary: `Release held fact ${input.ref}` }),
       apply: async (input: OwnerActionInput) => {
         if (input.ref === 'h7') throw pending;
         return { action: 'release', ref: 'h8', status: 'released', tier: 'user_confirmed' };
@@ -633,7 +633,7 @@ describe('review, explain and accept-all (CEO-2, DX-10, DX-15, DX-16)', () => {
     const rendered = renderTrustExplanation(pageExplained);
     expect(rendered).toContain('origin: mcp:put_page');
     expect(rendered).toContain('activation: Used on every surface, labeled "written by an agent"');
-    expect(rendered).toContain(`gbrain trust revert ${tp}`);
+    expect(rendered).toContain(`foresights trust revert ${tp}`);
     const byPhrase = await explainTrust(engine, 'Owner');
     expect(byPhrase.some(e => e.ref === `p:${b.sourceId}/notes/review-example`)).toBe(true);
   }), 90_000);
@@ -681,11 +681,11 @@ describe('aliases (DX-7)', () => {
     const { run: quarantine } = await import('../src/cli/commands/quarantine.ts');
     nonTty();
     const release = await captureStderr(() => quarantine(engine, ['release', 'h5']));
-    expect(release.stderr).toContain('alias: gbrain trust release h5');
+    expect(release.stderr).toContain('alias: foresights trust release h5');
     expect(release.stderr).toContain('confirmation_required');
     expect(released).toEqual([]);
     const drop = await captureStderr(() => quarantine(engine, ['drop', 'h5']));
-    expect(drop.stderr).toContain('alias: gbrain trust drop h5');
+    expect(drop.stderr).toContain('alias: foresights trust drop h5');
     expect(holds.get(5)!.status).toBe('dropped');
   }), 60_000);
 
@@ -765,7 +765,7 @@ describe('#7820: the release, drop and accept-all previews', () => {
         explain: async () => [],
         preview: async (input: OwnerActionInput) => {
           if (input.ref === 'h8') throw new OperationError('invalid_params', 'The facts fence of the page could not be read.');
-          return { action: 'release', ref: input.ref, token: input.ref, command: `gbrain trust release ${input.ref}`, raises: true, binding: `b-${input.ref}`,
+          return { action: 'release', ref: input.ref, token: input.ref, command: `foresights trust release ${input.ref}`, raises: true, binding: `b-${input.ref}`,
             summary: input.ref === 'h9' ? long : `Release held fact ${input.ref}` };
         },
         apply: async (input: OwnerActionInput) => { applied.push(input.ref!); return { action: 'release', ref: input.ref, status: 'released', tier: 'user_confirmed' }; },
@@ -783,17 +783,17 @@ describe('#7820: the release, drop and accept-all previews', () => {
       });
       expect({ json, exit, applied }).toEqual({ json, exit: 1, applied: ['h7'] });
       expect(prompt).toContain('Accept 1 item(s)');
-      expect(prompt).toContain('h8     skipped: its preview failed, so it is not accepted (run gbrain trust release h8 on its own)');
-      expect(prompt).toContain('h9     skipped: it is too long to confirm in one list, so it is not accepted (run gbrain trust release h9 on its own)');
+      expect(prompt).toContain('h8     skipped: its preview failed, so it is not accepted (run foresights trust release h8 on its own)');
+      expect(prompt).toContain('h9     skipped: it is too long to confirm in one list, so it is not accepted (run foresights trust release h9 on its own)');
       expect(prompt).not.toContain('a long claim');
       if (json) {
         const doc = JSON.parse(docs[0]!);
         expect({ accepted: doc.accepted.map((a: { ref: string }) => a.ref), skipped: doc.skipped.map((s: { ref: string; reason: string; next: string }) => [s.ref, s.reason, s.next]) })
-          .toEqual({ accepted: ['h7'], skipped: [['h8', 'preview_failed', 'gbrain trust release h8'], ['h9', 'summary_too_long', 'gbrain trust release h9']] });
+          .toEqual({ accepted: ['h7'], skipped: [['h8', 'preview_failed', 'foresights trust release h8'], ['h9', 'summary_too_long', 'foresights trust release h9']] });
         expect(doc.skipped[0].error.code).toBe('invalid_params');
       } else {
-        expect(lines).toContain('h8: skipped, its preview failed (The facts fence of the page could not be read.); run gbrain trust release h8 on its own');
-        expect(lines).toContain('h9: skipped, it is too long to confirm in one list; run gbrain trust release h9 on its own');
+        expect(lines).toContain('h8: skipped, its preview failed (The facts fence of the page could not be read.); run foresights trust release h8 on its own');
+        expect(lines).toContain('h9: skipped, it is too long to confirm in one list; run foresights trust release h9 on its own');
       }
     }
   }, 60_000);

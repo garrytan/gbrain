@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { formatResult } from '../src/cli/main.ts';
 
 /**
- * `gbrain get <slug> --json` accepted `--json` and silently printed the
+ * `foresights get <slug> --json` accepted `--json` and silently printed the
  * markdown serialization anyway (same class as the get_versions fix).
  */
 describe('formatResult - get_page --json', () => {

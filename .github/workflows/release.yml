@@ -287,7 +287,7 @@ jobs:
       # [C1 = D6-A] `latest-stable` is the alpha channel's ref: the alpha
       # update check follows it, and so does anyone who pins it by hand. The
       # install surfaces (the README paste block, the BOOTSTRAP_FOR_AGENTS.md
-      # fetch URL, `bun install -g github:garrytan/gbrain#stable`) name the
+      # fetch URL, `bun install -g github:aimonk2025/gbrain#stable`) name the
       # `stable` tag instead (src/core/install-ref.ts), which only
       # promote-stable.yml moves. Both refs move only to a release whose assets
       # already published, so neither has a 404 window. latest-stable is
@@ -401,7 +401,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           # History-less by design: each release force-publishes one commit
-          # whose message binds (gbrain version, vendored tree hash) [C3].
+          # whose message binds (foresights version, vendored tree hash) [C3].
           git commit -q -m "gbrain v${RELEASE_VERSION} template (tree ${TEMPLATE_TREE_HASH:-unvendored})"
           # Out-of-band credential: a one-shot GIT_ASKPASS script reads the
           # PAT from env at prompt time, so the token never rides argv (where
@@ -420,7 +420,7 @@ jobs:
           rm -f "$ASKPASS"
 
   # ── Slim plugin distribution (EV4): the codex-plugin orphan branch ─────────
-  # `codex plugin marketplace add garrytan/gbrain@codex-plugin` should download
+  # `codex plugin marketplace add aimonk2025/gbrain@codex-plugin` should download
   # the PLUGIN, not the 90+MiB dev repo. Each release force-publishes a
   # single history-less commit to the `codex-plugin` branch carrying exactly
   # the plugin artifacts: the manifests (.agents/, .codex-plugin/,

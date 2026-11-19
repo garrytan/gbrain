@@ -59,7 +59,7 @@ Every P0 item shipped. Nothing was cut.
   check before Lane F's source checks; the legacy copier's PGLite refusal,
   which now only fires with graduation turned off, asks the user to turn
   graduation back on and preview the read-only plan, or to stay on PGLite and
-  share it with `gbrain mcp expose`; chronicle publication applies the
+  share it with `foresights mcp expose`; chronicle publication applies the
   invite marking to the events the date screen keeps, so an ended invite is
   projected (no judge call) and still dated by its `end`; `auth rescope
   --client` takes `--operations all` and `--sources none` / `--takes-holders`
@@ -71,7 +71,7 @@ Every P0 item shipped. Nothing was cut.
   PGLite `releaseAbandonedClaims` with Lane F's refresh-fence predicate in the
   idle probe; released claims are still fenced when they are claimed again.
 
-- `gbrain sources add` on a 20,000-file checkout failed intermittently on
+- `foresights sources add` on a 20,000-file checkout failed intermittently on
   4-vCPU runners (also on branches without this wave): the background `git gc`
   that the fixture's large commit starts pruned `.git/objects/<xx>` while the
   physical-root overlap scan walked the checkout, and the scan's `readdirSync`

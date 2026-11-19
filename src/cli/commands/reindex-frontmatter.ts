@@ -1,5 +1,5 @@
 /**
- * `gbrain reindex-frontmatter`: post-connect dispatch, run by handleCliOnly with the
+ * `foresights reindex-frontmatter`: post-connect dispatch, run by handleCliOnly with the
  * engine connectEngine() opened. Moved verbatim from the src/cli.ts
  * handleCliOnly switch (refactor wave 1, W4 cli); the record lives in
  * src/cli/command-table.ts.
@@ -13,7 +13,7 @@ export async function run(engine: BrainEngine, args: string[]): Promise<void> {
   // migration orchestrator uses). The orchestrator runs once on
   // upgrade; this command is for after-the-fact frontmatter edits.
   //
-  // v0.30.1: still works; canonical entrypoint is now `gbrain backfill
+  // v0.30.1: still works; canonical entrypoint is now `foresights backfill
   // effective_date`. This command stays as a thin alias for back-compat.
   //
   // #1963: pass the already-connected engine. The command used to build

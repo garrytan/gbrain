@@ -8,7 +8,7 @@
  * fails the build before the fuzz tests run.
  *
  * The pure set is intentionally small (2 functions) for honest reasons:
- * `bun build --target=bun` reveals that gbrain's other "validator-shaped"
+ * `bun build --target=bun` reveals that foresights's other "validator-shaped"
  * functions live in files that transitively pull in `fs` through helpers
  * in the same module. The original T2 plan listed 7 targets; the bundle
  * disproved that for 5 of them. Those 5 still get property-tested in

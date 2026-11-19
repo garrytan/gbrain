@@ -6,7 +6,7 @@
  * `self_upgrade.failed_versions`, so the auto channel skipped that release
  * forever. This module finds the entries the audit proves were never
  * installed. Clearing them is the operator step
- * `gbrain self-upgrade --clear-never-installed [--apply]`; doctor's
+ * `foresights self-upgrade --clear-never-installed [--apply]`; doctor's
  * `self_upgrade_health` names its preview as the fix. File plane only.
  */
 
@@ -29,7 +29,7 @@ export interface NeverInstalledEntry {
   recorded_at: string;
 }
 
-/** The last upgrade gbrain recorded (`~/.gbrain/upgrade-state.json` `last_upgrade`). */
+/** The last upgrade foresights recorded (`~/.gbrain/upgrade-state.json` `last_upgrade`). */
 export interface LastUpgrade { from: string; to: string; ts: string }
 
 /** The longest a pre-fix swap could run between its apply row and its `swapped` row (the swap's own timeout). */
@@ -76,7 +76,7 @@ export function neverInstalledFailedVersions(
   return out;
 }
 
-/** `last_upgrade` from `~/.gbrain/upgrade-state.json` (where `gbrain upgrade` writes it), or null. */
+/** `last_upgrade` from `~/.gbrain/upgrade-state.json` (where `foresights upgrade` writes it), or null. */
 function readLastUpgrade(): LastUpgrade | null {
   try {
     const path = gbrainPath('upgrade-state.json');

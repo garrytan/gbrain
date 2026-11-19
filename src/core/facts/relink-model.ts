@@ -1,5 +1,5 @@
 /**
- * `gbrain facts relink` model tier (#5836): for facts the free tiers could not
+ * `foresights facts relink` model tier (#5836): for facts the free tiers could not
  * link, ask the configured fact-extraction model which single person, company
  * or project each claim is about. The answer is only a candidate name: it must
  * appear in the fact text, then pass the same strict resolver the free tiers

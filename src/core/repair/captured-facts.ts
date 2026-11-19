@@ -1,7 +1,7 @@
 /**
- * `gbrain repair captured-facts`: expire facts that the capture lanes
+ * `foresights repair captured-facts`: expire facts that the capture lanes
  * (`hook:writeback`, `hook:compact`, `sweep:corpus`) extracted, before
- * v0.60.30.0, from gbrain's own claude-cli sessions (#5413, #5820) or from
+ * v0.60.30.0, from foresights's own claude-cli sessions (#5413, #5820) or from
  * pasted text (#5812). Those releases stopped new extraction; this kind
  * cleans up the facts already stored.
  *
@@ -9,7 +9,7 @@
  * classified from its session (`source_session`; corpus rows carry
  * `sweep:corpus:<file>`, resolved with `corpusFileSessionId`):
  *   - evidenced (self-capture): the session id names a harness transcript
- *     under a gbrain claude-cli scratch project, or its corpus file sits in
+ *     under a foresights claude-cli scratch project, or its corpus file sits in
  *     doctor's `<corpus>.quarantine/` directory.
  *   - ambiguous (paste candidate): a still-retained corpus file of the session
  *     holds a paste block, and at least 60% of the fact's content words occur
@@ -227,7 +227,7 @@ export async function classifyCapturedFacts(db: BrainEngine, sourceIds: string[]
 
 function previewCommand(scope: RepairScope, all: string[], includeAmbiguous: boolean): string {
   const source = scope.source_ids.length === 1 && all.length > 1 ? ` --source ${scope.source_ids[0]}` : '';
-  return `gbrain repair captured-facts${source}${includeAmbiguous ? ' --include-ambiguous' : ''}`;
+  return `foresights repair captured-facts${source}${includeAmbiguous ? ' --include-ambiguous' : ''}`;
 }
 
 async function activeSources(engine: BrainEngine): Promise<string[]> {
@@ -270,7 +270,7 @@ export const capturedFactsRepair: RepairHandler = {
           ...(unreadable_corpus_files.length ? { unreadable_corpus_files: unreadable_corpus_files.length } : {}) } };
     }
     if (!opts.expect) {
-      throw new OperationError('invalid_params', 'gbrain repair captured-facts --apply expires only the set a preview printed.',
+      throw new OperationError('invalid_params', 'foresights repair captured-facts --apply expires only the set a preview printed.',
         `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`,
         'docs/guides/repair.md#explicit-only-repair-kinds');
     }

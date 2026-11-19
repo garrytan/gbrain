@@ -1,15 +1,15 @@
 /**
- * gbrain creds — the generic credential-vault surface.
+ * foresights creds — the generic credential-vault surface.
  *
  * Provider-agnostic: lists/inspects/removes vault entries and produces the
  * encrypted transfer bundle for hosted-upgrade moves. Provider-SPECIFIC
- * connect flows live in their own commands (gbrain google connect); this
+ * connect flows live in their own commands (foresights google connect); this
  * command never prints a secret.
  *
- *   gbrain creds list [--provider p] [--json]
- *   gbrain creds remove <id> [--json]
- *   gbrain creds export --out <file> [--ids a,b] [--passphrase-env VAR]
- *   gbrain creds import <file> [--passphrase-env VAR] [--json]
+ *   foresights creds list [--provider p] [--json]
+ *   foresights creds remove <id> [--json]
+ *   foresights creds export --out <file> [--ids a,b] [--passphrase-env VAR]
+ *   foresights creds import <file> [--passphrase-env VAR] [--json]
  *
  * Export custody rules (approved D3-A): per-credential confirmation lives in
  * the calling flow; a byo Google entry whose consent screen is not known to
@@ -58,7 +58,7 @@ async function runList(args: string[]): Promise<void> {
     return;
   }
   if (metas.length === 0) {
-    process.stdout.write('Credential vault is empty. Connect a provider first (e.g. `gbrain google connect`).\n');
+    process.stdout.write('Credential vault is empty. Connect a provider first (e.g. `foresights google connect`).\n');
     return;
   }
   for (const m of metas) {
@@ -74,7 +74,7 @@ async function runRemove(args: string[]): Promise<void> {
   const json = args.includes('--json');
   const id = args.find((a) => !a.startsWith('--'));
   if (!id) {
-    console.error('Usage: gbrain creds remove <id>   (ids from `gbrain creds list`)');
+    console.error('Usage: foresights creds remove <id>   (ids from `foresights creds list`)');
     process.exit(2);
   }
   const vault = openVault();
@@ -92,7 +92,7 @@ async function runExport(args: string[]): Promise<void> {
   const outIdx = args.indexOf('--out');
   const out = outIdx !== -1 ? args[outIdx + 1] : undefined;
   if (!out) {
-    console.error('Usage: gbrain creds export --out <file> [--ids a,b] [--passphrase-env VAR]');
+    console.error('Usage: foresights creds export --out <file> [--ids a,b] [--passphrase-env VAR]');
     process.exit(2);
   }
   const idsIdx = args.indexOf('--ids');
@@ -142,14 +142,14 @@ async function runExport(args: string[]): Promise<void> {
         out,
         credentials: entries.map((e) => e.id),
         clients: clients.map((c) => c.provider),
-        next_action: { command: `gbrain creds import ${out}` },
+        next_action: { command: `foresights creds import ${out}` },
       }, null, 2) + '\n',
     );
     return;
   }
   process.stdout.write(
     `Exported ${entries.length} credential(s) + ${clients.length} client record(s) to ${out} (encrypted).\n` +
-      `Import on the target with: gbrain creds import ${out}\n`,
+      `Import on the target with: foresights creds import ${out}\n`,
   );
 }
 
@@ -170,7 +170,7 @@ async function runImport(args: string[]): Promise<void> {
     break;
   }
   if (!file) {
-    console.error('Usage: gbrain creds import <bundle-file> [--passphrase-env VAR] [--json]');
+    console.error('Usage: foresights creds import <bundle-file> [--passphrase-env VAR] [--json]');
     process.exit(2);
   }
   const fail = (message: string): never => {
@@ -213,7 +213,7 @@ async function runImport(args: string[]): Promise<void> {
   }
 }
 
-const HELP = `gbrain creds — the credential vault (provider-agnostic)
+const HELP = `foresights creds — the credential vault (provider-agnostic)
 
   list     [--provider p] [--json]        redacted inventory
   remove   <id> [--json]                  delete one credential
@@ -222,7 +222,7 @@ const HELP = `gbrain creds — the credential vault (provider-agnostic)
   import   <file> [--passphrase-env VAR]  inverse of export
 
 Secrets live in ~/.gbrain/credentials.json (0600). Provider connect flows:
-  gbrain google connect`;
+  foresights google connect`;
 
 export async function runCreds(args: string[]): Promise<void> {
   const [sub, ...rest] = args;

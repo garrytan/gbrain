@@ -2,10 +2,10 @@
  * Large pages (Wave A, T15/T23/T34/T52/T16): the oversized-page backfill and
  * the per-page embedding budget.
  *
- * The upgrade fixture is a page an older gbrain stored the old way: written
+ * The upgrade fixture is a page an older foresights stored the old way: written
  * under a 500 KB bytes_block, so it carries the gate's
  * `embed_skip: { reason: oversized }` marker and has zero chunks. With no later
- * content write and embeddings off, `gbrain reindex --oversized` must make a
+ * content write and embeddings off, `foresights reindex --oversized` must make a
  * needle in its middle keyword-searchable with zero provider calls, hold a
  * large page for embedding approval, and leave a page still over the block
  * alone.
@@ -55,7 +55,7 @@ async function withHome<T>(config: Record<string, unknown> | null, fn: () => Pro
 }
 
 /**
- * Leave a page the way gbrain did before the ceiling: written under a 500 KB block, with the
+ * Leave a page the way foresights did before the ceiling: written under a 500 KB block, with the
  * gate's marker and zero chunks. A write today keeps an embed_skip page's chunks (#6722), so
  * the legacy chunkless state is restored by removing them, as an old brain holds it.
  */
@@ -95,7 +95,7 @@ beforeEach(async () => {
   providerCalls = 0;
 });
 
-describe('gbrain reindex --oversized (keyless upgrade path)', () => {
+describe('foresights reindex --oversized (keyless upgrade path)', () => {
   test('a zero-chunk size-skipped page becomes keyword-searchable with zero provider calls, and a rerun is a no-op', async () => {
     await withHome({ embedding_disabled: true }, async () => {
       await seedSizeSkipped('chats/small-large', 700_000);

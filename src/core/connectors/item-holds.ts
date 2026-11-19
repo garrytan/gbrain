@@ -5,9 +5,9 @@
  * A connector item that fails with an item-scoped error on 3 consecutive
  * attempted runs is held: it is recorded in the connector's cursor state
  * (`item_holds`) and the sweep's cursor or floor may advance past it. A held
- * item is never skipped silently; `gbrain sources status`, the doctor check
- * `connector_held_items`, the sync summary and `gbrain waiting` all show it,
- * and `gbrain sources retry-held <id>` re-attempts it.
+ * item is never skipped silently; `foresights sources status`, the doctor check
+ * `connector_held_items`, the sync summary and `foresights waiting` all show it,
+ * and `foresights sources retry-held <id>` re-attempts it.
  *
  * The thresholds are fixed and documented (docs/guides/google-connect.md and
  * docs/guides/github-source.md): 3 runs, the circuit breaker below, a
@@ -333,10 +333,10 @@ export class ItemHoldsRun {
 export function holdsExhaustedError(sourceId: string): OperationError {
   const error = new OperationError('connector_holds_exhausted',
     `Source "${sourceId}" already holds ${HOLD_CAP} items; this run did not advance its cursor.`,
-    `Review the held items with: gbrain sources status ${sourceId}; re-attempt them with: gbrain sources retry-held ${sourceId}`,
+    `Review the held items with: foresights sources status ${sourceId}; re-attempt them with: foresights sources retry-held ${sourceId}`,
     'docs/guides/write-refusals.md#connector-holds-exhausted');
   error.writeError = 'connector_holds_exhausted';
   return error;
 }
 
-export const retryHeldCommand = (sourceId: string): string => `gbrain sources retry-held ${sourceId}`;
+export const retryHeldCommand = (sourceId: string): string => `foresights sources retry-held ${sourceId}`;

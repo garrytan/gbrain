@@ -16,19 +16,19 @@ Orthogonal. Pick one on each axis per operation.
 
 Start in the brain + source resolved by the environment:
 
-1. Run `gbrain mounts list` if you haven't seen the user's mounts yet.
+1. Run `foresights mounts list` if you haven't seen the user's mounts yet.
 2. Trust the resolver. If the user is in `~/team-brains/media/`, their
    `.gbrain-mount` pins brain=media-team. Don't override that silently.
 3. For every brain op, pass the resolved brain id explicitly when calling
    tools (even if it matches the default). Makes routing visible in logs.
 
-Bare `gbrain query "X"` routes to the default brain's default source. That
+Bare `foresights query "X"` routes to the default brain's default source. That
 is the right answer 90% of the time. Don't cross the boundary without a
 reason.
 
 A remote `not_found` or a short result may be a page whose `readable_by` or folder rule excludes
 this credential or the audience it acts for: check `whoami` (`access.applied`) before telling the user there are no notes.
-On a brain that serves several people (`gbrain access serves`), a connection bound to a member (`whoami` names it) already reads as the person asking; an unbound one is refused `requester_scope_required` (after a 14-day grace noticed in `_meta.access.requester_scope`): relay its fix to the user.
+On a brain that serves several people (`foresights access serves`), a connection bound to a member (`whoami` names it) already reads as the person asking; an unbound one is refused `requester_scope_required` (after a 14-day grace noticed in `_meta.access.requester_scope`): relay its fix to the user.
 
 ## When to switch brain
 
@@ -57,7 +57,7 @@ Do NOT switch brain when:
 
 | # | Tier | Signal |
 |---|---|---|
-| 1 | `flag` | Explicit `--source <id>` CLI flag (or `--source-id <id>` on `gbrain extract` / `gbrain import`) |
+| 1 | `flag` | Explicit `--source <id>` CLI flag (or `--source-id <id>` on `foresights extract` / `foresights import`) |
 | 2 | `env` | `GBRAIN_SOURCE` environment variable |
 | 3 | `dotfile` | `.gbrain-source` file in CWD or any ancestor directory |
 | 4 | `local_path` | A registered source whose `local_path` contains CWD (longest prefix wins) |
@@ -67,28 +67,28 @@ Do NOT switch brain when:
 
 **v0.41.13 tier 5.5 (`sole_non_default`):** added for single-source brains
 (typical for users with one Obsidian vault, one notes folder, one project).
-Pre-fix, `gbrain sync` from `/tmp` against a brain registering only
+Pre-fix, `foresights sync` from `/tmp` against a brain registering only
 `studiovault` silently routed to `'default'` and every edit failed at
 `createVersion` because the slug didn't exist there. The tier auto-routes
 to the obvious single answer. Multi-source brains (2+ non-default registered)
 still fall through to `seed_default` and require explicit `--source`.
 
 Placement AFTER `brain_default` is deliberate: a user who explicitly set
-`sources.default` via `gbrain sources default <id>` has stated intent that
+`sources.default` via `foresights sources default <id>` has stated intent that
 wins over the auto-route. Archived sources and the storage shelf (the `storage`
 source, which only the storage verbs write) are excluded from the count.
 
 **v0.37.7.0 tooling:**
 
-- `gbrain sources current [--json]` echoes the resolved source AND
+- `foresights sources current [--json]` echoes the resolved source AND
   which tier won. Run this before any destructive op to verify what
   you're about to target.
-- `gbrain sources current --source X` shows what an explicit flag
+- `foresights sources current --source X` shows what an explicit flag
   WOULD resolve to (validates X exists in the sources table).
 
-CLI commands honoring this chain: `gbrain sync`, `gbrain import`,
-`gbrain search`, `gbrain extract` (via `--source-id <id>` since
-`--source` is the fs|db data-source axis), `gbrain graph-query`
+CLI commands honoring this chain: `foresights sync`, `foresights import`,
+`foresights search`, `foresights extract` (via `--source-id <id>` since
+`--source` is the fs|db data-source axis), `foresights graph-query`
 (`--source` scopes the walk; `--include-foreign` widens it to every
 source).
 
@@ -123,7 +123,7 @@ unified ranking. The AGENT federates.
 Pattern when the user asks something that might span brains:
 
 1. Query host with the obvious query.
-2. Check `gbrain mounts list` for relevant brain ids.
+2. Check `foresights mounts list` for relevant brain ids.
 3. If you think another brain has the answer, re-query THAT brain
    explicitly (`--brain <id>`).
 4. Synthesize across results. Cite `<brain>:<source>:<slug>` so the user

@@ -2,7 +2,7 @@
  * Automatic facts drain (Foundations 2, Lane D). PGLite has no background job
  * worker, so `facts-absorb` jobs (one per eligible page write) wait until
  * something runs them. This module runs them inside the processes that
- * already own a PGLite brain: stdio `gbrain serve`, `gbrain serve --http` and
+ * already own a PGLite brain: stdio `foresights serve`, `foresights serve --http` and
  * the dream/autopilot cycle (`facts_drain` phase). One shared implementation:
  *
  *   - one job at a time, with a yield between jobs, a wall-clock budget per
@@ -19,7 +19,7 @@
  *     row `facts.drain_state`, read by doctor `facts_drain` and the MCP
  *     readiness entry `facts_drain`.
  *
- * Opt out with `gbrain config set facts.extraction_enabled false`. Logging goes
+ * Opt out with `foresights config set facts.extraction_enabled false`. Logging goes
  * to stderr only (stdio serve speaks JSON-RPC on stdout).
  */
 import { randomUUID } from 'node:crypto';
@@ -27,6 +27,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { Action, Notice } from '../agent-output.ts';
 import type { MinionJob } from '../minions/types.ts';
 import { FACTS_DRAIN_KEYS, parseFactsDrainKey, type FactsDrainKey } from './drain-config.ts';
+import { commandText } from '../brand.ts';
 export { FACTS_DRAIN_KEYS, validateFactsDrainConfigValue, type FactsDrainKey } from './drain-config.ts';
 
 
@@ -131,12 +132,12 @@ export async function factsDrainBacklog(engine: BrainEngine): Promise<FactsDrain
 }
 
 const fmtUsd = (n: number) => `$${n < 0.1 ? n.toFixed(3) : n.toFixed(2)}`;
-const command = (argv: readonly string[]) => argv.join(' ');
+const command = (argv: readonly string[]) => commandText(argv);
 
 function keySetupFix(): Action {
   return {
     argv: ['gbrain', 'providers', 'list'], consent: ['credentials', 'paid'], actor: 'user', requires_exclusive: false,
-    why: 'Automatic fact extraction needs one chat provider key (for example ANTHROPIC_API_KEY or OPENAI_API_KEY, stored with `gbrain config set anthropic_api_key <key>`); `gbrain providers list` shows what each provider needs. Queued pages run on the next drain once a key exists.',
+    why: 'Automatic fact extraction needs one chat provider key (for example ANTHROPIC_API_KEY or OPENAI_API_KEY, stored with `foresights config set anthropic_api_key <key>`); `foresights providers list` shows what each provider needs. Queued pages run on the next drain once a key exists.',
     user_message: 'Pages are waiting for automatic fact extraction, which needs a chat model API key (Anthropic or OpenAI, for example). Want to add one? It costs a little per page processed.',
     verify: { argv: ['gbrain', 'doctor', '--only', 'facts_drain', '--json'] },
   };
@@ -272,7 +273,7 @@ export async function runFactsDrain(engine: BrainEngine, opts: FactsDrainRunOpts
         `The facts extraction model ${model} is not servable (its provider is not configured); ${backlog.waiting} page(s) stay queued.`,
         { argv: ['gbrain', 'config', 'set', 'facts.extraction_model', '<provider:model>'], consent: ['paid'], actor: 'agent', requires_exclusive: false,
           why: 'Points extraction at a model whose provider has a key, or set that provider\'s key instead.',
-          inputs: [{ name: 'provider:model', how: 'Pick a chat model whose provider key is configured (gbrain models doctor --json lists them).' }],
+          inputs: [{ name: 'provider:model', how: 'Pick a chat model whose provider key is configured (foresights models doctor --json lists them).' }],
           verify: { argv: ['gbrain', 'doctor', '--only', 'facts_drain', '--json'] } });
     }
 
@@ -445,7 +446,7 @@ export interface FactsDrainStatus {
 export async function readFactsDrainStatus(engine: BrainEngine, now = Date.now()): Promise<FactsDrainStatus> {
   const empty: FactsDrainBacklog = { waiting: 0, delayed: 0, active: 0 };
   if (engine.kind !== 'pglite') {
-    return { health: 'not_applicable', message: 'Postgres brains run facts-absorb jobs on the job worker (gbrain jobs supervisor), not the automatic drain.', settings: null, backlog: empty, last_run: null, daily_spent_usd: 0 };
+    return { health: 'not_applicable', message: 'Postgres brains run facts-absorb jobs on the job worker (foresights jobs supervisor), not the automatic drain.', settings: null, backlog: empty, last_run: null, daily_spent_usd: 0 };
   }
   const settings = await factsDrainSettings(engine);
   const backlog = await factsDrainBacklog(engine);
@@ -467,7 +468,7 @@ export async function readFactsDrainStatus(engine: BrainEngine, now = Date.now()
   const lastAt = last ? Date.parse(last.finished_at ?? last.started_at) : 0;
   if (now - lastAt > STALE_RUN_MS) {
     return { ...base, health: 'no_owner', message: `${queued} facts-absorb job(s) are queued and no drain ran in the last ${STALE_RUN_MS / 60_000} minutes (${lastText}). ` +
-      'The drain runs inside a resident gbrain serve (stdio or --http) and the dream/autopilot cycle; with none running, run it now.',
+      'The drain runs inside a resident foresights serve (stdio or --http) and the dream/autopilot cycle; with none running, run it now.',
       fix: { argv: [...FACTS_DRAIN_RUN_NOW_ARGV], consent: ['paid'], actor: 'agent', requires_exclusive: true,
         why: 'Runs one bounded drain (per-run and daily caps apply) in this process; each page is one paid chat call.', verify: { argv: ['gbrain', 'doctor', '--only', 'facts_drain', '--json'] } } };
   }

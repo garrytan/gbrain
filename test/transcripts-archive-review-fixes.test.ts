@@ -76,7 +76,7 @@ describe('PR 3 review fixes', () => {
     for (const id of ['alice-example', 'bob-example']) await addMember(engine, id);
     const check = await inHome(() => checkTranscriptArchiveFreshness(engine, { readers: [], nowMs: Date.parse('2026-11-06T00:00:00Z') }));
     expect(check.status).toBe('warn');
-    expect(check.message).toContain('gbrain access owner set');
+    expect(check.message).toContain('foresights access owner set');
   }, 120_000);
 
   test('held older days keep the automatic backfill open, and are archived once the hold clears', async () => {

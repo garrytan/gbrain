@@ -2,10 +2,10 @@
  * Per-member tokens on one shared brain: two bearer tokens, one granted
  * source-a and one granted source-b, call `search` (hybrid and
  * `match: "keyword"`), `query` and `recall` concurrently from one process
- * against one real `gbrain serve --http` on Postgres. Each token's results
+ * against one real `foresights serve --http` on Postgres. Each token's results
  * stay inside its own grant on every call, and `source_ids` cannot carry
  * either token into the other member's source. Two more tokens carry the
- * multi-source grant `gbrain auth rescope --token <name> --sources` writes
+ * multi-source grant `foresights auth rescope --token <name> --sources` writes
  * (the member's own source plus a shared one): each reads its own and the
  * shared source, never the other member's. GBRA-156: each member source also
  * holds a `visibility: private` page; the multi-source tokens carry

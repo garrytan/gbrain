@@ -1,5 +1,5 @@
 /**
- * `gbrain eval brainbench --decide ...` (System One arms) with a fixture
+ * `foresights eval brainbench --decide ...` (System One arms) with a fixture
  * decide transport (no provider is called).
  *
  * Protects: the flags parse (and bad values are usage errors); an all-off run
@@ -59,7 +59,7 @@ describe('eval brainbench --decide', () => {
 
     const o = newDecideEvalOptions();
     for (const [f, v] of [['--decide', 'recall_needed=on'], ['--decide-threshold', 'recall_needed=0.5'], ['--decide-force-on', 'recall_needed']]) applyDecideEvalFlag(o, f!, v!);
-    const decide = prepareDecideEval(o, { command: 'gbrain eval brainbench', throwaway: true })!;
+    const decide = prepareDecideEval(o, { command: 'foresights eval brainbench', throwaway: true })!;
     const arm = await runBrainBench(corpus, { harnesses: ['claude-code'], suites: ['know-to-ask'], includeHoldout: false, llm: false, decide });
     expect(arm.turn_rows.length).toBe(base.turn_rows.length);
     expect(arm.turn_rows.every((r) => r.decide?.recall_needed?.mode === 'on')).toBe(true);

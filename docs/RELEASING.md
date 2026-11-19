@@ -1,4 +1,4 @@
-# Releasing & contributing (gbrain)
+# Releasing & contributing (foresights)
 
 The full release + contributor process. CLAUDE.md keeps the ship-critical IRON RULES
 inline (the Version-locations table, branch=workspace, post-ship `/document-release`,
@@ -122,7 +122,7 @@ push SHA, first red SHA, merged PRs). Labels, close rules and recovery steps:
 
 `test.yml` and `e2e.yml` carry `merge_group` triggers. They are inert until the
 merge queue is enabled for `master` in the repository settings; check with
-`gh api repos/garrytan/gbrain/rulesets` (or the branch protection page). Queue runs use
+`gh api repos/aimonk2025/gbrain/rulesets` (or the branch protection page). Queue runs use
 the pull-request profile against the queued merge commit: primary native scope,
 the 2,500-write soak and the 10,001-page export scale; the E2E selector diffs the
 queued commit against `master`.
@@ -286,7 +286,7 @@ If any answer is no, fix it before continuing.
 **What to keep:**
 - The user-facing change: what commands exist now, what flag was added, what behavior fixed.
 - Numbers that mean something to the user: TTHW, commands that timed out before, detection counts.
-- Upgrade instructions: `gbrain upgrade` + any manual step if needed.
+- Upgrade instructions: `foresights upgrade` + any manual step if needed.
 - Credit to external contributors when a community PR was incorporated.
 
 ## Release restamp
@@ -358,7 +358,7 @@ reconciliation).
 
 **Why stamps are not derived at build time.** Several readers take the
 version from committed files with no build step: `bun install -g
-github:garrytan/gbrain` installs from source, `gbrain bootstrap status`
+github:aimonk2025/gbrain` installs from source, `foresights bootstrap status`
 compares the BOOTSTRAP runbook stamp with the installed binary, the plugin
 manifests and generated trees are published as committed, and `release.yml`
 fires on a VERSION change. A build-time value would leave those copies
@@ -380,7 +380,7 @@ happened.** Nobody reading release notes cares that codex caught a bug, that
 the plan went through CEO + eng review, that the migration was originally
 numbered v68 and renumbered to v79 during master merge, or that two
 review rounds caught architectural mistakes. The reader cares what
-`gbrain brainstorm` does and how to use it. If a fact only exists because
+`foresights brainstorm` does and how to use it. If a fact only exists because
 of the development process, it does NOT belong in the CHANGELOG.
 
 **Specifically forbidden in CHANGELOG entries:**
@@ -403,7 +403,7 @@ of the development process, it does NOT belong in the CHANGELOG.
   mistake ("the first plan was wrong", "we corrected the approach", "the
   shipped version supersedes the original design").
 
-**Smell test:** read the entry as a stranger who has never touched gbrain.
+**Smell test:** read the entry as a stranger who has never touched foresights.
 If any sentence makes them think "why are you telling me this?", cut it.
 Every sentence in the release-summary AND in the itemized changes must
 answer one of three questions: *What can I now do? How do I use it? What
@@ -421,7 +421,7 @@ know exactly what changed.
 ### Release-summary template
 
 **Iron rule: lead ELI10, get precise after.** The first ~150 words of every entry
-must be readable by someone who does NOT know gbrain's internals. No file paths,
+must be readable by someone who does NOT know foresights's internals. No file paths,
 no function names, no internal constants, no acronyms (no "RRF", no "knobsHash",
 no "MODE_BUNDLES", no "CDX-4"), no jargon that requires reading the codebase to
 parse. Lead with the user-visible behavior change, in everyday English, like
@@ -471,7 +471,7 @@ Voice rules (apply throughout):
   precision."
 - Be direct about quality. "Well-designed" or "this is a mess." No dancing.
 
-**The smell test:** if someone who has never opened gbrain reads the first 150
+**The smell test:** if someone who has never opened foresights reads the first 150
 words and walks away knowing what shipped and whether they care, the entry
 passes. If they need to grep the codebase to follow along, rewrite the lead.
 
@@ -496,11 +496,11 @@ After the release-summary and BEFORE `### Itemized changes`, every `## [X.Y.Z]`
 entry MUST include a human-readable self-repair block under the heading
 `## To take advantage of v[version]`.
 
-Why: `gbrain upgrade` runs `gbrain post-upgrade` which runs `gbrain apply-migrations`.
+Why: `foresights upgrade` runs `foresights post-upgrade` which runs `foresights apply-migrations`.
 This chain has a known weak link — `upgrade.ts` catches post-upgrade failures as
 best-effort (so the binary still works). When that chain silently fails, users end
 up with half-upgraded brains. The self-repair block gives them a paste-ready
-recovery path; the v0.13+ `~/.gbrain/upgrade-errors.jsonl` trail + `gbrain doctor`
+recovery path; the v0.13+ `~/.gbrain/upgrade-errors.jsonl` trail + `foresights doctor`
 integration close the loop.
 
 Template (adapt the verify commands per release):
@@ -508,28 +508,28 @@ Template (adapt the verify commands per release):
 ```markdown
 ## To take advantage of v[version]
 
-`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor`
+`foresights upgrade` should do this automatically. If it didn't, or if `foresights doctor`
 warns about a partial migration:
 
 1. **Run the orchestrator manually:**
    ```bash
-   gbrain apply-migrations --yes
+   foresights apply-migrations --yes
    ```
 2. **Your agent reads `skills/migrations/v[version].md` the next time you interact with it.**
    [One sentence on whether headless agents need manual action, or whether the
    orchestrator already handled the mechanical side.]
 3. **Verify the outcome:**
    ```bash
-   [release-specific verify commands, e.g. `gbrain graph ... --depth 2`]
-   gbrain stats
+   [release-specific verify commands, e.g. `foresights graph ... --depth 2`]
+   foresights stats
    ```
 4. **If any step fails or the numbers look wrong,** please file an issue:
-   https://github.com/garrytan/gbrain/issues with:
-   - output of `gbrain doctor`
+   https://github.com/aimonk2025/gbrain/issues with:
+   - output of `foresights doctor`
    - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
    - which step broke
 
-   This feedback loop is how the gbrain maintainers find fragile upgrade paths. Thank you.
+   This feedback loop is how the foresights maintainers find fragile upgrade paths. Thank you.
 ```
 
 **Skip this block** for patches that are pure bug fixes with zero user-facing action
@@ -548,7 +548,7 @@ Tests, etc.). Same rules as before:
 - Frame as benefits and capabilities, not files changed or code written
 - Make the user think "hell yeah, I want that"
 - Bad: "Added GBRAIN_VERIFY.md installation verification runbook"
-- Good: "Your agent now verifies the entire GBrain installation end-to-end, catching
+- Good: "Your agent now verifies the entire Foresights installation end-to-end, catching
   silent sync failures and stale embeddings before they bite you"
 - Bad: "Setup skill Phase H and Phase I added"
 - Good: "New installs automatically set up live sync so your brain never falls behind"
@@ -574,7 +574,7 @@ and executes them.
 - New setup step that existing installs don't have (e.g., v0.5.0 added live sync,
   existing users need to set it up, not just new installs)
 - New SKILLPACK section with a MUST ADD setup requirement
-- Schema changes that require `gbrain init` or manual SQL
+- Schema changes that require `foresights init` or manual SQL
 - Changed defaults that affect existing behavior
 - Deprecated commands or flags that need replacement
 - New verification steps that should run on existing installs
@@ -595,9 +595,9 @@ for the pattern.
 
 ## Migration is canonical, not advisory
 
-GBrain's job is to deliver a canonical, working setup to every user on upgrade.
+Foresights's job is to deliver a canonical, working setup to every user on upgrade.
 Anything that looks like a "host-repo change" — AGENTS.md, cron manifests,
-launchctl units, config files outside `~/.gbrain/` — is a GBrain migration
+launchctl units, config files outside `~/.gbrain/` — is a Foresights migration
 step, not a nudge we leave for the host-repo maintainer. Migrations edit host
 files (with backups) to make the canonical setup real. Exceptions: changes
 that require human judgment (content edits, renames that break semantics,
@@ -700,7 +700,7 @@ the gated release commit (`git push origin "+${RELEASE_SHA}:refs/tags/latest-sta
 and so does anyone who pins it by hand. New users start on the `stable` tag
 instead ([Stable channel promotion](#stable-channel-promotion)): the README paste
 block, the `BOOTSTRAP_FOR_AGENTS.md` fetch URL and
-`bun install -g github:garrytan/gbrain#stable` name it (`INSTALL_REF` in
+`bun install -g github:aimonk2025/gbrain#stable` name it (`INSTALL_REF` in
 `src/core/install-ref.ts`), and only the stable promotion moves it. Both refs
 move only to a release whose assets already published, so neither has a 404
 window. `scripts/check-bootstrap-tag.sh` and `bun run check:install-ref` keep the
@@ -735,8 +735,8 @@ not be needed. A hand re-run of release.yml that would republish the current
 stable release as a pre-release refuses; upload missing assets with
 `gh release upload` instead.
 
-Nothing that installs or updates gbrain reads GitHub's Latest: `#stable` and
-`gbrain upgrade` follow the `stable` tag and its record; the alpha channel
+Nothing that installs or updates foresights reads GitHub's Latest: `#stable` and
+`foresights upgrade` follow the `stable` tag and its record; the alpha channel
 (binary self-update included) reads `VERSION` at `latest-stable` and fetches
 that exact release; the upgrade matrix counts pre-releases as releases; the
 macOS signature check resolves its tag from `latest-stable`. Anyone who
@@ -1080,8 +1080,8 @@ older batch procedure; steps 4 to 7 still apply to any rebuild PR.
 ### Fix-wave gate
 
 `.github/workflows/fix-wave-gate.yml` (job `contributor-gate`) fails every PR into
-master unless its head repository is `garrytan/gbrain` or the `maintainer-override`
-label counts. Only maintainers can push to `garrytan/gbrain`, so GBRA thread PRs
+master unless its head repository is `aimonk2025/gbrain` or the `maintainer-override`
+label counts. Only maintainers can push to `aimonk2025/gbrain`, so GBRA thread PRs
 (`capy/*`) and `garrytan/*` branches pass; fork PRs fail whatever their branch is
 called. When a contributor PR opens, a second job posts one comment with the same
 text as the failure: how outside PRs are handled (documentation merged as it is
@@ -1121,7 +1121,7 @@ wave on those branches stays a policy rule, enforced by review, not by this chec
 ### Fix-wave closeout
 
 `.github/workflows/fix-wave-closeout.yml` (job `close-superseded`) runs when a PR
-into master closes. If it merged and its head repository is `garrytan/gbrain`,
+into master closes. If it merged and its head repository is `aimonk2025/gbrain`,
 `scripts/fix-wave-closeout.ts` reads the merged PR's body and closes every open pull
 request named on a `Supersedes #N` line (`Supersedes #5085`, `- Supersedes #5089,
 #5096 and #5107`, `**Supersedes:** #5113`). Only the list right after the keyword
@@ -1159,7 +1159,7 @@ before running CI:
 1. `gh pr checkout <N>` — pull down the fork's branch. Note the PR number and
    head branch name (`gh pr view <N> --json headRefName --jq .headRefName`).
 2. `git push origin HEAD:<branch-name>` — push the same branch to the base
-   repo (origin points at `garrytan/gbrain`, not the fork). This is the move
+   repo (origin points at `aimonk2025/gbrain`, not the fork). This is the move
    that gives CI access to secrets.
 3. `gh pr close <N> --comment "moving to base-repo branch for secret access"`
    — close the fork PR so the queue stays clean.
@@ -1186,9 +1186,9 @@ bun run publish:clawhub      # clawhub package publish . --family bundle-plugin
 ```
 
 `build:all` compiles only those two targets; the full binary matrix ships
-through the GitHub release job above. `gbrain upgrade` never runs
-`clawhub update gbrain` (#8464): that command updates a ClawHub *skill* named
-gbrain from any publisher, and we publish none, so it would install someone
+through the GitHub release job above. `foresights upgrade` never runs
+`clawhub update foresights` (#8464): that command updates a ClawHub *skill* named
+foresights from any publisher, and we publish none, so it would install someone
 else's package.
 
 ## Plugin dist tree (codex/claude lanes)

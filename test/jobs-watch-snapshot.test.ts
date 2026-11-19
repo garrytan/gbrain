@@ -32,7 +32,7 @@ function emptySnap(opts: Partial<WatchSnapshot> = {}): WatchSnapshot {
 describe('renderSnapshot', () => {
   test('renders header + queue panel even when nothing is happening', () => {
     const out = renderSnapshot(emptySnap(), { useAnsi: false });
-    expect(out).toContain('gbrain jobs watch');
+    expect(out).toContain('foresights jobs watch');
     expect(out).toContain('q to quit');
     expect(out).toContain('Queue');
     expect(out).toContain('waiting=0');
@@ -133,7 +133,7 @@ describe('renderSnapshot', () => {
 });
 
 describe('jobs watch --refresh-ms (#7624)', () => {
-  // Value: protects=gbrain jobs watch --refresh-ms 250 refreshes every 250 ms, as --refresh-ms=250 does;
+  // Value: protects=foresights jobs watch --refresh-ms 250 refreshes every 250 ms, as --refresh-ms=250 does;
   // fails_when=the separate-value form is ignored and the 1000 ms default applies; why_new=no test read
   // watch's flags; seam=parseRefreshMs; no_claim=validation of the value itself.
   test('reads --refresh-ms <n> and --refresh-ms=<n>; absent means 1000', () => {

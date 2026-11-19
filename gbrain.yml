@@ -10,8 +10,8 @@ storage:
     - projects/
 
   # Directories persisted via the brain database only — bulk machine-generated
-  # content. .gitignored automatically by `gbrain sync`. Restorable from the DB
-  # via `gbrain export --restore-only`.
+  # content. .gitignored automatically by `foresights sync`. Restorable from the DB
+  # via `foresights export --restore-only`.
   db_only:
     - media/x/
     - media/articles/

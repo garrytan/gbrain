@@ -134,7 +134,7 @@ export async function withBatchAdmission<T>(ctx: OperationContext, run: (own: Op
 /** Validate explicit routing before any admission, including dry-run adapters. */
 /**
  * validatePageSlug, except that delete and restore may name a slug an older
- * gbrain stored and today's grammar refuses, when an existing row in
+ * foresights stored and today's grammar refuses, when an existing row in
  * `sourceId` holds exactly that slug (#6212). Such a row publishes
  * database-only (page-prepare.ts prepareFileTarget).
  */
@@ -164,12 +164,12 @@ export function pageMutationSource(ctx: OperationContext, params: Record<string,
  */
 async function resolveCaptureFile(ctx: OperationContext, sourceId: string, p: Record<string, unknown>): Promise<string | null> {
   if (Object.hasOwn(p, 'capture_path')) {
-    throw new OperationError('invalid_params', 'capture_path is reserved for the capture owner.', 'Drop capture_path and pass the text as content; gbrain sets the capture path itself.');
+    throw new OperationError('invalid_params', 'capture_path is reserved for the capture owner.', 'Drop capture_path and pass the text as content; foresights sets the capture path itself.');
   }
   if (p.local_file === undefined) return null;
   if (ctx.remote !== false || typeof p.local_file !== 'string' || !isAbsolute(p.local_file)) {
     throw new OperationError('invalid_params', 'Capture file paths are accepted only from the trusted local CLI.',
-      'Read the file yourself and pass its content; file capture runs through the gbrain capture command on the brain host.');
+      'Read the file yourself and pass its content; file capture runs through the foresights capture command on the brain host.');
   }
   const file = p.local_file;
   delete p.local_file;
@@ -365,7 +365,7 @@ export async function preparePageAdmission(ctx: OperationContext,
     if (ctx.remote !== false || input.managedFileImport !== true || !OWNER_FILE_INTENTS.has(String(input.params.kind)) ||
       ['preview', 'backup_reference'].some(key => Object.hasOwn(input.params, key))) {
       throw new OperationError('invalid_params', 'Reserved persistence fields cannot be submitted through put_page. Use trusted local reconciliation administration.',
-        'Drop kind, preview and backup_reference from put_page; reconciling a canonical file runs through gbrain sources reconcile on the brain host.');
+        'Drop kind, preview and backup_reference from put_page; reconciling a canonical file runs through foresights sources reconcile on the brain host.');
     }
   }
   // #8765 review: a managed_sync_ kind marks managed sync's own rows, so no page write may carry one (a capture's event kind).
@@ -383,7 +383,7 @@ export async function preparePageAdmission(ctx: OperationContext,
   // #6188: a fence repair's receipt is recorded only by the trusted local fence repair, never by a caller.
   if (Object.hasOwn(input.params, 'fence_repair') && (input.operation !== 'put_page' || ctx.remote !== false || !parseFenceRepairReceipt(input.params.fence_repair))) {
     throw new OperationError('invalid_params', 'fence_repair is reserved for the trusted fence repair.',
-      'Drop fence_repair and submit the page without it; gbrain repair fences records its own receipt on the brain host. To fix a malformed facts or takes fence, correct it in content (or write facts with remember and takes with takes_add); a held file is repaired by the brain host operator with gbrain repair fences, so ask the user to run it.');
+      'Drop fence_repair and submit the page without it; foresights repair fences records its own receipt on the brain host. To fix a malformed facts or takes fence, correct it in content (or write facts with remember and takes with takes_add); a held file is repaired by the brain host operator with foresights repair fences, so ask the user to run it.');
   }
   // G6: the hidden-row merge of an untrusted capture's body (page-prepare.ts) is opted into only by the trusted local ingest_capture
   // handler, whose caller never saw the page's non-world rows; a remote put_page has it already, through its authority.

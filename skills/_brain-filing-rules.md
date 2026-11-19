@@ -95,7 +95,7 @@ silently pick one.
 
 Every ingested item should have its raw source preserved for provenance.
 
-**Size routing (automatic via `gbrain files upload-raw`):**
+**Size routing (automatic via `foresights files upload-raw`):**
 - **< 100 MB text/PDF**: stays in the brain repo (git-tracked) in a `.raw/`
   sidecar directory alongside the brain page
 - **>= 100 MB OR media files** (video, audio, images): uploaded to cloud
@@ -105,7 +105,7 @@ Every ingested item should have its raw source preserved for provenance.
 
 **Upload command:**
 ```bash
-gbrain files upload-raw <file> --page <page-slug> --type <type>
+foresights files upload-raw <file> --page <page-slug> --type <type>
 ```
 Returns JSON: `{storage: "git"}` for small files, `{storage: "supabase", storagePath, reference}` for cloud.
 
@@ -124,8 +124,8 @@ type: transcript
 
 **Accessing stored files:**
 ```bash
-gbrain files signed-url <storage-path>    # Generate 1-hour signed URL
-gbrain files restore <dir>                # Download back to local
+foresights files signed-url <storage-path>    # Generate 1-hour signed URL
+foresights files restore <dir>                # Download back to local
 ```
 
 This ensures any derived brain page can be traced back to its original source,
@@ -133,7 +133,7 @@ and large files don't bloat the git repo.
 
 ## Dream-cycle synthesize / patterns directories (v0.23)
 
-The `synthesize` and `patterns` phases of `gbrain dream` write to a
+The `synthesize` and `patterns` phases of `foresights dream` write to a
 **fixed allow-list** of paths sourced from `_brain-filing-rules.json`'s
 `dream_synthesize_paths.globs` array. Editing that JSON is the ONLY way
 to add a new directory the synthesis subagent may write to:
@@ -205,7 +205,7 @@ fence's markers and header canonical, so the page never needs fence repair.
 Give it a canonical holder: `world`, `brain`, `people/<slug>` or
 `companies/<slug>`, with a lowercase slug (`people/alice-example`,
 `companies/acme-example`). A display name (`Alice Example`), a bare first
-name or an assistant label is not a holder: gbrain rewrites assistant labels
+name or an assistant label is not a holder: foresights rewrites assistant labels
 (`System`, `assistant`) to `brain`, resolves a name only when it matches
 exactly one `people/` or `companies/` page, and otherwise refuses the write
 or holds the file for a person to fix. Facts rows go through `remember` the same way. Write a fence

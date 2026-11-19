@@ -21,7 +21,7 @@ import { withEnv } from './helpers/with-env.ts';
 // legacy (pre-activation) files on every run, spending a permanent request ID
 // each time, because their admit reason is one a no-op publication can never
 // resolve: an embedded page with no contextual retrieval mode, or file bytes
-// that differ from what gbrain reads but parse to the same page.
+// that differ from what foresights reads but parse to the same page.
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-5751-'));
 const engines: BrainEngine[] = [];
@@ -79,8 +79,8 @@ test('#5751 unchanged legacy working-tree files admit nothing on any run, and th
     expect(result.status === 'first_sync' || result.status === 'synced').toBe(true);
     expect(result.legacySkips).toEqual({ contextualMode: 1, canonicalBytes: 1 });
     expect(notes(result)).toEqual([
-      '  1 legacy file(s) skipped because they parse to the same page but have no contextual retrieval mode, which a skipped import cannot stamp; to stamp it: gbrain repair contextual-mode',
-      '  1 legacy file(s) skipped because they parse to the same page but their bytes are not what gbrain reads back (for example, not valid UTF-8); re-save them as UTF-8 to publish them exactly.',
+      '  1 legacy file(s) skipped because they parse to the same page but have no contextual retrieval mode, which a skipped import cannot stamp; to stamp it: foresights repair contextual-mode',
+      '  1 legacy file(s) skipped because they parse to the same page but their bytes are not what foresights reads back (for example, not valid UTF-8); re-save them as UTF-8 to publish them exactly.',
     ]);
   }
   expect((await admitted(engine, f.id)).filter(slug => slug in LEGACY)).toEqual([]);

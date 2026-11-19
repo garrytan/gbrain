@@ -26,7 +26,7 @@ const CONFLICT = 'This request_id was used for a different write; send a new one
 let engine: PGLiteEngine;
 
 async function callOn(target: PGLiteEngine, name: string, params: Record<string, unknown>) {
-  // The Cat 40 serve path: `gbrain serve --surface starter` over stdio.
+  // The Cat 40 serve path: `foresights serve --surface starter` over stdio.
   const res = await dispatchToolCall(target, name, params, { remote: true, transport: 'stdio', surface: 'starter', takesHoldersAllowList: ['world'], sourceId: 'default' });
   return { isError: res.isError === true, body: JSON.parse(res.content[0]!.text!) as Record<string, any> };
 }

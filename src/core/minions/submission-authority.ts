@@ -114,21 +114,21 @@ async function sourceBoundary(engine: BrainEngine, sourceId: string, jobName: Re
     'SELECT id, local_path, config, archived, created_at FROM sources WHERE id = $1', [sourceId]);
   if (!source || source.archived !== false || typeof source.local_path !== 'string' || !source.local_path) {
     deny('an active source with a registered filesystem root is required',
-      `Source ${sourceId} must be active and registered with a directory on the brain host. The brain host operator checks it with gbrain sources list --json.`);
+      `Source ${sourceId} must be active and registered with a directory on the brain host. The brain host operator checks it with foresights sources list --json.`);
   }
   let config = source.config;
-  if (typeof config === 'string') { try { config = JSON.parse(config); } catch { deny('malformed source config', `Source ${sourceId}'s stored config is not valid JSON on the brain host, so nothing was queued. The brain host operator inspects it with gbrain sources status ${sourceId} --json.`); } }
+  if (typeof config === 'string') { try { config = JSON.parse(config); } catch { deny('malformed source config', `Source ${sourceId}'s stored config is not valid JSON on the brain host, so nothing was queued. The brain host operator inspects it with foresights sources status ${sourceId} --json.`); } }
   if (!record(config) || record(config)!.kind != null) deny('generic filesystem jobs require an ordinary filesystem source; use the dedicated connector endpoint',
-    `Source ${sourceId} is a connector source: the brain host syncs it with gbrain connectors (connector_sync), not through submit_job.`);
+    `Source ${sourceId} is a connector source: the brain host syncs it with foresights connectors (connector_sync), not through submit_job.`);
   if (!isAbsolute(source.local_path)) deny('registered source root is a relative path',
-    `Source ${sourceId}'s registered root is a relative path, which names whatever directory the brain host runs from (#7630), so nothing was queued. The brain host operator sets it with gbrain sources set-path ${sourceId} <absolute-directory>.`);
+    `Source ${sourceId}'s registered root is a relative path, which names whatever directory the brain host runs from (#7630), so nothing was queued. The brain host operator sets it with foresights sources set-path ${sourceId} <absolute-directory>.`);
   let canonicalRoot: string;
   try {
     canonicalRoot = realpathSync(source.local_path);
     if (!statSync(canonicalRoot).isDirectory()) deny('registered source root must be a directory',
-      `Source ${sourceId}'s registered root is not a directory on the brain host. The brain host operator restores the checkout or re-points it with gbrain sources set-path.`);
+      `Source ${sourceId}'s registered root is not a directory on the brain host. The brain host operator restores the checkout or re-points it with foresights sources set-path.`);
   } catch { deny('registered source root is unavailable or is not a directory',
-    `Source ${sourceId}'s registered root is missing on the brain host. The brain host operator restores the checkout or re-points it with gbrain sources set-path.`); }
+    `Source ${sourceId}'s registered root is missing on the brain host. The brain host operator restores the checkout or re-points it with foresights sources set-path.`); }
   let worktreeRoot: string | null = null;
   try { worktreeRoot = realpathSync(discoverGitRoot(canonicalRoot)); }
   catch { if (jobName === 'sync') deny('remote sync requires an existing Git working tree; initialize or restore it locally',
@@ -175,12 +175,12 @@ export async function prepareRemoteJob(
   ctx: OperationContext, name: string, input: unknown,
 ): Promise<{ data: Record<string, unknown>; authority: RemoteJobAuthority }> {
   if (!REMOTE_JOB_NAMES.includes(name as RemoteJobName)) deny('unsupported remote job; only sync, import, lint and lint-fix are available through remote submit_job',
-    `Remote submit_job queues sync, import, lint and lint-fix only. Use the dedicated operation for ${name} work, or ask the user to run it with the gbrain CLI on the brain host.`);
+    `Remote submit_job queues sync, import, lint and lint-fix only. Use the dedicated operation for ${name} work, or ask the user to run it with the foresights CLI on the brain host.`);
   const principal = ctx.auth?.principal;
   const sourceId = ctx.auth?.sourceId;
   if (!principal || !sourceId || !isValidSourceId(sourceId) || ctx.sourceId !== sourceId || !hasScope(ctx.auth?.scopes ?? [], 'admin')) {
     deny('an authenticated persistent principal and scalar write source are required; use local CLI or a dedicated operation',
-      'Connect with a persistent OAuth client bound to one write source and holding the admin scope, or ask the user to run the job with the gbrain CLI on the brain host.');
+      'Connect with a persistent OAuth client bound to one write source and holding the admin scope, or ask the user to run the job with the foresights CLI on the brain host.');
   }
   if (ctx.auth?.boundSlugPrefixes !== undefined || ctx.auth?.fenceProjectionDegraded) deny('bulk filesystem jobs require an unrestricted source grant',
     'This connection is slug-bound (or its grant projection is degraded), so it cannot queue whole-source jobs. Use page writes, or ask the brain host operator for an unrestricted source grant.');
@@ -261,7 +261,7 @@ export async function prepareRemoteAgent(ctx: OperationContext, data: Record<str
   const principal = ctx.auth?.principal;
   if (principal?.kind !== 'oauth_client' || principal.id !== ctx.auth?.clientId || !hasScope(ctx.auth?.scopes ?? [], 'agent') ||
       typeof data.source_id !== 'string' || data.source_id !== ctx.auth?.sourceId || !isValidSourceId(data.source_id)) deny('submit_agent requires a verified OAuth principal and scalar source grant',
-    'submit_agent needs an OAuth client holding the agent scope and bound to the one source named in source_id. Ask the brain host operator for such a client, or ask the user to run gbrain agent run on the brain host.');
+    'submit_agent needs an OAuth client holding the agent scope and bound to the one source named in source_id. Ask the brain host operator for such a client, or ask the user to run foresights agent run on the brain host.');
   const [source] = await ctx.engine.executeRaw<Record<string, unknown>>('SELECT archived, created_at FROM sources WHERE id = $1', [data.source_id]);
   if (!source || source.archived !== false) deny('agent source must be active', `Source ${data.source_id} is archived or missing. Name an active source in source_id.`);
   const { currentCallerAccess } = await import('../search/private-visibility.ts');
@@ -282,7 +282,7 @@ export async function prepareRemoteAgent(ctx: OperationContext, data: Record<str
 export async function authorizeJobExecution(engine: BrainEngine, job: Pick<MinionJob, 'name' | 'data' | 'submission_authority'> & Partial<Pick<MinionJob, 'id'>>): Promise<SubmissionAuthority> {
   const a = parseSubmissionAuthority(job.submission_authority);
   if (!a) deny('missing or unsupported submission authority; review locally with jobs authorize-legacy',
-    'This queued job has no readable submission authority, so it does not run until reviewed. On the brain host, gbrain jobs authorize-legacy lists it for the user to approve or cancel.');
+    'This queued job has no readable submission authority, so it does not run until reviewed. On the brain host, foresights jobs authorize-legacy lists it for the user to approve or cancel.');
   if (a.kind === 'application') return a;
   if (a.kind === 'remote_agent') {
     if (job.name !== 'subagent' || authorityDigest(job.data) !== a.payloadHash) deny('agent payload differs from its accepted grant',
@@ -337,7 +337,7 @@ export function legacyJobAuthorityError(row: Record<string, unknown>, activeIds:
       `Resubmit with a new idempotency key; a local operator can review the old row with ${selectCommand('authorize-legacy', { statuses: [status], names: [name] })}.`);
   }
   if (status === 'active') {
-    return catalogueError('legacy_job_authority', what, `${STOP_PRODUCERS}, then cancel it: gbrain jobs cancel ${id}; run gbrain doctor to review the rest.`);
+    return catalogueError('legacy_job_authority', what, `${STOP_PRODUCERS}, then cancel it: foresights jobs cancel ${id}; run foresights doctor to review the rest.`);
   }
   return catalogueError('legacy_job_authority', what, legacyRecoveryHint(activeIds));
 }
@@ -376,5 +376,5 @@ export async function assertNoUnreviewedJobs(engine: BrainEngine): Promise<void>
   if (!invalid.length) return;
   throw catalogueError('legacy_job_authority',
     `Queued job authorization: ${invalid.length} legacy jobs have missing or unsupported authority, so workers cannot start until they are reviewed.`,
-    `${legacyRecoveryHint()} Rows with unsupported non-NULL authority need matching application and database versions, or gbrain jobs cancel <id>; gbrain doctor lists them.`);
+    `${legacyRecoveryHint()} Rows with unsupported non-NULL authority need matching application and database versions, or foresights jobs cancel <id>; foresights doctor lists them.`);
 }

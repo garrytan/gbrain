@@ -3,8 +3,8 @@
  *
  * Three call sites consume this rule:
  *   1. `ChildWorkerSupervisor` (in-process, restart-policy decision)
- *   2. `gbrain doctor` (audit-log read, supervisor health surface)
- *   3. `gbrain jobs supervisor status` (audit-log read, CLI status)
+ *   2. `foresights doctor` (audit-log read, supervisor health surface)
+ *   3. `foresights jobs supervisor status` (audit-log read, CLI status)
  *
  * The supervisor reads Node's `child.on('exit', (code, signal) => …)` callback
  * shape; doctor and jobs read the audit-log JSON shape. JSON.stringify drops

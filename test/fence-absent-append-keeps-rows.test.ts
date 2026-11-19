@@ -1,6 +1,6 @@
 /**
  * A page rewrite that drops its `## Facts` or takes section keeps the section's rows live under a `fence_absent`
- * hold until the user decides. gbrain's own appends (remember, takes_add) used to build a brand-new section holding only
+ * hold until the user decides. foresights's own appends (remember, takes_add) used to build a brand-new section holding only
  * the new row, so the next ordinary write (a tag, a timeline entry, an append, a get/put round trip) read that section as
  * the user's answer and expired the remembered facts or deleted the takes it no longer listed. The append now renders
  * the held rows back into the section it creates. A row the user withdrew (forget, takes_remove, an explicit empty
@@ -83,7 +83,7 @@ for (const backend of testBackends()) {
   for (const storage of STORAGES) {
     const opts = { databaseUrl, ...(storage === 'git' ? { setup: gitSetup } : {}) };
 
-    describe(`a section re-created by gbrain's own append keeps the rows a fenceless rewrite left held (${backend}, ${storage})`, () => {
+    describe(`a section re-created by foresights's own append keeps the rows a fenceless rewrite left held (${backend}, ${storage})`, () => {
       for (const [name, followUp] of FOLLOW_UPS) {
         test(`fact: remember, fenceless put, remember, then ${name}: the first fact stays live`, () => managedBrain(async ({ engine, ctx, root }) => {
           const slug = 'people/alice-example';

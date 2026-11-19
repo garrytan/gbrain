@@ -35,10 +35,10 @@ describe('auto_chronicle upgrade notice', () => {
     expect(text).toContain('now ON by default');
     expect(text).toContain('200 calls/day x $0.25 per-page cap = $50.00/day with anthropic:claude-sonnet-4-6');
     expect(text).toContain('sends page text to the configured chat provider');
-    expect(text).toContain('opt_out: Turn automatic extraction off (run: gbrain config set auto_chronicle false)');
+    expect(text).toContain('opt_out: Turn automatic extraction off (run: foresights config set auto_chronicle false)');
     expect(text).toContain('[/AGENT]');
-    expect(text).toMatch(/gbrain chronicle-backfill --since \d{4}-\d{2}-\d{2} --limit 50 --dry-run/);
-    expect(text).toContain('gbrain dream --phase chronicle');
+    expect(text).toMatch(/(?:foresights|gbrain) chronicle-backfill --since \d{4}-\d{2}-\d{2} --limit 50 --dry-run/);
+    expect(text).toContain('foresights dream --phase chronicle');
     expect(text).not.toContain('No chat provider is configured');
   });
 
@@ -86,7 +86,7 @@ describe('auto_chronicle upgrade notice', () => {
 
 describe('opt-out wording guard', () => {
   test('no surface tells anyone to clear auto_chronicle with config unset', () => {
-    // Unset restores the default, which is now on; the only opt-out is `gbrain config set auto_chronicle false`.
+    // Unset restores the default, which is now on; the only opt-out is `foresights config set auto_chronicle false`.
     const result = Bun.spawnSync(['git', 'grep', '-n', '-I', '-E', 'config unset (--pattern )?auto_chronicle', '--', 'src', 'docs', 'skills'],
       { cwd: `${import.meta.dir}/..` });
     const hits = result.stdout.toString().split('\n').filter(Boolean)

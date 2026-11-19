@@ -7,7 +7,7 @@
  *
  *   - listPendingProposals — source-scoped pending queue (newest first).
  *   - acceptProposal       — promote via a coordinated `takes_add` mutation
- *                            (submitPageMutation, the same path `gbrain
+ *                            (submitPageMutation, the same path `foresights
  *                            takes add` uses), then stamp status='accepted' +
  *                            promoted_row_num + acted_at/acted_by.
  *   - rejectProposal       — stamp status='rejected' + acted_at/acted_by.
@@ -146,7 +146,7 @@ async function loadProposal(
       throw new TakeProposalError(
         'not_pending',
         `Proposal #${id} is claimed 'accepted' but its take is not recorded yet (its write is pending, or a crash stopped it). ` +
-        `Re-run \`gbrain takes propose --accept ${id}\` to finish it; it resumes the same write and never adds a second take.`,
+        `Re-run \`foresights takes propose --accept ${id}\` to finish it; it resumes the same write and never adds a second take.`,
       );
     }
     throw new TakeProposalError(
@@ -196,14 +196,14 @@ function claimRequestId(id: number, actedAt: string): string {
 
 /**
  * Promotes an accepted proposal into the page's fence via the SAME
- * coordinated `takes_add` mutation `gbrain takes add` uses — never the
+ * coordinated `takes_add` mutation `foresights takes add` uses — never the
  * uncoordinated addTakeToPage — so a managed brain's writer-coordinator
  * guard (assertManagedFilesystemWrite) sees this write the same way it sees
  * every other takes mutation, instead of refusing it as an uncoordinated
  * legacy writer.
  *
  * The mutation resolves its own write root from the proposal's source
- * (source.local_path / sync.repo_path), as `gbrain takes add <slug>` does; an
+ * (source.local_path / sync.repo_path), as `foresights takes add <slug>` does; an
  * explicit `--dir` rides along as `local_dir`, which the coordinator refuses
  * unless it is that canonical root.
  */
@@ -288,7 +288,7 @@ export async function acceptProposal(
     await waitForWrite(engine, inFlight, target.config).catch(() => undefined);
     prior = await claimRequestStates(engine, requestId);
   } else if (prior.length === 0 && proposal.status === 'accepted' && claimedAt && Date.now() - Date.parse(claimedAt) < RESUME_GRACE_MS) {
-    throw new TakeProposalError('not_pending', `Proposal #${id} was just claimed by another accept that may still be submitting its take. Re-run \`gbrain takes propose --accept ${id}\` in a few minutes.`);
+    throw new TakeProposalError('not_pending', `Proposal #${id} was just claimed by another accept that may still be submitting its take. Re-run \`foresights takes propose --accept ${id}\` in a few minutes.`);
   }
   const committed = prior.find(r => r.state === 'committed');
   let rowNum: number;
@@ -298,7 +298,7 @@ export async function acceptProposal(
       throw new TakeProposalError('not_pending', `Proposal #${id}'s take was written (request ${requestId}) but its receipt no longer names the row; check the page's takes and record it by hand.`);
     }
   } else if (prior.some(r => !SETTLED_WITHOUT_COMMIT.has(r.state))) {
-    throw new TakeProposalError('not_pending', `Proposal #${id}'s take is still being written (request ${requestId}). Re-run \`gbrain takes propose --accept ${id}\` once it settles.`);
+    throw new TakeProposalError('not_pending', `Proposal #${id}'s take is still being written (request ${requestId}). Re-run \`foresights takes propose --accept ${id}\` once it settles.`);
   } else {
     try {
       // The row's OWN source, never the caller's, is what promoteProposalViaTakesAdd

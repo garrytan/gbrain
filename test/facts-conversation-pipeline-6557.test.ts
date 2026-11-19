@@ -37,7 +37,7 @@ describe('facts_extraction_health names the conversation pipeline (#6557)', () =
     const check = await run();
     expect(check.message).toContain('1 conversation page(s) are not read by the page-write facts backstop (conversation_pipeline)');
     expect(check.message).toContain('capped at $1.00 per source and $5.00 per cycle, 20 min per source and 30 min per cycle');
-    expect(check.message).toContain('gbrain config set cycle.conversation_facts_backfill.enabled true');
+    expect(check.message).toContain('foresights config set cycle.conversation_facts_backfill.enabled true');
     expect((check.details as Record<string, unknown>).conversation_pipeline).toMatchObject({ reason: 'conversation_pipeline', pages: 1 });
     expect(check.fix).toMatchObject({
       argv: ['gbrain', 'config', 'set', 'cycle.conversation_facts_backfill.enabled', 'true'], ask_user: true, consent: ['paid'],

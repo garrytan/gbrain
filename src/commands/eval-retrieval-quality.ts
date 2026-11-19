@@ -1,5 +1,5 @@
 /**
- * `gbrain eval retrieval-quality <fixture.jsonl> [--json] [--source <id>]`
+ * `foresights eval retrieval-quality <fixture.jsonl> [--json] [--source <id>]`
  * (T6 — NamedThingBench). Runs the gold query set against the brain's hybrid
  * retrieval and gates on the families that ARE the retrieval-maxpool incident.
  *
@@ -24,7 +24,7 @@ import {
   type SearchFn,
 } from '../eval/retrieval-quality/harness.ts';
 
-const USAGE = 'Usage: gbrain eval retrieval-quality <fixture.jsonl> [--json] [--source <id>] [--ab-relational] [--decide <slot>=<off|on|shadow> ...] [--decide-provider <id>] [--decide-dataset <jsonl>]';
+const USAGE = 'Usage: foresights eval retrieval-quality <fixture.jsonl> [--json] [--source <id>] [--ab-relational] [--decide <slot>=<off|on|shadow> ...] [--decide-provider <id>] [--decide-dataset <jsonl>]';
 
 export async function runEvalRetrievalQuality(engine: BrainEngine, argv: string[]): Promise<void> {
   if (argv.includes('--help') || argv.includes('-h')) {
@@ -37,7 +37,7 @@ export async function runEvalRetrievalQuality(engine: BrainEngine, argv: string[
   try {
     const parsed = extractDecideEvalFlags(argv);
     args = parsed.rest;
-    decideRun = prepareDecideEval(parsed.decide, { command: 'gbrain eval retrieval-quality', throwaway: false });
+    decideRun = prepareDecideEval(parsed.decide, { command: 'foresights eval retrieval-quality', throwaway: false });
   } catch (e) {
     console.error(e instanceof Error ? e.message : String(e));
     process.exit(2);

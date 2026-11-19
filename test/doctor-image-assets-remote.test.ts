@@ -3,7 +3,7 @@
  * storage lane (`storage: 'supabase' | 's3' | 'local'`) hold bucket keys,
  * not source-relative paths. Doctor must not stat them under the source root
  * and report "missing from disk … restore from git"; it classifies them as
- * storage-backend objects, points at the backend-aware `gbrain files verify`,
+ * storage-backend objects, points at the backend-aware `foresights files verify`,
  * and keeps detecting genuinely vanished local/git assets.
  *
  * Behavioral test through the master-existing `buildChecks` seam (mirrors

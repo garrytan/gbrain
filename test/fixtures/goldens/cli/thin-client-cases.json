@@ -5,19 +5,19 @@
       "exitCode": 0,
       "stderr": [],
       "stdout": [
-        "gbrain mcp — provision access on the host; install it inside the harness",
+        "foresights mcp — provision access on the host; install it inside the harness",
         "",
-        "gbrain mcp grant NAME --harness ID --profile PROFILE --source SOURCE --url URL --credentials-out FILE",
-        "gbrain mcp grant NAME --client ID --if-version N --profile PROFILE --url URL --harness ID --dry-run",
-        "gbrain mcp verify --client ID --harness ID --url URL --credentials-file FILE [--delegate]",
-        "gbrain mcp admin --help",
-        "gbrain mcp adapters | profiles",
-        "gbrain mcp expose [--port N] [--funnel] [--surface verbs|starter|full] [--enable-dcr] [--no-tailscale] [--no-service] [--no-install] [--force] [--dry-run] [--yes] [--json]",
-        "gbrain mcp expose --status [--json]",
-        "gbrain mcp expose --remove [--yes] [--json]",
+        "foresights mcp grant NAME --harness ID --profile PROFILE --source SOURCE --url URL --credentials-out FILE",
+        "foresights mcp grant NAME --client ID --if-version N --profile PROFILE --url URL --harness ID --dry-run",
+        "foresights mcp verify --client ID --harness ID --url URL --credentials-file FILE [--delegate]",
+        "foresights mcp admin --help",
+        "foresights mcp adapters | profiles",
+        "foresights mcp expose [--port N] [--funnel] [--surface verbs|starter|full] [--enable-dcr] [--no-tailscale] [--no-service] [--no-install] [--force] [--dry-run] [--yes] [--json]",
+        "foresights mcp expose --status [--json]",
+        "foresights mcp expose --remove [--yes] [--json]",
         "",
-        "expose publishes the gbrain HTTP MCP server on your Tailscale tailnet (--funnel: public, for cloud agents)",
-        "and keeps it running as a user service. Engine-free. See: gbrain mcp expose --help",
+        "expose publishes the foresights HTTP MCP server on your Tailscale tailnet (--funnel: public, for cloud agents)",
+        "and keeps it running as a user service. Engine-free. See: foresights mcp expose --help",
         "",
         "--profile defaults to memory-writer for new clients; omitted profiles preserve existing grants.",
         "New connections follow this brain's published skills within their approved read sources.",
@@ -41,7 +41,7 @@
         "--json                             Machine-readable redacted receipt",
         "",
         "Next, in the intended harness environment:",
-        "gbrain connect URL --harness ID --credentials-file FILE --install",
+        "foresights connect URL --harness ID --credentials-file FILE --install",
         "Thin CLI adapters additionally require --root ABSOLUTE-PERSISTENT-DIRECTORY.",
         ""
       ]
@@ -50,9 +50,9 @@
       "argv": "import",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain import` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain import",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights import` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights import",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -60,9 +60,9 @@
       "argv": "access",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain access` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain access",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights access` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights access",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -70,10 +70,10 @@
       "argv": "export",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain export` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain export",
-        "Why: export dumps the host brain to disk and has no MCP equivalent. Run `gbrain export` on the host, or read pages with the `get_page` MCP tool.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights export` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights export",
+        "Why: export dumps the host brain to disk and has no MCP equivalent. Run `foresights export` on the host, or read pages with the `get_page` MCP tool.",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -81,10 +81,10 @@
       "argv": "files",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain files` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain files",
-        "Why: `files list` and `files url` MCP ops are localOnly (paths live on the host filesystem). Use `gbrain files` on the host machine.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights files` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights files",
+        "Why: `files list` and `files url` MCP ops are localOnly (paths live on the host filesystem). Use `foresights files` on the host machine.",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -92,10 +92,10 @@
       "argv": "embed",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain embed` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain embed",
-        "Why: embed runs on the host. Run `gbrain embed` or `gbrain cycle` on the host machine.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights embed` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights embed",
+        "Why: embed runs on the host. Run `foresights embed` or `foresights cycle` on the host machine.",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -112,10 +112,10 @@
       "argv": "sweep",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain sweep` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain sweep",
+        "Error [requires_local_engine]: `foresights sweep` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights sweep",
         "Why: sweep runs the serve-resident maintenance passes against the LOCAL engine. Run it on the host (the serve process also runs it automatically).",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -123,10 +123,10 @@
       "argv": "config",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain config` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain config",
+        "Error [requires_local_engine]: `foresights config` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights config",
         "Why: config reads/writes the host brain's config plane. Edit the host's .gbrain/config.json (file-plane keys) or run on the host with GBRAIN_HOME set. self_upgrade.* keys are machine-local and work here.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -134,10 +134,10 @@
       "argv": "pricing",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain pricing` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain pricing",
-        "Why: pricing registers model prices in the host brain's config and is trusted-local only (a remote caller could void a cost cap). Ask the brain's operator to run `gbrain pricing set <model> ...` on the host.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights pricing` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights pricing",
+        "Why: pricing registers model prices in the host brain's config and is trusted-local only (a remote caller could void a cost cap). Ask the brain's operator to run `foresights pricing set <model> ...` on the host.",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -145,10 +145,10 @@
       "argv": "migrate",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain migrate` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain migrate",
+        "Error [requires_local_engine]: `foresights migrate` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights migrate",
         "Why: migrate runs on the host's local engine. Run on the host machine.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -156,10 +156,10 @@
       "argv": "retrieval-upgrade",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain retrieval-upgrade` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain retrieval-upgrade",
+        "Error [requires_local_engine]: `foresights retrieval-upgrade` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights retrieval-upgrade",
         "Why: retrieval-upgrade (embedding migration) rebuilds the host brain's schema + re-embeds. Run on the host machine.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -167,10 +167,10 @@
       "argv": "eval",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain eval` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain eval",
-        "Why: `eval` export/prune/replay touch the local engine and have no MCP equivalents. Run `gbrain eval` on the host.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights eval` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights eval",
+        "Why: `eval` export/prune/replay touch the local engine and have no MCP equivalents. Run `foresights eval` on the host.",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -178,10 +178,10 @@
       "argv": "jobs",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain jobs` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain jobs",
+        "Error [requires_local_engine]: `foresights jobs` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights jobs",
         "Why: `jobs list`, `jobs get <id>`, and `jobs stats` are thin-client routable; this subcommand runs against the host queue. Use the submit_job / list_jobs / get_job / get_job_stats MCP tools from your agent, or run on the host with GBRAIN_HOME set.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -189,9 +189,9 @@
       "argv": "agent",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain agent` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain agent",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights agent` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights agent",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -199,9 +199,9 @@
       "argv": "book-mirror",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain book-mirror` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain book-mirror",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights book-mirror` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights book-mirror",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -209,10 +209,10 @@
       "argv": "sync",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain sync` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain sync",
-        "Why: sync runs on the host. Use the dedicated `sync_brain` MCP operation, or run `gbrain sync` on the host.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights sync` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights sync",
+        "Why: sync runs on the host. Use the dedicated `sync_brain` MCP operation, or run `foresights sync` on the host.",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -220,10 +220,10 @@
       "argv": "extract",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain extract` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain extract",
-        "Why: extract runs on the host. Run `gbrain extract` or `gbrain cycle` on the host machine.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights extract` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights extract",
+        "Why: extract runs on the host. Run `foresights extract` or `foresights cycle` on the host machine.",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -231,10 +231,10 @@
       "argv": "extract-conversation-facts",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain extract-conversation-facts` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain extract-conversation-facts",
+        "Error [requires_local_engine]: `foresights extract-conversation-facts` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights extract-conversation-facts",
         "Why: extract-conversation-facts runs on the host (requires local engine + chat gateway). Run on the host machine.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -242,10 +242,10 @@
       "argv": "enrich",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain enrich` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain enrich",
+        "Error [requires_local_engine]: `foresights enrich` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights enrich",
         "Why: enrich runs on the host (requires local engine + chat gateway for grounded synthesis). Run on the host machine.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -253,9 +253,9 @@
       "argv": "features",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain features` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain features",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights features` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights features",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -263,9 +263,9 @@
       "argv": "autopilot",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain autopilot` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain autopilot",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights autopilot` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights autopilot",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -274,7 +274,7 @@
       "exitCode": 1,
       "stderr": [],
       "stdout": [
-        "Usage: gbrain graph-query <slug> [options]",
+        "Usage: foresights graph-query <slug> [options]",
         "",
         "Traverse the link graph from a page. Returns an indented tree of edges.",
         "Per-edge type filter: traversal only follows matching links.",
@@ -308,15 +308,15 @@
         "  -h, --help             Show this message.",
         "",
         "Examples:",
-        "  gbrain graph-query people/alice --type attended --depth 2",
+        "  foresights graph-query people/alice --type attended --depth 2",
         "    -> who attended meetings with Alice (multi-hop)",
-        "  gbrain graph-query companies/acme --type works_at --direction in",
+        "  foresights graph-query companies/acme --type works_at --direction in",
         "    -> who works at Acme",
-        "  gbrain graph-query people/bob --depth 1",
+        "  foresights graph-query people/bob --depth 1",
         "    -> Bob's direct connections",
-        "  gbrain graph-query people/bob --include-foreign",
+        "  foresights graph-query people/bob --include-foreign",
         "    -> include edges to pages in other sources",
-        "  gbrain graph-query people/alice --hop invested_in:object --hop founded:subject",
+        "  foresights graph-query people/alice --hop invested_in:object --hop founded:subject",
         "    -> founders of the companies Alice invested in, with evidence",
         ""
       ]
@@ -325,9 +325,9 @@
       "argv": "reconcile-links",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain reconcile-links` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain reconcile-links",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights reconcile-links` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights reconcile-links",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -335,10 +335,10 @@
       "argv": "repair",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain repair` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain repair",
-        "Why: repair runs on the brain host (it publishes coordinated page writes against the local engine). Run `gbrain repair` on the brain host.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights repair` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights repair",
+        "Why: repair runs on the brain host (it publishes coordinated page writes against the local engine). Run `foresights repair` on the brain host.",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -346,9 +346,9 @@
       "argv": "diag",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain diag` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain diag",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights diag` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights diag",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -356,10 +356,10 @@
       "argv": "orphans",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain orphans` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain orphans",
+        "Error [requires_local_engine]: `foresights orphans` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights orphans",
         "Why: orphans needs the host's brain. Run on the host or use the `find_orphans` MCP tool from your agent.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -367,9 +367,9 @@
       "argv": "maintain",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain maintain` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain maintain",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights maintain` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights maintain",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -377,9 +377,9 @@
       "argv": "reindex",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain reindex` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain reindex",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights reindex` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights reindex",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -388,8 +388,8 @@
       "exitCode": 1,
       "stderr": [
         "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
-        "Fix: gbrain remote doctor",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
+        "Fix: foresights remote doctor",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
       "stdout": []
     },
@@ -397,10 +397,10 @@
       "argv": "anomalies",
       "exitCode": 1,
       "stderr": [
-        "[gbrain] reading anomalous cohorts; large brains can take minutes. Progress prints here every 10 s; the result prints on stdout when it is ready.",
+        "[foresights] reading anomalous cohorts; large brains can take minutes. Progress prints here every 10 s; the result prints on stdout when it is ready.",
         "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
-        "Fix: gbrain remote doctor",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
+        "Fix: foresights remote doctor",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
       "stdout": []
     },
@@ -408,9 +408,9 @@
       "argv": "feedback",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain feedback` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain feedback",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights feedback` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights feedback",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -418,11 +418,11 @@
       "argv": "status",
       "exitCode": 0,
       "stderr": [
-        "[gbrain] reading the brain status snapshot; large brains can take minutes. Progress prints here every 10 s; the result prints on stdout when it is ready."
+        "[foresights] reading the brain status snapshot; large brains can take minutes. Progress prints here every 10 s; the result prints on stdout when it is ready."
       ],
       "stdout": [
         "",
-        "GBrain Status",
+        "Foresights Status",
         "=============",
         "Mode: thin-client  ·  v<version>  ·  <ts>",
         "",
@@ -440,10 +440,10 @@
       "argv": "advisor",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain advisor` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain advisor",
-        "Why: advisor ranks next actions from the host brain. Use the `advisor` MCP tool from your agent (when the host publishes it), or run `gbrain advisor` on the host.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights advisor` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights advisor",
+        "Why: advisor ranks next actions from the host brain. Use the `advisor` MCP tool from your agent (when the host publishes it), or run `foresights advisor` on the host.",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -452,7 +452,7 @@
       "exitCode": 0,
       "stderr": [],
       "stdout": [
-        "Usage: gbrain conversation-parser <subcommand> [options]",
+        "Usage: foresights conversation-parser <subcommand> [options]",
         "",
         "Subcommands:",
         "  scan <slug>          Dry-run the parser on a page; report pattern hit.",
@@ -462,9 +462,9 @@
         "                        emits \"TODO v0.42+\" notice.)",
         "",
         "Examples:",
-        "  gbrain conversation-parser scan conversations/imessage/alice-example",
-        "  gbrain conversation-parser list-builtins --json",
-        "  gbrain conversation-parser validate ./my-pattern.json",
+        "  foresights conversation-parser scan conversations/imessage/alice-example",
+        "  foresights conversation-parser list-builtins --json",
+        "  foresights conversation-parser validate ./my-pattern.json",
         "",
         "Global flags:",
         "  --json               Emit JSON envelope on stdout (where applicable).",
@@ -475,9 +475,9 @@
       "argv": "edges-backfill",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain edges-backfill` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain edges-backfill",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights edges-backfill` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights edges-backfill",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -485,8 +485,8 @@
       "argv": "whoknows",
       "exitCode": 2,
       "stderr": [
-        "gbrain whoknows: topic argument required",
-        "Usage: gbrain whoknows <topic> [options]",
+        "foresights whoknows: topic argument required",
+        "Usage: foresights whoknows <topic> [options]",
         "",
         "Ask your brain who knows about a topic. Returns ranked person/company",
         "pages by expertise depth, relationship recency, and salience.",
@@ -498,9 +498,9 @@
         "  --help, -h          Show this help",
         "",
         "Examples:",
-        "  gbrain whoknows \"lab automation\"",
-        "  gbrain whoknows fintech compliance --explain",
-        "  gbrain whoknows \"ai agents\" --limit 10 --json",
+        "  foresights whoknows \"lab automation\"",
+        "  foresights whoknows fintech compliance --explain",
+        "  foresights whoknows \"ai agents\" --limit 10 --json",
         ""
       ],
       "stdout": []
@@ -509,9 +509,9 @@
       "argv": "brainstorm",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain brainstorm` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain brainstorm",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights brainstorm` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights brainstorm",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -519,9 +519,9 @@
       "argv": "lsd",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain lsd` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain lsd",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights lsd` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights lsd",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -529,9 +529,9 @@
       "argv": "skillopt",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain skillopt` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain skillopt",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights skillopt` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights skillopt",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -539,9 +539,9 @@
       "argv": "calibration",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain calibration` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain calibration",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights calibration` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights calibration",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -549,10 +549,10 @@
       "argv": "transcripts",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain transcripts` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain transcripts",
+        "Error [requires_local_engine]: `foresights transcripts` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights transcripts",
         "Why: transcripts is server-private (raw chat exports stay on the host). Read transcripts on the host machine.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -560,9 +560,9 @@
       "argv": "models",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain models` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain models",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights models` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights models",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -570,10 +570,10 @@
       "argv": "takes",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain takes` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain takes",
+        "Error [requires_local_engine]: `foresights takes` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights takes",
         "Why: takes list/search/scorecard/calibration + add/update/resolve/supersede route to the brain host automatically (takes_* MCP ops). This subcommand (extract/revisit) is host-bound: run it on the host machine.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -581,9 +581,9 @@
       "argv": "onboard",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain onboard` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain onboard",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights onboard` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights onboard",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -593,7 +593,7 @@
       "stderr": [
         "Unknown founder subcommand: (none). Did you mean \"founder scorecard\"?",
         "",
-        "Usage: gbrain founder scorecard <entity-slug> [options]",
+        "Usage: foresights founder scorecard <entity-slug> [options]",
         "",
         "Rolls up the entity's typed-claim trajectory + resolved-take outcomes into",
         "the four founder-evaluation metrics: claim accuracy, consistency, growth",
@@ -606,8 +606,8 @@
         "  --help, -h          Show this help",
         "",
         "Examples:",
-        "  gbrain founder scorecard companies/acme-example",
-        "  gbrain founder scorecard companies/acme-example --since 2025-05-17 --json",
+        "  foresights founder scorecard companies/acme-example",
+        "  foresights founder scorecard companies/acme-example --since 2025-05-17 --json",
         ""
       ],
       "stdout": []
@@ -617,7 +617,7 @@
       "exitCode": 0,
       "stderr": [],
       "stdout": [
-        "Usage: gbrain think \"<question>\" [options]",
+        "Usage: foresights think \"<question>\" [options]",
         "",
         "Options:",
         "  --anchor <slug>          Pull the entity subgraph around this slug",
@@ -650,7 +650,7 @@
         "Dates: the reader sees today's date in brain.timezone and each page's content",
         "date; see docs/guides/time-aware-recall.md.",
         "",
-        "Set ANTHROPIC_API_KEY (or run: gbrain config set anthropic_api_key ...) to run",
+        "Set ANTHROPIC_API_KEY (or run: foresights config set anthropic_api_key ...) to run",
         "real synthesis. Without it AND without --save, the gather phase still runs and",
         "prints what would have been the input (exit 0).",
         ""
@@ -661,8 +661,8 @@
       "exitCode": 1,
       "stderr": [
         "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
-        "Fix: gbrain remote doctor",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
+        "Fix: foresights remote doctor",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
       "stdout": []
     },
@@ -670,9 +670,9 @@
       "argv": "notability-eval",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain notability-eval` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain notability-eval",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights notability-eval` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights notability-eval",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -680,10 +680,10 @@
       "argv": "sources",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain sources` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain sources",
+        "Error [requires_local_engine]: `foresights sources` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights sources",
         "Why: sources commands manage local DB + config rows. Per-subcommand thin-client routing lands in v0.31.x. For now: use `sources_list` / `sources_status` MCP tools, or run on the host.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -691,9 +691,9 @@
       "argv": "waiting",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain waiting` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain waiting",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights waiting` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights waiting",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -701,9 +701,9 @@
       "argv": "loops",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain loops` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain loops",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights loops` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights loops",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -711,9 +711,9 @@
       "argv": "questions",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain questions` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain questions",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights questions` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights questions",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -721,9 +721,9 @@
       "argv": "edge-proposals",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain edge-proposals` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain edge-proposals",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights edge-proposals` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights edge-proposals",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -731,9 +731,9 @@
       "argv": "memory-proposals",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain memory-proposals` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain memory-proposals",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights memory-proposals` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights memory-proposals",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -741,9 +741,9 @@
       "argv": "core",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain core` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain core",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights core` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights core",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -751,10 +751,10 @@
       "argv": "connectors",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain connectors` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain connectors",
+        "Error [requires_local_engine]: `foresights connectors` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights connectors",
         "Why: connectors manage provider session credentials in ~/.gbrain/connectors and sync your chat history on the host. Credentials never cross the wire — run on the host machine.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -762,10 +762,10 @@
       "argv": "wakeshift",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain wakeshift` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain wakeshift",
+        "Error [requires_local_engine]: `foresights wakeshift` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights wakeshift",
         "Why: `wakeshift watch job|write|cron` and `wakeshift accept-terms` route to the brain host automatically (watch_job / watch_write_request / watch_cron / accept_wakeshift_terms MCP tools). enable, disable, status and test read or change the brain host's Wakeshift key and settings: run those on the brain host.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -773,10 +773,10 @@
       "argv": "pages",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain pages` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain pages",
+        "Error [requires_local_engine]: `foresights pages` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights pages",
         "Why: `pages purge-deleted` is admin+localOnly (hard-deletes from the local DB). Run on the host.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -784,10 +784,10 @@
       "argv": "quarantine",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain quarantine` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain quarantine",
+        "Error [requires_local_engine]: `foresights quarantine` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights quarantine",
         "Why: `quarantine list` routes to the brain host automatically (quarantine_list MCP op). scan/clear are host-bound (bulk re-import; the clear trust decision) — run those on the host.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -795,9 +795,9 @@
       "argv": "beliefs",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain beliefs` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain beliefs",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights beliefs` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights beliefs",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -805,9 +805,9 @@
       "argv": "guests",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain guests` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain guests",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights guests` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights guests",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -815,9 +815,9 @@
       "argv": "trust",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain trust` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain trust",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights trust` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights trust",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -825,9 +825,9 @@
       "argv": "watch",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain watch` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain watch",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights watch` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights watch",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -835,10 +835,10 @@
       "argv": "storage",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain storage` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain storage",
+        "Error [requires_local_engine]: `foresights storage` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights storage",
         "Why: storage operates on the local repo on disk. Run on the host.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -846,10 +846,10 @@
       "argv": "code-def",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain code-def` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain code-def",
+        "Error [requires_local_engine]: `foresights code-def` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights code-def",
         "Why: `code-def` needs symbol-aware lookup that has no MCP op yet. Run on the host or use `search` from your agent with a symbol-shaped query.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -857,10 +857,10 @@
       "argv": "code-refs",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain code-refs` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain code-refs",
+        "Error [requires_local_engine]: `foresights code-refs` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights code-refs",
         "Why: `code-refs` has no MCP op yet. Run on the host.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -868,9 +868,9 @@
       "argv": "reindex-code",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain reindex-code` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain reindex-code",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights reindex-code` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights reindex-code",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -878,9 +878,9 @@
       "argv": "reindex-search-vector",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain reindex-search-vector` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain reindex-search-vector",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights reindex-search-vector` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights reindex-search-vector",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -888,9 +888,9 @@
       "argv": "reindex-frontmatter",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain reindex-frontmatter` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain reindex-frontmatter",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights reindex-frontmatter` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights reindex-frontmatter",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -898,9 +898,9 @@
       "argv": "backfill",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain backfill` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain backfill",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights backfill` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights backfill",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -908,10 +908,10 @@
       "argv": "code-callers",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain code-callers` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain code-callers",
+        "Error [requires_local_engine]: `foresights code-callers` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights code-callers",
         "Why: `code-callers` has no MCP op yet. Run on the host.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -919,10 +919,10 @@
       "argv": "code-callees",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain code-callees` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain code-callees",
+        "Error [requires_local_engine]: `foresights code-callees` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights code-callees",
         "Why: `code-callees` has no MCP op yet. Run on the host.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -930,9 +930,39 @@
       "argv": "repos",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain repos` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain repos",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights repos` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights repos",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "inbox",
+      "exitCode": 1,
+      "stderr": [
+        "Error [requires_local_engine]: `foresights inbox` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights inbox",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "nav",
+      "exitCode": 1,
+      "stderr": [
+        "Error [requires_local_engine]: `foresights nav` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights nav",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "filing",
+      "exitCode": 1,
+      "stderr": [
+        "Error [requires_local_engine]: `foresights filing` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: foresights filing",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     }

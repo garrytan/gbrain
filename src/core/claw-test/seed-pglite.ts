@@ -1,6 +1,6 @@
 /**
  * seed-pglite — replay a SQL dump into a fresh PGLite database, then let
- * gbrain's migration chain walk forward.
+ * foresights's migration chain walk forward.
  *
  * Codex caught (eng review pass 2) that existing migration helpers
  * (test/e2e/helpers.ts:204) are Postgres-only — they rewind schema_version
@@ -10,7 +10,7 @@
  *
  * Usage:
  *   const dbPath = await seedPglite('/tmp/run-x/.gbrain/brain.pglite', seedSql);
- *   // Then run `gbrain init --pglite --path <dbPath>` — the migration chain
+ *   // Then run `foresights init --pglite --path <dbPath>` — the migration chain
  *   // detects the seeded schema_version and migrates forward to LATEST.
  */
 

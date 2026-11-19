@@ -26,7 +26,7 @@ function gatewayEnv(): Record<string, string | undefined> {
  * planes are process env, the live gateway env snapshot and the config file
  * (via `mergedProviderEnv`). Anthropic keeps `probeChatModel`'s own check; a
  * recipe with no required key (ollama, llama-server, litellm, claude-cli)
- * passes. The hint names `gbrain config set <key>` only for env variables
+ * passes. The hint names `foresights config set <key>` only for env variables
  * that have a config-file key.
  */
 export function probeChatModelWithKey(modelStr: string): ChatModelProbe {
@@ -48,7 +48,7 @@ export function probeChatModelWithKey(modelStr: string): ChatModelProbe {
   if (missing.length === 0) return base;
 
   const configKeys = missing.flatMap(name => CONFIG_API_KEY_ENV.filter(([, envName]) => envName === name).map(([key]) => key));
-  const configHint = configKeys.length ? ` or run: ${configKeys.map(key => `gbrain config set ${key} ...`).join(' / ')}` : '';
+  const configHint = configKeys.length ? ` or run: ${configKeys.map(key => `foresights config set ${key} ...`).join(' / ')}` : '';
   return {
     ok: false,
     reason: 'unavailable',

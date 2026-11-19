@@ -1,5 +1,5 @@
 /**
- * GST-2731 (GBRA-529 PR 3): `gbrain import <dir> --calls` (src/commands/import-calls.ts), the opt-in text mode for
+ * GST-2731 (GBRA-529 PR 3): `foresights import <dir> --calls` (src/commands/import-calls.ts), the opt-in text mode for
  * exported call and meeting transcripts.
  *
  * Authoring gate:
@@ -8,7 +8,7 @@
  *     own, keyword-only and out of the facts backstop; a rerun writes nothing again.
  *  2. Fails on: a planted credential in a stored page, a call imported twice, a changed file overwriting its page,
  *     a --prefix value read as the import folder, a page written under conversations/.
- *  3. A new mode on an existing command; test/setup-brain-layout.test.ts covers it through gbrain setup.
+ *  3. A new mode on an existing command; test/setup-brain-layout.test.ts covers it through foresights setup.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
@@ -98,7 +98,7 @@ describe('operations filter guard', () => {
   });
 });
 
-describe('gbrain import --calls', () => {
+describe('foresights import --calls', () => {
   test('imports each call once, never overwrites a changed one, and reads --prefix before the folder', async () => {
     const root = temp('gbrain-calls-cli-');
     const home = join(root, 'home');
@@ -293,7 +293,7 @@ describe('call import, in process', () => {
     expect(result).toMatchObject({ imported: 0, errors: 0, failures: [] });
     expect(currentExitCode()).toBe(10);
     expect(lines.join('\n')).toContain('1 pending');
-    expect(lines.join('\n')).toContain(`gbrain write-request -- ${requestId}`);
+    expect(lines.join('\n')).toContain(`foresights write-request -- ${requestId}`);
   });
 });
 
@@ -357,7 +357,7 @@ describe('call import finds the same file across import roots and pending writes
         expect(await runCallImport(managed, calls, ['--calls', '--prefix', 'held'], { json: false })).toMatchObject({ imported: 0, errors: 0 });
         expect(currentExitCode()).toBe(10);
         expect(await requests()).toEqual([pending!]);
-        expect(lines.join('\n')).toContain(`gbrain write-request -- ${pending!.request_id}`);
+        expect(lines.join('\n')).toContain(`foresights write-request -- ${pending!.request_id}`);
         await withEnv({ GBRAIN_ACCEPT_PENDING: '1' }, async () => {
           _resetCliExitVerdictForTests();
           expect(await runCallImport(managed, calls, ['--calls', '--prefix', 'held'], { json: false })).toMatchObject({ imported: 0, errors: 0 });

@@ -2,7 +2,7 @@
  * #6948 `origin_twins`: live pages of one source recording the same file (duplicate-origin twins), which sync holds
  * `origin_conflict`, and the state of the `pages_live_origin_key` index that makes a new twin unwritable. With the
  * index present no twin can exist, so nothing else is read. Without it the check counts groups per source (one
- * grouped read over live file-backed pages): twins name the read-only `gbrain repair origin-twins --source <id>`
+ * grouped read over live file-backed pages): twins name the read-only `foresights repair origin-twins --source <id>`
  * preview; no twins name its apply, which builds the index ("index pending").
  */
 import type { Check } from '../../doctor.ts';

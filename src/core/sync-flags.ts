@@ -1,5 +1,5 @@
 /**
- * #6712 PR 2 (L3): every `gbrain sync` flag in one table, with where it travels when the run is handed to a resident
+ * #6712 PR 2 (L3): every `foresights sync` flag in one table, with where it travels when the run is handed to a resident
  * process. The serve-delegation ladder (`src/commands/sync-delegate.ts`), its wire validator
  * (`src/core/context/sync-ipc.ts`) and the PGLite owner lane (`src/commands/sync-persistence-delegate.ts`,
  * `src/core/persistence/sync-wire.ts`) derive their allowlists from it, so a flag is classified once.
@@ -11,7 +11,7 @@
  * - `refuse`: the hand-off cannot honor it. The serve ladder refuses it by name (PGLite) or keeps the run in this
  *   process (Postgres); the owner lane refuses it.
  *
- * Fields a newer gbrain stopped using stay readable from an older peer for a window in `src/core/wire-skew.ts`; they
+ * Fields a newer foresights stopped using stay readable from an older peer for a window in `src/core/wire-skew.ts`; they
  * are never in this table, so a newer client never sends them.
  */
 
@@ -31,7 +31,7 @@ export interface SyncFlagSpec {
   serve: SyncFlagRoute;
   /** The PGLite persistence owner lane (`writer_sync`). */
   owner: SyncFlagRoute;
-  /** #6712 PR 3 (L7): listed in the "Managed brains" section of `gbrain sync --help` (at most 10; the rest are classic or advanced). */
+  /** #6712 PR 3 (L7): listed in the "Managed brains" section of `foresights sync --help` (at most 10; the rest are classic or advanced). */
   managed?: true;
 }
 
@@ -86,7 +86,7 @@ export const SYNC_FLAGS = {
 export type SyncFlag = keyof typeof SYNC_FLAGS;
 type Lane = 'serve' | 'owner';
 
-/** #6712 PR 3 (L7): the flags `gbrain sync --help` lists under "Managed brains", in table order. */
+/** #6712 PR 3 (L7): the flags `foresights sync --help` lists under "Managed brains", in table order. */
 export const MANAGED_HELP_FLAGS: SyncFlag[] = (Object.keys(SYNC_FLAGS) as SyncFlag[]).filter(flag => (SYNC_FLAGS[flag] as SyncFlagSpec).managed);
 
 /** The flags a hand-off takes the given route for. */

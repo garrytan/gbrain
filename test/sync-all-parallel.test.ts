@@ -1,6 +1,6 @@
 /**
  * Tests for the v0.40.3.0 `sync --all` parallel fan-out + read-only
- * `gbrain sources status` dashboard.
+ * `foresights sources status` dashboard.
  *
  * Why this exists:
  *   The CLI `sync --all` path used to walk sources SEQUENTIALLY via a

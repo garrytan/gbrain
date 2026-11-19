@@ -12,15 +12,15 @@
  * Database: database_url is the transaction lane and GBRAIN_DIRECT_DATABASE_URL
  * the session lane (pool 25, a 26th client refused), both through toxiproxy at
  * --rtt-ms round trip. Processes, all from this checkout:
- *   - one resident gbrain serve (--http by default) with sync.on_commit=true, the
+ *   - one resident foresights serve (--http by default) with sync.on_commit=true, the
  *     only process that syncs;
- *   - one gbrain jobs work worker;
- *   - --mcp-readers gbrain serve stdio clients (remote callers) looping
+ *   - one foresights jobs work worker;
+ *   - --mcp-readers foresights serve stdio clients (remote callers) looping
  *     search / query / get_page / recall (warm latency), plus privacy probes
  *     that look for the fixture's private canaries;
- *   - --cli-readers loops of one-shot gbrain search / query / get (cold);
+ *   - --cli-readers loops of one-shot foresights search / query / get (cold);
  *   - an external writer committing edits, new pages, moves, archive culls,
- *     deletes and now and then a file gbrain must hold, every --commit-every-s;
+ *     deletes and now and then a file foresights must hold, every --commit-every-s;
  *   - put / remember writes through the CLI and MCP every --write-every-s;
  *   - extract --stale and embed --stale every --stale-every-s;
  *   - samplers: session-lane and transaction-lane server connections each 5 s,

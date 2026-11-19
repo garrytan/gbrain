@@ -24,7 +24,7 @@ export interface SchemaDriverOpts {
   args: string[];
   /**
    * `apply-migrations` (default) runs the runner with `args`; `post-upgrade`
-   * runs `gbrain post-upgrade` in-process with `args`; `argv` runs the runner
+   * runs `foresights post-upgrade` in-process with `args`; `argv` runs the runner
    * with the driver's own arguments after a leading `apply-migrations`, so a
    * `gbrain` shim on PATH can stand in for the CLI.
    */

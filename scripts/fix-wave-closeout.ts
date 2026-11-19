@@ -28,7 +28,7 @@
  */
 import { appendFileSync, readFileSync } from 'node:fs';
 
-export const TRUSTED_HEAD_REPO = 'garrytan/gbrain';
+export const TRUSTED_HEAD_REPO = 'aimonk2025/gbrain';
 export const COMMENT_MARKER = '<!-- fix-wave-closeout -->';
 export const MAX_CLOSES = 50;
 

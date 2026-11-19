@@ -313,7 +313,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       });
     }, 180_000);
 
-    test('#8092: a rolled-back path leaves the pending ledger, so a later hand edit there is not swept into another gbrain commit', async () => {
+    test('#8092: a rolled-back path leaves the pending ledger, so a later hand edit there is not swept into another foresights commit', async () => {
       await withBrain(databaseUrl, 'git', async b => {
         refuseCommits(b);
         await b.extract(['Renders vs proof'], 'hash-one');

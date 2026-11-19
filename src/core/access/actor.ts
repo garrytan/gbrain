@@ -1,7 +1,7 @@
 /**
  * GST-359 C1 (GBRA-218): the attested actor. A trusted system's credential (only `qm` today) names the person a call
  * serves in the `x-qm-actor` header: an opaque canonical id (a Slack id, an email principal, `oidc:<hash>:<subject>`),
- * 1-256 visible ASCII characters, compared exactly. gbrain maps it through `access_member_links` to one enabled member
+ * 1-256 visible ASCII characters, compared exactly. foresights maps it through `access_member_links` to one enabled member
  * and reads and writes as that member, never relaxing privacy.
  *
  * Two facts must both hold, re-read on every call and at every later publication or job tool call (actorCoverage):
@@ -87,7 +87,7 @@ export function parseAttestOps(raw: string, lookup: (name: string) => Attestable
   const refused = ops.filter(op => !/^[a-z][a-z0-9_]{0,63}$/.test(op) || !attestableOp(op, lookup(op)));
   if (refused.length) {
     throw opError('invalid_params', `--attest-ops names ${refused.join(', ')}, which an attested actor can never run.`,
-      `Name read, write or agent operations (gbrain --tools-json lists them) or the memory pair ${DEFAULT_ATTEST_OPS.join(',')}; admin, membership and local-only operations are never attestable.`,
+      `Name read, write or agent operations (foresights --tools-json lists them) or the memory pair ${DEFAULT_ATTEST_OPS.join(',')}; admin, membership and local-only operations are never attestable.`,
       { why: 'An attested call runs as a person the trusted system names; it never carries operator authority.' });
   }
   return ops.sort();
@@ -136,7 +136,7 @@ export function actorNotAttested(reason: ActorReason, caller: ActorCaller, ctx: 
       const missing = ctx.missing ?? ['attest_right', ACTOR_HEADER];
       const lacks = missing.map(m => (m === 'attest_right' ? 'the attest right on this credential' : `the ${ACTOR_HEADER} header`)).join(' and ');
       return opError('actor_not_attested', `The ${ACTOR_ARGUMENT} argument is accepted only on an attested call, and this call lacks ${lacks}, so nothing was read or written.`,
-        `Remove ${ACTOR_ARGUMENT} from the arguments. A trusted system names the person in the ${ACTOR_HEADER} header from a credential holding the attest right (gbrain auth rescope ... --attest-actor qm on the brain host).`, { reason, docs, detail: `missing=${missing.join(',')}` });
+        `Remove ${ACTOR_ARGUMENT} from the arguments. A trusted system names the person in the ${ACTOR_HEADER} header from a credential holding the attest right (foresights auth rescope ... --attest-actor qm on the brain host).`, { reason, docs, detail: `missing=${missing.join(',')}` });
     }
     case 'actor_required':
       if (ctx.right?.read === 'scope') {
@@ -160,7 +160,7 @@ export function actorUnlinked(externalId: string, transport?: string): Operation
     'The person this call names is not linked to an enabled member of this brain, so nothing was read or written.',
     ['gbrain', 'access', 'member', 'link', '<member>', '--qm', externalId],
     'Links the canonical id to the member it belongs to; an unlinked id, or one linked to a disabled member, reads nothing. Who a person is on this brain is the operator\'s decision.',
-    { suggestion: 'Ask the brain operator to link this person to their member (gbrain access member link <member> --qm <id>), or to enable the member if it is disabled.' }),
+    { suggestion: 'Ask the brain operator to link this person to their member (foresights access member link <member> --qm <id>), or to enable the member if it is disabled.' }),
   { docs: ERROR_CATALOGUE.actor_unlinked.docs });
 }
 
@@ -323,7 +323,7 @@ export async function linkMember(engine: BrainEngine, rawMember: unknown, system
   const existing = await linkRow(engine, system, externalId);
   if (existing) {
     throw linkInvalid(`That ${system} id is already linked to member "${existing.member_id}".`, 'link_exists',
-      existing.member_id === member ? 'Nothing to do: the link exists.' : `Unlink it first (gbrain access member unlink --${system} <id>), then link it to ${member}.`);
+      existing.member_id === member ? 'Nothing to do: the link exists.' : `Unlink it first (foresights access member unlink --${system} <id>), then link it to ${member}.`);
   }
   if (opts.dryRun) return { link: { system, external_id: externalId, member_id: member, created_at: null }, applied: false };
   await engine.executeRaw('INSERT INTO access_member_links (system, external_id, member_id) VALUES ($1, $2, $3)', [system, externalId, member]);
@@ -339,7 +339,7 @@ export async function linkMemberByEmail(engine: BrainEngine, rawEmail: unknown, 
 export async function unlinkMember(engine: BrainEngine, system: string, rawId: unknown, opts: { dryRun?: boolean } = {}): Promise<{ link: MemberLink; applied: boolean }> {
   const externalId = assertExternalId(rawId);
   const existing = await linkRow(engine, system, externalId);
-  if (!existing) throw linkInvalid(`That ${system} id is not linked to any member.`, 'unknown_link', 'List the links with gbrain access member links.');
+  if (!existing) throw linkInvalid(`That ${system} id is not linked to any member.`, 'unknown_link', 'List the links with foresights access member links.');
   if (!opts.dryRun) await engine.executeRaw('DELETE FROM access_member_links WHERE system = $1 AND external_id = $2', [system, externalId]);
   return { link: existing, applied: !opts.dryRun };
 }

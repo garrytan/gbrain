@@ -1,11 +1,11 @@
 /**
- * `gbrain repair timeline-comments` (#6184): clean timeline rows the
+ * `foresights repair timeline-comments` (#6184): clean timeline rows the
  * inline-citation parser filed from adjacent HTML comments (a section's
  * `<!-- AUTO:... END -->` marker, a materialized-row marker) and the
  * materialized bullets that wrote those comments back into the page.
  *
  * Per page, one revision-bound `put_page` drops every materialized bullet whose
- * line carries comment markup (gbrain wrote it; the user's own bullets are
+ * line carries comment markup (foresights wrote it; the user's own bullets are
  * left alone), then one coordinated transaction under the page lock fixes the
  * rows still carrying markup: a row whose summary is only markup is deleted, a
  * row with markup around real text is rewritten to the stripped text (or

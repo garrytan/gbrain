@@ -1228,7 +1228,7 @@
   ],
   [
    "test/pg-access-classify.test.ts",
-   "run_command argv[0] is always gbrain",
+   "run_command argv[0] is always foresights",
    8,
    [
     "classifyPgAccessError",

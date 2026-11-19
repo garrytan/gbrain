@@ -3,7 +3,7 @@
  *
  * 1. Protects: a stale page whose file Git never committed, stored in segments (`pages.segmented_storage`), is re-exported
  *    to the working tree by streaming its body through the staging writer the withdrawal mirror and restore_page use:
- *    the file holds the bytes `gbrain export` writes for the page, at 2 MiB and above the 24 MiB single-string ceiling,
+ *    the file holds the bytes `foresights export` writes for the page, at 2 MiB and above the 24 MiB single-string ceiling,
  *    is left uncommitted for Git's own door, and leaves no staging file behind. A page whose re-export fails is listed
  *    (`reexport_failures`) and the run still completes and advances. A plain directory (repo-less) source re-exports
  *    nothing and keeps the page.

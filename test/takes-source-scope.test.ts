@@ -1,7 +1,7 @@
 /**
  * Regression: takes read ops honor source / federated_read scope via the
  * take's page.source_id, while preserving the holder allow-list. (#2200-class;
- * see garrytan/gbrain#2200 comment.)
+ * see aimonk2025/gbrain#2200 comment.)
  *
  * takes has no source_id column of its own — it's scoped through
  * JOIN pages.source_id (list/search) or EXISTS pages (scorecard/curve).

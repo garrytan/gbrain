@@ -421,6 +421,6 @@ describe('buildGatewayConfig import side effect guard', () => {
       },
     );
     expect(result.status).toBe(0);
-    expect(result.stdout).not.toMatch(/usage|commands available|gbrain v?\\d/);
+    expect(result.stdout).not.toMatch(/usage|commands available|(?:foresights|gbrain) v?\\d/);
   });
 });

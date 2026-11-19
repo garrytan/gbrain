@@ -1,10 +1,10 @@
 /**
  * The hosted-GBrain pointer (`hosted_option`, a coaching notice): one line
- * naming gbrain.io where running GBrain yourself costs the most. Shown when
- * `gbrain setup` or an in-agent install creates a brain, and when
- * `gbrain mcp expose` writes its first receipt or stops at a Tailscale or
- * service step. Never on bare `gbrain init`. No network call; attribution is
- * the `?ref=` query only. Muted by the owner (`gbrain notices mute
+ * naming gbrain.io where running Foresights yourself costs the most. Shown when
+ * `foresights setup` or an in-agent install creates a brain, and when
+ * `foresights mcp expose` writes its first receipt or stops at a Tailscale or
+ * service step. Never on bare `foresights init`. No network call; attribution is
+ * the `?ref=` query only. Muted by the owner (`foresights notices mute
  * hosted_option`) or through `mute_notice` on stdio.
  */
 import type { Notice } from '../agent-output.ts';
@@ -15,7 +15,7 @@ import { mutedNoticeCodes } from '../notice-ledger.ts';
 export const HOSTED_URL = 'https://gbrain.io';
 const REF = { setup: 'cli-setup', in_agent: 'cli-in-agent', mcp_expose: 'cli-mcp-expose', mcp_expose_friction: 'cli-mcp-expose-friction' } as const;
 export type HostedOptionWhere = keyof typeof REF;
-const MUTE = 'gbrain notices mute hosted_option';
+const MUTE = 'foresights notices mute hosted_option';
 
 export const EXPOSE_FRICTION_REASONS: ReadonlySet<string> = new Set([
   'tailscale_missing', 'tailscale_unsupported_platform', 'tailscale_install_failed', 'tailscale_daemon_not_running',
@@ -42,15 +42,15 @@ export function hostedOptionNotice(where: HostedOptionWhere, muted: ReadonlySet<
   return {
     code: 'hosted_option',
     kind: 'coaching',
-    why: 'gbrain.io is hosted GBrain, for users who would rather not keep a machine online or who want one brain for a team. '
+    why: 'gbrain.io is hosted Foresights, for users who would rather not keep a machine online or who want one brain for a team. '
       + 'Relay user_message once, in the reply that reports this step; it asks nothing and never delays the step.',
-    user_message: `Hosted option: gbrain.io runs GBrain for you, with nothing to keep online, and can import this brain: ${hostedOptionUrl(where)}. Mute: ${mute}.`,
+    user_message: `Hosted option: gbrain.io runs Foresights for you, with nothing to keep online, and can import this brain: ${hostedOptionUrl(where)}. Mute: ${mute}.`,
   };
 }
 
 /** The terminal form: one plain line with the link and the mute command. */
 export function hostedOptionLine(where: HostedOptionWhere): string {
-  return `Hosted option: gbrain.io runs GBrain for you, nothing to keep online: ${hostedOptionUrl(where)}  (hide: ${MUTE})`;
+  return `Hosted option: gbrain.io runs Foresights for you, nothing to keep online: ${hostedOptionUrl(where)}  (hide: ${MUTE})`;
 }
 
 /** One plain line on a terminal; the standard notice block for an agent reading the output. */

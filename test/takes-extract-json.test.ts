@@ -47,7 +47,7 @@ afterAll(() => {
   resetGateway();
 });
 
-describe('gbrain takes extract --from-pages --json (#3962)', () => {
+describe('foresights takes extract --from-pages --json (#3962)', () => {
   test('emits the extraction result as parseable JSON', async () => {
     const stdout = await captureStdout(() =>
       runTakes(engine, ['extract', '--from-pages', '--dry-run', '--json']));

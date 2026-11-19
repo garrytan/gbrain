@@ -1,6 +1,6 @@
 /**
  * #6317 (C1): the ordinary pool's real numbers, read from the vendored
- * driver's own queues (`sql.pool`, a GBrain addition to postgres.js: the
+ * driver's own queues (`sql.pool`, a Foresights addition to postgres.js: the
  * `open`, `busy`, `full`, `reserved`, `connecting` connection queues and the
  * queries waiting for any connection). This is the figure `pool-gauge.ts`
  * refuses to invent: a connection is checked out when it is executing

@@ -1,6 +1,6 @@
 /**
  * Retrieval feedback through the real CLI on a keyless PGLite brain: off by
- * default (no answer id); once enabled, search prints an answer id, `gbrain rate` records the rating, and the next
+ * default (no answer id); once enabled, search prints an answer id, `foresights rate` records the rating, and the next
  * `search --explain` shows the feedback multiplier on the rated pages.
  *
  * Spawns the CLI against a temporary GBRAIN_HOME; no process-wide state.
@@ -46,7 +46,7 @@ test('search → rate → search --explain shows the learned boost', async () =>
   expect(search.exitCode).toBe(0);
   const answerId = (JSON.parse(search.stdout) as Array<{ answer_id?: string }>)[0]?.answer_id;
   expect(answerId).toMatch(/^ans_[0-9A-Z]{26}$/);
-  expect(search.stderr).toContain(`gbrain rate ${answerId} 1-5`);
+  expect(search.stderr).toContain(`foresights rate ${answerId} 1-5`);
 
   const rate = await cli(['rate', answerId!, '5']);
   expect(rate.exitCode).toBe(0);

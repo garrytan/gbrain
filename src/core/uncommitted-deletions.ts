@@ -13,7 +13,7 @@
  * is not on the disk. A path whose evidence could not be read is counted `unknown`, never listed. Purged pages have no
  * row left and are out of reach: only a backup brings them back.
  *
- * Readers: doctor `uncommitted_sync_deletions` and `gbrain repair uncommitted-deletions`.
+ * Readers: doctor `uncommitted_sync_deletions` and `foresights repair uncommitted-deletions`.
  */
 import { existsSync } from 'node:fs';
 import { relative, resolve, sep } from 'node:path';

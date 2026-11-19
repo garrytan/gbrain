@@ -2,7 +2,7 @@
  * #6712 PR 4b (design v3.1 §9, DX F14; §11 targets): doctor `managed_sync_not_moving` warns when a source's newest pass
  * found no change (`up_to_date`) but took longer than the §11 target for its kind: an idle tick 0.5 s, a full round 2 s
  * (sources up to 100,000 pages). The warning names the pass's `timings_ms`, its fix is the read-only
- * `gbrain sync status --detail`, and it is never a fail. A pass that changed something, or one inside its target, reads ok.
+ * `foresights sync status --detail`, and it is never a fail. A pass that changed something, or one inside its target, reads ok.
  * A real idle tick records its own `timings_ms` (`setup`, `kind`). PGLite.
  */
 import { describe, expect, test } from 'bun:test';

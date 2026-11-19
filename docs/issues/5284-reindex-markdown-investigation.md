@@ -264,7 +264,7 @@ fresh inspection passed the same consistency checks; the immediate no-op
 committed zero transactions. There was no connection recycling inside either
 CLI invocation.
 
-A direct PGLite probe on Node 24.18.0, bypassing GBrain's engine wrapper, also
+A direct PGLite probe on Node 24.18.0, bypassing Foresights's engine wrapper, also
 stalled on a copy of the same recovered state after 397 further transactions.
 Statement markers locate that stop in `INSERT content_chunks`, rather than
 COMMIT. An external V8 CPU profile captured 9,082 samples over 10.05 seconds,
@@ -291,7 +291,7 @@ and store, or proof that all these stops share one cause.
 
 ### Schema-free PGLite control
 
-A final bounded control removed GBrain's schema, triggers and engine wrapper.
+A final bounded control removed Foresights's schema, triggers and engine wrapper.
 It created only `pressure(id integer PRIMARY KEY, payload text NOT NULL)` in a
 fresh PGLite 0.4.3 store, with zero user triggers and only the built-in `plpgsql`
 extension. Each transaction inserted one deterministic 131,072-byte text value.
@@ -305,7 +305,7 @@ payload or index-integrity audit.
 The Node profile contains 8,998 samples over 10.04 seconds. Its hot ancestry
 again includes `CommitTransactionCommand`, `XLogFlush`, the same unexported
 intermediate frames, `pg_usleep`, `nanosleep` and `_emscripten_get_now`. The
-minimal reproduction rules out GBrain's schema and wrappers as prerequisites
+minimal reproduction rules out Foresights's schema and wrappers as prerequisites
 for this Linux pressure failure; the second runtime also rules out a
 Bun-only prerequisite.
 

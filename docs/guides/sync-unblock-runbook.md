@@ -1,6 +1,6 @@
 # Sync unblock runbook (for an operator agent)
 
-A managed catch-up on a live checkout (`gbrain sync --source <id> --no-pull`,
+A managed catch-up on a live checkout (`foresights sync --source <id> --no-pull`,
 thousands of pages, other agents committing to the brain repo every few
 minutes) finishes unattended. A page that moves under the run is held, not
 fatal; a dropped database connection is retried, not fatal; a relaunch starts
@@ -16,17 +16,17 @@ a page needs my decision."*
 ## The loop
 
 ```bash
-gbrain doctor --only serve_build_drift --json    # first: on a warning, restart serve and workers and stop here
-gbrain sync status --source <id> --json          # every N minutes (read-only)
-gbrain sync unblock --source <id> --apply --json # when committed_last_10m is 0 and needs_human is false
-gbrain sync <next.argv...>                       # the sync unblock (or status) names, with an open episode's inherited options
+foresights doctor --only serve_build_drift --json    # first: on a warning, restart serve and workers and stop here
+foresights sync status --source <id> --json          # every N minutes (read-only)
+foresights sync unblock --source <id> --apply --json # when committed_last_10m is 0 and needs_human is false
+foresights sync <next.argv...>                       # the sync unblock (or status) names, with an open episode's inherited options
 ```
 
 **Say to your agent:** *"Repair the files sync held and get the catch-up
-moving again; ask me only about the ones gbrain will not decide by itself."*
+moving again; ask me only about the ones foresights will not decide by itself."*
 
 0. Check the build. `serve_build_drift` warns when serve or a worker on this
-   host runs an older gbrain build than this checkout; restart them with the
+   host runs an older foresights build than this checkout; restart them with the
    command it prints before anything else, and stop until it reads ok
    ([serve build drift](troubleshooting.md#serve-build-drift)).
 1. Read `status`. `state` (`synced` | `resumable` | `blocked`) and `reason`
@@ -65,7 +65,7 @@ moving again; ask me only about the ones gbrain will not decide by itself."*
    one, refuses the rest by name, and prints the sync to run. For a content
    hold (`invalid_fence`; `frontmatter_slug_conflict` once its lane kind
    ships) the safe action is `repair`: unblock runs the content-repair lane
-   (`gbrain repair content`, the same kinds the maintenance run uses) on
+   (`foresights repair content`, the same kinds the maintenance run uses) on
    exactly those paths as one bounded apply under the `fences.repair` caps,
    each file bound to the bytes the plan read, and reports every path as
    `repaired`, `held`, `needs_human` or `skipped` with the reason code, the
@@ -96,13 +96,13 @@ Every hold and error has three fields, from one table
 - `class`: `page` (one entry moved under the sync; the rest of the source is
   fine), `connection` (the database went away for a moment; nothing is recorded
   against the source), `systemic` (the writer, the binding, an approval or
-  gbrain itself; a retry alone changes nothing).
+  foresights itself; a retry alone changes nothing).
 - `safe_actions`: what an agent may do on its own, first choice first. `retry`
   reruns the same sync; `retry_when_clean` re-screens a held file once its edit
   is committed; `repair` previews and applies a hash-bound file repair;
-  `reconcile` previews two diverged versions; `upgrade` installs a newer gbrain;
-  `migrate` applies the pending schema migrations (`gbrain apply-migrations
-  --yes`, as the database role that owns the gbrain tables) before the write is
+  `reconcile` previews two diverged versions; `upgrade` installs a newer foresights;
+  `migrate` applies the pending schema migrations (`foresights apply-migrations
+  --yes`, as the database role that owns the foresights tables) before the write is
   resubmitted; `none` waits for a person.
 - `needs_human`: a person has to choose or act before it clears;
   `human_reason` says what. A page whose safe action failed three times with
@@ -137,14 +137,14 @@ Every hold and error has three fields, from one table
 | `concurrent_write` | page | reconcile | yes | always: the file and the database page diverge |
 | `file_drift` | page | reconcile | yes | always: importing the file would replace a database version of the page that sync cannot trace to an import of it |
 | `preparation_stalled` | page | retry, upgrade | no | 3 failed attempts over 24 h, or writer status names a step that never finishes |
-| `write_interrupted` | page | retry | no | 3 failed attempts over 24 h: gbrain sources writer status --source <source> --json (read-only) names the load on the write owner |
+| `write_interrupted` | page | retry | no | 3 failed attempts over 24 h: foresights sources writer status --source <source> --json (read-only) names the load on the write owner |
 | `invalid_fence` | page | repair | no | the fence repair preview offers no plan (a manual reason) |
 | `invalid_frontmatter` | page | repair | no | the repair preview needs an interpretation (--include-ambiguous) |
 | `frontmatter_slug_conflict` | page | repair | no | the lane recorded why it could not decide |
 | `rename_held` | page | repair | no | the repair preview needs an interpretation |
 | `file_too_large` | page | none | yes | always |
 | `content_rejected` | page | none | yes | always |
-| `parser_regression` | page | upgrade | yes | always: a gbrain bug |
+| `parser_regression` | page | upgrade | yes | always: a foresights bug |
 | `frontmatter_alias_limit` | page | none | yes | always: only an edit to the file or its removal clears it |
 | `managed_image_sync_unsupported` | page | none | no | never: images stay held while multimodal embedding is off |
 | `purged_content` | page | none | yes | always: only the owner clears a purge tombstone |
@@ -165,7 +165,7 @@ Every hold and error has three fields, from one table
 | `rename_identity_unreadable` | page | none | yes | always: the file title or id holds characters the database cannot compare |
 | `rename_reconcile_failed` | page | none | yes | always: the old page may be a duplicate |
 | `file_drift_unknown` | page | reconcile | yes | always: the file and the page differ and no import record says which changed |
-| `file_drift_mirror_database_only` | page | none | no | never: the page stays live and database-only because gbrain never writes a read-only mirror |
+| `file_drift_mirror_database_only` | page | none | no | never: the page stays live and database-only because foresights never writes a read-only mirror |
 | `origin_conflict_decision` | page | none | yes | always: the pages differ, their ids conflict or none is the page the path names |
 | `page_identity_decision` | page | none | yes | always: only a person decides which page the file is |
 | `absent_from_worktree` | page | none | yes | always: only a person decides whether the file comes back or its deletion is committed |
@@ -181,10 +181,10 @@ Every hold and error has three fields, from one table
 | `source_binding_changed` | systemic | none | yes | always: the source or its checkout binding moved |
 | `unsafe_file_target` | systemic | none | yes | always: the file target resolves outside its source |
 | `cancelled` | page | retry | no | the same group is cancelled again after a rerun |
-| `knock_on` | page | retry | no | never: superseded; an older gbrain cancelled this page for another page's failure and a plain sync re-freezes it |
+| `knock_on` | page | retry | no | never: superseded; an older foresights cancelled this page for another page's failure and a plain sync re-freezes it |
 | `run_replaced` | page | retry | no | never: another run of the source superseded this one and covers its pages |
 | `outside_fence` | systemic | none | yes | always: a request published outside the cursor that admitted it |
-| `knock_on_exhausted` | page | retry | no | never: superseded; a plain sync resumes the entry an older gbrain stopped on |
+| `knock_on_exhausted` | page | retry | no | never: superseded; a plain sync resumes the entry an older foresights stopped on |
 | `sync_incomplete` | page | retry | no | never: an unfinished cursor resumes with the same command |
 | `connection_lost` | connection | retry | no | three reruns in a row end connection_lost (the database is unreachable from this host) |
 | `database_contention` | connection | retry | no | three reruns in a row stop on it |
@@ -193,7 +193,7 @@ Every hold and error has three fields, from one table
 | `capacity_paused` | connection | retry | no | reason lifetime_ids (only the host raise resumes it), or the same pause after the raise |
 | `sync_drain_lease_held` | connection | retry | no | never: a holder that stops committing ends the run drain_stalled instead |
 | `storage_error` | connection | retry | no | the same error after a rerun (then it is not a dropped connection) |
-| `graduation_in_progress` | connection | retry | no | gbrain migrate --status --json reports no running move and the fence still refuses |
+| `graduation_in_progress` | connection | retry | no | foresights migrate --status --json reports no running move and the fence still refuses |
 | `preparation_systemic` | systemic | upgrade, retry | yes | always |
 | `drain_stalled` | systemic | none | yes | always |
 | `recovery_required` | systemic | none | yes | always |
@@ -230,7 +230,7 @@ place; a systemic stop is re-frozen in place by the next plain sync, at most
 three times in a row, and once that bound is spent the next plain sync
 resets it and tries again.
 
-A `knock_on` or `knock_on_exhausted` error was written by an older gbrain
+A `knock_on` or `knock_on_exhausted` error was written by an older foresights
 (a page cancelled only because another page of its sync did not commit, or
 the stop that bounded re-freezing them). Both are superseded: the next plain
 sync re-freezes the entry under a fresh request; act on `root_cause` if it
@@ -243,8 +243,8 @@ without a commit is re-assessed on every resume and commits without
 rediscovering the manifest; one a receipt still blocks is rediscovered by
 the next plain sync.
 
-An unknown code is systemic and human: `gbrain errors <code>` explains it
-offline, `gbrain doctor --json` says what the brain thinks.
+An unknown code is systemic and human: `foresights errors <code>` explains it
+offline, `foresights doctor --json` says what the brain thinks.
 
 ## What each class means on the ground
 
@@ -252,7 +252,7 @@ offline, `gbrain doctor --json` says what the brain thinks.
 
 One entry of the manifest moved while the run was somewhere else. The run held
 it and kept going; the receipt lists the hold (`held`, `held_count`) and
-`gbrain sources status <id>` names each file with its fix.
+`foresights sources status <id>` names each file with its fix.
 
 - `worktree_dirty`: uncommitted working-tree bytes that match neither the
   pinned commit nor the page, so sync did not overwrite them. Whoever edits that
@@ -261,27 +261,27 @@ it and kept going; the receipt lists the hold (`held`, `held_count`) and
   the pinned target are not a conflict: sync imports them as HEAD has them.
 - `concurrent_write`: the Git file and the database page both changed (a
   `remember`, an edit through MCP, a restore). Neither was overwritten; a
-  person chooses with `gbrain sources reconcile <id> <slug> --preview`, then
-  `gbrain sources retry-held <id>` and the sync.
+  person chooses with `foresights sources reconcile <id> <slug> --preview`, then
+  `foresights sources retry-held <id>` and the sync.
 - `preparation_stalled`: the write owner, not the file, stalled;
-  `gbrain sources writer status --source <id> --json` names the step.
+  `foresights sources writer status --source <id> --json` names the step.
   `unblock --apply` schedules the re-screen.
 - `write_interrupted`: the database ended the file's statements (SQLSTATE
   57014, a statement timeout or cancel) at every attempt, so the file is held
   and the rest of the source syncs. Writer status names the load on the write
-  owner; reduce it, then `gbrain sources retry-held <id>` (or
+  owner; reduce it, then `foresights sources retry-held <id>` (or
   `unblock --apply`) and the same sync.
 - `invalid_fence` and `frontmatter_slug_conflict`: the content-repair lane
   clears them. Managed sync drops a `slug:` line naming no page or file
   (#6865). `unblock --apply` runs it on the held paths now; the maintenance
   run's `fence_repair` and `content_repair` phases run it by themselves;
-  `gbrain repair content --source <id>` previews it. A hold the lane will not
+  `foresights repair content --source <id>` previews it. A hold the lane will not
   decide is `needs_human` with the paragraph in `human_reason`
   ([held files](repair.md#held-files)).
 - `file_drift_mirror_database_only`: on a read-only mirror
-  (`gbrain sources mirror-readonly <id>`) a file gone upstream whose page was
-  edited in gbrain stays held and its page stays live and database-only, since
-  gbrain never writes the mirror. These holds never block the pass and are not
+  (`foresights sources mirror-readonly <id>`) a file gone upstream whose page was
+  edited in foresights stays held and its page stays live and database-only, since
+  foresights never writes the mirror. These holds never block the pass and are not
   re-screened every sync; the run and `sync status` report them as `carried`
   (class, count, a sample and the preview that lists them).
 - A symlink whose target does not exist is not a page: sync skips it and
@@ -307,7 +307,7 @@ The database went away under the run. The drain reconnects and retries after
 in a row with no page committed between them stop the drain
 `connection_lost`; nothing is recorded against the source, and the same
 command resumes at the stored cursor. If it keeps happening, the database or
-pooler is the problem (`gbrain doctor --json`), not the sync.
+pooler is the problem (`foresights doctor --json`), not the sync.
 
 ### Systemic
 
@@ -320,9 +320,9 @@ Page a person with `human_reason`; the fix is on the brain host.
 repair: a source in a subdirectory of its repository pins one
 `slug_root_mode`, the run used the other, and the two give different slugs.
 Ask the user which mode the source keeps. Restoring the pin to the run's mode
-lets the next plain `gbrain sync --no-pull --source <id>` finish (the refused
+lets the next plain `foresights sync --no-pull --source <id>` finish (the refused
 checkpoint is retried by itself); keeping the new pin takes
-`gbrain repair managed-sync-orphans --source <id>` (it lists the cursor as
+`foresights repair managed-sync-orphans --source <id>` (it lists the cursor as
 `slug_mode_refused`; preview, then `--apply --expect <hash>`), after which the
 next sync discovers the source again under the kept pin. No sync retries that
 checkpoint by itself. The pages the refused run wrote keep their old slugs
@@ -356,7 +356,7 @@ current derives (an older writer identity such as a `legacy_token` principal,
 a revoked local writer, a cursor from before sync options were recorded) is
 still read by doctor, so `sync_failures` reports it after every green sync.
 That is not a page fault and no rerun clears it: preview
-`gbrain repair managed-sync-orphans --source <id>`, relay the listed classes
+`foresights repair managed-sync-orphans --source <id>`, relay the listed classes
 (`no_cursor`, `principal_unadoptable`, `superseded`) and the kept rows, then
 apply with the printed `--apply --expect <hash>` once the user agrees. A cursor
 with a live pending request is kept; the loop above owns it
@@ -364,19 +364,19 @@ with a live pending request is kept; the loop above owns it
 
 ## Soak counters
 
-`gbrain doctor --json` reports `sync_soak_counters` (info, never a warning):
+`foresights doctor --json` reports `sync_soak_counters` (info, never a warning):
 how often a person or an agent had to step in, per UTC day for the last seven
 days, so a soak can show that sync keeps moving on its own.
 
-- `interventions`: `sync_non_plain` (a `gbrain sync` with a recovery flag such
+- `interventions`: `sync_non_plain` (a `foresights sync` with a recovery flag such
   as the deprecated `--retry-failed`, `--full`, `--break-lock` or `--skip-failed`; the plain
   scheduler flags `--all`, `--no-pull`, `--hard-deadline`, `--no-embed`,
   `--no-lanes`, `--no-bulk` and `--json` do not count), `repair_apply` (a
-  `gbrain repair … --apply` of any kind but file-drift), `unblock_apply`,
-  `retry_held` (a `gbrain sources retry-held` without `--dry-run`) and
+  `foresights repair … --apply` of any kind but file-drift), `unblock_apply`,
+  `retry_held` (a `foresights sources retry-held` without `--dry-run`) and
   `needs_human` (a hold that turned `needs_human`, counted once, by the first
   sync that sees it).
-- `content_decisions`: `file_drift_apply` (a `gbrain repair file-drift
+- `content_decisions`: `file_drift_apply` (a `foresights repair file-drift
   --apply`) and `file_drift_hold` (a `file_drift` hold a sync found). These
   are choices about which version of a page wins, not interventions; a
   `keep_db` prefix reconciles with no decision and counts in neither line.
@@ -398,11 +398,11 @@ run converges on the next plain sync with no flag.
 |---|---|---|---|
 | `pass_unfinished` | resumable | The newest pass is open or stopped at a deadline. | The plain sync (`resume_argv`); safe to loop. |
 | `pass_interrupted` | resumable | The newest pass is open but no process holds the source's drain lease: its process was killed or crashed (an out-of-memory guard, a timeout) before it ended the pass, so nothing recorded a failure. `live` is null and `interrupted` names the pass, its last write and, when the lock row outlived the process, the holder and the pages it committed. Doctor `managed_sync_blocked` lists it as `pass_interrupted` (warn, then fail after an hour). | The plain sync; if that pass stops the same way, the reason becomes `pass_abandoned`. |
-| `pass_abandoned` | blocked | Two passes in a row never ended or ended on the same kind of transient stop, and neither committed a page or wrote a hold before it stopped (a pass that committed work moved the source, so it resets the count; a pass that only reported progress does not): the drain stopped them for making no progress, their process was killed, or each hit a statement timeout, a lost connection or write back-pressure (#7982). The newest open pass counts once no process holds the source's drain lease (#7596; a reader without the lease read counts it once its row has not moved for 5 minutes). | `gbrain doctor --json` and a report with the gbrain version and the newest run's `drain.stall`; another plain sync is likely to stop the same way. |
-| `not_converged` | resumable | The pass used its four rounds while another writer kept changing the level. Everything it admitted stands. | The plain sync; after three such passes in a row `next` is `gbrain doctor --json` and a report, because another sync will not change it. |
+| `pass_abandoned` | blocked | Two passes in a row never ended or ended on the same kind of transient stop, and neither committed a page or wrote a hold before it stopped (a pass that committed work moved the source, so it resets the count; a pass that only reported progress does not): the drain stopped them for making no progress, their process was killed, or each hit a statement timeout, a lost connection or write back-pressure (#7982). The newest open pass counts once no process holds the source's drain lease (#7596; a reader without the lease read counts it once its row has not moved for 5 minutes). | `foresights doctor --json` and a report with the foresights version and the newest run's `drain.stall`; another plain sync is likely to stop the same way. |
+| `not_converged` | resumable | The pass used its four rounds while another writer kept changing the level. Everything it admitted stands. | The plain sync; after three such passes in a row `next` is `foresights doctor --json` and a report, because another sync will not change it. |
 | `settle_mismatch` | resumable | A path keeps settling without reading settled. The next pass re-admits it once; after three passes at one level it is a `settle_mismatch` hold that needs a person. | The plain sync, then report the hold. |
-| `deletes_withheld` | blocked | The pass's deletes crossed the mass-delete threshold (#2828) or an absolute cap (#7130: `sync.max_deletes`, default 500; `sync.max_delete_ratio`, default 0.01 above 50 deletes; per source `<key>.source.<id>`). The record's `trip` names which. It wrote one withheld record and synced everything else; no per-page hold is written. | Ask the user: restore the checkout if it is wrong; when the deletion is intended, raise the cap for that source (`gbrain config set sync.max_deletes.source.<id> <n>`) or run `GBRAIN_ALLOW_MASS_RECONCILE=1 gbrain sync --source <id>` on the brain host. `gbrain sync --source <id> --dry-run --json` lists the set and its hash. |
-| `admission_paused` | resumable | `sync.admission` is `imports_only` or `classify_only`. | Ask the user to run `gbrain config set sync.admission normal` when the pause is over; it is never lifted automatically. |
+| `deletes_withheld` | blocked | The pass's deletes crossed the mass-delete threshold (#2828) or an absolute cap (#7130: `sync.max_deletes`, default 500; `sync.max_delete_ratio`, default 0.01 above 50 deletes; per source `<key>.source.<id>`). The record's `trip` names which. It wrote one withheld record and synced everything else; no per-page hold is written. | Ask the user: restore the checkout if it is wrong; when the deletion is intended, raise the cap for that source (`foresights config set sync.max_deletes.source.<id> <n>`) or run `GBRAIN_ALLOW_MASS_RECONCILE=1 foresights sync --source <id>` on the brain host. `foresights sync --source <id> --dry-run --json` lists the set and its hash. |
+| `admission_paused` | resumable | `sync.admission` is `imports_only` or `classify_only`. | Ask the user to run `foresights config set sync.admission normal` when the pause is over; it is never lifted automatically. |
 | `selection_scoped` | synced | The pass converged at a selection other than the source's configured one (a CLI `--exclude`, say) and did not advance `last_commit`. | None; the next plain sync runs the configured selection. |
 | `commits_waiting` | resumable | Nothing else is pending (or only holds that need no person), but the checkout's `HEAD` is past `last_commit`: commits landed that no sync has imported yet. A company-brain source never reads it, because it syncs to its approved revision. | Run `next.argv`, the plain sync, which imports them; status reads `synced` once it lands, and it is safe to loop. A script waiting for `state: synced` keeps waiting until a sync runs, so run `next` rather than wait when nothing watches the source (`sync.on_commit` off). |
 
@@ -437,7 +437,7 @@ it, and a `--full` continues until every path it covers is settled.
 <a id="dry-run-convergence-classes"></a>
 ## Convergence classes
 
-`convergence.classes` (in `sync status` and in `gbrain sync --dry-run
+`convergence.classes` (in `sync status` and in `foresights sync --dry-run
 --json`) counts the paths of the newest round by class, each with an
 `action`: who finishes it.
 
@@ -448,7 +448,7 @@ it, and a `--full` continues until every path it covers is settled.
   page), `gone` (no file and no live page), `deleted_same` and `legacy_same` (a page a person deleted whose
   file is unchanged; a page sync deleted because its file was gone is an `import` once the file is back), and `db_ahead` (the page changed in the database and the file
   did not; the sub-labels `pending`, `db_only` and `unproven` are
-  informational, and `gbrain repair file-drift --prefer database` writes one
+  informational, and `foresights repair file-drift --prefer database` writes one
   back to its file if the owner wants it: its preview names any file change
   sync never imported, and its apply asks for the owner's consent).
 - `owner`, sync finishes it by itself: `in_flight` (admitted, not yet
@@ -475,9 +475,9 @@ reads `matched` even when its working copy is edited.
 ## Writes deferred behind a refresh
 
 With `persistence.refresh_barrier` on (off by default), a page write that
-arrives while `gbrain sources refresh` holds its worktree is not refused
+arrives while `foresights sources refresh` holds its worktree is not refused
 `worktree_refreshing`: it waits in state `deferred` and the caller gets a
-pending receipt. `gbrain sources writer status <id> --json` lists those rows
+pending receipt. `foresights sources writer status <id> --json` lists those rows
 with `state: "deferred"` in `requests`, and the `queue` entry for
 `deferred` carries their count and `oldest_age_ms`. They are not stuck while
 the refresh runs: once it completes or aborts they publish in order, and one
@@ -485,7 +485,7 @@ whose file the refresh changed ends `revision_conflict`. A write still waiting
 after `persistence.refresh_barrier_max_wait_ms` ends
 [`refresh_barrier_expired`](write-refusals.md#refresh_barrier_expired) with
 nothing applied: check the refresh, then submit it again with a new request id.
-Before downgrading gbrain, `gbrain upgrade --check-downgrade` must exit 0.
+Before downgrading foresights, `foresights upgrade --check-downgrade` must exit 0.
 
 ## See also
 

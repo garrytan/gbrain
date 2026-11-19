@@ -15,7 +15,7 @@ export function formatPoolStalledWarning(pool: PoolHealthSnapshot, sinceMs: numb
   return `[gbrain] warn code=pg_pool_stalled checked_out=${pool.checked_out} max=${pool.max} waiters=${pool.waiters}` +
     ` inflight_oldest_ms=${pool.inflight_oldest_ms} completed_delta=0 stalled_ms=${Math.max(0, Math.round(sinceMs))}` +
     ` cause="connections are checked out but no statement has completed since the last tick"` +
-    ` fix="gbrain doctor --json" docs=docs/ENGINES.md#pg-pool-stalled`;
+    ` fix="foresights doctor --json" docs=docs/ENGINES.md#pg-pool-stalled`;
 }
 
 export function formatPoolRecoveredInfo(stalledMs: number, completedDelta: number): string {

@@ -3,7 +3,7 @@
 `extraction.date_grounding` on (candidate, build 5d5375d43) against the branch base 5bd9e8497 with the setting
 absent (baseline), on development splits only, through the gbrain-evals decision kit's memory-qa facts lane
 (gbrain-evals branch `capy/p2-facts-lane`). Each conversation's sessions are imported as dated conversation
-pages and gbrain's conversation-facts extractor runs on them; the stored facts are then scored. The
+pages and foresights's conversation-facts extractor runs on them; the stored facts are then scored. The
 "unresolved" metric is the share of saved facts that still contain a relative time phrase ("yesterday",
 "last week", "3 days ago") with no absolute date. A fixed reader answers temporal questions from the saved
 facts (fact text and stored date) of the top five retrieved sessions, never from the raw sessions. The

@@ -1,10 +1,10 @@
 /**
- * `gbrain wakeshift watch job <id> | write <request_id> | cron <name>` (Wakeshift plan D8): have gbrain wake
- * this conversation when a job, a pending write or a cron run finishes, from a shell. `gbrain wakeshift
+ * `foresights wakeshift watch job <id> | write <request_id> | cron <name>` (Wakeshift plan D8): have foresights wake
+ * this conversation when a job, a pending write or a cron run finishes, from a shell. `foresights wakeshift
  * accept-terms <terms_version>` records the user's agreement to a shared brain's agreement step (accept_wakeshift_terms). On a thin client
- * (`gbrain init --mcp-only`: Muse, Grok Bot) it calls the brain host's watch_job, watch_write_request or
+ * (`foresights init --mcp-only`: Muse, Grok Bot) it calls the brain host's watch_job, watch_write_request or
  * watch_cron over MCP; on a brain host it calls the op with the trusted local context, whose refusal names the
- * local wait (gbrain jobs wait <id>), because a CLI run has no conversation to wake. The result prints as text or
+ * local wait (foresights jobs wait <id>), because a CLI run has no conversation to wake. The result prints as text or
  * one JSON line, and Wakeshift's addition (the tool tail) is always the last stdout line, where the agent reads
  * it. `--session-key`, `--harness` and `--conversation-id` pass through per call, exactly as given: the
  * session key is never written to disk, config or a log.
@@ -12,13 +12,13 @@
 import type { BrainEngine } from '../core/engine.ts';
 import type { GBrainConfig } from '../core/config.ts';
 
-export const WAKESHIFT_WATCH_HELP = `gbrain wakeshift watch — have gbrain wake this conversation when something finishes
+export const WAKESHIFT_WATCH_HELP = `foresights wakeshift watch — have foresights wake this conversation when something finishes
 
 Usage:
-  gbrain wakeshift watch job <id>              a job (submit_job, submit_agent, gbrain jobs submit)
-  gbrain wakeshift watch write <request_id>    a pending write (exit 10, write_pending)
-  gbrain wakeshift watch cron <name>           a scheduled run registered with gbrain wakeshift cron add
-  gbrain wakeshift accept-terms <terms_version>
+  foresights wakeshift watch job <id>              a job (submit_job, submit_agent, foresights jobs submit)
+  foresights wakeshift watch write <request_id>    a pending write (exit 10, write_pending)
+  foresights wakeshift watch cron <name>           a scheduled run registered with foresights wakeshift cron add
+  foresights wakeshift accept-terms <terms_version>
                                                after the user agreed to the agreement step a watch returned
                                                (agreement_required), record it; then run the watch again
 
@@ -29,7 +29,7 @@ Flags:
   --json                print the result as one JSON line
 
 On a thin client it calls the brain host over MCP. Wakeshift's instructions, when it sends any, are the last
-line of output: follow them. Without Wakeshift, wait with gbrain jobs wait <id>. Guide: docs/guides/wakeshift.md`;
+line of output: follow them. Without Wakeshift, wait with foresights jobs wait <id>. Guide: docs/guides/wakeshift.md`;
 
 const TARGETS = {
   job: { tool: 'watch_job', param: 'id' },
@@ -71,12 +71,12 @@ export function parseWatchArgs(args: readonly string[]): WatchCall | string {
   return { tool: spec.tool, params: { [spec.param]: kind === 'job' ? Number(target) : target, ...params }, json: args.includes('--json') };
 }
 
-/** Wakeshift's addition in a remote result: the last text block after the JSON body, unless it is gbrain's own. */
+/** Wakeshift's addition in a remote result: the last text block after the JSON body, unless it is foresights's own. */
 export function remoteToolTail(res: unknown): string | undefined {
   const content = (res as { content?: Array<{ type?: string; text?: unknown }> } | undefined)?.content;
   if (!Array.isArray(content) || content.length < 2) return undefined;
   const last = content.at(-1)!;
-  return last.type === 'text' && typeof last.text === 'string' && last.text.trim() && !last.text.startsWith('[gbrain ') ? last.text : undefined;
+  return last.type === 'text' && typeof last.text === 'string' && last.text.trim() && !/^\[(?:foresights|gbrain) /.test(last.text) ? last.text : undefined;
 }
 
 /** Print the result (text or one JSON line), then the tail as the last stdout line. */
@@ -101,7 +101,7 @@ export function printWatchResult(result: unknown, tail: string | undefined, json
 }
 
 function usage(problem: string): void {
-  console.error(`gbrain wakeshift watch: ${problem}\n\n${WAKESHIFT_WATCH_HELP}`);
+  console.error(`foresights wakeshift watch: ${problem}\n\n${WAKESHIFT_WATCH_HELP}`);
 }
 
 /** Thin client: the brain host's watch op over MCP. Remote errors propagate to the CLI dispatcher, like every routed command. */
@@ -131,7 +131,7 @@ export async function runWakeshiftWatch(engine: BrainEngine, args: string[]): Pr
   let tail: string | undefined;
   try {
     const op = operationsByName[call.tool];
-    if (!op) throw opError('unknown_tool', `This gbrain has no ${call.tool} operation.`, 'Upgrade gbrain on the brain host (gbrain upgrade).');
+    if (!op) throw opError('unknown_tool', `This foresights has no ${call.tool} operation.`, 'Upgrade foresights on the brain host (foresights upgrade).');
     const ctx = {
       engine, config: loadConfig() ?? ({ engine: engine.kind } as GBrainConfig), dryRun: false, remote: false as const,
       logger: { info: (m: string) => console.error(m), warn: (m: string) => console.error(m), error: (m: string) => console.error(m) },

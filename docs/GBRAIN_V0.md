@@ -1,4 +1,4 @@
-# GBrain v0: Postgres-Native Personal Knowledge Brain
+# Foresights v0: Postgres-Native Personal Knowledge Brain
 
 > **Historical design doc.** This is the original v0 spec from before PGLite landed. Several
 > forward-looking sections — most notably the SQLite engine plan — were superseded by
@@ -9,12 +9,12 @@
 
 > **Do not use the installation commands in this historical spec.** The bare
 > npm package named `gbrain` is unrelated to this project. Current installation
-> uses `bun install -g github:garrytan/gbrain` or a source clone; follow
+> uses `bun install -g github:aimonk2025/gbrain` or a source clone; follow
 > [the current install guide](INSTALL.md). The original design below is retained.
 
 ## What this is
 
-GBrain is a compiled intelligence system. Not a note-taking app. Not "chat with your notes."
+Foresights is a compiled intelligence system. Not a note-taking app. Not "chat with your notes."
 
 Every page is an intelligence assessment. Above the line: compiled truth (your current best understanding, rewritten when evidence changes). Below the line: timeline (append-only evidence trail). AI agents maintain the brain. MCP clients query it. The intelligence lives in fat markdown skills, not application code.
 
@@ -24,7 +24,7 @@ The core insight: personal knowledge at scale is an intelligence problem, not a 
 
 A 7,471-file / 2.3GB markdown wiki is choking git. Git doesn't scale past ~5K files for wiki-style use. The compiled truth + timeline model (Karpathy-style knowledge pages) is right, but it needs a real database underneath.
 
-There's already a production-grade RAG system (Ruby on Rails, Postgres + pgvector) with 3-tier chunking, hybrid search with RRF, multi-query expansion, and 4-layer dedup. GBrain ports these proven patterns to a standalone Bun + TypeScript tool.
+There's already a production-grade RAG system (Ruby on Rails, Postgres + pgvector) with 3-tier chunking, hybrid search with RRF, multi-query expansion, and 4-layer dedup. Foresights ports these proven patterns to a standalone Bun + TypeScript tool.
 
 ## The knowledge model
 
@@ -87,11 +87,11 @@ There's already a production-grade RAG system (Ruby on Rails, Postgres + pgvecto
 
 **Full port over minimal viable.** The patterns are proven. The port is mechanical. Shipping the full 3-tier chunking + hybrid search + 4-layer dedup means world-class RAG from day one. "We'll add that later" means rebuilding everything later.
 
-**Library-first distribution.** gbrain is an npm package. OpenClaw installs it as a dependency (`bun add gbrain`), imports the engine directly. Zero-overhead function calls, shared connection pool, TypeScript types. The CLI and MCP server are thin wrappers over the same engine.
+**Library-first distribution.** foresights is an npm package. OpenClaw installs it as a dependency (`bun add gbrain`), imports the engine directly. Zero-overhead function calls, shared connection pool, TypeScript types. The CLI and MCP server are thin wrappers over the same engine.
 
 **Trigger-based tsvector (not generated column).** To include timeline_entries content in full-text search, the tsvector needs to span multiple tables. Generated columns can't do cross-table references. A trigger on pages + timeline_entries updates the search_vector.
 
-**Auto-embed during import.** No separate embed step. `gbrain import` chunks and embeds in one pass. Progress bar shows status. `--no-embed` flag for users who want to defer. `embedded_at` column enables `gbrain embed --stale` for backfill.
+**Auto-embed during import.** No separate embed step. `foresights import` chunks and embeds in one pass. Progress bar shows status. `--no-embed` flag for users who want to defer. `embedded_at` column enables `foresights embed --stale` for backfill.
 
 ## Distribution model
 
@@ -101,7 +101,7 @@ There's already a production-grade RAG system (Ruby on Rails, Postgres + pgvecto
 |   (library)       |     |  (CLI)            |     |   (stdio)         |
 +-------------------+     +-------------------+     +-------------------+
 |                   |     |                   |     |                   |
-| bun add gbrain    |     | GitHub Releases   |     | gbrain serve      |
+| bun add gbrain    |     | GitHub Releases   |     | foresights serve      |
 | import { Postgres |     | npx gbrain        |     | in mcp.json       |
 |   Engine }        |     |                   |     |                   |
 |                   |     |                   |     |                   |
@@ -135,11 +135,11 @@ package.json exports:
 
 ### Path 1: OpenClaw user (primary)
 
-OpenClaw is the AI orchestrator that uses gbrain as its knowledge backend. This is the most common install path.
+OpenClaw is the AI orchestrator that uses foresights as its knowledge backend. This is the most common install path.
 
 ```bash
-# 1. Install gbrain as a ClawHub skill
-clawhub install gbrain
+# 1. Install foresights as a ClawHub skill
+clawhub install foresights
 
 # 2. The skill runs guided setup on first use:
 #    - Detects if Supabase CLI is available
@@ -156,11 +156,11 @@ clawhub install gbrain
 #    "How many pages are in the brain?"
 ```
 
-Behind the scenes, `clawhub install gbrain`:
+Behind the scenes, `clawhub install foresights`:
 1. Installs the `gbrain` npm package
 2. Ships SKILL.md files (ingest, query, maintain, enrich, briefing, migrate)
 3. Registers brain tools with the orchestrator
-4. Runs `gbrain init --supabase` on first use (guided wizard)
+4. Runs `foresights init --supabase` on first use (guided wizard)
 
 ### Path 2: CLI user (standalone)
 
@@ -170,22 +170,22 @@ npm install -g gbrain
 # or: download binary from GitHub Releases
 
 # 2. Initialize with Supabase
-gbrain init --supabase
+foresights init --supabase
 # Guided wizard:
 #   Try 1: Supabase CLI auto-provision (npx supabase)
 #   Try 2: If CLI not installed or not logged in, fallback:
 #          "Enter your Supabase connection URL:"
 #   Then: runs schema migration, verifies pgvector extension
 #   Then: verifies database is ready for import
-#   Output: "Brain ready. Run: gbrain import <your-repo>"
+#   Output: "Brain ready. Run: foresights import <your-repo>"
 
 # 3. Import your data
-gbrain import /path/to/markdown/wiki/
+foresights import /path/to/markdown/wiki/
 # Progress bar: 7,471 files, auto-chunk, auto-embed
 # ~30s for text import, ~10-15 min for embedding
 
 # 4. Query
-gbrain query "what does PG say about doing things that don't scale?"
+foresights query "what does PG say about doing things that don't scale?"
 ```
 
 ### Path 3: MCP user (Claude Code, Cursor)
@@ -206,7 +206,7 @@ Then in Claude Code: "Search my brain for people who know about robotics"
 
 ### The init wizard in detail
 
-`gbrain init --supabase` runs through these steps:
+`foresights init --supabase` runs through these steps:
 
 ```
 Step 1: Database Setup
@@ -244,7 +244,7 @@ Step 4: Kindling Import
   └── Output: "Brain ready. 10 pages imported."
 
 Step 5: First Query
-  └── "Try: gbrain query 'what does PG say about doing things that don't scale?'"
+  └── "Try: foresights query 'what does PG say about doing things that don't scale?'"
 ```
 
 Every error follows the style guide: problem + cause + fix + docs link.
@@ -252,32 +252,32 @@ Every error follows the style guide: problem + cause + fix + docs link.
 ## CLI commands
 
 ```
-gbrain init [--supabase|--url <conn>]     # create brain
-gbrain get <slug>                          # read a page
-gbrain put <slug> [< file.md]             # write/update a page
-gbrain search <query>                      # keyword search (tsvector)
-gbrain query <question>                    # hybrid search (RRF + expansion)
-gbrain ingest <file> [--type ...]         # ingest a source document
-gbrain link <from> <to> [--type <type>]   # create typed link
-gbrain unlink <from> <to>                 # remove link
-gbrain graph <slug> [--depth 5]           # traverse link graph (recursive CTE)
-gbrain backlinks <slug>                    # incoming links
-gbrain tags <slug>                         # list tags
-gbrain tag <slug> <tag>                    # add tag
-gbrain untag <slug> <tag>                  # remove tag
-gbrain timeline [<slug>]                   # view timeline
-gbrain timeline-add <slug> <date> <text>  # add timeline entry
-gbrain list [--type] [--tag] [--limit]    # list with filters
-gbrain stats                               # brain statistics
-gbrain health                              # brain health dashboard
-gbrain import <dir> [--no-embed]          # import from markdown directory
-gbrain export [--dir ./export/]           # export to markdown (round-trip)
-gbrain embed [<slug>|--all|--stale]       # generate/refresh embeddings
-gbrain serve                               # MCP server (stdio)
-gbrain call <tool> '<json>'               # raw tool invocation
-gbrain upgrade                             # self-update (npm, binary, ClawHub)
-gbrain version                             # version info
-gbrain config [get|set] <key> [value]     # brain config
+foresights init [--supabase|--url <conn>]     # create brain
+foresights get <slug>                          # read a page
+foresights put <slug> [< file.md]             # write/update a page
+foresights search <query>                      # keyword search (tsvector)
+foresights query <question>                    # hybrid search (RRF + expansion)
+foresights ingest <file> [--type ...]         # ingest a source document
+foresights link <from> <to> [--type <type>]   # create typed link
+foresights unlink <from> <to>                 # remove link
+foresights graph <slug> [--depth 5]           # traverse link graph (recursive CTE)
+foresights backlinks <slug>                    # incoming links
+foresights tags <slug>                         # list tags
+foresights tag <slug> <tag>                    # add tag
+foresights untag <slug> <tag>                  # remove tag
+foresights timeline [<slug>]                   # view timeline
+foresights timeline-add <slug> <date> <text>  # add timeline entry
+foresights list [--type] [--tag] [--limit]    # list with filters
+foresights stats                               # brain statistics
+foresights health                              # brain health dashboard
+foresights import <dir> [--no-embed]          # import from markdown directory
+foresights export [--dir ./export/]           # export to markdown (round-trip)
+foresights embed [<slug>|--all|--stale]       # generate/refresh embeddings
+foresights serve                               # MCP server (stdio)
+foresights call <tool> '<json>'               # raw tool invocation
+foresights upgrade                             # self-update (npm, binary, ClawHub)
+foresights version                             # version info
+foresights config [get|set] <key> [value]     # brain config
 ```
 
 CLI and MCP expose identical operations. Drift tests assert identical results for all operations across both interfaces.
@@ -429,11 +429,11 @@ Each skill is a markdown file that AI agents (Claude Code, OpenClaw) read and fo
 ## CEO scope expansions (accepted for v0)
 
 1. **CLI/MCP parity with drift tests.** Both interfaces are thin wrappers over the engine. Tests assert identical output.
-2. **Smart slug resolution.** Fuzzy matching via pg_trgm for reads. Writes require exact slugs. `gbrain get "dont scale"` resolves to `concepts/do-things-that-dont-scale`.
-3. **Brain health dashboard.** `gbrain health` shows page count, embed coverage, stale pages, orphans, dead links.
+2. **Smart slug resolution.** Fuzzy matching via pg_trgm for reads. Writes require exact slugs. `foresights get "dont scale"` resolves to `concepts/do-things-that-dont-scale`.
+3. **Brain health dashboard.** `foresights health` shows page count, embed coverage, stale pages, orphans, dead links.
 4. **Normalized timeline.** `timeline_entries` table only (no TEXT column). `detail` field supports markdown.
-5. **Page version control.** `page_versions` table stores full snapshots (compiled_truth + frontmatter + links + tags). `gbrain history`, `gbrain diff`, `gbrain revert` commands. Revert re-chunks and re-embeds.
-6. **Typed links + graph traversal.** `link_type` column (knows, invested_in, works_at, etc.). `gbrain graph` uses recursive CTE with max depth (default 5, configurable via `--depth`).
+5. **Page version control.** `page_versions` table stores full snapshots (compiled_truth + frontmatter + links + tags). `foresights history`, `foresights diff`, `foresights revert` commands. Revert re-chunks and re-embeds.
+6. **Typed links + graph traversal.** `link_type` column (knows, invested_in, works_at, etc.). `foresights graph` uses recursive CTE with max depth (default 5, configurable via `--depth`).
 7. **Trigger.dev data cleanup jobs.** Daily embed backfill, weekly stale detection + orphan audit + tag consistency.
 8. **Stale alert annotations.** Search results flag pages where compiled_truth is older than latest timeline entry.
 9. **Timeline merge on ingest.** Same event created across all mentioned entities.
@@ -442,19 +442,19 @@ Each skill is a markdown file that AI agents (Claude Code, OpenClaw) read and fo
 
 Single-user, local-only:
 - Supabase service role key in `~/.gbrain/config.json` (0600 permissions)
-- MCP stdio transport is inherently local (client spawns `gbrain serve` as subprocess)
+- MCP stdio transport is inherently local (client spawns `foresights serve` as subprocess)
 - No multi-user, no RLS, no OAuth in v0
 - Multi-user path (future): Supabase RLS + per-user API keys
 
 ## Upgrade mechanism
 
-`gbrain upgrade` detects the installation method and updates accordingly:
+`foresights upgrade` detects the installation method and updates accordingly:
 
 | Path | How |
 |------|-----|
-| npm | `bun update gbrain` (or npm equivalent) |
+| npm | `bun update foresights` (or npm equivalent) |
 | Compiled binary | Download new binary to temp dir, atomic rename swap, exec new process |
-| ClawHub | `clawhub update gbrain` |
+| ClawHub | `clawhub update foresights` |
 
 Version check: compare local version against latest GitHub release tag.
 
@@ -484,7 +484,7 @@ Supabase free tier (500MB) won't fit. Supabase Pro ($25/mo, 8GB) is the starting
 | Query expansion (per query, ~3 embeds) | negligible |
 | **Total initial import** | **~$4-5** |
 
-Budget alternative: `gbrain import --chunker recursive` skips sentence-level embeddings, then `gbrain embed --rechunk --chunker semantic` upgrades later.
+Budget alternative: `foresights import --chunker recursive` skips sentence-level embeddings, then `foresights embed --rechunk --chunker semantic` upgrades later.
 
 ## Serverless operations stack
 
@@ -506,17 +506,17 @@ The CLI connects directly to Supabase Postgres. Trigger.dev and Vercel are for a
 
 ## Verification checklist
 
-1. `gbrain import /data/brain/` migrates all 7,471 files losslessly
-2. `gbrain export` round-trips to semantically identical markdown
-3. `gbrain query "what does PG say about doing things that don't scale?"` returns relevant hybrid search results
-4. `gbrain serve` starts MCP server connectable by Claude Code
+1. `foresights import /data/brain/` migrates all 7,471 files losslessly
+2. `foresights export` round-trips to semantically identical markdown
+3. `foresights query "what does PG say about doing things that don't scale?"` returns relevant hybrid search results
+4. `foresights serve` starts MCP server connectable by Claude Code
 5. All 3 chunkers produce correct output with test fixtures
-6. `gbrain init --supabase` works end-to-end
+6. `foresights init --supabase` works end-to-end
 7. `bun test` passes all tests
-8. `clawhub install gbrain` installs the skill and runs guided setup
+8. `clawhub install foresights` installs the skill and runs guided setup
 9. `bun add gbrain` + `import { PostgresEngine } from 'gbrain'` works in external project
 10. Drift tests pass: CLI and MCP produce identical results
-11. `gbrain health` outputs accurate brain health metrics
+11. `foresights health` outputs accurate brain health metrics
 12. Migration skill successfully imports an Obsidian vault
 
 ## Future plans
@@ -525,7 +525,7 @@ See `docs/ENGINES.md` for the pluggable engine architecture and future backend p
 
 ### v1 candidates (deferred from v0)
 
-- **`gbrain ask` natural language CLI alias.** Trivial to add. P1 TODO.
+- **`foresights ask` natural language CLI alias.** Trivial to add. P1 TODO.
 - **Intelligence compiler.** Treat every fact as a first-class claim with source span, entity links, validity window, confidence, and contradiction status. "What changed, why, and what evidence would flip it again?" From Codex review. Builds on compiled truth model.
 - **Active skills via Trigger.dev.** Application-specific briefings, meeting prep. Belongs in OpenClaw, not generic brain infra.
 - **Multi-user access.** Supabase RLS + per-user API keys. v0 is single-user.

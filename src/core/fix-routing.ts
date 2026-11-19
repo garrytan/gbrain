@@ -5,7 +5,7 @@
  * different GBRAIN_BRAIN_ID / GBRAIN_SOURCE / .gbrain-mount / .gbrain-source
  * and still act on the intended brain.
  *
- * The pin is applied once, at render time (`renderAction`), to every gbrain
+ * The pin is applied once, at render time (`renderAction`), to every foresights
  * argv in the action (`argv`, `preview_argv`, `verify.argv`, `then`):
  *
  * - `--brain <id>` for commands that route through the brain axis: every
@@ -72,7 +72,7 @@ export function routingFlagsFor(command: string, opts: { remote?: boolean } = {}
 
 const hasFlag = (head: readonly string[], flag: string) => head.some(a => a === flag || a.startsWith(`${flag}=`));
 
-/** Append the missing routing flags to one gbrain argv (before a bare `--`). Non-gbrain argv pass through. */
+/** Append the missing routing flags to one foresights argv (before a bare `--`). Non-gbrain argv pass through. */
 export function pinRouting(argv: readonly string[], routing: FixRouting | undefined, opts: { remote?: boolean } = {}): string[] {
   if (!routing || argv[0] !== 'gbrain' || argv.length < 2) return [...argv];
   const flags = routingFlagsFor(argv[1]!, opts);

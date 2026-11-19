@@ -1,5 +1,5 @@
 /**
- * `gbrain providers` — pure formatter + envReady tests.
+ * `foresights providers` — pure formatter + envReady tests.
  *
  * `runTest` and `runExplain` aren't covered here because they touch the
  * gateway / loadConfig; E2E exercises those.

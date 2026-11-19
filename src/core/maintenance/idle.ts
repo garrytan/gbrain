@@ -1,5 +1,5 @@
 /**
- * Idle upkeep (GBRA-438 PR 2): the resident runner. A `gbrain serve` runs
+ * Idle upkeep (GBRA-438 PR 2): the resident runner. A `foresights serve` runs
  * free upkeep while its agent is quiet, a few seconds at a time, so a keyless
  * repo-less brain is maintained without any installed service.
  *
@@ -40,12 +40,12 @@ export async function runIdleUpkeep(engine: BrainEngine, opts: IdleUpkeepOpts): 
     return null;
   }
   const startedAt = Date.now();
-  opts.log?.(`[gbrain serve] idle upkeep: started`);
+  opts.log?.(`[foresights serve] idle upkeep: started`);
   const outcome = await runUnattendedMaintenance(engine, {
     runner: opts.runner, budgetMs: opts.budgetMs ?? IDLE_UPKEEP_BUDGET_MS, signal: opts.signal, ...(opts.retryParked ? { retryParked: true } : {}),
     ...(opts.now ? { now: opts.now } : {}), ...(opts.providers ? { providers: opts.providers } : {}), ...(opts.cycle ? { cycle: opts.cycle } : {}),
   });
-  opts.log?.(`[gbrain serve] idle upkeep: finished in ${Date.now() - startedAt} ms (${outcome.status}${outcome.code ? ` ${outcome.code}` : ''})`);
+  opts.log?.(`[foresights serve] idle upkeep: finished in ${Date.now() - startedAt} ms (${outcome.status}${outcome.code ? ` ${outcome.code}` : ''})`);
   return outcome;
 }
 

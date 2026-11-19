@@ -14,7 +14,7 @@ import { usageError } from './cli-error.ts';
 export function opParamValue(op: OperationMeta, key: string, def: ParamDef | undefined, raw: string, positional = false): unknown {
   if (!def) return raw;
   const name = positional ? `<${key}>` : `--${key.replace(/_/g, '-')}`;
-  const usage = `gbrain ${op.cliHints?.name ?? op.name}`;
+  const usage = `foresights ${op.cliHints?.name ?? op.name}`;
   if (def.type === 'number' || def.type === 'integer') {
     const n = Number(raw);
     if (raw.trim() !== '' && (def.type === 'integer' ? Number.isInteger(n) : Number.isFinite(n))) return n;

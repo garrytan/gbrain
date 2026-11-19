@@ -129,7 +129,7 @@ export function getCacheStats(): CacheStats {
 
 /**
  * The `methodology_note` disclosure stamped on routed rows and printed at
- * run end ("gbrain + <extractor>-preprocess", not "gbrain alone"). It names
+ * run end ("foresights + <extractor>-preprocess", not "foresights alone"). It names
  * the extractor that ran: a Haiku model keeps the published
  * `extractor=haiku-preprocess-full-haystack-v1` byte for byte, any other
  * model is named by its resolved id.

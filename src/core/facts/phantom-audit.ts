@@ -85,7 +85,7 @@ export function logPhantomEvent(event: Omit<PhantomAuditEvent, 'ts'> & { ts?: st
 
 /**
  * Read recent phantom-redirect events from the current + previous ISO
- * weeks. Used by future `gbrain doctor` `phantoms_pending` check (T9
+ * weeks. Used by future `foresights doctor` `phantoms_pending` check (T9
  * follow-up) and by tests asserting the audit-write contract.
  *
  * Missing files / corrupt rows are skipped silently — the audit trail is

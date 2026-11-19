@@ -1,5 +1,5 @@
 /**
- * Page purge (`gbrain delete <slug> --purge`, #5575 CEO-4/CEO-8): the same
+ * Page purge (`foresights delete <slug> --purge`, #5575 CEO-4/CEO-8): the same
  * live-store sweep as a fact purge, applied to one page inside the
  * coordinated delete transaction, plus a text-free page tombstone.
  *
@@ -13,7 +13,7 @@
  *
  * `page_purges` keeps (source_id, content_hash, slug): the pages guard raises
  * typed `purged_content` when a page with that content hash is written again
- * under any slug, until `gbrain pages unpurge <slug>` clears it.
+ * under any slug, until `foresights pages unpurge <slug>` clears it.
  *
  * #6511: the search for historical requests carrying the page's claims is an
  * O(journal) substring scan that no index serves, so it runs at preparation
@@ -170,7 +170,7 @@ async function sweepForPurge(engine: BrainEngine, row: WriteRequest, claims: str
 /** What the delete preparation hands the purge apply: the claims it searched for, the journal census, and the slug index's state for the failure hint. */
 export interface PreparedPagePurge {
   needles: string[]; sweep: JournalSweep; slugIndex: RequestIndexState['state'];
-  /** Retention removal of an expired tombstone (`gbrain pages purge-deleted`): no content tombstone, no ledger redaction, `page.expired`. */
+  /** Retention removal of an expired tombstone (`foresights pages purge-deleted`): no content tombstone, no ledger redaction, `page.expired`. */
   retention: boolean;
   /** GST-2201: a sync-made tombstone purged database-only beside its committed file: the file's return imports it, so no deletion marker. */
   keepOrigin?: boolean;
@@ -220,8 +220,8 @@ export function purgeLookupTimeout(row: Pick<WriteRequest, 'request_id' | 'slug'
   const broken = slugIndex === 'missing' || slugIndex === 'invalid';
   const next = broken
     ? `The request-table slug index ${PERSISTENCE_REQUEST_SLUG_INTENT_INDEX.name} is ${slugIndex === 'invalid' ? 'INVALID' : 'missing'}: rebuild it (${REQUEST_INDEXES_REPAIR_COMMAND}), then submit the purge again with a new request_id.`
-    : 'Submit the purge again with a new request_id (a retry with the same id returns this failure); if it times out again, report the request and attach the persistence_request_indexes and persistence_request_growth entries of gbrain doctor --json.';
-  // The journal keeps code and message only, so the next step rides the message (the receipt is what `gbrain write-request` shows).
+    : 'Submit the purge again with a new request_id (a retry with the same id returns this failure); if it times out again, report the request and attach the persistence_request_indexes and persistence_request_growth entries of foresights doctor --json.';
+  // The journal keeps code and message only, so the next step rides the message (the receipt is what `foresights write-request` shows).
   return opError('purge_lookup_timeout', `${PURGE_LOOKUP_TIMEOUT_MESSAGE} ${next}`,
     `The purge's ${LOOKUP_LABEL[point]} (request ${row.request_id}, page ${row.slug} in source ${row.source_id}) exceeded the publication transaction's statement budget, so the transaction rolled back: `
     + 'no row, file or tombstone of the page was removed and nothing in the journal was redacted.',
@@ -512,19 +512,19 @@ export async function readPagePurgeTombstones(engine: BrainEngine, sourceId: str
 }
 
 export async function listPagePurges(ctx: OperationContext, p: Record<string, unknown>): Promise<Record<string, unknown>> {
-  if (ctx.remote !== false) throw hostOnly('gbrain pages purges list');
+  if (ctx.remote !== false) throw hostOnly('foresights pages purges list');
   const limit = Math.max(1, Math.min(1000, Number(p.limit ?? 100) || 100));
   const rows = await ctx.engine.executeRaw<{ source_id: string; slug: string; content_hash: string; request_id: string | null; purged_at: string }>(`SELECT source_id,slug,
       content_hash,request_id::text,purged_at FROM page_purges WHERE ($1::text IS NULL OR source_id=$1) ORDER BY purged_at DESC LIMIT $2`,
   [typeof p.source_id === 'string' ? p.source_id : null, limit]);
   return { purges: rows.map(r => ({ source_id: r.source_id, slug: r.slug, content_hash8: r.content_hash.slice(0, 8), request_id: r.request_id,
-    purged_at: new Date(r.purged_at).toISOString() })), next: rows.length ? 'Clear one with gbrain pages unpurge <slug> [--source <id>].' : 'No page purge tombstones.' };
+    purged_at: new Date(r.purged_at).toISOString() })), next: rows.length ? 'Clear one with foresights pages unpurge <slug> [--source <id>].' : 'No page purge tombstones.' };
 }
 
 export async function unpurgePage(ctx: OperationContext, p: Record<string, unknown>): Promise<Record<string, unknown>> {
-  if (ctx.remote !== false) throw hostOnly('gbrain pages unpurge <slug>');
+  if (ctx.remote !== false) throw hostOnly('foresights pages unpurge <slug>');
   const slug = typeof p.slug === 'string' ? p.slug : '';
-  if (!slug) throw opError('invalid_params', 'unpurge needs a slug.', 'Pass the slug gbrain pages purges list shows.');
+  if (!slug) throw opError('invalid_params', 'unpurge needs a slug.', 'Pass the slug foresights pages purges list shows.');
   const sourceId = typeof p.source_id === 'string' ? p.source_id : ctx.sourceId ?? 'default';
   return ctx.engine.transaction(async tx => {
     await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
@@ -533,7 +533,7 @@ export async function unpurgePage(ctx: OperationContext, p: Record<string, unkno
     const facts = requests.length ? (await tx.executeRaw('DELETE FROM fact_purges WHERE source_id=$1 AND request_id=ANY($2::uuid[]) RETURNING 1', [sourceId, requests])).length : 0;
     const takes = requests.length ? (await tx.executeRaw('DELETE FROM take_purges WHERE source_id=$1 AND request_id=ANY($2::uuid[]) RETURNING 1', [sourceId, requests])).length : 0;
     return { slug, source_id: sourceId, cleared: cleared.length, fact_tombstones_cleared: facts, take_tombstones_cleared: takes,
-      next: cleared.length ? `The next import of ${slug} with its old content is accepted (gbrain sync --source ${sourceId} --no-pull). Nothing was restored.` : `No purge tombstone is recorded for ${slug} in source ${sourceId}.` };
+      next: cleared.length ? `The next import of ${slug} with its old content is accepted (foresights sync --source ${sourceId} --no-pull). Nothing was restored.` : `No purge tombstone is recorded for ${slug} in source ${sourceId}.` };
   });
 }
 

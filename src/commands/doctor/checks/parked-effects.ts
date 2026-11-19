@@ -5,6 +5,7 @@ import type { WriteRequest } from '../../../core/persistence/model.ts';
 import { OperationError } from '../../../core/ops/contract.ts';
 import { authorizeStoredRequest } from '../../../core/persistence/authority.ts';
 import { indexLockReceiptPath, readIndexLockReclaims } from '../../../core/persistence/index-lock-reclaim.ts';
+import { commandText } from '../../../core/brand.ts';
 
 const RECLAIM_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -42,7 +43,7 @@ const SAMPLE = 20;
  * #5612: Git and withdrawal targets that failed five consecutive times are
  * parked instead of retried forever. Reads the partial `persistence_effects_parked`
  * index: an exact count plus a capped sample naming each page and its retry command.
- * Settled effects (#7423, #7378: `gbrain sources writer settle-effects`) are history and not counted.
+ * Settled effects (#7423, #7378: `foresights sources writer settle-effects`) are history and not counted.
  */
 export async function checkParkedEffects(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
   try {
@@ -57,15 +58,15 @@ export async function checkParkedEffects(engine: BrainEngine, sourceIds?: string
     for (const { request, former_binding: former, ...row } of rows) {
       // #7985: an effect of a former binding is never retried (the binding guard refuses it); its exit is the settle preview.
       const preview = former && row.kind === 'git'
-        ? `gbrain sources writer settle-effects ${row.source_id} --request-id ${request.request_id} --dry-run`
-        : `gbrain sources writer retry-effects ${row.source_id} --request-id ${request.request_id} --dry-run`;
+        ? `foresights sources writer settle-effects ${row.source_id} --request-id ${request.request_id} --dry-run`
+        : `foresights sources writer retry-effects ${row.source_id} --request-id ${request.request_id} --dry-run`;
       const revoked = await revokedAuthority(engine, request);
       // GBRA-133: a target a .gitignore rule excludes parks again on any retry while the rule stands; its group says what to change first.
       const ignored = row.parked.every(target => target.error_code === 'git_target_ignored');
       effects.push({ request_id: request.request_id, ...row, ...(former ? { former_binding: true } : {}), ...(ignored ? {} : { command: preview }), ...(revoked === null ? {} : {
         owner_revoked: revoked,
         exit: row.kind === 'git'
-          ? `the original writer is revoked; ask the user, then retry once under the brain owner's authority: gbrain sources writer retry-effects ${row.source_id} --request-id ${request.request_id} --admin-intent writer_retry_effects --expected-state <admin_state from gbrain sources writer status>`
+          ? `the original writer is revoked; ask the user, then retry once under the brain owner's authority: foresights sources writer retry-effects ${row.source_id} --request-id ${request.request_id} --admin-intent writer_retry_effects --expected-state <admin_state from foresights sources writer status>`
           : 'the original writer is revoked and a withdrawal is never retried under another authority; ask the user how to withdraw the page' }) });
     }
     const reclaims = recentIndexLockReclaims();
@@ -79,9 +80,9 @@ export async function checkParkedEffects(engine: BrainEngine, sourceIds?: string
       ...(stalled.length ? { stalled_catchups: stalled } : {}), ...(reclaims ? { index_lock_reclaims: reclaims } : {}) };
     const conflicts = pushHolds.filter(hold => hold.conflict);
     const pushNote = pushHolds.length ? ' Git backups not pushed: ' + pushHolds.map(hold => `${hold.source_id} ${hold.retrying} retrying, ${hold.parked} parked (${hold.codes.join(', ')})${hold.conflict
-      ? `, CONFLICT in ${hold.conflict.paths.join(', ')}: ask the user which version wins (${hold.fix.argv?.join(' ')})` : hold.parked ? `: ${hold.fix.argv?.join(' ')}` : ''}`).join(' | ') + '.' : '';
+      ? `, CONFLICT in ${hold.conflict.paths.join(', ')}: ask the user which version wins (${(hold.fix.argv ? commandText(hold.fix.argv) : undefined)})` : hold.parked ? `: ${(hold.fix.argv ? commandText(hold.fix.argv) : undefined)}` : ''}`).join(' | ') + '.' : '';
     const stalledNote = stalled.length ? ' Catch-up not progressing: ' + stalled.map(item => `${item.source_id} ${item.stalled_effects} effect(s) have waited on a busy canonical worktree since ${item.busy_since} `
-      + `(${item.busy_effects} waiting now, up to ${item.busy_retries} busy retries); see who holds it: ${item.fix.argv?.join(' ')}`).join(' | ') + '.' : '';
+      + `(${item.busy_effects} waiting now, up to ${item.busy_retries} busy retries); see who holds it: ${(item.fix.argv ? commandText(item.fix.argv) : undefined)}`).join(' | ') + '.' : '';
     if (!count && (conflicts.length || stalled.length)) return { name: 'parked_effects', status: 'warn', details,
       message: `No effect is parked yet, but ${conflicts.length ? 'Git backups are held by a conflict between this machine and the remote' : 'a backlog of effects is not moving'}.${pushNote}${stalledNote}` };
     if (!count) return { name: 'parked_effects', status: 'ok', message: `No Git or withdrawal effect is parked.${pushNote}${reclaims ? reclaimNote(reclaims) : ''}`, details };
@@ -90,7 +91,7 @@ export async function checkParkedEffects(engine: BrainEngine, sourceIds?: string
       `${target.slug ?? '(whole effect)'} (${target.error_code})`).join(', ')}; ${'exit' in effect ? effect.exit : effect.command ?? 'change the .gitignore rule first (see its group)'}`);
     return { name: 'parked_effects', status: 'warn', details,
       message: `${count} Git, withdrawal or embedding effect(s) have parked targets after repeated failures; their withdrawal, Git backup or vectors are incomplete. ` +
-        `Inspect \`gbrain sources writer status <source>\`. ${grouped.length ? `Per source and code: ${grouped.join(' | ')}. ` : ''}Per effect, fix the cause, preview with the command shown, then rerun it without --dry-run to authorize one more attempt: ${listed.join(' | ')}` +
+        `Inspect \`foresights sources writer status <source>\`. ${grouped.length ? `Per source and code: ${grouped.join(' | ')}. ` : ''}Per effect, fix the cause, preview with the command shown, then rerun it without --dry-run to authorize one more attempt: ${listed.join(' | ')}` +
         (count > rows.length ? ` (first ${rows.length} of ${count} shown)` : '') +
         (effects.some(effect => effect.parked.some(target => target.error_code === 'git_target_pending'))
           ? '. git_target_pending: Git still lists a removed page file in the index; on Windows close the program holding it open (a sync watcher, indexer or antivirus), check with `git -c core.fscache=false status` on the brain host, then run the retry command.' : '') +

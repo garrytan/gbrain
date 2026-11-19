@@ -3,11 +3,11 @@
  * per-lock break hints. First coverage of this check's hint dispatch:
  *
  *   - cycle locks (`gbrain-cycle`, `gbrain-cycle:<source>`) point at
- *     `gbrain doctor --fix`. The removed hint `gbrain dream --break-lock`
+ *     `foresights doctor --fix`. The removed hint `foresights dream --break-lock`
  *     must NEVER come back: dream never implemented the flag, so a pasting
  *     operator ran a full (paid) dream cycle instead of breaking a lock.
  *   - sync locks (`gbrain-sync:<source>`) get the paste-ready
- *     `gbrain sync --break-lock --source <source>` command.
+ *     `foresights sync --break-lock --source <source>` command.
  *   - any other lock id falls back to the swept-at-next-acquire text.
  *
  * Runs without opts.fix so no reaping happens — the hints render for rows
@@ -64,7 +64,7 @@ describe('checkStaleLocks — per-lock break hints', () => {
     expect(check.status).toBe('warn');
     expect(check.message).toContain('gbrain-cycle');
     expect(check.message).toContain('gbrain-cycle:src');
-    expect(check.message).toContain('gbrain doctor --fix');
+    expect(check.message).toContain('foresights doctor --fix');
     // The circular hint that ran a full paid dream cycle when pasted.
     expect(check.message).not.toContain('dream --break-lock');
   });
@@ -73,7 +73,7 @@ describe('checkStaleLocks — per-lock break hints', () => {
     await seedStaleLock('gbrain-sync:foo');
     const check = await checkStaleLocks(engine as unknown as BrainEngine);
     expect(check.status).toBe('warn');
-    expect(check.message).toContain('gbrain sync --break-lock --source foo');
+    expect(check.message).toContain('foresights sync --break-lock --source foo');
   });
 
   it('any other stale lock id falls back to the swept-at-next-acquire text', async () => {

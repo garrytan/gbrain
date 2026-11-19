@@ -267,7 +267,7 @@ async function planEntity(
       const same = (t: string) => t.normalize('NFC').trim().toLowerCase();
       if (legacyPage && same(legacyPage.title ?? '') === same(request.entityName)) { slug = legacySlug; existingPage = legacyPage; legacyFound = true; }
     }
-    // An over-budget name an older gbrain minted at its cut slug with no hash tag; that slug is shared by every name with the same prefix.
+    // An over-budget name an older foresights minted at its cut slug with no hash tag; that slug is shared by every name with the same prefix.
     const untagged = `${prefix}/${portableSegment(base, true, request.entityType)}`;
     if (!legacyFound && !existingPage && untagged !== candidateSlug) {
       const untaggedSlug = await engine.resolveSlugWithAlias(untagged, sourceId);
@@ -359,7 +359,7 @@ async function planEntity(
       // must never regress the batch — the pre-#3994 direct write still
       // produces a page (unchunked, but present + reviewable). Warn loudly:
       // silence here would hide that the stub is invisible to vector recall
-      // until the next `gbrain embed --stale` / re-import sweep.
+      // until the next `foresights embed --stale` / re-import sweep.
       process.stderr.write(
         `[enrich] import pipeline failed for stub ${slug} (${e instanceof Error ? e.message : String(e)}); ` +
         'falling back to a direct unchunked write — the page exists but is not chunked/embedded until re-imported.\n',

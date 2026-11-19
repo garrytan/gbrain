@@ -43,13 +43,13 @@ export interface BootstrapDisplayResult {
 const FRAME_HEADER = `══════════════════════════════════════════════════════════════════════
  BOOTSTRAP STEPS (read-only — agent decides what to run)
 ══════════════════════════════════════════════════════════════════════
-These are SUGGESTED next steps from the skillpack author. gbrain
+These are SUGGESTED next steps from the skillpack author. foresights
 deliberately does NOT auto-execute them — third-party packs run in
 trusted-path mode and an automated walker would let a malicious pack
 mutate your brain on install.
 
 Read each step. Run what you understand. Skip what you don't. Use
-\`gbrain skillpack reference <name>\` later if you want to see what
+\`foresights skillpack reference <name>\` later if you want to see what
 the author changed in a new version.
 ══════════════════════════════════════════════════════════════════════
 `;

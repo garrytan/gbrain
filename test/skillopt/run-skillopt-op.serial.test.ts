@@ -128,11 +128,11 @@ describe('run_skillopt remote allowlist (default deny-all)', () => {
 
   test('the op result carries the receipt diagnostics (remediation, resume command) unchanged', async () => {
     const remediation = [{ code: 'reflect_truncated', fix: 'raise the cap', docs: 'docs/guides/skillopt.md#reflect_truncated' }];
-    stubReceipt = { outcome: 'errored', remediation, resume_command: 'gbrain skillopt test-skill --resume r1' };
+    stubReceipt = { outcome: 'errored', remediation, resume_command: 'foresights skillopt test-skill --resume r1' };
     try {
       const res = await run_skillopt.handler(ctxOf({ remote: false }), { skill_name: 'test-skill' }) as { receipt?: Record<string, unknown> };
       expect(res.receipt?.remediation).toEqual(remediation);
-      expect(res.receipt?.resume_command).toBe('gbrain skillopt test-skill --resume r1');
+      expect(res.receipt?.resume_command).toBe('foresights skillopt test-skill --resume r1');
     } finally {
       stubReceipt = null;
     }

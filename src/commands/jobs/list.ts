@@ -1,4 +1,4 @@
-/** `gbrain jobs list` (dispatched by runJobs in src/commands/jobs.ts). */
+/** `foresights jobs list` (dispatched by runJobs in src/commands/jobs.ts). */
 import { formatJob, hasFlag, parseFlag, rehydrateJobDates, type JobsCommandContext } from './shared.ts';
 import type { MinionJob, MinionJobStatus } from '../../core/minions/types.ts';
 import { isThinClient, loadConfig } from '../../core/config.ts';
@@ -91,7 +91,7 @@ async function listFinishedSince(engine: JobsCommandContext['engine'], since: st
   }
   if (json) { console.log(JSON.stringify(page, null, 2)); return; }
   for (const job of page.jobs) console.log(`${formatJob(job)} ${job.finished_at instanceof Date ? job.finished_at.toISOString() : ''}`);
-  console.log(`\n  ${page.jobs.length} finished jobs. Next: gbrain jobs list --finished-since ${page.next_cursor}`);
+  console.log(`\n  ${page.jobs.length} finished jobs. Next: foresights jobs list --finished-since ${page.next_cursor}`);
 }
 
 /** `jobs list --group <id>`: one spend group's record, amounts and member jobs. */
@@ -112,5 +112,5 @@ async function listSpendGroup(engine: JobsCommandContext['engine'], groupId: str
   console.log(`Spend group ${groupId}: ${record!.command}, ${record!.uncapped ? 'uncapped' : `$${record!.cap_usd!.toFixed(2)} ${record!.cap_source} cap`}`
     + (amounts ? `; spent $${amounts.spent_usd.toFixed(2)}, reserved $${amounts.reserved_usd.toFixed(2)}${amounts.remaining_usd === null ? '' : `, remaining $${amounts.remaining_usd.toFixed(2)}`}` : ''));
   for (const job of jobs) console.log(formatJob(job));
-  console.log(`\n  ${jobs.length} jobs. Cancel the unfinished ones with: gbrain jobs cancel --group ${groupId}`);
+  console.log(`\n  ${jobs.length} jobs. Cancel the unfinished ones with: foresights jobs cancel --group ${groupId}`);
 }

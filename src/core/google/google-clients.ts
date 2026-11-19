@@ -67,7 +67,7 @@ const RATE_LIMIT_BACKOFF_CAP_MS = 60_000;
 /**
  * Exponential backoff with EQUAL jitter (half fixed, half random), capped at
  * RATE_LIMIT_BACKOFF_CAP_MS. Only used when Google didn't send Retry-After —
- * jitter avoids many gbrain processes hitting the same per-user/per-project
+ * jitter avoids many foresights processes hitting the same per-user/per-project
  * quota resynchronizing their retries in lockstep.
  */
 export function rateLimitBackoffMs(attempt: number): number {
@@ -619,7 +619,7 @@ export class CalendarClient extends GoogleApiClient {
       signal?: AbortSignal;
       /** Calendar to sweep. Defaults to DEFAULT_CALENDAR_ID. A secondary calendar id is
        *  an address like `...@group.calendar.google.com`; each calendar gets
-       *  its OWN gbrain source so their sync tokens never collide. */
+       *  its OWN foresights source so their sync tokens never collide. */
       calendarId?: string;
     },
   ): Promise<{ events: CalendarEventData[]; nextSyncToken: string | null }> {

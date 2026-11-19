@@ -124,7 +124,7 @@ describe('agent register live-serve + duplicate-name refusals (real PGLite brain
     expect(dupDoc.message).toContain(firstDoc.client_id);
     expect(dupDoc.message).toContain('--reissue');
 
-    // Live PGLite serve: spawn `gbrain serve` (stdio) so it takes the
+    // Live PGLite serve: spawn `foresights serve` (stdio) so it takes the
     // single-writer lock, then register must refuse PRE-connect with the
     // typed pglite_live_serve reason (never a 30s lock hang — enforce with
     // a wall-clock ceiling well under the lock timeout).

@@ -1,5 +1,5 @@
 <!-- /autoplan restore point: "/home/user/.gstack/projects/garrytan-gbrain/feat-system-one-v1-autoplan-restore-20260930-164146.md" -->
-# System One v1: Jev decision support in GBrain
+# System One v1: Jev decision support in Foresights
 
 Status: plan, reviewed by /autoplan on 2026-09-30 (CEO, DX, Eng; Design skipped, no UI). All recommendations applied per the owner's accept-all instruction; implementation not started. Baseline: master @ 6c8373c (v0.60.13.0).
 Delivery: ONE integrated PR, one PATCH version bump, one CHANGELOG entry (owner's standing rule for waves).
@@ -8,7 +8,7 @@ Delivery: ONE integrated PR, one PATCH version bump, one CHANGELOG entry (owner'
 
 ### Problem
 
-GBrain makes hundreds of small fuzzy judgments per query and per dream cycle. Each one is either a hand-tuned
+Foresights makes hundreds of small fuzzy judgments per query and per dream cycle. Each one is either a hand-tuned
 rule (regex intent, score-cliff autocut, reflex name matching) or a full chat-model call (dream triage, the modality
 tie-break). Rules miss what they were not written for. Chat calls are
 slow, cost real money per call, and return free text that code has to parse.
@@ -23,7 +23,7 @@ distribution (`choice`), or a bounded rubric score (`score`). Measured facts we 
   and account-wide rate limits that TypeSafe says adjust dynamically (published figures differ by source and
   date: 100K tokens/s and 40 requests/s in the compendium, 250K tokens/s and 1,200 requests/minute in a
   2026-09-20 write-up). Aliases move; the response's `model` names the version that answered.
-- GBRA-4 (2026-09-18, 404 queries, 5,000 procedure traces): on the same GBrain candidate pool, adding Jev ranking
+- GBRA-4 (2026-09-18, 404 queries, 5,000 procedure traces): on the same Foresights candidate pool, adding Jev ranking
   raised Recall@1 from 20.8% to 33.2% and ranked the target first in all 134 queries where it was present. The other
   270 misses were candidate-generation misses. Jev fixes judgment, not recall.
 - PR #5178 (community, open): a working native Jev reranker adapter with context packing, bounded concurrency and
@@ -45,7 +45,7 @@ entity and visibility, cosine at least 0.95, same kind supersedes; the LLM class
 
 ### Goal and success criteria
 
-Add one `decide` capability to GBrain and wire it into nine decision slots, so every fuzzy judgment can come from
+Add one `decide` capability to Foresights and wire it into nine decision slots, so every fuzzy judgment can come from
 Jev (fast, cheap, calibrated) or from the configured chat model (no new vendor), with code owning every threshold.
 
 - (a) With every slot `off` (the default), behavior is byte-identical: existing goldens, BrainBench rows and the
@@ -59,7 +59,7 @@ Jev (fast, cheap, calibrated) or from the configured chat model (no new vendor),
   correctness labels; thresholds come from labelled datasets or the bundled reference calibrations.
 - (c) A slot in `on` mode uses a threshold from a stored calibration for the exact resolved model id, or an explicit
   operator override. If the provider answers with a different model id than the calibration's, the slot demotes
-  itself to off behavior (today's path) for that call, writes a receipt, and `gbrain doctor` warns (drift protection).
+  itself to off behavior (today's path) for that call, writes a receipt, and `foresights doctor` warns (drift protection).
 - (d) Every slot fails the documented direction: retrieval, context and triage slots fail open to today's path;
   no slot can weaken an existing deterministic floor (verbatim quotes, numbers, visibility, trust).
 - (e) Each slot ships with a matched baseline-vs-feature eval run and a recorded verdict (win / no measurable
@@ -134,8 +134,8 @@ Garry, after reviewing the ELI10: "we should just have on and off as the main th
 recommended." This overrides every earlier statement in this document that presents shadow as the default,
 recommended or first step:
 
-- The user-facing model is two states per slot: `off` (today's behavior) and `on` (GBrain acts on the decision).
-  `gbrain decide enable <slot>` turns a slot on; `disable` turns it off. `enable --recommended` turns on the slots
+- The user-facing model is two states per slot: `off` (today's behavior) and `on` (Foresights acts on the decision).
+  `foresights decide enable <slot>` turns a slot on; `disable` turns it off. `enable --recommended` turns on the slots
   with a recorded win and a passing reference calibration.
 - `shadow` stays as an advanced diagnostics mode (`enable --shadow`, `mode shadow`), documented only under an
   "Advanced diagnostics" heading in the operator guide. No doc, readiness string, doctor hint or quickstart step
@@ -160,7 +160,7 @@ off)." This amends "all default off" for the measured winners only:
   S9), as a documented default; nothing is written to config. Private-page and derived-page rules and
   `deny_sources` are unchanged, and the defaults never send pages.
 - Explicit settings win: the slot's mode or provider, `decide.provider none`, an explicit
-  `decide.egress.private deny`, a `deny` on the slot's consent key, `gbrain decide disable <slot>|--all`. Eval runs
+  `decide.egress.private deny`, a `deny` on the slot's consent key, `foresights decide disable <slot>|--all`. Eval runs
   never use the defaults.
 - `decide status` and doctor `decide_health` show `on (default: Jev key present)` and name the opt-out.
 
@@ -191,7 +191,7 @@ decide.slots.recall_needed.suppress_below  0.05   (2026-09-30: default raised to
 decide.egress.typesafe.<class>  deny | allow  (class: query, candidates, facts, conversation; written by
                              `decide enable` after it shows what leaves the machine)
 (receipt HMAC salt: 32 random bytes generated on first receipt write, stored in the brain config table under an
- internal key that `gbrain config get/list` never prints)
+ internal key that `foresights config get/list` never prints)
 ```
 
 Slots: `rerank`, `intent`, `evidence`, `answerable`, `injection`, `recall_needed`, `triage`, `grounding`, `conflict`.
@@ -276,53 +276,53 @@ false-quarantine rate.
 **S9 `conflict` (hot-memory contradiction).** The fact write path stays zero-LLM and unchanged. S9 is an async
 sweep over facts written since its last run, executed as a tail step of the existing `extract_facts` cycle phase
 only when the slot is not off (so the phase list and all-off output are unchanged), and on demand with
-`gbrain decide sweep --slot conflict`. For each new fact it takes the `findCandidateDuplicates` neighbours (k=5)
+`foresights decide sweep --slot conflict`. For each new fact it takes the `findCandidateDuplicates` neighbours (k=5)
 with cosine at least 0.80 that pass the same guards `decideSingleFact` applies (same source, entity and
 visibility, active, and a candidate `source_markdown_slug`, when set, equal to the new fact's `entity_slug`) and sends one packed request: state = the new fact, one `choice` per
 candidate (`duplicate | supersede | independent`).
 Sweep outcomes, the proposal rule and the `decide_proposals` table follow the accepted CEO requirements: v1
-never supersedes automatically, the new fact stays as written, and `gbrain decide proposals accept <id>` applies it through the existing supersede write path (local CLI
+never supersedes automatically, the new fact stays as written, and `foresights decide proposals accept <id>` applies it through the existing supersede write path (local CLI
 only). Requires `decide.egress.private=allow` for Jev when facts come from conversations.
 *Eval:* a labelled contradiction probe set (the hot-memory classifier fixtures plus the suspected-contradictions
 probes): agreement with labels versus today's cosine rule, contradictions found that the cosine rule misses,
 wrong-supersede rate (must not rise), cost per swept fact.
 
-**Judge harness (eval-only).** `gbrain decide judge-agreement --suite <suite>` runs Jev as a judge (groundedness,
+**Judge harness (eval-only).** `foresights decide judge-agreement --suite <suite>` runs Jev as a judge (groundedness,
 coverage) beside the existing LLM judge on a labelled set and reports Cohen's kappa. No runtime substitution in v1.
 
 ### CLI, doctor and ops
 
-New CLI-only command `gbrain decide` (`src/commands/decide.ts`, dispatch in `src/cli/commands/decide.ts`,
+New CLI-only command `foresights decide` (`src/commands/decide.ts`, dispatch in `src/cli/commands/decide.ts`,
 `CLI_COMMANDS` record, post-connect):
 
-- `gbrain decide status [--json]`: provider, resolved model, egress settings, each slot's mode, calibration row
+- `foresights decide status [--json]`: provider, resolved model, egress settings, each slot's mode, calibration row
   and effective threshold, 24-hour receipt counts, error rate and spend.
-- `gbrain decide probe [--query <q>]`: works with only a key (pinned default provider); one tiny live request that
+- `foresights decide probe [--query <q>]`: works with only a key (pinned default provider); one tiny live request that
   prints resolved model, latency, cost and the next command to run; sends no brain content unless `--query` is given,
   which previews S1 and S3 on one query of your brain after the egress summary and confirmation, changing nothing.
-- `gbrain decide enable <slot>` (turns the slot on; advanced `--shadow` for a diagnostics-only dry run),
-  `gbrain decide enable --recommended`, and
-  `gbrain decide disable <slot>|--all`: write every key the slot needs (pinned provider, consent keys, mode) in one
+- `foresights decide enable <slot>` (turns the slot on; advanced `--shadow` for a diagnostics-only dry run),
+  `foresights decide enable --recommended`, and
+  `foresights decide disable <slot>|--all`: write every key the slot needs (pinned provider, consent keys, mode) in one
   confirmed step after a plain summary of what data leaves the machine and the estimated cost, then print the
   requested versus effective mode.
-- `gbrain decide calibrate --slot <slot> --dataset <jsonl> [--target precision|recall|f1] [--min <x>]`: runs the
+- `foresights decide calibrate --slot <slot> --dataset <jsonl> [--target precision|recall|f1] [--min <x>]`: runs the
   slot's questions over a labelled dataset, picks the threshold, prints a reliability table and ECE, stores a
   `decide_calibrations` row. `--dry-run` estimates cost first; `--call-site <site>` selects the call site (default:
   the slot's only site).
-- `gbrain decide qualify --slot <slot> [--call-site <site>] --dataset <jsonl>`: evaluates the newest calibration on
+- `foresights decide qualify --slot <slot> [--call-site <site>] --dataset <jsonl>`: evaluates the newest calibration on
   the eval half, stores `action_precision_lb` and per-slice results as its qualification, and prints the exact
   activation command or the catalogued refusal reason.
-- `gbrain decide dataset --slot <slot> --from <longmemeval|brainbench|cat35|facts-fixtures|injection-fixtures|know-to-ask|grounding-labels> <path>`: builds the
+- `foresights decide dataset --slot <slot> --from <longmemeval|brainbench|cat35|facts-fixtures|injection-fixtures|know-to-ask|grounding-labels> <path>`: builds the
   labelled datasets the calibrations and evals use.
-- `gbrain decide receipts [--slot] [--since]`: aggregate stats only (counts, outcome mix, p distribution, latency).
-- `gbrain decide proposals [list|accept|reject]` for S9.
-- `gbrain decide judge-agreement --suite <suite>`: the eval-only judge harness.
+- `foresights decide receipts [--slot] [--since]`: aggregate stats only (counts, outcome mix, p distribution, latency).
+- `foresights decide proposals [list|accept|reject]` for S9.
+- `foresights decide judge-agreement --suite <suite>`: the eval-only judge harness.
 
 Doctor check `decide_health` (new topic module `src/commands/doctor/checks/decide.ts`): key present when a Jev
 provider is set; alias in use; slots `on` without calibration; calibration model differs from recently resolved
 model (drift); 24-hour error rate over 5%; daily budget exhausted; egress denials counted.
 
-Eval integration: `gbrain eval longmemeval`, `eval brainbench` and `eval retrieval-quality` accept
+Eval integration: `foresights eval longmemeval`, `eval brainbench` and `eval retrieval-quality` accept
 `--decide <slot>=<mode>` (repeatable) so matched runs differ only in the slot under test.
 
 ### Migrations
@@ -336,7 +336,7 @@ Eval integration: `gbrain eval longmemeval`, `eval brainbench` and `eval retriev
   `(status, created_at)`.
 - No data backfill. No config migration: all keys are new and default off.
 - Agent upgrade note `skills/migrations/v0.60.<patch>.md`: nothing changes until the operator opts in; how to try
-  `gbrain decide enable --recommended`; where the docs live.
+  `foresights decide enable --recommended`; where the docs live.
 
 ### Docs
 
@@ -420,7 +420,7 @@ security boundary.
   behaves as `off` and doctor warns. There is no calibration row and no drift demotion for rerank; a resolved model
   different from the pinned id is recorded, mixed ids within one decision fail it open, and doctor warns.
 - Decision stability (live probe 2026-09-30: identical requests returned 0.53 then 0.51, and 0.74 then 0.62;
-  re-packing moved one answer between 0.51 and 0.81): `gbrain decide calibrate` repeats each item 3 times on a
+  re-packing moved one answer between 0.51 and 0.81): `foresights decide calibrate` repeats each item 3 times on a
   sample of `decide.calibrate.retest_n` items (default 50), stores `retest_sd` and prints it. Every
   harmful-direction decision (S3 prune, S4 abstain, S6 suppress, S7 fail, S8 quarantine) whose answer lies within
   `max(0.05, 2 * retest_sd)` of the threshold on the harmful side takes the no-change outcome and is recorded as
@@ -451,7 +451,7 @@ security boundary.
   with an alias configured it uses the model id most recently resolved in receipts. After the response, a
   different resolved id demotes that call to shadow. An operator threshold override is never demoted; doctor lists
   it as an uncalibrated override.
-- Calibration holdout: `gbrain decide dataset` writes a frozen calibrate/eval split for every dataset (default
+- Calibration holdout: `foresights decide dataset` writes a frozen calibrate/eval split for every dataset (default
   50/50 by a stable hash of the item id) and records its `split_hash`. `decide calibrate` reads only the calibrate
   half and stores `split_hash`, `calibrate_ids_hash` and `calibrate_only = true`. Eval runs with `--decide` refuse
   (non-zero exit, named reason) any calibration whose `split_hash` differs from the eval split or whose
@@ -461,7 +461,7 @@ security boundary.
   label set is a hand-labelled sample of at least 200 claim units from Cat 35 dream pages, committed under
   `docs/eval/system-one/` with generic placeholders only.
 - S9 sweep scope: a per-source watermark (last swept fact id) lives under an internal config key. The first run
-  starts at the current maximum fact id unless `gbrain decide sweep --slot conflict --since <fact id>` is given, so
+  starts at the current maximum fact id unless `foresights decide sweep --slot conflict --since <fact id>` is given, so
   enabling the slot never sweeps the whole history silently. Facts with no embedding or no `entity_slug` are
   skipped with a receipt reason (`no_embedding`, `no_entity`). Candidate guards quote `decideSingleFact`: same
   source, entity and visibility, active and not expired, and a candidate `source_markdown_slug` (when set) equal to
@@ -473,7 +473,7 @@ security boundary.
   The new fact stays as written. Everything else is independent. In shadow, receipts only. Proposals live in a new
   table `decide_proposals` (`id, created_at, source_id, new_fact_id, old_fact_id, p_supersede, threshold,
   proposal_floor, model_resolved, status pending|accepted|rejected|stale, decided_at`), never pruned by receipt
-  retention. `gbrain decide proposals accept <id>` rechecks that both facts are still active and share source,
+  retention. `foresights decide proposals accept <id>` rechecks that both facts are still active and share source,
   entity and visibility (else marks `stale`), then supersedes old with new through `expireSuperseded` in
   `src/core/facts/write-single.ts`, exported for this use, which sets `superseded_by` and strikes the old line in
   the page's `## Facts` fence; `reject` marks it rejected; accepted proposals are reversible with the existing
@@ -534,7 +534,7 @@ security boundary.
   slot whose fallback has no calibration treats those items as shadow.
 - Egress consent contract (one rule for every path): a provider receives a data class (query text, candidate page
   text, fact text, conversation text) only with consent for that provider. For decide slots, consent is the
-  `decide.egress.typesafe.<class>` keys that `gbrain decide enable` writes after showing exactly what leaves the
+  `decide.egress.typesafe.<class>` keys that `foresights decide enable` writes after showing exactly what leaves the
   machine; the `llm:` provider inherits today's chat consent. For S1 `on`, configuring `search.reranker.model
   typesafe:*` is the consent for query and candidate text, as it is for Voyage today, and `decide status` shows it.
   S1 shadow and every fallback use the decide consent keys. `decide.egress.deny_sources` applies to every provider
@@ -557,7 +557,7 @@ security boundary.
   reorders the remaining measurement plan.
 - Reference calibrations and a recommended configuration (both CEO voices): the maintainer's eval runs produce
   reference calibration rows (per slot, call site, model and `pack_shape`, with dataset and split hashes), shipped
-  in the binary as a static table and used when a brain has no local row; a local row always wins. `gbrain decide
+  in the binary as a static table and used when a brain has no local row; a local row always wins. `foresights decide
   enable --recommended` enables exactly the slots whose recorded verdict is a win and whose reference calibration
   passes `min_action_precision`, after showing the egress summary. A reserved share of the eval budget (at most
   $10 of the $40) runs that recommended configuration end to end (answer quality, retained useful memory, full
@@ -578,7 +578,7 @@ security boundary.
 - Pinned-model retirement: a 404 or "model unavailable" for a pinned id is a provider failure (fail direction
   applies), surfaced by doctor as a named error with the recovery step (repin, then recalibrate or use a
   reference calibration for the new id).
-- `GBRAIN_DECIDE_SLOTS` is honored only by eval commands and by `gbrain dream --eval-run`; it never bypasses the
+- `GBRAIN_DECIDE_SLOTS` is honored only by eval commands and by `foresights dream --eval-run`; it never bypasses the
   consent keys, the egress gate or the daily cap.
 - Positioning: `docs/architecture/decide.md` and the guide present the durable asset as a provider-agnostic
   decision layer (receipts, calibration, drift, egress) with Jev as the first provider.
@@ -597,10 +597,10 @@ security boundary.
   value, fails that logical decision with `error_reason=malformed_response` and takes the fail direction; partial
   answers are never used. Receipts also carry `call_site` so deadline success rates per call site come from receipts.
 - Config and CLI hygiene: every `decide.*` key is registered with validation (enums, numeric ranges) in the config
-  key registry. `gbrain decide enable` refuses S6, S7, S8 or S9 on the Jev provider while `decide.egress.private` is
-  `deny`, naming the key to change. The `gbrain decide` command table record uses `thinClient: 'refuse'`. The
+  key registry. `foresights decide enable` refuses S6, S7, S8 or S9 on the Jev provider while `decide.egress.private` is
+  `deny`, naming the key to change. The `foresights decide` command table record uses `thinClient: 'refuse'`. The
   receipt HMAC salt is written insert-if-absent and re-read, so concurrent processes agree.
-- `gbrain decide sweep --slot conflict` runs the S9 sweep on demand (local CLI only) and prints the counts of
+- `foresights decide sweep --slot conflict` runs the S9 sweep on demand (local CLI only) and prints the counts of
   duplicates, proposals written, independents and skipped facts.
 - Module-size ratchets: new logic lives in new modules (`src/core/ai/decide/*`, search stage modules, cycle
   helpers). Facades at or near their ceilings today that this plan touches (`gateway.ts`, `synthesize.ts`, `cli.ts`,
@@ -609,20 +609,20 @@ security boundary.
 - Migrations take the next free numbers at build time (v179-v181 today) because GBRA-25, GBRA-27 and GBRA-31 are
   active. The keyed live test skips unless `GBRAIN_LIVE_TYPESAFE=1` and a TypeSafe key are set, following the
   repo's keyed-test skip convention, so the default `bun test` never calls the provider.
-- `gbrain decide judge-agreement --suite` accepts the existing LLM-judge suites that have labelled sets (the
+- `foresights decide judge-agreement --suite` accepts the existing LLM-judge suites that have labelled sets (the
   LongMemEval answer judge and the dream grounding judge).
 - Eval budget rule: the $40 paid ceiling holds. Slots are measured in the plan's expected-value order; a slot not
   measured when the budget runs out gets the recorded verdict `not measured`, stays experimental, and is named as
   such in the CHANGELOG. No slot's verdict is inferred from another slot's run.
-- `gbrain decide receipts --slot <slot> --what-if-threshold <t>` recomputes the outcome mix a different threshold
+- `foresights decide receipts --slot <slot> --what-if-threshold <t>` recomputes the outcome mix a different threshold
   would have produced from stored `answer_value`, `decision_id`, `protected`, `rank` and `min_keep`, with no
   provider call. The S3 survivor rule is: protected items stay, above-threshold items stay, then the best-ranked
   pruned items return until `min_keep` is met. Covered by a CLI test on seeded receipts, including a case where
   `min_keep` binds.
-- When any slot ran in shadow or on, `gbrain query --explain` prints one line per slot: mode, provider and
+- When any slot ran in shadow or on, `foresights query --explain` prints one line per slot: mode, provider and
   resolved model, answer summary, threshold and outcome. With all slots off, explain output is byte-identical to
   today (golden).
-- `gbrain decide status` prints a per-slot readiness line computed from local state only (`off`,
+- `foresights decide status` prints a per-slot readiness line computed from local state only (`off`,
   `shadow: N receipts, needs calibration`, `calibrated for <model>, ready for on`, `on`, `on (drift: demoted to
   shadow)`) and an estimated cost per unit for the enabled slots: per 1,000 queries (S1-S5), 1,000 turns (S6),
   1,000 transcripts (S7), 1,000 dream pages (S8) and 1,000 swept facts (S9), from the last 24 hours of receipts or,
@@ -636,19 +636,19 @@ security boundary.
 
 <!-- autoplan-accepted:dx -->
 - Quickstart and time to first decision (target under 5 minutes from a key in hand, probe under 2 minutes):
-  `docs/guides/system-one.md` opens with one copy-paste block: `export TYPESAFE_API_KEY=...`, `gbrain decide
-  probe` (works with only a key and prints the next command), `gbrain decide probe --query "<a question your brain
+  `docs/guides/system-one.md` opens with one copy-paste block: `export TYPESAFE_API_KEY=...`, `foresights decide
+  probe` (works with only a key and prints the next command), `foresights decide probe --query "<a question your brain
   can answer>"` (the magical moment: Jev's evidence probability for each result and its rerank order next to
-  today's, on your own brain, changing nothing), `gbrain decide enable --recommended` (or `gbrain decide enable
-  evidence` for shadow), then `gbrain decide status`, each with its expected output. A CI test runs the block
+  today's, on your own brain, changing nothing), `foresights decide enable --recommended` (or `foresights decide enable
+  evidence` for shadow), then `foresights decide status`, each with its expected output. A CI test runs the block
   against a seeded PGLite brain with a fixture transport and asserts every documented output line; key
   acquisition time is reported separately in the guide.
-- Preconditions: `gbrain decide enable` with `decide.provider none` refuses with reason `no_provider` and the exact
+- Preconditions: `foresights decide enable` with `decide.provider none` refuses with reason `no_provider` and the exact
   command, unless `--provider <id>` is given, in which case it writes that provider. Every `enable` writes the
   resolved pinned id (never an alias) into the provider key, so a later binary that changes the default pin never
   moves an opted-in brain. `enable --recommended` with no qualifying slot prints "no slot has a recorded win for
   <model>; see docs/eval/system-one/" and exits non-zero without changing config.
-- Effective mode everywhere: `decide enable`, `decide status` and a post-set hook on `gbrain config set
+- Effective mode everywhere: `decide enable`, `decide status` and a post-set hook on `foresights config set
   decide.slots.*` print `requested: <mode> / effective: <mode> / cause: <reason> (<values>) / fix: <command> /
   docs: <anchor>` for every slot whose effective mode differs (drift, `pack_shape` mismatch, action-precision
   gate, uncalibrated fallback, S1 without a Jev reranker, budget, missing consent). `enable` exits non-zero when
@@ -669,17 +669,17 @@ security boundary.
 - Shadow diagnostics: async shadow adds no meta; `--explain` awaits shadow for that one query and prints the decide
   lines, and `shadow_wait on` does so for every query. A fail-open skip adds `meta.decide.<slot>.skipped: <reason>`
   to query meta and a line to `--explain`.
-- S1 consistency: `gbrain decide enable rerank --on` sets `search.reranker.model` to the pinned Jev id after the
-  confirmation, remembering the previous value, and `gbrain decide disable rerank` restores it, so disabling
+- S1 consistency: `foresights decide enable rerank --on` sets `search.reranker.model` to the pinned Jev id after the
+  confirmation, remembering the previous value, and `foresights decide disable rerank` restores it, so disabling
   reverses what enabling did. `decide status` prints S1's active reranker, whether Jev is being called, and which
   key supplied the credential.
 - Per-slot providers and egress fallback: `decide.slots.<slot>.provider` (inherits `decide.provider`) lets an
   operator run, for example, S3 on Jev and S7 on a local `llm:` model; `decide.fallback` is named
   `decide.egress_fallback` because it only handles egress-refused items. `enable` validates the effective route:
   S6-S9 are refused on Jev with private egress denied only when no permitted per-slot provider or egress fallback
-  can handle the refused data, and the refusal names every missing key at once. `gbrain decide status --egress`
+  can handle the refused data, and the refusal names every missing key at once. `foresights decide status --egress`
   prints a provider by data-class matrix with the key that decides each cell.
-- Qualification step: `gbrain decide qualify --slot <slot> [--call-site <site>] --dataset <jsonl>` evaluates the
+- Qualification step: `foresights decide qualify --slot <slot> [--call-site <site>] --dataset <jsonl>` evaluates the
   newest calibration on the eval half in isolation, stores `action_precision_lb` and per-slice results as its
   qualification, and prints the activation command or the refusal. `calibrate` accepts `--call-site`. The guide
   documents the dataset JSONL schema per slot with a five-line example. Tests cover dataset, calibrate, qualify,
@@ -687,18 +687,18 @@ security boundary.
 - Budget wording: `decide.budget.daily_usd` is documented as the budget for third-party decide slots; `enable` and
   `status` show covered spend and the excluded paths (S1 `on` under reranker controls, `llm:` under chat controls)
   with their effective limits.
-- Discoverability: `gbrain providers` shows a decide/rerank capability column for the TypeSafe recipe;
-  `gbrain decide --help` and every subcommand's help work without a configured brain (added to
-  `test/cli-help-without-brain.serial.test.ts`); the thin-client refusal says "`gbrain decide` runs on the brain
+- Discoverability: `foresights providers` shows a decide/rerank capability column for the TypeSafe recipe;
+  `foresights decide --help` and every subcommand's help work without a configured brain (added to
+  `test/cli-help-without-brain.serial.test.ts`); the thin-client refusal says "`foresights decide` runs on the brain
   host; run it there"; the guide is linked from `docs/guides/search-modes.md` and the provider docs; AGENTS.md
   "Common tasks" gets one bullet and `skills/RESOLVER.md` a route for enabling System One.
 - Upgrade safety: an enabled slot records the calibration it uses (local row id or reference id plus binary
   version). A new binary never silently switches an enabled slot to a newer reference calibration: `decide status`
-  shows "newer reference available" with the threshold change, and `gbrain decide calibrations list|adopt
+  shows "newer reference available" with the threshold change, and `foresights decide calibrations list|adopt
   <id>|retire <id>` adopts, retires or restores rows. The upgrade note in `skills/migrations/` says so.
 - Proposal review and undo (replaces the CEO requirement's reference to an existing fact restore path, which does
-  not exist at 6c8373c): `gbrain decide proposals list` shows both facts' text locally; `accept` and `reject` accept
-  `--all-from <sweep id>`; `gbrain decide proposals undo <id>` reverses an accepted proposal with a revision check
+  not exist at 6c8373c): `foresights decide proposals list` shows both facts' text locally; `accept` and `reject` accept
+  `--all-from <sweep id>`; `foresights decide proposals undo <id>` reverses an accepted proposal with a revision check
   (clears `superseded_by`, restores the struck `## Facts` fence line), refusing if either fact changed since.
   Tested across database state and the Markdown fence.
 - Machine-readable output: `--json` on `probe`, `enable`, `status`, `receipts`, `proposals list`, `calibrate`,
@@ -707,7 +707,7 @@ security boundary.
   `decide.slots.<slot>.force_on true` does, prints a warning on every `enable`/`status`, and doctor always lists
   it. `decide.max_concurrency` (default 16) and `decide.margin_floor` (default 0.05) are configurable;
   `docs/architecture/decide.md` has a "fixed by design versus configurable" table covering window size, window cap,
-  S4 k, S6 budgets and S8 window count. `gbrain decide disable --all` and `decide.provider none` stop every slot,
+  S4 k, S6 budgets and S8 window count. `foresights decide disable --all` and `decide.provider none` stop every slot,
   S1 shadow and the S9 sweep; the guide names both as the kill switch.
 - Contributor contract: `decide()` takes an explicit `callSite`, questions are a discriminated union (choice
   options, score levels), and `docs/architecture/decide.md` includes one complete custom-slot example covering both
@@ -880,7 +880,7 @@ Aside is not installed; WebSearch was used (read-only, sanitized queries).
   TypeSafe says they change without notice. English is the primary language; other scripts are "not equally well"
   handled, which matters for CJK brains.
 - Layer 3 (first principles): the known failure of gates is that a false negative is invisible and serial gates
-  compound (three 95% gates pass about 86%). GBrain's plan answers this with shadow receipts, min-keep floors and
+  compound (three 95% gates pass about 86%). Foresights's plan answers this with shadow receipts, min-keep floors and
   per-slot measured verdicts. The part the conventional wisdom misses: a cheap scorer changes the economics of
   candidate depth. When scoring 100 documents costs cents and under 2 s, the rerank slot can look much deeper than
   today's pool, which attacks the measured recall bottleneck directly (see E1).
@@ -899,7 +899,7 @@ calibration must use production's packing shape.
 
 #### 0A. Premise challenge
 
-- P1 "Jev is calibrated": partly. Its probabilities are calibrated to its own training tasks, not GBrain's
+- P1 "Jev is calibrated": partly. Its probabilities are calibrated to its own training tasks, not Foresights's
   questions. The plan already requires per-slot calibration for the exact resolved model before `on`. Accepted
   with that caveat.
 - P2 "One `decide` capability for nine slots is the right abstraction": valid. Packing, receipts, egress,
@@ -980,7 +980,7 @@ Keep): S5 injection (keep, taste: weakest slot, signal-only, but cheap because i
 grounding (keep), S2 intent (keep), judge harness (keep, eval-only). The owner's rule and the autoplan override
 ("reduce scope on a complete plan: no") decide the rest.
 
-10x check: the 10x version is a decision layer, not a reranker: GBrain stops encoding judgment in regexes and
+10x check: the 10x version is a decision layer, not a reranker: Foresights stops encoding judgment in regexes and
 prompts and instead asks typed questions, stores why it acted, and graduates each judgment on measured evidence.
 Platform potential: C4-C9 slots, a local provider and online calibration all reuse `decide()`.
 
@@ -1306,9 +1306,9 @@ deadline-realism obligation).
 
 **Section 9: Deployment & Rollout.** Migrations are additive `CREATE TABLE` plus indexes; no locks on existing
 tables; old binaries ignore the new tables. Rollout order: migrate on upgrade, all slots off, nothing changes.
-Feature flags: every slot is its own flag. Rollback: `gbrain decide disable <slot>` (instant), or downgrade the
-binary (tables remain, unused). Post-deploy check: `gbrain doctor` shows `decide_health` ok with provider `none`;
-`gbrain decide probe` only when a key is configured. Risk: concurrent GBRA threads allocating migration numbers,
+Feature flags: every slot is its own flag. Rollback: `foresights decide disable <slot>` (instant), or downgrade the
+binary (tables remain, unused). Post-deploy check: `foresights doctor` shows `decide_health` ok with provider `none`;
+`foresights decide probe` only when a key is configured. Risk: concurrent GBRA threads allocating migration numbers,
 handled by next-free numbering at build time.
 
 **Section 10: Long-Term Trajectory.** Debt: nine slots of upkeep across future search and dream refactors
@@ -1375,7 +1375,7 @@ insertion point), `resolve-ipc.ts` budgets (S6), `QueryIntent` (S2 search questi
 
 #### Dream state delta
 
-After this plan GBrain has the whole control plane (typed decisions, receipts, calibration with reference rows,
+After this plan Foresights has the whole control plane (typed decisions, receipts, calibration with reference rows,
 drift, consent, action-safety gates) and measured verdicts for as many slots as the budget allows, plus a measured
 answer to the recall question. Still short of the 12-month ideal: no default-on slots, no local provider, no online
 labels, and production candidate depth unchanged until the recall experiment's follow-up.
@@ -1412,7 +1412,7 @@ touched files were found to go stale at this stage (Eng re-audits code-level dia
   - Surfaced by: Slots section; SR2/SR3 seam fixes
   - Files: search/hybrid/*, search/rerank.ts, think/*, context/turn-context.ts, cycle/*, facts/write-single.ts
   - Verify: PGLite integration per call site; all-off golden unchanged
-- [ ] **T4 (P1, human: ~1.5d / CC: ~1.5h)** — CLI + doctor — `gbrain decide` subcommands incl. `--recommended`, `sweep`, what-if; `decide_health`
+- [ ] **T4 (P1, human: ~1.5d / CC: ~1.5h)** — CLI + doctor — `foresights decide` subcommands incl. `--recommended`, `sweep`, what-if; `decide_health`
   - Surfaced by: CLI section, E3-E5, UC3
   - Files: src/commands/decide.ts, src/cli/commands/decide.ts, src/cli/command-table.ts, src/commands/doctor/checks/decide.ts
   - Verify: CLI goldens, doctor goldens
@@ -1468,7 +1468,7 @@ Approval readiness: PASS. Checked rows CEO-D1, CEO-D2, CEO-A1, CEO-M, CEO-H1..H4
 launch-3 fixes, UC1-UC3 and the voice dispositions above; all approvals are autoplan auto-decisions under the
 owner's "accept all recommendations" instruction, User Challenges included per that instruction.
 
-<!-- autoplan-baseline-edits:ceo {"sourceSha256":"56762e6a997285ce1c9a9e32a81cc80641896cd087000e6631899755a9cbfea4","replacements":[{"oldText":"  100K tokens/s and 40 requests/s per account. Aliases move;","newText":"  and account-wide rate limits that TypeSafe says adjust dynamically (published figures differ by source and\n  date: 100K tokens/s and 40 requests/s in the compendium, 250K tokens/s and 1,200 requests/minute in a\n  2026-09-20 write-up). Aliases move;"},{"oldText":"  experimental. Default flips are out of scope for this PR and need a separate owner decision.","newText":"  experimental. A slot not measured within the paid eval budget records the verdict `not measured` and also stays\n  experimental. Default flips are out of scope for this PR and need a separate owner decision."},{"oldText":"   Config: `decide.provider` (default `none`), `decide.fallback` (`none` default, or `llm`).","newText":"   Config: `decide.provider` (default `none`), `decide.fallback` (`none` default, or `llm:<provider:model>`)."},{"oldText":"New table `decision_receipts` (schema migration). Row: `id, created_at, source_id, slot,","newText":"New table `decision_receipts` (schema migration). Row: `id, decision_id, created_at, source_id, slot,"},{"oldText":"'proposal'|'shadow'|'error'), subject_ref","newText":"'proposal'|'margin_hold'|'error'; shadow rows record the would-be outcome and `mode` says shadow), subject_ref"},{"oldText":"   error_reason`. No query,","newText":"   error_reason, protected, min_keep, rank, k_used` (`decision_id` groups all rows of one logical decision; `protected` marks\n   identity-evidence or floor-protected items so threshold what-ifs can be recomputed exactly). No query,"},{"oldText":"   (default 30), pruned by the existing maintenance cycle.","newText":"   (default 7), pruned by the cycle's existing `purge` phase."},{"oldText":"   metric_value, ece, n, dataset_hash, created_at, notes`.","newText":"   metric_value, ece, retest_sd, repack_sd, action_precision_lb, n, dataset_hash, split_hash, calibrate_ids_hash, calibrate_only, pack_shape,\n   call_site, created_at, notes`."},{"oldText":"decide.fallback              none | llm\n","newText":"decide.fallback              none | llm:<provider:model>\n"},{"oldText":"decide.slots.<slot>.min_keep   (slot-specific, where applicable)\n","newText":"decide.slots.<slot>.min_keep   (slot-specific, where applicable)\ndecide.slots.conflict.proposal_floor  0.50\ndecide.calibrate.retest_n    50  (items re-asked 3 times to measure retest_sd and repack_sd)\ndecide.slots.<slot>.min_action_precision  0.90  (harmful-direction slots)\ndecide.slots.<slot>.shadow_sample  1.0\ndecide.slots.<slot>.shadow_wait    off  (on: await shadow under on deadlines)\ndecide.slots.intent.wait_ms  150\ndecide.slots.recall_needed.suppress_below  0.05\ndecide.egress.typesafe.<class>  deny | allow  (class: query, candidates, facts, conversation; written by\n                             `decide enable` after it shows what leaves the machine)\n(receipt HMAC salt: 32 random bytes generated on first receipt write, stored in the brain config table under an\n internal key that `gbrain config get/list` never prints)\n"},{"oldText":"One `choice` over `temporal | knowledge_update | relational | exact_lookup |\nmulti_hop | other`, state = query only. Launched concurrently with query embedding so it adds no serial latency.\nIn `on` mode it replaces `classifyIntent()` in `think` and feeds the existing arm gates (`relational-recall`,\n`alias-hop`, `exact-lookup`, `date-bounds`, trajectory injection). Below-threshold confidence falls back to the\nregex classifier, which stays the default and the tie source.","newText":"S2 asks one `choice` question per call site, state = the query. Search: `entity | temporal | event | concept |\ngeneral` (the existing `QueryIntent`), launched at the start of `hybrid/request.ts` under a short wait bound; in `on`\nmode an above-threshold label replaces the intent that `classifyQueryWithBrainPatterns` returns, which drives the\nexisting intent weights and detail level. Think: `temporal | knowledge_update | other`, replacing `classifyIntent()`\n(which gates trajectory injection). Arms keep their own detectors; S2 never forces an arm. Below-threshold\nconfidence falls back to the regex classifiers, which stay the default and the tie source."},{"oldText":"`exact_lookup`, `exact_title_match`), never reorder.","newText":"`exact_lookup`, `exact_title_match`), never reorder (S5 is the only post-rerank slot that reorders)."},{"oldText":"In the same packed request: one `noul` over the retained set (\"can `query` be\nanswered from `evidence`?\").","newText":"Two call sites. For the `query` op it is its own request, launched concurrently with the S3/S5\npacked request and never co-packed with candidate questions: one `noul` over the pre-S3 top-k candidates (k = min(10, candidate count), shrunk until state plus the question fits 32k; `k_used`\nis recorded; fail open if k=1 overflows; not asked with zero candidates). Judging a superset of the retained set\nis conservative: it can only under-abstain. For `think` it is one separate call over think's final gathered\nevidence (same k rule), made after gather and before synthesis."},{"oldText":"are moved below clean candidates of equal evidence and wrapped","newText":"are moved below clean candidates of the same `classifyEvidence` class (never below the S3 `min_keep` cut) and wrapped"},{"oldText":"In the `hook user-prompt` path, before reflex resolution:","newText":"In serve's turn-context handler (`src/core/context/turn-context.ts`), which\nanswers the engine-free `hook user-prompt` over IPC, alongside reflex resolution:"},{"oldText":"very low and no exact alias hit exists. Respects the hook's hard self-deadline; on timeout the reflex path runs\nunchanged.","newText":"very low and no exact alias hit exists. Firing retrieval runs the one `search`-mode query defined in the accepted CEO\nrequirements, with the user prompt as the query. S6 runs concurrently with reflex resolution inside the\n400 ms server budget (`TURN_CONTEXT_SERVER_BUDGET_MS`) with its own deadline of at most 250 ms; fire/suppress is\napplied after both finish, and on timeout the reflex result stands unchanged."},{"oldText":"rescue band for the LLM path. Bumps `triage_version` so cached verdicts re-triage once.","newText":"rescue band for the LLM path. `TRIAGE_VERSION` is not bumped: the decide provider and resolved model join the\ntriage cache identity only when S7 is on, so upgrading with S7 off re-triages nothing."},{"oldText":"`gbrain decide proposals [list|accept|reject]` for S9.","newText":"`gbrain decide proposals [list|accept|reject]` for S9.\n- `gbrain decide judge-agreement --suite <suite>`: the eval-only judge harness."},{"oldText":"- Schema migration `v180-decide-calibrations`: `decide_calibrations` with index on `(slot, provider, model_resolved,\n  created_at desc)`.","newText":"- Schema migration `v180-decide-calibrations`: `decide_calibrations` (columns as in Architecture item 8, including\n  `retest_sd` and `split_hash`) with index on `(slot, provider, model_resolved, created_at desc)`.\n- Schema migration `v181-decide-proposals`: `decide_proposals` for S9 pending supersedes, with index on\n  `(status, created_at)`."},{"oldText":"abstention, hook user-prompt, dream triage,","newText":"abstention, serve turn-context for hook user-prompt, dream triage,"},{"oldText":"Runs go to Ubicloud. Each slot gets a matched pair","newText":"Runs go to Ubicloud. Each measured slot gets a matched pair"},{"oldText":"- Hot-path latency: intent runs concurrently with embedding; one packed post-fusion call; fail open at deadline.","newText":"- Hot-path latency: intent waits at most 150 ms; with S1 on Jev and any of S3-S5 on, the query path\n  makes two serial Jev stages (rerank, then the S3/S5 packed request with the S4 request concurrently), each\n  deadline-bound and failing open."},{"oldText":"At or above threshold the result is applied exactly as today's classifier result. A supersede verdict in\n`[proposal_floor, threshold)` is not applied; it writes a receipt with outcome `proposal`, reviewable with\n`gbrain decide proposals` and applied with `gbrain decide proposals accept <id>` through the existing supersede\nwrite path (local CLI only).","newText":"Sweep outcomes, the proposal rule and the `decide_proposals` table follow the accepted CEO requirements: v1\nnever supersedes automatically, the new fact stays as written, and `gbrain decide proposals accept <id>` applies it through the existing supersede write path (local CLI\nonly)."},{"oldText":"`gbrain decide dataset --slot <slot> --from <longmemeval|brainbench|cat35|facts-fixtures> <path>`: builds the","newText":"`gbrain decide dataset --slot <slot> --from <longmemeval|brainbench|cat35|facts-fixtures|injection-fixtures|know-to-ask|grounding-labels> <path>`: builds the"},{"oldText":"callers (search stages, think, hook, dream, facts, evals)","newText":"callers (search stages, think, serve turn-context, dream, facts, evals)"},{"oldText":"- (b) Every slot supports `off | shadow | on`. `shadow` makes the call and writes a decision receipt but changes\n  nothing, so operators can calibrate on real traffic before trusting a slot.","newText":"- (b) Every slot supports `off | shadow | on`. `shadow` makes the call and writes a decision receipt; it changes no\n  ranking, pruning, gating or write and only adds diagnostics (search meta, `--explain` lines), so operators can\n  see real traffic, drift, agreement and latency before trusting a slot. Shadow receipts carry predictions, not\n  correctness labels; thresholds come from labelled datasets or the bundled reference calibrations."},{"oldText":"hot memory already runs an LLM\nduplicate/supersede/independent classifier (`src/core/facts/classify.ts`), and CRAG grading exists","newText":"hot memory decides supersession with a\ndeterministic, zero-LLM cosine rule at write time (`decideSingleFact` in `src/core/facts/single-prepare.ts`: same\nentity and visibility, cosine at least 0.95, same kind supersedes; the LLM classifier in\n`src/core/facts/classify.ts` has no runtime caller), and CRAG grading exists"},{"oldText":"**S9 `conflict` (hot-memory contradiction).** In `src/core/facts/classify.ts`, keep the decision tree (empty →\ninsert; cosine ≥ 0.95 → duplicate; failure → cosine fallback) and replace the chat classifier call with one\npacked request: state = the new fact, one `choice` per candidate (`duplicate | supersede | independent`).","newText":"**S9 `conflict` (hot-memory contradiction).** The fact write path stays zero-LLM and unchanged. S9 is an async\nsweep over facts written since its last run, executed as a tail step of the existing `extract_facts` cycle phase\nonly when the slot is not off (so the phase list and all-off output are unchanged), and on demand with\n`gbrain decide sweep --slot conflict`. For each new fact it takes the `findCandidateDuplicates` neighbours (k=5)\nwith cosine at least 0.80 that pass the same guards `decideSingleFact` applies (same source, entity and\nvisibility, active, and a candidate `source_markdown_slug`, when set, equal to the new fact's `entity_slug`) and sends one packed request: state = the new fact, one `choice` per\ncandidate (`duplicate | supersede | independent`)."},{"oldText":"*Eval:* the hot-memory classifier fixtures and the suspected-contradictions probe set: agreement with the current\nchat classifier, wrong-supersede rate (must not rise), latency and cost per fact.","newText":"*Eval:* a labelled contradiction probe set (the hot-memory classifier fixtures plus the suspected-contradictions\nprobes): agreement with labels versus today's cosine rule, contradictions found that the cosine rule misses,\nwrong-supersede rate (must not rise), cost per swept fact."},{"oldText":"one `noul` (\"does answering this need the user's stored memory?\") and one `choice` over\nmemory class (`person | project | preference | past_event | none`).","newText":"one `noul` (\"does answering this need the user's stored memory?\")."},{"oldText":"pages it did find, and skips the synthesis call. `crag_escalation` runs before abstention when enabled.","newText":"pages it did find, and skips the synthesis call."},{"oldText":"or a full chat-model call (dream triage, hot-memory\ncontradiction classification, the modality tie-break).","newText":"or a full chat-model call (dream triage, the modality\ntie-break)."},{"oldText":"facts classify), receipts written with no text.","newText":"S9 sweep in the `extract_facts` tail and `decide sweep`), receipts written with no text."},{"oldText":"(strong when the top kept candidate clears threshold). Same packed request carries S4 and S5 questions.","newText":"(strong when the top kept candidate clears threshold). The same packed request carries the S5 questions; S4 is a\nseparate request made concurrently (see S4)."},{"oldText":"In `on` mode `think` abstains below threshold:","newText":"In `on` mode `think` abstains below threshold only when a deterministic signal agrees (no identity-evidence hit\nand no strong CRAG grade):"},{"oldText":"decision (A5), chunking","newText":"decision (A5) as a runtime slot (v1 measures expansion only as an arm of the recall experiment), chunking"},{"oldText":"- Single closed vendor: the `llm:` provider makes every slot work without Jev.","newText":"- Single closed vendor: the `llm:` provider makes every slot work without Jev, but its answers are uncalibrated\n  until qualified; v1 qualifies one local `llm:` configuration on S7 for quality and latency. Private brains that\n  keep egress denied effectively run S6-S9 as LLM slots."},{"oldText":"decide.receipts.retention_days 30\n","newText":"decide.receipts.retention_days 7\n"},{"oldText":"never sentences, so judgments keep conversational context), then one packed request per transcript: one `noul`\nper window (","newText":"never sentences, so judgments keep conversational context), then one request per window (unpacked, paced under the\nconcurrency cap): one `noul` per window ("},{"oldText":"find the best source turn window\n(existing normalized-substring and keyword tools) and ask one `noul` (\"is `claim` supported by `source`?\").","newText":"gather up to three candidate source turn\nwindows (normalized-substring, keyword and embedding neighbours) and ask one `noul` (\"is `claim` supported by\n`sources`?\"); weak coverage records `insufficient_context` instead of quarantining."},{"oldText":"the shadow → calibrate → on\n  loop with exact commands,","newText":"the shadow → calibrate (or reference\n  calibration) → on loop with exact commands, `decide enable --recommended`,"}]} -->
+<!-- autoplan-baseline-edits:ceo {"sourceSha256":"56762e6a997285ce1c9a9e32a81cc80641896cd087000e6631899755a9cbfea4","replacements":[{"oldText":"  100K tokens/s and 40 requests/s per account. Aliases move;","newText":"  and account-wide rate limits that TypeSafe says adjust dynamically (published figures differ by source and\n  date: 100K tokens/s and 40 requests/s in the compendium, 250K tokens/s and 1,200 requests/minute in a\n  2026-09-20 write-up). Aliases move;"},{"oldText":"  experimental. Default flips are out of scope for this PR and need a separate owner decision.","newText":"  experimental. A slot not measured within the paid eval budget records the verdict `not measured` and also stays\n  experimental. Default flips are out of scope for this PR and need a separate owner decision."},{"oldText":"   Config: `decide.provider` (default `none`), `decide.fallback` (`none` default, or `llm`).","newText":"   Config: `decide.provider` (default `none`), `decide.fallback` (`none` default, or `llm:<provider:model>`)."},{"oldText":"New table `decision_receipts` (schema migration). Row: `id, created_at, source_id, slot,","newText":"New table `decision_receipts` (schema migration). Row: `id, decision_id, created_at, source_id, slot,"},{"oldText":"'proposal'|'shadow'|'error'), subject_ref","newText":"'proposal'|'margin_hold'|'error'; shadow rows record the would-be outcome and `mode` says shadow), subject_ref"},{"oldText":"   error_reason`. No query,","newText":"   error_reason, protected, min_keep, rank, k_used` (`decision_id` groups all rows of one logical decision; `protected` marks\n   identity-evidence or floor-protected items so threshold what-ifs can be recomputed exactly). No query,"},{"oldText":"   (default 30), pruned by the existing maintenance cycle.","newText":"   (default 7), pruned by the cycle's existing `purge` phase."},{"oldText":"   metric_value, ece, n, dataset_hash, created_at, notes`.","newText":"   metric_value, ece, retest_sd, repack_sd, action_precision_lb, n, dataset_hash, split_hash, calibrate_ids_hash, calibrate_only, pack_shape,\n   call_site, created_at, notes`."},{"oldText":"decide.fallback              none | llm\n","newText":"decide.fallback              none | llm:<provider:model>\n"},{"oldText":"decide.slots.<slot>.min_keep   (slot-specific, where applicable)\n","newText":"decide.slots.<slot>.min_keep   (slot-specific, where applicable)\ndecide.slots.conflict.proposal_floor  0.50\ndecide.calibrate.retest_n    50  (items re-asked 3 times to measure retest_sd and repack_sd)\ndecide.slots.<slot>.min_action_precision  0.90  (harmful-direction slots)\ndecide.slots.<slot>.shadow_sample  1.0\ndecide.slots.<slot>.shadow_wait    off  (on: await shadow under on deadlines)\ndecide.slots.intent.wait_ms  150\ndecide.slots.recall_needed.suppress_below  0.05\ndecide.egress.typesafe.<class>  deny | allow  (class: query, candidates, facts, conversation; written by\n                             `decide enable` after it shows what leaves the machine)\n(receipt HMAC salt: 32 random bytes generated on first receipt write, stored in the brain config table under an\n internal key that `foresights config get/list` never prints)\n"},{"oldText":"One `choice` over `temporal | knowledge_update | relational | exact_lookup |\nmulti_hop | other`, state = query only. Launched concurrently with query embedding so it adds no serial latency.\nIn `on` mode it replaces `classifyIntent()` in `think` and feeds the existing arm gates (`relational-recall`,\n`alias-hop`, `exact-lookup`, `date-bounds`, trajectory injection). Below-threshold confidence falls back to the\nregex classifier, which stays the default and the tie source.","newText":"S2 asks one `choice` question per call site, state = the query. Search: `entity | temporal | event | concept |\ngeneral` (the existing `QueryIntent`), launched at the start of `hybrid/request.ts` under a short wait bound; in `on`\nmode an above-threshold label replaces the intent that `classifyQueryWithBrainPatterns` returns, which drives the\nexisting intent weights and detail level. Think: `temporal | knowledge_update | other`, replacing `classifyIntent()`\n(which gates trajectory injection). Arms keep their own detectors; S2 never forces an arm. Below-threshold\nconfidence falls back to the regex classifiers, which stay the default and the tie source."},{"oldText":"`exact_lookup`, `exact_title_match`), never reorder.","newText":"`exact_lookup`, `exact_title_match`), never reorder (S5 is the only post-rerank slot that reorders)."},{"oldText":"In the same packed request: one `noul` over the retained set (\"can `query` be\nanswered from `evidence`?\").","newText":"Two call sites. For the `query` op it is its own request, launched concurrently with the S3/S5\npacked request and never co-packed with candidate questions: one `noul` over the pre-S3 top-k candidates (k = min(10, candidate count), shrunk until state plus the question fits 32k; `k_used`\nis recorded; fail open if k=1 overflows; not asked with zero candidates). Judging a superset of the retained set\nis conservative: it can only under-abstain. For `think` it is one separate call over think's final gathered\nevidence (same k rule), made after gather and before synthesis."},{"oldText":"are moved below clean candidates of equal evidence and wrapped","newText":"are moved below clean candidates of the same `classifyEvidence` class (never below the S3 `min_keep` cut) and wrapped"},{"oldText":"In the `hook user-prompt` path, before reflex resolution:","newText":"In serve's turn-context handler (`src/core/context/turn-context.ts`), which\nanswers the engine-free `hook user-prompt` over IPC, alongside reflex resolution:"},{"oldText":"very low and no exact alias hit exists. Respects the hook's hard self-deadline; on timeout the reflex path runs\nunchanged.","newText":"very low and no exact alias hit exists. Firing retrieval runs the one `search`-mode query defined in the accepted CEO\nrequirements, with the user prompt as the query. S6 runs concurrently with reflex resolution inside the\n400 ms server budget (`TURN_CONTEXT_SERVER_BUDGET_MS`) with its own deadline of at most 250 ms; fire/suppress is\napplied after both finish, and on timeout the reflex result stands unchanged."},{"oldText":"rescue band for the LLM path. Bumps `triage_version` so cached verdicts re-triage once.","newText":"rescue band for the LLM path. `TRIAGE_VERSION` is not bumped: the decide provider and resolved model join the\ntriage cache identity only when S7 is on, so upgrading with S7 off re-triages nothing."},{"oldText":"`foresights decide proposals [list|accept|reject]` for S9.","newText":"`foresights decide proposals [list|accept|reject]` for S9.\n- `foresights decide judge-agreement --suite <suite>`: the eval-only judge harness."},{"oldText":"- Schema migration `v180-decide-calibrations`: `decide_calibrations` with index on `(slot, provider, model_resolved,\n  created_at desc)`.","newText":"- Schema migration `v180-decide-calibrations`: `decide_calibrations` (columns as in Architecture item 8, including\n  `retest_sd` and `split_hash`) with index on `(slot, provider, model_resolved, created_at desc)`.\n- Schema migration `v181-decide-proposals`: `decide_proposals` for S9 pending supersedes, with index on\n  `(status, created_at)`."},{"oldText":"abstention, hook user-prompt, dream triage,","newText":"abstention, serve turn-context for hook user-prompt, dream triage,"},{"oldText":"Runs go to Ubicloud. Each slot gets a matched pair","newText":"Runs go to Ubicloud. Each measured slot gets a matched pair"},{"oldText":"- Hot-path latency: intent runs concurrently with embedding; one packed post-fusion call; fail open at deadline.","newText":"- Hot-path latency: intent waits at most 150 ms; with S1 on Jev and any of S3-S5 on, the query path\n  makes two serial Jev stages (rerank, then the S3/S5 packed request with the S4 request concurrently), each\n  deadline-bound and failing open."},{"oldText":"At or above threshold the result is applied exactly as today's classifier result. A supersede verdict in\n`[proposal_floor, threshold)` is not applied; it writes a receipt with outcome `proposal`, reviewable with\n`foresights decide proposals` and applied with `foresights decide proposals accept <id>` through the existing supersede\nwrite path (local CLI only).","newText":"Sweep outcomes, the proposal rule and the `decide_proposals` table follow the accepted CEO requirements: v1\nnever supersedes automatically, the new fact stays as written, and `foresights decide proposals accept <id>` applies it through the existing supersede write path (local CLI\nonly)."},{"oldText":"`foresights decide dataset --slot <slot> --from <longmemeval|brainbench|cat35|facts-fixtures> <path>`: builds the","newText":"`foresights decide dataset --slot <slot> --from <longmemeval|brainbench|cat35|facts-fixtures|injection-fixtures|know-to-ask|grounding-labels> <path>`: builds the"},{"oldText":"callers (search stages, think, hook, dream, facts, evals)","newText":"callers (search stages, think, serve turn-context, dream, facts, evals)"},{"oldText":"- (b) Every slot supports `off | shadow | on`. `shadow` makes the call and writes a decision receipt but changes\n  nothing, so operators can calibrate on real traffic before trusting a slot.","newText":"- (b) Every slot supports `off | shadow | on`. `shadow` makes the call and writes a decision receipt; it changes no\n  ranking, pruning, gating or write and only adds diagnostics (search meta, `--explain` lines), so operators can\n  see real traffic, drift, agreement and latency before trusting a slot. Shadow receipts carry predictions, not\n  correctness labels; thresholds come from labelled datasets or the bundled reference calibrations."},{"oldText":"hot memory already runs an LLM\nduplicate/supersede/independent classifier (`src/core/facts/classify.ts`), and CRAG grading exists","newText":"hot memory decides supersession with a\ndeterministic, zero-LLM cosine rule at write time (`decideSingleFact` in `src/core/facts/single-prepare.ts`: same\nentity and visibility, cosine at least 0.95, same kind supersedes; the LLM classifier in\n`src/core/facts/classify.ts` has no runtime caller), and CRAG grading exists"},{"oldText":"**S9 `conflict` (hot-memory contradiction).** In `src/core/facts/classify.ts`, keep the decision tree (empty →\ninsert; cosine ≥ 0.95 → duplicate; failure → cosine fallback) and replace the chat classifier call with one\npacked request: state = the new fact, one `choice` per candidate (`duplicate | supersede | independent`).","newText":"**S9 `conflict` (hot-memory contradiction).** The fact write path stays zero-LLM and unchanged. S9 is an async\nsweep over facts written since its last run, executed as a tail step of the existing `extract_facts` cycle phase\nonly when the slot is not off (so the phase list and all-off output are unchanged), and on demand with\n`foresights decide sweep --slot conflict`. For each new fact it takes the `findCandidateDuplicates` neighbours (k=5)\nwith cosine at least 0.80 that pass the same guards `decideSingleFact` applies (same source, entity and\nvisibility, active, and a candidate `source_markdown_slug`, when set, equal to the new fact's `entity_slug`) and sends one packed request: state = the new fact, one `choice` per\ncandidate (`duplicate | supersede | independent`)."},{"oldText":"*Eval:* the hot-memory classifier fixtures and the suspected-contradictions probe set: agreement with the current\nchat classifier, wrong-supersede rate (must not rise), latency and cost per fact.","newText":"*Eval:* a labelled contradiction probe set (the hot-memory classifier fixtures plus the suspected-contradictions\nprobes): agreement with labels versus today's cosine rule, contradictions found that the cosine rule misses,\nwrong-supersede rate (must not rise), cost per swept fact."},{"oldText":"one `noul` (\"does answering this need the user's stored memory?\") and one `choice` over\nmemory class (`person | project | preference | past_event | none`).","newText":"one `noul` (\"does answering this need the user's stored memory?\")."},{"oldText":"pages it did find, and skips the synthesis call. `crag_escalation` runs before abstention when enabled.","newText":"pages it did find, and skips the synthesis call."},{"oldText":"or a full chat-model call (dream triage, hot-memory\ncontradiction classification, the modality tie-break).","newText":"or a full chat-model call (dream triage, the modality\ntie-break)."},{"oldText":"facts classify), receipts written with no text.","newText":"S9 sweep in the `extract_facts` tail and `decide sweep`), receipts written with no text."},{"oldText":"(strong when the top kept candidate clears threshold). Same packed request carries S4 and S5 questions.","newText":"(strong when the top kept candidate clears threshold). The same packed request carries the S5 questions; S4 is a\nseparate request made concurrently (see S4)."},{"oldText":"In `on` mode `think` abstains below threshold:","newText":"In `on` mode `think` abstains below threshold only when a deterministic signal agrees (no identity-evidence hit\nand no strong CRAG grade):"},{"oldText":"decision (A5), chunking","newText":"decision (A5) as a runtime slot (v1 measures expansion only as an arm of the recall experiment), chunking"},{"oldText":"- Single closed vendor: the `llm:` provider makes every slot work without Jev.","newText":"- Single closed vendor: the `llm:` provider makes every slot work without Jev, but its answers are uncalibrated\n  until qualified; v1 qualifies one local `llm:` configuration on S7 for quality and latency. Private brains that\n  keep egress denied effectively run S6-S9 as LLM slots."},{"oldText":"decide.receipts.retention_days 30\n","newText":"decide.receipts.retention_days 7\n"},{"oldText":"never sentences, so judgments keep conversational context), then one packed request per transcript: one `noul`\nper window (","newText":"never sentences, so judgments keep conversational context), then one request per window (unpacked, paced under the\nconcurrency cap): one `noul` per window ("},{"oldText":"find the best source turn window\n(existing normalized-substring and keyword tools) and ask one `noul` (\"is `claim` supported by `source`?\").","newText":"gather up to three candidate source turn\nwindows (normalized-substring, keyword and embedding neighbours) and ask one `noul` (\"is `claim` supported by\n`sources`?\"); weak coverage records `insufficient_context` instead of quarantining."},{"oldText":"the shadow → calibrate → on\n  loop with exact commands,","newText":"the shadow → calibrate (or reference\n  calibration) → on loop with exact commands, `decide enable --recommended`,"}]} -->
 
 <!-- autoplan-accepted:ceo -->
 - Rerank depth: no new key. The S1 eval reuses the existing `search.reranker.top_n_in` and treats the recall
@@ -1489,7 +1489,7 @@ owner's "accept all recommendations" instruction, User Challenges included per t
   behaves as `off` and doctor warns. There is no calibration row and no drift demotion for rerank; a resolved model
   different from the pinned id is recorded, mixed ids within one decision fail it open, and doctor warns.
 - Decision stability (live probe 2026-09-30: identical requests returned 0.53 then 0.51, and 0.74 then 0.62;
-  re-packing moved one answer between 0.51 and 0.81): `gbrain decide calibrate` repeats each item 3 times on a
+  re-packing moved one answer between 0.51 and 0.81): `foresights decide calibrate` repeats each item 3 times on a
   sample of `decide.calibrate.retest_n` items (default 50), stores `retest_sd` and prints it. Every
   harmful-direction decision (S3 prune, S4 abstain, S6 suppress, S7 fail, S8 quarantine) whose answer lies within
   `max(0.05, 2 * retest_sd)` of the threshold on the harmful side takes the no-change outcome and is recorded as
@@ -1520,7 +1520,7 @@ owner's "accept all recommendations" instruction, User Challenges included per t
   with an alias configured it uses the model id most recently resolved in receipts. After the response, a
   different resolved id demotes that call to shadow. An operator threshold override is never demoted; doctor lists
   it as an uncalibrated override.
-- Calibration holdout: `gbrain decide dataset` writes a frozen calibrate/eval split for every dataset (default
+- Calibration holdout: `foresights decide dataset` writes a frozen calibrate/eval split for every dataset (default
   50/50 by a stable hash of the item id) and records its `split_hash`. `decide calibrate` reads only the calibrate
   half and stores `split_hash`, `calibrate_ids_hash` and `calibrate_only = true`. Eval runs with `--decide` refuse
   (non-zero exit, named reason) any calibration whose `split_hash` differs from the eval split or whose
@@ -1530,7 +1530,7 @@ owner's "accept all recommendations" instruction, User Challenges included per t
   label set is a hand-labelled sample of at least 200 claim units from Cat 35 dream pages, committed under
   `docs/eval/system-one/` with generic placeholders only.
 - S9 sweep scope: a per-source watermark (last swept fact id) lives under an internal config key. The first run
-  starts at the current maximum fact id unless `gbrain decide sweep --slot conflict --since <fact id>` is given, so
+  starts at the current maximum fact id unless `foresights decide sweep --slot conflict --since <fact id>` is given, so
   enabling the slot never sweeps the whole history silently. Facts with no embedding or no `entity_slug` are
   skipped with a receipt reason (`no_embedding`, `no_entity`). Candidate guards quote `decideSingleFact`: same
   source, entity and visibility, active and not expired, and a candidate `source_markdown_slug` (when set) equal to
@@ -1542,7 +1542,7 @@ owner's "accept all recommendations" instruction, User Challenges included per t
   The new fact stays as written. Everything else is independent. In shadow, receipts only. Proposals live in a new
   table `decide_proposals` (`id, created_at, source_id, new_fact_id, old_fact_id, p_supersede, threshold,
   proposal_floor, model_resolved, status pending|accepted|rejected|stale, decided_at`), never pruned by receipt
-  retention. `gbrain decide proposals accept <id>` rechecks that both facts are still active and share source,
+  retention. `foresights decide proposals accept <id>` rechecks that both facts are still active and share source,
   entity and visibility (else marks `stale`), then supersedes old with new through `expireSuperseded` in
   `src/core/facts/write-single.ts`, exported for this use, which sets `superseded_by` and strikes the old line in
   the page's `## Facts` fence; `reject` marks it rejected; accepted proposals are reversible with the existing
@@ -1603,7 +1603,7 @@ owner's "accept all recommendations" instruction, User Challenges included per t
   slot whose fallback has no calibration treats those items as shadow.
 - Egress consent contract (one rule for every path): a provider receives a data class (query text, candidate page
   text, fact text, conversation text) only with consent for that provider. For decide slots, consent is the
-  `decide.egress.typesafe.<class>` keys that `gbrain decide enable` writes after showing exactly what leaves the
+  `decide.egress.typesafe.<class>` keys that `foresights decide enable` writes after showing exactly what leaves the
   machine; the `llm:` provider inherits today's chat consent. For S1 `on`, configuring `search.reranker.model
   typesafe:*` is the consent for query and candidate text, as it is for Voyage today, and `decide status` shows it.
   S1 shadow and every fallback use the decide consent keys. `decide.egress.deny_sources` applies to every provider
@@ -1626,7 +1626,7 @@ owner's "accept all recommendations" instruction, User Challenges included per t
   reorders the remaining measurement plan.
 - Reference calibrations and a recommended configuration (both CEO voices): the maintainer's eval runs produce
   reference calibration rows (per slot, call site, model and `pack_shape`, with dataset and split hashes), shipped
-  in the binary as a static table and used when a brain has no local row; a local row always wins. `gbrain decide
+  in the binary as a static table and used when a brain has no local row; a local row always wins. `foresights decide
   enable --recommended` enables exactly the slots whose recorded verdict is a win and whose reference calibration
   passes `min_action_precision`, after showing the egress summary. A reserved share of the eval budget (at most
   $10 of the $40) runs that recommended configuration end to end (answer quality, retained useful memory, full
@@ -1647,7 +1647,7 @@ owner's "accept all recommendations" instruction, User Challenges included per t
 - Pinned-model retirement: a 404 or "model unavailable" for a pinned id is a provider failure (fail direction
   applies), surfaced by doctor as a named error with the recovery step (repin, then recalibrate or use a
   reference calibration for the new id).
-- `GBRAIN_DECIDE_SLOTS` is honored only by eval commands and by `gbrain dream --eval-run`; it never bypasses the
+- `GBRAIN_DECIDE_SLOTS` is honored only by eval commands and by `foresights dream --eval-run`; it never bypasses the
   consent keys, the egress gate or the daily cap.
 - Positioning: `docs/architecture/decide.md` and the guide present the durable asset as a provider-agnostic
   decision layer (receipts, calibration, drift, egress) with Jev as the first provider.
@@ -1666,10 +1666,10 @@ owner's "accept all recommendations" instruction, User Challenges included per t
   value, fails that logical decision with `error_reason=malformed_response` and takes the fail direction; partial
   answers are never used. Receipts also carry `call_site` so deadline success rates per call site come from receipts.
 - Config and CLI hygiene: every `decide.*` key is registered with validation (enums, numeric ranges) in the config
-  key registry. `gbrain decide enable` refuses S6, S7, S8 or S9 on the Jev provider while `decide.egress.private` is
-  `deny`, naming the key to change. The `gbrain decide` command table record uses `thinClient: 'refuse'`. The
+  key registry. `foresights decide enable` refuses S6, S7, S8 or S9 on the Jev provider while `decide.egress.private` is
+  `deny`, naming the key to change. The `foresights decide` command table record uses `thinClient: 'refuse'`. The
   receipt HMAC salt is written insert-if-absent and re-read, so concurrent processes agree.
-- `gbrain decide sweep --slot conflict` runs the S9 sweep on demand (local CLI only) and prints the counts of
+- `foresights decide sweep --slot conflict` runs the S9 sweep on demand (local CLI only) and prints the counts of
   duplicates, proposals written, independents and skipped facts.
 - Module-size ratchets: new logic lives in new modules (`src/core/ai/decide/*`, search stage modules, cycle
   helpers). Facades at or near their ceilings today that this plan touches (`gateway.ts`, `synthesize.ts`, `cli.ts`,
@@ -1678,20 +1678,20 @@ owner's "accept all recommendations" instruction, User Challenges included per t
 - Migrations take the next free numbers at build time (v179-v181 today) because GBRA-25, GBRA-27 and GBRA-31 are
   active. The keyed live test skips unless `GBRAIN_LIVE_TYPESAFE=1` and a TypeSafe key are set, following the
   repo's keyed-test skip convention, so the default `bun test` never calls the provider.
-- `gbrain decide judge-agreement --suite` accepts the existing LLM-judge suites that have labelled sets (the
+- `foresights decide judge-agreement --suite` accepts the existing LLM-judge suites that have labelled sets (the
   LongMemEval answer judge and the dream grounding judge).
 - Eval budget rule: the $40 paid ceiling holds. Slots are measured in the plan's expected-value order; a slot not
   measured when the budget runs out gets the recorded verdict `not measured`, stays experimental, and is named as
   such in the CHANGELOG. No slot's verdict is inferred from another slot's run.
-- `gbrain decide receipts --slot <slot> --what-if-threshold <t>` recomputes the outcome mix a different threshold
+- `foresights decide receipts --slot <slot> --what-if-threshold <t>` recomputes the outcome mix a different threshold
   would have produced from stored `answer_value`, `decision_id`, `protected`, `rank` and `min_keep`, with no
   provider call. The S3 survivor rule is: protected items stay, above-threshold items stay, then the best-ranked
   pruned items return until `min_keep` is met. Covered by a CLI test on seeded receipts, including a case where
   `min_keep` binds.
-- When any slot ran in shadow or on, `gbrain query --explain` prints one line per slot: mode, provider and
+- When any slot ran in shadow or on, `foresights query --explain` prints one line per slot: mode, provider and
   resolved model, answer summary, threshold and outcome. With all slots off, explain output is byte-identical to
   today (golden).
-- `gbrain decide status` prints a per-slot readiness line computed from local state only (`off`,
+- `foresights decide status` prints a per-slot readiness line computed from local state only (`off`,
   `shadow: N receipts, needs calibration`, `calibrated for <model>, ready for on`, `on`, `on (drift: demoted to
   shadow)`) and an estimated cost per unit for the enabled slots: per 1,000 queries (S1-S5), 1,000 turns (S6),
   1,000 transcripts (S7), 1,000 dream pages (S8) and 1,000 swept facts (S9), from the last 24 hours of receipts or,
@@ -1730,16 +1730,16 @@ Passes 1-8 read one at a time. Voice input and amendment checkpoint: `autoplan-d
 ```
 TARGET DEVELOPER PERSONA
 ========================
-Who:       A GBrain operator running a personal or company brain for their agents (Bun install, CLI, doctor,
+Who:       A Foresights operator running a personal or company brain for their agents (Bun install, CLI, doctor,
            config keys), often acting through an AI agent that runs the commands for them.
 Context:   Heard Jev is fast and cheap; wants better retrieval or cheaper dream triage without risking memory.
 Tolerance: About 10 minutes for an optional feature before giving up; zero tolerance for silent behavior changes.
-Expects:   `gbrain config set`-style keys, `gbrain doctor` telling them what is wrong, "say to your agent" prompts,
+Expects:   `foresights config set`-style keys, `foresights doctor` telling them what is wrong, "say to your agent" prompts,
            and nothing happening until they opt in.
 ```
 
-Empathy narrative (predicted from the plan, not observed): "I have a TypeSafe key. I set it and run `gbrain
-decide status`: provider `none`, every slot off. The guide says shadow, then calibrate, then on. I run `gbrain
+Empathy narrative (predicted from the plan, not observed): "I have a TypeSafe key. I set it and run `foresights
+decide status`: provider `none`, every slot off. The guide says shadow, then calibrate, then on. I run `foresights
 decide enable evidence` and it refuses: no calibration. I try `--shadow`, it works, and I run a query with
 `--explain`: nothing changes and no decide lines appear, because shadow is async. `status` says `shadow: 0
 receipts, needs calibration`. I look for how to calibrate and find I need a labelled dataset from LongMemEval or
@@ -1752,13 +1752,13 @@ Competitive benchmark (evidence types labelled; clocks start with a key in hand)
 |---|---|---|---|---|
 | TypeSafe Jev (raw API) | key → first answer | ~1 min, reported | one curl, typed answers | jevplayground.com/jev-api |
 | Cohere Rerank via LlamaIndex | key → reranked results in an app | ~5 min, estimated from docs | one post-processor object | developers.llamaindex.ai Cohere rerank |
-| GBrain Voyage reranker (today) | key → reranked search | ~2 min, estimated from docs | one `config set` + env key | docs/guides/search-modes.md |
+| Foresights Voyage reranker (today) | key → reranked search | ~2 min, estimated from docs | one `config set` + env key | docs/guides/search-modes.md |
 | This plan (before DX fixes) | key → first visible decision on own brain | 10+ min for shadow evidence (async shadow shows nothing); hours to `on` without reference calibrations; estimated | many keys, loop requires external datasets | plan text |
 | This plan (after DX fixes) | key → `probe --query` preview on own brain | under 3 min, estimated | one command preview, recommended preset | accepted DX requirements |
 
 Target (auto-decided): Competitive, under 5 minutes from key in hand to a visible decision on your own brain;
 probe under 2 minutes. Magical moment vehicle (taste, lowest-effort vehicle using existing plan capabilities):
-`gbrain decide probe --query "<q>"`, which shows per-result evidence probabilities and Jev's rerank order next to
+`foresights decide probe --query "<q>"`, which shows per-result evidence probabilities and Jev's rerank order next to
 today's for one real query, changing nothing. Alternative considered: making `query --explain` force shadow only
 (kept as well, but it requires enabling a slot first).
 
@@ -1768,7 +1768,7 @@ Developer journey (traced against the plan and repo docs):
 STAGE           | DEVELOPER DOES                               | FRICTION POINTS                         | STATUS
 ----------------|----------------------------------------------|-----------------------------------------|-------
 1. Discover     | reads search-modes / providers / AGENTS.md   | decide not linked; providers table lacks column | fixed
-2. Install      | already has gbrain; sets TYPESAFE_API_KEY    | provider `none` preconditions undefined | fixed
+2. Install      | already has foresights; sets TYPESAFE_API_KEY    | provider `none` preconditions undefined | fixed
 3. Hello World  | `decide probe`, `probe --query`              | probe needed provider; no own-brain preview | fixed
 4. Real Usage   | `enable --recommended` / `enable <slot>`     | enable defaulted to on and refused; S1 split truth | fixed
 5. Debug        | `status`, doctor, `--explain`                | silent demotion; no reason catalog; async shadow invisible | fixed
@@ -1839,8 +1839,8 @@ fact restore path" does not exist, so the plan now builds `decide proposals undo
 - **Pass 3 Errors & Debugging: 4 → 8.** Seven silent demotion states; "named reason" never named. Fixed with the
   effective-mode line (problem, cause with values, fix command, docs anchor), the refusal catalog modeled on
   write-refusals, skipped-reason meta and non-zero exits. Traced paths: (1) `enable evidence --on` with no
-  calibration → `requested: on / effective: shadow / cause: no_calibration / fix: gbrain decide enable
-  --recommended or gbrain decide dataset ...`; (2) S6 enable on Jev with private egress denied → `refused:
+  calibration → `requested: on / effective: shadow / cause: no_calibration / fix: foresights decide enable
+  --recommended or foresights decide dataset ...`; (2) S6 enable on Jev with private egress denied → `refused:
   egress_private_denied (missing: decide.egress.private, decide.egress.typesafe.conversation) / fix: ... or set
   decide.slots.recall_needed.provider llm:<model>`; (3) pinned model retired → doctor `pinned_model_unavailable`
   with repin + adopt commands.
@@ -1854,7 +1854,7 @@ fact restore path" does not exist, so the plan now builds `decide proposals undo
 - **Pass 7 Community & Ecosystem: 6 → 7.** Contributor "how to add a slot" checklist existed; now with a full
   custom-slot example and fixed-vs-configurable table. #5178 credit retained. No further finding.
 - **Pass 8 DX Measurement: 5 → 7.** The quickstart CI test measures the documented clock end to end on a fixture;
-  `decide status` readiness and effective mode make drop-off visible locally; no telemetry is added (GBrain is
+  `decide status` readiness and effective mode make drop-off visible locally; no telemetry is added (Foresights is
   local-first; telemetry would be a new policy, not in scope). Boomerang: `/devex-review` after implementation
   should time the quickstart on a fresh machine.
 
@@ -1877,7 +1877,7 @@ fact restore path" does not exist, so the plan now builds `decide proposals undo
 +--------------------------------------------------------------------+
 | TTHW                 | <3 min (est.) | 10+ min (est.) | ↑ |
 | Competitive Rank     | Competitive                                  |
-| Magical Moment       | designed via `gbrain decide probe --query`   |
+| Magical Moment       | designed via `foresights decide probe --query`   |
 | Product Type         | CLI tool (+ contributor library API)         |
 | Mode                 | POLISH                                       |
 | Overall DX           |  7.6/10 |  4.9/10 | ↑     |
@@ -1896,9 +1896,9 @@ fact restore path" does not exist, so the plan now builds `decide proposals undo
 DX IMPLEMENTATION CHECKLIST
 ============================
 [ ] Time to first visible decision < 5 min from key in hand (quickstart CI on fixture)
-[ ] Installation is one command (existing gbrain install; key via env)
+[ ] Installation is one command (existing foresights install; key via env)
 [ ] First run produces meaningful output (`decide probe` prints model, latency, cost, next command)
-[ ] Magical moment delivered via `gbrain decide probe --query`
+[ ] Magical moment delivered via `foresights decide probe --query`
 [ ] Every refusal/skip has: problem + cause + fix + docs anchor (catalog test)
 [ ] CLI naming consistent (enable = shadow, --on explicit, disable reverses)
 [ ] Every key has a documented default; `--recommended` is the golden path
@@ -1919,8 +1919,8 @@ outside the CLI; an MCP surface for decide (kept off MCP by the CEO phase). Defe
 measure the quickstart on a fresh machine with `/devex-review` after implementation.
 
 What already exists (DX): `docs/guides/write-refusals.md` (refusal format to copy), `test/cli-help-without-brain.serial.test.ts`
-(engine-free help guard), `gbrain providers` table (`src/commands/providers.ts`), `formatResultsExplain`
-(`--explain`), doctor topic modules, `gbrain config set` key registry, the reranker provider doc pattern
+(engine-free help guard), `foresights providers` table (`src/commands/providers.ts`), `formatResultsExplain`
+(`--explain`), doctor topic modules, `foresights config set` key registry, the reranker provider doc pattern
 (`docs/ai-providers/llama-server-reranker.md`).
 
 #### DX Implementation Tasks
@@ -1956,23 +1956,23 @@ What already exists (DX): `docs/guides/write-refusals.md` (refusal format to cop
 
 Unresolved decisions: none (every DX question auto-decided; taste call: magical-moment vehicle).
 
-<!-- autoplan-baseline-edits:dx {"sourceSha256":"5c9c4b6999c2ec76eefd2fef3d9f0119d8b146c6e6746e146eb514663f033837","replacements":[{"oldText":"\n#### Phase 1 close\n\nClose packet `autoplan-ceo-wPu9Yh/close-packet.md` (618 lines) read in full after fixing drift found by the first\npacket's verification (S6/S7/S8/S9 base text, two-stage bound, env override wording, sweep counts). Published to the\nparent: Phase 1 complete; Codex 9 concerns; native 13 issues; consensus 5/6 confirmed, 1 disagreement to the gate.\n\n### Phase 2 Design review\n\nSKIPPED: no UI scope detected in Phase 0 (not a completed review).\n\n","newText":""},{"oldText":"`decide({ slot, state, questions, deadlineMs, signal })` where each question is\n   `{ id, kind: 'noul'|'choice'|'score', instructions, criteria? }`.","newText":"`decide({ slot, callSite, state, questions, deadlineMs, signal })` where each question is a discriminated\n   union: `{ id, kind: 'noul', instructions }`, `{ id, kind: 'choice', instructions, options: Record<label, description> }`\n   or `{ id, kind: 'score', instructions, levels: string[] }`."},{"oldText":"   Config: `decide.provider` (default `none`), `decide.fallback` (`none` default, or `llm:<provider:model>`).","newText":"   Config: `decide.provider` (default `none`), per-slot `decide.slots.<slot>.provider` (inherits it), and\n   `decide.egress_fallback` (`none` default, or `llm:<provider:model>`; used only for egress-refused items)."},{"oldText":"decide.fallback              none | llm:<provider:model>\n","newText":"decide.egress_fallback       none | llm:<provider:model>   (egress-refused items only)\ndecide.slots.<slot>.provider (inherits decide.provider)\ndecide.max_concurrency       16\ndecide.margin_floor          0.05\ndecide.slots.<slot>.force_on false  (explicit bypass of the action-precision gate; doctor always lists it)\n"},{"oldText":"Refused items are decided by the fallback provider if configured,","newText":"Refused items are decided by `decide.egress_fallback` if configured,"},{"oldText":"- `gbrain decide enable <slot> [--shadow]` / `disable <slot>`: writes the slot config keys with a plain summary of\n  what data leaves the machine.","newText":"- `gbrain decide enable <slot> [--on]` (shadow unless `--on`), `gbrain decide enable --recommended`, and\n  `gbrain decide disable <slot>|--all`: write every key the slot needs (pinned provider, consent keys, mode) in one\n  confirmed step after a plain summary of what data leaves the machine and the estimated cost, then print the\n  requested versus effective mode."},{"oldText":"- `gbrain decide probe`: one tiny live request; prints resolved model, latency and cost; never sends brain content.","newText":"- `gbrain decide probe [--query <q>]`: works with only a key (pinned default provider); one tiny live request that\n  prints resolved model, latency, cost and the next command to run; sends no brain content unless `--query` is given,\n  which previews S1 and S3 on one query of your brain after the egress summary and confirmation, changing nothing."},{"oldText":"only adds diagnostics (search meta, `--explain` lines), so operators can","newText":"adds diagnostics only when shadow is awaited (`shadow_wait on`, or `--explain`, which awaits shadow for that one\n  query), so operators can"},{"oldText":"  `decide_calibrations` row. `--dry-run` estimates cost first.","newText":"  `decide_calibrations` row. `--dry-run` estimates cost first; `--call-site <site>` selects the call site (default:\n  the slot's only site).\n- `gbrain decide qualify --slot <slot> [--call-site <site>] --dataset <jsonl>`: evaluates the newest calibration on\n  the eval half, stores `action_precision_lb` and per-slice results as its qualification, and prints the exact\n  activation command or the catalogued refusal reason."}]} -->
+<!-- autoplan-baseline-edits:dx {"sourceSha256":"5c9c4b6999c2ec76eefd2fef3d9f0119d8b146c6e6746e146eb514663f033837","replacements":[{"oldText":"\n#### Phase 1 close\n\nClose packet `autoplan-ceo-wPu9Yh/close-packet.md` (618 lines) read in full after fixing drift found by the first\npacket's verification (S6/S7/S8/S9 base text, two-stage bound, env override wording, sweep counts). Published to the\nparent: Phase 1 complete; Codex 9 concerns; native 13 issues; consensus 5/6 confirmed, 1 disagreement to the gate.\n\n### Phase 2 Design review\n\nSKIPPED: no UI scope detected in Phase 0 (not a completed review).\n\n","newText":""},{"oldText":"`decide({ slot, state, questions, deadlineMs, signal })` where each question is\n   `{ id, kind: 'noul'|'choice'|'score', instructions, criteria? }`.","newText":"`decide({ slot, callSite, state, questions, deadlineMs, signal })` where each question is a discriminated\n   union: `{ id, kind: 'noul', instructions }`, `{ id, kind: 'choice', instructions, options: Record<label, description> }`\n   or `{ id, kind: 'score', instructions, levels: string[] }`."},{"oldText":"   Config: `decide.provider` (default `none`), `decide.fallback` (`none` default, or `llm:<provider:model>`).","newText":"   Config: `decide.provider` (default `none`), per-slot `decide.slots.<slot>.provider` (inherits it), and\n   `decide.egress_fallback` (`none` default, or `llm:<provider:model>`; used only for egress-refused items)."},{"oldText":"decide.fallback              none | llm:<provider:model>\n","newText":"decide.egress_fallback       none | llm:<provider:model>   (egress-refused items only)\ndecide.slots.<slot>.provider (inherits decide.provider)\ndecide.max_concurrency       16\ndecide.margin_floor          0.05\ndecide.slots.<slot>.force_on false  (explicit bypass of the action-precision gate; doctor always lists it)\n"},{"oldText":"Refused items are decided by the fallback provider if configured,","newText":"Refused items are decided by `decide.egress_fallback` if configured,"},{"oldText":"- `foresights decide enable <slot> [--shadow]` / `disable <slot>`: writes the slot config keys with a plain summary of\n  what data leaves the machine.","newText":"- `foresights decide enable <slot> [--on]` (shadow unless `--on`), `foresights decide enable --recommended`, and\n  `foresights decide disable <slot>|--all`: write every key the slot needs (pinned provider, consent keys, mode) in one\n  confirmed step after a plain summary of what data leaves the machine and the estimated cost, then print the\n  requested versus effective mode."},{"oldText":"- `foresights decide probe`: one tiny live request; prints resolved model, latency and cost; never sends brain content.","newText":"- `foresights decide probe [--query <q>]`: works with only a key (pinned default provider); one tiny live request that\n  prints resolved model, latency, cost and the next command to run; sends no brain content unless `--query` is given,\n  which previews S1 and S3 on one query of your brain after the egress summary and confirmation, changing nothing."},{"oldText":"only adds diagnostics (search meta, `--explain` lines), so operators can","newText":"adds diagnostics only when shadow is awaited (`shadow_wait on`, or `--explain`, which awaits shadow for that one\n  query), so operators can"},{"oldText":"  `decide_calibrations` row. `--dry-run` estimates cost first.","newText":"  `decide_calibrations` row. `--dry-run` estimates cost first; `--call-site <site>` selects the call site (default:\n  the slot's only site).\n- `foresights decide qualify --slot <slot> [--call-site <site>] --dataset <jsonl>`: evaluates the newest calibration on\n  the eval half, stores `action_precision_lb` and per-slice results as its qualification, and prints the exact\n  activation command or the catalogued refusal reason."}]} -->
 
 <!-- autoplan-accepted:dx -->
 - Quickstart and time to first decision (target under 5 minutes from a key in hand, probe under 2 minutes):
-  `docs/guides/system-one.md` opens with one copy-paste block: `export TYPESAFE_API_KEY=...`, `gbrain decide
-  probe` (works with only a key and prints the next command), `gbrain decide probe --query "<a question your brain
+  `docs/guides/system-one.md` opens with one copy-paste block: `export TYPESAFE_API_KEY=...`, `foresights decide
+  probe` (works with only a key and prints the next command), `foresights decide probe --query "<a question your brain
   can answer>"` (the magical moment: Jev's evidence probability for each result and its rerank order next to
-  today's, on your own brain, changing nothing), `gbrain decide enable --recommended` (or `gbrain decide enable
-  evidence` for shadow), then `gbrain decide status`, each with its expected output. A CI test runs the block
+  today's, on your own brain, changing nothing), `foresights decide enable --recommended` (or `foresights decide enable
+  evidence` for shadow), then `foresights decide status`, each with its expected output. A CI test runs the block
   against a seeded PGLite brain with a fixture transport and asserts every documented output line; key
   acquisition time is reported separately in the guide.
-- Preconditions: `gbrain decide enable` with `decide.provider none` refuses with reason `no_provider` and the exact
+- Preconditions: `foresights decide enable` with `decide.provider none` refuses with reason `no_provider` and the exact
   command, unless `--provider <id>` is given, in which case it writes that provider. Every `enable` writes the
   resolved pinned id (never an alias) into the provider key, so a later binary that changes the default pin never
   moves an opted-in brain. `enable --recommended` with no qualifying slot prints "no slot has a recorded win for
   <model>; see docs/eval/system-one/" and exits non-zero without changing config.
-- Effective mode everywhere: `decide enable`, `decide status` and a post-set hook on `gbrain config set
+- Effective mode everywhere: `decide enable`, `decide status` and a post-set hook on `foresights config set
   decide.slots.*` print `requested: <mode> / effective: <mode> / cause: <reason> (<values>) / fix: <command> /
   docs: <anchor>` for every slot whose effective mode differs (drift, `pack_shape` mismatch, action-precision
   gate, uncalibrated fallback, S1 without a Jev reranker, budget, missing consent). `enable` exits non-zero when
@@ -1993,17 +1993,17 @@ Unresolved decisions: none (every DX question auto-decided; taste call: magical-
 - Shadow diagnostics: async shadow adds no meta; `--explain` awaits shadow for that one query and prints the decide
   lines, and `shadow_wait on` does so for every query. A fail-open skip adds `meta.decide.<slot>.skipped: <reason>`
   to query meta and a line to `--explain`.
-- S1 consistency: `gbrain decide enable rerank --on` sets `search.reranker.model` to the pinned Jev id after the
-  confirmation, remembering the previous value, and `gbrain decide disable rerank` restores it, so disabling
+- S1 consistency: `foresights decide enable rerank --on` sets `search.reranker.model` to the pinned Jev id after the
+  confirmation, remembering the previous value, and `foresights decide disable rerank` restores it, so disabling
   reverses what enabling did. `decide status` prints S1's active reranker, whether Jev is being called, and which
   key supplied the credential.
 - Per-slot providers and egress fallback: `decide.slots.<slot>.provider` (inherits `decide.provider`) lets an
   operator run, for example, S3 on Jev and S7 on a local `llm:` model; `decide.fallback` is named
   `decide.egress_fallback` because it only handles egress-refused items. `enable` validates the effective route:
   S6-S9 are refused on Jev with private egress denied only when no permitted per-slot provider or egress fallback
-  can handle the refused data, and the refusal names every missing key at once. `gbrain decide status --egress`
+  can handle the refused data, and the refusal names every missing key at once. `foresights decide status --egress`
   prints a provider by data-class matrix with the key that decides each cell.
-- Qualification step: `gbrain decide qualify --slot <slot> [--call-site <site>] --dataset <jsonl>` evaluates the
+- Qualification step: `foresights decide qualify --slot <slot> [--call-site <site>] --dataset <jsonl>` evaluates the
   newest calibration on the eval half in isolation, stores `action_precision_lb` and per-slice results as its
   qualification, and prints the activation command or the refusal. `calibrate` accepts `--call-site`. The guide
   documents the dataset JSONL schema per slot with a five-line example. Tests cover dataset, calibrate, qualify,
@@ -2011,18 +2011,18 @@ Unresolved decisions: none (every DX question auto-decided; taste call: magical-
 - Budget wording: `decide.budget.daily_usd` is documented as the budget for third-party decide slots; `enable` and
   `status` show covered spend and the excluded paths (S1 `on` under reranker controls, `llm:` under chat controls)
   with their effective limits.
-- Discoverability: `gbrain providers` shows a decide/rerank capability column for the TypeSafe recipe;
-  `gbrain decide --help` and every subcommand's help work without a configured brain (added to
-  `test/cli-help-without-brain.serial.test.ts`); the thin-client refusal says "`gbrain decide` runs on the brain
+- Discoverability: `foresights providers` shows a decide/rerank capability column for the TypeSafe recipe;
+  `foresights decide --help` and every subcommand's help work without a configured brain (added to
+  `test/cli-help-without-brain.serial.test.ts`); the thin-client refusal says "`foresights decide` runs on the brain
   host; run it there"; the guide is linked from `docs/guides/search-modes.md` and the provider docs; AGENTS.md
   "Common tasks" gets one bullet and `skills/RESOLVER.md` a route for enabling System One.
 - Upgrade safety: an enabled slot records the calibration it uses (local row id or reference id plus binary
   version). A new binary never silently switches an enabled slot to a newer reference calibration: `decide status`
-  shows "newer reference available" with the threshold change, and `gbrain decide calibrations list|adopt
+  shows "newer reference available" with the threshold change, and `foresights decide calibrations list|adopt
   <id>|retire <id>` adopts, retires or restores rows. The upgrade note in `skills/migrations/` says so.
 - Proposal review and undo (replaces the CEO requirement's reference to an existing fact restore path, which does
-  not exist at 6c8373c): `gbrain decide proposals list` shows both facts' text locally; `accept` and `reject` accept
-  `--all-from <sweep id>`; `gbrain decide proposals undo <id>` reverses an accepted proposal with a revision check
+  not exist at 6c8373c): `foresights decide proposals list` shows both facts' text locally; `accept` and `reject` accept
+  `--all-from <sweep id>`; `foresights decide proposals undo <id>` reverses an accepted proposal with a revision check
   (clears `superseded_by`, restores the struck `## Facts` fence line), refusing if either fact changed since.
   Tested across database state and the Markdown fence.
 - Machine-readable output: `--json` on `probe`, `enable`, `status`, `receipts`, `proposals list`, `calibrate`,
@@ -2031,7 +2031,7 @@ Unresolved decisions: none (every DX question auto-decided; taste call: magical-
   `decide.slots.<slot>.force_on true` does, prints a warning on every `enable`/`status`, and doctor always lists
   it. `decide.max_concurrency` (default 16) and `decide.margin_floor` (default 0.05) are configurable;
   `docs/architecture/decide.md` has a "fixed by design versus configurable" table covering window size, window cap,
-  S4 k, S6 budgets and S8 window count. `gbrain decide disable --all` and `decide.provider none` stop every slot,
+  S4 k, S6 budgets and S8 window count. `foresights decide disable --all` and `decide.provider none` stop every slot,
   S1 shadow and the S9 sweep; the guide names both as the kill switch.
 - Contributor contract: `decide()` takes an explicit `callSite`, questions are a discriminated union (choice
   options, score levels), and `docs/architecture/decide.md` includes one complete custom-slot example covering both
@@ -2435,14 +2435,14 @@ recommended configuration and matched baseline-vs-feature evals under $40.
 User Challenges (applied under the accept-all instruction; original direction listed so it can be restored):
 - UC1 (CEO spec review 2, verified in code): you said S9 replaces the chat classifier inside `facts/classify.ts`.
   That classifier has no runtime caller; supersession is a zero-LLM cosine rule in `decideSingleFact`. Change: S9
-  is an async, proposal-only sweep in the `extract_facts` tail plus `gbrain decide sweep`; the write path is
+  is an async, proposal-only sweep in the `extract_facts` tail plus `foresights decide sweep`; the write path is
   untouched. Might be missing: you may want inline conflict decisions at write time. If wrong: contradictions are
   found minutes later instead of at write time.
 - UC2 (both CEO voices): you put deeper candidate generation and the expansion decision (A5) out of scope. Change:
   the S1 eval adds a four-arm recall experiment (today, Jev at 100, a 300-deep pool eval-only, expansion + Jev).
   Production depth is unchanged. Might be missing: eval spend. If wrong: a few dollars of the $40 buy a negative.
 - UC3 (both CEO voices): you framed shadow as the way to calibrate on real traffic. Receipts carry no labels, so
-  that loop cannot close. Change: bundled reference calibrations, `gbrain decide enable --recommended`, and a
+  that loop cannot close. Change: bundled reference calibrations, `foresights decide enable --recommended`, and a
   reserved end-to-end eval (at most $10) that must win for the preset to ship non-empty. If wrong: extra eval spend
   and a preset that may ship empty.
 
@@ -2450,7 +2450,7 @@ Taste choices (recommended option taken): keep S5 injection (#6); S4 in `query` 
 in `think` over complete evidence (#18, revised by Eng); async sampled shadow by default (#29, reverses #24); S9
 proposal-only (#28); keep all nine slots rather than the native CEO voice's 3-4 slot cut (#33); keep #5178 closed
 after this PR rather than landing it first (#34); local classifier provider deferred, local `llm:` qualified on S7
-instead (#35); magical moment via `gbrain decide probe --query` (#39); storage via `executeRaw` like
+instead (#35); magical moment via `foresights decide probe --query` (#39); storage via `executeRaw` like
 `search/telemetry.ts` rather than new BrainEngine methods (#52).
 
 Review scores: CEO SELECTIVE EXPANSION, native 13 + Codex 9, consensus 5/6 (scope disagreement to taste). Design
@@ -2469,7 +2469,7 @@ knobs when the semantic cache returns; fresh-machine quickstart timing.
 Implementation tasks (aggregated across phases; two CEO rows are superseded by later phases: CEO T2's engine-sql
 domain → Eng T1's `executeRaw` store, and DX T5's CHECK constraint → Eng's TS-enforced vocabulary):
 
-- [ ] **T4 (P1, human: ~1.5d / CC: ~1.5h) — CLI + doctor** — gbrain decide subcommands incl. --recommended, sweep, what-if; decide_health doctor check
+- [ ] **T4 (P1, human: ~1.5d / CC: ~1.5h) — CLI + doctor** — foresights decide subcommands incl. --recommended, sweep, what-if; decide_health doctor check
   - Surfaced by: ceo-review — CLI section; E3-E5; UC3
   - Files: src/commands/decide.ts, src/cli/commands/decide.ts, src/cli/command-table.ts, src/commands/doctor/checks/decide.ts
 - [ ] **T1 (P1, human: ~3d / CC: ~3h) — decide core** — Build src/core/ai/decide/ (policy, pack, providers, receipts, calibrate, budget) with the consent contract and action-safety gate
@@ -2571,7 +2571,7 @@ domain → Eng T1's `executeRaw` store, and DX T5's CHECK constraint → Eng's T
 | 34 | CEO | Keep #5178 closed after this PR (not landed first) | Taste | owner rule | Single voice; one integrated PR | land #5178 first |
 | 35 | CEO | Local classifier provider stays deferred; qualify local `llm:` on S7 | Taste | P3 | New infra outside radius | local provider in v1 |
 | 36 | CEO | Malformed-response handling fails the whole decision | Mechanical | P5 | Partial answers are never trusted | use partial answers |
-| 37 | DX | Product type CLI tool; mode DX POLISH; persona GBrain operator (often via agent) | Mechanical | override/P6 | Inferred from README and plan | other personas |
+| 37 | DX | Product type CLI tool; mode DX POLISH; persona Foresights operator (often via agent) | Mechanical | override/P6 | Inferred from README and plan | other personas |
 | 38 | DX | TTHW target Competitive (<5 min from key) | Mechanical | P5 | Peer raw API ~1 min, reranker config ~2 min | Champion (<2 min) needs key-less path |
 | 39 | DX | Magical moment via `decide probe --query` | Taste | P5 | Lowest-effort vehicle on existing plan surface | `query --explain` forcing shadow only |
 | 40 | DX | Provider preconditions, pinned writes, recommended empty state | Mechanical | P1 | Native critical | leave undefined |

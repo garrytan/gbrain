@@ -95,7 +95,7 @@ export async function seedRecordsWorld(engine: BrainEngine): Promise<void> {
 export async function call(engine: BrainEngine, tool: string, args: Record<string, unknown>, remote = true) {
   const r = await dispatchToolCall(engine, tool, args, { remote, sourceId: SRC } as never);
   const body = JSON.parse(r.content[0]!.text!) as Record<string, any>;
-  const notices = r.content.slice(1).map(c => ({ code: /\[gbrain notice ([a-z_]+)/.exec(c.text ?? '')?.[1] ?? '', text: c.text ?? '' }));
+  const notices = r.content.slice(1).map(c => ({ code: /\[(?:foresights|gbrain) notice ([a-z_]+)/.exec(c.text ?? '')?.[1] ?? '', text: c.text ?? '' }));
   return { isError: r.isError === true, body, notices };
 }
 

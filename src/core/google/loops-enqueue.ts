@@ -75,7 +75,7 @@ export async function enqueueLoopsExtraction(deps: GoogleSyncDeps): Promise<Loop
       deps.log(
         `[google] loops_extract: chat provider unavailable (no configured chat model / API key) — ` +
           `skipped enqueue of ${deps.extractCandidates.length} eligible thread(s); they are queued on ` +
-          `their next touch (or \`gbrain sync --source ${deps.sourceId} --full\`) once a provider is configured`,
+          `their next touch (or \`foresights sync --source ${deps.sourceId} --full\`) once a provider is configured`,
       );
       return { ...report, skipped_reason: 'chat_unavailable' };
     }

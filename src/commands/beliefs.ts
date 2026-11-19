@@ -1,5 +1,5 @@
 /**
- * `gbrain beliefs`: the belief ledger's coverage (docs/designs/BELIEF_LEDGER.md
+ * `foresights beliefs`: the belief ledger's coverage (docs/designs/BELIEF_LEDGER.md
  * section 7). `enable` runs the resumable baseline and starts a coverage
  * interval; `disable` stops it; `status` prints each source's intervals,
  * watermark, certified status, baseline progress, restore gaps, drift marks
@@ -22,7 +22,7 @@ import { beliefChanges, renderBeliefChanges } from '../core/belief/changes.ts';
 import { parseSince } from '../core/since.ts';
 
 export const BELIEFS_USAGE = [
-  'Usage: gbrain beliefs <enable|disable|status|changes|reconcile|backfill|replay-purges> [--source <id>] [--json]',
+  'Usage: foresights beliefs <enable|disable|status|changes|reconcile|backfill|replay-purges> [--source <id>] [--json]',
   '  enable     Start recording the belief ledger on a source: baselines every page (resumable) and sets the watermark.',
   '             Only a managed source\'s coverage is certified; an unmanaged source is recorded but uncertified.',
   '  disable    Stop recording (appends coverage.stopped); enabling again starts a new interval with a new baseline.',
@@ -61,11 +61,11 @@ export function beliefsChangesArgs(args: string[], now = Date.now()): { entities
 function sourceArg(args: string[]): string | undefined {
   const at = args.indexOf('--source');
   const value = at >= 0 ? args[at + 1] : args.find(a => a.startsWith('--source='))?.slice('--source='.length);
-  if ((at >= 0 || value !== undefined) && (!value || value.startsWith('-'))) throw opError('invalid_params', '--source needs a source id.', 'Name the source after --source; gbrain sources list shows the source ids.');
+  if ((at >= 0 || value !== undefined) && (!value || value.startsWith('-'))) throw opError('invalid_params', '--source needs a source id.', 'Name the source after --source; foresights sources list shows the source ids.');
   return value;
 }
 
-const unknownSource = (sourceId: string) => opError('invalid_params', `Source ${sourceId} does not exist.`, 'Run gbrain sources list to see the source ids.');
+const unknownSource = (sourceId: string) => opError('invalid_params', `Source ${sourceId} does not exist.`, 'Run foresights sources list to see the source ids.');
 
 async function sourceStatus(engine: BrainEngine, sourceId: string) {
   const source = await readLedgerSource(engine, sourceId);
@@ -77,7 +77,7 @@ async function sourceStatus(engine: BrainEngine, sourceId: string) {
 
 function renderInterval(i: CoverageInterval): string[] {
   const lines = [`  interval from ${i.started_at}${i.stopped_at ? ` to ${i.stopped_at}` : ' (open)'}: ${i.certified ? 'certified (links: journaled publications only)' : 'uncertified'}`,
-    `    watermark: ${i.watermark ?? 'none yet'}; baseline: ${i.baseline.pages_done} page(s) done${i.baseline.complete ? ', complete' : `, ${i.baseline.pending ?? '?'} pending (rerun gbrain beliefs enable to resume)`}`];
+    `    watermark: ${i.watermark ?? 'none yet'}; baseline: ${i.baseline.pages_done} page(s) done${i.baseline.complete ? ', complete' : `, ${i.baseline.pending ?? '?'} pending (rerun foresights beliefs enable to resume)`}`];
   for (const r of i.restores) lines.push(`    restore at ${r.at} from an archive of ${r.archived_at ?? 'unknown time'} (gap); purge replay: ${r.purge_replay ?? 'unknown'}`);
   if (i.drift.length) lines.push(`    drift: ${i.drift.length} reconcile mark(s), uncertified permanently for ${[...new Set(i.drift.map(d => d.slug))].slice(0, 5).join(', ')}`);
   return lines;
@@ -93,12 +93,12 @@ export async function runBeliefs(engine: BrainEngine, args: string[]): Promise<v
   if (args.includes('--help') || args.includes('-h') || !sub) { console.log(BELIEFS_USAGE); return; }
   try {
     if (!(SUBCOMMANDS as readonly string[]).includes(sub)) {
-      throw opError('invalid_params', `Unknown beliefs subcommand '${sub}'.`, 'gbrain beliefs --help lists enable, disable, status, changes, reconcile, backfill and replay-purges.');
+      throw opError('invalid_params', `Unknown beliefs subcommand '${sub}'.`, 'foresights beliefs --help lists enable, disable, status, changes, reconcile, backfill and replay-purges.');
     }
     const named = sourceArg(args);
     if (named !== undefined && !await readLedgerSource(engine, named)) throw unknownSource(named);
     const target = () => resolveSourceId(engine, named).catch(error => {
-      throw error instanceof SourceTargetError ? opError('invalid_params', error.message, 'Name the source after --source; gbrain sources list shows the source ids.') : error;
+      throw error instanceof SourceTargetError ? opError('invalid_params', error.message, 'Name the source after --source; foresights sources list shows the source ids.') : error;
     });
     if (sub === 'enable') {
       const sourceId = await target();
@@ -139,10 +139,10 @@ export async function runBeliefs(engine: BrainEngine, args: string[]): Promise<v
       const statuses = [];
       for (const sourceId of sources) statuses.push(await sourceStatus(engine, sourceId));
       const text = statuses.length ? statuses.flatMap(s => [`${s.source_id} (${s.managed ? 'managed' : 'unmanaged'}, ${s.active ? 'recording' : 'not recording'})`,
-        ...(s.intervals.length ? s.intervals.flatMap(renderInterval) : ['  never enabled (gbrain beliefs enable --source ' + s.source_id + ')']),
-        ...(s.unmarked_publications ? [`  ${s.unmarked_publications} committed publication(s) without a commit mark (gbrain beliefs reconcile fills them)`] : []),
-        ...(s.orphans.count ? [`  ${s.orphans.count} orphan lifetime(s) (gbrain beliefs reconcile ends them)`] : [])]).join('\n')
-        : 'The belief ledger is not enabled on any source. Enable it with gbrain beliefs enable --source <id>.';
+        ...(s.intervals.length ? s.intervals.flatMap(renderInterval) : ['  never enabled (foresights beliefs enable --source ' + s.source_id + ')']),
+        ...(s.unmarked_publications ? [`  ${s.unmarked_publications} committed publication(s) without a commit mark (foresights beliefs reconcile fills them)`] : []),
+        ...(s.orphans.count ? [`  ${s.orphans.count} orphan lifetime(s) (foresights beliefs reconcile ends them)`] : [])]).join('\n')
+        : 'The belief ledger is not enabled on any source. Enable it with foresights beliefs enable --source <id>.';
       await report(args, { sources: statuses }, text);
       return;
     }

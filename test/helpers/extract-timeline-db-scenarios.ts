@@ -1,5 +1,5 @@
 /**
- * #5904 probe (E28): `gbrain extract timeline --source db` on a managed brain
+ * #5904 probe (E28): `foresights extract timeline --source db` on a managed brain
  * writes through the coordinator, and a refused write is reported honestly
  * with a non-zero exit. Shared by the PGLite test and the Postgres E2E.
  */
@@ -98,7 +98,7 @@ export async function managedTimelineDbRefusalExitsNonZero(databaseUrl?: string)
       expect(run.stderr).toContain('refused: writer_coordinator_required; nothing written; existing timeline rows are untouched');
       expect(run.stderr).not.toContain('rows lost');
       expect(run.stderr).toContain('1 page(s) not written, 0 written');
-      expect(run.stderr).toContain('gbrain extract --stale');
+      expect(run.stderr).toContain('foresights extract --stale');
       expect(run.stderr).toContain('docs/guides/write-refusals.md#extract-timeline-refused');
       expect(await rows(engine, BOB)).toEqual(bobBefore);
       expect(await rows(engine, ALICE)).toEqual([]);

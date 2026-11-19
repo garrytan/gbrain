@@ -5,7 +5,7 @@
  * .jsonl.reset.* / .jsonl.deleted.* variants, Hermes, Grok), parsed by the existing adapters, plus the OpenClaw
  * Gateway reader when the openclaw CLI is on PATH (or GBRAIN_OPENCLAW_GATEWAY_URL names a Gateway). A harness with
  * nothing on this machine is an informational line, never an error. Consumer chat apps have no local store: their
- * history arrives through gbrain connectors or an export.
+ * history arrives through foresights connectors or an export.
  */
 
 import { existsSync, lstatSync } from 'node:fs';
@@ -15,7 +15,7 @@ import { openclawGatewayReader } from './openclaw-gateway.ts';
 import { archiveMessageId, type ArchiveConversation, type ArchiveReader } from './archive.ts';
 import type { ParsedSession, TranscriptFormat, TranscriptMessage } from './types.ts';
 
-const NO_SESSIONS = (harness: string) => 'no readable sessions for ' + harness + '; use gbrain connectors or an export with gbrain transcripts ingest';
+const NO_SESSIONS = (harness: string) => 'no readable sessions for ' + harness + '; use foresights connectors or an export with foresights transcripts ingest';
 
 export function fileReader(root: HarnessRoot): ArchiveReader {
   const present = existsSync(root.root);

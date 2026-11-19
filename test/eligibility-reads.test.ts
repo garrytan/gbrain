@@ -181,7 +181,7 @@ describe('activation control (CEO-20, DX-10)', () => {
   test('the hook turn context labels what it injects and reports what it withheld', () => withEnv(env, async () => {
     const res = await assembleTurnContext(engine, { sourceId: 'default', window: [{ role: 'user', text: 'What does Acme Example need from Alice Example?' }] });
     expect(res.text).not.toContain('account is closed');
-    expect(res.suppressed).toEqual({ withheld: 1, review: 'gbrain trust review' });
+    expect(res.suppressed).toEqual({ withheld: 1, review: 'foresights trust review' });
     if (res.pointers.length) expect(res.text).toMatch(/\[(your notes|unverified origin|written by an agent|tool data|confirmed by you) · /);
   }));
 });

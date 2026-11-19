@@ -35,7 +35,7 @@ const pageFix = (sourceId: string, slug: string): Action => readFix(`Shows page 
   { argv: ['gbrain', 'get', '--source', sourceId, '--', slug] });
 const receiptFix = (row: WriteRequest): Action => readFix('Reads the reconcile request\'s durable receipt: its state, outcome and recorded error, read-only.',
   { argv: ['gbrain', 'write-request', '--', row.request_id] });
-const freshPreview = (sourceId: string, slug: string) => `Generate a fresh preview with gbrain sources reconcile ${sourceId} ${slug} --preview (with the same --brain), review it and apply that file; nothing from this attempt was written.`;
+const freshPreview = (sourceId: string, slug: string) => `Generate a fresh preview with foresights sources reconcile ${sourceId} ${slug} --preview (with the same --brain), review it and apply that file; nothing from this attempt was written.`;
 
 /** A copied private context shorter than this is too common to count as a copy ("Slack import", "meeting notes"). */
 export const PRIVATE_CONTEXT_COPY_MIN_CHARS = 24;
@@ -132,7 +132,7 @@ async function assertKeepDbAdmission(engine: Pick<BrainEngine, 'executeRaw'>, ro
   const admission = await readSyncAdmission(engine);
   if (admissionAllows(admission, 'destructive')) return;
   throw opError('admission_paused', `sync.admission is ${admission}, so this keep_db write was cancelled before it published.`,
-    `Nothing was written to ${row.slug} in source ${row.source_id}. keep_db writes resume when sync.admission is normal again (gbrain config set sync.admission normal); the next sync pass admits this page again.`,
+    `Nothing was written to ${row.slug} in source ${row.source_id}. keep_db writes resume when sync.admission is normal again (foresights config set sync.admission normal); the next sync pass admits this page again.`,
     { fix: readFix('Shows the sync admission switch and what the newest pass paused, read-only.', { argv: ['gbrain', 'sync', 'status', '--source', row.source_id, '--json'] }) });
 }
 

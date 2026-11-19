@@ -22,14 +22,14 @@ async function verdict(ctx: DoctorContext): Promise<Check> {
   try {
     const members = await labelledOnlyMembers(engine);
     const ids = members.map(m => m.id);
-    if (!ids.length) return infoCheck(name, 'Not applicable: no member is labelled-only (gbrain access member labelled-only <id> on).', 'not_applicable');
+    if (!ids.length) return infoCheck(name, 'Not applicable: no member is labelled-only (foresights access member labelled-only <id> on).', 'not_applicable');
     const owner = await ownerMemberId(engine);
     if (owner && ids.includes(owner)) {
       return { name, status: 'warn', details: { members, owner },
-        message: `The brain owner (${owner}) is marked labelled-only. The owner reads the whole brain, so the grant does not apply to it; clear it with gbrain access member labelled-only ${owner} off.`,
+        message: `The brain owner (${owner}) is marked labelled-only. The owner reads the whole brain, so the grant does not apply to it; clear it with foresights access member labelled-only ${owner} off.`,
         fix: agentFix(['gbrain', 'access', 'member', 'labelled-only', owner, 'off'], 'Clears the grant on the owner; no read changes, because the owner never reads under it.', name, { ask_user: true }) };
     }
-    return infoCheck(name, `${ids.length} labelled-only member(s): every credential bound to each reads only pages that name it (readable_by or a rule listing it or its groups), never an unlabelled page its grant would otherwise open: ${members.map(m => `${m.id} (${m.credentials} credential(s))`).join(', ')}. Clear one with gbrain access member labelled-only <id> off.`,
+    return infoCheck(name, `${ids.length} labelled-only member(s): every credential bound to each reads only pages that name it (readable_by or a rule listing it or its groups), never an unlabelled page its grant would otherwise open: ${members.map(m => `${m.id} (${m.credentials} credential(s))`).join(', ')}. Clear one with foresights access member labelled-only <id> off.`,
       'ok', undefined, { members });
   } catch (error) {
     return checkError(name, `run ${name}`, error);

@@ -1,5 +1,5 @@
 /**
- * `gbrain jobs submit enrich|subagent` asks for consent like the producing
+ * `foresights jobs submit enrich|subagent` asks for consent like the producing
  * commands, so the consent payload of `enrich --background` has no
  * unconsented alternative.
  *

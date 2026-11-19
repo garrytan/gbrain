@@ -20,9 +20,10 @@ import type { Action, McpCall } from '../core/agent-output.ts';
 import type { Operation, OperationMeta } from '../core/ops/contract.ts';
 import { cliEquivalent } from '../core/ops/cli-equivalent.ts';
 import { clampSurface, filterOpsForSurface, isReadOnlyOperation, surfaceWiderThan, type McpSurface } from './surface.ts';
+import { commandText } from '../core/brand.ts';
 
-const PERSISTENT_ROUTE = 'To keep the full surface for new sessions, set GBRAIN_SURFACE=full in the env of this harness\'s MCP server entry for gbrain '
-  + '(`claude mcp add gbrain -e GBRAIN_SURFACE=full -- …`, the env table of the Codex server entry, or the plugin\'s GBRAIN_SURFACE setting on launcher installs), '
+const PERSISTENT_ROUTE = 'To keep the full surface for new sessions, set GBRAIN_SURFACE=full in the env of this harness\'s MCP server entry for foresights '
+  + '(`claude mcp add foresights -e GBRAIN_SURFACE=full -- …`, the env table of the Codex server entry, or the plugin\'s GBRAIN_SURFACE setting on launcher installs), '
   + 'or re-register the server with `--surface full`. An inherited GBRAIN_SURFACE overrides a pinned --surface.';
 
 /** What the route decision reads about one connection. */
@@ -80,23 +81,23 @@ export function hiddenToolHint(
   const inputs = argInputs(argv, name);
   if (route.kind === 'host' && route.blocker === 'read_only') {
     const why = `${name} exists, but this server is read-only (access read-only), so it is not listed. Its CLI equivalent does the same on the brain host; this connection stays read-only.`;
-    return { suggestion: `${why} CLI equivalent: \`${argv.join(' ')}\`.`, fix: { argv, consent: [], actor: 'agent', requires_exclusive: false, why, ...inputs } };
+    return { suggestion: `${why} CLI equivalent: \`${commandText(argv)}\`.`, fix: { argv, consent: [], actor: 'agent', requires_exclusive: false, why, ...inputs } };
   }
   if (route.kind === 'widen') {
     const why = `${name} exists, but this session serves the ${surface} tool surface, which does not include it. `
       + `Call request_tools {"surface":"${route.surface}"} to add it to this session (no restart; nothing is written), then call ${name} by name. ${PERSISTENT_ROUTE}`;
     return {
-      suggestion: `${why} CLI equivalent: \`${argv.join(' ')}\`.`,
+      suggestion: `${why} CLI equivalent: \`${commandText(argv)}\`.`,
       fix: { mcp: { tool: 'request_tools', arguments: { surface: route.surface } }, argv, consent: [], actor: 'agent', requires_exclusive: false, why, ...inputs },
     };
   }
   const why = `${name} exists, but this server runs the ${surface} tool surface, which does not include it, and this session cannot widen it. `
     + `Its CLI equivalent does the same on the brain host. ${PERSISTENT_ROUTE}`;
   return {
-    suggestion: `${why} CLI equivalent: \`${argv.join(' ')}\`.`,
+    suggestion: `${why} CLI equivalent: \`${commandText(argv)}\`.`,
     fix: {
       argv, consent: [], actor: 'user', requires_exclusive: false, why,
-      user_message: `The ${name} tool is not in this session's gbrain tool set. You can run \`${argv.join(' ')}\` on the brain host, or add GBRAIN_SURFACE=full to the gbrain MCP server's env in your agent app and start a new session.`,
+      user_message: `The ${name} tool is not in this session's foresights tool set. You can run \`${commandText(argv)}\` on the brain host, or add GBRAIN_SURFACE=full to the foresights MCP server's env in your agent app and start a new session.`,
       ...inputs,
     },
   };
@@ -129,7 +130,7 @@ export function hiddenToolNext(op: Operation, call: McpCall, route: HiddenToolRo
       ? `${name} lists ${what}, but this connection is read-only and cannot call it; its CLI equivalent does the same on the brain host.`
       : `${name} lists ${what}, but this session cannot add it to its tool surface; its CLI equivalent does the same on the brain host. ${PERSISTENT_ROUTE}`;
     return { argv, consent: [], actor: 'user', requires_exclusive: false, why,
-      user_message: `This gbrain connection cannot list ${what}. You can run \`${argv.join(' ')}\` on the brain host.` };
+      user_message: `This foresights connection cannot list ${what}. You can run \`${commandText(argv)}\` on the brain host.` };
   }
   return hostFix;
 }

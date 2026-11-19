@@ -1,7 +1,7 @@
 /**
  * GBRA-438 PR 1, done item 9: free upkeep on a fresh keyless, repo-less
  * PGLite brain, black-box through the real CLI. Import leaves links
- * unextracted (link_count 0); one \`gbrain maintain --unattended\` extracts
+ * unextracted (link_count 0); one \`foresights maintain --unattended\` extracts
  * them, writes maintenance.last_run, and doctor's unattended_maintenance
  * shows the ok line. A second run is not due. \`maintain --status\` on a home
  * with no brain refuses no_brain with exit 1.

@@ -83,7 +83,7 @@ export interface ReconcileLinksOpts {
  * that resolves to a code page. Idempotent via ON CONFLICT DO
  * NOTHING in the underlying addLink path.
  *
- * Called by `gbrain reconcile-links` CLI surface. Respects the
+ * Called by `foresights reconcile-links` CLI surface. Respects the
  * `auto_link` config: if the user has disabled auto-linking on
  * put_page, reconcile-links doesn't silently re-populate those
  * edges either.
@@ -95,7 +95,7 @@ export async function runReconcileLinks(
   const sourceId = opts.sourceId ?? 'default';
   if (sourceId === ALL_SOURCES) {
     throw opError('invalid_params', `reconcile-links links pages inside one source; ${ALL_SOURCES} is not a source.`,
-      'Name one source with --source (gbrain sources list shows the ids).');
+      'Name one source with --source (foresights sources list shows the ids).');
   }
 
   // Respect auto_link config (same gate put_page uses). A user that
@@ -173,8 +173,8 @@ export async function runReconcileLinks(
         // if codeSlug isn't a page yet (benign — counted below). Source-
         // qualified per opts.sourceId; same-source assumption mirrors the
         // import-file.ts:303 doc↔impl auto-link.
-        await engine.addLink(mdSlug, codeSlug, ctx, 'documents', 'markdown', mdSlug, 'compiled_truth', linkOpts); // gbrain-allow-direct-insert: gbrain reconcile-links command — code-graph reconciliation from markdown references
-        await engine.addLink(codeSlug, mdSlug, ref.path, 'documented_by', 'markdown', mdSlug, 'compiled_truth', linkOpts); // gbrain-allow-direct-insert: gbrain reconcile-links command — reverse documented_by edge
+        await engine.addLink(mdSlug, codeSlug, ctx, 'documents', 'markdown', mdSlug, 'compiled_truth', linkOpts); // gbrain-allow-direct-insert: foresights reconcile-links command — code-graph reconciliation from markdown references
+        await engine.addLink(codeSlug, mdSlug, ref.path, 'documented_by', 'markdown', mdSlug, 'compiled_truth', linkOpts); // gbrain-allow-direct-insert: foresights reconcile-links command — reverse documented_by edge
       } catch (e: unknown) {
         // A missing code page is expected and counted; any other write failure fails the run.
         if (!(e instanceof PageMissingError)) {
@@ -224,7 +224,7 @@ export async function runReconcileLinksCli(engine: BrainEngine, args: string[]):
   if (result.status === 'auto_link_disabled') {
     console.log(
       '[reconcile-links] auto_link is disabled in config; skipping. ' +
-      'Set `gbrain config set auto_link true` to re-enable.',
+      'Set `foresights config set auto_link true` to re-enable.',
     );
     return;
   }

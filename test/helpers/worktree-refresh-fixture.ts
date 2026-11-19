@@ -1,5 +1,5 @@
 /**
- * F0 `gbrain sources refresh` fixture: a bare upstream, a pushing clone, and a
+ * F0 `foresights sources refresh` fixture: a bare upstream, a pushing clone, and a
  * managed clone whose `alpha/` and `beta/` directories are two sources bound
  * to ONE canonical worktree (the multi-source case a per-source fence cannot
  * protect). Both sources are synced once, so `last_commit` is the clone HEAD.

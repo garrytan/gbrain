@@ -5,8 +5,8 @@
  * 1. Protects: with `pages.segmented_storage` on, such a file is refused
  *    (`invalid_params`, message prefix `File too large (`) with a message that
  *    itself says to move it into the source root and names the target path
- *    (`gbrain import` prints only the message), and a fix the user runs after
- *    moving it (`gbrain import <target> --source <id>`). Nothing is imported.
+ *    (`foresights import` prints only the message), and a fix the user runs after
+ *    moving it (`foresights import <target> --source <id>`). Nothing is imported.
  *    The same file inside the root imports.
  * 2. Fails when: the refusal says only "File too large (max N bytes)." and
  *    hides the move in the suggestion.

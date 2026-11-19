@@ -1,5 +1,5 @@
 /**
- * synopsis-tier.ts — makes `gbrain eval longmemeval --mode tokenmax` measure
+ * synopsis-tier.ts — makes `foresights eval longmemeval --mode tokenmax` measure
  * the vectors production builds for that mode.
  *
  * Production imports every page at the free title tier and leaves the

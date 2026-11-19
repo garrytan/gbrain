@@ -15,8 +15,8 @@
  * Topology: pgvector Postgres in Docker, a transaction-mode PgBouncer in front
  * of it (startup parameters such as statement_timeout ignored, as Supavisor
  * does), toxiproxy in front of the pooler with `--rtt` ms of round trip, and
- * every gbrain process pointed at the proxy with GBRAIN_POOL_SIZE=--pool-size.
- * `--cli-repo` names the gbrain checkout under test (default: this one), so the
+ * every foresights process pointed at the proxy with GBRAIN_POOL_SIZE=--pool-size.
+ * `--cli-repo` names the foresights checkout under test (default: this one), so the
  * same fixture runs on a release commit and on a branch head; that checkout's
  * engine initializes the schema.
  *
@@ -39,16 +39,16 @@
  * The backlog also carries `--backlog-marker-pages` repeated-marker pages, to
  * see whether the managed screen holds a sync member before admission.
  *
- * Drive: `timeout 3600 gbrain sync --source bench --no-pull --no-embed` in a
+ * Drive: `timeout 3600 foresights sync --source bench --no-pull --no-embed` in a
  * non-TTY (stdout/stderr piped), re-run up to `--passes` times until synced,
- * while a second process runs `gbrain dream --phase extract_facts --source bench`
+ * while a second process runs `foresights dream --phase extract_facts --source bench`
  * every `--adoption-interval` seconds so adoption writes land mid-sync. Every
  * `--sample-seconds` the sampler records, through the pooler: the running
  * requests (request_id, operation, kind, claim_phase, blocked_reason),
  * pg_stat_activity (pid, state, wait event, xact/query age, query head), the
- * queue state counts and `gbrain sources writer status --probe --json`; and from
+ * queue state counts and `foresights sources writer status --probe --json`; and from
  * the admin connection: lock waits with their blockers. `SHOW statement_timeout`
- * is read once through the pooler. Every gbrain process writes GBRAIN_SQL_TRACE,
+ * is read once through the pooler. Every foresights process writes GBRAIN_SQL_TRACE,
  * so the sync process's last completed round trips are known at any moment.
  *
  * A stall is `--stall-minutes` without a new committed sync request while a
@@ -128,19 +128,19 @@ const SYNC_PREPARATION_MS = Number(flag('sync-preparation-ms', '0'));
 /** Phase 4.1: `--chaos-repeat N` holds the lock N times (default once), `--chaos-gap <seconds>` apart, so the second hold lands on a run that already recovered once. */
 const CHAOS_REPEAT = Number(flag('chaos-repeat', '1'));
 const CHAOS_GAP_MS = Number(flag('chaos-gap', '300')) * 1000;
-/** Phase 4.1: `--fence-repair-at <minutes>` (0 = off) runs `gbrain dream --phase fence_repair` once, that many minutes into pass 1, and records its verification block (`fence-repair.json`). */
+/** Phase 4.1: `--fence-repair-at <minutes>` (0 = off) runs `foresights dream --phase fence_repair` once, that many minutes into pass 1, and records its verification block (`fence-repair.json`). */
 const FENCE_REPAIR_AT_MS = Number(flag('fence-repair-at', '0')) * 60_000;
-/** Phase 4.1: `--retry-held-after` runs `gbrain sources retry-held` plus the sync it prints once the passes end, and records what the held files did (`retry-held.json`). */
+/** Phase 4.1: `--retry-held-after` runs `foresights sources retry-held` plus the sync it prints once the passes end, and records what the held files did (`retry-held.json`). */
 const RETRY_HELD_AFTER = process.argv.includes('--retry-held-after');
 /**
  * #6317 (GBRA-61 Phase 0): `--scenario two-consumer` builds the reporter's two-process shape instead of the pass loop.
- * A seeding drain (`gbrain sync`, bulk lanes `--lanes`) runs `--seed-seconds` and is killed with `--seed-kill` (the
- * reporter's watchdog kill), leaving its lane groups queued; then `gbrain serve --http` and a fresh `gbrain sync` start
+ * A seeding drain (`foresights sync`, bulk lanes `--lanes`) runs `--seed-seconds` and is killed with `--seed-kill` (the
+ * reporter's watchdog kill), leaving its lane groups queued; then `foresights serve --http` and a fresh `foresights sync` start
  * `--gap-seconds` apart in `--order` (serve-first: serve boots, claims the FIFO head, the CLI arrives later, as in the
  * reporter's timeline; cli-first: the reverse). `--cli-restart-seconds N` kills the CLI with SIGTERM every N s and
  * restarts it 10 s later (the reporter's passes were restarted after each watchdog kill). A wedge is a `preparing`
  * claim older than `--wedge-minutes` while nothing in pg_stat_activity is older than 10 s; on detection the sampler
- * writes `wedge-<n>.json`, sends `--stall-signal` to every gbrain process it started and records each dump.
+ * writes `wedge-<n>.json`, sends `--stall-signal` to every foresights process it started and records each dump.
  * `--seed-settle-seconds` lets the seed's claims lapse before the first consumer boots. `--serve-port` is the serve's HTTP port; `--wedge-hold-minutes` keeps a wedge alive that long before the scenario
  * ends (0 = until --max-minutes).
  */
@@ -208,7 +208,7 @@ async function runCli(home: string, args: string[], env: Record<string, string |
 }
 async function mustCli(home: string, args: string[], env: Record<string, string | undefined> = {}): Promise<CliRun> {
   const r = await runCli(home, args, env);
-  if (r.code !== 0) throw new Error(`gbrain ${args.join(' ')} exited ${r.code}\nstdout: ${r.stdout.slice(-1500)}\nstderr: ${r.stderr.slice(-1500)}`);
+  if (r.code !== 0) throw new Error(`foresights ${args.join(' ')} exited ${r.code}\nstdout: ${r.stdout.slice(-1500)}\nstderr: ${r.stderr.slice(-1500)}`);
   return r;
 }
 
@@ -519,7 +519,7 @@ function summarizeActivity(activity: unknown): unknown {
   return (activity as Array<Record<string, unknown>>).map(a => `${a.pid} ${a.application_name} ${a.state} ${a.wait_event_type ?? '-'}/${a.wait_event ?? '-'} xact=${a.xact_age_ms}ms q=${a.query_age_ms}ms blocked_by=${JSON.stringify(a.blocked_by)} :: ${String(a.query).slice(0, 120)}`);
 }
 
-/** `gbrain dream --phase extract_facts` on a cadence: the fact-adoption writes that land mid-sync (and the Phase 0.5 refusals). */
+/** `foresights dream --phase extract_facts` on a cadence: the fact-adoption writes that land mid-sync (and the Phase 0.5 refusals). */
 async function adoptionLoop(row: Row, legacy: LegacyRow[], stop: () => boolean): Promise<void> {
   if (ADOPTION_INTERVAL_MS <= 0) return;
   const pool = dripPages(legacy);
@@ -561,7 +561,7 @@ async function chaos(stop: () => boolean): Promise<void> {
   while (!stop() && !(state.pass && state.pass.pass === 1 && Date.now() - state.pass.startedAt >= CHAOS_AT_MS)) await Bun.sleep(1000);
   if (stop()) return;
   if (CHAOS_KIND === 'partition') {
-    // #6317: the client->pooler half of every gbrain connection is dropped (iptables, never closed): statements already sent park
+    // #6317: the client->pooler half of every foresights connection is dropped (iptables, never closed): statements already sent park
     // in JS while their backend waits in ClientRead for the rest of the exchange; new connections time out. The reporter's
     // Supavisor wedge, deterministically and for every connection at once; lifted after --chaos-for.
     const rule = ['OUTPUT', '-p', 'tcp', '--dport', flag('proxy-port', '55433'), '-j', 'DROP'];
@@ -621,7 +621,7 @@ async function fenceRepairOnce(row: Row, stop: () => boolean): Promise<void> {
   while (!stop() && !(state.pass && state.pass.pass === 1 && Date.now() - state.pass.startedAt >= FENCE_REPAIR_AT_MS)) await Bun.sleep(1000);
   if (stop()) return;
   const t = Date.now();
-  log('fence_repair: running gbrain dream --phase fence_repair during pass 1');
+  log('fence_repair: running foresights dream --phase fence_repair during pass 1');
   const r = await runCli(row.home, ['dream', '--phase', 'fence_repair', '--source', SOURCE, '--json'], { GBRAIN_SQL_TRACE: row.trace, GBRAIN_SQL_TRACE_LABEL: 'fence-repair' }, 20 * 60_000);
   const phases = (r.json?.phases as Array<Record<string, unknown>> | undefined) ?? (r.json?.phase_results as Array<Record<string, unknown>> | undefined) ?? [];
   const phase = phases.find(p => p.phase === 'fence_repair') ?? null;
@@ -710,7 +710,7 @@ async function legacyOutcome(row: Row, legacy: LegacyRow[]): Promise<Record<stri
   return out;
 }
 
-/** Phase 4.1: `gbrain sources retry-held` and the sync it prints, with the holds before and after. */
+/** Phase 4.1: `foresights sources retry-held` and the sync it prints, with the holds before and after. */
 async function retryHeldAfter(row: Row): Promise<Record<string, unknown>> {
   const before = await holdSummary(row).catch(e => ({ error: String(e) }));
   const retry = await runCli(row.home, ['sources', 'retry-held', SOURCE, '--json'], { GBRAIN_SQL_TRACE: row.trace, GBRAIN_SQL_TRACE_LABEL: 'retry-held' }, 120_000);
@@ -736,14 +736,14 @@ async function syncPass(row: Row, pass: number): Promise<SyncPass> {
   const err = Bun.file(join(OUT, `pass-${pass}.stderr`)).writer();
   const child = Bun.spawn(['timeout', '3600', process.execPath, ...(INSPECT ? [`--inspect=127.0.0.1:${INSPECT_PORT}`] : []), CLI, ...SYNC_ARGS], { cwd: row.home, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe',
     env: childEnv(row.home, { GBRAIN_SQL_TRACE: row.trace, GBRAIN_SQL_TRACE_LABEL: 'cli-sync', GBRAIN_SYNC_LANES: LANES, ...(DIRECT_POOL ? { GBRAIN_DIRECT_DATABASE_URL: row.directUrl } : {}) }) });
-  // `timeout` is the parent; the gbrain process is its child. Find it for the kill and trace attribution.
+  // `timeout` is the parent; the foresights process is its child. Find it for the kill and trace attribution.
   await Bun.sleep(1500);
   let gbrainPid = child.pid;
   try { const kids = execFileSync('pgrep', ['-P', String(child.pid)], { encoding: 'utf8' }).trim().split('\n').filter(Boolean); if (kids[0]) gbrainPid = Number(kids[0]); } catch { /* keep the timeout pid */ }
   const record: SyncPass = { pass, pid: gbrainPid, startedAt: Date.now(), committedAtStart: await committedCount(row), ...(INSPECT ? { inspect: `127.0.0.1:${INSPECT_PORT}` } : {}) };
   state.pass = record;
   state.committedChangedAt = Date.now();
-  log(`pass ${pass} started: timeout pid ${child.pid}, gbrain pid ${gbrainPid}`);
+  log(`pass ${pass} started: timeout pid ${child.pid}, foresights pid ${gbrainPid}`);
   const pump = async (stream: ReadableStream<Uint8Array>, sink: { write(chunk: Uint8Array): unknown; flush(): unknown; end(): unknown }) => {
     for await (const chunk of stream) { sink.write(chunk); await sink.flush(); }
     await sink.end();
@@ -783,7 +783,7 @@ function wedgeSignature(sample: Record<string, unknown>): { preparing_age_ms: nu
   return { preparing_age_ms: preparingAge, preparing, oldest_active_query_ms: oldestActive, idle_in_tx_ms: idleInTx, running: running.length };
 }
 
-/** Sends `signal` to every live gbrain process the scenario started and collects the `[stall-debug]` line each wrote. */
+/** Sends `signal` to every live foresights process the scenario started and collects the `[stall-debug]` line each wrote. */
 async function dumpAll(signal: string): Promise<Array<Record<string, unknown>>> {
   const procs = liveProcs();
   for (const p of procs) { try { process.kill(p.pid, signal as NodeJS.Signals); } catch { /* gone */ } }
@@ -828,7 +828,7 @@ function sh(cmd: string, ...args: string[]): string {
   try { return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10_000 }).trim(); } catch (error) { return `(${cmd} failed: ${error instanceof Error ? error.message.split('\n')[0] : String(error)})`; }
 }
 
-/** One gbrain process of the scenario, output to `<label>.stdout` / `<label>.stderr`; the gbrain pid is the child itself (no `timeout` wrapper). */
+/** One foresights process of the scenario, output to `<label>.stdout` / `<label>.stderr`; the foresights pid is the child itself (no `timeout` wrapper). */
 function spawnProc(row: Row, label: string, kind: Proc['kind'], args: string[], env: Record<string, string | undefined> = {}): Proc {
   const out = Bun.file(join(OUT, `${label}.stdout`)).writer();
   const err = Bun.file(join(OUT, `${label}.stderr`)).writer();
@@ -942,7 +942,7 @@ try {
     doomed_pages: new Set(built.legacy.filter(r => r.doomedPage).map(r => r.slug)).size, adoptable_pages: new Set(built.legacy.filter(r => !r.doomedPage && !r.markerPage).map(r => r.slug)).size,
     drip_pool_pages: dripPages(built.legacy).length, drip_rows_per_run: DRIP_ROWS,
     marker_history_pages: [...markerHistory], marker_backlog_pages: [...markerBacklog] };
-  // The same startup parameters gbrain sends (db.ts resolveSessionTimeouts), through the pooler and directly: does the pooler keep them?
+  // The same startup parameters foresights sends (db.ts resolveSessionTimeouts), through the pooler and directly: does the pooler keep them?
   const showTimeouts = async (sql: ReturnType<typeof postgres>) => ({
     statement_timeout: (await sql.unsafe('SHOW statement_timeout'))[0]!.statement_timeout, idle_in_transaction_session_timeout: (await sql.unsafe('SHOW idle_in_transaction_session_timeout'))[0]!.idle_in_transaction_session_timeout,
     lock_timeout: (await sql.unsafe('SHOW lock_timeout'))[0]!.lock_timeout });

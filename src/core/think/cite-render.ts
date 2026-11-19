@@ -1,5 +1,5 @@
 /**
- * v0.28: structured-citations → inline-marker rendering for `gbrain think`.
+ * v0.28: structured-citations → inline-marker rendering for `foresights think`.
  *
  * The model's structured output gives us:
  *   citations: [{page_slug, row_num | null, citation_index}, ...]

@@ -160,7 +160,7 @@ export interface Check extends CheckAgentFields {
    * v0.36+ brain-health-100: structured remediation jobs per check.
    * Populated by the recommendation generator + (v0.40.3.0 T8b) individual
    * checks (lint, integrity, sync_failures). Consumed by
-   * `gbrain doctor --remediation-plan` / `--remediate`. Optional and
+   * `foresights doctor --remediation-plan` / `--remediate`. Optional and
    * additive — schema_version stays at 2 (D4).
    *
    * v0.40.3.0 (D6): typed to RemediationStep[] from the canonical
@@ -184,9 +184,9 @@ export interface Check extends CheckAgentFields {
 
 /**
  * Structured doctor report. Stable shape consumed by:
- *   - gbrain doctor --json (CLI)
+ *   - foresights doctor --json (CLI)
  *   - run_doctor MCP op (remote callers)
- *   - gbrain remote doctor (renders this from the MCP op response)
+ *   - foresights remote doctor (renders this from the MCP op response)
  *
  * schema_version=2 was set when --json output stabilized; bump only for
  * breaking field changes.
@@ -197,8 +197,8 @@ export interface DoctorReport {
   /**
    * Legacy all-checks aggregate. `100 − 20×fails − 5×warns`, floor 0.
    *
-   * Preserved verbatim from pre-v0.41.19.0 for back-compat with `gbrain
-   * doctor --remediate`, `gbrain remote doctor`, the MCP `run_doctor` op,
+   * Preserved verbatim from pre-v0.41.19.0 for back-compat with `foresights
+   * doctor --remediate`, `foresights remote doctor`, the MCP `run_doctor` op,
    * and any external monitor / CI gate that reads this field. NO behavior
    * change: a fixed check set produces a byte-identical `health_score`
    * before and after the v0.41.19.0 wave.
@@ -326,7 +326,7 @@ export function computeDoctorReport(
 }
 
 /**
- * Focused doctor for `run_doctor` MCP op + `gbrain remote doctor` CLI.
+ * Focused doctor for `run_doctor` MCP op + `foresights remote doctor` CLI.
  *
  * Runs five checks scoped to "what does a remote operator need to know about
  * this brain right now?":
@@ -362,7 +362,7 @@ const _resolveSyncFreshnessHours = resolveHoursEnv;
 
 
 /**
- * Build the full check list for `gbrain doctor` against an engine + arg vector.
+ * Build the full check list for `foresights doctor` against an engine + arg vector.
  * Filesystem-first, DB-second: filesystem checks (resolver, conformance) run
  * without an engine; DB checks run only if one is provided.
  *
@@ -423,7 +423,7 @@ export async function buildChecks(
   // v0.41.29.0: explicit `--source <id>` scopes the `orphan_ratio` check to one
   // source. EXPLICIT-ONLY by design — a raw flag parse, NOT resolveSourceWithTier.
   // The tier resolver would pick a default source when `--source` is absent and
-  // silently scope a bare `gbrain doctor` to one source; we want bare doctor to
+  // silently scope a bare `foresights doctor` to one source; we want bare doctor to
   // stay brain-wide. Only `orphan_ratio` consumes this for now (other checks
   // staying brain-wide is a separate, larger change — see TODOS.md).
   let orphanRatioSourceId: string | undefined;
@@ -493,7 +493,7 @@ export async function buildChecks(
 }
 
 /**
- * CLI entry point for `gbrain doctor`. Thin wrapper around buildChecks +
+ * CLI entry point for `foresights doctor`. Thin wrapper around buildChecks +
  * computeDoctorReport + render + process.exit.
  *
  * Concerns kept here (not pushed into buildChecks):
@@ -647,7 +647,7 @@ function outputResults(
 }
 
 /**
- * `gbrain doctor --locks` — list idle-in-transaction backends older
+ * `foresights doctor --locks` — list idle-in-transaction backends older
  * than 5 minutes that could block DDL. Exits 0 on clean, 1 on blockers.
  *
  * Agents hitting a statement_timeout (SQLSTATE 57014) during migration
@@ -662,7 +662,7 @@ async function runLocksCheck(engine: BrainEngine | null, jsonOutput: boolean): P
     if (jsonOutput) {
       void writeJsonDocument(JSON.stringify({ status: 'unavailable', reason: 'no_engine' }));
     } else {
-      console.log('gbrain doctor --locks requires a database connection. Configure a URL and retry.');
+      console.log('foresights doctor --locks requires a database connection. Configure a URL and retry.');
     }
     process.exit(1);
   }
@@ -671,7 +671,7 @@ async function runLocksCheck(engine: BrainEngine | null, jsonOutput: boolean): P
     if (jsonOutput) {
       void writeJsonDocument(JSON.stringify({ status: 'not_applicable', engine: engine.kind }));
     } else {
-      console.log(`gbrain doctor --locks is Postgres-only. Current engine: ${engine.kind}. No blockers possible (no connection pool).`);
+      console.log(`foresights doctor --locks is Postgres-only. Current engine: ${engine.kind}. No blockers possible (no connection pool).`);
     }
     return;
   }
@@ -697,7 +697,7 @@ async function runLocksCheck(engine: BrainEngine | null, jsonOutput: boolean): P
     console.log('');
   }
   console.log('These connections may block ALTER TABLE DDL during migration.');
-  console.log('After terminating, retry: gbrain apply-migrations --yes');
+  console.log('After terminating, retry: foresights apply-migrations --yes');
   process.exit(1);
 }
 

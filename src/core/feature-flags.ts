@@ -8,7 +8,7 @@
  * undiscovered Postgres lock contention).
  *
  * What the flag gates:
- *   - Parallel branch of `gbrain sync --all` (serial fallback otherwise)
+ *   - Parallel branch of `foresights sync --all` (serial fallback otherwise)
  *   - Auto-enqueue of embed-backfill in the extended `sync` handler
  *   - Autopilot's per-source freshness-gate dispatch (D17)
  *
@@ -20,8 +20,8 @@
  *   - safeHexEqual extraction (D15.5)
  *
  * Disable path:
- *   gbrain config set sync.federated_v2 false
- *   gbrain jobs supervisor restart   # autopilot picks up the change
+ *   foresights config set sync.federated_v2 false
+ *   foresights jobs supervisor restart   # autopilot picks up the change
  *
  * Convention: this module is the ONLY place that reads the flag. Callers go
  * through `isFederatedV2Enabled(engine)` so future changes to the flag key,

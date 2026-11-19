@@ -9,7 +9,7 @@
  *   bun scripts/ci-cost-ledger.ts --write-baseline      # refresh scripts/ci-cost-baseline.json
  *
  * Options:
- *   --repo OWNER/NAME     default $GITHUB_REPOSITORY, else garrytan/gbrain
+ *   --repo OWNER/NAME     default $GITHUB_REPOSITORY, else aimonk2025/gbrain
  *   --days N              window length (default 7), ending at --until (default now)
  *   --max-requests N      API request budget, listing included (default 700:
  *                         GITHUB_TOKEN allows 1000 an hour per repository)
@@ -179,7 +179,7 @@ export interface LedgerDeps {
 }
 
 export async function runLedger(argv: string[], deps: LedgerDeps = {}): Promise<LedgerResult> {
-  const o = { repo: process.env.GITHUB_REPOSITORY || "garrytan/gbrain", days: 7, until: "", maxRequests: 700, concurrency: 8, reportOnly: false, stepSummary: false, writeBaseline: false, baseline: DEFAULT_BASELINE };
+  const o = { repo: process.env.GITHUB_REPOSITORY || "aimonk2025/gbrain", days: 7, until: "", maxRequests: 700, concurrency: 8, reportOnly: false, stepSummary: false, writeBaseline: false, baseline: DEFAULT_BASELINE };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
     const value = () => {

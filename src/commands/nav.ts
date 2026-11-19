@@ -1,7 +1,7 @@
 /**
- * gbrain nav — write the brain's navigation files at a source's root.
+ * foresights nav — write the brain's navigation files at a source's root.
  *
- *   gbrain nav [build] [--source <id>] [--out <dir>] [--dry-run] [--json]
+ *   foresights nav [build] [--source <id>] [--out <dir>] [--dry-run] [--json]
  *
  * index.md   every page, grouped by folder, with a one-line summary
  * log.md     recent operations (the ingest log), newest first
@@ -20,6 +20,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { collectGitVisibleFiles } from '../core/git-visible-files.ts';
 import { assertManagedFilesystemWrite } from '../core/persistence/filesystem-guard.ts';
 import { listInboxFiles } from '../core/ingestion/sources/inbox-folder.ts';
@@ -29,9 +30,9 @@ import {
   mergeNavFile, renderHot, renderIndex, renderLog, type NavLogEntry, type NavMerge, type NavPage,
 } from '../core/nav/nav-pages.ts';
 
-const USAGE = `Usage: gbrain nav [build] [--source <id>] [--out <dir>] [--dry-run] [--json]
+const USAGE = `Usage: foresights nav [build] [--source <id>] [--out <dir>] [--dry-run] [--json]
   Writes index.md (every page by folder), log.md (recent operations) and hot.md (what is new)
-  at the source's folder, or ~/.gbrain/nav/<source>/ when gbrain manages that folder.
+  at the source's folder, or ~/.gbrain/nav/<source>/ when foresights manages that folder.
   Only the block between the gbrain:nav markers is rebuilt.
   --source <id>  the source (default: default)
   --out <dir>    the folder to write into
@@ -39,9 +40,9 @@ const USAGE = `Usage: gbrain nav [build] [--source <id>] [--out <dir>] [--dry-ru
   --json         machine-readable output`;
 
 const FILES = {
-  'index.md': { title: 'Index', intro: 'Every page in this brain, by folder. `gbrain nav` rebuilds the marked block; your notes outside it stay.' },
-  'log.md': { title: 'Log', intro: 'What happened in this brain, newest first. `gbrain nav` rebuilds the marked block; your notes outside it stay.' },
-  'hot.md': { title: 'Hot', intro: 'Read this first: what is new in this brain. `gbrain nav` rebuilds the marked block; your notes outside it stay.' },
+  'index.md': { title: 'Index', intro: 'Every page in this brain, by folder. `foresights nav` rebuilds the marked block; your notes outside it stay.' },
+  'log.md': { title: 'Log', intro: 'What happened in this brain, newest first. `foresights nav` rebuilds the marked block; your notes outside it stay.' },
+  'hot.md': { title: 'Hot', intro: 'Read this first: what is new in this brain. `foresights nav` rebuilds the marked block; your notes outside it stay.' },
 } as const;
 type NavFile = keyof typeof FILES;
 
@@ -100,7 +101,7 @@ export interface NavResult {
   files: Array<{ file: NavFile; action: NavMerge['action']; reason?: string }>;
 }
 
-/** Whether gbrain's persistence coordinator owns this folder (a direct file write there is refused). */
+/** Whether foresights's persistence coordinator owns this folder (a direct file write there is refused). */
 function isManagedFolder(dir: string): boolean {
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- dir is the source's own folder; the fixed name index.md is only probed, nothing is written
   try { assertManagedFilesystemWrite(join(dir, 'index.md')); return false; } catch { return true; }
@@ -111,7 +112,7 @@ export async function buildNav(engine: BrainEngine, opts: { sourceId?: string; o
   const sourceId = opts.sourceId ?? 'default';
   const root = await sourceRoot(engine, sourceId);
   if (!root || !existsSync(root)) {
-    throw new Error(`gbrain nav: source "${sourceId}" has no folder on this machine${root ? ` (${root} is missing)` : ''}. Give the source a path with gbrain sources set-path.`);
+    throw new Error(`foresights nav: source "${sourceId}" has no folder on this machine${root ? ` (${root} is missing)` : ''}. Give the source a path with foresights sources set-path.`);
   }
   const managedRoot = !opts.out && isManagedFolder(root);
   const out = opts.out ?? (managedRoot ? gbrainPath('nav', sourceId) : root);
@@ -147,7 +148,7 @@ export async function buildNav(engine: BrainEngine, opts: { sourceId?: string; o
 export async function runNav(engine: BrainEngine, args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) { console.log(USAGE); return; }
   const sub = args[0] && !args[0].startsWith('--') ? args[0] : 'build';
-  if (sub !== 'build') { console.error(USAGE); process.exitCode = 1; return; }
+  if (sub !== 'build') { console.error(USAGE); setCliExitVerdict(1); return; }
   const json = args.includes('--json');
   const dryRun = args.includes('--dry-run');
   let result: NavResult;
@@ -155,13 +156,13 @@ export async function runNav(engine: BrainEngine, args: string[]): Promise<void>
     result = await buildNav(engine, { sourceId: flagValue(args, '--source'), out: flagValue(args, '--out'), dryRun });
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
-    process.exitCode = 1;
+    setCliExitVerdict(1);
     return;
   }
-  if (result.files.some(f => f.action === 'refuse')) process.exitCode = 1;
+  if (result.files.some(f => f.action === 'refuse')) setCliExitVerdict(1);
   if (json) { console.log(JSON.stringify({ ...result, dry_run: dryRun }, null, 2)); return; }
   const verb = (a: NavMerge['action']) => (dryRun ? { create: 'would create', update: 'would update', unchanged: 'unchanged', refuse: 'left alone' }
     : { create: 'created', update: 'updated', unchanged: 'unchanged', refuse: 'left alone' })[a];
   for (const f of result.files) console.log(`${f.file}: ${verb(f.action)}${f.reason ? `: ${f.reason}` : ''}`);
-  console.log(`In ${result.out}${result.managed_root ? ` (gbrain manages the source's folder ${result.root}, so the files are kept here)` : ''}. Nothing was committed.`);
+  console.log(`In ${result.out}${result.managed_root ? ` (foresights manages the source's folder ${result.root}, so the files are kept here)` : ''}. Nothing was committed.`);
 }

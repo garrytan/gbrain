@@ -1,5 +1,5 @@
 /**
- * B5 — `gbrain protocol` document shape (buildProtocolDocument, src/commands/protocol.ts).
+ * B5 — `foresights protocol` document shape (buildProtocolDocument, src/commands/protocol.ts).
  *
  * The protocol document is the machine-readable face of the frozen
  * MEMORY_VERBS v1 contract (docs/protocol/MEMORY_VERBS_v1.md). The builder

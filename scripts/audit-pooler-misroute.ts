@@ -13,11 +13,11 @@
  *
  * Self-contained, so it runs beside any install (a v0.60.180.0 global install
  * included) with no checkout: copy this one file anywhere and run it with bun.
- * It imports nothing from gbrain's src/, only the postgres driver, from the
+ * It imports nothing from foresights's src/, only the postgres driver, from the
  * first of: $GBRAIN_AUDIT_POSTGRES_DRIVER (a path to postgres's src/index.js),
  * ../vendor/postgres/src/index.js next to this file (a checkout),
  * ~/.bun/install/global/node_modules/gbrain/vendor/postgres/src/index.js (a
- * `bun install -g` gbrain), or a `postgres` package node_modules resolves.
+ * `bun install -g` foresights), or a `postgres` package node_modules resolves.
  *
  * Connection: one connection to the URL given with --url (never read from the
  * environment). A direct URL or the session pooler (Supabase :5432) is
@@ -104,7 +104,7 @@ async function loadPostgres(): Promise<PostgresFactory> {
   for (const specifier of [...candidates, 'postgres']) {
     try { return ((await import(specifier)) as { default: PostgresFactory }).default; } catch { /* next candidate */ }
   }
-  throw new Error('no postgres driver found: set GBRAIN_AUDIT_POSTGRES_DRIVER to the path of a postgres src/index.js (a gbrain install has one under vendor/postgres)');
+  throw new Error('no postgres driver found: set GBRAIN_AUDIT_POSTGRES_DRIVER to the path of a postgres src/index.js (a foresights install has one under vendor/postgres)');
 }
 
 const REQUESTS_SQL = `SELECT r.sequence::text AS seq, r.id::text AS id, r.request_id::text AS request_id, r.source_id, r.source_incarnation::text AS source_incarnation,

@@ -37,7 +37,7 @@ function writeCarrier(path: string, events: readonly string[], marker = 'bootstr
   mkdirSync(dirname(path), { recursive: true });
   const hooks: Record<string, unknown> = {};
   for (const ev of events) {
-    hooks[ev] = [{ hooks: [{ type: 'command', command: `gbrain hook ${ev.toLowerCase()}`, _gbrain: marker }] }];
+    hooks[ev] = [{ hooks: [{ type: 'command', command: `foresights hook ${ev.toLowerCase()}`, _gbrain: marker }] }];
   }
   writeFileSync(path, JSON.stringify({ hooks }, null, 2));
 }

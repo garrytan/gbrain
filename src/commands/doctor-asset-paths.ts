@@ -1,7 +1,7 @@
 /**
  * #1835 — storage_path resolution for the doctor `image_assets` check.
  *
- * `files.storage_path` rows written by a Windows gbrain install carry Windows
+ * `files.storage_path` rows written by a Windows foresights install carry Windows
  * drive paths (`D:/foo/img.jpg`, `D:\foo\img.jpg`). On POSIX,
  * `path.isAbsolute()` is false for those, so the old code joined them onto the
  * repo root and produced a path that can never exist — a false-positive
@@ -81,7 +81,7 @@ export function resolveImageAssetPath(
  * Which lane a files row's bytes live in, from its `metadata.storage` stamp
  * (#4910). `'backend'` = an explicit non-git lane (supabase / s3 / the local
  * backend root): storage_path is a bucket key, never a source-relative file,
- * so only `gbrain files verify` can check it. `'local'` = explicit `git` OR
+ * so only `foresights files verify` can check it. `'local'` = explicit `git` OR
  * no stamp at all — unmarked rows (sync-ingested, pre-fix writers) keep the
  * on-disk stat so genuinely vanished repo assets are still caught. Accepts
  * the #2339-era string-scalar shape like files verify does.

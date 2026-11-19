@@ -36,7 +36,7 @@ export async function sweepUnsyncableModified(
   // `index.md`, `README.md` — files that fail `isSyncable` precisely
   // because they're metafiles by convention, not because the user
   // "removed" them from the strategy. infiniteGameExp's domain `log.md`
-  // pages had been indexed by an older gbrain version (or via direct
+  // pages had been indexed by an older foresights version (or via direct
   // put_page) and were silently dropped on every subsequent sync. The
   // fix uses `unsyncableReason` (factored from `isSyncable` so they
   // cannot drift) to skip the delete when the reason is `'metafile'`.
@@ -45,8 +45,8 @@ export async function sweepUnsyncableModified(
   // `manifest.deleted` is filtered upstream at sync.ts:757 via the same
   // `isSyncable` call, so `rm log.md` followed by sync also doesn't
   // delete the page. That's the same pre-fix behavior — removing the
-  // page requires `gbrain pages purge-deleted` or a direct MCP delete.
-  // Filed as v0.42+ follow-up for a `gbrain pages remove <slug>` surface.
+  // page requires `foresights pages purge-deleted` or a direct MCP delete.
+  // Filed as v0.42+ follow-up for a `foresights pages remove <slug>` surface.
   const unsyncableModified = manifest.modified.filter(p => inScope(p) && !isSelectedForRun(p, syncOpts));
   // v0.18.0+ multi-source: scope getPage + deletePage to opts.sourceId so
   // unsyncable cleanup in source A doesn't accidentally sweep same-slug

@@ -161,9 +161,9 @@ export interface TargetProbe {
   /** Every existing public table is owned by a role the current user can act as. */
   ownsTables: boolean;
   triggerBypass: TriggerBypass | null;
-  /** A gbrain schema exists (the config table is present). */
+  /** A foresights schema exists (the config table is present). */
   gbrainSchema: boolean;
-  /** No public tables, or a gbrain schema holding only the initSchema seed rows. */
+  /** No public tables, or a foresights schema holding only the initSchema seed rows. */
   empty: boolean;
   nonEmptyTables: readonly string[];
   embeddingColumns: readonly EmbeddingColumn[];
@@ -391,7 +391,7 @@ export interface GraduationCommandOptions {
   signal?: AbortSignal;
 }
 
-/** `gbrain migrate --status --json` (zero mutations). */
+/** `foresights migrate --status --json` (zero mutations). */
 export interface GraduationStatusDoc {
   schema_version: 1;
   state: ManifestState | 'none';

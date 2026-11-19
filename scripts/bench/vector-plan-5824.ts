@@ -18,7 +18,7 @@
  *   current     reporter shape
  *   stale10     10% of chunks edited after embedding (hash mismatch)
  *   stale30     30% stale
- *   reembedded  the stale30 chunks re-embedded in place (what `gbrain embed
+ *   reembedded  the stale30 chunks re-embedded in place (what `foresights embed
  *               --stale` does) with autovacuum off and no ANALYZE, so planner
  *               statistics still describe the pre-re-embed table
  *

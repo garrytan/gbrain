@@ -129,7 +129,7 @@ setTimeout(()=>{writeWorkerProcessingStatus({state:'configuration_blocked',reaso
     const other = spawn('sleep', ['30'], { stdio: 'ignore' });
     try {
       const otherPid = other.pid!;
-      const autopilot = { readProcessCommand: () => 'gbrain autopilot' };
+      const autopilot = { readProcessCommand: () => 'foresights autopilot' };
       expect(readAutopilotProcessingStatus()).toBeNull();
       writeFileSync(autopilotLockPath(), String(process.pid));
       expect(readAutopilotProcessingStatus()?.owner_pid).toBe(process.pid);

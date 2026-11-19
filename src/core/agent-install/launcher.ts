@@ -24,7 +24,7 @@ ${routing}export GBRAIN_SKIP_STARTUP_HOOKS=1
 export DATABASE_URL='' GBRAIN_DATABASE_URL=''
 cd ${shellQuote(p.root)}
 if [[ ${missing} ]]; then
-  printf '%s\\n' ${shellQuote(`GBrain runtime is missing. ${repair}`)} >&2
+  printf '%s\\n' ${shellQuote(`Foresights runtime is missing. ${repair}`)} >&2
   exit 1
 fi
 exec ${invocation}${brainArg} "$@"

@@ -1,6 +1,6 @@
 /**
  * gateway-client.ts — the `ThinkLLMClient` adapter over the configured AI
- * gateway used by BOTH chat lanes of `gbrain eval longmemeval` (the reader's
+ * gateway used by BOTH chat lanes of `foresights eval longmemeval` (the reader's
  * answer generation and the trajectory claim extractor). Peeled from
  * src/commands/eval-longmemeval.ts.
  *

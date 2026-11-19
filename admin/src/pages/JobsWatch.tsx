@@ -3,7 +3,7 @@ import { api } from '../api';
 
 /**
  * v0.41 D2 — live jobs dashboard. Browser counterpart to the TTY
- * `gbrain jobs watch` command. Polls `/admin/api/jobs/watch` every
+ * `foresights jobs watch` command. Polls `/admin/api/jobs/watch` every
  * 1s (matches TTY refresh cadence; SSE upgrade is a v0.42 follow-up
  * once the same wiring lands in serve-http for the TTY command).
  *

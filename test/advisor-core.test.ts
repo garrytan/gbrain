@@ -248,7 +248,7 @@ describe('collect-stalled-jobs', () => {
   });
 });
 
-// Value: protects=an archived source never gets a stale_sync finding (its gbrain sync fix cannot run); fails_when=the weekly checkup nags about a source the user retired; why_new=#7281; seam=none; no_claim=a purge finding for archived sources
+// Value: protects=an archived source never gets a stale_sync finding (its foresights sync fix cannot run); fails_when=the weekly checkup nags about a source the user retired; why_new=#7281; seam=none; no_claim=a purge finding for archived sources
 describe('collect-stalled-jobs on a real brain (#7281)', () => {
   let engine: PGLiteEngine;
   beforeAll(async () => {

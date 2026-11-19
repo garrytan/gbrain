@@ -9,10 +9,10 @@ import {
   type LegacyJobSelection, type SelectionSummary,
 } from './legacy-selection.ts';
 
-const IDS_EXAMPLE = 'gbrain jobs authorize-legacy --ids 12,34';
+const IDS_EXAMPLE = 'foresights jobs authorize-legacy --ids 12,34';
 
 function idsPreviewCommand(ids: number[]): string {
-  return `gbrain jobs authorize-legacy --ids ${ids.join(',')}`;
+  return `foresights jobs authorize-legacy --ids ${ids.join(',')}`;
 }
 
 function selectionInvalid(message: string, hint: string) {
@@ -22,7 +22,7 @@ function selectionInvalid(message: string, hint: string) {
 export function parseLegacyJobIds(raw: string | undefined): number[] {
   if (!raw || !/^\d+(,\d+)*$/.test(raw)) {
     throw selectionInvalid('authorize-legacy requires --ids <id,id,...> or --select <filter>; implicit/all-job approval is unavailable.',
-      `${IDS_EXAMPLE}, or gbrain jobs authorize-legacy --select "status=waiting"`);
+      `${IDS_EXAMPLE}, or foresights jobs authorize-legacy --select "status=waiting"`);
   }
   const ids = [...new Set(raw.split(',').map(Number))].sort((a, b) => a - b);
   if (ids.some(id => !Number.isSafeInteger(id) || id <= 0)) throw selectionInvalid('Job ids must be positive safe integers.', IDS_EXAMPLE);
@@ -48,7 +48,7 @@ async function snapshot(engine: BrainEngine, ids: number[], lock: boolean, previ
   const unsupported = jobs.filter(job => job.legacy_authority_is_null !== true).map(job => Number(job.id));
   if (unsupported.length) {
     throw selectionInvalid(`Every selected job must have SQL NULL submission authority; jobs ${unsupported.slice(0, 10).join(', ')} carry unsupported non-NULL authority.`,
-      `Run matching application and database versions, or cancel them locally: ${unsupported.slice(0, 10).map(id => `gbrain jobs cancel ${id}`).join('; ')}.`);
+      `Run matching application and database versions, or cancel them locally: ${unsupported.slice(0, 10).map(id => `foresights jobs cancel ${id}`).join('; ')}.`);
   }
   // The controlled upgrade drains before review. Recovery decisions belong to
   // the local operator, never an implicit status/retry rewrite in this command.
@@ -127,7 +127,7 @@ export interface LegacySelectionPreview {
 }
 
 /**
- * `gbrain jobs authorize-legacy --select <filter>`: lists every matching SQL
+ * `foresights jobs authorize-legacy --select <filter>`: lists every matching SQL
  * NULL row, hashes the same snapshot `--ids` reviews and saves the exact id
  * set under that hash, so `--expect <hash> --yes` approves exactly it.
  */

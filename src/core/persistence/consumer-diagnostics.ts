@@ -10,7 +10,7 @@
  *   fenced role).
  * - `ownersWithoutHeartbeat`: the owner identities stamped on this host's
  *   running claims that have no heartbeat row (doctor
- *   `consumers_without_heartbeat`): an older gbrain writes no row, so this is
+ *   `consumers_without_heartbeat`): an older foresights writes no row, so this is
  *   the only evidence such a process leaves.
  * - `hostIdentityMismatches`: a worktree this filesystem holds whose binding
  *   belongs to another host identity (doctor `host_identity_mismatch`): the

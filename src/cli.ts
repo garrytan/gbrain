@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * gbrain CLI entry point (`bun src/cli.ts`, the `gbrain` bin, the compiled
+ * foresights CLI entry point (`bun src/cli.ts`, the `gbrain` bin, the compiled
  * binary). Runs the process-level setup, then answers the engine-free fast
  * paths (`--version`, `version`, bare `gbrain`, `--help`, `-h`, and the
  * skill-resolver hook lane's `hook user-prompt|session-start`) itself, or
@@ -9,6 +9,7 @@
  * import graph entirely. Every static import here is paid by every invocation:
  * keep them light.
  */
+import { ALIAS_ENV_ADOPTED } from './cli/legacy-env.ts'; // first: FORESIGHTS_* settings answer to their GBRAIN_* names (core/brand.ts)
 import { VERSION } from './version.ts';
 import { exitOnUnsupportedBun } from './core/runtime-version.ts';
 import { installCleanupSignalHandlers } from './core/serve-invocation.ts';
@@ -18,6 +19,7 @@ import { parseGlobalFlags } from './core/cli-options.ts';
 import { runCliPreflight } from './core/cli-preflight.ts';
 import { printHelp } from './cli/top-help.ts';
 import { withLocalScope } from './core/engine-scope-store.ts';
+void ALIAS_ENV_ADOPTED;
 
 /**
  * The fast path main() would take for `argv`, or null when the dispatcher must
@@ -61,7 +63,7 @@ async function runFastPath(path: 'help' | 'version' | 'skill-resolver-lane'): Pr
   if (path === 'skill-resolver-lane') return runSkillResolverLaneFastPath();
   await runCliPreflight();
   if (path === 'help') printHelp();
-  else console.log(`gbrain ${VERSION}`);
+  else console.log(`foresights ${VERSION}`);
 }
 
 if (import.meta.main) {

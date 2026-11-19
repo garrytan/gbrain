@@ -3,7 +3,7 @@
  *
  * When every deterministic pattern misses a page and the user has
  * explicitly opted in via
- * `gbrain config set conversation_parser.llm_fallback_enabled true`
+ * `foresights config set conversation_parser.llm_fallback_enabled true`
  * (D15: opt-IN by default for PRIVACY of chat logs), the extraction
  * orchestrator calls this utility-model parser. The full non-empty body is
  * processed in bounded, independently cached chunks.

@@ -1,15 +1,15 @@
 /**
  * GST-2584: whether a live page whose file is gone (a ghost, held `file_gone` on a managed source) is a file that moved,
  * and to which page. Sync follows a move only when it happens; when the old page's deletion was held, the new path
- * imported as a fresh page and nothing pairs the two again. `gbrain repair file-drift` lists such a page `moved_to`
- * and `gbrain repair moved-pages` folds it into the moved page; both read this one verdict.
+ * imported as a fresh page and nothing pairs the two again. `foresights repair file-drift` lists such a page `moved_to`
+ * and `foresights repair moved-pages` folds it into the moved page; both read this one verdict.
  *
  * The proof that loses nothing is two facts, read from Git and the page, never from today's content of the moved file:
  *   1. the move: the old path's last committed blob (at the first parent of the commit that deleted it) is the blob a new
  *      path took in that same commit, or the blob of the first commit that holds the new path. A Git rename with identical
  *      content is the first case; later edits to the moved file do not matter;
  *   2. the stale side is untouched: the old page still holds what that blob imports (`fileMatchesSnapshot`, which reads
- *      gbrain's own database-only artefacts as derived: `alignWithStored`). A page edited in the database after the move
+ *      foresights's own database-only artefacts as derived: `alignWithStored`). A page edited in the database after the move
  *      is `both_changed`.
  * Exactly one live page of the source may descend from the blob; two or more are `several_candidates`, and a moved page that
  * another old page with the same content also claims is `shared_survivor`. A first commit counts only between the old path's add and its deletion. The file name

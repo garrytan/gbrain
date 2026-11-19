@@ -34,7 +34,7 @@ let gbrainHome: string;
 
 beforeAll(async () => {
   // GBRAIN_HOME isolation so the file lock at ~/.gbrain/cycle.lock doesn't
-  // collide with the dev's real gbrain. resetPgliteState would wipe the
+  // collide with the dev's real foresights. resetPgliteState would wipe the
   // config table so we don't use it here.
   gbrainHome = mkdtempSync(join(tmpdir(), 'gbrain-pglite-lock-'));
   process.env.GBRAIN_HOME = gbrainHome;

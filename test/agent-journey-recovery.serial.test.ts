@@ -1,7 +1,7 @@
 /**
  * Lane H1b (Tier 2), surfaces and recovery rows (split from
  * test/agent-journey-tier2.serial.test.ts to keep each serial file well under
- * the pool's per-file wall clock). Rows 5–8 of the H1b list there. Real CLI subprocesses, real `gbrain serve`
+ * the pool's per-file wall clock). Rows 5–8 of the H1b list there. Real CLI subprocesses, real `foresights serve`
  * sessions (stdio and HTTP), keyless PGLite in temp homes, hard timeouts.
  *
  *   1. Every `--json` stdout parses: the journey's commands, the doctor family,
@@ -249,7 +249,7 @@ describe('H1b: recovery from another directory with conflicting ambient brain/so
     expect((await gb(host, ['import', notes, '--no-embed', '--json'])).exitCode).toBe(0);
     await withBrain(host, engine => engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.executeRaw(
       "UPDATE pages SET deleted_at = now() WHERE source_id = 'default' AND slug = 'route-gone-1'"), TEST_WRITE_ATTRIBUTION)));
-    // The op handler's fix is `gbrain get <slug> --include-deleted`; the brain and source come only from the render-time pin.
+    // The op handler's fix is `foresights get <slug> --include-deleted`; the brain and source come only from the render-time pin.
     const missing = await gb(host, ['get', 'route-gone-1', '--json']);
     expect(missing.exitCode).toBe(1);
     const doc = expectJsonContract(missing, 'get on a soft-deleted page');

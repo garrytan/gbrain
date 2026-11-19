@@ -1,6 +1,6 @@
-# Install GBrain inside a personal agent
+# Install Foresights inside a personal agent
 
-Give the agent one durable GBrain folder and one absolute command to use in
+Give the agent one durable Foresights folder and one absolute command to use in
 every conversation. The setup helper installs a private Bun runtime, creates a
 local PGLite brain, and writes a small memory skill. You can start remembering
 facts without a model API key, a server, or a new agent identity.
@@ -34,7 +34,7 @@ Setup creates this layout:
 | `instructions/maintenance.md` | Optional maintenance routine with a stable identifier |
 | `runtime/` | Replaceable private runtime and package versions |
 
-`GBRAIN_HOME` is the chosen root; GBrain places its state in the `.gbrain`
+`GBRAIN_HOME` is the chosen root; Foresights places its state in the `.gbrain`
 directory underneath it. Use the generated launcher even if another `gbrain`
 is on `PATH`. It selects the root explicitly, changes to that directory, and
 removes inherited database, brain, source, and provider overrides. Put later
@@ -47,7 +47,7 @@ Run these commands **inside the agent's computer**. For Grok Bot:
 
 ```bash
 curl --fail --silent --show-error --location \
-  https://raw.githubusercontent.com/garrytan/gbrain/stable/scripts/setup-in-agent.sh \
+  https://raw.githubusercontent.com/aimonk2025/gbrain/stable/scripts/setup-in-agent.sh \
   --output /tmp/gbrain-setup.sh
 bash /tmp/gbrain-setup.sh --root /workspace/gbrain --harness grok-bot
 ```
@@ -58,7 +58,7 @@ access to GitHub and package downloads. It does not install system packages or
 require root. If the platform blocks a download, use its normal permission flow.
 
 The helper verifies the pinned Bun release checksum and records the exact
-GBrain commit it installs. Package installation runs with lifecycle scripts
+Foresights commit it installs. Package installation runs with lifecycle scripts
 disabled. Initialization uses `--pglite --no-embedding`: keyless fact writes,
 entity recall, and text filtering are available; semantic embedding and paid
 extraction require separate configuration.
@@ -95,7 +95,7 @@ Now attach `instructions/gbrain-skill.md` through the app's native saved-skill
 or standing-instruction mechanism. Open a **new conversation**, ask for the
 test phrase without repeating it, and inspect the actual command result. The
 agent must invoke the same absolute launcher. Its own built-in memory is not
-evidence that it used GBrain.
+evidence that it used Foresights.
 
 Finally, ask the agent to correct the test phrase. It should recall the old
 fact, retire the old ID, save the replacement with provenance, and verify that
@@ -138,7 +138,7 @@ Three useful first workflows:
 3. **Connected services:** “Use your existing calendar/email connector to
    prepare this meeting, then save only the decisions and commitments I ask
    you to retain, with source links.” The harness keeps using its own service
-   connection. GBrain stores the selected memory; it does not need a second
+   connection. Foresights stores the selected memory; it does not need a second
    copy of the service credentials or the entire inbox.
 
 Capture and bulk imports are opt-in. To import chosen files or exported chats,
@@ -192,9 +192,9 @@ permitted. When Windows PowerShell does not start within the protection step's
 `private_backup_protection_timeout` instead; run the backup again. A busy database or a
 changing file fails the operation instead of publishing a success receipt.
 
-Before the dump, the command removes gbrain's own IPC socket files
+Before the dump, the command removes foresights's own IPC socket files
 (`.gbrain-resolve.sock`, `.gbrain-persistence.sock`) from the data dir when
-nothing listens on them, so a `gbrain serve` that was killed does not block
+nothing listens on them, so a `foresights serve` that was killed does not block
 later backups; each removal is listed in the archive's `omitted` inventory.
 Any other socket, FIFO or symlink in the data dir is left alone and the
 command refuses with `backup_dump_failed` naming it: stop the process that
@@ -242,9 +242,9 @@ For a brain over the cap or in a flat or symlinked layout, the supported
 recovery artifact is a physical copy of the stopped data directory. Ask the
 user before step 1: it stops their memory service.
 
-1. **Stop every writer.** Stop `gbrain serve`, autopilot and jobs workers, and
-   any agent session using this brain. Then run `gbrain doctor --json`: doctor
-   opens the brain only when no other gbrain process holds its PGLite lock, so
+1. **Stop every writer.** Stop `foresights serve`, autopilot and jobs workers, and
+   any agent session using this brain. Then run `foresights doctor --json`: doctor
+   opens the brain only when no other foresights process holds its PGLite lock, so
    a `pglite_data_dir` warning that names a live PID means a writer is still
    running.
 2. **Copy.** Resolve the real data directory through any alias
@@ -254,10 +254,10 @@ user before step 1: it stops their memory service.
    the brain, and do not start writers again until the copy finishes.
 3. **Point the copy at itself.** Set `database_path` in the copied
    `config.json` to the copied data directory.
-4. **Verify in isolation.** Run `GBRAIN_HOME=<new-home> gbrain doctor --json`
+4. **Verify in isolation.** Run `GBRAIN_HOME=<new-home> foresights doctor --json`
    and an entity recall against the copy before relying on it. The copy is the
    managed layout, so while it is under the cap, `GBRAIN_HOME=<new-home>
-   gbrain backup create --output <new archive>` also archives it.
+   foresights backup create --output <new archive>` also archives it.
 
 The restore drill in `test/backup-preflight-6649.serial.test.ts` runs these steps on a
 `.gbrain` alias to another directory: it copies the stopped brain, opens the
@@ -268,7 +268,7 @@ runbook is the recovery route until a streaming format ships
 
 ## 7. Restore into a new root
 
-Use an available GBrain runtime and a destination that **does not exist**:
+Use an available Foresights runtime and a destination that **does not exist**:
 
 ```bash
 /workspace/gbrain/bin/gbrain backup restore \
@@ -361,12 +361,12 @@ helper and reruns setup with the same root, harness and flags:
 
 ```bash
 curl --fail --silent --show-error --location \
-  https://raw.githubusercontent.com/garrytan/gbrain/stable/scripts/setup-in-agent.sh \
+  https://raw.githubusercontent.com/aimonk2025/gbrain/stable/scripts/setup-in-agent.sh \
   --output /tmp/gbrain-setup.sh
 bash /tmp/gbrain-setup.sh --root /workspace/gbrain --harness grok-bot --upgrade
 ```
 
-To stop using GBrain, pause its native routine and disable its saved skill.
+To stop using Foresights, pause its native routine and disable its saved skill.
 Keep the root and a protected backup until you deliberately choose to remove
 the data. No daemon or system-level installation needs uninstalling. If using
 hosted access, also revoke that installation's grant on the host.
@@ -385,7 +385,7 @@ hosted access, also revoke that installation's grant on the host.
 | `pglite_busy` | Wait for the active command to finish and retry; stop a long-lived server through its owning process before using finite CLI mode | agent | none | retry the read-only command |
 | Fresh conversation cannot recall the test | Inspect the native skill attachment and exact launcher invocation, then run explicit entity recall | user (reloads the native skill) | none | a `recall` from a fresh conversation |
 | Backup says files changed | Pause the writer and create a new snapshot; do not treat the failed output as a backup | agent | none | the new snapshot's verification output |
-| `unmanaged_database_path` or `backup_too_large` from `backup create` | Ask the user, then follow the [quiesced physical copy](#large-or-non-standard-brains-quiesced-physical-copy) runbook | user stops writers; agent copies and verifies | user agrees to stop writers | `GBRAIN_HOME=<new-home> gbrain doctor --json` |
+| `unmanaged_database_path` or `backup_too_large` from `backup create` | Ask the user, then follow the [quiesced physical copy](#large-or-non-standard-brains-quiesced-physical-copy) runbook | user stops writers; agent copies and verifies | user agrees to stop writers | `GBRAIN_HOME=<new-home> foresights doctor --json` |
 | Restore target already exists | Choose another absent root; restore never overwrites existing state | agent | none | the restore output |
 | A package or host URL is blocked | Complete the app's normal approval flow; preserve the error if access is denied | user | none | retry after approval |
 

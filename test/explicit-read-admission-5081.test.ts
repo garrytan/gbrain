@@ -13,7 +13,7 @@
  *
  * Contexts are built by the real stdio scope resolver
  * (`resolveMcpStdioSourceScope`) and calls go through `dispatchToolCall`, the
- * same path `gbrain serve` uses. The subprocess transport test lives in
+ * same path `foresights serve` uses. The subprocess transport test lives in
  * test/serve-stdio-bound-explicit-read.test.ts.
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
@@ -151,7 +151,7 @@ describe('#5081 — explicit reads from a GBRAIN_SOURCE-bound stdio connection',
       expect(body.suggestion).toBe(
         'This connection is bound to source work (GBRAIN_SOURCE). private is not federated; the brain owner can run '
         // A1: the quoted command is the rendered fix, so it names the brain.
-        + '`gbrain sources federate private --brain host` on the brain host, or start this connection without GBRAIN_SOURCE.',
+        + '`foresights sources federate private --brain host` on the brain host, or start this connection without GBRAIN_SOURCE.',
       );
     });
   }
@@ -175,7 +175,7 @@ describe('#5081 — explicit reads from a GBRAIN_SOURCE-bound stdio connection',
     const { body } = await call(await bound(), 'search', { query: MARKER, source_id: 'iso' });
     expect(body.error).toBe('permission_denied');
     expect(body.suggestion).toContain('iso opted out of federation (federated: false)');
-    expect(body.suggestion).toContain('`gbrain sources federate iso --brain host`');
+    expect(body.suggestion).toContain('`foresights sources federate iso --brain host`');
   });
 
   test('unqualified reads stay scalar on the bound source', async () => {
@@ -195,7 +195,7 @@ describe('#5081 — explicit reads from a GBRAIN_SOURCE-bound stdio connection',
     expect(isError).toBe(true);
     expect(body.suggestion).toBe(
       'This connection is bound to source iso (GBRAIN_SOURCE). iso opted out of federation (federated: false), so it '
-      + 'reads no other source; the brain owner can run `gbrain sources federate iso --brain host` on the brain host, or start this '
+      + 'reads no other source; the brain owner can run `foresights sources federate iso --brain host` on the brain host, or start this '
       + 'connection without GBRAIN_SOURCE.',
     );
     const own = await call(await bound('iso'), 'search', { query: MARKER, source_id: 'iso' });
@@ -210,7 +210,7 @@ describe('#5081 — explicit reads from a GBRAIN_SOURCE-bound stdio connection',
     const { body } = await call(opts, 'search', { query: MARKER, source_id: 'private' });
     expect(body.suggestion).toBe(
       'This connection is bound to source work (.gbrain-source). private is not federated; the brain owner can run '
-      + '`gbrain sources federate private --brain host` on the brain host, or start this connection outside the directory pinned by .gbrain-source.',
+      + '`foresights sources federate private --brain host` on the brain host, or start this connection outside the directory pinned by .gbrain-source.',
     );
   });
 });
@@ -271,7 +271,7 @@ describe('#5081 — HTTP tokens and unbound stdio keep the no-widening rule', ()
     const { body } = await call(await noGrantOpts(), 'search', { query: MARKER, source_id: 'private' });
     expect(body.error).toBe('permission_denied');
     expect(body.suggestion).toBe(
-      'private is not federated; the brain owner can run `gbrain sources federate private` on the brain host, '
+      'private is not federated; the brain owner can run `foresights sources federate private` on the brain host, '
       + 'or omit source_id to read within this connection\'s sources.',
     );
   });
@@ -298,7 +298,7 @@ describe('#5081 — HTTP tokens and unbound stdio keep the no-widening rule', ()
     expect(body.error).toBe('permission_denied');
     expect(body.suggestion).toBe(
       'Your token is not granted notes; ask the brain owner to grant it '
-      + '(gbrain auth rescope-client client-a --federated-read work,notes).',
+      + '(foresights auth rescope-client client-a --federated-read work,notes).',
     );
   });
 

@@ -34,7 +34,7 @@ The user wants to:
 - **Frontmatter mutation is FORBIDDEN.** The optimizer only edits the body.
   Routing surface (`triggers:`, `brain_first:`) stays invariant.
 - **Bundled skills require explicit opt-in AND an independent held-out set.**
-  Skills shipping with gbrain cannot be auto-mutated. To rewrite one in place
+  Skills shipping with foresights cannot be auto-mutated. To rewrite one in place
   the user passes BOTH `--allow-mutate-bundled` AND `--held-out <path>` with
   at least 5 benchmark-disjoint tasks; without the held-out set the run
   hard-refuses (exit 2). Drop `--allow-mutate-bundled` (or pass `--no-mutate`,
@@ -48,7 +48,7 @@ The user wants to:
 ## The pipeline
 
 ```
-gbrain skillopt <skill-name> [flags]
+foresights skillopt <skill-name> [flags]
   │
   ├── Pre-flight gates
   │     ├── working tree clean (or --force)
@@ -79,7 +79,7 @@ gbrain skillopt <skill-name> [flags]
 Plugin-bundled skills ship as a read-only snapshot; you cannot write a
 benchmark or optimization artifacts next to them. Run skillopt against your
 own writable skills directory: pass `--skills-dir <path>`
-(`gbrain skillopt X --skills-dir ~/my-project/skills`), or run from a
+(`foresights skillopt X --skills-dir ~/my-project/skills`), or run from a
 workspace that contains a `skills/` tree and the CLI auto-detects it. Every
 `skills/X/...` path below refers to that writable directory (your own
 authored skills, skillify-scaffolded skills, or a brain-resident skillpack),
@@ -94,7 +94,7 @@ SKILL.md directly:
 
 1. **Generate the starter.** Run:
    ```
-   gbrain skillopt X --bootstrap-from-skill
+   foresights skillopt X --bootstrap-from-skill
    ```
    One LLM call reads `skills/X/SKILL.md`, infers what the skill produces and what
    "good" looks like, and writes ~15 tasks (each with rule judges) to
@@ -111,7 +111,7 @@ SKILL.md directly:
 3. **Delete the sentinel line** (`# BOOTSTRAP_PENDING_REVIEW`, the last line).
 4. **Run the optimizer with `--split 1:1:1`:**
    ```
-   gbrain skillopt X --bootstrap-reviewed --split 1:1:1
+   foresights skillopt X --bootstrap-reviewed --split 1:1:1
    ```
    The 1:1:1 split is REQUIRED for a 15-task starter — the default `4:1:5` makes
    the validation set `floor(15/10)=1`, below the `D_sel >= 5` floor, and the
@@ -134,21 +134,21 @@ possible for very behavior-shaped skills), discard it and write the JSONL
 yourself: read the SKILL.md, write ~15 realistic tasks covering the boring middle,
 attach >=2 rule checks each, save to `skills/X/skillopt-benchmark.jsonl`, run with
 `--split 1:1:1`. The full walkthrough lives at
-https://github.com/garrytan/gbrain/blob/master/docs/tutorials/improving-skills-with-skillopt.md.
+https://github.com/aimonk2025/gbrain/blob/master/docs/tutorials/improving-skills-with-skillopt.md.
 
 ## Decision tree
 
 | Situation | Action |
 |---|---|
-| Skill has no benchmark | `gbrain skillopt foo --bootstrap-from-skill` → review + strengthen the judges → delete sentinel → `gbrain skillopt foo --bootstrap-reviewed --split 1:1:1` (see section above) |
-| Skill has a `routing-eval.jsonl` and you want a head start | `gbrain skillopt foo --bootstrap-from-routing` → review the generated tasks → `--bootstrap-reviewed` (routing tasks test dispatch; tighten them into quality tasks before trusting) |
-| Iterating on an existing skill | `gbrain skillopt foo --benchmark skills/foo/skillopt-benchmark.jsonl` |
+| Skill has no benchmark | `foresights skillopt foo --bootstrap-from-skill` → review + strengthen the judges → delete sentinel → `foresights skillopt foo --bootstrap-reviewed --split 1:1:1` (see section above) |
+| Skill has a `routing-eval.jsonl` and you want a head start | `foresights skillopt foo --bootstrap-from-routing` → review the generated tasks → `--bootstrap-reviewed` (routing tasks test dispatch; tighten them into quality tasks before trusting) |
+| Iterating on an existing skill | `foresights skillopt foo --benchmark skills/foo/skillopt-benchmark.jsonl` |
 | Costly run, want preview | Add `--dry-run` |
-| Bundled skill (skills/ in gbrain repo) | Default writes proposed.md; to commit in place add `--allow-mutate-bundled` AND `--held-out <path>` (>=5 benchmark-disjoint tasks) — else it hard-refuses. Plugin installs cannot mutate bundled skills in place (the snapshot is read-only): copy the SKILL.md into your own skills dir to iterate, or stick with the default proposed.md review flow |
+| Bundled skill (skills/ in foresights repo) | Default writes proposed.md; to commit in place add `--allow-mutate-bundled` AND `--held-out <path>` (>=5 benchmark-disjoint tasks) — else it hard-refuses. Plugin installs cannot mutate bundled skills in place (the snapshot is read-only): copy the SKILL.md into your own skills dir to iterate, or stick with the default proposed.md review flow |
 | Want to review changes before applying | Add `--no-mutate` (writes proposed.md, no held-out needed) |
 | Guard against benchmark overfitting | Add `--held-out <path>` — checked once on the final candidate; one that beats the benchmark but regresses on the held-out set is refused |
 | Want the iterative edit loop | Don't: `--loop` is deprecated and removed on or after 2026-12-03 (it prints `skillopt_loop_deprecated`). Run the default one-shot rewrite or edit the skill directly |
-| Mid-run crash | `gbrain skillopt foo --resume <run-id>` |
+| Mid-run crash | `foresights skillopt foo --resume <run-id>` |
 
 ## Output Format
 
@@ -163,7 +163,7 @@ When invoked, this skill produces:
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - Hard refusals: `dirty_tree` (commit or stash skill edits first), `d_sel_too_small` (add benchmark tasks), a bundled skill without `--allow-mutate-bundled` plus `--held-out` (exit 2). Fix the input; never force past them.
 - The cost preflight refuses over `--max-cost-usd`, or `no_pricing` under a user cap: preview with `--dry-run`, then ask the user before raising the cap.
@@ -174,7 +174,7 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 - **Don't bypass the validation gate.** The median-of-3 + epsilon=0.05 is
   load-bearing; without it, the optimizer accepts noise as improvement.
 - **Don't optimize bundled skills without `--allow-mutate-bundled` AND
-  `--held-out`.** They ship with gbrain and are load-bearing for downstream
+  `--held-out`.** They ship with foresights and are load-bearing for downstream
   agents. In-place mutation requires both flags (held-out >=5 benchmark-disjoint
   tasks); without the held-out set the run hard-refuses and points you at
   proposed.md.

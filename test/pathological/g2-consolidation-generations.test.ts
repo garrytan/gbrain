@@ -1,7 +1,7 @@
 /**
  * GBRA-161 PR 2 (B-17, #6023): the dream consolidate phase publishes through the generation primitive. A cluster whose
  * typed claims tie at one instant is held (`generation_held`, reason `tie`) with nothing written; a strict
- * chronological chain records each member's before-state, and `gbrain repair generations --kind consolidation --mode
+ * chronological chain records each member's before-state, and `foresights repair generations --kind consolidation --mode
  * restore` reopens it. PGLite; Postgres when DATABASE_URL is set.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';

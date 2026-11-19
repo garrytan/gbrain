@@ -24,7 +24,7 @@ agent memory.
 
 **Flow:** Webhook fires -> transform validates signature + normalizes -> agent wakes ->
 pulls full transcript via API -> creates brain meeting page -> propagates to entity
-pages -> commits to brain repo -> `gbrain sync`.
+pages -> commits to brain repo -> `foresights sync`.
 
 ### 14c. Quo (OpenPhone) -- SMS and Call Integration
 
@@ -60,4 +60,4 @@ SMS, calls, voicemail, and AI transcripts.
 
 ---
 
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md). See also: [Getting Data In](README.md)*
+*Part of the [Foresights Skillpack](../GBRAIN_SKILLPACK.md). See also: [Getting Data In](README.md)*

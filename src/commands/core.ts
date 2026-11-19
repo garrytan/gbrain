@@ -1,15 +1,15 @@
 /**
- * `gbrain core`: manage always-loaded core memory (docs/guides/core-memory.md).
+ * `foresights core`: manage always-loaded core memory (docs/guides/core-memory.md).
  *
- *   gbrain core list    [--source <id>] [--json]   core pages, priority order, rendered size
- *   gbrain core show    [--source <id>] [--json]   the exact block a session receives
- *   gbrain core status  [--json]                   usage against the budget, notices, settings
- *   gbrain core add     <slug> [--source <id>] [--priority <n>]
- *   gbrain core remove  <slug> [--source <id>]
- *   gbrain core diff    <slug> [--source <id>]     what remote edits changed since the last ack
- *   gbrain core ack     <slug> [--source <id>] --revision <token>
- *   gbrain core init    [--source <id>] [--slug <slug>]   starter profile page, marked core
- *   gbrain core suggest [--source <id>] [--apply] [--json]
+ *   foresights core list    [--source <id>] [--json]   core pages, priority order, rendered size
+ *   foresights core show    [--source <id>] [--json]   the exact block a session receives
+ *   foresights core status  [--json]                   usage against the budget, notices, settings
+ *   foresights core add     <slug> [--source <id>] [--priority <n>]
+ *   foresights core remove  <slug> [--source <id>]
+ *   foresights core diff    <slug> [--source <id>]     what remote edits changed since the last ack
+ *   foresights core ack     <slug> [--source <id>] --revision <token>
+ *   foresights core init    [--source <id>] [--slug <slug>]   starter profile page, marked core
+ *   foresights core suggest [--source <id>] [--apply] [--json]
  *
  * Marking writes go through put_page as the trusted local owner, so the
  * write-path guard (budget, page cap) applies to them like any other write.
@@ -28,9 +28,9 @@ import { CORE_SUBCOMMANDS, ROUTERS, subcommandHelpRequested } from '../cli/subco
 export { CORE_SUBCOMMANDS as SUBCOMMANDS } from '../cli/subcommands.ts';
 
 /** Core is opt-in: marking a page does nothing for sessions until the owner turns delivery on. */
-const CORE_OFF_HINT = 'Core memory is off (the default), so sessions do not load it yet. If the user wants it always loaded: gbrain config set memory.core.enabled true';
+const CORE_OFF_HINT = 'Core memory is off (the default), so sessions do not load it yet. If the user wants it always loaded: foresights config set memory.core.enabled true';
 
-const USAGE = `Usage: gbrain core <list|show|status|add|remove|diff|ack|init|suggest> [options]
+const USAGE = `Usage: foresights core <list|show|status|add|remove|diff|ack|init|suggest> [options]
   list    [--source <id>] [--json]
   show    [--source <id>] [--json]
   status  [--json]
@@ -86,7 +86,7 @@ async function setMarking(engine: BrainEngine, sourceId: string, slug: string, m
   const content = serializePageToMarkdown({ ...snap.page, frontmatter: fm }, tags);
   const receipt = await handleToolCall(engine, 'put_page', { slug, content, source_id: sourceId, expected_revision: snap.revision }, { sourceId }) as { state?: string; write_request?: { state?: string } };
   const state = receipt?.state ?? receipt?.write_request?.state;
-  if (state && state !== 'committed') throw new Error(`the write is ${state}; check it with gbrain sources writer status --json`);
+  if (state && state !== 'committed') throw new Error(`the write is ${state}; check it with foresights sources writer status --json`);
   return 'changed';
 }
 
@@ -147,7 +147,7 @@ export async function runCore(engine: BrainEngine, args: string[]): Promise<void
       const pages = (await coreUsage(engine)).pages.filter(p => !flag(args, '--source') || p.source_id === sourceId);
       print({ pages: pages.map(p => ({ source_id: p.source_id, slug: p.slug, title: p.title, priority: p.priority, chars: p.chars })) },
         () => pages.length ? pages.map(p => `${String(p.priority).padStart(4)}  ${p.source_id}:${p.slug}  ${p.chars} chars  ${p.title}`).join('\n')
-          : 'No core pages. Mark one with: gbrain core add <slug>  (or start with: gbrain core init)');
+          : 'No core pages. Mark one with: foresights core add <slug>  (or start with: foresights core init)');
       return;
     }
     case 'show': {
@@ -168,13 +168,13 @@ export async function runCore(engine: BrainEngine, args: string[]): Promise<void
         pending_notices: notices.map(n => ({ ...n, next: coreNoticeLine(n) })),
         delivery: {
           'claude-code': 'session-start hook (core printed first)', openclaw: 'context engine, every turn',
-          mcp: 'context_pack core field', 'static files': 'gbrain compile-context --include-core',
+          mcp: 'context_pack core field', 'static files': 'foresights compile-context --include-core',
         },
         docs: CORE_DOCS,
       };
       print(status, () => [
         `Core memory: ${settings.enabled ? 'enabled' : 'disabled'} — ${usage.chars.toLocaleString('en-US')}/${settings.maxChars.toLocaleString('en-US')} chars, ${usage.pages.length} page(s), remote edits: ${settings.remoteEdit}`,
-        ...(status.over_budget ? [`OVER BUDGET by ${usage.chars - settings.maxChars} chars: shorten a page (move detail into a linked page) or gbrain config set memory.core.max_chars <n>`] : []),
+        ...(status.over_budget ? [`OVER BUDGET by ${usage.chars - settings.maxChars} chars: shorten a page (move detail into a linked page) or foresights config set memory.core.max_chars <n>`] : []),
         ...status.largest.map(p => `  ${p.source_id}:${p.slug}  ${p.chars} chars`),
         ...status.withheld.map(w => `  withheld from delivery: ${w.source_id}:${w.slug} (sensitive content)`),
         ...notices.map(n => `  notice: ${coreNoticeLine(n)}`),
@@ -183,41 +183,41 @@ export async function runCore(engine: BrainEngine, args: string[]): Promise<void
     }
     case 'add':
     case 'remove': {
-      if (!slug) { fail(`${sub} needs a page slug.`, `gbrain core ${sub} <slug> [--source <id>]`); return; }
+      if (!slug) { fail(`${sub} needs a page slug.`, `foresights core ${sub} <slug> [--source <id>]`); return; }
       const rawPriority = flag(args, '--priority');
       const priority = rawPriority === undefined ? undefined : Number(rawPriority);
       if (priority !== undefined && !Number.isInteger(priority)) { fail('--priority must be an integer (lower renders first; default 100).'); return; }
       try {
         const result = await setMarking(engine, sourceId, slug, { core: sub === 'add', ...(priority !== undefined ? { priority } : {}) });
-        if (result === 'missing') { fail(`No live page ${sourceId}:${slug}.`, 'check the slug with gbrain get <slug> or create the page first'); return; }
+        if (result === 'missing') { fail(`No live page ${sourceId}:${slug}.`, 'check the slug with foresights get <slug> or create the page first'); return; }
         if (sub === 'remove') await engine.executeRaw('UPDATE core_edit_notices SET acked_at = now() WHERE source_id = $1 AND slug = $2 AND acked_at IS NULL', [sourceId, slug]);
         const usage = await coreUsage(engine);
         const settings = await readCoreSettings(engine);
         console.log(`${result === 'unchanged' ? 'Already' : 'Now'} ${sub === 'add' ? 'in' : 'out of'} core: ${sourceId}:${slug}. Core uses ${usage.chars}/${settings.maxChars} chars.`);
         if (sub === 'add' && !settings.enabled) console.log(CORE_OFF_HINT);
       } catch (e) {
-        fail((e as Error).message, sub === 'add' ? 'run gbrain core status to see where the budget goes' : undefined);
+        fail((e as Error).message, sub === 'add' ? 'run foresights core status to see where the budget goes' : undefined);
       }
       return;
     }
     case 'diff': {
-      if (!slug) { fail('diff needs a page slug.', 'gbrain core diff <slug> [--source <id>]'); return; }
+      if (!slug) { fail('diff needs a page slug.', 'foresights core diff <slug> [--source <id>]'); return; }
       const [oldest] = await engine.executeRaw<{ base_text: string | null; actor: string; created_at: string }>(
         `SELECT base_text, actor, created_at::text AS created_at FROM core_edit_notices WHERE source_id = $1 AND slug = $2 AND acked_at IS NULL ORDER BY id LIMIT 1`, [sourceId, slug]);
       if (!oldest) { print({ pending: false }, () => `No unacknowledged remote edits to ${sourceId}:${slug}.`); return; }
       const snap = await wholeBodySnapshot(engine, await engine.readPageSnapshot(slug, { sourceId }), 'core diff');
       const current = snap ? renderCorePage({ source_id: sourceId, slug, title: snap.page.title, compiled_truth: snap.page.compiled_truth }) : '';
       print({ pending: true, since: oldest.created_at, actor: oldest.actor, before: oldest.base_text, after: current, revision: snap?.revision ?? null },
-        () => `Remote edits to ${sourceId}:${slug} since ${oldest.created_at} (first by ${oldest.actor}):\n${lineDiff(oldest.base_text ?? '', current)}\n\nIf this is fine: gbrain core ack --source ${sourceId} ${slug} --revision ${snap?.revision ?? 'latest'}`);
+        () => `Remote edits to ${sourceId}:${slug} since ${oldest.created_at} (first by ${oldest.actor}):\n${lineDiff(oldest.base_text ?? '', current)}\n\nIf this is fine: foresights core ack --source ${sourceId} ${slug} --revision ${snap?.revision ?? 'latest'}`);
       return;
     }
     case 'ack': {
       const revision = flag(args, '--revision');
-      if (!slug || !revision) { fail('ack needs a slug and --revision (from gbrain core diff or the notice).', 'gbrain core ack <slug> --revision <token>'); return; }
+      if (!slug || !revision) { fail('ack needs a slug and --revision (from foresights core diff or the notice).', 'foresights core ack <slug> --revision <token>'); return; }
       const snap = await engine.readPageSnapshot(slug, { sourceId });
       if (revision !== 'latest' && snap && snap.revision !== revision) {
         const [known] = await engine.executeRaw<{ id: number }>('SELECT id FROM core_edit_notices WHERE source_id = $1 AND slug = $2 AND revision = $3 ORDER BY id DESC LIMIT 1', [sourceId, slug, revision]);
-        if (!known) { fail(`Revision ${revision} is not a reviewed edit of ${sourceId}:${slug}.`, `gbrain core diff --source ${sourceId} ${slug}`); return; }
+        if (!known) { fail(`Revision ${revision} is not a reviewed edit of ${sourceId}:${slug}.`, `foresights core diff --source ${sourceId} ${slug}`); return; }
         const rows = await engine.executeRaw<{ n: number }>('WITH a AS (UPDATE core_edit_notices SET acked_at = now() WHERE source_id = $1 AND slug = $2 AND acked_at IS NULL AND id <= $3 RETURNING 1) SELECT count(*)::int AS n FROM a', [sourceId, slug, known.id]);
         console.log(`Acknowledged ${rows[0]?.n ?? 0} edit(s) up to ${revision}; later edits stay pending.`);
         return;
@@ -250,8 +250,8 @@ export async function runCore(engine: BrainEngine, args: string[]): Promise<void
       const candidates = await suggestCandidates(engine, sourceId, room);
       if (!args.includes('--apply')) {
         print({ room, candidates }, () => candidates.length
-          ? `Candidates that fit the ${room} chars left (read-only; ask the user before applying):\n${candidates.map(c => `  ${sourceId}:${c.slug}  ${c.chars} chars  ${c.why}`).join('\n')}\nApply one: gbrain core add <slug>  (or all that fit: gbrain core suggest --apply)`
-          : `No candidates fit the ${room} chars left. Start with: gbrain core init`);
+          ? `Candidates that fit the ${room} chars left (read-only; ask the user before applying):\n${candidates.map(c => `  ${sourceId}:${c.slug}  ${c.chars} chars  ${c.why}`).join('\n')}\nApply one: foresights core add <slug>  (or all that fit: foresights core suggest --apply)`
+          : `No candidates fit the ${room} chars left. Start with: foresights core init`);
         return;
       }
       let left = room;

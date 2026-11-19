@@ -77,7 +77,7 @@ process.exit(2);`);
     expect(doc).toEqual({
       error: 'command_failed', code: 'invalid_params',
       message: 'The command exited with status 2 without writing its JSON result.',
-      suggestion: 'Re-run without --json to read the error on stderr, or run `gbrain doctor --json`.',
+      suggestion: 'Re-run without --json to read the error on stderr, or run `foresights doctor --json`.',
       exit_code: 2, contract_version: 1,
     });
   });

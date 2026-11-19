@@ -8,7 +8,7 @@ Placeholders only: "source D", "the main source", "a busy agent". Counts are syn
 
 Two problems keep a shared brain checkout from converging:
 
-1. **Writes that meet a refresh are refused.** `gbrain sources refresh` fast-forwards a managed
+1. **Writes that meet a refresh are refused.** `foresights sources refresh` fast-forwards a managed
    worktree. While its row is active, every page write to that worktree is refused
    `worktree_refreshing` before it is journaled (journal.ts `assertWorktreeNotRefreshing`). A tick
    runs minutes, so a producer that does not read the JSON code loses the write. Production saw
@@ -19,9 +19,9 @@ Two problems keep a shared brain checkout from converging:
    which is the assumption that failed.
 
 PR B turns (1) into a deferred write that commits after the refresh, and makes (2) visible with an
-append-only ledger of every commit gbrain makes plus a doctor check that names every other commit.
+append-only ledger of every commit foresights makes plus a doctor check that names every other commit.
 It also lets the owner install the commit guard on a managed worktree, adds a per-path base check
-to `gbrain git commit-push`, and folds three small bugs (#8615, #8617, #8662); #8616 is left out
+to `foresights git commit-push`, and folds three small bugs (#8615, #8617, #8662); #8616 is left out
 (below).
 
 Out of scope: who routes the box's writers (lane L2), when the flag is turned on (an operations
@@ -40,7 +40,7 @@ decision with stated preconditions, below), and the soak cell (lane L5).
   (`refreshFenceClear`); `draining` and `syncing` keep claiming so queued work drains.
 - `fenceAndMerge` refuses `refresh_source_changed` when any request, checkout effect or recovery
   record reached the worktree after the drain check.
-- #8828: HEAD that moved past `old_head` under the fence only by gbrain's own commits (every sha in
+- #8828: HEAD that moved past `old_head` under the fence only by foresights's own commits (every sha in
   `old_head..HEAD` is in the commit ledger) and that the upstream ref the precheck recorded (still the checkout's `@{upstream}`) holds is the drained writes
   the writer pushed: the fenced row takes HEAD as `old_head` and the upstream ref as `target_head`
   (it must hold the precheck's target) before `merge_started`, and the merge goes on. Any other HEAD
@@ -57,7 +57,7 @@ When the flag is on and an admission sees an active refresh in `draining`, `fenc
 2. The caller gets a pending receipt at once (no wait on the owner): CLI exit 10
    (`write_pending`, unchanged registry entry); MCP `isError: false` with
    `{ status: "pending", request_id, receipt, deferred: { refresh_id, refresh_state }, next }`.
-   `next` is `get_write_request` / `gbrain write-request <id>` after `retry_after_ms`.
+   `next` is `get_write_request` / `foresights write-request <id>` after `retry_after_ms`.
 3. A deferred row is **unclaimable until its refresh is released.** A refresh is released when its
    row reaches `completed` or `aborted` (`released_at` is set in the same statement).
 4. After release, the new claim moves deferred rows **straight from `deferred` to `running`** in
@@ -240,7 +240,7 @@ the run lists them in `synced` once each, and a refusal's message names them). A
 `expected_revision` put ends `revision_conflict`, a blind put or capture lands and names what it replaced, an append
 applies on top. Releasing them this way, instead of refusing them, gives the caller an answer within the run, and a
 refusal would only be held again on retry while the import stays pending. A member this sync cannot bring to HEAD (its
-drain blocked or out of budget) is named with `gbrain sync --source <id> --no-pull` in `next` (a blocked one also in
+drain blocked or out of budget) is named with `foresights sync --source <id> --no-pull` in `next` (a blocked one also in
 `sync_blocked`) or the refusal's message, and waits for the next run or sync; its held writes stay bound by the wait
 limit below.
 
@@ -260,7 +260,7 @@ whose admission is older than four wait limits (at least four hours) however oft
 request lock that the row is still unclaimed and its import still pending. A `remember` ends as its
 `pending_import` refusal did instead (conflict `source_changed`, origin `pending_import`), so the
 first sync that imports the file replays the fact; one that named no entity is not replayed, and its
-message sends a person to `gbrain repair failed-writes`. A source row is removed only through writer
+message sends a person to `foresights repair failed-writes`. A source row is removed only through writer
 administration, which ends its deferred rows `source_changed`, so no held row outlives its source. Migration v294 adds the nullable `persistence_requests.deferred_import_from` and
 widens `gbrain_guard_deferred_request`: a running row may move to `deferred` only under the barrier's
 session declaration and only naming the import it waits for, and a deferred row moves to `running`
@@ -296,7 +296,7 @@ Deferred rows are durable rows; nothing about them lives in process memory.
   The row records `outcome.merge_started` (false when it is fenced, true just before
   `git merge --ff-only`), so recovery tells a merge that never ran from one that ran:
   - Killed while `fenced`, before the merge started, with HEAD moved past `old_head` on its own line
-    (writes that landed while it drained, or a commit gbrain did not make): recovery aborts the row,
+    (writes that landed while it drained, or a commit foresights did not make): recovery aborts the row,
     as the live tick would, and its deferred writes commit (GBEV-44, GST-1674).
   - Killed after the merge started but before HEAD reached the target (a commit landed on `old_head`
     right before the merge, so git refused the fast-forward): the row also records
@@ -333,13 +333,13 @@ Deferred rows are durable rows; nothing about them lives in process memory.
 - **Upgrade order:** apply the migration (harmless with the flag off) → upgrade every binary on the
   owner host → restart resident consumers so their heartbeats carry the capability (quiescence) →
   watch a clean deploy → turn the flag on per brain.
-- **Turning the flag on** (`gbrain config set persistence.refresh_barrier true`, env
+- **Turning the flag on** (`foresights config set persistence.refresh_barrier true`, env
   `GBRAIN_REFRESH_BARRIER`, a `WRITE_SWITCHES` entry with `defaultOn: false`) is gated
   operationally on a clean deploy watch and on every routed producer of that brain having its three
   proofs (pending to committed, pending to conflict, restart), reported by the box lane. Turning it
   off stops new deferrals; existing deferred rows still drain.
 - **Downgrade order:** turn the flag off → wait until every write admitted deferred has finished → downgrade.
-  `gbrain upgrade --check-downgrade` (read-only, new) exits 0 when none remains (a released row that
+  `foresights upgrade --check-downgrade` (read-only, new) exits 0 when none remains (a released row that
   a consumer claimed counts until it commits or fails, because an older consumer that recovers it
   skips the refresh-change check) and exits
   3 with `downgrade_blocked_deferred_writes` (count, oldest age) otherwise; the box's automatic
@@ -352,9 +352,9 @@ Deferred rows are durable rows; nothing about them lives in process memory.
 - CLI write verbs: deferred → exit 10 with the receipt (`state: deferred`, `deferred`), `--json`
   carries `outcome: pending`. This holds on every CLI route: the owner socket asks dispatch for the
   `write_pending` error (`pendingAsError`), and a thin client turns a `status: "pending"` success
-  into the same pending error. `gbrain write-request <id>` shows the deferral until it drains; it
+  into the same pending error. `foresights write-request <id>` shows the deferral until it drains; it
   only reads the receipt. A released row publishes when a process runs the write consumer on the
-  owner host (`gbrain serve`, `gbrain jobs work`, any write or sync import there). Its receipt health
+  owner host (`foresights serve`, `foresights jobs work`, any write or sync import there). Its receipt health
   counts a released deferred row as an earlier write, and every write on a worktree whose refresh
   awaits recovery (a deferred one included) reports `recovery_required` (GST-1623).
 - A replay of an accepted request id reconciles to its receipt before any deferral, so it is never
@@ -368,12 +368,12 @@ Deferred rows are durable rows; nothing about them lives in process memory.
 - With the flag off nothing changes, and two refusals are pinned non-zero on both surfaces by tests:
   `worktree_refreshing` and the held-file refusal (`source_changed` with the held-file diagnostic,
   verb-errors.ts). CLI exit is non-zero; MCP is `isError: true`.
-- `gbrain sources writer status --json` gains `deferred: { count, oldest_age_ms, refresh_id }`, and
+- `foresights sources writer status --json` gains `deferred: { count, oldest_age_ms, refresh_id }`, and
   receipts render state `deferred` as pending.
 
 ## Part 2: per-path base check on commit-push
 
-`gbrain git commit-push --base <path>=<blob> [--base ...] -m <msg> -- <paths>`: after taking the
+`foresights git commit-push --base <path>=<blob> [--base ...] -m <msg> -- <paths>`: after taking the
 commit lock and before staging, each named path's blob at HEAD (`git rev-parse --verify -q
 HEAD:<path>`) must equal `<blob>` (full object id), or be absent when `<blob>` is `absent`. Any
 mismatch refuses `commit_base_moved` naming the path, the base and HEAD's blob; nothing is staged
@@ -470,22 +470,22 @@ time-bounded, and the check stops at doctor's budget and labels its result parti
 **Dirty page files.** `git status --porcelain=v2 -z --untracked-files=all` scoped to the checkout's
 source roots lists untracked and unstaged page files. Paths with a pending git effect
 (`persistence_effects`, kind `git`, state `queued` or `running`, whose targets name the path) and
-paths in the write-through pending ledger are left out: gbrain is about to commit them. Each listed
+paths in the write-through pending ledger are left out: foresights is about to commit them. Each listed
 file carries its age since first seen, read as its mtime (no new state file; a file touched again
 reads younger, which errs toward under-alarming, never toward a false alarm). At most 20 are listed
 with the total count.
 
 **Verdict.** Any foreign commit in the window: status `fail` with `act`, and a one-line fix naming
 the newest foreign commit (`Commit <sha12> (<kind>, "<subject>", <time>) in <checkout> was not made
-by gbrain; route that writer through gbrain git commit-push or a page write`). Dirty files older than
+by foresights; route that writer through foresights git commit-push or a page write`). Dirty files older than
 30 minutes with no foreign commit: `warn`. The JSON carries the window, every foreign commit (sha,
 kind, ref, time, subject, committer identity as recorded), the unconfirmed ones and the dirty list.
 The check is read-only.
 
 ## Part 5: owner-path guard install
 
-`gbrain git guard --install` refuses a managed worktree today (`assertManagedFilesystemWrite`). New:
-`gbrain sources guard <source> --install|--uninstall|--status [--mode enforce]`, CLI-only and
+`foresights git guard --install` refuses a managed worktree today (`assertManagedFilesystemWrite`). New:
+`foresights sources guard <source> --install|--uninstall|--status [--mode enforce]`, CLI-only and
 trusted-local. It installs the `prepare-commit-msg` guard on the source's managed worktree only from
 its owner host, under the worktree's native writer lock (the owner check `sources refresh` uses).
 

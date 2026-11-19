@@ -1,5 +1,5 @@
 /**
- * #6712 PR 2: doctor's managed cron recipe (`gbrain sync --all --no-pull --hard-deadline 13m`) and the managed
+ * #6712 PR 2: doctor's managed cron recipe (`foresights sync --all --no-pull --hard-deadline 13m`) and the managed
  * catch-up knobs `--no-bulk` / `--no-lanes` are never refused on a managed source, on any path a CLI sync takes:
  * the in-process run (single source and `--all`), the serve ladder's argv gate, and the PGLite owner lane (which
  * used to refuse `--no-lanes` / `--lanes N`; a PGLite owner runs no bulk lanes, so the CLI accepts and drops them).

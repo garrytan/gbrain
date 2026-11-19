@@ -101,7 +101,7 @@ describe('claude-cli recipe registration', () => {
     expect(recipe!.touchpoints.embedding).toBeUndefined();
     // Expansion IS declared. Without it `isAvailable('expansion')` is false
     // for every claude-cli model, so expandQuery() returns [query] before any
-    // model call and query expansion vanishes with no error — while `gbrain
+    // model call and query expansion vanishes with no error — while `foresights
     // models doctor` still shows the touchpoint green (its probe calls chat()
     // with an explicit model override and never consults the recipe).
     expect(recipe!.touchpoints.expansion).toBeDefined();
@@ -227,7 +227,7 @@ describe('claude-cli LanguageModel — tool use', () => {
       expect(result.finishReason).toBe('tool-calls');
       expect(result.content).toHaveLength(2);
       expect(result.content[0]).toMatchObject({ type: 'text', text: 'I will look up the pattern first.' });
-      // #4155: the model-supplied id is NEVER trusted for uniqueness — gbrain
+      // #4155: the model-supplied id is NEVER trusted for uniqueness — foresights
       // mints its own (the subprocess has no cross-turn memory and repeats
       // short ids like toolu_01, violating uniq_subagent_tools_use_id).
       expect(result.content[1]).toMatchObject({
@@ -756,7 +756,7 @@ describe('claude-cli LanguageModel — context isolation', () => {
       const model = new ClaudeCliLanguageModel('claude-sonnet-4-6');
       await model.doGenerate({
         prompt: [
-          { role: 'system', content: 'You are gbrain subagent.' },
+          { role: 'system', content: 'You are foresights subagent.' },
           userMessage('hi'),
         ],
       } as LanguageModelV2CallOptions);
@@ -773,11 +773,11 @@ describe('claude-cli LanguageModel — context isolation', () => {
       // Agent-isolation hardening: no built-in tools, no inherited MCP servers.
       expect(argv).toContain('--tools');
       expect(argv).toContain('--strict-mcp-config');
-      // #5820: user/project hooks never run in the child (gbrain's own Stop
+      // #5820: user/project hooks never run in the child (foresights's own Stop
       // hook would bank this call as a conversation).
       expect(argv[argv.indexOf('--settings') + 1]).toBe('{"disableAllHooks":true}');
       expect(argv).toContain('--system-prompt');
-      expect(argv).toContain('You are gbrain subagent.');
+      expect(argv).toContain('You are foresights subagent.');
       expect(cwd).toMatch(/gbrain-claude-cli-cwd-\d+$/);
 
       const fastStub = [

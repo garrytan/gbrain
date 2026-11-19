@@ -3,7 +3,7 @@
  * its table, and Postgres answers its next execute with SQLSTATE 0A000 "cached plan must not change result type"
  * (routine RevalidateCachedQuery). The vendored driver re-prepares and retries such a statement, which heals it outside
  * a transaction; inside one the 0A000 has already aborted the transaction, so the caller saw it, once per statement shape
- * per pooled connection (a `gbrain serve` refusing writes after `apply-migrations` ran in another process).
+ * per pooled connection (a `foresights serve` refusing writes after `apply-migrations` ran in another process).
  * 1. Protects: the first such error heals every pooled connection of the process, and the write paths that re-run an
  *    aborted transaction (retryWriteAdmission, the coordinator's transient classifier) re-run it, so a put_page after
  *    the migration succeeds with no caller-visible error.

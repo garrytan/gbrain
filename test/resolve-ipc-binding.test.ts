@@ -1,9 +1,9 @@
 /**
  * test/resolve-ipc-binding.test.ts — #4474.
  *
- * `gbrain serve --http` never bound the resolve-IPC unix socket (the
+ * `foresights serve --http` never bound the resolve-IPC unix socket (the
  * listener lived inline in the stdio MCP path only), so on the exact
- * posture `gbrain bootstrap harness` targets, every wired lifecycle hook
+ * posture `foresights bootstrap harness` targets, every wired lifecycle hook
  * degraded to `no_serve` forever — with no local recovery on PGLite (the
  * http serve owns the single-writer lock). The wiring now lives in the
  * shared `bindResolveIpcForServe` helper and BOTH transports call it.

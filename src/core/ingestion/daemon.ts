@@ -33,7 +33,7 @@
  *   - Source.start() throws → SourceSupervisor catches, increments crash
  *     counter, applies exponential backoff, restarts up to maxCrashes.
  *   - Source emits invalid event → daemon logs and drops; source keeps
- *     running. Bug surfaces in `gbrain doctor ingestion_health`.
+ *     running. Bug surfaces in `foresights doctor ingestion_health`.
  *   - Dispatcher throws → daemon logs but does NOT crash the source. The
  *     queue write failed (DB blip, etc.); subsequent emits will retry.
  *   - Rate-limit exceeded → daemon drops the event silently. Source
@@ -268,7 +268,7 @@ export class IngestionDaemon {
     this._stopping = false;
   }
 
-  /** Aggregate health report for `gbrain doctor ingestion_health`. */
+  /** Aggregate health report for `foresights doctor ingestion_health`. */
   async healthCheck(): Promise<DaemonHealth> {
     const perSource: DaemonHealth['sources'] = [];
     let aggregateStatus: 'ok' | 'warn' | 'fail' = 'ok';

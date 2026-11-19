@@ -119,14 +119,14 @@ export function manageGitignore(
 
   // #2788: a configured collector whose output dir sits inside a db_only
   // path dies silently — the dir is auto-gitignored below, the git-walking
-  // sync never sees its files, and `gbrain import` honors .gitignore too.
+  // sync never sees its files, and `foresights import` honors .gitignore too.
   // Warn at the moment the config takes effect. Recipe scan failure never
   // blocks the gitignore housekeeping.
   try {
     for (const c of findDbOnlyCollisions(getConfiguredCollectorOutputs(), storageConfig.db_only)) {
       console.warn(
         `WARNING: collector '${c.id}' writes to '${c.output_path}', which is inside db_only path ` +
-          `'${c.db_only_dir}'. db_only dirs are auto-gitignored, so gbrain sync and gbrain import ` +
+          `'${c.db_only_dir}'. db_only dirs are auto-gitignored, so foresights sync and foresights import ` +
           `will silently skip its files. Remove the prefix from storage.db_only in gbrain.yml, or ` +
           `move the collector output.`,
       );
@@ -175,7 +175,7 @@ export function manageGitignore(
   if (gitignoreContent && !gitignoreContent.endsWith('\n')) {
     gitignoreContent += '\n';
   }
-  gitignoreContent += '\n# Auto-managed by gbrain (db_only directories)\n';
+  gitignoreContent += '\n# Auto-managed by foresights (db_only directories)\n';
   gitignoreContent += linesToAdd.join('\n') + '\n';
 
   try {

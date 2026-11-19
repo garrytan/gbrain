@@ -21,7 +21,7 @@
  * pack can extend it with `extraVerbs`. Every emitted link_type is validated
  * against KNOWN_LINK_TYPES so the query side can't drift from what ingest
  * actually produces (see link-extraction.ts:inferLinkType). intro/connects
- * traverse type-agnostically (linkTypes = null) because gbrain has no
+ * traverse type-agnostically (linkTypes = null) because foresights has no
  * `introduced`/`knows` edge — any edge touching the seed is the signal.
  *
  * ReDoS: seed captures are length-bounded (`.{1,80}?`) and every pattern is

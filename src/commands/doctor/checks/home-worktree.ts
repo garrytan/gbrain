@@ -2,7 +2,7 @@
  * home_dir_in_worktree check (v0.35.8.0) — peeled from src/commands/doctor.ts
  * (3e) so the walk is unit-testable against tmpdir trees.
  *
- * Walks up from the gbrain home looking for a `.git` directory OR file. If
+ * Walks up from the foresights home looking for a `.git` directory OR file. If
  * found, warns: `~/.gbrain/` lives inside a git worktree, so an accidental
  * `git add` from the worktree root could stage the brain. Pairs with the
  * retroactive `~/.gbrain/.gitignore` (single-line `*`) laid down by
@@ -79,7 +79,7 @@ export function buildHomeDirInWorktreeCheck(
   if (worktreeRoot) {
     const homeEnvHint = gbrainHomeEnvSet
       ? `# Or move \`~/.gbrain\` outside the worktree by setting GBRAIN_HOME elsewhere.`
-      : `# Fix: \`export GBRAIN_HOME=/some/path/outside/the/worktree\` (gbrain appends \`.gbrain\`).`;
+      : `# Fix: \`export GBRAIN_HOME=/some/path/outside/the/worktree\` (foresights appends \`.gbrain\`).`;
     return {
       name: 'home_dir_in_worktree',
       status: 'warn',
@@ -93,6 +93,6 @@ export function buildHomeDirInWorktreeCheck(
   return {
     name: 'home_dir_in_worktree',
     status: 'ok',
-    message: 'gbrain home is outside any enclosing git worktree.',
+    message: 'foresights home is outside any enclosing git worktree.',
   };
 }

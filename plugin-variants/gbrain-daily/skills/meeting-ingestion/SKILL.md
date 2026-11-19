@@ -146,7 +146,7 @@ Build the transcript record from whatever arrived. If the input is malformed
 recording), STOP — do not create a meeting page from a summary alone. Surface
 the problem to the user.
 
-For raw transcript files with no structure at all, `gbrain capture` is the
+For raw transcript files with no structure at all, `foresights capture` is the
 preferred entry (it handles dedup and frontmatter routing); this pipeline is
 for building structured meeting pages.
 
@@ -183,7 +183,7 @@ boundary to the user rather than guessing.
 
 Users increasingly run two recorders at once as a backup. Before creating a
 page, check whether the same meeting already exists:
-`gbrain search "{title or attendee names}"`, then match by date ± 1 day +
+`foresights search "{title or attendee names}"`, then match by date ± 1 day +
 attendee overlap ≥ 50% + similar title.
 
 - If a page exists, MERGE into it instead of creating a duplicate: build from
@@ -203,7 +203,7 @@ and sometimes confidently WRONG names. Resolve by evidence:
    charlie-example").
 2. **Never guess.** When uncertain, write `[Room]` or `UNKNOWN` and flag it.
    A wrong attribution is worse than no attribution.
-3. Cross-reference the brain: `gbrain search "{name}"` for each candidate;
+3. Cross-reference the brain: `foresights search "{name}"` for each candidate;
    read their page before accepting an identification.
 4. Assign each named speaker a confidence: `high` (roster-confirmed), `medium`
    (named unambiguously in the transcript), `low` (inferred from content —
@@ -283,7 +283,7 @@ a blockquote is a fabricated quote.
 Timeline events (`life/events/`) are extracted from the saved meeting page in
 the background (Life Chronicle, on by default; one paid chat call per page).
 Check the write receipt: `chronicle_backstop.pending: "next_cycle"` means the
-next cycle extracts it (`gbrain dream --phase chronicle` runs it now, paid), and
+next cycle extracts it (`foresights dream --phase chronicle` runs it now, paid), and
 `chronicle_backstop.skipped` names the reason and its fix. Never hand-write
 `life/events/` pages; edit the meeting page and extraction updates its events.
 See `docs/guides/life-chronicle.md`.
@@ -321,7 +321,7 @@ or timeline), verify:
 can be faithfully transcribed and still wrong. Every claim that passes the
 transcript bar ALSO gets:
 
-1. **Brain contradiction check.** `gbrain query "{entity}"` and read the
+1. **Brain contradiction check.** `foresights query "{entity}"` and read the
    relevant pages. Does the new claim CONTRADICT established brain truth?
    When it does, the ESTABLISHED truth wins by default — flag the conflict to
    the user, don't silently overwrite. New claims override old truth only with
@@ -351,7 +351,7 @@ five pages costs five corrections.
 
 For EACH attendee:
 1. Does a people page exist? Only an exact match counts: one match from
-   `gbrain whois <email> --json`, else from `gbrain whois "<name>" --json`
+   `foresights whois <email> --json`, else from `foresights whois "<name>" --json`
    ([identity rule](../conventions/brain-first.md#identity-exact-match)).
    A search's top hit is a candidate to check, never the attendee.
 2. If NO → create via the enrich skill (`skills/enrich/SKILL.md`). Every
@@ -361,28 +361,28 @@ For EACH attendee:
    orders).
 3. If YES → update compiled truth with meeting context (subject to Phase 6).
 4. Add a timeline entry on the person's page:
-   `gbrain timeline-add {person-slug} {date} "Attended {meeting-title}"`
+   `foresights timeline-add {person-slug} {date} "Attended {meeting-title}"`
 
 Back-link known people who are MENTIONED or SPEAK in the transcript too, not
 just attendees — but high-confidence identifications only. Never backlink a
 garbled name or a low-confidence guess; a wrong backlink pollutes the graph
 worse than a missing one.
 
-**Note:** Once the meeting page is written via `gbrain put`, the auto-link
+**Note:** Once the meeting page is written via `foresights put`, the auto-link
 post-hook reads attendance from the page. Where the active schema pack does
-not override attendance (gbrain-base-v2, which `gbrain init` sets), each
+not override attendance (gbrain-base-v2, which `foresights init` sets), each
 person on the `Attendees:` line and in `attendees:` frontmatter (Phase 5) gets a
 `person --attended--> meeting` edge, and people linked anywhere else on the
 page are not recorded as attendance; a pack that overrides attendance, such as
 the older `gbrain-base`, sets its own rule and direction. Leave attendance to
-auto-link rather than `gbrain link` or `add_link`: a hand-written `attended`
+auto-link rather than `foresights link` or `add_link`: a hand-written `attended`
 edge can point the wrong way. Over MCP, `put_page` does not auto-link inline
 (the receipt says `auto_links.skipped: remote`). It queues plain `mentions`
 edges to pages that already exist (`auto_links.mention_links: queued`), but
 never the typed `attended` edges. Those come from a maintenance pass: a stdio
-`gbrain serve` runs it on its startup and idle sweeps; behind
-`gbrain serve --http` the host runs `gbrain sweep --once` or
-`gbrain extract links --source db`. No MCP tool runs that pass for you, so
+`foresights serve` runs it on its startup and idle sweeps; behind
+`foresights serve --http` the host runs `foresights sweep --once` or
+`foresights extract links --source db`. No MCP tool runs that pass for you, so
 over HTTP ask the host operator, and don't hand-write `attended` with
 `add_link`.
 
@@ -390,14 +390,14 @@ A missing `attended` edge has one of two causes. Either the attendee record
 breaks a Phase 5 rule, or it names a person whose page did not exist when the
 meeting page was written; auto-link then reports an error and writes none of
 the page's links. This skill creates new people pages in Phase 7, after the
-meeting page, so once Phase 7 is done run `gbrain extract --stale` (over MCP,
-the sweep above) to link the page. You DO still need `gbrain timeline-add` for
+meeting page, so once Phase 7 is done run `foresights extract --stale` (over MCP,
+the sweep above) to link the page. You DO still need `foresights timeline-add` for
 dated events (auto-link only handles links, not timeline entries).
 
 ### Phase 8: Entity propagation + timeline merge (MANDATORY)
 
 For each company, project, or concept discussed:
-1. Check the brain for an existing page (`gbrain search`, then `gbrain get`).
+1. Check the brain for an existing page (`foresights search`, then `foresights get`).
 2. Create/update as needed (claims subject to Phase 6).
 3. Add a timeline entry referencing the meeting.
 4. Back-link from entity page to meeting page.
@@ -417,13 +417,13 @@ itself, chain into `skills/signal-detector/SKILL.md` after ingestion.
 The pages are already in the brain; this step catches the index up to the
 brain repo checkout. Use the form that matches the brain:
 
-- **Managed brain** (managed persistence on): `gbrain sync --source <id> --no-pull`.
-  A managed checkout moves only through `gbrain sources refresh <id>`, never
-  through sync, so a bare `gbrain sync` there would pull the checkout behind
+- **Managed brain** (managed persistence on): `foresights sync --source <id> --no-pull`.
+  A managed checkout moves only through `foresights sources refresh <id>`, never
+  through sync, so a bare `foresights sync` there would pull the checkout behind
   the coordinator's back.
-- **Unmanaged brain:** `gbrain sync`.
+- **Unmanaged brain:** `foresights sync`.
 
-If you can't tell which, use `gbrain sync --source <id> --no-pull`: it is
+If you can't tell which, use `foresights sync --source <id> --no-pull`: it is
 correct on both and never moves the checkout.
 
 ## Verify before declaring done (HARD GATE)
@@ -446,8 +446,8 @@ violation; a false completion report is worse than an honest partial one.
 **V2 — Every people/companies slug has a page AND a timeline backlink.**
 For each person/company slug referenced by the meeting page:
 ```bash
-gbrain get people/{slug}          # page exists?
-gbrain timeline people/{slug}     # has an entry pointing back at this meeting?
+foresights get people/{slug}          # page exists?
+foresights timeline people/{slug}     # has an entry pointing back at this meeting?
 ```
 A slug with no page means Phase 7/8 was skipped — go do it. A page with no
 timeline entry for this meeting means the merge was incomplete — add it.
@@ -465,7 +465,7 @@ Phase 4. An unflagged anonymous label means speaker resolution was skipped.
   quote still shares a long contiguous run of content words, a fabricated one
   does not.
   ```bash
-  gbrain get sources/meetings/{date}-{slug}-transcript   # then locate each quote span
+  foresights get sources/meetings/{date}-{slug}-transcript   # then locate each quote span
   ```
 - **Prompt checklist (no transcript retained):** re-read the source notes and
   attest that each quote traces to them word-for-word.
@@ -504,7 +504,7 @@ failure axes, and V1–V5 never look at order. Verify the narrated sequence:
      the acme-example office in the next, with nothing connecting the two.
 3. **Day-timeline corroboration (soft):**
    ```bash
-   gbrain day {date}
+   foresights day {date}
    ```
    assembles that day's events and timeline entries across the whole brain.
    - **DAY_TIMELINE_GAP:** a narrated participant who never appears in the
@@ -552,7 +552,7 @@ name the failing item.
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - A contradiction with an existing page blocks ingestion until the user fixes or waives it: show both sources and wait.
 - `add_link` / auto-link reports an error after the meeting page was written: the page is saved but the links are not; list the failed links and add them after fixing slugs.

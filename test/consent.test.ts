@@ -54,7 +54,7 @@ const inHome = <T>(fn: () => Promise<T> | T) => withEnv({ GBRAIN_HOME: home }, a
 
 function req(effects: Effect[], args: string[], extra: Partial<ConsentRequest> = {}): ConsentRequest {
   return {
-    command: 'demo', effects, actor: 'agent', what: 'gbrain demo', why: 'Demo work.', risk: 'Demo risk.',
+    command: 'demo', effects, actor: 'agent', what: 'foresights demo', why: 'Demo work.', risk: 'Demo risk.',
     user_message: 'Run the demo? It costs about $0.40.', argv: ['gbrain', 'demo'], args, est_usd: 0.4, ...extra,
   };
 }
@@ -226,7 +226,7 @@ describe('refusal payload and rendering', () => {
       expect(p).toMatchObject({ status: 'confirmation_required', code: 'confirmation_required', effects: ['paid'], actor: 'agent', est_usd: 0.4, contract_version: 1 });
       expect(p.fix.argv).toEqual(['gbrain', 'demo', '--yes']);
       expect(p.fix.next).toBe('ask_user');
-      expect(p.preview?.command).toBe('gbrain demo --dry-run');
+      expect(p.preview?.command).toBe('foresights demo --dry-run');
       expect(p.preapprove_argv).toEqual(['gbrain', 'config', 'set', PREAPPROVE_PAID_MAX_USD_PER_RUN, '<usd>']);
       expect(e.fix?.argv).toEqual(['gbrain', 'demo', '--yes']);
       const event = readAgentContractEvents().at(-1)!;
@@ -256,8 +256,8 @@ describe('refusal payload and rendering', () => {
     expect(lines.at(-1)).toBe('[/AGENT]');
     expect(out.stdout).toContain('[SHOW USER]\nRun the demo? It costs about $0.40.\n[/SHOW USER]');
     expect(out.stdout).toContain('next: ask_user');
-    expect(out.stdout).toContain('if_yes: gbrain demo --yes');
-    expect(out.stdout).toContain('gbrain demo --dry-run');
+    expect(out.stdout).toContain('if_yes: foresights demo --yes');
+    expect(out.stdout).toContain('foresights demo --dry-run');
   });
 
   test('if_yes separates the approved command from the preapproval offer', async () => {
@@ -265,7 +265,7 @@ describe('refusal payload and rendering', () => {
     if (!isConsentRefusal(e)) throw e;
     expect(e.consent.preapprove_argv).toBeDefined();
     const ifYes = renderConsentRefusal(e.consent, { json: false }).stdout!.split('\n').find(l => l.startsWith('if_yes: '))!;
-    expect(ifYes).toMatch(/^if_yes: gbrain demo --yes — To stop asking for runs under a limit the user picks: gbrain config set consent\.preapprove\.paid\.max_usd_per_run /);
+    expect(ifYes).toMatch(/^if_yes: (?:foresights|gbrain) demo --yes — To stop asking for runs under a limit the user picks: (?:foresights|gbrain) config set consent\.preapprove\.paid\.max_usd_per_run /);
     expect(ifYes).not.toContain('--yes To stop');
   });
 
@@ -364,7 +364,7 @@ describe('preapproval config (trusted local CLI only)', () => {
     });
   });
 
-  test('`gbrain config set|get|unset consent.*` uses the host file plane, never a DB row', async () => {
+  test('`foresights config set|get|unset consent.*` uses the host file plane, never a DB row', async () => {
     const { runConfig } = await import('../src/commands/config.ts');
     const dbWrites: string[] = [];
     const engine = {
@@ -430,7 +430,7 @@ describe('derived-cap exhaustion report', () => {
     expect(e.message).toContain('enrich-checkpoint.json');
     expect(e.fix?.argv).toEqual(['gbrain', 'enrich', '--yes', '--source', 'x', '--max-usd', '1.20']);
     expect(e.fix?.consent).toEqual(['paid']);
-    expect(e.suggestion).toContain('gbrain enrich --yes --source x --max-usd 1.20');
+    expect(e.suggestion).toContain('foresights enrich --yes --source x --max-usd 1.20');
   });
 });
 

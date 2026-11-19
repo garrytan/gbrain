@@ -1,5 +1,5 @@
 /**
- * `gbrain sync` CLI flag parsing and usage text (refactor wave 1, W4 sync).
+ * `foresights sync` CLI flag parsing and usage text (refactor wave 1, W4 sync).
  * Invalid values print the same messages and exit with the same codes as
  * before; parsing is split in two because `--break-lock` runs (and exits)
  * between the two halves.
@@ -14,28 +14,28 @@ import { usageError } from '../../cli/cli-error.ts';
 import type { MissingPathMode } from './missing-path.ts';
 
 export function printSyncHelp(): void {
-  console.log(`Usage: gbrain sync [options]
+  console.log(`Usage: foresights sync [options]
 
 Sync the brain repo's text content into the engine, then embed.
 
-A file whose content refuses deterministically (frontmatter gbrain cannot
+A file whose content refuses deterministically (frontmatter foresights cannot
 read without guessing, a conflicting frontmatter slug, over-size, a
 content_sanity reject, or on a managed brain a facts or takes fence that
 cannot be imported) is held: the rest of the source imports, the
 checkpoint advances, and each hold prints its code, location and next
-command. Inspect holds with 'gbrain sources status <id>'. Preview a
-frontmatter fix with 'gbrain repair frontmatter --source <id>'. A fence hold
+command. Inspect holds with 'foresights sources status <id>'. Preview a
+frontmatter fix with 'foresights repair frontmatter --source <id>'. A fence hold
 (invalid_fence) is repaired by the next maintenance run when one is active;
-preview it with 'gbrain repair fences --source <id>' (read-only, no model
-call), which prints the apply command, or the exact edit for a fence gbrain
+preview it with 'foresights repair fences --source <id>' (read-only, no model
+call), which prints the apply command, or the exact edit for a fence foresights
 will not guess. A source a file blocked before this release recovers on its
 next sync ('--no-pull' on a managed brain). On a managed brain a write whose
 preparation never finishes within its attempts is held as
 preparation_stalled: the file is fine, so no repair applies; inspect the
-writer with 'gbrain sources writer status --source <id> --json', fix what it
-names, then 'gbrain sources retry-held <id>' and the same sync. Many such
+writer with 'foresights sources writer status --source <id> --json', fix what it
+names, then 'foresights sources retry-held <id>' and the same sync. Many such
 stalls in one run stop it with outcome blocked / preparation_systemic.
-'gbrain config set sync.holds fail' restores fail-closed blocking.
+'foresights config set sync.holds fail' restores fail-closed blocking.
 
 Managed brains (the flags an operator or cron needs; listed first):
   --source <id>        Scope sync to a single source. Defaults to the
@@ -43,7 +43,7 @@ Managed brains (the flags an operator or cron needs; listed first):
   --all                Sync every registered source instead of just the
                        default (multi-source brains).
   --no-pull            Skip 'git pull' before the sync. Implied on managed
-                       brains, which never pull during sync: 'gbrain sources
+                       brains, which never pull during sync: 'foresights sources
                        refresh <id>' moves the checkout, and sync catches the
                        index up to it.
   --timeout <dur>      Stop the sync after <dur> (per source with --all).
@@ -65,7 +65,7 @@ Managed brains (the flags an operator or cron needs; listed first):
   --hard-deadline <dur>
                        Stop the whole process after <dur> (for example 13m),
                        even when a step hangs. Doctor's managed cron line is
-                       'gbrain sync --all --no-pull --hard-deadline 13m'
+                       'foresights sync --all --no-pull --hard-deadline 13m'
                        every 15 minutes. A non-TTY run gets a default
                        deadline that extends while pages keep committing;
                        --no-hard-deadline waives it.
@@ -93,7 +93,7 @@ Managed brains (the flags an operator or cron needs; listed first):
                        instead of bulk groups (each page keeps its own write
                        request either way). GBRAIN_SYNC_BULK=0 does the
                        same for every run of a process; tune the group size
-                       with 'gbrain config set sync.bulk_size N'.
+                       with 'foresights config set sync.bulk_size N'.
   --no-lanes           Same as --lanes 1: one bulk group at a time.
   --break-lock         Release the source's sync lock (the managed drain
                        lease) left by a holder that is gone: a dead pid on
@@ -103,15 +103,15 @@ Managed brains (the flags an operator or cron needs; listed first):
 Classic brains / advanced (classic sync, processing opt-outs, one-off repair):
   --no-embed           Skip the embed step. Use this when the embed
                        provider is misconfigured or you want to defer
-                       embedding (run 'gbrain embed --stale' later).
+                       embedding (run 'foresights embed --stale' later).
   --no-extract         Skip the link/timeline extraction step. Pages will
-                       show as stale in 'gbrain doctor'; run
-                       'gbrain extract --stale' later to catch up.
+                       show as stale in 'foresights doctor'; run
+                       'foresights extract --stale' later to catch up.
   --workers N          Run the import phase with N parallel workers
                        (alias: --concurrency). Default: 4 when the
                        diff is >100 files, else serial.
   --repo <path>        Path to the brain repo. Defaults to the path
-                       saved by 'gbrain init'.
+                       saved by 'foresights init'.
   --full               Force a full re-sync (rare; usually incremental).
   --redact-paths       With --dry-run --json: sample paths become sha256
                        prefixes and slugs are dropped, so the counts can
@@ -131,7 +131,7 @@ Classic brains / advanced (classic sync, processing opt-outs, one-off repair):
                        Does not reach a non-git directory's FS-walk import
                        fallback; every git-tracked source (the normal case)
                        is covered. Cannot combine with --all; persist it as
-                       the sync.include_hidden config key (gbrain config set
+                       the sync.include_hidden config key (foresights config set
                        sync.include_hidden '<globs>') so --all, autopilot and
                        the dream cycle honor it.
   --include-gitignored Include otherwise-syncable files matched by .gitignore.
@@ -141,7 +141,7 @@ Classic brains / advanced (classic sync, processing opt-outs, one-off repair):
                        files + uncommitted edits/deletes). Default: committed
                        changes only — uncommitted drift is counted and warned,
                        never silently ignored. Persist with
-                       'gbrain config set sync.include_working_tree true'.
+                       'foresights config set sync.include_working_tree true'.
                        Caution: imports untracked files as-is — unignored
                        scratch files and secrets included; review 'git status'
                        before enabling, especially as persisted config.
@@ -159,7 +159,7 @@ Classic brains / advanced (classic sync, processing opt-outs, one-off repair):
                        coaching notice. A plain sync now retries a failure
                        the previous run recorded by itself, so drop the
                        flag. Held files re-screen on the next sync when they
-                       change (or with 'gbrain sources retry-held <id>'). On
+                       change (or with 'foresights sources retry-held <id>'). On
                        a google or github connector source it still
                        re-approves the failed item receipts it meets.
   --reset-checkpoint   Connector source only: re-walk its window once from an empty
@@ -169,10 +169,10 @@ Classic brains / advanced (classic sync, processing opt-outs, one-off repair):
   --lanes N            Managed Postgres sync: publish at most N bulk groups at
                        once (1-16, default 16, capped by the connection pool:
                        GBRAIN_POOL_SIZE minus 4). Pages still commit in file
-                       order. Persist with 'gbrain config set sync.lanes N' or
+                       order. Persist with 'foresights config set sync.lanes N' or
                        GBRAIN_SYNC_LANES; the drain reports what limited it.
   --no-delegate        Keep this process's own write consumer even when a
-                       live 'gbrain serve' could run the sync. Normally sync
+                       live 'foresights serve' could run the sync. Normally sync
                        hands the run to that serve over its IPC socket and
                        prints its progress: on PGLite because the serve holds
                        the single-writer lock, on a managed Postgres brain so
@@ -205,14 +205,14 @@ Classic brains / advanced (classic sync, processing opt-outs, one-off repair):
   --yes                Accept any interactive prompts (CI / non-TTY).
 
 Subcommands:
-  gbrain sync status --source <id> [--json]
+  foresights sync status --source <id> [--json]
                        Where a managed catch-up stands: pass or cursor, pages
                        committed in the last 10 minutes, each hold and the
                        last error with class / safe_actions / needs_human,
                        and the next action (for an operator agent's loop).
-                       'gbrain sync --status' is the same read (never a sync);
+                       'foresights sync --status' is the same read (never a sync);
                        sync refuses --preview, which it never reads.
-  gbrain sync unblock --source <id> [--apply] [--no-llm] [--no-repair] [--json]
+  foresights sync unblock --source <id> [--apply] [--no-llm] [--no-repair] [--json]
                        Performs the safe action for every hold (re-screens a
                        held file whose edit is now committed, retries a
                        stalled preparation, repairs a content hold through
@@ -221,12 +221,12 @@ Subcommands:
                        Runbook: docs/guides/sync-unblock-runbook.md
 
 See also:
-  gbrain embed --stale    Re-embed all stale chunks (post --no-embed).
-  gbrain doctor           Diagnose dim mismatches and other sync issues.
-  gbrain sources status <id>              Held files with their next command.
-  gbrain repair frontmatter --source <id> Preview the fix for frontmatter holds.
-  gbrain repair fences --source <id>      Preview the repair of fence holds.
-  gbrain sources writer status --source <id> --json
+  foresights embed --stale    Re-embed all stale chunks (post --no-embed).
+  foresights doctor           Diagnose dim mismatches and other sync issues.
+  foresights sources status <id>              Held files with their next command.
+  foresights repair frontmatter --source <id> Preview the fix for frontmatter holds.
+  foresights repair fences --source <id>      Preview the repair of fence holds.
+  foresights sources writer status --source <id> --json
                                           What a stalled write was doing (preparation_stalled holds).
   docs/guides/repair.md#held-files        Walkthrough.
   docs/guides/troubleshooting.md#catch-up-stuck
@@ -235,7 +235,7 @@ See also:
 }
 
 /** #6712 PR 3 (L7): the coaching notice `--retry-failed` prints while it stays accepted (two releases). */
-export const RETRY_FAILED_DEPRECATED = '--retry-failed is deprecated: a plain gbrain sync now retries a failure the previous run recorded by itself, '
+export const RETRY_FAILED_DEPRECATED = '--retry-failed is deprecated: a plain foresights sync now retries a failure the previous run recorded by itself, '
   + 'so drop the flag (it stays accepted for two releases and changes nothing on a Git source). On a google or github connector source it still '
   + 're-approves the failed item receipts it meets.';
 let retryFailedNoted = false;
@@ -262,11 +262,11 @@ const MAX_WATCH_INTERVAL_SECONDS = Math.floor(2_147_483_647 / 1000);
  */
 function retryHeldRefusal(args: string[]) {
   const source = args.find((a, i) => args[i - 1] === '--source');
-  return usageError('gbrain sync has no --retry-held flag; held files are re-screened on the next sync, and sources retry-held schedules a re-screen for a source.',
-    `Run gbrain sources retry-held ${source ?? '<source-id>'}, then sync that source again without --retry-held.`, {
+  return usageError('foresights sync has no --retry-held flag; held files are re-screened on the next sync, and sources retry-held schedules a re-screen for a source.',
+    `Run foresights sources retry-held ${source ?? '<source-id>'}, then sync that source again without --retry-held.`, {
       fix: { argv: ['gbrain', 'sources', 'retry-held', source ?? '<source-id>'], consent: [], actor: 'agent', requires_exclusive: false,
-        ...(source ? {} : { inputs: [{ name: 'source-id', how: 'gbrain sources status lists each source with its held files' }] }),
-        why: 'Most held files re-screen on the next sync by themselves (changed, deleted, or readable by a newer gbrain); retry-held schedules a re-screen of every held file of the source on its next sync and runs nothing now.',
+        ...(source ? {} : { inputs: [{ name: 'source-id', how: 'foresights sources status lists each source with its held files' }] }),
+        why: 'Most held files re-screen on the next sync by themselves (changed, deleted, or readable by a newer foresights); retry-held schedules a re-screen of every held file of the source on its next sync and runs nothing now.',
         verify: { argv: ['gbrain', 'sources', 'status', ...(source ? [source] : []), '--json'] } } });
 }
 
@@ -307,7 +307,7 @@ export function parseSyncFlags(args: string[]) {
     // Single-source sync on a missing path should stay loud — an explicit
     // `--source X` naming an absent checkout is an operator error, not a
     // multi-machine artifact. Warn instead of silently ignoring the flag.
-    console.error('[gbrain] WARN: --missing-path only applies to `sync --all`; ignored here.');
+    console.error('[foresights] WARN: --missing-path only applies to `sync --all`; ignored here.');
   }
   const jsonOut = args.includes('--json');
   const redactPaths = args.includes('--redact-paths');
@@ -375,9 +375,9 @@ export function parseSyncFanoutFlags(args: string[], syncAll: boolean) {
     console.error(
       `--src-subpath/--exclude/--include-hidden scope a single sync invocation; they cannot be combined with --all. ` +
       `For --all runs, register the subdirectory as the source's local_path instead ` +
-      `(gbrain sources add <id> --path <repo>/<subdir>), persist exclusions with ` +
-      `\`gbrain config set sync.exclude <globs>\`, and persist the dot-directory waiver with ` +
-      `\`gbrain config set sync.include_hidden <globs>\` so --all, autopilot and the dream cycle honor it.`,
+      `(foresights sources add <id> --path <repo>/<subdir>), persist exclusions with ` +
+      `\`foresights config set sync.exclude <globs>\`, and persist the dot-directory waiver with ` +
+      `\`foresights config set sync.include_hidden <globs>\` so --all, autopilot and the dream cycle honor it.`,
     );
     process.exit(1);
   }
@@ -406,7 +406,7 @@ export function parseSyncFanoutFlags(args: string[], syncAll: boolean) {
   // combined with --all, each source gets its OWN AbortController + countdown
   // inside runOne so the budget is per-source, not shared across the fan-out.
   //
-  // Validation: --timeout requires --source OR --all. Bare `gbrain sync
+  // Validation: --timeout requires --source OR --all. Bare `foresights sync
   // --timeout 60` (no source scope) is rejected at parse time — the natural
   // single-source case requires the user to either name the source or opt
   // into the global fan-out, so the error message tells them which to add.

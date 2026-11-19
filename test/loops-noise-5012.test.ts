@@ -10,7 +10,7 @@
  *    `unmute` queues them for re-check, and the re-check reopens only a
  *    thread nothing answered since the mute;
  *  - `loops drop sender` previews, then closes only that sender's loops;
- *  - `gbrain waiting` reports the loops the rule would not have opened;
+ *  - `foresights waiting` reports the loops the rule would not have opened;
  *  - the opt-in Updates reciprocity rule's owner-wrote-to set.
  *
  * Synthetic data only.
@@ -179,7 +179,7 @@ describe('mute closes, unmute re-checks', () => {
 
     const r = await captured(() => runLoops(engine, ['mute', 'sender', 'Alerts@Bank-Example.test']));
     expect(r.out).toContain(`closed 2 open reply-owed loop(s): ${a.id}, ${b.id}`);
-    expect(r.out).toContain('Undo: gbrain loops unmute sender alerts@bank-example.test --source g1');
+    expect(r.out).toContain('Undo: foresights loops unmute sender alerts@bank-example.test --source g1');
     expect(await row(a.id)).toEqual({ status: 'dropped', closed_by: 'muted' });
     expect(await row(b.id)).toEqual({ status: 'dropped', closed_by: 'muted' });
     expect((await row(other.id)).status).toBe('open');
@@ -189,7 +189,7 @@ describe('mute closes, unmute re-checks', () => {
   test('mute thread closes that thread\'s reply-owed loop; the MCP result lists it', async () => {
     const a = await upsertOpenLoop(engine, loop());
     const res = await handleToolCall(engine, 'loops_mute', { kind: 'thread', value: '18C2F4A9B3D21E07', source_id: 'g1' }) as Record<string, unknown>;
-    expect(res).toMatchObject({ muted: true, closed: [a.id], count: 1, undo_command: 'gbrain loops unmute thread 18c2f4a9b3d21e07 --source g1' });
+    expect(res).toMatchObject({ muted: true, closed: [a.id], count: 1, undo_command: 'foresights loops unmute thread 18c2f4a9b3d21e07 --source g1' });
   });
 
   test('a sweep never reopens a muted loop for the same counterparty, even on newer activity', async () => {
@@ -222,7 +222,7 @@ describe('mute closes, unmute re-checks', () => {
 
     const r = await captured(() => runLoops(engine, ['unmute', 'sender', 'founder@startup-example.test']));
     expect(r.out).toContain('Queued 2 loop(s) the mute closed for re-check on the next sync');
-    expect(r.out).toContain('Undo: gbrain loops mute sender founder@startup-example.test --source g1');
+    expect(r.out).toContain('Undo: foresights loops mute sender founder@startup-example.test --source g1');
     expect((await row(qLoop.id)).closed_by).toBe('mute_recheck');
 
     // The next sweep queues both threads through the grace-hold re-fetch.
@@ -256,14 +256,14 @@ describe('mute closes, unmute re-checks', () => {
     await handleToolCall(engine, 'loops_mute', { kind: 'sender', value: 'alerts@bank-example.test', source_id: 'g1' });
     await engine.executeRaw(`UPDATE sources SET last_sync_at = now() - interval '3 days' WHERE id = 'g1'`);
     const res = await handleToolCall(engine, 'loops_unmute', { kind: 'sender', value: 'alerts@bank-example.test', source_id: 'g1' }) as Record<string, unknown>;
-    expect(res).toMatchObject({ stale_source: true, recheck_command: 'gbrain sync --source g1' });
+    expect(res).toMatchObject({ stale_source: true, recheck_command: 'foresights sync --source g1' });
   });
 });
 
 describe('the google-loops skill runbook matches the CLI', () => {
   test('skills/google-loops/SKILL.md names drop sender with its dry run, unmute, and withheld_noise', async () => {
     const skill = readFileSync(join(import.meta.dir, '..', 'skills', 'google-loops', 'SKILL.md'), 'utf8');
-    for (const line of ['gbrain loops drop sender <email> --dry-run', 'gbrain loops unmute sender <email>', 'withheld_noise', 'cannot be undone']) {
+    for (const line of ['foresights loops drop sender <email> --dry-run', 'foresights loops unmute sender <email>', 'withheld_noise', 'cannot be undone']) {
       expect(skill).toContain(line);
     }
     const help = await captured(() => runLoops(engine, ['--help']));
@@ -280,7 +280,7 @@ describe('loops drop sender', () => {
 
     const dry = await captured(() => runLoops(engine, ['drop', 'sender', 'alerts@bank-example.test', '--dry-run', '--json']));
     expect(JSON.parse(dry.out)).toMatchObject({ ok: true, status: 'dry_run', would_close: [a.id, b.id], count: 2,
-      apply_command: 'gbrain loops drop sender alerts@bank-example.test' });
+      apply_command: 'foresights loops drop sender alerts@bank-example.test' });
     expect((await row(a.id)).status).toBe('open');
     const human = await captured(() => runLoops(engine, ['drop', 'sender', 'alerts@bank-example.test', '--dry-run']));
     expect(human.out).toContain('would be dropped');
@@ -300,7 +300,7 @@ describe('loops drop sender', () => {
   });
 });
 
-describe('gbrain waiting reports the loops the rule would not have opened', () => {
+describe('foresights waiting reports the loops the rule would not have opened', () => {
   test('counts open reply-owed loops from recorded senders and prints the exact dry-run command', async () => {
     await upsertOpenLoop(engine, loop());
     await upsertOpenLoop(engine, loop({ threadId: '18c2f4a9b3d21e12' }));
@@ -309,7 +309,7 @@ describe('gbrain waiting reports the loops the rule would not have opened', () =
       loop_withheld_senders: { 'alerts@bank-example.test': { reason: 'automated_mail', count: 1, last_ms: 1 } } }));
     const r = await captured(() => runWaiting(engine, []));
     expect(r.out).toContain('2 open reply-owed loop(s) come from 1 sender(s) whose mail is automated');
-    expect(r.out).toContain('gbrain loops drop sender alerts@bank-example.test --source g1 --dry-run');
+    expect(r.out).toContain('foresights loops drop sender alerts@bank-example.test --source g1 --dry-run');
     const j = await captured(() => runWaiting(engine, ['--json']));
     expect(JSON.parse(j.out).withheld_noise).toMatchObject({ loop_count: 2, sender_count: 1,
       senders: [{ email: 'alerts@bank-example.test', source_id: 'g1', open_loops: 2 }] });
@@ -330,10 +330,10 @@ describe('gbrain waiting reports the loops the rule would not have opened', () =
     const noise = JSON.parse(j.out).withheld_noise;
     expect(noise).toMatchObject({ loop_count: 14, sender_count: 12 });
     expect(noise.senders.map((s: { email: string }) => s.email)).toEqual(['zz-top@bank-example.test', ...senders.slice(0, 11)]);
-    expect(noise.senders[0]).toMatchObject({ open_loops: 3, preview_command: 'gbrain loops drop sender zz-top@bank-example.test --source g1 --dry-run' });
+    expect(noise.senders[0]).toMatchObject({ open_loops: 3, preview_command: 'foresights loops drop sender zz-top@bank-example.test --source g1 --dry-run' });
     const r = await captured(() => runWaiting(engine, []));
-    expect(r.out.split('\n').filter((line) => line.includes('gbrain loops drop sender')).length).toBe(10);
-    expect(r.out).toContain('  … and 2 more sender(s); every sender: gbrain waiting --json');
+    expect(r.out.split('\n').filter((line) => line.includes('foresights loops drop sender')).length).toBe(10);
+    expect(r.out).toContain('  … and 2 more sender(s); every sender: foresights waiting --json');
   });
 
   test('the one-shot sender backfill queues the newest thread of each sender with open reply-owed loops', async () => {

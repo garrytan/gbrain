@@ -7,7 +7,7 @@ description: |
   ClawVisor for safe credential handling — the agent never holds raw API keys.
   Covers Gmail import, calendar sync, contacts seeding, X/Twitter archive,
   conversation imports, and file archives.
-  Use when a user has just finished gbrain setup and asks "now what?"
+  Use when a user has just finished foresights setup and asks "now what?"
 triggers:
   - "cold start"
   - "fill my brain"
@@ -53,7 +53,7 @@ sources to get you from zero to useful in one session.
 - Every import phase is gated on user consent (ask-user pattern) before proceeding.
 - **The agent never holds raw OAuth tokens or API keys.** This is a safety
   requirement, not a preference. Three paths satisfy it for Google data:
-  the native connector (`gbrain google setup` — tokens live in gbrain's
+  the native connector (`foresights google setup` — tokens live in foresights's
   credential vault, mode 0600, never in the agent's context; see
   `docs/guides/google-connect.md` and `skills/google-loops/SKILL.md`),
   ClawVisor (a hosted credential gateway that vaults credentials,
@@ -69,7 +69,7 @@ sources to get you from zero to useful in one session.
 
 ## Prerequisites
 
-- GBrain installed and initialized (`gbrain doctor --json` all green)
+- Foresights installed and initialized (`foresights doctor --json` all green)
 - Brain repo cloned and synced
 - Agent has terminal access and can run `gbrain` CLI commands
 
@@ -93,8 +93,8 @@ Data sources ranked by **information density × ease of import**:
 **Harness check first.** ClawVisor requires an agent host with a ClawVisor
 integration (for example, an OpenClaw deployment). On harnesses without one,
 such as Codex or Claude Code, skip this phase: the default for Contacts,
-Calendar, and Gmail is the native connector — `gbrain google setup` (live
-sync; tokens in gbrain's local credential vault, never with the agent; see
+Calendar, and Gmail is the native connector — `foresights google setup` (live
+sync; tokens in foresights's local credential vault, never with the agent; see
 `skills/google-loops/SKILL.md`) — with a
 [Google Takeout](https://takeout.google.com) export as the offline
 alternative covering all three (contacts CSV, calendar ICS, Gmail mbox).
@@ -122,7 +122,7 @@ them at request time, enforces policies, and logs everything.
 1. Sign up at [app.clawvisor.com](https://app.clawvisor.com)
 2. Create an agent in the dashboard, copy the agent token
 3. Set environment variables (in the host agent's environment — shell profile
-   or harness config; gbrain itself has no ClawVisor config keys, these are
+   or harness config; foresights itself has no ClawVisor config keys, these are
    consumed by the host's ClawVisor integration. This requires an agent host
    with a ClawVisor integration, such as an OpenClaw deployment. Codex and
    Claude Code do not consume these variables; use the offline import path
@@ -157,14 +157,14 @@ Do NOT fall back to direct OAuth. Instead, proceed with offline-only imports:
 - **Phase 8** (meeting transcripts) — works from exported transcripts
 
 Tell the user:
-> "No problem. Two options: the native connector (`gbrain google setup`) does
+> "No problem. Two options: the native connector (`foresights google setup`) does
 > live Gmail/Calendar/Contacts sync with your own OAuth app — tokens stay in
-> gbrain's local credential vault, never with me — or a Google Takeout export
+> foresights's local credential vault, never with me — or a Google Takeout export
 > covers all three as a point-in-time snapshot."
 
 **Do NOT hold raw Google tokens yourself.** An agent holding tokens in its
 context is a security liability. The native connector is the sanctioned
-OAuth path precisely because gbrain vaults the tokens (0600 file, redacted
+OAuth path precisely because foresights vaults the tokens (0600 file, redacted
 listings) and the agent only ever runs CLI commands; secrets travel by file
 or env intake, never argv or chat. See `skills/google-loops/SKILL.md` for
 the exact protocol.
@@ -173,10 +173,10 @@ the exact protocol.
 
 For an existing company Git repository, use the migrate (host-side) company
 workflow instead of the generic import below. On the trusted brain host, start with
-`gbrain sources inspect <path> --profile company-brain`; confirm an initialized
+`foresights sources inspect <path> --profile company-brain`; confirm an initialized
 company brain and a new source, show the connect destination/access preview, and
 obtain approval before `--yes`. Do not flatten its vocabulary by activating or
-normalizing an unrelated personal schema. The offline `gbrain sources demo
+normalizing an unrelated personal schema. The offline `foresights sources demo
 company-brain` needs no keys or private data. Details:
 `docs/guides/company-brain-ingestion.md`.
 For this company path, stop after reporting the durable receipt; skip the generic
@@ -207,22 +207,22 @@ done
 ```bash
 # Obsidian vaults are markdown directories — import directly, then wire wikilinks
 # (full flow: migrate (host-side))
-gbrain import /path/to/vault --no-embed --workers 4
-gbrain extract links --source db      # parses [[wikilinks]] natively
+foresights import /path/to/vault --no-embed --workers 4
+foresights extract links --source db      # parses [[wikilinks]] natively
 
 # For plain markdown directories
-gbrain import /path/to/dir --no-embed --workers 4
+foresights import /path/to/dir --no-embed --workers 4
 
 # Verify
-gbrain stats
-gbrain search "<topic from the imported data>"
+foresights stats
+foresights search "<topic from the imported data>"
 ```
 
 ### Post-import
 
-- Run link extraction: `gbrain extract links --source db`
-- Run timeline extraction: `gbrain extract timeline --source db`
-- Start embeddings: `gbrain embed --stale` (runs in background)
+- Run link extraction: `foresights extract links --source db`
+- Run timeline extraction: `foresights extract timeline --source db`
+- Start embeddings: `foresights embed --stale` (runs in background)
 
 > **Track progress:**
 > ```bash
@@ -260,7 +260,7 @@ const contacts = await clawvisor('google.contacts', 'list_contacts', {
 For each contact:
 1. **Filter out noise** — skip contacts with no name, no email, or that are clearly
    automated (noreply@, no-reply@, support@, notifications@)
-2. **Check brain first** — `gbrain search "name"` to avoid duplicates
+2. **Check brain first** — `foresights search "name"` to avoid duplicates
 3. **Create people/ page** with:
    - Name, email(s), phone(s), company, title
    - Source attribution: `[Source: Google Contacts, YYYY-MM-DD]`
@@ -317,7 +317,7 @@ brain/daily/calendar/
 
 For each event with attendees:
 1. Look up each attendee in the brain (they should exist from Phase 2), by
-   exact match only (`gbrain whois <email or name> --json`)
+   exact match only (`foresights whois <email or name> --json`)
    ([identity rule](../conventions/brain-first.md#identity-exact-match))
 2. Add a timeline entry to their page: met at [event title] on [date]
 3. If an attendee has no brain page and appears in 3+ events, create one
@@ -463,26 +463,26 @@ After completing available phases:
 
 1. **Verify brain health:**
    ```bash
-   gbrain doctor --json
-   gbrain stats
+   foresights doctor --json
+   foresights stats
    ```
 
 2. **Test retrieval:**
    ```bash
-   gbrain query "who do I meet with most often?"
-   gbrain query "what am I working on?"
-   gbrain search "<person from contacts>"
+   foresights query "who do I meet with most often?"
+   foresights query "what am I working on?"
+   foresights search "<person from contacts>"
    ```
 
 3. **Set up live sync** (if not already):
    - Calendar: daily cron
    - Email: periodic sweep (4-8 hours)
    - X: daily ingest
-   - Brain repo: `gbrain sync --repo <path>` every 5-30 minutes. A managed brain
-     (`gbrain sources writer status --json` shows `"mode": "managed"`) refuses
+   - Brain repo: `foresights sync --repo <path>` every 5-30 minutes. A managed brain
+     (`foresights sources writer status --json` shows `"mode": "managed"`) refuses
      that line: use the managed recipe in `skills/cron-scheduler/SKILL.md`
      ("Managed brain") with `--source <id>`, e.g.
-     `gbrain sources refresh <id>; gbrain sync --source <id> --no-pull --hard-deadline 13m`
+     `foresights sources refresh <id>; foresights sync --source <id> --no-pull --hard-deadline 13m`
      every 15 minutes on the owner host.
 
 4. **Track state:**
@@ -509,11 +509,11 @@ After completing available phases:
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - Every import phase is a user choice: when a command exits 3 (`confirmation_required`) or prints an `[AGENT]` ask, relay the `[SHOW USER]` block and wait; do not chain phases with `--yes`.
-- `gbrain google setup` prints `[SHOW USER]` steps: relay them verbatim and wait for the user to finish the consent click. Credential errors carry their own `fix`; follow it.
-- The first `gbrain query` after an import is empty with a degraded notice: embeddings are off or still backfilling, so the import may have worked. Check `gbrain doctor --json` before telling the user the import failed.
+- `foresights google setup` prints `[SHOW USER]` steps: relay them verbatim and wait for the user to finish the consent click. Credential errors carry their own `fix`; follow it.
+- The first `foresights query` after an import is empty with a degraded notice: embeddings are off or still backfilling, so the import may have worked. Check `foresights doctor --json` before telling the user the import failed.
 
 ## Anti-Patterns
 

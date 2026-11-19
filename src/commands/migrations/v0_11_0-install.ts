@@ -33,6 +33,7 @@ import { defaultSourceLocalPath } from '../autopilot/install-repo.ts';
 import { gbrainChildCommand } from './in-process.ts';
 import { connectMigrationEngine } from './run-engine.ts';
 import type { OrchestratorOpts, OrchestratorPhaseResult } from './types.ts';
+import { commandText } from '../../core/brand.ts';
 
 export const AUTOPILOT_INSTALL_TODO = 'autopilot-install-needs-repo';
 const REPO_INPUT = 'REPO_PATH';
@@ -54,7 +55,7 @@ export function autopilotInstallArgv(repo: string | null): string[] {
 }
 
 export function autopilotInstallCommand(repo: string | null): string {
-  return repo ? shellQuote(autopilotInstallArgv(repo)) : autopilotInstallArgv(null).join(' ');
+  return repo ? shellQuote(autopilotInstallArgv(repo)) : commandText(autopilotInstallArgv(null));
 }
 
 /** The newest pending install item Phase F recorded, or null. */
@@ -111,7 +112,7 @@ function skipWithoutRepo(defaultSourcePath: string | null): OrchestratorPhaseRes
   recordSkippedAutopilotInstall(defaultSourcePath);
   const command = autopilotInstallCommand(defaultSourcePath);
   console.log(`No autopilot was installed: sync.repo_path is unset or relative. Install it when you want background maintenance: ${command} `
-    + `(recorded in ${pendingHostWorkPath()}; gbrain doctor shows it until an autopilot is installed)`);
+    + `(recorded in ${pendingHostWorkPath()}; foresights doctor shows it until an autopilot is installed)`);
   return {
     name: 'install', status: 'skipped', reason: 'no_repo_path', detail: `sync.repo_path is unset or relative, so the upgrade installed no autopilot. Install it: ${command}`,
     ...(defaultSourcePath ? { argv: autopilotInstallArgv(defaultSourcePath) } : {}),
@@ -123,7 +124,7 @@ function skipNotInstalled(repo: string | null): OrchestratorPhaseResult {
   recordSkippedAutopilotInstall(repo, why);
   const command = autopilotInstallCommand(repo);
   console.log(`No autopilot was installed: ${why}. Install it when you want background maintenance: ${command} `
-    + `(recorded in ${pendingHostWorkPath()}; gbrain doctor shows it until an autopilot is installed)`);
+    + `(recorded in ${pendingHostWorkPath()}; foresights doctor shows it until an autopilot is installed)`);
   return {
     name: 'install', status: 'skipped', reason: 'not_installed', detail: `${why}. Install it: ${command}`,
     ...(repo ? { argv: autopilotInstallArgv(repo) } : {}),
@@ -137,7 +138,7 @@ export async function phaseFInstall(opts: OrchestratorOpts): Promise<Orchestrato
   try {
     const config = loadConfig();
     if (config?.engine === 'pglite') {
-      return { name: 'install', status: 'skipped', detail: 'PGLite is single-writer; use gbrain serve for background maintenance' };
+      return { name: 'install', status: 'skipped', detail: 'PGLite is single-writer; use foresights serve for background maintenance' };
     }
     let repoPath: string | null = null;
     try {

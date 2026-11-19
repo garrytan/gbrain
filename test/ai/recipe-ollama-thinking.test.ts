@@ -1,5 +1,5 @@
 /**
- * Ollama thinking-by-default headroom (companion to gbrain#4172).
+ * Ollama thinking-by-default headroom (companion to foresights#4172).
  *
  * Reasoning-by-default local models (Qwen3 / qwen38, DeepSeek-R1, gpt-oss,
  * magistral, phi4-reasoning) spend output-token budget on internal reasoning
@@ -15,7 +15,7 @@
  *   max_tokens=16  -> content: "",     reasoning: 16 tokens, finish: length
  *   max_tokens=600 -> content: "PONG", reasoning present,    finish: stop
  *
- * The failure is silent: gbrain's own chat probe reports a GREEN result with
+ * The failure is silent: foresights's own chat probe reports a GREEN result with
  * empty content, so the misconfiguration is invisible in `providers test`.
  *
  * Non-reasoning local models (qwen2.5-coder, llama3.x, mistral) must NOT be
@@ -81,7 +81,7 @@ describe('recipe: ollama thinking-by-default', () => {
     expect(getProviderCapabilities(model).supportsThinking).toBe(true);
   });
 
-  // gbrain#4727: GLM-4.5+/5.x reason by default on every host (the zhipu
+  // foresights#4727: GLM-4.5+/5.x reason by default on every host (the zhipu
   // recipe already declares it); a reporter hit the 4000 cap on GLM-5.3-flash
   // via Ollama cloud. Older glm-4 tags keep the conservative cap.
   test.each([

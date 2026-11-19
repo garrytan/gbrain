@@ -86,7 +86,7 @@ async function driftCase(engine: BrainEngine): Promise<void> {
       expect(again.residuals).toEqual({ file_database_drift: 1 });
       const [entry] = again.listing ?? [];
       expect(entry?.class).toBe('file_database_drift');
-      expect(entry?.detail).toContain(`gbrain sources reconcile ${sourceId} people/bob-example --preview`);
+      expect(entry?.detail).toContain(`foresights sources reconcile ${sourceId} people/bob-example --preview`);
 
       // Once the page is written again (a reconcile commits a new revision), the write is a replay candidate again.
       await engine.executeRaw(`ALTER TABLE pages DISABLE TRIGGER USER`);

@@ -5,7 +5,7 @@
  * `UserPromptSubmit` hook stdin JSON, `runHook(['user-prompt'], io)` executes
  * the production hook (stdin parse → transcript-window parse → IPC
  * turn_context → additionalContext), and a run-scoped resolve-IPC server —
- * the SAME `startResolveIpcServer` + `assembleTurnContext` pair `gbrain
+ * the SAME `startResolveIpcServer` + `assembleTurnContext` pair `foresights
  * serve` registers — answers over a real unix socket with the real shared
  * secret. What used to be an in-process contract simulation is now the
  * shipped wire, transcript window, cross-turn dedupe, and IPC auth path.
@@ -133,7 +133,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
                 lexicalArms: req.lexicalArms,
               })
             : Promise.resolve(null),
-        // The SAME handler shape gbrain serve registers (mcp/server.ts):
+        // The SAME handler shape foresights serve registers (mcp/server.ts):
         // always assembles against the adapter's active source.
         turn_context: (req) =>
           this.engine

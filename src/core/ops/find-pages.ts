@@ -1,5 +1,5 @@
 /**
- * #7191: `find_pages` (CLI `gbrain find <pattern>`): find pages by name or
+ * #7191: `find_pages` (CLI `foresights find <pattern>`): find pages by name or
  * path in one indexed read, instead of `ls` / `find` on a checkout. Pattern
  * forms and matching rules: src/core/page-find.ts; SQL and index use:
  * src/core/engine-sql/page-lookup.ts.

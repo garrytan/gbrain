@@ -38,7 +38,7 @@ const run = (dir: string, budgets = new Map<string, SkillBudget>(), bundled = ne
 
 describe('computeSkillHealth', () => {
   test('a clean managed folder has no findings and counts invocations', () => {
-    const r = run(folder({ a: skill('Run `gbrain doctor --json`.') }));
+    const r = run(folder({ a: skill('Run `foresights doctor --json`.') }));
     expect(r.scope).toBe('managed');
     expect(r.findings).toEqual([]);
     expect(r.totals).toMatchObject({ skills: 1, invocations: 1, drift: 0, size: 0 });
@@ -52,7 +52,7 @@ describe('computeSkillHealth', () => {
       grown: skill('y'.repeat(1_200)),
       nodesc: `---\nname: s\ndescription: ${'d'.repeat(1_100)}\ntriggers:\n  - t\n---\nbody\n`,
       untriggered: skill('body', ''),
-      drifted: skill('Run `gbrain search q --no-such-flag`.'),
+      drifted: skill('Run `foresights search q --no-such-flag`.'),
     });
     const budgets = new Map<string, SkillBudget>([['over', { max: 1_000, lastDiet: null }], ['grown', { max: 5_000, lastDiet: 1_000 }]]);
     const r = run(dir, budgets);
@@ -65,21 +65,21 @@ describe('computeSkillHealth', () => {
     expect(byCode.SKILL_DRIFT_UNKNOWN_FLAG).toMatchObject({ skill: 'drifted', line: 8 });
     for (const f of r.findings) {
       expect(f.fix.length).toBeGreaterThan(10);
-      expect(f.verify).toBe(`gbrain skillpack health ${f.skill}`);
+      expect(f.verify).toBe(`foresights skillpack health ${f.skill}`);
     }
     expect(r.totals).toMatchObject({ drift: 1, size: 4 });
   });
 
   test('an over-budget copy of a bundled skill points at the upstream version first', () => {
     const r = run(folder({ brainy: skill('x'.repeat(20_000)) }), new Map(), new Set(['brainy']));
-    expect(r.findings[0]!.fix).toContain('gbrain skillpack reference brainy');
+    expect(r.findings[0]!.fix).toContain('foresights skillpack reference brainy');
   });
 
-  test('a folder gbrain does not manage gets no findings', () => {
+  test('a folder foresights does not manage gets no findings', () => {
     const r = run(folder({ theirs: skill('x'.repeat(20_000), '') }, false), new Map(), new Set(['brainy']));
     expect(r.scope).toBe('not_gbrain');
     expect(r.skills).toEqual([]);
-    expect(skillHealthSummary(r)).toBe('no gbrain skills in this folder');
+    expect(skillHealthSummary(r)).toBe('no foresights skills in this folder');
   });
 
   test('in an unmanaged folder only copies of bundled skills are checked', () => {
@@ -89,7 +89,7 @@ describe('computeSkillHealth', () => {
   });
 
   test('without a CLI surface only size and frontmatter are checked, and the summary says so', () => {
-    const r = computeSkillHealth({ skillsDir: folder({ a: skill('Run `gbrain search q --no-such-flag`.') }), surface: null, budgets: new Map(), bundled: new Set() });
+    const r = computeSkillHealth({ skillsDir: folder({ a: skill('Run `foresights search q --no-such-flag`.') }), surface: null, budgets: new Map(), bundled: new Set() });
     expect(r.drift_checked).toBe(false);
     expect(r.findings).toEqual([]);
     expect(skillHealthSummary(r)).toContain('not checked outside the CLI');
@@ -102,7 +102,7 @@ describe('computeSkillHealth', () => {
 
   test('100 skills in under 500 ms', () => {
     const skills: Record<string, string> = {};
-    for (let i = 0; i < 100; i++) skills[`s${i}`] = skill(`Run \`gbrain doctor --json\`.\n${'text '.repeat(2_000)}`);
+    for (let i = 0; i < 100; i++) skills[`s${i}`] = skill(`Run \`foresights doctor --json\`.\n${'text '.repeat(2_000)}`);
     const dir = folder(skills);
     const t0 = performance.now();
     const r = run(dir);
@@ -136,10 +136,10 @@ describe('skill_health doctor check', () => {
     ({ scope, skillsDirResolution: { dir, source: dir ? 'explicit' : 'none' } }) as unknown as DoctorContext;
 
   test('warns on drift and points at the fix command', async () => {
-    const dir = folder({ doctor: skill('Run `gbrain doctor --no-such-flag`.') });
+    const dir = folder({ doctor: skill('Run `foresights doctor --no-such-flag`.') });
     const [c] = (await skillHealthEntry.run(ctx(dir))) as Array<{ name: string; status: string; message: string; issues?: unknown[] }>;
     expect(c!.status).toBe('warn');
-    expect(c!.message).toContain('Run: gbrain skillpack health');
+    expect(c!.message).toContain('Run: foresights skillpack health');
     expect(c!.issues).toHaveLength(1);
   });
 
@@ -147,10 +147,10 @@ describe('skill_health doctor check', () => {
     const dir = folder({ big: skill('x'.repeat(20_000)) });
     const [c] = (await skillHealthEntry.run(ctx(dir))) as Array<{ status: string; message: string }>;
     expect(c!.status).toBe('ok');
-    expect(c!.message).toContain('gbrain skillpack health lists them');
+    expect(c!.message).toContain('foresights skillpack health lists them');
   });
 
-  test('is not applicable to a folder gbrain does not manage, and silent without a skills dir or under --scope=brain', async () => {
+  test('is not applicable to a folder foresights does not manage, and silent without a skills dir or under --scope=brain', async () => {
     const [c] = (await skillHealthEntry.run(ctx(folder({ theirs: skill('x', '') }, false)))) as Array<{ status: string; severity?: string }>;
     expect(c).toMatchObject({ status: 'ok', severity: 'info' });
     expect(await skillHealthEntry.run(ctx(null))).toEqual([]);

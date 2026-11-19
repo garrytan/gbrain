@@ -1,6 +1,6 @@
 /**
  * Graduation fixtures: on-disk PGLite brains with real persistence history,
- * ready for `gbrain migrate --to postgres`.
+ * ready for `foresights migrate --to postgres`.
  *
  * Kinds:
  * - `history`: a thin wrapper over `buildHistoryFixture` (`history-fixture.ts`,

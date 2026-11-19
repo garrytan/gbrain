@@ -1,5 +1,5 @@
 /**
- * Consent for `gbrain doctor --remediate` (agent operator contract v1, C1).
+ * Consent for `foresights doctor --remediate` (agent operator contract v1, C1).
  *
  * Remediation submits job steps that may spend (`paid`) and, with
  * `--include-repairs`, applies repair steps that rewrite stored records
@@ -97,7 +97,7 @@ export function remediateArgv(args: readonly string[]): string[] {
 }
 
 function planSummary(plan: RemediationPlan | null, flags: RemediateFlags, estUsd: number | null): string {
-  if (!plan) return 'the remediation plan (it could not be previewed before startup; preview it after approval with gbrain doctor --remediation-plan)';
+  if (!plan) return 'the remediation plan (it could not be previewed before startup; preview it after approval with foresights doctor --remediation-plan)';
   const repairs = plan.repair_steps ?? [];
   const cost = estUsd === null ? 'an unpriced amount' : `about $${estUsd.toFixed(2)}`;
   const repairText = flags.includeRepairs && repairs.length
@@ -138,7 +138,7 @@ export async function remediateConsent(engine: BrainEngine, args: readonly strin
     why: `doctor --remediate runs ${summary} to raise the brain's health score.`
       + (flags.includeRepairs ? ' Repair steps rewrite stored records (re-seal chunks, restamp metadata) on this brain.' : ''),
     risk: (estUsd === null ? 'Paid steps have no price estimate, so the default cost cap applies. ' : `Spends up to the cost cap (estimate $${estUsd.toFixed(2)}). `)
-      + (flags.includeRepairs ? 'Repairs change stored records in place; there is no automatic undo, so take a backup first if one matters (gbrain backup). ' : '')
+      + (flags.includeRepairs ? 'Repairs change stored records in place; there is no automatic undo, so take a backup first if one matters (foresights backup). ' : '')
       + 'Job steps run model calls and may queue embeddings.',
     user_message: `Run the brain remediation now (${summary})?`
       + (flags.includeRepairs ? ' It includes repairs that rewrite stored records.' : ''),

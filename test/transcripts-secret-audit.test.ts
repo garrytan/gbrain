@@ -1,7 +1,7 @@
 /**
  * The installed-base transcript secret audit (#6147) and its doctor check.
  * Pages imported before the labeled-credential detector keep a typed
- * password; `gbrain transcripts audit-secrets` lists them by slug and count
+ * password; `foresights transcripts audit-secrets` lists them by slug and count
  * (never a value) and `transcript_secret_exposure` reads its cached summary.
  *
  * R3/R4: engine in beforeAll, disconnect in afterAll; state reset per test.

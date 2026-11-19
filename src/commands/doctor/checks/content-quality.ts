@@ -56,7 +56,7 @@ async function runContentSanity(ctx: DoctorContext): Promise<Check[]> {
   progress.heartbeat('oversized_pages');
   try {
     // #6526: the write gate's bytes_block (the DB config plane over file and env),
-    // so a `gbrain config set content_sanity.bytes_block N` reaches this check too.
+    // so a `foresights config set content_sanity.bytes_block N` reaches this check too.
     const bytesBlock = await (await import('../../../core/import-screen.ts')).effectiveBytesBlock(engine);
     // #1871: engine.executeRaw, not the dead-on-PGLite postgres singleton.
     const rows = await engine.executeRaw<{ slug: string; source_id: string; bytes: number }>(
@@ -72,7 +72,7 @@ async function runContentSanity(ctx: DoctorContext): Promise<Check[]> {
     );
     // #7145: a full list means more pages exceed the block; the count is then a floor.
     const capped = rows.length > OVERSIZED_LIST_LIMIT;
-    // Pages an older gbrain stored chunkless for size that now fit under the block: the free backfill re-indexes them.
+    // Pages an older foresights stored chunkless for size that now fit under the block: the free backfill re-indexes them.
     // chunk-visibility-ok: counts pages with no chunk row at all (any generation), the chunk safety net's own test
     const [skipped] = await engine.executeRaw<{ n: number; chunkless: number }>(`SELECT COUNT(*)::int AS n,
          COUNT(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id))::int AS chunkless FROM pages p
@@ -88,9 +88,9 @@ async function runContentSanity(ctx: DoctorContext): Promise<Check[]> {
         name: 'oversized_pages',
         status: 'warn',
         // #7184: a marked page keeps its chunks once healed or rewritten, so say how many are truly invisible.
-        message: `${backfillable} page(s) still carry the size-skip marker an older gbrain wrote, and now fit under the ${bytesBlock}-byte bytes_block: `
+        message: `${backfillable} page(s) still carry the size-skip marker an older foresights wrote, and now fit under the ${bytesBlock}-byte bytes_block: `
           + `${chunklessMarked} have no chunks, so not even keyword search finds them, and ${backfillable - chunklessMarked} are keyword-only with no vectors. `
-          + 'A page whose rewrite fails (an invalid fence, for example) keeps the marker until its content is repaired. Fix: gbrain reindex --oversized (free, CPU only; pages over 1 MiB then wait for embedding approval).',
+          + 'A page whose rewrite fails (an invalid fence, for example) keeps the marker until its content is repaired. Fix: foresights reindex --oversized (free, CPU only; pages over 1 MiB then wait for embedding approval).',
         details: { marked: backfillable, chunkless: chunklessMarked },
         fix: agentFix(['gbrain', 'reindex', '--oversized'], 'Re-chunks the size-skipped pages so keyword search finds them; it calls no paid provider and holds large pages for embedding approval.',
           'oversized_pages', { docs: 'docs/guides/memory-boundaries.md#large-pages-upgrade' }),
@@ -303,7 +303,7 @@ async function runQuarantine(ctx: DoctorContext): Promise<Check[]> {
       name: 'quarantined_pages',
       status: n > 0 ? 'warn' : 'ok',
       message: n > 0
-        ? `${n} page(s) quarantined as junk (hidden from search). Review with 'gbrain quarantine list'; clear a false positive with 'gbrain quarantine clear <slug> --force' (it stays cleared until the page changes; a pattern that misfires brain-wide is turned off with content_sanity.disabled_patterns).`
+        ? `${n} page(s) quarantined as junk (hidden from search). Review with 'foresights quarantine list'; clear a false positive with 'foresights quarantine clear <slug> --force' (it stays cleared until the page changes; a pattern that misfires brain-wide is turned off with content_sanity.disabled_patterns).`
         : 'No quarantined pages',
     });
   } catch (err) {
@@ -323,7 +323,7 @@ async function runQuarantine(ctx: DoctorContext): Promise<Check[]> {
       name: 'flagged_pages',
       status: n > 0 ? 'warn' : 'ok',
       message: n > 0
-        ? `${n} page(s) flagged (markup-heavy or oversize) — still searchable, agent warned on retrieval. Review with 'gbrain quarantine list --include-flagged'.`
+        ? `${n} page(s) flagged (markup-heavy or oversize) — still searchable, agent warned on retrieval. Review with 'foresights quarantine list --include-flagged'.`
         : 'No flagged pages',
     });
   } catch (err) {
@@ -352,7 +352,7 @@ async function runFrontmatter(ctx: DoctorContext): Promise<Check[]> {
   // scanBrainSources walks every registered source's local_path on disk
   // (not from the DB), invoking parseMarkdown(..., {validate:true}) per
   // file. Reports per-source counts grouped by error code. The fix path is
-  // `gbrain frontmatter validate <source-path> --fix`, which writes .bak
+  // `foresights frontmatter validate <source-path> --fix`, which writes .bak
   // backups so it works for both git and non-git brain repos.
   //
   // v0.38.2.0 wave (this PR supersedes PR #1287):
@@ -426,12 +426,12 @@ async function runFrontmatter(ctx: DoctorContext): Promise<Check[]> {
           continue;
         }
         if (src.status === 'skipped') {
-          // Codex adversarial #1: `gbrain frontmatter validate` takes a
+          // Codex adversarial #1: `foresights frontmatter validate` takes a
           // filesystem PATH, not a source id. Pre-fix the hint pointed users
           // at a command that would fail with "no such directory" — breaking
           // the very remediation path this PR ships to give them.
           sourceMessages.push(
-            `${src.source_id}: NOT SCANNED (timeout — run \`gbrain frontmatter validate ${src.source_path}\`)`,
+            `${src.source_id}: NOT SCANNED (timeout — run \`foresights frontmatter validate ${src.source_path}\`)`,
           );
           continue;
         }
@@ -452,12 +452,12 @@ async function runFrontmatter(ctx: DoctorContext): Promise<Check[]> {
           .join(', ');
         sourceMessages.push(`${src.source_id}: ${src.total} (${codes})`);
       }
-      const repairHint = 'Fix: gbrain repair frontmatter --source <id> previews the line fix for every file it can repair (and names the manual fix for the rest, '
-        + 'such as a missing opening ---); on an unmanaged checkout gbrain frontmatter validate <source-path> --fix applies the same safe fixes';
+      const repairHint = 'Fix: foresights repair frontmatter --source <id> previews the line fix for every file it can repair (and names the manual fix for the rest, '
+        + 'such as a missing opening ---); on an unmanaged checkout foresights frontmatter validate <source-path> --fix applies the same safe fixes';
       const sourcesWithIssues = report.per_source.filter(src => src.total > 0).map(src => src.source_id);
-      const missingHint = missing.length ? `Restore the missing directory, or point the source at its checkout with gbrain sources set-path <id> <path>. ` : '';
+      const missingHint = missing.length ? `Restore the missing directory, or point the source at its checkout with foresights sources set-path <id> <path>. ` : '';
       const fixHint = missingHint + (report.partial
-        ? `Raise GBRAIN_DOCTOR_FM_TIMEOUT_MS or run \`gbrain frontmatter validate <source-path>\` directly. ${repairHint}`
+        ? `Raise GBRAIN_DOCTOR_FM_TIMEOUT_MS or run \`foresights frontmatter validate <source-path>\` directly. ${repairHint}`
         : repairHint);
       checks.push({
         name: 'frontmatter_integrity',

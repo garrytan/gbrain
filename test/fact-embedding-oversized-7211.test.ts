@@ -96,7 +96,7 @@ for (const backend of testBackends()) describe('oversized facts never wedge the 
     expect(first).toMatchObject({ embedded: 3, attempted: 3, failures: 0, failure_samples: [], refused_oversized: 2, remaining: 0, stopped: 'complete' });
     expect(first.refused_samples.join('\n')).toContain('fact ' + longId);
     expect(first.refused_samples.join('\n')).toContain('fact ' + astralId);
-    expect(first.refused_fix).toContain('gbrain forget');
+    expect(first.refused_fix).toContain('foresights forget');
     expect(calls.flat()).not.toContain(LONG);
     expect(calls.flat()).not.toContain(ASTRAL);
     expect(await texts()).toEqual([['Alice example joined Acme example.', true], [LONG, false], ['Bob example leads Fund A.', true], [ASTRAL, false], ['Carol example moved to Oslo.', true]]);
@@ -136,7 +136,7 @@ for (const backend of testBackends()) describe('oversized facts never wedge the 
     const check = await capped(() => doctor(engine));
     expect(check).toMatchObject({ status: 'warn', details: { facts: { stale: 1, oversized: 1 } } });
     expect(check.message).toContain('longer than the embedding input limit');
-    expect(check.message).toContain('gbrain forget');
+    expect(check.message).toContain('foresights forget');
     const said: string[] = [];
     const held = await capped(() => heldEmbedArgv(engine, ['--held', '--dry-run'], null, line => said.push(line)));
     expect(held).toMatchObject({ dryRun: true, oversized_facts: [{ id: longId, source_id: SOURCE }] });

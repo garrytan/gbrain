@@ -1,7 +1,7 @@
 /**
- * v0.42 Wave D2 — `gbrain extract --explain <kind>` CLI.
+ * v0.42 Wave D2 — `foresights extract --explain <kind>` CLI.
  *
- *   gbrain extract --explain <kind>
+ *   foresights extract --explain <kind>
  *
  * Prints the active-pack's resolution chain for the requested kind:
  *   - Which pack declares it extractable
@@ -26,7 +26,7 @@ export async function runExtractExplain(
   engine: BrainEngine,
   args: string[],
 ): Promise<void> {
-  // `gbrain extract mentions --explain <name|slug>` explains a mention, not an extractable kind.
+  // `foresights extract mentions --explain <name|slug>` explains a mention, not an extractable kind.
   if (args[0] === 'mentions') return (await import('./extract-mentions-explain.ts')).runExtractMentionsExplain(engine, args);
   const json = args.includes('--json');
   // --explain consumes the NEXT positional arg as the kind.
@@ -36,7 +36,7 @@ export async function runExtractExplain(
     : args.find((a, i) => i > 0 && !a.startsWith('--'));
 
   if (!kindArg || kindArg.startsWith('--')) {
-    console.error('Usage: gbrain extract --explain <kind>');
+    console.error('Usage: foresights extract --explain <kind>');
     process.exit(2);
   }
 
@@ -58,7 +58,7 @@ export async function runExtractExplain(
       console.log(`Kind: ${kindArg}`);
       console.log('Status: no active pack configured');
       console.log('');
-      console.log('Configure a pack with: gbrain schema use <pack-name>');
+      console.log('Configure a pack with: foresights schema use <pack-name>');
     }
     return;
   }
@@ -100,10 +100,10 @@ export async function runExtractExplain(
         for (const k of allExtractable) console.log(`  ${k}`);
       }
       console.log('');
-      console.log('Built-in kinds (shipped by gbrain cycle phases):');
+      console.log('Built-in kinds (shipped by foresights cycle phases):');
       for (const k of Array.from(cyclePhaseKinds).sort()) console.log(`  ${k}`);
       console.log('');
-      console.log(`To declare it: gbrain schema scaffold-extractable ${kindArg} --pack ${pack.manifest.name}`);
+      console.log(`To declare it: foresights schema scaffold-extractable ${kindArg} --pack ${pack.manifest.name}`);
     }
     return;
   }

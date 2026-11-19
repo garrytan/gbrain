@@ -27,7 +27,7 @@ export const commitFiles = (root: string, paths: string[], message: string) => {
 export const page = (slug: string, canary: string, extra: string[] = []) => ['---', `title: Example ${slug}`, 'type: note', ...extra, 'owner_note: kept', '---', '',
   `Body of ${slug} ${canary}.`, ''].join('\n');
 
-/** `gbrain repair <argv> --json`, previewed and then applied with the preview's hash; the applied result. */
+/** `foresights repair <argv> --json`, previewed and then applied with the preview's hash; the applied result. */
 export async function repairApply(engine: BrainEngine, argv: string[]): Promise<{ applied: number; outcome_items?: Array<{ item: string; outcome: string }> }> {
   const run = async (args: string[]) => {
     let out = '';

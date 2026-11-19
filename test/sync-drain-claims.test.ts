@@ -48,7 +48,7 @@ const pending = (index: number, requestId = '00000000-0000-0000-0000-00000000000
   managedWrite: { source_id: 's', slug: 'p', path: 'p.md', write_error: 'write_pending', reason: 'write_pending', message: 'm', suggestion: 's',
     write_request: { request_id: requestId, state: 'queued', retry_after_ms: 0 } as never } });
 const done = (total = 10): SyncResult => ({ ...base, managedCursor: { index: total, total } });
-const RESUME = 'gbrain sync --source s --no-pull';
+const RESUME = 'foresights sync --source s --no-pull';
 const stall = { request_id: 'r', state: 'queued', blocked_reason: null, head_request_id: 'h', head_state: 'running', claimable_here: false, owner_is_this_host: true };
 const claim = (over: Partial<DrainClaim> = {}): DrainClaim => ({ phase: 'preparing', step: 'origin_check', waiting_on: 'db', step_age_ms: 45_000, claim_age_ms: 50_000, lapsed: false,
   owner_pid: null, owner_kind: null, owner_nonce: null, last_sql: null, allowance_ms: 150_000, ceiling_ms: 600_000, ...over });
@@ -71,7 +71,7 @@ describe('claim-aware no-progress window', () => {
     expect(result.drain).toMatchObject({ outcome: 'blocked', stop_reason: 'drain_stalled',
       stall: { cause: 'preparation_overdue', step: 'origin_check', waiting_on: 'db', phase: 'preparing', stalled_seconds: 160, owner_pid: process.pid + 1, owner_kind: 'serve' } });
     const next = drainNext(result, RESUME, 's')!;
-    expect(next).toMatchObject({ command: 'gbrain sources writer status s', safe_to_loop: false, docs: 'docs/guides/write-refusals.md#drain-stalled', code: 'drain_stalled', cause: 'preparation_overdue' });
+    expect(next).toMatchObject({ command: 'foresights sources writer status s', safe_to_loop: false, docs: 'docs/guides/write-refusals.md#drain-stalled', code: 'drain_stalled', cause: 'preparation_overdue' });
     expect(next.why).toContain('stuck at step origin_check, waiting on db');
     expect(next.why).toContain('renewing the claim past the preparation budget');
     expect(formatDrainSummary(result, RESUME, 's').join('\n')).toContain('step=origin_check, waiting_on=db, cause=preparation_overdue');
@@ -100,7 +100,7 @@ describe('claim-aware no-progress window', () => {
       expect(result.drain).toMatchObject({ outcome: 'blocked', stop_reason: 'drain_stalled', retry_after_ms: 0,
         stall: { cause: 'owner_wedged_here', owner_pid: process.pid + 1, owner_kind: 'serve', owner_nonce: 'other-nonce', step: 'origin_check', waiting_on: 'db', past_ceiling: true, ceiling_ms: 600_000, last_sql: { label: 'SELECT pages' } } });
       const next = drainNext(result, RESUME, 's')!;
-      expect(next).toMatchObject({ code: 'drain_stalled', cause: 'owner_wedged_here', safe_to_loop: false, retry_after_ms: 0, command: 'gbrain sources writer status --source s --json' });
+      expect(next).toMatchObject({ code: 'drain_stalled', cause: 'owner_wedged_here', safe_to_loop: false, retry_after_ms: 0, command: 'foresights sources writer status --source s --json' });
       expect(next.fix).toMatchObject({ next: 'tell_user_to_run', actor: 'host_admin' });
       expect(next.fix!.user_message).toContain(`pid ${process.pid + 1}`);
       expect(next.why).toContain(`held by the serve pid ${process.pid + 1} on this host, past the 10m00s ceiling`);
@@ -183,7 +183,7 @@ describe('claim-aware no-progress window', () => {
     expect(result.drain).toMatchObject({ outcome: 'blocked', stop_reason: 'preparation_systemic' });
     expect(syncOutcome(result)).toBe('blocked');
     const next = drainNext(result, RESUME, 's')!;
-    expect(next).toMatchObject({ command: 'gbrain sources writer status --source s --json', safe_to_loop: false, docs: 'docs/guides/write-refusals.md#preparation_systemic' });
+    expect(next).toMatchObject({ command: 'foresights sources writer status --source s --json', safe_to_loop: false, docs: 'docs/guides/write-refusals.md#preparation_systemic' });
     expect(next.why).toContain('5 writes of this sync could not finish preparing at step knowledge_publication (5 in a row');
     expect(ERROR_CATALOGUE.sync_drain_preparation_systemic.code).toBe('preparation_systemic');
     expect(ERROR_CATALOGUE.sync_drain_preparation_abandoned.code).toBe('preparation_abandoned');

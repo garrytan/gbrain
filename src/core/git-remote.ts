@@ -1,6 +1,6 @@
 import { assertManagedFilesystemWrite } from './persistence/filesystem-guard.ts';
 /**
- * gbrain remote-source git helpers (v0.28).
+ * foresights remote-source git helpers (v0.28).
  *
  * Single source of SSRF-defensive git invocations. parseRemoteUrl delegates
  * to isInternalUrl from src/core/url-safety.ts (covers scheme allowlist,
@@ -80,7 +80,7 @@ export function parseRemoteUrl(s: string): ParsedRemoteUrl {
   if (isInternalUrl(s)) {
     if (process.env.GBRAIN_ALLOW_PRIVATE_REMOTES === '1') {
       console.error(
-        `[gbrain] WARN: GBRAIN_ALLOW_PRIVATE_REMOTES=1, accepting internal/private URL: ${url.hostname}`,
+        `[foresights] WARN: GBRAIN_ALLOW_PRIVATE_REMOTES=1, accepting internal/private URL: ${url.hostname}`,
       );
     } else {
       throw new RemoteUrlError(
@@ -434,7 +434,7 @@ export function hasTrackedContent(path: string): boolean {
 }
 
 // ── Durability helpers (v0.42.44) ───────────────────────────────────────────
-// Used by the brain-repo durability feature (`gbrain sources harden/pull`) and
+// Used by the brain-repo durability feature (`foresights sources harden/pull`) and
 // the DB-free pull cron. These are the auth-capable, rebase-aware counterparts
 // to the strict read-only `pullRepo` (which stays `--ff-only` for `sync.ts`).
 

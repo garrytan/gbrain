@@ -124,7 +124,7 @@ describe('resolveCorsOrigin', () => {
  * Integration coverage for #3845.
  *
  * The MCP SDK's mcpAuthRouter mounts a bare `cors()` (origin `*`) as the first
- * middleware on /token, /revoke, and /register. gbrain's own gate runs first,
+ * middleware on /token, /revoke, and /register. foresights's own gate runs first,
  * but with a denied/default-deny origin cors@2.8.x neither sets a header nor
  * short-circuits — it calls next() — so the SDK's `*` answered the preflight,
  * leaking the endpoint surface to any web origin.
@@ -143,7 +143,7 @@ describe('mountOAuthCorsGate — OAuth preflight is default-deny (#3845)', () =>
       allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
     };
     const app = express();
-    // gbrain gate (runs first) — mirrors serve-http.ts.
+    // foresights gate (runs first) — mirrors serve-http.ts.
     app.use('/token', mountOAuthCorsGate(oauthOptions));
     app.use('/revoke', mountOAuthCorsGate(oauthOptions));
     // Downstream SDK-style router: bare cors() then the POST handler.

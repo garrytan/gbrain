@@ -71,7 +71,7 @@ describe('unlinked_facts doctor check', () => {
     const c = await check();
     expect(c.status).toBe('warn');
     expect(c.message).toContain('30.0% of 20 new facts unlinked');
-    expect(c.message).toContain('gbrain facts relink --dry-run');
+    expect(c.message).toContain('foresights facts relink --dry-run');
     expect((c.details as any).window).toMatchObject({ active: 20, unlinked: 6, capped: false });
   });
 
@@ -157,12 +157,12 @@ describe('unlinked_facts doctor check', () => {
     await seed(10, { entity: null });
     const c = unlinkedFactsVerdict(await unlinkedFactsStats(engine), { thinClient: true });
     expect(c.status).toBe('warn');
-    expect(c.message).toContain('ask the brain host operator to run: gbrain facts relink --dry-run');
+    expect(c.message).toContain('ask the brain host operator to run: foresights facts relink --dry-run');
     const remote = await remoteUnlinkedFactsCheck(engine, { sourceIds: ['default'], remote: true });
     expect(remote).toMatchObject({ name: 'unlinked_facts', status: 'warn' });
     expect(remote.message).toContain('ask the brain host operator');
     expect((await remoteUnlinkedFactsCheck(engine, {})).message).toContain('ask the brain host operator');
-    expect((await remoteUnlinkedFactsCheck(engine, { remote: false })).message).toContain('preview links: gbrain facts relink --dry-run');
+    expect((await remoteUnlinkedFactsCheck(engine, { remote: false })).message).toContain('preview links: foresights facts relink --dry-run');
   });
 
   test('degrades without fact_relink_attempts: relink figures omitted, nothing excluded', async () => {

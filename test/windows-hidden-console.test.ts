@@ -1,11 +1,11 @@
 /**
- * #4992 on Windows: a detached gbrain process (the Stop-hook push, the backup
+ * #4992 on Windows: a detached foresights process (the Stop-hook push, the backup
  * check, the job supervisor, its worker, every job child) has no console, so
  * each console program it launches without windowsHide opens a visible
  * console window that takes focus.
  *
  * The launcher fixture runs detached through the production supervisor path
- * and launches a compiled console probe the ways gbrain does; the probe
+ * and launches a compiled console probe the ways foresights does; the probe
  * reports whether its own console window is visible. The CONTROL launch (raw
  * child_process, no windowsHide) must show a window first: a runner without
  * an interactive console cannot tell a hidden launch from one that never had
@@ -26,7 +26,7 @@ const FIXTURES = join(import.meta.dir, 'fixtures', 'windows-console');
 const HIDDEN = { console: true, visibleWindow: false };
 const SEAM_LAUNCHERS = ['spawn', 'spawnSync', 'execFile', 'execFileSync', 'exec', 'execSync', 'bunSpawn', 'bunSpawnSync'];
 
-describe.skipIf(process.platform !== 'win32')('console windows from a detached gbrain process (#4992)', () => {
+describe.skipIf(process.platform !== 'win32')('console windows from a detached foresights process (#4992)', () => {
   let dir = '';
   let results: Record<string, unknown> = {};
 

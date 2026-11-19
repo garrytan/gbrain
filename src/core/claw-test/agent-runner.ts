@@ -99,7 +99,7 @@ export interface TranscriptEvent {
  * GBRAIN_DATABASE_URL is deliberately ABSENT (removed in the hermes-harness
  * wave's adversarial review): live mode's staging + success oracle operate on
  * the hermetic PGLite under GBRAIN_HOME=tempdir, and an inherited
- * GBRAIN_DATABASE_URL would flip only the AGENT's gbrain children to the
+ * GBRAIN_DATABASE_URL would flip only the AGENT's foresights children to the
  * operator's real Postgres — polluting the real brain while the oracle probes
  * the untouched PGLite and fails with a misleading verdict.
  */

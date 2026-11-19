@@ -52,7 +52,7 @@ async function attestReadVerdict(ctx: DoctorContext): Promise<Check> {
         + `${shared.slice(0, 5).map(p => `${p.kind} ${p.name} (${p.shared.join(', ')})`).join('; ')}. `
         + 'A call that names such a source reads as the person, so what it returns can reach everyone in a shared turn. Keep person credentials for one person\'s own turns.',
       fix: agentFix(['gbrain', 'access', 'check', first.kind === 'token' ? '--token' : '--client', first.kind === 'token' ? first.name : first.id, '--json'],
-        'Read-only: shows the credential\'s grant. Ask the user whether it serves only one person\'s own turns; if not, set it to scope with gbrain auth rescope ... --attest-read scope.', name, { ask_user: true }) };
+        'Read-only: shows the credential\'s grant. Ask the user whether it serves only one person\'s own turns; if not, set it to scope with foresights auth rescope ... --attest-read scope.', name, { ask_user: true }) };
   } catch (error) {
     return checkError(name, `run ${name}`, error);
   }

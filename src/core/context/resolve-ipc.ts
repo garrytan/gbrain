@@ -2,12 +2,12 @@
  * Retrieval Reflex — resolve IPC (issue #1981, D9=C) + turn-context IPC v2
  * (agent-bootstrap plan: ENG-3, A9, S3#6, G11, CX2-10).
  *
- * PGLite is single-connection: `gbrain serve` holds the one connection for its
+ * PGLite is single-connection: `foresights serve` holds the one connection for its
  * lifetime, so the context engine cannot open its own and must NOT shell out to
  * a subprocess (that would force-steal the lock past the 5-min staleness window
  * and crash the brain — see plan D9 rejected option). Instead, `serve`
  * optionally listens on a local unix-domain socket and answers NARROW requests
- * using the connection it already owns. Both ends are gbrain code; raw SQL
+ * using the connection it already owns. Both ends are foresights code; raw SQL
  * never crosses the wire (closes the trust hole).
  *
  * Protocol: newline-delimited JSON. One request line, one response line.
@@ -29,7 +29,7 @@
  * typed { degraded: 'stale_serve' } instead of trusting the empty block.
  *
  *   sync_start / sync_status / sync_abort (secret-gated, protocol:2):
- *     serve-delegated sync — a `gbrain sync` CLI that finds a live serve
+ *     serve-delegated sync — a `foresights sync` CLI that finds a live serve
  *     holding the PGLite lock delegates the run through these kinds instead
  *     of failing on LiveServeLockError. Wire shapes + option validation live
  *     in sync-ipc.ts; execution lives in serve-sync-runner.ts. Start+poll

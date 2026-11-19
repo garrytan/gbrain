@@ -42,7 +42,7 @@ describe('childTableOrphansCheck (#1063)', () => {
     expect(result.message).toContain('5 orphan row(s)');
     expect(result.message).toContain('content_chunks.page_id=5');
     expect(result.message).not.toContain('DELETE FROM');
-    expect(result.message).toContain('gbrain repair orphan-children --apply');
+    expect(result.message).toContain('foresights repair orphan-children --apply');
     expect(result.details).toMatchObject({ code: 'child_table_orphans', fix: { kind: 'run_command', argv: ['gbrain', 'repair', 'orphan-children'] },
       docs: 'docs/guides/repair.md#orphan-children' });
   });
@@ -60,7 +60,7 @@ describe('childTableOrphansCheck (#1063)', () => {
     expect(result.message).toContain('content_chunks.page_id=234');
     expect(result.message).toContain('page_versions.page_id=12');
     expect(result.message).toContain('tags.page_id=3');
-    expect(result.message).toContain('Preview: gbrain repair orphan-children');
+    expect(result.message).toContain('Preview: foresights repair orphan-children');
     expect(result.details?.orphans).toEqual(['content_chunks.page_id=234', 'page_versions.page_id=12', 'tags.page_id=3']);
   });
 

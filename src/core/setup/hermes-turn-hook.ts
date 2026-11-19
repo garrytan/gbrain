@@ -4,19 +4,19 @@
  * that echoes `{"context": <rule>}`, which Hermes appends to every user
  * message. The block in SOUL.md reaches the system prompt only, and bots read
  * it as identity; this puts the same rule next to each turn. The command is
- * self-contained (no gbrain process per turn, no path that must exist on the
+ * self-contained (no foresights process per turn, no path that must exist on the
  * Hermes host), so a re-run after an upgrade rewrites it with the new text.
  *
  * Ownership is by YAML comment markers; text outside them is never touched.
- * gbrain appends its block only when config.yaml has no top-level `hooks:`
+ * foresights appends its block only when config.yaml has no top-level `hooks:`
  * key (a second one would be invalid YAML) and prints the entry to add by
  * hand otherwise. Hermes runs a shell hook only after approval, so setup
  * records the approval for this exact command in Hermes's own allowlist, the
- * way `gbrain setup codex` writes its hook trust entries. Removal strips the
+ * way `foresights setup codex` writes its hook trust entries. Removal strips the
  * block and that approval.
  *
  * The same block also carries the skill-resolver lane's entry
- * (`gbrain setup hermes --skill-loading resolve`, skill-resolver-hook.ts):
+ * (`foresights setup hermes --skill-loading resolve`, skill-resolver-hook.ts):
  * config.yaml can hold one top-level `hooks:` key, so both lanes share one
  * marked block, each entry with its own approval. Each lane writes and removes
  * only its own entry, so declining the brain-first rule keeps the resolver
@@ -31,7 +31,7 @@ import { probeBlock, removeBlock, spliceBlock, type BlockMarkers } from '../mana
 import { renderBrainFirstTurnRule, writeUnlessChanged, type BrainFirstAccess } from './brain-first.ts';
 import { isSkillResolverCommand } from './skill-resolver-lane.ts';
 
-const MARKERS: BlockMarkers = { begin: '# gbrain:turn-rule:begin', end: '# gbrain:turn-rule:end', label: 'turn-rule', rerun: 'gbrain setup hermes --instructions-only' };
+const MARKERS: BlockMarkers = { begin: '# gbrain:turn-rule:begin', end: '# gbrain:turn-rule:end', label: 'turn-rule', rerun: 'foresights setup hermes --instructions-only' };
 const EVENT = 'pre_llm_call';
 const ALLOWLIST = 'shell-hooks-allowlist.json';
 
@@ -42,7 +42,7 @@ export function hermesTurnHookCommand(access: BrainFirstAccess): string {
   return `/bin/echo '${JSON.stringify({ context: renderBrainFirstTurnRule(access, 'hermes') }).replace(/'/g, '\\u0027')}'`;
 }
 
-/** The lanes that own an entry in gbrain's block, in the order the block lists them, with each entry's timeout. */
+/** The lanes that own an entry in foresights's block, in the order the block lists them, with each entry's timeout. */
 export type HermesHookLane = 'turn-rule' | 'skill-resolver';
 const LANES: Record<HermesHookLane, { timeout: number; what: string }> = {
   'turn-rule': { timeout: 10, what: 'per-turn rule hook' },
@@ -69,7 +69,7 @@ function hooksYaml(entries: Partial<Record<HermesHookLane, string>>): string {
 
 interface Allowlist { approvals: Array<Record<string, unknown>> }
 
-/** Throws on a file gbrain cannot read as Hermes does (utf-8-sig JSON object), so it is never rewritten without the user's approvals. */
+/** Throws on a file foresights cannot read as Hermes does (utf-8-sig JSON object), so it is never rewritten without the user's approvals. */
 function readAllowlist(path: string): Allowlist {
   if (!existsSync(path)) return { approvals: [] };
   const raw = JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, '')) as Allowlist;
@@ -115,20 +115,20 @@ function revoke(hermesHome: string, command: string): void {
   });
 }
 
-/** Write or update the hook (accepted decision). Never throws: anything gbrain cannot edit safely is printed to add by hand. */
+/** Write or update the hook (accepted decision). Never throws: anything foresights cannot edit safely is printed to add by hand. */
 export function syncHermesTurnHook(opts: { hermesHome: string; access: BrainFirstAccess; dryRun: boolean }): HermesTurnHookOutcome {
   return syncHermesHook({ hermesHome: opts.hermesHome, lane: 'turn-rule', command: hermesTurnHookCommand(opts.access), dryRun: opts.dryRun });
 }
 
-/** A `pre_llm_call` entry with exactly this command in config.yaml outside gbrain's block (pasted by hand from a printed snippet). */
+/** A `pre_llm_call` entry with exactly this command in config.yaml outside foresights's block (pasted by hand from a printed snippet). */
 function pastedIn(doc: Record<string, unknown> | null | undefined, command: string): boolean {
   const entries = (doc?.hooks as Record<string, unknown> | undefined)?.[EVENT];
   return Array.isArray(entries) && entries.some((e) => (e as { command?: unknown } | null)?.command === command);
 }
 
 /**
- * Write or update one lane's entry in gbrain's block, keeping the other
- * lane's. Never throws: anything gbrain cannot edit safely is printed to add
+ * Write or update one lane's entry in foresights's block, keeping the other
+ * lane's. Never throws: anything foresights cannot edit safely is printed to add
  * by hand. The resolver's entry pasted by hand under the user's own `hooks:`
  * (the printed snippet) is kept and approved.
  */
@@ -142,7 +142,7 @@ export function syncHermesHook(opts: { hermesHome: string; lane: HermesHookLane;
     const missing = !existsSync(path);
     const text = missing ? '' : readFileSync(path, 'utf8');
     const probe = probeBlock(MARKERS, text);
-    if (probe.state === 'damaged') return print('the gbrain turn-rule markers in config.yaml are damaged');
+    if (probe.state === 'damaged') return print('the foresights turn-rule markers in config.yaml are damaged');
     if (probe.state === 'absent') {
       const doc = loadBoundedYaml(text) as Record<string, unknown> | null | undefined;
       if (doc !== null && doc !== undefined && typeof doc !== 'object') return print('config.yaml is not a YAML mapping');
@@ -151,7 +151,7 @@ export function syncHermesHook(opts: { hermesHome: string; lane: HermesHookLane;
         if (!opts.dryRun) approve(opts.hermesHome, command);
         return { action: 'keep', path, detail: `${what} (${EVENT}) in ${path}, added by hand` };
       }
-      if (doc && 'hooks' in doc) return print('config.yaml already has a hooks: section, which gbrain does not edit');
+      if (doc && 'hooks' in doc) return print('config.yaml already has a hooks: section, which foresights does not edit');
     }
     readAllowlist(join(opts.hermesHome, ALLOWLIST));
     const entries = entriesIn(probe.interior);
@@ -191,7 +191,7 @@ export function removeHermesHook(opts: { hermesHome: string; lane: HermesHookLan
     const pasted = probe.state === 'absent' && opts.lane === 'skill-resolver' ? inspectHermesResolverHook(opts.hermesHome).command : undefined;
     if (pasted) {
       if (!opts.dryRun) revoke(opts.hermesHome, pasted);
-      return { action: 'skip', path, detail: `the ${what} you pasted under your own hooks: in ${path} is not gbrain's to edit, so delete it there; its approval in ${ALLOWLIST} is withdrawn` };
+      return { action: 'skip', path, detail: `the ${what} you pasted under your own hooks: in ${path} is not foresights's to edit, so delete it there; its approval in ${ALLOWLIST} is withdrawn` };
     }
     if (probe.state !== 'present' || (!command && (opts.lane === 'skill-resolver' || Object.keys(entries).length > 0))) return { action: 'skip', path, detail: `no ${what} in ${path}` };
     const rest = { ...entries, [opts.lane]: undefined };
@@ -206,7 +206,7 @@ export function removeHermesHook(opts: { hermesHome: string; lane: HermesHookLan
   }
 }
 
-/** Read-only: is the skill-resolver lane's entry in config.yaml (gbrain's block, else pasted by hand), and does Hermes's allowlist approve it? */
+/** Read-only: is the skill-resolver lane's entry in config.yaml (foresights's block, else pasted by hand), and does Hermes's allowlist approve it? */
 export function inspectHermesResolverHook(hermesHome: string): { state: 'absent' | 'unapproved' | 'approved'; path: string; command?: string } {
   const path = join(hermesHome, 'config.yaml');
   try {

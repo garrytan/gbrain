@@ -45,7 +45,7 @@ mutating: true
 writes_pages: true
 # EIIRP files across the full canonical set — the actual destination
 # per page is decided by brain-taxonomist consulting the active schema
-# pack via `gbrain schema show --json`. List the gbrain-recommended set
+# pack via `foresights schema show --json`. List the gbrain-recommended set
 # of canonical directories here so the filing-audit gate passes; on
 # brains with custom packs, the routing surface is broader and routes
 # through loadActivePack at write time.
@@ -121,7 +121,7 @@ session), this gate is an **always-on agent-side convention**, like
 `signal-detector`: the agent applies it on every substantive reply, not
 when a trigger phrase routes here. Always-on is a harness-routing
 convention that a well-behaved agent follows — not a mechanical
-guarantee; nothing in the gbrain runtime blocks a reply if the skill
+guarantee; nothing in the foresights runtime blocks a reply if the skill
 never loads.
 
 **The moment of evaluation is delivery, not request.** The gate
@@ -164,13 +164,13 @@ it and let it file:
 ### Filing mechanics (before the reply goes out)
 
 1. **Path** — consult `skills/brain-taxonomist/SKILL.md`. It reads the
-   active schema pack (`gbrain schema show --json`); document analysis
+   active schema pack (`foresights schema show --json`); document analysis
    usually lands under `analysis/` or `research/`, entity-centric
    findings under `people/` or `companies/`.
 2. **Write** — file via capture:
 
    ```bash
-   gbrain capture --file <analysis.md> --slug <taxonomist-path>
+   foresights capture --file <analysis.md> --slug <taxonomist-path>
    ```
 
    (or `put_page` over MCP on thin-client installs). Full frontmatter
@@ -243,7 +243,7 @@ Produce a manifest:
 filing decisions in v0.39+):
 
 ```bash
-gbrain schema show --json
+foresights schema show --json
 ```
 
 The pack's `page_types[]` lists every directory the brain accepts plus
@@ -273,17 +273,17 @@ adding a new type via the v0.39 cathedral:
 
 ```bash
 # What's emerging in the brain that the active pack doesn't cover?
-gbrain schema detect --json
+foresights schema detect --json
 
 # LLM-refined suggestions (heuristic when no API key set).
-gbrain schema suggest --json
+foresights schema suggest --json
 
 # Review what's pending; promote or ignore each candidate.
-gbrain schema review-candidates --json
-gbrain schema review-candidates --apply <prefix-or-type-name>
+foresights schema review-candidates --json
+foresights schema review-candidates --apply <prefix-or-type-name>
 ```
 
-**Confidence floor:** when `gbrain schema suggest` returns confidence
+**Confidence floor:** when `foresights schema suggest` returns confidence
 < 0.6 on a proposed type, DO NOT auto-apply. Surface the suggestion to
 the user and let them choose. The schema-cathedral ships the
 primitives; EIIRP enforces the human-in-the-loop gate.
@@ -293,7 +293,7 @@ If schema needs change:
 - Document the change in the commit message of the next sync.
 - The schema-pack engine writes the delta to
   `~/.gbrain/schema-pack-deltas/` — review and merge into the active
-  pack via `gbrain schema edit` (or hand-edit the YAML).
+  pack via `foresights schema edit` (or hand-edit the YAML).
 
 ## Phase 4: FILE — Create enriched brain pages
 
@@ -310,12 +310,12 @@ Use the brain page template. MUST include:
 
 ### 4b. Entity pages (people, companies)
 For each entity mentioned:
-- Check if a brain page exists (`gbrain search "<name>"` or `gbrain get people/<slug>`).
+- Check if a brain page exists (`foresights search "<name>"` or `foresights get people/<slug>`).
 - If exists: update State, append Timeline entry citing this research.
 - If not: create with enrichment.
 
 ### 4c. Commit and verify
-After ALL pages are written, run `gbrain sync` (or commit + push in the
+After ALL pages are written, run `foresights sync` (or commit + push in the
 brain repo). Verify every link resolves.
 
 ## Phase 5: SKILL GRAPH AUDIT — DRY + MECE on capabilities
@@ -325,7 +325,7 @@ This phase operates on the SKILL graph, not just the research.
 > **Read-only plugin installs:** the shipped plugin snapshot is not
 > writable. New or updated skills and `lib/` extractions target your
 > own project skill directory or a brain-resident skillpack
-> (`gbrain skillpack init-brain-pack`), never the shipped snapshot.
+> (`foresights skillpack init-brain-pack`), never the shipped snapshot.
 > Phases 1-4 and the `gbrain` CLI checks in Phase 6 work everywhere.
 
 ### 5a. New pattern identification
@@ -347,7 +347,7 @@ Ask: did this work reveal REPEATABLE patterns that will recur?
    - Filing logic → already covered by brain-taxonomist + active pack
 2. DRY check via the v0.19 resolver:
    ```bash
-   gbrain check-resolvable
+   foresights check-resolvable
    ```
    Look for overlapping triggers or unreachable skills.
 
@@ -385,10 +385,10 @@ On approval: invoke `/skillify` for each new/modified skill.
 After all filing and skillification:
 
 ```bash
-gbrain check-resolvable                         # routing-table reachability
-gbrain doctor --json                            # health surface
-gbrain search "<topic keywords>"                # brain pages findable
-gbrain orphans                                  # any pages without inbound links?
+foresights check-resolvable                         # routing-table reachability
+foresights doctor --json                            # health surface
+foresights search "<topic keywords>"                # brain pages findable
+foresights orphans                                  # any pages without inbound links?
 ```
 
 Confirm:
@@ -398,7 +398,7 @@ Confirm:
 - [ ] No DRY violations (no duplicated logic across skills)
 - [ ] No MECE violations (no ambiguous routing between skills)
 - [ ] Active schema pack updated if new content types emerged
-- [ ] `gbrain schema review-orphans --json` reports `orphan_count: 0` (no untyped pages and no undeclared types)
+- [ ] `foresights schema review-orphans --json` reports `orphan_count: 0` (no untyped pages and no undeclared types)
 
 ## Phase 7: REPORT — Summary
 
@@ -459,19 +459,19 @@ reads it; doctor cross-references the pack version).
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
-- A schema change (`gbrain schema add-type`, `gbrain schema use`) needs the user's confirmation; present it and stop if they decline.
-- `gbrain schema suggest` runs heuristic-only without an API key: say the suggestions are heuristic, not LLM-refined.
-- A filing write returns `revision_conflict` or `write_pending` (exit 10): re-read and merge, or poll `gbrain write-request <request_id>`; the Phase 7 report lists pending writes as pending.
+- A schema change (`foresights schema add-type`, `foresights schema use`) needs the user's confirmation; present it and stop if they decline.
+- `foresights schema suggest` runs heuristic-only without an API key: say the suggestions are heuristic, not LLM-refined.
+- A filing write returns `revision_conflict` or `write_pending` (exit 10): re-read and merge, or poll `foresights write-request <request_id>`; the Phase 7 report lists pending writes as pending.
 
 ## Anti-Patterns
 
 - **Hardcoding directory tables in EIIRP's logic.** Every filing decision
-  reads `gbrain schema show --json`. Users on `gbrain-recommended` AND
+  reads `foresights schema show --json`. Users on `gbrain-recommended` AND
   custom packs MUST get the right behavior automatically.
 - **Auto-applying low-confidence schema suggestions.** Confidence < 0.6
-  from `gbrain schema suggest` means manual review is required. EIIRP
+  from `foresights schema suggest` means manual review is required. EIIRP
   surfaces it; the user accepts.
 - **Skipping Phase 5 SKILL GRAPH AUDIT because "this was a one-off."**
   If the work took >10 minutes, the methodology is probably reusable.
@@ -511,7 +511,7 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 
 ### Meta
 - **EIIRP is idempotent.** Running it twice on the same work should produce no changes the second time.
-- **EIIRP consumes the active schema pack as data.** Never hard-code directory tables in EIIRP's logic — read from `gbrain schema show --json` so users who picked `gbrain-recommended` OR custom packs get the right behavior automatically.
+- **EIIRP consumes the active schema pack as data.** Never hard-code directory tables in EIIRP's logic — read from `foresights schema show --json` so users who picked `gbrain-recommended` OR custom packs get the right behavior automatically.
 
 ## Changelog
 
@@ -520,22 +520,22 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
   analysis on a user-shared document is about to be delivered, file the
   brain page first, then deliver analysis + link in that same reply.
 - Filing routes through brain-taxonomist (active schema pack) +
-  `gbrain capture` instead of the donor's git-commit mechanics; the
+  `foresights capture` instead of the donor's git-commit mechanics; the
   donor's direct GitHub-API link check was dropped in favor of the
   brain-link-discipline skill's link format + verify step.
 - Donor examples and origin story genericized per CLAUDE.md privacy
   rules; added dedicated-pipeline exemptions and the per-user
   storage-policy off switch.
 
-### v1.0.0 — gbrain v0.39.0.0
+### v1.0.0 — foresights v0.39.0.0
 - Initial port from upstream OpenClaw. Genericized — no references to
   private fork names per CLAUDE.md privacy rules.
 - Phase 3 SCHEMA CHECK rewritten to consume the v0.39 cathedral CLI
   (`detect | suggest | review-candidates`) instead of a private
   `brain/schema.md`.
-- Phase 5 SKILL GRAPH AUDIT calls `gbrain check-resolvable` instead of
+- Phase 5 SKILL GRAPH AUDIT calls `foresights check-resolvable` instead of
   upstream `scripts/skill-dry-check.mjs`.
-- Phase 6 verification uses `gbrain schema review-orphans` (untyped pages
+- Phase 6 verification uses `foresights schema review-orphans` (untyped pages
   plus undeclared types, the same classification as `schema lint
   --with-db`); over MCP, `run_doctor`'s schema_pack_consistency check
   carries the same verdict.

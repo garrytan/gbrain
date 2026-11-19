@@ -2,7 +2,7 @@
  * Shared helpers for the production-shaped scale soak (GBRA-174): the database
  * topology (Postgres, a session-mode PgBouncer capped like a session pooler, a
  * transaction-mode PgBouncer, and toxiproxy latency in front of both), the
- * gbrain CLI runner and the child environment. Every listener binds loopback.
+ * foresights CLI runner and the child environment. Every listener binds loopback.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -147,7 +147,7 @@ export async function gb(cli: string, home: string, env: Record<string, string>,
   const [stdout, stderr, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
   let json: any = null;
   try { json = JSON.parse(stdout); } catch { const last = stdout.trim().split('\n').reverse().find(l => l.startsWith('{')); try { json = last ? JSON.parse(last) : null; } catch { json = null; } }
-  if (code !== 0 && !opts.allowFail) throw new Error('gbrain ' + args.join(' ') + ' exited ' + code + '\n' + stdout.slice(-1500) + '\n' + stderr.slice(-1500));
+  if (code !== 0 && !opts.allowFail) throw new Error('foresights ' + args.join(' ') + ' exited ' + code + '\n' + stdout.slice(-1500) + '\n' + stderr.slice(-1500));
   return { code: code ?? -1, stdout, stderr, ms: now() - t, json };
 }
 

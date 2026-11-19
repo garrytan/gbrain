@@ -101,7 +101,7 @@ export async function captureOffPath(engine: BrainEngine): Promise<Record<string
 export function offPathMcpBytes(res: { content: { type: string; text: string }[]; _meta?: Record<string, unknown> }): string {
   // Cat 40 Hard F2's keyword count line and fields and F4's row-date line are additive too
   // (pinned in test/search-keyword-paging.test.ts and test/search-date-labels.test.ts).
-  const content = res.content.filter(c => !/^\[gbrain (notice |search\] |dates\] )/.test(c.text));
+  const content = res.content.filter(c => !/^\[(?:foresights|gbrain) (notice |search\] |dates\] )/.test(c.text));
   // GBRA-231's additive `_meta.access` (the caller's applied view) is pinned in test/access-on-behalf-of.test.ts.
   const { gbrain_notices: _notices, access: _access, ...meta } = res._meta ?? {};
   if (meta.retrieval) meta.retrieval = withoutCounts(withoutTimings(meta.retrieval) as Record<string, unknown>);

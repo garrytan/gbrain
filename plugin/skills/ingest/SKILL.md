@@ -33,7 +33,7 @@ Ingest meetings, articles, media, documents, and conversations into the brain.
 
 - Every fact written to a brain page carries an inline `[Source: ...]` citation with date and provenance.
 - Every entity mention creates a back-link from the entity's page to the page mentioning them (Iron Law).
-- Raw sources are preserved for provenance via `gbrain files upload-raw` with automatic size routing.
+- Raw sources are preserved for provenance via `foresights files upload-raw` with automatic size routing.
 - State sections are rewritten with current best understanding, never appended to.
 - After the user's explicit automatic-capture opt-in (see `skills/signal-detector/SKILL.md`), entity detection fires on every substantive inbound message; notable entities get pages or updates. Without that opt-in, capture only what the user asks to save.
 - Notability gate before any new entity page: existing pages are updated, and a NEW page is
@@ -64,11 +64,11 @@ Every fact written to a brain page must carry an inline `[Source: ...]` citation
 
 1. **Parse the source.** Extract people, companies, dates, and events from the input.
 2. **For each entity mentioned:**
-   - Read the entity's page from gbrain to check if it exists
+   - Read the entity's page from foresights to check if it exists
    - If exists: update compiled_truth (rewrite State section with new info, don't append)
-   - If new: check notability gate, then store the page in gbrain with the appropriate type and slug
-3. **Append to timeline.** Add a timeline entry in gbrain for each event, with date, summary, and source citation.
-4. **Create cross-reference links.** Link entities in gbrain for every entity pair mentioned together, using the appropriate relationship type.
+   - If new: check notability gate, then store the page in foresights with the appropriate type and slug
+3. **Append to timeline.** Add a timeline entry in foresights for each event, with date, summary, and source citation.
+4. **Create cross-reference links.** Link entities in foresights for every entity pair mentioned together, using the appropriate relationship type.
 5. **Back-link all entities.** Update EVERY mentioned entity's page with a back-link to this page (Iron Law).
 6. **Timeline merge.** The same event appears on ALL mentioned entities' timelines. If Alice met Bob at Acme Corp, the event goes on Alice's page, Bob's page, and Acme Corp's page.
 
@@ -86,15 +86,15 @@ brain compound over time. Without the opt-in, write only what the user asks to s
    thinking. With the opt-in recorded, fire on every substantive message (skip
    purely operational ones and honor narrower per-message instructions).
 2. **For each entity detected:**
-   - `gbrain search "name"` -- does a page already exist?
-   - **If yes:** load context with `gbrain get <slug>`. Use the compiled truth to
+   - `foresights search "name"` -- does a page already exist?
+   - **If yes:** load context with `foresights get <slug>`. Use the compiled truth to
      inform your response. Update the page if the message contains new information.
    - **If no:** assess notability (see `skills/_brain-filing-rules.md`). If the entity
-     is worth tracking, create a new page with `gbrain put <type/slug>` and populate
+     is worth tracking, create a new page with `foresights put <type/slug>` and populate
      with what you know.
 3. **After creating or updating pages:** sync to gbrain:
    ```bash
-   gbrain sync --no-pull --no-embed
+   foresights sync --no-pull --no-embed
    ```
 4. **Don't block the conversation.** Entity detection and enrichment should happen
    alongside the response, not before it. The user shouldn't wait for brain writes
@@ -229,9 +229,9 @@ if the post is primarily about a person/company.
 
 Every ingested item must have its raw source preserved for provenance.
 
-**Use `gbrain files upload-raw` for automatic size routing:**
+**Use `foresights files upload-raw` for automatic size routing:**
 ```bash
-gbrain files upload-raw <file> --page <page-slug> --type <type>
+foresights files upload-raw <file> --page <page-slug> --type <type>
 ```
 
 - **< 100 MB text/PDF**: stays in git (brain repo `.raw/` sidecar directories)
@@ -252,10 +252,10 @@ type: transcript
 ```
 
 **Accessing stored files:**
-- `gbrain files signed-url <storage-path>` -- generate 1-hour signed URL for viewing/sharing
-- `gbrain files restore <dir>` -- download back to local from cloud storage
+- `foresights files signed-url <storage-path>` -- generate 1-hour signed URL for viewing/sharing
+- `foresights files restore <dir>` -- download back to local from cloud storage
 
-Use `put_raw_data` in gbrain to store raw API responses and metadata (JSON, not binary).
+Use `put_raw_data` in foresights to store raw API responses and metadata (JSON, not binary).
 
 ## Test Before Bulk
 
@@ -284,11 +284,11 @@ up 100 bad pages is enormous.
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - The sub-skill this routes to fails: report which one and why, using that skill's own failure guidance; do not silently re-route to a generic page write.
-- `put_page` returns `write_pending` (exit 10) or `revision_conflict`: poll `gbrain write-request <request_id>`, or re-read and merge; never write a duplicate page.
-- `gbrain files upload-raw` is refused for size or path: store a pointer and tell the user the raw file was not uploaded.
+- `put_page` returns `write_pending` (exit 10) or `revision_conflict`: poll `foresights write-request <request_id>`, or re-read and merge; never write a duplicate page.
+- `foresights files upload-raw` is refused for size or path: store a pointer and tell the user the raw file was not uploaded.
 
 ## Anti-Patterns
 
@@ -318,11 +318,11 @@ Raw source: [preserved at path / uploaded to cloud]
 
 ## Tools Used
 
-- Read a page from gbrain (get_page)
-- Store/update a page in gbrain (put_page)
-- Add a timeline entry in gbrain (add_timeline_entry)
-- Link entities in gbrain (add_link)
+- Read a page from foresights (get_page)
+- Store/update a page in foresights (put_page)
+- Add a timeline entry in foresights (add_timeline_entry)
+- Link entities in foresights (add_link)
 - List tags for a page (get_tags)
-- Tag a page in gbrain (add_tag)
-- Store raw data in gbrain (put_raw_data)
-- Check backlinks in gbrain (get_backlinks)
+- Tag a page in foresights (add_tag)
+- Store raw data in foresights (put_raw_data)
+- Check backlinks in foresights (get_backlinks)

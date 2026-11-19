@@ -6,11 +6,11 @@
  * recovery keep working exactly as before:
  *  - an interactive write (the origin the CLI and MCP surfaces set) is still
  *    admitted against a worktree in recovery;
- *  - `gbrain repair stuck-recovery` resolves a blocked publication on a worktree in
+ *  - `foresights repair stuck-recovery` resolves a blocked publication on a worktree in
  *    recovery (projection only, no admission);
  *  - a writer self-transfer repairs a `recovery_required` source, after which the
  *    managed purge stops reporting it `writer_not_active`;
- *  - an interactive `gbrain sync` against a worktree in recovery meets the sync's own
+ *  - an interactive `foresights sync` against a worktree in recovery meets the sync's own
  *    owner check, never the background refusal, and admits again once the
  *    worktree is active.
  */

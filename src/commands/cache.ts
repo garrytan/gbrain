@@ -1,10 +1,10 @@
 /**
- * `gbrain cache` \u2014 manage the semantic query cache (v0.32.x search-lite).
+ * `foresights cache` \u2014 manage the semantic query cache (v0.32.x search-lite).
  *
  * Subcommands:
- *   gbrain cache stats   \u2014 print row/hit counts and freshness breakdown.
- *   gbrain cache clear   \u2014 wipe all cache rows.
- *   gbrain cache prune   \u2014 delete only stale (past-TTL) rows.
+ *   foresights cache stats   \u2014 print row/hit counts and freshness breakdown.
+ *   foresights cache clear   \u2014 wipe all cache rows.
+ *   foresights cache prune   \u2014 delete only stale (past-TTL) rows.
  *
  * Read-only by default. `clear` requires `--yes` to avoid accidents.
  *
@@ -21,12 +21,12 @@ export { CACHE_SUBCOMMANDS as SUBCOMMANDS } from '../cli/subcommands.ts';
 export function printUsage(): void {
   // eslint-disable-next-line no-console
   console.log(`
-gbrain cache \u2014 manage the semantic query cache (v0.32.x search-lite)
+foresights cache \u2014 manage the semantic query cache (v0.32.x search-lite)
 
 Usage:
-  gbrain cache stats        Print cache row counts, hit counts, freshness.
-  gbrain cache clear        Wipe ALL cache rows. Requires --yes.
-  gbrain cache prune        Delete only stale (past-TTL) rows.
+  foresights cache stats        Print cache row counts, hit counts, freshness.
+  foresights cache clear        Wipe ALL cache rows. Requires --yes.
+  foresights cache prune        Delete only stale (past-TTL) rows.
 
 Flags:
   --yes                     Bypass clear confirmation prompt.
@@ -45,7 +45,7 @@ export async function runCache(args: string[]): Promise<void> {
   const config = loadConfig();
   if (!config) {
     // eslint-disable-next-line no-console
-    console.error('gbrain cache: no brain configured. Run `gbrain init` first.');
+    console.error('foresights cache: no brain configured. Run `foresights init` first.');
     process.exit(1);
   }
   const engineConfig = toEngineConfig(config);
@@ -87,7 +87,7 @@ export async function runCache(args: string[]): Promise<void> {
       const sourceId = sourceIdx >= 0 ? args[sourceIdx + 1] : undefined;
       if (!yes) {
         // eslint-disable-next-line no-console
-        console.error('gbrain cache clear: refusing to wipe without --yes flag.');
+        console.error('foresights cache clear: refusing to wipe without --yes flag.');
         process.exit(1);
       }
       const n = await cache.clear(sourceId ? { sourceId } : {});
@@ -104,7 +104,7 @@ export async function runCache(args: string[]): Promise<void> {
     }
 
     // eslint-disable-next-line no-console
-    console.error(`gbrain cache: unknown subcommand "${sub}". See \`gbrain cache --help\`.`);
+    console.error(`foresights cache: unknown subcommand "${sub}". See \`foresights cache --help\`.`);
     process.exit(1);
   } finally {
     try { await engine.disconnect(); } catch { /* ignore */ }

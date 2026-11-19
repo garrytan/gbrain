@@ -64,7 +64,7 @@ export function assertMutationProtocol(row: Pick<WriteRequest, 'target_kind' | '
   if (((row.target_kind ?? 'page') === 'page' && (row.protocol_version ?? 1) === 1)
     || (row.target_kind === 'skill_bundle' && row.protocol_version === 2)) return;
   throw opError('unsupported_mutation_protocol', 'This consumer does not support the request target and protocol version.',
-    `This gbrain process cannot apply ${row.target_kind ?? 'page'} requests at protocol ${row.protocol_version ?? 1}, so it left the request untouched. A newer gbrain wrote it: upgrading gbrain on this host (the user's call) lets it be applied.`);
+    `This foresights process cannot apply ${row.target_kind ?? 'page'} requests at protocol ${row.protocol_version ?? 1}, so it left the request untouched. A newer foresights wrote it: upgrading foresights on this host (the user's call) lets it be applied.`);
 }
 
 export async function assertSharedSkillPersistence(engine: SqlEngine, sourceId?: string): Promise<void> {

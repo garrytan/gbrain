@@ -1,25 +1,25 @@
 # Embedding migration — moving a brain to another embedding provider
 
-`gbrain migrate embeddings` re-embeds an entire brain onto a supported
+`foresights migrate embeddings` re-embeds an entire brain onto a supported
 embedding provider/model, safely and resumably. It requires an explicit target
 and approval; upgrading or changing a default does not convert stored vectors.
 Inspect the intended brain with `--status`, keep a verified full backup, and
 coordinate quiescing embedding writers before approving a live run.
 
-`gbrain retrieval-upgrade` is an alias for the same provider-agnostic migration
+`foresights retrieval-upgrade` is an alias for the same provider-agnostic migration
 command. It uses the same flags, preview, consent and verification workflow.
 
 ## Quick start
 
 ```bash
 # Preview the work + cost. Changes nothing.
-gbrain migrate embeddings --to voyage:voyage-4 --dim 1024 --dry-run
+foresights migrate embeddings --to voyage:voyage-4 --dim 1024 --dry-run
 
 # After reviewing the plan, run with interactive confirmation.
-gbrain migrate embeddings --to voyage:voyage-4 --dim 1024 --max-cost-usd 1
+foresights migrate embeddings --to voyage:voyage-4 --dim 1024 --max-cost-usd 1
 
 # Only after explicit approval: --yes is required non-interactively, else exit 2.
-gbrain migrate embeddings --to voyage:voyage-4 --dim 1024 --max-cost-usd 1 --yes
+foresights migrate embeddings --to voyage:voyage-4 --dim 1024 --max-cost-usd 1 --yes
 ```
 
 `--dim <N>` overrides the target width; it defaults to the provider recipe's
@@ -42,7 +42,7 @@ llama-server, and other bring-your-own-model providers).
   the OpenAI key.
 
 Set the target's API key via `export VOYAGE_API_KEY=...`, via
-`gbrain config set voyage_api_key ...` (API keys are routed to the file
+`foresights config set voyage_api_key ...` (API keys are routed to the file
 plane, which the provider pipeline reads), or by editing
 `~/.gbrain/config.json` directly.
 
@@ -108,7 +108,7 @@ even if a custom base URL still serves its old model.
    live run refuses (config-says-new / runtime-embeds-old silently splits a brain
    across two embedding spaces); `--ignore-env-override` for deliberate experiments. When they
    AGREE with the target the run proceeds with a loud notice (env-first
-   deployments are legitimate; keep the env in sync everywhere gbrain runs).
+   deployments are legitimate; keep the env in sync everywhere foresights runs).
    Nothing load-bearing trusts the env either way: the "nothing to migrate"
    decision verifies the DATABASE (column widths, NULL censuses, signature
    census, the un-merged file plane), so a pre-set env var cannot fake a
@@ -159,16 +159,16 @@ even if a custom base URL still serves its old model.
 Legacy saved facts have no recorded embedding model until they are repaired.
 Exact-text duplicate detection still works, but semantic duplicate detection
 and consolidation do not compare these unverified vectors. Preview the scoped
-work with `gbrain embed --facts --stale --source 'source-example' --dry-run --json`;
+work with `foresights embed --facts --stale --source 'source-example' --dry-run --json`;
 repair requires explicit `--yes --max-cost-usd <amount>` authorization. No paid
 re-embedding is started automatically on upgrade. Existing page vectors with a
 matching model and a legacy NULL text hash remain searchable, including after a
 failed migration attempt; this does not relabel vectors from another model.
 
-Stop older GBrain mutation workers before repair; mixed-version mutation is
+Stop older Foresights mutation workers before repair; mixed-version mutation is
 not supported. Preserve their durable queued work.
 Select the intended brain using the ordinary global `--brain` option. This
-migration is brain-wide: both `gbrain migrate embeddings` and `gbrain retrieval-upgrade`
+migration is brain-wide: both `foresights migrate embeddings` and `foresights retrieval-upgrade`
 reject `--source` and `--slugs`, including `--flag=value`
 forms, before planning or opening the brain. Neither flag narrows schema work.
 
@@ -201,7 +201,7 @@ brain selection when inspecting status; do not blindly retry or reset the migrat
 | `locked` | Check the existing holder; let it finish or deliberately stop it, then inspect status. | A previous holder may have committed progress or debits. |
 | `refused` | Resolve the named environment mismatch or deliberately choose whether to resume or retarget. For `embedding_budget_below_worst_case`, re-run with the printed `--max-cost-usd` value or keep the current model. | An earlier migration and its authorization may still be live. The budget refusal itself changed nothing. |
 | `probe_failed` (operation: `failed`) | Check provider configuration and the reported dimensions before authorizing another attempt. | An authorized probe debit may remain even when invalidation did not run. |
-| `apply_failed` (operation: `failed`) | Inspect the specific blocker first. Restore an archived source with `gbrain sources restore <id>` only after owner approval; unsealed unsupported projections need their original importer. Resolve configuration, database, or ownership errors before retrying. | Canonical repairs, schema/config changes, vectors, and debits may have committed in earlier phases. |
+| `apply_failed` (operation: `failed`) | Inspect the specific blocker first. Restore an archived source with `foresights sources restore <id>` only after owner approval; unsealed unsupported projections need their original importer. Resolve configuration, database, or ownership errors before retrying. | Canonical repairs, schema/config changes, vectors, and debits may have committed in earlier phases. |
 | `retained_vectors_blocked` within `apply_failed` (operation: `failed`) | Inspect both the retained page-chunk/fact/take counts and the archived-page blocked-work count. Migration can lack an eligible rebuild path even when vectors are already missing. Preserve the data and obtain the owner's retention/recovery decision before retrying. | Refusal does not undo earlier committed progress or authorization debits. |
 | `retained_vector_check_failed` within `apply_failed` (operation: `failed`) | Rebuildability could not be established. Inspect the same selected brain's status and database/schema/embedding-registry access; restore reliable inspection before retrying. Do not interpret an unavailable census as zero blockers. | This phase is refused; the failed check does not establish that previous phases made no changes or spent nothing. |
 | `incomplete` | Inspect remaining work, provider health, and ownership; resume only after resolving the blocker. | Completed chunks/facts and prior debits remain; incomplete is not a rollback. |
@@ -218,21 +218,21 @@ Standalone brain-wide `embed --stale` can repair active work while explicitly
 reporting archived blockers as incomplete; it does not dispatch archived text.
 Restoring an archived source still requires the owner's deliberate approval.
 An unsealed image page the importer already attested (`sealable` in doctor
-`text_projection_readiness`) is sealed keyless by `gbrain projections drain`
-(preview with `gbrain projections drain --dry-run`); every other unsealed image
-needs its original importer (`gbrain embed --stale --images --dry-run`, then the
+`text_projection_readiness`) is sealed keyless by `foresights projections drain`
+(preview with `foresights projections drain --dry-run`); every other unsealed image
+needs its original importer (`foresights embed --stale --images --dry-run`, then the
 paid run). A sealed imported image with usable stored chunks can migrate
 through the existing embedder. These are
 phase-local checks, not a purge path or permission for raw SQL, a forced marker
 reset, or a new override. `--status` and `--dry-run` describe runnable work and
 estimates; they do not prove that the live retained-vector check will pass.
 
-Use `gbrain migrate embeddings --status --json` on the selected brain. Increasing
+Use `foresights migrate embeddings --status --json` on the selected brain. Increasing
 `--max-cost-usd` is renewed authorization for a larger **total** cap, not a reset
 of prior debits. The CLI does not infer that a failure means zero writes.
 
 1. Inspect without mutations or provider calls:
-   `gbrain migrate embeddings --status --json`, then a target-specific
+   `foresights migrate embeddings --status --json`, then a target-specific
    `--dry-run`. Inspect chunks, facts, projection blockers, target dimensions,
    reranker action and whether pricing is known.
 2. Verify a full database backup on an isolated restore. For PGLite, stop all
@@ -244,7 +244,7 @@ of prior debits. The CLI does not infer that a failure means zero writes.
    queued intent. Markdown export is not a database backup. Follow the
    [engine-specific backup and isolated-restore examples](../embedding-migrations.md#backup-and-isolated-restore).
 3. Authorize a bounded migration, for example:
-   `gbrain migrate embeddings --to openai:text-embedding-3-small --dim 1536 --reranker off --max-cost-usd 1 --yes --json`.
+   `foresights migrate embeddings --to openai:text-embedding-3-small --dim 1536 --reranker off --max-cost-usd 1 --yes --json`.
    The dollar amount is an operator-chosen total limit, not a price quote.
    A batch size is not a spending cap. The preview character-based cost is
    an estimate; the cap must cover the printed worst-case authorization, and
@@ -256,10 +256,10 @@ of prior debits. The CLI does not infer that a failure means zero writes.
    If the cap is exhausted, fix the underlying provider problem and explicitly
    raise the **total** authorization to continue. Do not reset the marker.
    Projection recovery may have made durable progress even when migration
-   invalidation was refused. `gbrain doctor --only text_projection_readiness
-   --json` counts the blocked pages by class: `gbrain projections drain` seals
+   invalidation was refused. `foresights doctor --only text_projection_readiness
+   --json` counts the blocked pages by class: `foresights projections drain` seals
    the `sealable` images, and `reimport` images need their original importer
-   (`gbrain embed --stale --images --dry-run`, then the paid run). Never stamp
+   (`foresights embed --stale --images --dry-run`, then the paid run). Never stamp
    projection revisions with SQL.
 5. Verify `facts_pending`, remaining chunks and the completion receipt with
    `--status --json`, then perform a known-positive retrieval in the same
@@ -277,9 +277,9 @@ Repeating the same completed migration, including `--reranker off`, returned
 `{"status":"skipped_no_work"}` without new provider work. These are synthetic
 recovery checks, not a prediction of a personal brain's counts or provider cost.
 
-For a brain already missing page vectors, `gbrain embed --stale
+For a brain already missing page vectors, `foresights embed --stale
 --include-null-signature` uses the same bounded canonical projection recovery.
-For source-scoped facts, preview `gbrain embed --facts --stale --source
+For source-scoped facts, preview `foresights embed --facts --stale --source
 'source-example' --dry-run --json`; explicit repair requires `--yes
 --max-cost-usd 1` and supports `--max-facts` bounded work. Use the brain-wide
 migration command when durable authorization across interruptions is required.
@@ -298,8 +298,8 @@ network-isolated keyless fixture, these exact commands ran
 against an existing synthetic page:
 
 ```bash
-gbrain --brain host search amberbadgerfixtureproof --source default --json
-gbrain --brain host search zzzgenuinemissfixtureproof --source default --json
+foresights --brain host search amberbadgerfixtureproof --source default --json
+foresights --brain host search zzzgenuinemissfixtureproof --source default --json
 ```
 
 The first returned `concepts/keyless-fixture-example` with `keyword_hit: true`;
@@ -356,9 +356,9 @@ deferred work. Inspect status, then resume the migration without `--no-embed` so
 the existing total authorization and completion checks still cover the repair:
 
 ```bash
-gbrain migrate embeddings --to openai:text-embedding-3-small --yes --no-embed --max-cost-usd 1
-gbrain migrate embeddings --status --json
-gbrain migrate embeddings --to openai:text-embedding-3-small --yes --max-cost-usd 1
+foresights migrate embeddings --to openai:text-embedding-3-small --yes --no-embed --max-cost-usd 1
+foresights migrate embeddings --status --json
+foresights migrate embeddings --to openai:text-embedding-3-small --yes --max-cost-usd 1
 ```
 
 The example cap must be approved by the operator. The resumed command retains
@@ -379,9 +379,9 @@ surprise-re-embeds a whole corpus). After a provider swap that grandfather
 clause would silently leave those pages in the OLD embedding space — mixed
 vector spaces in one index, degrading retrieval with nothing in the logs.
 
-- `gbrain migrate embeddings` always includes them.
-- Plain `gbrain embed --stale` warns when a model swap leaves NULL-signature
-  pages behind, and `gbrain embed --stale --include-null-signature` re-embeds
+- `foresights migrate embeddings` always includes them.
+- Plain `foresights embed --stale` warns when a model swap leaves NULL-signature
+  pages behind, and `foresights embed --stale --include-null-signature` re-embeds
   them.
 
 ## Reranker
@@ -396,19 +396,19 @@ disables reranking, `--reranker keep` leaves it, `--reranker
 <provider:model>` picks explicitly (validated before anything runs). When the
 target provider has no reranker (OpenAI), the run prints an ACTION line with
 the exact commands instead of silently enabling a third provider:
-`gbrain config set search.reranker.model voyage:rerank-3-lite` (needs
-`VOYAGE_API_KEY`) or `gbrain config set search.reranker.enabled false`. A
+`foresights config set search.reranker.model voyage:rerank-3-lite` (needs
+`VOYAGE_API_KEY`) or `foresights config set search.reranker.enabled false`. A
 failed reranker probe keeps the previous config and is reported as
 `switch_failed` — never silent, never fatal to the migration.
 
 ## Status (read-only, spend-free)
 
-`gbrain migrate embeddings --status [--json]` reports every config plane (env
+`foresights migrate embeddings --status [--json]` reports every config plane (env
 presence, file, DB — API keys as presence booleans only), actual column
 widths (including `facts` / `query_cache`), NULL and chunkless censuses, the
 page-signature census, the in-flight marker with the exact resume command,
 and the last completion record including its smoke-check outcome. It is the
-mid-incident "where am I?" surface; `gbrain doctor`'s
+mid-incident "where am I?" surface; `foresights doctor`'s
 `embedding_migration_state` check surfaces the same marker on every doctor
 run.
 

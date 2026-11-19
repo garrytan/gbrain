@@ -3,7 +3,7 @@
  *
  * The owner designates a few pages as core with frontmatter
  * `always_load: true` (optional `core_priority`, lower renders first). Core
- * pages are rendered into every session's prompt through the lanes gbrain
+ * pages are rendered into every session's prompt through the lanes foresights
  * already reaches (session-start hooks, the OpenClaw assemble block,
  * compiled instruction files, and the `context_pack` verb), under one
  * brain-wide character budget that the write path enforces
@@ -79,7 +79,7 @@ function parseBool(raw: string | null | undefined): boolean | null {
   return null;
 }
 
-/** Validation for `gbrain config set` on the core keys; null when valid. */
+/** Validation for `foresights config set` on the core keys; null when valid. */
 export function validateCoreConfigValue(key: string, value: string): string | null {
   if (key === CORE_CONFIG_KEYS.maxChars && parseCoreMaxChars(value) === null) {
     return `${key} must be an integer from ${CORE_MIN_MAX_CHARS} to ${CORE_MAX_MAX_CHARS} (default ${CORE_DEFAULT_MAX_CHARS}).`;
@@ -156,7 +156,7 @@ export interface CoreBlock {
   revision: string;
 }
 
-export const CORE_BLOCK_FOOTER = 'Owner-designated pages, loaded in every session. Edit with edit_page (exact text, expected_revision) and keep them lean: detail belongs in linked pages. Only the owner adds or removes core pages (gbrain core add|remove).';
+export const CORE_BLOCK_FOOTER = 'Owner-designated pages, loaded in every session. Edit with edit_page (exact text, expected_revision) and keep them lean: detail belongs in linked pages. Only the owner adds or removes core pages (foresights core add|remove).';
 
 /** sha256 over the rendered pages and the limit, so any visible change moves it. */
 export function coreRevision(pages: readonly Pick<CorePage, 'source_id' | 'slug' | 'rendered' | 'priority'>[], maxChars: number): string {
@@ -201,11 +201,11 @@ export function renderCoreBlock(input: readonly CorePage[], opts: RenderCoreBloc
   const lines: string[] = [`## Core memory (always loaded) — ${used.toLocaleString('en-US')}/${opts.maxChars.toLocaleString('en-US')} chars`];
   const notices = opts.notices ?? [];
   for (const n of notices.slice(0, MAX_NOTICE_LINES)) lines.push(`> ${n}`);
-  if (notices.length > MAX_NOTICE_LINES) lines.push(`> +${notices.length - MAX_NOTICE_LINES} more remote edits; review with gbrain core diff`);
-  for (const w of opts.withheld ?? []) lines.push(`[core page ${w.source_id}:${w.slug} withheld: ${w.family}; run gbrain core status]`);
+  if (notices.length > MAX_NOTICE_LINES) lines.push(`> +${notices.length - MAX_NOTICE_LINES} more remote edits; review with foresights core diff`);
+  for (const w of opts.withheld ?? []) lines.push(`[core page ${w.source_id}:${w.slug} withheld: ${w.family}; run foresights core status]`);
   const overBudget = omitted.filter(o => o.reason !== 'withheld');
   if (overBudget.length) {
-    lines.push(`[core truncated: ${overBudget.length} page(s) over the ${opts.maxChars}-char budget or page cap left out; run gbrain core status]`);
+    lines.push(`[core truncated: ${overBudget.length} page(s) over the ${opts.maxChars}-char budget or page cap left out; run foresights core status]`);
   }
   const body = kept.map(p => p.rendered).join('\n\n');
   const text = `${lines.join('\n')}\n\n${body}${body ? '\n\n' : ''}${CORE_BLOCK_FOOTER}`;
@@ -356,7 +356,7 @@ export async function pendingCoreNotices(exec: Pick<BrainEngine, 'executeRaw'>, 
 }
 
 export function coreNoticeLine(n: { source_id: string; slug: string; revision: string | null; actor: string }): string {
-  return `Core page ${n.source_id}:${n.slug} was edited remotely by ${n.actor}. The user should review it: gbrain core diff --source ${n.source_id} ${n.slug}, then gbrain core ack --source ${n.source_id} ${n.slug} --revision ${n.revision ?? 'latest'}.`;
+  return `Core page ${n.source_id}:${n.slug} was edited remotely by ${n.actor}. The user should review it: foresights core diff --source ${n.source_id} ${n.slug}, then foresights core ack --source ${n.source_id} ${n.slug} --revision ${n.revision ?? 'latest'}.`;
 }
 
 /** The block a session receives; empty text when core is disabled or empty. */
@@ -369,14 +369,14 @@ export async function loadCoreBlock(engine: BrainEngine, opts: LoadCoreBlockOpts
   const eligibility = opts.eligibility ?? await proactiveEligibility({ engine }, 'core_delivery');
   const all = await listCorePages(engine, { sourceIds, excludePrivate: opts.excludePrivate ?? true, forCaller: opts.forCaller, eligibility });
   const listed = all.filter(p => !p.suppressed);
-  const suppressed = all.filter(p => p.suppressed).map(p => ({ source_id: p.source_id, slug: p.slug, family: 'unconfirmed agent-written instruction (gbrain trust review)' }));
+  const suppressed = all.filter(p => p.suppressed).map(p => ({ source_id: p.source_id, slug: p.slug, family: 'unconfirmed agent-written instruction (foresights trust review)' }));
   const { pages, withheld } = await applyCoreSensitivity(listed);
   const notices = opts.notices ?? (listed.length ? (await pendingCoreNotices(engine, sourceIds)).map(coreNoticeLine) : []);
   return { ...renderCoreBlock(pages, { maxChars: settings.maxChars, notices, withheld: [...withheld, ...suppressed] }), enabled: true,
     ...(suppressed.length ? { activation_withheld: suppressed.length } : {}) };
 }
 
-/** Brain-wide accounting used by the write-path guard and `gbrain core status`. */
+/** Brain-wide accounting used by the write-path guard and `foresights core status`. */
 export async function coreUsage(exec: RawExec, opts: { exclude?: { sourceId: string; slug: string } } = {}): Promise<{ pages: CorePage[]; chars: number }> {
   const pages = orderCorePages(await listCorePages(exec, { exclude: opts.exclude }));
   return { pages, chars: coreChars(pages) };

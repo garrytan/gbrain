@@ -1,6 +1,6 @@
 /**
  * #5735 — OpenClaw compact() rung 3 (Postgres inline harvest) gates on the
- * extraction model GBrain will actually use, not the engine-blind
+ * extraction model Foresights will actually use, not the engine-blind
  * detectCapabilities() file/env probe.
  *
  * Fixture: a Postgres brain whose DB plane sets `facts.extraction_model` to a

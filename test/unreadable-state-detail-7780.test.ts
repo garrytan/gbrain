@@ -129,7 +129,7 @@ for (const backend of backends) describe(`${backend}: unreadable_state names its
       expect(refused).toMatchObject({ code: 'writer_coordinator_required', detail: 'database_guard',
         docs: 'docs/guides/write-refusals.md#writer-coordinator-required' });
       expect(refused.suggestion).not.toBe(DATABASE_REFUSAL_HINT);
-      expect(refused.suggestion).toContain('Upgrading gbrain does not fix this');
+      expect(refused.suggestion).toContain('Upgrading foresights does not fix this');
       expect(refused.suggestion).toContain('recent_failures[].error_detail.state names the table');
       expect(refused.suggestion).toContain('Ask the user before changing the database role');
       const failure = (await readWriterDiagnostics(db)).recent_failures.find(f => f.request_id === done.request_id)!;

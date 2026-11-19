@@ -6,7 +6,7 @@
 // code and every hint print, the reranker.*, cross_modal.*, relational_*
 // keys…) were accepted only through the `search.` prefix. Because the prefix
 // swallows both spellings silently, neither the Levenshtein suggestion nor
-// the --force "Nothing in gbrain reads this" warning could ever fire for a
+// the --force "Nothing in foresights reads this" warning could ever fire for a
 // search.* key. These pins keep the registry and the read path in lockstep
 // without config.ts importing mode.ts (config.ts is deliberately lean: its
 // import closure serves engine-free hook children).

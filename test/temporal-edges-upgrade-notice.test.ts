@@ -20,7 +20,7 @@ describe('temporal edges upgrade notice', () => {
       resetGateway();
       const apply = (await temporalEdgesUpgradeNotice(engine))!.join('\n');
       expect(apply).toContain('certified for apply mode');
-      expect(apply).toContain('gbrain edge-proposals undo');
+      expect(apply).toContain('foresights edge-proposals undo');
       await engine.setConfig('dream.edge_contradictions.mode', 'propose');
       const propose = (await temporalEdgesUpgradeNotice(engine))!.join('\n');
       expect(propose).toContain('In propose mode it writes nothing to pages');

@@ -10,7 +10,7 @@ describe('takes mutation refusals name their own next step', () => {
   test('a missing row points at the page takes listing', async () => {
     const env = envelopeFor(await caught(() => parseTakesMutation(['update', 'people/alice-example', '--weight', '0.7'])));
     expect(env).toMatchObject({ code: 'invalid_params', fix: { argv: ['gbrain', 'takes', 'people/alice-example', '--json'], next: 'run' } });
-    expect(env.suggestion).toContain('gbrain takes update people/alice-example --row N');
+    expect(env.suggestion).toContain('foresights takes update people/alice-example --row N');
   });
 
   test('a flag another mutation owns names the flags this one takes and offers the help', async () => {
@@ -21,6 +21,6 @@ describe('takes mutation refusals name their own next step', () => {
 
   test('an invalid quality shows the resolve usage for this row', async () => {
     const env = envelopeFor(await caught(() => parseTakesMutation(['resolve', 'people/alice-example', '--row', '3', '--quality', 'maybe'])));
-    expect(env.suggestion).toContain('gbrain takes resolve people/alice-example --row 3 --quality correct');
+    expect(env.suggestion).toContain('foresights takes resolve people/alice-example --row 3 --quality correct');
   });
 });

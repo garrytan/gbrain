@@ -29,7 +29,7 @@
  *  - my acknowledgement-only reply ("Thanks!", "Got it") to a question is
  *    not an answer: it neither closes the reply-owed loop nor flips the turn
  *    ("Will do" is a commitment and still counts as the reply)
- *  - suppressed senders/threads (gbrain loops mute) never open NEW loops;
+ *  - suppressed senders/threads (foresights loops mute) never open NEW loops;
  *    existing loops keep their state
  *  - grace windows: inbound 24h, outbound 72h — fresh mail is not a loop yet;
  *    measured from the oldest unanswered message in the trailing run, so a

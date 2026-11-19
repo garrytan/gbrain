@@ -2,7 +2,7 @@
  * v0.34 W3 — MCP exposure of code-intel ops.
  *
  * Pre-v0.34 code-callers / code-callees / code-def / code-refs lived in
- * CLI_ONLY at cli.ts:30. Agents calling gbrain via MCP couldn't reach
+ * CLI_ONLY at cli.ts:30. Agents calling foresights via MCP couldn't reach
  * them and fell through to text search.
  *
  * This E2E pins:

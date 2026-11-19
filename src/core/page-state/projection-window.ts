@@ -18,7 +18,7 @@
  *
  * A bounded negative cache skips (source incarnation, slug, revision) of a page
  * whose kind the resident never builds (images: their seal is the importer's
- * or the explicit `gbrain projections drain`'s). Archive, missing-source and
+ * or the explicit `foresights projections drain`'s). Archive, missing-source and
  * cooldown states are never cached. The window and the recency lane bound the
  * inline selector only; the segmented route keeps its own probe and lease, and
  * the explicit drain keeps oldest-first.

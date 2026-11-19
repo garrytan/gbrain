@@ -1,7 +1,7 @@
 /**
- * #7422: `harness_wiring` warned "Claude Code is installed but has no gbrain
+ * #7422: `harness_wiring` warned "Claude Code is installed but has no foresights
  * MCP registration … has not been verified from this process" on a host whose
- * registration `gbrain bootstrap` recorded: the check never read the
+ * registration `foresights bootstrap` recorded: the check never read the
  * project-scope `.mcp.json` bootstrap writes, and a registration in a config
  * this process cannot see (a service under another HOME) read as missing.
  *
@@ -78,9 +78,9 @@ describe('#7422 harness_wiring consults the bootstrap registration record', () =
     expect(c.status).toBe('ok');
     expect(c.severity).toBe('info');
     expect(c.details).toMatchObject({ reason: 'registration_recorded', harnesses: ['claude-code'] });
-    expect(c.message).toContain('gbrain bootstrap');
-    expect(c.message).toContain('gbrain doctor --only harness_wiring');
-    expect(c.message).not.toContain('has no gbrain MCP registration');
+    expect(c.message).toContain('foresights bootstrap');
+    expect(c.message).toContain('foresights doctor --only harness_wiring');
+    expect(c.message).not.toContain('has no foresights MCP registration');
   });
 
   test('a recorded project-scope registration whose workspace config this process cannot read → ok info', async () => {
@@ -96,7 +96,7 @@ describe('#7422 harness_wiring consults the bootstrap registration record', () =
     const b = box();
     const c = await check(b);
     expect(c.status).toBe('warn');
-    expect(c.message).toMatch(/^Claude Code is installed but has no gbrain MCP registration/);
+    expect(c.message).toMatch(/^Claude Code is installed but has no (?:foresights|gbrain) MCP registration/);
   });
 
   test('a hooks-only record is not an MCP registration → warn', async () => {

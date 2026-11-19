@@ -5,7 +5,7 @@
  *    (`acme-example`), the page is `companies/acme-example`, and the local
  *    CLI read only the page slug (the recall op already read siblings and the
  *    title subject);
- *  - `gbrain recall "<name> <topic>"` resolved the whole phrase as one
+ *  - `foresights recall "<name> <topic>"` resolved the whole phrase as one
  *    entity and grepped it as one literal, so neither matched.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
@@ -93,7 +93,7 @@ describe('a name followed by topic words', () => {
     const r = await recall(['alice example enterprise pricing']);
     expect(r.facts).toEqual(['pricing for the enterprise plan is per seat', 'prefers morning meetings']);
     expect(r.err).toContain("'alice example' is people/alice-example");
-    expect(r.err).toContain('gbrain recall --entity people/alice-example');
+    expect(r.err).toContain('foresights recall --entity people/alice-example');
   });
 
   test('a trailing name works too', async () => {

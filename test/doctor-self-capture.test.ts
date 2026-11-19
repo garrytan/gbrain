@@ -1,6 +1,6 @@
 /**
  * self_capture doctor check (#5413): counts corpus files captured from
- * gbrain's own claude-cli sessions (classified) and files whose harness
+ * foresights's own claude-cli sessions (classified) and files whose harness
  * transcript is gone (unclassifiable), prints copy-paste quarantine commands
  * and never moves or deletes anything.
  */
@@ -23,7 +23,7 @@ beforeAll(async () => {
   await engine.connect({});
   await engine.initSchema();
   mkdirSync(corpus, { recursive: true });
-  // A gbrain claude-cli scratch project holding two self sessions, and an ordinary project.
+  // A foresights claude-cli scratch project holding two self sessions, and an ordinary project.
   const self = join(projects, `-tmp-${CLAUDE_CLI_CWD_PREFIX.replace(/[^a-z0-9]/gi, '-')}4242`);
   mkdirSync(self, { recursive: true });
   mkdirSync(join(projects, '-home-user-work'), { recursive: true });

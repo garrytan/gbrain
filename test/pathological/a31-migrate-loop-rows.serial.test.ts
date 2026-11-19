@@ -1,5 +1,5 @@
 /**
- * A-31 (GBRA-130): `gbrain migrate --to …` never switches the active engine
+ * A-31 (GBRA-130): `foresights migrate --to …` never switches the active engine
  * over open-loop rows the target refused.
  *
  * Protects: an open_loops/loop_suppressions row whose insert the target
@@ -106,8 +106,8 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         const line = err.split('\n').find(l => l.startsWith('  - open_loops id '));
         const parsed = /^ {2}- (open_loops) id (\d+) \((\w+)\): (.+)$/.exec(line ?? '');
         expect(parsed).not.toBeNull();
-        const fix = /then re-run: (gbrain migrate .+)$/m.exec(err)?.[1];
-        expectItemFailure({ key: `${parsed![1]}:${parsed![2]}`, code: parsed![3], fix }, { key: `open_loops:${poison.id}`, code: 'invalid_data', fix: new RegExp(`^gbrain migrate --to ${target.configEngine}`) });
+        const fix = /then re-run: ((?:foresights|gbrain) migrate .+)$/m.exec(err)?.[1];
+        expectItemFailure({ key: `${parsed![1]}:${parsed![2]}`, code: parsed![3], fix }, { key: `open_loops:${poison.id}`, code: 'invalid_data', fix: new RegExp(`^foresights migrate --to ${target.configEngine}`) });
         expect(parsed![4]).toContain('patho_no_poison');
         expectOthersUnchanged(before, await snapshotItems(source, 'default'));
         const copied = await target.open();

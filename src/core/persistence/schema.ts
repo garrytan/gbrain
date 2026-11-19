@@ -21,7 +21,7 @@ export const PERSISTENCE_SYNC_RUN_INDEXES = [
 /**
  * #6511: the page purge's lookup of stored intents for a slug (`findRequestsForSlugs`: source, slug, uncompacted rows
  * with an intent) ran as a sequential scan of the request table inside the 5 s purge transaction. Postgres builds it
- * CONCURRENTLY in the persistence_request_slug_intent_index migration (`transaction: false`); PGLite inline. `gbrain repair request-indexes` rebuilds it.
+ * CONCURRENTLY in the persistence_request_slug_intent_index migration (`transaction: false`); PGLite inline. `foresights repair request-indexes` rebuilds it.
  */
 export const PERSISTENCE_REQUEST_SLUG_INTENT_INDEX_SQL = `CREATE INDEX IF NOT EXISTS persistence_requests_slug_intent
   ON persistence_requests(source_id,slug,sequence) WHERE intent IS NOT NULL AND NOT compacted`;
@@ -47,7 +47,7 @@ export const PERSISTENCE_FOREGROUND_COMMITTED_INDEX_SQL = `CREATE INDEX IF NOT E
   ON persistence_requests(worktree_id,sequence) WHERE state='committed' AND NOT COALESCE(intent->>'kind','') LIKE 'managed_sync_%'`;
 export const PERSISTENCE_FOREGROUND_COMMITTED_INDEX = { name: 'persistence_requests_foreground_committed', table: 'persistence_requests', sql: PERSISTENCE_FOREGROUND_COMMITTED_INDEX_SQL } as const;
 /**
- * #8707: `gbrain repair failed-writes` finds a refused write's replay attempts by request id alone (the id is derived
+ * #8707: `foresights repair failed-writes` finds a refused write's replay attempts by request id alone (the id is derived
  * from the refused request, so neither the principal nor the source is known), and finds the later requests of its page
  * (supersession, recovered fact requests) by source, slug and sequence over every receipt, compacted ones included,
  * which the partial slug index above does not hold. Without these each lookup was a sequential scan of the request
@@ -60,7 +60,7 @@ export const PERSISTENCE_REQUEST_REPLAY_ID_INDEX = { name: 'persistence_requests
 export const PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX_SQL = `CREATE INDEX IF NOT EXISTS persistence_requests_slug_sequence
   ON persistence_requests(source_id,slug,sequence)`;
 export const PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX = { name: 'persistence_requests_slug_sequence', table: 'persistence_requests', sql: PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX_SQL } as const;
-/** Every request-table index built online (a migration, then `gbrain repair request-indexes` and doctor `persistence_request_indexes`). */
+/** Every request-table index built online (a migration, then `foresights repair request-indexes` and doctor `persistence_request_indexes`). */
 export const PERSISTENCE_REQUEST_ONLINE_INDEXES = [...PERSISTENCE_SYNC_RUN_INDEXES, PERSISTENCE_REQUEST_SLUG_INTENT_INDEX, PERSISTENCE_REQUEST_ID_INDEX,
   PERSISTENCE_FOREGROUND_COMMITTED_INDEX, PERSISTENCE_REQUEST_REPLAY_ID_INDEX, PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX] as const;
 /**

@@ -8,8 +8,8 @@
  * drops the record once the row lands or no longer matches. A content failure
  * (classifyItemFailure class `content`, such as a CHECK violation) on 3
  * consecutive runs at the same row revision (a hash of the selected columns)
- * and the same gbrain version is held: later runs report it without retrying
- * it until the row or the version changes, or `gbrain backfill <name> --fresh`
+ * and the same foresights version is held: later runs report it without retrying
+ * it until the row or the version changes, or `foresights backfill <name> --fresh`
  * walks every pending row again. A transient failure is never held.
  */
 import { createHash } from 'node:crypto';
@@ -25,7 +25,7 @@ export interface BackfillSkipRecord {
   message: string;
   /** Hash of the row's selected columns when it last failed. */
   revision: string;
-  /** The gbrain version that last attempted it. */
+  /** The foresights version that last attempted it. */
   producer: string;
   /** Consecutive runs that failed it at this revision, version and class. */
   attempts: number;
@@ -75,7 +75,7 @@ export function rowRevision(row: unknown): string {
   return createHash('sha256').update(JSON.stringify(row)).digest('hex').slice(0, 16);
 }
 
-/** A held record whose row and gbrain version are unchanged: reported, not retried. */
+/** A held record whose row and foresights version are unchanged: reported, not retried. */
 export function heldUnchanged(record: BackfillSkipRecord | undefined, revision: string, producer: string): boolean {
   return record?.state === 'held' && record.revision === revision && record.producer === producer;
 }
@@ -95,6 +95,6 @@ export function noteSkip(ledger: BackfillSkipLedger, id: number, revision: strin
 export function reportSkips(ledger: BackfillSkipLedger, name: string): BackfillSkip[] {
   return Object.values(ledger.items).sort((a, b) => a.id - b.id).map(record => ({
     key: String(record.id), id: record.id, code: record.code, class: record.class, state: record.state, attempts: record.attempts,
-    message: record.message, fix: record.state === 'held' ? `gbrain backfill ${name} --fresh` : `gbrain backfill ${name}`,
+    message: record.message, fix: record.state === 'held' ? `foresights backfill ${name} --fresh` : `foresights backfill ${name}`,
   }));
 }

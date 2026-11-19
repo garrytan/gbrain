@@ -2,7 +2,7 @@
  * skill-resolver-hook.ts — the skill-resolver lane's hook wiring
  * (`GBRAIN_HOOK_LANE=skill-resolver`, runtime in
  * src/core/skills/resolver/hook-lane.ts), written by
- * `gbrain setup <claude-code|codex> --skill-loading resolve`
+ * `foresights setup <claude-code|codex> --skill-loading resolve`
  * (skill-resolver-setup.ts) and removed by `--skill-loading off` and
  * `setup --remove`.
  *
@@ -17,14 +17,14 @@
  *    each trusted by its hash in config.toml beside it, like the turn-rule
  *    lane.
  *  - Hermes: its own `pre_llm_call` entry (`hook user-prompt --harness
- *    hermes`) in gbrain's marked `hooks:` block in $HERMES_HOME/config.yaml,
+ *    hermes`) in foresights's marked `hooks:` block in $HERMES_HOME/config.yaml,
  *    beside the turn rule's (hermes-turn-hook.ts), approved in Hermes's
  *    shell-hooks-allowlist.json. Hermes splits the command like shlex with no
  *    shell and needs its first word to be a file, so it starts with
  *    /usr/bin/env. Hermes has no SessionStart: the lane resets a session's
  *    dedupe state itself when the history shrinks (in-place compaction).
  *
- * All three run gbrain through the existing hook launcher (hook-launcher.ts); this
+ * All three run foresights through the existing hook launcher (hook-launcher.ts); this
  * module writes nothing else into the launcher's directory. Ownership: the
  * marker, else the lane token in the command (Claude Code), the lane token
  * (Codex). Nothing else in either file is touched.
@@ -178,7 +178,7 @@ function syncCodex(bin: string, home: string | undefined, launcher: string, p: {
     const trust = codexSetupTrustEntry(p.hooks, event, index, groups[event]);
     const existing = readCodexTomlTable(p.config, trustPath(trust.key)) as { trusted_hash?: unknown } | undefined;
     if (existing === undefined) appendCodexTomlTable(p.config, trustPath(trust.key), { trusted_hash: trust.trusted_hash }, `gbrain setup (skill-resolver): trusts the skill-resolver lane ${event} hook; owned by its hash`);
-    else if (existing.trusted_hash !== trust.trusted_hash) return { action: 'refuse', path: p.hooks, detail: `${p.config} already has a different [hooks.state."${trust.key}"]; trust gbrain's skill-resolver hook in Codex's /hooks` };
+    else if (existing.trusted_hash !== trust.trusted_hash) return { action: 'refuse', path: p.hooks, detail: `${p.config} already has a different [hooks.state."${trust.key}"]; trust foresights's skill-resolver hook in Codex's /hooks` };
   }
   return { action: 'write', path: p.hooks, detail };
 }

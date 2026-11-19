@@ -1,5 +1,5 @@
 /**
- * `gbrain db-repair` — engine-free Postgres-access repair. In-process tests
+ * `foresights db-repair` — engine-free Postgres-access repair. In-process tests
  * against runDbRepair via the exported DbRepairDeps seam: probes are queued
  * fake diagnoses (built with the real classifier so shapes never drift),
  * docker is absent, sleep is a no-op, now is frozen. GBRAIN_HOME points at a
@@ -181,7 +181,7 @@ describe('db-repair flag gating', () => {
 
   test('--help → exit 0', async () => {
     expect(await runDbRepair(['--help'], makeDeps().deps)).toBe(0);
-    expect(logs.join('\n')).toContain('gbrain db-repair');
+    expect(logs.join('\n')).toContain('foresights db-repair');
   });
 });
 
@@ -542,7 +542,7 @@ describe('db-repair docker arm + healthy-path bonus + rewrite restart note', () 
     });
     expect(await runDbRepair([], deps)).toBe(0);
     expect(logs.join('\n')).toContain('stale DB-plane config row');
-    expect(logs.join('\n')).toContain('gbrain config unset');
+    expect(logs.join('\n')).toContain('foresights config unset');
     expect(executed.some((s) => s.includes('FROM config'))).toBe(true);
   });
 
@@ -559,7 +559,7 @@ describe('db-repair docker arm + healthy-path bonus + rewrite restart note', () 
 
 describe('db-repair --yes that could not fix the access failure (#7137)', () => {
   // Value: protects=an agent following the operator contract stops after one failed --yes instead of looping on it;
-  // fails_when=an exhausted conn_refused --yes run hands back fix argv [gbrain, db-repair, --yes] with next run;
+  // fails_when=an exhausted conn_refused --yes run hands back fix argv [foresights, db-repair, --yes] with next run;
   // why_new=no test read the --json fix of an unfixed --yes run; seam=runDbRepair deps in a child process (the
   // envelope is written to fd 1); no_claim=diagnosing why the local server refuses connections.
   function runJson(args: string[], probes: number): { status: number | null; doc: Record<string, any>; accessCalls: number } {

@@ -1,5 +1,5 @@
 /**
- * docker-postgres — the PURE parts of gbrain's own-container seam only.
+ * docker-postgres — the PURE parts of foresights's own-container seam only.
  * Never invokes real docker: `isGbrainDockerUrl` is string classification,
  * and the exported constants are the DRY contract between the init ladder's
  * docker rung and db-repair's conn_refused auto arm (the container name and

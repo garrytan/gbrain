@@ -3,7 +3,7 @@
  * autopilot probe steps (the daemon's real wiring) against a config-only
  * fake brain, with the gateway's chat and embed test transports as the
  * hermetic provider. Compiled with `bun build --compile` and run from a
- * directory with no gbrain checkout, it proves the embedded fixtures (#5187,
+ * directory with no foresights checkout, it proves the embedded fixtures (#5187,
  * C-N6) reach the probes. Prints `PROBE_RESULT <json>` with the audit rows.
  */
 import {

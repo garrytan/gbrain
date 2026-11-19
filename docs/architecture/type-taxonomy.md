@@ -6,7 +6,7 @@
 
 ## Why
 
-A production gbrain brain (186K pages) had accreted **94 distinct
+A production foresights brain (186K pages) had accreted **94 distinct
 `pages.type` values** in 9 clusters of redundancy. The type system is
 the foundation for schema packs, search filtering, extract behavior,
 enrichment routing, and expert routing. When types are noisy, every
@@ -60,7 +60,7 @@ writer's page type under `extracts/`, a non-extractable annotation), so
 imported code and extraction receipts never read as undeclared types and
 the catch-all retype leaves them alone. Since 1.6.0 it declares
 `stored-object` (a storage shelf card, a non-extractable annotation with no
-folder prefix) for the same reason, and since 1.7.0 `facts` (the type gbrain
+folder prefix) for the same reason, and since 1.7.0 `facts` (the type foresights
 setup stamps on the me/facts and company/facts starter pages: one dated line
 per fact; a non-extractable annotation with no folder prefix).
 
@@ -82,11 +82,11 @@ via mapping_rules (codex D9 security hardening).
 ## Migration flow
 
 ```
-gbrain onboard --check                         # surfaces pack_upgrade_available
+foresights onboard --check                         # surfaces pack_upgrade_available
         ↓
-gbrain onboard --check --explain               # per-cluster narrative dry-run
+foresights onboard --check --explain               # per-cluster narrative dry-run
         ↓
-gbrain jobs submit unify-types \               # PROTECTED + manual_only (CLI submit trusts it)
+foresights jobs submit unify-types \               # PROTECTED + manual_only (CLI submit trusts it)
   --params '{"target_pack":"gbrain-base-v2","apply":true}'
                                                # omit "apply":true → dry-run (default)
         ↓
@@ -109,7 +109,7 @@ Handler runs 8 phases:
   │ Phase 8: Verify + celebrate         │ → assert ≤16 types; stderr summary
   └─────────────────────────────────────┘
         ↓
-gbrain onboard --check                         # pack_upgrade_available cleared
+foresights onboard --check                         # pack_upgrade_available cleared
                                                # type_proliferation cleared
 ```
 
@@ -120,9 +120,9 @@ Every primitive ships with a documented rollback:
 | Operation | Rollback |
 |-----------|----------|
 | Retype | `frontmatter.legacy_type = <original>` preserved on every page (D8). One SQL UPDATE restores types: `UPDATE pages SET type = frontmatter->>'legacy_type' WHERE frontmatter ? 'legacy_type'`. |
-| Page-to-link | Source page soft-deleted with 72h TTL. `gbrain restore <slug>` within 72h. Link row stays harmless if source restored. |
-| Page-to-alias | Source page soft-deleted with 72h TTL. `gbrain restore <slug>` within 72h. Alias row stays harmless (or `DELETE FROM slug_aliases WHERE alias_slug = <slug>` to clean up). |
-| Active-pack flip | `gbrain schema use gbrain-base` reverses the flip. |
+| Page-to-link | Source page soft-deleted with 72h TTL. `foresights restore <slug>` within 72h. Link row stays harmless if source restored. |
+| Page-to-alias | Source page soft-deleted with 72h TTL. `foresights restore <slug>` within 72h. Alias row stays harmless (or `DELETE FROM slug_aliases WHERE alias_slug = <slug>` to clean up). |
+| Active-pack flip | `foresights schema use gbrain-base` reverses the flip. |
 
 ## What if my brain doesn't fit?
 
@@ -135,10 +135,10 @@ post-unify on ANY brain.
 For brains with substantial custom types that deserve their own canonical
 (e.g. `researcher` for an academic brain), the right move is:
 
-1. Fork gbrain-base-v2: `gbrain schema fork gbrain-base-v2 my-pack`
+1. Fork gbrain-base-v2: `foresights schema fork gbrain-base-v2 my-pack`
 2. Edit your fork to add page_types + mapping_rules covering your
    custom domain.
-3. Target your fork: `gbrain jobs submit unify-types
+3. Target your fork: `foresights jobs submit unify-types
    --params '{"target_pack":"my-pack","apply":true}'` (omit `"apply":true`
    for a dry-run preview — that is the default)
 

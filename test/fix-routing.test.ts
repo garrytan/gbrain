@@ -91,12 +91,12 @@ describe('render-time pin', () => {
       then: read(['gbrain', 'embed', '--stale']),
     }), cli);
     expect(r.argv).toEqual(['gbrain', 'sync', '--no-pull', '--brain', 'teambrain', '--source', 'wiki']);
-    expect(r.command).toBe('gbrain sync --no-pull --brain teambrain --source wiki');
+    expect(r.command).toBe('foresights sync --no-pull --brain teambrain --source wiki');
     expect(r.preview_argv).toEqual(['gbrain', 'sync', '--dry-run', '--brain', 'teambrain', '--source', 'wiki']);
     expect(r.verify?.argv).toEqual(['gbrain', 'doctor', '--only', 'sync_freshness', '--json', '--brain', 'teambrain']);
     expect(r.then?.argv).toEqual(['gbrain', 'embed', '--stale', '--brain', 'teambrain', '--source', 'wiki']);
     const env = toAgentError(opError('invalid_params', 'bad', 'Try again.', { fix: read(['gbrain', 'get', 'a']) }), { transport: 'cli', render: cli });
-    expect(env.suggestion).toContain('gbrain get a --brain teambrain --source wiki');
+    expect(env.suggestion).toContain('foresights get a --brain teambrain --source wiki');
   });
 
   test('HTTP keeps only the source id (no mount topology), where a thin client can send it, and still strips paths', () => {

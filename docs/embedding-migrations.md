@@ -1,6 +1,6 @@
 # Switching embedding models or dimensions on an existing brain
 
-Use `gbrain migrate embeddings` for both same-width model changes and dimension
+Use `foresights migrate embeddings` for both same-width model changes and dimension
 changes, on **PGLite and PostgreSQL**. It coordinates the text-vector schema,
 configuration, invalidation, guarded projection recovery, chunk/fact repair and
 resumable authorization. Changing a config value alone does not convert vectors.
@@ -18,8 +18,8 @@ not narrow it. See the [migration reference](guides/embedding-migration.md) and
 Inspect state and preview a deliberately selected target without provider work:
 
 ```bash
-gbrain migrate embeddings --status --json
-gbrain migrate embeddings --to voyage:voyage-4 --dim 1024 --dry-run --json
+foresights migrate embeddings --status --json
+foresights migrate embeddings --to voyage:voyage-4 --dim 1024 --dry-run --json
 ```
 
 Review actual column widths, model provenance, pending chunks and facts,
@@ -34,9 +34,9 @@ cap**. Replace `<approved-total-usd>` with the operator's choice, not an amount
 invented by the agent:
 
 ```bash
-gbrain migrate embeddings --to voyage:voyage-4 --dim 1024 \
+foresights migrate embeddings --to voyage:voyage-4 --dim 1024 \
   --max-cost-usd <approved-total-usd> --yes --json
-gbrain migrate embeddings --status --json
+foresights migrate embeddings --status --json
 ```
 
 `--yes` is operation consent, not a substitute for the cap. Batch size is not a
@@ -73,7 +73,7 @@ model swaps and facts-only brains. Standalone fact repair is a separate,
 explicitly **source-scoped** operation:
 
 ```bash
-gbrain embed --stale --facts --source source-example --dry-run --json
+foresights embed --stale --facts --source source-example --dry-run --json
 ```
 
 Eligible work includes a missing vector, a different or unknown stored model,
@@ -87,7 +87,7 @@ cost means no provider spend occurred during the preview. After reviewing the
 count and obtaining an operator-selected cap, authorize the bounded repair:
 
 ```bash
-gbrain embed --stale --facts --source source-example \
+foresights embed --stale --facts --source source-example \
   --yes --max-cost-usd <approved-usd> --json
 ```
 
@@ -156,7 +156,7 @@ backup directory outside it. With all owners stopped:
 umask 077
 source_root=/absolute/path/to/brain-root
 backup_dir=$(mktemp -d "$HOME/gbrain-backup.XXXXXX")
-GBRAIN_HOME="$source_root" gbrain backup create --brain host \
+GBRAIN_HOME="$source_root" foresights backup create --brain host \
   --output "$backup_dir/brain.gbrain-backup" --json
 ```
 
@@ -175,7 +175,7 @@ create `restored_root` first; occupied roots are refused:
 ```bash
 restore_parent=$(mktemp -d "$HOME/gbrain-restore-review.XXXXXX")
 restored_root="$restore_parent/brain"
-GBRAIN_HOME="$source_root" gbrain backup restore "$backup_dir/brain.gbrain-backup" \
+GBRAIN_HOME="$source_root" foresights backup restore "$backup_dir/brain.gbrain-backup" \
   --brain host --into "$restored_root" --mode new-brain --json
 ```
 
@@ -195,7 +195,7 @@ separate inspection server without application access. Configure private libpq
 service entries beforehand: `gbrain-source-example` selects the exact source
 database; `gbrain-restore-admin-example` selects the isolated inspection server's
 maintenance database with permission to create a database. These are placeholders,
-not services GBrain creates. Keep credentials in protected service/password
+not services Foresights creates. Keep credentials in protected service/password
 files, not command text. Do not reuse a production service for the restore.
 
 After quiescing the source and protecting its file configuration/external assets:
@@ -216,7 +216,7 @@ The `&&` is intentional: if the database already exists, `createdb` fails and
 restore must not run. On any restore error, leave that partial inspection target
 offline and use a different new name for the next attempt. Do not add `--clean`,
 drop the current brain, or restore over an occupied database. PostgreSQL tools
-alone do not provide GBrain's PGLite occupied-root protection or authority
+alone do not provide Foresights's PGLite occupied-root protection or authority
 quarantine. A raw dump retains queued work and application authority; it must
 remain inspection-only. `--no-owner --no-acl` does not sanitize stored credentials.
 

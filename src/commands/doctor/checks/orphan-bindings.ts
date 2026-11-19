@@ -19,7 +19,7 @@ export async function checkOrphanBindings(engine: BrainEngine): Promise<Check> {
     return { name: 'orphan_persistence_bindings', status: 'warn', details,
       message: `${bindings.length}${truncated ? '+' : ''} persistence source binding(s) belong to a removed source or an earlier incarnation `
         + `(${bindings.map(row => row.source_id).slice(0, 10).join(', ')}); a source re-added under the same id cannot be claimed while one remains. `
-        + 'Preview on the brain host: gbrain repair orphan-bindings — then apply after the user agrees: gbrain repair orphan-bindings --apply' };
+        + 'Preview on the brain host: foresights repair orphan-bindings — then apply after the user agrees: foresights repair orphan-bindings --apply' };
   } catch (error) {
     return { name: 'orphan_persistence_bindings', status: 'warn',
       message: `Persistence source bindings could not be inspected: ${error instanceof Error ? error.message : String(error)}. Health is unknown.`,

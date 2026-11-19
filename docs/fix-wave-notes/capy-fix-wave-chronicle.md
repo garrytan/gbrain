@@ -96,7 +96,7 @@ events come from two patterns, filed in TODOS.md: a future date mentioned in a
 past meeting becomes an event, and a plan in a chat is written as if it
 happened. Total provider spend for the measurement: $0.136.
 
-`gbrain eval chronicle` (deterministic, 6 tasks): 6/6 on master `101799f1f`
+`foresights eval chronicle` (deterministic, 6 tasks): 6/6 on master `101799f1f`
 and 6/6 on this branch.
 
 No live OFF-vs-ON quality comparison was run; the default is on by the
@@ -115,8 +115,8 @@ When the agent-operator wave lands on master:
   `src/core/agent-output.ts`; the field names already match.
 - Doctor `auto_chronicle` (`src/commands/doctor/checks/auto-chronicle.ts`):
   move `readiness: 'disabled_by_choice'` and the `auto_chronicle_default_on`
-  `ask_user` decision (keep: `gbrain config set auto_chronicle true`; opt out:
-  `gbrain config set auto_chronicle false`) onto its readiness and decision
+  `ask_user` decision (keep: `foresights config set auto_chronicle true`; opt out:
+  `foresights config set auto_chronicle false`) onto its readiness and decision
   helpers.
 - Register `chronicle_skipped` in `src/core/error-registry.ts` `CODES` with
   `reasons` = the `CHRONICLE_REASONS` keys: `auto_chronicle_off`,

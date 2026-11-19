@@ -85,7 +85,7 @@ describe('bootstrap same-turn write-back contract', () => {
   test('accepts a semantically equivalent custom workspace gate', () => {
     const ws = workspace(
       '## Durable write-back\n\n' +
-        'Use same-turn GBrain write-back for durable learning. Run `gbrain remember` with provenance, then verify it.\n',
+        'Use same-turn Foresights write-back for durable learning. Run `foresights remember` with provenance, then verify it.\n',
     );
     expect(auditWritebackContract(ws)).toMatchObject({ ok: true, mode: 'integrated' });
   });

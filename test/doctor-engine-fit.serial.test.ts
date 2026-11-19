@@ -129,7 +129,7 @@ describe('pgliteScaleCheck', () => {
     expect(check!.status).toBe('warn');
     expect(check!.message).toContain('1500');
     expect(check!.message).toContain('migrate --to postgres --plan');
-    expect(check!.message).toContain('gbrain mcp expose');
+    expect(check!.message).toContain('foresights mcp expose');
     expect(check!.message).toContain(String(PGLITE_SCALE_PAGE_THRESHOLD));
     const fix = check!.fix as { argv: string[]; consent: string[] };
     expect(fix.argv).toEqual(['gbrain', 'migrate', '--to', 'postgres', '--plan', '--json']);

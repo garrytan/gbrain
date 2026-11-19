@@ -49,7 +49,7 @@ export class YamlAliasBoundError extends Error {
 }
 
 /**
- * The one js-yaml entry point for content gbrain did not write. Loads, then
+ * The one js-yaml entry point for content foresights did not write. Loads, then
  * measures the value as if every alias were copied out (strings by length,
  * keys by length, other nodes as one; shared nodes memoized, a cycle infinite)
  * and throws YamlAliasBoundError past the bound, before any caller can walk it.

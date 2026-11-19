@@ -1,5 +1,5 @@
 /**
- * `gbrain engine status` — the engine-free detection primitive of the
+ * `foresights engine status` — the engine-free detection primitive of the
  * db-availability loop. Spawned against the real cli.ts entrypoint (the
  * house pattern for CLI-surface tests) with GBRAIN_HOME pointed at a fresh
  * temp dir per test, so nothing touches the operator's real ~/.gbrain.
@@ -69,7 +69,7 @@ function writeConfig(cfg: Record<string, unknown>): void {
   writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify(cfg));
 }
 
-describe('gbrain engine status', () => {
+describe('foresights engine status', () => {
   test('unconfigured home: effective_engine null, no_url diagnosis, exit 1', () => {
     const { stdout, status } = run(['engine', 'status', '--json']);
     expect(status).toBe(1);

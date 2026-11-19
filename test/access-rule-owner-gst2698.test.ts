@@ -1,6 +1,6 @@
 /**
- * GST-2698 (GST-2670 decision d2): `gbrain access rule add` refuses a reader list that leaves out the brain owner, as
- * `gbrain repair visibility --readers` already does (readers_omit_owner), because such a rule closes the folder to the
+ * GST-2698 (GST-2670 decision d2): `foresights access rule add` refuses a reader list that leaves out the brain owner, as
+ * `foresights repair visibility --readers` already does (readers_omit_owner), because such a rule closes the folder to the
  * owner's own keys.
  *
  * 1. Protects: with an owner set, a rule whose readers do not name the owner refuses on the preview and on --yes, with
@@ -8,7 +8,7 @@
  *    is unchanged.
  * 2. Fails when: a rule without the owner is written without the flag, the flag is ignored, or a brain with no owner
  *    starts refusing.
- * 3. Real seams: the gbrain access rule CLI module on a repo-less source (database store) and on a managed git source
+ * 3. Real seams: the foresights access rule CLI module on a repo-less source (database store) and on a managed git source
  *    (.gbrain/access.yml through the door), PGLite and Postgres.
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
@@ -27,7 +27,7 @@ async function cli(engine: BrainEngine, args: string[]): Promise<any> {
   const spy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { lines.push(a.map(String).join(' ')); });
   try { await runAccessRules(engine, args[0]!, [...args.slice(1), '--json'], true); } finally { spy.mockRestore(); }
   const text = lines.join('\n');
-  try { return JSON.parse(text); } catch { throw new Error(`gbrain access ${args.join(' ')} printed no JSON: ${text}`); }
+  try { return JSON.parse(text); } catch { throw new Error(`foresights access ${args.join(' ')} printed no JSON: ${text}`); }
 }
 
 async function members(engine: BrainEngine, owner: string | null): Promise<void> {

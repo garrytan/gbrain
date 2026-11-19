@@ -1,5 +1,5 @@
 /**
- * `gbrain repair` flag handling (fix wave 3, Lane D): unknown flags are
+ * `foresights repair` flag handling (fix wave 3, Lane D): unknown flags are
  * refused before any scope resolution or write, `--max-usd` points at the
  * capped doctor route, every registered kind has a help line and a
  * registration, and the `--all` preview lists every kind with its estimates.
@@ -37,7 +37,7 @@ async function refusal(args: string[]): Promise<OperationError> {
     if (error instanceof OperationError) return error;
     throw error;
   }
-  throw new Error(`gbrain repair ${args.join(' ')} was accepted`);
+  throw new Error(`foresights repair ${args.join(' ')} was accepted`);
 }
 
 async function captured(args: string[]): Promise<string> {
@@ -48,12 +48,12 @@ async function captured(args: string[]): Promise<string> {
   return lines.join('\n');
 }
 
-describe('gbrain repair flags', () => {
+describe('foresights repair flags', () => {
   test('--max-usd is refused with invalid_params naming the flag and the capped doctor route', async () => {
     const error = await refusal(['safe-chunks', '--apply', '--max-usd', '0']);
     expect(error.code).toBe('invalid_params');
     expect(error.message).toContain('--max-usd');
-    expect(error.suggestion).toContain('gbrain doctor --remediate --yes --include-repairs --max-usd 0');
+    expect(error.suggestion).toContain('foresights doctor --remediate --yes --include-repairs --max-usd 0');
   });
 
   test('any unknown flag is refused and named, with or without a value', async () => {

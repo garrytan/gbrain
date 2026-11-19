@@ -1,5 +1,5 @@
 /**
- * #5892: `gbrain think --json` stdout is JSON only; the AI SDK warning that a
+ * #5892: `foresights think --json` stdout is JSON only; the AI SDK warning that a
  * claude-cli model triggers lands on stderr.
  *
  * Protects: the real CLI path from the command through the gateway to the
@@ -9,7 +9,7 @@
  * `console.info` before the JSON, so `JSON.parse(stdout)` throws.
  * Existing coverage: test/ai-sdk-warnings.test.ts pins the writer in-process;
  * this pins that the CLI process actually loads it before the first call.
- * `gbrain query --json` is not included: on a brain with no embedding
+ * `foresights query --json` is not included: on a brain with no embedding
  * provider it takes the keyword-only path and never reaches the gateway.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -40,7 +40,7 @@ beforeAll(async () => {
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 describe('--json stdout with an AI SDK warning (#5892)', () => {
-  test('gbrain think --json: stdout parses as JSON and the warning is on stderr', async () => {
+  test('foresights think --json: stdout parses as JSON and the warning is on stderr', async () => {
     const r = await runCli(['think', 'what color is the alpha widget', '--json'], { home, env, timeoutMs: 120_000 });
     expect(r.exitCode, r.stderr).toBe(0);
     const parsed = JSON.parse(r.stdout) as { answer?: string; modelUsed?: string };

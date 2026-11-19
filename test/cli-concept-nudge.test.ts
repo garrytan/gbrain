@@ -37,7 +37,7 @@ describe('#2416 — maybePrintConceptNudge wiring', () => {
     setCliOptions({ ...DEFAULT_CLI_OPTIONS });
     maybePrintConceptNudge('search', { query: CONCEPT_QUERY });
     expect(stderrChunks.length).toBe(1);
-    expect(stderrChunks[0]).toContain('gbrain query');
+    expect(stderrChunks[0]).toContain('foresights query');
     expect(stderrChunks[0]).toContain('not proof of completeness');
     expect(stderrChunks[0].endsWith('\n')).toBe(true);
   });

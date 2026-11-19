@@ -9,7 +9,7 @@ import { shellQuote } from '../../core/agent-output.ts';
 import { MIGRATION_OPT_OUT_KEYS } from '../../core/migration-ledger.ts';
 
 export const SHARED_CONTENT_MIGRATION_VERSION = '0.53.0';
-/** #6466: `gbrain config set shared_skills.migration.enabled false` declines this migration (brain-level, every machine). */
+/** #6466: `foresights config set shared_skills.migration.enabled false` declines this migration (brain-level, every machine). */
 export const SHARED_CONTENT_MIGRATION_OPT_OUT_KEY = MIGRATION_OPT_OUT_KEYS[SHARED_CONTENT_MIGRATION_VERSION]!;
 
 /** Read-only: prints every source's remaining stage, its reason and the command for it (`pending_actions`). */

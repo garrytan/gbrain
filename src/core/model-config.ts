@@ -86,7 +86,7 @@ export const DEFAULT_ALIASES: Record<string, string> = {
  * Sonnet (default workhorse); deep gets Opus 4.7 (expensive reasoning);
  * utility gets Haiku (fast classification).
  *
- * Users override via `gbrain config set models.tier.<tier> <model>`.
+ * Users override via `foresights config set models.tier.<tier> <model>`.
  */
 export const TIER_DEFAULTS: Record<ModelTier, string> = {
   utility:   'anthropic:claude-haiku-4-5-20251001',
@@ -615,7 +615,7 @@ function subagentGate(
       process.stderr.write(
         `[models] tier.subagent resolved to "${resolved}" via "${source}", which ${prose}. ` +
         `The subagent tool loop cannot run on this model — falling back to ${TIER_DEFAULTS.subagent}. ` +
-        `Fix: gbrain config set models.tier.subagent <provider>:<model> ` +
+        `Fix: foresights config set models.tier.subagent <provider>:<model> ` +
         `(the provider's recipe must declare supports_subagent_loop: true)\n`,
       );
     }

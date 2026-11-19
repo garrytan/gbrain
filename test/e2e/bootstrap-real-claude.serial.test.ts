@@ -4,19 +4,19 @@
  *
  *   (1) SETUP+INSTALL — in a hermetic temp HOME + CLAUDE_CONFIG_DIR +
  *       GBRAIN_HOME + workspace, drive the real `gbrain` bootstrap CLI to an
- *       installed state: `gbrain init --pglite --no-embedding` (keyless),
+ *       installed state: `foresights init --pglite --no-embedding` (keyless),
  *       interview (--set required answers + --confirm), render, then
- *       `gbrain bootstrap hooks --harness claude-code` — which runs the REAL
+ *       `foresights bootstrap hooks --harness claude-code` — which runs the REAL
  *       `claude mcp add` into the temp config (project-scope `.mcp.json` in the
- *       workspace). We then run the REAL `claude mcp get gbrain` and assert it
+ *       workspace). We then run the REAL `claude mcp get foresights` and assert it
  *       shows OUR serve command + GBRAIN_SOURCE binding (real-registration
- *       proof), and `gbrain bootstrap verify` exits 0 in this hermetic HOME.
+ *       proof), and `foresights bootstrap verify` exits 0 in this hermetic HOME.
  *
  *   (2) SMOKE — the real-harness-in-the-loop proof: seed a distinctive,
  *       100%-synthetic fact into a keyless brain, write a `--mcp-config` that
- *       runs THIS repo's `gbrain serve` over stdio, and drive one headless
- *       `claude -p` turn asking about the seeded entity. Assert a gbrain MCP
- *       tool actually fired (real claude → real gbrain MCP → real brain) AND
+ *       runs THIS repo's `foresights serve` over stdio, and drive one headless
+ *       `claude -p` turn asking about the seeded entity. Assert a foresights MCP
+ *       tool actually fired (real claude → real foresights MCP → real brain) AND
  *       the seeded fact surfaced. This is the whole product in one turn.
  *
  * Every real-agent turn pays API cost and takes 30s–2min, so prompts are
@@ -65,7 +65,7 @@ let tmpParent: string; // GBRAIN_HOME (parent — config appends `.gbrain`)
 let home: string; // temp $HOME for the spawned claude
 let claudeCfg: string; // temp CLAUDE_CONFIG_DIR
 let ws: string; // the "installed" workspace
-let binDir: string; // holds the dummy absolute gbrain binary path
+let binDir: string; // holds the dummy absolute foresights binary path
 let gbrainBin: string;
 
 const SAVED_ENV: Record<string, string | undefined> = {};
@@ -130,7 +130,7 @@ beforeAll(() => {
   ws = mkdtempSync(join(tmpdir(), 'gb-rc-ws-'));
   mkdirSync(join(ws, 'brain'), { recursive: true });
 
-  // A dummy absolute gbrain binary for the MCP registration + hook command
+  // A dummy absolute foresights binary for the MCP registration + hook command
   // strings (never executed here — the registration only records the path, and
   // `claude mcp get` reads config without launching the server).
   binDir = mkdtempSync(join(tmpdir(), 'gb-rc-bin-'));
@@ -178,7 +178,7 @@ describe.skipIf(!CAN_RUN)('bootstrap real Claude Code door (serial e2e)', () => 
 
     // Register the workspace source with its brain/ dir so put_page write-through
     // (the roundtrip check) lands files in the repo — the installed-state that
-    // `gbrain sources add workspace --path <ws>/brain` produces.
+    // `foresights sources add workspace --path <ws>/brain` produces.
     const engineConfig = { engine: 'pglite' as const, database_path: cfg.database_path };
     const engine = await createEngine(engineConfig);
     await engine.connect(engineConfig);
@@ -219,7 +219,7 @@ describe.skipIf(!CAN_RUN)('bootstrap real Claude Code door (serial e2e)', () => 
     expect(registered).toContain('serve');
     expect(registered).toContain('GBRAIN_SOURCE=workspace'); // the source binding
 
-    // 6. `gbrain bootstrap verify` — the whole install contract — exits 0 in
+    // 6. `foresights bootstrap verify` — the whole install contract — exits 0 in
     // this real hermetic HOME (keyless: magic moment via the zero-LLM fence).
     const { result: verifyCode, out: verifyOut } = await captureStdout(() =>
       runBootstrap(['verify', '--workspace', ws, '--json']),
@@ -236,7 +236,7 @@ describe.skipIf(!CAN_RUN)('bootstrap real Claude Code door (serial e2e)', () => 
     expect(byId('magic_moment')?.ok).toBe(true);
   }, 300_000);
 
-  test('SMOKE: real `claude -p` → real gbrain MCP → real brain → surfaced fact', async () => {
+  test('SMOKE: real `claude -p` → real foresights MCP → real brain → surfaced fact', async () => {
     // Independent hermetic brain for the recall proof (its own home + workspace).
     const smokeHome = mkdtempSync(join(tmpdir(), 'gb-rc-smoke-'));
     const smokeWs = mkdtempSync(join(tmpdir(), 'gb-rc-smoke-ws-'));
@@ -255,7 +255,7 @@ describe.skipIf(!CAN_RUN)('bootstrap real Claude Code door (serial e2e)', () => 
       });
 
       // Bounded retry (max 2) rides out a transient MCP-startup cancellation.
-      // PASS only when an attempt lands BOTH a gbrain tool AND the seeded fact;
+      // PASS only when an attempt lands BOTH a foresights tool AND the seeded fact;
       // never pass on zero tool calls, never soften to "answered something".
       const perAttemptTimeout = server.kind === 'compiled' ? 150_000 : 190_000;
       const maxAttempts = 2;
@@ -266,7 +266,7 @@ describe.skipIf(!CAN_RUN)('bootstrap real Claude Code door (serial e2e)', () => 
         if (attempt > 1) await new Promise((r) => setTimeout(r, 3_000));
         const turn = await claudeHeadlessTurn({
           prompt:
-            `Use your gbrain memory tools to answer: ${seeded.query} ` +
+            `Use your foresights memory tools to answer: ${seeded.query} ` +
             `Answer only from the brain, in one short sentence.`,
           cwd: smokeWs,
           home,
@@ -275,11 +275,11 @@ describe.skipIf(!CAN_RUN)('bootstrap real Claude Code door (serial e2e)', () => 
           timeoutMs: perAttemptTimeout,
         });
 
-        // Real claude actually invoked OUR MCP server over stdio: a gbrain tool
+        // Real claude actually invoked OUR MCP server over stdio: a foresights tool
         // name (e.g. `mcp__gbrain__search`) appears in the tool-call trace.
         // `toolCalls` holds tool NAMES only, so this can't false-positive on a
         // stray "gbrain" substring in a file path or the raw event stream.
-        const firedGbrainTool = turn.toolCalls.some((t) => /gbrain/i.test(t));
+        const firedGbrainTool = turn.toolCalls.some((t) => /(?:foresights|gbrain)/i.test(t));
         // And the seeded, brain-ONLY fact reached the final answer. Only
         // "rivermouth" proves recall — the entity "Summit Robotics" is echoed
         // from the question, so matching it would be a false positive.

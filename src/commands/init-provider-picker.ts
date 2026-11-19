@@ -1,11 +1,11 @@
 /**
- * v0.37.x — interactive provider picker for `gbrain init`.
+ * v0.37.x — interactive provider picker for `foresights init`.
  *
  * Mirrors the `init-mode-picker.ts` (v0.32.3) pattern. Runs from
  * `initPGLite()` BEFORE `engine.initSchema()` when env detection finds
  * zero or multiple env-ready providers for the embedding touchpoint
  * (D1=hybrid). Reuses `formatRecipeTable()` from `providers.ts` so the
- * picker's UI and `gbrain providers list` can't drift.
+ * picker's UI and `foresights providers list` can't drift.
  *
  * Trust contract:
  *  - TTY-only. Callers must not invoke this in non-TTY contexts (non-TTY
@@ -75,9 +75,9 @@ export interface PickProviderOpts {
 export function printSubagentAnthropicCaveat(write: (s: string) => void): void {
   write(
     '\n' +
-    'Note: subagent features (gbrain dream, gbrain agent run, gbrain autopilot)\n' +
+    'Note: subagent features (foresights dream, foresights agent run, foresights autopilot)\n' +
     '      require ANTHROPIC_API_KEY regardless of which chat model you pick.\n' +
-    '      Chat alone (gbrain think, gbrain query expansion) works without it.\n' +
+    '      Chat alone (foresights think, foresights query expansion) works without it.\n' +
     '      Set ANTHROPIC_API_KEY before running those commands.\n\n',
   );
 }

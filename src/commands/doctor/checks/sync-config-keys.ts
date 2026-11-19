@@ -33,7 +33,7 @@ async function runSyncConfigKeys(ctx: DoctorContext): Promise<Check[]> {
   checks.push({ name: 'sync_config_keys', status: 'warn', details: { unapplied, rollback },
     message: `${unapplied.length} retired sync config key(s) are stored but no longer applied: `
       + unapplied.map(row => `${row.key}=${row.stored} (in effect: ${row.effective}${row.replacement ? `; set ${row.replacement} for the process that syncs to change it` : '; removed, nothing replaces it'})`).join('; ')
-      + `. Ask the user whether to carry each value over to its environment variable, then remove the stored key with gbrain config unset <key>.${rollbackLine}`,
+      + `. Ask the user whether to carry each value over to its environment variable, then remove the stored key with foresights config unset <key>.${rollbackLine}`,
     fix: agentFix(['gbrain', 'config', 'get', unapplied[0]!.key],
       'Prints the value in effect for the first unapplied key and the environment variable that replaces it; read-only.', 'sync_config_keys') });
   return checks;

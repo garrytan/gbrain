@@ -1,5 +1,5 @@
 /**
- * `gbrain sources mirror-readonly <id>` / `gbrain sources mirror-writable <id>`
+ * `foresights sources mirror-readonly <id>` / `foresights sources mirror-writable <id>`
  * (#5409): set `sources.config.mirror_read_only`, the per-source read-only
  * mirror flag (default false). While it is true, managed publication never
  * writes a file into the source's checkout: sync imports canonical metadata
@@ -14,12 +14,12 @@ import { normalizeSourceConfig, parseSourceConfig } from '../core/sources-load.t
 export async function runMirrorMode(engine: BrainEngine, args: string[], readOnly: boolean): Promise<void> {
   const id = args[0];
   if (!id || id.startsWith('-')) {
-    console.error(`Usage: gbrain sources ${readOnly ? 'mirror-readonly' : 'mirror-writable'} <id> [--dry-run]`);
+    console.error(`Usage: foresights sources ${readOnly ? 'mirror-readonly' : 'mirror-writable'} <id> [--dry-run]`);
     process.exit(2);
   }
   const [src] = await engine.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id=$1', [id]);
   if (!src) {
-    console.error(`Source "${id}" not found. List sources with: gbrain sources list`);
+    console.error(`Source "${id}" not found. List sources with: foresights sources list`);
     process.exit(4);
   }
   const config = parseSourceConfig(src.config);

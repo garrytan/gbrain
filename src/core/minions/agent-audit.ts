@@ -87,7 +87,7 @@ export function logAgentSubmission(event: Omit<AgentAuditEvent, 'ts'>): void {
   }
 }
 
-/** Read recent events across files (for `gbrain doctor` integrations + tests). */
+/** Read recent events across files (for `foresights doctor` integrations + tests). */
 export function readRecentAgentEvents(days: number, now: Date = new Date()): AgentAuditEvent[] {
   const dir = resolveAuditDir();
   if (!fs.existsSync(dir)) return [];

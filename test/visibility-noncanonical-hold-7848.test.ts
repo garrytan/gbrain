@@ -1,12 +1,12 @@
 /**
  * #7848: a file whose frontmatter asks for `visibility: private` in a spelling page privacy does not read
  * (`Visibility: private`, `visibility: Private`, a block scalar, a flow list, a merge key, a flow-mapping block) is held
- * `visibility_noncanonical` by Git sync and `gbrain import`, as `invalid_frontmatter` is, and is never stored
+ * `visibility_noncanonical` by Git sync and `foresights import`, as `invalid_frontmatter` is, and is never stored
  * world-readable. #7844 refuses the same request on put_page, edit_page and capture (`visibility_not_applied`); file
  * ingestion never ran that check, so such a file synced or imported as a world page.
  *
  * Protects:
- * - repo-less `gbrain import` of a plain directory (no Git checkout), unmanaged and managed: each such file is refused
+ * - repo-less `foresights import` of a plain directory (no Git checkout), unmanaged and managed: each such file is refused
  *   and listed as a failure, no page is written; `visibility: private` (any quoting) and pages that do not ask for
  *   private import unchanged;
  * - classic (unmanaged) Git sync and managed Git sync: each such file is held `visibility_noncanonical`, the rest of
@@ -128,7 +128,7 @@ test('screenImportContent holds visibility_noncanonical only for file ingestion 
 for (const backend of backends) describe(`#7848 non-canonical private requests on file ingestion (${backend})`, () => {
   const engine = () => engines[backends.indexOf(backend)]!;
 
-  test('repo-less gbrain import of a plain directory refuses each file that asks for private in another spelling; the rest imports unchanged', () => withEnv(env, async () => {
+  test('repo-less foresights import of a plain directory refuses each file that asks for private in another spelling; the rest imports unchanged', () => withEnv(env, async () => {
     const root = mkdtempSync(join(home, 'plain-'));
     writeTree(root, { ...NONCANONICAL, ...PRIVATE, ...WORLD });
     const sourceId = await newSource(engine(), root);
@@ -204,7 +204,7 @@ describe('#7848 managed brains', () => {
       expect(isPrivatePage((await engine.getPage('notes/upper-key', { sourceId: 'default' }))!)).toBe(true);
     }, { ...(databaseUrl ? { databaseUrl } : {}), setup: ({ root }) => { git(root, 'init', '-q'); } }), 180_000);
 
-    test(`[${backend}] managed gbrain import of a directory with no Git checkout refuses each such file; the rest imports unchanged`, () => managedBrain(async ({ engine, root }) => {
+    test(`[${backend}] managed foresights import of a directory with no Git checkout refuses each such file; the rest imports unchanged`, () => managedBrain(async ({ engine, root }) => {
       writeTree(root, { ...NONCANONICAL, ...PRIVATE, ...WORLD });
       const result = await runImport(engine, [root, '--no-embed'], { sourceId: 'default' });
       expect(result.failures.map(failure => failure.path).sort()).toEqual(paths(NONCANONICAL));

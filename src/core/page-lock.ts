@@ -1,7 +1,7 @@
 /**
  * v0.28: per-page file lock for atomic markdown read-modify-write.
  *
- * Scoped per page so two parallel `gbrain takes add` calls + a refresh-mode
+ * Scoped per page so two parallel `foresights takes add` calls + a refresh-mode
  * `takes seed` running in autopilot can't race on the same `<slug>.md` file.
  *
  * Lock file path: `~/.gbrain/page-locks/<sha256-of-slug>.lock`. SHA-256
@@ -12,8 +12,8 @@
  * i.e. heartbeat/lease recency, nothing else (#2840). PID liveness
  * (`process.kill(pid, 0)`) is deliberately NOT consulted: a PID is only
  * meaningful inside the namespace that produced it, so in containerized
- * deploys sharing `GBRAIN_HOME` across PID namespaces (e.g. `gbrain serve`
- * + `gbrain jobs work` as sibling containers) a LIVE holder resolves to
+ * deploys sharing `GBRAIN_HOME` across PID namespaces (e.g. `foresights serve`
+ * + `foresights jobs work` as sibling containers) a LIVE holder resolves to
  * ESRCH and would be stolen milliseconds after it heartbeated — silent
  * last-writer-wins on facts/takes. Same family as the sync lock's
  * refresh-recency rule (GBRAIN_LOCK_STEAL_GRACE): a holder that heartbeated

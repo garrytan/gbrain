@@ -1,6 +1,6 @@
 /**
  * skillpack/registry-client.ts — fetch + cache + stale-fallback for the
- * `gbrain skillpack-registry` catalog.
+ * `foresights skillpack-registry` catalog.
  *
  * The default registry lives at
  *   https://raw.githubusercontent.com/garrytan/gbrain-skillpack-registry/main/registry.json
@@ -278,7 +278,7 @@ export async function loadRegistry(opts: LoadRegistryOptions = {}): Promise<Load
         );
         if (origin === 'cache_hard_stale') {
           process.stderr.write(
-            `[skillpack] cache is older than 7 days. When back online run \`gbrain skillpack registry --refresh\`.\n`,
+            `[skillpack] cache is older than 7 days. When back online run \`foresights skillpack registry --refresh\`.\n`,
           );
         }
         return {

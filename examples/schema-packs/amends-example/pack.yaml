@@ -13,7 +13,7 @@
 # Each entry becomes an `amends` link from this page to the named page; its
 # `since` records when the amended terms take effect (link_relationships
 # first_start). `amends` takes no part in ranking and future-dated amends
-# edges stay visible in default graph reads; both policies live in gbrain's
+# edges stay visible in default graph reads; both policies live in foresights's
 # code, so this pack needs no ranking field.
 #
 # `supersedes: [name]` is for a record that replaces another one entirely:
@@ -21,9 +21,9 @@
 # `amends` when the earlier record still governs the terms it did not change.
 #
 # Copy this directory to ~/.gbrain/schema-packs/amends-example/, rename the page
-# type and prefixes to your layout, then: gbrain schema use amends-example.
+# type and prefixes to your layout, then: foresights schema use amends-example.
 # Existing pages gain their amends links after:
-#   gbrain extract links --source db --include-frontmatter
+#   foresights extract links --source db --include-frontmatter
 # Guide: docs/guides/temporal-edges.md ("Amendments: the amends link").
 
 api_version: gbrain-schema-pack-v1

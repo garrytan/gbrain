@@ -72,7 +72,7 @@ export interface PatternsPhaseOpts {
   signal?: AbortSignal;
   yieldDuringPhase?: () => Promise<void>;
   /**
-   * issue #2860 — `gbrain dream --phase patterns --once`. Bypasses the
+   * issue #2860 — `foresights dream --phase patterns --once`. Bypasses the
    * `dream.patterns.enabled` gate AND the #4879 no-new-evidence gate for
    * THIS call only; never reads or writes the `.enabled` key. A completed
    * forced run still stamps `dream.patterns.last_evidence_ts` so the next
@@ -80,14 +80,14 @@ export interface PatternsPhaseOpts {
    */
   once?: boolean;
   /**
-   * #6297: the operator named this phase (`gbrain dream --phase patterns`). A
+   * #6297: the operator named this phase (`foresights dream --phase patterns`). A
    * direct run, like `--once`, is not held to `dream.patterns.min_interval_hours`;
-   * in-cycle runs (autopilot, bare `gbrain dream`) are.
+   * in-cycle runs (autopilot, bare `foresights dream`) are.
    */
   direct?: boolean;
   /**
    * Absolute deadline (epoch ms) of the enclosing minion job, or null for
-   * direct callers (`gbrain dream`). When set, the subagent's job timeout
+   * direct callers (`foresights dream`). When set, the subagent's job timeout
    * and the wait timeout are clamped so the phase finishes (or times out)
    * BEFORE the parent job's budget expires — a fixed 30/35-min default
    * inside an interval-derived cycle budget dead-letters the whole cycle
@@ -113,7 +113,7 @@ export interface PatternsPhaseOpts {
  * fires: wait poll interval (5s) + worker force-evict grace (30s) + lock
  * and DB cleanup headroom.
  *
- * gbrain#4168: the canonical definition moved to base-phase.ts (one home for
+ * foresights#4168: the canonical definition moved to base-phase.ts (one home for
  * every phase); re-exported here so existing imports (tests included) keep
  * working.
  */
@@ -246,7 +246,7 @@ async function runPatternsPass(engine: BrainEngine, opts: PatternsPhaseOpts, con
     // hardcoded env gate misclassified non-Anthropic stacks (litellm,
     // deepseek, openrouter, ...) as "no upstream" even though the subagent
     // routes them through the gateway (agent.use_gateway_loop), and it missed
-    // Anthropic keys set via `gbrain config set anthropic_api_key`. Unknown
+    // Anthropic keys set via `foresights config set anthropic_api_key`. Unknown
     // provider/model or any keyed provider without its key skips cheaply
     // (#6705: probeChatModelWithKey, not the lazy probeChatModel, so a keyless
     // non-Anthropic model never submits a subagent that fails at dispatch).
@@ -447,7 +447,7 @@ async function runPatternsPass(engine: BrainEngine, opts: PatternsPhaseOpts, con
             `PATTERNS_CHILD_${outcome.toUpperCase()}`,
             `subagent job ${job.id} outcome '${outcome}' with zero pattern pages written`,
             outcome === 'timeout'
-              ? 'A timeout with zero writes usually means no subagent-capable worker claimed the job. Check `gbrain jobs list` and worker capacity.'
+              ? 'A timeout with zero writes usually means no subagent-capable worker claimed the job. Check `foresights jobs list` and worker capacity.'
               : undefined,
           ),
         };

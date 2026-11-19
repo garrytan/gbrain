@@ -56,7 +56,7 @@ original is never lost.
 ```
 1. READ      → Open the article brain page; parse frontmatter + body.
 2. SCAN      → Look for ## Content (raw dump) and absence of ## Executive Summary.
-3. CONTEXT   → gbrain query the article's key entities to ground "Why It Matters".
+3. CONTEXT   → foresights query the article's key entities to ground "Why It Matters".
 4. ENRICH    → Sonnet (default) or Opus (for high-value content) restructures.
 5. WRITE     → Replace ## Content with the structured sections; preserve raw
                source in <details>; clear needs_enrichment in frontmatter.
@@ -67,15 +67,15 @@ original is never lost.
 ## Invocation
 
 The skill itself is markdown instructions to the agent. It does NOT ship a
-deterministic CLI command in v0.25.1. The agent uses gbrain's existing
+deterministic CLI command in v0.25.1. The agent uses foresights's existing
 operations:
 
 ```bash
 # 1. Find candidate pages
-gbrain query "needs_enrichment: true type:article" --limit 50
+foresights query "needs_enrichment: true type:article" --limit 50
 
 # 2. For each candidate, read the page
-gbrain get media/articles/<slug>
+foresights get media/articles/<slug>
 
 # 3. Enrich via the agent's LLM (Sonnet by default; Opus for high-value)
 #    The agent reads the raw content + brain context + writes the structured page.
@@ -116,11 +116,11 @@ NEVER use `[[wiki-links]]` — they don't render on GitHub.
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `get_page` returns `page_not_found`: the raw dump moved or the slug is wrong; search for the title before reporting the article missing.
 - The rewrite returns `revision_conflict`: someone else edited the page since you read it. Re-read, re-apply the enrichment to the new text, and save with the new revision; never overwrite blind.
-- `write_pending` (exit 10): poll `gbrain write-request <request_id>`; only report the page enriched once the receipt commits.
+- `write_pending` (exit 10): poll `foresights write-request <request_id>`; only report the page enriched once the receipt commits.
 
 ## Anti-Patterns
 

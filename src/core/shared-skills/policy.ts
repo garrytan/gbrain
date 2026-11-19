@@ -23,8 +23,8 @@ function grantFix(kind: string | undefined, why: string): Action {
   return {
     argv, consent: [], actor: local ? 'user' : 'host_admin', why, requires_exclusive: false,
     user_message: local
-      ? 'This gbrain connection is missing access it needs. Please review its registration by running the command shown in a terminal on this machine.'
-      : 'This gbrain connection is missing access it needs. Please ask whoever runs the gbrain server to review its grant with the command shown.',
+      ? 'This foresights connection is missing access it needs. Please review its registration by running the command shown in a terminal on this machine.'
+      : 'This foresights connection is missing access it needs. Please ask whoever runs the foresights server to review its grant with the command shown.',
   };
 }
 
@@ -33,7 +33,7 @@ export function skillPrincipal(ctx: OperationContext): string {
   if (p) return `${p.kind}:${p.id}`;
   if (ctx.remote === false) return 'local_cli';
   throw opError('permission_denied', 'A verified principal is required for shared skills.',
-    'Connect through an authenticated MCP client (OAuth client or access token), or use the gbrain CLI on the brain host; shared skills apply per-principal grants, so anonymous connections are refused.');
+    'Connect through an authenticated MCP client (OAuth client or access token), or use the foresights CLI on the brain host; shared skills apply per-principal grants, so anonymous connections are refused.');
 }
 function intersect(original: string[], live: string[]): string[] { return original.filter(v => live.includes(v)); }
 export async function authorizeSkillRead(ctx: OperationContext, operation: string): Promise<OperationContext> {
@@ -100,7 +100,7 @@ export async function authorizeSkillRead(ctx: OperationContext, operation: strin
     }
     if (tokenGrant.permissionsMalformed) {
       throw opError('permission_denied', 'Invalid reader projection.',
-        'This access token\'s stored permissions are malformed, so gbrain will not guess which sources it may read. Ask the brain host\'s operator to reissue the token.',
+        'This access token\'s stored permissions are malformed, so foresights will not guess which sources it may read. Ask the brain host\'s operator to reissue the token.',
         { fix: grantFix('legacy_token', 'Shows the active tokens and clients so the operator can reissue this one.') });
     }
     const parsed = authSourcesFromGrant(tokenGrant);

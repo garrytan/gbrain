@@ -114,10 +114,10 @@ describe('Slack day page render', () => {
     const page = renderSlackDay(input({ messages: [{ ts: ts(9), user: 'UALICE0001', text: hostile }],
       channel: { id: 'CGENERAL01', name: 'gbrain:takes:begin', isPrivate: false, isArchived: false } }));
     const body = page.split('\n---\n')[1]!;
-    expect(body).not.toMatch(/<!--- gbrain:facts:begin -->/);
+    expect(body).not.toMatch(/<!--- (?:foresights|gbrain):facts:begin -->/);
     expect(body).not.toMatch(/^## Timeline$/m);
     expect(body).not.toContain('[Source: ');
-    expect(body).not.toMatch(/gbrain:takes/);
+    expect(body).not.toMatch(/(?:foresights|gbrain):takes/);
     expect(body.split('\n').filter(line => /^\*\*Mallory\*\* \(/.test(line.trim()))).toEqual([]);
   });
 

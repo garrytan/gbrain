@@ -63,7 +63,7 @@ const INVARIANT = [/^\s*SELECT [\w, ]+ FROM config\b/, /SELECT config FROM sourc
 const passRow = async (engine: BrainEngine) => (await engine.executeRaw<{ value: any }>('SELECT completed_keys->0 AS value FROM op_checkpoints WHERE op=$1', [MANAGED_SYNC_PASS_OP]))[0]?.value ?? null;
 const recorded = async (engine: BrainEngine) => (await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM op_checkpoints WHERE op=$1', [SYNC_IMPORT_PROVENANCE_OP]))[0]!.n;
 
-/** Turns the synced pages into pages an older gbrain imported: the same rows with no import record, and no pass row. */
+/** Turns the synced pages into pages an older foresights imported: the same rows with no import record, and no pass row. */
 async function legacyPages(engine: BrainEngine): Promise<void> {
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
   try {

@@ -17,7 +17,7 @@ the API response.
 The two output surfaces take OPPOSITE link forms:
 
 - **In-page (inside a brain page):** RELATIVE markdown links
-  (`[page title](type/slug.md)`). gbrain's link extraction builds the
+  (`[page title](type/slug.md)`). foresights's link extraction builds the
   links/backlinks graph — which powers relational retrieval — from
   filesystem-relative links. An absolute URL between two brain pages is
   invisible to that graph. Absolute URLs in a page body are for genuinely
@@ -40,7 +40,7 @@ A link handed to the user as part of a deliverable must be:
 
 Fallback chain when the brain has no hosted remote (or verification fails):
 hosted git-remote URL (verified) → repo-relative path plus a note that it's
-local → `gbrain publish` output offered as an attachable HTML ARTIFACT (it
+local → `foresights publish` output offered as an attachable HTML ARTIFACT (it
 emits a local file path — never promise it as a URL).
 
 Mechanics — path derivation, push-before-link ordering, subagent-relay

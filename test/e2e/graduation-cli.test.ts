@@ -60,7 +60,7 @@ describe.skipIf(!DATABASE_URL)('graduation: agent workflow', () => {
     results.push(run);
     expect({ code: run.code, stderr: run.code === 0 ? '' : run.stderr.slice(-3000) }).toEqual({ code: 0, stderr: '' });
     expect(failingChecks(run.json?.doctor ?? run.json?.receipt?.doctor ?? null)).toEqual([]);
-    expect(JSON.stringify(run.json)).toContain('gbrain mcp expose');
+    expect(JSON.stringify(run.json)).toContain('foresights mcp expose');
     const minutes = (Date.now() - started) / 60_000;
     expect(minutes).toBeLessThan(5);
     await expectGraduated(c, 'agent flow');

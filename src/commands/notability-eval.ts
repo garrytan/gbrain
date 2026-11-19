@@ -1,9 +1,9 @@
 /**
- * v0.31.2 — `gbrain notability-eval` mining + review CLI.
+ * v0.31.2 — `foresights notability-eval` mining + review CLI.
  *
  * Two subcommands:
  *
- *   gbrain notability-eval mine [--target-high N] [--target-medium N]
+ *   foresights notability-eval mine [--target-high N] [--target-medium N]
  *                                [--target-low N] [--out PATH]
  *      Walks meetings/, personal/, daily/ in the brain repo (resolved
  *      via `sync.repo_path` config), splits each markdown body into
@@ -11,7 +11,7 @@
  *      stratified-samples to target counts (default 20/20/10), writes
  *      candidates JSONL for hand-confirmation.
  *
- *   gbrain notability-eval review [--in PATH] [--out PATH]
+ *   foresights notability-eval review [--in PATH] [--out PATH]
  *      Walks the candidates JSONL one-by-one in TTY: shows the paragraph,
  *      asks for HIGH/MEDIUM/LOW confirmation, writes confirmed cases
  *      to `~/.gbrain/eval/notability-real.jsonl`.
@@ -335,7 +335,7 @@ export async function runNotabilityEval(args: RunNotabilityEvalArgs): Promise<vo
       // eslint-disable-next-line no-console
       console.log(`Wrote ${candidates.length} candidates to ${out}`);
       // eslint-disable-next-line no-console
-      console.log(`Run \`gbrain notability-eval review --in ${out}\` to hand-confirm tiers.`);
+      console.log(`Run \`foresights notability-eval review --in ${out}\` to hand-confirm tiers.`);
       return;
     }
 
@@ -356,7 +356,7 @@ export async function runNotabilityEval(args: RunNotabilityEvalArgs): Promise<vo
       if (!isInteractive()) {
         console.error(
           `notability-eval review needs a person at a terminal to confirm each tier; nothing was read or written. `
-          + `Ask the user to run: gbrain notability-eval review --in ${inPath}`,
+          + `Ask the user to run: foresights notability-eval review --in ${inPath}`,
         );
         setCliExitVerdict(1);
         return;
@@ -393,7 +393,7 @@ export async function runNotabilityEval(args: RunNotabilityEvalArgs): Promise<vo
     default:
       // eslint-disable-next-line no-console
       console.log([
-        'gbrain notability-eval — eval suite for the notability gate.',
+        'foresights notability-eval — eval suite for the notability gate.',
         '',
         'Subcommands:',
         '  mine   Walk the brain repo, sample paragraphs, write candidates.',

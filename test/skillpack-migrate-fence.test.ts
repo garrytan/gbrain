@@ -72,7 +72,7 @@ function scratchGbrain(): string {
 
 const FENCE_WITH_RECEIPT = `<!-- gbrain:skillpack:begin -->
 
-<!-- Installed by gbrain 0.32.0 — do not hand-edit between markers. -->
+<!-- Installed by foresights 0.32.0 — do not hand-edit between markers. -->
 <!-- gbrain:skillpack:manifest cumulative-slugs="alpha,beta" version="0.32.0" -->
 
 | Trigger | Skill |
@@ -161,7 +161,7 @@ describe('stripFence', () => {
     expect(out).not.toContain('gbrain:skillpack:begin');
     expect(out).not.toContain('gbrain:skillpack:end');
     expect(out).not.toContain('cumulative-slugs');
-    expect(out).not.toContain('Installed by gbrain');
+    expect(out).not.toContain('Installed by foresights');
   });
 
   it('preserves table rows verbatim', () => {

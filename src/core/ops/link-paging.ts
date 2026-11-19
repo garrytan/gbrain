@@ -131,7 +131,7 @@ export function reportLinkPage(ctx: OperationContext, opName: LinkOp, p: Record<
   if (!next) return undefined;
   const args = { ...listingArgs(p), ...(p.limit !== undefined ? { limit: p.limit } : {}), cursor: next };
   if (ctx.remote === false) {
-    ctx.logger.warn(`[gbrain] ${commandOf(opName)}: showing ${page.returned} link rows (limit ${listing.limit}); more exist. ` +
+    ctx.logger.warn(`[foresights] ${commandOf(opName)}: showing ${page.returned} link rows (limit ${listing.limit}); more exist. ` +
       `Continue with --cursor ${next}, or pass --all for every row.`);
     return next;
   }

@@ -26,7 +26,7 @@ async function runOpenSharedPages(ctx: DoctorContext): Promise<Check[]> {
     if (!o) {
       const error = read.open_pages_error!;
       checks.push(ctx.remote
-        ? checkError(NAME, "count the pages every member's key can read", new Error(`${error.code}; ask the brain host's operator to run gbrain doctor --only open_shared_pages`), { details: { open_pages: null, code: error.code } })
+        ? checkError(NAME, "count the pages every member's key can read", new Error(`${error.code}; ask the brain host's operator to run foresights doctor --only open_shared_pages`), { details: { open_pages: null, code: error.code } })
         : checkError(NAME, "count the pages every member's key can read", new Error(error.message), { details: { open_pages: null, open_pages_error: error } }));
       return checks;
     }
@@ -39,13 +39,13 @@ async function runOpenSharedPages(ctx: DoctorContext): Promise<Check[]> {
     if (!o.sensitive || !o.members.reading) {
       checks.push({ name: 'open_shared_pages', status: 'ok', severity: 'info', readiness_state: 'ok', details,
         message: o.members.reading
-          ? `${message} A team may share these on purpose; to keep a folder to some members, name its readers (gbrain access rule add --prefix <folder>/ --readers <list>).`
+          ? `${message} A team may share these on purpose; to keep a folder to some members, name its readers (foresights access rule add --prefix <folder>/ --readers <list>).`
           : `${message} A member key made later will read them unless they name their readers first.` });
       return checks;
     }
     const top = o.top_sensitive!;
     checks.push({ name: 'open_shared_pages', status: 'warn', details,
-      message: ctx.remote ? `${message} Ask the brain host's operator to run gbrain doctor --only open_shared_pages.` : `${message} A key bound to a member reads a page with no readers like any other key.`,
+      message: ctx.remote ? `${message} Ask the brain host's operator to run foresights doctor --only open_shared_pages.` : `${message} A key bound to a member reads a page with no readers like any other key.`,
       ...(ctx.remote ? {} : { fix: agentFix(['gbrain', 'list', '--type', top.type, '--source-id', top.source, '--json'],
         'Read-only: lists the pages of the largest open DM, chat or mail type (pages that already name readers are listed too, 50 at a time), so the user can say who should read the open ones.', NAME,
         { ask_user: true, docs: 'docs/guides/access-designations.md#pages-every-members-key-can-read', user_message: openPagesLines(read, { prefix: '' }).join('\n') }) }) });

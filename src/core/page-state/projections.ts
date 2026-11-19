@@ -521,7 +521,7 @@ export async function preparePageProjection(prepared: ProjectionSnapshot) {
     const code = await prepareCodeChunks(page, path);
     return { chunks: code.chunks, code };
   }
-  if (prepared.pageKind !== 'markdown') throw new Error('This page kind requires its source importer (images: see `gbrain doctor --only text_projection_readiness --json`).');
+  if (prepared.pageKind !== 'markdown') throw new Error('This page kind requires its source importer (images: see `foresights doctor --only text_projection_readiness --json`).');
   return { chunks: await prepareMarkdownChunks(page, prepared.maxChunkTokens, prepared.fenceOverlay), code: undefined };
 }
 
@@ -540,7 +540,7 @@ export const SEGMENTED_JOB_PROBES = `JOIN sources s ON s.incarnation=j.source_in
 /**
  * The page probe of a queue walk. `media` also admits `sealable` image rows
  * (projection-class.ts), for the explicit drain and its preview only: the
- * resident, embed paths and `gbrain migrate` never pass it.
+ * resident, embed paths and `foresights migrate` never pass it.
  */
 export function projectionJobProbes(opts: { media?: boolean } = {}): string {
   const inline = "p.page_kind IN ('markdown','code') AND p.body_storage IS DISTINCT FROM 'segmented'";
@@ -742,7 +742,7 @@ export async function projectionBacklog(engine: Pick<BrainEngine, 'executeRaw'>,
 }
 
 /**
- * #6803: the read-only preview of `gbrain projections drain`: every class
+ * #6803: the read-only preview of `foresights projections drain`: every class
  * count (`pending` Markdown/code rows it rebuilds, `sealable` images it seals,
  * and the `reimport`, `protected` and `archived` rows it leaves), then the rows
  * it would take, oldest first (at most `limit`), with each row's page kind and
@@ -858,7 +858,7 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
         await engine.executeRaw(`UPDATE page_projection_jobs j SET reason='rebuild_failed',updated_at=now()
           WHERE j.source_incarnation=$1::uuid AND j.slug=$2 AND j.revision=$3::uuid AND NOT ${SEGMENTED_PROJECTION_CLAIMED_SQL}`, observed);
         if (opts.onFailure) opts.onFailure({ source_id: job.source_id, slug: job.slug, reason: (error instanceof Error ? error.message : String(error)).split('\n')[0].slice(0, 300) });
-        else process.stderr.write('[gbrain] Projection rebuild failed; work remains queued. Inspect projection readiness and the recorded source path.\n');
+        else process.stderr.write('[foresights] Projection rebuild failed; work remains queued. Inspect projection readiness and the recorded source path.\n');
         continue;
       }
       // The page moved under its install: defer the exact row this call listed
@@ -916,7 +916,7 @@ export interface ProjectionDrainResult {
 }
 
 /**
- * `media` (the explicit `gbrain projections drain` only) also seals the
+ * `media` (the explicit `foresights projections drain` only) also seals the
  * `sealable` images after the Markdown and code rows (image-seal.ts).
  * Queued Markdown/code rows refresh stale planner statistics first: every
  * rebuild reads and writes its page by key, and without statistics (PGLite

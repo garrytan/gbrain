@@ -1,5 +1,5 @@
 /**
- * #7701: `gbrain sources list` loads archived (soft-deleted) sources but dropped the flag when it built each entry, so the
+ * #7701: `foresights sources list` loads archived (soft-deleted) sources but dropped the flag when it built each entry, so the
  * table never printed its archived marker and `--json` had no `archived` field: an archived source read as live.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';

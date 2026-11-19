@@ -11,7 +11,7 @@
  * Protects:
  * - doctor `sync_rows_behind_checkpoint` compares each row with the file at the checkpoint commit (not the record, not
  *   the working tree) and warns with the count and the preview command; a plain sync does not heal the row;
- * - `gbrain repair rows-behind` previews the rows (writes nothing), applies exactly the previewed set through the managed
+ * - `foresights repair rows-behind` previews the rows (writes nothing), applies exactly the previewed set through the managed
  *   import of the checkpoint's bytes, and the check is clean afterwards;
  * - a database edit made since the last import, a held path and a path changed after the checkpoint are not behind; a
  *   row with no import record is listed apart and joins the set only with --include-ambiguous;
@@ -138,7 +138,7 @@ for (const backend of testBackends()) describe(`[${backend}] #8071: rows behind 
     const warned = await doctor(engine);
     expect(categorizeCheck(CHECK)).toBe('brain');
     expect(warned).toMatchObject({ name: CHECK, status: 'warn', details: { count: 1, sources: [{ source_id: 'default', checkpoint: head, behind: 1, samples: ['notes/a'] }] } });
-    expect(warned.message).toContain('gbrain repair rows-behind --source default');
+    expect(warned.message).toContain('foresights repair rows-behind --source default');
     expect(warned.fix.argv).toEqual(['gbrain', 'repair', 'rows-behind', '--source', 'default', '--json']);
 
     expect(EXPLICIT_REPAIR_REGISTRY.map(spec => spec.kind)).toContain(KIND);

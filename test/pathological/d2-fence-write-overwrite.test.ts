@@ -32,7 +32,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) describe(`D-2 fence w
       });
       expect(result).toMatchObject({ inserted: 0, legacyFallback: true, databaseOnlyReason: 'file_database_drift' });
       expect(result.warning).toContain(`${SLUG} (file_database_drift`);
-      expect(result.warning).toContain('gbrain sync --source default');
+      expect(result.warning).toContain('foresights sync --source default');
       expect((await writeSingleFact(b.engine, 'default', { fact: CLAIM, entity: SLUG, provenance: 'test', visibility: 'world' })).status).toBe('inserted');
       expect(await b.engine.executeRaw('SELECT fact, row_num FROM facts')).toEqual([{ fact: CLAIM, row_num: null }]);
     });

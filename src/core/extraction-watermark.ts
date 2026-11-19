@@ -41,7 +41,7 @@ export interface InputTruncated {
    * format over its whole text yet no message parsed under it; the run changed nothing. `detection_ambiguous`, no format is
    * detected over a segmented conversation page yet the formats in `grammars` parse messages in it: the page is held, nothing
    * extracted or collected, until it changes or the operator chooses its format. `grammar_chosen`, the operator's format
-   * (`gbrain extract-conversation-facts --grammar`) for page version `version_token`; not a truncation.
+   * (`foresights extract-conversation-facts --grammar`) for page version `version_token`; not a truncation.
    */
   kind: 'head' | 'tail_window' | 'skipped_too_large' | 'no_messages' | 'detection_ambiguous' | 'grammar_chosen';
   pipeline: ExtractionPipeline;
@@ -176,7 +176,7 @@ function warnStorageOnce(action: string, error: unknown): void {
   if (warnedStorage) return;
   warnedStorage = true;
   console.error(`[extraction-watermark] could not ${action} (${error instanceof Error ? error.message : String(error)}); `
-    + 'large pages fall back to head-only extraction until gbrain apply-migrations brings the schema to head.');
+    + 'large pages fall back to head-only extraction until foresights apply-migrations brings the schema to head.');
 }
 
 /** The page's id and stored watermark for `pipeline`; `pageId` is null when no live page has that slug. Fail-soft to no watermark. */

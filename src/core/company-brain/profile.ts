@@ -23,7 +23,7 @@ function statusFix(sourceId: string): Action {
 }
 
 function resumeCommand(sourceId: string): string {
-  return `gbrain sync --source ${sourceId} --no-embed --no-pull`;
+  return `foresights sync --source ${sourceId} --no-embed --no-pull`;
 }
 
 export async function getCompanyBrainProfile(engine: BrainEngine, sourceId: string): Promise<CompanyBrainProfile | null> {
@@ -38,7 +38,7 @@ export async function getCompanyBrainProfile(engine: BrainEngine, sourceId: stri
   if (!profile) {
     if (receipt) {
       throw opError('profile_incompatible', 'The durable company approval has no source policy. Reconnect explicitly; sync cannot fall back to an unrestricted profile.',
-        `Source ${sourceId} has a company-brain receipt but no stored source policy. Check its status; reconnecting means previewing removal with gbrain sources remove ${sourceId} --dry-run and connecting again, a destructive step the user approves. Do not edit stored policy fields.`,
+        `Source ${sourceId} has a company-brain receipt but no stored source policy. Check its status; reconnecting means previewing removal with foresights sources remove ${sourceId} --dry-run and connecting again, a destructive step the user approves. Do not edit stored policy fields.`,
         { fix: statusFix(sourceId) });
     }
   }
@@ -88,7 +88,7 @@ export async function readCompanyBrainPlan(engine: BrainEngine, receiptId: strin
     "SELECT completed_keys FROM op_checkpoints WHERE op='company-brain-plan' AND fingerprint=$1", [receiptId]);
   if (!row?.completed_keys?.[0]) {
     throw opError('checkpoint_missing', 'The approved source plan is missing; do not restart from a different revision.',
-      `Receipt ${receiptId}'s approved plan checkpoint is gone, so gbrain will not resume from another revision. Check the source status; starting over needs a removal preview and a new reviewed connection, which the user approves.`,
+      `Receipt ${receiptId}'s approved plan checkpoint is gone, so foresights will not resume from another revision. Check the source status; starting over needs a removal preview and a new reviewed connection, which the user approves.`,
       { fix: readFix(`Shows which source holds receipt ${receiptId} and its outstanding phase.`, { argv: ['gbrain', 'sources', 'status', '--json'] }) });
   }
   return row.completed_keys[0];
@@ -123,7 +123,7 @@ export async function importCompanyBrainFile(engine: BrainEngine, filePath: stri
         const fences = ready.result.fences_normalized ?? [];
         throw opError('source_writeback_required', fences.length ? `Canonical preparation would normalize a facts or takes fence (${describeFixes(fences)}); this profile never writes repository files.`
           : 'Canonical preparation requires a source-content correction; this profile never writes repository files.',
-          fences.length ? `${path} has a facts or takes fence gbrain would normalize (${describeFixes(fences)}), and this profile never edits repository files. Fix the fence in the repository and commit, then resume with ${resumeCommand(sourceId)}.`
+          fences.length ? `${path} has a facts or takes fence foresights would normalize (${describeFixes(fences)}), and this profile never edits repository files. Fix the fence in the repository and commit, then resume with ${resumeCommand(sourceId)}.`
             : `${path} would change when published canonically (for example normalized frontmatter or tags), and this profile never edits repository files. Review the needed correction with the user, commit it, then resume with ${resumeCommand(sourceId)}.`);
       }
       if (ready.slug !== entry.page!.slug || ready.observedRevision !== (snapshot?.revision ?? null)) {

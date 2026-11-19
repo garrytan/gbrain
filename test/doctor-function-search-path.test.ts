@@ -1,5 +1,5 @@
 /**
- * function_search_path doctor check (#7632, #7688): names every gbrain function whose search_path does not end in
+ * function_search_path doctor check (#7632, #7688): names every foresights function whose search_path does not end in
  * pg_temp, with a schema-qualified ALTER FUNCTION that fixes it; the fix changes no owner, so the next boot still
  * succeeds. Below migration v277 it points at the migration instead. The Postgres non-owner path is in
  * test/e2e/function-search-path-postgres.test.ts (case 5).
@@ -77,7 +77,7 @@ describe('function_search_path doctor check (#7632)', () => {
     }
   }, 120_000);
 
-  test('below v277 the check points at gbrain apply-migrations --yes instead of hand-written ALTERs (#7688)', async () => {
+  test('below v277 the check points at foresights apply-migrations --yes instead of hand-written ALTERs (#7688)', async () => {
     await engine.runMigration(0, `ALTER FUNCTION gbrain_refuse_purged_take() SET search_path = pg_catalog, public`);
     const latest = await engine.getConfig('version');
     await engine.setConfig('version', '276');

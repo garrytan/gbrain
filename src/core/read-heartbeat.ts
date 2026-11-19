@@ -44,8 +44,8 @@ export function beginSlowRead(label: string, opts: { json: boolean; everyMs?: nu
   const writeErr = opts.writeErr ?? (line => { try { process.stderr.write(line + '\n'); } catch { /* stderr gone */ } });
   const read: ActiveRead = { label, startedAt: now(), json: opts.json, timer: null, sigint: null, writeErr };
   active = read;
-  writeErr(`[gbrain] reading ${label}; large brains can take minutes. Progress prints here every ${seconds(opts.everyMs ?? READ_HEARTBEAT_EVERY_MS)} s; the result prints on stdout when it is ready.`);
-  read.timer = setInterval(() => writeErr(`[gbrain] still reading ${label} (${seconds(now() - read.startedAt)} s so far); no result yet.`), opts.everyMs ?? READ_HEARTBEAT_EVERY_MS);
+  writeErr(`[foresights] reading ${label}; large brains can take minutes. Progress prints here every ${seconds(opts.everyMs ?? READ_HEARTBEAT_EVERY_MS)} s; the result prints on stdout when it is ready.`);
+  read.timer = setInterval(() => writeErr(`[foresights] still reading ${label} (${seconds(now() - read.startedAt)} s so far); no result yet.`), opts.everyMs ?? READ_HEARTBEAT_EVERY_MS);
   read.timer.unref?.();
   if (process.listenerCount('SIGINT') === 0) {
     read.sigint = () => { noteInterrupted('SIGINT', now()); process.exit(130); };
@@ -118,10 +118,10 @@ export function noteInterrupted(signal: string, now = Date.now()): boolean {
   endSlowRead();
   const elapsedMs = now - read.startedAt;
   const message = `Interrupted by ${signal} after ${seconds(elapsedMs)} s while reading ${read.label}, before the result was ready. Nothing was read, so this is not an empty result.`;
-  read.writeErr(`[gbrain] ${message} Re-run with a longer timeout; large brains can take minutes.`);
+  read.writeErr(`[foresights] ${message} Re-run with a longer timeout; large brains can take minutes.`);
   if (read.json) {
     interruptWriter?.({ error: 'interrupted', code: 'interrupted', message,
-      suggestion: 'Re-run the same command with a longer timeout (large brains can take minutes), or run `gbrain diag --json` for a bounded summary.',
+      suggestion: 'Re-run the same command with a longer timeout (large brains can take minutes), or run `foresights diag --json` for a bounded summary.',
       signal, read: read.label, elapsed_ms: elapsedMs, complete: false, contract_version: 1 });
   }
   return true;

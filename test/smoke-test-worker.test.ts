@@ -78,7 +78,7 @@ describe('smoke-test worker health (#4175)', () => {
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stdout).toContain('health score: 97/100');
     expect(result.stderr).not.toContain('invalid option');
-    expect(result.stdout).toContain('GBrain worker (supervisor-managed)');
+    expect(result.stdout).toContain('Foresights worker (supervisor-managed)');
     expect(readFileSync(result.calls, 'utf8')).toContain('jobs supervisor status --json');
     expect(existsSync(result.workerStarted)).toBe(false);
     expect(existsSync(result.workerPid)).toBe(false);
@@ -87,7 +87,7 @@ describe('smoke-test worker health (#4175)', () => {
   test('a missing worker fails with an explicit native repair and never starts one', () => {
     const result = runSmoke({ supervisorRunning: false });
     expect(result.status).toBe(1);
-    expect(result.stdout).toContain('gbrain jobs supervisor start --detach');
+    expect(result.stdout).toContain('foresights jobs supervisor start --detach');
     expect(existsSync(result.workerStarted)).toBe(false);
     expect(existsSync(result.workerPid)).toBe(false);
   }, 30_000);
@@ -160,7 +160,7 @@ describe('smoke-test checks stay bounded without a timeout binary (#5248)', () =
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(`${result.stdout}${result.stderr}`).not.toContain('not found');
     expect(result.stdout).toContain('health score: 97/100');
-    expect(result.stdout).toContain('GBrain worker (supervisor-managed)');
+    expect(result.stdout).toContain('Foresights worker (supervisor-managed)');
     const calls = readFileSync(result.calls, 'utf8');
     for (const bounded of ['--help', 'engine status --json', 'doctor --json', 'jobs supervisor status --json']) {
       expect(calls).toContain(bounded);

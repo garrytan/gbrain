@@ -8,7 +8,7 @@
  * outcome is re-read here whenever the receipt is served (the put_page reply,
  * get_write_request): `true` once the page's projection is sealed, else
  * `'pending'` with the poll interval and the receipt read that tells, then
- * `gbrain projections drain` as the fallback when no process builds it.
+ * `foresights projections drain` as the fallback when no process builds it.
  */
 import type { OperationContext } from '../ops/contract.ts';
 import { cliRenderContext, renderAction, type RenderContext } from '../agent-output.ts';
@@ -58,7 +58,7 @@ export async function liveSearchable(ctx: Pick<OperationContext, 'engine' | 'rem
       why: `The write committed, but search does not see ${receipt.slug} yet: its chunks and keyword index are built after commit. `
         + `Read this receipt again after ${retryAfterMs} ms; searchable turns true once search sees the page.`,
       then: { argv: ['gbrain', 'projections', 'drain'], consent: [], actor: 'agent', requires_exclusive: false,
-        why: `Only if searchable is still "pending" after a minute: no running gbrain process is building the page (a brain with no resident writer, `
+        why: `Only if searchable is still "pending" after a minute: no running foresights process is building the page (a brain with no resident writer, `
           + 'or a build that died). This builds every queued page now, then read the receipt again.' },
     }, render),
   };

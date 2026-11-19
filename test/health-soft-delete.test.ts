@@ -80,7 +80,7 @@ describe('#1305 — getHealth excludes soft-deleted pages', () => {
   });
 
   test('entity coverage denominators and most_connected exclude deleted entities', async () => {
-    // FIVE live entities (>= the gbrain#4147 small-N floor, so the ratios
+    // FIVE live entities (>= the foresights#4147 small-N floor, so the ratios
     // are real percentages, not the below-floor null), each with an inbound
     // link + timeline entry → full coverage. Bob is the sixth, soft-deleted.
     const liveSlugs = ['people/alice-example', 'people/carol-example', 'people/dana-example', 'companies/acme-example', 'companies/widget-co'];

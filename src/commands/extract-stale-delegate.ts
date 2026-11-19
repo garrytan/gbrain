@@ -30,7 +30,7 @@ export async function maybeDelegateExtractStale(hostConfig: GBrainConfig | null,
   const config = persistenceConfigForBrain(hostConfig, brainId, brainId === 'host' ? [] : loadMounts());
   if (config?.engine !== 'pglite' || !config.database_path || config.database_url || !inspectLockHolder(config.database_path).held) return false;
   const invalid = (message: string, suggestion: string) => opError('invalid_params', message, suggestion,
-    { fix: readFix('Prints the gbrain extract forms and flags.', { argv: ['gbrain', 'extract', '--help'] }) });
+    { fix: readFix('Prints the foresights extract forms and flags.', { argv: ['gbrain', 'extract', '--help'] }) });
   try {
     const params: Record<string, unknown> = {};
     for (let i = 0; i < args.length; i++) {
@@ -38,7 +38,7 @@ export async function maybeDelegateExtractStale(hostConfig: GBrainConfig | null,
       if (arg === '--dry-run') params.dry_run = true;
       else if (arg === '--source-id') {
         const value = args[++i];
-        if (!value || value.startsWith('-')) throw invalid('--source-id requires a value.', 'Give --source-id the source to extract, e.g. gbrain extract --stale --source-id default, or omit it to extract every source.');
+        if (!value || value.startsWith('-')) throw invalid('--source-id requires a value.', 'Give --source-id the source to extract, e.g. foresights extract --stale --source-id default, or omit it to extract every source.');
         params.source_id = value;
       } else if (arg === '--source' || arg === '--source=db') {
         if (arg === '--source') i++;

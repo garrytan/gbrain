@@ -1,7 +1,7 @@
 /**
  * #6609 (D5) `missing_recorded_files`: live pages of a classic source (a
  * checkout on this host, managed persistence off) whose recorded canonical
- * file is not among the files `gbrain sync --full` enumerates, so the next
+ * file is not among the files `foresights sync --full` enumerates, so the next
  * full sync soft-deletes them. The usual cause is a page restored after its
  * file left the checkout (`git rm --cached`, an ignore rule, a deletion not
  * committed yet). Keeping such a page is the user's choice: put the file back
@@ -53,10 +53,10 @@ async function runMissingRecordedFiles(ctx: DoctorContext): Promise<Check[]> {
     const first = found[0]!;
     const sample = first.pages[0]!;
     checks.push({ name: 'missing_recorded_files', status: 'warn', details: { ...details, exact: !truncated.length },
-      message: `${truncated.length ? 'At least ' : ''}${count} live page(s) record a canonical file that is not in their checkout, so the next gbrain sync --full soft-deletes them `
+      message: `${truncated.length ? 'At least ' : ''}${count} live page(s) record a canonical file that is not in their checkout, so the next foresights sync --full soft-deletes them `
         + `(${found.map(scan => `${scan.source_id}: ${scan.pages.length}`).join('; ')}; e.g. ${found.flatMap(scan => scan.pages.slice(0, 3).map(page => `${scan.source_id}:${page.slug} (${page.source_path})`)).slice(0, 5).join(', ')}). `
-        + 'A page restored after its file left the checkout is the usual cause. To keep one with its file, put the file back, commit it and run gbrain sync; '
-        + `to keep it database-only, run gbrain delete ${sample.slug} --source-id ${first.source_id}, then gbrain restore ${sample.slug} --source-id ${first.source_id} --detach. A page whose file you removed on purpose needs nothing.`,
+        + 'A page restored after its file left the checkout is the usual cause. To keep one with its file, put the file back, commit it and run foresights sync; '
+        + `to keep it database-only, run foresights delete ${sample.slug} --source-id ${first.source_id}, then foresights restore ${sample.slug} --source-id ${first.source_id} --detach. A page whose file you removed on purpose needs nothing.`,
       fix: { consent: [], actor: 'agent', ask_user: true, requires_exclusive: false, docs: DOCS, verify: doctorVerify('missing_recorded_files'),
         why: 'Whether each page keeps its file, becomes database-only, or goes away with its file is the user\'s choice; nothing here runs on its own.',
         user_message: `${count} page(s) point at files that are no longer in your checkout (for example ${sample.slug}), so the next full sync will delete them. `

@@ -1,5 +1,5 @@
 /**
- * gbrain's general-purpose skill resolver (library entry; also published
+ * foresights's general-purpose skill resolver (library entry; also published
  * as `gbrain/skill-resolver` and as a prebuilt, dependency-free bundle).
  *
  *   await buildSkillIndex({ catalog: 'claude-user', dirs: ['/home/alice-example/.claude/skills'] })

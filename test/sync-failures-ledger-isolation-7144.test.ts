@@ -6,7 +6,7 @@
  * GBRAIN_HOME, and the broken-fixture sync tests appended their rows to
  * ~/.gbrain/sync-failures.jsonl. Bun sets NODE_ENV=test for every test run, so
  * the ledger falls back to a per-process scratch directory there. Outside a test
- * run (NODE_ENV unset) the ledger stays in the gbrain home.
+ * run (NODE_ENV unset) the ledger stays in the foresights home.
  */
 import { describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -41,7 +41,7 @@ describe('sync failure ledger isolation without the test preloads (#7144)', () =
     }
   });
 
-  test('outside a test run the ledger stays in the gbrain home', async () => {
+  test('outside a test run the ledger stays in the foresights home', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-7144-home-'));
     try {
       const { path } = await record(home, undefined);

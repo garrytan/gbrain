@@ -13,7 +13,7 @@
  * 12-page outage halts systemic on every run), and a page
  * failing with the same content-class code in 3 counted runs at the same
  * content hash and prompt version gets a failure tombstone (distinct from a
- * successful empty extraction) that `gbrain takes propose --retry-failed`
+ * successful empty extraction) that `foresights takes propose --retry-failed`
  * releases and that a content or prompt-version change bypasses; a
  * run-scoped extractor error stops the phase and records nothing; a run where
  * most fresh pages fail counts nothing. (2) Reverting the ordering or the
@@ -95,7 +95,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       expect(calls[1]![0]).toBe(HEALTHY);
       const last = runs[3]!.details.failed_pages!;
       expect(last.map(f => [f.slug, f.attempts, f.held])).toEqual([...POISON].map(slug => [slug, 3, true]));
-      expectItemFailure(last[0], { key: 'page-01', code: 'request_too_large', fix: /gbrain takes propose --retry-failed --slug page-01 --source default/ });
+      expectItemFailure(last[0], { key: 'page-01', code: 'request_too_large', fix: /(?:foresights|gbrain) takes propose --retry-failed --slug page-01 --source default/ });
 
       const fifth = await run(engine, extractor(poison));
       expect({ calls: fifth.details.llm_calls_succeeded as number + (fifth.details.llm_calls_failed as number), cache_hits: fifth.details.cache_hits })

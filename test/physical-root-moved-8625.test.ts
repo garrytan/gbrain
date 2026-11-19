@@ -79,7 +79,7 @@ for (const kind of testBackends()) describe(`#8625 a moved managed checkout name
     hosts: await engine.executeRaw('SELECT worktree_id,local_path,coordination_path FROM persistence_host_bindings ORDER BY worktree_id'),
     sources: await engine.executeRaw('SELECT id,local_path FROM sources ORDER BY id'),
   });
-  /** Runs a refusal's fix chain as an operator would once the user agreed: plain commands as argv, gbrain steps through the lifecycle. */
+  /** Runs a refusal's fix chain as an operator would once the user agreed: plain commands as argv, foresights steps through the lifecycle. */
   async function runFix(fix: Action | undefined): Promise<void> {
     for (let step = fix; step; step = step.then) {
       const argv = step.argv!;
@@ -211,7 +211,7 @@ for (const kind of testBackends()) describe(`#8625 a moved managed checkout name
       const error = await refusal(add(`${f.source}-b`, copy, dryRun));
       expect(error).toMatchObject({ code: 'recovery_required', detail: 'physical_root_moved' });
       expect(error!.message).toContain(f.root);
-      expect(error!.suggestion).toContain('gbrain sources writer deactivate --dry-run');
+      expect(error!.suggestion).toContain('foresights sources writer deactivate --dry-run');
       expect(error!.suggestion).not.toContain('mv ');
       expect(error!.fix!.argv).toEqual(['gbrain', 'sources', 'writer', 'deactivate', '--dry-run']);
     }

@@ -9,7 +9,7 @@
  * that decide inside the projections (contest, hold) and identity code paths
  * report through `noteBelief`, so their events exist whether or not any row
  * changed. The batch is inert, and costs one source read, when the source has
- * no active coverage (`gbrain beliefs enable`).
+ * no active coverage (`foresights beliefs enable`).
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';

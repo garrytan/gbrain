@@ -1,5 +1,5 @@
 /**
- * E2E: fresh `gbrain init --pglite` produces a brain that can embed end-to-end.
+ * E2E: fresh `foresights init --pglite` produces a brain that can embed end-to-end.
  *
  * The headline behavior the v0.37 fix wave exists to fix. Pre-fix, this
  * exact path broke: schema sized to 1536 (stale default), embed pipeline
@@ -31,7 +31,7 @@ import {
   NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS,
 } from '../src/core/ai/defaults.ts';
 
-describe('E2E: fresh gbrain init --pglite → import → embed works end-to-end', () => {
+describe('E2E: fresh foresights init --pglite → import → embed works end-to-end', () => {
   let tmpHome: string;
   let origHome: string | undefined;
   // v0.46.3: the single-ready provider for a fresh install is VOYAGE (unsupported providers are
@@ -88,7 +88,7 @@ describe('E2E: fresh gbrain init --pglite → import → embed works end-to-end'
   test('bare `init --pglite`: schema sized to the new-install default (voyage-4/1024)', async () => {
     // Reset gateway so init.ts has to resolve the new-install default from
     // ai/defaults.ts. This is the actual production code path for a
-    // fresh install: bare `gbrain init --pglite` with a single ready key.
+    // fresh install: bare `foresights init --pglite` with a single ready key.
     resetGateway();
 
     // Stub embed transport to return synthetic target-width vectors. The
@@ -263,7 +263,7 @@ describe('E2E: fresh gbrain init --pglite → import → embed works end-to-end'
 
   test('v0.46.3: keyless recovery — `init --force --embedding-model` clears embedding_disabled', async () => {
     // The documented recovery command for a deferred-setup brain is
-    // `gbrain init --force --embedding-model voyage:voyage-4`. Two traps made
+    // `foresights init --force --embedding-model voyage:voyage-4`. Two traps made
     // it a silent no-op: the seeded embedding_disabled sentinel set
     // out.noEmbedding (which an explicit flag must clear), and the persist
     // block's ...existingFile spread re-wrote the stale sentinel alongside

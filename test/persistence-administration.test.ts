@@ -41,7 +41,7 @@ async function spawnCliBounded(args: string[], cwd: string, wallMs: number) {
   const expiry = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       try { child.kill(9); } catch { /* already exited */ }
-      reject(new Error(`gbrain ${args.join(' ')} did not exit within ${wallMs}ms (#5332)`));
+      reject(new Error(`foresights ${args.join(' ')} did not exit within ${wallMs}ms (#5332)`));
     }, wallMs);
   });
   try {

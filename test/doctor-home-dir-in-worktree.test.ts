@@ -98,7 +98,7 @@ async function getCheck(name: string, env: Record<string, string | undefined>) {
 }
 
 describe('home_dir_in_worktree doctor check', () => {
-  test('gbrain home outside any worktree → ok', async () => {
+  test('foresights home outside any worktree → ok', async () => {
     // scratch/.gbrain — no parent has a .git, scratch IS our fake $HOME
     const home = scratch;
     const gbrainParent = home;
@@ -110,9 +110,9 @@ describe('home_dir_in_worktree doctor check', () => {
     expect(check!.status).toBe('ok');
   });
 
-  test('gbrain home inside dir-style .git worktree → warn', async () => {
+  test('foresights home inside dir-style .git worktree → warn', async () => {
     // scratch/home/myrepo/.git/    (directory with HEAD — real main-repo shape)
-    // scratch/home/myrepo/.gbrain/ ← gbrain home is inside the worktree
+    // scratch/home/myrepo/.gbrain/ ← foresights home is inside the worktree
     const home = join(scratch, 'home');
     const repo = join(home, 'myrepo');
     mkValidGitDir(repo);
@@ -125,7 +125,7 @@ describe('home_dir_in_worktree doctor check', () => {
     expect(check!.message).toContain('myrepo');
   });
 
-  test('gbrain home inside .git-AS-FILE linked worktree → warn (F4)', async () => {
+  test('foresights home inside .git-AS-FILE linked worktree → warn (F4)', async () => {
     // Linked worktrees use a `.git` FILE (not a directory) containing
     // `gitdir: /path/to/main/.git/worktrees/<name>`. Doctor MUST recognize
     // both shapes — this is the Conductor + git-worktrees topology our

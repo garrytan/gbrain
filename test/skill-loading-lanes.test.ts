@@ -1,7 +1,7 @@
 /**
  * GBRA-194: the spring-loaded skills index on the installer lanes beside
- * setup: `gbrain connect --harness … --install` (native config files and the
- * thin-client GBRAIN-INSTRUCTIONS.md), `gbrain bootstrap harness`, the
+ * setup: `foresights connect --harness … --install` (native config files and the
+ * thin-client GBRAIN-INSTRUCTIONS.md), `foresights bootstrap harness`, the
  * shared installer decision, and doctor's informational report.
  *
  * Protects: every lane writes the index right after the brain-first block
@@ -132,7 +132,7 @@ describe('connect --harness --install', () => {
       expect(read(join(root, 'GBRAIN-INSTRUCTIONS.md'))).toBe(text);
       await withEnv({ GBRAIN_HOME: root }, async () => {
         expect(skillsIndexViews()).toMatchObject([{ harness: 'openclaw', path: join(root, 'GBRAIN-INSTRUCTIONS.md'), state: 'current' }]);
-        expect(skillsIndexViews()[0].refresh).toContain('gbrain connect');
+        expect(skillsIndexViews()[0].refresh).toContain('foresights connect');
       });
       await installHarnessConnection(credentials, { harness: 'openclaw', root, instructions: false });
       expect(read(join(root, 'GBRAIN-INSTRUCTIONS.md'))).not.toContain(SKILLS_BLOCK_BEGIN);
@@ -157,11 +157,11 @@ describe('bootstrap harness', () => {
       expect(read(paths.codexAgentsPath)).toContain('\`' + LAUNCHER + ' bundled-skill <name>\`');
 
       const other = join(b.home, 'other', 'AGENTS.md');
-      installerSkillsBlock({ target: brainFirstTargetAt('opencode', other), launcher: LAUNCHER, writer: 'gbrain setup opencode', brainFirstDeclined: false, skillLoading: 'spring' });
+      installerSkillsBlock({ target: brainFirstTargetAt('opencode', other), launcher: LAUNCHER, writer: 'foresights setup opencode', brainFirstDeclined: false, skillLoading: 'spring' });
       removeHarnessSkillsIndex('gbrain', () => {});
       expect(existsSync(paths.claudeMemoryPath)).toBe(false);
       expect(read(other)).toContain(SKILLS_BLOCK_BEGIN);
-      expect(readSkillLoadingLedger().map(e => e.writer)).toEqual(['gbrain setup opencode']);
+      expect(readSkillLoadingLedger().map(e => e.writer)).toEqual(['foresights setup opencode']);
     });
   });
 
@@ -223,18 +223,18 @@ describe('doctor: skills index', () => {
   const check = { name: 'harness_wiring', status: 'ok' as const, message: 'Claude Code is wired.' };
   test('a stale or missing index is named with its refresh command and never changes the status', () => {
     const out = withSkillsIndex(check, [
-      { harness: 'claude-code', path: '/home/alice-example/.claude/CLAUDE.md', state: 'stale', refresh: 'gbrain setup claude-code --skills-index-only' },
-      { harness: 'codex', path: '/home/alice-example/.codex/AGENTS.md', state: 'current', refresh: 'gbrain setup codex --skills-index-only' },
+      { harness: 'claude-code', path: '/home/alice-example/.claude/CLAUDE.md', state: 'stale', refresh: 'foresights setup claude-code --skills-index-only' },
+      { harness: 'codex', path: '/home/alice-example/.codex/AGENTS.md', state: 'current', refresh: 'foresights setup codex --skills-index-only' },
     ]);
     expect(out.status).toBe('ok');
     expect(out.message).toContain('claude-code skills index');
-    expect(out.message).toContain('`gbrain setup claude-code --skills-index-only`');
+    expect(out.message).toContain('`foresights setup claude-code --skills-index-only`');
     expect(out.message).not.toContain('codex skills index');
     expect((out.details as any).skills_index).toHaveLength(2);
-    const warn = withSkillsIndex({ ...check, status: 'warn' as any }, [{ harness: 'cursor', path: '/p/.cursor/rules/x.mdc', state: 'absent', refresh: 'gbrain setup cursor --instructions-only' }]);
+    const warn = withSkillsIndex({ ...check, status: 'warn' as any }, [{ harness: 'cursor', path: '/p/.cursor/rules/x.mdc', state: 'absent', refresh: 'foresights setup cursor --instructions-only' }]);
     expect(warn.status).toBe('warn');
   });
-  test('an index whose recorded gbrain is gone reports launcher_missing with a --gbrain-bin refresh', async () => {
+  test('an index whose recorded foresights is gone reports launcher_missing with a --gbrain-bin refresh', async () => {
     const b = box();
     const moved = join(b.root, 'old-install', 'gbrain');
     mkdirSync(dirname(moved), { recursive: true });
@@ -305,7 +305,7 @@ describe('Claude Code loader rule', () => {
     });
   }
 
-  test('a rule the user had before gbrain is never taken out', async () => {
+  test('a rule the user had before foresights is never taken out', async () => {
     const b = box();
     await withEnv(b.env, async () => {
       const s = setup(b);
@@ -318,7 +318,7 @@ describe('Claude Code loader rule', () => {
     });
   });
 
-  test('a rule the user had before gbrain and then deleted is not added back by a remembered choice', async () => {
+  test('a rule the user had before foresights and then deleted is not added back by a remembered choice', async () => {
     const b = box();
     await withEnv(b.env, async () => {
       const s = setup(b);
@@ -451,12 +451,12 @@ describe('Claude Code loader rule: refresh, dry-run, ledger failures', () => {
     });
   });
 
-  test('a ledger written by a newer gbrain says to upgrade', async () => {
+  test('a ledger written by a newer foresights says to upgrade', async () => {
     const b = box();
     await withEnv(b.env, async () => {
       mkdirSync(join(b.home, '.gbrain'), { recursive: true });
       writeFileSync(join(b.home, '.gbrain', 'skill-loading.json'), JSON.stringify({ version: 2, entries: [] }));
-      expect(ctx(b).run().detail).toContain('newer gbrain');
+      expect(ctx(b).run().detail).toContain('newer foresights');
     });
   });
 
@@ -572,7 +572,7 @@ describe('Claude Code loader rule: refresh, dry-run, ledger failures', () => {
     });
   });
 
-  test('another gbrain home\'s index is left alone by a default run here', async () => {
+  test('another foresights home\'s index is left alone by a default run here', async () => {
     const b = box();
     await withEnv(b.env, async () => {
       const c = ctx(b);
@@ -603,7 +603,7 @@ describe('Claude Code loader rule: refresh, dry-run, ledger failures', () => {
     });
   });
 
-  test('an instruction path gbrain cannot read is a refusal, never a throw', async () => {
+  test('an instruction path foresights cannot read is a refusal, never a throw', async () => {
     const b = box();
     await withEnv(b.env, async () => {
       const dir = join(b.home, 'agents', 'AGENTS.md');
@@ -649,7 +649,7 @@ describe('refusals keep everything as it was', () => {
     });
   });
 
-  test('Claude Code: a permission rule gbrain added but cannot remove fails the opt-out and keeps the record', async () => {
+  test('Claude Code: a permission rule foresights added but cannot remove fails the opt-out and keeps the record', async () => {
     const b = box();
     const file = join(b.home, '.claude', 'CLAUDE.md');
     const settings = join(b.home, '.claude', 'settings.json');

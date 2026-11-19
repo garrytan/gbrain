@@ -683,7 +683,7 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
   // v0.39.3.0 T3 — provenance write+read parity (WARN-8 + CV5).
   // Both engines must write the same 4 provenance columns (source_kind,
   // source_uri, ingested_via, ingested_at) on putPage AND surface them
-  // on getPage. A drift here would mean `gbrain migrate --to supabase`
+  // on getPage. A drift here would mean `foresights migrate --to supabase`
   // silently loses half a user's provenance audit trail.
   test('provenance columns: putPage writes + getPage returns identical shape on both engines', async () => {
     const slug = 'wiki/provenance-parity';
@@ -1424,7 +1424,7 @@ describeBoth('Engine parity — relationalFanout', () => {
 
 // #2200 — federated sourceIds[] on the secondary-fetch reads must behave
 // identically on both engines (a drift would mean a federated MCP client sees
-// different tags/links/timeline after `gbrain migrate --to supabase`).
+// different tags/links/timeline after `foresights migrate --to supabase`).
 async function seedFederated(eng: BrainEngine) {
   await eng.executeRaw(`INSERT INTO sources (id, name, local_path) VALUES ('beta', 'beta', '/tmp/beta') ON CONFLICT (id) DO NOTHING`);
   await eng.putPage('fed/doc', { type: 'note', title: 'Fed doc', compiled_truth: 'b', timeline: '' }, { sourceId: 'beta' });
@@ -1609,7 +1609,7 @@ describeBoth('Engine parity — unscoped getTimeline plan (Cat7-1)', () => {
 //   1. The keyset-pagination WHERE clause (PageFilters.updatedAfterKeyset) —
 //      Postgres composes it from postgres.js sql`` fragments, PGLite from
 //      positional $N params. A drift here means the `delta` verb's session
-//      cursor drops or re-delivers pages after `gbrain migrate --to supabase`.
+//      cursor drops or re-delivers pages after `foresights migrate --to supabase`.
 //   2. The session_context_state $N::text::jsonb upsert (session-state.ts) —
 //      the postgres.js jsonb double-encode trap PGLite structurally cannot
 //      surface (the CLAUDE.md #2339 class).
@@ -2306,7 +2306,7 @@ describeBoth('Engine parity — resolveSlugWithAliasDetailed', () => {
 // ── D7: restorePage arc parity ───────────────────────────────────────────
 // softDelete → hidden → includeDeleted peek → restore → visible → second
 // restore false. Both engines gate restore on `deleted_at IS NOT NULL` and
-// carry the same scalar sourceCondition — a drift means `gbrain migrate
+// carry the same scalar sourceCondition — a drift means `foresights migrate
 // --to supabase` changes trash-can semantics.
 describeBoth('Engine parity — restorePage arc (D7)', () => {
   let pgEngine: BrainEngine;

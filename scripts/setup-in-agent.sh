@@ -57,7 +57,7 @@ fi
 if [[ -z "$gbrain_source_ref" ]]; then
   # Resolve the stable tag once; the installed receipt records this immutable
   # commit, so an ordinary repair never upgrades the software implicitly.
-  gbrain_refs=$(git ls-remote https://github.com/garrytan/gbrain.git "refs/tags/$gbrain_install_ref" "refs/tags/$gbrain_install_ref^{}")
+  gbrain_refs=$(git ls-remote https://github.com/aimonk2025/gbrain.git "refs/tags/$gbrain_install_ref" "refs/tags/$gbrain_install_ref^{}")
   gbrain_source_ref=$(printf '%s\n' "$gbrain_refs" | awk '/\^\{\}$/ {print $1; found=1} END {if (!found) exit 1}') || gbrain_source_ref=$(printf '%s\n' "$gbrain_refs" | awk 'NR==1 {print $1}')
 fi
 [[ "$gbrain_source_ref" =~ ^[a-f0-9]{40}$ ]] || { echo 'Could not resolve the GBrain package commit.' >&2; exit 1; }
@@ -97,7 +97,7 @@ for gbrain_env_name in $(compgen -e); do
 done
 export GBRAIN_HOME="$gbrain_work/setup-home" GBRAIN_SKIP_STARTUP_HOOKS=1
 export BUN_INSTALL_CACHE_DIR="$gbrain_work/cache"
-printf '{"private":true,"dependencies":{"gbrain":"github:garrytan/gbrain#%s"}}\n' "$gbrain_source_ref" > "$gbrain_work/bundle/app/package.json"
+printf '{"private":true,"dependencies":{"gbrain":"github:aimonk2025/gbrain#%s"}}\n' "$gbrain_source_ref" > "$gbrain_work/bundle/app/package.json"
 "$gbrain_work/bundle/bun" install --cwd "$gbrain_work/bundle/app" --ignore-scripts >&2
 "$gbrain_work/bundle/bun" --no-env-file "$gbrain_work/bundle/app/node_modules/gbrain/src/core/agent-install/entry.ts" \
   --root "$gbrain_root" --harness "$gbrain_harness" --bundle "$gbrain_work/bundle" --source-ref "$gbrain_source_ref" "${gbrain_extra[@]}"

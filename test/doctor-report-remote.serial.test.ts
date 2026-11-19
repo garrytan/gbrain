@@ -234,12 +234,12 @@ describe('doctorReportRemote — managed drift advice (#5477)', () => {
       expect(unmanaged.message).toBe(
         "1 page slug(s) appear at 'default' but NOT at the intended source " +
         '(e.g., notes/misrouted (intended=doctor-drift-advice-test)). Likely pre-v0.30.3 misroutes OR an incomplete initial sync. ' +
-        'Verify on the brain host: `gbrain sources status` then `gbrain sync --source <id> --full`.',
+        'Verify on the brain host: `foresights sources status` then `foresights sync --source <id> --full`.',
       );
 
       await engine.executeRaw('UPDATE persistence_brain SET enabled = true WHERE singleton = 1');
       const managed = await drift();
-      expect(managed.message).toContain('then `gbrain sync --source <id> --no-pull --full`.');
+      expect(managed.message).toContain('then `foresights sync --source <id> --no-pull --full`.');
       expect(managed.message).not.toContain('--include-gitignored');
     } finally {
       await engine.executeRaw('UPDATE persistence_brain SET enabled = false WHERE singleton = 1');

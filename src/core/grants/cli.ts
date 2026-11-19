@@ -99,7 +99,7 @@ function assertProfileKept(result: RescopeGrantArgs, flag: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// F3: `gbrain auth rescope`, one command for legacy tokens and OAuth clients.
+// F3: `foresights auth rescope`, one command for legacy tokens and OAuth clients.
 // ---------------------------------------------------------------------------
 
 export type RescopeCommand =
@@ -173,7 +173,7 @@ export function parseClientRescopeArgs(clientId: string, args: string[]): Rescop
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
     if (TOKEN_ONLY_FLAGS[flag]) {
-      throw new GrantError('invalid_grant', `${flag} applies to legacy tokens only; OAuth client ${clientId} has no such grant in this release (see gbrain auth rescope --help)`, [TOKEN_ONLY_FLAGS[flag]]);
+      throw new GrantError('invalid_grant', `${flag} applies to legacy tokens only; OAuth client ${clientId} has no such grant in this release (see foresights auth rescope --help)`, [TOKEN_ONLY_FLAGS[flag]]);
     }
     if (!['--sources', '--read-sources', '--operations', '--takes-holders'].includes(flag)) {
       legacy.push(flag);

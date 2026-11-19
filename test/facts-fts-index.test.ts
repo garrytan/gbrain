@@ -1,7 +1,7 @@
 /**
  * The facts keyword index (`idx_facts_fts`) is built and replaced without
  * blocking writers or leaving search without an index (facts/fts-index.ts,
- * the facts question-recall index migration, `gbrain reindex-search-vector`).
+ * the facts question-recall index migration, `foresights reindex-search-vector`).
  * Postgres builds CONCURRENTLY; PGLite inline. Every interrupted state (an
  * invalid or stale `_next`, a stray `_old`, a failed build) converges on a
  * rerun, and keyword search finds the facts at every step of the swap.

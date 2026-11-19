@@ -1,8 +1,8 @@
 /**
  * GBRA-133 `session_lane_budget`: how close this role is to the database's session-connection limit, counted across every
- * process (src/core/session-lane.ts). A pooler's per-role session limit (Supavisor `pool_size`) is shared by every gbrain
+ * process (src/core/session-lane.ts). A pooler's per-role session limit (Supavisor `pool_size`) is shared by every foresights
  * process on every host, so a serve, a cron sync, a jobs worker and an MCP stdio server together can exhaust it
- * (`EMAXCONNSESSION`) although each stays inside its own pool. Read-only: it counts backends by name, attributes gbrain's
+ * (`EMAXCONNSESSION`) although each stays inside its own pool. Read-only: it counts backends by name, attributes foresights's
  * to a process kind and host, and warns at 80% of the limit with the process kinds holding the most. On PGLite it is
  * not applicable; without a known limit (a pooler, and `GBRAIN_SESSION_LANE_LIMIT` unset) it reports the counts only.
  */
@@ -25,7 +25,7 @@ async function runSessionLaneBudget(ctx: DoctorContext): Promise<Check[]> {
   try {
     const census = await readSessionLane(engine, [loadConfig()?.database_url ?? '', process.env.GBRAIN_DIRECT_DATABASE_URL ?? ''], process.env);
     const kinds = Object.entries(census.by_kind).sort((a, b) => b[1] - a[1]).map(([kind, n]) => `${kind} ${n}`).join(', ') || 'none';
-    const counts = `${census.gbrain} named by gbrain processes (${kinds})${census.pooler ? `, ${census.pooler} held by the pooler` : ''}${census.other ? `, ${census.other} by other clients` : ''}`;
+    const counts = `${census.gbrain} named by foresights processes (${kinds})${census.pooler ? `, ${census.pooler} held by the pooler` : ''}${census.other ? `, ${census.other} by other clients` : ''}`;
     const details = { ...census, warn_ratio: SESSION_LANE_WARN_RATIO, docs: DOCS };
     if (census.limit === null) {
       checks.push({ name: 'session_lane_budget', status: 'ok', severity: 'info', details,
@@ -38,7 +38,7 @@ async function runSessionLaneBudget(ctx: DoctorContext): Promise<Check[]> {
     if (share >= SESSION_LANE_WARN_RATIO) {
       checks.push({ name: 'session_lane_budget', status: 'warn', details,
         message: `${census.used} of ${census.limit} session connection(s) are in use (${Math.round(share * 100)}%, limit ${where}): ${counts}. `
-          + 'One more process of the usual size exhausts the limit (EMAXCONNSESSION). Run fewer long-running processes on this database (share one gbrain serve --http), '
+          + 'One more process of the usual size exhausts the limit (EMAXCONNSESSION). Run fewer long-running processes on this database (share one foresights serve --http), '
           + 'keep short-lived ones off the session lane (unset GBRAIN_DIRECT_DATABASE_URL and set GBRAIN_DISABLE_DIRECT_POOL=1 for a cron sync or an MCP stdio server), '
           + `lower GBRAIN_DIRECT_POOL_SIZE, or raise the limit (${DOCS}).` });
       return checks;

@@ -5,7 +5,7 @@
  * extension Pi loads into its own Node process, and worker.js, the same
  * resolver worker thread the OpenClaw plugin runs (it rebuilds with harness
  * pi and acknowledges each commit, so a one-shot `pi -p` can wait for it
- * before it exits). Only paths and the gbrain bin are baked in, never pins
+ * before it exits). Only paths and the foresights bin are baked in, never pins
  * or a library path.
  */
 import { openclawSkillWorkerJs } from './openclaw-skill-plugin-code.ts';
@@ -14,10 +14,10 @@ export const PI_SKILL_EXTENSION_CODE_VERSION = 1;
 
 export interface PiLoaderConstants { home: string; libDir: string; statePath: string; logDir: string; workerPath: string; gbrainBin: string; gbrainHomeEnv: string | null }
 
-const LOADER_JS = String.raw`// Managed by gbrain setup pi; a re-run rewrites this file. Remove: gbrain setup pi --skill-loading off
+const LOADER_JS = String.raw`// Managed by foresights setup pi; a re-run rewrites this file. Remove: foresights setup pi --skill-loading off
 // gbrain-skill-resolver for Pi: before each user run, up to a few installed skills that fit the prompt go to the
 // model as one hidden message, and the operator's pinned skills as a system prompt section. Settings come from a
-// data-only state file gbrain writes, re-read when it changes. Every failure lets the run go ahead unchanged, and
+// data-only state file foresights writes, re-read when it changes. Every failure lets the run go ahead unchanged, and
 // no handler waits longer than the deadline (longer on a run whose worker is still starting).
 import { Worker } from 'node:worker_threads';
 import { execFile } from 'node:child_process';
@@ -213,7 +213,7 @@ async function beforeAgentStart(event, ctx) {
 }
 
 export default function gbrainSkillResolver(pi) {
-  pi.registerFlag(FLAG, { description: 'gbrain skill resolver is loaded (managed by gbrain setup pi; this flag changes nothing)', type: 'boolean', default: false });
+  pi.registerFlag(FLAG, { description: 'foresights skill resolver is loaded (managed by foresights setup pi; this flag changes nothing)', type: 'boolean', default: false });
   try { const s = readState(); if (s && s.mode === 'live') ensureWorker(s); } catch { /* the first run starts it */ }
   pi.on('session_start', () => { try { const s = readState(); if (s && s.mode === 'live') { ensureWorker(s); checkSkew(s); } } catch { /* best effort */ } });
   pi.on('before_agent_start', async (event, ctx) => { try { return await beforeAgentStart(event, ctx); } catch { return undefined; } });
@@ -221,7 +221,7 @@ export default function gbrainSkillResolver(pi) {
   pi.on('session_shutdown', async () => { try { await flush(500); await logTail; } catch { /* best effort */ } dropWorker(); });
 }
 
-/** One shadow turn through the worker (gbrain setup pi's self-test, under Node); commits nothing. */
+/** One shadow turn through the worker (foresights setup pi's self-test, under Node); commits nothing. */
 export async function selfTest(message) {
   const s = readState();
   if (!s) return { ok: false, code: 'skill_resolver_state_missing' };
@@ -251,7 +251,7 @@ export function piSkillWorkerJs(): string {
   const base = openclawSkillWorkerJs();
   if (!base.includes(OPENCLAW_REBUILD) || !base.includes(OPENCLAW_COMMIT)) throw new Error('the OpenClaw resolver worker changed shape; update piSkillWorkerJs');
   return base
-    .replace('// Managed by gbrain setup openclaw (gbrain-skill-resolver worker thread)', '// Managed by gbrain setup pi (gbrain-skill-resolver worker thread)')
+    .replace('// Managed by foresights setup openclaw (gbrain-skill-resolver worker thread)', '// Managed by foresights setup pi (gbrain-skill-resolver worker thread)')
     .replace(OPENCLAW_REBUILD, "harness: 'pi' }, { home })")
     .replace(OPENCLAW_COMMIT, "const ack = () => parentPort.postMessage({ type: 'committed', id: m.id });\n    if (p && loaded.lib) loaded.lib.commitSessionAsync(home, p.key, p.delta).then(ack, ack); else ack();\n    return;");
 }

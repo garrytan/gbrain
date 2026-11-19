@@ -1,5 +1,5 @@
 /**
- * `gbrain decide judge-agreement --suite <longmemeval|grounding> --input <file>`
+ * `foresights decide judge-agreement --suite <longmemeval|grounding> --input <file>`
  * (eval-only, local CLI, no brain needed): Jev answers one probability
  * question per item beside an existing LLM judge's verdict, and the report
  * gives n, raw agreement, Cohen's kappa with a 95% CI, the confusion matrix,
@@ -8,7 +8,7 @@
  * agreement; it never substitutes Jev for the runtime judge.
  *
  * Inputs:
- *   longmemeval  `gbrain eval longmemeval --judge` output JSONL: rows with
+ *   longmemeval  `foresights eval longmemeval --judge` output JSONL: rows with
  *                question, answer, hypothesis and a settled judge_correct
  *                (judge_error / judge_skipped / unjudged rows are skipped).
  *   grounding    grounding-labels JSONL {id, page, claim, sources|transcript|
@@ -115,7 +115,7 @@ interface ItemResult { id: string; slice?: string; reference: boolean; p: number
 export async function runJudgeAgreement(args: string[]): Promise<number> {
   const suite = flagValue(args, '--suite') as Suite | undefined;
   const input = flagValue(args, '--input');
-  if ((suite !== 'longmemeval' && suite !== 'grounding') || !input) { console.error(`Usage: gbrain decide ${JUDGE_AGREEMENT_USAGE}`); return 1; }
+  if ((suite !== 'longmemeval' && suite !== 'grounding') || !input) { console.error(`Usage: foresights decide ${JUDGE_AGREEMENT_USAGE}`); return 1; }
   const provider = flagValue(args, '--provider') ?? DEFAULT_TYPESAFE_PROVIDER;
   if (!isValidProvider(provider) || provider === 'none') { console.error(`--provider must be typesafe:<model> or llm:<provider:model> (got ${provider})`); return 1; }
   const threshold = Number(flagValue(args, '--threshold') ?? '0.5');

@@ -5,7 +5,7 @@
  *    { kind: "fresh-install", expected_phases: ["import.files", ...], ... }
  *
  * The harness reads scenario.json to know which phases to assert from
- * gbrain's --progress-json events. Pure local fs; no DB, no network.
+ * foresights's --progress-json events. Pure local fs; no DB, no network.
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
@@ -155,7 +155,7 @@ export function loadScenario(name: string, root?: string): ScenarioConfig {
       if (typeof o.query !== 'string' || !o.query.trim()) {
         throw new Error(`scenario ${JSON.stringify(name)}: oracle.query must be a non-empty string`);
       }
-      // The query lands in gbrain argv — a leading dash would parse as a CLI
+      // The query lands in foresights argv — a leading dash would parse as a CLI
       // flag instead of a query (scenario packs load from arbitrary dirs via
       // the scenarios-dir env override, so treat this as a trust boundary).
       if (o.query.trim().startsWith('-')) {

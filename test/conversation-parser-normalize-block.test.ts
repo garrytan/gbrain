@@ -5,7 +5,7 @@ import {
 } from '../src/core/conversation-parser/normalize-block.ts';
 import { parseConversation } from '../src/core/conversation-parser/parse.ts';
 
-// A realistic Slack-collector page body (the format gbrain's own collector emits).
+// A realistic Slack-collector page body (the format foresights's own collector emits).
 const SLACK_DM = `# DM (group) with Hugh, Karyshma, Theo — 2026-06-15
 
 - **Theo** (Mon 11:18)

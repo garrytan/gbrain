@@ -61,7 +61,7 @@ describe('recipe: minimax', () => {
     expect(dimsProviderOptions('openai-compatible', 'nomic-embed-text', 768)).toBeUndefined();
   });
 
-  test('chat touchpoint declared (#1977) so assertTouchpoint permits gbrain think', () => {
+  test('chat touchpoint declared (#1977) so assertTouchpoint permits foresights think', () => {
     const r = getRecipe('minimax')!;
     expect(r.touchpoints.chat).toBeDefined();
     expect(r.touchpoints.chat!.models).toContain('MiniMax-M3');

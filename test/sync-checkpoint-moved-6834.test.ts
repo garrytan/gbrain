@@ -3,7 +3,7 @@
  *
  * The checkpoint request names the bookkeeping slug `__managed_sync_checkpoint__`; its publication is a compare-and-swap
  * on `last_commit` (sync-prepare.ts `applyManagedSyncCheckpoint`). When another run of the source checkpointed first (an
- * older gbrain kept one cursor per writer and option set, so two cursors of one source raced to the same target), the
+ * older foresights kept one cursor per writer and option set, so two cursors of one source raced to the same target), the
  * refusal was `revision_conflict` "The source checkpoint changed during this sync." against a page that does not exist,
  * every plain sync resumed the same cursor into the same refusal, and no repair listed it.
  *
@@ -11,7 +11,7 @@
  *   - the source already stands at the run's target: the next plain sync finishes the run (a checkpoint marked overtaken),
  *     both for a fresh race and for a brain that already carries the refused receipt and failure row;
  *   - the source moved anywhere else: the plain sync stays blocked, but the receipt, doctor (sync_failures and
- *     sync_freshness) and the terminal-failure action name no page; `gbrain repair managed-sync-orphans` lists the cursor
+ *     sync_freshness) and the terminal-failure action name no page; `foresights repair managed-sync-orphans` lists the cursor
  *     as `checkpoint_moved`, keeps it when the rule no longer holds at apply time, retires it otherwise, and the next
  *     plain sync discovers from the recorded commit;
  *   - ordinary page revision conflicts keep their diagnosis and action.

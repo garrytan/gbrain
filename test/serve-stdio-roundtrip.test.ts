@@ -1,12 +1,12 @@
 /**
- * E2E for the "standalone from nothing" funnel: `gbrain init --pglite` →
- * `gbrain serve` (stdio) wired into a coding agent as an MCP subprocess.
+ * E2E for the "standalone from nothing" funnel: `foresights init --pglite` →
+ * `foresights serve` (stdio) wired into a coding agent as an MCP subprocess.
  *
  * This is the canonical local path the docs encourage for Claude Code / Codex
  * users with no remote brain:
  *
- *     claude mcp add gbrain -- gbrain serve
- *     codex  mcp add gbrain -- gbrain serve
+ *     claude mcp add foresights -- foresights serve
+ *     codex  mcp add foresights -- foresights serve
  *
  * The `connect`/bearer E2E proves the REMOTE (HTTP) funnel. Nothing proved the
  * LOCAL stdio funnel end-to-end: that a freshly-init'd PGLite brain, served
@@ -15,10 +15,10 @@
  * serve-stdio-lifecycle unit test only covers shutdown signalling.
  *
  * No Postgres / Docker. PGLite, hermetic temp HOME. Drives the real
- * StdioClientTransport, so the MCP SDK spawns `gbrain serve` for us, runs the
+ * StdioClientTransport, so the MCP SDK spawns `foresights serve` for us, runs the
  * `initialize` handshake, and round-trips `tools/list` + `tools/call`.
  *
- * The second session (v0.45.7) covers `gbrain serve --surface verbs`: the
+ * The second session (v0.45.7) covers `foresights serve --surface verbs`: the
  * frozen 7-verb MEMORY_VERBS surface over the same real stdio transport —
  * exact tool list, the two ambient-recall verbs (context_pack + delta),
  * fail-closed dispatch on hidden ops, and the delta session cursor advancing
@@ -110,7 +110,7 @@ describe('serve stdio round-trip E2E (local PGLite → real MCP tool calls)', ()
     execFixture(['run', 'src/cli.ts', 'sources', 'add', 'federated-source', '--path', federatedNotes, '--federated', '--force'], env);
     execFixture(['run', 'src/cli.ts', 'import', federatedNotes, '--no-embed', '--source-id', 'federated-source'], env);
 
-    // 3. Let the MCP SDK spawn `gbrain serve` (stdio) and run the initialize
+    // 3. Let the MCP SDK spawn `foresights serve` (stdio) and run the initialize
     //    handshake with the opt-in idle timeout enabled. This pins the
     //    production wrapper shape that previously let the timeout's activity
     //    listener consume initialize before the SDK transport attached.

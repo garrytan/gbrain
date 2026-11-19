@@ -31,7 +31,7 @@ export interface InstallOptions { harness: string; name?: string; root?: string;
   instructions?: boolean;
   /** The spring-loaded skills index beside the brain-first block (off by default; GBRAIN_SKILL_LOADING and the recorded choice apply). */
   skillLoading?: SkillLoading;
-  /** The absolute gbrain the native-config index names (default: this gbrain, else the one on PATH). */
+  /** The absolute foresights the native-config index names (default: this foresights, else the one on PATH). */
   gbrainBin?: string }
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const readJson = (path: string): Record<string, any> => {
@@ -66,13 +66,13 @@ function committingGitTree(path: string): string | null {
 
 /** Where an installed bearer token lives and how to replace it, never the token itself (#5775). */
 export function inlineTokenReceipt(c: HarnessCredentials, harness: string, name: string, configPath: string, reload: string, credentialsFile?: string) {
-  const renew = ['gbrain connect', shellQuote(c.mcp_url), '--harness', shellQuote(harness), '--credentials-file',
+  const renew = ['foresights connect', shellQuote(c.mcp_url), '--harness', shellQuote(harness), '--credentials-file',
     credentialsFile ? shellQuote(credentialsFile) : '<private-handoff-file>', ...(name === 'gbrain' ? [] : ['--name', shellQuote(name)]), '--install', ...(c.client_secret ? ['--fresh-token'] : [])].join(' ');
-  const invalidate = (apply: string) => `gbrain mcp admin invalidate-tokens ${shellQuote(c.client_id)}${apply} --url ${shellQuote(c.mcp_url)} --admin-token-file <owner-admin-token-file> --json`;
+  const invalidate = (apply: string) => `foresights mcp admin invalidate-tokens ${shellQuote(c.client_id)}${apply} --url ${shellQuote(c.mcp_url)} --admin-token-file <owner-admin-token-file> --json`;
   const tree = committingGitTree(configPath);
   // A cached unexpired handoff token may be the invalidated one, so renewal always exchanges a new token.
   const replace = c.client_secret ? `Write a freshly exchanged token here: ${renew}`
-    : `This handoff cannot exchange a new token; get a new private handoff from the brain owner (gbrain mcp grant on the brain host), then run: ${renew}`;
+    : `This handoff cannot exchange a new token; get a new private handoff from the brain owner (foresights mcp grant on the brain host), then run: ${renew}`;
   return {
     token_storage: 'inline' as const, config_path: configPath, renew_command: renew,
     if_exposed: {
@@ -86,7 +86,7 @@ export function inlineTokenReceipt(c: HarnessCredentials, harness: string, name:
 }
 
 /**
- * #6799: the hash gbrain owns a native entry by. A Codex entry's `tools` table
+ * #6799: the hash foresights owns a native entry by. A Codex entry's `tools` table
  * holds Codex's own per-tool settings ("always allow"), so it is left out;
  * every other key, including any unexpected one, stays covered.
  */
@@ -189,16 +189,16 @@ export async function installHarnessConnection(c: HarnessCredentials, opts: Inst
     }
     const beside = instructionFileBeside(adapter.connection, configPath);
     const instructions = installerBrainFirst({ target: brainFirstTargetAt(beside.harness, beside.path), access: { kind: 'mcp', server: name },
-      writer: `gbrain connect --harness ${adapter.id} --install`, instructions: opts.instructions, remove: opts.remove });
+      writer: `foresights connect --harness ${adapter.id} --install`, instructions: opts.instructions, remove: opts.remove });
     const keptForOther = opts.remove && readBrainFirstLedger().some((b) => b.harness === beside.harness && b.path === beside.path && b.status === 'installed' && b.access.kind === 'mcp' && b.access.server !== name);
     const skills = keptForOther
       ? { harness: beside.harness, path: beside.path, decision: { value: 'off', source: 'flag' }, action: 'skip', state_before: inspectSkillsBlock(beside.path).state, detail: `the skills index in ${beside.path} sits beside another connection's brain-first block, so removing \`${name}\` leaves it` } satisfies SkillsBlockOutcome
       : installerSkillsBlock({ target: brainFirstTargetAt(beside.harness, beside.path), launcher: opts.gbrainBin ?? indexLauncher() ?? 'gbrain',
-      writer: `gbrain connect --harness ${adapter.id} --install`, brainFirstDeclined: instructions.decision.value === 'declined', skillLoading: opts.skillLoading, audience: 'downstream', remove: opts.remove });
+      writer: `foresights connect --harness ${adapter.id} --install`, brainFirstDeclined: instructions.decision.value === 'declined', skillLoading: opts.skillLoading, audience: 'downstream', remove: opts.remove });
     const skillsFailed = skillsOutcomeFailed(skills) ? { skills_failed: true } : {};
     const turn = installerTurnHook({ harness: beside.harness, accepted: !opts.remove && instructions.decision.value === 'accepted' && instructions.action !== 'preserve',
       gbrainBin: resolveGbrainBin(), gbrainHome: process.env.GBRAIN_HOME?.trim() || undefined, paths: opts.configPath ? turnHookPathsBeside(adapter.connection, configPath) : undefined,
-      rerun: `gbrain setup ${beside.harness} --instructions-only` });
+      rerun: `foresights setup ${beside.harness} --instructions-only` });
     const turn_hook = { ...turn.outcome, ...(turn.verdict ? { check: turn.verdict } : {}),
       ...(turn.verdict && !turn.verdict.ok ? { error: { code: 'turn_hook_not_loaded', reason: turn.verdict.reason, message: turn.verdict.message, fix: turnHookFix(beside.harness, ['gbrain', 'setup', beside.harness, '--instructions-only']) } } : {}) };
     if (opts.remove) {
@@ -242,13 +242,13 @@ async function installThinClient(c: HarnessCredentials, opts: InstallOptions, co
     const launcher = join(root, 'bin', 'gbrain');
     const brainFirst = resolveBrainFirstDecision(opts.instructions, prior.brain_first_instructions === 'declined' ? { status: 'declined' } : undefined).value;
     const skillLoading = opts.remove || brainFirst === 'declined' ? 'off' : resolveSkillLoading(opts.skillLoading, isSkillLoading(prior.skill_loading) ? { mode: prior.skill_loading } : undefined).value;
-    const rerun = `gbrain connect ${shellQuote(c.mcp_url)} --harness ${shellQuote(opts.harness)} --credentials-file <private-handoff-file> --root ${shellQuote(root)} --install`;
+    const rerun = `foresights connect ${shellQuote(c.mcp_url)} --harness ${shellQuote(opts.harness)} --credentials-file <private-handoff-file> --root ${shellQuote(root)} --install`;
     const skillsIndex = skillLoading === 'spring' ? renderSkillsSnippet(opts.harness, launcher, 'downstream', { refresh: rerun, optOut: `${rerun} --skill-loading off` }) : '';
-    const instructionsHead = `${brainFirst === 'declined' ? '' : renderBrainFirstSnippet(opts.harness, { kind: 'cli', launcher }, 're-run gbrain connect with --no-instructions')}${skillsIndex}`;
+    const instructionsHead = `${brainFirst === 'declined' ? '' : renderBrainFirstSnippet(opts.harness, { kind: 'cli', launcher }, 're-run foresights connect with --no-instructions')}${skillsIndex}`;
     const files = [
       { path: '.gbrain/config.json', text: `${JSON.stringify(config, null, 2)}\n`, mode: 0o600 },
       { path: 'bin/gbrain', text: renderAgentLauncher({ root, bunPath: process.execPath, cliPath: sourceCli.includes('$bunfs') ? undefined : sourceCli, mode: 'thin-client',
-        repairHint: `Reinstall GBrain in this environment, then repeat: gbrain connect ${shellQuote(c.mcp_url)} --harness ${shellQuote(opts.harness)} --credentials-file <private-handoff-file> --root ${shellQuote(root)} --install` }), mode: 0o700 },
+        repairHint: `Reinstall Foresights in this environment, then repeat: foresights connect ${shellQuote(c.mcp_url)} --harness ${shellQuote(opts.harness)} --credentials-file <private-handoff-file> --root ${shellQuote(root)} --install` }), mode: 0o700 },
       { path: 'GBRAIN-INSTRUCTIONS.md', text: `${instructionsHead ? `${instructionsHead}\n` : ''}${GBRAIN_MCP_INSTRUCTIONS}\n\nRun commands with the absolute launcher: ${launcher}\nThis is a hosted connection. The host grant controls sources and permissions.\n`, mode: 0o600 },
     ];
     const owned: Record<string, string> = prior.owned_files ?? {};

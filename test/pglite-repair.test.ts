@@ -339,7 +339,7 @@ describe('attemptWalRepairAndRetry — the never-throws engine seam', () => {
     } finally {
       process.stderr.write = origWrite;
     }
-    expect(stderrChunks.join('')).toContain('gbrain pglite-repair');
+    expect(stderrChunks.join('')).toContain('foresights pglite-repair');
     expect(readRepairSidecar(dir).episodeStartedAt).toBeNull();
     expect(readRepairSidecar(dir).attempts.at(-1)?.outcome).toBe('repaired');
   });
@@ -537,7 +537,7 @@ describe('inspectPgliteDataDir', () => {
     mkdirSync(join(dir, '.gbrain-lock'), { recursive: true });
     writeFileSync(
       join(dir, '.gbrain-lock', 'lock'),
-      JSON.stringify({ pid: process.pid, acquired_at: Date.now(), refreshed_at: Date.now(), command: 'gbrain embed', subcommand: 'embed' }),
+      JSON.stringify({ pid: process.pid, acquired_at: Date.now(), refreshed_at: Date.now(), command: 'foresights embed', subcommand: 'embed' }),
     );
     const diag = inspectPgliteDataDir(dir);
     expect(diag.verdict).toBe('locked');

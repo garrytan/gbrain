@@ -1,5 +1,5 @@
 /**
- * Self-describing slow-read documents (core/read-heartbeat.ts) and the bounded `gbrain diag` bundle.
+ * Self-describing slow-read documents (core/read-heartbeat.ts) and the bounded `foresights diag` bundle.
  *
  * 1. Protects: a slow read's --json document gains elapsed_ms and complete, and complete is false with each field
  *    named when a field was not read (a `*_read` with status not_read), a listing is paged or capped, a budget stopped
@@ -28,7 +28,7 @@ describe('withReadMeta', () => {
   test('each marker of a cut makes it incomplete and is named', () => {
     beginSlowRead('sync status for source alpha-example', quiet);
     const doc = withReadMeta({
-      sources: [{ id: 'alpha-example', holds_read: { status: 'not_read', fix: 'gbrain sync status --detail' } }],
+      sources: [{ id: 'alpha-example', holds_read: { status: 'not_read', fix: 'foresights sync status --detail' } }],
       git_holds: { count: 40, items_complete: false },
       budget_hit: true,
       checks: [{ name: 'a', details: { health: 'unknown', reason: 'budget' } }, { name: 'b', status: 'ok' }],
@@ -60,7 +60,7 @@ describe('withReadMeta', () => {
   });
 });
 
-describe('gbrain diag', () => {
+describe('foresights diag', () => {
   let engine: PGLiteEngine;
   beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }, 120_000);
   afterAll(async () => { await engine.disconnect(); });
@@ -81,7 +81,7 @@ describe('gbrain diag', () => {
   test('the search section times one search and reports its result count, never its results', async () => {
     const makeContext = async (e: BrainEngine) => ({ engine: e, config: { engine: 'pglite', embedding_disabled: true }, remote: false, dryRun: false, sourceId: 'default',
       logger: { info() {}, warn() {}, error() {} } }) as never;
-    await engine.putPage('notes/probe', { type: 'note', title: 'Probe', compiled_truth: 'gbrain diagnostic probe text', timeline: '', frontmatter: {} }, { sourceId: 'default' });
+    await engine.putPage('notes/probe', { type: 'note', title: 'Probe', compiled_truth: 'foresights diagnostic probe text', timeline: '', frontmatter: {} }, { sourceId: 'default' });
     const doc = await collectDiag(engine, { budgetMs: 30_000, query: DIAG_PROBE_QUERY, makeContext }) as Record<string, Record<string, unknown>>;
     expect(doc.search).toMatchObject({ status: 'ok', query: DIAG_PROBE_QUERY });
     expect(typeof doc.search!.result_count).toBe('number');

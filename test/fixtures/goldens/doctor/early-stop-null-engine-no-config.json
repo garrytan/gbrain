@@ -16,7 +16,7 @@
         "policy_skill_installed": false
       },
       "elapsed_ms": "<volatile>",
-      "message": "engine unknown; enabled but NO resolve path exists right now: the IPC socket is only bound by a running `gbrain serve` (stdio or --http) — until one is up, hooks/reflex degrade to no_serve on this brain (host capability may still supply pointers; policy skill carries otherwise) — policy skill not installed; run `gbrain integrations install retrieval-reflex --target <host-repo>`",
+      "message": "engine unknown; enabled but NO resolve path exists right now: the IPC socket is only bound by a running `foresights serve` (stdio or --http) — until one is up, hooks/reflex degrade to no_serve on this brain (host capability may still supply pointers; policy skill carries otherwise) — policy skill not installed; run `foresights integrations install retrieval-reflex --target <host-repo>`",
       "name": "retrieval_reflex_health",
       "status": "warn"
     },
@@ -116,7 +116,7 @@
         ]
       },
       "elapsed_ms": "<volatile>",
-      "message": "65 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +57 more. Add them with `gbrain skillpack sync`.",
+      "message": "65 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +57 more. Add them with `foresights skillpack sync`.",
       "name": "skill_currency",
       "status": "warn"
     },
@@ -181,7 +181,7 @@
     },
     {
       "elapsed_ms": "<volatile>",
-      "message": "disabled (opt-in). Enable with: gbrain config set autopilot.nightly_quality_probe.enabled true",
+      "message": "disabled (opt-in). Enable with: foresights config set autopilot.nightly_quality_probe.enabled true",
       "name": "nightly_quality_probe_health",
       "status": "ok"
     },
@@ -193,13 +193,13 @@
     },
     {
       "elapsed_ms": "<volatile>",
-      "message": "disabled (opt-in; default-on only for search.mode=tokenmax). Enable with: `gbrain config set autopilot.conversation_parser_probe.enabled true`",
+      "message": "disabled (opt-in; default-on only for search.mode=tokenmax). Enable with: `foresights config set autopilot.conversation_parser_probe.enabled true`",
       "name": "conversation_parser_probe_health",
       "status": "ok"
     },
     {
       "elapsed_ms": "<volatile>",
-      "message": "gbrain home is outside any enclosing git worktree.",
+      "message": "foresights home is outside any enclosing git worktree.",
       "name": "home_dir_in_worktree",
       "status": "ok"
     },
@@ -215,7 +215,7 @@
         "shadows": []
       },
       "elapsed_ms": "<volatile>",
-      "message": "No embedding key is set here (VOYAGE_API_KEY or voyage_api_key). No environment variable overrides a different config-plane provider key. This check sees only the environment `gbrain doctor` runs in; a daemon (gbrain serve, autopilot) has its own, and reports a mismatch in its log with a startup warning or embedding_auth_failed.",
+      "message": "No embedding key is set here (VOYAGE_API_KEY or voyage_api_key). No environment variable overrides a different config-plane provider key. This check sees only the environment `foresights doctor` runs in; a daemon (foresights serve, autopilot) has its own, and reports a mismatch in its log with a startup warning or embedding_auth_failed.",
       "name": "embedding_key_source",
       "status": "ok"
     },
@@ -225,7 +225,7 @@
         "provider_env": []
       },
       "elapsed_ms": "<volatile>",
-      "message": "No gbrain setup receipt records a provider-use decision for this install; provider calls follow the configured keys.",
+      "message": "No foresights setup receipt records a provider-use decision for this install; provider calls follow the configured keys.",
       "name": "provider_consent",
       "readiness_state": "not_applicable",
       "severity": "info",
@@ -243,8 +243,8 @@
         ],
         "docs": "docs/protocol/MEMORY_VERBS_v1.md#install-the-4-command-quickstart",
         "requires_exclusive": false,
-        "user_message": "Which agent app should get gbrain memory? The install guide has a one-line command for each.",
-        "why": "For Claude Code or Codex, run `gbrain setup claude-code` or `gbrain setup codex` (it registers serve behind gbrain's launcher, so the session directory's bunfig.toml and .env never load). For any other host, register `<absolute path to gbrain> serve --surface starter --advertise verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+        "user_message": "Which agent app should get foresights memory? The install guide has a one-line command for each.",
+        "why": "For Claude Code or Codex, run `foresights setup claude-code` or `foresights setup codex` (it registers serve behind foresights's launcher, so the session directory's bunfig.toml and .env never load). For any other host, register `<absolute path to foresights> serve --surface starter --advertise verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
       },
       "message": "No agent harness was detected. Wire one when the user picks an agent app.",
       "name": "harness_wiring",
@@ -277,7 +277,7 @@
         ],
         "consent": [],
         "requires_exclusive": false,
-        "user_message": "There is no gbrain brain on this machine yet. Shall I create a local one?",
+        "user_message": "There is no foresights brain on this machine yet. Shall I create a local one?",
         "verify": {
           "argv": [
             "gbrain",
@@ -289,7 +289,7 @@
         },
         "why": "No brain is configured on this machine; init creates a local PGLite brain (keyless unless the user adds a provider key)."
       },
-      "message": "No database configured (filesystem checks only; no URL in the environment or in <home>/.gbrain/config.json). Set GBRAIN_DATABASE_URL or run `gbrain init`.",
+      "message": "No database configured (filesystem checks only; no URL in the environment or in <home>/.gbrain/config.json). Set GBRAIN_DATABASE_URL or run `foresights init`.",
       "name": "connection",
       "readiness_state": "unknown",
       "status": "warn"

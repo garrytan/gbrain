@@ -37,7 +37,7 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
   const invalid = (message: string, suggestion: string) => opError('invalid_params', message, suggestion, {
     fix: readFix(`Prints the managed source administration forms and their options.`, { argv: ['gbrain', 'sources', ...(known ? [verb] : []), '--help'] }),
   });
-  if (!known) throw invalid('Unknown source lifecycle command.', `Use one of gbrain sources ${SOURCE_LIFECYCLE_COMMANDS.join(', ')}.`);
+  if (!known) throw invalid('Unknown source lifecycle command.', `Use one of foresights sources ${SOURCE_LIFECYCLE_COMMANDS.join(', ')}.`);
   const values = new Map<string, string>();
   const flags = new Set<string>();
   const positionals: string[] = [];
@@ -58,16 +58,16 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
       if (equal >= 0) throw invalid(`--${key} does not accept a value.`, `Write --${key} on its own, without =value; leave it out to keep it off.`);
       flags.add(key); continue;
     }
-    if (!valued.has(key)) throw invalid(`Unknown option --${key}.`, `Remove --${key}; gbrain sources ${verb} --help lists the options sources ${verb} accepts.`);
+    if (!valued.has(key)) throw invalid(`Unknown option --${key}.`, `Remove --${key}; foresights sources ${verb} --help lists the options sources ${verb} accepts.`);
     const value = equal < 0 ? rest[++i] : token.slice(equal + 1);
     if (value === undefined || value === '' || value.startsWith('--')) throw invalid(`--${key} requires a value.`, `Give --${key} its value right after it, as --${key} VALUE or --${key}=VALUE.`);
     values.set(key, value);
   }
   const id = positionals.shift();
   if (!id && verb === 'purge') throw invalid('Managed purge requires an explicit archived source ID. Run sources archived, then sources purge <id> --confirm-destructive.',
-    'Run gbrain sources archived --json to list the archived source ids, then gbrain sources purge with that id and --confirm-destructive after the user confirms.');
+    'Run foresights sources archived --json to list the archived source ids, then foresights sources purge with that id and --confirm-destructive after the user confirms.');
   if (!id || !isValidSourceId(id)) throw invalid('An explicit valid source ID is required.',
-    `Name the source id right after sources ${verb}: 1-32 lowercase letters, digits and inner hyphens, e.g. gbrain sources ${verb} notes.`);
+    `Name the source id right after sources ${verb}: 1-32 lowercase letters, digits and inner hyphens, e.g. foresights sources ${verb} notes.`);
   const requestId = values.get('request-id') ?? generatedId;
   const incarnation = values.get('expected-incarnation');
   if (!isWriteRequestId(requestId) || incarnation !== undefined && !isWriteRequestId(incarnation)) {
@@ -87,10 +87,10 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
     `Remove --${key}; sources ${verb} accepts ${[...allowed].map(name => `--${name}`).join(', ')}.`);
   if (verb === 'set-path') {
     if (positionals.length && values.has('path')) throw invalid('Specify the set-path target once.',
-      `Give the successor directory once: gbrain sources set-path ${id} DIRECTORY, or --path DIRECTORY, not both.`);
+      `Give the successor directory once: foresights sources set-path ${id} DIRECTORY, or --path DIRECTORY, not both.`);
     const target = positionals.shift() ?? values.get('path');
     if (!target) throw invalid('set-path requires the verified successor directory.',
-      `Pass the directory that now holds source ${id}'s checkout: gbrain sources set-path ${id} DIRECTORY (--clear clears a connector source's stale local_path, or any relative one).`);
+      `Pass the directory that now holds source ${id}'s checkout: foresights sources set-path ${id} DIRECTORY (--clear clears a connector source's stale local_path, or any relative one).`);
     params.path = absolute(target);
   }
   if (positionals.length) throw invalid(`Unexpected argument: ${positionals[0]}.`, `Remove ${positionals[0]}; sources ${verb} takes only the source id${verb === 'set-path' ? ' and the directory' : ''} as arguments.`);

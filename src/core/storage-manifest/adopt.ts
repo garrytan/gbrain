@@ -1,5 +1,5 @@
 /**
- * `gbrain storage adopt` (GST-1943): moves interim storage records onto the shelf. An interim record is a page of type
+ * `foresights storage adopt` (GST-1943): moves interim storage records onto the shelf. An interim record is a page of type
  * `stored-object` under a slug prefix (default `storage-manifest/`) in an ordinary source, written before the shelf
  * existed, holding its record as JSON in a fenced json block under a `## Record` heading (other sections, such as
  * `## Restore`, are not read; the finalize preview names them). Records use the draft schema: card fields, plus
@@ -53,7 +53,7 @@ export interface AdoptPlan {
 }
 export type SideEffects = 'none' | 'partial' | 'complete';
 export interface StepFailure { item: string; code: string; message: string }
-/** A write gbrain accepted that has not committed yet: poll its receipt; submitting it again is never needed. */
+/** A write foresights accepted that has not committed yet: poll its receipt; submitting it again is never needed. */
 export interface PendingWrite { item: string; request_id: string; state: string; poll: string[] }
 
 /** The pending write an error reports (an accepted, non-terminal receipt), or null for any other error. */
@@ -189,7 +189,7 @@ function originalLabels(row: InterimAccess, frontmatter: Record<string, unknown>
   const raw = typeof row.folder_readers === 'string' ? JSON.parse(row.folder_readers) as unknown : row.folder_readers;
   const rules = Array.isArray(raw) ? raw as string[][] : [];
   if (row.access_pending || rules.length !== (row.folder_rule_ids?.length ?? 0)) {
-    return { labels: null, problem: invalidRecord('access_pending', 'an access rule over the page is still being applied, so who may read it is not settled (gbrain access status names the rule)') };
+    return { labels: null, problem: invalidRecord('access_pending', 'an access rule over the page is still being applied, so who may read it is not settled (foresights access status names the rule)') };
   }
   if (!rules.length) return { labels, problem: null };
   const lists = [...(hasReaders(frontmatter) ? [normalizeReaders(frontmatter)!] : []), ...rules];
@@ -240,7 +240,7 @@ async function assertInterimSource(ctx: OperationContext, opts: AdoptOptions): P
     'Pass --source with the source that holds the interim pages (the default is default); nothing was changed.');
   const rows = await ctx.engine.executeRaw('SELECT 1 FROM sources WHERE id = $1 AND archived IS NOT TRUE', [opts.sourceId]);
   if (!rows.length) throw opError('invalid_params', `No active source ${opts.sourceId}; nothing was changed.`,
-    'Pass --source with an id gbrain sources list shows.', { fix: readFix('Lists the sources of this brain.', { argv: ['gbrain', 'sources', 'list', '--json'] }) });
+    'Pass --source with an id foresights sources list shows.', { fix: readFix('Lists the sources of this brain.', { argv: ['gbrain', 'sources', 'list', '--json'] }) });
 }
 
 /** Preview: what apply would do. Writes nothing; refuses storage_manifest_missing on a brain with a Git checkout until storage init has run. */
@@ -292,7 +292,7 @@ function blockedRefusal(opts: AdoptOptions, blocked: AdoptEntry[]): OperationErr
     first.problem!.code === 'storage_record_secret'
       ? 'Remove the credential from the record on each named page (the restore skill reads credentials from its own environment); a field refused only for its name (credential_key) that holds no credential can instead be renamed to end in _id, _ref or another suffix the rule passes. Then preview the adopt again.'
       : first.problem!.reason === 'remote_written'
-        ? 'Adopt never registers a record a remote client wrote. Check each named page yourself and register the item with gbrain storage-register, or leave it as it is.'
+        ? 'Adopt never registers a record a remote client wrote. Check each named page yourself and register the item with foresights storage-register, or leave it as it is.'
         : 'Fix the record on each named page so it is a complete card, then preview the adopt again.',
     { reason: first.problem!.reason, fix: previewFix(opts) });
 }
@@ -392,10 +392,10 @@ export async function previewFinalize(ctx: OperationContext, opts: AdoptOptions)
     entries: entries.filter((e) => e.state !== 'not_adopted').map((e) => ({ slug: e.slug, card_id: e.card_id, unverified: e.state === 'unverified', content: e.content })) }));
   const summary = [`${count('delete')} adopted original(s) to soft-delete (restorable for 72 hours), ${count('deleted')} already deleted, ${count('unverified')} whose card is missing or differs (in content or access labels), ${count('not_adopted')} not adopted yet (kept).`];
   const dropping = entries.filter((e) => e.state === 'delete' && e.other_sections);
-  if (dropping.length) summary.push(`${dropping.length} original(s) to delete hold sections the card does not carry (${[...new Set(dropping.flatMap((e) => e.other_sections!))].join(', ')}): show the user, and move what matters into the card with gbrain storage-update before finalizing.`);
+  if (dropping.length) summary.push(`${dropping.length} original(s) to delete hold sections the card does not carry (${[...new Set(dropping.flatMap((e) => e.other_sections!))].join(', ')}): show the user, and move what matters into the card with foresights storage-update before finalizing.`);
   const long = entries.filter((e) => e.state === 'delete' && e.unread_tail).map((e) => e.slug);
-  if (long.length) summary.push(`${long.length} original(s) to delete are longer than 64 KiB, so sections past that point were not read (${long.slice(0, 5).join(', ')}): read each with gbrain get before finalizing.`);
-  if (count('unverified')) summary.push('Finalize refuses while an adopted original has no matching card; compare it with gbrain storage-get and fix the card or the record first.');
+  if (long.length) summary.push(`${long.length} original(s) to delete are longer than 64 KiB, so sections past that point were not read (${long.slice(0, 5).join(', ')}): read each with foresights get before finalizing.`);
+  if (count('unverified')) summary.push('Finalize refuses while an adopted original has no matching card; compare it with foresights storage-get and fix the card or the record first.');
   const apply = count('unverified') || !count('delete') ? undefined : [...adoptArgv(opts), '--finalize', '--expect', plan_hash];
   return { action: 'finalize', dry_run: true, source_id: opts.sourceId, prefix: opts.prefix, entries, plan_hash, summary, ...(apply ? { apply } : {}) };
 }
@@ -407,7 +407,7 @@ export async function applyFinalize(ctx: OperationContext, opts: AdoptOptions & 
   const unverified = plan.entries.filter((e) => e.state === 'unverified');
   if (unverified.length) {
     throw opError('storage_adopt_unverified', `${unverified.length} adopted original(s) have no matching card on the storage shelf: ${unverified.slice(0, 5).map((e) => e.slug).join(', ')}; nothing was deleted.`,
-      'Compare each original with its card (gbrain storage-get with the card id the finalize preview lists), fix the card or the record, then preview finalize again.', { fix: previewFix(opts, true) });
+      'Compare each original with its card (foresights storage-get with the card id the finalize preview lists), fix the card or the record, then preview finalize again.', { fix: previewFix(opts, true) });
   }
   const deleted: string[] = [];
   const pending: PendingWrite[] = [];

@@ -1,5 +1,5 @@
 /**
- * #6650 §1.10 on real Postgres: a `gbrain repair stuck-recovery` apply SIGKILLed at each of its fault seams (while it
+ * #6650 §1.10 on real Postgres: a `foresights repair stuck-recovery` apply SIGKILLed at each of its fault seams (while it
  * holds the native worktree lock) resumes to the same end state, a write abandoned by `--keep disk` keeps its recovery
  * record unchanged for the unchanged resident recovery pass to clear, and an identical apply replays.
  */
@@ -22,7 +22,7 @@ import { AFTER, EDITED, PRIOR, stuckRecoveryFixture } from '../helpers/stuck-rec
 const url = process.env.DATABASE_URL;
 const WORKER = resolve(import.meta.dir, '../fixtures/stuck-recovery-worker.ts');
 
-describe.skipIf(!url)('gbrain repair stuck-recovery on Postgres', () => {
+describe.skipIf(!url)('foresights repair stuck-recovery on Postgres', () => {
   const home = mkdtempSync(join(tmpdir(), 'gbrain-stuck-recovery-pg-'));
   const roots: string[] = [];
   let admin: ReturnType<typeof postgres>;

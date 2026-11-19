@@ -115,10 +115,10 @@ export interface CardIdentity {
   alias_guidance?: { text: string; requires_surface?: 'starter' };
 }
 
-const GUIDANCE = 'aka lists names gbrain recognized as declared on this page (aka_sources says where); it is not proof the list is complete. '
+const GUIDANCE = 'aka lists names foresights recognized as declared on this page (aka_sources says where); it is not proof the list is complete. '
   + 'search already queries these names and the identity siblings\' names (rows found that way carry matched_alias), which is not proof every record was retrieved. '
   + 'Before a history or as-of answer, also search any other name shown in identity_excerpt or in a search response\'s fanout.aliases_skipped.';
-const GUIDANCE_VERBS = 'aka lists names gbrain recognized as declared on this page (aka_sources says where); it is not proof the list is complete. '
+const GUIDANCE_VERBS = 'aka lists names foresights recognized as declared on this page (aka_sources says where); it is not proof the list is complete. '
   + 'Before a history or as-of answer, also look for records under every name shown in aka, identity_siblings and identity_excerpt; searching needs the search tool on the starter surface.';
 
 export interface SiblingIdentity {

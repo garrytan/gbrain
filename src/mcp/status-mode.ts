@@ -1,5 +1,5 @@
 /**
- * Status-only serve (agent operator contract v1, F4). `gbrain serve` (stdio)
+ * Status-only serve (agent operator contract v1, F4). `foresights serve` (stdio)
  * never exits before the MCP handshake: when the brain is locked by another
  * server, missing, or its config is unreadable, it completes the handshake
  * with exactly one tool, `gbrain_status`, that says what is wrong, names the
@@ -133,19 +133,19 @@ function ownerPhrase(state: StatusModeState): string {
   const o = state.lock_owner;
   if (!o) return 'another process';
   const pid = o.pid !== undefined ? ` (PID ${o.pid})` : '';
-  if (!o.serve) return `another gbrain process${pid}`;
-  return o.transport === 'http' ? `a shared \`gbrain serve --http\`${pid}` : `another \`gbrain serve\`${pid}, usually started by another agent session`;
+  if (!o.serve) return `another foresights process${pid}`;
+  return o.transport === 'http' ? `a shared \`foresights serve --http\`${pid}` : `another \`foresights serve\`${pid}, usually started by another agent session`;
 }
 
 /** One sentence naming the cause plainly (lock owner, brain path, config path). */
 export function statusHeadline(state: StatusModeState): string {
   if (state.reason === 'lock_held') return `This brain (${state.brain_path ?? 'its data directory'}) is open in ${ownerPhrase(state)}, so this server cannot open it.`;
-  if (state.reason === 'config_unreadable') return `The gbrain config at ${state.config_path} exists but cannot be read (invalid JSON or unreadable), so this server cannot open a brain.`;
+  if (state.reason === 'config_unreadable') return `The foresights config at ${state.config_path} exists but cannot be read (invalid JSON or unreadable), so this server cannot open a brain.`;
   if (state.reason === 'brain_unopenable') return `The brain at ${state.brain_path ?? 'its configured path'} exists, but its writer lock file next to it cannot be opened (a read-only or unmounted drive, or permissions), so this server cannot open it.`;
   if (state.reason === 'missing_brain') return `The brain configured in ${state.config_path} is not at ${state.brain_path ?? 'its configured path'} (an unmounted drive or a moved folder?), so this server cannot open it. Nothing was created there.`;
   if (state.reason === 'engine_graduated') return `This brain moved to Postgres; ${state.brain_path ?? 'its old PGLite path'} is a tombstone, and this server's config still points at it.`;
-  if (state.reason === 'repair_failed') return `The brain at ${state.brain_path ?? 'its data directory'} is damaged and gbrain's automatic repair failed, so gbrain refuses to open it until the user decides how to recover.`;
-  return `No gbrain brain is set up on this machine yet (no config at ${state.config_path}), so this server has no brain to open.`;
+  if (state.reason === 'repair_failed') return `The brain at ${state.brain_path ?? 'its data directory'} is damaged and foresights's automatic repair failed, so foresights refuses to open it until the user decides how to recover.`;
+  return `No foresights brain is set up on this machine yet (no config at ${state.config_path}), so this server has no brain to open.`;
 }
 
 function restartNote(t: StatusTransport): string {
@@ -169,17 +169,17 @@ export function statusFix(state: StatusModeState, t: StatusTransport = 'stdio'):
       fix: {
         argv: ['gbrain', 'init', '--pglite', '--no-embedding'], consent: ['persistent_install'], actor: 'agent', requires_exclusive: false,
         why: `Creates a keyless local brain (config at ${state.config_path}); semantic search can be enabled later. Then ${recheck(t)}, without a restart. ${restartNote(t)}`,
-        user_message: 'gbrain memory is installed but no brain exists yet. Should I create a local one now? It stays on this machine and needs no API key.',
+        user_message: 'foresights memory is installed but no brain exists yet. Should I create a local one now? It stays on this machine and needs no API key.',
         verify: { argv: ['gbrain', 'doctor', '--json'] }, docs: 'INSTALL_FOR_AGENTS.md',
       },
-      user_message: 'gbrain memory is installed but no brain exists yet. Should I create a local one now? It stays on this machine and needs no API key.',
+      user_message: 'foresights memory is installed but no brain exists yet. Should I create a local one now? It stays on this machine and needs no API key.',
     };
   }
   if (state.reason === 'missing_brain' || state.reason === 'brain_unopenable') {
     const where = state.brain_path ?? 'its configured path';
     const user_message = state.reason === 'missing_brain'
-      ? `Your gbrain brain is configured at ${where}, but nothing is there right now. Is it on a drive that needs mounting, or did it move? Once it's back I'll reconnect. If it's gone for good I can create a new empty brain, but your old notes would not be in it.`
-      : `Your gbrain brain at ${where} is there, but gbrain can't open its lock file next to it (a read-only or unmounted drive, or a permissions problem). Can you check that drive? Once it's writable I'll reconnect.`;
+      ? `Your foresights brain is configured at ${where}, but nothing is there right now. Is it on a drive that needs mounting, or did it move? Once it's back I'll reconnect. If it's gone for good I can create a new empty brain, but your old notes would not be in it.`
+      : `Your foresights brain at ${where} is there, but foresights can't open its lock file next to it (a read-only or unmounted drive, or a permissions problem). Can you check that drive? Once it's writable I'll reconnect.`;
     return {
       fix: {
         ...statusCall(t), consent: [], actor: 'user', requires_exclusive: false,
@@ -205,11 +205,11 @@ export function statusFix(state: StatusModeState, t: StatusTransport = 'stdio'):
     return { fix, user_message: fix.user_message ?? statusHeadline(state) };
   }
   if (state.reason === 'repair_failed') {
-    const user_message = `Your gbrain brain at ${state.brain_path ?? 'its data directory'} is damaged and gbrain's automatic repair did not fix it, so gbrain has stopped opening it to keep it from getting worse. In a terminal you can preview the repair with \`gbrain pglite-repair --dry-run\` and run the one it prints after you agree, or restore the brain from a backup. Nobody should copy, move or edit the brain files by hand.`;
+    const user_message = `Your foresights brain at ${state.brain_path ?? 'its data directory'} is damaged and foresights's automatic repair did not fix it, so foresights has stopped opening it to keep it from getting worse. In a terminal you can preview the repair with \`foresights pglite-repair --dry-run\` and run the one it prints after you agree, or restore the brain from a backup. Nobody should copy, move or edit the brain files by hand.`;
     return {
       fix: {
         argv: ['gbrain', 'pglite-repair', '--dry-run', '--json'], consent: [], actor: 'user', requires_exclusive: false,
-        why: `${HANDS_OFF_BRAIN_FILES} The read-only preview names the consented repair (\`gbrain pglite-repair --yes --expect <plan_hash>\`, effects destructive) the user runs once they agree; then ${recheck(t)}. ${restartNote(t)}`,
+        why: `${HANDS_OFF_BRAIN_FILES} The read-only preview names the consented repair (\`foresights pglite-repair --yes --expect <plan_hash>\`, effects destructive) the user runs once they agree; then ${recheck(t)}. ${restartNote(t)}`,
         user_message,
       },
       user_message,
@@ -219,17 +219,17 @@ export function statusFix(state: StatusModeState, t: StatusTransport = 'stdio'):
     return {
       fix: {
         argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'user', requires_exclusive: false,
-        why: `Fix or restore ${state.config_path} (it must be valid JSON; \`gbrain doctor --json\` names the problem), then ${recheck(t)}. Never delete it without asking: it holds the brain's settings and may hold keys.`,
-        user_message: `Your gbrain config file (${state.config_path}) is damaged, so memory is offline. Can you check it, or should I show you what doctor reports?`,
+        why: `Fix or restore ${state.config_path} (it must be valid JSON; \`foresights doctor --json\` names the problem), then ${recheck(t)}. Never delete it without asking: it holds the brain's settings and may hold keys.`,
+        user_message: `Your foresights config file (${state.config_path}) is damaged, so memory is offline. Can you check it, or should I show you what doctor reports?`,
       },
-      user_message: `Your gbrain config file (${state.config_path}) is damaged, so memory is offline. Can you check it, or should I show you what doctor reports?`,
+      user_message: `Your foresights config file (${state.config_path}) is damaged, so memory is offline. Can you check it, or should I show you what doctor reports?`,
     };
   }
   const owner = ownerPhrase(state);
   const wireHarnesses: Action = {
     argv: ['gbrain', 'bootstrap', 'harness', '--harness', 'all', '--yes'], consent: ['persistent_install', 'credentials'], actor: 'agent', requires_exclusive: false,
     why: 'Mints one bearer token per detected harness through the running HTTP server and rewrites each harness MCP entry to it (each stdio entry keeps working until its harness is rewired).',
-    user_message: 'I can connect your agent apps to the shared gbrain server so every session uses memory at once. That stores an access token in each app\'s config and pre-approves gbrain\'s tools. OK?',
+    user_message: 'I can connect your agent apps to the shared foresights server so every session uses memory at once. That stores an access token in each app\'s config and pre-approves foresights\'s tools. OK?',
     verify: { argv: ['gbrain', 'doctor', '--only', 'harness_wiring', '--json'] }, docs: 'docs/guides/remote-mcp.md',
   };
   if (state.lock_owner?.transport === 'http') {
@@ -238,7 +238,7 @@ export function statusFix(state: StatusModeState, t: StatusTransport = 'stdio'):
   }
   if (t === 'http') {
     // This process is the shared HTTP server: once the owner stops, it opens the brain and the harnesses move to it.
-    const user_message = `Your gbrain brain is open in ${owner.replace(/`/g, '')}, so the shared gbrain server can't open it. Should I stop that session so every agent shares the server?`;
+    const user_message = `Your foresights brain is open in ${owner.replace(/`/g, '')}, so the shared foresights server can't open it. Should I stop that session so every agent shares the server?`;
     return { user_message, fix: {
       ...(state.lock_owner?.pid !== undefined ? { argv: ['kill', String(state.lock_owner.pid)] } : {}), consent: [], actor: 'user', requires_exclusive: false, user_message,
       why: `Stop ${owner} (or quit that session); ${recheck(t)}. Then wire the harnesses to it.`, then: wireHarnesses,
@@ -257,7 +257,7 @@ export function statusFix(state: StatusModeState, t: StatusTransport = 'stdio'):
     ...statusCall(t), consent: [], actor: 'user', requires_exclusive: false,
     why: `Close the session that owns the brain (${owner}); then ${recheck(t)} (re-checked at most every 5 s). ${restartNote(t)}`,
   };
-  const user_message = `Your gbrain brain is already open in ${owner.replace(/`/g, '')}, so this session can't use memory right now. Close that session and I'll reconnect, or I can set up one shared gbrain server so both sessions work at once. Which do you prefer?`;
+  const user_message = `Your foresights brain is already open in ${owner.replace(/`/g, '')}, so this session can't use memory right now. Close that session and I'll reconnect, or I can set up one shared foresights server so both sessions work at once. Which do you prefer?`;
   return {
     fix: { ...waitFix, user_message },
     user_message,
@@ -266,7 +266,7 @@ export function statusFix(state: StatusModeState, t: StatusTransport = 'stdio'):
       question: 'Two agent sessions want the same brain. Close the other session, or share one HTTP server?',
       options: [
         { id: 'close_owner', label: `Close ${owner.replace(/`/g, '')}; this server recovers on the next gbrain_status call.` },
-        { id: 'share_http', label: 'Run one shared `gbrain serve --http` and connect every harness to it (writes harness config, mints tokens); the full plan is share_http_plan.', argv: shareHttp.argv },
+        { id: 'share_http', label: 'Run one shared `foresights serve --http` and connect every harness to it (writes harness config, mints tokens); the full plan is share_http_plan.', argv: shareHttp.argv },
       ],
       default: 'close_owner',
       default_reason: 'Nothing is installed or reconfigured; the brain comes back as soon as the other session ends.',
@@ -288,8 +288,8 @@ export const HTTP_STATUS_RETRY_AFTER_S = 5;
  * loopback address), so the detailed reason stays in stderr, the status
  * marker and doctor on the host.
  */
-const HTTP_UNAVAILABLE_WHY = 'This gbrain server cannot open its brain; its host operator can see why with `gbrain doctor`.';
-const HTTP_USER_MESSAGE = 'The gbrain memory server is running but cannot open its brain, so memory is offline. Can whoever runs that machine run `gbrain doctor` there? The server reconnects by itself once it is fixed.';
+const HTTP_UNAVAILABLE_WHY = 'This foresights server cannot open its brain; its host operator can see why with `foresights doctor`.';
+const HTTP_USER_MESSAGE = 'The foresights memory server is running but cannot open its brain, so memory is offline. Can whoever runs that machine run `foresights doctor` there? The server reconnects by itself once it is fixed.';
 
 function httpStatusFix(): Action {
   return {
@@ -352,15 +352,15 @@ export function statusPayload(state: StatusModeState, t: StatusTransport = 'stdi
 /** The one tool advertised in status mode. */
 export const STATUS_TOOL_DEF = {
   name: STATUS_TOOL_NAME,
-  description: 'gbrain is running in status-only mode: its brain is locked by another server, missing, damaged (automatic repair failed), or its config is unreadable. Call this for the cause (lock owner, brain path), the fix and what to tell the user; calling it also re-checks and restores the full tool list once the brain can be opened.',
+  description: 'foresights is running in status-only mode: its brain is locked by another server, missing, damaged (automatic repair failed), or its config is unreadable. Call this for the cause (lock owner, brain path), the fix and what to tell the user; calling it also re-checks and restores the full tool list once the brain can be opened.',
   inputSchema: { type: 'object' as const, properties: {} },
-  annotations: { title: 'gbrain status (status-only mode)', readOnlyHint: true },
+  annotations: { title: 'foresights status (status-only mode)', readOnlyHint: true },
 };
 
 /** The same tool on an HTTP status server: no host detail; the server re-checks on its own. */
 export const HTTP_STATUS_TOOL_DEF = {
   ...STATUS_TOOL_DEF,
-  description: 'This gbrain server is running in status-only mode: it cannot open its brain. Call this for what to tell the user; the server re-checks every 5 s, and once this reports recovered, re-list tools or reconnect for the full tool list.',
+  description: 'This foresights server is running in status-only mode: it cannot open its brain. Call this for what to tell the user; the server re-checks every 5 s, and once this reports recovered, re-list tools or reconnect for the full tool list.',
 };
 
 /**

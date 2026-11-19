@@ -31,7 +31,7 @@ mock.module('../../src/core/skillopt/orchestrator.ts', () => ({
       receipt: {
         run_id: 'r', skill: SKILL, final_cost_usd: 0, best_sel_score: 0,
         models_plan: [{ touchpoint: 'optimizer', model: 'm', source: 'models_default', origin: 'models.default', active: true }],
-        models_strict: { enabled: strictOn, ok: false, violations: [{ touchpoint: 'optimizer', model: 'm', source: 'models_default', origin: 'models.default', fix: 'gbrain config set models.tier.deep m' }] },
+        models_strict: { enabled: strictOn, ok: false, violations: [{ touchpoint: 'optimizer', model: 'm', source: 'models_default', origin: 'models.default', fix: 'foresights config set models.tier.deep m' }] },
       },
       finalText: '',
       mutatedSkillFile: false,

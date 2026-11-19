@@ -1,5 +1,5 @@
 /**
- * `gbrain sources writer deactivate` (#5455, #5628): a deliberate, state-bound
+ * `foresights sources writer deactivate` (#5455, #5628): a deliberate, state-bound
  * conversion from managed mode back to classic mode. Brain-wide and
  * trusted-local only.
  *
@@ -104,24 +104,24 @@ export async function deactivationBlockers(engine: BrainEngine): Promise<Deactiv
   const blockers: DeactivationBlocker[] = [];
   const lock = await readWriterAdminLock(engine);
   if (lock.locked) blockers.push({ kind: 'writer_admin_lock', id: 'persistence.writer_admin_lock', detail: `set at ${lock.set_at ?? 'unknown'}`,
-    exit: 'gbrain sources writer unlock' });
+    exit: 'foresights sources writer unlock' });
   const requests = await engine.executeRaw<{ request_id: string; source_id: string; slug: string; operation: string; state: string; recovering: boolean }>(
     `SELECT request_id::text AS request_id, source_id, slug, operation, state, recovery IS NOT NULL AS recovering FROM persistence_requests
      WHERE state IN ('queued','deferred','running','recovering') OR recovery IS NOT NULL ORDER BY sequence LIMIT 50`);
   for (const r of requests) {
     blockers.push({ kind: 'request', id: r.request_id, source_id: r.source_id, detail: `${r.operation} ${r.state}${r.recovering ? ', recovering' : ''} (${r.source_id}:${r.slug})`,
-      exit: r.state === 'queued' && !r.recovering ? `gbrain cancel-write-request ${r.request_id} (MCP: cancel_write_request), or wait for the owner to publish it`
+      exit: r.state === 'queued' && !r.recovering ? `foresights cancel-write-request ${r.request_id} (MCP: cancel_write_request), or wait for the owner to publish it`
         : r.state === 'running' && !r.recovering ? 'wait for the owner to finish publishing it, then rerun deactivate'
-          : `gbrain sync --source ${r.source_id} --no-pull` });
+          : `foresights sync --source ${r.source_id} --no-pull` });
   }
   const topology = await engine.executeRaw<{ id: string; operation: string; source_id: string; request_id: string; admission: boolean; automatic: boolean }>(
     "SELECT id::text AS id, operation, source_id, request_id::text AS request_id, (state='recovering' AND recovery IS NULL) AS admission, COALESCE(outcome->>'expired_only','false')='true' AS automatic FROM persistence_topology_changes WHERE state='recovering' OR recovery IS NOT NULL ORDER BY created_at LIMIT 20");
   for (const t of topology) blockers.push({ kind: 'topology_recovery', id: t.id, source_id: t.source_id,
     detail: !t.admission ? `${t.operation} for ${t.source_id} is recovering`
       : `${t.automatic ? 'automatic expired-archive purge' : t.operation} of ${t.source_id} (request ${t.request_id}) stopped before it finished`,
-    exit: t.admission && t.automatic ? `the next automatic expired-archive purge finishes it, or gbrain sources purge with no source id finishes it now (gbrain sources writer status --source ${t.source_id} --json lists the request), then rerun deactivate`
-      : t.admission ? `ask the user whether to finish it, because finishing deletes the rest of ${t.source_id}'s pages: to finish, rerun the same gbrain sources ${t.operation} command with all its original flags and --request-id ${t.request_id} (an automatic expired-archive purge finishes on its next run); to keep what is left, any other lifecycle change to the source (gbrain sources restore of an archived source, or archive then restore) abandons the request; then rerun deactivate`
-      : `gbrain sources writer status ${t.source_id} --json, then let the owner finish recovery` });
+    exit: t.admission && t.automatic ? `the next automatic expired-archive purge finishes it, or foresights sources purge with no source id finishes it now (foresights sources writer status --source ${t.source_id} --json lists the request), then rerun deactivate`
+      : t.admission ? `ask the user whether to finish it, because finishing deletes the rest of ${t.source_id}'s pages: to finish, rerun the same foresights sources ${t.operation} command with all its original flags and --request-id ${t.request_id} (an automatic expired-archive purge finishes on its next run); to keep what is left, any other lifecycle change to the source (foresights sources restore of an archived source, or archive then restore) abandons the request; then rerun deactivate`
+      : `foresights sources writer status ${t.source_id} --json, then let the owner finish recovery` });
   // GBRA-130 A-15: only work that can still change blocks, as activation checks; terminal failures are failedEffectHistory's.
   const effects = await engine.executeRaw<EffectRow>(`${EFFECT_ROWS} WHERE e.state IN ('queued','running') OR e.recovery IS NOT NULL ORDER BY e.id LIMIT 50`);
   for (const e of effects) {
@@ -129,14 +129,14 @@ export async function deactivationBlockers(engine: BrainEngine): Promise<Deactiv
       exit: e.kind === 'links' || e.kind === 'facts-backstop'
         ? `wait for the owner to drain it (a ${e.kind} effect that keeps failing settles after ${PARK_AFTER_FAILURES} attempts), then rerun deactivate`
         : e.kind === 'embedding' && !e.recovering
-          ? `wait for the owner to drain it, then rerun deactivate; one still queued after an hour is re-queued by gbrain repair embedding-effects --source ${e.source_id}`
+          ? `wait for the owner to drain it, then rerun deactivate; one still queued after an hour is re-queued by foresights repair embedding-effects --source ${e.source_id}`
           : 'wait for the owner to drain it, then rerun deactivate' });
   }
   // Managed connector holds live in the managed checkpoint, which classic mode does not read. Deactivation copies
   // them into each source's classic state file; only a source whose holds have nowhere to go blocks it.
   for (const carry of await planHoldCarry(engine, existingHostIdFor(engine))) {
     if (!holdCarryBlocked(carry)) continue;
-    const resolve = `gbrain sources status ${carry.source_id} names each item's error; fix its cause, then gbrain sources retry-held ${carry.source_id} and gbrain sync --source ${carry.source_id} (a successful re-attempt clears the hold)`;
+    const resolve = `foresights sources status ${carry.source_id} names each item's error; fix its cause, then foresights sources retry-held ${carry.source_id} and foresights sync --source ${carry.source_id} (a successful re-attempt clears the hold)`;
     blockers.push({ kind: 'connector_holds', id: carry.source_id, source_id: carry.source_id,
       detail: carry.owner_host
         ? `${carry.items} held item(s) on a worktree owned by host ${carry.owner_host}; deactivate cannot write that host's classic state`
@@ -150,7 +150,7 @@ export async function deactivationBlockers(engine: BrainEngine): Promise<Deactiv
   const leases = await engine.executeRaw<{ id: string; holder_host: string; holder_pid: number }>(
     `SELECT id, holder_host, holder_pid FROM gbrain_cycle_locks WHERE ttl_expires_at > now() AND ${NOT_PAGE_EMBEDDING_LEASE} ORDER BY id`);
   for (const l of leases) blockers.push({ kind: 'lease', id: l.id, detail: `held by host ${l.holder_host}, pid ${l.holder_pid}`,
-    exit: 'wait for that connector sync or maintenance run to finish (gbrain doctor shows live locks), then rerun deactivate' });
+    exit: 'wait for that connector sync or maintenance run to finish (foresights doctor shows live locks), then rerun deactivate' });
   return blockers;
 }
 
@@ -169,11 +169,11 @@ const EFFECT_ROWS = `SELECT e.id::text AS effect_id, e.kind, e.state, COALESCE(e
 export async function failedEffectHistory(engine: BrainEngine): Promise<FailedEffectEntry[]> {
   const rows = await engine.executeRaw<EffectRow>(`${EFFECT_ROWS} WHERE e.state='failed' AND e.recovery IS NULL AND NOT (e.data ? 'settled') ORDER BY e.id LIMIT 50`);
   return rows.map(e => {
-    const retry = `gbrain sources writer retry-effects ${e.source_id} --request-id ${e.request_id} --dry-run`;
+    const retry = `foresights sources writer retry-effects ${e.source_id} --request-id ${e.request_id} --dry-run`;
     const [exit, why] = !e.source_live ? [null, 'its source was archived, replaced or removed, so nothing can run it']
       : e.kind !== 'embedding' || e.error_code === 'targets_parked' ? [retry, 'preview it, fix the recorded cause, then run the command without --dry-run']
-        : e.error_code === EMBEDDING_ZERO_NORM ? [null, 'the provider returns a zero vector for this text, so a retry fails the same way; the page keeps no signature, so gbrain embed --stale retries it under another model']
-          : [`gbrain repair embedding-effects --source ${e.source_id}`, 'preview the bounded retry, then apply it with --apply after the user approves the cost'];
+        : e.error_code === EMBEDDING_ZERO_NORM ? [null, 'the provider returns a zero vector for this text, so a retry fails the same way; the page keeps no signature, so foresights embed --stale retries it under another model']
+          : [`foresights repair embedding-effects --source ${e.source_id}`, 'preview the bounded retry, then apply it with --apply after the user approves the cost'];
     return { effect_id: e.effect_id, kind: e.kind, source_id: e.source_id, request_id: e.request_id, code: e.error_code, exit,
       detail: `${e.kind} effect failed${e.error_code ? ` (${e.error_code})` : ''} for request ${e.request_id}: ${why}` };
   });
@@ -203,10 +203,10 @@ export async function physicalRootBlockers(engine: BrainEngine, mode: 'managed' 
       const detail = error instanceof OperationError ? error.message : String(error);
       blockers.push({ kind: 'physical_root', id: binding.worktree_id, source_id: id, detail: `${binding.local_path}: ${detail}`,
         exit: mode === 'managed'
-          ? `gbrain sources writer status ${id} --json, then (same path, directory recreated) gbrain sources writer transfer prepare ${id} --self-transfer --confirm-relocated-root --admin-intent writer_transfer_prepare --expected-state <admin_state> `
-            + `and gbrain sources writer transfer accept ${id} --path ${binding.local_path} --expected-epoch <owner_epoch> --manifest <digest> --self-transfer --confirm-relocated-root --admin-intent writer_transfer_accept --expected-state <admin_state>; `
-            + 'a checkout moved behind a symlink converges with gbrain sources set-path instead'
-          : `gbrain sources writer status ${id} --json; the reservation beside ${binding.local_path} must name this worktree and its stamp must carry the same token (docs/architecture/topologies.md#recreated-root)` });
+          ? `foresights sources writer status ${id} --json, then (same path, directory recreated) foresights sources writer transfer prepare ${id} --self-transfer --confirm-relocated-root --admin-intent writer_transfer_prepare --expected-state <admin_state> `
+            + `and foresights sources writer transfer accept ${id} --path ${binding.local_path} --expected-epoch <owner_epoch> --manifest <digest> --self-transfer --confirm-relocated-root --admin-intent writer_transfer_accept --expected-state <admin_state>; `
+            + 'a checkout moved behind a symlink converges with foresights sources set-path instead'
+          : `foresights sources writer status ${id} --json; the reservation beside ${binding.local_path} must name this worktree and its stamp must carry the same token (docs/architecture/topologies.md#recreated-root)` });
     }
   }
   return blockers;
@@ -215,7 +215,7 @@ export async function physicalRootBlockers(engine: BrainEngine, mode: 'managed' 
 function blockedError(blockers: DeactivationBlocker[]): OperationError {
   const locked = blockers.find(b => b.kind === 'writer_admin_lock');
   if (locked) return new OperationError('writer_admin_locked', 'Writer administration is locked; deactivation was not applied.',
-    `Run gbrain sources writer unlock on the brain host, deactivate, then gbrain sources writer lock again.`, WRITER_ADMIN_LOCKED_DOCS);
+    `Run foresights sources writer unlock on the brain host, deactivate, then foresights sources writer lock again.`, WRITER_ADMIN_LOCKED_DOCS);
   return new OperationError('writer_not_quiesced', `Deactivation requires a quiesced brain; ${blockers.length} item(s) block it.`,
     blockers.slice(0, 10).map(b => `${b.kind} ${b.id} (${b.detail}): ${b.exit}`).join(' | '), DEACTIVATE_DOCS);
 }
@@ -281,7 +281,7 @@ export async function deactivatePersistence(engine: BrainEngine, opts: { dryRun?
     for (const binding of [...local.values()].sort((a, b) => a!.worktree_id.localeCompare(b!.worktree_id))) {
       const lock = await acquireWorktree(binding!, 0, undefined, undefined, { yieldLanes: true });
       if (!lock) throw new OperationError('writer_lock_unavailable', `A local process holds the canonical worktree lock of source '${binding!.source_id}'.`,
-        'Stop the resident owner on this host (gbrain serve or autopilot), then rerun deactivate.');
+        'Stop the resident owner on this host (foresights serve or autopilot), then rerun deactivate.');
       locks.push(lock);
     }
     report = await engine.transaction(async tx => {
@@ -421,7 +421,7 @@ export async function cleanupRetiredManagedMarkers(engine: BrainEngine): Promise
   await refreshManagedFilesystemRoots(engine);
   if (report.pending.length) {
     report.state = 'pending';
-    report.rerun = 'gbrain sources writer status (rerun on this host after fixing the named paths)';
+    report.rerun = 'foresights sources writer status (rerun on this host after fixing the named paths)';
   }
   return report;
 }

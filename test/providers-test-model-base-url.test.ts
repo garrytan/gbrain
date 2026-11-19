@@ -1,14 +1,14 @@
 /**
- * #2863 regression — `gbrain providers test --model` must resolve
+ * #2863 regression — `foresights providers test --model` must resolve
  * `provider_base_urls` the same way the production embed/chat path does.
  *
  * Before the fix, the `--model` override branch in `runTest`
  * (src/commands/providers.ts) forwarded only `embedding_model`/`chat_model`
  * + `env` into `configureGateway`, dropping `config.provider_base_urls`
  * entirely. A brain configured with a custom (e.g. China-region DashScope)
- * endpoint would pass `gbrain providers test --touchpoint embedding` (no
+ * endpoint would pass `foresights providers test --touchpoint embedding` (no
  * `--model`, uses configureFromEnv() which DOES forward base_urls) but fail
- * `gbrain providers test --touchpoint embedding --model
+ * `foresights providers test --touchpoint embedding --model
  * dashscope:text-embedding-v3` with a misleading "Incorrect API key" error
  * — the probe silently fell back to the recipe's hardcoded default endpoint
  * (dashscope-intl.aliyuncs.com) instead of the configured one.

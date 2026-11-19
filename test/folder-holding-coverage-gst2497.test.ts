@@ -89,7 +89,7 @@ for (const backend of testBackends()) describe(`[${backend}] folder holding page
     expect(saved).toMatchObject({ page: FOLDER_HOLD, persistence: { mode: 'database' }, write_through: { skipped: 'db_only', held_for: ENTITY } });
     const notice = notices.filter(n => n.code === 'entity_page_missing');
     expect(notice).toHaveLength(1);
-    expect(notice[0]!.why).toBe(`Saved in the database only, as its folder keeps its pages out of Git; held on ${FOLDER_HOLD} until ${ENTITY} has a page. Say that when you report the save. Nothing needs to run: once the page exists, the next maintenance cycle (gbrain dream) moves the fact into the page's Facts table.`);
+    expect(notice[0]!.why).toBe(`Saved in the database only, as its folder keeps its pages out of Git; held on ${FOLDER_HOLD} until ${ENTITY} has a page. Say that when you report the save. Nothing needs to run: once the page exists, the next maintenance cycle (foresights dream) moves the fact into the page's Facts table.`);
     expect(notice[0]).not.toHaveProperty('fix');
     expect(notice[0]).not.toHaveProperty('user_message');
   }), 300_000);

@@ -1,5 +1,5 @@
 /**
- * #575 — `gbrain config show` printed `[object Object]` for object-valued
+ * #575 — `foresights config show` printed `[object Object]` for object-valued
  * config fields (e.g. `provider_base_urls`) because non-string values were
  * interpolated straight into a template literal.
  *

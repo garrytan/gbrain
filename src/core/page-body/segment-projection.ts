@@ -77,7 +77,7 @@ export interface SegmentProjection {
 export function projectionStaleError(byteStart: number, why: string) {
   return opError('page_projection_stale',
     `The segment at stored byte ${byteStart} cannot be projected: ${why}. Nothing was returned for it.`,
-    'Rewrite the page body (import or sync its file again) so it is segmented by this gbrain version, then read it again.');
+    'Rewrite the page body (import or sync its file again) so it is segmented by this foresights version, then read it again.');
 }
 
 export function projectSegment(segment: ProjectableSegment, input: SegmentProjectionInput = {}): SegmentProjection {

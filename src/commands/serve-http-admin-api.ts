@@ -1,5 +1,5 @@
 /**
- * Owner administration for `gbrain serve --http`: the cookie-session guard
+ * Owner administration for `foresights serve --http`: the cookie-session guard
  * (`requireAdmin`), password login, the /admin/api/* dashboard endpoints and
  * the /admin/events SSE feed. Every /admin/api route here carries requireAdmin
  * first (test/serve-http-admin-route-guard.test.ts).
@@ -364,7 +364,7 @@ function mountAdminOverviewApi(app: Express, ctx: ServeHttpContext): void {
   });
 
   // v0.41 D2 — live jobs dashboard data. Shares readSnapshot() with the
-  // TTY `gbrain jobs watch` command so the two surfaces stay 1:1.
+  // TTY `foresights jobs watch` command so the two surfaces stay 1:1.
   app.get('/admin/api/jobs/watch', requireAdmin, async (_req: Request, res: Response) => {
     try {
       const { readSnapshot } = await import('./jobs-watch.ts');

@@ -1,5 +1,5 @@
 /**
- * #7599: a harness runs one stdio `gbrain serve --access read-only` per session, so each one's resident direct pool held
+ * #7599: a harness runs one stdio `foresights serve --access read-only` per session, so each one's resident direct pool held
  * session-lane connections (3 each) and a few sessions could starve the long-lived serve, worker and autopilot. A read-only
  * serve now takes the one-shot direct-pool profile and runs no resident write duty (persistence consumer, on-commit
  * notifier lease, sweeps), so it holds no session-lane connection after startup or after a search. A read-write serve

@@ -2,7 +2,7 @@
  * #7305 `slug_path_mismatch` doctor check: live file-backed pages whose slug their recorded file path does not derive
  * (a hyphen run the path rule folds). A file stamped with the page's `slug:` line keeps the page and is ok; a file
  * without it would import as the folded slug and fork a twin, so it warns with a sample and the read-only
- * `gbrain repair frontmatter --source <id>` preview as the fix. Read-only: no row or file changes.
+ * `foresights repair frontmatter --source <id>` preview as the fix. Read-only: no row or file changes.
  *
  * PGLite and, with DATABASE_URL, Postgres. Synthetic content only.
  */

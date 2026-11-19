@@ -14,7 +14,7 @@ export async function runAuthenticatedFactEmbedding(engine: BrainEngine, params:
   }
   if (Object.keys(params).some(key => key !== 'options')) {
     throw opError('invalid_params', 'Fact embedding repair requires typed options',
-      'Run the CLI command gbrain embed --stale --facts --source with --dry-run first; it builds the typed options this owner lane accepts.');
+      'Run the CLI command foresights embed --stale --facts --source with --dry-run first; it builds the typed options this owner lane accepts.');
   }
   const options = validateEmbedFactsOptions(params.options);
   const controller = new AbortController();

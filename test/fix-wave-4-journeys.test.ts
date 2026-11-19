@@ -54,7 +54,7 @@ afterEach(() => __setEmbedTransportForTests(null));
 
 class CliExit extends Error { constructor(readonly code: number) { super(`process.exit(${code})`); } }
 
-/** Runs one `gbrain ...` line through the entry point the CLI dispatches it to; returns everything it printed. */
+/** Runs one `foresights ...` line through the entry point the CLI dispatches it to; returns everything it printed. */
 async function gbrain(engine: BrainEngine, line: string): Promise<{ text: string; exit: number }> {
   const argv = line.trim().split(/\s+/);
   expect(argv[0]).toBe('gbrain');
@@ -138,20 +138,20 @@ test('journey (a): a held Gmail thread is cleared with the four commands the pro
     const provider = withGoogleAccount(gmailFetch(fx), account);
     // The failure: three syncs in a row fail the same thread, so it is held and the sync summary points at the source.
     let summary = '';
-    for (let i = 0; i < 3; i++) summary = (await withFetch(provider, () => gbrain(engine, `gbrain sync --source ${f.id}`))).text;
+    for (let i = 0; i < 3; i++) summary = (await withFetch(provider, () => gbrain(engine, `foresights sync --source ${f.id}`))).text;
     fx.failThreads.delete('a1b2c3d4e5f60202');
     expect(summary).toContain('held');
 
     const j = journey('held Gmail item');
-    const status = await j.run(engine, printed(summary, `gbrain sources status ${f.id}`));
+    const status = await j.run(engine, printed(summary, `foresights sources status ${f.id}`));
     expect(status.text).toContain('a1b2c3d4e5f60202');
-    const retry = await j.run(engine, printed(status.text, `gbrain sources retry-held ${f.id}`));
+    const retry = await j.run(engine, printed(status.text, `foresights sources retry-held ${f.id}`));
     expect(retry.text).toContain('1 held item(s) scheduled');
     fx.fetched.length = 0;
-    const sync = await withFetch(provider, () => j.run(engine, printed(retry.text, `gbrain sync --source ${f.id}`)));
+    const sync = await withFetch(provider, () => j.run(engine, printed(retry.text, `foresights sync --source ${f.id}`)));
     expect(sync.exit).toBe(0);
     expect(fx.fetched).toContain('a1b2c3d4e5f60202');
-    const after = await j.run(engine, printed(retry.text, `gbrain sources status ${f.id}`));
+    const after = await j.run(engine, printed(retry.text, `foresights sources status ${f.id}`));
     expect(after.text).not.toContain('a1b2c3d4e5f60202');
     expect(after.text).not.toContain('held item(s)');
     j.finish(4);
@@ -163,14 +163,14 @@ test('journey (b): request-indexes, from the doctor finding to a clear finding, 
   for (const engine of engines) {
     await engine.executeRaw('DROP INDEX IF EXISTS persistence_requests_sync_run_committed');
     const j = journey('repair request-indexes');
-    const doctor = await j.run(engine, 'gbrain doctor --json');
+    const doctor = await j.run(engine, 'foresights doctor --json');
     const finding = JSON.parse(doctor.text.slice(doctor.text.indexOf('{'))).checks.find((c: { name: string }) => c.name === 'persistence_request_indexes');
     expect(finding).toMatchObject({ status: 'warn' });
-    const apply = printed(finding.message, 'gbrain repair request-indexes');
+    const apply = printed(finding.message, 'foresights repair request-indexes');
     const preview = await j.run(engine, apply.replace(/ --apply$/, ''));
     expect(preview.text).toMatch(/request-indexes.*1/);
     expect((await j.run(engine, apply)).exit).toBe(0);
-    const clear = await j.run(engine, 'gbrain doctor --json');
+    const clear = await j.run(engine, 'foresights doctor --json');
     expect(JSON.parse(clear.text.slice(clear.text.indexOf('{'))).checks.find((c: { name: string }) => c.name === 'persistence_request_indexes'))
       .toMatchObject({ status: 'ok' });
     j.finish(4);
@@ -190,13 +190,13 @@ test('journey (b): orphan-bindings, from the doctor finding to a clear finding, 
     await engine.executeRaw("DELETE FROM sources WHERE id = 'journey-orphan'");
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
     const j = journey('repair orphan-bindings');
-    const doctor = await j.run(engine, 'gbrain doctor --json');
+    const doctor = await j.run(engine, 'foresights doctor --json');
     const finding = JSON.parse(doctor.text.slice(doctor.text.indexOf('{'))).checks.find((c: { name: string }) => c.name === 'orphan_persistence_bindings');
     expect(finding).toMatchObject({ status: 'warn' });
-    expect((await j.run(engine, printed(finding.message, 'gbrain repair orphan-bindings'))).text).toContain('orphan-bindings');
-    const apply = printed(finding.message, 'gbrain repair orphan-bindings --apply');
+    expect((await j.run(engine, printed(finding.message, 'foresights repair orphan-bindings'))).text).toContain('orphan-bindings');
+    const apply = printed(finding.message, 'foresights repair orphan-bindings --apply');
     expect((await j.run(engine, apply)).exit).toBe(0);
-    const clear = await j.run(engine, 'gbrain doctor --json');
+    const clear = await j.run(engine, 'foresights doctor --json');
     expect(JSON.parse(clear.text.slice(clear.text.indexOf('{'))).checks.find((c: { name: string }) => c.name === 'orphan_persistence_bindings'))
       .toMatchObject({ status: 'ok' });
     j.finish(4);
@@ -213,19 +213,19 @@ test('journey (b): connector-fences, from the sync refusal to a sync that carrie
     const fx = fakeGitHub();
     fx.issues = [{ number: 1, title: 'Synthetic issue 1', body: 'Body 1', updated_at: '2026-01-01T00:00:01Z' }];
     const provider = githubHoldsFetch(fx);
-    expect((await withFetch(provider, () => gbrain(engine, `gbrain sync --source ${f.id}`))).exit).toBe(0);
+    expect((await withFetch(provider, () => gbrain(engine, `foresights sync --source ${f.id}`))).exit).toBe(0);
     await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
     await engine.executeRaw(`UPDATE pages SET timeline=COALESCE(timeline,'') || $2 WHERE source_id=$1 AND slug='gh/acme-example/app/1'`, [f.id, `\n\n${fence}\n`]);
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
     fx.issues[0] = { ...fx.issues[0], body: 'Body 1 edited upstream', updated_at: '2026-01-01T00:00:04Z' };
 
     const j = journey('repair connector-fences');
-    const refused = await withFetch(provider, () => j.run(engine, `gbrain sync --source ${f.id}`));
+    const refused = await withFetch(provider, () => j.run(engine, `foresights sync --source ${f.id}`));
     expect(refused.text).toContain('connector_fence_below_timeline');
-    const preview = await j.run(engine, printed(refused.text, `gbrain repair connector-fences --source ${f.id}`).replace(/ --apply$/, ''));
+    const preview = await j.run(engine, printed(refused.text, `foresights repair connector-fences --source ${f.id}`).replace(/ --apply$/, ''));
     expect(preview.text).toContain('connector-fences');
-    expect((await j.run(engine, `${printed(refused.text, `gbrain repair connector-fences --source ${f.id}`).replace(/ --apply$/, '')} --apply`)).exit).toBe(0);
-    const synced = await withFetch(provider, () => j.run(engine, `gbrain sync --source ${f.id}`));
+    expect((await j.run(engine, `${printed(refused.text, `foresights repair connector-fences --source ${f.id}`).replace(/ --apply$/, '')} --apply`)).exit).toBe(0);
+    const synced = await withFetch(provider, () => j.run(engine, `foresights sync --source ${f.id}`));
     expect(synced.exit).toBe(0);
     const [page] = await engine.executeRaw<{ compiled_truth: string }>(`SELECT compiled_truth FROM pages WHERE source_id=$1 AND slug='gh/acme-example/app/1'`, [f.id]);
     expect(page.compiled_truth).toContain('Body 1 edited upstream');
@@ -275,19 +275,19 @@ test('journey (c): a checkpoint timeout with a dropped index recovers with the r
     // The checkpoint request's validation times out: this run stamps by its request, not folded into its last import (#6926).
     try {
       refused = await stampByCheckpoint(async () => {
-        let ran = await j.run(engine, `gbrain sync --source ${id} --no-pull --no-embed --no-extract`);
+        let ran = await j.run(engine, `foresights sync --source ${id} --no-pull --no-embed --no-extract`);
         // A real 5 s statement timeout outlasts the sync's own wait; the terminal refusal is then reported by the same command's receipt.
         for (let waited = 0; !ran.text.includes('checkpoint_validation_timeout') && waited < 30_000; waited += 500) {
           await new Promise(resolve => setTimeout(resolve, 500));
           const [row] = await engine.executeRaw<{ state: string }>("SELECT state FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_checkpoint'", [id]);
-          if (row?.state === 'failed') ran = await j.run(engine, `gbrain sync --source ${id} --no-pull --no-embed --no-extract`);
+          if (row?.state === 'failed') ran = await j.run(engine, `foresights sync --source ${id} --no-pull --no-embed --no-extract`);
         }
         return ran;
       });
     } finally { restore(); }
     expect(refused.text).toContain('checkpoint_validation_timeout');
-    expect((await j.run(engine, printed(refused.text, 'gbrain repair request-indexes'))).exit).toBe(0);
-    const retried = await j.run(engine, printed(refused.text, `gbrain sync --source ${id} --no-pull`));
+    expect((await j.run(engine, printed(refused.text, 'foresights repair request-indexes'))).exit).toBe(0);
+    const retried = await j.run(engine, printed(refused.text, `foresights sync --source ${id} --no-pull`));
     expect(retried.exit).toBe(0);
     expect(await engine.executeRaw("SELECT id FROM persistence_requests WHERE source_id=$1 AND state<>'committed' AND state<>'failed'", [id])).toEqual([]);
     expect((await engine.getPage('a', { sourceId: id }))?.title).toBe('a');
@@ -306,11 +306,11 @@ for (const backend of testBackends()) {
     }
     expect(existsSync(join(root, '.gbrain-managed'))).toBe(true);
     const j = journey(`deactivate (${backend})`);
-    const dry = await j.run(engine, 'gbrain sources writer deactivate --dry-run');
+    const dry = await j.run(engine, 'foresights sources writer deactivate --dry-run');
     expect(JSON.parse(dry.text)).toMatchObject({ mode: 'managed', blockers: [] });
-    const done = await j.run(engine, printed(dry.text, 'gbrain sources writer deactivate --admin-intent'));
+    const done = await j.run(engine, printed(dry.text, 'foresights sources writer deactivate --admin-intent'));
     expect(JSON.parse(done.text)).toMatchObject({ mode: 'classic', deactivated: true });
-    const status = await j.run(engine, 'gbrain sources writer status');
+    const status = await j.run(engine, 'foresights sources writer status');
     expect(JSON.parse(status.text)).toMatchObject({ mode: 'classic' });
     expect(existsSync(join(root, '.gbrain-managed'))).toBe(false);
     j.finish(3);

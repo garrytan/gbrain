@@ -37,7 +37,7 @@ describe('connectors sync --source CLI validation', () => {
         const e = error as OperationError;
         expect(e.code).toBe('invalid_params');
         expect(e.message).toContain('--source requires a value');
-        expect(e.suggestion).toContain('Usage: gbrain connectors sync');
+        expect(e.suggestion).toContain('Usage: foresights connectors sync');
         expect(e.why).toBeTruthy();
         expect(e.fix?.argv).toEqual(['gbrain', 'connectors', 'sync', 'claude', '--source', '<SOURCE_ID>', ...args.slice(2)]);
         expect(e.fix?.inputs?.[0]?.name).toBe('SOURCE_ID');
@@ -72,7 +72,7 @@ describe('connectors sync provider usage errors', () => {
     const log = console.log;
     console.log = (...values: unknown[]) => lines.push(values.join(' '));
     try { await runConnectorSyncCmd({ getConfig: async () => null } as never, ['--help']); } finally { console.log = log; }
-    expect(lines.join('\n')).toContain('Usage: gbrain connectors sync');
+    expect(lines.join('\n')).toContain('Usage: foresights connectors sync');
     expect(currentExitCode()).toBe(0);
   });
 });

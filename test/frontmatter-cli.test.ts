@@ -1,5 +1,5 @@
 /**
- * gbrain frontmatter CLI (src/commands/frontmatter.ts) — validate + generate
+ * foresights frontmatter CLI (src/commands/frontmatter.ts) — validate + generate
  * on real tmp-dir fixtures, no DB.
  *
  * runFrontmatter is driven IN-PROCESS for the pure-filesystem paths:
@@ -42,12 +42,12 @@ const fence = '---';
 interface Captured {
   out: string;
   err: string;
-  /** gbrain's owned exit verdict after the run (0 when none was set). */
+  /** foresights's owned exit verdict after the run (0 when none was set). */
   verdict: number;
 }
 
 /**
- * Drive `gbrain frontmatter <args>` in-process. Frontmatter output goes
+ * Drive `foresights frontmatter <args>` in-process. Frontmatter output goes
  * exclusively through console.log/console.error; the verdict channel is reset
  * before the run and read (then cleared, mirror included) after so no verdict
  * leaks into other tests in the shard.
@@ -90,7 +90,7 @@ function findFilesNamed(dir: string, name: string): string[] {
   return hits;
 }
 
-describe('gbrain frontmatter CLI (B4)', () => {
+describe('foresights frontmatter CLI (B4)', () => {
   let tmp: string;
 
   beforeEach(() => {
@@ -237,7 +237,7 @@ describe('gbrain frontmatter CLI (B4)', () => {
     // Under `docs/guides/` the rule's titleStrategy is `heading`, so the title
     // comes from `# …`. A leading U+FEFF used to defeat the `^#` match (title
     // fell back to the filename) and then get written back INSIDE the body,
-    // diverging from what `gbrain sync` / `import` produce.
+    // diverging from what `foresights sync` / `import` produce.
     const dir = join(tmp, 'docs', 'guides');
     mkdirSync(dir, { recursive: true });
     const f = join(dir, 'bom-example.md');

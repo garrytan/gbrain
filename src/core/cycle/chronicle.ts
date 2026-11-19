@@ -1,7 +1,7 @@
 /**
  * #5876 — cycle phase `chronicle`: Life Chronicle automatic extraction.
  *
- * Default ON (`gbrain config set auto_chronicle false` opts out). One global
+ * Default ON (`foresights config set auto_chronicle false` opts out). One global
  * phase under the cycle lock executes `chronicle_page_state` ledger rows:
  *
  *   1. Housekeeping: rows whose content is no longer live become
@@ -182,7 +182,7 @@ export async function runPhaseChronicle(engine: BrainEngine, opts: ChroniclePhas
   if (details.candidates === 0) {
     details.reason = enabled ? 'nothing_pending' : 'auto_chronicle_off';
     return result(enabled ? 'ok' : 'skipped', enabled ? 'chronicle: nothing pending'
-      : 'chronicle: auto_chronicle is off and no backfill rows are pending (turn on: gbrain config set auto_chronicle true)', details);
+      : 'chronicle: auto_chronicle is off and no backfill rows are pending (turn on: foresights config set auto_chronicle true)', details);
   }
   if (dryRun) return finishResult('ok', `chronicle (dry run): ${details.candidates} item(s) ready across ${queues.size} source(s)`);
 

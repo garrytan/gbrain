@@ -3,7 +3,7 @@
  *
  * Protects: `fences.repair.max_usd_per_page` (default 0.30) and
  * `fences.repair.max_usd_per_day` (default 1.00) are registered keys that
- * `gbrain config set` accepts as non-negative USD amounts (0 = no model
+ * `foresights config set` accepts as non-negative USD amounts (0 = no model
  * spend) and refuses otherwise with nothing written; the reader keeps the
  * default for an unset or unreadable value and says whether the cap is the
  * user's (an unpriced model is refused only under a user cap).

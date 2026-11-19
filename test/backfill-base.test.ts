@@ -186,7 +186,7 @@ describe('runBackfill — transaction failures (#5730)', () => {
     expect(error.code).toBe('backfill_rollback_failed');
     expect(error.message).toContain('batch error: 23505 duplicate key value');
     expect(error.message).toContain('rollback error: 08006 connection failure');
-    expect(error.fix).toBe('gbrain backfill test_backfill --resume');
+    expect(error.fix).toBe('foresights backfill test_backfill --resume');
     expect(engine.rows[0].needs_backfill).toBe(true);
     expect(engine.config.get('backfill.test_backfill.last_id')).toBeUndefined();
   });

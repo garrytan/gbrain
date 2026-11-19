@@ -2,7 +2,7 @@
 /**
  * CI guard for skills/skills.lock.history.json, the append-only record of
  * every released sha256 of each bundled skill file that
- * `gbrain skillpack reference --update-untouched` reads.
+ * `foresights skillpack reference --update-untouched` reads.
  *
  * Fails when:
  *   1. the history does not parse, or misses a hash the current lock lists

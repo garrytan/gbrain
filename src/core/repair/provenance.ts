@@ -1,11 +1,11 @@
 /**
- * `gbrain repair provenance` (#7891, #7918): put back the provenance stamps and lowering markers that writes removed
+ * `foresights repair provenance` (#7891, #7918): put back the provenance stamps and lowering markers that writes removed
  * before #7892, and stamp the trust marker on classified pages whose file would re-read higher than the row.
  * trust/provenance-drift.ts decides which pages and what each one gets; every change only lowers.
  *
  * - `restore` (class `remote`, or `ambiguous` with `--include-ambiguous`): the stamps restored, the lost cap stamped
  *   back as the `trust_tier` marker, the page lowered to min(stored, marker), and a `lower_page` proposal filed
- *   (`gbrain trust review` confirms or reverts it), through the owner page write `trust_owner_page` mode
+ *   (`foresights trust review` confirms or reverts it), through the owner page write `trust_owner_page` mode
  *   `restore_provenance` (trust/page-handlers.ts `restorePageProvenance`).
  * - `restamp` (#7918): the stored tier stamped as the marker; the row keeps its tier (mode `repair_marker`).
  * - Listed, never written: `needs_review` (a later local write also changed the stamp), `local` (the owner's own
@@ -34,7 +34,7 @@ interface PlannedPage { source_id: string; slug: string; id: number; revision: s
 interface ProvenanceItem extends RepairItem { page: PlannedPage; hash: string; includeAmbiguous: boolean; last: boolean }
 
 function previewCommand(scope: RepairScope, selection: Selection): string {
-  return `gbrain repair provenance${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}${selection.slugs.map(slug => ` --slug ${slug}`).join('')}`
+  return `foresights repair provenance${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}${selection.slugs.map(slug => ` --slug ${slug}`).join('')}`
     + (selection.include_ambiguous ? ' --include-ambiguous' : '');
 }
 
@@ -110,7 +110,7 @@ async function scan(engine: BrainEngine, scope: RepairScope, selection: Selectio
       if (file && !file.ok) {
         residuals.needs_review!++;
         listing.push({ item: label, class: 'needs_review', detail: file.reason === 'file_database_drift'
-          ? 'the page file holds an edit the database lacks; run gbrain sync first, then preview again'
+          ? 'the page file holds an edit the database lacks; run foresights sync first, then preview again'
           : `the page file cannot be written (${file.reason}); fix the checkout, then preview again` });
         continue;
       }
@@ -149,10 +149,10 @@ export const provenanceRepair: RepairHandler = {
       return { items: planned.map((page, index) => item(page, hash, selection.include_ambiguous, index === planned.length - 1)), preview_hash: hash, residuals, listing };
     }
     if (opts.remote !== false) {
-      throw opError('permission_denied', 'gbrain repair provenance --apply runs only from the local CLI on the brain host.', `Run it there: ${command}`);
+      throw opError('permission_denied', 'foresights repair provenance --apply runs only from the local CLI on the brain host.', `Run it there: ${command}`);
     }
     if (!opts.expect) {
-      throw new OperationError('invalid_params', 'gbrain repair provenance --apply writes only the set a preview printed.',
+      throw new OperationError('invalid_params', 'foresights repair provenance --apply writes only the set a preview printed.',
         `Preview first: ${command} — show the user the listing, then run the apply command it prints: ${command} --apply --expect <preview-hash> --yes`, DOCS);
     }
     const expect = opts.expect;

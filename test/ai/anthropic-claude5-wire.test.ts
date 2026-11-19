@@ -10,7 +10,7 @@
  * then 400 against the real API.
  *
  * These tests drive the real gateway (`chat()` and `expand()`) against a local
- * stub of the Messages API and assert the request body that leaves gbrain.
+ * stub of the Messages API and assert the request body that leaves foresights.
  */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';

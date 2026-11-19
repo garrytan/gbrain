@@ -1,5 +1,5 @@
 /**
- * `gbrain upgrade`'s one-time "Enable skill publishing now? (recommended)
+ * `foresights upgrade`'s one-time "Enable skill publishing now? (recommended)
  * [Y/n]" prompt (#4318 residual). The inline readline confirm used to call
  * `rl.close()` before resolving while an unguarded close listener settled the
  * promise `false` first, so pressing Enter on this default-YES prompt always
@@ -23,7 +23,7 @@ async function answer(text: string | null, probe = TTY): Promise<{ enabled: bool
   return { enabled: await pending, prompt };
 }
 
-describe('gbrain upgrade — skill-publish prompt (#4318 residual)', () => {
+describe('foresights upgrade — skill-publish prompt (#4318 residual)', () => {
   test('Enter alone accepts the [Y/n] default (the race used to decline it)', async () => {
     const r = await answer('\n');
     expect(r.enabled).toBe(true);

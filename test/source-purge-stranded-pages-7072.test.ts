@@ -71,7 +71,7 @@ for (const flavor of ['pglite', ...(databaseUrl ? ['postgres'] : [])] as const) 
       await seedExpiredArchive(engine, 'source-c', 0);
       const { purged, blocked } = await purgeExpiredSources(engine);
       expect(purged).toEqual(['source-c']);
-      expect(blocked.map(b => [b.id, b.code, b.fix?.command])).toEqual([['source-b', 'source_pages_remain', 'gbrain doctor --json']]);
+      expect(blocked.map(b => [b.id, b.code, b.fix?.command])).toEqual([['source-b', 'source_pages_remain', 'foresights doctor --json']]);
       expect(blocked[0]!.reason).toContain('3 page(s)');
       expect(await sourceRows(engine, 'source-b')).toBe(1);
       expect(await pageRows(engine, 'source-b')).toBe(3);

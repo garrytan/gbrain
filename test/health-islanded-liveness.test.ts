@@ -1,11 +1,11 @@
 /**
- * gbrain#4153 + gbrain#4147 — getHealth accounting fixes.
+ * foresights#4153 + foresights#4147 — getHealth accounting fixes.
  *
  * #4153: the islanded (orphan_pages) predicate must apply endpoint liveness
  * in BOTH directions — an inbound link from a soft-deleted page (the
  * invariant findOrphanPages documents) and an outbound link to a
  * soft-deleted target must NOT rescue a page from islanded status. Pre-fix,
- * get_health.orphan_pages disagreed with `gbrain orphans` whenever a
+ * get_health.orphan_pages disagreed with `foresights orphans` whenever a
  * soft-deleted page still touched a live one.
  *
  * #4147: entity-scoped link_coverage / timeline_coverage report null below
@@ -53,7 +53,7 @@ async function softDelete(slug: string): Promise<void> {
   await (engine as any).db.query(`UPDATE pages SET deleted_at = now() WHERE slug = $1`, [slug]);
 }
 
-describe('gbrain#4153 — islanded endpoint liveness (both directions)', () => {
+describe('foresights#4153 — islanded endpoint liveness (both directions)', () => {
   test('an inbound link from a soft-deleted page does NOT rescue a page from islanded', async () => {
     await engine.putPage('live-target', { type: 'note', title: 'T', compiled_truth: 'body', frontmatter: {} });
     await engine.putPage('dead-source', { type: 'note', title: 'S', compiled_truth: 'body', frontmatter: {} });
@@ -61,7 +61,7 @@ describe('gbrain#4153 — islanded endpoint liveness (both directions)', () => {
     await softDelete('dead-source');
     const h = await engine.getHealth();
     // live-target's only inbound link comes from a soft-deleted page — the
-    // same situation `gbrain orphans` already reports as an orphan.
+    // same situation `foresights orphans` already reports as an orphan.
     expect(h.orphan_pages).toBe(1);
   });
 
@@ -83,7 +83,7 @@ describe('gbrain#4153 — islanded endpoint liveness (both directions)', () => {
   });
 });
 
-describe('gbrain#4147 — entity coverage small-N guard', () => {
+describe('foresights#4147 — entity coverage small-N guard', () => {
   async function seedEntities(n: number, linked: boolean): Promise<void> {
     for (let i = 0; i < n; i++) {
       await engine.putPage(`people/p${i}`, { type: 'person', title: `P${i}`, compiled_truth: 'bio', frontmatter: {} });

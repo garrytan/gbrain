@@ -1,7 +1,7 @@
 /**
- * The cron-run spool (GST-2679). On a PGLite brain, `gbrain wakeshift emit cron.finished` at the end of a cron script
- * cannot open the brain while `gbrain serve` or `gbrain jobs work` holds its single-writer lock. Instead of dropping
- * the run, emit writes it as one small 0600 file under the brain's own gbrain home
+ * The cron-run spool (GST-2679). On a PGLite brain, `foresights wakeshift emit cron.finished` at the end of a cron script
+ * cannot open the brain while `foresights serve` or `foresights jobs work` holds its single-writer lock. Instead of dropping
+ * the run, emit writes it as one small 0600 file under the brain's own foresights home
  * (~/.gbrain/wakeshift-spool/<hash of the datastore path>/), and the 5 s wake drainer that serve and the worker both
  * run ingests it: it claims each file by an atomic rename, so two drainers never take the same file, inserts the run
  * with its original finished time and deletes the file. The insert skips a run already recorded with the same name,
@@ -30,7 +30,7 @@ const CLAIMED = /^\d{13}-[0-9a-f]{16}\.json\.claimed-[0-9a-f]{16}$/;
 export interface CronRun { name: string; status: 'ok' | 'failed'; finished_at: string }
 
 /**
- * The spool directory of the PGLite brain at `databasePath`, under this gbrain home, keyed by the datastore's
+ * The spool directory of the PGLite brain at `databasePath`, under this foresights home, keyed by the datastore's
  * canonical path as the PGLite lock is, so two spellings of one datastore (a symlink) share one spool. A path that
  * cannot be resolved keys by its absolute spelling.
  */
@@ -48,7 +48,7 @@ export async function recordCronRun(engine: BrainEngine, run: { name: string; st
     [run.name, run.status, run.finished_at ?? null]);
   await engine.executeRaw("DELETE FROM wake_cron_runs WHERE name = $1 AND finished_at < now() - interval '30 days'", [run.name]);
   const registered = await engine.executeRaw('SELECT 1 FROM wake_crons WHERE name = $1', [run.name]);
-  if (registered.length === 0) console.error(`[wakeshift] cron ${run.name} is not registered, so no agent can watch it: run gbrain wakeshift cron add ${run.name}.`);
+  if (registered.length === 0) console.error(`[wakeshift] cron ${run.name} is not registered, so no agent can watch it: run foresights wakeshift cron add ${run.name}.`);
 }
 
 /** Write one run to the spool; 'full' when SPOOL_MAX_FILES runs already wait. */

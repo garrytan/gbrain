@@ -1,10 +1,10 @@
 /**
- * v0.41.27.0 — git HEAD freshness probe for `gbrain doctor`.
+ * v0.41.27.0 — git HEAD freshness probe for `foresights doctor`.
  *
  * Single primitive. Returns true iff a `local_path` directory is a git repo
  * whose current HEAD matches the `last_commit` SHA the DB recorded at last
  * sync completion. When `requireCleanWorkingTree` is set, also requires the
- * working tree to be clean — mirroring `gbrain sync`'s force-walk gate at
+ * working tree to be clean — mirroring `foresights sync`'s force-walk gate at
  * sync.ts:1075 so doctor and sync agree on "is there work to do?".
  *
  * Fail-open contract: any error (missing path, not a git repo, git not
@@ -88,7 +88,7 @@ export interface GitFreshnessOpts {
    * Working-tree cleanliness requirement on top of the HEAD==lastCommit check:
    *   - `false`/omitted: HEAD comparison only.
    *   - `true`: require a fully clean tree (tracked AND untracked) — the
-   *     v0.41.27.0 posture mirroring `gbrain sync`'s gate at sync.ts:1075.
+   *     v0.41.27.0 posture mirroring `foresights sync`'s gate at sync.ts:1075.
    *   - `'ignore-untracked'` (v0.41.32.0): require no TRACKED changes but allow
    *     untracked files. This is what doctor/sources should use: sync's
    *     incremental path keys off the commit diff and never imports untracked
@@ -120,7 +120,7 @@ export type SourceGitState = 'unchanged' | 'changed' | 'unavailable';
 /**
  * Probe a source clone and classify it (see `SourceGitState`).
  *
- * This is NOT a full mirror of `gbrain sync`'s "do work?" predicate.
+ * This is NOT a full mirror of `foresights sync`'s "do work?" predicate.
  * Chunker-version match is computed by the caller because it depends on
  * engine state (`sources.chunker_version` vs `CURRENT_CHUNKER_VERSION`).
  * See `src/commands/doctor/checks/extraction-sync.ts:checkSyncFreshness` for the AND

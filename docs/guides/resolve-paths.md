@@ -1,9 +1,9 @@
-# Resolve a file path the way gbrain does
+# Resolve a file path the way foresights does
 
 A harness that checks whether a commit "landed" in search (a landing check, an agent that just wrote a page, a CI step) should
-ask gbrain what it did with each file, not re-implement gbrain's rules. A copied rule drifts. Three real shapes of that drift:
+ask foresights what it did with each file, not re-implement foresights's rules. A copied rule drifts. Three real shapes of that drift:
 
-- **Slug folding.** gbrain lowercases each path segment and strips leading and trailing hyphens, so
+- **Slug folding.** foresights lowercases each path segment and strips leading and trailing hyphens, so
   `articles/outlet-example/a-headline-.md` is the page `articles/outlet-example/a-headline`. A copy that only lowercases looks
   for a page that never exists.
 - **Case-folded twins.** A deleted `notes/Call-AbC.md` and a live `notes/call-abc.md` share one slug. Checked by slug, the
@@ -16,8 +16,8 @@ ask gbrain what it did with each file, not re-implement gbrain's rules. A copied
 ## The command
 
 ```bash
-gbrain sources resolve-path <source-id> <path...> [--stdin] [--json]
-git diff --name-only HEAD~1 | gbrain sources resolve-path default --stdin --json
+foresights sources resolve-path <source-id> <path...> [--stdin] [--json]
+git diff --name-only HEAD~1 | foresights sources resolve-path default --stdin --json
 ```
 
 MCP: `sources_resolve_path` with `{ id, paths }` (read scope, confined to the caller's sources). At most 200 paths per call. Paths
@@ -36,15 +36,15 @@ sentence and a `fix` (an existing command, never run here; null when nothing is 
 | state | meaning | fix |
 |---|---|---|
 | `searchable` | live page, every chunk has a vector | none |
-| `pending_embedding` | found by keyword; some chunks still wait for a vector (with `embedding_hold` set: a large page's budget waits for approval) | `gbrain embed --stale --catch-up` (paid, asks first), or `gbrain embed --held --dry-run --source <id>` for a held page; none on a brain keyless by choice |
-| `chunkless` | page with body text and no chunk rows | `gbrain embed --stale --catch-up` |
-| `keyword_only` | an `embed_skip` page: keyword search only, by design | see `gbrain pages unsearchable` |
+| `pending_embedding` | found by keyword; some chunks still wait for a vector (with `embedding_hold` set: a large page's budget waits for approval) | `foresights embed --stale --catch-up` (paid, asks first), or `foresights embed --held --dry-run --source <id>` for a held page; none on a brain keyless by choice |
+| `chunkless` | page with body text and no chunk rows | `foresights embed --stale --catch-up` |
+| `keyword_only` | an `embed_skip` page: keyword search only, by design | see `foresights pages unsearchable` |
 | `quarantined` | hidden from search by the import gate | doctor `quarantined_pages` |
 | `empty` | live page with no body | none |
-| `held` | a sync hold waits on the file | `gbrain sync status --source <id> --json` lists the hold's own fix |
+| `held` | a sync hold waits on the file | `foresights sync status --source <id> --json` lists the hold's own fix |
 | `skipped` | sync never imports this path (`skipped.reason`) | none: no page by design |
-| `not_synced_yet` | the file at HEAD differs from the last synced commit | `gbrain sync --source <id> --no-pull` |
-| `missing` | committed and eligible, no page, no hold, no skip: a real gap | `gbrain sources retry-held <id> --unindexed`, then the sync |
+| `not_synced_yet` | the file at HEAD differs from the last synced commit | `foresights sync --source <id> --no-pull` |
+| `missing` | committed and eligible, no page, no hold, no skip: a real gap | `foresights sources retry-held <id> --unindexed`, then the sync |
 | `slug_taken` | no page because another file's page owns the slug | rename one of the two files |
 | `page_deleted` | committed, but its page was deleted and sync keeps it deleted | restore the page, or delete the file |
 | `deleted` | the file is gone and no live page records it as its origin | none (a `slug_owner` twin is not this file's page) |
@@ -55,7 +55,7 @@ keyword search, `not_synced_yet` as lag, and every other state as an alert carry
 
 ## Synced but not searchable
 
-`gbrain sync status --source <id> --detail --json` adds a `landing` block, and doctor `sync_landing_gaps` (a cheap incident
+`foresights sync status --source <id> --detail --json` adds a `landing` block, and doctor `sync_landing_gaps` (a cheap incident
 check, so it answers even when a full doctor run cannot finish) reads the same thing: pages a managed sync committed more than
 the source's freshness target ago (`sync.freshness_target_seconds`, default 300 s) that search still cannot fully see, one row per
 page with its reason (`pending_embedding`, `chunkless`, `quarantined`, `page_missing`) and fix. It reads at most the newest 2,000
@@ -63,13 +63,13 @@ committed sync receipts of the last 24 h and says `unknown`, never `ok`, when it
 
 ## What "blocked" means
 
-`gbrain sync status` reads `blocked` only when the source cannot advance without a person or an operator, the same meaning as a
+`foresights sync status` reads `blocked` only when the source cannot advance without a person or an operator, the same meaning as a
 sync run's drain outcome and a sync job's `blocked` progress. A file hold that waits on a person while the rest of the source
 keeps syncing reads `synced` with reason `held_needs_human`; `needs_human` and `next` still carry that decision.
 
 ## Is my write searchable yet?
 
-`gbrain write-request <request_id> --applied --json` (MCP `get_write_request` with `applied: true`) carries `applied`, read live each time. It is opt-in, so a plain receipt poll costs no extra reads. The write's own reply stays frozen, so a same-request-id replay returns it unchanged; read the receipt for the live answer:
+`foresights write-request <request_id> --applied --json` (MCP `get_write_request` with `applied: true`) carries `applied`, read live each time. It is opt-in, so a plain receipt poll costs no extra reads. The write's own reply stays frozen, so a same-request-id replay returns it unchanged; read the receipt for the live answer:
 
 | Field | Meaning |
 |---|---|
@@ -85,7 +85,7 @@ A receipt read whose watermark read fails leaves `applied` out.
 
 ## The source watermark
 
-`gbrain sources status --json` (each source's `watermark`), MCP `sources_status` and `gbrain sync --json` (each synced source) carry the full watermark:
+`foresights sources status --json` (each source's `watermark`), MCP `sources_status` and `foresights sync --json` (each synced source) carry the full watermark:
 
 - `indexed_through`: `{ commit, synced_at }`. The commit is the source's last synced commit, which only a finished sync pass moves. A pass stopped by its deadline, an abort or a page budget leaves it where it was. Files held at that commit are counted in `pending.held_files`.
 - `embedded_through`: `complete` (with `commit`) when every live page that is not `embed_skip` has a vector for each visible chunk; `partial` with `unembedded_pages`, `held_pages` (held and capped large pages count as not embedded) and `before`, the oldest `updated_at` among the pages still waiting, so every page written before it is embedded; or `embeddings_off`.

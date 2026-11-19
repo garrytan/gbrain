@@ -2,7 +2,7 @@
 
 Branch: `test-reduction-wave` (uncommitted). Bun 1.3.14. Mutations applied one at a time with an exact-string replace and reverted with `git checkout -- <file>`; counts are executed-test counts (`N pass / M fail`). E2E runs used a local `pgvector/pgvector:pg16` container (`GBRAIN_TEST_ALLOW_DATABASE_URL=1`).
 
-## 1. `gbrain features` typeof probes (vacuous assertion)
+## 1. `foresights features` typeof probes (vacuous assertion)
 
 | Deleted test | Probe edit | Result | Surviving owner | Owner result |
 |---|---|---|---|---|

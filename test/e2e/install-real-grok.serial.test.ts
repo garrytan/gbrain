@@ -1,9 +1,9 @@
 /**
  * install-real-grok door e2e — drives the REAL `grok` binary (xAI Grok Build
- * CLI) against THIS checkout's gbrain over stdio MCP.
+ * CLI) against THIS checkout's foresights over stdio MCP.
  *
- * WHAT THIS PROVES: gbrain WIRED INTO grok via the DOCUMENTED command shape
- * (`grok mcp add gbrain -- gbrain serve --surface verbs`, bare command
+ * WHAT THIS PROVES: foresights WIRED INTO grok via the DOCUMENTED command shape
+ * (`grok mcp add foresights -- foresights serve --surface verbs`, bare command
  * resolved via a PATH-staged bin dir) + recall through MCP. Every asserted
  * shape was observed against v1.0.4 — see docs/mcp/GROK-CLI-PIN.md; update
  * that file, the heavy-tests grok-door pins, and these assertions together.
@@ -300,7 +300,7 @@ describe.skipIf(!CAN_RUN_KEYLESS)('install real-grok door — keyless tier (seri
 
     const binDir = join(home, 'staged-bin');
     const staged = stageGbrainBinDir(REPO_ROOT, binDir);
-    console.warn(`[install-real-grok] staged gbrain kind=${staged.kind}`);
+    console.warn(`[install-real-grok] staged foresights kind=${staged.kind}`);
 
     const add = registerGbrainIntoGrok(home, ws, binDir, home, 'default');
     // Add is LAZY (observed): exit 0 proves only that the config was written
@@ -330,7 +330,7 @@ describe.skipIf(!CAN_RUN_KEYLESS)('install real-grok door — keyless tier (seri
     const list = runGrok(home, ws, ['mcp', 'list', '--json'], binDir);
     expect(list.code).toBe(0);
     if (!list.stdout.includes('gbrain')) {
-      console.warn('[install-real-grok] mcp list --json did not mention gbrain — shape drift? output:', list.stdout.slice(0, 400));
+      console.warn('[install-real-grok] mcp list --json did not mention foresights — shape drift? output:', list.stdout.slice(0, 400));
     }
   }, 420_000);
 
@@ -413,7 +413,7 @@ describe.skipIf(!CAN_RUN_KEYLESS)('install real-grok door — keyless tier (seri
 });
 
 describe.skipIf(!CAN_RUN_PAID)('install real-grok door — paid tier (serial e2e)', () => {
-  test('SMOKE: real grok -p answers the per-run nonce fact through the gbrain MCP server', async () => {
+  test('SMOKE: real grok -p answers the per-run nonce fact through the foresights MCP server', async () => {
     const home = trackHome('smoke');
     const ws = join(home, 'ws');
     mkdirSync(ws, { recursive: true });
@@ -449,9 +449,9 @@ describe.skipIf(!CAN_RUN_PAID)('install real-grok door — paid tier (serial e2e
     expect(pre.code).toBe(0);
 
     const prompt =
-      'You have an MCP server named gbrain connected to a knowledge brain. ' +
+      'You have an MCP server named foresights connected to a knowledge brain. ' +
       `Using ONLY that brain (no general knowledge, no web search, no filesystem or shell tools), answer: ${seeded.query} ` +
-      'Report exactly what the brain says. If no gbrain tool is available to you, reply with exactly: NO-GBRAIN-TOOL';
+      'Report exactly what the brain says. If no foresights tool is available to you, reply with exactly: NO-GBRAIN-TOOL';
 
     let finalText = '';
     let lastExit: number | null = null;

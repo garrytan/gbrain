@@ -79,7 +79,7 @@ describe('scanText — pattern classes', () => {
     }
   });
 
-  test("gbrain's own tokens (generateToken prefix family) fire as gbrain_token", () => {
+  test("foresights's own tokens (generateToken prefix family) fire as gbrain_token", () => {
     // '' = legacy bearer (auth create / token-mint / serve-http); the rest are
     // the OAuth forms from oauth-provider.ts, gbrain_at_ being the /mcp bearer.
     for (const infix of ['', 'at_', 'rt_', 'cs_', 'code_']) {
@@ -403,7 +403,7 @@ describe('high-entropy assignment reaches compound credential keys', () => {
    * rediscovered. The left boundary requires the keyword to START at a
    * non-alphanumeric, so a camelCase compound (`apiAccessToken`) is out of
    * reach here. Dropping the boundary would let the keyword fire mid-word in
-   * ordinary prose, and this pattern is shared with gbrain's corpus scanning.
+   * ordinary prose, and this pattern is shared with foresights's corpus scanning.
    * The consumer's own scrub normalises separators and DOES cover this shape,
    * and it is the last pass before anything leaves the machine. */
   test('camelCase compounds are NOT covered by this rule', () => {

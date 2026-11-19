@@ -130,7 +130,7 @@ describe('contextual synopsis model resolution', () => {
     ).toBe(TIER_DEFAULTS.utility);
   });
 
-  test('reports the contextual synopsis route in gbrain models JSON', async () => {
+  test('reports the contextual synopsis route in foresights models JSON', async () => {
     const engine = new StubConfigEngine();
     engine.set('models.contextual_synopsis', 'codex-proxy:gpt-5.6-luna');
 

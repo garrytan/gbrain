@@ -1,10 +1,10 @@
 /**
- * #6803 C1: `gbrain sync --status› is the status read, never a sync.
+ * #6803 C1: `foresights sync --status› is the status read, never a sync.
  *
  * Before, the strict flag validator accepted `--status› (sync's generated legal set is the union of its
  * modules' flags), nothing downstream read it, and `runSingleSourceSync› ran: a full sync under the
  * 3600 s watchdog that imported the source. Now one classifier (`syncOperatorVerb›) routes it to
- * `gbrain sync status› in the CLI preflight (no watchdog, no owner delegation) and in `runSyncInner›,
+ * `foresights sync status› in the CLI preflight (no watchdog, no owner delegation) and in `runSyncInner›,
  * with one stderr hint. `--preview›, which no sync path reads, refuses `invalid_params›; `--dry-run› is
  * unchanged and still consumed by the direct parse and both owner delegation parsers.
  */
@@ -21,7 +21,7 @@ import { runCli } from './helpers/cli-spawn.ts';
 
 const HINT = 'sync --status is the status read';
 
-describe('gbrain sync --status (real CLI)', () => {
+describe('foresights sync --status (real CLI)', () => {
   let home: string;
   let notes: string;
   const dbPath = () => join(home, '.gbrain', 'brain.pglite');

@@ -1,5 +1,5 @@
 /**
- * GBRA-75 wave 10: full `gbrain doctor --json` golden on a PGLite brain whose
+ * GBRA-75 wave 10: full `foresights doctor --json` golden on a PGLite brain whose
  * content exercises every finding of the doctor hot checks
  * (`frontmatter_integrity`, `frontmatter_repairable`, the `timeline_history`
  * group, `fence_integrity`; fixture in test/helpers/doctor-hot-checks-fixture.ts).
@@ -31,7 +31,7 @@ async function capture(): Promise<Captures> {
   const h = makeDoctorHome('doctor-hot-checks', { clock: HOT_CHECK_CLOCK });
   homes.push(h);
   const init = await runGbrain(h, ['init', '--pglite', '--no-embedding']);
-  if (init.exitCode !== 0) throw new Error(`gbrain init failed (${init.exitCode}): ${init.stderr}`);
+  if (init.exitCode !== 0) throw new Error(`foresights init failed (${init.exitCode}): ${init.stderr}`);
   const { database_path } = JSON.parse(readFileSync(join(h.home, '.gbrain', 'config.json'), 'utf8')) as { database_path: string };
   const sql = pgliteSql(database_path);
   await buildHotCheckFixture(h, sql);
@@ -43,7 +43,7 @@ async function capture(): Promise<Captures> {
   return { first, second };
 }
 
-describe('gbrain doctor --json golden on the hot-check fixture (PGLite)', () => {
+describe('foresights doctor --json golden on the hot-check fixture (PGLite)', () => {
   test('first and second doctor runs match the 3f960312a capture', async () => {
     const c = await expectNormalizerStable(capture, BOTH);
     for (const run of [c.first, c.second]) expect(run.json).not.toBeNull();

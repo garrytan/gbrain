@@ -27,19 +27,19 @@ export class PgliteBusyError extends Error {
  * A legacy (pre-kernel) `.gbrain-lock/` whose owner cannot be proven dead: torn
  * or missing metadata, no recorded PID, or (Linux) no matching pid_ns+boot_id.
  * Waiting never changes that, so it is not retryable: the fix asks the user
- * and starts with the read-only `gbrain pglite-repair --legacy-lock` preview.
+ * and starts with the read-only `foresights pglite-repair --legacy-lock` preview.
  */
 export class LegacyOwnerUnverifiedError extends PgliteBusyError {
   override readonly retryable = false;
   readonly fix: Action;
   constructor(readonly dataDir: string, readonly legacyPid: number | null, readonly why: string) {
-    super(`GBrain: the PGLite data dir ${dataDir} still has a lock folder (.gbrain-lock) from an older gbrain${legacyPid === null ? '' : ` (PID ${legacyPid})`}, and ${why}, so gbrain cannot prove that process has stopped and will not open the brain. Waiting does not change this. Never remove a live holder's lock.`, 'legacy_owner_unverified');
+    super(`Foresights: the PGLite data dir ${dataDir} still has a lock folder (.gbrain-lock) from an older foresights${legacyPid === null ? '' : ` (PID ${legacyPid})`}, and ${why}, so foresights cannot prove that process has stopped and will not open the brain. Waiting does not change this. Never remove a live holder's lock.`, 'legacy_owner_unverified');
     this.name = 'LegacyOwnerUnverifiedError';
     this.fix = {
       argv: ['gbrain', 'pglite-repair', '--legacy-lock', '--path', dataDir, '--dry-run', '--json'], ask_user: true, consent: [], actor: 'agent', requires_exclusive: false,
       why: 'Read-only: names the legacy PID, whether it still runs and which processes on this host have the data dir open, and prints the plan_hash an approved removal binds.',
-      user_message: `Your gbrain brain at ${dataDir} still carries a lock left by an older gbrain version, and gbrain cannot prove that process has stopped, so it will not open the brain. `
-        + 'If no older gbrain is still running on this computer or on any other computer that shares this folder, I can check what is still using it (read-only) and then, with your OK, move the stale lock aside. Should I?',
+      user_message: `Your foresights brain at ${dataDir} still carries a lock left by an older foresights version, and foresights cannot prove that process has stopped, so it will not open the brain. `
+        + 'If no older foresights is still running on this computer or on any other computer that shares this folder, I can check what is still using it (read-only) and then, with your OK, move the stale lock aside. Should I?',
     };
   }
 }
@@ -123,7 +123,7 @@ function canonicalPath(path: string): string {
 export function getPgliteKernelLockPath(dataDir: string | undefined): string | undefined {
   return dataDir ? `${canonicalPath(dataDir)}.gbrain-owner.lock` : undefined;
 }
-/** Orchestration lock for `gbrain apply-migrations`; separate from the datastore lock above. */
+/** Orchestration lock for `foresights apply-migrations`; separate from the datastore lock above. */
 export function getPgliteMigrationLockPath(dataDir: string): string {
   return `${canonicalPath(dataDir)}.gbrain-migrations.lock`;
 }
@@ -228,7 +228,7 @@ function inspectHolderMetadata(dataDir: string | undefined): { holder: LockHolde
 }
 export interface LockPeekResult {
   held: boolean; isServe?: boolean; pid?: number;
-  /** The holder is `gbrain serve --http` (read from its recorded argv). */
+  /** The holder is `foresights serve --http` (read from its recorded argv). */
   http?: boolean;
   /** Epoch ms the holder recorded at acquisition. */
   acquiredAt?: number;
@@ -283,10 +283,10 @@ function busy(lockDir: string): PgliteBusyError {
   const metadata = readMetadata(lockDir);
   if (metadata && isServeCommand(metadata) && isProcessAlive(metadata.pid!)) {
     const args = Array.isArray(metadata.argv) ? metadata.argv : (metadata.command ?? '').split(/\s+/);
-    return new LiveServeLockError(`GBrain's local database is already open through \`gbrain serve\` (MCP, PID ${metadata.pid ?? 'unknown'}). Use the live serve's IPC/MCP tools or stop it before opening this PGLite datastore. Never remove a live holder's lock.`,
+    return new LiveServeLockError(`Foresights's local database is already open through \`foresights serve\` (MCP, PID ${metadata.pid ?? 'unknown'}). Use the live serve's IPC/MCP tools or stop it before opening this PGLite datastore. Never remove a live holder's lock.`,
       { pid: metadata.pid, transport: args.includes('--http') ? 'http' : 'stdio' });
   }
-  return new PgliteBusyError(`GBrain: Timed out waiting for PGLite data-dir lock at ${lockDir}. Retry after the holder finishes. Stop all older GBrain processes before upgrading this datastore's lock protocol; unreadable legacy ownership is never stolen. Never remove a live holder's lock. This lock is separate from \`gbrain sync --break-lock\`.`);
+  return new PgliteBusyError(`Foresights: Timed out waiting for PGLite data-dir lock at ${lockDir}. Retry after the holder finishes. Stop all older Foresights processes before upgrading this datastore's lock protocol; unreadable legacy ownership is never stolen. Never remove a live holder's lock. This lock is separate from \`foresights sync --break-lock\`.`);
 }
 
 /**
@@ -314,7 +314,7 @@ export const LEGACY_UNVERIFIED_WHY: Readonly<Record<LegacyUnverifiedReason, stri
  * First kernel acquisition also claims the legacy mkdir lock. A live or
  * unreadable legacy holder blocks migration. After migration, pid/mtime/
  * metadata corruption cannot authorize or prevent native ownership.
- * All older GBrain processes must be stopped before the protocol upgrade.
+ * All older Foresights processes must be stopped before the protocol upgrade.
  */
 export async function acquireLock(dataDir: string | undefined, opts: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<LockHandle> {
   if (!dataDir) return { lockDir: '', acquired: true };

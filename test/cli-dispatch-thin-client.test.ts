@@ -9,7 +9,7 @@
  * Doctor is NOT in the refused set — it routes to runRemoteDoctor instead.
  *
  * Strategy: seed `~/.gbrain/config.json` with remote_mcp set in a tempdir
- * home, then spawn `gbrain <cmd>` via test/helpers/cli-spawn.ts (async
+ * home, then spawn `foresights <cmd>` via test/helpers/cli-spawn.ts (async
  * Bun.spawn — NOT execFileSync — so the test event loop stays responsive;
  * DATABASE_URL / GBRAIN_DATABASE_URL always stripped, HOME + GBRAIN_HOME
  * pinned to the temp home) and assert (a) exit code 1, (b) stderr contains
@@ -133,18 +133,18 @@ describe('thin-client dispatch guard refuses DB-bound commands', () => {
 
   function cached(argv: string[]): CliResult {
     const r = refused.get(argv.join(' '));
-    if (!r) throw new Error(`not in refusedCommands batch: gbrain ${argv.join(' ')}`);
+    if (!r) throw new Error(`not in refusedCommands batch: foresights ${argv.join(' ')}`);
     return r;
   }
 
   for (const args of refusedCommands) {
-    test(`refuses \`gbrain ${args.join(' ')}\` with pinpoint hint`, () => {
+    test(`refuses \`foresights ${args.join(' ')}\` with pinpoint hint`, () => {
       const r = cached(args);
       expect(r.exitCode).toBe(1);
       // v0.31.1 (Issue #734): refusal carries an actionable hint via
       // THIN_CLIENT_REFUSE_HINTS instead of a generic "run on the remote
-      // host" message. Hint format: "`gbrain <cmd>` is not routable. <hint>"
-      expect(r.stderr).toContain(`gbrain ${args[0]}`);
+      // host" message. Hint format: "`foresights <cmd>` is not routable. <hint>"
+      expect(r.stderr).toContain(`foresights ${args[0]}`);
       expect(r.stderr).toContain('thin-client of https://brain-host.example/mcp');
       expect(r.stderr).toContain('not routable');
     });
@@ -157,7 +157,7 @@ describe('thin-client dispatch guard does NOT refuse safe commands', () => {
   // Commands that are still useful in thin-client mode (init, auth, version,
   // help) MUST NOT be refused. We assert the canonical thin-client error
   // does NOT appear.
-  test('`gbrain --brain <id> serve` refuses instead of bridging to the configured remote', async () => {
+  test('`foresights --brain <id> serve` refuses instead of bridging to the configured remote', async () => {
     seedThinClientConfig(tmp);
     const r = await run(['--brain', 'other-brain', 'serve']);
     expect(r.exitCode).toBe(2);
@@ -165,7 +165,7 @@ describe('thin-client dispatch guard does NOT refuse safe commands', () => {
     expect(r.stderr).not.toContain('[gbrain-bridge] relaying');
   });
 
-  test('`gbrain --version` works on thin-client install', async () => {
+  test('`foresights --version` works on thin-client install', async () => {
     seedThinClientConfig(tmp);
     const r = await run(['--version']);
     expect(r.exitCode).toBe(0);
@@ -173,7 +173,7 @@ describe('thin-client dispatch guard does NOT refuse safe commands', () => {
     expect(r.stderr).not.toContain('thin client');
   });
 
-  test('`gbrain --help` works on thin-client install', async () => {
+  test('`foresights --help` works on thin-client install', async () => {
     seedThinClientConfig(tmp);
     const r = await run(['--help']);
     expect(r.exitCode).toBe(0);
@@ -184,7 +184,7 @@ describe('thin-client dispatch guard does NOT refuse safe commands', () => {
 describe('thin-client doctor routes to runRemoteDoctor', () => {
   useFreshHome();
 
-  test('`gbrain doctor` runs remote checks (not DB-bound checks) when remote_mcp is set', async () => {
+  test('`foresights doctor` runs remote checks (not DB-bound checks) when remote_mcp is set', async () => {
     seedThinClientConfig(tmp);
     const r = await run(['doctor', '--json']);
     // Doctor will likely fail because brain-host.example isn't reachable —
@@ -201,7 +201,7 @@ describe('regression — local config still passes through normally', () => {
   useFreshHome();
 
   test('local PGLite config does NOT trigger thin-client guard for `sync`', async () => {
-    // Seed a local PGLite config (no remote_mcp). `gbrain sync` shouldn't
+    // Seed a local PGLite config (no remote_mcp). `foresights sync` shouldn't
     // refuse with the thin-client error. It may error for other reasons
     // (no brain repo configured, etc.) — what matters is the canonical
     // thin-client message MUST NOT appear.
@@ -222,34 +222,34 @@ describe('regression — local config still passes through normally', () => {
 describe('thin-client scratch-DB guard — jobs partial dispatch + config refusal', () => {
   useFreshHome();
 
-  test('`gbrain config set x y` is refused with pinpoint hint', async () => {
+  test('`foresights config set x y` is refused with pinpoint hint', async () => {
     seedThinClientConfig(tmp);
     const r = await run(['config', 'set', 'search.reranker.enabled', 'false']);
     expect(r.exitCode).toBe(1);
-    expect(r.stderr).toContain('gbrain config');
+    expect(r.stderr).toContain('foresights config');
     expect(r.stderr).toContain('not routable');
     expect(r.stderr).toContain('thin-client of https://brain-host.example/mcp');
   });
 
   // #5254: the unbound-write policy decides whether Postgres pages may skip
   // their canonical files; only the brain host may change it (no MCP op writes config).
-  test('`gbrain config set persistence.unbound_write` is refused on a thin client', async () => {
+  test('`foresights config set persistence.unbound_write` is refused on a thin client', async () => {
     seedThinClientConfig(tmp);
     const r = await run(['config', 'set', 'persistence.unbound_write', 'database_only']);
     expect(r.exitCode).toBe(1);
     expect(r.stderr).toContain('not routable');
   });
 
-  test('`gbrain jobs work` is refused with pinpoint hint (host-queue-bound)', async () => {
+  test('`foresights jobs work` is refused with pinpoint hint (host-queue-bound)', async () => {
     seedThinClientConfig(tmp);
     const r = await run(['jobs', 'work']);
     expect(r.exitCode).toBe(1);
-    expect(r.stderr).toContain('gbrain jobs');
+    expect(r.stderr).toContain('foresights jobs');
     expect(r.stderr).toContain('not routable');
     expect(r.stderr).toContain('thin-client of https://brain-host.example/mcp');
   });
 
-  test('`gbrain jobs get` never fabricates a scratch local engine', async () => {
+  test('`foresights jobs get` never fabricates a scratch local engine', async () => {
     // The regression this pins: on a thin-client install with a PGLite
     // engine key, `jobs get` connected a LOCAL engine before its remote
     // routing branch ran — creating an empty scratch PGLite store in the
@@ -267,7 +267,7 @@ describe('thin-client scratch-DB guard — jobs partial dispatch + config refusa
     expect(r.stdout + r.stderr).not.toContain('Setting up brain schema');
   });
 
-  test('`gbrain jobs list` never fabricates a scratch local engine', async () => {
+  test('`foresights jobs list` never fabricates a scratch local engine', async () => {
     seedThinClientConfig(tmp, { engine: 'pglite' });
     const r = await run(['jobs', 'list']);
     // Partial dispatch owns `jobs`: list/get route over MCP, never refused.
@@ -277,7 +277,7 @@ describe('thin-client scratch-DB guard — jobs partial dispatch + config refusa
     expect(r.stdout + r.stderr).not.toContain('Setting up brain schema');
   });
 
-  test('`gbrain think` never fabricates a scratch local engine', async () => {
+  test('`foresights think` never fabricates a scratch local engine', async () => {
     // Same class as jobs get: pglite-keyed thin client must not open a
     // scratch store / replay migrations before the remote think call.
     seedThinClientConfig(tmp, { engine: 'pglite' });
@@ -288,7 +288,7 @@ describe('thin-client scratch-DB guard — jobs partial dispatch + config refusa
     expect(r.stdout + r.stderr).not.toContain('database_url is missing');
   });
 
-  test('`gbrain think` on postgres-keyed thin client never demands database_url', async () => {
+  test('`foresights think` on postgres-keyed thin client never demands database_url', async () => {
     // Topology 2 as shipped: engine postgres, remote_mcp set, no database_url.
     // Today's connectEngine() throws `database_url is missing` before
     // runThinkCli's isThinClient branch. Remote call to brain-host.example

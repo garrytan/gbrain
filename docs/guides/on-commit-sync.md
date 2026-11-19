@@ -1,21 +1,21 @@
 # On-commit sync
 
-A resident gbrain process can sync a source as soon as a commit lands in its
+A resident foresights process can sync a source as soon as a commit lands in its
 checkout, instead of waiting for the next scheduled sync. Watching commits is
 off by default; turn it on with:
 
 ```bash
-gbrain config set sync.on_commit true
+foresights config set sync.on_commit true
 ```
 
 Residents read the flag every 30 seconds, so no restart is needed in either
-direction. Requests you make explicitly (gbrain sync trigger, a GitHub push
+direction. Requests you make explicitly (foresights sync trigger, a GitHub push
 webhook, a delegated sync that found another sync running) are recorded and
 synced whether or not the flag is on.
 
 ## Residents
 
-Four processes are residents: gbrain serve, gbrain serve --http, gbrain jobs
+Four processes are residents: foresights serve, foresights serve --http, foresights jobs
 work and the autopilot daemon. Each one starts the commit notifier; one of them
 owns it per host (a lease in the database on Postgres; on PGLite the process
 that holds the brain owns it). The others forward what they see to the owner.
@@ -77,15 +77,15 @@ satisfied and nobody re-recorded meanwhile; anything left gets one more run.
 Residents also scan the markers every 15 seconds, so a request that lands while
 a sync is finishing is still served.
 
-- gbrain sync trigger --source <id> [--json] records the request and answers
+- foresights sync trigger --source <id> [--json] records the request and answers
   queued (a job was queued; stdout keeps job_id=N), coalesced (a job for the
-  source is already waiting or running), nudged (a running gbrain serve on
+  source is already waiting or running), nudged (a running foresights serve on
   PGLite took it and its notifier starts the sync); exit 0. When no resident
   watches the source the answer also carries resident: null and the notice
   no_resident with its fix.
 - A GitHub push for a classic source queues one sync per source; a second push
   while that job waits joins it and the newer commit is kept.
-- gbrain sync while a serve on the same PGLite brain is already syncing records
+- foresights sync while a serve on the same PGLite brain is already syncing records
   the request with that serve instead of failing (except --dry-run, which stays
   read-only).
 
@@ -95,7 +95,7 @@ a sync is finishing is still served.
 |---|---|
 | sync.on_commit (config, default false) | Watch commits on this brain's sources |
 | sync.on_commit.sources (config) | Comma-separated source ids never watched for commits |
-| `gbrain sources set-sync <id> off` | The source is not watched for commits and owes no retry; a sync trigger or webhook still runs it once (a failed run waits for a new request instead of retrying), and `set-sync <id> on` restores the watch |
+| `foresights sources set-sync <id> off` | The source is not watched for commits and owes no retry; a sync trigger or webhook still runs it once (a failed run waits for a new request instead of retrying), and `set-sync <id> on` restores the watch |
 | GBRAIN_NOTIFIER=0 | No notifier in this process |
 | GBRAIN_NOTIFIER_DETECTION=poll | Never use file watches |
 | GBRAIN_NOTIFIER_POLL_MS | HEAD poll interval (default 3000) |
@@ -113,7 +113,7 @@ daemon also reads HEADs between ticks (every 3 s, git only;
 `GBRAIN_AUTOPILOT_HEAD_PROBE_MS`, 1 to 30 s), so a commit is queued within
 seconds instead of at the next tick (150 to 600 s).
 
-A `gbrain jobs work` worker picks up a queued sync job at once: it LISTENs for
+A `foresights jobs work` worker picks up a queued sync job at once: it LISTENs for
 queued sync jobs when its database URL is a direct session, and reads the sync
 queue every second (`GBRAIN_WORKER_SYNC_WAKE_POLL_MS`, 250 ms to 5 s) behind a
 transaction pooler (port 6543 or `?prepare=false`), where LISTEN does not
@@ -126,7 +126,7 @@ With `persistence.single_consumer` off, a worker beside a `serve` runs its own
 full consumer, as every resident process does, and doctor lists the pair as
 `two_consumers_on_host`.
 
-`gbrain autopilot --status` grades the daemon from its own next tick, written
+`foresights autopilot --status` grades the daemon from its own next tick, written
 to `autopilot.heartbeat.json` beside the lock (#7003); `--status --json`
 names the source of the threshold in `stale_after_source` (`daemon`, or `flag`
 when the sidecar is missing or from an older daemon, which falls back to
@@ -135,10 +135,10 @@ when the sidecar is missing or from an older daemon, which falls back to
 ## Check it
 
 ```bash
-gbrain config get sync.on_commit
-gbrain sync status --source <id> --json
-gbrain sync trigger --source <id> --json
-gbrain doctor --only commit_notifier --json
+foresights config get sync.on_commit
+foresights sync status --source <id> --json
+foresights sync trigger --source <id> --json
+foresights doctor --only commit_notifier --json
 ```
 
 sync status prints a `notifier for <id>:` line (the `notifier` object in
@@ -157,10 +157,10 @@ watching the source: nothing will sync a new commit until one starts.
 <a id="no-resident"></a>
 ## no_resident
 
-A notice, not an error: gbrain sync trigger recorded the request (and queued a
+A notice, not an error: foresights sync trigger recorded the request (and queued a
 job, or the serve took it) and exits 0, but no resident watches the source, so
-the recorded request waits. Run gbrain sync --source <id> --no-pull now, or
-start gbrain serve (or gbrain jobs work, or the autopilot daemon); the first
+the recorded request waits. Run foresights sync --source <id> --no-pull now, or
+start foresights serve (or foresights jobs work, or the autopilot daemon); the first
 resident that starts drains the recorded request. No service is installed for
 you.
 
@@ -169,8 +169,8 @@ you.
 
 The notifier kept retrying a source for more than five minutes without progress.
 sync status names the last error and the trace file
-(<gbrain home>/notifier/<source>.jsonl, local callers only). Run
-gbrain sync --source <id> --no-pull to see the error in the foreground, fix it,
+(<foresights home>/notifier/<source>.jsonl, local callers only). Run
+foresights sync --source <id> --no-pull to see the error in the foreground, fix it,
 and the notifier resumes on its next retry.
 
 The retries keep running every five minutes with sync.on_commit off (a run a
@@ -181,7 +181,7 @@ resident gives its first run applies only to a source with no failed attempts,
 so a retry after a run that advanced nothing gets the full sync budget.
 Turning sync.on_commit off, excluding the source with
 sync.on_commit.sources, or turning sync off for the source
-(`gbrain sources set-sync <id> off`) still ends a retry that a HEAD move
+(`foresights sources set-sync <id> off`) still ends a retry that a HEAD move
 started: the source goes idle.
 
 A run that committed pages counts as progress even before the source's last
@@ -197,20 +197,20 @@ the holder and takes the source over when its lease lapses.
 A GitHub push arrived for a managed source. A managed source never pulls, so the
 push's commit is recorded as wanted and the webhook answers 409 refresh_required
 instead of queueing a sync that cannot import it. Run
-gbrain sources refresh <id> on the brain host; the resident notifier then syncs
+foresights sources refresh <id> on the brain host; the resident notifier then syncs
 the refreshed checkout.
 
 ## Freshness numbers
 
-Each managed source's freshness over the last 24 hours shows in gbrain sync
-status --source <id> (the freshness block in --json) and in gbrain status: p50
+Each managed source's freshness over the last 24 hours shows in foresights sync
+status --source <id> (the freshness block in --json) and in foresights status: p50
 and p95 of commit to searchable (from the commit's committer time to the page
 write's completed_at) and commit to embedded. A first sync and working-tree
 entries are not counted, and a run that spans several commits is dated by its
 newest. Doctor managed_sync_latency warns when p95 commit to searchable is over
 sync.freshness_target_seconds (default 300) and fails over one hour; it grades
 only a brain with sync.on_commit on or a target set, and otherwise reports the
-numbers. gbrain doctor --source <id> grades only that source.
+numbers. foresights doctor --source <id> grades only that source.
 
 The check also grades the commit that is still waiting, so a stalled source
 does not read ok for lack of samples. A source is behind when its checkout
@@ -223,7 +223,7 @@ is no longer an ancestor of HEAD), the wait reads unknown and warns. Classic
 sources are graded the same way. Each source reports keyword-visible and
 embedded freshness separately (details.freshness_by_source in --json); the
 embedding backlog is reported, not graded, and reads disabled on a keyless
-brain. gbrain sources status dates a source's lag the same way. A stopped run
+brain. foresights sources status dates a source's lag the same way. A stopped run
 is reported by doctor managed_sync_blocked and managed_sync_not_moving.
 
 The rest of managed sync (backlogs, holds, the drain) is in

@@ -29,7 +29,7 @@ export interface RegistrySource {
 export interface RegistryEntry {
   /** Pack name (must match skillpack.json `name`). Unique in the catalog. */
   name: string;
-  /** One-line description for `gbrain skillpack search` output. */
+  /** One-line description for `foresights skillpack search` output. */
   description: string;
   /** Author display name (display only; account binding is via author_handle). */
   author: string;
@@ -43,11 +43,11 @@ export interface RegistryEntry {
    *  durability path: if source repo disappears, the registry-hosted
    *  tarballs/<name>-<version>.tgz mirror matches this hash. */
   tarball_sha256: string;
-  /** Minimum gbrain version the pack supports. */
+  /** Minimum foresights version the pack supports. */
   gbrain_min_version: string;
   /** Default tier — may be overridden by endorsements.json. Catalog PRs
    *  always land at `community`. Endorsement happens via the separate
-   *  `gbrain skillpack endorse` command writing endorsements.json. */
+   *  `foresights skillpack endorse` command writing endorsements.json. */
   default_tier: Exclude<RegistryTier, 'endorsed'>;
   /** Searchable tags (lowercase kebab strings). */
   tags: string[];
@@ -64,7 +64,7 @@ export interface RegistryEntry {
 }
 
 export interface RegistryBundles {
-  /** Named bundles — `gbrain skillpack scaffold starter-pack` walks the list. */
+  /** Named bundles — `foresights skillpack scaffold starter-pack` walks the list. */
   [bundleName: string]: string[];
 }
 

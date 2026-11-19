@@ -85,7 +85,7 @@ async function whole(engine: BrainEngine, env: string, key: string, fallback: nu
   const raw = process.env[env] ? Number(process.env[env]) : await engine.getConfig(key).then(v => v == null ? undefined : Number(v)).catch(() => undefined);
   if (raw === undefined) return fallback;
   if (!Number.isFinite(raw) || raw < min || raw > max) throw new OperationError('invalid_params', `${key} (or ${env}) must be a whole number from ${min} to ${max}; got ${raw}.`,
-    `Run gbrain config set ${key} ${fallback} (or unset ${env}), then retry.`);
+    `Run foresights config set ${key} ${fallback} (or unset ${env}), then retry.`);
   return Math.floor(raw);
 }
 

@@ -20,7 +20,7 @@ import { readLineGrammarSettings } from './line-grammar.ts';
  *      resolveDefaultVisibility inside the shared pipeline (backstop.ts).
  *
  *   2. LINK/TIMELINE EXTRACTION [CX-P0.3] — zero-LLM, deterministic. The
- *      same per-page cores `gbrain extract links|timeline --source db`
+ *      same per-page cores `foresights extract links|timeline --source db`
  *      runs: extractPageLinks + parseTimelineEntries, endpoint-validated
  *      through resolveCandidateSources and batch-written via
  *      addLinksBatch / addTimelineEntriesBatch, then watermark-stamped
@@ -77,7 +77,7 @@ export const CORPUS_INGESTED_SUFFIX = '.ingested';
 
 /**
  * Claim sidecar marking a corpus file as being ingested RIGHT NOW. Created
- * with O_EXCL (`wx`) before the LLM call so a manual `gbrain sweep --once`
+ * with O_EXCL (`wx`) before the LLM call so a manual `foresights sweep --once`
  * and the serve-idle sweep (separate processes on a Postgres brain) can't
  * both pay for the same transcript. Replaced by the `.ingested` sidecar on
  * success; removed on failure so the next sweep retries.
@@ -326,7 +326,7 @@ type FreshBudget = { budgetLeft: () => number };
  * Segmented pages whose links/timeline pass did not fit a whole sweep budget, `source\0slug` to the page's updated_at
  * then: later sweeps in this process leave them out of the pass's page query until the page changes, so one page too
  * large for any budget cannot take every sweep's budget, nor the batch slots of the pages behind it.
- * `gbrain extract --stale` extracts them.
+ * `foresights extract --stale` extracts them.
  */
 const deferredSegmentedPages = new Map<string, string>();
 
@@ -336,7 +336,7 @@ export function _resetDeferredSegmentedPagesForTests(): void {
 }
 
 /**
- * Pass 2 body. Calls the SAME per-page cores as `gbrain extract
+ * Pass 2 body. Calls the SAME per-page cores as `foresights extract
  * links|timeline --source db` (extract.ts:extractLinksFromDB /
  * extractTimelineFromDB): extractPageLinks + parseTimelineEntries, with
  * resolveCandidateSources doing the multi-source endpoint validation and
@@ -457,7 +457,7 @@ async function runLinksTimelinePass(
       const entries: ReturnType<typeof parseTimelineEntries> = [];
       const timelineOf = (block: { text: string }) => { for (const entry of parseTimelineEntries(block.text)) entries.push(detachedValue(entry)); };
       if (linksEnabled) {
-        // skipFrontmatter matches user-invoked `gbrain extract links`
+        // skipFrontmatter matches user-invoked `foresights extract links`
         // (frontmatter backfill stays a migration-orchestrator concern).
         const extracted = await linksOf(snapshot, { skipFrontmatter: true, globalBasename, pack, temporal: segmented,
           ...(segmented && timelineEnabled ? { onBlock: timelineOf } : {}) });
@@ -704,7 +704,7 @@ async function runLinksTimelineBatches(
       }
       deferredSegmentedPages.set(`${sourceId}\0${row.slug}`, row.updated_at_iso);
       skip('budget_deferred:segmented_page');
-      log(`[sweep] links/timeline: ${row.slug} (${row.body_bytes ?? '?'} bytes, segmented) does not fit the sweep budget; deferred until it changes. \`gbrain extract --stale --source-id ${sourceId}\` extracts it.`);
+      log(`[sweep] links/timeline: ${row.slug} (${row.body_bytes ?? '?'} bytes, segmented) does not fit the sweep budget; deferred until it changes. \`foresights extract --stale --source-id ${sourceId}\` extracts it.`);
     }
   }
 }
@@ -720,7 +720,7 @@ async function runLinksTimelineBatches(
  * window succeeds.
  *
  * Concurrency: a `<file>.in-progress` claim sidecar (O_EXCL create) fences
- * each file before its LLM call — a manual `gbrain sweep --once` racing the
+ * each file before its LLM call — a manual `foresights sweep --once` racing the
  * serve-idle sweep never double-spends on the same transcript. Success
  * replaces the claim with the `.ingested` sidecar; failure removes the claim
  * (next sweep retries); claims older than CORPUS_CLAIM_STALE_MS belong to
@@ -864,7 +864,7 @@ async function runCorpusIngestPass(
         continue;
       }
 
-      // #5413: a corpus file captured from gbrain's own claude-cli call, in
+      // #5413: a corpus file captured from foresights's own claude-cli call, in
       // any capture form. Extracting it spawns another claude-cli call; the
       // classification is permanent, so the terminal sidecar stops the retry.
       if (isClaudeCliSelfSessionId(corpusFileSessionId(name), selfProjectDirs)) {
@@ -1061,7 +1061,7 @@ async function corpusWriterPreflight(engine: BrainEngine, log: (msg: string) => 
         if ((e as { code?: unknown }).code !== 'writer_coordinator_required') throw e;
         held.set(sourceId, true);
         log(`[sweep] corpus extraction into source ${sourceId} is held before any model call: writer_coordinator_required `
-          + `(${e instanceof Error ? e.message : String(e)}). Check the writer: gbrain sources writer status ${sourceId}`);
+          + `(${e instanceof Error ? e.message : String(e)}). Check the writer: foresights sources writer status ${sourceId}`);
       }
     }
     return held.get(sourceId)!;
@@ -1070,7 +1070,7 @@ async function corpusWriterPreflight(engine: BrainEngine, log: (msg: string) => 
 
 function deadLetterLine(label: string, cap: number): string {
   return `[sweep] ${label}: corpus_window_dead_lettered — its next window failed ${cap} times after the model call, `
-    + 'so the sweep stopped paying for it. Fix the cause, then preview a retry: gbrain sweep --retry-failed';
+    + 'so the sweep stopped paying for it. Fix the cause, then preview a retry: foresights sweep --retry-failed';
 }
 
 /**
@@ -1216,7 +1216,7 @@ function drainSkipReasons(report: unknown): string[] {
  * X8 (D18): the corpus drain a `serve --http` process owns. A stdio serve
  * sweeps at startup and on idle ticks; the HTTP serve never swept, so a turn
  * the serve-side harvest refused (#5557) or a session-end corpus file waited
- * for a hand-run `gbrain sweep --once` and then for retention GC. Every
+ * for a hand-run `foresights sweep --once` and then for retention GC. Every
  * CORPUS_DRAIN_INTERVAL_MS, when a corpus file has no `.ingested` sidecar,
  * one bounded sweep runs under the corpus pass's own gates (keyless skip,
  * the writeback gate, claims, per-file and per-sweep window caps). Never

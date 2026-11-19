@@ -12,14 +12,14 @@
  *     test/write-receipt-remediation.test.ts).
  *   - submit_job → status read: a job that was really queued before the call
  *     failed is recovered through the job list, never a resubmit, on the
- *     trusted local `gbrain call` dispatch and over HTTP. Fails without the
- *     src/core/agent-output.ts STATUS_READ row (the fix was `gbrain doctor`).
- *   - Approval binding: `gbrain reindex-frontmatter` (destructive, plan-bound)
+ *     trusted local `foresights call` dispatch and over HTTP. Fails without the
+ *     src/core/agent-output.ts STATUS_READ row (the fix was `foresights doctor`).
+ *   - Approval binding: `foresights reindex-frontmatter` (destructive, plan-bound)
  *     re-asks with `preview_changed` when an approved record changed and when
  *     a new record started matching, changes nothing, and runs once the
  *     current plan is approved (units: test/consent.test.ts verifyApproval,
  *     test/doctor-remediate-consent.test.ts stale hash).
- *   - isInteractive on a REAL gbrain CLI under a pseudo-terminal: a human with
+ *   - isInteractive on a REAL foresights CLI under a pseudo-terminal: a human with
  *     only CODEX_HOME set keeps the consent prompt; CLAUDECODE and CI force
  *     non-interactive with exactly one stderr line naming the cause and
  *     GBRAIN_INTERACTIVE=1 (units: test/interaction.test.ts,
@@ -119,7 +119,7 @@ describe('cross-principal receipt recovery through real dispatch', () => {
     const denied = envelopeOf(await callTool(serve.base, other.token, 'get_write_request', { request_id: requestId }));
     expect(denied.code).toBe('not_found');
 
-    // The trusted CLI owner of a local receipt reads it with `gbrain write-request -- <id>`.
+    // The trusted CLI owner of a local receipt reads it with `foresights write-request -- <id>`.
     const local = opError('storage_error', 'The connection dropped after the write was accepted.', 'Inspect the receipt before resubmitting.');
     local.writeRequest = { request_id: requestId, state: 'queued', retry_after_ms: 1000 } as OperationError['writeRequest'];
     local.receiptFields = { operation: 'put_page', source_id: 'default', slug: 'notes/h3-receipt', principal_kind: 'local_cli', principal_id: 'local' };
@@ -132,7 +132,7 @@ describe('submit_job recovers through the job list, never a resubmit', () => {
   const jobCount = async (name: string) =>
     Number((await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM minion_jobs WHERE name = $1', [name]))[0]?.n ?? 0);
 
-  test('trusted local dispatch (`gbrain call`): the job was queued, the fix lists it', async () => {
+  test('trusted local dispatch (`foresights call`): the job was queued, the fix lists it', async () => {
     const original = opNamed('submit_job').handler;
     const r = await withOpHandler('submit_job', async (ctx, p) => {
       await original(ctx, p);

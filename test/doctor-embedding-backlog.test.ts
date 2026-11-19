@@ -2,7 +2,7 @@
  * embeddings doctor check reports the embedding backlog (Foundations 1, F4d).
  *
  * Protects: when chunks lack embeddings, the `embeddings` check names the
- * backlog count and the command that finishes it (`gbrain embed --stale
+ * backlog count and the command that finishes it (`foresights embed --stale
  * --catch-up`), says it makes paid calls, and carries the same facts in
  * `details` for agents. A clean brain keeps the golden-pinned message.
  * Fails when: the check goes back to recommending a plain `embed --stale`,
@@ -62,9 +62,9 @@ describe('embeddings doctor check: backlog', () => {
     const [check] = await runCheck(ctxFor(0.002, 51_910));
     expect(check.status).toBe('warn');
     expect(check.message).toContain('Backlog: 51910 chunk(s) without embeddings');
-    expect(check.message).toContain('Fix: gbrain embed --stale --catch-up');
+    expect(check.message).toContain('Fix: foresights embed --stale --catch-up');
     expect(check.message).toContain('paid embedding calls');
-    expect(check.details).toMatchObject({ code: 'embedding_backlog', backlog: 51_910, fix: 'gbrain embed --stale --catch-up' });
+    expect(check.details).toMatchObject({ code: 'embedding_backlog', backlog: 51_910, fix: 'foresights embed --stale --catch-up' });
   });
 
   test('a brain with no embeddings yet names the backlog too', async () => {
@@ -101,7 +101,7 @@ describe('embeddings doctor check: backlog age', () => {
     expect(check.message).toContain('Backlog: 50000 chunk(s) without embeddings');
     expect(check.message).toContain('Oldest pending chunk has waited 3d');
     expect(check.details).toMatchObject({ code: 'embedding_backlog', backlog: 50_000, oldest_pending_age_s: 3 * DAY,
-      age_threshold_s: EMBEDDING_BACKLOG_MAX_AGE_S, fix: 'gbrain embed --stale --catch-up' });
+      age_threshold_s: EMBEDDING_BACKLOG_MAX_AGE_S, fix: 'foresights embed --stale --catch-up' });
     expect(check.fix?.consent).toEqual(['paid']);
     expect(check.fix?.argv).toEqual(['gbrain', 'embed', '--stale', '--catch-up', '--yes']);
   });

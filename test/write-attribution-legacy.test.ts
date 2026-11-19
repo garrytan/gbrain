@@ -5,7 +5,7 @@
  *
  * Protects: direct markdown, code and image imports (pages.revision_* and the
  * page_versions row an edit archives), the unmanaged extract_facts page
- * reconcile, extract-takes and `gbrain repair stale-atoms --apply`. Fails if
+ * reconcile, extract-takes and `foresights repair stale-atoms --apply`. Fails if
  * one of those transactions stops entering maintenanceTransaction. Also pins the
  * attributed and "unattributed" lists in docs/architecture/system-of-record.md
  * against a grep of src, so a new direct writer cannot fall out silently.
@@ -133,7 +133,7 @@ describe('write attribution on an unmanaged brain', () => {
     }
   }, 120_000);
 
-  test('gbrain repair stale-atoms --apply stamps the retirement on the atom revision and its archived version', async () => {
+  test('foresights repair stale-atoms --apply stamps the retirement on the atom revision and its archived version', async () => {
     for (const engine of engines) {
       const brain = await unmanagedBrain(engine);
       const atom = 'atoms/2026-01-01/gone-example';

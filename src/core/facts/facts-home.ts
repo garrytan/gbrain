@@ -1,5 +1,5 @@
 /**
- * GST-2492 PR 2: where the facts of a strict source that have no Git home stand, and what `gbrain repair facts-home` does
+ * GST-2492 PR 2: where the facts of a strict source that have no Git home stand, and what `foresights repair facts-home` does
  * with each (the doctor check `strict_facts_outside_git` reads the same scan). Read-only.
  *
  * Groups, one per row:
@@ -32,7 +32,7 @@ import { ambiguousHeldReason, heldFactTarget, holdingHome, holdingPageFor } from
 
 export const FACTS_HOME_DOCS = 'docs/guides/repair.md#facts-home';
 export const HELD_TOO_LONG_DAYS = 30;
-export const factsHomePreviewCommand = (sourceId: string) => `gbrain repair facts-home --source ${sourceId}`;
+export const factsHomePreviewCommand = (sourceId: string) => `foresights repair facts-home --source ${sourceId}`;
 
 export const FACTS_HOME_GROUPS = ['entity_page_exists', 'entity_page_missing', 'no_entity', 'cannot_render', 'folder_restricted',
   'entity_page_deleted', 'held_fact_unmovable', 'held_over_30_days', 'fenced_page_missing', 'ontology_observation'] as const;

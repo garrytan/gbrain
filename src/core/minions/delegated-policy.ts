@@ -26,8 +26,8 @@ export interface DelegationSnapshot {
 export class DelegationDeniedError extends UnrecoverableError {
   constructor(public readonly reasons: string[]) {
     super(`agent_bindings_invalid: ${reasons.join(', ')}. ${reasons.includes('client_deleted')
-      ? 'Ask the server administrator to inspect registrations with gbrain mcp admin clients and, if replacement is intended, grant a new client and submit a new job. This job cannot regain authority.'
-      : 'Repair with gbrain auth rescope-client; this job never changes its submitted source.'}`);
+      ? 'Ask the server administrator to inspect registrations with foresights mcp admin clients and, if replacement is intended, grant a new client and submit a new job. This job cannot regain authority.'
+      : 'Repair with foresights auth rescope-client; this job never changes its submitted source.'}`);
     this.name = 'DelegationDeniedError';
   }
 }

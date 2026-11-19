@@ -3,7 +3,7 @@
  * detector (src/core/persistence/unindexed-files.ts) over every managed Git
  * source this host owns, in the global maintenance lane right after
  * `content_repair`. It finds committed files with no page, no hold and no
- * scheduled re-screen (typically files an older gbrain refused before
+ * scheduled re-screen (typically files an older foresights refused before
  * refusals became holds), stores the result where doctor `unindexed_files`
  * reads it, and schedules the found paths for a re-screen on the next sync
  * (at most `UNINDEXED_SCHEDULE_CAP` per run), so each is imported or recorded
@@ -31,7 +31,7 @@ import { isUncontainedPhaseError } from './phase-containment.ts';
 export interface UnindexedFilesPhaseOpts {
   dryRun: boolean;
   signal?: AbortSignal;
-  /** The enclosing maintenance job's absolute deadline (epoch ms); null or unset for a direct `gbrain dream`. */
+  /** The enclosing maintenance job's absolute deadline (epoch ms); null or unset for a direct `foresights dream`. */
   deadlineAtMs?: number | null;
   now?: () => number;
 }
@@ -98,7 +98,7 @@ export async function runUnindexedFilesPhase(engine: BrainEngine | null, opts: U
   const notes = [
     incomplete ? `${incomplete} source(s) stopped at their time budget; the next maintenance run continues where they stopped.` : '',
     skipped.length ? `${skipped.length} source(s) skipped (${[...new Set(skipped.map(s => s.reason))].join(', ')}).` : '',
-    errors.length ? `${errors.length} source(s) could not be checked (${[...new Set(errors.map(e => e.code))].join(', ')}); gbrain doctor --only unindexed_files --json shows each source's state.` : '',
+    errors.length ? `${errors.length} source(s) could not be checked (${[...new Set(errors.map(e => e.code))].join(', ')}); foresights doctor --only unindexed_files --json shows each source's state.` : '',
   ].filter(Boolean);
   return {
     ...base,

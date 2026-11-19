@@ -1,8 +1,8 @@
 /**
  * The one approval for large pages that wait for embedding (#6803 part 3,
  * #6847): the phrase every surface prints, the approval amount, and the
- * Action `gbrain embed --stale`, the embed-backfill job, doctor
- * `partial_embedding`, `gbrain embed --held --dry-run` and the per-page hold
+ * Action `foresights embed --stale`, the embed-backfill job, doctor
+ * `partial_embedding`, `foresights embed --held --dry-run` and the per-page hold
  * line in `meterPageBatch` all render.
  *
  * The approval is `--max-usd N`, which is both the run's hard cap (paid
@@ -23,6 +23,7 @@ import { reservationCostUsd } from './budget/reservation-cost.ts';
 import { estimateCostFromChars, lookupEmbeddingPrice } from './embedding-pricing.ts';
 import { DEFAULT_CHARS_PER_TOKEN } from './ai/embed-batch-plan.ts';
 import { getRecipe } from './ai/recipes/index.ts';
+import { commandText } from './brand.ts';
 
 /** Price assumed for a model with no known rate (the conservative OpenAI large rate). */
 export const UNPRICED_RATE_PER_MTOK = 0.13;
@@ -73,7 +74,7 @@ const previewArgv = (sourceId: string) => ['gbrain', 'embed', '--held', '--dry-r
 
 /**
  * The approve Action for one source (or one page of it, `slug`): run
- * `gbrain embed --held --source S --max-usd N`, preview and verify with the
+ * `foresights embed --held --source S --max-usd N`, preview and verify with the
  * same source-scoped dry run (held 0 for that source once it ran). Always
  * `ask_user`: the hold is the user's consent gate (no automatic release).
  */
@@ -102,11 +103,11 @@ export function heldApproveAction(target: HeldTarget, free: boolean): Action {
 
 /** The rendered shell command of an Action (routing pinned, as every printed fix is). */
 export function renderedCommand(action: Action, ctx: RenderContext = cliRenderContext()): string {
-  return renderAction(action, ctx).command ?? action.argv!.join(' ');
+  return renderAction(action, ctx).command ?? commandText(action.argv!);
 }
 
 /**
- * `gbrain embed --held --dry-run [--source S]`, rendered. Without a source it
+ * `foresights embed --held --dry-run [--source S]`, rendered. Without a source it
  * lists every source, so it opts out of routing's source pin (a pinned
  * `--source` would narrow the listing to the ambient source); the brain pin stays.
  */

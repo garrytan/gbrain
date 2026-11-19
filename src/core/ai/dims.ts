@@ -68,7 +68,7 @@ export function isValidVoyageOutputDim(dims: number): boolean {
 // brain is configured with `embedding_dimensions` OUTSIDE that range, OpenAI
 // returns HTTP 400 at first embed. We catch it locally with a paste-ready
 // fix so users don't see opaque "vector dimension mismatch" errors after a
-// `gbrain migrate embeddings --to openai:...` lands them at the wrong dim.
+// `foresights migrate embeddings --to openai:...` lands them at the wrong dim.
 const OPENAI_TEXT3_MAX_DIMS: Record<string, number> = {
   'text-embedding-3-small': 1536,
   'text-embedding-3-large': 3072,
@@ -182,7 +182,7 @@ export function dimsProviderOptions(
           throw new AIConfigError(
             `OpenAI model "${modelId}" supports embedding_dimensions in 1..${max}, got ${dims}.`,
             `Use a width between 1 and ${max} (${Math.min(1024, max)} is a common default). On an existing brain a width change re-embeds; ` +
-            `preview it with \`gbrain migrate embeddings --to openai:${modelId} --dim ${Math.min(1024, max)} --dry-run\` (pages and facts are kept).`,
+            `preview it with \`foresights migrate embeddings --to openai:${modelId} --dim ${Math.min(1024, max)} --dry-run\` (pages and facts are kept).`,
           );
         }
         return { openai: { dimensions: dims } };
@@ -217,7 +217,7 @@ export function dimsProviderOptions(
             `Voyage model "${modelId}" supports output_dimension only in ` +
             `{${VOYAGE_VALID_OUTPUT_DIMS.join(', ')}}, got ${dims}.`,
             `Set \`embedding_dimensions\` to one of ` +
-            `${VOYAGE_VALID_OUTPUT_DIMS.join('/')} in your gbrain config, or ` +
+            `${VOYAGE_VALID_OUTPUT_DIMS.join('/')} in your foresights config, or ` +
             `switch to a fixed-dim Voyage model (e.g. voyage-3, voyage-3-lite).`,
           );
         }
@@ -235,7 +235,7 @@ export function dimsProviderOptions(
             `Perplexity model "${modelId}" supports embedding_dimensions in ` +
             `${PERPLEXITY_MIN_DIMS}..${max}, got ${dims}.`,
             `Set \`embedding_dimensions\` to a value between ${PERPLEXITY_MIN_DIMS} and ${max} ` +
-            `in your gbrain config.`,
+            `in your foresights config.`,
           );
         }
         return { openaiCompatible: { dimensions: dims } };
@@ -261,7 +261,7 @@ export function dimsProviderOptions(
       // Lowercased for matching only — providers' model ids are case-sensitive
       // (SiliconFlow serves `Qwen/Qwen3-Embedding-4B` and 500s on the
       // lowercase form), so the ORIGINAL id goes on the wire while every
-      // literal compared here is already lowercase (gbrain#4123). matchId is
+      // literal compared here is already lowercase (foresights#4123). matchId is
       // the folded form of modelId (modelMatchKey above).
       const bareModelId = matchId.includes('/') ? matchId.split('/').pop()! : matchId;
       if (bareModelId.startsWith('text-embedding-3')) {
@@ -270,7 +270,7 @@ export function dimsProviderOptions(
           throw new AIConfigError(
             `OpenAI model "${modelId}" supports embedding_dimensions in 1..${max}, got ${dims}.`,
             `Use a width between 1 and ${max} (${Math.min(1024, max)} is a common default). On an existing brain a width change re-embeds; ` +
-            `preview it with \`gbrain migrate embeddings --to <provider>:${modelId} --dim ${Math.min(1024, max)} --dry-run\` (pages and facts are kept).`,
+            `preview it with \`foresights migrate embeddings --to <provider>:${modelId} --dim ${Math.min(1024, max)} --dry-run\` (pages and facts are kept).`,
           );
         }
         return { openaiCompatible: { dimensions: dims } };

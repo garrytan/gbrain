@@ -1,13 +1,13 @@
 /**
- * gbrain capture — the single human-facing entrypoint for getting content
+ * foresights capture — the single human-facing entrypoint for getting content
  * into the brain. Replaces the confusion of "do I call put_page, commit
  * a file, or wait for autopilot?" with one command that just works.
  *
- *   gbrain capture "thought to remember"
- *   gbrain capture --file ./notes/2026-05-20.md
- *   echo "from stdin" | gbrain capture --stdin
- *   gbrain capture "..." --slug inbox/specific
- *   gbrain capture "..." --quiet           # slug-only output for pipelines
+ *   foresights capture "thought to remember"
+ *   foresights capture --file ./notes/2026-05-20.md
+ *   echo "from stdin" | foresights capture --stdin
+ *   foresights capture "..." --slug inbox/specific
+ *   foresights capture "..." --quiet           # slug-only output for pipelines
  *
  * Behavior:
  *   - Local install: writes to ~/.gbrain/inbox/<slug>.md OR routes through
@@ -26,7 +26,7 @@
  *   - Default: 5-line receipt block (slug, ingested_at, source_kind,
  *     content_hash, queue job id where applicable).
  *   - --quiet: just the slug on stdout for shell pipelines like
- *     `JOB=$(gbrain capture "..." --quiet)`.
+ *     `JOB=$(foresights capture "..." --quiet)`.
  *   - --json: structured response for agents.
  */
 
@@ -97,8 +97,8 @@ function parseArgs(args: string[]): RunOpts | { help: true; positional: string |
     if (mutationFlag) {
       const value = mutationFlag[2] ?? args[++i];
       if (!value || value.startsWith('--')) throw opError('invalid_params', `${mutationFlag[1]} requires a UUID.`, mutationFlag[1] === 'request-id'
-        ? 'Give --request-id the UUID an earlier attempt of this capture printed (it replays that request), or omit it and gbrain generates one.'
-        : 'Give --expected-revision the revision gbrain get --json returned for the page, or omit it to capture without a revision check.');
+        ? 'Give --request-id the UUID an earlier attempt of this capture printed (it replays that request), or omit it and foresights generates one.'
+        : 'Give --expected-revision the revision foresights get --json returned for the page, or omit it to capture without a revision check.');
       if (mutationFlag[1] === 'request-id') opts.request_id = value;
       else opts.expected_revision = value;
       continue;
@@ -130,7 +130,7 @@ function parseArgs(args: string[]): RunOpts | { help: true; positional: string |
     if (a === '--kind') { const v = args[++i]; if (v) opts.kind = v; continue; }
     if (a === '--depth') { const v = args[++i]; if (v) opts.depth = v; continue; }
     if (a.startsWith('--')) throw opError('invalid_params', `Unsupported capture option '${a.split('=')[0]}'.`,
-      `Remove ${a.split('=')[0]}; gbrain capture accepts --file, --stdin, --slug, --type, --source, --who, --what, --where, --kind, --depth, --request-id, --expected-revision, --force, --json and --quiet.`,
+      `Remove ${a.split('=')[0]}; foresights capture accepts --file, --stdin, --slug, --type, --source, --who, --what, --where, --kind, --depth, --request-id, --expected-revision, --force, --json and --quiet.`,
       { fix: { argv: ['gbrain', 'capture', '--help'], consent: [], actor: 'agent', why: 'Prints the capture forms and flags.', requires_exclusive: false } });
     positional.push(a);
   }
@@ -140,15 +140,15 @@ function parseArgs(args: string[]): RunOpts | { help: true; positional: string |
   return opts;
 }
 
-const HELP = `Usage: gbrain capture [content] [options]
+const HELP = `Usage: foresights capture [content] [options]
 
 The single entrypoint for getting content into the brain. One command,
 local OR thin-client, synchronous receipt with the resulting page slug.
 
 Modes (mutually exclusive — first match wins):
-  gbrain capture "thought"          inline content
-  gbrain capture --file PATH        read content from a file
-  gbrain capture --stdin            read content from stdin (piped)
+  foresights capture "thought"          inline content
+  foresights capture --file PATH        read content from a file
+  foresights capture --stdin            read content from stdin (piped)
 
 Options:
   --slug SLUG          Override the default inbox/YYYY-MM-DD-<hash6> slug
@@ -179,10 +179,10 @@ Notes:
     Keep --request-id unchanged when retrying the same capture.
 
 Examples:
-  gbrain capture "remember to follow up on the X deal"
-  echo "from a pipe" | gbrain capture --stdin
-  gbrain capture --file ./notes/today.md --slug daily/2026-05-20
-  JOB=$(gbrain capture "..." --quiet)
+  foresights capture "remember to follow up on the X deal"
+  echo "from a pipe" | foresights capture --stdin
+  foresights capture --file ./notes/today.md --slug daily/2026-05-20
+  JOB=$(foresights capture "..." --quiet)
 `;
 
 
@@ -207,7 +207,7 @@ export function maybeRewriteSourceFkError(err: unknown, sourceId: string | undef
   const matchesFk = msg.includes('pages_source_id_fk')
     || (msg.includes('foreign key constraint') && msg.includes('source'));
   if (!matchesFk) return null;
-  return `source '${sourceId}' is not registered. Register it first:\n  gbrain sources add ${sourceId} --path <path>\n\nList registered sources:\n  gbrain sources list`;
+  return `source '${sourceId}' is not registered. Register it first:\n  foresights sources add ${sourceId} --path <path>\n\nList registered sources:\n  foresights sources list`;
 }
 
 
@@ -301,10 +301,10 @@ export async function runCapture(engine: BrainEngine | null, args: string[], opt
   // (server owns the source scope, client cannot override per-call).
   const cfg = loadConfig();
   if (parsed.source && isThinClient(cfg)) {
-    console.error(`gbrain capture: --source is not supported on thin-client installs.`);
+    console.error(`foresights capture: --source is not supported on thin-client installs.`);
     console.error(`Server-side OAuth client registration determines source scope.`);
     console.error(`On the server, run:`);
-    console.error(`  gbrain auth register-client <name> --source ${parsed.source} --scopes "read write"`);
+    console.error(`  foresights auth register-client <name> --source ${parsed.source} --scopes "read write"`);
     process.exit(1);
   }
 
@@ -316,9 +316,9 @@ export async function runCapture(engine: BrainEngine | null, args: string[], opt
   if (parsed.stdin) {
     // Bounded read (C5): an open-but-silent pipe times out instead of hanging,
     // and partial input is never captured. Raw bytes reach the binary guards.
-    const read = await readStdinPayload('echo "a thought" | gbrain capture --stdin');
+    const read = await readStdinPayload('echo "a thought" | foresights capture --stdin');
     if (!read.ok) {
-      console.error(`gbrain capture: ${read.message}`);
+      console.error(`foresights capture: ${read.message}`);
       process.exit(1);
     }
     rawBuffer = read.raw;
@@ -332,7 +332,7 @@ export async function runCapture(engine: BrainEngine | null, args: string[], opt
         if (streamed) return printReceipt({ ...streamed, written: false, source_kind: 'capture-cli', captured_at: new Date().toISOString() }, parsed.quiet ?? false, parsed.json ?? false);
       } catch (error) {
         if (await reportPersistenceCliError(error, parsed.json ?? false)) return;
-        console.error(`gbrain capture: ${error instanceof Error ? error.message : String(error)}`);
+        console.error(`foresights capture: ${error instanceof Error ? error.message : String(error)}`);
         const { setCliExitVerdict } = await import('../core/cli-force-exit.ts');
         return setCliExitVerdict(1);
       }
@@ -342,7 +342,7 @@ export async function runCapture(engine: BrainEngine | null, args: string[], opt
       rawBuffer = readFileSync(parsed.filePath);
     } catch (e) {
       console.error(
-        `gbrain capture: failed to read ${parsed.filePath}: ${e instanceof Error ? e.message : String(e)}`,
+        `foresights capture: failed to read ${parsed.filePath}: ${e instanceof Error ? e.message : String(e)}`,
       );
       process.exit(1);
     }
@@ -354,8 +354,8 @@ export async function runCapture(engine: BrainEngine | null, args: string[], opt
     rawBuffer = Buffer.from(parsed.content, 'utf8');
     inputLabel = 'positional content';
   } else {
-    console.error('gbrain capture: provide content positionally, --file PATH, or --stdin');
-    console.error('Run `gbrain capture --help` for examples.');
+    console.error('foresights capture: provide content positionally, --file PATH, or --stdin');
+    console.error('Run `foresights capture --help` for examples.');
     process.exit(1);
   }
 
@@ -366,12 +366,12 @@ export async function runCapture(engine: BrainEngine | null, args: string[], opt
   const binaryFormat = detectBinarySignature(rawBuffer!);
   if (binaryFormat !== null) {
     console.error(
-      `gbrain capture: refusing to capture ${binaryFormat} content from ${inputLabel}\n` +
+      `foresights capture: refusing to capture ${binaryFormat} content from ${inputLabel}\n` +
       `  Detected by magic bytes. Storing it would write UTF-8 replacement characters as the\n` +
       `  page body — for container formats the real text is compressed, so it would be lost\n` +
       `  entirely while the command reported success.\n` +
       `  Extract the text first, then capture that. For a PDF:\n` +
-      `    pdftotext ${inputLabel === 'stdin' ? 'input.pdf' : inputLabel} - | gbrain capture --stdin --slug <slug>`,
+      `    pdftotext ${inputLabel === 'stdin' ? 'input.pdf' : inputLabel} - | foresights capture --stdin --slug <slug>`,
     );
     process.exit(1);
   }
@@ -381,7 +381,7 @@ export async function runCapture(engine: BrainEngine | null, args: string[], opt
   const nullByteOffset = detectBinaryNullByte(rawBuffer!);
   if (nullByteOffset !== -1) {
     console.error(
-      `gbrain capture: refusing to capture binary content from ${inputLabel}\n` +
+      `foresights capture: refusing to capture binary content from ${inputLabel}\n` +
       `  Found null byte at offset ${nullByteOffset} (first 8KB scan); ` +
       `text files (including UTF-8 CJK/emoji/BOM) never contain NUL bytes.\n` +
       `  Binary content (image/audio/video/pdf) is not yet supported via capture — ` +
@@ -398,7 +398,7 @@ export async function runCapture(engine: BrainEngine | null, args: string[], opt
   // the put_page write so CRLF / BOM / trailing-newline tests pass.
   const normalizedBody = normalizeForHash(rawBody);
   if (normalizedBody.length === 0) {
-    console.error('gbrain capture: refusing to capture empty content');
+    console.error('foresights capture: refusing to capture empty content');
     process.exit(1);
   }
 
@@ -430,14 +430,14 @@ export async function runCapture(engine: BrainEngine | null, args: string[], opt
       else {
         if (!engine && options.getEngine) engine = await options.getEngine();
         if (!engine) throw opError('owner_unavailable', 'Capture requires a connected engine or a local persistence owner.',
-          'Run gbrain capture from the CLI on the brain host, where it opens the brain itself or hands the capture to a running gbrain serve.',
+          'Run foresights capture from the CLI on the brain host, where it opens the brain itself or hands the capture to a running foresights serve.',
           { fix: { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'agent', why: 'Shows whether this machine resolves a brain and whether a serve owns it, read-only.', requires_exclusive: false } });
         const resolved = await resolveSourceWithTier(engine, parsed.source ?? null);
         resolvedSourceId = resolved.source_id;
         const captureOp = operations.find(operation => operation.name === 'capture');
         if (!captureOp) throw opError('unavailable', 'The capture operation is missing; upgrade this installation.',
-          'This gbrain build has no capture operation. Check for an update and, with the user\'s go-ahead, run gbrain upgrade, then capture again.',
-          { fix: { argv: ['gbrain', 'check-update', '--json'], consent: [], actor: 'agent', why: 'Reports whether a newer gbrain is available, read-only.', requires_exclusive: false } });
+          'This foresights build has no capture operation. Check for an update and, with the user\'s go-ahead, run foresights upgrade, then capture again.',
+          { fix: { argv: ['gbrain', 'check-update', '--json'], consent: [], actor: 'agent', why: 'Reports whether a newer foresights is available, read-only.', requires_exclusive: false } });
         const ctx: OperationContext = {
           engine, config: cfg ?? { engine: 'pglite' }, sourceId: resolvedSourceId,
           remote: false, dryRun: false, writeWaitMs: currentCliWriteWait().waitMs,
@@ -475,7 +475,7 @@ export async function runCapture(engine: BrainEngine | null, args: string[], opt
   } catch (error) {
     if (await reportPersistenceCliError(error, parsed.json ?? false)) return;
     const hint = maybeRewriteSourceFkError(error, parsed.source ?? resolvedSourceId);
-    console.error(`gbrain capture: ${hint ?? (error instanceof Error ? error.message : String(error))}`);
+    console.error(`foresights capture: ${hint ?? (error instanceof Error ? error.message : String(error))}`);
     if (requestId) console.error(`Retry the same capture with --request-id ${requestId}.`);
     if (parsed.json && error instanceof RemoteMcpError && error.detail?.write_request) {
       console.log(JSON.stringify({ ...error.detail, request_id: requestId }, null, 2));

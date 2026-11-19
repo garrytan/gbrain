@@ -1,5 +1,5 @@
 /**
- * v0.28.1: LongMemEval haystack -> gbrain page conversion.
+ * v0.28.1: LongMemEval haystack -> foresights page conversion.
  *
  * Pure data-shape converter. No I/O, no engine, no LLM. Fed by the harness in
  * src/commands/eval-longmemeval.ts which then calls importFromContent on each

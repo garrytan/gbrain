@@ -1,5 +1,5 @@
 /**
- * Thin client against a status-only `gbrain serve --http` host.
+ * Thin client against a status-only `foresights serve --http` host.
  *
  * Protects: OAuth discovery and /token answering 503 with a
  * `serve_status_only` envelope reach the agent as that code with the host's

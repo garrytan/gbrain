@@ -1,5 +1,5 @@
 /**
- * GBRA-377: with the skill resolver off, plain `gbrain setup claude-code`
+ * GBRA-377: with the skill resolver off, plain `foresights setup claude-code`
  * and `setup codex` write byte-identical files, and every UserPromptSubmit
  * hook they wire prints byte-identical output, compared with master before
  * the resolver existed. The golden holds a sha256 per file and the full

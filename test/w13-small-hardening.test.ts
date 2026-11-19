@@ -35,8 +35,8 @@ describe('P1.15 pollCommand quoting', () => {
   test('a fix.argv element with a space or $(…) is single-quoted', () => {
     const id = 'req 1$(touch /tmp/pwned)';
     expect(pollCommand(id, { argv: ['gbrain', 'write-request', '--brain', 'my brain', '--', id] }))
-      .toBe("gbrain write-request --brain 'my brain' -- 'req 1$(touch /tmp/pwned)'");
-    expect(pollCommand('0b1c-uuid')).toBe('gbrain write-request -- 0b1c-uuid');
+      .toBe("foresights write-request --brain 'my brain' -- 'req 1$(touch /tmp/pwned)'");
+    expect(pollCommand('0b1c-uuid')).toBe('foresights write-request -- 0b1c-uuid');
   });
 });
 

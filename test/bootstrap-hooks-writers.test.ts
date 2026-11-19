@@ -176,7 +176,7 @@ describe('writeClaudeHooks [G5, CX2-17]', () => {
 
   test('broken JSON: write ABORTS fail-closed, file untouched, fix named', () => {
     // A parse-broken settings.local.json may carry permissions/allowlist
-    // entries gbrain cannot see — rewriting it (the old backup-and-start-clean
+    // entries foresights cannot see — rewriting it (the old backup-and-start-clean
     // behavior) silently dropped them from the live file. The write path now
     // matches removeClaudeHooks: refuse, name the fix, change nothing.
     const dir = ws();
@@ -316,7 +316,7 @@ describe('buildClaudeHookCommand', () => {
 // the dedupe invariant (one event never fires from both carriers).
 
 describe('writeCommittedClaudeHooks [D12]', () => {
-  test('portable commands: PATH-resolved gbrain, fail-open guard, marker present, no absolute binary path', () => {
+  test('portable commands: PATH-resolved foresights, fail-open guard, marker present, no absolute binary path', () => {
     const dir = ws();
     const r = writeCommittedClaudeHooks(dir, { env: ENV });
     expect(r.settingsPath).toBe(claudeCommittedSettingsPath(dir));
@@ -328,7 +328,7 @@ describe('writeCommittedClaudeHooks [D12]', () => {
       const entry = parsed.hooks[event]![0]!.hooks[0]!;
       const cmd = entry.command as string;
       expect(cmd).toContain('command -v gbrain');
-      expect(cmd).toContain('|| exit 0');           // fail-open where gbrain is absent
+      expect(cmd).toContain('|| exit 0');           // fail-open where foresights is absent
       expect(cmd).toContain('GBRAIN_SOURCE=workspace');
       expect(cmd).not.toContain(BIN);                // never a machine path
       expect(cmd).not.toContain('/opt/');
@@ -342,7 +342,7 @@ describe('writeCommittedClaudeHooks [D12]', () => {
     expect(readFileSync(claudeSettingsPath(dir), 'utf8')).toContain(GBRAIN_HOOK_MARKER_VALUE);
     const r = writeCommittedClaudeHooks(dir, { env: ENV });
     expect(r.notes.join(' ')).toContain('committed carrier owns the events');
-    // Local file no longer carries any gbrain entry.
+    // Local file no longer carries any foresights entry.
     const local = readFileSync(claudeSettingsPath(dir), 'utf8');
     expect(local).not.toContain(GBRAIN_HOOK_MARKER_VALUE);
   });
@@ -360,7 +360,7 @@ describe('writeCommittedClaudeHooks [D12]', () => {
   test('removeClaudeHooks cleans BOTH carriers', () => {
     const dir = ws();
     writeCommittedClaudeHooks(dir, { env: ENV });
-    // Seed a REAL local gbrain entry directly (bypassing the dedupe-aware
+    // Seed a REAL local foresights entry directly (bypassing the dedupe-aware
     // writer) — the pre-dedupe-install shape a mixed-binary machine can hold.
     writeFileSync(
       claudeSettingsPath(dir),

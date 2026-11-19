@@ -45,12 +45,12 @@ describe('#8484: an install that cannot take the ledger lock changes nothing', (
         const target = brainFirstTargetAt('claude-code', file);
         const sync = syncSkillsBlock({ target, launcher: '/usr/local/bin/gbrain', decision: { value: 'spring', source: 'flag' }, writer: 'test', dryRun: false, settingsPath: join(home, '.claude', 'settings.json') });
         expect(sync).toMatchObject({ action: 'preserve', reason: 'ledger_locked' });
-        expect(sync.detail).toContain('another gbrain install is updating the instruction ledgers');
+        expect(sync.detail).toContain('another foresights install is updating the instruction ledgers');
         const removed = removeSkillsBlock({ harness: 'claude-code', path: file, dryRun: false });
         expect(removed).toMatchObject({ action: 'preserve', reason: 'ledger_locked' });
         const brainFirst = removeBrainFirst({ harness: 'claude-code', path: file, dryRun: false });
         expect(brainFirst.action).toBe('preserve');
-        expect(brainFirst.detail).toContain('another gbrain install is updating the instruction ledgers');
+        expect(brainFirst.detail).toContain('another foresights install is updating the instruction ledgers');
         expect(readFileSync(file, 'utf8')).toBe('# My rules\n');
         expect(existsSync(skillLoadingLedgerPath())).toBe(false);
         expect(existsSync(join(home, '.gbrain', 'agent-instructions.json'))).toBe(false);

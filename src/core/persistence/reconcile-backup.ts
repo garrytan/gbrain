@@ -36,7 +36,7 @@ export async function assertReconcileOutputPath(engine: BrainEngine, sourceId: s
   const resolved = canonicalFilesystemPath(path);
   if (roots.some(row => containsPath(canonicalFilesystemPath(row.local_path), resolved))) {
     throw opError('permission_denied', 'Private reconciliation artifacts must be stored outside every canonical source and worktree.',
-      `Nothing was written. Put the preview output outside every source checkout (the command in fix lists their paths); if no --out was given, the gbrain config directory itself sits inside a checkout and the user must move it.`,
+      `Nothing was written. Put the preview output outside every source checkout (the command in fix lists their paths); if no --out was given, the foresights config directory itself sits inside a checkout and the user must move it.`,
       { fix: readFix('Lists every registered source with its local checkout path.', { argv: ['gbrain', 'sources', 'list', '--json'] }) });
   }
 }
@@ -45,7 +45,7 @@ function privateDirectory(path: string): void {
   const stat = lstatSync(path);
   if (!stat.isDirectory() || stat.isSymbolicLink() || !privatePermissions(stat)) {
     throw opError('permission_denied', 'The reconciliation backup directory must be private, owned, and free of symlinks.',
-      'Nothing was changed. Ask the user to make reconciliation-previews under the gbrain config directory a real directory owned by them with mode 0700 (not a symlink), then run the same command again.');
+      'Nothing was changed. Ask the user to make reconciliation-previews under the foresights config directory a real directory owned by them with mode 0700 (not a symlink), then run the same command again.');
   }
 }
 export async function assertReconcileSize(engine: BrainEngine, artifact: ReconcileArtifact): Promise<void> {
@@ -82,7 +82,7 @@ export async function retainReconcileBackup(engine: BrainEngine, artifact: Recon
       const stat = lstatSync(join(directory, name));
       if (!stat.isFile() || stat.isSymbolicLink()) {
         throw opError('storage_error', 'Unexpected content in the private reconciliation backup directory.',
-          `Nothing was admitted. Ask the user to move the non-file entry out of reconciliation-previews under the gbrain config directory, then run the same apply again with the same request_id (${requestId}).`);
+          `Nothing was admitted. Ask the user to move the non-file entry out of reconciliation-previews under the foresights config directory, then run the same apply again with the same request_id (${requestId}).`);
       }
       count++; bytes += stat.size;
     }
@@ -97,7 +97,7 @@ export async function retainReconcileBackup(engine: BrainEngine, artifact: Recon
 }
 export function verifyReconcileBackup(reference: string, artifact: ReconcileArtifact): void {
   if (!backupPattern.test(reference)) throw opError('storage_error', 'Invalid reconciliation backup reference.',
-    'This accepted reconcile request carries a malformed backup reference, so it was not published. Read its receipt with gbrain write-request and its request ID before making a fresh preview; do not resubmit it.');
+    'This accepted reconcile request carries a malformed backup reference, so it was not published. Read its receipt with foresights write-request and its request ID before making a fresh preview; do not resubmit it.');
   try {
     const directory = backupDirectory();
     privateDirectory(directory);
@@ -106,7 +106,7 @@ export function verifyReconcileBackup(reference: string, artifact: ReconcileArti
       digest(JSON.parse(readFileSync(path, 'utf8')).preview) !== digest(artifact)) throw new Error('backup changed');
   } catch {
     throw opError('storage_error', 'The retained reconciliation preimages are missing or changed.',
-      `The private backup of the originals for request ${reference.slice(0, 36)} is missing or was edited, so the request was not published. Read its receipt with gbrain write-request -- ${reference.slice(0, 36)}; leave files under reconciliation-previews alone, and make a fresh preview with a new request ID if the page still needs reconciling.`,
+      `The private backup of the originals for request ${reference.slice(0, 36)} is missing or was edited, so the request was not published. Read its receipt with foresights write-request -- ${reference.slice(0, 36)}; leave files under reconciliation-previews alone, and make a fresh preview with a new request ID if the page still needs reconciling.`,
       { fix: receiptFix(reference.slice(0, 36)) });
   }
 }
@@ -165,7 +165,7 @@ export async function manageReconcileBackups(engine: BrainEngine, authority: Wri
         `Request ${requestId} is not an apply this CLI registration made for ${slug} in ${authority.sourceId}, so nothing was removed. List the removable backups of this page with --backups.`);
       await authorizeStoredRequest(tx, row, true);
       if (!isTerminal(row) || row.recovery !== null) throw opError('recovery_required', 'The backup still protects a nonterminal or recovering request.',
-        `Request ${requestId} is still pending or recovering and its backup protects the originals, so nothing was removed. Read the receipt with gbrain write-request -- ${requestId}; remove the backup only once it is terminal.`,
+        `Request ${requestId} is still pending or recovering and its backup protects the originals, so nothing was removed. Read the receipt with foresights write-request -- ${requestId}; remove the backup only once it is terminal.`,
         { fix: receiptFix(requestId) });
       const path = join(directory, reference);
       if (!existsSync(path)) return { removed: false, backup_reference: reference, request_id: row.request_id };
@@ -179,7 +179,7 @@ export async function manageReconcileBackups(engine: BrainEngine, authority: Wri
       if (stored.request_id !== row.request_id || digest(stored.principal) !== digest(principal) ||
         intentDigest({ operation: 'put_page', sourceId: row.source_id, slug: row.slug, callerIntent: { kind: 'canonical_reconcile', preview: stored.preview } }) !== row.digest) {
         throw opError('storage_error', 'The retained backup does not match its immutable request.',
-          `Nothing was removed. The backup file for request ${requestId} does not match the request it protects; keep it, tell the user, and read the receipt with gbrain write-request -- ${requestId}.`,
+          `Nothing was removed. The backup file for request ${requestId} does not match the request it protects; keep it, tell the user, and read the receipt with foresights write-request -- ${requestId}.`,
           { fix: receiptFix(requestId) });
       }
       unlinkSync(path); flushDirectory(directory);

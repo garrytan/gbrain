@@ -162,7 +162,7 @@ describe('extract-atoms-drain handler', () => {
 
   // #5832: withRefreshingLock aborts the signal it hands its work when the
   // cycle lock's lease is lost; that signal must reach the model call even for
-  // a caller that passes no signal of its own (gbrain dream --drain).
+  // a caller that passes no signal of its own (foresights dream --drain).
   test('the cycle lock signal reaches the model call when the caller passes none', async () => {
     await seedEligiblePage('notes/lock-probe');
     const callSignals: Array<AbortSignal | undefined> = [];

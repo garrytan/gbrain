@@ -38,8 +38,8 @@ function siblingNote(relative: PathRow[], pathless: string[]): string {
   const parts: string[] = [];
   if (relative.length > 0) {
     parts.push(`${relative.map(row => `source "${row.id}" has the relative local_path "${row.local_path}"`).join('; ')}, which names whatever directory ` +
-      'gbrain runs from, so sync refuses it (sync_anchor_relative). Ask the user which directory holds its files, then run ' +
-      '`gbrain sources set-path <id> <absolute-directory>`, or clear the pointer with `gbrain sources set-path <id> --clear`.');
+      'foresights runs from, so sync refuses it (sync_anchor_relative). Ask the user which directory holds its files, then run ' +
+      '`foresights sources set-path <id> <absolute-directory>`, or clear the pointer with `foresights sources set-path <id> --clear`.');
   }
   if (pathless.length > 0) {
     parts.push(pathless.includes('default')

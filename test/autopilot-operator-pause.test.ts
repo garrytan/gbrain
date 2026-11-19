@@ -1,7 +1,7 @@
 /**
- * `gbrain autopilot pause|resume` (fix wave 3, Lane D): the operator pause is
+ * `foresights autopilot pause|resume` (fix wave 3, Lane D): the operator pause is
  * its own marker. The daemon and workers honor it, status shows it,
- * `autopilot --install` (which `gbrain upgrade` runs) keeps it, and resume
+ * `autopilot --install` (which `foresights upgrade` runs) keeps it, and resume
  * clears only it — never a migration or restore hold.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
@@ -36,7 +36,7 @@ describe('autopilot operator pause', () => {
       expect(autopilotPaused()).toBe(false);
       const text = out(() => runAutopilotPauseCommand(['--pause', '--reason', 'upgrade window']));
       expect(text).toContain('Autopilot paused on this host');
-      expect(text).toContain('gbrain autopilot resume');
+      expect(text).toContain('foresights autopilot resume');
       expect(existsSync(autopilotOperatorPauseMarkerPath())).toBe(true);
       expect(existsSync(autopilotPausedMarkerPath())).toBe(false);
       expect(autopilotPaused()).toBe(true);
@@ -56,7 +56,7 @@ describe('autopilot operator pause', () => {
     await withEnv({ GBRAIN_HOME: emptyHome() }, () => {
       const hold = autopilotPausedMarkerPath();
       mkdirSync(dirname(hold), { recursive: true });
-      writeFileSync(hold, `paused by gbrain migrate (pid ${process.pid})\n`);
+      writeFileSync(hold, `paused by foresights migrate (pid ${process.pid})\n`);
       out(() => runAutopilotPauseCommand(['--pause']));
       const text = out(() => runAutopilotPauseCommand(['--resume']));
       expect(text).toContain('Another hold is still present and was not touched');
@@ -65,7 +65,7 @@ describe('autopilot operator pause', () => {
     });
   });
 
-  test('autopilot --install (what gbrain upgrade runs) keeps the operator pause and clears only a leaked hold', async () => {
+  test('autopilot --install (what foresights upgrade runs) keeps the operator pause and clears only a leaked hold', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-autopilot-home-'));
     const repo = mkdtempSync(join(tmpdir(), 'gbrain-autopilot-repo-'));
     const bin = mkdtempSync(join(tmpdir(), 'gbrain-autopilot-bin-'));

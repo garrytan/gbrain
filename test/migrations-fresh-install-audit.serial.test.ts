@@ -1,7 +1,7 @@
 /**
  * E8 fresh-install audit (agent-first operator wave, Lane E).
  *
- * `gbrain init` records a migration complete on a new brain only when the
+ * `foresights init` records a migration complete on a new brain only when the
  * migration declares `fresh_install_noop: true`. This file is the proof for
  * every flag: on one keyless PGLite brain created by the real CLI
  * (`init --pglite --no-embedding`, hermetic HOME = GBRAIN_HOME, provider keys
@@ -57,7 +57,7 @@ afterAll(() => {
   rmSync(tools, { recursive: true, force: true });
 });
 
-describe('E8 — gbrain init stamps only fresh_install_noop migrations', () => {
+describe('E8 — foresights init stamps only fresh_install_noop migrations', () => {
   test('the flagged set is exactly the audited set; everything else is setup work', () => {
     expect(migrations.filter(m => m.fresh_install_noop).map(m => m.version)).toEqual(FLAGGED);
     expect(migrations.filter(m => !m.fresh_install_noop).map(m => m.version)).toEqual(SETUP);

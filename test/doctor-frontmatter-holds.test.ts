@@ -3,7 +3,7 @@
  * (Git-source holds) and `frontmatter_repairable` (files the repair can fix)
  * are wave findings the explicit-only `frontmatter` repair kind clears:
  * `doctor --remediation-plan --json` classifies them `explicit_kind_required`
- * with `gbrain repair frontmatter --source <id>`, and `--remediate
+ * with `foresights repair frontmatter --source <id>`, and `--remediate
  * --include-repairs` never runs the kind. A deadline-partial scan is pending,
  * an outdated pre-commit hook is an operator finding, and the post-upgrade
  * banner tells the agent the next sync unblocks a source a file blocked.
@@ -127,7 +127,7 @@ test('holds and repairable files: the plan says explicit_kind_required with the 
   const s = await source(engine, { 'notes/a.md': note('A'), 'notes/held-one.md': FOLDED, 'notes/held-two.md': FOLDED, 'notes/roundup.md': AUTHOR });
   const synced = await s.sync();
   expect(synced).toMatchObject({ status: 'first_sync', held_count: 2 });
-  const preview = `gbrain repair frontmatter --source ${s.id}`;
+  const preview = `foresights repair frontmatter --source ${s.id}`;
 
   const held = await gitHeldFilesCheck(engine);
   expect(held).toMatchObject({ status: 'warn', details: { held: 2, source_ids: [s.id] },
@@ -135,7 +135,7 @@ test('holds and repairable files: the plan says explicit_kind_required with the 
   expect(held.message).toContain(`${s.id}: 2 held (0 page(s) keep an older revision, 2 file(s) have no page)`);
   expect(held.message).toContain('notes/held-one.md [invalid_frontmatter/needs_interpretation]');
   expect(held.message).toContain('read-only for put_page until the file is repaired');
-  expect(held.message).toContain(`gbrain sources status ${s.id}`);
+  expect(held.message).toContain(`foresights sources status ${s.id}`);
   expect(held.message).toContain(preview);
   expect((held.details as { sources: Array<{ first: Array<{ why: string }> }> }).sources[0]!.first[0]!.why).toContain('needs an interpretation');
 
@@ -194,12 +194,12 @@ test('an older installed pre-commit hook is an operator finding naming install-h
   writeFileSync(join(s.root, '.githooks', 'pre-commit'), OLD_HOOK);
   const check = await frontmatterHookCheck(engine);
   expect(check).toMatchObject({ status: 'warn', details: { count: 1 }, fix: { argv: ['gbrain', 'frontmatter', 'install-hook', '--source', s.id, '--force'] } });
-  expect(check.message).toContain(`gbrain frontmatter install-hook --source ${s.id} --force`);
+  expect(check.message).toContain(`foresights frontmatter install-hook --source ${s.id} --force`);
   const waves = (await runWaveChecks(engine)).filter(f => f.spec.id === 'frontmatter_hook');
   expect(classifyWaveFindings(waves, waves, { repairs: [], repairs_skipped: [] })).toEqual([expect.objectContaining({
-    check_id: 'frontmatter_hook', class: 'operator_required', instruction: expect.stringContaining('gbrain frontmatter install-hook --force') })]);
+    check_id: 'frontmatter_hook', class: 'operator_required', instruction: expect.stringContaining('foresights frontmatter install-hook --force') })]);
   const banner = (await postUpgradeRecoveryBanner(engine, 'host')).join('\n');
-  expect(banner).toContain(`refresh it with gbrain frontmatter install-hook --source ${s.id} --force`);
+  expect(banner).toContain(`refresh it with foresights frontmatter install-hook --source ${s.id} --force`);
 }), 120_000);
 
 test('post-upgrade: a source a file blocked is told the next sync recovers it, with the unblock and repair commands', () => each(async engine => {
@@ -213,10 +213,10 @@ test('post-upgrade: a source a file blocked is told the next sync recovers it, w
     [failed!.request_id, 'Invalid YAML frontmatter: bad indentation of a mapping entry (3:1)']);
 
   const banner = (await postUpgradeRecoveryBanner(engine, 'host')).join('\n');
-  expect(banner).toContain(`[AGENT]   frontmatter_holds: 1 source(s) are blocked by a file gbrain could not import (${s.id}).`);
+  expect(banner).toContain(`[AGENT]   frontmatter_holds: 1 source(s) are blocked by a file foresights could not import (${s.id}).`);
   expect(banner).toContain('The next scheduled or manual sync recovers a blocked source automatically; '
-    + `to do it now run gbrain sync --source ${s.id} --no-pull.`);
-  expect(banner).toContain(`gbrain repair frontmatter --source ${s.id}`);
+    + `to do it now run foresights sync --source ${s.id} --no-pull.`);
+  expect(banner).toContain(`foresights repair frontmatter --source ${s.id}`);
 
   // #6712 PR 4b: no cursor converts in place; the next pass holds the file, imports the rest and leaves the old receipt as it was.
   expect(await s.sync()).toMatchObject({ status: 'first_sync', held_count: 1, held: [{ code: 'invalid_frontmatter' }] });

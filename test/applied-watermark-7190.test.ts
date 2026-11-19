@@ -1,5 +1,5 @@
 /**
- * #7190: a per-source applied-through watermark on write receipts, in `gbrain sources status --json` and in a sync
+ * #7190: a per-source applied-through watermark on write receipts, in `foresights sources status --json` and in a sync
  * result. Red on master (no watermark, no receipt `applied`):
  * - indexed_through moves only when a pass finishes: a sliced pass that stops after one page leaves it where it was;
  * - pending counts the commits and files on HEAD that have not synced yet;
@@ -119,7 +119,7 @@ test('a pending write hint names the applied read; an inspect-owner hint does no
   const request_id = randomUUID();
   const poll = pendingWriteHint({ request_id, state: 'queued', retry_after_ms: 800, target: { slug: 'people/alice-example' } } as any, 'remember');
   expect(poll).toContain('applied: true');
-  expect(poll).toContain(`gbrain write-request ${request_id} --applied --json`);
+  expect(poll).toContain(`foresights write-request ${request_id} --applied --json`);
   expect(poll).toContain('page people/alice-example');
   const inspect = pendingWriteHint({ request_id, state: 'queued', retry_after_ms: 30_000, diagnostic: { next_action: 'inspect_owner' } } as any);
   expect(inspect).not.toContain('--applied');

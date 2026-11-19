@@ -39,7 +39,7 @@ export interface SkillpackManifest {
   name: string;
   /** Semver-ish version string (Keep-a-Changelog compatible). */
   version: string;
-  /** One-line description, shown by `gbrain skillpack info`. */
+  /** One-line description, shown by `foresights skillpack info`. */
   description: string;
   /** Author name (display name optionally with email; not parsed). */
   author: string;
@@ -47,7 +47,7 @@ export interface SkillpackManifest {
   license: string;
   /** Homepage URL (canonical source repo). */
   homepage: string;
-  /** Minimum gbrain version this pack requires (semver). */
+  /** Minimum foresights version this pack requires (semver). */
   gbrain_min_version: string;
   /** Runbook format schema version (default 1). */
   runbook_schema_version?: number;
@@ -84,7 +84,7 @@ export interface SkillpackManifest {
    * Drives connect-time discovery (Topology A `sources add` advisory + the
    * `list_brain_skillpack` MCP tool) and the install nag. Absent/false = a
    * legacy or registry third-party pack. Additive + forward-compatible:
-   * older gbrain ignores it; this validator tolerates it being absent.
+   * older foresights ignores it; this validator tolerates it being absent.
    */
   brain_resident?: boolean;
   /**
@@ -303,7 +303,7 @@ export function validateSkillpackManifest(
     }
     if (v > maxRunbook) {
       throw new SkillpackManifestError(
-        `runbook_schema_version ${v} exceeds maximum supported (${maxRunbook}). Run \`gbrain upgrade\``,
+        `runbook_schema_version ${v} exceeds maximum supported (${maxRunbook}). Run \`foresights upgrade\``,
         'manifest_unsupported_schema_version',
         { field: 'runbook_schema_version', expected: `<= ${maxRunbook}`, actual: v },
       );
@@ -320,7 +320,7 @@ export function validateSkillpackManifest(
     }
     if (v > maxEval) {
       throw new SkillpackManifestError(
-        `eval_schema_version ${v} exceeds maximum supported (${maxEval}). Run \`gbrain upgrade\``,
+        `eval_schema_version ${v} exceeds maximum supported (${maxEval}). Run \`foresights upgrade\``,
         'manifest_unsupported_schema_version',
         { field: 'eval_schema_version', expected: `<= ${maxEval}`, actual: v },
       );

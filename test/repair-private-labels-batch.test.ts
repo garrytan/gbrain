@@ -1,5 +1,5 @@
 /**
- * gbrain repair private-labels, applied a window at a time (GBRA-443).
+ * foresights repair private-labels, applied a window at a time (GBRA-443).
  *
  * 1. Protects: a managed window is admitted as one maintenance batch and published in groups; a page whose write is
  *    declined (its file drifted before admission, or a refusal inside its publication group) fails alone and every other
@@ -14,7 +14,7 @@
  * 2. Fails when: a decline fails or blocks another page, the batch path is not taken, the ledger is written after a page
  *    of its run, restore misses a page, the cost claims re-embeds, the order puts retried pages first, the exit is 1 for
  *    declines only (or 0 for anything else), the ledger fields are missing or wrong, or a refresh refuses the apply early.
- * 3. Real seams: PGLite and Postgres, repo-less and managed (a claimed worktree with Git), the gbrain repair command entry.
+ * 3. Real seams: PGLite and Postgres, repo-less and managed (a claimed worktree with Git), the foresights repair command entry.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -56,7 +56,7 @@ async function capture(fn: () => Promise<void>): Promise<string> {
   return printed;
 }
 
-/** One gbrain repair run through the command entry: its JSON result and the exit code it set. */
+/** One foresights repair run through the command entry: its JSON result and the exit code it set. */
 async function cli(engine: BrainEngine, argv: string[], env: Record<string, string> = {}): Promise<{ result: any; exit: number }> {
   _resetCliExitVerdictForTests();
   try {
@@ -75,7 +75,7 @@ const setup = ({ root }: { root: string }) => { writeFileSync(join(root, '.gitig
 
 afterAll(() => { installFaultHook(undefined); _setRefreshFenceWaitForTests(null); _setRepairRefreshWaitForTests(null); });
 
-describe('gbrain repair exit verdict (GBRA-443)', () => {
+describe('foresights repair exit verdict (GBRA-443)', () => {
   const base = { stopped: undefined, complete: true, failed: [] as RepairResult['failed'] };
   const failed = (reason: string) => ({ item: 'default:notes/a', source_id: 'default', slug: 'notes/a', reason, message: 'x', retry: 'next_full_scan' as const });
   test('a preview-bound apply that is complete with only declines exits 0; anything else keeps exit 1', () => {
@@ -189,7 +189,7 @@ for (const backend of testBackends()) {
       // No provider here, so these pages have no vectors yet: their write embeds them, and the preview counts them.
       expect(preview.cost.embedding_pages).toBe(4);
       const drifted = join(root, slugs[0] + '.md');
-      writeFileSync(drifted, readFileSync(drifted, 'utf8') + NL + 'An edit made outside gbrain.' + NL);
+      writeFileSync(drifted, readFileSync(drifted, 'utf8') + NL + 'An edit made outside foresights.' + NL);
       installFaultHook(async (point, detail) => {
         if (point !== 'consumer:preparing') return;
         const [row] = await engine.executeRaw<{ slug: string }>('SELECT slug FROM persistence_requests WHERE id=$1::uuid', [detail.writeId]);
@@ -227,7 +227,7 @@ for (const backend of testBackends()) {
       const first = Array.from({ length: 16 }, (_, i) => 'notes/w1-' + String(i).padStart(2, '0'));
       for (const slug of first) await put(ctx, slug, labelled(slug));
       await settleManagedGitEffects(engine);
-      const drift = (slug: string) => { const file = join(root, slug + '.md'); writeFileSync(file, readFileSync(file, 'utf8') + NL + 'An edit made outside gbrain.' + NL); };
+      const drift = (slug: string) => { const file = join(root, slug + '.md'); writeFileSync(file, readFileSync(file, 'utf8') + NL + 'An edit made outside foresights.' + NL); };
       // Five drifted pages spread through the first window, so it completes with five declines.
       const declined = [1, 4, 7, 10, 13].map(i => first[i]!);
       for (const slug of declined) drift(slug);

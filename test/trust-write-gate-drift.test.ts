@@ -94,7 +94,7 @@ const EXEMPT: Record<string, string> = {
   'src/core/facts/fence-fact-append.ts': 'remember gates in memory-prepare.ts before calling it and records the flag receipt on the row it indexes; it renders and indexes the fact its caller passes',
   'src/core/facts/fence-write.ts': 'callers decide the gate (backstop, loops-extract) and pass the decision; it records the flag receipt on the new row',
   'src/core/facts/write-single.ts': 'callers gate first (loops-extract decides; remember gates in memory-prepare); it records a passed decision\'s flag receipt',
-  'src/core/output/writer.ts': 'gbrain integrity auto-repair (owner-run local CLI) rewrites citations and back-links of existing pages',
+  'src/core/output/writer.ts': 'foresights integrity auto-repair (owner-run local CLI) rewrites citations and back-links of existing pages',
   'src/core/persistence/prepared-maintenance.ts': 'consolidation takes gate in takes-prepare; pending: derived maintenance pages carry intent.derivation for the page-prepare gate',
 };
 

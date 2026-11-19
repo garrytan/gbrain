@@ -175,7 +175,7 @@ test('GST-1853: a refresh run that already synced the members runs no second owe
 
 test('GST-1853: a member the owed sync leaves behind HEAD is named with its resume command, on success and on refusal', () => each(async f => {
   await abortedByScan(f);
-  const resume = `gbrain sync --source ${f.alpha} --no-pull`;
+  const resume = `foresights sync --source ${f.alpha} --no-pull`;
   const refused = await refreshWorktree(f.engine, f.alpha, { syncBudgetMs: 0 }).then(() => null, thrown => thrown as { code?: string; message: string });
   expect(refused?.code).toBe('refresh_diverged');
   expect(refused?.message).toContain(resume);

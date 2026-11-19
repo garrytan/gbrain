@@ -197,9 +197,9 @@ function breakerResult(cursor: Cursor, pending: Pending, done: WriteRequest, rem
   const fix: ManagedSyncBreaker['fix'] = { argv: ['gbrain', 'sources', 'writer', 'status', '--source', cursor.sourceId, '--json'], consent: [], actor: remote ? 'host_admin' : 'agent', requires_exclusive: false,
     docs: 'docs/guides/write-refusals.md#preparation_systemic', verify: { argv: ['gbrain', 'sources', 'status', cursor.sourceId, '--json'] },
     why: `${trip.stalled} write(s) of this sync ran out of attempts: ${causes} (${trip.rule === 'consecutive' ? `${trip.streak} in a row with no page committed between them` : 'more than a source should hold'}), `
-      + 'so the run stopped instead of holding every file: the write owner, not the files, is the likely cause. Writer status (read-only) shows the owner process, its gbrain version and the step '
-      + 'each stuck write reached; fix what it names or upgrade gbrain, then rerun the same sync: it re-freezes the stopped entry and re-screens the files this run held.',
-    ...(remote ? { user_message: `A managed sync of source ${cursor.sourceId} stopped because ${trip.stalled} writes ran out of attempts (${causes}). Please run 'gbrain sources writer status --source ${cursor.sourceId} --json' on the brain host, fix what it names, then rerun the sync.` } : {}) };
+      + 'so the run stopped instead of holding every file: the write owner, not the files, is the likely cause. Writer status (read-only) shows the owner process, its foresights version and the step '
+      + 'each stuck write reached; fix what it names or upgrade foresights, then rerun the same sync: it re-freezes the stopped entry and re-screens the files this run held.',
+    ...(remote ? { user_message: `A managed sync of source ${cursor.sourceId} stopped because ${trip.stalled} writes ran out of attempts (${causes}). Please run 'foresights sources writer status --source ${cursor.sourceId} --json' on the brain host, fix what it names, then rerun the sync.` } : {}) };
   return { ...result(cursor, 'blocked_by_failures'), failedFiles: 1, failureCodes: [{ code: PREPARATION_STALLED, count: prepared }, { code: 'write_interrupted', count: interrupted }].filter(code => code.count > 0),
     breaker: { code: 'preparation_systemic', rule: trip.rule, stalled: trip.stalled, consecutive: trip.streak, step: trip.step, request_id: trip.request_id, fix },
     ...(remote ? {} : { managedWrite: writeDiagnostic(cursor, pending, done) }) };
@@ -413,7 +413,7 @@ async function freezeEntryOnce(engine: BrainEngine, cursor: Cursor, key: string,
       const blob = company?.entries.get(entry.path);
       if (company?.receiptId !== cursor.companyReceiptId || !blob || blob.disposition !== 'included') throw syncRunRefusal('plan_stale', 'The durable cursor does not match its approved content manifest.',
         retry,
-        `Source ${cursor.sourceId}'s approved company-brain content manifest no longer includes ${entry.path} for this run (its approval changed, or the file is no longer an included path), so nothing was imported for it. If the approval changed, inspect and approve the repository again first (gbrain sources inspect --help).`);
+        `Source ${cursor.sourceId}'s approved company-brain content manifest no longer includes ${entry.path} for this run (its approval changed, or the file is no longer an included path), so nothing was imported for it. If the approval changed, inspect and approve the repository again first (foresights sources inspect --help).`);
       content = (await readCommittedBlob(cursor.companyPlan.revision!, blob, cursor.companyPlan.limits)).toString('utf8');
       assertActive();
     } else content = imageBytes ? frozenImageIntent(imageBytes).content : entry.action === 'import' && !oversize && !bodyRef ? pinnedContent(cursor, entry) : null;
@@ -589,7 +589,7 @@ export const PREPARATION_STALLED = 'preparation_stalled';
 const preparationStalled = (row: Pick<WriteRequest, 'state' | 'error_code'>) => row.state === 'failed' && outOfAttemptsHold(row.error_code);
 /** The run's page requests, as `persistence_requests_sync_run_open` indexes them. */
 const SYNC_PAGE_KINDS_SQL = "intent->>'kind' IN ('managed_sync_import','managed_sync_delete')";
-/** The `gbrain sync` arguments a hold or receipt prints to resume this cursor with its own options. */
+/** The `foresights sync` arguments a hold or receipt prints to resume this cursor with its own options. */
 const resumeArgsOf = (cursor: Cursor, run: { syncOptions: SyncCursorOptions; repoPath?: string }) => cursor.resumeArgs ??
   managedSyncResumeArgs({ sourceId: cursor.sourceId, processingOptions: cursor.processingOptions, syncOptions: cursor.syncOptions ?? run.syncOptions, repoPath: run.repoPath });
 
@@ -713,7 +713,7 @@ export const STOPS_PER_ENTRY = 3;
 
 /**
  * #6712: the entry of a request that did not commit and whose fault is not the page's (a transport fault proven by its
- * receipt, a systemic stop an earlier invocation recorded, or a legacy knock-on an older gbrain cancelled) is re-frozen in
+ * receipt, a systemic stop an earlier invocation recorded, or a legacy knock-on an older foresights cancelled) is re-frozen in
  * place under a fresh request (#8729: in a pass, the retry's own `passRequestId`, never the failed one): the cursor does not advance past it and the failed receipt is recorded as converted
  * (`convertedFromFailed`), so it never blocks the checkpoint. Bounded by `STOPS_PER_ENTRY` re-freezes in a row at the
  * entry (`Pending.stops`); null past the bound, so the failure is recorded and the next sync takes the entry again (a pass re-classifies its path; a company run retries its recorded stop).

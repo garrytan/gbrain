@@ -83,7 +83,7 @@ describe('resolveExtractAtomsCostGate', () => {
     const gate = resolveExtractAtomsCostGate(FREE_CHAT, UNPRICED_EMBED, undefined, { explicitBudget: true });
     expect(gate).toMatchObject({ enforceCap: true, unpricedModel: UNPRICED_EMBED, unpricedKind: 'embed' });
     expect(gate.refusal).toMatchObject({ code: 'no_pricing', model: UNPRICED_EMBED, kind: 'embed', units: ['usd_per_1m_tokens'] });
-    expect(gate.refusal!.register_command).toStartWith(`gbrain pricing set ${UNPRICED_EMBED} --rate`);
+    expect(gate.refusal!.register_command).toStartWith(`foresights pricing set ${UNPRICED_EMBED} --rate`);
   });
 
   test('an explicit budget never invents a $0 embed row; other overrides are left as they were', () => {
@@ -199,7 +199,7 @@ describe('extract_atoms with a $0 chat model and an unpriced embedding model (PG
     // The cap was NOT dropped — the operator asked for one.
     expect(joined).not.toContain('running without a cost gate');
     // ...and the run names the embed model and the registration command.
-    expect(joined).toContain(`gbrain pricing set ${UNPRICED_EMBED} --rate`);
+    expect(joined).toContain(`foresights pricing set ${UNPRICED_EMBED} --rate`);
   }, 60000);
 
   test('with a $0 pricing override for the embed model the cap stays on and the run still extracts', async () => {

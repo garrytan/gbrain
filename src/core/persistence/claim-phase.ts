@@ -15,7 +15,7 @@
  * and checks the preparation's signal, so cancellation reaches a preparer
  * between its queries even when the query itself takes no signal. The stamp
  * also names the owner process (kind, pid, build), so writer status can tell
- * a sync CLI from a `gbrain serve` without raw SQL. The claim statements
+ * a sync CLI from a `foresights serve` without raw SQL. The claim statements
  * stamp a single claim at claim time and a group stamps each wave's members
  * at dispatch, so a kill before the first renewal still shows a `preparing`
  * stamp of the current token (the expired-claim reclaim charges exactly
@@ -140,7 +140,7 @@ export function isOwnerThisProcess(owner: Pick<ClaimOwner, 'pid' | 'nonce'> | nu
 
 export const OWNER_COMMANDS: ReadonlySet<string> = new Set(['sync', 'serve', 'jobs', 'autopilot', 'mcp', 'dream', 'cycle', 'sources', 'migrate-graduation', 'put', 'import']);
 let ownerOverride: ClaimOwner | undefined;
-/** The gbrain command this process runs (`cli` when none is recognisable). */
+/** The foresights command this process runs (`cli` when none is recognisable). */
 export function claimOwnerKind(): string {
   if (ownerOverride) return ownerOverride.kind;
   const command = process.argv.slice(2).find(arg => !arg.startsWith('-'));
@@ -154,7 +154,7 @@ let oneShotCommand = false;
  */
 export function markOneShotCommand(on = true): void { oneShotCommand = on; }
 export function isOneShotCommand(): boolean { return oneShotCommand; }
-/** The owning process for the stamp: the gbrain command this process runs (`cli` when none is recognisable), its pid, nonce, pid namespace and build. */
+/** The owning process for the stamp: the foresights command this process runs (`cli` when none is recognisable), its pid, nonce, pid namespace and build. */
 export function claimOwner(): ClaimOwner {
   if (ownerOverride) return ownerOverride;
   const { pid, nonce, pid_ns, boot_id, start } = consumerIdentity();
@@ -212,7 +212,7 @@ export function parseMaxClaimMs(raw: string | null | undefined): number | null {
 export function validateMaxClaimConfigValue(key: string, value: string): string | null {
   if (key !== MAX_CLAIM_CONFIG_KEY || parseMaxClaimMs(value) !== null) return null;
   return `invalid_params: ${MAX_CLAIM_CONFIG_KEY} must be a whole number of milliseconds from ${MAX_CLAIM_MIN_MS} to ${MAX_CLAIM_MAX_MS} `
-    + `(default ${MAX_CLAIM_DEFAULT_MS}, 10 minutes; for example gbrain config set ${MAX_CLAIM_CONFIG_KEY} 900000) (got '${value}'). Nothing was written.`;
+    + `(default ${MAX_CLAIM_DEFAULT_MS}, 10 minutes; for example foresights config set ${MAX_CLAIM_CONFIG_KEY} 900000) (got '${value}'). Nothing was written.`;
 }
 export async function readMaxClaimMs(engine: Pick<BrainEngine, 'getConfig'>): Promise<number> {
   return parseMaxClaimMs(await engine.getConfig(MAX_CLAIM_CONFIG_KEY).catch(() => null)) ?? MAX_CLAIM_DEFAULT_MS;
@@ -288,7 +288,7 @@ export function claimStateOf(row: ClaimRow, now = Date.now()): ClaimState | null
   if (row.abandoned === true || row.probe_owner && own && claimOwnerProvablyDead(stamp)) {
     const recorded = own && (stamp!.phase === 'preparing' || stamp!.phase === 'publishing') ? stamp!.phase as 'preparing' | 'publishing' : 'unrecorded';
     return { phase: recorded, claim_age_ms: claimAge, phase_age_ms: recorded === 'unrecorded' ? null : age(stamp!.since, now), ...detail, resumes_on_its_own: true, owner_exited: true,
-      why: `Its owner process has exited (${row.abandoned === true ? 'it last wrote the claim before this process opened the brain, which admits one process at a time' : 'same machine boot, its process is gone'}) and nothing renews the claim. The next write from this machine (or a gbrain process already running here, within seconds) releases it and runs the request again; nothing else is needed.` };
+      why: `Its owner process has exited (${row.abandoned === true ? 'it last wrote the claim before this process opened the brain, which admits one process at a time' : 'same machine boot, its process is gone'}) and nothing renews the claim. The next write from this machine (or a foresights process already running here, within seconds) releases it and runs the request again; nothing else is needed.` };
   }
   if (row.claim_lapsed) return { phase: 'publication_transaction', claim_age_ms: claimAge, phase_age_ms: null, ...detail, resumes_on_its_own: true,
     why: 'Its claim lapsed while it was still running and nothing was published: a transaction holds the request row (renewals cannot reach it) or its owner is gone. It is requeued once that transaction ends or the owner process exits.' };

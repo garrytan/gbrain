@@ -35,8 +35,8 @@ export const SYNTHETIC_CHECK_NAMES = [
  * brain to opts.targetScore (default 90). Never enqueues, never mutates.
  *
  * Consumed by:
- *   - gbrain doctor --remediation-plan (renders human/JSON in CLI shell)
- *   - gbrain onboard --check (reframes as onboarding language)
+ *   - foresights doctor --remediation-plan (renders human/JSON in CLI shell)
+ *   - foresights onboard --check (reframes as onboarding language)
  *   - MCP run_onboard (admin scope, returns plan as JSON envelope)
  */
 export async function computeRemediationPlan(

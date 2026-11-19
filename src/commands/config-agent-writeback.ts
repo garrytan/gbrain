@@ -1,5 +1,5 @@
 /**
- * `gbrain config set|get memory.agent_writeback` (GBRA-219). Kept out of
+ * `foresights config set|get memory.agent_writeback` (GBRA-219). Kept out of
  * runConfig, which sits at its function-size ceiling. DB-only: the setting and
  * its audit row commit in one transaction; the capture lanes and the file
  * mirror are never touched.
@@ -22,7 +22,7 @@ export async function setAgentWritebackFromCli(engine: BrainEngine, value: strin
     console.log('This changes what agents are told to save. Background capture (session hooks) still follows memory.auto_writeback.');
   } catch (e) {
     console.error(`[config] ERROR: the write did not confirm (${e instanceof Error ? e.name : 'error'}), so it may or may not have landed.`);
-    console.error(`[config] Read it back with \`gbrain config get ${AGENT_WRITEBACK_KEY}\` before re-running.`);
+    console.error(`[config] Read it back with \`foresights config get ${AGENT_WRITEBACK_KEY}\` before re-running.`);
     process.exit(1);
   }
 }

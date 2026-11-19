@@ -59,9 +59,9 @@ release. An atom's identity leaves out the provenance a managed writer stamps (`
 A page's `## Facts` and takes fences are canonical, so their kinds (`fact_fence`, `take_fence`, one key `page:<slug>`
 each, `generations/fence.ts`) have no shrink floor, valve or item cap: a fence read whole and valid is complete whatever
 its row count, and an empty one retires every row (`fenceParsedEmpty`). Every writer that would retire fence rows (the
-page publication's projection, `extract_facts`, `gbrain extract takes`) calls `publishFenceGeneration` in its own
+page publication's projection, `extract_facts`, `foresights extract takes`) calls `publishFenceGeneration` in its own
 transaction, under the page key, before it writes. A fence that is absent, unread or on a segmented page holds
-(`fence_absent`): nothing retires, and doctor `generation_held`, `gbrain sync status` (`fence_holds`) and
+(`fence_absent`): nothing retires, and doctor `generation_held`, `foresights sync status` (`fence_holds`) and
 `get_page` (`fence_held`) list the page with an `ask_user` fix naming both outcomes (restore the section to keep the
 rows, or write the exact empty fence it prints to retire them; never a default). The rows of a deleted page expire only
 on `originGone`: the page is gone under its key and the rows came from a fence (a live generation, or a fence in the
@@ -77,7 +77,7 @@ stays active, and an incoming fence row that claims its number takes it while th
 row whose claim the incoming fence states, at any number or visibility, still retires, so no wider copy of a claim the
 fence narrowed stays readable. The managed `extract_facts` reconcile applies the same rule; an unmanaged brain's
 reconcile still treats rows its fence lacks as drift. Rows an earlier release retired this way on a managed brain are
-restored by `gbrain repair unwithdrawn-facts`; on an unmanaged brain it lists them as `excluded:unmanaged_reconcile`,
+restored by `foresights repair unwithdrawn-facts`; on an unmanaged brain it lists them as `excluded:unmanaged_reconcile`,
 since the next reconcile would retire a restored row again.
 
 The dream consolidate phase records each cluster (`consolidation`, key `entity:<slug>:cluster:<ids>`,
@@ -103,7 +103,7 @@ adapter's `proofHolds`) or `originGone` (the chronicle phase retires the events 
 stays content-addressed: an event is the extractor's while its content hash is on the chronicle ledger, its identity is
 the one the live generation recorded, or it is exactly what this publication proposed; an operator-edited or
 operator-deleted event is never an item, so nothing overwrites, retires or revives it.
-`gbrain repair generations --kind chronicle-event --mode restore` brings retired events and their rows back.
+`foresights repair generations --kind chronicle-event --mode restore` brings retired events and their rows back.
 
 ### Synthesis
 
@@ -121,7 +121,7 @@ the plan approved on Oct 21: replace only on a complete, non-empty result, alway
   generation.
 - Every other earlier output is carried into the new generation, stays live and is recorded on it as an unmatched
   predecessor (why, and how many claims, quotes and citations it holds alone; a segmented page is never compared and is
-  listed `unreadable`). `gbrain repair generations --kind synthesis --mode cleanup --since 30d` lists them and
+  listed `unreadable`). `foresights repair generations --kind synthesis --mode cleanup --since 30d` lists them and
   `--apply --expect <hash> --yes` retires exactly the previewed ones (`retired_by: synthesis-cleanup`).
 - A transcript is complete only when every child of every chunk completed and nothing of the run is deferred or still
   pending publication. Otherwise, or with `generations.synthesis.retire_previous` set to false, the generation is
@@ -144,8 +144,8 @@ before it composes (the summary before its children are submitted, the drift rep
 page before gathering, carried on `ThinkResult.persist_base`) and passes it as the generation's input pin. Activation
 rechecks it under the page lock: a page that changed since is fenced (`generation_fenced`, `pin_moved`), keeps the
 edit, and the writer reports it (the summary and drift report on stderr, `think --save` as an error) instead of writing.
-A write that changes a live page copies it to `page_versions` first (`gbrain restore`) and keeps its bounded preimage
-on the ledger, so `gbrain repair generations --kind dream_summary|think_synthesis|drift_report --mode restore` puts the
+A write that changes a live page copies it to `page_versions` first (`foresights restore`) and keeps its bounded preimage
+on the ledger, so `foresights repair generations --kind dream_summary|think_synthesis|drift_report --mode restore` puts the
 earlier page back. A segmented live page is held `segmented_unsupported`. Managed brains keep their coordinated
 maintenance page request, which binds the revision it reads at publish time and versions first.
 
@@ -153,9 +153,9 @@ Derived links and timeline rows are fence-only kinds (plan: the revision fence a
 runs with the page row locked (`FOR SHARE`) and only while the page is still at the revision its producer read:
 
 - Timeline orphan retraction (T-2): `retractRemovedTimelineEntries` takes `expectedRevision`; `pruneTimelineOrphans`
-  (unmanaged), `gbrain extract timeline --source db` (unmanaged) and `extract --stale` pass the revision they read. A
+  (unmanaged), `foresights extract timeline --source db` (unmanaged) and `extract --stale` pass the revision they read. A
   page that moved deletes nothing. File-source extraction reconciles against the file and keeps no fence here.
-- The by-mention rebuild sweep (L-6): `gbrain extract links --by-mention --rebuild` reads the revision before the body;
+- The by-mention rebuild sweep (L-6): `foresights extract links --by-mention --rebuild` reads the revision before the body;
   a page that moved before the sweep is not swept and stays unchecked, so a resume retries it.
 - Concept provenance edges (C-4, #4589): `replaceConceptProvenanceLinks` banks a republished concept's edges and retires
   the edges of atoms that left its member group in one transaction, only while the concept is at the revision its
@@ -189,17 +189,17 @@ A transcript's key is its corpus root label and root-relative path (`transcript:
 never its basename or content hash. A file a live generation names as its `locator` keeps that key, and a file whose
 content equals the input of a live generation whose file is gone was moved: it keeps that key and the locator follows.
 
-`gbrain repair stale-atoms` retires each listed atom as an approved generation of its origin key (no floor or valve),
+`foresights repair stale-atoms` retires each listed atom as an approved generation of its origin key (no floor or valve),
 bound to the atom's identity; `atoms-restore` keeps its command and JSON and still restores managed retirements, and
 doctor `atom_retirements_restorable` leaves out an atom whose retirement the ledger records, so it warns once.
 
 ## Repair
 
-`gbrain repair generations --kind <kind>` is explicit-only and preview-bound (docs/guides/repair.md#generations):
+`foresights repair generations --kind <kind>` is explicit-only and preview-bound (docs/guides/repair.md#generations):
 `--mode restore` (the default) republishes the item set the selected live generation replaced, `--mode release-held`
 publishes a held result once (a managed source releases an atom page key through its writer), and `--mode cleanup` lists
 pending members and orphan candidates, read-only (for `synthesis` it also lists unmatched predecessors, which its
-`--apply` retires; see [Synthesis](#synthesis)). A managed source restores retired atoms with `gbrain repair
+`--apply` retires; see [Synthesis](#synthesis)). A managed source restores retired atoms with `foresights repair
 atoms-restore`; `--mode restore` refuses there for every kind but the fence kinds, whose restore is a guarded page write. Doctor reports `generation_retirements` (ok, with the restorable
 count), `generation_held` (warn) and `generation_pending` (warn).
 
@@ -225,7 +225,7 @@ deletes every row they would retire); a fact purge nulls every preimage and prop
 | `generations.valve.max_ratio` | 0.5 | 0.01 to 1 |
 | `generations.synthesis.retire_previous` | true | true or false |
 
-`gbrain config set` refuses a value out of range; a stored value out of range reads as the default.
+`foresights config set` refuses a value out of range; a stored value out of range reads as the default.
 
 ## Decisions
 
@@ -257,5 +257,5 @@ deletes every row they would retire); a fact purge nulls every preimage and prop
 - An in-place kind's shrink floor counts the live generation's items only, because its new outputs carry new keys and
   would otherwise count as owned before the run: a re-synthesis with fewer pages than before would always hold.
 - A managed brain's synthesis restore is refused like every non-fence managed restore (see above); its retirements are
-  versioned deletes, and the earlier pages come back through `gbrain repair generations` on an unmanaged brain or a
+  versioned deletes, and the earlier pages come back through `foresights repair generations` on an unmanaged brain or a
   later managed restore path.

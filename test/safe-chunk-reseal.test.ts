@@ -3,7 +3,7 @@
  * withheld from every remote read. Re-importing their unchanged content
  * re-seals them projection-only (no page write, no journal admission, no
  * lifetime ID); doctor and the `safe_index_pending` hint count code pages as
- * well as markdown and fire on partial results; `gbrain repair safe-chunks`
+ * well as markdown and fire on partial results; `foresights repair safe-chunks`
  * drains the rest on a managed brain with zero admissions.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -160,7 +160,7 @@ for (const kind of backends) {
       await engine.executeRaw('UPDATE pages SET chunker_version=1 WHERE source_id=$1 AND slug=$2', [sourceId, imported.slug]);
       const check = await checkContextualRetrievalCoverage(engine, { sourceIds: [sourceId] });
       expect(check.message).toContain('1 page(s) below the safe-chunk index version');
-      expect(check.message).toContain('gbrain repair safe-chunks');
+      expect(check.message).toContain('foresights repair safe-chunks');
       expect(await remoteSearch('legacyOnlyMarker')).toEqual([]);
       expect(degraded()).toContain('safe_index_pending');
       // A sealed page still matches, so the result is partial, not empty.
@@ -173,7 +173,7 @@ for (const kind of backends) {
     });
   });
 
-  describe(`gbrain repair safe-chunks ${kind}`, () => {
+  describe(`foresights repair safe-chunks ${kind}`, () => {
     let engine: BrainEngine;
     let close: () => Promise<void>;
     beforeAll(async () => {
@@ -215,10 +215,10 @@ for (const kind of backends) {
         const pending = await safeIndexPendingCheck(engine);
         expect(pending).toMatchObject({ status: 'warn', details: { pages_pending: 3, repair: 'safe-chunks' } });
         expect(pending.message).toContain('3 page(s) are below the safe-chunk index version');
-        expect(pending.message).toContain('gbrain repair safe-chunks --apply');
+        expect(pending.message).toContain('foresights repair safe-chunks --apply');
         const preview = await runRepair(ctx, safeChunksRepair, scope, { apply: false, sourceFlag: sourceId });
         expect(preview).toMatchObject({ kind: 'safe-chunks', mode: 'dry_run', affected: 3,
-          cost: { lifetime_ids: 0, receipt_bytes: 0, embedding_pages: 3 }, apply_command: `gbrain repair safe-chunks --source ${sourceId} --apply` });
+          cost: { lifetime_ids: 0, receipt_bytes: 0, embedding_pages: 3 }, apply_command: `foresights repair safe-chunks --source ${sourceId} --apply` });
         expect(preview.sample).toEqual(expect.arrayContaining([`${sourceId}:notes/a`, `${sourceId}:${codeSlug}`]));
         const before = await journal(engine);
         const first = await runRepair(ctx, safeChunksRepair, scope, { apply: true, limit: 1, sourceFlag: sourceId });
@@ -247,7 +247,7 @@ for (const kind of backends) {
           __setEmbedTransportForTests(null);
           resetGateway();
         }
-        expect(warnings.join('\n')).toContain(`gbrain embed --stale --source ${sourceId}`);
+        expect(warnings.join('\n')).toContain(`foresights embed --stale --source ${sourceId}`);
         expect((await pageState(engine, sourceId, 'notes/c')).chunker_version).toBeGreaterThanOrEqual(SAFE_FENCE_CHUNKER_VERSION);
       });
     }, 120_000);

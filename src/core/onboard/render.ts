@@ -1,6 +1,6 @@
 // src/core/onboard/render.ts
 // v0.41.18.0 (T12). Stable JSON envelope + human renderer for
-// `gbrain onboard`. Library-shaped — no console.* / process.exit; CLI
+// `foresights onboard`. Library-shaped — no console.* / process.exit; CLI
 // shell calls these and pipes results to its own output.
 
 import type { RemediationStep } from '../remediation-step.ts';

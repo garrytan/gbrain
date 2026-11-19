@@ -1,5 +1,5 @@
 /**
- * `gbrain dream retriage` (#4152) — PGLite-backed tests for the backlog
+ * `foresights dream retriage` (#4152) — PGLite-backed tests for the backlog
  * reconciliation matrix, the spend gate, and dispatch/usage errors.
  *
  * No LLM calls anywhere: every discovered transcript gets a pre-seeded
@@ -443,7 +443,7 @@ describe('dream retriage — reconcile matrix', () => {
     }
   });
 
-  test('SR3-P2: gbrain models reports models.dream.triage as the effective triage route', async () => {
+  test('SR3-P2: foresights models reports models.dream.triage as the effective triage route', async () => {
     const rig = await setupRig();
     try {
       await rig.engine.setConfig('models.dream.triage', 'anthropic:claude-sonnet-4-6');

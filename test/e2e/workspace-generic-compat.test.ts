@@ -1,7 +1,7 @@
 /**
  * test/e2e/workspace-generic-compat.test.ts — generic-workspace compat gate.
  *
- * Pins gbrain's DOCUMENTED CONTRACT for the INSTALL_FOR_AGENTS.md
+ * Pins foresights's DOCUMENTED CONTRACT for the INSTALL_FOR_AGENTS.md
  * "any repo with a workspace" flow: the cwd_walk_up detection tier
  * (src/core/repo-root.ts tier 1b), scaffold additivity
  * (src/core/skillpack/scaffold.ts contracts 1–3), and check-resolvable
@@ -101,7 +101,7 @@ describe('generic agent-workspace compat (INSTALL_FOR_AGENTS.md flow)', () => {
 
   it('scaffold is additive into an AGENTS.md-shell workspace and refuses overwrite on re-run', () => {
     // Fresh workspace with only the AGENTS.md shell — the documented
-    // starting state for a generic repo adopting gbrain skills.
+    // starting state for a generic repo adopting foresights skills.
     const target = mkdtempSync(join(tmpdir(), 'generic-ws-scaffold-'));
     created.push(target);
     const shell = '# AGENTS\n\n| Trigger | Skill |\n|---------|-------|\n';

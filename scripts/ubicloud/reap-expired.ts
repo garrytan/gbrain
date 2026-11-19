@@ -23,7 +23,7 @@
  * which `ci:ubicloud` writes for its gate VMs (`--ttl-hours`, default 2) and
  * `ubi-runner.sh up|run` writes for every name it generates (`--ttl-hours H`,
  * else UBI_TTL_HOURS, default 3), whichever tool and owner made the VM; or in the older form
- * gbrain wrote before it, reaped until none are left:
+ * foresights wrote before it, reaped until none are left:
  *
  *   ubirun-<owner>-<created epoch>-x<expiry epoch>-<suffix>
  *

@@ -1,9 +1,9 @@
 /**
- * commands/advisor.ts — `gbrain advisor` CLI surface.
+ * commands/advisor.ts — `foresights advisor` CLI surface.
  *
- *   gbrain advisor            # ranked, agent-readable action list (human render)
- *   gbrain advisor --json     # structured findings; exit non-zero on critical (E2)
- *   gbrain advisor --apply ID # run ONE finding's fix, local-only, after confirm (E5)
+ *   foresights advisor            # ranked, agent-readable action list (human render)
+ *   foresights advisor --json     # structured findings; exit non-zero on critical (E2)
+ *   foresights advisor --apply ID # run ONE finding's fix, local-only, after confirm (E5)
  *
  * The advisor itself never mutates. `--apply` is the only path that runs a fix,
  * and it: refuses over MCP (CLI is always local), only acts on allowlisted
@@ -58,7 +58,7 @@ function exitFor(report: AdvisorReport): 0 | 1 | 2 {
 export async function runAdvisorCli(engine: BrainEngine, args: string[]): Promise<AdvisorCliResult> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(
-      'gbrain advisor [--json] [--apply <finding-id>]\n\n' +
+      'foresights advisor [--json] [--apply <finding-id>]\n\n' +
         '  (no flags)        Ranked, agent-readable list of high-leverage actions for this brain.\n' +
         '  --json            Structured findings. Exit code: 0 clean / 1 warn / 2 critical.\n' +
         '  --apply <id>      Run ONE finding\'s fix (local-only). Only findings that report an\n' +
@@ -106,7 +106,7 @@ export async function runAdvisorCli(engine: BrainEngine, args: string[]): Promis
 const APPLY_CONSENT: Readonly<Record<string, { effects: Effect[]; risk: string; cost: string }>> = {
   apply_migrations: {
     effects: ['persistent_install'],
-    risk: 'Applies the pending schema and data migrations to this brain (forward-only; take a backup first with gbrain backup if one matters) '
+    risk: 'Applies the pending schema and data migrations to this brain (forward-only; take a backup first with foresights backup if one matters) '
       + 'and may install the autopilot background service.',
     cost: 'no model spend (a migration that needs paid re-embedding asks separately)',
   },
@@ -136,7 +136,7 @@ async function applyFinding(engine: BrainEngine, report: AdvisorReport, id: stri
     command: 'advisor --apply', effects: known?.effects ?? ['destructive'], actor: 'agent',
     what: `Run the advisor fix ${id}: ${target.display}`,
     why: finding?.title ?? `The advisor recommends ${id}.`,
-    risk: `${known?.risk ?? 'Runs a gbrain maintenance command that changes this brain.'} Cost: ${known?.cost ?? 'unknown'}.`,
+    risk: `${known?.risk ?? 'Runs a foresights maintenance command that changes this brain.'} Cost: ${known?.cost ?? 'unknown'}.`,
     user_message: `Run ${target.display} now (${known?.cost ?? 'cost unknown'})? ${finding?.title ?? ''}`.trim(),
     argv: ['gbrain', 'advisor', '--apply', id, ...(args.includes('--json') ? ['--json'] : [])],
     preview_argv: ['gbrain', 'advisor', '--json'],

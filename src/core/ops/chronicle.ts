@@ -56,7 +56,7 @@ async function remoteOntology<V extends Pick<OntologyValue, 'value' | 'source' |
 
 // ── v0.42.x — Life Chronicle (#2390) timeline read ops ───────────────────
 // CLI names avoid the existing `timeline` (get_timeline, a page's own timeline):
-// `gbrain day <date>` / `gbrain since <date>` / `gbrain last-seen <entity>`.
+// `foresights day <date>` / `foresights since <date>` / `foresights last-seen <entity>`.
 // All route through sourceScopeOpts(ctx) so reads honor source isolation.
 const chronicle_day: Operation = {
   name: 'chronicle_day',
@@ -66,7 +66,7 @@ const chronicle_day: Operation = {
   description:
     'Life Chronicle: events + timeline entries on a given day (or its ISO week when week=true), ' +
     "ordered chronologically; each row backlinks to its depth page. Distinct from `get_timeline`/" +
-    "`gbrain timeline <slug>`, which shows ONE page's timeline. CLI: `gbrain day <date>`.",
+    "`foresights timeline <slug>`, which shows ONE page's timeline. CLI: `foresights day <date>`.",
   scope: 'read',
   params: {
     date: { type: 'string', required: true, description: 'Day as YYYY-MM-DD.' },
@@ -96,7 +96,7 @@ const chronicle_on_this_day: Operation = {
   outputRedaction: 'retrieval',
   description:
     'Life Chronicle: events from the same calendar day in PRIOR years ("on this day"). ' +
-    'CLI: `gbrain on-this-day [--date YYYY-MM-DD]`.',
+    'CLI: `foresights on-this-day [--date YYYY-MM-DD]`.',
   scope: 'read',
   params: {
     date: { type: 'string', description: 'Anchor day YYYY-MM-DD (default today); matches its month-day in prior years.' },
@@ -117,7 +117,7 @@ const chronicle_since: Operation = {
   outputRedaction: 'retrieval',
   description:
     'Life Chronicle: events + timeline entries on or after a date, optionally filtered by event kind. ' +
-    'CLI: `gbrain since <date> [--kind commitment]`.',
+    'CLI: `foresights since <date> [--kind commitment]`.',
   scope: 'read',
   params: {
     date: { type: 'string', required: true, description: 'Lower-bound day as YYYY-MM-DD (inclusive).' },
@@ -141,7 +141,7 @@ const chronicle_last_seen: Operation = {
   outputRedaction: 'retrieval',
   description:
     "Life Chronicle: when an entity was last seen — its own timeline rows OR an event's `who`. " +
-    'Returns last_date, the event slug, and days_ago. CLI: `gbrain last-seen <entity-slug>`.',
+    'Returns last_date, the event slug, and days_ago. CLI: `foresights last-seen <entity-slug>`.',
   scope: 'read',
   params: {
     entity: { type: 'string', required: true, description: 'Entity page slug (e.g. people/sarah-chen).' },
@@ -171,7 +171,7 @@ const ontology_get: Operation = {
   outputRedaction: 'retrieval',
   description:
     "Life Chronicle: the current resolved per-entity ontology (dimension → value) at `asof` " +
-    "(default now), with provenance + confidence + validity. CLI: `gbrain ontology <entity> [--asof YYYY-MM-DD]`.",
+    "(default now), with provenance + confidence + validity. CLI: `foresights ontology <entity> [--asof YYYY-MM-DD]`.",
   scope: 'read',
   params: {
     entity: { type: 'string', required: true, description: 'Entity page slug (e.g. people/sarah-chen).' },
@@ -201,7 +201,7 @@ const ontology_propose: Operation = {
   description:
     'Life Chronicle: record one ontology observation (entity has dimension=value), sourced + ' +
     'confidence-weighted + bi-temporal. Idempotent on (entity,dimension,value,source). A new value ' +
-    'supersedes the prior; a backdated conflict is flagged not rewritten. CLI: `gbrain ontology-add <entity> <dimension> <value>`.',
+    'supersedes the prior; a backdated conflict is flagged not rewritten. CLI: `foresights ontology-add <entity> <dimension> <value>`.',
   scope: 'write',
   mutating: true,
   params: {
@@ -274,7 +274,7 @@ const ontology_dimensions: Operation = {
   outputRedaction: 'no_stored_text',
   description:
     'Life Chronicle meta-ontology: which dimensions the brain tracks across entities, with ' +
-    'entity + observation counts. CLI: `gbrain ontology-dimensions`.',
+    'entity + observation counts. CLI: `foresights ontology-dimensions`.',
   scope: 'read',
   params: {},
   handler: async (ctx) => ctx.engine.discoverOntologyDimensions(sourceScopeOpts(ctx)),
@@ -288,7 +288,7 @@ const ontology_conflicts: Operation = {
   outputRedaction: 'retrieval',
   description:
     'Life Chronicle: dimensions with ≥2 distinct current values from ≥2 provenances (genuine ' +
-    'disagreement, not temporal supersession). CLI: `gbrain ontology-contradictions`.',
+    'disagreement, not temporal supersession). CLI: `foresights ontology-contradictions`.',
   scope: 'read',
   params: {
     min_confidence: { type: 'number', description: 'Only consider observations at/above this confidence (0..1).' },
@@ -321,7 +321,7 @@ const volunteer_chronicle: Operation = {
     'Life Chronicle agent-orientation: the recent timeline (last N days) + the current ' +
     'validity-resolved ontology for the named entities, in one zero-LLM payload, so an agent ' +
     'orients before acting. Diary-sourced ontology is redacted for remote callers. ' +
-    'CLI: `gbrain orient [--days 7] [--entities people/a,people/b]`.',
+    'CLI: `foresights orient [--days 7] [--entities people/a,people/b]`.',
   scope: 'read',
   params: {
     days: { type: 'number', description: 'Recent-timeline lookback in days (default 7).' },
@@ -357,9 +357,9 @@ const chronicle_backfill: Operation = {
     'cal/, calendar/) for timeline-event extraction. One paid chat call per page, so it needs --yes; --dry-run ' +
     'reports the candidates, an estimated cost and skip reasons. The chronicle_page_state ledger skips content ' +
     'already extracted or queued, so repeats never pay twice. Queued pages run in the `chronicle` cycle phase ' +
-    '(`gbrain dream --phase chronicle`), exempt from the daily limit. --max-usd is a hard bound counting retries: ' +
+    '(`foresights dream --phase chronicle`), exempt from the daily limit. --max-usd is a hard bound counting retries: ' +
     'pages queue only while their worst case fits, and an unpriced chat model then refuses with no_pricing. Local-only bulk op. ' +
-    'CLI: `gbrain chronicle-backfill [--since YYYY-MM-DD] [--dated-since YYYY-MM-DD] [--recent] [--limit N] [--max-usd USD] [--dry-run | --yes]`.',
+    'CLI: `foresights chronicle-backfill [--since YYYY-MM-DD] [--dated-since YYYY-MM-DD] [--recent] [--limit N] [--max-usd USD] [--dry-run | --yes]`.',
   scope: 'admin',
   mutating: true,
   localOnly: true,

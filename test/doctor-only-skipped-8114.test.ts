@@ -1,5 +1,5 @@
 /**
- * #8114: `gbrain doctor --fast --only <db check>` stops before the database checks, so the
+ * #8114: `foresights doctor --fast --only <db check>` stops before the database checks, so the
  * selected check does not run. Its not-run placeholder must mark the report incomplete
  * (unknown health); a run that executes the same check stays complete.
  */

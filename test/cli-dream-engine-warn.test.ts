@@ -1,5 +1,5 @@
 /**
- * v0.41.13 (#1422) — `gbrain dream` surfaces engine-connect failures on stderr.
+ * v0.41.13 (#1422) — `foresights dream` surfaces engine-connect failures on stderr.
  *
  * Pre-fix bug (foxhoundinc): dream wrapped `connectEngine()` in `try {} catch {}`
  * that silently swallowed the failure. The cycle then ran with `engine: null`,

@@ -3,7 +3,7 @@
  * and read-only.
  *
  * - `generation_retirements`: items live generations retired inside the restore window (`generations.restore_days`),
- *   which `gbrain repair generations --mode restore` can bring back. Retiring what a complete successor no longer has is
+ *   which `foresights repair generations --mode restore` can bring back. Retiring what a complete successor no longer has is
  *   the normal path, so this is `ok` with the counts and the read-only preview; it never warns by itself.
  * - `generation_held`: results the primitive held instead of publishing (shrunk, oversize, valve, no_proof, ...). The
  *   previous generation stays live and nothing was retired; `warn` names each reason and the preview that lists them.
@@ -22,6 +22,7 @@ import { RELEASABLE_HELD_REASONS, type HeldReason } from '../../../core/generati
 import { generationsPreviewArgv } from '../../../core/generations/repair.ts';
 import { listOrphanCandidates, listPendingMembers } from '../../../core/generations/managed.ts';
 import { fenceHoldEntries } from '../../../core/generations/fence.ts';
+import { commandText } from '../../../core/brand.ts';
 
 const DOCS = 'docs/guides/repair.md#generations';
 
@@ -47,7 +48,7 @@ export async function generationRetirementsCheck(engine: BrainEngine, sourceIds?
     return { name: 'generation_retirements', status: 'ok', details,
       message: `${items} derived item(s) were retired by ${details.keys} live generation(s) in the last ${restoreDays} day(s) `
         + `(${bySource.map(row => `${row.source_id}/${row.kind}: ${row.items}`).join('; ')}); each is restorable until the purge hold ends. `
-        + `Preview a restore with ${preview.join(' ')} (read-only).` };
+        + `Preview a restore with ${commandText(preview)} (read-only).` };
   } catch (error) {
     return { name: 'generation_retirements', status: 'warn', details: { items: 'unknown' },
       message: `Generation retirements could not be inspected: ${error instanceof Error ? error.message : String(error)}. Health is unknown.` };
@@ -80,7 +81,7 @@ export async function generationHeldCheck(engine: BrainEngine, sourceIds?: strin
     return { name: 'generation_held', status: 'warn', details,
       message: `${count} derived result(s) were held instead of published (${byReason.map(row => `${row.source_id}/${row.kind} ${row.held_reason}: ${row.count}`).join('; ')}); `
         + 'the previous generation of each key stays live and nothing was retired. '
-        + `Preview them with ${preview.join(' ')} (read-only); release a releasable one only after the user agrees.`,
+        + `Preview them with ${commandText(preview)} (read-only); release a releasable one only after the user agrees.`,
       fix: agentFix(preview, 'Lists each held result with its reason, attempts and item count and prints the apply command bound to that set; it writes nothing. '
         + 'Releasing is the user\'s call: show them the preview before running the apply.', 'generation_held', { docs: DOCS }) };
   } catch (error) {
@@ -108,7 +109,7 @@ export async function generationPendingCheck(engine: BrainEngine, sourceIds?: st
     ];
     const first = orphans[0] ?? pending[0]!;
     const preview = generationsPreviewArgv({ kind: first.kind, sourceId: first.source_id }, 'cleanup');
-    return { name: 'generation_pending', status: 'warn', details, message: `${parts.join(' ')} List them with ${preview.join(' ')} (read-only).`,
+    return { name: 'generation_pending', status: 'warn', details, message: `${parts.join(' ')} List them with ${commandText(preview)} (read-only).`,
       fix: agentFix(preview, 'Lists each pending member and orphan candidate with its activation id; it writes nothing. Pending members resume on the next extraction run; orphan candidates stay until the user decides.',
         'generation_pending', { docs: DOCS }) };
   } catch (error) {

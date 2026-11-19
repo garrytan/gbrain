@@ -17,7 +17,7 @@ Copy an API key from the provider's settings (Fireflies: Settings, then
 Developer settings), then pipe it on stdin:
 
 ```bash
-printf '%s' "$KEY" | gbrain connectors auth fireflies --token -
+printf '%s' "$KEY" | foresights connectors auth fireflies --token -
 ```
 
 The key is checked against the provider before it is saved, and saved only
@@ -36,7 +36,7 @@ Two environment variables override the saved key, in this order:
 ### 2. Register the source
 
 ```bash
-gbrain sources add meetings --kind meetings --provider fireflies
+foresights sources add meetings --kind meetings --provider fireflies
 ```
 
 | Flag | Default | What it does |
@@ -55,21 +55,21 @@ gbrain sources add meetings --kind meetings --provider fireflies
 ### 3. Run the first sync
 
 ```bash
-gbrain sync --source meetings
+foresights sync --source meetings
 ```
 
 Nothing syncs on a schedule until this first explicit sync. After it,
 autopilot keeps the source fresh every `--sync-interval-min` minutes. When
 the provider rate-limits a sync, the time it gives (or the next 00:00 UTC for
 a daily quota) is recorded and autopilot waits until then. Without autopilot,
-run `gbrain sync --source meetings` from cron through the wrapper in
+run `foresights sync --source meetings` from cron through the wrapper in
 [cron-schedule.md](cron-schedule.md#calling-gbrain-unattended).
 
-`gbrain sync --source meetings --full` re-reads the whole `--history-days`
+`foresights sync --source meetings --full` re-reads the whole `--history-days`
 window, for items added upstream behind the lookback. `--dry-run` has no
 preview for these sources: it fetches and writes nothing. The first account a
 source syncs is pinned to it, and a key for another account is refused with
-`connector_account_changed` even after a config change. `gbrain connectors
+`connector_account_changed` even after a config change. `foresights connectors
 status fireflies` (or `slack`) reports whether a key is saved, without the key.
 
 ## Record modes
@@ -123,7 +123,7 @@ scopes:
 
 ```yaml
 display_information:
-  name: gbrain
+  name: foresights
 oauth_config:
   scopes:
     bot:
@@ -148,7 +148,7 @@ Copy the Bot User OAuth Token (`xoxb-…`) from the app's OAuth & Permissions
 page and pipe it on stdin:
 
 ```bash
-printf '%s' "$SLACK_TOKEN" | gbrain connectors auth slack --token -
+printf '%s' "$SLACK_TOKEN" | foresights connectors auth slack --token -
 ```
 
 It is checked with `auth.test` before it is saved to
@@ -159,11 +159,11 @@ meetings.
 ### 3. Register the source
 
 ```bash
-gbrain sources add slack --kind slack --channels C0123ABCDEF,C0456GHIJKL
+foresights sources add slack --kind slack --channels C0123ABCDEF,C0456GHIJKL
 ```
 
 The channel id is in the channel's details in Slack. Before the source is
-registered, gbrain checks the token and every channel: a missing scope or a
+registered, foresights checks the token and every channel: a missing scope or a
 channel the app was not invited to refuses with the fix. It then prints which
 channels are private. Anyone who can read the brain sees every imported
 channel together; Slack's per-channel membership does not carry over to a
@@ -184,7 +184,7 @@ shared brain.
 | `--token-env` | none | Read the token from this environment variable instead. |
 | `--federated` | off | Let Slack pages join unqualified searches. |
 
-Then run `gbrain sync --source slack` once; autopilot keeps it fresh after
+Then run `foresights sync --source slack` once; autopilot keeps it fresh after
 that and waits out Slack's rate limits.
 
 ### What a day page holds
@@ -222,7 +222,7 @@ from it are retired.
 
 A channel the app can no longer read (it was removed from the channel) is held
 on later syncs while the other channels keep syncing; invite the app back and
-run `gbrain sources retry-held <id>`.
+run `foresights sources retry-held <id>`.
 
 ## Troubleshooting
 
@@ -231,8 +231,8 @@ run `gbrain sources retry-held <id>`.
 
 The source has no working API key: none was saved, the source's
 `--token-env` variable is unset, or the provider rejected the key. Save a
-fresh key with `gbrain connectors auth fireflies --token -`, then run
-`gbrain sync --source <id>`. Nothing was imported.
+fresh key with `foresights connectors auth fireflies --token -`, then run
+`foresights sync --source <id>`. Nothing was imported.
 
 <a id="connector_access_denied"></a>
 ### connector_access_denied
@@ -245,22 +245,22 @@ the channel the app must be invited to.
 <a id="rate_limited"></a>
 ### rate_limited
 
-The provider asked gbrain to wait. Progress so far was saved, and autopilot
+The provider asked foresights to wait. Progress so far was saved, and autopilot
 resumes after the stated time by itself.
 
 <a id="connector_binding_missing"></a>
 ### connector_binding_missing
 
 A Git-recorded source's checkout is not available. The meeting was held and
-not written to the database alone. Restore the checkout (`gbrain sources
-status <id>`), then `gbrain sources retry-held <id>`.
+not written to the database alone. Restore the checkout (`foresights sources
+status <id>`), then `foresights sources retry-held <id>`.
 
 <a id="connector_shape_drift"></a>
 ### connector_shape_drift
 
-A provider response is missing a field gbrain needs, which usually means the
+A provider response is missing a field foresights needs, which usually means the
 provider changed its API. The meeting was held, never published partially.
-Upgrade gbrain; held meetings are retried on later syncs.
+Upgrade foresights; held meetings are retried on later syncs.
 
 <a id="connector_item_too_large"></a>
 ### connector_item_too_large

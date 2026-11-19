@@ -119,7 +119,7 @@ describe('submitEmbedBackfill — worker-surface gate', () => {
   test('public queue refusal leaves no PGLite row', async () => {
     await expect(
       new MinionQueue(engine).add('embed-backfill', { sourceId: 'default' }),
-    ).rejects.toThrow('gbrain embed --stale --source default');
+    ).rejects.toThrow('foresights embed --stale --source default');
     const rows = await engine.executeRaw<{ n: number }>(
       `SELECT COUNT(*)::int AS n FROM minion_jobs WHERE name = 'embed-backfill'`,
     );
@@ -139,7 +139,7 @@ describe('submitEmbedBackfill — worker-surface gate', () => {
 
     expect(error).toBeDefined();
     expect(error!.message).toContain('Invalid source_id');
-    expect(error!.message).not.toContain('Run `gbrain embed --stale --source');
+    expect(error!.message).not.toContain('Run `foresights embed --stale --source');
     expect(fake.accesses).toEqual([]);
 
     const response = await dispatchToolCall(
@@ -151,7 +151,7 @@ describe('submitEmbedBackfill — worker-surface gate', () => {
     expect(response.isError).toBe(true);
     const envelope = JSON.parse(response.content[0]?.text ?? '{}') as Record<string, unknown>;
     expect(envelope).toMatchObject({ error: 'permission_denied' });
-    expect(envelope.message).not.toContain('gbrain embed --stale --source');
+    expect(envelope.message).not.toContain('foresights embed --stale --source');
   });
 
   test('an unknown future engine kind fails closed before any engine access', async () => {

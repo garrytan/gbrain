@@ -64,7 +64,7 @@ describe('book-mirror spend authorization', () => {
       `SELECT spend_authorization->>'group_id' AS group_id FROM minion_jobs WHERE name = 'subagent' LIMIT 1`);
     const stderr = await run(['--chapters-dir', dir, '--slug', 'a-book', '--model', 'anthropic:claude-opus-4-7', '--max-usd', '20']);
     expect(stderr).toContain(`keep their earlier authorization: group ${group_id}`);
-    expect(stderr).toContain(`gbrain jobs cancel --group ${group_id}`);
+    expect(stderr).toContain(`foresights jobs cancel --group ${group_id}`);
     const groups = await engine.executeRaw<{ g: string }>(`SELECT DISTINCT spend_authorization->>'group_id' AS g FROM minion_jobs`);
     expect(groups).toEqual([{ g: group_id }]);
   });
@@ -84,7 +84,7 @@ describe('book-mirror publication refusals name their next step', () => {
     const err = (await publishWith({ request_id: '0192a000-0000-7000-8000-000000000009', state: 'queued', retry_after_ms: 500 }))!;
     expect(err.code).toBe('write_pending');
     expect(err.fix).toMatchObject({ argv: ['gbrain', 'write-request', '--', expect.any(String)], consent: [] });
-    expect(err.suggestion).toContain('gbrain write-request --');
+    expect(err.suggestion).toContain('foresights write-request --');
     expect(err.writeRequest).toMatchObject({ state: 'queued' });
   });
 

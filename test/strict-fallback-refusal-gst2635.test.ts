@@ -2,7 +2,7 @@
  * GST-2635: on a strict git-canonical source, the attribute-fallback fact writer refuses a fact no holding page can carry.
  *
  * 1. Protects: on a source whose pages are canonical in Git (`canonical: git`), a fact for an entity with no page that an
- *    exact page rule names (`gbrain access rule add --slug people/bob-example`), written through the attribute fallback
+ *    exact page rule names (`foresights access rule add --slug people/bob-example`), written through the attribute fallback
  *    (writeSingleFact, the Google loops extraction's one call, then publishManagedEntityFacts and publishManagedFacts), is
  *    refused before anything reaches the database: `git_home_required` (`facts_lane`) naming the entity's page and the
  *    fix that creates it, as `remember` refuses. An access state this database role cannot read refuses
@@ -14,7 +14,7 @@
  * 3. Existing coverage: test/folder-holding-page-gst2492.test.ts pins the same refusals for `remember`;
  *    test/strict-background-writers-gst2492.test.ts pins the background writers for entities no page rule names.
  * 4. Real seams: the coordinated write and the write door on PGLite and Postgres (DATABASE_URL), a managed Git checkout,
- *    the page rule added the way an owner adds it (`gbrain access rule add --slug ... --yes`), member-bound MCP callers,
+ *    the page rule added the way an owner adds it (`foresights access rule add --slug ... --yes`), member-bound MCP callers,
  *    and the loops job as the minion handler runs it, with the model behind the gateway's test transport.
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';

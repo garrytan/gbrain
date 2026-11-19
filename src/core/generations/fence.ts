@@ -170,7 +170,7 @@ export async function clearFenceHold(tx: BrainEngine, key: GenerationKey): Promi
     [key.sourceId, key.kind, key.ownerKey]);
 }
 
-/** A held fence result, as doctor, `get_page` and `gbrain sync status` list it. */
+/** A held fence result, as doctor, `get_page` and `foresights sync status` list it. */
 export interface FenceHold { source_id: string; kind: FenceGenerationKind; slug: string; reason: HeldReason; read: string; rows: number; since: string; writer: string | null }
 
 /** The held fence results of `sources` (one page with `slug`), oldest first. */
@@ -216,9 +216,9 @@ export function fenceAbsentFix(hold: Pick<FenceHold, 'source_id' | 'kind' | 'slu
   const what = `${hold.rows} ${fence === 'facts' ? 'fact' : 'take'} row(s)`;
   if (hold.reason !== 'fence_absent' || hold.read !== 'absent') {
     return { consent: [], actor: 'user', requires_exclusive: false, ask_user: true,
-      why: `The ${fence} rows of ${hold.slug} (source ${hold.source_id}) were held (${hold.reason}, fence ${hold.read}), so gbrain kept its ${what} live instead of retiring them; `
+      why: `The ${fence} rows of ${hold.slug} (source ${hold.source_id}) were held (${hold.reason}, fence ${hold.read}), so foresights kept its ${what} live instead of retiring them; `
         + 'nothing was retired. Ask the user whether the page should keep these rows; the next write that reads the whole fence (or, for a deleted page, finds it still deleted) reconciles them.',
-      user_message: `gbrain could not confirm the ${section} section of ${hold.slug}, so it kept its ${what} as they were. Nothing was removed.`,
+      user_message: `foresights could not confirm the ${section} section of ${hold.slug}, so it kept its ${what} as they were. Nothing was removed.`,
       verify: { argv: ['gbrain', 'doctor', '--only', 'generation_held', '--json'] }, docs: 'docs/guides/repair.md#fence-absent' };
   }
   const block = emptyFenceBlock(fence);
@@ -227,11 +227,11 @@ export function fenceAbsentFix(hold: Pick<FenceHold, 'source_id' | 'kind' | 'slu
       + 'content with the section restored or the empty block appended (edit_page refuses to write fence markers).'
     : ' Edit the page\'s file and sync it, or read it with get_page (include_content: true) and put_page the full content with that revision as expected_revision.';
   return { consent: [], actor: 'user', requires_exclusive: false, ask_user: true,
-    why: `Page ${hold.slug} (source ${hold.source_id}) was written without its ${section} section, so gbrain kept its ${what} live instead of retiring them; `
+    why: `Page ${hold.slug} (source ${hold.source_id}) was written without its ${section} section, so foresights kept its ${what} live instead of retiring them; `
       + `nothing was retired. The user may have deleted the whole ${section} section on purpose, or an edit may have lost it: ask which. `
       + `To keep the rows, restore the ${section} section (from the page's history or the previous version of its file). `
       + `To retire them, write this exact empty fence into the page; the next write retires every row on it:\n${block}${write}`,
-    user_message: `The ${section} section of ${hold.slug} is gone, so gbrain kept its ${what} instead of deleting them. Did you mean to remove them? `
+    user_message: `The ${section} section of ${hold.slug} is gone, so foresights kept its ${what} instead of deleting them. Did you mean to remove them? `
       + `To keep them, restore the ${section} section. To remove them, add this empty section to the page:\n${block}`,
     verify: { argv: ['gbrain', 'doctor', '--only', 'generation_held', '--json'] },
     docs: 'docs/guides/repair.md#fence-absent' };

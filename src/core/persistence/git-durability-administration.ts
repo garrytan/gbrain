@@ -1,5 +1,5 @@
 /**
- * `gbrain sources writer git-durability <source> --enable|--disable [--pat-file <p>] [--dry-run]`
+ * `foresights sources writer git-durability <source> --enable|--disable [--pat-file <p>] [--dry-run]`
  * (#5182, #5808): the trusted-local admin verb that records a managed worktree's
  * Git-durability opt-in on this host's binding, re-wires the repo-scoped push
  * credential, and catches up the Git effects skipped while durability was off.
@@ -8,7 +8,7 @@
  * the same `--admin-intent`/`--expected-state` handshake as `writer_activate`:
  * the binding column is part of the admin-state hash, so a stale state is
  * refused. The opt-in is a database column, the credential is Git metadata in
- * `.git/config` plus a 0600 store under the gbrain home (the same keys
+ * `.git/config` plus a 0600 store under the foresights home (the same keys
  * `sources harden` uses, so `sources unharden` removes it), and the push probe
  * is `git push --dry-run`. The one file under the canonical root this verb
  * writes is the resolver file's durability block (#5808): `--enable` and
@@ -35,6 +35,7 @@ import { refusalEnvelope, retryParkedEffects } from './effect-retry.ts';
 import { GIT_PUSH_CODES } from './git-push-holds.ts';
 import { patchManagedDurabilityBlock } from '../brain-repo-durability.ts';
 import { findResolverFile } from '../resolver-filenames.ts';
+import { commandText } from '../brand.ts';
 
 export const GIT_DURABILITY_PARAMS = ['source_id', 'enable', 'disable', 'pat_file', 'dry_run', 'admin_intent', 'expected_state'] as const;
 
@@ -53,14 +54,14 @@ export function parseGitDurabilityParams(params: Record<string, unknown>): GitDu
     if (params[key] !== undefined && typeof params[key] !== 'boolean') throw invalid(`${key} must be a boolean.`, `Pass --${key.replace('_', '-')} as a bare flag; it takes no value.`);
   }
   if (params.enable === true && params.disable === true) throw invalid('Choose --enable or --disable, not both.',
-    'Run gbrain sources writer git-durability <source> --enable to publish through the persistence owner, or --disable to keep Git effects off.');
+    'Run foresights sources writer git-durability <source> --enable to publish through the persistence owner, or --disable to keep Git effects off.');
   if (params.pat_file !== undefined && (typeof params.pat_file !== 'string' || !params.pat_file.trim() || params.pat_file.includes('\0'))) {
     throw invalid('pat_file must be a path to a file holding the token.', 'Pass --pat-file <path>; the token is read from that 0600 file and never from the command line.');
   }
   if (params.disable === true && params.pat_file !== undefined) throw invalid('--pat-file cannot be combined with --disable.',
     'Disable without a token, or re-wire the credential with --enable --pat-file <path> (or --pat-file alone to keep the current setting).');
   if (params.enable !== true && params.disable !== true && params.pat_file === undefined) throw invalid('Name the change: --enable, --disable, or --pat-file <path>.',
-    'gbrain sources writer git-durability <source> --enable publishes page writes through the owner\'s Git effect; --disable turns that off; --pat-file <path> alone re-wires the push credential and retries parked pushes.');
+    'foresights sources writer git-durability <source> --enable publishes page writes through the owner\'s Git effect; --disable turns that off; --pat-file <path> alone re-wires the push credential and retries parked pushes.');
   return { sourceId: String(params.source_id), enable: params.enable === true, disable: params.disable === true,
     patFile: typeof params.pat_file === 'string' ? params.pat_file : undefined, dryRun: params.dry_run === true };
 }
@@ -148,7 +149,7 @@ async function remoteHost(root: string, remote: string | null): Promise<string> 
  * Wire a repo-scoped credential for the tracking remote's host: a repo-LOCAL
  * `credential.helper store --file <gbrain-home>/git-credentials` (0600) marked
  * with the key `sources harden` uses, so both verbs share one store and
- * `sources unharden` removes either's wiring. A repo-local helper gbrain did not
+ * `sources unharden` removes either's wiring. A repo-local helper foresights did not
  * write is left alone. The token never appears in the result or a log line.
  */
 export async function wireDurabilityCredential(root: string, remote: string | null, token: string, dryRun: boolean): Promise<{ status: 'ok' | 'fixed'; detail: string }> {
@@ -192,7 +193,7 @@ async function formerWorktreeHolds(engine: BrainEngine, sourceId: string, worktr
   if (!row?.effects || !row.code) return {};
   const command = ['gbrain', 'sources', 'writer', 'settle-effects', sourceId, '--parked-code', row.code, '--dry-run'];
   return { former_worktree: { effects: Number(row.effects), command, worktree_ids: row.worktree_ids, requests: row.requests,
-    why: `${row.effects} held Git effect(s) of source ${sourceId} (requests ${row.requests.join(', ')}) belong to former canonical worktree ${row.worktree_ids.join(', ')}, not the current ${worktreeId}: retry cannot run them (their binding changed) and this preview does not resolve them, so its counts do not include them. Preview settling them on proof: ${command.join(' ')}` } };
+    why: `${row.effects} held Git effect(s) of source ${sourceId} (requests ${row.requests.join(', ')}) belong to former canonical worktree ${row.worktree_ids.join(', ')}, not the current ${worktreeId}: retry cannot run them (their binding changed) and this preview does not resolve them, so its counts do not include them. Preview settling them on proof: ${commandText(command)}` } };
 }
 
 export type ParkedPushRefusal = { source_id: string; request_id: string; code: string; message: string; suggestion?: string; fix?: Action };
@@ -274,7 +275,7 @@ async function ownedBinding(engine: BrainEngine, sourceId: string): Promise<Work
   const binding = await getWorktreeBinding(engine, sourceId, hostId);
   if (!binding) {
     throw opError('writer_registration_required', `Source ${sourceId} has no canonical owner on this brain.`,
-      `Claim its checkout first (gbrain sources writer claim ${sourceId} --path <directory>, with the admin-intent handshake), then enable Git durability; a database-only source needs neither.`,
+      `Claim its checkout first (foresights sources writer claim ${sourceId} --path <directory>, with the admin-intent handshake), then enable Git durability; a database-only source needs neither.`,
       { fix: statusFix(sourceId) });
   }
   if (!hostId || binding.owner_host_id !== hostId || !binding.local_path) {
@@ -336,7 +337,7 @@ export async function runGitDurabilityAdministration(engine: BrainEngine, params
     const status = input.dryRun ? null : await execFileBounded('git', ['-C', root, 'status', '--porcelain', '--untracked-files=all', '--', file], { timeout: 10_000, env: gitChildEnv({ ...GIT_ENV }) });
     const pending = !!status && (status.error !== null || status.stdout.trim() !== '');
     report.agents = { ...agents, file, ...(pending ? {
-      commit: `The durability block is a non-page file: review it and commit it with gbrain git commit-push --path ${root} -m "<msg>" -- ${file}; it rides the owner's next push.`,
+      commit: `The durability block is a non-page file: review it and commit it with foresights git commit-push --path ${root} -m "<msg>" -- ${file}; it rides the owner's next push.`,
       commit_argv: ['gbrain', 'git', 'commit-push', '--path', root, '-m', `gbrain: durability rules for source ${input.sourceId}`, '--', file] } : {}) };
   }
   if (input.dryRun) {

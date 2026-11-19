@@ -464,14 +464,14 @@ test('#8755 c: conflict markers keep the refusal: an unmerged path, and a merge 
   try { await expectRefused(f, EDITED, timeline(f), 'add_timeline_entry'); } finally { rmSync(join(f.root, '.git', 'MERGE_HEAD'), { force: true }); }
 }), 180_000);
 
-test('#8755 d: a stale editor save keeps the refusal: the earlier revision as it was, and one missing the row gbrain added', () => each(async f => {
+test('#8755 d: a stale editor save keeps the refusal: the earlier revision as it was, and one missing the row foresights added', () => each(async f => {
   const before = file(f, 'one.md');
-  const out = await call(f, 'add_timeline_entry', { slug: 'one', date: '2026-11-06', summary: 'Entry gbrain added.' });
+  const out = await call(f, 'add_timeline_entry', { slug: 'one', date: '2026-11-06', summary: 'Entry foresights added.' });
   expect(out.isError).toBe(false);
   const added = await settled(f.engine, await lastRow(f, 'add_timeline_entry'));
   expect(added.state).toBe('committed');
   await gitEffectDone(f, added.id);
-  expect(git(f.root, 'show', 'HEAD:alpha/one.md')).toContain('Entry gbrain added.');
+  expect(git(f.root, 'show', 'HEAD:alpha/one.md')).toContain('Entry foresights added.');
   await expectRefused(f, before, timeline(f), 'add_timeline_entry');
   await expectRefused(f, before.replace('The first alpha observation.', `The first alpha observation.\n\n${LOCAL}`), timeline(f), 'add_timeline_entry');
 }), 180_000);

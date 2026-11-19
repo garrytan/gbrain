@@ -1,5 +1,5 @@
 /**
- * #5088: deferred ANN (HNSW) index build for `gbrain migrate embeddings`.
+ * #5088: deferred ANN (HNSW) index build for `foresights migrate embeddings`.
  *
  * The schema transition drops `content_chunks.embedding` and used to recreate
  * its HNSW indexes before the bulk re-embed, so every vector write inserted

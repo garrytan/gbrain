@@ -22,7 +22,7 @@ export async function checkConnectorCheckpoints(engine: BrainEngine): Promise<Ch
     if (!counted.length) return { name: 'connector_checkpoints', status: 'ok', message: 'No orphan connector checkpoint rows older than 7 days.', details };
     return { name: 'connector_checkpoints', status: 'warn', details,
       message: `${counted.length}${truncated ? '+' : ''} connector checkpoint row(s) no source can load (${checkpoints} checkpoint(s), ${retries} retry pointer(s)), older than 7 days. `
-        + 'Preview on the brain host: gbrain repair connector-checkpoints — then apply after the user agrees: gbrain repair connector-checkpoints --apply' };
+        + 'Preview on the brain host: foresights repair connector-checkpoints — then apply after the user agrees: foresights repair connector-checkpoints --apply' };
   } catch (error) {
     return { name: 'connector_checkpoints', status: 'warn',
       message: `Connector checkpoint rows could not be inspected: ${error instanceof Error ? error.message : String(error)}. Health is unknown.`,

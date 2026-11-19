@@ -1,5 +1,5 @@
 /**
- * GBRA-130 C-22: `gbrain repair stuck-recovery` on a page recovery whose prior file is over the 24 MiB single-string ceiling.
+ * GBRA-130 C-22: `foresights repair stuck-recovery` on a page recovery whose prior file is over the 24 MiB single-string ceiling.
  *
  * Protects: a soft delete of a canonical file over 24 MiB keeps the prior file as a staged copy (`staging.before`) instead
  * of embedding it. When the file is edited while that write publishes, recovery parks the request `unexpected_file_bytes`
@@ -108,8 +108,8 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       expect(out).toContain(`prior: sha256 ${prior.sha.slice(0, 16)}… size ${prior.size}`);
       expect(out).toContain(`disk:  sha256 ${edited.sha.slice(0, 16)}… size ${edited.size}`);
       const hash = /--expect ([0-9a-f]{64})/.exec(out)![1]!;
-      expect(out).toContain(`gbrain repair stuck-recovery --source ${sourceId} --keep prior --apply --expect ${hash} --yes`);
-      expect(out).toContain(`gbrain repair stuck-recovery --source ${sourceId} --keep disk --apply --expect ${hash} --yes`);
+      expect(out).toContain(`foresights repair stuck-recovery --source ${sourceId} --keep prior --apply --expect ${hash} --yes`);
+      expect(out).toContain(`foresights repair stuck-recovery --source ${sourceId} --keep disk --apply --expect ${hash} --yes`);
 
       const scope = await resolveRepairScope(engine, sourceId);
       const stale = await (await repairRunner(engine, { apply: true })).run('stuck-recovery', scope, { sourceFlag: sourceId, explicit: true, expect: '0'.repeat(64), keep: 'prior' })

@@ -1,10 +1,10 @@
 /**
- * One checkout brought level with its upstream, the engine-free half of `gbrain sources git-reconcile` (the managed half
- * runs `gbrain sources refresh`). Idempotent: a checkout already level costs one fetch and reports in_sync. Behind:
+ * One checkout brought level with its upstream, the engine-free half of `foresights sources git-reconcile` (the managed half
+ * runs `foresights sources refresh`). Idempotent: a checkout already level costs one fetch and reports in_sync. Behind:
  * the shared pull (fast-forward, never a rebase). Ahead or diverged: the upstream-rewrite check, then the shared
  * publish with the secret gate (merged in memory, never a rebase or force-push, refusing on a conflict), bound with
  * --expect-remote to the upstream the rewrite check read, so a force-push after the check refuses instead of being
- * merged back. The pull and the publish run as bounded `gbrain git commit-push` children (their Git work is synchronous),
+ * merged back. The pull and the publish run as bounded `foresights git commit-push` children (their Git work is synchronous),
  * so a caller's event loop (the autopilot daemon's) never blocks. Concurrent callers take turns on the reconcile lock.
  */
 import { execFileBounded } from '../bounded-child-exec.ts';
@@ -87,10 +87,10 @@ export interface ReconcileCheckoutOptions {
 /** A remote that moves between the rewrite check and the push is fetched and checked again, this many times in all. */
 const MOVED_REMOTE_ATTEMPTS = 4;
 
-/** The bound on one `gbrain git commit-push` child (a fetch, an in-memory merge and a push, repeated while the remote keeps moving). */
+/** The bound on one `foresights git commit-push` child (a fetch, an in-memory merge and a push, repeated while the remote keeps moving). */
 export const COMMIT_PUSH_CHILD_TIMEOUT_MS = 600_000;
 
-/** Run `gbrain git commit-push <args> --path <root> --json [-- <paths>]` in a bounded child; its JSON document, or its refusal rethrown. */
+/** Run `foresights git commit-push <args> --path <root> --json [-- <paths>]` in a bounded child; its JSON document, or its refusal rethrown. */
 export async function commitPushChild(root: string, args: string[], timeoutMs = COMMIT_PUSH_CHILD_TIMEOUT_MS, paths: readonly string[] = []): Promise<Record<string, unknown>> {
   const cli = resolveChildCliInvocation(process.env, process.execPath, process.argv[1], () => null);
   if (!cli) throw opError('git_push_unavailable', `This process could not locate its own CLI executable to reconcile ${root}; nothing changed.`,
@@ -104,7 +104,7 @@ export async function commitPushChild(root: string, args: string[], timeoutMs = 
     throw opError(doc.code as Parameters<typeof opError>[0], doc.message, typeof doc.suggestion === 'string' ? doc.suggestion : '',
       { ...(typeof doc.detail === 'string' ? { detail: doc.detail } : {}), retryable: doc.retryable === true });
   }
-  throw opError('push_unconfirmed', `gbrain git commit-push ${args[0]} in ${root} did not report a result (${child.error ? `exit ${String(child.error.code ?? child.error.signal ?? 'unknown')}` : 'unreadable output'}: ${String(child.stderr).trim().slice(0, 300) || 'no detail'}); the remote may already hold the push.`,
+  throw opError('push_unconfirmed', `foresights git commit-push ${args[0]} in ${root} did not report a result (${child.error ? `exit ${String(child.error.code ?? child.error.signal ?? 'unknown')}` : 'unreadable output'}: ${String(child.stderr).trim().slice(0, 300) || 'no detail'}); the remote may already hold the push.`,
     'Retry: a reconcile of a level checkout reports in_sync.', { retryable: true });
 }
 
@@ -134,7 +134,7 @@ async function reconcileLocked(root: string, opts: ReconcileCheckoutOptions): Pr
     }
     const rewrite = await upstreamRewriteReason(read, before, upstream, target, head);
     if (rewrite) throw opError('upstream_rewritten', `${rewrite} Nothing was pushed from ${root}.`,
-      `Ask the user: git -C ${root} log --stat ${upstream}..HEAD lists the local commits; publishing them anyway is gbrain git commit-push --push-only --scan-secrets --path ${root}.`);
+      `Ask the user: git -C ${root} log --stat ${upstream}..HEAD lists the local commits; publishing them anyway is foresights git commit-push --push-only --scan-secrets --path ${root}.`);
     try {
       const pushed = await commitPushChild(root, ['--push-only', '--scan-secrets', '--expect-remote', target], opts.childTimeoutMs);
       return { root, status: pushed.checkout === 'lagging' ? 'lagging' : 'published', ahead, behind, ...(typeof pushed.sha === 'string' ? { sha: pushed.sha } : {}),

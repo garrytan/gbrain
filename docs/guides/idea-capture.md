@@ -56,7 +56,7 @@ capture_idea(message_text, source_context):
   link_to_concepts(page, referenced_concepts)
 
   // 5. SYNC
-  gbrain sync --no-pull --no-embed
+  foresights sync --no-pull --no-embed
 ```
 
 ### The Authorship Test
@@ -159,6 +159,6 @@ search enrichment. No stubs. If you make a page, make it good.
 
 ---
 
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md). The bundled
+*Part of the [Foresights Skillpack](../GBRAIN_SKILLPACK.md). The bundled
 `idea-ingest` skill (`skills/idea-ingest/`) ships this workflow. See also:
 [Entity Detection](entity-detection.md).*

@@ -1,5 +1,5 @@
 /**
- * `gbrain eval retrieval-quality --decide ...` on a connected brain with a
+ * `foresights eval retrieval-quality --decide ...` on a connected brain with a
  * fixture decide transport (no provider is called).
  *
  * Protects: the command never writes decide config to the operator's brain;

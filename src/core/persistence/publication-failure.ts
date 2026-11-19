@@ -15,7 +15,7 @@ import { READ_ONLY_SQLSTATE } from '../postgres-engine/read-write-transactions.t
  */
 export type PublicationStage = 'preparation' | 'publication' | 'after_file_publication';
 /**
- * #6513 (wave 16 G3.5): the public `reason` of a refusal gbrain classifies by its raiser and SQLSTATE (#6904: `schema_missing`,
+ * #6513 (wave 16 G3.5): the public `reason` of a refusal foresights classifies by its raiser and SQLSTATE (#6904: `schema_missing`,
  * a 42P01/42703 missing relation or column, per `pg-access-classify.ts`). A CLOSED enum:
  * an operator trigger can interpolate a row value at its message prefix, so nothing derived from the message is kept,
  * publicly or owner-side (#5974's rule: fixed identifiers only).
@@ -46,7 +46,7 @@ export interface PublicationFailureDetail {
 export type FenceRefusalDetail = FenceFailureDetail & Pick<PublicationFailureDetail, 'stage' | 'attempt'>;
 /**
  * #5929: an unexpected exception in the owner. Fixed identifiers only, never
- * application error text or values: the error class, its errno and the top gbrain
+ * application error text or values: the error class, its errno and the top foresights
  * source frame (repo-relative). #7112: a database server error also keeps its
  * redacted primary message, the failing statement with every literal replaced and the
  * error position (`databaseErrorText`). All of it is owner-only.
@@ -193,7 +193,7 @@ function publicationReason(sqlstate: string, raiser: string | undefined, message
 
 /**
  * #6904: a relation or column the write path needs is missing (42P01 / 42703, `schema_missing` in `pg-access-classify.ts`):
- * the brain schema is behind this build or lost a table, never a gbrain defect. Names the missing identifier from the server's
+ * the brain schema is behind this build or lost a table, never a foresights defect. Names the missing identifier from the server's
  * own parser error; a PL/pgSQL RAISE carries caller text, so it is never parsed (#5974 fixed identifiers).
  */
 const SCHEMA_MISSING_SQLSTATES = new Set(['42P01', '42703']);
@@ -202,7 +202,7 @@ function schemaMissing(sqlstate: string, message: string): PublicationFailure {
   const match = MISSING_NAME.exec(message);
   const missing = match ? ident(match[3] ? `${match[3]}.${match[2]}` : match[2]) : undefined;
   const what = match ? `${match[1]!.toLowerCase()} ${missing ?? 'unnamed'}` : 'relation or column';
-  return { code: 'storage_error', message: `Publication failed: the database has no ${what} (${sqlstate}), which this gbrain build needs, so the brain schema is missing a migration or a table. Nothing was committed.`,
+  return { code: 'storage_error', message: `Publication failed: the database has no ${what} (${sqlstate}), which this foresights build needs, so the brain schema is missing a migration or a table. Nothing was committed.`,
     detail: { origin: 'database', sqlstate, reason: 'schema_missing', ...(missing ? { missing } : {}) } };
 }
 
@@ -235,14 +235,14 @@ export function databaseRefusal(error: unknown): PublicationFailure | null {
     const reason = publicationReason(sqlstate, raiser, message);
     return { code: 'storage_error', detail: { origin: raiser ? 'database_trigger' : 'database', sqlstate, ...(raiser ? { raiser } : {}), ...(table ? { table } : {}), reason },
       message: reason === 'graduation_in_progress'
-        ? `Publication was refused by the engine graduation fence (${sqlstate} in ${raiser}: ${reason}): this brain is being moved between engines; retry once gbrain migrate --status --json reports the run finished.`
+        ? `Publication was refused by the engine graduation fence (${sqlstate} in ${raiser}: ${reason}): this brain is being moved between engines; retry once foresights migrate --status --json reports the run finished.`
         : `Publication failed (${sqlstate}${raiser ? ` in ${raiser}` : ''}: ${reason}). Inspect owner diagnostics.` };
   }
   if (message.startsWith(PURGED_PREFIX)) return { code: 'purged_content', message: `${message.slice(PURGED_PREFIX.length).trim()}. Nothing was committed.`,
     detail: { origin: 'database_trigger', sqlstate, ...(raiser ? { raiser } : {}), ...(table ? { table } : {}) } };
   if (message.startsWith(GIT_PROTOCOL_PREFIX) || constraint.startsWith('git_canonical_fence')) {
     return { code: 'git_protocol_required', detail: { origin: 'database_guard', sqlstate, raiser: raiser ?? 'gbrain_require_managed_writer', ...(table ? { table } : {}), ...guardDetail(e.detail) },
-      message: `The git-canonical database fence refused a write${table ? ` on ${table}` : ''}: the source is git-canonical and this gbrain process does not declare the git protocol (an older gbrain). Nothing was committed.` };
+      message: `The git-canonical database fence refused a write${table ? ` on ${table}` : ''}: the source is git-canonical and this foresights process does not declare the git protocol (an older foresights). Nothing was committed.` };
   }
   if (message.startsWith(GUARD_PREFIX) || constraint.startsWith('managed_writer_guard')) {
     const branch = constraint.startsWith('managed_writer_guard:') ? ident(constraint.slice('managed_writer_guard:'.length)) : undefined;
@@ -267,7 +267,7 @@ export function databaseRefusal(error: unknown): PublicationFailure | null {
 
 const ERRNO = /^[A-Za-z0-9_]{1,40}$/;
 
-/** The top stack frame inside gbrain's own `src/`, as `src/<path>.ts:<line>`; never an absolute path. */
+/** The top stack frame inside foresights's own `src/`, as `src/<path>.ts:<line>`; never an absolute path. */
 function gbrainFrame(stack: unknown): string | undefined {
   if (typeof stack !== 'string') return undefined;
   for (const line of stack.split('\n').slice(1)) {
@@ -280,9 +280,9 @@ function gbrainFrame(stack: unknown): string | undefined {
 
 /**
  * #5929: the public message of an unexpected owner exception. Remote submitters read it, so it names no class,
- * errno or build; those stay in the owner-only detail, `gbrain write-request <id>` on the brain host and the consumer log.
+ * errno or build; those stay in the owner-only detail, `foresights write-request <id>` on the brain host and the consumer log.
  */
-export const OWNER_EXCEPTION_MESSAGE = 'Publication failed on an unexpected owner exception. On the brain host, gbrain write-request <request_id> and the persistence consumer log name its class, database error text, statement, source frame and owner build.';
+export const OWNER_EXCEPTION_MESSAGE = 'Publication failed on an unexpected owner exception. On the brain host, foresights write-request <request_id> and the persistence consumer log name its class, database error text, statement, source frame and owner build.';
 
 const ERROR_TEXT_MAX = 240;
 const STATEMENT_MAX = 160;
@@ -411,7 +411,7 @@ function databaseErrorText(e: Record<string, unknown>): Pick<OwnerExceptionDetai
 export function ownerExceptionFailure(error: unknown): PublicationFailure {
   const e = (error && typeof error === 'object' ? error : {}) as { constructor?: { name?: unknown }; code?: unknown; errno?: unknown; stack?: unknown; osError?: unknown };
   const errorClass = ident(e.constructor?.name);
-  // #6305: an error that names the OS error behind it (a native lock failure) reports that, not its gbrain code.
+  // #6305: an error that names the OS error behind it (a native lock failure) reports that, not its foresights code.
   const raw = typeof e.osError === 'string' ? e.osError : typeof e.code === 'string' ? e.code : typeof e.errno === 'number' ? String(e.errno) : undefined;
   const errno = raw && ERRNO.test(raw) ? raw : undefined;
   const frame = gbrainFrame(e.stack);
@@ -431,17 +431,17 @@ export function ownerExceptionLogText(detail: unknown): string {
 
 /**
  * #5929: when the owner that ran a failed attempt is on another build than
- * this CLI (a long-running `gbrain serve` started before an upgrade), say so
+ * this CLI (a long-running `foresights serve` started before an upgrade), say so
  * with the restart step. Owner-only: the attempt stamp is never public.
  */
 export function ownerBuildMismatch(detail: unknown, cliVersion: string): { owner: string; cli: string; why: string; fix: Action } | null {
   const owner = (detail as Partial<PublicationFailureDetail> | null)?.attempt?.consumer_version;
   if (typeof owner !== 'string' || !owner || owner === cliVersion) return null;
   return { owner, cli: cliVersion,
-    why: `The owner process that ran this attempt is on gbrain ${owner}; this CLI is ${cliVersion}. Long-running \`gbrain serve\` processes (and autopilot or sync jobs) started before the upgrade still own writes and run the old code.`,
+    why: `The owner process that ran this attempt is on foresights ${owner}; this CLI is ${cliVersion}. Long-running \`foresights serve\` processes (and autopilot or sync jobs) started before the upgrade still own writes and run the old code.`,
     fix: { consent: [], actor: 'user', requires_exclusive: false,
-      why: 'Restart every serve, autopilot and sync process on the brain host so the owner runs this build (`gbrain sources writer status --probe --json` shows it), then submit the write again with a new request_id.',
-      user_message: `Restart the gbrain serve (and autopilot) processes on the brain host: they are on ${owner}, this CLI is ${cliVersion}.`,
+      why: 'Restart every serve, autopilot and sync process on the brain host so the owner runs this build (`foresights sources writer status --probe --json` shows it), then submit the write again with a new request_id.',
+      user_message: `Restart the foresights serve (and autopilot) processes on the brain host: they are on ${owner}, this CLI is ${cliVersion}.`,
       verify: { argv: ['gbrain', 'doctor', '--only', 'writer_version', '--json'] } } };
 }
 

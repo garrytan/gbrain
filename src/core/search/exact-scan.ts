@@ -1,5 +1,5 @@
 /**
- * #7191 ask 2: `search_exact` (CLI `gbrain search --exact "<phrase>"`), the
+ * #7191 ask 2: `search_exact` (CLI `foresights search --exact "<phrase>"`), the
  * exhaustive literal scan agents otherwise run with grep. Unranked: every page
  * with a visible text chunk containing the phrase, in page-id order, plus a
  * `complete` flag that is true only when every page in the caller's scope was

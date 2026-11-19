@@ -5,11 +5,11 @@
  *
  *   - the local doctor (checks registered here rather than inline in doctor.ts),
  *   - the remote doctor's sanitized host-action lines (report-remote.ts),
- *   - `gbrain doctor --remediate` finding classification,
- *   - the `gbrain post-upgrade` banner.
+ *   - `foresights doctor --remediate` finding classification,
+ *   - the `foresights post-upgrade` banner.
  *
  * `resolution` says how a non-ok finding clears: `repair` (a registered
- * `gbrain repair` kind names this check in its `checks`), `operator` (a named
+ * `foresights repair` kind names this check in its `checks`), `operator` (a named
  * manual action on the brain host), or `unsupported` (no command can clear it
  * yet; it is reported, never hidden). Add a check by appending one entry.
  */
@@ -47,11 +47,11 @@ export interface WaveCheckSpec {
 
 /**
  * #6188 (D7): what clears malformed fences, from a check's `auto_repair` detail: the next maintenance run while
- * one is active and `fences.repair.enabled` is on, otherwise the preview `command`: the content lane for held files (#6377), `gbrain repair fences`
+ * one is active and `fences.repair.enabled` is on, otherwise the preview `command`: the content lane for held files (#6377), `foresights repair fences`
  * for malformed fences stored pages carry (whose preview prints the apply command).
  */
 function fenceRepairHow(details: Record<string, any>, source: string | undefined, command: 'fences' | 'content'): string {
-  const preview = `preview with: gbrain repair ${command}${source ? ` --source ${source}` : ''}`;
+  const preview = `preview with: foresights repair ${command}${source ? ` --source ${source}` : ''}`;
   const auto = details.auto_repair as { active?: boolean; enabled?: boolean } | undefined;
   if (auto && auto.active === false) return `not repaired automatically (${auto.enabled === false ? 'fences.repair.enabled is false' : 'no maintenance run is active'}); ${preview}`;
   const manual = Array.isArray(details.sources) ? details.sources.reduce((sum: number, c: { by_tier?: { manual?: number } }) => sum + Number(c.by_tier?.manual ?? 0), 0) : 0;
@@ -82,8 +82,8 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
   {
     id: 'privacy_label_ignored', resolution: 'operator', registration: 'wave',
     count: d => Number(d.pages ?? 0),
-    impact: 'Some pages carry an access or confidentiality value gbrain does not read as private, so the label does not hide them from remote callers or keep them out of git',
-    instruction: 'List the pages with `gbrain list --where <key>=<value> --json` on the brain host and add `visibility: private` to each page that should stay private; gbrain rewrites no label itself.',
+    impact: 'Some pages carry an access or confidentiality value foresights does not read as private, so the label does not hide them from remote callers or keep them out of git',
+    instruction: 'List the pages with `foresights list --where <key>=<value> --json` on the brain host and add `visibility: private` to each page that should stay private; foresights rewrites no label itself.',
     run: async (engine, scope) => (await import('./checks/privacy-label-ignored.ts')).privacyLabelIgnoredCheck(engine, scope.sourceIds),
   },
   {
@@ -96,7 +96,7 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     id: 'credential_projection_pending', resolution: 'operator', registration: 'wave',
     count: d => Number(d.pages_pending ?? 0) + Number(d.kept_pages ?? 0),
     impact: 'Some pages holding a private key are withheld from search until their credential-safe re-chunk completes',
-    instruction: 'Run `gbrain apply-migrations --yes --no-autopilot-install` on the brain host (no provider calls), then `gbrain embed --stale` when ready; re-import code pages without a recorded source path.',
+    instruction: 'Run `foresights apply-migrations --yes --no-autopilot-install` on the brain host (no provider calls), then `foresights embed --stale` when ready; re-import code pages without a recorded source path.',
     run: async (engine, scope) => (await import('./checks/credential-projection.ts')).credentialProjectionPendingCheck(engine, scope.sourceIds),
   },
   {
@@ -115,7 +115,7 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     id: 'persistence_request_growth', resolution: 'operator', registration: 'wave',
     count: d => (d.scopes ?? []).filter((scope: { days_to_exhaustion?: number | null }) => scope.days_to_exhaustion != null && scope.days_to_exhaustion < 90).length,
     impact: 'At its current admission rate a writer exhausts its lifetime request IDs within 90 days',
-    instruction: 'Raise the named limit with the `gbrain config set persistence.limits.<limit> <value>` command doctor prints, on the brain host (docs/guides/repair.md#request-growth).',
+    instruction: 'Raise the named limit with the `foresights config set persistence.limits.<limit> <value>` command doctor prints, on the brain host (docs/guides/repair.md#request-growth).',
     run: async engine => (await import('./checks/persistence-requests.ts')).requestGrowthCheck(engine),
   },
   {
@@ -123,7 +123,7 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     count: d => Number(d.count ?? 0),
     hostOnly: 'Request ids, roots and the owning process are brain-host persistence state outside any source scope.',
     impact: 'A write request has held its claim past persistence.max_claim_ms, so later writes on its root wait behind it',
-    instruction: 'Inspect it with `gbrain sources writer status --source <id> --json`, then restart the `gbrain serve` that owns the root (docs/guides/troubleshooting.md#persistence-write-stall).',
+    instruction: 'Inspect it with `foresights sources writer status --source <id> --json`, then restart the `foresights serve` that owns the root (docs/guides/troubleshooting.md#persistence-write-stall).',
     run: async engine => (await import('./checks/persistence-requests.ts')).writeStallCheck(engine),
   },
   {
@@ -138,7 +138,7 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     hostOnly: 'Request ids, roots and recovery records are brain-host persistence state outside any source scope.',
     count: d => Number(d.count ?? 0),
     impact: 'A write receipt that did not commit blocks work now (a recovery record or a checkpoint blocker), or an unresolved receipt is a gbrain-defect class',
-    instruction: 'Run the fix doctor prints, then drill down with `gbrain sources writer failures <source> --group-by category --json` on the brain host (docs/guides/troubleshooting.md#terminal-write-failures).',
+    instruction: 'Run the fix doctor prints, then drill down with `foresights sources writer failures <source> --group-by category --json` on the brain host (docs/guides/troubleshooting.md#terminal-write-failures).',
     run: async (engine, scope) => (await (await import('./checks/persistence-requests.ts')).terminalFailuresCheck(engine, scope.sourceIds))!,
   },
   {
@@ -146,14 +146,14 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     count: d => d.reason === 'session_timeouts_not_applied' ? 1 : 0,
     hostOnly: 'The connection URL and its pooler are brain-host configuration outside any source scope.',
     impact: 'A transaction-mode pooler drops the configured session statement_timeout, so autocommit statements outside a transaction have no server-side bound',
-    instruction: 'Set the default on the role instead: `ALTER ROLE <gbrain role> SET statement_timeout = \'5min\'` (docs/guides/troubleshooting.md#session-timeouts-not-applied).',
+    instruction: 'Set the default on the role instead: `ALTER ROLE <foresights role> SET statement_timeout = \'5min\'` (docs/guides/troubleshooting.md#session-timeouts-not-applied).',
     run: async engine => (await import('./checks/persistence-requests.ts')).sessionTimeoutsCheck(engine),
   },
   {
     id: 'connector_held_items', resolution: 'operator', registration: 'wave',
     count: d => Number(d.held ?? 0),
     impact: 'Some connector items are held after repeated failures and are not imported',
-    instruction: 'Inspect them with `gbrain sources status <source>`, fix the cause, then run `gbrain sources retry-held <source>` and `gbrain sync --source <source>` (docs/guides/repair.md#connector-held-items).',
+    instruction: 'Inspect them with `foresights sources status <source>`, fix the cause, then run `foresights sources retry-held <source>` and `foresights sync --source <source>` (docs/guides/repair.md#connector-held-items).',
     run: async (engine, scope) => (await import('./checks/connector-holds.ts')).connectorHeldItemsCheck(engine, scope.sourceIds),
   },
   {
@@ -175,7 +175,7 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     id: 'frontmatter_repairable', resolution: 'repair', registration: 'doctor.ts',
     hostOnly: 'The scan reads source checkouts on the brain host, and the frontmatter repair rewrites files there (explicit-only).',
     count: d => Number(d.repairable ?? 0),
-    impact: 'Some source files have frontmatter gbrain reads only by quoting or interpreting it',
+    impact: 'Some source files have frontmatter foresights reads only by quoting or interpreting it',
     run: async (engine, scope) => { const { frontmatterRepairableCheck } = await import('./checks/frontmatter-repairable.ts'); return perSource(scope, id => frontmatterRepairableCheck(engine, id)); },
   },
   {
@@ -183,7 +183,7 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     hostOnly: 'Pre-commit hooks live in the source checkouts on the brain host.',
     count: d => Number(d.count ?? 0),
     impact: 'An installed frontmatter pre-commit hook predates this release and checks working-tree files instead of staged content',
-    instruction: 'Refresh it on the brain host with `gbrain frontmatter install-hook --force` (add `--source <id>` for one source); only the gbrain hook script is rewritten.',
+    instruction: 'Refresh it on the brain host with `foresights frontmatter install-hook --force` (add `--source <id>` for one source); only the foresights hook script is rewritten.',
     run: async (engine, scope) => (await import('./checks/frontmatter-hook.ts')).frontmatterHookCheck(engine, scope.sourceIds),
   },
   {
@@ -191,7 +191,7 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     hostOnly: 'Which caller added a source is a decision only the brain host operator can record.',
     count: d => Number(d.count ?? 0),
     impact: 'Some URL source clones have no record of who added them, so their reclones use the clone settings of a local add',
-    instruction: 'Ask the user which of the listed sources a remote caller added; on the brain host, preview `gbrain sources record-origin <id>... --remote` (`--local` for the rest), then rerun it with --apply.',
+    instruction: 'Ask the user which of the listed sources a remote caller added; on the brain host, preview `foresights sources record-origin <id>... --remote` (`--local` for the rest), then rerun it with --apply.',
     run: async engine => (await import('./checks/url-source-origin.ts')).urlSourceOriginCheck(engine),
   },
   {
@@ -221,35 +221,35 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     id: 'unbound_source', resolution: 'operator', registration: 'wave',
     count: d => (d.sources ?? []).filter((source: { bound?: boolean }) => source.bound).reduce((sum: number, source: { pages?: number }) => sum + Number(source.pages ?? 0), 0),
     impact: 'Some pages written database-only while their source was unbound now sit outside canonical files',
-    instruction: 'Keep them database-only, or for a page whose slug already has a canonical file preview both sides with `gbrain sources reconcile <source> <slug> --brain <brain> --preview` and apply the agreed resolution (docs/guides/write-refusals.md#unbound-sources-on-postgres).',
+    instruction: 'Keep them database-only, or for a page whose slug already has a canonical file preview both sides with `foresights sources reconcile <source> <slug> --brain <brain> --preview` and apply the agreed resolution (docs/guides/write-refusals.md#unbound-sources-on-postgres).',
     run: async engine => (await import('./checks/unbound-source.ts')).checkUnboundSource(engine),
   },
   {
     id: 'persistence_capacity', resolution: 'operator', registration: 'doctor.ts',
     count: d => (d.resources ?? []).length,
     impact: 'A cumulative managed-write limit is at or above 80%',
-    instruction: 'Raise the named journal limit with the `gbrain config set` command doctor prints, on the brain host.',
+    instruction: 'Raise the named journal limit with the `foresights config set` command doctor prints, on the brain host.',
     run: async engine => (await import('./checks/persistence-capacity.ts')).checkPersistenceCapacity(engine),
   },
   {
     id: 'persistence_compaction', resolution: 'operator', registration: 'doctor.ts',
     count: d => (d.live_consumers ?? 0) > 0 ? 1 : 0,
     impact: 'A resident consumer has not compacted write receipts within its staleness window, so receipt bytes are not coming back',
-    instruction: 'Check the consumer with `gbrain sources writer status --json`; preview an on-demand pass with `gbrain repair receipt-compaction --json` and apply it after the user agrees.',
+    instruction: 'Check the consumer with `foresights sources writer status --json`; preview an on-demand pass with `foresights repair receipt-compaction --json` and apply it after the user agrees.',
     run: async engine => (await import('./checks/persistence-compaction.ts')).checkPersistenceCompaction(engine),
   },
   {
     id: 'persistence_counter_drift', resolution: 'operator', registration: 'doctor.ts',
     count: d => (d.drift ?? []).length,
     impact: 'Receipt-bytes counters differ from the receipts they account for',
-    instruction: 'Report the drift with `gbrain doctor --only persistence_counter_drift --json`; the check changes nothing.',
+    instruction: 'Report the drift with `foresights doctor --only persistence_counter_drift --json`; the check changes nothing.',
     run: async engine => (await import('./checks/persistence-compaction.ts')).checkPersistenceCounterDrift(engine),
   },
   {
     id: 'parked_effects', resolution: 'operator', registration: 'doctor.ts',
     count: d => Number(d.parked_effects ?? 0),
     impact: 'Some Git or withdrawal effects are parked after repeated failures',
-    instruction: 'Fix the cause, then run the `gbrain sources writer retry-effects <source> --request-id <id>` command doctor prints (preview with --dry-run first).',
+    instruction: 'Fix the cause, then run the `foresights sources writer retry-effects <source> --request-id <id>` command doctor prints (preview with --dry-run first).',
     run: async (engine, scope) => (await import('./checks/parked-effects.ts')).checkParkedEffects(engine, scope.sourceIds),
   },
   {
@@ -263,27 +263,27 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     id: 'dream_write_deferred', resolution: 'operator', registration: 'wave',
     count: d => (d.items ?? []).filter((item: { replays: number; bound: number }) => item.replays >= item.bound).length,
     impact: 'A dream phase write is still pending after its replay bound, so the phase submits nothing more for that source',
-    instruction: 'Read the receipt with the `gbrain write-request` command doctor prints; if the writer is stuck, `gbrain sources writer status --source <id> --json` names why.',
+    instruction: 'Read the receipt with the `foresights write-request` command doctor prints; if the writer is stuck, `foresights sources writer status --source <id> --json` names why.',
     run: async (engine, scope) => (await import('./checks/dream-write-deferred.ts')).dreamWriteDeferredCheck(engine, scope.sourceIds),
   },
   {
     id: 'embedding_restamp_stalled', resolution: 'operator', registration: 'wave',
     count: d => (d.last ? 1 : 0),
     impact: 'The free embedding signature restamp keeps failing, so current vectors still read as another model\'s space',
-    instruction: 'Fix the error doctor prints, then run `gbrain dream --phase embed` once.',
+    instruction: 'Fix the error doctor prints, then run `foresights dream --phase embed` once.',
     run: async engine => (await import('./checks/embedding-restamp.ts')).embeddingRestampStalledCheck(engine),
   },
   {
     id: 'writer_version', resolution: 'operator', registration: 'wave',
     impact: 'A writer older than this release admitted or published a recent write',
-    instruction: 'Run `gbrain upgrade` on each host doctor names (by host UUID), then restart its gbrain processes; an older writer may still delete database-only timeline rows.',
+    instruction: 'Run `foresights upgrade` on each host doctor names (by host UUID), then restart its foresights processes; an older writer may still delete database-only timeline rows.',
     count: d => Number(d.count ?? 0),
     run: async engine => (await import('./checks/writer-version.ts')).writerVersionCheck(engine),
   },
   {
     id: 'segmented_storage', resolution: 'operator', registration: 'wave',
     impact: 'A recent writer older than this release keeps segmented page storage off, so pages over 1 MiB are written inline up to 24 MiB',
-    instruction: 'Run `gbrain upgrade` on each host doctor names (by host UUID), then restart its gbrain processes; the hold clears seven days after that writer\'s last request.',
+    instruction: 'Run `foresights upgrade` on each host doctor names (by host UUID), then restart its foresights processes; the hold clears seven days after that writer\'s last request.',
     count: d => (Array.isArray(d.blockers) ? d.blockers.length : 0),
     run: async engine => (await import('./checks/segmented-storage.ts')).segmentedStorageCheck(engine),
   },
@@ -291,14 +291,14 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     id: 'segmented_tiling', resolution: 'operator', registration: 'doctor.ts',
     hostOnly: 'It lists page slugs, and the repair it names runs only from the trusted local CLI on the brain host.',
     impact: 'Some pages stored in segments have segment rows that do not cover their body, so every read of them refuses and sync holds their files',
-    instruction: 'Preview `gbrain repair segmented-tiling --source <id>` (read-only), show the user the listing, and apply it with the printed --expect hash only after they agree; it republishes each page from its file at HEAD and never runs automatically.',
+    instruction: 'Preview `foresights repair segmented-tiling --source <id>` (read-only), show the user the listing, and apply it with the printed --expect hash only after they agree; it republishes each page from its file at HEAD and never runs automatically.',
     count: d => (Array.isArray(d.pages) ? d.pages.length : 0),
     run: async (engine, scope) => (await import('./checks/segmented-tiling.ts')).segmentedTilingCheck(engine, scope.sourceIds),
   },
   {
     id: 'self_capture', resolution: 'operator', registration: 'wave',
     count: d => Number(d.classified ?? 0),
-    impact: 'The session corpus still holds files captured from gbrain\'s own model sessions',
+    impact: 'The session corpus still holds files captured from foresights\'s own model sessions',
     instruction: 'Quarantine the listed corpus files by hand with the commands in docs/guides/repair.md#quarantine-self-captured-corpus-files; nothing is deleted automatically.',
     run: async engine => (await import('./checks/self-capture.ts')).selfCaptureCheck(engine),
   },
@@ -306,14 +306,14 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     id: 'vector_plan', resolution: 'operator', registration: 'wave',
     count: d => (d.outcome === 'index_unused' || d.outcome === 'legacy_guard' ? 1 : 0),
     impact: 'Vector search on the active embedding column does not use its HNSW index, so vector candidates can time out and hybrid search falls back to keyword hits',
-    instruction: 'Upgrade gbrain on the brain host and rerun `gbrain doctor`; check the HNSW index state doctor reports; remove `search.vector_legacy_guard` / GBRAIN_VECTOR_LEGACY_GUARD unless it rolled back a regression, then restart the owning service (docs/guides/troubleshooting.md#hybrid-search-returns-only-keyword-hits).',
+    instruction: 'Upgrade foresights on the brain host and rerun `foresights doctor`; check the HNSW index state doctor reports; remove `search.vector_legacy_guard` / GBRAIN_VECTOR_LEGACY_GUARD unless it rolled back a regression, then restart the owning service (docs/guides/troubleshooting.md#hybrid-search-returns-only-keyword-hits).',
     run: async engine => (await import('./checks/vector-plan.ts')).vectorPlanCheck(engine),
   },
   {
     id: 'keyword_plan', resolution: 'operator', registration: 'wave',
     count: d => (d.outcome === 'canary_timed_out' || d.outcome === 'canary_slow' ? 1 : 0),
     impact: 'The commonest keyword term on this brain cannot be counted inside the keyword statement bound, so broad keyword queries time out and hybrid search answers from the vector arm alone',
-    instruction: 'Read the canary doctor reports (one term is not workload coverage); raise `search.keyword_statement_timeout_ms` on the brain host only to buy time (1000-60000 ms, then restart the serving process), narrow broad queries to one source (`gbrain search --source-id <id>`, MCP `source_id`), and follow #6495 for the bounded candidate set (docs/guides/troubleshooting.md#keyword-search-times-out-on-a-large-postgres-brain).',
+    instruction: 'Read the canary doctor reports (one term is not workload coverage); raise `search.keyword_statement_timeout_ms` on the brain host only to buy time (1000-60000 ms, then restart the serving process), narrow broad queries to one source (`foresights search --source-id <id>`, MCP `source_id`), and follow #6495 for the bounded candidate set (docs/guides/troubleshooting.md#keyword-search-times-out-on-a-large-postgres-brain).',
     run: async engine => (await import('./checks/keyword-plan.ts')).keywordPlanCheck(engine),
   },
   {
@@ -326,7 +326,7 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     id: 'google_file_modes', resolution: 'repair', registration: 'wave',
     hostOnly: 'File permissions and directory paths on the brain host are host-local filesystem state.',
     count: d => Number(d.count ?? 0),
-    impact: 'Some files gbrain wrote under a Google source directory outside ~/.gbrain are readable by other local users',
+    impact: 'Some files foresights wrote under a Google source directory outside ~/.gbrain are readable by other local users',
     run: async (engine, scope) => (await import('./checks/google-file-modes.ts')).checkGoogleFileModes(engine, scope.sourceIds),
   },
   {
@@ -334,7 +334,7 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     hostOnly: 'Connector state and the account address live on the brain host.',
     count: d => Number(d.count ?? 0),
     impact: 'A Google source is configured with a calendar its account cannot read, so it imports no events',
-    instruction: 'List the readable calendars with `gbrain google calendars --account <email>`, then `gbrain sources set-calendar <source> <calendar-id>` and `gbrain sync --source <source>` (docs/guides/google-connect.md#unreadable-calendar).',
+    instruction: 'List the readable calendars with `foresights google calendars --account <email>`, then `foresights sources set-calendar <source> <calendar-id>` and `foresights sync --source <source>` (docs/guides/google-connect.md#unreadable-calendar).',
     run: async (engine, scope) => (await import('./checks/google-calendar.ts')).googleCalendarReadableCheck(engine, scope.sourceIds),
   },
   {
@@ -342,7 +342,7 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     hostOnly: 'Connector state, the account address and the Google Cloud project live on the brain host.',
     count: d => Number(d.count ?? 0),
     impact: 'A Google source could not reach a service because its API is disabled for the OAuth project or its scope was not granted, so that service imports nothing',
-    instruction: 'Enable each named API at the console link in the finding (or run `gbrain google connect --reauth <email>` for a missing scope), then confirm with `gbrain google status --json` and run `gbrain sync --source <source>` (docs/guides/google-connect.md#api-access).',
+    instruction: 'Enable each named API at the console link in the finding (or run `foresights google connect --reauth <email>` for a missing scope), then confirm with `foresights google status --json` and run `foresights sync --source <source>` (docs/guides/google-connect.md#api-access).',
     run: async (engine, scope) => (await import('./checks/google-api-access.ts')).googleApiAccessCheck(engine, scope.sourceIds),
   },
   {
@@ -418,7 +418,7 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
   {
     id: 'conversation_outcomes_stale', resolution: 'operator', registration: 'wave',
     hostOnly: 'Re-extracting conversation facts spends model calls on the brain host.',
-    instruction: 'Preview re-extracting a page the check names with gbrain extract-conversation-facts --source-id <id> --slug <slug> --force --dry-run, then run it without --dry-run after the user agrees to the spend.',
+    instruction: 'Preview re-extracting a page the check names with foresights extract-conversation-facts --source-id <id> --slug <slug> --force --dry-run, then run it without --dry-run after the user agrees to the spend.',
     count: d => Number(d.stale ?? 0),
     impact: 'Some conversation pages keep an extraction outcome recorded by an older conversation parser, which is never reopened automatically',
     run: async (engine, scope) => (await import('./checks/conversation-outcomes.ts')).conversationOutcomesStaleCheck(engine, scope.sourceIds),
@@ -427,7 +427,7 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     id: 'captured_facts_active', resolution: 'repair', registration: 'wave',
     hostOnly: 'Classifying captured facts reads harness transcripts and the session corpus on the brain host; the repair is explicit-only.',
     count: d => Number(d.evidenced ?? 0) + Number(d.ambiguous ?? 0),
-    impact: 'Some active facts were captured from gbrain\'s own model sessions or from pasted text before v0.60.30.0',
+    impact: 'Some active facts were captured from foresights\'s own model sessions or from pasted text before v0.60.30.0',
     run: async (engine, scope) => (await import('./checks/captured-facts.ts')).capturedFactsCheck(engine, scope.sourceIds),
   },
   {
@@ -515,7 +515,7 @@ export function waveRepairKind(spec: WaveCheckSpec) {
   return spec.resolution === 'repair' ? repairForCheck(spec.id)?.kind : undefined;
 }
 
-export const REMOTE_HOST_ACTION = 'host operator action required: on the brain host run `gbrain doctor --remediation-plan`';
+export const REMOTE_HOST_ACTION = 'host operator action required: on the brain host run `foresights doctor --remediation-plan`';
 
 /**
  * Remote doctor lines: one per remotely offered wave check, with a stable id,
@@ -525,7 +525,7 @@ export const REMOTE_HOST_ACTION = 'host operator action required: on the brain h
 export async function remoteWaveHandoff(engine: BrainEngine, sourceIds?: string[]): Promise<Check[]> {
   const findings = await runWaveChecks(engine, { sourceIds, remote: true });
   return findings.map(({ spec, check, state }) => {
-    const host_action = { check_id: spec.id, state: state === 'finding' ? 'action_required' : state, preview_command: 'gbrain doctor --remediation-plan' };
+    const host_action = { check_id: spec.id, state: state === 'finding' ? 'action_required' : state, preview_command: 'foresights doctor --remediation-plan' };
     if (state === 'ok') return { name: spec.id, status: 'ok' as const, message: 'No host action needed.', details: { host_action },
       ...(check.severity ? { severity: check.severity } : {}), ...(check.readiness_state ? { readiness_state: check.readiness_state } : {}) };
     if (state === 'unknown') return { name: spec.id, status: 'warn' as const, details: { host_action },

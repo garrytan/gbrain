@@ -1,7 +1,7 @@
 /**
  * creds/vault — the generic credential vault.
  *
- * One home for every outbound credential gbrain holds: Google OAuth tokens
+ * One home for every outbound credential foresights holds: Google OAuth tokens
  * today; Dropbox OAuth, Mac-companion bearer tokens, and any future provider
  * tomorrow. Providers register in src/core/creds/providers/; nothing in this
  * module is Google-specific.

@@ -1,5 +1,5 @@
 /**
- * #6712 PR 0: `gbrain sync status --json` always carries `checkpoint_blockers` as an array, so the convergence
+ * #6712 PR 0: `foresights sync status --json` always carries `checkpoint_blockers` as an array, so the convergence
  * gate's status oracle (and an operator agent) can read it without guessing whether its absence means "nothing
  * blocks" or "not computed".
  *
@@ -60,7 +60,7 @@ beforeEach(async () => {
   await engine.executeRaw('DELETE FROM persistence_requests');
 });
 
-/** The JSON document `gbrain sync status --source <id> --json` prints. */
+/** The JSON document `foresights sync status --source <id> --json` prints. */
 async function statusJson(...extra: string[]): Promise<Record<string, unknown>> {
   const lines: string[] = [];
   const log = console.log;

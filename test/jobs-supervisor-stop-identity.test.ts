@@ -1,5 +1,5 @@
 /**
- * W9F item 7: `gbrain jobs supervisor stop` verifies the drain against the
+ * W9F item 7: `foresights jobs supervisor stop` verifies the drain against the
  * run's own audit rows and real process identity.
  *
  * Protects: a worker pid recycled by an unrelated process (start time differs

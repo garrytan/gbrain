@@ -4,7 +4,7 @@
  * `memory.auto_writeback = off | salient | all` gates the activation layer:
  * the ambient-writeback section of the MCP initialize instructions, the
  * managed bootstrap instruction blocks, and the Stop-hook extraction
- * backstop. Two planes carry the keys and `gbrain config set memory.*`
+ * backstop. Two planes carry the keys and `foresights config set memory.*`
  * DUAL-WRITES both (src/commands/config.ts):
  *
  *   - DB plane (`config` table) — AUTHORITATIVE. The serve-side harvest gate
@@ -67,7 +67,7 @@ export const DEFAULT_TRANSIENT_TTL = '3d';
 export const PRIVATE_DEFAULT_REMOTE_CONSEQUENCE =
   'remote sessions read world-visible facts only, so they cannot recall or forget the private facts they save ' +
   '(extract_facts, the writeback backstop and the ambient instructions all write private here). ' +
-  'Keep private only if that is intended; otherwise: gbrain config set facts.default_visibility world';
+  'Keep private only if that is intended; otherwise: foresights config set facts.default_visibility world';
 
 /** Engine-free resolution (hook child + stdio boot): no visibility arm. */
 export interface WritebackFileConfig {
@@ -78,7 +78,7 @@ export interface WritebackFileConfig {
   raw_mode: string | null;
   transient_ttl: string;
   ttl_valid: boolean;
-  /** The visibility POSTURE stamped into the file mirror by `gbrain config
+  /** The visibility POSTURE stamped into the file mirror by `foresights config
    * set memory.*` (which has the engine and resolves the DB-plane
    * `facts.default_visibility`). Engine-free consumers (the bootstrap
    * harness block renderer) use this; absent → 'world' (F5's unset default).
@@ -318,27 +318,27 @@ export function captureLaneSummary(cfg: WritebackConfig): string {
 
 /** Workers that read the gate only from this version on; an older one keeps capturing until it restarts. */
 export const WRITEBACK_RESTART_AFTER_OFF: readonly string[] = Object.freeze([
-  'long-running `gbrain serve` processes (compaction harvest; `gbrain sources writer status --json` consumer_version is a hint, not proof, because an idle old worker leaves no receipt)',
+  'long-running `foresights serve` processes (compaction harvest; `foresights sources writer status --json` consumer_version is a hint, not proof, because an idle old worker leaves no receipt)',
   'cron or autopilot sweeps (SessionEnd transcripts and the compaction backstop)',
-  'any OpenClaw gateway hosting the gbrain context engine (compaction rungs 2 and 3)',
+  'any OpenClaw gateway hosting the foresights context engine (compaction rungs 2 and 3)',
 ]);
 
-/** What `gbrain config set memory.auto_writeback off` tells the operator. */
+/** What `foresights config set memory.auto_writeback off` tells the operator. */
 export function writebackOffMessage(): string[] {
   return [
     'Ambient writeback off. Stopped: Stop-hook turn capture, the compaction harvest (PreCompact segments and OpenClaw compactions) and SessionEnd transcript extraction. Session text banked from now on is retired, never extracted later, even if writeback is turned back on.',
     'Not stopped: facts already saved, explicit remember / extract_facts calls, and fact extraction from pages written on purpose.',
-    `Enforcement is incomplete until workers started on an older gbrain restart: ${WRITEBACK_RESTART_AFTER_OFF.join('; ')}.`,
-    'Review facts these lanes already saved: `gbrain recall --since 30d --limit 500 --json` (rows whose source is hook:compact, hook:writeback or sweep:corpus); forget one only with the user\'s agreement: `gbrain forget <fact-id>`.',
-    'To stop the hooks from banking session text at all, SessionEnd included: `gbrain bootstrap harness --remove`.',
-    'If harness instruction blocks were installed, remove them: gbrain bootstrap harness --yes (converges on off).',
+    `Enforcement is incomplete until workers started on an older foresights restart: ${WRITEBACK_RESTART_AFTER_OFF.join('; ')}.`,
+    'Review facts these lanes already saved: `foresights recall --since 30d --limit 500 --json` (rows whose source is hook:compact, hook:writeback or sweep:corpus); forget one only with the user\'s agreement: `foresights forget <fact-id>`.',
+    'To stop the hooks from banking session text at all, SessionEnd included: `foresights bootstrap harness --remove`.',
+    'If harness instruction blocks were installed, remove them: foresights bootstrap harness --yes (converges on off).',
   ];
 }
 
-/** What `gbrain config unset memory.auto_writeback` tells the operator. */
+/** What `foresights config unset memory.auto_writeback` tells the operator. */
 export function writebackUnsetMessage(): string[] {
   return [
-    'Ambient writeback is unset: Stop-hook turn capture stays off, but the compaction harvest and SessionEnd transcripts extract again (installing the harness hooks opted into them). To stop every capture lane: `gbrain config set memory.auto_writeback off`.',
-    'If harness instruction blocks were installed, remove them: gbrain bootstrap harness --yes (converges on off).',
+    'Ambient writeback is unset: Stop-hook turn capture stays off, but the compaction harvest and SessionEnd transcripts extract again (installing the harness hooks opted into them). To stop every capture lane: `foresights config set memory.auto_writeback off`.',
+    'If harness instruction blocks were installed, remove them: foresights bootstrap harness --yes (converges on off).',
   ];
 }

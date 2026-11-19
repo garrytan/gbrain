@@ -4,7 +4,7 @@
  * SEGMENTED_WRITER_FLOOR, the blocker is this host's, it is not an older resident process still renewing its heartbeat
  * (CONSUMER_PURGE_MS), and this host has since made the same kind of write (role and principal: an ingest source type, a
  * resident kind, a managed principal) with a build that passes the gate, every write of the blocker coming before the
- * first of those. Anything else may be a second older gbrain (another host, a cron job, an npx run, a pinned install,
+ * first of those. Anything else may be a second older foresights (another host, a cron job, an npx run, a pinned install,
  * an older serve still running here) and stays live. Doctor `segmented_storage` reports a hold with no live blocker as
  * information and keeps its upgrade warning otherwise; the segmented withdrawal mirror (segmented-mirror-gate.ts) holds
  * only on live blockers. The pages switch itself still counts every blocker.

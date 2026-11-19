@@ -1,5 +1,5 @@
 /**
- * `gbrain facts relink` storage DDL (#5836): one canonical copy used by the
+ * `foresights facts relink` storage DDL (#5836): one canonical copy used by the
  * schema migration and, through scripts/build-schema.ts FRAGMENTS, by
  * fresh-install DDL.
  *

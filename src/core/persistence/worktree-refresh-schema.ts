@@ -1,5 +1,5 @@
 /**
- * `gbrain sources refresh` storage (F0): one row per coordinated fast-forward
+ * `foresights sources refresh` storage (F0): one row per coordinated fast-forward
  * of a managed worktree. The canonical DDL copy is used by the schema
  * migration and, through scripts/build-schema.ts FRAGMENTS, by fresh installs.
  * The partial unique index makes "one active refresh per worktree" a database

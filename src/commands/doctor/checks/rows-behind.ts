@@ -5,7 +5,7 @@
  * at the checkpoint commit and confirms the difference with the importer.
  *
  * warn when any source has a `behind` row: per-source counts, the first slugs and the read-only preview
- * `gbrain repair rows-behind --source <id>`. Rows with no import record (`unproven`) are counted from the content comparison
+ * `foresights repair rows-behind --source <id>`. Rows with no import record (`unproven`) are counted from the content comparison
  * alone (no importer confirmation) and never warn. ok when
  * every source read completely and none is behind; a scan the budget stopped, or a checkout Git cannot read, is info
  * `unknown` (never a clean ok). Not applicable (ok, info) on a brain without managed sync, a source without a checkout or
@@ -43,13 +43,13 @@ async function runRowsBehind(ctx: DoctorContext): Promise<Check[]> {
       sources: scans.map(scan => ({ source_id: scan.source_id, status: scan.status, ...(scan.reason ? { reason: scan.reason } : {}), checkpoint: scan.checkpoint, complete: scan.complete, stopped_at: scan.stopped_at,
         pages: scan.pages, behind: scan.behind_count, unproven: scan.unproven_count, counts: scan.counts,
         samples: (ctx.remote ? [] : scan.behind).slice(0, SAMPLES).map(row => row.slug), unproven_samples: (ctx.remote ? [] : scan.unproven).slice(0, SAMPLES).map(row => row.slug) })) };
-    const unprovenNote = unproven ? ` ${unproven} more row(s) differ from their checkpoint file but have no import record, so the side that moved is unknown; gbrain repair rows-behind --source <id> --include-ambiguous lists and re-imports them, which replaces any database-only edit those rows hold.` : '';
+    const unprovenNote = unproven ? ` ${unproven} more row(s) differ from their checkpoint file but have no import record, so the side that moved is unknown; foresights repair rows-behind --source <id> --include-ambiguous lists and re-imports them, which replaces any database-only edit those rows hold.` : '';
     if (count) {
       const found = known.filter(scan => scan.behind_count);
       checks.push({ name: 'sync_rows_behind_checkpoint', status: 'warn', details,
         message: `${count}${partial.length ? '+' : ''} page(s) hold an older version of their file than the sync checkpoint says was imported, with no hold `
           + `(${found.map(scan => `${scan.source_id}: ${scan.behind_count}${ctx.remote ? '' : `, e.g. ${scan.behind.slice(0, 3).map(row => row.slug).join(', ')}`}`).join('; ')}). `
-          + `Search and reads return the old text, and no later sync re-imports them. Preview the re-import with gbrain repair rows-behind --source ${found[0]!.source_id}; it writes nothing.${unprovenNote}`,
+          + `Search and reads return the old text, and no later sync re-imports them. Preview the re-import with foresights repair rows-behind --source ${found[0]!.source_id}; it writes nothing.${unprovenNote}`,
         fix: agentFix(['gbrain', 'repair', 'rows-behind', '--source', found[0]!.source_id, '--json'],
           'Read-only preview: lists each row behind its checkpoint file and what the re-import would do (or the hold it would open), and prints the apply command with its hash.',
           'sync_rows_behind_checkpoint', { docs: ROWS_BEHIND_DOCS }) });
@@ -58,7 +58,7 @@ async function runRowsBehind(ctx: DoctorContext): Promise<Check[]> {
     if (unknown.length || partial.length) {
       checks.push(infoCheck('sync_rows_behind_checkpoint', `Rows behind the sync checkpoint are unknown for ${[...unknown.map(scan => `${scan.source_id} (${scan.reason})`),
         ...partial.map(scan => `${scan.source_id} (stopped after ${scan.pages} page(s)${scan.stopped_at !== null ? ` at page id ${scan.stopped_at}` : ''} at the ${details.timeout_ms / 1000} s budget)`)].join(', ')}; this is not a clean result. `
-        + `The full read: gbrain repair rows-behind --source <id> (writes nothing).${unprovenNote}`, 'unknown', undefined, details));
+        + `The full read: foresights repair rows-behind --source <id> (writes nothing).${unprovenNote}`, 'unknown', undefined, details));
       return checks;
     }
     if (!known.length) {

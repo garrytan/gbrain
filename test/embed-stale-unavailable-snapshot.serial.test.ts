@@ -98,7 +98,7 @@ describe('embed --stale past pages still waiting for a projection (#6223)', () =
     expect(result.failures).toBe(1);
     const samples = result.failure_samples.join(' ');
     expect(samples).toContain('default:images/scan-0001');
-    expect(samples).toContain('gbrain embed --stale --images');
+    expect(samples).toContain('foresights embed --stale --images');
     expect(samples).not.toContain('changed, was deleted or lost its projection during this run');
     expect(await chunkRows('images/scan-0001')).toEqual(before);
   });
@@ -152,7 +152,7 @@ describe('embed --stale with a projection snapshot that becomes unavailable mid-
     expect(summary).toStartWith('2 page(s) not embedded:');
     expect(summary).toContain('notes/tagged-mid-run');
     expect(summary).toContain('notes/edited-mid-run');
-    expect(summary).toContain('rerun gbrain embed --stale');
+    expect(summary).toContain('rerun foresights embed --stale');
   });
 
   test('the summary names five pages and counts the rest', async () => {

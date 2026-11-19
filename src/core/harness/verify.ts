@@ -93,7 +93,7 @@ export async function verifyHarnessConnection(c: HarnessCredentials, options: Ve
         mutationAttempted = true;
         const saved = await active.call(pageMode ? 'put_page' : 'remember', pageMode
           ? { request_id: writeRequestId, slug: cleanupSlug, content: `---\ntitle: Connection check\n---\n# Connection check\n\n${fixture}\n` }
-          : { request_id: writeRequestId, fact: fixture, entity: fixtureEntity, provenance: 'GBrain randomized connection verification', ...(member ? {} : { visibility: 'world' }) });
+          : { request_id: writeRequestId, fact: fixture, entity: fixtureEntity, provenance: 'Foresights randomized connection verification', ...(member ? {} : { visibility: 'world' }) });
         if (saved.state !== undefined && saved.state !== 'committed') throw new Error('write_not_committed');
         if (!pageMode) factId = String(saved.id ?? '');
         mutationConfirmed = true;
@@ -209,8 +209,8 @@ export async function verifyHarnessConnection(c: HarnessCredentials, options: Ve
           status: 'outcome_unknown', may_have_started: true, retry_safe: false,
           client_id: c.client_id, source_id: identity?.source_id ?? c.source_id ?? null, fixture, prompt,
           reason: 'submit_agent has no idempotency-key parameter; a lost response does not prove the worker was not accepted',
-          host_reconcile_command: `gbrain jobs list --queue default --limit 1000 --json | jq --arg client ${shellQuote(c.client_id)} --arg prompt ${shellQuote(prompt)} ${shellQuote(filter)}`,
-          next_action: 'Run this command on the brain host (requires jq), inspect matching job IDs and source_id, then use gbrain jobs get ID --json and explicitly cancel unfinished matches. An empty bounded listing does not prove absence; do not resubmit the probe while its outcome is unknown.',
+          host_reconcile_command: `foresights jobs list --queue default --limit 1000 --json | jq --arg client ${shellQuote(c.client_id)} --arg prompt ${shellQuote(prompt)} ${shellQuote(filter)}`,
+          next_action: 'Run this command on the brain host (requires jq), inspect matching job IDs and source_id, then use foresights jobs get ID --json and explicitly cancel unfinished matches. An empty bounded listing does not prove absence; do not resubmit the probe while its outcome is unknown.',
         };
       }, identity };
   }

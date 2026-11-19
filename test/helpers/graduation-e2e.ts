@@ -77,7 +77,7 @@ function withDatabase(url: string, database: string, user?: { name: string; pass
   return u.toString();
 }
 
-/** A brand-new empty database (no gbrain schema) on the E2E server. */
+/** A brand-new empty database (no foresights schema) on the E2E server. */
 export async function emptyTarget(adminUrl = DATABASE_URL!): Promise<TargetDb> {
   assertSafeE2eDatabaseUrl(adminUrl);
   const database = `gbrain_test_graduation_${randomUUID().replace(/-/g, '').slice(0, 20)}`;

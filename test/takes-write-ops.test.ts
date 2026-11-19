@@ -551,7 +551,7 @@ describe('concurrency [ENG-E4/EV11]', () => {
 
 // #3605: shared-repo pages whose on-disk file name differs from the slug.
 // The recorded `source_path` (or a contained `file://` `source_uri` from
-// `gbrain capture --file`) is the file of record; the slug-derived path
+// `foresights capture --file`) is the file of record; the slug-derived path
 // minted a stray twin on add and refused update/resolve with
 // takes_mirror_unavailable even though the page's file was right there.
 describe('takes-write recorded source_path routing (#3605)', () => {

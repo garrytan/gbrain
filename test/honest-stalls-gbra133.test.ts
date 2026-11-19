@@ -115,7 +115,7 @@ describe('a deadline never extends a run that committed nothing', () => {
     expect(plan.watchdog.progressSignal).toBe('committed');
     expect(plan.watchdog.stallNotice).toContain('code=sync_deadline_stalled');
     expect(plan.watchdog.stallNotice).toContain('committed nothing');
-    expect(plan.watchdog.stallNotice).toContain('Fix: gbrain sync status --source source-a --json');
+    expect(plan.watchdog.stallNotice).toContain('Fix: foresights sync status --source source-a --json');
     expect(plan.armedLine).toContain('extends while the sync keeps progressing');
     const json = JSON.parse(syncDeadlineStallNotice(['--source', 'source-a', '--no-pull', '--json'], res));
     expect(json).toMatchObject({ status: 'stalled', code: 'sync_deadline_stalled', committed: 0, deadline_seconds: 3600,
@@ -178,12 +178,12 @@ describe('drain: only commits are progress, and a stopped pass reports nothing l
     const result = await runDrain({ governMs: 10, noProgressMs: 60_000, publicationCeilingMs: 30, probe, pass: () => new Promise<SyncResult>(() => undefined) });
     expect(result.drain).toMatchObject({ outcome: 'blocked', stop_reason: 'drain_stalled',
       stall: { cause: 'owner_restart_required', in_pass: true, head_request_id: 'req-head', owner_row: { pid: 4242, restart_required: true } } });
-    const next = drainNext(result, 'gbrain sync --source source-a --no-pull', 'source-a')!;
-    expect(next).toMatchObject({ code: 'drain_stalled', cause: 'owner_restart_required', safe_to_loop: false, command: 'gbrain sources writer status --source source-a --json' });
-    expect(next.why).toContain('the gbrain serve process (pid 4242)');
+    const next = drainNext(result, 'foresights sync --source source-a --no-pull', 'source-a')!;
+    expect(next).toMatchObject({ code: 'drain_stalled', cause: 'owner_restart_required', safe_to_loop: false, command: 'foresights sources writer status --source source-a --json' });
+    expect(next.why).toContain('the foresights serve process (pid 4242)');
     expect(next.why).toContain('reports restart_required');
-    expect(next.fix?.user_message).toContain('Restart the gbrain serve process (pid 4242)');
-    expect(formatDrainSummary(result, 'gbrain sync --source source-a --no-pull', 'source-a').join('\n')).toContain('cause=owner_restart_required');
+    expect(next.fix?.user_message).toContain('Restart the foresights serve process (pid 4242)');
+    expect(formatDrainSummary(result, 'foresights sync --source source-a --no-pull', 'source-a').join('\n')).toContain('cause=owner_restart_required');
     expect(CODES.drain_stalled.reasons as readonly string[]).toContain('owner_restart_required');
   });
 
@@ -240,7 +240,7 @@ describe('commit notifier: committed runs are progress, and a stalled lease hold
     expect(h.decisions('stalled').length).toBeGreaterThan(0);
     expect(h.store.states.get('acme-example')).toMatchObject({ state: 'retry', reason: 'notifier_stalled', last_error_code: 'notifier_stalled' });
     expect(h.s.lines.filter(l => l.includes('notifier_stalled') && l.includes('drain_holder_stalled'))).toHaveLength(1);
-    expect(h.s.lines.some(l => l.includes('gbrain sync --source acme-example --no-pull'))).toBe(true);
+    expect(h.s.lines.some(l => l.includes('foresights sync --source acme-example --no-pull'))).toBe(true);
     expect(CODES.drain_holder_stalled.docs).toBe('docs/guides/on-commit-sync.md#notifier-stalled');
     // The holder recovers (a live, committing holder): the source is deferred to it again, never started beside it.
     h.s.held = true;

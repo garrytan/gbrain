@@ -79,7 +79,7 @@ test('a different server version or schema version ignores and then replaces the
   expect(processRun(['160004', '113'])).toEqual({ loaded: 0, before: undefined });
 }));
 
-test('with no schema version (a database gbrain has not initialized) nothing is loaded or saved', () => withHome(home => {
+test('with no schema version (a database foresights has not initialized) nothing is loaded or saved', () => withHome(home => {
   processRun(['160004', null as unknown as string], [25, 25]);
   expect(cacheFiles(home)).toEqual([]);
 }));

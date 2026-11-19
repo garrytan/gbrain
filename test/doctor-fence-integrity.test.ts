@@ -3,7 +3,7 @@
  *
  * Protects: doctor reports every malformed facts or takes fence that waits
  * (held file, stored page, unsynced file) per source, split by planned tier,
- * with the oldest hold and the `gbrain repair fences --source <id>` preview as
+ * with the oldest hold and the `foresights repair fences --source <id>` preview as
  * the fix for every bucket (#6188 PR4); what the next maintenance run repairs
  * is described as "repaired automatically by the next maintenance run" only
  * while one is active, otherwise the preview then the apply; model-tier
@@ -123,7 +123,7 @@ describe('fence_integrity doctor check', () => {
     expect(check.message).toContain('Model repair caps: $0.30 per page, $1.00 per day ($0.00 spent today).');
     // No maintenance run has completed on this brain: never "repaired automatically", the preview then the apply.
     expect(check.message).toContain('not repaired automatically (no maintenance run has completed in the last 24 h)');
-    expect(check.message).toContain(`Preview: gbrain repair fences --source ${s.id}`);
+    expect(check.message).toContain(`Preview: foresights repair fences --source ${s.id}`);
     expect(check.fix).toMatchObject({ argv: ['gbrain', 'repair', 'fences', '--source', s.id], actor: 'agent',
       then: { argv: ['gbrain', 'repair', 'fences', '--source', s.id, '--apply'] } });
     expect(check.fix!.why).toContain('--expect <hash>');
@@ -162,7 +162,7 @@ describe('fence_integrity doctor check', () => {
     await engine.setConfig('fences.repair.llm', 'false');
     const off = await result();
     expect(off.message).toContain('Model repair (Tier 3) is off (fences.repair.llm false), so 1 model-tier fence(s) wait');
-    expect(off.message).toContain('gbrain config set fences.repair.llm true');
+    expect(off.message).toContain('foresights config set fences.repair.llm true');
     expect(off.message).toContain('The deterministic and resolver ones are');
     await engine.unsetConfig('fences.repair.llm');
     await engine.setConfig('fences.repair.max_usd_per_day', '0.1');
@@ -174,7 +174,7 @@ describe('fence_integrity doctor check', () => {
     await ledger.settle(held.reservation.id, 0.1);
     const spent = await fenceIntegrityResult(engine, { timeoutMs: 60_000, now: () => day });
     expect(spent.message).toContain('Today\'s model repair budget is spent ($0.10 of $0.10), so 1 model-tier fence(s) wait until after 00:00 UTC');
-    expect(spent.message).toContain('gbrain config set fences.repair.max_usd_per_day <usd>');
+    expect(spent.message).toContain('foresights config set fences.repair.max_usd_per_day <usd>');
   });
 
   test('the WAVE_CHECKS entry counts details.total, routes to the fences kind and its banner and remote lines say who repairs it, with no path or claim', async () => {
@@ -187,10 +187,10 @@ describe('fence_integrity doctor check', () => {
     const check = await spec.run(engine, { sourceIds: [s.id] });
     expect(spec.count(check.details ?? {})).toBe(2);
     const line = bannerFindingLine({ spec, check, state: 'finding' });
-    expect(line).toBe('[AGENT]   fence_integrity: 2 (not repaired automatically (no maintenance run is active); preview with: gbrain repair fences)');
+    expect(line).toBe('[AGENT]   fence_integrity: 2 (not repaired automatically (no maintenance run is active); preview with: foresights repair fences)');
     await engine.setConfig(LAST_GLOBAL_AT_KEY, new Date().toISOString());
     const active = await spec.run(engine, { sourceIds: [s.id] });
-    expect(bannerFindingLine({ spec, check: active, state: 'finding' })).toBe('[AGENT]   fence_integrity: 2 (repaired automatically by the next maintenance run, except 1 that need a manual edit; preview with: gbrain repair fences)');
+    expect(bannerFindingLine({ spec, check: active, state: 'finding' })).toBe('[AGENT]   fence_integrity: 2 (repaired automatically by the next maintenance run, except 1 that need a manual edit; preview with: foresights repair fences)');
     const remote = (await remoteWaveHandoff(engine, [s.id])).find(entry => entry.name === 'fence_integrity')!;
     expect(remote).toMatchObject({ status: 'warn', details: { host_action: { check_id: 'fence_integrity', state: 'action_required' } } });
     const text = JSON.stringify(remote);
@@ -247,12 +247,12 @@ describe('fence_integrity doctor check', () => {
     expect(check.status).toBe('warn');
     expect((check.details as any).unrenderable_legacy_facts).toEqual({ total: 1, complete: true, pages: [{ source_id: s.id, slug: 'people/alice-example',
       rows: [{ fact_id: Number(legacy.id), reason: 'duplicate_claim', class: 'duplicate_claim' }] }] });
-    expect(check.message).toContain(`1 of them copy a claim their page's facts table already carries (duplicate_claim): gbrain repair duplicate-facts --source ${s.id} previews`);
+    expect(check.message).toContain(`1 of them copy a claim their page's facts table already carries (duplicate_claim): foresights repair duplicate-facts --source ${s.id} previews`);
     expect(check.message).not.toContain('For the other rows there is no safe automatic fix');
     expect(check.message).not.toContain('forget_fact');
     const rendered = renderAction(check.fix!, cliRenderContext());
     expect(rendered.next).toBe('run');
-    expect(rendered.command).toBe(`gbrain repair duplicate-facts --source ${s.id} --json`);
+    expect(rendered.command).toBe(`foresights repair duplicate-facts --source ${s.id} --json`);
     expect(rendered.docs).toContain('repair.md#duplicate-facts');
     expect(JSON.stringify(check)).not.toContain('Clean synthetic fact');
     await engine.executeRaw('DELETE FROM facts WHERE source_id = $1', [s.id]);

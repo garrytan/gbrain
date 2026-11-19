@@ -1,5 +1,5 @@
 /**
- * G7b-2, hosted writes (docs/designs/GIT_CANONICAL_MEMORY.md "Remote and hosted writes"): `gbrain sources host-repo` gives an
+ * G7b-2, hosted writes (docs/designs/GIT_CANONICAL_MEMORY.md "Remote and hosted writes"): `foresights sources host-repo` gives an
  * empty source a bare repository plus a gbrain-owned linked worktree, claimed through the ordinary claim, and makes the
  * source git-canonical. Protects:
  *   - the preview says the source becomes strict and binds the apply: a stale plan_hash refuses `preview_changed` and
@@ -166,14 +166,14 @@ for (const backend of testBackends()) describe(`[${backend}] G7b-2: a hosted sou
     const head = git(hosted.repository, 'rev-parse', 'main').trim();
     const clone = join(dirname(root), 'clone');
     const first = foreignPush(hosted.repository, clone);
-    expect({ exitCode: first.exitCode, named: first.stderr.includes(`gbrain put --source ${SOURCE}`) }).toEqual({ exitCode: 1, named: true });
+    expect({ exitCode: first.exitCode, named: first.stderr.includes(`foresights put --source ${SOURCE}`) }).toEqual({ exitCode: 1, named: true });
     expect(git(hosted.repository, 'rev-parse', 'main').trim()).toBe(head);
 
     rmSync(hosted.worktree, { recursive: true, force: true });
     git(hosted.repository, 'worktree', 'prune');
     expect(git(hosted.repository, 'worktree', 'list', '--porcelain')).not.toContain(hosted.worktree);
     const second = foreignPush(hosted.repository, clone);
-    expect({ exitCode: second.exitCode, named: second.stderr.includes(`gbrain put --source ${SOURCE}`) }).toEqual({ exitCode: 1, named: true });
+    expect({ exitCode: second.exitCode, named: second.stderr.includes(`foresights put --source ${SOURCE}`) }).toEqual({ exitCode: 1, named: true });
     expect(git(hosted.repository, 'rev-parse', 'main').trim()).toBe(head);
     expect(await hostRepo(engine, { sourceId: SOURCE, dir, dryRun: true })).toMatchObject({ action: 'none', hook: { state: 'ok' }, worktree_link: 'absent' });
 

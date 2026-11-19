@@ -342,7 +342,7 @@ describe('verdict channel — immune to PGLite WASM process.exitCode writes', ()
     _resetCliExitVerdictForTests();
     try {
       process.exitCode = 100; // what in-memory PGLite's initdb does mid-run
-      expect(currentExitCode()).toBe(0); // no gbrain verdict was ever set
+      expect(currentExitCode()).toBe(0); // no foresights verdict was ever set
       setCliExitVerdict(2);
       expect(currentExitCode()).toBe(2);
       // The mirror write exists for EXTERNAL readers of the global.

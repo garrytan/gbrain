@@ -524,8 +524,8 @@ async function mapWithConcurrency<I, O>(
 const DEFAULT_PARALLELISM = 4;
 
 /**
- * Run the brainstorm or LSD pipeline. The CLI command (`gbrain brainstorm` /
- * `gbrain lsd`) calls this with the question + profile; renders the result
+ * Run the brainstorm or LSD pipeline. The CLI command (`foresights brainstorm` /
+ * `foresights lsd`) calls this with the question + profile; renders the result
  * via formatBrainstormMarkdown; optionally saves via put_page.
  */
 /**
@@ -744,7 +744,7 @@ async function _runBrainstormInner(
   }
   if (farResult.pages.length === 0) {
     throw new Error(
-      `${profile.label}: brain has no usable far pages. Try \`gbrain import <dir>\` to seed cross-domain content, or check the prefix cache via \`gbrain doctor\`.`
+      `${profile.label}: brain has no usable far pages. Try \`foresights import <dir>\` to seed cross-domain content, or check the prefix cache via \`foresights doctor\`.`
     );
   }
 
@@ -955,7 +955,7 @@ async function _runBrainstormInner(
 
   if (allRawIdeas.length === 0) {
     throw new Error(
-      `${profile.label}: no ideas generated across ${crosses.length} crosses. Check API keys via \`gbrain models doctor\`.`
+      `${profile.label}: no ideas generated across ${crosses.length} crosses. Check API keys via \`foresights models doctor\`.`
     );
   }
 
@@ -989,7 +989,7 @@ async function _runBrainstormInner(
   } catch (err) {
     judgeFailed = true;
     const msg = err instanceof Error ? err.message : String(err);
-    stderr(`[${profile.label}] WARN: judge phase failed (${msg}); saving ideas unscored. Re-score with: gbrain ${profile.label} --resume ${runId} (see --list-runs)\n`);
+    stderr(`[${profile.label}] WARN: judge phase failed (${msg}); saving ideas unscored. Re-score with: foresights ${profile.label} --resume ${runId} (see --list-runs)\n`);
   }
 
   // ---- Phase 5: assemble BrainstormResult ----
@@ -1024,11 +1024,11 @@ async function _runBrainstormInner(
   // all-crosses-green + judge-failed marked judge_done and unlinked the file.
   if (liveCheckpoint.failed_crosses.length > 0) {
     stderr(
-      `[${profile.label}] ${liveCheckpoint.failed_crosses.length} cross(es) failed. Resume with: gbrain ${profile.label} --resume ${runId}\n`,
+      `[${profile.label}] ${liveCheckpoint.failed_crosses.length} cross(es) failed. Resume with: foresights ${profile.label} --resume ${runId}\n`,
     );
   } else if (judgeFailed) {
     stderr(
-      `[${profile.label}] Judge failed; ${liveCheckpoint.completed_crosses.length} cross(es) kept in checkpoint ${runId}. Re-score with: gbrain ${profile.label} --resume ${runId}\n`,
+      `[${profile.label}] Judge failed; ${liveCheckpoint.completed_crosses.length} cross(es) kept in checkpoint ${runId}. Re-score with: foresights ${profile.label} --resume ${runId}\n`,
     );
   } else {
     // Clean completion — every cross succeeded. Clear the checkpoint so we

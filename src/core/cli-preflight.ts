@@ -13,7 +13,7 @@
  *      cwd assigns. GBRAIN_HOME is on that list, so it is quarantined BEFORE
  *      step 2 resolves the config dir. The 8 cwd .env files are parsed ONCE
  *      here and the parse is shared with the cwd == config dir check.
- *   1b. Re-run gbrain with the sanitized environment whenever anything was
+ *   1b. Re-run foresights with the sanitized environment whenever anything was
  *      dropped (see "Why the re-run" below).
  *   2. `loadGbrainEnvFile(configDir)` — fill process.env from `~/.gbrain/.env`
  *      (never overriding an exported variable). `loadConfig()` does this too,
@@ -30,7 +30,7 @@
  *
  * Every runtime entry — commands, `hook *`, `serve` (stdio and --http),
  * `mcp`, the supervisor-spawned `jobs work`, the per-job `jobs run-child` —
- * dispatches through `main()`, so this one call covers every gbrain process.
+ * dispatches through `main()`, so this one call covers every foresights process.
  * (`src/commands/auth.ts`'s `import.meta.main` seam is a dev-only
  * direct-script entry.)
  *
@@ -42,7 +42,7 @@
  * workers would still see the planted keys (verified on Bun 1.3.13: a `.env`
  * carrying `GIT_CONFIG_COUNT=1 / GIT_CONFIG_KEY_0=core.fsmonitor /
  * GIT_CONFIG_VALUE_0=./x.sh` runs x.sh from a plain `git status`). When the
- * quarantine dropped anything, preflight therefore spawns gbrain again with
+ * quarantine dropped anything, preflight therefore spawns foresights again with
  * an explicit, sanitized environment and exits with the re-run's status;
  * every descendant of the re-run inherits the clean view.
  *
@@ -72,7 +72,7 @@
  * directory fails the second check (its startup cwd has a `.env`) and the
  * third if it names its own directory — so it ignores the marker entirely
  * and never chdirs on one. Termination is structural: the re-run's startup
- * cwd has no `.env`, so it never drops anything and never re-runs. gbrain
+ * cwd has no `.env`, so it never drops anything and never re-runs. foresights
  * self-spawns (supervisor → worker, hook → detached push, worker →
  * run-child) that start in the hostile cwd reload the file and perform the
  * hop once for their own subtree — accepted; one warning per subtree.
@@ -189,7 +189,7 @@
  *
  * ## cwd == config dir
  *
- * Running gbrain from INSIDE `~/.gbrain` (or `$GBRAIN_HOME/.gbrain`) makes Bun
+ * Running foresights from INSIDE `~/.gbrain` (or `$GBRAIN_HOME/.gbrain`) makes Bun
  * load the operator's own `.env` as a "cwd .env". That file is operator-owned,
  * so the quarantine and the guardrails loader's cwd check are skipped when
  * `realpath(cwd) === realpath(configDir())` — but ONLY when no cwd .env file
@@ -304,9 +304,9 @@ export function cwdIsOperatorConfigDir(cwd: string, assignments: readonly Dotenv
 }
 
 /**
- * argv (after execPath) that runs THIS gbrain again. A compiled Bun binary
+ * argv (after execPath) that runs THIS foresights again. A compiled Bun binary
  * reports its virtual entrypoint as argv[1] (`/$bunfs/root/...`; `~BUN` on
- * Windows) and execPath IS gbrain, so the user args are the whole argv;
+ * Windows) and execPath IS foresights, so the user args are the whole argv;
  * `bun src/cli.ts` needs the runtime flags (`--inspect`, `--preload`, … from
  * process.execArgv, relative paths resolved against `originalCwd` — see
  * "Runtime flags across the hop") and the entry file re-inserted — Bun
@@ -368,7 +368,7 @@ function resolveRuntimePaths(execArgv: readonly string[], cwd: string): string[]
 /**
  * True when this process is `bun <entry>` (the dev runtime or a `bun install
  * -g` / `bun link` install running src/cli.ts through its shebang), false for
- * a compiled binary (execPath IS gbrain; the entry is a `/$bunfs/` virtual
+ * a compiled binary (execPath IS foresights; the entry is a `/$bunfs/` virtual
  * path, `~BUN` on Windows).
  */
 export function isScriptRuntime(): boolean {
@@ -383,9 +383,9 @@ export function isScriptRuntime(): boolean {
  * bunfig.toml". Exported for tests.
  */
 export const SCRIPT_MODE_BUNFIG_WARNING =
-  '[env] gbrain is running as a bun script (not the compiled binary) and the bunfig.toml in the current ' +
-  'directory declares a top-level preload — Bun ran it before gbrain started. A cwd bunfig.toml is untrusted: ' +
-  'run gbrain from a directory you control, or start it as `bun --config=/dev/null <path-to-gbrain/src/cli.ts> …`.';
+  '[env] foresights is running as a bun script (not the compiled binary) and the bunfig.toml in the current ' +
+  'directory declares a top-level preload — Bun ran it before foresights started. A cwd bunfig.toml is untrusted: ' +
+  'run foresights from a directory you control, or start it as `bun --config=/dev/null <path-to-gbrain/src/cli.ts> …`.';
 
 /**
  * Does `bunfig.toml` in `dir` declare a TOP-LEVEL `preload` (the one Bun
@@ -549,9 +549,9 @@ async function reexecSanitized(originalCwd: string, dropped: readonly string[]):
  */
 export const GUARDRAILS_ASSIGNED_BY_CWD_DOTENV =
   'guardrails: GBRAIN_GUARDRAILS_MODULE is assigned by a .env file in the current directory; ' +
-  "refusing to run without the operator's firewall. Bun merges that file before gbrain starts, " +
+  "refusing to run without the operator's firewall. Bun merges that file before foresights starts, " +
   "so a value you exported cannot be told apart from the file's — remove the assignment from the " +
-  "project's .env, or run gbrain from a directory that does not assign it. Your own setting " +
+  "project's .env, or run foresights from a directory that does not assign it. Your own setting " +
   'belongs in your shell environment or in ~/.gbrain/.env (never in a project .env).';
 
 export async function runCliPreflight(): Promise<void> {

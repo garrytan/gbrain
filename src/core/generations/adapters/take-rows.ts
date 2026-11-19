@@ -1,6 +1,6 @@
 /**
  * GBRA-161 PR 2: the take-rows adapter (`take_fence`, one owner key per page). A page's takes fence is the system of
- * record for its takes (fence.ts). The page publication's projection and `gbrain extract takes` delete the takes whose row
+ * record for its takes (fence.ts). The page publication's projection and `foresights extract takes` delete the takes whose row
  * left a fence that was read whole, and overwrite a take whose claim, kind or holder changed at its row number (the
  * `addTakesBatch` upsert, B-19). Both now ask `publishFenceGeneration` first: an absent fence holds (`fence_absent`) and
  * deletes nothing, and every deleted or replaced take's full row (database-only resolution included) is recorded on the

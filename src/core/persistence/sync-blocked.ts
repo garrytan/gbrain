@@ -4,7 +4,7 @@
  * itself; doctor `managed_sync_blocked` and get_brain_health read it. An unfinished cursor waiting on a queued or
  * running request (`sync_incomplete`) is draining and not listed, and neither is a cursor saved after its recorded stop:
  * the failure row stays until the whole run finishes, so a resumed run that is moving again would otherwise still read
- * as blocked. A failure whose cursor is gone is an orphan (`gbrain repair managed-sync-orphans`), not a blocked run.
+ * as blocked. A failure whose cursor is gone is an orphan (`foresights repair managed-sync-orphans`), not a blocked run.
  * #6712 PR 4b (design v3.2 §3.7): a non-company source has a pass row instead; it is blocked while its passes keep
  * stopping (`passHealth`: the newest ended `blocked`, a `not_converged` streak, a `settle_mismatch` streak), with the
  * newest pass's stop reason as `code`, its pass id as `run_id` and `stuck_since` as `blocked_since`. A source listed by

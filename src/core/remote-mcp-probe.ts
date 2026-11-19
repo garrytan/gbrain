@@ -2,7 +2,7 @@
  * Outbound HTTP probes for thin-client mode (multi-topology v1).
  *
  * Three pure functions covering the discovery + auth + smoke surface that
- * `gbrain init --mcp-only` and the thin-client doctor both need. No SDK
+ * `foresights init --mcp-only` and the thin-client doctor both need. No SDK
  * dependency; just `fetch`. Lane B's `src/core/mcp-client.ts` builds on
  * these helpers (or supersedes them with the official SDK Client) but for
  * Lane A's setup-flow smoke test, raw HTTP keeps the scope tight and avoids
@@ -24,13 +24,13 @@ type ProbeFailure<Reason extends string> = {
   kind?: 'timeout' | 'aborted';
   /** Seconds the server asked the caller to wait (Retry-After), when it said. */
   retry_after_s?: number;
-  /** A status-only `gbrain serve --http` answered 503: its `serve_status_only` envelope. */
+  /** A status-only `foresights serve --http` answered 503: its `serve_status_only` envelope. */
   status_only?: Record<string, unknown>;
   message: string;
 };
 
 /**
- * A 503 from a status-only `gbrain serve --http` carries a `serve_status_only`
+ * A 503 from a status-only `foresights serve --http` carries a `serve_status_only`
  * envelope (why, fix, user_message); any other body is not one. Consumes the
  * body only for a 503.
  */
@@ -43,7 +43,7 @@ async function statusOnlyFailure(res: Response, label: string): Promise<ProbeFai
   const retryAfter = parseRetryAfterSeconds(res.headers.get('retry-after'));
   return {
     ok: false, reason: 'http', status: 503, status_only: env, ...(retryAfter !== undefined ? { retry_after_s: retryAfter } : {}),
-    message: `${label} answered 503: the gbrain server is in status-only mode. ${typeof env.why === 'string' ? env.why : ''}`.trim(),
+    message: `${label} answered 503: the foresights server is in status-only mode. ${typeof env.why === 'string' ? env.why : ''}`.trim(),
   };
 }
 
@@ -213,7 +213,7 @@ export async function mintClientCredentialsToken(
  *
  * Note: This is a one-shot probe, not a long-lived session. We don't follow
  * up with `notifications/initialized` because we tear down immediately.
- * Servers that strictly require the full handshake will reject; gbrain's
+ * Servers that strictly require the full handshake will reject; foresights's
  * own `serve --http` accepts the bare initialize request and returns
  * server info, which is exactly what we want for a connectivity check.
  */

@@ -1,9 +1,9 @@
 /**
- * W4 end to end through the real CLI, on a repo-less brain (gbrain init --pglite --no-embedding, no git repo) and a
+ * W4 end to end through the real CLI, on a repo-less brain (foresights init --pglite --no-embedding, no git repo) and a
  * repo brain (a git source added):
  *   - the reported alert: doctor run from a directory holding an agent's own skills folder
- *     (skills/<category>/<name>/SKILL.md, no RESOLVER.md, nothing gbrain installed) used to fail resolver_health and
- *     warn skill_currency (score 75, unhealthy, brain category 100). Now both report "not a gbrain skills folder";
+ *     (skills/<category>/<name>/SKILL.md, no RESOLVER.md, nothing foresights installed) used to fail resolver_health and
+ *     warn skill_currency (score 75, unhealthy, brain category 100). Now both report "not a foresights skills folder";
  *     --skills-dir still grades it, and a gbrain-managed folder found the same way is still graded;
  *   - doctor --alert: exit 0 / 17 / 18, --json alert.level, the consecutive-unknown counter and its reset, a home whose
  *     state file cannot be read or written, the human output, and convergence on a larger synthetic brain.
@@ -34,7 +34,7 @@ async function brain(kind: 'repo-less' | 'repo'): Promise<DoctorHome> {
   return h;
 }
 
-/** An agent's own skills folder in the doctor's cwd: category folders, no resolver file, nothing gbrain wrote. */
+/** An agent's own skills folder in the doctor's cwd: category folders, no resolver file, nothing foresights wrote. */
 function agentSkills(h: DoctorHome): string {
   const dir = join(h.work, 'skills');
   for (const [cat, name] of [['research', 'web-digest'], ['devops', 'deploy-notes']]) {
@@ -55,13 +55,13 @@ async function corruptJsonb(h: DoctorHome, fix = false): Promise<void> {
 
 for (const kind of ['repo-less', 'repo'] as const) {
   describe(`${kind} brain`, () => {
-    test('an agent skills folder found by walking up from the cwd is not graded against gbrain conventions', async () => {
+    test('an agent skills folder found by walking up from the cwd is not graded against foresights conventions', async () => {
       const h = await brain(kind);
       const dir = agentSkills(h);
       const run = await runGbrain(h, ['doctor', '--json']);
       const report = run.json as any;
       for (const name of ['resolver_health', 'skill_currency']) {
-        expect(check(report, name)).toMatchObject({ status: 'ok', severity: 'info', message: `not a gbrain skills folder (${dir}); pass --skills-dir to grade it` });
+        expect(check(report, name)).toMatchObject({ status: 'ok', severity: 'info', message: `not a foresights skills folder (${dir}); pass --skills-dir to grade it` });
       }
       expect(report.checks.filter((c: any) => c.category === 'skill' && c.status !== 'ok').map((c: any) => c.name)).toEqual([]);
       expect(report.category_scores.skill).toBe(100);
@@ -76,7 +76,7 @@ for (const kind of ['repo-less', 'repo'] as const) {
       writeFileSync(join(dir, 'RESOLVER.md'), '# RESOLVER\n\n<!-- gbrain:skillpack:begin -->\n<!-- gbrain:skillpack:end -->\n');
       const managed = (await runGbrain(h, ['doctor', '--json'])).json as any;
       expect(check(managed, 'resolver_health').severity).toBeUndefined();
-      expect(check(managed, 'resolver_health').message).not.toContain('not a gbrain skills folder');
+      expect(check(managed, 'resolver_health').message).not.toContain('not a foresights skills folder');
     }, 180_000);
 
     test('doctor --alert: none (exit 0), act (exit 17), unknown (exit 18) with a consecutive counter that resets', async () => {

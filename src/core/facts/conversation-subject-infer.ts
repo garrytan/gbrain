@@ -1,7 +1,7 @@
 /**
  * #6764: write-time fact subject inference for the conversation extractor's
- * bulk path (`gbrain extract-conversation-facts`, the backfill phase) and for
- * the free conversation relink (`gbrain facts relink --conversation`).
+ * bulk path (`foresights extract-conversation-facts`, the backfill phase) and for
+ * the free conversation relink (`foresights facts relink --conversation`).
  *
  * The extractor sometimes returns a fact with no entity, or one the save-time
  * resolver could not resolve. Such a fact gets the subject `inferFactSubject`
@@ -16,7 +16,7 @@
  * withdrawn claim and visibility (a private page never resolves, nor counts
  * toward uniqueness, for a world fact). The extractor also honours the
  * `facts.entity_inference` kill switch; relink ignores it, as
- * `gbrain facts relink` does. Trusted local callers only.
+ * `foresights facts relink` does. Trusted local callers only.
  */
 import type { BrainEngine } from '../engine.ts';
 import type { FactVisibility } from './visibility.ts';

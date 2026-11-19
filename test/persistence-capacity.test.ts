@@ -10,7 +10,7 @@ import { JOURNAL_CONFIG_KEYS } from '../src/core/persistence/limits.ts';
 import { KNOWN_CONFIG_KEYS } from '../src/core/config.ts';
 import { capacityWarnsAndRefusalNamesTheKey, compactionSkipsUnfinishedReceipts } from './helpers/w5-scenarios.ts';
 
-test('every journal config key is registered for `gbrain config set`', () => {
+test('every journal config key is registered for `foresights config set`', () => {
   expect(JOURNAL_CONFIG_KEYS).toHaveLength(12);
   for (const key of JOURNAL_CONFIG_KEYS) expect(KNOWN_CONFIG_KEYS).toContain(key);
 });
@@ -55,5 +55,5 @@ test('doctor emits one command per brain-wide key with the largest value any pri
   } };
   const check = await checkPersistenceCapacity(engine as never);
   expect(check.status).toBe('warn');
-  expect((check.details as { commands: string[] }).commands).toEqual(['gbrain config set persistence.limits.principal_lifetime_ids 3650009']);
+  expect((check.details as { commands: string[] }).commands).toEqual(['foresights config set persistence.limits.principal_lifetime_ids 3650009']);
 });

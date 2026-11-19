@@ -79,9 +79,9 @@ export function linksFenceRowProblem(row: LinksFenceRow): string | null {
 }
 
 // A cell quoting this fence's own marker would close or reopen it. The fence-shared encoding, applied to links
-// markers (`gbrain:links:begin` -> `gbrain&#58;links:begin`, each further level adds `amp;`), keeps it text.
-const BARE_OR_ENCODED_MARKER_RE = /gbrain(:|&(?:amp;)*#58;)links:(begin|end)/g;
-const ENCODED_MARKER_RE = /gbrain&((?:amp;)*)#58;links:(begin|end)/g;
+// markers (`gbrain:links:begin` -> `foresights&#58;links:begin`, each further level adds `amp;`), keeps it text.
+const BARE_OR_ENCODED_MARKER_RE = /(?:foresights|gbrain)(:|&(?:amp;)*#58;)links:(begin|end)/g;
+const ENCODED_MARKER_RE = /(?:foresights|gbrain)&((?:amp;)*)#58;links:(begin|end)/g;
 const encodeCell = (value: string) => escapeFenceCell(value.replace(BARE_OR_ENCODED_MARKER_RE, (_m, mid: string, edge: string) =>
   mid === ':' ? `gbrain&#58;links:${edge}` : `gbrain&amp;${mid.slice(1)}links:${edge}`));
 const decodeCell = (value: string) => value.replace(ENCODED_MARKER_RE, (_m, amps: string, edge: string) =>

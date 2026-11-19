@@ -1,5 +1,5 @@
 /**
- * #6871: `gbrain migrate --to <engine>` (the legacy copier) must carry an image chunk's
+ * #6871: `foresights migrate --to <engine>` (the legacy copier) must carry an image chunk's
  * `embedding_image` vector. It used to copy the chunk with only the text embedding, so a
  * migrated image page lost its visual vector and needed a paid re-embed to be found by image
  * search again.
@@ -14,7 +14,7 @@ import { saveConfig } from '../src/core/config.ts';
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import { withEnv } from './helpers/with-env.ts';
 
-describe('gbrain migrate carries image vectors (#6871)', () => {
+describe('foresights migrate carries image vectors (#6871)', () => {
   afterEach(() => { _resetCliExitVerdictForTests(); });
 
   test('an image chunk arrives on the target with its embedding_image vector', async () => {

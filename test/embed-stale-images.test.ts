@@ -1,5 +1,5 @@
 /**
- * `gbrain embed --stale --images` rebuilds image pages whose index is
+ * `foresights embed --stale --images` rebuilds image pages whose index is
  * incomplete (no visual vector, or no OCR text while OCR is enabled) from
  * their source files, without `sync --full`. Complete images are not
  * candidates and cost no provider call; a vanished source file is reported.

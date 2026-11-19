@@ -1,17 +1,17 @@
 /**
- * gbrain friction — friction reporter CLI.
+ * foresights friction — friction reporter CLI.
  *
  * Five subcommands (remaining analytical ones — trend, migration-stub — stay v1.1):
- *   gbrain friction log     Append a friction or delight entry
- *   gbrain friction render  Render a run as markdown or JSON
- *   gbrain friction list    List recent runs with counts
- *   gbrain friction summary Side-by-side friction + delight summary
- *   gbrain friction diff    Compare two runs (or agents): unique-to-each + shared-but-changed
+ *   foresights friction log     Append a friction or delight entry
+ *   foresights friction render  Render a run as markdown or JSON
+ *   foresights friction list    List recent runs with counts
+ *   foresights friction summary Side-by-side friction + delight summary
+ *   foresights friction diff    Compare two runs (or agents): unique-to-each + shared-but-changed
  *
  * Subcommands stay thin (≤ ~30 LOC each). Reader/writer/redaction logic lives
  * in src/core/friction.ts; the diff computation lives here (it is CLI-only).
  *
- * The CLI is dispatched from src/cli.ts. See `gbrain friction --help`.
+ * The CLI is dispatched from src/cli.ts. See `foresights friction --help`.
  */
 
 import { existsSync } from 'fs';
@@ -53,7 +53,7 @@ function cmdLog(args: string[]): number {
   const phase = flags.string('--phase');
   const message = flags.string('--message');
   if (!phase || !message) {
-    console.error('usage: gbrain friction log --phase <name> --message <text> [--severity ...] [--hint ...] [--kind ...] [--run-id ...]');
+    console.error('usage: foresights friction log --phase <name> --message <text> [--severity ...] [--hint ...] [--kind ...] [--run-id ...]');
     return 2;
   }
   const kind = (flags.string('--kind') ?? 'friction') as FrictionKind;
@@ -303,7 +303,7 @@ export function computeFrictionDiff(baseRunId: string, compareRunId: string): Fr
     warnings.push(`scenario differs: ${baseRunId} ran ${baseBanner.scenario ?? '(unknown)'}, ${compareRunId} ran ${compareBanner.scenario ?? '(unknown)'} — entries may not be comparable`);
   }
   if ((baseBanner.gbrain_version ?? '') !== (compareBanner.gbrain_version ?? '')) {
-    warnings.push(`gbrain version differs: ${baseRunId} ran ${baseBanner.gbrain_version ?? '(unknown)'}, ${compareRunId} ran ${compareBanner.gbrain_version ?? '(unknown)'}`);
+    warnings.push(`foresights version differs: ${baseRunId} ran ${baseBanner.gbrain_version ?? '(unknown)'}, ${compareRunId} ran ${compareBanner.gbrain_version ?? '(unknown)'}`);
   }
 
   const baseIds = collectIdentities(baseRead.entries);
@@ -441,7 +441,7 @@ function cmdDiff(args: string[]): number {
   const baseSpec = flags.string('--base');
   const compareSpec = flags.string('--compare');
   if (!baseSpec || !compareSpec) {
-    console.error('usage: gbrain friction diff --base <run-or-agent> --compare <run-or-agent> [--json]');
+    console.error('usage: foresights friction diff --base <run-or-agent> --compare <run-or-agent> [--json]');
     return 2;
   }
   const baseRun = resolveRunSpec(baseSpec);
@@ -482,7 +482,7 @@ function parseFlags(args: string[]) {
 }
 
 function printHelp() {
-  console.log(`gbrain friction — friction reporter
+  console.log(`foresights friction — friction reporter
 
 Subcommands:
   log     Append a friction or delight entry to the active run
@@ -492,11 +492,11 @@ Subcommands:
   diff    Compare two runs: unique-to-each + shared-but-changed entries
 
 Examples:
-  gbrain friction log --severity confused --phase install --message "init didn't say which engine"
-  gbrain friction render --run-id claw-test-20260428-... --transcripts
-  gbrain friction list --json
-  gbrain friction summary
-  gbrain friction diff --base openclaw --compare hermes --json
+  foresights friction log --severity confused --phase install --message "init didn't say which engine"
+  foresights friction render --run-id claw-test-20260428-... --transcripts
+  foresights friction list --json
+  foresights friction summary
+  foresights friction diff --base openclaw --compare hermes --json
 
 Run-id resolution: --run-id > $GBRAIN_FRICTION_RUN_ID > 'standalone'.
 Diff run resolution: an exact run-id wins; otherwise the value is treated as

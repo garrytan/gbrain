@@ -197,7 +197,7 @@ test('a delegated sync past its progress-aware deadline keeps going while the ow
   expect(JSON.parse(page.out).compiled_truth).toContain('Bulk delegated observation 299');
 },180000);
 
-// gbrain sources refresh needs the writer lock the resident owner holds; it runs inside the owner over the persistence socket.
+// foresights sources refresh needs the writer lock the resident owner holds; it runs inside the owner over the persistence socket.
 test('sources refresh delegates to the resident owner, fast-forwards the checkout and syncs the new page',async()=>{
   const remote=join(home,'origin.git'),pusher=join(home,'pusher');
   const g=(cwd:string,...args:string[])=>execFileSync('git',['-C',cwd,'-c','user.name=Example','-c','user.email=example@example.invalid',...args],{stdio:'pipe'}).toString().trim();

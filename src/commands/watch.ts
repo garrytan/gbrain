@@ -1,5 +1,5 @@
 /**
- * v0.43 (#2095) — `gbrain watch`: the push transport for push-based context.
+ * v0.43 (#2095) — `foresights watch`: the push transport for push-based context.
  *
  * Reads conversation turns from stdin AS THEY ARRIVE (plain text = a user
  * turn; `user:` / `assistant:` prefixed lines set the role), maintains a
@@ -7,7 +7,7 @@
  * stdout after every turn. The consumer pipes its transcript in and reads
  * volunteered pointers out — no per-entity CLI round-trips.
  *
- * Lifecycle: BLOCKS in the stdin iteration (like `gbrain jobs work`), so an
+ * Lifecycle: BLOCKS in the stdin iteration (like `foresights jobs work`), so an
  * interactive TTY session stays alive until Ctrl-C / Ctrl-D and piped input
  * exits at EOF. Either way the handler RETURNS, the CLI_ONLY finally runs
  * finishCliTeardown (volunteer events bank before teardown), and the
@@ -23,8 +23,8 @@
  * pages out of the cap — red-team finding).
  *
  * PGLite note: watch holds the single-writer engine for the whole session,
- * so on the default engine it cannot run concurrently with `gbrain serve`
- * (or any other gbrain process) against the same brain — run it against
+ * so on the default engine it cannot run concurrently with `foresights serve`
+ * (or any other foresights process) against the same brain — run it against
  * Postgres, or stop serve first. Routing watch through the serve resolve-IPC
  * socket (like the ambient reflex) is a filed follow-up.
  */
@@ -43,7 +43,7 @@ import { DEFAULT_WINDOW_TURNS, windowTurnCount, lexicalArmsEnabled } from '../co
 import { loadConfig } from '../core/config.ts';
 import { logVolunteerEventsFireAndForget, volunteerEventRowsFrom } from '../core/context/volunteer-events.ts';
 
-export const WATCH_HELP = `gbrain watch — push-based context: volunteer brain pages per conversation turn (#2095)
+export const WATCH_HELP = `foresights watch — push-based context: volunteer brain pages per conversation turn (#2095)
 
 Reads turns from stdin (one per line; 'user:' / 'assistant:' prefixes set the
 role, unprefixed lines are user turns) and prints confidence-gated page
@@ -51,11 +51,11 @@ pointers with rationales after each turn. A slug is volunteered at most once
 per session. Piped input exits at EOF; interactive sessions exit on Ctrl-C.
 
 Usage:
-  some-transcript-feed | gbrain watch [--json]
-  gbrain watch                          # interactive: type turns, Ctrl-C to end
+  some-transcript-feed | foresights watch [--json]
+  foresights watch                          # interactive: type turns, Ctrl-C to end
 
 PGLite brains: watch holds the single-writer engine for the whole session —
-it cannot run alongside \`gbrain serve\` (or other gbrain processes) against
+it cannot run alongside \`foresights serve\` (or other foresights processes) against
 the same brain. Use a Postgres brain for concurrent access.
 
 Flags:

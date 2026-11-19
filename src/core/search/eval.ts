@@ -290,11 +290,11 @@ function mean(values: number[]): number {
  * throws with the entry index — commands/eval.ts catches and prints a
  * clean usage error before the first provider call.
  *
- * Friendly aliases: the `gbrain eval gate` per-entry keys
+ * Friendly aliases: the `foresights eval gate` per-entry keys
  * (`relevant_slugs`, `first_relevant_slug` — see bench/qrels-file.ts)
  * map onto `relevant`, so the same file works in both commands. The gate's
  * FEDERATED shape (`relevant: [{source_id, slug}]`) is rejected BY NAME:
- * bare `gbrain eval` compares unqualified slugs, so accepting the object
+ * bare `foresights eval` compares unqualified slugs, so accepting the object
  * form would silently score all-zero (the issue's quieter half).
  */
 function normalizeQrelEntry(e: unknown, i: number): EvalQrel {
@@ -326,8 +326,8 @@ function normalizeQrelEntry(e: unknown, i: number): EvalQrel {
     if (s && typeof s === 'object' && 'slug' in (s as Record<string, unknown>)) {
       throw new Error(
         `qrels entry ${i} ("${o.query}"): "relevant" contains {source_id, slug} objects — that is the ` +
-          '`gbrain eval gate` federated shape. Bare `gbrain eval` compares unqualified slugs; ' +
-          'use `"relevant": ["<slug>", ...]` here, or run `gbrain eval gate --qrels` for source-qualified gold.',
+          '`foresights eval gate` federated shape. Bare `foresights eval` compares unqualified slugs; ' +
+          'use `"relevant": ["<slug>", ...]` here, or run `foresights eval gate --qrels` for source-qualified gold.',
       );
     }
     throw new Error(`qrels entry ${i} ("${o.query}"): "relevant" must contain only slug strings.`);

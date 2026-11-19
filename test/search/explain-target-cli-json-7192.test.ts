@@ -1,5 +1,5 @@
 /**
- * #7192: \`gbrain search|query --explain-target <source>:<slug> --json\` puts the
+ * #7192: \`foresights search|query --explain-target <source>:<slug> --json\` puts the
  * diagnosis and its cause in stdout JSON (it used to ride only stderr), with the
  * fix rendered as a runnable command. Without --explain-target the output stays
  * a bare array.

@@ -1,5 +1,5 @@
 /**
- * `gbrain sources set-sync <id> <on|off>` (GBRA-108): sets config.syncEnabled preview-first, with --expect binding the
+ * `foresights sources set-sync <id> <on|off>` (GBRA-108): sets config.syncEnabled preview-first, with --expect binding the
  * apply to the previewed state, by a single-key merge; automatic sync reads it through sync-policy.ts.
  */
 import { afterAll, beforeAll, expect, spyOn, test } from 'bun:test';

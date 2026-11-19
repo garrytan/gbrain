@@ -25,7 +25,7 @@
  *   is left in sync state once it is released; downgrade stays quiescent (stop serve, cron and jobs first), since an
  *   older CLI run by hand ignores both.
  *
- * A caller that may follow (`gbrain sync`, a CLI run delegated to a serve) waits for a live holder within its own
+ * A caller that may follow (`foresights sync`, a CLI run delegated to a serve) waits for a live holder within its own
  * budget, counting the holder's commits and cursor saves as this process's forward progress, and takes the lease when
  * the holder releases it. Out of budget, or when the lease moved away mid-pass, the run returns `resumable` with
  * `sync_drain_lease_held`; a holder that has made no progress for `HOLDER_STALL_MS` stops it `blocked` with
@@ -63,7 +63,7 @@ export interface DrainHolderRef { kind: DrainHolderKind; id?: string | null }
 /** The holder's commits since it took the lease, and its last commit or cursor save. */
 export interface DrainHolderProgress { committed: number; last_committed_at: string | null; last_progress_at: string | null }
 export interface DrainHolder { kind: DrainHolderKind | 'unknown'; id: string | null; host: string | null; pid: number | null; started_at: string | null; last_heartbeat_at: string | null;
-  /** The holder's gbrain version (null for a holder that predates it). */
+  /** The holder's foresights version (null for a holder that predates it). */
   version: string | null; progress: DrainHolderProgress | null }
 /** `safe_to_loop` and `retry_after_ms` are the `next` fields of the drain's other owner stops (`owner_wedged_here`). */
 export interface DrainLeaseHeld { code: typeof SYNC_DRAIN_LEASE_HELD; holder: DrainHolder | null; retry_after_ms: number; safe_to_loop: true; lost?: true; fix: Action }
@@ -192,7 +192,7 @@ export function leaseHeldResult(sourceId: string, holder: DrainHolder | null, op
   const progress = shown?.progress ? `, ${shown.progress.committed} page(s) committed since it took the lease${shown.progress.last_committed_at ? ` (last at ${shown.progress.last_committed_at})` : ''}` : '';
   const why = `${opts.lost ? `This run lost the drain lease of source ${sourceId} to ${who}` : `Source ${sourceId} is being drained by ${who}`}${shown?.last_heartbeat_at ? `, last heartbeat ${shown.last_heartbeat_at}` : ''}${progress}; `
     + `one drainer runs per source and it resumes the same cursor, so nothing is lost. Rerun after ${Math.round(LEASE_RETRY_AFTER_MS / 1000)}s: it follows the holder and takes the lease when the holder finishes. `
-    + `If the holder is gone, gbrain sync --source ${sourceId} --break-lock releases its lease (never a live holder's); gbrain sources writer status --source ${sourceId} --json shows the writer, read-only.`;
+    + `If the holder is gone, foresights sync --source ${sourceId} --break-lock releases its lease (never a live holder's); foresights sources writer status --source ${sourceId} --json shows the writer, read-only.`;
   const fix: Action = { argv, consent: [], actor: 'provider', requires_exclusive: false, why,
     verify: { argv: ['gbrain', 'sync', 'status', '--source', sourceId, '--json'] } };
   return { status: 'partial', reason: 'drain_lease_held', fromCommit: null, toCommit: '', added: 0, modified: 0, deleted: 0, renamed: 0, chunksCreated: 0, embedded: 0, pagesAffected: [],

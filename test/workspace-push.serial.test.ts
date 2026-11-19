@@ -324,7 +324,7 @@ describe('secret-scan refusal guidance (DX-3/ENG-11)', () => {
     for (const f of r.findings!) {
       expect(f.allowlistPath).toBe(join(repoRoot, SCAN_ALLOW_FILENAME));
       expect(f.allowCommand).toContain(f.fingerprint);
-      expect(f.retryCommand).toBe(`gbrain sources push --path ${work} --branch main --allow-unverified-remote`);
+      expect(f.retryCommand).toBe(`foresights sources push --path ${work} --branch main --allow-unverified-remote`);
       expect(f.docs).toBe(SECRET_SCAN_REFUSAL_DOCS);
     }
     expect(JSON.stringify(r).includes(OPENAI)).toBe(false);

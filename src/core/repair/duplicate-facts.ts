@@ -1,5 +1,5 @@
 /**
- * `gbrain repair duplicate-facts` (#7043): retire exact copies of one active
+ * `foresights repair duplicate-facts` (#7043): retire exact copies of one active
  * fact, keeping a fenced copy when there is one, else the oldest.
  *
  * A group is the active facts of one source and visibility (and one speaker)
@@ -114,7 +114,7 @@ interface ApprovedGroup extends DuplicateGroup { selection: { source_ids: string
 interface GroupItem extends RepairItem { group: DuplicateGroup; hash: string; last: boolean }
 
 function previewCommand(scope: RepairScope, includeCrossEntity: boolean): string {
-  return `gbrain repair duplicate-facts${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}${includeCrossEntity ? ' --include-cross-entity' : ''}`;
+  return `foresights repair duplicate-facts${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}${includeCrossEntity ? ' --include-cross-entity' : ''}`;
 }
 
 const sourcesOf = (engine: BrainEngine, scope: RepairScope) => engine.executeRaw<{ id: string; incarnation: string }>(
@@ -164,7 +164,7 @@ export const duplicateFactsRepair: RepairHandler = {
           fence_kept_elsewhere: groups.reduce((n, g) => n + g.held.length, 0), segmented_page: groups.reduce((n, g) => n + g.segmented.length, 0) } };
     }
     if (!opts.expect) {
-      throw new OperationError('invalid_params', 'gbrain repair duplicate-facts --apply retires only the set a preview printed.',
+      throw new OperationError('invalid_params', 'foresights repair duplicate-facts --apply retires only the set a preview printed.',
         `Preview first: ${command} — show the user the listing, then run the apply command it prints: ${command} --apply --expect <preview-hash> --yes`,
         'docs/guides/repair.md#explicit-only-repair-kinds');
     }

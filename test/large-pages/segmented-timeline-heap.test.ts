@@ -3,7 +3,7 @@
  * against the page's stored timeline rows as they stream, instead of keeping every entry the body yields.
  *
  * 1. Protects: on an 18 MiB page of dated bullets whose rows are all stored, the prune pass (timeline retraction) and
- *    the managed publication's plan (gbrain extract timeline --source db on a managed brain, the sweep's publication)
+ *    the managed publication's plan (foresights extract timeline --source db on a managed brain, the sweep's publication)
  *    keep, while they read the body, only what differs from the stored rows: the heap after a full collection, sampled
  *    before each segment read, stays under the page's bytes: one key digest per stored row (TimelineKeySet), not every
  *    parsed entry, key and canonical entry (2.4-7.9 MiB held at 18 MiB, against 22-51 MiB before).

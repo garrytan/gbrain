@@ -1,8 +1,8 @@
 /**
- * Degraded-mode engine — the lazy-reconnect stand-in `gbrain serve` uses
+ * Degraded-mode engine — the lazy-reconnect stand-in `foresights serve` uses
  * when Postgres is unreachable AT STARTUP (db-availability loop, 4c).
  *
- * Before this, a dead DB killed serve inside connectEngine and gbrain
+ * Before this, a dead DB killed serve inside connectEngine and foresights
  * simply disappeared from the harness. Now serve boots with THIS object;
  * every tool call attempts ONE reconnect (single-flight, min-interval-gated
  * so a dying pooler never sees a connect storm), and until one succeeds the
@@ -19,7 +19,7 @@
  * attempt finishes in the background.
  *
  * Scope: POSTGRES ONLY. A PGLite startup failure keeps die-on-startup —
- * that lane's repair is `gbrain pglite-repair`, and the single-writer
+ * that lane's repair is `foresights pglite-repair`, and the single-writer
  * data-dir lock makes a lazy reconnect proxy wrong there.
  *
  * Shape: a concrete OBJECT whose method set is enumerated from
@@ -75,7 +75,7 @@ export interface DegradedEngineOptions {
 export class DegradedRecoveredRetryError extends Error {
   readonly code = 'GBRAIN_RECOVERED_RETRY';
   constructor() {
-    super('gbrain database access RECOVERED — retry this call (full service is restored; this one call was scoped before recovery).');
+    super('foresights database access RECOVERED — retry this call (full service is restored; this one call was scoped before recovery).');
     this.name = 'DegradedRecoveredRetryError';
   }
 }

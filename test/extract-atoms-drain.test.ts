@@ -169,7 +169,7 @@ describe('runExtractAtomsDrain (issue #1678)', () => {
 
 // #1685 GAP D (CODEX #1) — the auto-drain Minion job burns Haiku, so it must be
 // PROTECTED: no MCP/OAuth-scoped caller can submit it; only trusted local
-// callers (autopilot, an explicit `gbrain jobs submit` from the CLI) can.
+// callers (autopilot, an explicit `foresights jobs submit` from the CLI) can.
 describe('extract-atoms-drain protected-name membership', () => {
   it('extract-atoms-drain is PROTECTED', () => {
     expect(isProtectedJobName('extract-atoms-drain')).toBe(true);

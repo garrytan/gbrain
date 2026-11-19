@@ -2,7 +2,7 @@ import { assertManagedFilesystemWrite, isManagedFilesystemPath, managedFilesyste
 import { OWNERSHIP_MARKER_GLOBS } from './persistence/root-metadata.ts';
 import { OperationError } from './ops/contract.ts';
 /**
- * workspace-push.ts — the `gbrain sources push` core: scan-gated
+ * workspace-push.ts — the `foresights sources push` core: scan-gated
  * add → commit → pull → push for an agent-workspace repo
  * (agent-bootstrap plan: D6, G6, G8, G14/A5, B4, CX2-3, CX2-6, CX2-7, S3#2).
  *
@@ -121,7 +121,7 @@ export interface WorkspacePushResult {
 
 /** Troubleshooting section for push refusals (DX-8 in docs/guides/write-refusals.md). */
 export const SECRET_SCAN_REFUSAL_DOCS =
-  'https://github.com/garrytan/gbrain/blob/master/docs/guides/write-refusals.md#secret-scan-refusals-and-redaction';
+  'https://github.com/aimonk2025/gbrain/blob/master/docs/guides/write-refusals.md#secret-scan-refusals-and-redaction';
 
 /**
  * An allowlist line that suppressed a private key's header-only value before
@@ -141,7 +141,7 @@ export interface StaleAllowlistEntry {
  */
 export interface PushSecretFinding extends SecretFinding {
   file: string;
-  /** The gbrain version that added or changed the rule, when the scanner reports one. */
+  /** The foresights version that added or changed the rule, when the scanner reports one. */
   since?: string;
   /** Absolute path of the `.gbrain-scan-allow` file the gate reads. */
   allowlistPath: string;
@@ -532,7 +532,7 @@ export async function verifyRemotePrivacy(root: string): Promise<RemotePrivacyVe
   return { verdict: 'unverifiable', detail: v.detail };
 }
 
-/** File-plane escape hatch [D18]: `gbrain config set push.allow_unverified_remote true`.
+/** File-plane escape hatch [D18]: `foresights config set push.allow_unverified_remote true`.
  * Read tolerantly from ~/.gbrain/config.json — detached hook children never see
  * a shell export, and the DB plane is unreadable while a serve holds the
  * single-writer lock, so the file plane is the only channel that always works. */
@@ -554,7 +554,7 @@ export function pushStatusPath(): string {
   return join(ensureGbrainHome(), 'bootstrap', 'push-status.json');
 }
 
-/** Stable short key for per-root state files [D3/D13]: one gbrain home serves
+/** Stable short key for per-root state files [D3/D13]: one foresights home serves
  * many bootstrap workspaces, so every push/debounce/announce state file is
  * keyed by workspace root — a single shared file is last-writer-wins, which
  * either masks one workspace's failure or defeats another's debounce. */
@@ -715,7 +715,7 @@ const PUSH_REASON_MAX_CHARS = 140;
 export function blockedSecretsReason(findings: readonly PushSecretFinding[]): string {
   const first = findings[0]!;
   const head = `${findings.length} secret finding(s), first `;
-  const tail = ` [${first.pattern}]; nothing committed. Run gbrain sources push for fix steps`;
+  const tail = ` [${first.pattern}]; nothing committed. Run foresights sources push for fix steps`;
   const budget = PUSH_REASON_MAX_CHARS - head.length - tail.length;
   const loc = `${first.file}:${first.line}`;
   const shown = loc.length <= budget ? loc : `...${loc.slice(-Math.max(1, budget - 3))}`;
@@ -739,11 +739,11 @@ function staleHeaderOnlyEntry(legacyFingerprint: string | undefined, allowlist: 
   });
 }
 
-/** The exact `gbrain sources push` invocation that re-runs this push from any directory. */
+/** The exact `foresights sources push` invocation that re-runs this push from any directory. */
 function pushRetryCommand(opts: WorkspacePushOpts): string {
   return [
     // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- display only: the printed retry command names the caller's own workspace dir; nothing is read or written here.
-    'gbrain sources push --path', shellQuote(resolve(opts.dir)),
+    'foresights sources push --path', shellQuote(resolve(opts.dir)),
     ...(opts.branch ? ['--branch', shellQuote(opts.branch)] : []),
     ...(opts.allowUnverifiedRemote ? ['--allow-unverified-remote'] : []),
   ].join(' ');
@@ -773,12 +773,12 @@ export function buildPushFindings(input: {
 }
 
 /**
- * Human rendering of a `blocked_secrets` result for `gbrain sources push`.
+ * Human rendering of a `blocked_secrets` result for `foresights sources push`.
  * Every line comes from the structured findings, so the CLI text and the
  * `--json` output carry the same commands.
  */
 export function formatBlockedSecrets(findings: readonly PushSecretFinding[]): string[] {
-  const version = (since: string) => `gbrain v${since.replace(/^v/, '')}`;
+  const version = (since: string) => `foresights v${since.replace(/^v/, '')}`;
   const lines = ['PUSH BLOCKED — secret scan findings (nothing committed):'];
   for (const f of findings) {
     lines.push(`  ${f.file}:${f.line} [${f.pattern}] ${f.redactedPreview}`);
@@ -881,11 +881,11 @@ export function managedPushRefusal(dir: string, root: string | null | undefined,
   const source = managed?.sourceId;
   const name = source ?? '<source>';
   const error = new OperationError('writer_coordinator_required',
-    `${managed?.root ?? root ?? dir} is the managed canonical worktree${source ? ` of source ${source}` : ''}; gbrain sources push is not its Git writer.`,
-    `Page writes there are committed and pushed by the persistence owner's Git effect, not by sources push. Check it with gbrain sources writer status${source ? ` ${source}` : ''} --json `
-    + `(git_durability, parked effects). If git_durability is off or unknown, enable it with gbrain sources writer git-durability ${name} --enable --dry-run, then the apply command it prints; `
-    + `after a push credential change, gbrain sources writer git-durability ${name} --pat-file <path> re-wires it and retries the parked pushes. `
-    + 'Files that are not gbrain pages (MEMORY.md, daily notes) are not published by the owner: review the diff and push them with plain git; the sources push secret scan does not run then.');
+    `${managed?.root ?? root ?? dir} is the managed canonical worktree${source ? ` of source ${source}` : ''}; foresights sources push is not its Git writer.`,
+    `Page writes there are committed and pushed by the persistence owner's Git effect, not by sources push. Check it with foresights sources writer status${source ? ` ${source}` : ''} --json `
+    + `(git_durability, parked effects). If git_durability is off or unknown, enable it with foresights sources writer git-durability ${name} --enable --dry-run, then the apply command it prints; `
+    + `after a push credential change, foresights sources writer git-durability ${name} --pat-file <path> re-wires it and retries the parked pushes. `
+    + 'Files that are not foresights pages (MEMORY.md, daily notes) are not published by the owner: review the diff and push them with plain git; the sources push secret scan does not run then.');
   error.detail = cause.detail;
   return error;
 }
@@ -1175,7 +1175,7 @@ export async function workspacePush(opts: WorkspacePushOpts): Promise<WorkspaceP
           const reason =
             `cannot verify origin visibility (${privacy.detail}) — refusing to push. ` +
             `Pass --allow-unverified-remote (or set GBRAIN_ALLOW_UNVERIFIED_REMOTE=1, or ` +
-            '`gbrain config set push.allow_unverified_remote true`) for self-hosted git you trust.';
+            '`foresights config set push.allow_unverified_remote true`) for self-hosted git you trust.';
           log(`PUSH REFUSED: ${reason}`);
           return finish({
             ok: false, status: 'refused_visibility', repoRoot: root, branch, committed, reason,

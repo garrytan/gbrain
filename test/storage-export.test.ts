@@ -137,7 +137,7 @@ describe('export --restore-only resolution chain (D5)', () => {
     await engine.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = 'default'`, [tmp]);
     await tryRunExport(['--dir', outDir, '--restore-only']);
     expect(exitCode).toBe(1);
-    expect(stderr.join('\n')).toMatch(/storage tiering config|gbrain\.yml/);
+    expect(stderr.join('\n')).toMatch(/storage tiering config|(?:foresights|gbrain)\.yml/);
   });
 
   test('non-restore export does NOT require --repo (D26)', async () => {

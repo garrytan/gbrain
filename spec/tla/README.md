@@ -1,6 +1,6 @@
 # TLA+ specs
 
-TLA+ models of gbrain's concurrency protocols, checked exhaustively at small bounds by TLC, the TLA+ model checker. Each
+TLA+ models of foresights's concurrency protocols, checked exhaustively at small bounds by TLC, the TLA+ model checker. Each
 guard a model relies on is a mutant: removing it from the model must break a named property, and removing it from the
 code must fail a named test. The crash robot (`scripts/persistence/`) samples real schedules; these models cover every
 interleaving of the modelled actions inside their bounds. The approach follows Parcha's agentrun `spec/receipts`
@@ -175,7 +175,7 @@ config gets in CI, so `tlc.sh` runs it only when named; it passed on master ecc7
 
 Every config kills the refreshing process once (`MaxCrashes = 1`), at any step, after which `recoverOne` resumes the
 refresh row it left. A refresh that finds HEAD moved at the merge aborts and the tick retries, as `fenceAndMerge` does,
-unless every commit in old_head..HEAD is gbrain's own: then HEAD becomes old_head and the merge goes on (#8828). So `recovery_required` is reached only through recovery; a refused merge aborts too (GST-1674). `RefreshBarrier.cfg` also lets
+unless every commit in old_head..HEAD is foresights's own: then HEAD becomes old_head and the merge goes on (#8828). So `recovery_required` is reached only through recovery; a refused merge aborts too (GST-1674). `RefreshBarrier.cfg` also lets
 someone reset the checkout to old_head after the merge (`MayReset`).
 
 `test/spec-refresh-barrier.test.ts` keeps the default config on #8682 alone, every safety config on every invariant,
@@ -216,7 +216,7 @@ every config killing the refresh at least once, and the workflow's path filter c
 | `ExpRefBegin`, `ExpRefCommit` | `expireDeferredWrites`: the protocol, the refresh row re-read `released_at IS NULL FOR NO KEY UPDATE`, `completeWrite` |
 | `ExpImpBegin`, `ExpImpRecheck`, `ExpImpCommit` | #8705's import expiry in `expireDeferredWrites` |
 | `SyncBegin` … `SyncStamp` | a managed sync pass, whose rows go through the claim like writes: no write passes the queued row importing its page or a running sync row, and a sync row waits behind earlier writes and is never claimed while a write runs; the page row, then its checkpoint row's `UPDATE sources SET last_commit` (sync-prepare.ts) |
-| `RefMerge` | the HEAD check under the commit lock in `fenceAndMerge`: HEAD at old_head goes on; #8828 `replanOnOwnCommits` takes a HEAD moved only by gbrain's ledgered commits as old_head (`OwnSince`, the code's `ownCommits`); any other move aborts |
+| `RefMerge` | the HEAD check under the commit lock in `fenceAndMerge`: HEAD at old_head goes on; #8828 `replanOnOwnCommits` takes a HEAD moved only by foresights's ledgered commits as old_head (`OwnSince`, the code's `ownCommits`); any other move aborts |
 | `OwedSyncBegin` | GST-1853 `syncAfterUnfinishedRefresh` (worktree-refresh.ts): while the worktree's newest refresh is aborted and a member's `last_commit` is not HEAD, a refresh run ends by running that member's managed `--no-pull` sync |
 | `Foreign`, `LocalEdit`, `Age`, `Revoke`, `Restore` | the environment: another agent's plain-git commit, an uncommitted edit, the wait limit passing, a revoked token, `quarantineSharedSkillRestore` (PGLite-only, one transaction, no worker) |
 
@@ -243,11 +243,11 @@ every config killing the refresh at least once, and the workflow's path filter c
 | `hold-beside-held-off` | guard | `CommitsInAdmissionOrder` (Import) | compareFileTarget's held-first read; the later write that must not pass a held one (import-write-barrier.test.ts) |
 | `import-expiry-locks-source-first` | guard | `NoDeadlock` (Import) | the import expiry's lock order; a Postgres expiry overlapping a fence (import-write-barrier.test.ts) |
 | `import-expiry-skips-source-lock` | guard | `ExpiryOnlyWhileWaiting` (Import) | the import expiry's `FOR SHARE OF s`; a Postgres import landing while the expiry waits (import-write-barrier.test.ts) |
-| `resume-marks-unmerged-recovery` | guard | `RecoveryOnlyByPolicy` | `movedBeforeMerge` (the finding below): the code edit aborts only a HEAD moved by gbrain's own commits; the refresh killed at fenced after a foreign commit, aborted by the owner scan |
+| `resume-marks-unmerged-recovery` | guard | `RecoveryOnlyByPolicy` | `movedBeforeMerge` (the finding below): the code edit aborts only a HEAD moved by foresights's own commits; the refresh killed at fenced after a foreign commit, aborted by the owner scan |
 | `resume-marks-refused-merge-recovery` | guard | `RecoveryOnlyByPolicy` | `refusedBeforeAbort` (GST-1674): a refresh killed after git refused its fast-forward, before the abort, is marked `recovery_required`; the refresh SIGKILLed right after the refused merge (persistence-worktree-refresh-restart.test.ts), aborted by the owner scan |
 | `resume-needs-exact-target` | guard | `RecoveryOnlyByPolicy` | `recoverOne`'s bookkeeping branch: with HEAD only exactly at the target, a commit between the merge and bookkeeping strands the row; the refresh killed after its merge |
 | `abort-skips-owed-sync` | guard | `DeferredLeaves` (AbortLiveness) | `syncAfterUnfinishedRefresh`: no refresh run syncs the members an aborted refresh left behind HEAD; the three GST-1853 tests (aborted then diverged, killed at fenced then `--resume`, owner-scan abort then a diverged tick) |
-| `replan-over-foreign-commit` | guard | `ReplanOnlyOwnCommits` | `replanOnOwnCommits`'s ledger check (`ownCommits`): the refresh takes a HEAD with another agent's commit in it as its start; the #8828 test with one foreign commit among gbrain's own published commits |
+| `replan-over-foreign-commit` | guard | `ReplanOnlyOwnCommits` | `replanOnOwnCommits`'s ledger check (`ownCommits`): the refresh takes a HEAD with another agent's commit in it as its start; the #8828 test with one foreign commit among foresights's own published commits |
 
 #8708's local-edit adoption has no guard mutant of its own: `RefreshBarrierAdopt.cfg` checks it against every safety property.
 
@@ -308,6 +308,6 @@ refresh aborted runs the members' managed `--no-pull` sync on its way out (`Owed
 ### Not modelled
 
 The removed deferred-write cap (`persistence.refresh_barrier_max_deferred`, no longer read since GST-1582), consumers without the capability, repo-less
-sources, `gbrain upgrade --check-downgrade`, edit_page and forget replays, and source lifecycle changes, each covered
+sources, `foresights upgrade --check-downgrade`, edit_page and forget replays, and source lifecycle changes, each covered
 by test/refresh-write-barrier.test.ts; more than one worktree, page or refresh at a time; older binaries' claims
 (the v292 guard trigger, pinned by its test); effects other than page writes; side effects outside the database.

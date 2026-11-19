@@ -89,13 +89,13 @@ describe('computePgliteDataDirCheck — verdict → Check mapping', () => {
     expect(check.status).toBe('fail');
     expect(check.message).toContain('pglite-repair --dry-run');
     expect(check.message).toContain('#223');
-    expect(check.message).toContain('gbrain pglite-repair');
+    expect(check.message).toContain('foresights pglite-repair');
   });
 
-  test('looks-healthy (but connect failed) → fail, points at gbrain pglite-repair', () => {
+  test('looks-healthy (but connect failed) → fail, points at foresights pglite-repair', () => {
     const check = computePgliteDataDirCheck(DIR, makeDiagnosis({ verdict: 'looks-healthy' }));
     expect(check.status).toBe('fail');
-    expect(check.message).toContain('gbrain pglite-repair');
+    expect(check.message).toContain('foresights pglite-repair');
   });
 
   test('unsupported-layout → fail', () => {
@@ -218,7 +218,7 @@ describe('inspectPgliteDataDir — synthetic on-disk layouts', () => {
         pid: process.pid, // this test process — provably alive
         acquired_at: Date.now(),
         refreshed_at: Date.now(),
-        command: 'gbrain embed',
+        command: 'foresights embed',
         subcommand: 'embed',
       }),
     );

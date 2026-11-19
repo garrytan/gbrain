@@ -6,7 +6,7 @@
  * purge phase and the `purge` job) keep an expired sync tombstone that no live page of its source duplicates, report it
  * `held` (blocked `sync_delete_unreviewed`, phase warn), and fall back to the uncompacted committed receipt when the
  * record is missing (a tombstone made before records existed); a sync tombstone with a live twin and a person's delete are
- * still purged; the consented `gbrain pages purge-deleted` names the count in its preview and consent and purges them; the
+ * still purged; the consented `foresights pages purge-deleted` names the count in its preview and consent and purges them; the
  * cycle cutoff follows `purge.retention_hours`.
  *
  * PGLite always; Postgres with DATABASE_URL (test/postgres-unit-arms.txt).
@@ -155,7 +155,7 @@ for (const backend of testBackends()) {
     // Contract for every soft delete that promises a 72-hour restore (an automatic repair's 'restore_72h' undo, such as
     // an origin-twin merge's losing twin, which has a live twin and so is not held as an unreviewed sync tombstone): no
     // retention setting lets the automatic purge take it inside 72 hours. A stored value below 72 is ignored (the default
-    // applies) and `gbrain config set` refuses it.
+    // applies) and `foresights config set` refuses it.
     test('no purge.retention_hours value purges a soft-deleted page inside 72 hours', () => managedBrain(async ({ engine, ctx, root }) => {
       await deleteBoth(engine, ctx, root);
       await age(engine, 71);

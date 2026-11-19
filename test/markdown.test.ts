@@ -93,7 +93,7 @@ Content
 
   // v0.20: BrainBench / native inbox-chat-calendar Page types. These 5 directory
   // heuristics exercise PageType 'email | slack | calendar-event | note | meeting'
-  // which were added for amara-life-v1 ingest but are useful for any gbrain user
+  // which were added for amara-life-v1 ingest but are useful for any foresights user
   // ingesting an inbox dump, Slack export, iCal, meeting transcript, or daily notes.
   test.each([
     ['emails/em-0001.md', 'email'],
@@ -146,7 +146,7 @@ describe('splitBody', () => {
   // merely STARTS with "Timeline"/"History" ("## History & Reach",
   // "## Timeline of Events"). That silently moved the rest of an ordinary
   // article into the timeline half. Rule 3 is a back-compat shim for pages
-  // gbrain itself wrote, so it takes the exact heading only.
+  // foresights itself wrote, so it takes the exact heading only.
   test('does NOT split at --- when the heading only STARTS with History', () => {
     const body = 'Article content\n\n---\n\n## History & Reach\n\n- item';
     const { compiled_truth, timeline } = splitBody(body);
@@ -585,7 +585,7 @@ describe('splitBody bare-heading fallback (#2225)', () => {
 
   test('ordinary wiki page: prose ## History + later unrelated H2 stays fully intact', () => {
     // The gate: '## History' whose section is prose (not dated bullets) is a
-    // normal wiki section, NOT a gbrain timeline. Pre-gate, EVERYTHING after
+    // normal wiki section, NOT a foresights timeline. Pre-gate, EVERYTHING after
     // the heading — including '## Architecture' — was eaten into timeline.
     const body = 'Widget Co overview.\n\n## History\n\nFounded in a garage. Grew steadily.\n\n## Architecture\n\nThree services and a queue.';
     const { compiled_truth, timeline } = splitBody(body);
@@ -630,7 +630,7 @@ describe('splitBody bare-heading fallback (#2225)', () => {
   });
 
   test('naive get→edit→put reassembly round-trips the timeline', () => {
-    // 1. Canonical page as gbrain writes it.
+    // 1. Canonical page as foresights writes it.
     const original = `---
 type: company
 title: Acme Example

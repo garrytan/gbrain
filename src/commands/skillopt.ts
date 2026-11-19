@@ -1,7 +1,7 @@
 /**
- * `gbrain skillopt <skill> [flags]` CLI dispatcher.
+ * `foresights skillopt <skill> [flags]` CLI dispatcher.
  *
- * Top-level command (not under `gbrain eval`) because it MUTATES files.
+ * Top-level command (not under `foresights eval`) because it MUTATES files.
  * See: src/core/skillopt/ for the implementation modules.
  */
 
@@ -90,7 +90,7 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
   try {
     parsed = parseFlags(args);
   } catch (err) {
-    process.stderr.write(`gbrain skillopt: ${err instanceof Error ? err.message : String(err)}\n\n`);
+    process.stderr.write(`foresights skillopt: ${err instanceof Error ? err.message : String(err)}\n\n`);
     process.stderr.write(SKILLOPT_HELP_TEXT);
     process.exit(2);
   }
@@ -101,12 +101,12 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
   }
 
   if (parsed.maxCostFlag === '--max-cost-usd' && parsed.maxCostUsd === 0) {
-    process.stderr.write('gbrain skillopt: --max-cost-usd 0 is deprecated; it still means uncapped, but write --max-usd off.\n');
+    process.stderr.write('foresights skillopt: --max-cost-usd 0 is deprecated; it still means uncapped, but write --max-usd off.\n');
   }
   process.stderr.write(`[skillopt] ${capNotice({ usd: parsed.maxCostUsd > 0 ? parsed.maxCostUsd : null, source: parsed.maxCostSource, flag: parsed.maxCostFlag })}\n`);
 
   if (!engine) {
-    process.stderr.write('gbrain skillopt: requires a configured brain (engine connection failed)\n');
+    process.stderr.write('foresights skillopt: requires a configured brain (engine connection failed)\n');
     process.exit(2);
   }
 
@@ -114,7 +114,7 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
   const detected = autoDetectSkillsDirReadOnly(process.cwd());
   const skillsDir = parsed.skillsDir ?? detected.dir;
   if (!skillsDir) {
-    process.stderr.write(`gbrain skillopt: cannot find skills directory. Pass --skills-dir <path> or run from a workspace with a skills/ directory.\n`);
+    process.stderr.write(`foresights skillopt: cannot find skills directory. Pass --skills-dir <path> or run from a workspace with a skills/ directory.\n`);
     process.exit(2);
   }
 
@@ -265,7 +265,7 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
   // skillopt is in PROTECTED_JOB_NAMES, so we can't use the generic
   // maybeBackground helper (which doesn't pass allowProtectedSubmit). Inline
   // a small submit that does. Behavior mirrors maybeBackground: writes
-  // `job_id=N` to stdout, exits 0; `--follow` execs `gbrain jobs follow`.
+  // `job_id=N` to stdout, exits 0; `--follow` execs `foresights jobs follow`.
   if (args.includes('--background')) {
     if (engine.kind === 'pglite') {
       process.stderr.write('[--background] PGLite has no worker daemon; running inline.\n');
@@ -411,7 +411,7 @@ export function formatRunSummary(outcome: RunSkillOptOutcome, receipt: RunReceip
     if (receipt.no_pricing) {
       lines.push(`[skillopt] Hint: ${receipt.no_pricing.lookup} Register it with: ${receipt.no_pricing.register_command} — then retry; or pass --no-max-cost (or --max-cost-usd 0) to run uncapped with a warn-once.`);
     } else if (detail.includes('no_pricing')) {
-      lines.push(`[skillopt] Hint: gbrain has no price for the model, so the cap can't be enforced. Look up its per-token price and register it with \`gbrain pricing set\` (see the detail above), then retry; or pass --no-max-cost (or --max-cost-usd 0) to run uncapped with a warn-once.`);
+      lines.push(`[skillopt] Hint: foresights has no price for the model, so the cap can't be enforced. Look up its per-token price and register it with \`foresights pricing set\` (see the detail above), then retry; or pass --no-max-cost (or --max-cost-usd 0) to run uncapped with a warn-once.`);
     }
   }
   if (receipt.stop_reason === 'early_stop_unusable_output') {
@@ -641,7 +641,7 @@ function handleErrorAndExit(err: unknown, json: boolean, exitCode: number): neve
     const envelope = err instanceof StructuredAgentError ? err.envelope : serializeError(err);
     process.stderr.write(JSON.stringify({ ok: false, error: envelope }) + '\n');
   } else {
-    process.stderr.write(`gbrain skillopt: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.stderr.write(`foresights skillopt: ${err instanceof Error ? err.message : String(err)}\n`);
     if (err instanceof StructuredAgentError && err.envelope.hint) {
       process.stderr.write(`  hint: ${err.envelope.hint}\n`);
     }

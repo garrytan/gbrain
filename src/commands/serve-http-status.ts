@@ -1,5 +1,5 @@
 /**
- * Status-only `gbrain serve --http` (agent operator contract v1): a shared
+ * Status-only `foresights serve --http` (agent operator contract v1): a shared
  * HTTP server whose brain cannot be opened (lock held, no brain, a missing or
  * repair-failed brain, unreadable config) stays up on its `--bind`/`--port`
  * and explains itself instead of exiting into a supervisor crash loop.
@@ -97,7 +97,7 @@ function statusHandler(state: StatusModeState, nonce: string): HttpRequestHandle
 function banner(state: StatusModeState, where: string): string {
   const fix = renderAction(statusFix(state, 'http').fix, cliRenderContext());
   return [
-    `GBrain MCP server: status-only mode on ${where} (the brain cannot be opened).`,
+    `Foresights MCP server: status-only mode on ${where} (the brain cannot be opened).`,
     `  Reason: ${statusHeadline(state)}`,
     `  Fix:    ${fix.command ?? fix.why}`,
     `  Re-checking every ${HTTP_STATUS_RETRY_AFTER_S} s; Ctrl-C to stop; --fail-fast to exit instead.`,
@@ -148,7 +148,7 @@ export async function runHttpStatusServe(
     if (stopping) return;
     Object.assign(state, initialStatusState('brain_unopenable'), { reason: 'brain_unopenable', recovered: false });
     marker();
-    log(`GBrain MCP server: the brain opened but the full server did not start (${e instanceof Error ? e.message : String(e)}); the brain is released and this server stays in status-only mode.`);
+    log(`Foresights MCP server: the brain opened but the full server did not start (${e instanceof Error ? e.message : String(e)}); the brain is released and this server stays in status-only mode.`);
     logStatusTransition('serve_status_mode_enter', state, 'http', enteredAt);
   };
 
@@ -158,13 +158,13 @@ export async function runHttpStatusServe(
     const adoptServer: AdoptableServer = {
       server,
       adopt(next: HttpRequestHandler) {
-        if (stopping) throw new Error('gbrain serve --http is shutting down');
+        if (stopping) throw new Error('foresights serve --http is shutting down');
         handler = next;
         adopted = true;
         // The full server's lifecycle owns SIGINT from here on.
         process.off('SIGINT', onSigint);
         dropMarker();
-        log(`GBrain MCP server: the brain is open; the full server now answers on http://${bind}:${port}.`);
+        log(`Foresights MCP server: the brain is open; the full server now answers on http://${bind}:${port}.`);
         swapped();
       },
     };
@@ -186,11 +186,11 @@ export async function runHttpStatusServe(
       engine = await probe();
     } catch (e) {
       Object.assign(state, initialStatusState(statusReasonForError(e) ?? 'brain_unopenable'), { recovered: false });
-      if (state.reason !== before) { marker(); log(`GBrain MCP server: the brain did not open (${e instanceof Error ? e.message : String(e)}); still status-only: ${statusHeadline(state)}`); }
+      if (state.reason !== before) { marker(); log(`Foresights MCP server: the brain did not open (${e instanceof Error ? e.message : String(e)}); still status-only: ${statusHeadline(state)}`); }
       return;
     }
     if (engine === null) {
-      if (state.reason !== before) { marker(); log(`GBrain MCP server: still status-only: ${statusHeadline(state)}`); }
+      if (state.reason !== before) { marker(); log(`Foresights MCP server: still status-only: ${statusHeadline(state)}`); }
       return;
     }
     if (stopping) { await engine.disconnect().catch(() => {}); return; }

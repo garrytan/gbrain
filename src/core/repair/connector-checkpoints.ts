@@ -1,5 +1,5 @@
 /**
- * `gbrain repair connector-checkpoints` (#5686): delete connector checkpoint
+ * `foresights repair connector-checkpoints` (#5686): delete connector checkpoint
  * rows and retry pointers that no registered connector source can load and
  * that are older than 7 days. Cleanup only; the upgrade migration's re-key
  * copy never runs here. Rows referenced by a non-terminal request or a

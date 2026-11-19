@@ -10,7 +10,7 @@ import { usageError } from '../cli/cli-error.ts';
 const FLAGS = ['--member', '--may-act-for', '--attest-actor', '--attest-ops', '--attest-read', '--attest-sources'] as const;
 type Flag = typeof FLAGS[number];
 const NEEDS: Record<Flag, string> = {
-  '--member': 'Pass a member id, or none to unbind (gbrain access member list).',
+  '--member': 'Pass a member id, or none to unbind (foresights access member list).',
   '--may-act-for': 'Pass a comma-separated list of member ids, group:<id>, guest or *, or none.',
   '--attest-actor': 'Pass qm (the system whose x-qm-actor header this credential may send), or none.',
   '--attest-ops': 'Pass a comma-separated list of operations an attested call may run (default get_write_request,memory_recall,memory_write).',
@@ -37,7 +37,7 @@ function parseAttestSources(value: string): string[] | null {
 function parseAttestActor(value: string): string | null {
   if (value.trim() === 'none') return null;
   if (ATTEST_SYSTEMS.includes(value.trim())) return value.trim();
-  throw opError('invalid_params', `--attest-actor ${value} is not a system gbrain trusts to name people.`, `Pass ${ATTEST_SYSTEMS.join(' or ')}, or none to clear the right.`);
+  throw opError('invalid_params', `--attest-actor ${value} is not a system foresights trusts to name people.`, `Pass ${ATTEST_SYSTEMS.join(' or ')}, or none to clear the right.`);
 }
 
 /**

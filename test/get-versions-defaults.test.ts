@@ -123,7 +123,7 @@ describe('get_versions defaults', () => {
     } finally { err.mockRestore(); }
   });
 
-  test('gbrain history renders metadata-only rows with the version title', async () => {
+  test('foresights history renders metadata-only rows with the version title', async () => {
     const err = spyOn(console, 'error').mockImplementation(() => {});
     try {
       const out = formatResult('get_versions', await versions(false, { slug: SLUG, limit: 2 }), {});

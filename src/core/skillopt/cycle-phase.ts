@@ -21,14 +21,14 @@
  * `cycle.skillopt.last_skip.<skill>` stores a fingerprint of everything the
  * reservation check prices: the resolved optimizer, target and judge models,
  * `cycle.skillopt.per_skill_cap_usd`, `skillopt.reflect_max_tokens`,
- * `pricing.overrides`, the gbrain version (built-in prices and default caps)
+ * `pricing.overrides`, the foresights version (built-in prices and default caps)
  * and the skill's benchmark (per-task judge models); the skill is not retried
  * until one of them changes. Models resolve once per cycle through `resolveSkillOptModels`; the
  * models banner prints once and each run prints only rows that differ.
  *
  * Each per-skill invocation runs with epochs=1 (incremental nightly
  * improvement, not full optimization). Users who want a full multi-epoch
- * run invoke `gbrain skillopt <name> --epochs N` directly.
+ * run invoke `foresights skillopt <name> --epochs N` directly.
  */
 
 import * as fs from 'node:fs';
@@ -51,7 +51,7 @@ export interface SkilloptPhaseOpts {
   dryRun?: boolean;
   signal?: AbortSignal;
   /**
-   * issue #2860 — `gbrain dream --phase skillopt --once`. Bypasses the
+   * issue #2860 — `foresights dream --phase skillopt --once`. Bypasses the
    * `cycle.skillopt.enabled` feature flag for THIS call only; never reads
    * or writes config. Per-skill + brain-wide cost caps still apply.
    */
@@ -108,7 +108,7 @@ export async function runPhaseSkillopt(opts: SkilloptPhaseOpts): Promise<Skillop
         phase: 'skillopt',
         status: 'skipped',
         duration_ms: Date.now() - start,
-        summary: 'feature flag off (gbrain config set cycle.skillopt.enabled true to enable)',
+        summary: 'feature flag off (foresights config set cycle.skillopt.enabled true to enable)',
         details: { reason: 'feature_flag_off' },
       };
     }

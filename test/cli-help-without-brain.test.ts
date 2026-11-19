@@ -1,7 +1,7 @@
 /**
  * `--help` must be answerable with no brain configured.
  *
- * A reader runs `--help` most often right after install, before `gbrain init`.
+ * A reader runs `--help` most often right after install, before `foresights init`.
  * CLI_ONLY_SELF_HELP members skip the dispatcher's generic usage stub (that is
  * the point — they print their own), but they were then reached through the
  * normal dispatch, which connects the engine first. So on a machine with no
@@ -140,7 +140,7 @@ describe('--help without a configured brain', () => {
     const { code, out } = await runHelp('retrieval-upgrade');
     expect(code).toBe(0);
     expect(out).not.toContain('No brain configured');
-    expect(out).toContain('Usage: gbrain migrate embeddings --to <provider:model>');
+    expect(out).toContain('Usage: foresights migrate embeddings --to <provider:model>');
   }, 30_000);
 
   for (const command of HELP_WITHOUT_BRAIN) {
@@ -161,20 +161,20 @@ describe('--help without a configured brain', () => {
   // keeps per-subcommand help, so its handler answers the flag for `status`/`audit-secrets`. The explicit table
   // is the fail-first; the ROUTERS walk in test/helpers/cli-help-gate.ts is the ratchet afterwards.
   const SUBCOMMAND_HELP_WITHOUT_BRAIN: Array<{ argv: string[]; usage: string }> = [
-    { argv: ['core', 'list', '--help'], usage: 'Usage: gbrain core' },
-    { argv: ['core', 'status', '--help'], usage: 'Usage: gbrain core' },
-    { argv: ['core', 'init', '--help'], usage: 'Usage: gbrain core' },
-    { argv: ['core', 'suggest', '-h'], usage: 'Usage: gbrain core' },
-    { argv: ['core', 'add', 'x', '--help'], usage: 'Usage: gbrain core' },
-    { argv: ['core', 'add', 'help'], usage: 'Usage: gbrain core' },
-    { argv: ['loops', 'list', '--help'], usage: 'gbrain loops —' },
-    { argv: ['loops', 'show', '--help'], usage: 'gbrain loops —' },
-    { argv: ['loops', 'done', '--help'], usage: 'gbrain loops —' },
-    { argv: ['loops', 'drop', '-h'], usage: 'gbrain loops —' },
-    { argv: ['loops', 'mute', '--help'], usage: 'gbrain loops —' },
-    { argv: ['loops', 'unmute', 'help'], usage: 'gbrain loops —' },
-    { argv: ['transcripts', 'status', '--help'], usage: 'gbrain transcripts' },
-    { argv: ['transcripts', 'audit-secrets', '--help'], usage: 'gbrain transcripts' },
+    { argv: ['core', 'list', '--help'], usage: 'Usage: foresights core' },
+    { argv: ['core', 'status', '--help'], usage: 'Usage: foresights core' },
+    { argv: ['core', 'init', '--help'], usage: 'Usage: foresights core' },
+    { argv: ['core', 'suggest', '-h'], usage: 'Usage: foresights core' },
+    { argv: ['core', 'add', 'x', '--help'], usage: 'Usage: foresights core' },
+    { argv: ['core', 'add', 'help'], usage: 'Usage: foresights core' },
+    { argv: ['loops', 'list', '--help'], usage: 'foresights loops —' },
+    { argv: ['loops', 'show', '--help'], usage: 'foresights loops —' },
+    { argv: ['loops', 'done', '--help'], usage: 'foresights loops —' },
+    { argv: ['loops', 'drop', '-h'], usage: 'foresights loops —' },
+    { argv: ['loops', 'mute', '--help'], usage: 'foresights loops —' },
+    { argv: ['loops', 'unmute', 'help'], usage: 'foresights loops —' },
+    { argv: ['transcripts', 'status', '--help'], usage: 'foresights transcripts' },
+    { argv: ['transcripts', 'audit-secrets', '--help'], usage: 'foresights transcripts' },
   ];
   test('subcommand help answers brainless (#6521: core, loops, transcripts status)', async () => {
     const results = await Promise.all(SUBCOMMAND_HELP_WITHOUT_BRAIN.map(async c => ({ ...c, ...(await runCli(c.argv)) })));

@@ -1,5 +1,5 @@
 /**
- * `gbrain questions`: post-connect dispatch, run by handleCliOnly with the
+ * `foresights questions`: post-connect dispatch, run by handleCliOnly with the
  * engine connectEngine() opened; the record lives in src/cli/command-table.ts.
  */
 import type { BrainEngine } from '../../core/engine.ts';

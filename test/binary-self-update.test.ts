@@ -19,7 +19,7 @@ const ASSETS: ReleaseAsset[] = [
 ];
 
 // A builder id that matches EXPECTED_BUILDER_ID_PREFIX (this repo's release workflow).
-const VALID_BUILDER = 'https://github.com/garrytan/gbrain/.github/workflows/release.yml@refs/heads/master';
+const VALID_BUILDER = 'https://github.com/aimonk2025/gbrain/.github/workflows/release.yml@refs/heads/master';
 const FAKE_DIGEST = 'a'.repeat(64);
 const OTHER_DIGEST = 'b'.repeat(64);
 
@@ -278,7 +278,7 @@ describe('runBinarySelfUpdate', () => {
             subjects: [{ name: 'gbrain-darwin-arm64', sha256: FAKE_DIGEST }],
             // Same repo + workflow, but minted from an arbitrary branch dispatch.
             builderId:
-              'https://github.com/garrytan/gbrain/.github/workflows/release.yml@refs/heads/attacker-branch',
+              'https://github.com/aimonk2025/gbrain/.github/workflows/release.yml@refs/heads/attacker-branch',
           },
         ],
         smoke: () => true,

@@ -2,7 +2,7 @@
  * questions_* ops: pinned questions (standing answers kept current from
  * evidence). Owner-private in v1: every op refuses callers that cannot read
  * private pages (src/core/questions/service.ts). On the full MCP surface that
- * registrations pin, not in STARTER_OPS; `gbrain questions <verb>` is the CLI.
+ * registrations pin, not in STARTER_OPS; `foresights questions <verb>` is the CLI.
  */
 import type { Operation, ParamDef } from './contract.ts';
 
@@ -12,7 +12,7 @@ const WAIT: ParamDef = { type: 'number', description: 'Max ms to wait for the an
 
 const questions_pin: Operation = {
   name: 'questions_pin',
-  description: 'Pin a question: gbrain keeps a cited answer current from your notes and flags sentences whose evidence changed. Idempotent. Pins made over MCP stay inactive (paid refresh) until the owner activates them; returns the first answer when a key and consent exist, else awaiting_refresh with next_action.',
+  description: 'Pin a question: foresights keeps a cited answer current from your notes and flags sentences whose evidence changed. Idempotent. Pins made over MCP stay inactive (paid refresh) until the owner activates them; returns the first answer when a key and consent exist, else awaiting_refresh with next_action.',
   params: {
     question: { type: 'string', description: 'The question (omit when passing id).' },
     scope: {

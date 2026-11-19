@@ -52,7 +52,7 @@ const factsRow = (n: number, claim: string) => `| ${n} | ${claim} | fact | 1.0 |
 const DETERMINISTIC = ['## Facts', '', FB, FH, FS, factsRow(1, 'Synthetic fact'), factsRow(2, 'Second synthetic fact'), '', ''].join('\n');
 /** A display-name holder: the resolver tier. */
 const RESOLVER = `${T}\n${TH}\n| 1 | ${CLAIM} | take | ${HOLDER} | 0.7 | 2026-01 | chat |\n${TE}\n`;
-/** A takes kind gbrain never chooses: a manual edit. */
+/** A takes kind foresights never chooses: a manual edit. */
 const MANUAL = `${T}\n${TH}\n| 1 | Synthetic take | ${KIND} | brain | 0.7 | 2026-01 | chat |\n${TE}\n`;
 /** Rows with no header: the model tier. */
 const LLM = ['## Facts', '', FB, factsRow(1, 'Synthetic fact'), factsRow(2, 'Another synthetic fact'), FE, ''].join('\n');

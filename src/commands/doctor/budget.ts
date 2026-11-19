@@ -5,7 +5,7 @@
  * `DoctorTier` in ./context.ts); `--budget-ms <n>` is one absolute end-to-end
  * deadline that starts before the CLI connects (default 4000 for `ops`, none
  * for the other tiers; `--budget-ms 0`: none). A plain non-interactive CLI
- * `gbrain doctor --json` caps its check run at `doctor.default_budget_ms`
+ * `foresights doctor --json` caps its check run at `doctor.default_budget_ms`
  * (./default-budget.ts), started after connect and migrations. Every entry also
  * has its own budget (`doctor.entry_budget_ms`, default 15000; the remaining
  * overall time when that is shorter; under `--only` with an explicit
@@ -30,6 +30,7 @@ import { StatementDeadlineError } from '../../core/statement-deadline.ts';
 import type { Check, DoctorReport } from '../doctor.ts';
 import { agentFix } from './check-fix.ts';
 import type { DoctorTier } from './context.ts';
+import { commandText } from '../../core/brand.ts';
 
 export const DOCTOR_TIERS: readonly DoctorTier[] = ['ops', 'quick', 'standard', 'deep'];
 /** Default `--budget-ms` for `--tier ops`; the other tiers have no overall deadline unless one is given. */
@@ -179,7 +180,7 @@ export function budgetUnknownCheck(name: string, elapsedMs: number, budgetMs: nu
   const why = `Runs only this check with a ${n} ms budget, above the ${elapsedMs} ms it already took; read-only.`;
   return {
     name, status: 'warn', elapsed_ms: elapsedMs,
-    message: `Not finished within ${which}. Health is unknown, not clear; rerun this check alone: ${argv.join(' ')}`
+    message: `Not finished within ${which}. Health is unknown, not clear; rerun this check alone: ${commandText(argv)}`
       + (n < wanted ? ` (capped to fit an agent tool call; if it stops again, run it in a terminal with --budget-ms ${wanted})` : ''),
     details: { health: 'unknown', reason: 'budget', limit, exact: false, elapsed_ms: elapsedMs, budget_ms: budgetMs, rerun_budget_ms: n, ...(n < wanted ? { terminal_budget_ms: wanted } : {}) },
     fix: n <= agentCap ? agentFix(argv, why, name)
@@ -191,7 +192,7 @@ export function budgetUnknownCheck(name: string, elapsedMs: number, budgetMs: nu
 export function opsNotApplicableCheck(name: string): Check {
   return {
     name, status: 'ok', severity: 'info', readiness_state: 'not_applicable', elapsed_ms: 0,
-    message: 'Not applicable to the ops tier on PGLite (it reads only counters, config and catalog there); run gbrain doctor for this check.',
+    message: 'Not applicable to the ops tier on PGLite (it reads only counters, config and catalog there); run foresights doctor for this check.',
     details: { health: 'not_applicable', reason: 'pglite_ops_tier', exact: true },
   };
 }

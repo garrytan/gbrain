@@ -1,8 +1,8 @@
 /**
- * Guest sources (GBRA-504): the reads and writes behind `gbrain guests init` and
- * `gbrain sources writers`. guest_sources is the authority the trust trigger
+ * Guest sources (GBRA-504): the reads and writes behind `foresights guests init` and
+ * `foresights sources writers`. guest_sources is the authority the trust trigger
  * reads (guests/schema.ts); sources.config carries `guest: true` and
- * `trust_ceiling` for people and `gbrain sources list`, and `federated: true`
+ * `trust_ceiling` for people and `foresights sources list`, and `federated: true`
  * so owner reads that widen to federated sources include it.
  */
 import type { BrainEngine } from '../engine.ts';
@@ -47,7 +47,7 @@ export async function planGuestSource(engine: BrainEngine, sourceId: string, wri
 /** initGuestSource refused: the source is not yet a guest source and already holds pages (deleted ones not yet purged included). */
 export class GuestSourceHoldsPages extends Error {
   constructor(readonly sourceId: string, readonly pages: number) {
-    super(`Source "${sourceId}" already holds ${pages} page(s), counting deleted pages not yet purged (a restore would bring them back). Every page in a guest source reads as an outside guest's words and only listed writers can change it, so gbrain will not make this one a guest source. Pick another name with --source.`);
+    super(`Source "${sourceId}" already holds ${pages} page(s), counting deleted pages not yet purged (a restore would bring them back). Every page in a guest source reads as an outside guest's words and only listed writers can change it, so foresights will not make this one a guest source. Pick another name with --source.`);
   }
 }
 

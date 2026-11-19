@@ -52,7 +52,7 @@ describe('reranker_health (v0.48.2 readiness-aware)', () => {
       expect(c.message).toContain(DEFAULT_RERANKER_MODEL);
       expect(c.message).toContain('not running');
       expect(c.message).toContain('VOYAGE_API_KEY');
-      expect(c.message).toContain('gbrain config set search.reranker.enabled false');
+      expect(c.message).toContain('foresights config set search.reranker.enabled false');
     });
   });
 
@@ -74,7 +74,7 @@ describe('reranker_health (v0.48.2 readiness-aware)', () => {
       const c = await checkRerankerHealth(engineWith({ 'search.reranker.enabled': 'false' }));
       expect(c.status).toBe('ok');
       expect(c.message).toContain('Reranker disabled');
-      expect(c.message).toContain('gbrain config set search.reranker.enabled true');
+      expect(c.message).toContain('foresights config set search.reranker.enabled true');
     });
     await inFreshAudit({ VOYAGE_API_KEY: undefined, GBRAIN_HOME: emptyHome() }, async () => {
       gw({});

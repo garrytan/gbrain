@@ -1,5 +1,5 @@
 /**
- * `gbrain repair managed-sync-orphans [--source <id>]` (#5459): retire managed
+ * `foresights repair managed-sync-orphans [--source <id>]` (#5459): retire managed
  * sync bookkeeping nothing current can resume or clear, so doctor stops
  * reporting it as an unresolved failure. Explicit-only and preview-bound: the
  * preview lists each orphan with its class and saves the set under a hash;
@@ -15,7 +15,7 @@
  * pins the other one (`slug_mode_refused`) is retirable too: retiring it is how
  * a person keeps the new pin.
  * Retiring an old incarnation's bookkeeping says nothing about whether the
- * current source's files were imported; `gbrain sync status` does.
+ * current source's files were imported; `foresights sync status` does.
  */
 import { OperationError } from '../ops/contract.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
@@ -25,7 +25,7 @@ import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcom
 type ApprovedOrphan = ManagedSyncOrphan & { selection: string[] };
 type OrphanItem = RepairItem & { orphan: ManagedSyncOrphan; hash: string; last: boolean };
 
-const previewCommand = (scope: RepairScope) => `gbrain repair managed-sync-orphans${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
+const previewCommand = (scope: RepairScope) => `foresights repair managed-sync-orphans${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
 
 function item(orphan: ManagedSyncOrphan, index: number, hash: string, last: boolean): OrphanItem {
   return { cursor: { phase: orphan.kind === 'unfinished_cursor' ? 0 : orphan.kind === 'failure_row' ? 1 : 2, id: index + 1 }, source_id: orphan.source_id,
@@ -61,7 +61,7 @@ export const managedSyncOrphansRepair: RepairHandler = {
         details: { retained } };
     }
     if (!opts.expect) {
-      throw new OperationError('invalid_params', 'gbrain repair managed-sync-orphans --apply retires only the set a preview printed.',
+      throw new OperationError('invalid_params', 'foresights repair managed-sync-orphans --apply retires only the set a preview printed.',
         `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`, 'docs/guides/repair.md#explicit-only-repair-kinds');
     }
     const approved = await loadApprovedSet<ApprovedOrphan>(engine, { command: 'managed-sync-orphans', hash: opts.expect, previewCommand: command });

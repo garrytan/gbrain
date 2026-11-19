@@ -1,5 +1,5 @@
 /**
- * `gbrain repair stale-atoms` (#5770, CEO-A7, ENG-O7, DX-O4), on PGLite and,
+ * `foresights repair stale-atoms` (#5770, CEO-A7, ENG-O7, DX-O4), on PGLite and,
  * with a safe DATABASE_URL, Postgres (test/e2e/repair-stale-atoms-postgres.test.ts).
  *
  * Unmanaged and managed brains: the preview lists both classes and changes
@@ -43,7 +43,7 @@ test('stale-atoms is CLI-only: no operation exposes it over MCP (ENG-O13)', () =
 });
 
 for (const kind of testBackends()) {
-  describe(`gbrain repair stale-atoms (${kind})`, () => {
+  describe(`foresights repair stale-atoms (${kind})`, () => {
     let engine: BrainEngine;
     let close: (() => Promise<void>) | undefined;
     const home = mkdtempSync(join(tmpdir(), 'gbrain-repair-stale-atoms-'));
@@ -100,15 +100,15 @@ for (const kind of testBackends()) {
       ]);
       expect(preview.results[0].residuals).toEqual({ origin_gone: 2, origin_changed: 1 });
       const hash = hashOf(preview);
-      expect(preview.results[0].apply_command).toBe(`gbrain repair stale-atoms --source ${sourceId} --apply --expect ${hash}`);
+      expect(preview.results[0].apply_command).toBe(`foresights repair stale-atoms --source ${sourceId} --apply --expect ${hash}`);
       for (const slug of ['gone', 'orphan', 'edited-old']) expect((await atom(sourceId, `atoms/2026-01-01/${slug}`)).deleted).toBe(false);
 
       const unbound = await refusal(() => repair(['--source', sourceId, '--apply']));
       expect(unbound.toJSON()).toMatchObject({ error: 'invalid_params', docs: 'docs/guides/repair.md#explicit-only-repair-kinds',
-        suggestion: `Preview first: gbrain repair stale-atoms --source ${sourceId} — then run the apply command it prints: gbrain repair stale-atoms --source ${sourceId} --apply --expect <preview-hash>` });
+        suggestion: `Preview first: foresights repair stale-atoms --source ${sourceId} — then run the apply command it prints: foresights repair stale-atoms --source ${sourceId} --apply --expect <preview-hash>` });
       const stale = await refusal(() => repair(['--source', sourceId, '--apply', '--expect', 'f'.repeat(64)]));
       expect(stale.toJSON()).toMatchObject({ error: 'preview_changed', docs: 'docs/guides/repair.md#preview-changed',
-        message: `The preview changed since ${'f'.repeat(64)}; re-run gbrain repair stale-atoms --source ${sourceId} and use the new hash.` });
+        message: `The preview changed since ${'f'.repeat(64)}; re-run foresights repair stale-atoms --source ${sourceId} and use the new hash.` });
 
       const applied = await repair(['--source', sourceId, '--apply', '--expect', hash]);
       expect(applied.results[0]).toMatchObject({ applied: 3, skipped: 0, outcomes: { retired: 3 } });
@@ -141,7 +141,7 @@ for (const kind of testBackends()) {
       await engine.softDeletePage('notes/gone', { sourceId });
       const before = await computeAtomProvenanceDriftCheck(engine);
       expect(before.status).toBe('warn');
-      const printed = before.message.match(/gbrain repair stale-atoms/)![0];
+      const printed = before.message.match(/(?:foresights|gbrain) repair stale-atoms/)![0];
       const preview = await withEnv({ GBRAIN_HOME: home }, async () => {
         const lines: string[] = [];
         const original = console.log;

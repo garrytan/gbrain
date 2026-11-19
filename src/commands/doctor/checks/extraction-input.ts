@@ -27,7 +27,7 @@
  * conversation_detection_ambiguous (PR 4, Wave B incremental derivation, transcripts): segmented conversation pages
  * held because no format is detected over them yet some format parses messages (a `detection_ambiguous` receipt
  * with each format's count): nothing was extracted or collected there until the operator chooses the format with
- * gbrain extract-conversation-facts --slug <slug> --grammar <format|none> (preview with --dry-run). Such a page's
+ * foresights extract-conversation-facts --slug <slug> --grammar <format|none> (preview with --dry-run). Such a page's
  * receipts are listed there, not here, so a stale window receipt never offers a spend cap for it; an operator choice
  * (`grammar_chosen`) is not a truncation and is not listed.
  */
@@ -40,19 +40,19 @@ import { PAGE_DERIVATION_CAP_KEY } from '../../../core/page-spend.ts';
 interface ReceiptGroup { pipeline: string; kind: string; pages: number; samples: string[] }
 
 const REMEDY: Record<string, string> = {
-  facts_backstop: 'later appends are extracted from the appended text; for a conversation page, gbrain extract-conversation-facts --slug <slug> reads every window of the body',
-  extract_atoms: `raise the cap so the next cycle reads more of each page: gbrain config set ${EXTRACT_MAX_INPUT_CHARS_KEY} <n>`,
-  conversation_facts: 'the parser input (page body or raw_transcript sidecar) is over the conversation body cap and was not read; trim the sidecar under the cap or remove raw_transcript from the page frontmatter, then gbrain extract-conversation-facts --slug <slug>',
+  facts_backstop: 'later appends are extracted from the appended text; for a conversation page, foresights extract-conversation-facts --slug <slug> reads every window of the body',
+  extract_atoms: `raise the cap so the next cycle reads more of each page: foresights config set ${EXTRACT_MAX_INPUT_CHARS_KEY} <n>`,
+  conversation_facts: 'the parser input (page body or raw_transcript sidecar) is over the conversation body cap and was not read; trim the sidecar under the cap or remove raw_transcript from the page frontmatter, then foresights extract-conversation-facts --slug <slug>',
 };
 
 const UNREAD_WINDOWS = 'unread_windows';
-const UNREAD_REMEDY = `the run stopped before every window of the page was read (the receipt's reason: the per-page spend cap, a window limit or a skipped window); the next run resumes where it stopped, and when the cap stopped it: gbrain config set ${PAGE_DERIVATION_CAP_KEY} <usd>`;
+const UNREAD_REMEDY = `the run stopped before every window of the page was read (the receipt's reason: the per-page spend cap, a window limit or a skipped window); the next run resumes where it stopped, and when the cap stopped it: foresights config set ${PAGE_DERIVATION_CAP_KEY} <usd>`;
 const FAILED_WINDOWS = 'failed_windows';
-const FAILED_REMEDY = 'a conversation window failed to extract in run after run and is skipped, so the older windows still get extracted (the sample names the window, its receipt the last error); fix the cause, then gbrain extract-conversation-facts --slug <slug> --force tries it again';
+const FAILED_REMEDY = 'a conversation window failed to extract in run after run and is skipped, so the older windows still get extracted (the sample names the window, its receipt the last error); fix the cause, then foresights extract-conversation-facts --slug <slug> --force tries it again';
 const PURGE_SWEEP = 'purge_sweep_pending';
-const PURGE_SWEEP_REMEDY = 'a fact purge\'s sweep of stored derivation results covers the page, so the run made no paid call there; gbrain doctor --only derivation_purge_sweeps names the purge, gbrain forget --purge --status --request-id <request_id> --continue finishes its sweep, and the next run resumes where it stopped';
+const PURGE_SWEEP_REMEDY = 'a fact purge\'s sweep of stored derivation results covers the page, so the run made no paid call there; foresights doctor --only derivation_purge_sweeps names the purge, foresights forget --purge --status --request-id <request_id> --continue finishes its sweep, and the next run resumes where it stopped';
 const NO_MESSAGES = 'no_messages';
-const NO_MESSAGES_REMEDY = 'the page reads as a transcript format over its whole text, yet no message parsed under that format (a conversation parser fault), so the last run changed nothing and kept its facts; rerunning repeats this, so report it with gbrain doctor --json and the page\'s format (a page that is not a transcript settles as non-extractable instead)';
+const NO_MESSAGES_REMEDY = 'the page reads as a transcript format over its whole text, yet no message parsed under that format (a conversation parser fault), so the last run changed nothing and kept its facts; rerunning repeats this, so report it with foresights doctor --json and the page\'s format (a page that is not a transcript settles as non-extractable instead)';
 const AMBIGUOUS = 'detection_ambiguous';
 const CHOSEN = 'grammar_chosen';
 const remedy = (g: ReceiptGroup): string | null => g.kind === PURGE_SWEEP ? PURGE_SWEEP_REMEDY : g.kind === UNREAD_WINDOWS ? UNREAD_REMEDY : g.kind === FAILED_WINDOWS ? FAILED_REMEDY
@@ -77,7 +77,7 @@ async function runExtractionInputTruncatedCheck(ctx: DoctorContext): Promise<Che
       const sample = pages.slice(0, 3).map(p => `${p.page} (${Object.entries(p.grammars).map(([id, n]) => `${id}: ${n}`).join(', ')})`).join('; ');
       checks.push({ name: 'conversation_detection_ambiguous', status: 'warn',
         message: `${total} conversation page(s) are held: no format is detected over the whole page, yet these formats parse messages in it, so nothing was extracted or removed there (messages per format: ${sample}). `
-          + 'Preview the format the page holds with gbrain extract-conversation-facts --source-id <source> --slug <slug> --grammar <format> --dry-run (--grammar none for a page that is not a transcript: its conversation facts are removed), then run it without --dry-run.',
+          + 'Preview the format the page holds with foresights extract-conversation-facts --source-id <source> --slug <slug> --grammar <format> --dry-run (--grammar none for a page that is not a transcript: its conversation facts are removed), then run it without --dry-run.',
         details: { pages: total, samples: pages },
         fix: agentFix(['gbrain', 'extract-conversation-facts', '--source-id', '<SOURCE>', '--slug', '<SLUG>', '--grammar', '<FORMAT>', '--dry-run'],
           "Shows what a run under the chosen format would extract and which conversation facts its settled run would remove; it changes nothing. Running it without --dry-run applies the choice, which is the user's call.",

@@ -1,5 +1,5 @@
 /**
- * #5532 -- `gbrain migrate` must copy every live page. The copy used one
+ * #5532 -- `foresights migrate` must copy every live page. The copy used one
  * `listPages({ limit: 100000 })` read, so the engine's LIMIT silently dropped
  * every page past it. Here the source engine caps each listPages read at 2
  * rows (standing in for that LIMIT without inserting 100k rows); the

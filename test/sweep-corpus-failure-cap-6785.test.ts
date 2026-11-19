@@ -9,11 +9,11 @@
  *
  * Protects: the sweep and the compact harvest run the facts-absorb
  * owner-readiness preflight (#5362) before any model call and name
- * `gbrain sources writer status <id>`; a window that keeps failing after its
+ * `foresights sources writer status <id>`; a window that keeps failing after its
  * model call is retried on the next sweep, then after 10, 20 and 40 minutes,
  * then stopped at 5 attempts, whatever the error label and however the file
  * grows; one extraction-config change re-arms it once; the operator retry
- * (`gbrain sweep --retry-failed --apply`, named as doctor's paid fix)
+ * (`foresights sweep --retry-failed --apply`, named as doctor's paid fix)
  * extracts it and its facts land; the HTTP drain logs skip reasons and
  * thrown errors instead of discarding them. Stopped files never starve a
  * healthy one; a thrown window counts against the sweep total; a paid
@@ -148,7 +148,7 @@ describe('#6785: a claimed, not activated worktree is held before any model call
     }
     expect(existsSync(file + CORPUS_INGESTED_SUFFIX)).toBe(false);
     expect(logs.join('\n')).toContain('(writer_coordinator_required)');
-    expect(logs.join('\n')).toContain('gbrain sources writer status default');
+    expect(logs.join('\n')).toContain('foresights sources writer status default');
   });
 
   test('the compact harvest holds a segment of a claimed source without paying', async () => {
@@ -180,8 +180,8 @@ describe('#6785: a claimed, not activated worktree is held before any model call
     expect(chatCalls).toBe(before);
     const text = lines.join('\n');
     expect(text).toContain('writer_coordinator_required');
-    expect(text).toContain('gbrain sources writer status claimed-example');
-    expect(lines.filter((l) => l.includes('gbrain sources writer status claimed-example')).length).toBe(1);
+    expect(text).toContain('foresights sources writer status claimed-example');
+    expect(lines.filter((l) => l.includes('foresights sources writer status claimed-example')).length).toBe(1);
 
     const failing: string[] = [];
     const broken = armCorpusDrain(engine, { env: {}, setIntervalFn: () => 0, clearIntervalFn: () => {},
@@ -271,7 +271,7 @@ describe('#6785: a window that keeps failing after its model call is capped', ()
       expect(skipped(r.report, 'corpus_window_dead_lettered')).toBe(1);
     }
     expect(existsSync(file + CORPUS_INGESTED_SUFFIX)).toBe(false);
-    expect(logs.join('\n')).toContain('gbrain sweep --retry-failed');
+    expect(logs.join('\n')).toContain('foresights sweep --retry-failed');
     const record = JSON.parse(readFileSync(file + '.failures.json', 'utf8'));
     expect(record.count).toBe(5);
     expect(record.last_code).toBe('provider_error');
@@ -304,7 +304,7 @@ describe('#6785: a window that keeps failing after its model call is capped', ()
     const { buildMemoryWritebackCheck } = await import('../src/commands/doctor/checks/memory-writeback.ts');
     const check = await withEnv({ GBRAIN_HOME: home }, () => buildMemoryWritebackCheck(engine));
     expect(check.status).toBe('warn');
-    expect(check.message).toContain('gbrain sweep --retry-failed --apply');
+    expect(check.message).toContain('foresights sweep --retry-failed --apply');
     const fix = (check as { fix?: { argv: string[]; consent: string[] } }).fix;
     expect(fix?.argv).toEqual(['gbrain', 'sweep', '--retry-failed', '--apply']);
     expect(fix?.consent).toEqual(['paid']);

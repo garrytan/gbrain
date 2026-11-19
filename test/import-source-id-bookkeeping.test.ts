@@ -1,6 +1,6 @@
 /**
  * #3838 — the sync-failures ledger and ingest_log both hard-coded
- * `source_id: 'default'` for a bare `gbrain import <dir>` run, even when
+ * `source_id: 'default'` for a bare `foresights import <dir>` run, even when
  * the resolver's `sole_non_default` tier (5.5) routed the run to a
  * different source. `recordFailures` was called with
  * `opts.sourceId ?? 'default'` — the unresolved CLI parameter, which stays

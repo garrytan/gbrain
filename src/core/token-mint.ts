@@ -1,6 +1,6 @@
 /**
  * token-mint.ts — legacy bearer-token mint/revoke for programmatic callers
- * (#4043 `gbrain bootstrap harness`; extracted from src/commands/auth.ts's
+ * (#4043 `foresights bootstrap harness`; extracted from src/commands/auth.ts's
  * private logic, using the canonical hashToken/generateToken from utils.ts).
  *
  * Least-privilege by construction: scopes land in the original-schema
@@ -162,11 +162,11 @@ export async function revokeLegacyTokenById(sql: SqlQuery, id: string): Promise<
  * as stored, narrowed to the operations this run would grant, plus only the
  * operations a skills-policy change adds; `[]` stays `[]`. Operations new
  * since the snapshot are withheld (reported, never silently granted): widen
- * with `gbrain auth rescope --token <name> --refresh-operations`.
+ * with `foresights auth rescope --token <name> --refresh-operations`.
  *
  * F3: the prior grant is read from its `permissions` JSONB through the shared
  * parser. On a unified row that JSONB mirrors the columns. On a drifted row
- * (an older gbrain edited the JSONB after migration) the edit is the newest
+ * (an older foresights edited the JSONB after migration) the edit is the newest
  * operator intent, so rotation carries it, the same resolution as
  * `auth rescope --adopt-permissions`; the replacement is born unified and the
  * drifted row is revoked after the swap.
@@ -207,7 +207,7 @@ export async function readActiveTokenPrivatePages(engine: BrainEngine, id: strin
 
 /** #8104: the note a rotation prints beside the withheld-operations note when the replaced token had a private-pages grant. */
 export function uncarriedPrivatePagesNote(name: string, mode: Exclude<PrivatePagesGrant, 'none'>): string {
-  return `token ${name}: private-pages grant not carried; run \`gbrain auth rescope --token ${name} --private-pages ${mode.replace('_', '-')}\` to grant it again.`;
+  return `token ${name}: private-pages grant not carried; run \`foresights auth rescope --token ${name} --private-pages ${mode.replace('_', '-')}\` to grant it again.`;
 }
 
 /** The stored grant of an active token, or undefined when it is gone or revoked. */

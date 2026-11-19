@@ -13,7 +13,7 @@
  * now reaches the page (or alias) in another; `projects/` and `people/` keep
  * their own directory.
  *
- * Read side: `gbrain repair facts-rehome` re-homes database-only facts from a
+ * Read side: `foresights repair facts-rehome` re-homes database-only facts from a
  * page-less entity slug to the page the strict resolver reaches by identity
  * evidence. Preview-first: the preview lists every page-less slug with its
  * class, an apply moves only with the preview's hash, and ambiguous or

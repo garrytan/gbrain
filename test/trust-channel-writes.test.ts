@@ -231,7 +231,7 @@ describe('channel tiers on journaled writes', () => {
       const rendered = renderTrustExplanation([explained!]);
       expect(rendered).toContain(`${ref} (fact, source ${b.sourceId}): ${USER_SAID_TRUST_LABEL} [agent_written]`);
       expect(rendered).toContain('origin: mcp:remember (content_origin user_said)');
-      expect(rendered).toContain(`confirm: gbrain trust confirm ${ref}`);
+      expect(rendered).toContain(`confirm: foresights trust confirm ${ref}`);
       expect(await explainEligibility(engine, ref)).toMatchObject({ trust_tier: 'agent_written', label: USER_SAID_TRUST_LABEL, origin: 'mcp:remember:user_said', unconfirmed: false });
       const [plainExplained] = await explainTrust(engine, `f${Number(plain.id)}`);
       expect(plainExplained).toMatchObject({ label: 'written by an agent' });
@@ -338,7 +338,7 @@ describe('channel tiers on journaled writes', () => {
       expect(preview.apply_command).toEqual(['gbrain', 'trust', 'backfill', '--repair-unknown-markers', '--source', b.sourceId,
         '--slug', 'notes/legacy-a', '--slug', 'notes/legacy-c', '--expect', preview.preview_hash]);
       const text = renderMarkerRepairPreview(preview);
-      expect(text.trimEnd().split('\n').at(-1)).toBe(`Apply with: gbrain trust backfill --repair-unknown-markers --source ${b.sourceId} --slug notes/legacy-a --slug notes/legacy-c --expect ${preview.preview_hash}`);
+      expect(text.trimEnd().split('\n').at(-1)).toBe(`Apply with: foresights trust backfill --repair-unknown-markers --source ${b.sourceId} --slug notes/legacy-a --slug notes/legacy-c --expect ${preview.preview_hash}`);
       await expect(applyMarkerRepair(engine, { slugs: ['notes/legacy-a'], expect: 'mr_0000000000000000', sourceId: b.sourceId })).rejects.toMatchObject({ code: 'preview_changed' });
       // The operator names only legacy-a.
       const applied = await applyMarkerRepair(engine, { slugs: ['notes/legacy-a'], expect: preview.preview_hash, sourceId: b.sourceId });
@@ -448,7 +448,7 @@ describe('owner-source sync tiers and the git round trip (CEO-21)', () => {
   }), 120_000);
 });
 
-describe('gbrain sources set-trust', () => {
+describe('foresights sources set-trust', () => {
   test('stores a default at or below operator_curated, refuses user_confirmed, clears', async () => {
     const engine = engines[0]!;
     await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');

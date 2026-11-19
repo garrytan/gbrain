@@ -1,5 +1,5 @@
 /**
- * #5693: `gbrain upgrade` owns migrations through post-upgrade (the install
+ * #5693: `foresights upgrade` owns migrations through post-upgrade (the install
  * step runs none); an install that failed after the version swapped
  * is reported as installed; and the run ends with separate binary and
  * migration lines (complete, running with the holder, or failed with the
@@ -25,7 +25,7 @@ function runUpgradeHarness(opts: { bunExit?: number; postUpgradeExit?: number; c
   mkdirSync(join(home, '.gbrain'), { recursive: true });
   if (opts.config) writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify(opts.config));
   opts.setup?.(home);
-  writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: 'gbrain', repository: { url: 'https://github.com/garrytan/gbrain' } }));
+  writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: 'gbrain', repository: { url: 'https://github.com/aimonk2025/gbrain' } }));
   const driver = join(pkg, 'src', 'cli.ts');
   writeFileSync(driver, `const { runUpgrade } = await import(${JSON.stringify(join(REPO, 'src/commands/upgrade.ts'))});\nawait runUpgrade(['--no-bun-floor-check']);\n`);
   writeFileSync(join(bin, 'bun'), `#!/bin/sh\nprintf 'bun:%s:owns=%s\\n' "$*" "$GBRAIN_UPGRADE_OWNS_MIGRATIONS" >> "$HOME/calls.log"\nexit ${opts.bunExit ?? 0}\n`, { mode: 0o755 });
@@ -40,7 +40,7 @@ function runUpgradeHarness(opts: { bunExit?: number; postUpgradeExit?: number; c
   return { status: result.status, out: result.stdout + result.stderr, calls };
 }
 
-describe('gbrain upgrade migration ownership and outcome (#5693)', () => {
+describe('foresights upgrade migration ownership and outcome (#5693)', () => {
   test('upgrade runs migrations once, in post-upgrade, never during the install step', () => {
     const r = runUpgradeHarness({});
     expect(r.status, r.out).toBe(0);
@@ -63,7 +63,7 @@ describe('gbrain upgrade migration ownership and outcome (#5693)', () => {
     const r = runUpgradeHarness({ postUpgradeExit: 1 });
     expect(r.out).toContain(`Binary: installed ${NEWER}`);
     expect(r.out).toContain('Migrations: failed');
-    expect(r.out).toContain('gbrain apply-migrations --yes');
+    expect(r.out).toContain('foresights apply-migrations --yes');
     expect(r.out).not.toMatch(/^Upgrade succeeded/m);
   });
 

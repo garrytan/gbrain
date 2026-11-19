@@ -34,8 +34,8 @@ beforeEach(async () => {
 describe('Bug 11 — brain_score breakdown sums to total', () => {
   test('empty brain returns full score (vacuous truth) with all breakdown fields present', async () => {
     // v0.37.10.0: empty brain = no coverage problems = full marks. Pre-fix
-    // this returned 0/100, which surprised users running `gbrain doctor`
-    // immediately after `gbrain init --pglite`. Each component returns its
+    // this returned 0/100, which surprised users running `foresights doctor`
+    // immediately after `foresights init --pglite`. Each component returns its
     // max weight when pageCount === 0; the sum equals brain_score=100 by
     // construction (same invariant as the non-empty path, see next test).
     const h = await engine.getHealth();

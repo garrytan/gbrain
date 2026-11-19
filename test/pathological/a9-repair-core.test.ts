@@ -87,7 +87,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         expect(result).toMatchObject({ applied: 5, complete: true });
         expect(result.stopped).toBeUndefined();
         expect(result.failed.length).toBe(1);
-        expectItemFailure({ ...result.failed[0]!, code: result.failed[0]!.reason }, { key: `${SOURCE}:${slugOf(3)}`, code, fix: /"gbrain","repair","timeline","--source","default"/ });
+        expectItemFailure({ ...result.failed[0]!, code: result.failed[0]!.reason }, { key: `${SOURCE}:${slugOf(3)}`, code, fix: /"(?:foresights|gbrain)","repair","timeline","--source","default"/ });
         expect(result.failed[0]!.retry).toBe('next_full_scan');
         expect(JSON.stringify(result)).not.toContain('secret');
         expectOthersUnchanged(before, await snapshotItems(engine, SOURCE), { expectProgress: [1, 2, 4, 5, 6].map(slugOf), progressFields: ['content_hash'] });
@@ -129,7 +129,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         expect(stub.attempts).toEqual([1, 2, 3].map(slugOf));
         if (result) {
           expect(result.stopped?.reason).toBe('owner_unavailable');
-          expect(result.stopped?.message).toContain('gbrain sources writer status default');
+          expect(result.stopped?.message).toContain('foresights sources writer status default');
           expect(result.failed).toEqual([]);
         } else expect(thrown).toBe(injected);
         const rows = await cursorRows();

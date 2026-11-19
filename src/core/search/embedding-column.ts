@@ -58,7 +58,7 @@
  *   3. Field validation at load (type/dims/provider) — bad config refuses
  *      to load instead of silently ignoring entries.
  *
- * Future write-path PR (`gbrain embed --column X --model Y`, deferred per
+ * Future write-path PR (`foresights embed --column X --model Y`, deferred per
  * D1 out-of-scope list) MUST also consume this resolver — never compute a
  * column→provider mapping by hand. This is the canonical seam.
  */
@@ -118,7 +118,7 @@ export class EmbeddingColumnNotRegisteredError extends Error {
     super(
       `Embedding column "${columnName}" is not registered. ` +
         `Declared columns: ${valid}. ` +
-        `Add it via: gbrain config set embedding_columns '<JSON>'`,
+        `Add it via: foresights config set embedding_columns '<JSON>'`,
     );
     this.name = 'EmbeddingColumnNotRegisteredError';
     this.columnName = columnName;
@@ -579,7 +579,7 @@ export function normalizeEngineColumn(
   }
 
   // v0.36 Phase 3 unified multimodal column — populated by
-  // `gbrain reindex --multimodal`. Voyage multimodal-3, vector(1024).
+  // `foresights reindex --multimodal`. Voyage multimodal-3, vector(1024).
   if (embeddingColumn === 'embedding_multimodal') {
     return {
       name: 'embedding_multimodal',
@@ -624,7 +624,7 @@ export function normalizeEngineColumn(
  *
  * Malformed `embedding_columns` JSON is ignored (same forgiving parse as
  * loadConfigWithEngine) so a bad row can't brick default-column writes.
- * File-plane-only registry config (rare; `gbrain config set` writes the
+ * File-plane-only registry config (rare; `foresights config set` writes the
  * DB plane) is covered by the caller-boundary `opts.embeddingColumn`
  * override on upsertChunks — engines never read the file plane (D11).
  */

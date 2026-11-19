@@ -99,7 +99,7 @@ export async function recordPatternsBudgetSkip(engine: BrainEngine, lastRun: Pat
 export function patternsBudgetSkipFix(): Action {
   return {
     argv: ['gbrain', 'dream', '--phase', 'patterns'], consent: ['paid'], actor: 'agent', requires_exclusive: false,
-    why: 'A direct run is not limited by the cycle budget and records its cost for the next cycle. It is a paid model run, so ask the user first. To forget the recorded cost instead: gbrain config unset dream.patterns.last_run',
+    why: 'A direct run is not limited by the cycle budget and records its cost for the next cycle. It is a paid model run, so ask the user first. To forget the recorded cost instead: foresights config unset dream.patterns.last_run',
     docs: 'docs/guides/dream-patterns.md#budget-sizing',
   };
 }
@@ -117,10 +117,10 @@ export async function sizePatternsRun(engine: BrainEngine, input: { budgetMs: nu
   const budgetMs = input.budgetMs ?? 0;
   return { kind: 'skip', result: { phase: 'patterns', status: 'skipped', duration_ms: 0,
     summary: `patterns: the ${Math.round(budgetMs / 1000)}s cycle budget fits ${plan.n} of ${input.reflections} reflections ` +
-      `at the recorded runtime (need ≥${input.minEvidence}); nothing was submitted. Run it outside the cycle: gbrain dream --phase patterns`,
+      `at the recorded runtime (need ≥${input.minEvidence}); nothing was submitted. Run it outside the cycle: foresights dream --phase patterns`,
     details: { reason: 'insufficient_cycle_budget', cause: plan.reason, reflections_selected: input.reflections,
       reflections_submitted: 0, reflections_fit: plan.n, budget_ms: budgetMs, last_run: lastRun,
-      fix: patternsBudgetSkipFix(), reset_command: `gbrain config unset ${PATTERNS_LAST_RUN_KEY}` } } };
+      fix: patternsBudgetSkipFix(), reset_command: `foresights config unset ${PATTERNS_LAST_RUN_KEY}` } } };
 }
 
 /** #6297: state key prefix of the time each partition's last completed patterns child ended. */
@@ -137,11 +137,11 @@ export async function patternsCadenceKey(engine: BrainEngine, sourceId: string):
 }
 
 /**
- * #6297: an in-cycle run (autopilot, bare `gbrain dream`) is skipped while
+ * #6297: an in-cycle run (autopilot, bare `foresights dream`) is skipped while
  * the partition's last completed child ended less than
  * `dream.patterns.min_interval_hours` (default 6, 0 off) ago. Every
  * maintenance pass writes new reflections, so the evidence watermark alone
- * re-ran a paid child on every pass. A direct `gbrain dream --phase patterns`
+ * re-ran a paid child on every pass. A direct `foresights dream --phase patterns`
  * or `--once` is not checked (the caller decides). An absent or unreadable
  * stamp fails open.
  */

@@ -5,7 +5,7 @@ import { assertManagedFilesystemWrite } from './persistence/filesystem-guard.ts'
  * Thin layer on top of `parseMarkdown(..., {validate:true})` (the canonical
  * source of frontmatter validation rules) and `isSyncable()` (the canonical
  * brain-page filter). Three consumers call into this module: the
- * `gbrain frontmatter` CLI, the `frontmatter_integrity` doctor subcheck, and
+ * `foresights frontmatter` CLI, the `frontmatter_integrity` doctor subcheck, and
  * the v0.22.4 migration audit phase. Single source of truth — no parallel
  * validation stack.
  *
@@ -65,7 +65,7 @@ export interface AuditFix {
 export type RecoverabilityByCode = Partial<Record<ParseValidationCode, { recoverable: number; unrecoverable: number }>>;
 
 /**
- * #5988: files `gbrain repair frontmatter` can fix, by the cause it fixes:
+ * #5988: files `foresights repair frontmatter` can fix, by the cause it fixes:
  * recoverable `YAML_PARSE`, `needs_interpretation` (the held reading needs a
  * fold or a duplicate-key choice), a `#`-leading value YAML read as a comment
  * (`FRONTMATTER_COMMENT_VALUE` on title/name/description/summary),
@@ -192,7 +192,7 @@ function rewriteKeepsYamlValue(before: string, after: string): boolean {
  *   - NESTED_QUOTES     — rewrite `"... "inner" ..."` to single-quoted outer
  *   - MISSING_CLOSE     — insert `---` before the first heading found inside
  *                          the YAML zone
- *   - SLUG_MISMATCH     — remove `slug:` line (gbrain derives slug from path)
+ *   - SLUG_MISMATCH     — remove `slug:` line (foresights derives slug from path)
  *                          when `opts.filePath` is given. It must be the path
  *                          the slug derives from (relative to the brain or
  *                          source root, #5053), never an absolute path.
@@ -387,7 +387,7 @@ export function autoFixFrontmatter(
 
   // 4. SLUG_MISMATCH — remove `slug:` line if filePath is provided and the
   //    declared slug doesn't match the path-derived one. Per PR #392 spec,
-  //    gbrain derives slug from path; the field shouldn't be in frontmatter.
+  //    foresights derives slug from path; the field shouldn't be in frontmatter.
   if (opts?.filePath) {
     const expectedSlug = slugifyPath(opts.filePath);
     // Use the (possibly partially-fixed) working content to detect whether
@@ -951,7 +951,7 @@ function scanOneSource(
  * Pre-v0.38.2.0 this walker descended into every subtree and let
  * `isSyncable` filter at the leaf — paying the IO cost of stat'ing hundreds
  * of thousands of vendor entries that were never going to be parsed. That
- * was the root cause of the `gbrain doctor` hang on 216K-page brains
+ * was the root cause of the `foresights doctor` hang on 216K-page brains
  * reported in PR #1287.
  *
  * Optional `visitDir(dir)` is fired once per directory the walker decides

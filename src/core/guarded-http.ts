@@ -41,7 +41,7 @@ const ambientProxyAtImport = hasAmbientProxy();
 export class HttpProxyError extends Error {
   readonly code = 'PROXY_NOT_SUPPORTED';
   constructor() {
-    super('Guarded URL requests require a direct connection. Remove HTTP_PROXY, HTTPS_PROXY and ALL_PROXY (including lowercase variants), then restart GBrain.');
+    super('Guarded URL requests require a direct connection. Remove HTTP_PROXY, HTTPS_PROXY and ALL_PROXY (including lowercase variants), then restart Foresights.');
     this.name = 'HttpProxyError';
   }
 }

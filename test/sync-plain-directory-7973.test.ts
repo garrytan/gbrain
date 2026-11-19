@@ -1,6 +1,6 @@
 /**
  * #7973: a plain directory registered with `sources add --path <dir> --force` (no Git checkout at or above it)
- * syncs without Git: the run imports its files into the source the way `gbrain import` does on a repo-less brain.
+ * syncs without Git: the run imports its files into the source the way `foresights import` does on a repo-less brain.
  * Fails when: sync dies with a raw `git rev-parse` internal_error, a dry run writes, a removed file deletes its
  * page, `sources add` and sync disagree about what a forced plain directory does, or a Git-synced source whose
  * checkout is gone is imported as plain (its database-only edits would be overwritten and deletions stop propagating).

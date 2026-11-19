@@ -2,13 +2,13 @@
 /**
  * Regenerates skills/skills.lock.json — the tamper-evidence manifest mapping
  * every bundled file under skills/ to its sha256 (#159). Not a signature
- * system: it turns silent skill edits into explicit diffs. `gbrain doctor`
+ * system: it turns silent skill edits into explicit diffs. `foresights doctor`
  * warns (never fails) on drift; scripts/check-skills-manifest-fresh.sh keeps
  * the committed manifest in sync in CI.
  *
  * It first appends the current hashes to skills/skills.lock.history.json (the
  * append-only record of every released version of each bundled file, read by
- * `gbrain skillpack reference --update-untouched`), then writes the lock, so
+ * `foresights skillpack reference --update-untouched`), then writes the lock, so
  * the lock records the history's own hash. scripts/check-skills-lock-history.ts
  * fails CI when the history drops an entry.
  *

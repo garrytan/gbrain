@@ -1,5 +1,5 @@
 /**
- * gbrain code-callers <symbol>
+ * foresights code-callers <symbol>
  *
  * v0.20.0 Cathedral II Layer 10 (C4) — "who calls this symbol?" Reversed
  * view of the A1 call graph. Matches `to_symbol_qualified` in both
@@ -14,7 +14,7 @@
  * Source resolution: when --source is omitted AND --all-sources is NOT set,
  * resolve through the full source-resolution chain via
  * `resolveScopedSourceOrThrow` (flag → env → .gbrain-source dotfile →
- * local_path → brain_default → sole_non_default), matching `gbrain sources
+ * local_path → brain_default → sole_non_default), matching `foresights sources
  * current`. A `.gbrain-source` pin selects the source; only a no-signal
  * multi-source brain still fails with `multiple_sources_ambiguous`. (Pre-
  * v0.41.30 this called `resolveDefaultSource` directly, which ignored the pin
@@ -46,7 +46,7 @@ export async function runCodeCallers(engine: BrainEngine, args: string[]): Promi
       class: 'UsageError',
       code: 'code_callers_requires_symbol',
       message: 'code-callers requires a symbol name',
-      hint: 'gbrain code-callers <symbol> [--source S | --all-sources] [--limit N] [--json]',
+      hint: 'foresights code-callers <symbol> [--source S | --all-sources] [--limit N] [--json]',
     });
     if (shouldEmitJson(args)) {
       console.log(JSON.stringify(legacyNestedErrorDocument(err.envelope, ['gbrain', 'code-callers', '--help'])));

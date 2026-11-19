@@ -1,4 +1,4 @@
-/** `gbrain jobs stats` (dispatched by runJobs in src/commands/jobs.ts). */
+/** `foresights jobs stats` (dispatched by runJobs in src/commands/jobs.ts). */
 import { hasFlag, parseFlag, type JobsCommandContext } from './shared.ts';
 import { formatNice, getEffectiveNiceness } from '../../core/minions/niceness.ts';
 import { DREAM_INLINE_PRIVATE_QUEUE_PREFIX, deriveWedgeSignal } from '../../core/minions/queue.ts';
@@ -100,7 +100,7 @@ export async function runJobsStats({ args, engine, queue }: JobsCommandContext):
       `\n  ⚠  DIVERGENT QUEUE type '${sanitizeName(t.name)}': intake ${t.total}/24h vs ${t.drained_completed} completed/24h, ` +
       `${t.waiting_now} waiting (${eta}).${ttlNote}\n` +
       `     Reduce intake, raise drain, or cap admission:\n` +
-      `       gbrain config set minions.quota_max_waiting.${safeConfigSegment(t.name) ?? '<job-name>'} <n>`,
+      `       foresights config set minions.quota_max_waiting.${safeConfigSegment(t.name) ?? '<job-name>'} <n>`,
     );
   }
   if (ttlCancelled.length > 0) {
@@ -108,7 +108,7 @@ export async function runJobsStats({ args, engine, queue }: JobsCommandContext):
     console.log(
       `\n  ⚠  Waiting-TTL cancelled ${ttlCancelled.reduce((a, c) => a + c.count, 0)} job(s) in the last 24h (${parts}).\n` +
       `     These waited past their TTL without ever being claimed. Tune:\n` +
-      `       gbrain config set minions.ttl_waiting_hours.<name> <hours|0>`,
+      `       foresights config set minions.ttl_waiting_hours.<name> <hours|0>`,
     );
   }
 
@@ -160,7 +160,7 @@ export async function runJobsStats({ args, engine, queue }: JobsCommandContext):
         `     This dream-inline queue is parent-owned; restarting a worker cannot consume it.\n` +
         (privateVerdict === 'orphan'
           ? `     Auto-recovery cancels it at the next worker spawn or dream-cycle start.`
-          : `     Legacy unowned queue: preview \`gbrain dream retriage --help\` before manual cancellation.`),
+          : `     Legacy unowned queue: preview \`foresights dream retriage --help\` before manual cancellation.`),
       );
     } else if (no_worker) {
       await printNoWorker(engine.kind, w.queue, w.waiting);
@@ -169,8 +169,8 @@ export async function runJobsStats({ args, engine, queue }: JobsCommandContext):
       console.log(
         `\n  ⚠  WEDGED QUEUE '${w.queue}': ${w.waiting} waiting, 0 active (live-lock), ${since}.\n` +
         `     A worker may be alive but stuck (dead DB pool / stuck handler). Fix:\n` +
-        `       gbrain jobs supervisor stop && gbrain jobs supervisor start   # rebuild a fresh pool\n` +
-        `       gbrain jobs retry <id>                                        # for dead-lettered jobs`,
+        `       foresights jobs supervisor stop && foresights jobs supervisor start   # rebuild a fresh pool\n` +
+        `       foresights jobs retry <id>                                        # for dead-lettered jobs`,
       );
     }
 
@@ -226,7 +226,7 @@ export async function runJobsStats({ args, engine, queue }: JobsCommandContext):
           const ageMin = r?.age_min != null ? parseInt(r.age_min, 10) : null;
           if (r && parseInt(r.waiting ?? '0', 10) === 0 && r.live_id != null && ageMin != null && ageMin > wedgeMins) {
             console.log(
-              `     ${name}: dispatch suppressed by in-flight job #${r.live_id} (age ${ageMin}m) — check \`gbrain jobs get ${r.live_id}\``,
+              `     ${name}: dispatch suppressed by in-flight job #${r.live_id} (age ${ageMin}m) — check \`foresights jobs get ${r.live_id}\``,
             );
           }
         }
@@ -287,7 +287,7 @@ export async function runJobsStats({ args, engine, queue }: JobsCommandContext):
         console.log(`\n  Error clusters (24h):`);
         for (const c of clusters.slice(0, 5)) {
           const sample = c.sample_ids.length > 0
-            ? `  (e.g. \`gbrain jobs get ${c.sample_ids[0]}\`)` : '';
+            ? `  (e.g. \`foresights jobs get ${c.sample_ids[0]}\`)` : '';
           console.log(`    ${String(c.count).padStart(4)} × ${c.cluster.padEnd(22)}${sample}`);
         }
         if (clusters.length > 5) {

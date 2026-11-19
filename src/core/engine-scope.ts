@@ -6,7 +6,7 @@
  * engine-taking entry points a host calls (hybridSearch, the import paths) enter it themselves (needsEngineScope).
  *
  * A call decides by scope presence alone. In an embedded engine's scope it uses that engine's state; in a local scope
- * (withLocalScope, which the CLI, gbrain serve and the jobs worker enter, or any other engine's scope) the process
+ * (withLocalScope, which the CLI, foresights serve and the jobs worker enter, or any other engine's scope) the process
  * gateway; with no scope while the process holds an open embedded engine it refuses `engine_scope_required`. In a
  * process that never opened an embedded engine nothing changes.
  */

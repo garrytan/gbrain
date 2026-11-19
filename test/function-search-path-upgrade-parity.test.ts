@@ -1,5 +1,5 @@
 /**
- * A brain whose gbrain functions still pin the search_path they pinned before pg_temp (every brain migrated before
+ * A brain whose foresights functions still pin the search_path they pinned before pg_temp (every brain migrated before
  * v277, #7632), upgraded on this code, ends with the same search_path on every function as a brain created fresh here.
  *
  * 1. Protects: every definition now pins pg_temp itself (#7785), while an existing brain gets it only from the
@@ -12,7 +12,7 @@
  *    and the list without pg_temp, on Postgres and through runMigrations only. This file compares every function's
  *    full proconfig, on PGLite and Postgres, through initSchema and runMigrations.
  * 4. Real seams: PGLite cold in-memory brains (no schema snapshot) and, with DATABASE_URL, fresh Postgres databases;
- *    initSchema (the gbrain upgrade and apply-migrations entry) and runMigrations.
+ *    initSchema (the foresights upgrade and apply-migrations entry) and runMigrations.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -67,7 +67,7 @@ async function capturingStderr(fn: () => Promise<unknown>): Promise<string> {
 }
 
 const ENTRIES: Array<[string, (engine: BrainEngine) => Promise<unknown>]> = [
-  ['initSchema (gbrain upgrade, apply-migrations)', engine => engine.initSchema()],
+  ['initSchema (foresights upgrade, apply-migrations)', engine => engine.initSchema()],
   ['runMigrations', engine => runMigrations(engine)],
 ];
 const STATES: Array<[string, number]> = [

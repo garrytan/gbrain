@@ -3,7 +3,7 @@
  * this build, before a request id is admitted.
  *
  * Protects: with `config.version` one step behind `LATEST_SCHEMA_VERSION`, put_page refuses with the protocol fix
- * (`gbrain apply-migrations --yes`, verify `gbrain doctor --json`) and admits nothing; the same request id commits once
+ * (`foresights apply-migrations --yes`, verify `foresights doctor --json`) and admits nothing; the same request id commits once
  * the schema is at head again; a replay of an id accepted before the schema fell behind still reconciles; and a write
  * made while this process holds the apply-migrations orchestration lock is admitted. A real PGLite brain with a managed,
  * claimed canonical worktree.

@@ -46,7 +46,7 @@ async function seedSource(
   // postgres-js double-encodes the JS string parameter, producing a JSONB
   // STRING shape instead of OBJECT. Use sql.json() inside the template tag.
   // Same pattern as putPage. The pre-existing sources.ts:482 has the
-  // same latent bug; the call site there is rare (gbrain sources
+  // same latent bug; the call site there is rare (foresights sources
   // federate/unfederate) and out of scope for this PR.
   const eng = engine as unknown as { sql: (...args: unknown[]) => Promise<{ count?: number }> };
   await (eng.sql as any)`

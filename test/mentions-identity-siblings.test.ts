@@ -138,7 +138,7 @@ describe('the sibling rule', () => {
     const { json, notices } = await call('entity', { name: 'accounts/account-sheet' });
     expect(json.card.identity_siblings).toEqual({ pages: [], capped: true });
     expect(notices.join('\n')).toContain('identity_siblings_capped');
-    expect(notices.join('\n')).toContain('gbrain extract mentions --explain accounts/account-sheet');
+    expect(notices.join('\n')).toContain('foresights extract mentions --explain accounts/account-sheet');
   });
 
   test('identity: separate, mentions.exclude_slugs and mentions.sibling_merge=false keep pages apart', async () => {

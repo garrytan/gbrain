@@ -2,7 +2,7 @@
  * legacy_job_authority (#5157, DX-O3(a)): the claim gate's population, read
  * with the gate's own predicate (`UNREVIEWED_LIVE_JOBS_WHERE`) so the two counts
  * never drift. Live rows whose authority is SQL NULL (authorizable with
- * `gbrain jobs authorize-legacy --select`) or unsupported non-NULL block
+ * `foresights jobs authorize-legacy --select`) or unsupported non-NULL block
  * every worker, so the check fails and names the recovery order. Terminal
  * keyed SQL NULL rows are reported separately: application callers coalesce
  * onto completed or failed ones and dead or cancelled keys are released on
@@ -95,7 +95,7 @@ export async function legacyJobAuthorityCheck(engine: BrainEngine): Promise<Chec
     };
   }
   const unsupported = state.unsupported
-    ? ` ${state.unsupported} carry unsupported non-NULL authority: run matching application and database versions, or cancel them (${state.unsupported_ids.map(id => `gbrain jobs cancel ${id}`).join('; ')}).`
+    ? ` ${state.unsupported} carry unsupported non-NULL authority: run matching application and database versions, or cancel them (${state.unsupported_ids.map(id => `foresights jobs cancel ${id}`).join('; ')}).`
     : '';
   return {
     name: 'legacy_job_authority', status: 'fail', details,
@@ -126,7 +126,7 @@ async function runLegacyJobAuthority(ctx: DoctorContext): Promise<Check[]> {
   if (status === 'ok' && spend?.long_waiting && workers !== null && workers > 0) {
     checks.push({ name: 'legacy_job_authority', status: 'warn', details: { ...details, queued_spend: spend, live_workers: workers },
       message: `${spend.long_waiting} spend-authorized job(s) (${spend.long_waiting_ids.join(', ')}) have waited over 10 minutes while ${workers} worker(s) run: `
-        + `an un-upgraded worker may be fenced off; un-upgraded workers stop claiming at a fenced row. Upgrade gbrain on every worker host and restart the workers (gbrain jobs supervisor stop, then gbrain jobs supervisor start, or your service manager).${census}`,
+        + `an un-upgraded worker may be fenced off; un-upgraded workers stop claiming at a fenced row. Upgrade foresights on every worker host and restart the workers (foresights jobs supervisor stop, then foresights jobs supervisor start, or your service manager).${census}`,
       fix: { argv: ['gbrain', 'jobs', 'list', '--status', 'waiting', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
         why: 'Shows the waiting rows and their spend records; fenced rows run once every worker runs the upgraded binary.' } });
     return checks;
@@ -143,21 +143,21 @@ export const legacyJobAuthorityEntry: DoctorEntry = {
   run: runLegacyJobAuthority,
 };
 
-/** `gbrain post-upgrade` banner line when live legacy rows block workers (read-only commands only). */
+/** `foresights post-upgrade` banner line when live legacy rows block workers (read-only commands only). */
 export async function legacyJobAuthorityBannerNote(engine: BrainEngine): Promise<string | null> {
   const state = await readLegacyJobAuthority(engine);
   const authorizable = sum(state.authorizable);
   if (!authorizable && !state.unsupported) return null;
   return `legacy_job_authority: ${authorizable + state.unsupported} queued job(s) from before v0.50 block every worker. `
-    + `Stop producers (gbrain serve, gbrain autopilot) and workers, cancel active jobs, then preview with: ${LIVE_LEGACY_PREVIEW}`
-    + `${state.unsupported ? `; ${state.unsupported} unsupported row(s) need matching versions or gbrain jobs cancel <id>` : ''}. Recipe: ${ERROR_CATALOGUE.legacy_job_authority.docs}`;
+    + `Stop producers (foresights serve, foresights autopilot) and workers, cancel active jobs, then preview with: ${LIVE_LEGACY_PREVIEW}`
+    + `${state.unsupported ? `; ${state.unsupported} unsupported row(s) need matching versions or foresights jobs cancel <id>` : ''}. Recipe: ${ERROR_CATALOGUE.legacy_job_authority.docs}`;
 }
 
-/** `gbrain post-upgrade` banner line when queued paid jobs will run under the legacy default cap. */
+/** `foresights post-upgrade` banner line when queued paid jobs will run under the legacy default cap. */
 export async function legacyDefaultSpendBannerNote(engine: BrainEngine): Promise<string | null> {
   const n = (await readQueuedSpend(engine)).by_basis.legacy_default ?? 0;
   if (!n) return null;
   return `spend: ${n} queued paid job(s) (book-mirror chapters or enrich runs) were queued before submit-time authorization and run under a $5 default cap each. `
-    + 'To authorize a different amount, re-run the command that queued them with --max-usd <usd>; inspect them with: gbrain jobs list --status waiting --json';
+    + 'To authorize a different amount, re-run the command that queued them with --max-usd <usd>; inspect them with: foresights jobs list --status waiting --json';
 }
 

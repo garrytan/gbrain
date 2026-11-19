@@ -3,7 +3,7 @@
  * could not be confirmed (sync-rename-identity.ts). Each old page keeps its facts, links and aliases on its soft-deleted
  * slug, and the purge leaves it alone until the pair gets a disposition (restored, remedied or closed without merging);
  * there is no time window. The finding names every open pair with its remedy; its fix is the first pair's
- * `gbrain repair rename-identity` apply (preview first, bound to the plan hash, destructive consent, behind ask_user;
+ * `foresights repair rename-identity` apply (preview first, bound to the plan hash, destructive consent, behind ask_user;
  * `--close` on a managed brain). Restoring the old page is the alternative its text names wherever the source admits a
  * restore (`restore_available`); details list the sources that do not. With no open record the check is ok.
  */
@@ -11,6 +11,7 @@ import type { Check } from '../../doctor.ts';
 import { agentFix, checkError } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { identityDowngradeReasonText, identityRestoreArgv, identityStatusArgv, listIdentityDowngrades, withIdentityRemedies } from '../../../core/sync-identity-downgrades.ts';
+import { commandText } from '../../../core/brand.ts';
 
 const DOCS = 'docs/guides/live-sync.md#renaming-a-page';
 const SAMPLE = 5;
@@ -31,17 +32,17 @@ async function runRenameIdentityDowngrades(ctx: DoctorContext): Promise<Check[]>
     }
     const first = sampled[0]!;
     const unrestorable = [...new Set(open.filter(record => record.restore_available === false).map(record => record.source_id))];
-    const restore = first.restore_available === false ? null : identityRestoreArgv(first).join(' ');
+    const restore = first.restore_available === false ? null : commandText(identityRestoreArgv(first));
     const carry = first.remedy.disposition === 'carry';
     const route = carry
-      ? `To carry an old page's identity onto its new page, preview ${first.remedy.preview_argv.join(' ')} and, after the user agrees, apply it. `
+      ? `To carry an old page's identity onto its new page, preview ${commandText(first.remedy.preview_argv)} and, after the user agrees, apply it. `
       : first.remedy.carry_unavailable
-        ? `Carrying identity is unavailable on a managed source (${first.remedy.carry_unavailable}); to release the purge hold without carrying it, preview ${first.remedy.preview_argv.join(' ')} and, after the user agrees, apply it. `
-        : `The new file did not import; to release the purge hold, preview ${first.remedy.preview_argv.join(' ')} and, after the user agrees, apply it. `;
+        ? `Carrying identity is unavailable on a managed source (${first.remedy.carry_unavailable}); to release the purge hold without carrying it, preview ${commandText(first.remedy.preview_argv)} and, after the user agrees, apply it. `
+        : `The new file did not import; to release the purge hold, preview ${commandText(first.remedy.preview_argv)} and, after the user agrees, apply it. `;
     checks.push({ name: 'rename_identity_downgrades', status: 'warn', details: { ...details, restore_unavailable_sources: unrestorable },
       message: `${open.length} rename(s) did not keep their page identity, so each old page's facts, links and aliases stay on its soft-deleted slug, held from the purge until the pair is settled `
         + `(e.g. ${samples.map(record => `${record.source_id}:${record.from} -> ${record.to}, ${record.facts} fact(s) and ${record.links} link(s) on ${record.old_slug}`).join('; ')}; `
-        + `first: ${identityDowngradeReasonText(first.reason)}). ${identityStatusArgv(first.source_id).join(' ')} lists every pair with its remedy. ${route}`
+        + `first: ${identityDowngradeReasonText(first.reason)}). ${commandText(identityStatusArgv(first.source_id))} lists every pair with its remedy. ${route}`
         + (restore ? `To keep the old page as its own page instead: ${restore}. ` : '')
         + (unrestorable.length ? `A restore is not offered on ${unrestorable.join(', ')} (an unbound Postgres source refuses page writes outside its checkout). ` : '')
         + `The purge holds each old page until ${first.remedy.hold_releases}.`,

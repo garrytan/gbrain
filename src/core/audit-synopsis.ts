@@ -5,7 +5,7 @@
  *
  * Writes failure events to `~/.gbrain/audit/synopsis-failures-YYYY-Www.jsonl`
  * (ISO-week rotation, mirrors `audit-slug-fallback.ts` shape). Surfaced
- * by `gbrain doctor`'s `synopsis_refusal_rate` check.
+ * by `foresights doctor`'s `synopsis_refusal_rate` check.
  *
  * Why failure-only (D17 decision, repeated here for the file-level reader):
  *   - The per-chunk synopsis backfill writes one row per page (potentially
@@ -121,7 +121,7 @@ export function logSynopsisFailure(args: LogSynopsisFailureArgs): void {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(
-      `[gbrain] synopsis-failure audit write failed (${msg}); page ${args.pageSlug} continues\n`,
+      `[foresights] synopsis-failure audit write failed (${msg}); page ${args.pageSlug} continues\n`,
     );
   }
 }

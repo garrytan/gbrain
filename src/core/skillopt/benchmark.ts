@@ -58,7 +58,7 @@ export function loadBenchmark(
       class: 'BenchmarkNotFound',
       code: 'benchmark_not_found',
       message: `Benchmark file unreadable: ${path} (${msg})`,
-      hint: `Auto-generate a starter with 'gbrain skillopt <skill> --bootstrap-from-skill' (reads SKILL.md), then review + run with --bootstrap-reviewed --split 1:1:1. Or pass --bootstrap-from-routing if a routing-eval.jsonl exists.`,
+      hint: `Auto-generate a starter with 'foresights skillopt <skill> --bootstrap-from-skill' (reads SKILL.md), then review + run with --bootstrap-reviewed --split 1:1:1. Or pass --bootstrap-from-routing if a routing-eval.jsonl exists.`,
     });
   }
 

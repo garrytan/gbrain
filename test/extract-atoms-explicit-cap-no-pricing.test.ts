@@ -1,6 +1,6 @@
 /**
  * extract_atoms under an explicit `cycle.extract_atoms.budget_usd` with a
- * model gbrain has no price for: the run is refused (status `warn`, no model
+ * model foresights has no price for: the run is refused (status `warn`, no model
  * call), carries the shared no_pricing guidance in its details, records the
  * stop as an expected limit (not a halt) for extract_health, and doctor's
  * extract_health names the registration command until the price is
@@ -113,7 +113,7 @@ describe('explicit extract_atoms cap + unpriced model', () => {
       units: ['usd_per_1m_input_tokens', 'usd_per_1m_output_tokens'], register_scope: 'local_cli',
       docs: 'docs/guides/write-refusals.md#no_pricing',
     });
-    expect(details.no_pricing.register_command).toStartWith(`gbrain pricing set ${UNPRICED_CHAT} --input`);
+    expect(details.no_pricing.register_command).toStartWith(`foresights pricing set ${UNPRICED_CHAT} --input`);
     expect(result.summary).toContain('the $0.50 cost cap can\'t be enforced');
     expect(result.summary).toContain(details.no_pricing.register_command);
     expect(stderr).toContain(details.no_pricing.register_command);
@@ -142,7 +142,7 @@ describe('explicit extract_atoms cap + unpriced model', () => {
     const details = result.details as Record<string, any>;
     expect(details.atoms_extracted).toBe(0);
     expect(details.no_pricing).toMatchObject({ code: 'no_pricing', model: UNPRICED_EMBED, kind: 'embed', units: ['usd_per_1m_tokens'] });
-    expect(details.no_pricing.register_command).toStartWith(`gbrain pricing set ${UNPRICED_EMBED} --rate`);
+    expect(details.no_pricing.register_command).toStartWith(`foresights pricing set ${UNPRICED_EMBED} --rate`);
     expect(await rollup()).toEqual({ halt: 0, expected: 1, completed: 0 });
   }, 60_000);
 
@@ -181,7 +181,7 @@ describe('default extract_atoms cap + unpriced model', () => {
     expect(chatCalls).toBe(1);
     expect(result.details?.atoms_extracted).toBe(1);
     expect(stderr).toContain('running without a cost gate');
-    expect(stderr).toContain(`gbrain pricing set ${UNPRICED_CHAT} --input`);
+    expect(stderr).toContain(`foresights pricing set ${UNPRICED_CHAT} --input`);
     expect(await readExtractAtomsNoPricing(engine)).toEqual([]);
   }, 60_000);
 });

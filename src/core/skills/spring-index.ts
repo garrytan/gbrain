@@ -1,9 +1,9 @@
 /**
  * skills/spring-index.ts — the spring-loaded skill resolver's always-loaded
- * half: a compact index of gbrain's bundled skills, one line per skill with
+ * half: a compact index of foresights's bundled skills, one line per skill with
  * its trigger phrases, plus the sentence that says how to load a skill on
  * demand: `<launcher> bundled-skill <name>`, which prints the skill from the
- * same gbrain that wrote the index (src/cli/commands/bundled-skill.ts).
+ * same foresights that wrote the index (src/cli/commands/bundled-skill.ts).
  *
  * Generated from each skill's frontmatter `triggers:` (the canonical routing
  * signal; skills/RESOLVER.md is the human map of the same data), so there is
@@ -57,10 +57,10 @@ const line = (name: string, triggers: string[]) => (triggers.length ? `- ${name}
 export function skillIndexHeader(launcher: string, refresh: string, optOut: string): string[] {
   const run = shellQuote(launcher);
   return [
-    `<!-- gbrain skills v${SKILL_INDEX_VERSION} catalog ${bundledCatalogId()}: managed by gbrain; edit outside these markers. Refresh: ${refresh}. Opt out: ${optOut} -->`,
-    '## GBrain skills: load on demand',
+    `<!-- gbrain skills v${SKILL_INDEX_VERSION} catalog ${bundledCatalogId()}: managed by foresights; edit outside these markers. Refresh: ${refresh}. Opt out: ${optOut} -->`,
+    '## Foresights skills: load on demand',
     '',
-    `GBrain ships step-by-step procedures for brain work. When a task matches a line below, run \`${run} bundled-skill <name>\` and follow the procedure it prints before acting. Print a file the skill names with \`${run} bundled-skill <name> --asset <path>\`. Load nothing for a task no line matches.`,
+    `Foresights ships step-by-step procedures for brain work. When a task matches a line below, run \`${run} bundled-skill <name>\` and follow the procedure it prints before acting. Print a file the skill names with \`${run} bundled-skill <name> --asset <path>\`. Load nothing for a task no line matches.`,
     '',
   ];
 }
@@ -88,5 +88,5 @@ export function renderSkillIndexBlock(skills: readonly BundledSkill[], launcher:
 
 /** The catalog identity an index block records, or undefined for a block without one. */
 export function skillIndexCatalog(interior: string): string | undefined {
-  return /gbrain skills v\d+ catalog ([0-9a-f]+)/.exec(interior)?.[1];
+  return /(?:foresights|gbrain) skills v\d+ catalog ([0-9a-f]+)/.exec(interior)?.[1];
 }

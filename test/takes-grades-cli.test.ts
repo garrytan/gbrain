@@ -1,5 +1,5 @@
 /**
- * W6: `gbrain takes grades`, the review surface for grade_takes verdicts.
+ * W6: `foresights takes grades`, the review surface for grade_takes verdicts.
  *
  * Protects: the newest cached verdict per take is listed (an older verdict of
  * the same take is not); takes on soft-deleted pages are left out; the
@@ -61,7 +61,7 @@ afterAll(async () => {
   await engine.disconnect();
 });
 
-describe('gbrain takes grades', () => {
+describe('foresights takes grades', () => {
   test('lists the newest verdict per take, newest first, and leaves out deleted pages', async () => {
     const rows = JSON.parse(await capture(() => runTakes(engine, ['grades', '--json'])));
     expect(rows.map((r: { take_id: number; verdict: string }) => [r.take_id, r.verdict])).toEqual([

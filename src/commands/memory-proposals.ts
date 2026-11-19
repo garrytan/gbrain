@@ -1,12 +1,12 @@
 /**
- * `gbrain memory-proposals` (GST-1158, GBRA-284): the brain owner's review of QM's proposed timeline entries and
+ * `foresights memory-proposals` (GST-1158, GBRA-284): the brain owner's review of QM's proposed timeline entries and
  * links (memory_propose). Trusted local CLI; the owner session reaches the same library calls over HTTP
- * (serve-http-access.ts, gbrain mcp admin memory-proposals). Never an MCP operation.
+ * (serve-http-access.ts, foresights mcp admin memory-proposals). Never an MCP operation.
  *
- *   gbrain memory-proposals list [--source <id>] [--all] [--limit N] [--json]
- *   gbrain memory-proposals show <request_id> [--json]
- *   gbrain memory-proposals approve <request_id> [--dry-run] [--json]
- *   gbrain memory-proposals deny <request_id> --reason "<why>" [--dry-run] [--json]
+ *   foresights memory-proposals list [--source <id>] [--all] [--limit N] [--json]
+ *   foresights memory-proposals show <request_id> [--json]
+ *   foresights memory-proposals approve <request_id> [--dry-run] [--json]
+ *   foresights memory-proposals deny <request_id> --reason "<why>" [--dry-run] [--json]
  *
  * The proposed text comes from a system credential, so list and show print it inside the transcript fence (quoted:
  * transcript) and approve takes exactly one request id.
@@ -22,7 +22,7 @@ export { MEMORY_PROPOSALS_SUBCOMMANDS as SUBCOMMANDS } from '../cli/subcommands.
 
 function usage(): string {
   return [
-    'Usage: gbrain memory-proposals <list|show|approve|deny> [args]',
+    'Usage: foresights memory-proposals <list|show|approve|deny> [args]',
     '  list [--source <id>] [--all] [--limit N] [--json]   awaiting your decision, oldest first (--all: closed ones too)',
     '  show <request_id> [--json]',
     '  approve <request_id> [--dry-run]                   re-check the person, the grant and the page, then write it',
@@ -83,11 +83,11 @@ export async function runMemoryProposals(engine: BrainEngine, args: string[]): P
       const limit = rawLimit === undefined ? 50 : intFlagValue(rawLimit, '--limit', { min: 1, example: 50 });
       const rows = await lib.listMemoryProposals(engine, { sourceId: flag('--source'), all: rest.includes('--all'), limit });
       const views = await Promise.all(rows.map(ownerView));
-      out({ proposals: views }, views.length ? views.map(line).join('\n') + '\n\nNext: gbrain memory-proposals show <request_id>, then approve <request_id> or deny <request_id> --reason "<why>"'
+      out({ proposals: views }, views.length ? views.map(line).join('\n') + '\n\nNext: foresights memory-proposals show <request_id>, then approve <request_id> or deny <request_id> --reason "<why>"'
         : 'No memory proposals await your decision.');
       return;
     }
-    if (!id) { console.error(`${usage()}\n\nA request id is required (gbrain memory-proposals list shows them).`); setCliExitVerdict(2); return; }
+    if (!id) { console.error(`${usage()}\n\nA request id is required (foresights memory-proposals list shows them).`); setCliExitVerdict(2); return; }
     if (sub === 'show') {
       const view = await ownerView(await lib.ownerProposal(engine, id));
       out(view, `${line(view)}\n${JSON.stringify(view.payload, null, 2)}`);

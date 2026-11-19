@@ -10,7 +10,7 @@
  * Pass / FAIL / INCONCLUSIVE verdict per `aggregate()`. The receipt schema
  * (schema_version: 1) is stable: timestamps, model strings, raw scores, and
  * dim rolls. Receipt filename binds skill slug + content sha-8 (T10=A) so
- * `gbrain skillify check` can tell whether a receipt is current or stale.
+ * `foresights skillify check` can tell whether a receipt is current or stale.
  */
 
 import { join } from 'path';

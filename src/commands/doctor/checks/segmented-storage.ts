@@ -45,11 +45,11 @@ export async function segmentedStorageCheck(engine: BrainEngine): Promise<Check>
     if (blockers.length) {
       return { name, status: 'warn', details,
         message: `Segmented page storage is configured ${configured === 'on' ? 'on' : 'on by default'} but held off: ${blockers.length} writer(s) that do not read segmented pages `
-          + `(a gbrain older than this release, or stamped below v${SEGMENTED_WRITER_FLOOR}) wrote in the last ${SEGMENTED_WRITER_WINDOW_DAYS} days: ${hosts.join('; ')}${blockers.length > SAMPLE ? ` (first ${SAMPLE} shown)` : ''}. `
+          + `(a foresights older than this release, or stamped below v${SEGMENTED_WRITER_FLOOR}) wrote in the last ${SEGMENTED_WRITER_WINDOW_DAYS} days: ${hosts.join('; ')}${blockers.length > SAMPLE ? ` (first ${SAMPLE} shown)` : ''}. `
           + 'An older writer does not understand segmented pages, so pages over 1 MiB are written inline up to 24 MiB until it is upgraded. '
           + `The hold clears ${SEGMENTED_WRITER_WINDOW_DAYS} days after each one's last write (clears_at).`,
         fix: { argv: ['gbrain', 'upgrade'], consent: [], actor: 'host_admin', requires_exclusive: false, verify: doctorVerify(name), docs: DOCS,
-          why: 'Run on each host doctor names (by host UUID), then restart its gbrain processes; the hold clears once no older writer has written for seven days.' } };
+          why: 'Run on each host doctor names (by host UUID), then restart its foresights processes; the hold clears once no older writer has written for seven days.' } };
     }
     return { name, status: 'ok', details,
       message: `Segmented page storage is on: pages over 1 MiB are stored in segments, up to ${policy.maxBytes} bytes on this ${engine.kind === 'pglite' ? 'PGLite' : 'Postgres'} brain.` };

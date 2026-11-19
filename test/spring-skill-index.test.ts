@@ -11,7 +11,7 @@
  * Fails when: a new or longer skill pushes the block past
  * SKILL_INDEX_BUDGET_BYTES, a skill drops out of the index, the renderer
  * returns an over-budget block, or a skill names a shared file
- * `gbrain bundled-skill --asset` would refuse.
+ * `foresights bundled-skill --asset` would refuse.
  */
 import { describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync } from 'node:fs';
@@ -26,7 +26,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 
-const OPTS = { refresh: 'gbrain setup claude-code --instructions-only', optOut: 'gbrain setup claude-code --instructions-only --skill-loading off' };
+const OPTS = { refresh: 'foresights setup claude-code --instructions-only', optOut: 'foresights setup claude-code --instructions-only --skill-loading off' };
 const LAUNCHER = '/home/alice-example/.bun/bin/gbrain';
 const bytes = (s: string) => Buffer.byteLength(s, 'utf8');
 const entries = (block: string) => block.split('\n').filter(l => l.startsWith('- '));

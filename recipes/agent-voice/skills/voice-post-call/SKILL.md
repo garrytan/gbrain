@@ -18,7 +18,7 @@ writes_to:
 
 # voice-post-call — Post-session transcript + summary handling
 
-> **Convention:** see gbrain's `skills/conventions/quality.md` for citation rules + back-link enforcement, and `skills/_brain-filing-rules.md` for the filing decision protocol. (These are not copied by the install; the relative paths resolve only if your host repo mirrors gbrain's skills layout.)
+> **Convention:** see foresights's `skills/conventions/quality.md` for citation rules + back-link enforcement, and `skills/_brain-filing-rules.md` for the filing decision protocol. (These are not copied by the install; the relative paths resolve only if your host repo mirrors foresights's skills layout.)
 
 ## Iron Law
 
@@ -33,7 +33,7 @@ If both paths fire (the tool call AND the call-end handler), the second one is i
               the full call audio (webm/opus) to /tmp/calls/<ts>-<persona>.webm.
               The browser client at /call?test=1 also captures via WebAudio-tee
               for E2E asserts; production /call uses server-side capture only.
-2. TRANSCRIBE → Whisper (via gbrain transcription) processes the audio. Output:
+2. TRANSCRIBE → Whisper (via foresights transcription) processes the audio. Output:
               full transcript (timestamped) + speaker labels where possible.
 3. SUMMARIZE  → A separate LLM call produces a 3-5 sentence summary covering
               key topics, decisions, and unresolved items.
@@ -119,7 +119,7 @@ Ships with this bundle (sibling directories after install):
 - [voice-persona-mars](../voice-persona-mars/SKILL.md) — the persona that may invoke this
 - [voice-persona-venus](../voice-persona-venus/SKILL.md) — the other persona that may invoke this
 
-Lives in gbrain's `skills/` (present on the host only if your repo mirrors gbrain's skills layout):
+Lives in foresights's `skills/` (present on the host only if your repo mirrors foresights's skills layout):
 
 - `meeting-ingestion` — analogous flow for multi-party meeting transcripts (different in that voice-call is typically 1:1)
 - `media-ingest` — for recorded one-way voice memos (different from live voice calls)
@@ -132,7 +132,7 @@ This skill guarantees:
 - The post-call pipeline runs idempotently — second invocations update rather than duplicate.
 - Output written under `meetings/` or `voice-calls/` (consistent with `_brain-filing-rules.md`).
 - Conventions referenced (`quality.md`, `_brain-filing-rules.md`) are followed.
-- Privacy contract preserved: no real names in any committed sample; the operator's actual call transcripts contain whatever they say, which is the operator's data and not gbrain's concern.
+- Privacy contract preserved: no real names in any committed sample; the operator's actual call transcripts contain whatever they say, which is the operator's data and not foresights's concern.
 
 ## Output Format
 

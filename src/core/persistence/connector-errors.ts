@@ -30,34 +30,34 @@ export function connectorAccountChanged(sourceId: string, kind: ConnectorKind, c
   case 'google': {
     const google = config as GoogleSourceConfig;
     const where = google.access === 'command' ? `the command configured as g_token_command (${google.tokenCommand ?? 'unset'})`
-      : google.access === 'env' ? `the environment variable configured as g_token_env (${google.tokenEnv ?? 'unset'})` : `the vault credential (gbrain google connect --account ${google.account})`;
-    restore = `restore ${where} so it yields a token for ${show(recorded)}, then retry: gbrain sync --source ${sourceId}`;
-    replace = `add a new source for the new account (gbrain google setup --account ${typeof resolved === 'object' && resolved?.kind === 'google' ? resolved.email : '<email>'}), `
-      + `then archive this one: gbrain sources archive ${sourceId}`;
+      : google.access === 'env' ? `the environment variable configured as g_token_env (${google.tokenEnv ?? 'unset'})` : `the vault credential (foresights google connect --account ${google.account})`;
+    restore = `restore ${where} so it yields a token for ${show(recorded)}, then retry: foresights sync --source ${sourceId}`;
+    replace = `add a new source for the new account (foresights google setup --account ${typeof resolved === 'object' && resolved?.kind === 'google' ? resolved.email : '<email>'}), `
+      + `then archive this one: foresights sources archive ${sourceId}`;
     break;
   }
   case 'github': {
     const github = config as GitHubSourceConfig;
     const installation = typeof resolved === 'object' && resolved?.kind === 'github' && resolved.installationId !== null ? resolved.installationId : '<installation-id>';
-    restore = github.app ? `restore the GitHub App credential (gh_app_id ${github.app.appId}, key at gh_app_pem_path) for ${show(recorded)}, then retry: gbrain sync --source ${sourceId}`
-      : `restore the token in the environment variable configured as gh_token_env (${github.tokenEnv}) for ${show(recorded)}, then retry: gbrain sync --source ${sourceId}`;
-    replace = `add a new source pinned to the intended installation (gbrain sources add <new-id> --kind github --scope ${github.scope}`
+    restore = github.app ? `restore the GitHub App credential (gh_app_id ${github.app.appId}, key at gh_app_pem_path) for ${show(recorded)}, then retry: foresights sync --source ${sourceId}`
+      : `restore the token in the environment variable configured as gh_token_env (${github.tokenEnv}) for ${show(recorded)}, then retry: foresights sync --source ${sourceId}`;
+    replace = `add a new source pinned to the intended installation (foresights sources add <new-id> --kind github --scope ${github.scope}`
       + `${github.scope === 'repos' ? ` --repos ${github.repos.join(',')}` : ''}${github.app ? ` --app-id ${github.app.appId} --app-pem <path>` : ''} --app-install ${installation}), `
-      + `then archive this one: gbrain sources archive ${sourceId}`;
+      + `then archive this one: foresights sources archive ${sourceId}`;
     break;
   }
   case 'meetings': {
     const meetings = config as MeetingsSourceConfig;
-    const where = meetings.tokenEnv ? `the environment variable configured as m_token_env (${meetings.tokenEnv})` : `the saved key (gbrain connectors auth ${meetings.provider} --token -)`;
-    restore = `restore ${where} so it belongs to ${show(recorded)}, then retry: gbrain sync --source ${sourceId}`;
-    replace = `add a new source for the new account (gbrain sources add <new-id> --kind meetings --provider ${meetings.provider}), then archive this one: gbrain sources archive ${sourceId}`;
+    const where = meetings.tokenEnv ? `the environment variable configured as m_token_env (${meetings.tokenEnv})` : `the saved key (foresights connectors auth ${meetings.provider} --token -)`;
+    restore = `restore ${where} so it belongs to ${show(recorded)}, then retry: foresights sync --source ${sourceId}`;
+    replace = `add a new source for the new account (foresights sources add <new-id> --kind meetings --provider ${meetings.provider}), then archive this one: foresights sources archive ${sourceId}`;
     break;
   }
   case 'slack': {
     const slack = config as SlackSourceConfig;
-    const where = slack.tokenEnv ? `the environment variable configured as s_token_env (${slack.tokenEnv})` : 'the saved token (gbrain connectors auth slack --token -)';
-    restore = `restore ${where} so it belongs to ${show(recorded)}, then retry: gbrain sync --source ${sourceId}`;
-    replace = `add a new source for the new workspace (gbrain sources add <new-id> --kind slack --channels ${slack.channels.join(',')}), then archive this one: gbrain sources archive ${sourceId}`;
+    const where = slack.tokenEnv ? `the environment variable configured as s_token_env (${slack.tokenEnv})` : 'the saved token (foresights connectors auth slack --token -)';
+    restore = `restore ${where} so it belongs to ${show(recorded)}, then retry: foresights sync --source ${sourceId}`;
+    replace = `add a new source for the new workspace (foresights sources add <new-id> --kind slack --channels ${slack.channels.join(',')}), then archive this one: foresights sources archive ${sourceId}`;
     break;
   }
   default: return assertNever(kind);
@@ -82,27 +82,27 @@ export const CONNECTOR_INTENT_OUTDATED_OLD_HOST = 'A connector host older than t
  */
 /** Fix wave 4: recovery for `connector_fence_below_timeline`. */
 export function connectorFenceHint(source: string): string {
-  return `Preview the fix: gbrain repair connector-fences --source ${source}; apply it after review: gbrain repair connector-fences --source ${source} --apply; `
-    + `then re-attempt the item: gbrain sources retry-held ${source}`;
+  return `Preview the fix: foresights repair connector-fences --source ${source}; apply it after review: foresights repair connector-fences --source ${source} --apply; `
+    + `then re-attempt the item: foresights sources retry-held ${source}`;
 }
 
-/** #5974: a trigger refusal is a gbrain defect or a writer-version mismatch, not a content conflict. */
-export const DATABASE_REFUSAL_HINT = 'This is not a content conflict: a gbrain process wrote a row its publication did not own, so the database refused it and nothing was committed. '
-  + 'On the brain host run gbrain sources writer status --probe --json; recent_failures[].error_detail names the table, operation, guard branch, sources, '
-  + 'and the gbrain build and host that ran the attempt. If that build differs from gbrain --version, upgrade or restart every gbrain process sharing this database '
-  + '(serve, autopilot, sync jobs), then retry with a new request ID. If the builds match, report error_detail (it contains no page text) on the gbrain issue tracker. '
+/** #5974: a trigger refusal is a foresights defect or a writer-version mismatch, not a content conflict. */
+export const DATABASE_REFUSAL_HINT = 'This is not a content conflict: a foresights process wrote a row its publication did not own, so the database refused it and nothing was committed. '
+  + 'On the brain host run foresights sources writer status --probe --json; recent_failures[].error_detail names the table, operation, guard branch, sources, '
+  + 'and the foresights build and host that ran the attempt. If that build differs from foresights --version, upgrade or restart every foresights process sharing this database '
+  + '(serve, autopilot, sync jobs), then retry with a new request ID. If the builds match, report error_detail (it contains no page text) on the foresights issue tracker. '
   + 'Do not force-write, edit SQL, or disable the guard; ask the user before changing which hosts own the brain.';
 
 /**
  * #7636/#7780: a guard refused because the database role cannot fully read the writer state it checks. The cause is the
  * role's visibility, never the build, whichever guard raised it; the owner-only `error_detail.state` names the table.
  */
-export const UNREADABLE_STATE_HINT = 'A database guard refused this write and nothing was committed: the database role gbrain connects as cannot fully read the writer state the guard checks '
+export const UNREADABLE_STATE_HINT = 'A database guard refused this write and nothing was committed: the database role foresights connects as cannot fully read the writer state the guard checks '
   + '(row-level security hides it or applies to the role, or a singleton row is missing), so the guard refused instead of reading the brain as unmanaged or the row as absent. '
-  + 'Upgrading gbrain does not fix this. On the brain host run gbrain sources writer status --probe --json; recent_failures[].error_detail.state names the table. '
-  + 'Run gbrain as a role that can read it (the table owner, a role that bypasses RLS, or a scoped role whose policies cover those rows; protocol activation and a change to '
-  + 'which sources are Git-canonical pass only the first two), then retry with a new request ID. A missing persistence_brain or git_canonical_brain row, which gbrain init '
-  + 'never leaves, is a defect: report it on the gbrain issue tracker. Ask the user before changing the database role gbrain connects as. Do not edit SQL or disable the guard.';
+  + 'Upgrading foresights does not fix this. On the brain host run foresights sources writer status --probe --json; recent_failures[].error_detail.state names the table. '
+  + 'Run foresights as a role that can read it (the table owner, a role that bypasses RLS, or a scoped role whose policies cover those rows; protocol activation and a change to '
+  + 'which sources are Git-canonical pass only the first two), then retry with a new request ID. A missing persistence_brain or git_canonical_brain row, which foresights init '
+  + 'never leaves, is a defect: report it on the foresights issue tracker. Ask the user before changing the database role foresights connects as. Do not edit SQL or disable the guard.';
 
 /**
  * The remedy and docs anchor of a database guard refusal whose cause the stored detail establishes: unreadable writer state
@@ -115,19 +115,19 @@ export function guardRefusalHint(code: string | null | undefined, detail: Record
     return { suggestion: UNREADABLE_STATE_HINT, docs: docsAnchor(protocol ? 'protocol_guard' : 'writer_coordinator_required') };
   }
   if (!protocol) return null;
-  const inspect = 'On the brain host run gbrain sources writer status --probe --json';
+  const inspect = 'On the brain host run foresights sources writer status --probe --json';
   const never = 'Do not edit SQL or disable the guard.';
   const suggestion = code === 'writer_upgrade_required'
-    ? 'The persistence protocol guard refused this write and nothing was committed: the gbrain process that ran it does not declare the persistence protocol this brain requires '
-      + `(an older gbrain sharing the database). ${inspect} and compare recent_failures[].error_detail.attempt.consumer_version with gbrain --version; `
-      + 'upgrade or restart every older gbrain process (serve, autopilot, sync jobs), then retry with a new request ID. Never lower the protocol floor, edit SQL or disable the guard.'
+    ? 'The persistence protocol guard refused this write and nothing was committed: the foresights process that ran it does not declare the persistence protocol this brain requires '
+      + `(an older foresights sharing the database). ${inspect} and compare recent_failures[].error_detail.attempt.consumer_version with foresights --version; `
+      + 'upgrade or restart every older foresights process (serve, autopilot, sync jobs), then retry with a new request ID. Never lower the protocol floor, edit SQL or disable the guard.'
     : code === 'writer_not_quiesced'
       ? 'The persistence protocol guard refused this write and nothing was committed: shared skill publication is not active, or the canonical owner\'s protocol-2 capability '
         + `changed after it was activated. ${inspect}; stop older writers and direct-file skill servers, then activate shared skill persistence on the canonical host again, `
         + `and retry with a new request ID. ${never}`
       : code === 'unsupported_mutation_protocol'
-        ? 'The persistence protocol guard refused a request whose target or protocol does not fit its operation, and nothing was committed: a gbrain defect or a version mismatch '
-          + `between gbrain processes sharing the database. ${inspect}, upgrade or restart every older gbrain process, then submit the write again with a new request ID; `
+        ? 'The persistence protocol guard refused a request whose target or protocol does not fit its operation, and nothing was committed: a foresights defect or a version mismatch '
+          + `between foresights processes sharing the database. ${inspect}, upgrade or restart every older foresights process, then submit the write again with a new request ID; `
           + `an accepted request's target cannot change. ${never}`
         : code === 'writer_coordinator_required' ? DATABASE_REFUSAL_HINT : null;
   return suggestion ? { suggestion, docs: docsAnchor('protocol_guard') } : null;
@@ -136,17 +136,17 @@ export function guardRefusalHint(code: string | null | undefined, detail: Record
 /** #5974: another database trigger (named in write_error_detail.raiser) refused the write. */
 /** #6719: an owner exception's recorded identity (class, errno, frame, build) does not name its cause; nothing proves the database refused it. */
 export const ownerExceptionHint = (requestId: string) => 'An unexpected owner exception ended this write and nothing was committed; its cause is unknown from the recorded identity alone. '
-  + `On the brain host run gbrain write-request ${requestId} --json and read error_detail (error_class, errno, frame, attempt.consumer_version, and for a database error its redacted error_text, statement and position) beside the persistence consumer log; `
-  + 'report that identity and the gbrain version on the issue tracker, and upgrade when a fix ships. Do not replay the old intent to diagnose it.';
+  + `On the brain host run foresights write-request ${requestId} --json and read error_detail (error_class, errno, frame, attempt.consumer_version, and for a database error its redacted error_text, statement and position) beside the persistence consumer log; `
+  + 'report that identity and the foresights version on the issue tracker, and upgrade when a fix ships. Do not replay the old intent to diagnose it.';
 
 /** #6719: an origin that names no database refusal (or none at all) stays unknown rather than read as a trigger. */
 export const unknownOriginHint = (requestId: string) => 'The recorded origin of this failure does not name a database refusal, so its cause is not established by this status. '
-  + `On the brain host run gbrain write-request ${requestId} --json and follow its diagnosis.fix; report the receipt's error_code and error_detail if it names no cause.`;
+  + `On the brain host run foresights write-request ${requestId} --json and follow its diagnosis.fix; report the receipt's error_code and error_detail if it names no cause.`;
 
 export const DATABASE_TRIGGER_HINT = 'A database trigger refused this write and nothing was committed; write_error_detail.raiser names it. '
-  + 'On the brain host run gbrain sources writer status --probe --json and compare recent_failures[].error_detail.attempt.consumer_version '
-  + 'with the version of every gbrain process sharing this database; upgrade or restart the older one, run gbrain apply-migrations --yes, then retry with a new request ID. '
-  + 'If versions match, report error_detail on the gbrain issue tracker. Do not edit SQL or disable triggers.';
+  + 'On the brain host run foresights sources writer status --probe --json and compare recent_failures[].error_detail.attempt.consumer_version '
+  + 'with the version of every foresights process sharing this database; upgrade or restart the older one, run foresights apply-migrations --yes, then retry with a new request ID. '
+  + 'If versions match, report error_detail on the foresights issue tracker. Do not edit SQL or disable triggers.';
 
 export function receiptDeliveredHint(receipt: { error_code?: string | null; error_message?: string | null; source_id?: string; slug?: string | null; intent?: Record<string, unknown> | null;
   error_detail?: Record<string, unknown> | null }):
@@ -159,22 +159,22 @@ export function receiptDeliveredHint(receipt: { error_code?: string | null; erro
       const preUpgrade = receipt.error_message === CONNECTOR_INTENT_OUTDATED_PRE_UPGRADE;
       return preUpgrade
         ? { detail: 'pre_upgrade', docs: docsAnchor('connector_intent_outdated'),
-          suggestion: `No host upgrade is needed: the item is fetched again on the next run under a new request ID. Run: gbrain sync --source ${source}` }
+          suggestion: `No host upgrade is needed: the item is fetched again on the next run under a new request ID. Run: foresights sync --source ${source}` }
         : { docs: docsAnchor('connector_intent_outdated'),
-          suggestion: `Upgrade gbrain on the host that runs connector jobs for ${source} (gbrain upgrade), then run gbrain sync --source ${source}; the item is fetched again under a new request ID.` };
+          suggestion: `Upgrade foresights on the host that runs connector jobs for ${source} (foresights upgrade), then run foresights sync --source ${source}; the item is fetched again under a new request ID.` };
     }
     case 'unsupported_mutation_protocol': {
       const kind = String(receipt.intent?.kind ?? '');
       if (!kind.startsWith('connector_v2_')) return null;
       return { detail: 'consumer_upgrade_required', docs: docsAnchor('unsupported_mutation_protocol'),
-        suggestion: `The persistence consumer that owns ${source} runs a gbrain older than this connector. Run gbrain upgrade on every consumer and worktree-owner host, then gbrain sync --source ${source}.` };
+        suggestion: `The persistence consumer that owns ${source} runs a foresights older than this connector. Run foresights upgrade on every consumer and worktree-owner host, then foresights sync --source ${source}.` };
     }
     case EMBEDDING_ZERO_NORM: {
       const slug = receipt.slug ?? '<slug>';
       const sourceFlag = receipt.source_id && receipt.source_id !== 'default' ? ` --source ${receipt.source_id}` : '';
       return { docs: EMBEDDING_ZERO_NORM_DOCS,
         suggestion: `The embedding provider gave no usable vector for some chunks of ${slug}; the other chunks were stored and nothing is retried. `
-          + `Inspect those chunks' text (empty, whitespace- or symbol-only chunks are the usual cause) or the provider, then run gbrain embed ${slug}${sourceFlag}.` };
+          + `Inspect those chunks' text (empty, whitespace- or symbol-only chunks are the usual cause) or the provider, then run foresights embed ${slug}${sourceFlag}.` };
     }
     case 'writer_coordinator_required':
     case 'storage_error': {

@@ -1,11 +1,11 @@
 /**
  * Poll-until-terminal helper for CLI callers. Minions doesn't ship a
  * notification stream for arbitrary callers (the NOTIFY trigger is worker-
- * side), so `gbrain agent run --follow` on the CLI side polls getJob() until
+ * side), so `foresights agent run --follow` on the CLI side polls getJob() until
  * the job reaches a terminal state.
  *
- * On timeout, the job is NOT cancelled — the user can `gbrain jobs get <id>`
- * later to check. Explicit cancellation is the user's call via `gbrain jobs
+ * On timeout, the job is NOT cancelled — the user can `foresights jobs get <id>`
+ * later to check. Explicit cancellation is the user's call via `foresights jobs
  * cancel <id>`.
  */
 

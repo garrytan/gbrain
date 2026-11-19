@@ -50,7 +50,7 @@ export const CONSUMER_DEADLINE_MS = 5_000;
 
 export type ConsumerRowMode = 'probing' | 'full' | 'waiter_only' | 'promoted';
 /**
- * Process identity: `{ pid, nonce, pid_ns }`; `kind` names the gbrain command. #6650: `boot_id` (the kernel's
+ * Process identity: `{ pid, nonce, pid_ns }`; `kind` names the foresights command. #6650: `boot_id` (the kernel's
  * boot id) and `start` (the process's kernel start time, `/proc/<pid>/stat` field 22) let another process on the
  * same machine prove this one is dead; null where /proc is unreadable, and `start` is null where /proc does not number
  * processes as this pid namespace does.
@@ -249,7 +249,7 @@ export function startConsumerHeartbeat(engine: DirectEngine, hostId: string, opt
     if (streak++ > 0) return;
     const message = error instanceof Error ? error.message.replace(/\s+/g, ' ').slice(0, 200) : String(error);
     process.stderr.write(`[persistence] phase=consumer_heartbeat reason=renewal_failed message="${message}"; this process keeps consuming; `
-      + 'other consumers on this host may stop deferring to it after 60 s; fix: gbrain sources writer status --json; docs: docs/ENGINES.md#persistence-consumer-log\n');
+      + 'other consumers on this host may stop deferring to it after 60 s; fix: foresights sources writer status --json; docs: docs/ENGINES.md#persistence-consumer-log\n');
   };
   // The deadline settles the await itself (a round-trip a pooler never completes must not park the heartbeat); a late result is dropped.
   const bounded = <T>(work: Promise<T>, cancel: AbortController, ms: number): Promise<T> => new Promise<T>((resolve, reject) => {

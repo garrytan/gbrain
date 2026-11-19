@@ -6,7 +6,7 @@
  * orphan pages (knowledge not connected), and a low composite brain_score.
  *
  * Perf note (eng-review): getHealth runs the orphan/dead-link scan — heavier
- * than getStats. The advisor calls it on explicit `gbrain advisor` / weekly
+ * than getStats. The advisor calls it on explicit `foresights advisor` / weekly
  * cron; the sync-cadence path uses getStats only (commands/advisor.ts /
  * the sync hook decide which collectors to run).
  *

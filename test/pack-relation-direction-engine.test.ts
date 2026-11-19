@@ -3,7 +3,7 @@
  * re-derivation path, on both engines (eval wave N9-2, N9-3, N9-4, N12-7).
  *
  * The brain has no schema_pack configured, so it resolves the bundled legacy
- * gbrain-base pack, exactly like brains created before `gbrain init` wrote one.
+ * gbrain-base pack, exactly like brains created before `foresights init` wrote one.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';

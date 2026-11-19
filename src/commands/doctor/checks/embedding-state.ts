@@ -5,9 +5,9 @@
  * (unknown without a covering partial index); every other tier counts exactly.
  *
  * It warns only on what no other check owns: chunks of pages soft-deleted
- * longer than the purge window that the purge would remove (fix: `gbrain
+ * longer than the purge window that the purge would remove (fix: `foresights
  * pages purge-deleted`; chunks its holds keep are information), and live
- * pages with body text but no chunk rows on a keyed brain (fix: `gbrain embed
+ * pages with body text but no chunk rows on a keyed brain (fix: `foresights embed
  * --stale`). The pending backlog stays the `embeddings` check's warning (it
  * ages the backlog; this check only counts it), and quarantined pages stay
  * `quarantined_pages`'. keyword_only (embed_skip by design), deleted chunks
@@ -46,13 +46,13 @@ async function runEmbeddingState(ctx: DoctorContext): Promise<Check[]> {
     const notes: string[] = [];
     if ((counts.pending ?? 0) > 0) notes.push(enabled ? 'The pending backlog is the embeddings check\'s to age and warn on.' : 'Embeddings are disabled by choice: keyword search reads the pending chunks.');
     if ((counts.quarantined ?? 0) > 0) notes.push('Quarantined pages are reviewed under quarantined_pages.');
-    if ((counts.keyword_only ?? 0) > 0) notes.push('Keyword-only chunks sit on embed_skip pages by design (split the page or approve a higher content_sanity.bytes_block; `gbrain pages unsearchable --state keyword_only` lists them).');
+    if ((counts.keyword_only ?? 0) > 0) notes.push('Keyword-only chunks sit on embed_skip pages by design (split the page or approve a higher content_sanity.bytes_block; `foresights pages unsearchable --state keyword_only` lists them).');
     if (deleted.within_window > 0) notes.push(`${deleted.within_window} chunk(s) on pages soft-deleted within ${deleted.window_hours}h wait for the purge lifecycle.`);
     if (deleted.held > 0) notes.push(`${deleted.held} chunk(s) on pages soft-deleted more than ${deleted.window_hours}h ago are held from the purge by design (a derived retirement inside generations.restore_days, a restorable atom, an open rename-identity pair, a parked derived-page origin or an archived source).`);
     if (deleted.purgeable > 0 || healable > 0) {
       const warnings: string[] = [];
-      if (deleted.purgeable > 0) warnings.push(`${deleted.purgeable} chunk(s) belong to pages soft-deleted more than ${deleted.window_hours}h ago; \`gbrain pages purge-deleted\` removes them (preview with --dry-run --json; it is brain-wide and irreversible, so ask the user first).`);
-      if (healable > 0) warnings.push(`${healable} live page(s) have body text but no chunk rows, so search cannot read their body; \`gbrain embed --stale\` chunks and embeds them (paid).`);
+      if (deleted.purgeable > 0) warnings.push(`${deleted.purgeable} chunk(s) belong to pages soft-deleted more than ${deleted.window_hours}h ago; \`foresights pages purge-deleted\` removes them (preview with --dry-run --json; it is brain-wide and irreversible, so ask the user first).`);
+      if (healable > 0) warnings.push(`${healable} live page(s) have body text but no chunk rows, so search cannot read their body; \`foresights embed --stale\` chunks and embeds them (paid).`);
       const fix = embeddingStateFix(deleted.purgeable > 0 ? 'deleted_page_chunks' : 'chunkless_healable', { embeddingsEnabled: enabled, verify: doctorVerify('embedding_state') });
       checks.push({ name: 'embedding_state', status: 'warn', message: [summary, ...warnings, ...notes].join(' '),
         details: { ...details, code: deleted.purgeable > 0 ? 'deleted_page_chunks_overdue' : 'chunkless_pages_healable' }, ...(fix ? { fix } : {}) });

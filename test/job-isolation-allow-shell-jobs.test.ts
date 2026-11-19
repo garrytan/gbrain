@@ -1,6 +1,6 @@
 /**
- * `--job-isolation process`: the per-job child (`gbrain jobs run-child`) is a
- * fresh gbrain process that re-runs the startup cwd-.env quarantine in the
+ * `--job-isolation process`: the per-job child (`foresights jobs run-child`) is a
+ * fresh foresights process that re-runs the startup cwd-.env quarantine in the
  * SAME cwd as the worker, so an env-only handoff of GBRAIN_ALLOW_SHELL_JOBS is
  * dropped again whenever a .env there assigns it — exactly the hole
  * `jobs work --allow-shell-jobs` closes for the supervisor → worker hop. The

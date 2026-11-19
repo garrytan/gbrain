@@ -1,5 +1,5 @@
 /**
- * `gbrain decide calibrate | qualify | calibrations | dataset`.
+ * `foresights decide calibrate | qualify | calibrations | dataset`.
  *
  * calibrate: runs the slot's production-shaped requests over the dataset's
  * calibrate half, picks the threshold, measures reliability/ECE, retest_sd
@@ -100,14 +100,14 @@ async function cmdCalibrate(engine: BrainEngine, args: string[]): Promise<number
   const json = args.includes('--json');
   const slot = slotArg(args);
   const path = flagValue(args, '--dataset');
-  if (!slot || !path) { console.error('Usage: gbrain decide calibrate --slot <slot> --dataset <jsonl> [--target precision|recall|f1] [--min <x>] [--call-site <site>] [--dry-run]'); return 1; }
+  if (!slot || !path) { console.error('Usage: foresights decide calibrate --slot <slot> --dataset <jsonl> [--target precision|recall|f1] [--min <x>] [--call-site <site>] [--dry-run]'); return 1; }
   const adapter = datasetAdapter(slot);
   if (!adapter || !SLOT_SPECS[slot].thresholded) { console.error(refusalLine('slot_unavailable', slot)); return 1; }
   const text = readFileSync(path, 'utf8');
   const callSite = flagValue(args, '--call-site') ?? adapter.callSite;
   const all = parseDatasetJsonl(text).filter((i) => i.slot === slot && itemForCallSite(i, callSite));
   const calibrate = all.filter((i) => i.split === 'calibrate');
-  if (calibrate.length === 0) { console.error('dataset has no calibrate-half items for this slot (build it with gbrain decide dataset)'); return 1; }
+  if (calibrate.length === 0) { console.error('dataset has no calibrate-half items for this slot (build it with foresights decide dataset)'); return 1; }
   const state = await loadDecideState(engine);
   const provider = state.cfg.slots[slot].provider;
   if (provider === 'none') { console.error(refusalLine('no_provider', slot)); return 1; }
@@ -161,7 +161,7 @@ async function cmdCalibrate(engine: BrainEngine, args: string[]): Promise<number
     console.log(`ECE ${rel.ece.toFixed(3)}; retest_sd ${row.retest_sd.toFixed(3)}; repack_sd ${row.repack_sd.toFixed(3)}; margin ${out.margin.toFixed(3)}`);
     console.log('reliability (probability bin: n, mean probability, observed rate):');
     for (const b of rel.table) if (b.n) console.log(`  ${b.lo.toFixed(1)}-${b.hi.toFixed(1)}: ${b.n}, ${b.mean_p.toFixed(3)}, ${b.observed.toFixed(3)}`);
-    console.log(`Next: gbrain decide qualify --slot ${slot} --dataset ${path}`);
+    console.log(`Next: foresights decide qualify --slot ${slot} --dataset ${path}`);
     return 0;
   } catch (err) {
     console.error(`calibrate failed: ${refusalLine(err instanceof DecideError ? err.reason : 'provider_error')}${err instanceof DecideError ? '' : ` (${err instanceof Error ? err.message : err})`}`);
@@ -174,7 +174,7 @@ async function cmdQualify(engine: BrainEngine, args: string[]): Promise<number> 
   const slot = slotArg(args);
   const path = flagValue(args, '--dataset');
   const itemsOut = flagValue(args, '--items-out');
-  if (!slot || !path) { console.error('Usage: gbrain decide qualify --slot <slot> --dataset <jsonl> [--call-site <site>] [--items-out <path>]'); return 1; }
+  if (!slot || !path) { console.error('Usage: foresights decide qualify --slot <slot> --dataset <jsonl> [--call-site <site>] [--items-out <path>]'); return 1; }
   const adapter = datasetAdapter(slot);
   if (!adapter?.harmfulActions) { console.error(refusalLine('slot_unavailable', slot)); return 1; }
   const unwritable = itemsOut ? itemsOutProblem(itemsOut) : null;
@@ -216,11 +216,11 @@ async function cmdQualify(engine: BrainEngine, args: string[]): Promise<number> 
         return 1;
       }
     }
-    const out = { calibration: `local:${cal.id}`, ...q, min_action_precision: minPrecision, policy_fingerprint: fingerprint, next: q.status === 'qualified' ? `gbrain decide enable ${slot}` : null };
+    const out = { calibration: `local:${cal.id}`, ...q, min_action_precision: minPrecision, policy_fingerprint: fingerprint, next: q.status === 'qualified' ? `foresights decide enable ${slot}` : null };
     if (json) { console.log(JSON.stringify(out, null, 2)); return q.status === 'qualified' ? 0 : 1; }
     console.log(`Qualification of local:${cal.id} (${slot}, ${callSite}): ${q.correct_families}/${q.families} families correct over ${q.actions} harmful actions; action_precision_lb ${q.action_precision_lb === null ? 'n/a' : q.action_precision_lb.toFixed(3)} (gate ${minPrecision})`);
     for (const [slice, s] of Object.entries(q.slices)) console.log(`  slice ${slice}: ${s.correct}/${s.families}, lb ${s.lb.toFixed(3)} (advisory)`);
-    if (q.status === 'qualified') { console.log(`Qualified. Next: gbrain decide enable ${slot}`); return 0; }
+    if (q.status === 'qualified') { console.log(`Qualified. Next: foresights decide enable ${slot}`); return 0; }
     if (q.status === 'insufficient_n') console.error(`${refusalLine('insufficient_n', slot)} (need at least ${requiredN(minPrecision)} families with a harmful action; have ${q.families})`);
     else console.error(refusalLine('action_precision_low', slot));
     return 1;
@@ -247,7 +247,7 @@ async function cmdCalibrations(engine: BrainEngine, args: string[]): Promise<num
     const slot = slotArg(args) ?? undefined;
     const rows = await listCalibrations(engine, { slot, includeRetired: true });
     if (args.includes('--json')) { console.log(JSON.stringify(rows, null, 2)); return 0; }
-    if (rows.length === 0) { console.log('No local calibrations. Build one: gbrain decide calibrate --slot <slot> --dataset <jsonl>'); return 0; }
+    if (rows.length === 0) { console.log('No local calibrations. Build one: foresights decide calibrate --slot <slot> --dataset <jsonl>'); return 0; }
     for (const r of rows) {
       console.log(`local:${r.id}  ${r.slot}/${r.call_site}  ${r.provider} → ${r.model_resolved}  threshold ${r.threshold.toFixed(3)}  n=${r.n}  lb=${r.action_precision_lb === null ? 'unqualified' : r.action_precision_lb.toFixed(3)}${r.retired_at ? '  (retired)' : ''}`);
     }
@@ -256,14 +256,14 @@ async function cmdCalibrations(engine: BrainEngine, args: string[]): Promise<num
   const raw = String(args[1] ?? '');
   if (action === 'adopt' && raw.startsWith('ref:')) {
     const ref = REFERENCE_CALIBRATIONS.find((r) => `ref:${r.id}` === raw);
-    if (!ref) { console.error(`reference calibration ${raw} not found in this build (gbrain decide calibrations list shows local ones; shipped references appear in gbrain decide status)`); return 1; }
+    if (!ref) { console.error(`reference calibration ${raw} not found in this build (foresights decide calibrations list shows local ones; shipped references appear in foresights decide status)`); return 1; }
     await engine.setConfig(`decide.slots.${ref.slot}.calibration`, raw);
     resetDecideSearchCache();
     console.log(`${ref.slot} (${ref.call_site}) now uses ${raw} (threshold ${ref.threshold.toFixed(3)} for ${ref.model_resolved}).`);
     return 0;
   }
   const id = Number(raw.replace(/^local:/, ''));
-  if (!Number.isInteger(id) || id <= 0) { console.error(`Usage: gbrain decide calibrations ${action} <id>  (adopt also takes ref:<id>)`); return 1; }
+  if (!Number.isInteger(id) || id <= 0) { console.error(`Usage: foresights decide calibrations ${action} <id>  (adopt also takes ref:<id>)`); return 1; }
   const row = await getCalibration(engine, id);
   if (!row) { console.error(`calibration local:${id} not found`); return 1; }
   if (action === 'adopt') {
@@ -279,7 +279,7 @@ async function cmdCalibrations(engine: BrainEngine, args: string[]): Promise<num
     console.log(`local:${id} ${action === 'retire' ? 'retired' : 'restored'}.`);
     return 0;
   }
-  console.error('Usage: gbrain decide calibrations list|adopt|retire|restore');
+  console.error('Usage: foresights decide calibrations list|adopt|retire|restore');
   return 1;
 }
 
@@ -287,7 +287,7 @@ async function cmdDataset(args: string[]): Promise<number> {
   const slot = slotArg(args);
   const source = flagValue(args, '--from');
   const path = source ? args[args.indexOf('--from') + 2] : undefined;
-  if (!slot || !source || !path) { console.error(`Usage: gbrain decide dataset --slot <slot> --from <source> <path> [--out <file>]. Sources in this build: ${datasetSources().join(', ')}`); return 1; }
+  if (!slot || !source || !path) { console.error(`Usage: foresights decide dataset --slot <slot> --from <source> <path> [--out <file>]. Sources in this build: ${datasetSources().join(', ')}`); return 1; }
   const builder = datasetBuilder(source);
   if (!builder) { console.error(`dataset source '${source}' is not available in this build. Sources: ${datasetSources().join(', ')}`); return 1; }
   const items = await builder(path, { slot });

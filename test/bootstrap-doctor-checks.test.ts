@@ -245,7 +245,7 @@ describe('bootstrap_harness_health (#4043)', () => {
     const c = byName(checks, 'bootstrap_harness_health');
     expect(c?.status).toBe('fail');
     // #6743: per-id wording (this id has no enrollment to leave, so revoking it is safe).
-    expect(c?.message).toContain('44444444-4444-4444-4444-444444444444: status unknown; no enrollment holds it; a re-run revokes it (or `gbrain auth revoke` by id)');
+    expect(c?.message).toContain('44444444-4444-4444-4444-444444444444: status unknown; no enrollment holds it; a re-run revokes it (or `foresights auth revoke` by id)');
   }, T);
 
   test('healthy receipt + unreachable serve → WARN (normal transient), never fail', async () => {
@@ -462,7 +462,7 @@ describe('bootstrap_push_health', () => {
     writePushStatus(home, JSON.stringify({ ts: new Date().toISOString(), ok: true }));
     const c = byName(await run(parent), 'bootstrap_push_health');
     expect(c?.status).toBe('warn');
-    expect(c?.message).toBe(`last push ok (${JSON.parse(readFileSync(join(home, 'bootstrap', 'push-status.json'), 'utf8')).ts}), but ${ws} has 1 commit(s) not on origin — recent agent memory is unpushed. Run \`gbrain sources push --path ${ws}\`.`);
+    expect(c?.message).toBe(`last push ok (${JSON.parse(readFileSync(join(home, 'bootstrap', 'push-status.json'), 'utf8')).ts}), but ${ws} has 1 commit(s) not on origin — recent agent memory is unpushed. Run \`foresights sources push --path ${ws}\`.`);
   }, T);
 
   test('last push FAILED → warn naming the reason (regardless of age)', async () => {
@@ -543,7 +543,7 @@ describe('bootstrap_push_health', () => {
     expect(c?.status).toBe('fail');
     expect(c?.message).toContain('DIRTY');
     expect(c?.message).toContain(ws);
-    expect(c?.message).toContain(`Run \`gbrain sources push --path ${ws}\`.`);
+    expect(c?.message).toContain(`Run \`foresights sources push --path ${ws}\`.`);
     expect(c?.fix).toBeUndefined();
   }, T);
 
@@ -827,7 +827,7 @@ describe('bootstrap_last_verify', () => {
 // Presence-only checks certify dead jobs as healthy, so the doctor probes
 // consent + liveness. These pin the two branch families a unit test can hold
 // deterministically: the non-local environment (no scheduler EXPECTED — ok)
-// and the consented-but-missing job (warn naming `gbrain sources harden`).
+// and the consented-but-missing job (warn naming `foresights sources harden`).
 
 describe('bootstrap_durability_job [B7/D7]', () => {
   /** Env keys that would flip detectExecutionEnvironment away from local. */
@@ -866,13 +866,13 @@ describe('bootstrap_durability_job [B7/D7]', () => {
     expect(c?.message).toContain('cloud-sandbox');
   }, T);
 
-  test('local + PERSIST_CRON=yes but NO scheduled job on disk → warn naming `gbrain sources harden`', async () => {
+  test('local + PERSIST_CRON=yes but NO scheduled job on disk → warn naming `foresights sources harden`', async () => {
     const { parent, home } = makeHome();
     const ws = makeWorkspace();
     writeReceipt(home, ws);
     writeConsent(ws, 'yes');
     // HOME redirected: the launchd-plist / pull-log probes must never read the
-    // real machine's LaunchAgents (a developer's own gbrain install would flip
+    // real machine's LaunchAgents (a developer's own foresights install would flip
     // the verdict). Fresh empty HOME → durabilityJobStatus kind 'none'.
     const fakeHome = mkdtempSync(join(tmpdir(), 'gb-bdc-fakehome-'));
     tmpDirs.push(fakeHome);
@@ -887,7 +887,7 @@ describe('bootstrap_durability_job [B7/D7]', () => {
       const c = byName(checks, 'bootstrap_durability_job');
       expect(c?.status).toBe('warn');
       expect(c?.message).toContain('PERSIST_CRON=yes');
-      expect(c?.message).toContain('gbrain sources harden workspace');
+      expect(c?.message).toContain('foresights sources harden workspace');
     } finally {
       environment.mockRestore();
     }
@@ -910,16 +910,16 @@ describe('fail-soft umbrella', () => {
   }, T);
 });
 
-// #5371: a managed canonical worktree refuses `gbrain sources push`, and the
-// ownership stamp gbrain writes into it is not unpushed work.
+// #5371: a managed canonical worktree refuses `foresights sources push`, and the
+// ownership stamp foresights writes into it is not unpushed work.
 describe('bootstrap_push_health on a managed canonical worktree (#5371)', () => {
   const stamp = (ws: string) => writeFileSync(join(ws, '.gbrain-owner.json'), '{}');
-  const MANAGED_PROBE = 'gbrain sources writer status --probe --json';
+  const MANAGED_PROBE = 'foresights sources writer status --probe --json';
   function expectManagedGuidance(c: Check | undefined, ws: string): void {
     expect(c?.message).toContain(`${ws} is a managed canonical worktree`);
     expect(c?.message).toContain('legacy bulk push is not available');
     expect(c?.message).toContain(MANAGED_PROBE);
-    expect(c?.message).not.toContain('gbrain sources push');
+    expect(c?.message).not.toContain('foresights sources push');
   }
 
   test('stale push + tree whose only change is the ownership stamp → ok, confirmed clean', async () => {

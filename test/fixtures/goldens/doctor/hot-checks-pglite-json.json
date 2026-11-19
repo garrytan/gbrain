@@ -50,13 +50,13 @@
               "consent": [
                 "persistent_install"
               ],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/protocol/MEMORY_VERBS_v1.md#install-the-4-command-quickstart",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/protocol/MEMORY_VERBS_v1.md#install-the-4-command-quickstart",
               "next": "report",
               "requires_exclusive": false,
-              "user_message": "Which agent app should get gbrain memory? The install guide has a one-line command for each.",
-              "why": "For Claude Code or Codex, run `gbrain setup claude-code` or `gbrain setup codex` (it registers serve behind gbrain's launcher, so the session directory's bunfig.toml and .env never load). For any other host, register `<absolute path to gbrain> serve --surface starter --advertise verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+              "user_message": "Which agent app should get foresights memory? The install guide has a one-line command for each.",
+              "why": "For Claude Code or Codex, run `foresights setup claude-code` or `foresights setup codex` (it registers serve behind foresights's launcher, so the session directory's bunfig.toml and .env never load). For any other host, register `<absolute path to foresights> serve --surface starter --advertise verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
             },
-            "message": "pglite — serve IPC socket not present; enabled but NO resolve path exists right now: the IPC socket is only bound by a running `gbrain serve` (stdio or --http) — until one is up, hooks/reflex degrade to no_serve on this brain (host capability may still supply pointers; policy skill carries otherwise) — policy skill not installed; run `gbrain integrations install retrieval-reflex --target <host-repo>`",
+            "message": "pglite — serve IPC socket not present; enabled but NO resolve path exists right now: the IPC socket is only bound by a running `foresights serve` (stdio or --http) — until one is up, hooks/reflex degrade to no_serve on this brain (host capability may still supply pointers; policy skill carries otherwise) — policy skill not installed; run `foresights integrations install retrieval-reflex --target <host-repo>`",
             "name": "retrieval_reflex_health",
             "readiness_state": "not_applicable",
             "severity": "info",
@@ -175,7 +175,7 @@
             },
             "elapsed_ms": "<volatile>",
             "fix_unavailable_reason": "unstructured",
-            "message": "65 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +57 more. Add them with `gbrain skillpack sync`.",
+            "message": "65 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +57 more. Add them with `foresights skillpack sync`.",
             "name": "skill_currency",
             "status": "warn"
           },
@@ -200,7 +200,7 @@
               }
             },
             "elapsed_ms": "<volatile>",
-            "message": "1 skill(s), 0 KB, 0 gbrain invocation(s) (0 with undeclared subcommands, flags checked); no findings",
+            "message": "1 skill(s), 0 KB, 0 foresights invocation(s) (0 with undeclared subcommands, flags checked); no findings",
             "name": "skill_health",
             "status": "ok"
           },
@@ -246,7 +246,7 @@
               "visibility_note": "world = readable by agents authorized on THIS brain, not the public internet"
             },
             "elapsed_ms": "<volatile>",
-            "message": "ambient writeback off (default): Stop-hook turn capture is off, but the compaction harvest and SessionEnd transcripts still extract (installing the harness hooks opted into them; stop them: gbrain config set memory.auto_writeback off). Enable: gbrain config set memory.auto_writeback salient",
+            "message": "ambient writeback off (default): Stop-hook turn capture is off, but the compaction harvest and SessionEnd transcripts still extract (installing the harness hooks opted into them; stop them: foresights config set memory.auto_writeback off). Enable: foresights config set memory.auto_writeback salient",
             "name": "memory_writeback",
             "status": "ok"
           },
@@ -291,7 +291,7 @@
                 "--yes",
                 "--no-autopilot-install"
               ],
-              "command": "gbrain apply-migrations --yes --no-autopilot-install",
+              "command": "foresights apply-migrations --yes --no-autopilot-install",
               "consent": [],
               "next": "run",
               "requires_exclusive": true,
@@ -306,9 +306,9 @@
                   "host"
                 ]
               },
-              "why": "Runs the setup migrations gbrain init left pending (preferences, host-work notes, shared-skill checkpoints) on the brain host, without installing background services."
+              "why": "Runs the setup migrations foresights init left pending (preferences, host-work notes, shared-skill checkpoints) on the brain host, without installing background services."
             },
-            "message": "5 setup migration(s) not run yet on this new brain (pending_fresh_install: 0.11.0, 0.14.0, 0.22.4, 0.28.0, 0.53.0). Expected after gbrain init, not a failed upgrade.",
+            "message": "5 setup migration(s) not run yet on this new brain (pending_fresh_install: 0.11.0, 0.14.0, 0.22.4, 0.28.0, 0.53.0). Expected after foresights init, not a failed upgrade.",
             "name": "minions_migration",
             "severity": "info",
             "status": "ok"
@@ -330,7 +330,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "disabled (opt-in). Enable with: gbrain config set autopilot.nightly_quality_probe.enabled true",
+            "message": "disabled (opt-in). Enable with: foresights config set autopilot.nightly_quality_probe.enabled true",
             "name": "nightly_quality_probe_health",
             "status": "ok"
           },
@@ -348,7 +348,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "disabled (opt-in). Enable with: gbrain config set cycle.conversation_facts_backfill.enabled true",
+            "message": "disabled (opt-in). Enable with: foresights config set cycle.conversation_facts_backfill.enabled true",
             "name": "conversation_facts_backlog",
             "status": "ok"
           },
@@ -397,14 +397,14 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "disabled (opt-in; default-on only for search.mode=tokenmax). Enable with: `gbrain config set autopilot.conversation_parser_probe.enabled true`",
+            "message": "disabled (opt-in; default-on only for search.mode=tokenmax). Enable with: `foresights config set autopilot.conversation_parser_probe.enabled true`",
             "name": "conversation_parser_probe_health",
             "status": "ok"
           },
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "gbrain home is outside any enclosing git worktree.",
+            "message": "foresights home is outside any enclosing git worktree.",
             "name": "home_dir_in_worktree",
             "status": "ok"
           },
@@ -443,7 +443,7 @@
               "shadows": []
             },
             "elapsed_ms": "<volatile>",
-            "message": "No embedding key is set here (VOYAGE_API_KEY or voyage_api_key). No environment variable overrides a different config-plane provider key. This check sees only the environment `gbrain doctor` runs in; a daemon (gbrain serve, autopilot) has its own, and reports a mismatch in its log with a startup warning or embedding_auth_failed.",
+            "message": "No embedding key is set here (VOYAGE_API_KEY or voyage_api_key). No environment variable overrides a different config-plane provider key. This check sees only the environment `foresights doctor` runs in; a daemon (foresights serve, autopilot) has its own, and reports a mismatch in its log with a startup warning or embedding_auth_failed.",
             "name": "embedding_key_source",
             "status": "ok"
           },
@@ -454,7 +454,7 @@
               "provider_env": []
             },
             "elapsed_ms": "<volatile>",
-            "message": "No gbrain setup receipt records a provider-use decision for this install; provider calls follow the configured keys.",
+            "message": "No foresights setup receipt records a provider-use decision for this install; provider calls follow the configured keys.",
             "name": "provider_consent",
             "readiness_state": "not_applicable",
             "severity": "info",
@@ -471,11 +471,11 @@
               "consent": [
                 "persistent_install"
               ],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/protocol/MEMORY_VERBS_v1.md#install-the-4-command-quickstart",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/protocol/MEMORY_VERBS_v1.md#install-the-4-command-quickstart",
               "next": "report",
               "requires_exclusive": false,
-              "user_message": "Which agent app should get gbrain memory? The install guide has a one-line command for each.",
-              "why": "For Claude Code or Codex, run `gbrain setup claude-code` or `gbrain setup codex` (it registers serve behind gbrain's launcher, so the session directory's bunfig.toml and .env never load). For any other host, register `<absolute path to gbrain> serve --surface starter --advertise verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+              "user_message": "Which agent app should get foresights memory? The install guide has a one-line command for each.",
+              "why": "For Claude Code or Codex, run `foresights setup claude-code` or `foresights setup codex` (it registers serve behind foresights's launcher, so the session directory's bunfig.toml and .env never load). For any other host, register `<absolute path to foresights> serve --surface starter --advertise verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
             },
             "message": "No agent harness was detected. Wire one when the user picks an agent app.",
             "name": "harness_wiring",
@@ -529,17 +529,17 @@
                 "explicit_retention_days": null,
                 "over_target": false,
                 "target_bytes": 8589934592,
-                "used_bytes": 199663
+                "used_bytes": 199675
               },
               "inspected": 2,
               "outstanding": [],
               "paused_producers": [],
               "resources": [],
               "truncated": false,
-              "verify": "gbrain doctor --only persistence_capacity --json"
+              "verify": "foresights doctor --only persistence_capacity --json"
             },
             "elapsed_ms": "<volatile>",
-            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 199663 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
+            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 199675 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
             "name": "persistence_capacity",
             "status": "ok"
           },
@@ -740,7 +740,7 @@
             },
             "elapsed_ms": "<volatile>",
             "fix_unavailable_reason": "unstructured",
-            "message": "Source `notes`: 1 page(s) use 1 type(s) pack `gbrain-base-v2` neither declares nor aliases: '2024' (1). List them with `gbrain schema review-orphans --source notes`, then declare the type (`gbrain schema add-type <type>`, which takes its primitive and prefix) or retype the pages to a declared type.",
+            "message": "Source `notes`: 1 page(s) use 1 type(s) pack `gbrain-base-v2` neither declares nor aliases: '2024' (1). List them with `foresights schema review-orphans --source notes`, then declare the type (`foresights schema add-type <type>`, which takes its primitive and prefix) or retype the pages to a declared type.",
             "name": "schema_pack_consistency",
             "status": "warn"
           },
@@ -807,15 +807,15 @@
                 "--path",
                 "<home>/.gbrain/brain.pglite"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+              "command": "foresights init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
               "consent": [
                 "credentials",
                 "paid"
               ],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/search-modes.md",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/search-modes.md",
               "inputs": [
                 {
-                  "how": "Ask the user for an API key for Voyage AI; store it with `gbrain config set voyage_api_key <key>` (every gbrain process reads it), or export VOYAGE_API_KEY in the environment of every gbrain process. Then run the command.",
+                  "how": "Ask the user for an API key for Voyage AI; store it with `foresights config set voyage_api_key <key>` (every foresights process reads it), or export VOYAGE_API_KEY in the environment of every foresights process. Then run the command.",
                   "name": "VOYAGE_API_KEY"
                 }
               ],
@@ -833,7 +833,7 @@
                   "host"
                 ]
               },
-              "why": "Embeddings are off, so search is keyword-only, and no configured embedding key fits this brain. Once the key is set this turns on voyage:voyage-4 (1024d) for the PGLite brain at <home>/.gbrain/brain.pglite. Pages, facts and keyword search are kept; existing chunks and facts are queued for vectors, which `gbrain embed --stale` (or the next maintenance cycle) fills."
+              "why": "Embeddings are off, so search is keyword-only, and no configured embedding key fits this brain. Once the key is set this turns on voyage:voyage-4 (1024d) for the PGLite brain at <home>/.gbrain/brain.pglite. Pages, facts and keyword search are kept; existing chunks and facts are queued for vectors, which `foresights embed --stale` (or the next maintenance cycle) fills."
             },
             "message": "Embedding state (exact, column 'embedding'): 0 embedded, 23 pending, 0 keyword-only, 0 quarantined, 1 empty, 0 on deleted pages, 0 chunkless (healable); 1 unsearchable. Embeddings are disabled by choice: keyword search reads the pending chunks.",
             "name": "embedding_state",
@@ -844,7 +844,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "Extraction lag not applicable (20 pages — too few to assess); 1 page(s) pending link extraction (gbrain extract --stale finishes them)",
+            "message": "Extraction lag not applicable (20 pages — too few to assess); 1 page(s) pending link extraction (foresights extract --stale finishes them)",
             "name": "links_extraction_lag",
             "status": "ok"
           },
@@ -942,9 +942,9 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain projections drain --limit 4800 --brain host",
+              "command": "foresights projections drain --limit 4800 --brain host",
               "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/repair.md#projection-drain",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/repair.md#projection-drain",
               "next": "run",
               "preview_argv": [
                 "gbrain",
@@ -969,7 +969,7 @@
               },
               "why": "Rebuilds queued Markdown and code projections and seals importer-attested image pages in place, at most 4800 pages per run; repeat until the dry run shows sealable 0."
             },
-            "message": "Visible pages have missing or stale text projections (1 queued Markdown/code page(s)); search and code results may be incomplete. Run `gbrain projections drain` to rebuild queued Markdown and code projections now; it is safe while `gbrain serve` runs on Postgres. For code metadata repair, run `gbrain reindex-code --force --no-embed`. If work stays pending, inspect the recorded source path. No repair or embedding was started by this check.",
+            "message": "Visible pages have missing or stale text projections (1 queued Markdown/code page(s)); search and code results may be incomplete. Run `foresights projections drain` to rebuild queued Markdown and code projections now; it is safe while `foresights serve` runs on Postgres. For code metadata repair, run `foresights reindex-code --force --no-embed`. If work stays pending, inspect the recorded source path. No repair or embedding was started by this check.",
             "name": "text_projection_readiness",
             "status": "warn"
           },
@@ -1021,7 +1021,7 @@
               "runbook": "docs/guides/write-refusals.md#managed-guard-page-children"
             },
             "elapsed_ms": "<volatile>",
-            "message": "Guarded tables carry only the columns gbrain creates.",
+            "message": "Guarded tables carry only the columns foresights creates.",
             "name": "managed_guard_schema_drift",
             "status": "ok"
           },
@@ -1137,7 +1137,7 @@
               "timeout_ms": "<volatile>"
             },
             "elapsed_ms": "<volatile>",
-            "message": "Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout. notes: 19 live page(s), 11 equal, 4 database_ahead, 4 unparseable. Page detail: gbrain sources git-gap <source-id>.",
+            "message": "Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout. notes: 19 live page(s), 11 equal, 4 database_ahead, 4 unparseable. Page detail: foresights sources git-gap <source-id>.",
             "name": "db_ahead_of_git",
             "status": "ok"
           },
@@ -1351,7 +1351,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "Not applicable: no member is marked as an audience (gbrain access member kind <id> audience).",
+            "message": "Not applicable: no member is marked as an audience (foresights access member kind <id> audience).",
             "name": "access_audience_members",
             "readiness_state": "not_applicable",
             "severity": "info",
@@ -1369,7 +1369,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "Not applicable: no member is labelled-only (gbrain access member labelled-only <id> on).",
+            "message": "Not applicable: no member is labelled-only (foresights access member labelled-only <id> on).",
             "name": "access_labelled_only_members",
             "readiness_state": "not_applicable",
             "severity": "info",
@@ -1387,7 +1387,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "Not applicable: this brain has no guest source (gbrain guests init).",
+            "message": "Not applicable: this brain has no guest source (foresights guests init).",
             "name": "guest_source",
             "readiness_state": "not_applicable",
             "severity": "info",
@@ -1438,7 +1438,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "Every function this gbrain's schema defines has its body",
+            "message": "Every function this foresights's schema defines has its body",
             "name": "schema_function_bodies",
             "status": "ok"
           },
@@ -1465,15 +1465,15 @@
                 "--path",
                 "<home>/.gbrain/brain.pglite"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+              "command": "foresights init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
               "consent": [
                 "credentials",
                 "paid"
               ],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/search-modes.md",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/search-modes.md",
               "inputs": [
                 {
-                  "how": "Ask the user for an API key for Voyage AI; store it with `gbrain config set voyage_api_key <key>` (every gbrain process reads it), or export VOYAGE_API_KEY in the environment of every gbrain process. Then run the command.",
+                  "how": "Ask the user for an API key for Voyage AI; store it with `foresights config set voyage_api_key <key>` (every foresights process reads it), or export VOYAGE_API_KEY in the environment of every foresights process. Then run the command.",
                   "name": "VOYAGE_API_KEY"
                 }
               ],
@@ -1491,7 +1491,7 @@
                   "host"
                 ]
               },
-              "why": "Embeddings are off, so search is keyword-only, and no configured embedding key fits this brain. Once the key is set this turns on voyage:voyage-4 (1024d) for the PGLite brain at <home>/.gbrain/brain.pglite. Pages, facts and keyword search are kept; existing chunks and facts are queued for vectors, which `gbrain embed --stale` (or the next maintenance cycle) fills."
+              "why": "Embeddings are off, so search is keyword-only, and no configured embedding key fits this brain. Once the key is set this turns on voyage:voyage-4 (1024d) for the PGLite brain at <home>/.gbrain/brain.pglite. Pages, facts and keyword search are kept; existing chunks and facts are queued for vectors, which `foresights embed --stale` (or the next maintenance cycle) fills."
             },
             "message": "Not applicable: embeddings are disabled on this brain (keyword search keeps working).",
             "name": "embeddings",
@@ -1515,15 +1515,15 @@
                 "--path",
                 "<home>/.gbrain/brain.pglite"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+              "command": "foresights init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
               "consent": [
                 "credentials",
                 "paid"
               ],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/search-modes.md",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/search-modes.md",
               "inputs": [
                 {
-                  "how": "Ask the user for an API key for Voyage AI; store it with `gbrain config set voyage_api_key <key>` (every gbrain process reads it), or export VOYAGE_API_KEY in the environment of every gbrain process. Then run the command.",
+                  "how": "Ask the user for an API key for Voyage AI; store it with `foresights config set voyage_api_key <key>` (every foresights process reads it), or export VOYAGE_API_KEY in the environment of every foresights process. Then run the command.",
                   "name": "VOYAGE_API_KEY"
                 }
               ],
@@ -1541,7 +1541,7 @@
                   "host"
                 ]
               },
-              "why": "Embeddings are off, so search is keyword-only, and no configured embedding key fits this brain. Once the key is set this turns on voyage:voyage-4 (1024d) for the PGLite brain at <home>/.gbrain/brain.pglite. Pages, facts and keyword search are kept; existing chunks and facts are queued for vectors, which `gbrain embed --stale` (or the next maintenance cycle) fills."
+              "why": "Embeddings are off, so search is keyword-only, and no configured embedding key fits this brain. Once the key is set this turns on voyage:voyage-4 (1024d) for the PGLite brain at <home>/.gbrain/brain.pglite. Pages, facts and keyword search are kept; existing chunks and facts are queued for vectors, which `foresights embed --stale` (or the next maintenance cycle) fills."
             },
             "message": "Not probed: embeddings are disabled on this brain by choice (keyword search keeps working).",
             "name": "embedding_provider",
@@ -1629,7 +1629,7 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain doctor --remediation-plan --json --brain host",
+              "command": "foresights doctor --remediation-plan --json --brain host",
               "consent": [],
               "next": "run",
               "requires_exclusive": false,
@@ -1706,7 +1706,7 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain repair timeline --brain host",
+              "command": "foresights repair timeline --brain host",
               "consent": [],
               "next": "run",
               "requires_exclusive": false,
@@ -1723,7 +1723,7 @@
               },
               "why": "Previews the repair without changing anything and prints the exact apply command; applying rewrites stored records, so ask the user first."
             },
-            "message": "1 timeline row(s) on 1 page(s) exist only in the database. Preview: gbrain repair timeline — apply: gbrain repair timeline --apply. 1 other row(s) cannot round-trip and are kept as-is.",
+            "message": "1 timeline row(s) on 1 page(s) exist only in the database. Preview: foresights repair timeline — apply: foresights repair timeline --apply. 1 other row(s) cannot round-trip and are kept as-is.",
             "name": "timeline_history",
             "status": "warn"
           },
@@ -1739,7 +1739,7 @@
               "values_truncated": false
             },
             "elapsed_ms": "<volatile>",
-            "message": "No page relies on an access or confidentiality value gbrain does not recognize.",
+            "message": "No page relies on an access or confidentiality value foresights does not recognize.",
             "name": "privacy_label_ignored",
             "status": "ok"
           },
@@ -1788,7 +1788,7 @@
           {
             "category": "ops",
             "details": {
-              "command": "gbrain repair request-indexes --apply",
+              "command": "foresights repair request-indexes --apply",
               "count": 0,
               "docs": "docs/guides/repair.md#request-indexes",
               "indexes": [
@@ -1836,7 +1836,7 @@
               "rows": 22,
               "rows_exact": true,
               "scopes": [],
-              "verify": "gbrain doctor --json (check persistence_request_growth)",
+              "verify": "foresights doctor --json (check persistence_request_growth)",
               "window_days": 7
             },
             "elapsed_ms": "<volatile>",
@@ -1934,7 +1934,7 @@
                       "code": "invalid_fence",
                       "path": "fences/manual.md",
                       "reason": "takes_kind_unsupported",
-                      "why": "fences/manual.md is held because the takes fence (body), row 1, column kind, at line 10 cannot be imported (takes_kind_unsupported). gbrain will not guess this repair. Column `kind` of row(s) 1 in the takes fence (body, line 6) is not a takes kind. Use one of `fact`, `take`, `bet`, `hunch`; gbrain does not choose a takes kind for you. The preview names the exact edit, read-only: make it in fences/manual.md (never the frontmatter), commit, then sync. The rest of the source keeps syncing."
+                      "why": "fences/manual.md is held because the takes fence (body), row 1, column kind, at line 10 cannot be imported (takes_kind_unsupported). foresights will not guess this repair. Column `kind` of row(s) 1 in the takes fence (body, line 6) is not a takes kind. Use one of `fact`, `take`, `bet`, `hunch`; foresights does not choose a takes kind for you. The preview names the exact edit, read-only: make it in fences/manual.md (never the frontmatter), commit, then sync. The rest of the source keeps syncing."
                     },
                     {
                       "code": "invalid_frontmatter",
@@ -1957,11 +1957,11 @@
                   ],
                   "held": 8,
                   "missing": 8,
-                  "next": "preview the frontmatter and other fixes with gbrain repair frontmatter --source notes (writes nothing until a hash-bound apply); nothing repairs the fence and slug-conflict holds by itself (no maintenance run is active), so preview the content repairs with gbrain repair content --source notes (read-only, no model call: it lists each held file with its planned repair or the exact edit, kind by kind, and prints the apply command with --expect <hash>[,<hash>]), then run the apply command it prints",
-                  "repair": "gbrain repair frontmatter --source notes; gbrain repair content --source notes",
+                  "next": "preview the frontmatter and other fixes with foresights repair frontmatter --source notes (writes nothing until a hash-bound apply); nothing repairs the fence and slug-conflict holds by itself (no maintenance run is active), so preview the content repairs with foresights repair content --source notes (read-only, no model call: it lists each held file with its planned repair or the exact edit, kind by kind, and prints the apply command with --expect <hash>[,<hash>]), then run the apply command it prints",
+                  "repair": "foresights repair frontmatter --source notes; foresights repair content --source notes",
                   "source_id": "notes",
                   "stale": 0,
-                  "status": "gbrain sources status notes"
+                  "status": "foresights sources status notes"
                 }
               ]
             },
@@ -1977,9 +1977,9 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain repair frontmatter --source notes --brain host",
+              "command": "foresights repair frontmatter --source notes --brain host",
               "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/repair.md#held-files",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/repair.md#held-files",
               "next": "run",
               "requires_exclusive": false,
               "verify": {
@@ -1995,7 +1995,7 @@
               },
               "why": "Previews the minimal line fix for each held file (or names the line to fix by hand) and prints the hash-bound apply command; it writes nothing."
             },
-            "message": "8 file(s) in Git sources are held and not imported; the rest of each sync continues. notes: 8 held (0 page(s) keep an older revision, 8 file(s) have no page), first: fences/llm.md [invalid_fence/no_header], fences/manual.md [invalid_fence/takes_kind_unsupported], fm/dash-line.md [invalid_frontmatter/needs_interpretation], fm/duplicate-key.md [invalid_frontmatter/needs_interpretation], fm/indented-close.md [invalid_frontmatter/yaml_parse]. A page whose newer file is held is read-only for put_page until the file is repaired, so do not retry a refused write. Inspect with gbrain sources status notes; then notes: preview the frontmatter and other fixes with gbrain repair frontmatter --source notes (writes nothing until a hash-bound apply); nothing repairs the fence and slug-conflict holds by itself (no maintenance run is active), so preview the content repairs with gbrain repair content --source notes (read-only, no model call: it lists each held file with its planned repair or the exact edit, kind by kind, and prints the apply command with --expect <hash>[,<hash>]), then run the apply command it prints.",
+            "message": "8 file(s) in Git sources are held and not imported; the rest of each sync continues. notes: 8 held (0 page(s) keep an older revision, 8 file(s) have no page), first: fences/llm.md [invalid_fence/no_header], fences/manual.md [invalid_fence/takes_kind_unsupported], fm/dash-line.md [invalid_frontmatter/needs_interpretation], fm/duplicate-key.md [invalid_frontmatter/needs_interpretation], fm/indented-close.md [invalid_frontmatter/yaml_parse]. A page whose newer file is held is read-only for put_page until the file is repaired, so do not retry a refused write. Inspect with foresights sources status notes; then notes: preview the frontmatter and other fixes with foresights repair frontmatter --source notes (writes nothing until a hash-bound apply); nothing repairs the fence and slug-conflict holds by itself (no maintenance run is active), so preview the content repairs with foresights repair content --source notes (read-only, no model call: it lists each held file with its planned repair or the exact edit, kind by kind, and prints the apply command with --expect <hash>[,<hash>]), then run the apply command it prints.",
             "name": "git_held_files",
             "status": "warn"
           },
@@ -2007,7 +2007,7 @@
               "hooks": []
             },
             "elapsed_ms": "<volatile>",
-            "message": "No outdated gbrain frontmatter pre-commit hook is installed.",
+            "message": "No outdated foresights frontmatter pre-commit hook is installed.",
             "name": "frontmatter_hook",
             "status": "ok"
           },
@@ -2181,7 +2181,7 @@
           {
             "category": "ops",
             "details": {
-              "command": "gbrain repair embedding-effects",
+              "command": "foresights repair embedding-effects",
               "count": "exact",
               "docs": "docs/guides/repair.md#stale-queued-embedding-effects",
               "effects": [],
@@ -2206,7 +2206,7 @@
               "sources": []
             },
             "elapsed_ms": "<volatile>",
-            "message": "No group- or world-readable gbrain files under Google source directories outside ~/.gbrain.",
+            "message": "No group- or world-readable foresights files under Google source directories outside ~/.gbrain.",
             "name": "google_file_modes",
             "status": "ok"
           },
@@ -2393,7 +2393,7 @@
               "unclassifiable": 0
             },
             "elapsed_ms": "<volatile>",
-            "message": "No active fact from a gbrain self-capture or paste candidate remains. This counts facts in the database; the self_capture check counts corpus files.",
+            "message": "No active fact from a foresights self-capture or paste candidate remains. This counts facts in the database; the self_capture check counts corpus files.",
             "name": "captured_facts_active",
             "status": "ok"
           },
@@ -2501,7 +2501,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "Relative dates resolve against each source's observation date in fact extraction, dream synthesis, extract_atoms and propose_takes (the default). life chronicle events keep their current prompt unless extraction.date_grounding is set to true. Facts extracted before this was on keep their original wording; re-extract a source only with the user's consent (gbrain extract-conversation-facts --source-id <id> --dry-run previews it).",
+            "message": "Relative dates resolve against each source's observation date in fact extraction, dream synthesis, extract_atoms and propose_takes (the default). life chronicle events keep their current prompt unless extraction.date_grounding is set to true. Facts extracted before this was on keep their original wording; re-extract a source only with the user's consent (foresights extract-conversation-facts --source-id <id> --dry-run previews it).",
             "name": "extraction_date_grounding",
             "status": "ok"
           },
@@ -2550,7 +2550,7 @@
           {
             "category": "skill",
             "elapsed_ms": "<volatile>",
-            "message": "whoknows eval fixture present (10 queries). Run `gbrain eval whoknows test/fixtures/whoknows-eval.jsonl` to grade.",
+            "message": "whoknows eval fixture present (10 queries). Run `foresights eval whoknows test/fixtures/whoknows-eval.jsonl` to grade.",
             "name": "whoknows_health",
             "status": "ok"
           },
@@ -2631,7 +2631,7 @@
             },
             "elapsed_ms": "<volatile>",
             "fix_unavailable_reason": "unstructured",
-            "message": "18 frontmatter issue(s). notes: 17 (YAML_PARSE=8, EMPTY_FRONTMATTER=1, MISSING_CLOSE=2, NESTED_QUOTES=1, NON_STRING_FIELD=2, NULL_BYTES=2, SLUG_MISMATCH=1); plain: 1 (YAML_PARSE=1). Fix: gbrain repair frontmatter --source <id> previews the line fix for every file it can repair (and names the manual fix for the rest, such as a missing opening ---); on an unmanaged checkout gbrain frontmatter validate <source-path> --fix applies the same safe fixes",
+            "message": "18 frontmatter issue(s). notes: 17 (YAML_PARSE=8, EMPTY_FRONTMATTER=1, MISSING_CLOSE=2, NESTED_QUOTES=1, NON_STRING_FIELD=2, NULL_BYTES=2, SLUG_MISMATCH=1); plain: 1 (YAML_PARSE=1). Fix: foresights repair frontmatter --source <id> previews the line fix for every file it can repair (and names the manual fix for the rest, such as a missing opening ---); on an unmanaged checkout foresights frontmatter validate <source-path> --fix applies the same safe fixes",
             "name": "frontmatter_integrity",
             "status": "warn"
           },
@@ -2657,7 +2657,7 @@
                     "needs_interpretation": 4
                   },
                   "files": 12,
-                  "preview": "gbrain repair frontmatter --source notes",
+                  "preview": "foresights repair frontmatter --source notes",
                   "sample_paths": [
                     "fm/comment-value.md",
                     "fm/dash-line.md",
@@ -2673,7 +2673,7 @@
                     "needs_interpretation": 1
                   },
                   "files": 1,
-                  "preview": "gbrain repair frontmatter --source plain",
+                  "preview": "foresights repair frontmatter --source plain",
                   "sample_paths": [
                     "broken.md"
                   ],
@@ -2693,9 +2693,9 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain repair frontmatter --brain host",
+              "command": "foresights repair frontmatter --brain host",
               "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/repair.md#frontmatter",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/repair.md#frontmatter",
               "next": "run",
               "requires_exclusive": false,
               "verify": {
@@ -2711,7 +2711,7 @@
               },
               "why": "Previews the minimal line fix per file (safe quoting first; interpretations only with --include-ambiguous) and prints the hash-bound apply command; it writes nothing."
             },
-            "message": "13 file(s) have frontmatter gbrain repair frontmatter can fix: notes: 12 (FRONTMATTER_COMMENT_VALUE=1, needs_interpretation=4, MISSING_CLOSE=2, NESTED_QUOTES=1, YAML_PARSE=2, NULL_BYTES=2, SLUG_MISMATCH=1); plain: 1 (needs_interpretation=1). Preview with gbrain repair frontmatter --source notes; gbrain repair frontmatter --source plain (writes nothing; add --include-ambiguous for interpretations after the safe pass).",
+            "message": "13 file(s) have frontmatter foresights repair frontmatter can fix: notes: 12 (FRONTMATTER_COMMENT_VALUE=1, needs_interpretation=4, MISSING_CLOSE=2, NESTED_QUOTES=1, YAML_PARSE=2, NULL_BYTES=2, SLUG_MISMATCH=1); plain: 1 (needs_interpretation=1). Preview with foresights repair frontmatter --source notes; foresights repair frontmatter --source plain (writes nothing; add --include-ambiguous for interpretations after the safe pass).",
             "name": "frontmatter_repairable",
             "status": "warn"
           },
@@ -2725,7 +2725,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "No probe runs in the last 7 days. Run `gbrain eval suspected-contradictions --query \"...\" --top-k 5` to populate.",
+            "message": "No probe runs in the last 7 days. Run `foresights eval suspected-contradictions --query \"...\" --top-k 5` to populate.",
             "name": "contradictions",
             "status": "ok"
           },
@@ -2833,7 +2833,7 @@
               "steps": 0
             },
             "elapsed_ms": "<volatile>",
-            "message": "Free upkeep has not run on this brain yet; gbrain maintain --unattended runs it (no model calls, no page purge). Nothing deletes on its own.",
+            "message": "Free upkeep has not run on this brain yet; foresights maintain --unattended runs it (no model calls, no page purge). Nothing deletes on its own.",
             "name": "unattended_maintenance",
             "readiness_state": "not_applicable",
             "severity": "info",
@@ -2894,7 +2894,7 @@
               "stale_days": 2
             },
             "elapsed_ms": "<volatile>",
-            "message": "Conversation archive is on; no readable sessions for claude-code, codex, openclaw, hermes, grok (gbrain transcripts archive status names each reader).",
+            "message": "Conversation archive is on; no readable sessions for claude-code, codex, openclaw, hermes, grok (foresights transcripts archive status names each reader).",
             "name": "transcript_archive_freshness",
             "readiness_state": "not_applicable",
             "severity": "info",
@@ -2959,7 +2959,7 @@
               "mirror_window_ends": "2026-11-04"
             },
             "elapsed_ms": "<volatile>",
-            "message": "Every active legacy token uses the unified grant columns. The permissions mirror for older gbrain binaries is kept until 2026-11-04.",
+            "message": "Every active legacy token uses the unified grant columns. The permissions mirror for older foresights binaries is kept until 2026-11-04.",
             "name": "legacy_token_grant_shape",
             "status": "ok"
           },
@@ -3091,9 +3091,9 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain sync --source plain --no-pull --brain host",
+              "command": "foresights sync --source plain --no-pull --brain host",
               "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/troubleshooting.md#sync-freshness-no-successful-sync",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/troubleshooting.md#sync-freshness-no-successful-sync",
               "next": "run",
               "requires_exclusive": false,
               "verify": {
@@ -3109,7 +3109,7 @@
               },
               "why": "No successful sync of plain is recorded; this runs one and stamps last_sync_at when it succeeds."
             },
-            "message": "Source 'plain': no successful sync recorded; no attempt recorded; run `gbrain sync --source plain --no-pull`. 1 writer-owned canonical content source(s): upstream sync is not applicable; see canonical_content_writes for publication status",
+            "message": "Source 'plain': no successful sync recorded; no attempt recorded; run `foresights sync --source plain --no-pull`. 1 writer-owned canonical content source(s): upstream sync is not applicable; see canonical_content_writes for publication status",
             "name": "sync_freshness",
             "status": "fail"
           },
@@ -3157,9 +3157,9 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain export --source default --dir '<BACKUP_DIR>/default' --brain host",
+              "command": "foresights export --source default --dir '<BACKUP_DIR>/default' --brain host",
               "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/operations/backup-check.md",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/operations/backup-check.md",
               "inputs": [
                 {
                   "how": "Ask the user where backups should live (a directory outside the brain, ideally synced or on another disk).",
@@ -3181,7 +3181,7 @@
               },
               "why": "Writes a Markdown copy of 'default' (pages and facts) to a directory outside the brain so it survives losing the database."
             },
-            "message": "Not urgent yet: the brain holds 23 page(s)+fact(s) and is under 7 days old (backup coaching starts at 25 items or 7 days). 3 knowledge asset(s) lack verified recovery: default (not_a_git_repo), plain (not_a_git_repo), notes (no git remote). A source repo with a pushed git remote restores its Markdown files only, never DB-only pages, facts, config or credentials. Run `gbrain backup status` for each asset's fix command.",
+            "message": "Not urgent yet: the brain holds 23 page(s)+fact(s) and is under 7 days old (backup coaching starts at 25 items or 7 days). 3 knowledge asset(s) lack verified recovery: default (not_a_git_repo), plain (not_a_git_repo), notes (no git remote). A source repo with a pushed git remote restores its Markdown files only, never DB-only pages, facts, config or credentials. Run `foresights backup status` for each asset's fix command.",
             "name": "backup_coverage",
             "readiness_state": "degraded",
             "severity": "info",
@@ -3190,7 +3190,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "3 active sources on a managed brain. Recommended cron on the owner host, every 15 minutes: `gbrain sync --all --no-pull --hard-deadline 13m`. Managed sync never pulls: for each checkout that tracks a remote, chain `gbrain sources refresh <id>;` in front of it to take upstream commits. Keep the deadline under the interval: managed sync takes no per-source lock, so a tick that outlives the interval would overlap the next one.",
+            "message": "3 active sources on a managed brain. Recommended cron on the owner host, every 15 minutes: `foresights sync --all --no-pull --hard-deadline 13m`. Managed sync never pulls: for each checkout that tracks a remote, chain `foresights sources refresh <id>;` in front of it to take upstream commits. Keep the deadline under the interval: managed sync takes no per-source lock, so a tick that outlives the interval would overlap the next one.",
             "name": "sync_consolidation",
             "status": "ok"
           },
@@ -3417,7 +3417,7 @@
               ]
             },
             "elapsed_ms": "<volatile>",
-            "message": "Every locally created commit in the covered window of 1 repository is in gbrain's commit ledger, and no page file waits uncommitted for more than 30 minutes. A repository gbrain has not committed in yet has no ledger, so its window is empty.",
+            "message": "Every locally created commit in the covered window of 1 repository is in foresights's commit ledger, and no page file waits uncommitted for more than 30 minutes. A repository foresights has not committed in yet has no ledger, so its window is empty.",
             "name": "foreign_writers",
             "status": "ok"
           },
@@ -3439,7 +3439,7 @@
             "category": "brain",
             "details": {
               "conversation": null,
-              "fix": "preview links: gbrain facts relink --dry-run",
+              "fix": "preview links: foresights facts relink --dry-run",
               "inferred_7d": {
                 "mention": 0,
                 "page": 0
@@ -3661,7 +3661,7 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain config set auto_chronicle true --brain host",
+              "command": "foresights config set auto_chronicle true --brain host",
               "consent": [
                 "paid",
                 "egress"
@@ -3682,7 +3682,7 @@
               },
               "why": "Keeping automatic extraction records that the user accepted one paid chat call per eligible page; page text goes to the chat provider."
             },
-            "message": "Automatic event extraction is on by default and the user has not confirmed it yet. Each eligible new or changed meeting, conversation or calendar page gets one paid chat call (cap $0.25 per page; at most 200 calls per day, so at most $50.00 per day for a priced model; an unpriced model has no cap), and page text goes to the configured chat provider. Relay this to the user, then run `gbrain config set auto_chronicle true` to keep it or `gbrain config set auto_chronicle false` to opt out.",
+            "message": "Automatic event extraction is on by default and the user has not confirmed it yet. Each eligible new or changed meeting, conversation or calendar page gets one paid chat call (cap $0.25 per page; at most 200 calls per day, so at most $50.00 per day for a priced model; an unpriced model has no cap), and page text goes to the configured chat provider. Relay this to the user, then run `foresights config set auto_chronicle true` to keep it or `foresights config set auto_chronicle false` to opt out.",
             "name": "auto_chronicle_default_on",
             "readiness_state": "ok",
             "severity": "info",
@@ -3718,7 +3718,7 @@
               "key_source": "none"
             },
             "elapsed_ms": "<volatile>",
-            "message": "Reporting back through Wakeshift is off (gbrain wakeshift enable turns it on).",
+            "message": "Reporting back through Wakeshift is off (foresights wakeshift enable turns it on).",
             "name": "wakeshift",
             "readiness_state": "disabled_by_choice",
             "severity": "info",
@@ -3750,7 +3750,7 @@
               ],
               "engine": "pglite",
               "expression_indexes_without_statistics": [],
-              "fix": "gbrain repair planner-stats --apply",
+              "fix": "foresights repair planner-stats --apply",
               "missing_search_statistics": [],
               "stale": []
             },
@@ -3776,7 +3776,7 @@
               "weights_off_neutral": 0
             },
             "elapsed_ms": "<volatile>",
-            "message": "Retrieval feedback is off; rankings do not learn from ratings. Turn it on with: gbrain config set feedback.enabled true",
+            "message": "Retrieval feedback is off; rankings do not learn from ratings. Turn it on with: foresights config set feedback.enabled true",
             "name": "retrieval_feedback_health",
             "status": "ok"
           },
@@ -3806,12 +3806,12 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain beliefs enable --source default --brain host",
+              "command": "foresights beliefs enable --source default --brain host",
               "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/designs/BELIEF_LEDGER.md#73-the-doctor-coverage-check",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/designs/BELIEF_LEDGER.md#73-the-doctor-coverage-check",
               "next": "ask_user",
               "requires_exclusive": false,
-              "user_message": "Do you want gbrain to keep a belief ledger (a recorded history of facts, takes and links) for this source?",
+              "user_message": "Do you want foresights to keep a belief ledger (a recorded history of facts, takes and links) for this source?",
               "verify": {
                 "argv": [
                   "gbrain",
@@ -3906,7 +3906,7 @@
               "unknown_pct": 10
             },
             "elapsed_ms": "<volatile>",
-            "message": "10% of 30 row(s) have an unverified origin (unknown tier); the backfill has classified every row it has a signal for. Remote MCP readers see the 1 unverified-origin page(s) quoted as source material until the backfill classifies them or the owner claims their source (gbrain trust claim-sources); local reads are unchanged.",
+            "message": "10% of 30 row(s) have an unverified origin (unknown tier); the backfill has classified every row it has a signal for. Remote MCP readers see the 1 unverified-origin page(s) quoted as source material until the backfill classifies them or the owner claims their source (foresights trust claim-sources); local reads are unchanged.",
             "name": "trust_tiers",
             "status": "ok"
           },
@@ -3975,7 +3975,7 @@
               "pages": 0
             },
             "elapsed_ms": "<volatile>",
-            "message": "Core memory is off (opt-in). If the user wants a profile loaded in every session: gbrain config set memory.core.enabled true, then gbrain core init.",
+            "message": "Core memory is off (opt-in). If the user wants a profile loaded in every session: foresights config set memory.core.enabled true, then foresights core init.",
             "name": "core_memory",
             "status": "ok"
           },
@@ -4043,7 +4043,7 @@
               "unknown_builds": []
             },
             "elapsed_ms": "<volatile>",
-            "message": "No long-running gbrain process (serve, jobs supervisor, worker) is running on this host.",
+            "message": "No long-running foresights process (serve, jobs supervisor, worker) is running on this host.",
             "name": "runtime_build_skew",
             "status": "ok"
           },
@@ -4268,9 +4268,9 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain sources retry-held default --unindexed --brain host",
+              "command": "foresights sources retry-held default --unindexed --brain host",
               "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/repair.md#unindexed-files",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/repair.md#unindexed-files",
               "next": "run",
               "requires_exclusive": false,
               "then": {
@@ -4284,9 +4284,9 @@
                   "--brain",
                   "host"
                 ],
-                "command": "gbrain sync --source default --no-pull --brain host",
+                "command": "foresights sync --source default --no-pull --brain host",
                 "consent": [],
-                "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/repair.md#unindexed-files",
+                "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/repair.md#unindexed-files",
                 "next": "run",
                 "requires_exclusive": false,
                 "verify": {
@@ -4300,7 +4300,7 @@
                     "host"
                   ]
                 },
-                "why": "The sync re-screens the scheduled files of default: each one that passes imports, each one that refuses is recorded as a hold that gbrain sources status default lists."
+                "why": "The sync re-screens the scheduled files of default: each one that passes imports, each one that refuses is recorded as a hold that foresights sources status default lists."
               },
               "verify": {
                 "argv": [
@@ -4315,7 +4315,7 @@
               },
               "why": "Finds the committed files of default with no page and no hold (bounded; it continues an incomplete scan), schedules them for a re-screen and stores the result this check reads."
             },
-            "message": "Unindexed files are not known for default (not computed yet), notes (not computed yet), plain (not computed yet). The maintenance phase unindexed_files computes them on each run and continues an incomplete scan; to compute them now, run gbrain sources retry-held <id> --unindexed.",
+            "message": "Unindexed files are not known for default (not computed yet), notes (not computed yet), plain (not computed yet). The maintenance phase unindexed_files computes them on each run and continues an incomplete scan; to compute them now, run foresights sources retry-held <id> --unindexed.",
             "name": "unindexed_files",
             "readiness_state": "unknown",
             "severity": "info",
@@ -4474,11 +4474,11 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain config set cycle.purge.mcp_request_log_retention_days 90 --brain host",
+              "command": "foresights config set cycle.purge.mcp_request_log_retention_days 90 --brain host",
               "consent": [
                 "destructive"
               ],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/mcp/ADMIN.md#request-log-retention",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/mcp/ADMIN.md#request-log-retention",
               "next": "ask_user",
               "requires_exclusive": false,
               "user_message": "Your MCP request log holds 0 row(s) (0.0 MB) and nothing prunes it. Turn on 90-day retention? Request details older than 90 days (operation, status, parameters, errors) will be deleted and cannot be restored; per-client totals and audit rows are kept.",
@@ -4766,9 +4766,9 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain repair fences --source notes --brain host",
+              "command": "foresights repair fences --source notes --brain host",
               "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/repair.md#fences",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/repair.md#fences",
               "next": "run",
               "requires_exclusive": false,
               "then": {
@@ -4783,7 +4783,7 @@
                   "--brain",
                   "host"
                 ],
-                "command": "gbrain repair fences --source notes --apply --brain host",
+                "command": "foresights repair fences --source notes --apply --brain host",
                 "consent": [],
                 "next": "run",
                 "requires_exclusive": false,
@@ -4811,9 +4811,9 @@
                   "host"
                 ]
               },
-              "why": "Previews the repair of each malformed fence of notes (read-only, no model call): its planned tier and diff, the estimated model cost, or the exact edit for a fence gbrain will not guess; it prints the apply command with --expect <hash>. They are not repaired automatically (no maintenance run has completed in the last 24 h), so apply the plan with the command the preview prints. 1 need a manual edit: make the edit the preview names in the file (or the page), commit, then sync."
+              "why": "Previews the repair of each malformed fence of notes (read-only, no model call): its planned tier and diff, the estimated model cost, or the exact edit for a fence foresights will not guess; it prints the apply command with --expect <hash>. They are not repaired automatically (no maintenance run has completed in the last 24 h), so apply the plan with the command the preview prints. 1 need a manual edit: make the edit the preview names in the file (or the page), commit, then sync."
             },
-            "message": "5 malformed facts or takes fence(s) wait: notes: 2 held file(s), 1 stored page(s), 1 unsynced file(s) (by tier: deterministic 2, llm 1, manual 1); oldest hold 0 h old; plain: 1 unsynced file(s) (by tier: deterministic 1). The deterministic, resolver and model-tier ones are not repaired automatically (no maintenance run has completed in the last 24 h); 1 need the manual edit the preview names. None of them blocks a sync. Preview: gbrain repair fences --source notes; gbrain repair fences --source plain. Model repair caps: $0.30 per page, $1.00 per day ($0.00 spent today).",
+            "message": "5 malformed facts or takes fence(s) wait: notes: 2 held file(s), 1 stored page(s), 1 unsynced file(s) (by tier: deterministic 2, llm 1, manual 1); oldest hold 0 h old; plain: 1 unsynced file(s) (by tier: deterministic 1). The deterministic, resolver and model-tier ones are not repaired automatically (no maintenance run has completed in the last 24 h); 1 need the manual edit the preview names. None of them blocks a sync. Preview: foresights repair fences --source notes; foresights repair fences --source plain. Model repair caps: $0.30 per page, $1.00 per day ($0.00 spent today).",
             "name": "fence_integrity",
             "status": "warn"
           },
@@ -4897,7 +4897,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "no Google accounts connected (gbrain google connect to start)",
+            "message": "no Google accounts connected (foresights google connect to start)",
             "name": "google_oauth",
             "status": "ok"
           },
@@ -5042,15 +5042,15 @@
                 "--path",
                 "<home>/.gbrain/brain.pglite"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+              "command": "foresights init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
               "consent": [
                 "credentials",
                 "paid"
               ],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/search-modes.md",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/search-modes.md",
               "inputs": [
                 {
-                  "how": "Ask the user for an API key for Voyage AI; store it with `gbrain config set voyage_api_key <key>` (every gbrain process reads it), or export VOYAGE_API_KEY in the environment of every gbrain process. Then run the command.",
+                  "how": "Ask the user for an API key for Voyage AI; store it with `foresights config set voyage_api_key <key>` (every foresights process reads it), or export VOYAGE_API_KEY in the environment of every foresights process. Then run the command.",
                   "name": "VOYAGE_API_KEY"
                 }
               ],
@@ -5068,7 +5068,7 @@
                   "host"
                 ]
               },
-              "why": "Embeddings are off, so search is keyword-only, and no configured embedding key fits this brain. Once the key is set this turns on voyage:voyage-4 (1024d) for the PGLite brain at <home>/.gbrain/brain.pglite. Pages, facts and keyword search are kept; existing chunks and facts are queued for vectors, which `gbrain embed --stale` (or the next maintenance cycle) fills."
+              "why": "Embeddings are off, so search is keyword-only, and no configured embedding key fits this brain. Once the key is set this turns on voyage:voyage-4 (1024d) for the PGLite brain at <home>/.gbrain/brain.pglite. Pages, facts and keyword search are kept; existing chunks and facts are queued for vectors, which `foresights embed --stale` (or the next maintenance cycle) fills."
             },
             "message": "Not applicable: embeddings are disabled on this brain by choice, so chunks have no vectors by design (keyword search keeps working).",
             "name": "embed_staleness",
@@ -5104,13 +5104,13 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain config set takes.bootstrap_enabled true --brain host",
+              "command": "foresights config set takes.bootstrap_enabled true --brain host",
               "consent": [
                 "paid"
               ],
               "next": "ask_user",
               "requires_exclusive": false,
-              "user_message": "gbrain can extract typed claims (\"takes\") from your pages so it can track calibration over time. It uses a paid chat model (roughly $5 once). Turn it on?",
+              "user_message": "foresights can extract typed claims (\"takes\") from your pages so it can track calibration over time. It uses a paid chat model (roughly $5 once). Turn it on?",
               "verify": {
                 "argv": [
                   "gbrain",
@@ -5173,9 +5173,9 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain sync --source plain --no-pull --brain host",
+              "command": "foresights sync --source plain --no-pull --brain host",
               "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/troubleshooting.md#sync-freshness-no-successful-sync",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/troubleshooting.md#sync-freshness-no-successful-sync",
               "next": "run",
               "requires_exclusive": false,
               "verify": {
@@ -5191,7 +5191,7 @@
               },
               "why": "No successful sync of plain is recorded; this runs one and stamps last_sync_at when it succeeds."
             },
-            "fix": "Source 'plain': no successful sync recorded; no attempt recorded; run `gbrain sync --source plain --no-pull`. 1 writer-owned canonical content source(s): upstream sync is not applicable; see canonical_content_writes for publication status",
+            "fix": "Source 'plain': no successful sync recorded; no attempt recorded; run `foresights sync --source plain --no-pull`. 1 writer-owned canonical content source(s): upstream sync is not applicable; see canonical_content_writes for publication status",
             "name": "sync_freshness",
             "status": "fail",
             "tier": "root"
@@ -5207,7 +5207,7 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain doctor --remediation-plan --json --brain host",
+              "command": "foresights doctor --remediation-plan --json --brain host",
               "consent": [],
               "next": "run",
               "requires_exclusive": false,
@@ -5241,9 +5241,9 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain repair fences --source notes --brain host",
+              "command": "foresights repair fences --source notes --brain host",
               "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/repair.md#fences",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/repair.md#fences",
               "next": "run",
               "requires_exclusive": false,
               "then": {
@@ -5258,7 +5258,7 @@
                   "--brain",
                   "host"
                 ],
-                "command": "gbrain repair fences --source notes --apply --brain host",
+                "command": "foresights repair fences --source notes --apply --brain host",
                 "consent": [],
                 "next": "run",
                 "requires_exclusive": false,
@@ -5286,15 +5286,15 @@
                   "host"
                 ]
               },
-              "why": "Previews the repair of each malformed fence of notes (read-only, no model call): its planned tier and diff, the estimated model cost, or the exact edit for a fence gbrain will not guess; it prints the apply command with --expect <hash>. They are not repaired automatically (no maintenance run has completed in the last 24 h), so apply the plan with the command the preview prints. 1 need a manual edit: make the edit the preview names in the file (or the page), commit, then sync."
+              "why": "Previews the repair of each malformed fence of notes (read-only, no model call): its planned tier and diff, the estimated model cost, or the exact edit for a fence foresights will not guess; it prints the apply command with --expect <hash>. They are not repaired automatically (no maintenance run has completed in the last 24 h), so apply the plan with the command the preview prints. 1 need a manual edit: make the edit the preview names in the file (or the page), commit, then sync."
             },
-            "fix": "5 malformed facts or takes fence(s) wait: notes: 2 held file(s), 1 stored page(s), 1 unsynced file(s) (by tier: deterministic 2, llm 1, manual 1); oldest hold 0 h old; plain: 1 unsynced file(s) (by tier: deterministic 1). The deterministic, resolver and model-tier ones are not repaired automatically (no maintenance run has completed in the last 24 h); 1 need the manual edit the preview names. None of them blocks a sync. Preview: gbrain repair fences --source notes; gbrain repair fences --source plain. Model repair caps: $0.30 per page, $1.00 per day ($0.00 spent today).",
+            "fix": "5 malformed facts or takes fence(s) wait: notes: 2 held file(s), 1 stored page(s), 1 unsynced file(s) (by tier: deterministic 2, llm 1, manual 1); oldest hold 0 h old; plain: 1 unsynced file(s) (by tier: deterministic 1). The deterministic, resolver and model-tier ones are not repaired automatically (no maintenance run has completed in the last 24 h); 1 need the manual edit the preview names. None of them blocks a sync. Preview: foresights repair fences --source notes; foresights repair fences --source plain. Model repair caps: $0.30 per page, $1.00 per day ($0.00 spent today).",
             "name": "fence_integrity",
             "status": "warn",
             "tier": "symptom"
           },
           {
-            "fix": "18 frontmatter issue(s). notes: 17 (YAML_PARSE=8, EMPTY_FRONTMATTER=1, MISSING_CLOSE=2, NESTED_QUOTES=1, NON_STRING_FIELD=2, NULL_BYTES=2, SLUG_MISMATCH=1); plain: 1 (YAML_PARSE=1). Fix: gbrain repair frontmatter --source <id> previews the line fix for every file it can repair (and names the manual fix for the rest, such as a missing opening ---); on an unmanaged checkout gbrain frontmatter validate <source-path> --fix applies the same safe fixes",
+            "fix": "18 frontmatter issue(s). notes: 17 (YAML_PARSE=8, EMPTY_FRONTMATTER=1, MISSING_CLOSE=2, NESTED_QUOTES=1, NON_STRING_FIELD=2, NULL_BYTES=2, SLUG_MISMATCH=1); plain: 1 (YAML_PARSE=1). Fix: foresights repair frontmatter --source <id> previews the line fix for every file it can repair (and names the manual fix for the rest, such as a missing opening ---); on an unmanaged checkout foresights frontmatter validate <source-path> --fix applies the same safe fixes",
             "name": "frontmatter_integrity",
             "status": "warn",
             "tier": "symptom"
@@ -5309,9 +5309,9 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain repair frontmatter --brain host",
+              "command": "foresights repair frontmatter --brain host",
               "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/repair.md#frontmatter",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/repair.md#frontmatter",
               "next": "run",
               "requires_exclusive": false,
               "verify": {
@@ -5327,7 +5327,7 @@
               },
               "why": "Previews the minimal line fix per file (safe quoting first; interpretations only with --include-ambiguous) and prints the hash-bound apply command; it writes nothing."
             },
-            "fix": "13 file(s) have frontmatter gbrain repair frontmatter can fix: notes: 12 (FRONTMATTER_COMMENT_VALUE=1, needs_interpretation=4, MISSING_CLOSE=2, NESTED_QUOTES=1, YAML_PARSE=2, NULL_BYTES=2, SLUG_MISMATCH=1); plain: 1 (needs_interpretation=1). Preview with gbrain repair frontmatter --source notes; gbrain repair frontmatter --source plain (writes nothing; add --include-ambiguous for interpretations after the safe pass).",
+            "fix": "13 file(s) have frontmatter foresights repair frontmatter can fix: notes: 12 (FRONTMATTER_COMMENT_VALUE=1, needs_interpretation=4, MISSING_CLOSE=2, NESTED_QUOTES=1, YAML_PARSE=2, NULL_BYTES=2, SLUG_MISMATCH=1); plain: 1 (needs_interpretation=1). Preview with foresights repair frontmatter --source notes; foresights repair frontmatter --source plain (writes nothing; add --include-ambiguous for interpretations after the safe pass).",
             "name": "frontmatter_repairable",
             "status": "warn",
             "tier": "symptom"
@@ -5344,9 +5344,9 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain repair frontmatter --source notes --brain host",
+              "command": "foresights repair frontmatter --source notes --brain host",
               "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/repair.md#held-files",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/repair.md#held-files",
               "next": "run",
               "requires_exclusive": false,
               "verify": {
@@ -5362,19 +5362,19 @@
               },
               "why": "Previews the minimal line fix for each held file (or names the line to fix by hand) and prints the hash-bound apply command; it writes nothing."
             },
-            "fix": "8 file(s) in Git sources are held and not imported; the rest of each sync continues. notes: 8 held (0 page(s) keep an older revision, 8 file(s) have no page), first: fences/llm.md [invalid_fence/no_header], fences/manual.md [invalid_fence/takes_kind_unsupported], fm/dash-line.md [invalid_frontmatter/needs_interpretation], fm/duplicate-key.md [invalid_frontmatter/needs_interpretation], fm/indented-close.md [invalid_frontmatter/yaml_parse]. A page whose newer file is held is read-only for put_page until the file is repaired, so do not retry a refused write. Inspect with gbrain sources status notes; then notes: preview the frontmatter and other fixes with gbrain repair frontmatter --source notes (writes nothing until a hash-bound apply); nothing repairs the fence and slug-conflict holds by itself (no maintenance run is active), so preview the content repairs with gbrain repair content --source notes (read-only, no model call: it lists each held file with its planned repair or the exact edit, kind by kind, and prints the apply command with --expect <hash>[,<hash>]), then run the apply command it prints.",
+            "fix": "8 file(s) in Git sources are held and not imported; the rest of each sync continues. notes: 8 held (0 page(s) keep an older revision, 8 file(s) have no page), first: fences/llm.md [invalid_fence/no_header], fences/manual.md [invalid_fence/takes_kind_unsupported], fm/dash-line.md [invalid_frontmatter/needs_interpretation], fm/duplicate-key.md [invalid_frontmatter/needs_interpretation], fm/indented-close.md [invalid_frontmatter/yaml_parse]. A page whose newer file is held is read-only for put_page until the file is repaired, so do not retry a refused write. Inspect with foresights sources status notes; then notes: preview the frontmatter and other fixes with foresights repair frontmatter --source notes (writes nothing until a hash-bound apply); nothing repairs the fence and slug-conflict holds by itself (no maintenance run is active), so preview the content repairs with foresights repair content --source notes (read-only, no model call: it lists each held file with its planned repair or the exact edit, kind by kind, and prints the apply command with --expect <hash>[,<hash>]), then run the apply command it prints.",
             "name": "git_held_files",
             "status": "warn",
             "tier": "symptom"
           },
           {
-            "fix": "Source `notes`: 1 page(s) use 1 type(s) pack `gbrain-base-v2` neither declares nor aliases: '2024' (1). List them with `gbrain schema review-orphans --source notes`, then declare the type (`gbrain schema add-type <type>`, which takes its primitive and prefix) or retype the pages to a declared type.",
+            "fix": "Source `notes`: 1 page(s) use 1 type(s) pack `gbrain-base-v2` neither declares nor aliases: '2024' (1). List them with `foresights schema review-orphans --source notes`, then declare the type (`foresights schema add-type <type>`, which takes its primitive and prefix) or retype the pages to a declared type.",
             "name": "schema_pack_consistency",
             "status": "warn",
             "tier": "symptom"
           },
           {
-            "fix": "65 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +57 more. Add them with `gbrain skillpack sync`.",
+            "fix": "65 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +57 more. Add them with `foresights skillpack sync`.",
             "name": "skill_currency",
             "status": "warn",
             "tier": "symptom"
@@ -5391,9 +5391,9 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain projections drain --limit 4800 --brain host",
+              "command": "foresights projections drain --limit 4800 --brain host",
               "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/repair.md#projection-drain",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/repair.md#projection-drain",
               "next": "run",
               "preview_argv": [
                 "gbrain",
@@ -5418,7 +5418,7 @@
               },
               "why": "Rebuilds queued Markdown and code projections and seals importer-attested image pages in place, at most 4800 pages per run; repeat until the dry run shows sealable 0."
             },
-            "fix": "Visible pages have missing or stale text projections (1 queued Markdown/code page(s)); search and code results may be incomplete. Run `gbrain projections drain` to rebuild queued Markdown and code projections now; it is safe while `gbrain serve` runs on Postgres. For code metadata repair, run `gbrain reindex-code --force --no-embed`. If work stays pending, inspect the recorded source path. No repair or embedding was started by this check.",
+            "fix": "Visible pages have missing or stale text projections (1 queued Markdown/code page(s)); search and code results may be incomplete. Run `foresights projections drain` to rebuild queued Markdown and code projections now; it is safe while `foresights serve` runs on Postgres. For code metadata repair, run `foresights reindex-code --force --no-embed`. If work stays pending, inspect the recorded source path. No repair or embedding was started by this check.",
             "name": "text_projection_readiness",
             "status": "warn",
             "tier": "symptom"
@@ -5433,7 +5433,7 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain repair timeline --brain host",
+              "command": "foresights repair timeline --brain host",
               "consent": [],
               "next": "run",
               "requires_exclusive": false,
@@ -5450,7 +5450,7 @@
               },
               "why": "Previews the repair without changing anything and prints the exact apply command; applying rewrites stored records, so ask the user first."
             },
-            "fix": "1 timeline row(s) on 1 page(s) exist only in the database. Preview: gbrain repair timeline — apply: gbrain repair timeline --apply. 1 other row(s) cannot round-trip and are kept as-is.",
+            "fix": "1 timeline row(s) on 1 page(s) exist only in the database. Preview: foresights repair timeline — apply: foresights repair timeline --apply. 1 other row(s) cannot round-trip and are kept as-is.",
             "name": "timeline_history",
             "status": "warn",
             "tier": "symptom"
@@ -5459,8 +5459,8 @@
         "unknown_sections": []
       },
       "stderr": [
-        "[gbrain] reading doctor checks; large brains can take minutes. Progress prints here every 10 s; the result prints on stdout when it is ready.",
-        "[gbrain doctor] non-interactive run: the check run (not connect or migrations) is capped at 90000 ms (doctor.default_budget_ms); checks past it report health unknown. Off for one run: --budget-ms 0; off for good: gbrain config set doctor.default_budget_ms 0. On PGLite a statement already running cannot be stopped, so a check can finish late.",
+        "[foresights] reading doctor checks; large brains can take minutes. Progress prints here every 10 s; the result prints on stdout when it is ready.",
+        "[foresights doctor] non-interactive run: the check run (not connect or migrations) is capped at 90000 ms (doctor.default_budget_ms); checks past it report health unknown. Off for one run: --budget-ms 0; off for good: foresights config set doctor.default_budget_ms 0. On PGLite a statement already running cannot be stopped, so a check can finish late.",
         "[backup] checked 3 asset(s): 1 without a git remote (computed_by=doctor)"
       ],
       "stdout": "<json>"
@@ -5515,13 +5515,13 @@
               "consent": [
                 "persistent_install"
               ],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/protocol/MEMORY_VERBS_v1.md#install-the-4-command-quickstart",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/protocol/MEMORY_VERBS_v1.md#install-the-4-command-quickstart",
               "next": "report",
               "requires_exclusive": false,
-              "user_message": "Which agent app should get gbrain memory? The install guide has a one-line command for each.",
-              "why": "For Claude Code or Codex, run `gbrain setup claude-code` or `gbrain setup codex` (it registers serve behind gbrain's launcher, so the session directory's bunfig.toml and .env never load). For any other host, register `<absolute path to gbrain> serve --surface starter --advertise verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+              "user_message": "Which agent app should get foresights memory? The install guide has a one-line command for each.",
+              "why": "For Claude Code or Codex, run `foresights setup claude-code` or `foresights setup codex` (it registers serve behind foresights's launcher, so the session directory's bunfig.toml and .env never load). For any other host, register `<absolute path to foresights> serve --surface starter --advertise verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
             },
-            "message": "pglite — serve IPC socket not present; enabled but NO resolve path exists right now: the IPC socket is only bound by a running `gbrain serve` (stdio or --http) — until one is up, hooks/reflex degrade to no_serve on this brain (host capability may still supply pointers; policy skill carries otherwise) — policy skill not installed; run `gbrain integrations install retrieval-reflex --target <host-repo>`",
+            "message": "pglite — serve IPC socket not present; enabled but NO resolve path exists right now: the IPC socket is only bound by a running `foresights serve` (stdio or --http) — until one is up, hooks/reflex degrade to no_serve on this brain (host capability may still supply pointers; policy skill carries otherwise) — policy skill not installed; run `foresights integrations install retrieval-reflex --target <host-repo>`",
             "name": "retrieval_reflex_health",
             "readiness_state": "not_applicable",
             "severity": "info",
@@ -5640,7 +5640,7 @@
             },
             "elapsed_ms": "<volatile>",
             "fix_unavailable_reason": "unstructured",
-            "message": "65 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +57 more. Add them with `gbrain skillpack sync`.",
+            "message": "65 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +57 more. Add them with `foresights skillpack sync`.",
             "name": "skill_currency",
             "status": "warn"
           },
@@ -5665,7 +5665,7 @@
               }
             },
             "elapsed_ms": "<volatile>",
-            "message": "1 skill(s), 0 KB, 0 gbrain invocation(s) (0 with undeclared subcommands, flags checked); no findings",
+            "message": "1 skill(s), 0 KB, 0 foresights invocation(s) (0 with undeclared subcommands, flags checked); no findings",
             "name": "skill_health",
             "status": "ok"
           },
@@ -5711,7 +5711,7 @@
               "visibility_note": "world = readable by agents authorized on THIS brain, not the public internet"
             },
             "elapsed_ms": "<volatile>",
-            "message": "ambient writeback off (default): Stop-hook turn capture is off, but the compaction harvest and SessionEnd transcripts still extract (installing the harness hooks opted into them; stop them: gbrain config set memory.auto_writeback off). Enable: gbrain config set memory.auto_writeback salient",
+            "message": "ambient writeback off (default): Stop-hook turn capture is off, but the compaction harvest and SessionEnd transcripts still extract (installing the harness hooks opted into them; stop them: foresights config set memory.auto_writeback off). Enable: foresights config set memory.auto_writeback salient",
             "name": "memory_writeback",
             "status": "ok"
           },
@@ -5756,7 +5756,7 @@
                 "--yes",
                 "--no-autopilot-install"
               ],
-              "command": "gbrain apply-migrations --yes --no-autopilot-install",
+              "command": "foresights apply-migrations --yes --no-autopilot-install",
               "consent": [],
               "next": "run",
               "requires_exclusive": true,
@@ -5771,9 +5771,9 @@
                   "host"
                 ]
               },
-              "why": "Runs the setup migrations gbrain init left pending (preferences, host-work notes, shared-skill checkpoints) on the brain host, without installing background services."
+              "why": "Runs the setup migrations foresights init left pending (preferences, host-work notes, shared-skill checkpoints) on the brain host, without installing background services."
             },
-            "message": "5 setup migration(s) not run yet on this new brain (pending_fresh_install: 0.11.0, 0.14.0, 0.22.4, 0.28.0, 0.53.0). Expected after gbrain init, not a failed upgrade.",
+            "message": "5 setup migration(s) not run yet on this new brain (pending_fresh_install: 0.11.0, 0.14.0, 0.22.4, 0.28.0, 0.53.0). Expected after foresights init, not a failed upgrade.",
             "name": "minions_migration",
             "severity": "info",
             "status": "ok"
@@ -5795,7 +5795,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "disabled (opt-in). Enable with: gbrain config set autopilot.nightly_quality_probe.enabled true",
+            "message": "disabled (opt-in). Enable with: foresights config set autopilot.nightly_quality_probe.enabled true",
             "name": "nightly_quality_probe_health",
             "status": "ok"
           },
@@ -5813,7 +5813,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "disabled (opt-in). Enable with: gbrain config set cycle.conversation_facts_backfill.enabled true",
+            "message": "disabled (opt-in). Enable with: foresights config set cycle.conversation_facts_backfill.enabled true",
             "name": "conversation_facts_backlog",
             "status": "ok"
           },
@@ -5862,14 +5862,14 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "disabled (opt-in; default-on only for search.mode=tokenmax). Enable with: `gbrain config set autopilot.conversation_parser_probe.enabled true`",
+            "message": "disabled (opt-in; default-on only for search.mode=tokenmax). Enable with: `foresights config set autopilot.conversation_parser_probe.enabled true`",
             "name": "conversation_parser_probe_health",
             "status": "ok"
           },
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "gbrain home is outside any enclosing git worktree.",
+            "message": "foresights home is outside any enclosing git worktree.",
             "name": "home_dir_in_worktree",
             "status": "ok"
           },
@@ -5908,7 +5908,7 @@
               "shadows": []
             },
             "elapsed_ms": "<volatile>",
-            "message": "No embedding key is set here (VOYAGE_API_KEY or voyage_api_key). No environment variable overrides a different config-plane provider key. This check sees only the environment `gbrain doctor` runs in; a daemon (gbrain serve, autopilot) has its own, and reports a mismatch in its log with a startup warning or embedding_auth_failed.",
+            "message": "No embedding key is set here (VOYAGE_API_KEY or voyage_api_key). No environment variable overrides a different config-plane provider key. This check sees only the environment `foresights doctor` runs in; a daemon (foresights serve, autopilot) has its own, and reports a mismatch in its log with a startup warning or embedding_auth_failed.",
             "name": "embedding_key_source",
             "status": "ok"
           },
@@ -5919,7 +5919,7 @@
               "provider_env": []
             },
             "elapsed_ms": "<volatile>",
-            "message": "No gbrain setup receipt records a provider-use decision for this install; provider calls follow the configured keys.",
+            "message": "No foresights setup receipt records a provider-use decision for this install; provider calls follow the configured keys.",
             "name": "provider_consent",
             "readiness_state": "not_applicable",
             "severity": "info",
@@ -5936,11 +5936,11 @@
               "consent": [
                 "persistent_install"
               ],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/protocol/MEMORY_VERBS_v1.md#install-the-4-command-quickstart",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/protocol/MEMORY_VERBS_v1.md#install-the-4-command-quickstart",
               "next": "report",
               "requires_exclusive": false,
-              "user_message": "Which agent app should get gbrain memory? The install guide has a one-line command for each.",
-              "why": "For Claude Code or Codex, run `gbrain setup claude-code` or `gbrain setup codex` (it registers serve behind gbrain's launcher, so the session directory's bunfig.toml and .env never load). For any other host, register `<absolute path to gbrain> serve --surface starter --advertise verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+              "user_message": "Which agent app should get foresights memory? The install guide has a one-line command for each.",
+              "why": "For Claude Code or Codex, run `foresights setup claude-code` or `foresights setup codex` (it registers serve behind foresights's launcher, so the session directory's bunfig.toml and .env never load). For any other host, register `<absolute path to foresights> serve --surface starter --advertise verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
             },
             "message": "No agent harness was detected. Wire one when the user picks an agent app.",
             "name": "harness_wiring",
@@ -5994,17 +5994,17 @@
                 "explicit_retention_days": null,
                 "over_target": false,
                 "target_bytes": 8589934592,
-                "used_bytes": 199663
+                "used_bytes": 199675
               },
               "inspected": 2,
               "outstanding": [],
               "paused_producers": [],
               "resources": [],
               "truncated": false,
-              "verify": "gbrain doctor --only persistence_capacity --json"
+              "verify": "foresights doctor --only persistence_capacity --json"
             },
             "elapsed_ms": "<volatile>",
-            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 199663 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
+            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 199675 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
             "name": "persistence_capacity",
             "status": "ok"
           },
@@ -6205,7 +6205,7 @@
             },
             "elapsed_ms": "<volatile>",
             "fix_unavailable_reason": "unstructured",
-            "message": "Source `notes`: 1 page(s) use 1 type(s) pack `gbrain-base-v2` neither declares nor aliases: '2024' (1). List them with `gbrain schema review-orphans --source notes`, then declare the type (`gbrain schema add-type <type>`, which takes its primitive and prefix) or retype the pages to a declared type.",
+            "message": "Source `notes`: 1 page(s) use 1 type(s) pack `gbrain-base-v2` neither declares nor aliases: '2024' (1). List them with `foresights schema review-orphans --source notes`, then declare the type (`foresights schema add-type <type>`, which takes its primitive and prefix) or retype the pages to a declared type.",
             "name": "schema_pack_consistency",
             "status": "warn"
           },
@@ -6272,15 +6272,15 @@
                 "--path",
                 "<home>/.gbrain/brain.pglite"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+              "command": "foresights init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
               "consent": [
                 "credentials",
                 "paid"
               ],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/search-modes.md",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/search-modes.md",
               "inputs": [
                 {
-                  "how": "Ask the user for an API key for Voyage AI; store it with `gbrain config set voyage_api_key <key>` (every gbrain process reads it), or export VOYAGE_API_KEY in the environment of every gbrain process. Then run the command.",
+                  "how": "Ask the user for an API key for Voyage AI; store it with `foresights config set voyage_api_key <key>` (every foresights process reads it), or export VOYAGE_API_KEY in the environment of every foresights process. Then run the command.",
                   "name": "VOYAGE_API_KEY"
                 }
               ],
@@ -6298,7 +6298,7 @@
                   "host"
                 ]
               },
-              "why": "Embeddings are off, so search is keyword-only, and no configured embedding key fits this brain. Once the key is set this turns on voyage:voyage-4 (1024d) for the PGLite brain at <home>/.gbrain/brain.pglite. Pages, facts and keyword search are kept; existing chunks and facts are queued for vectors, which `gbrain embed --stale` (or the next maintenance cycle) fills."
+              "why": "Embeddings are off, so search is keyword-only, and no configured embedding key fits this brain. Once the key is set this turns on voyage:voyage-4 (1024d) for the PGLite brain at <home>/.gbrain/brain.pglite. Pages, facts and keyword search are kept; existing chunks and facts are queued for vectors, which `foresights embed --stale` (or the next maintenance cycle) fills."
             },
             "message": "Embedding state (exact, column 'embedding'): 0 embedded, 23 pending, 0 keyword-only, 0 quarantined, 1 empty, 0 on deleted pages, 0 chunkless (healable); 1 unsearchable. Embeddings are disabled by choice: keyword search reads the pending chunks.",
             "name": "embedding_state",
@@ -6309,7 +6309,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "Extraction lag not applicable (20 pages — too few to assess); 1 page(s) pending link extraction (gbrain extract --stale finishes them)",
+            "message": "Extraction lag not applicable (20 pages — too few to assess); 1 page(s) pending link extraction (foresights extract --stale finishes them)",
             "name": "links_extraction_lag",
             "status": "ok"
           },
@@ -6407,9 +6407,9 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain projections drain --limit 4800 --brain host",
+              "command": "foresights projections drain --limit 4800 --brain host",
               "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/repair.md#projection-drain",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/repair.md#projection-drain",
               "next": "run",
               "preview_argv": [
                 "gbrain",
@@ -6434,7 +6434,7 @@
               },
               "why": "Rebuilds queued Markdown and code projections and seals importer-attested image pages in place, at most 4800 pages per run; repeat until the dry run shows sealable 0."
             },
-            "message": "Visible pages have missing or stale text projections (1 queued Markdown/code page(s)); search and code results may be incomplete. Run `gbrain projections drain` to rebuild queued Markdown and code projections now; it is safe while `gbrain serve` runs on Postgres. For code metadata repair, run `gbrain reindex-code --force --no-embed`. If work stays pending, inspect the recorded source path. No repair or embedding was started by this check.",
+            "message": "Visible pages have missing or stale text projections (1 queued Markdown/code page(s)); search and code results may be incomplete. Run `foresights projections drain` to rebuild queued Markdown and code projections now; it is safe while `foresights serve` runs on Postgres. For code metadata repair, run `foresights reindex-code --force --no-embed`. If work stays pending, inspect the recorded source path. No repair or embedding was started by this check.",
             "name": "text_projection_readiness",
             "status": "warn"
           },
@@ -6486,7 +6486,7 @@
               "runbook": "docs/guides/write-refusals.md#managed-guard-page-children"
             },
             "elapsed_ms": "<volatile>",
-            "message": "Guarded tables carry only the columns gbrain creates.",
+            "message": "Guarded tables carry only the columns foresights creates.",
             "name": "managed_guard_schema_drift",
             "status": "ok"
           },
@@ -6602,7 +6602,7 @@
               "timeout_ms": "<volatile>"
             },
             "elapsed_ms": "<volatile>",
-            "message": "Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout. notes: 19 live page(s), 11 equal, 4 database_ahead, 4 unparseable. Page detail: gbrain sources git-gap <source-id>.",
+            "message": "Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout. notes: 19 live page(s), 11 equal, 4 database_ahead, 4 unparseable. Page detail: foresights sources git-gap <source-id>.",
             "name": "db_ahead_of_git",
             "status": "ok"
           },
@@ -6816,7 +6816,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "Not applicable: no member is marked as an audience (gbrain access member kind <id> audience).",
+            "message": "Not applicable: no member is marked as an audience (foresights access member kind <id> audience).",
             "name": "access_audience_members",
             "readiness_state": "not_applicable",
             "severity": "info",
@@ -6834,7 +6834,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "Not applicable: no member is labelled-only (gbrain access member labelled-only <id> on).",
+            "message": "Not applicable: no member is labelled-only (foresights access member labelled-only <id> on).",
             "name": "access_labelled_only_members",
             "readiness_state": "not_applicable",
             "severity": "info",
@@ -6852,7 +6852,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "Not applicable: this brain has no guest source (gbrain guests init).",
+            "message": "Not applicable: this brain has no guest source (foresights guests init).",
             "name": "guest_source",
             "readiness_state": "not_applicable",
             "severity": "info",
@@ -6903,7 +6903,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "Every function this gbrain's schema defines has its body",
+            "message": "Every function this foresights's schema defines has its body",
             "name": "schema_function_bodies",
             "status": "ok"
           },
@@ -6930,15 +6930,15 @@
                 "--path",
                 "<home>/.gbrain/brain.pglite"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+              "command": "foresights init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
               "consent": [
                 "credentials",
                 "paid"
               ],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/search-modes.md",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/search-modes.md",
               "inputs": [
                 {
-                  "how": "Ask the user for an API key for Voyage AI; store it with `gbrain config set voyage_api_key <key>` (every gbrain process reads it), or export VOYAGE_API_KEY in the environment of every gbrain process. Then run the command.",
+                  "how": "Ask the user for an API key for Voyage AI; store it with `foresights config set voyage_api_key <key>` (every foresights process reads it), or export VOYAGE_API_KEY in the environment of every foresights process. Then run the command.",
                   "name": "VOYAGE_API_KEY"
                 }
               ],
@@ -6956,7 +6956,7 @@
                   "host"
                 ]
               },
-              "why": "Embeddings are off, so search is keyword-only, and no configured embedding key fits this brain. Once the key is set this turns on voyage:voyage-4 (1024d) for the PGLite brain at <home>/.gbrain/brain.pglite. Pages, facts and keyword search are kept; existing chunks and facts are queued for vectors, which `gbrain embed --stale` (or the next maintenance cycle) fills."
+              "why": "Embeddings are off, so search is keyword-only, and no configured embedding key fits this brain. Once the key is set this turns on voyage:voyage-4 (1024d) for the PGLite brain at <home>/.gbrain/brain.pglite. Pages, facts and keyword search are kept; existing chunks and facts are queued for vectors, which `foresights embed --stale` (or the next maintenance cycle) fills."
             },
             "message": "Not applicable: embeddings are disabled on this brain (keyword search keeps working).",
             "name": "embeddings",
@@ -6980,15 +6980,15 @@
                 "--path",
                 "<home>/.gbrain/brain.pglite"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+              "command": "foresights init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
               "consent": [
                 "credentials",
                 "paid"
               ],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/search-modes.md",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/search-modes.md",
               "inputs": [
                 {
-                  "how": "Ask the user for an API key for Voyage AI; store it with `gbrain config set voyage_api_key <key>` (every gbrain process reads it), or export VOYAGE_API_KEY in the environment of every gbrain process. Then run the command.",
+                  "how": "Ask the user for an API key for Voyage AI; store it with `foresights config set voyage_api_key <key>` (every foresights process reads it), or export VOYAGE_API_KEY in the environment of every foresights process. Then run the command.",
                   "name": "VOYAGE_API_KEY"
                 }
               ],
@@ -7006,7 +7006,7 @@
                   "host"
                 ]
               },
-              "why": "Embeddings are off, so search is keyword-only, and no configured embedding key fits this brain. Once the key is set this turns on voyage:voyage-4 (1024d) for the PGLite brain at <home>/.gbrain/brain.pglite. Pages, facts and keyword search are kept; existing chunks and facts are queued for vectors, which `gbrain embed --stale` (or the next maintenance cycle) fills."
+              "why": "Embeddings are off, so search is keyword-only, and no configured embedding key fits this brain. Once the key is set this turns on voyage:voyage-4 (1024d) for the PGLite brain at <home>/.gbrain/brain.pglite. Pages, facts and keyword search are kept; existing chunks and facts are queued for vectors, which `foresights embed --stale` (or the next maintenance cycle) fills."
             },
             "message": "Not probed: embeddings are disabled on this brain by choice (keyword search keeps working).",
             "name": "embedding_provider",
@@ -7094,7 +7094,7 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain doctor --remediation-plan --json --brain host",
+              "command": "foresights doctor --remediation-plan --json --brain host",
               "consent": [],
               "next": "run",
               "requires_exclusive": false,
@@ -7171,7 +7171,7 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain repair timeline --brain host",
+              "command": "foresights repair timeline --brain host",
               "consent": [],
               "next": "run",
               "requires_exclusive": false,
@@ -7188,7 +7188,7 @@
               },
               "why": "Previews the repair without changing anything and prints the exact apply command; applying rewrites stored records, so ask the user first."
             },
-            "message": "2 timeline row(s) on 2 page(s) exist only in the database. Preview: gbrain repair timeline — apply: gbrain repair timeline --apply. 1 other row(s) cannot round-trip and are kept as-is.",
+            "message": "2 timeline row(s) on 2 page(s) exist only in the database. Preview: foresights repair timeline — apply: foresights repair timeline --apply. 1 other row(s) cannot round-trip and are kept as-is.",
             "name": "timeline_history",
             "status": "warn"
           },
@@ -7204,7 +7204,7 @@
               "values_truncated": false
             },
             "elapsed_ms": "<volatile>",
-            "message": "No page relies on an access or confidentiality value gbrain does not recognize.",
+            "message": "No page relies on an access or confidentiality value foresights does not recognize.",
             "name": "privacy_label_ignored",
             "status": "ok"
           },
@@ -7253,7 +7253,7 @@
           {
             "category": "ops",
             "details": {
-              "command": "gbrain repair request-indexes --apply",
+              "command": "foresights repair request-indexes --apply",
               "count": 0,
               "docs": "docs/guides/repair.md#request-indexes",
               "indexes": [
@@ -7301,7 +7301,7 @@
               "rows": 22,
               "rows_exact": true,
               "scopes": [],
-              "verify": "gbrain doctor --json (check persistence_request_growth)",
+              "verify": "foresights doctor --json (check persistence_request_growth)",
               "window_days": 7
             },
             "elapsed_ms": "<volatile>",
@@ -7399,7 +7399,7 @@
                       "code": "invalid_fence",
                       "path": "fences/manual.md",
                       "reason": "takes_kind_unsupported",
-                      "why": "fences/manual.md is held because the takes fence (body), row 1, column kind, at line 10 cannot be imported (takes_kind_unsupported). gbrain will not guess this repair. Column `kind` of row(s) 1 in the takes fence (body, line 6) is not a takes kind. Use one of `fact`, `take`, `bet`, `hunch`; gbrain does not choose a takes kind for you. The preview names the exact edit, read-only: make it in fences/manual.md (never the frontmatter), commit, then sync. The rest of the source keeps syncing."
+                      "why": "fences/manual.md is held because the takes fence (body), row 1, column kind, at line 10 cannot be imported (takes_kind_unsupported). foresights will not guess this repair. Column `kind` of row(s) 1 in the takes fence (body, line 6) is not a takes kind. Use one of `fact`, `take`, `bet`, `hunch`; foresights does not choose a takes kind for you. The preview names the exact edit, read-only: make it in fences/manual.md (never the frontmatter), commit, then sync. The rest of the source keeps syncing."
                     },
                     {
                       "code": "invalid_frontmatter",
@@ -7422,11 +7422,11 @@
                   ],
                   "held": 8,
                   "missing": 8,
-                  "next": "preview the frontmatter and other fixes with gbrain repair frontmatter --source notes (writes nothing until a hash-bound apply); nothing repairs the fence and slug-conflict holds by itself (no maintenance run is active), so preview the content repairs with gbrain repair content --source notes (read-only, no model call: it lists each held file with its planned repair or the exact edit, kind by kind, and prints the apply command with --expect <hash>[,<hash>]), then run the apply command it prints",
-                  "repair": "gbrain repair frontmatter --source notes; gbrain repair content --source notes",
+                  "next": "preview the frontmatter and other fixes with foresights repair frontmatter --source notes (writes nothing until a hash-bound apply); nothing repairs the fence and slug-conflict holds by itself (no maintenance run is active), so preview the content repairs with foresights repair content --source notes (read-only, no model call: it lists each held file with its planned repair or the exact edit, kind by kind, and prints the apply command with --expect <hash>[,<hash>]), then run the apply command it prints",
+                  "repair": "foresights repair frontmatter --source notes; foresights repair content --source notes",
                   "source_id": "notes",
                   "stale": 0,
-                  "status": "gbrain sources status notes"
+                  "status": "foresights sources status notes"
                 }
               ]
             },
@@ -7442,9 +7442,9 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain repair frontmatter --source notes --brain host",
+              "command": "foresights repair frontmatter --source notes --brain host",
               "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/repair.md#held-files",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/repair.md#held-files",
               "next": "run",
               "requires_exclusive": false,
               "verify": {
@@ -7460,7 +7460,7 @@
               },
               "why": "Previews the minimal line fix for each held file (or names the line to fix by hand) and prints the hash-bound apply command; it writes nothing."
             },
-            "message": "8 file(s) in Git sources are held and not imported; the rest of each sync continues. notes: 8 held (0 page(s) keep an older revision, 8 file(s) have no page), first: fences/llm.md [invalid_fence/no_header], fences/manual.md [invalid_fence/takes_kind_unsupported], fm/dash-line.md [invalid_frontmatter/needs_interpretation], fm/duplicate-key.md [invalid_frontmatter/needs_interpretation], fm/indented-close.md [invalid_frontmatter/yaml_parse]. A page whose newer file is held is read-only for put_page until the file is repaired, so do not retry a refused write. Inspect with gbrain sources status notes; then notes: preview the frontmatter and other fixes with gbrain repair frontmatter --source notes (writes nothing until a hash-bound apply); nothing repairs the fence and slug-conflict holds by itself (no maintenance run is active), so preview the content repairs with gbrain repair content --source notes (read-only, no model call: it lists each held file with its planned repair or the exact edit, kind by kind, and prints the apply command with --expect <hash>[,<hash>]), then run the apply command it prints.",
+            "message": "8 file(s) in Git sources are held and not imported; the rest of each sync continues. notes: 8 held (0 page(s) keep an older revision, 8 file(s) have no page), first: fences/llm.md [invalid_fence/no_header], fences/manual.md [invalid_fence/takes_kind_unsupported], fm/dash-line.md [invalid_frontmatter/needs_interpretation], fm/duplicate-key.md [invalid_frontmatter/needs_interpretation], fm/indented-close.md [invalid_frontmatter/yaml_parse]. A page whose newer file is held is read-only for put_page until the file is repaired, so do not retry a refused write. Inspect with foresights sources status notes; then notes: preview the frontmatter and other fixes with foresights repair frontmatter --source notes (writes nothing until a hash-bound apply); nothing repairs the fence and slug-conflict holds by itself (no maintenance run is active), so preview the content repairs with foresights repair content --source notes (read-only, no model call: it lists each held file with its planned repair or the exact edit, kind by kind, and prints the apply command with --expect <hash>[,<hash>]), then run the apply command it prints.",
             "name": "git_held_files",
             "status": "warn"
           },
@@ -7472,7 +7472,7 @@
               "hooks": []
             },
             "elapsed_ms": "<volatile>",
-            "message": "No outdated gbrain frontmatter pre-commit hook is installed.",
+            "message": "No outdated foresights frontmatter pre-commit hook is installed.",
             "name": "frontmatter_hook",
             "status": "ok"
           },
@@ -7646,7 +7646,7 @@
           {
             "category": "ops",
             "details": {
-              "command": "gbrain repair embedding-effects",
+              "command": "foresights repair embedding-effects",
               "count": "exact",
               "docs": "docs/guides/repair.md#stale-queued-embedding-effects",
               "effects": [],
@@ -7671,7 +7671,7 @@
               "sources": []
             },
             "elapsed_ms": "<volatile>",
-            "message": "No group- or world-readable gbrain files under Google source directories outside ~/.gbrain.",
+            "message": "No group- or world-readable foresights files under Google source directories outside ~/.gbrain.",
             "name": "google_file_modes",
             "status": "ok"
           },
@@ -7858,7 +7858,7 @@
               "unclassifiable": 0
             },
             "elapsed_ms": "<volatile>",
-            "message": "No active fact from a gbrain self-capture or paste candidate remains. This counts facts in the database; the self_capture check counts corpus files.",
+            "message": "No active fact from a foresights self-capture or paste candidate remains. This counts facts in the database; the self_capture check counts corpus files.",
             "name": "captured_facts_active",
             "status": "ok"
           },
@@ -7966,7 +7966,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "Relative dates resolve against each source's observation date in fact extraction, dream synthesis, extract_atoms and propose_takes (the default). life chronicle events keep their current prompt unless extraction.date_grounding is set to true. Facts extracted before this was on keep their original wording; re-extract a source only with the user's consent (gbrain extract-conversation-facts --source-id <id> --dry-run previews it).",
+            "message": "Relative dates resolve against each source's observation date in fact extraction, dream synthesis, extract_atoms and propose_takes (the default). life chronicle events keep their current prompt unless extraction.date_grounding is set to true. Facts extracted before this was on keep their original wording; re-extract a source only with the user's consent (foresights extract-conversation-facts --source-id <id> --dry-run previews it).",
             "name": "extraction_date_grounding",
             "status": "ok"
           },
@@ -8015,7 +8015,7 @@
           {
             "category": "skill",
             "elapsed_ms": "<volatile>",
-            "message": "whoknows eval fixture present (10 queries). Run `gbrain eval whoknows test/fixtures/whoknows-eval.jsonl` to grade.",
+            "message": "whoknows eval fixture present (10 queries). Run `foresights eval whoknows test/fixtures/whoknows-eval.jsonl` to grade.",
             "name": "whoknows_health",
             "status": "ok"
           },
@@ -8096,7 +8096,7 @@
             },
             "elapsed_ms": "<volatile>",
             "fix_unavailable_reason": "unstructured",
-            "message": "20 frontmatter issue(s). notes: 19 (YAML_PARSE=9, EMPTY_FRONTMATTER=1, NESTED_QUOTES=2, MISSING_CLOSE=2, NON_STRING_FIELD=2, NULL_BYTES=2, SLUG_MISMATCH=1); plain: 1 (YAML_PARSE=1). Fix: gbrain repair frontmatter --source <id> previews the line fix for every file it can repair (and names the manual fix for the rest, such as a missing opening ---); on an unmanaged checkout gbrain frontmatter validate <source-path> --fix applies the same safe fixes",
+            "message": "20 frontmatter issue(s). notes: 19 (YAML_PARSE=9, EMPTY_FRONTMATTER=1, NESTED_QUOTES=2, MISSING_CLOSE=2, NON_STRING_FIELD=2, NULL_BYTES=2, SLUG_MISMATCH=1); plain: 1 (YAML_PARSE=1). Fix: foresights repair frontmatter --source <id> previews the line fix for every file it can repair (and names the manual fix for the rest, such as a missing opening ---); on an unmanaged checkout foresights frontmatter validate <source-path> --fix applies the same safe fixes",
             "name": "frontmatter_integrity",
             "status": "warn"
           },
@@ -8122,7 +8122,7 @@
                     "needs_interpretation": 4
                   },
                   "files": 13,
-                  "preview": "gbrain repair frontmatter --source notes",
+                  "preview": "foresights repair frontmatter --source notes",
                   "sample_paths": [
                     "fm/comment-value.md",
                     "fm/dash-line.md",
@@ -8138,7 +8138,7 @@
                     "needs_interpretation": 1
                   },
                   "files": 1,
-                  "preview": "gbrain repair frontmatter --source plain",
+                  "preview": "foresights repair frontmatter --source plain",
                   "sample_paths": [
                     "broken.md"
                   ],
@@ -8158,9 +8158,9 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain repair frontmatter --brain host",
+              "command": "foresights repair frontmatter --brain host",
               "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/repair.md#frontmatter",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/repair.md#frontmatter",
               "next": "run",
               "requires_exclusive": false,
               "verify": {
@@ -8176,7 +8176,7 @@
               },
               "why": "Previews the minimal line fix per file (safe quoting first; interpretations only with --include-ambiguous) and prints the hash-bound apply command; it writes nothing."
             },
-            "message": "14 file(s) have frontmatter gbrain repair frontmatter can fix: notes: 13 (FRONTMATTER_COMMENT_VALUE=1, needs_interpretation=4, NESTED_QUOTES=2, YAML_PARSE=3, MISSING_CLOSE=2, NULL_BYTES=2, SLUG_MISMATCH=1); plain: 1 (needs_interpretation=1). Preview with gbrain repair frontmatter --source notes; gbrain repair frontmatter --source plain (writes nothing; add --include-ambiguous for interpretations after the safe pass).",
+            "message": "14 file(s) have frontmatter foresights repair frontmatter can fix: notes: 13 (FRONTMATTER_COMMENT_VALUE=1, needs_interpretation=4, NESTED_QUOTES=2, YAML_PARSE=3, MISSING_CLOSE=2, NULL_BYTES=2, SLUG_MISMATCH=1); plain: 1 (needs_interpretation=1). Preview with foresights repair frontmatter --source notes; foresights repair frontmatter --source plain (writes nothing; add --include-ambiguous for interpretations after the safe pass).",
             "name": "frontmatter_repairable",
             "status": "warn"
           },
@@ -8190,7 +8190,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "No probe runs in the last 7 days. Run `gbrain eval suspected-contradictions --query \"...\" --top-k 5` to populate.",
+            "message": "No probe runs in the last 7 days. Run `foresights eval suspected-contradictions --query \"...\" --top-k 5` to populate.",
             "name": "contradictions",
             "status": "ok"
           },
@@ -8298,7 +8298,7 @@
               "steps": 0
             },
             "elapsed_ms": "<volatile>",
-            "message": "Free upkeep has not run on this brain yet; gbrain maintain --unattended runs it (no model calls, no page purge). Nothing deletes on its own.",
+            "message": "Free upkeep has not run on this brain yet; foresights maintain --unattended runs it (no model calls, no page purge). Nothing deletes on its own.",
             "name": "unattended_maintenance",
             "readiness_state": "not_applicable",
             "severity": "info",
@@ -8359,7 +8359,7 @@
               "stale_days": 2
             },
             "elapsed_ms": "<volatile>",
-            "message": "Conversation archive is on; no readable sessions for claude-code, codex, openclaw, hermes, grok (gbrain transcripts archive status names each reader).",
+            "message": "Conversation archive is on; no readable sessions for claude-code, codex, openclaw, hermes, grok (foresights transcripts archive status names each reader).",
             "name": "transcript_archive_freshness",
             "readiness_state": "not_applicable",
             "severity": "info",
@@ -8424,7 +8424,7 @@
               "mirror_window_ends": "2026-11-04"
             },
             "elapsed_ms": "<volatile>",
-            "message": "Every active legacy token uses the unified grant columns. The permissions mirror for older gbrain binaries is kept until 2026-11-04.",
+            "message": "Every active legacy token uses the unified grant columns. The permissions mirror for older foresights binaries is kept until 2026-11-04.",
             "name": "legacy_token_grant_shape",
             "status": "ok"
           },
@@ -8556,9 +8556,9 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain sync --source plain --no-pull --brain host",
+              "command": "foresights sync --source plain --no-pull --brain host",
               "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/troubleshooting.md#sync-freshness-no-successful-sync",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/troubleshooting.md#sync-freshness-no-successful-sync",
               "next": "run",
               "requires_exclusive": false,
               "verify": {
@@ -8574,7 +8574,7 @@
               },
               "why": "No successful sync of plain is recorded; this runs one and stamps last_sync_at when it succeeds."
             },
-            "message": "Source 'plain': no successful sync recorded; no attempt recorded; run `gbrain sync --source plain --no-pull`. 1 writer-owned canonical content source(s): upstream sync is not applicable; see canonical_content_writes for publication status",
+            "message": "Source 'plain': no successful sync recorded; no attempt recorded; run `foresights sync --source plain --no-pull`. 1 writer-owned canonical content source(s): upstream sync is not applicable; see canonical_content_writes for publication status",
             "name": "sync_freshness",
             "status": "fail"
           },
@@ -8622,9 +8622,9 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain export --source default --dir '<BACKUP_DIR>/default' --brain host",
+              "command": "foresights export --source default --dir '<BACKUP_DIR>/default' --brain host",
               "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/operations/backup-check.md",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/operations/backup-check.md",
               "inputs": [
                 {
                   "how": "Ask the user where backups should live (a directory outside the brain, ideally synced or on another disk).",
@@ -8646,7 +8646,7 @@
               },
               "why": "Writes a Markdown copy of 'default' (pages and facts) to a directory outside the brain so it survives losing the database."
             },
-            "message": "Not urgent yet: the brain holds 23 page(s)+fact(s) and is under 7 days old (backup coaching starts at 25 items or 7 days). 3 knowledge asset(s) lack verified recovery: default (not_a_git_repo), plain (not_a_git_repo), notes (no git remote). A source repo with a pushed git remote restores its Markdown files only, never DB-only pages, facts, config or credentials. Run `gbrain backup status` for each asset's fix command.",
+            "message": "Not urgent yet: the brain holds 23 page(s)+fact(s) and is under 7 days old (backup coaching starts at 25 items or 7 days). 3 knowledge asset(s) lack verified recovery: default (not_a_git_repo), plain (not_a_git_repo), notes (no git remote). A source repo with a pushed git remote restores its Markdown files only, never DB-only pages, facts, config or credentials. Run `foresights backup status` for each asset's fix command.",
             "name": "backup_coverage",
             "readiness_state": "degraded",
             "severity": "info",
@@ -8655,7 +8655,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "3 active sources on a managed brain. Recommended cron on the owner host, every 15 minutes: `gbrain sync --all --no-pull --hard-deadline 13m`. Managed sync never pulls: for each checkout that tracks a remote, chain `gbrain sources refresh <id>;` in front of it to take upstream commits. Keep the deadline under the interval: managed sync takes no per-source lock, so a tick that outlives the interval would overlap the next one.",
+            "message": "3 active sources on a managed brain. Recommended cron on the owner host, every 15 minutes: `foresights sync --all --no-pull --hard-deadline 13m`. Managed sync never pulls: for each checkout that tracks a remote, chain `foresights sources refresh <id>;` in front of it to take upstream commits. Keep the deadline under the interval: managed sync takes no per-source lock, so a tick that outlives the interval would overlap the next one.",
             "name": "sync_consolidation",
             "status": "ok"
           },
@@ -8894,7 +8894,7 @@
               ]
             },
             "elapsed_ms": "<volatile>",
-            "message": "Every locally created commit in the covered window of 1 repository is in gbrain's commit ledger, and no page file waits uncommitted for more than 30 minutes. A repository gbrain has not committed in yet has no ledger, so its window is empty.",
+            "message": "Every locally created commit in the covered window of 1 repository is in foresights's commit ledger, and no page file waits uncommitted for more than 30 minutes. A repository foresights has not committed in yet has no ledger, so its window is empty.",
             "name": "foreign_writers",
             "status": "ok"
           },
@@ -8916,7 +8916,7 @@
             "category": "brain",
             "details": {
               "conversation": null,
-              "fix": "preview links: gbrain facts relink --dry-run",
+              "fix": "preview links: foresights facts relink --dry-run",
               "inferred_7d": {
                 "mention": 0,
                 "page": 0
@@ -9138,7 +9138,7 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain config set auto_chronicle true --brain host",
+              "command": "foresights config set auto_chronicle true --brain host",
               "consent": [
                 "paid",
                 "egress"
@@ -9159,7 +9159,7 @@
               },
               "why": "Keeping automatic extraction records that the user accepted one paid chat call per eligible page; page text goes to the chat provider."
             },
-            "message": "Automatic event extraction is on by default and the user has not confirmed it yet. Each eligible new or changed meeting, conversation or calendar page gets one paid chat call (cap $0.25 per page; at most 200 calls per day, so at most $50.00 per day for a priced model; an unpriced model has no cap), and page text goes to the configured chat provider. Relay this to the user, then run `gbrain config set auto_chronicle true` to keep it or `gbrain config set auto_chronicle false` to opt out.",
+            "message": "Automatic event extraction is on by default and the user has not confirmed it yet. Each eligible new or changed meeting, conversation or calendar page gets one paid chat call (cap $0.25 per page; at most 200 calls per day, so at most $50.00 per day for a priced model; an unpriced model has no cap), and page text goes to the configured chat provider. Relay this to the user, then run `foresights config set auto_chronicle true` to keep it or `foresights config set auto_chronicle false` to opt out.",
             "name": "auto_chronicle_default_on",
             "readiness_state": "ok",
             "severity": "info",
@@ -9195,7 +9195,7 @@
               "key_source": "none"
             },
             "elapsed_ms": "<volatile>",
-            "message": "Reporting back through Wakeshift is off (gbrain wakeshift enable turns it on).",
+            "message": "Reporting back through Wakeshift is off (foresights wakeshift enable turns it on).",
             "name": "wakeshift",
             "readiness_state": "disabled_by_choice",
             "severity": "info",
@@ -9227,7 +9227,7 @@
               ],
               "engine": "pglite",
               "expression_indexes_without_statistics": [],
-              "fix": "gbrain repair planner-stats --apply",
+              "fix": "foresights repair planner-stats --apply",
               "missing_search_statistics": [],
               "stale": []
             },
@@ -9253,7 +9253,7 @@
               "weights_off_neutral": 0
             },
             "elapsed_ms": "<volatile>",
-            "message": "Retrieval feedback is off; rankings do not learn from ratings. Turn it on with: gbrain config set feedback.enabled true",
+            "message": "Retrieval feedback is off; rankings do not learn from ratings. Turn it on with: foresights config set feedback.enabled true",
             "name": "retrieval_feedback_health",
             "status": "ok"
           },
@@ -9283,12 +9283,12 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain beliefs enable --source default --brain host",
+              "command": "foresights beliefs enable --source default --brain host",
               "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/designs/BELIEF_LEDGER.md#73-the-doctor-coverage-check",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/designs/BELIEF_LEDGER.md#73-the-doctor-coverage-check",
               "next": "ask_user",
               "requires_exclusive": false,
-              "user_message": "Do you want gbrain to keep a belief ledger (a recorded history of facts, takes and links) for this source?",
+              "user_message": "Do you want foresights to keep a belief ledger (a recorded history of facts, takes and links) for this source?",
               "verify": {
                 "argv": [
                   "gbrain",
@@ -9383,7 +9383,7 @@
               "unknown_pct": 12.9
             },
             "elapsed_ms": "<volatile>",
-            "message": "12.9% of 31 row(s) have an unverified origin (unknown tier); the backfill has classified every row it has a signal for. Remote MCP readers see the 1 unverified-origin page(s) quoted as source material until the backfill classifies them or the owner claims their source (gbrain trust claim-sources); local reads are unchanged.",
+            "message": "12.9% of 31 row(s) have an unverified origin (unknown tier); the backfill has classified every row it has a signal for. Remote MCP readers see the 1 unverified-origin page(s) quoted as source material until the backfill classifies them or the owner claims their source (foresights trust claim-sources); local reads are unchanged.",
             "name": "trust_tiers",
             "status": "ok"
           },
@@ -9452,7 +9452,7 @@
               "pages": 0
             },
             "elapsed_ms": "<volatile>",
-            "message": "Core memory is off (opt-in). If the user wants a profile loaded in every session: gbrain config set memory.core.enabled true, then gbrain core init.",
+            "message": "Core memory is off (opt-in). If the user wants a profile loaded in every session: foresights config set memory.core.enabled true, then foresights core init.",
             "name": "core_memory",
             "status": "ok"
           },
@@ -9520,7 +9520,7 @@
               "unknown_builds": []
             },
             "elapsed_ms": "<volatile>",
-            "message": "No long-running gbrain process (serve, jobs supervisor, worker) is running on this host.",
+            "message": "No long-running foresights process (serve, jobs supervisor, worker) is running on this host.",
             "name": "runtime_build_skew",
             "status": "ok"
           },
@@ -9745,9 +9745,9 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain sources retry-held default --unindexed --brain host",
+              "command": "foresights sources retry-held default --unindexed --brain host",
               "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/repair.md#unindexed-files",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/repair.md#unindexed-files",
               "next": "run",
               "requires_exclusive": false,
               "then": {
@@ -9761,9 +9761,9 @@
                   "--brain",
                   "host"
                 ],
-                "command": "gbrain sync --source default --no-pull --brain host",
+                "command": "foresights sync --source default --no-pull --brain host",
                 "consent": [],
-                "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/repair.md#unindexed-files",
+                "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/repair.md#unindexed-files",
                 "next": "run",
                 "requires_exclusive": false,
                 "verify": {
@@ -9777,7 +9777,7 @@
                     "host"
                   ]
                 },
-                "why": "The sync re-screens the scheduled files of default: each one that passes imports, each one that refuses is recorded as a hold that gbrain sources status default lists."
+                "why": "The sync re-screens the scheduled files of default: each one that passes imports, each one that refuses is recorded as a hold that foresights sources status default lists."
               },
               "verify": {
                 "argv": [
@@ -9792,7 +9792,7 @@
               },
               "why": "Finds the committed files of default with no page and no hold (bounded; it continues an incomplete scan), schedules them for a re-screen and stores the result this check reads."
             },
-            "message": "Unindexed files are not known for default (not computed yet), notes (not computed yet), plain (not computed yet). The maintenance phase unindexed_files computes them on each run and continues an incomplete scan; to compute them now, run gbrain sources retry-held <id> --unindexed.",
+            "message": "Unindexed files are not known for default (not computed yet), notes (not computed yet), plain (not computed yet). The maintenance phase unindexed_files computes them on each run and continues an incomplete scan; to compute them now, run foresights sources retry-held <id> --unindexed.",
             "name": "unindexed_files",
             "readiness_state": "unknown",
             "severity": "info",
@@ -9951,11 +9951,11 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain config set cycle.purge.mcp_request_log_retention_days 90 --brain host",
+              "command": "foresights config set cycle.purge.mcp_request_log_retention_days 90 --brain host",
               "consent": [
                 "destructive"
               ],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/mcp/ADMIN.md#request-log-retention",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/mcp/ADMIN.md#request-log-retention",
               "next": "ask_user",
               "requires_exclusive": false,
               "user_message": "Your MCP request log holds 0 row(s) (0.0 MB) and nothing prunes it. Turn on 90-day retention? Request details older than 90 days (operation, status, parameters, errors) will be deleted and cannot be restored; per-client totals and audit rows are kept.",
@@ -10243,9 +10243,9 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain repair fences --source notes --brain host",
+              "command": "foresights repair fences --source notes --brain host",
               "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/repair.md#fences",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/repair.md#fences",
               "next": "run",
               "requires_exclusive": false,
               "then": {
@@ -10260,7 +10260,7 @@
                   "--brain",
                   "host"
                 ],
-                "command": "gbrain repair fences --source notes --apply --brain host",
+                "command": "foresights repair fences --source notes --apply --brain host",
                 "consent": [],
                 "next": "run",
                 "requires_exclusive": false,
@@ -10288,9 +10288,9 @@
                   "host"
                 ]
               },
-              "why": "Previews the repair of each malformed fence of notes (read-only, no model call): its planned tier and diff, the estimated model cost, or the exact edit for a fence gbrain will not guess; it prints the apply command with --expect <hash>. They are not repaired automatically (no maintenance run has completed in the last 24 h), so apply the plan with the command the preview prints. 2 need a manual edit: make the edit the preview names in the file (or the page), commit, then sync."
+              "why": "Previews the repair of each malformed fence of notes (read-only, no model call): its planned tier and diff, the estimated model cost, or the exact edit for a fence foresights will not guess; it prints the apply command with --expect <hash>. They are not repaired automatically (no maintenance run has completed in the last 24 h), so apply the plan with the command the preview prints. 2 need a manual edit: make the edit the preview names in the file (or the page), commit, then sync."
             },
-            "message": "5 malformed facts or takes fence(s) wait: notes: 2 held file(s), 1 stored page(s), 1 unsynced file(s) (by tier: deterministic 1, llm 1, manual 2); oldest hold 0 h old; plain: 1 unsynced file(s) (by tier: deterministic 1). The deterministic, resolver and model-tier ones are not repaired automatically (no maintenance run has completed in the last 24 h); 2 need the manual edit the preview names. None of them blocks a sync. Preview: gbrain repair fences --source notes; gbrain repair fences --source plain. Model repair caps: $0.30 per page, $1.00 per day ($0.00 spent today).",
+            "message": "5 malformed facts or takes fence(s) wait: notes: 2 held file(s), 1 stored page(s), 1 unsynced file(s) (by tier: deterministic 1, llm 1, manual 2); oldest hold 0 h old; plain: 1 unsynced file(s) (by tier: deterministic 1). The deterministic, resolver and model-tier ones are not repaired automatically (no maintenance run has completed in the last 24 h); 2 need the manual edit the preview names. None of them blocks a sync. Preview: foresights repair fences --source notes; foresights repair fences --source plain. Model repair caps: $0.30 per page, $1.00 per day ($0.00 spent today).",
             "name": "fence_integrity",
             "status": "warn"
           },
@@ -10374,7 +10374,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "no Google accounts connected (gbrain google connect to start)",
+            "message": "no Google accounts connected (foresights google connect to start)",
             "name": "google_oauth",
             "status": "ok"
           },
@@ -10519,15 +10519,15 @@
                 "--path",
                 "<home>/.gbrain/brain.pglite"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+              "command": "foresights init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
               "consent": [
                 "credentials",
                 "paid"
               ],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/search-modes.md",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/search-modes.md",
               "inputs": [
                 {
-                  "how": "Ask the user for an API key for Voyage AI; store it with `gbrain config set voyage_api_key <key>` (every gbrain process reads it), or export VOYAGE_API_KEY in the environment of every gbrain process. Then run the command.",
+                  "how": "Ask the user for an API key for Voyage AI; store it with `foresights config set voyage_api_key <key>` (every foresights process reads it), or export VOYAGE_API_KEY in the environment of every foresights process. Then run the command.",
                   "name": "VOYAGE_API_KEY"
                 }
               ],
@@ -10545,7 +10545,7 @@
                   "host"
                 ]
               },
-              "why": "Embeddings are off, so search is keyword-only, and no configured embedding key fits this brain. Once the key is set this turns on voyage:voyage-4 (1024d) for the PGLite brain at <home>/.gbrain/brain.pglite. Pages, facts and keyword search are kept; existing chunks and facts are queued for vectors, which `gbrain embed --stale` (or the next maintenance cycle) fills."
+              "why": "Embeddings are off, so search is keyword-only, and no configured embedding key fits this brain. Once the key is set this turns on voyage:voyage-4 (1024d) for the PGLite brain at <home>/.gbrain/brain.pglite. Pages, facts and keyword search are kept; existing chunks and facts are queued for vectors, which `foresights embed --stale` (or the next maintenance cycle) fills."
             },
             "message": "Not applicable: embeddings are disabled on this brain by choice, so chunks have no vectors by design (keyword search keeps working).",
             "name": "embed_staleness",
@@ -10581,13 +10581,13 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain config set takes.bootstrap_enabled true --brain host",
+              "command": "foresights config set takes.bootstrap_enabled true --brain host",
               "consent": [
                 "paid"
               ],
               "next": "ask_user",
               "requires_exclusive": false,
-              "user_message": "gbrain can extract typed claims (\"takes\") from your pages so it can track calibration over time. It uses a paid chat model (roughly $5 once). Turn it on?",
+              "user_message": "foresights can extract typed claims (\"takes\") from your pages so it can track calibration over time. It uses a paid chat model (roughly $5 once). Turn it on?",
               "verify": {
                 "argv": [
                   "gbrain",
@@ -10650,9 +10650,9 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain sync --source plain --no-pull --brain host",
+              "command": "foresights sync --source plain --no-pull --brain host",
               "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/troubleshooting.md#sync-freshness-no-successful-sync",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/troubleshooting.md#sync-freshness-no-successful-sync",
               "next": "run",
               "requires_exclusive": false,
               "verify": {
@@ -10668,7 +10668,7 @@
               },
               "why": "No successful sync of plain is recorded; this runs one and stamps last_sync_at when it succeeds."
             },
-            "fix": "Source 'plain': no successful sync recorded; no attempt recorded; run `gbrain sync --source plain --no-pull`. 1 writer-owned canonical content source(s): upstream sync is not applicable; see canonical_content_writes for publication status",
+            "fix": "Source 'plain': no successful sync recorded; no attempt recorded; run `foresights sync --source plain --no-pull`. 1 writer-owned canonical content source(s): upstream sync is not applicable; see canonical_content_writes for publication status",
             "name": "sync_freshness",
             "status": "fail",
             "tier": "root"
@@ -10684,7 +10684,7 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain doctor --remediation-plan --json --brain host",
+              "command": "foresights doctor --remediation-plan --json --brain host",
               "consent": [],
               "next": "run",
               "requires_exclusive": false,
@@ -10718,9 +10718,9 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain repair fences --source notes --brain host",
+              "command": "foresights repair fences --source notes --brain host",
               "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/repair.md#fences",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/repair.md#fences",
               "next": "run",
               "requires_exclusive": false,
               "then": {
@@ -10735,7 +10735,7 @@
                   "--brain",
                   "host"
                 ],
-                "command": "gbrain repair fences --source notes --apply --brain host",
+                "command": "foresights repair fences --source notes --apply --brain host",
                 "consent": [],
                 "next": "run",
                 "requires_exclusive": false,
@@ -10763,15 +10763,15 @@
                   "host"
                 ]
               },
-              "why": "Previews the repair of each malformed fence of notes (read-only, no model call): its planned tier and diff, the estimated model cost, or the exact edit for a fence gbrain will not guess; it prints the apply command with --expect <hash>. They are not repaired automatically (no maintenance run has completed in the last 24 h), so apply the plan with the command the preview prints. 2 need a manual edit: make the edit the preview names in the file (or the page), commit, then sync."
+              "why": "Previews the repair of each malformed fence of notes (read-only, no model call): its planned tier and diff, the estimated model cost, or the exact edit for a fence foresights will not guess; it prints the apply command with --expect <hash>. They are not repaired automatically (no maintenance run has completed in the last 24 h), so apply the plan with the command the preview prints. 2 need a manual edit: make the edit the preview names in the file (or the page), commit, then sync."
             },
-            "fix": "5 malformed facts or takes fence(s) wait: notes: 2 held file(s), 1 stored page(s), 1 unsynced file(s) (by tier: deterministic 1, llm 1, manual 2); oldest hold 0 h old; plain: 1 unsynced file(s) (by tier: deterministic 1). The deterministic, resolver and model-tier ones are not repaired automatically (no maintenance run has completed in the last 24 h); 2 need the manual edit the preview names. None of them blocks a sync. Preview: gbrain repair fences --source notes; gbrain repair fences --source plain. Model repair caps: $0.30 per page, $1.00 per day ($0.00 spent today).",
+            "fix": "5 malformed facts or takes fence(s) wait: notes: 2 held file(s), 1 stored page(s), 1 unsynced file(s) (by tier: deterministic 1, llm 1, manual 2); oldest hold 0 h old; plain: 1 unsynced file(s) (by tier: deterministic 1). The deterministic, resolver and model-tier ones are not repaired automatically (no maintenance run has completed in the last 24 h); 2 need the manual edit the preview names. None of them blocks a sync. Preview: foresights repair fences --source notes; foresights repair fences --source plain. Model repair caps: $0.30 per page, $1.00 per day ($0.00 spent today).",
             "name": "fence_integrity",
             "status": "warn",
             "tier": "symptom"
           },
           {
-            "fix": "20 frontmatter issue(s). notes: 19 (YAML_PARSE=9, EMPTY_FRONTMATTER=1, NESTED_QUOTES=2, MISSING_CLOSE=2, NON_STRING_FIELD=2, NULL_BYTES=2, SLUG_MISMATCH=1); plain: 1 (YAML_PARSE=1). Fix: gbrain repair frontmatter --source <id> previews the line fix for every file it can repair (and names the manual fix for the rest, such as a missing opening ---); on an unmanaged checkout gbrain frontmatter validate <source-path> --fix applies the same safe fixes",
+            "fix": "20 frontmatter issue(s). notes: 19 (YAML_PARSE=9, EMPTY_FRONTMATTER=1, NESTED_QUOTES=2, MISSING_CLOSE=2, NON_STRING_FIELD=2, NULL_BYTES=2, SLUG_MISMATCH=1); plain: 1 (YAML_PARSE=1). Fix: foresights repair frontmatter --source <id> previews the line fix for every file it can repair (and names the manual fix for the rest, such as a missing opening ---); on an unmanaged checkout foresights frontmatter validate <source-path> --fix applies the same safe fixes",
             "name": "frontmatter_integrity",
             "status": "warn",
             "tier": "symptom"
@@ -10786,9 +10786,9 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain repair frontmatter --brain host",
+              "command": "foresights repair frontmatter --brain host",
               "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/repair.md#frontmatter",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/repair.md#frontmatter",
               "next": "run",
               "requires_exclusive": false,
               "verify": {
@@ -10804,7 +10804,7 @@
               },
               "why": "Previews the minimal line fix per file (safe quoting first; interpretations only with --include-ambiguous) and prints the hash-bound apply command; it writes nothing."
             },
-            "fix": "14 file(s) have frontmatter gbrain repair frontmatter can fix: notes: 13 (FRONTMATTER_COMMENT_VALUE=1, needs_interpretation=4, NESTED_QUOTES=2, YAML_PARSE=3, MISSING_CLOSE=2, NULL_BYTES=2, SLUG_MISMATCH=1); plain: 1 (needs_interpretation=1). Preview with gbrain repair frontmatter --source notes; gbrain repair frontmatter --source plain (writes nothing; add --include-ambiguous for interpretations after the safe pass).",
+            "fix": "14 file(s) have frontmatter foresights repair frontmatter can fix: notes: 13 (FRONTMATTER_COMMENT_VALUE=1, needs_interpretation=4, NESTED_QUOTES=2, YAML_PARSE=3, MISSING_CLOSE=2, NULL_BYTES=2, SLUG_MISMATCH=1); plain: 1 (needs_interpretation=1). Preview with foresights repair frontmatter --source notes; foresights repair frontmatter --source plain (writes nothing; add --include-ambiguous for interpretations after the safe pass).",
             "name": "frontmatter_repairable",
             "status": "warn",
             "tier": "symptom"
@@ -10821,9 +10821,9 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain repair frontmatter --source notes --brain host",
+              "command": "foresights repair frontmatter --source notes --brain host",
               "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/repair.md#held-files",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/repair.md#held-files",
               "next": "run",
               "requires_exclusive": false,
               "verify": {
@@ -10839,19 +10839,19 @@
               },
               "why": "Previews the minimal line fix for each held file (or names the line to fix by hand) and prints the hash-bound apply command; it writes nothing."
             },
-            "fix": "8 file(s) in Git sources are held and not imported; the rest of each sync continues. notes: 8 held (0 page(s) keep an older revision, 8 file(s) have no page), first: fences/llm.md [invalid_fence/no_header], fences/manual.md [invalid_fence/takes_kind_unsupported], fm/dash-line.md [invalid_frontmatter/needs_interpretation], fm/duplicate-key.md [invalid_frontmatter/needs_interpretation], fm/indented-close.md [invalid_frontmatter/yaml_parse]. A page whose newer file is held is read-only for put_page until the file is repaired, so do not retry a refused write. Inspect with gbrain sources status notes; then notes: preview the frontmatter and other fixes with gbrain repair frontmatter --source notes (writes nothing until a hash-bound apply); nothing repairs the fence and slug-conflict holds by itself (no maintenance run is active), so preview the content repairs with gbrain repair content --source notes (read-only, no model call: it lists each held file with its planned repair or the exact edit, kind by kind, and prints the apply command with --expect <hash>[,<hash>]), then run the apply command it prints.",
+            "fix": "8 file(s) in Git sources are held and not imported; the rest of each sync continues. notes: 8 held (0 page(s) keep an older revision, 8 file(s) have no page), first: fences/llm.md [invalid_fence/no_header], fences/manual.md [invalid_fence/takes_kind_unsupported], fm/dash-line.md [invalid_frontmatter/needs_interpretation], fm/duplicate-key.md [invalid_frontmatter/needs_interpretation], fm/indented-close.md [invalid_frontmatter/yaml_parse]. A page whose newer file is held is read-only for put_page until the file is repaired, so do not retry a refused write. Inspect with foresights sources status notes; then notes: preview the frontmatter and other fixes with foresights repair frontmatter --source notes (writes nothing until a hash-bound apply); nothing repairs the fence and slug-conflict holds by itself (no maintenance run is active), so preview the content repairs with foresights repair content --source notes (read-only, no model call: it lists each held file with its planned repair or the exact edit, kind by kind, and prints the apply command with --expect <hash>[,<hash>]), then run the apply command it prints.",
             "name": "git_held_files",
             "status": "warn",
             "tier": "symptom"
           },
           {
-            "fix": "Source `notes`: 1 page(s) use 1 type(s) pack `gbrain-base-v2` neither declares nor aliases: '2024' (1). List them with `gbrain schema review-orphans --source notes`, then declare the type (`gbrain schema add-type <type>`, which takes its primitive and prefix) or retype the pages to a declared type.",
+            "fix": "Source `notes`: 1 page(s) use 1 type(s) pack `gbrain-base-v2` neither declares nor aliases: '2024' (1). List them with `foresights schema review-orphans --source notes`, then declare the type (`foresights schema add-type <type>`, which takes its primitive and prefix) or retype the pages to a declared type.",
             "name": "schema_pack_consistency",
             "status": "warn",
             "tier": "symptom"
           },
           {
-            "fix": "65 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +57 more. Add them with `gbrain skillpack sync`.",
+            "fix": "65 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +57 more. Add them with `foresights skillpack sync`.",
             "name": "skill_currency",
             "status": "warn",
             "tier": "symptom"
@@ -10868,9 +10868,9 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain projections drain --limit 4800 --brain host",
+              "command": "foresights projections drain --limit 4800 --brain host",
               "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/repair.md#projection-drain",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/repair.md#projection-drain",
               "next": "run",
               "preview_argv": [
                 "gbrain",
@@ -10895,7 +10895,7 @@
               },
               "why": "Rebuilds queued Markdown and code projections and seals importer-attested image pages in place, at most 4800 pages per run; repeat until the dry run shows sealable 0."
             },
-            "fix": "Visible pages have missing or stale text projections (1 queued Markdown/code page(s)); search and code results may be incomplete. Run `gbrain projections drain` to rebuild queued Markdown and code projections now; it is safe while `gbrain serve` runs on Postgres. For code metadata repair, run `gbrain reindex-code --force --no-embed`. If work stays pending, inspect the recorded source path. No repair or embedding was started by this check.",
+            "fix": "Visible pages have missing or stale text projections (1 queued Markdown/code page(s)); search and code results may be incomplete. Run `foresights projections drain` to rebuild queued Markdown and code projections now; it is safe while `foresights serve` runs on Postgres. For code metadata repair, run `foresights reindex-code --force --no-embed`. If work stays pending, inspect the recorded source path. No repair or embedding was started by this check.",
             "name": "text_projection_readiness",
             "status": "warn",
             "tier": "symptom"
@@ -10910,7 +10910,7 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain repair timeline --brain host",
+              "command": "foresights repair timeline --brain host",
               "consent": [],
               "next": "run",
               "requires_exclusive": false,
@@ -10927,7 +10927,7 @@
               },
               "why": "Previews the repair without changing anything and prints the exact apply command; applying rewrites stored records, so ask the user first."
             },
-            "fix": "2 timeline row(s) on 2 page(s) exist only in the database. Preview: gbrain repair timeline — apply: gbrain repair timeline --apply. 1 other row(s) cannot round-trip and are kept as-is.",
+            "fix": "2 timeline row(s) on 2 page(s) exist only in the database. Preview: foresights repair timeline — apply: foresights repair timeline --apply. 1 other row(s) cannot round-trip and are kept as-is.",
             "name": "timeline_history",
             "status": "warn",
             "tier": "symptom"
@@ -10936,8 +10936,8 @@
         "unknown_sections": []
       },
       "stderr": [
-        "[gbrain] reading doctor checks; large brains can take minutes. Progress prints here every 10 s; the result prints on stdout when it is ready.",
-        "[gbrain doctor] non-interactive run: the check run (not connect or migrations) is capped at 90000 ms (doctor.default_budget_ms); checks past it report health unknown. Off for one run: --budget-ms 0; off for good: gbrain config set doctor.default_budget_ms 0. On PGLite a statement already running cannot be stopped, so a check can finish late."
+        "[foresights] reading doctor checks; large brains can take minutes. Progress prints here every 10 s; the result prints on stdout when it is ready.",
+        "[foresights doctor] non-interactive run: the check run (not connect or migrations) is capped at 90000 ms (doctor.default_budget_ms); checks past it report health unknown. Off for one run: --budget-ms 0; off for good: foresights config set doctor.default_budget_ms 0. On PGLite a statement already running cannot be stopped, so a check can finish late."
       ],
       "stdout": "<json>"
     }

@@ -1,15 +1,15 @@
 /**
- * gbrain questions — pinned questions (standing answers kept current from
+ * foresights questions — pinned questions (standing answers kept current from
  * evidence). Every path dispatches through the trusted-local op layer
  * (handleToolCall, remote:false) so the CLI and the questions_* MCP tools
  * share one behavior.
  *
- *   gbrain questions pin "<question>" [--source <id>] [--prefix <slug-prefix>] [--entity <slug>] [--defer] [--wait-ms N]
- *   gbrain questions pin --id <id> [--publish]      activate (or re-pin) an existing pin
- *   gbrain questions list [--source <id>] [--include-archived]
- *   gbrain questions status <id>
- *   gbrain questions refresh <id> [--full] [--wait-ms N]
- *   gbrain questions unpin <id>
+ *   foresights questions pin "<question>" [--source <id>] [--prefix <slug-prefix>] [--entity <slug>] [--defer] [--wait-ms N]
+ *   foresights questions pin --id <id> [--publish]      activate (or re-pin) an existing pin
+ *   foresights questions list [--source <id>] [--include-archived]
+ *   foresights questions status <id>
+ *   foresights questions refresh <id> [--full] [--wait-ms N]
+ *   foresights questions unpin <id>
  * Every subcommand takes --json (the receipt). Exit 1 when the answer is
  * blocked (no key, budget, failed refresh, awaiting consent) or a refresh did
  * not publish.
@@ -21,7 +21,7 @@ import { shellQuote } from '../core/agent-output.ts';
 import type { QuestionReceipt } from '../core/questions/receipt.ts';
 
 const HELP = [
-  'gbrain questions — pinned questions: cited answers kept current from your notes',
+  'foresights questions — pinned questions: cited answers kept current from your notes',
   '',
   '  pin "<question>"   pin a question and get its first answer (paid model call)',
   '      --source <id>      evidence source (default: current source)',
@@ -95,7 +95,7 @@ export async function runQuestions(engine: BrainEngine, args: string[]): Promise
     const id = flag(rest, '--id');
     const question = id ? undefined : positional(rest);
     if (!id && !question) {
-      console.error('Usage: gbrain questions pin "<question>" [--source <id>] [--prefix <p>] [--entity <slug>]  |  gbrain questions pin --id <id>');
+      console.error('Usage: foresights questions pin "<question>" [--source <id>] [--prefix <p>] [--entity <slug>]  |  foresights questions pin --id <id>');
       process.exit(2);
     }
     const prefix = flag(rest, '--prefix');
@@ -119,14 +119,14 @@ export async function runQuestions(engine: BrainEngine, args: string[]): Promise
     };
     const c = result.counts;
     out({ ok: true, ...result }, result.questions.length === 0
-      ? 'No pinned questions. Pin one: gbrain questions pin "<question>"'
+      ? 'No pinned questions. Pin one: foresights questions pin "<question>"'
       : [...result.questions.map(r => renderReceipt(r, false)), '', `${c.total} pinned: ${c.fresh} fresh, ${c.stale} stale, ${c.awaiting_refresh} awaiting refresh, ${c.blocked} blocked`].join('\n'));
     return;
   }
   if (sub === 'status' || sub === 'refresh' || sub === 'unpin') {
     const id = positional(rest);
     if (!id) {
-      console.error(`Usage: gbrain questions ${sub} <id>   (ids: gbrain questions list)`);
+      console.error(`Usage: foresights questions ${sub} <id>   (ids: foresights questions list)`);
       process.exit(2);
     }
     if (sub === 'status') {
@@ -146,6 +146,6 @@ export async function runQuestions(engine: BrainEngine, args: string[]): Promise
     out({ ok: true, ...result }, result.unpinned ? `Unpinned ${result.receipt.id}: refreshes stopped and its page is archived.` : `${result.receipt.id} was already unpinned.`);
     return;
   }
-  console.error(`Unknown subcommand: ${sub} (try: gbrain questions --help)`);
+  console.error(`Unknown subcommand: ${sub} (try: foresights questions --help)`);
   process.exit(2);
 }

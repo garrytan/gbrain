@@ -13,7 +13,7 @@
  * - ALL edits go through jsonc-parser `modify`/`applyEdits` — text splicing
  *   that preserves comments, formatting, and EOLs byte-for-byte outside the
  *   edited range. opencode's own `mcp add` preserves comments (observed);
- *   gbrain matches that bar. JSON.parse is never used on config text.
+ *   foresights matches that bar. JSON.parse is never used on config text.
  * - Ownership is a STRUCTURAL FINGERPRINT, not a marker key (unknown keys
  *   are tolerated by opencode 1.18.18, but a future strict-schema flip must
  *   not brick the user's opencode): a local entry is ours when command[0] is
@@ -167,16 +167,16 @@ function isGbrainShapedCommand(command: unknown): boolean {
   if (typeof head !== 'string') return false;
   if (isHookLauncherPath(head)) return isGbrainShapedCommand(command.slice(1)); // user scope through the hook launcher (#8435)
   if (head === 'gbrain') return true; // PATH-resolved (project scope)
-  if (/[\\/]gbrain$/.test(head)) return true; // absolute binary path
+  if (/[\\/](?:foresights|gbrain)$/.test(head)) return true; // absolute binary path
   // bun-run wrapper shim lane: `bun run <...>/gbrain/src/cli.ts` etc. The
   // arg match is ANCHORED like the head-path lane: some arg must carry an
   // exact `gbrain` path segment (or a hyphen-suffixed `gbrain-*` one) — a
   // loose substring scan classified `bun run /opt/gbrainy-fork/src/cli.ts`
   // as ours (both the `gbrain` substring and a bare `src/cli.ts$` matched).
   // A gbrain-less `bun run /repo/src/cli.ts` is now NOT ours (fail-closed:
-  // gbrain refuses to touch what it cannot prove it owns).
+  // foresights refuses to touch what it cannot prove it owns).
   if (head === 'bun' || head.endsWith('/bun')) {
-    return command.some((a) => typeof a === 'string' && /(?:^|[\\/])gbrain(?:[\\/-]|$)/.test(a));
+    return command.some((a) => typeof a === 'string' && /(?:^|[\\/])(?:foresights|gbrain)(?:[\\/-]|$)/.test(a));
   }
   // staged shim named gbrain-<suffix> (e.g. gbrain-shim from stageBinDir) —
   // hyphen-anchored so a foreign /opt/bin/gbrainy is NOT ours.
@@ -208,7 +208,7 @@ export function opencodeEntryKind(
         : undefined;
     if (typeof src !== 'string' || src === '') return 'foreign';
     // Kind mismatch (red-team): a caller expecting a REMOTE entry (harness /
-    // connect lanes pass expect.url) that finds a LOCAL gbrain entry is
+    // connect lanes pass expect.url) that finds a LOCAL foresights entry is
     // looking at ANOTHER lane's registration (the workspace stdio lane's) —
     // never `ours-same-source`, or a silent replace (and a later --remove)
     // would eat it. `ours-other-source` fires the refuse/confirm machinery.
@@ -225,7 +225,7 @@ export function opencodeEntryKind(
         ? (headers as Record<string, unknown>).Authorization
         : undefined;
     if (typeof auth === 'string' && auth.includes(ENV_INTERPOLATION)) {
-      // Only the gbrain connect lane writes the {env:GBRAIN_REMOTE_TOKEN}
+      // Only the foresights connect lane writes the {env:GBRAIN_REMOTE_TOKEN}
       // interpolation — unambiguously ours even without a receipt url. But a
       // url mismatch (another serve) OR a LOCAL expectation (expect.sourceId
       // — the workspace stdio lane; the kind-mismatch mirror of the local
@@ -353,17 +353,17 @@ export function writeOpencodeMcpEntry(
     // to the local/workspace lane only.
     throw new Error(
       opts.expect?.url !== undefined
-        ? `mcp.${entry.name} in ${configPath} is a gbrain registration that does not match this endpoint ` +
+        ? `mcp.${entry.name} in ${configPath} is a foresights registration that does not match this endpoint ` +
             `(${opts.expect.url}) — another install or lane owns it; pass --force to replace it, or pick another --name.`
-        : `mcp.${entry.name} in ${configPath} belongs to a DIFFERENT gbrain workspace ` +
+        : `mcp.${entry.name} in ${configPath} belongs to a DIFFERENT foresights workspace ` +
             `(GBRAIN_SOURCE mismatch) — re-run with the overwrite confirmation to reroute it, or pick another --name.`,
     );
   }
   if (priorKind === 'ours-other-source') {
     notes.push(
       opts.expect?.url !== undefined
-        ? `replaced a gbrain registration that did not match this endpoint (url/lane mismatch).`
-        : `replaced a gbrain registration that pointed at a different workspace (source mismatch).`,
+        ? `replaced a foresights registration that did not match this endpoint (url/lane mismatch).`
+        : `replaced a foresights registration that pointed at a different workspace (source mismatch).`,
     );
   }
 
@@ -428,9 +428,9 @@ export function writeOpencodeMcpEntry(
 /**
  * Remove the managed entry (fingerprint-keyed; everything else survives
  * byte-for-byte). Absent file / absent entry are calm no-ops. Foreign
- * entries refuse — removal never deletes what gbrain does not own.
+ * entries refuse — removal never deletes what foresights does not own.
  * `skipOtherSource` turns an `ours-other-source` match into a calm skip-with-
- * note instead of a removal (the uninstall sweep passes it: a gbrain entry
+ * note instead of a removal (the uninstall sweep passes it: a foresights entry
  * from a DIFFERENT workspace is not this uninstall's to delete).
  */
 export function removeOpencodeMcpEntry(
@@ -462,12 +462,12 @@ export function removeOpencodeMcpEntry(
       removed: false,
       backupPath: null,
       notes: [
-        `mcp.${name} in ${configPath} belongs to a DIFFERENT gbrain workspace (source mismatch) — left in place.`,
+        `mcp.${name} in ${configPath} belongs to a DIFFERENT foresights workspace (source mismatch) — left in place.`,
       ],
     };
   }
   if (kind === 'ours-other-source') {
-    notes.push('removed a gbrain registration that pointed at a different workspace (source mismatch).');
+    notes.push('removed a foresights registration that pointed at a different workspace (source mismatch).');
   }
 
   const edits = modify(text, ['mcp', name], undefined, FORMATTING);
@@ -517,7 +517,7 @@ export function reconcileOpencodeSiblingGlobal(
   }
   const r = removeOpencodeMcpEntry(siblingPath, name, expect);
   const notes = [
-    `removed the gbrain mcp.${name} entry from ${siblingPath} — opencode merges both global filenames, and the ` +
+    `removed the foresights mcp.${name} entry from ${siblingPath} — opencode merges both global filenames, and the ` +
       `registration being written lands in ${configPath} (one owner per name).`,
     ...r.notes,
   ];

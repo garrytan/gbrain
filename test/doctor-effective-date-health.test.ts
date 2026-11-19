@@ -5,13 +5,13 @@
  * The check used to flag any `effective_date_source = 'fallback'` row whose
  * frontmatter merely HAD an `event_date`/`date`/`published` key (JSONB `?`
  * operator), even when the value was an empty string or otherwise
- * unparseable. That over-reported: `gbrain reindex-frontmatter --dry-run`
+ * unparseable. That over-reported: `foresights reindex-frontmatter --dry-run`
  * (which runs the real `computeEffectiveDate` precedence chain) would find
  * nothing to fix for those rows, so the doctor warning never went away no
  * matter how many times reindex-frontmatter ran.
  *
  * The fix re-runs `computeEffectiveDate` (the same function
- * `backfillEffectiveDate` / `gbrain reindex-frontmatter` uses) with
+ * `backfillEffectiveDate` / `foresights reindex-frontmatter` uses) with
  * `filename: null` over the candidate rows in JS, so doctor only flags rows
  * where a fresh parse finds a date attributable to the FRONTMATTER
  * specifically — independent of whether a filename-derived date would win

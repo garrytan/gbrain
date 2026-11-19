@@ -178,7 +178,7 @@ async function resolveChunkWrite(exec: SqlExecutor, chunks: readonly SegmentChun
     searchEmbeddingColumn: config.get('search_embedding_column') ?? null, embeddingColumnsJson: config.get('embedding_columns') ?? null });
   const model = column.embeddingModel || config.get('embedding_model') || null;
   if (!model && chunks.some(chunk => chunk.embedding && !chunk.model)) {
-    throw new Error('Embedding model provenance is unknown. Supply an explicit chunk model or run gbrain migrate embeddings --status before an explicit migration.');
+    throw new Error('Embedding model provenance is unknown. Supply an explicit chunk model or run foresights migrate embeddings --status before an explicit migration.');
   }
   return { column, model: model ?? 'unconfigured' };
 }

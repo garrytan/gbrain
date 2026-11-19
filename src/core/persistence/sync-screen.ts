@@ -115,7 +115,7 @@ export function pinnedFilterDriver(cursor: Pick<SyncDiscovery, 'root' | 'gitRoot
  * A `both` entry's recorded disk blob (`driftBaseline`), or null. When the page still holds what it imports (sync-run.ts
  * `sameContentAtOrigin`, `pageOnly`), the database changed only what an import keeps (tags, links), so the newer file
  * overwrites nothing the database alone holds and the entry imports. #7338: an `unknown` entry (a page with no import
- * record, imported by an older gbrain) carries its file at the incarnation's baseline commit: a page that still holds that
+ * record, imported by an older foresights) carries its file at the incarnation's baseline commit: a page that still holds that
  * file changed only in Git, so the edit imports instead of being held `file_drift`.
  */
 export function driftBaselineContent(gitRoot: string, entry: Pick<SyncEntry, 'drift' | 'driftBaseline'>): string | null {
@@ -124,7 +124,7 @@ export function driftBaselineContent(gitRoot: string, entry: Pick<SyncEntry, 'dr
 }
 
 /**
- * GST-2568: whether the stored frontmatter differs from a file's only by keys gbrain itself wrote to the database: a copy of
+ * GST-2568: whether the stored frontmatter differs from a file's only by keys foresights itself wrote to the database: a copy of
  * the reserved `type` key (older imports) and the grandfather's `validate: false` (#6429), each absent from the file. A
  * page with any other difference (a protected key, a label) is not treated as unchanged since that file.
  */
@@ -171,7 +171,7 @@ export function pinnedImageBytes(cursor: SyncDiscovery & { index: number }, entr
   })();
   if (bytes) return bytes;
   throw opError('source_changed', 'The discovered image disappeared.',
-    `${entry.path} left ${cursor.sourceId} between discovery and import, so nothing was imported from it. Run gbrain sync --no-pull --source ${cursor.sourceId} to rediscover the tree.`);
+    `${entry.path} left ${cursor.sourceId} between discovery and import, so nothing was imported from it. Run foresights sync --no-pull --source ${cursor.sourceId} to rediscover the tree.`);
 }
 
 /** #5493: the hold `freezeEntry` returns for an image import while multimodal embedding is off, keyed by the pinned blob or the working bytes (an over-bound file keys by nothing). */
@@ -184,7 +184,7 @@ export function heldImageEntry(cursor: SyncDiscovery & { index: number }, entry:
 
 /**
  * The hold each intended refusal (markdown.ts `IntendedRefusal`) earns when the page's provenance says a validating older
- * gbrain imported the same bytes: that page alone is held, and the run goes on.
+ * foresights imported the same bytes: that page alone is held, and the run goes on.
  */
 const INTENDED_HOLDS: Record<IntendedRefusal, { code: GitHoldCode; cause: string; fix: string }> = {
   yaml_alias_limit: { code: 'frontmatter_alias_limit', cause: 'its frontmatter YAML aliases expand past the size limit',
@@ -211,7 +211,7 @@ function heldEntry(entry: Pick<SyncEntry, 'path' | 'sourcePath' | 'working' | 'r
  */
 export function prepareTimeFenceHold(entry: Pick<SyncEntry, 'path' | 'sourcePath' | 'working' | 'renameFrom' | 'renameHeld'>, slug: string, pageId: number | null,
   receipt: ReceiptFenceLocation, content: string, blobOid: string | null | undefined): HeldEntry {
-  // An older gbrain's receipt named no section: take it from the refused bytes themselves.
+  // An older foresights's receipt named no section: take it from the refused bytes themselves.
   const fence = completeFenceLocation(receipt, parseMarkdown(content, `${slug}.md`));
   return heldEntry(entry, slug, pageId, { code: 'invalid_fence', reason: 'prepare_time', fence, message: fenceMessage(fence) }, content, blobOid ? { oid: blobOid } : null);
 }
@@ -233,7 +233,7 @@ export function preparationStallMeta(receipt: Pick<WriteRequest, 'request_id' | 
  * problem, so the hold carries the receipt's step and wait cause and routes
  * to writer status, then `sources retry-held` and the same sync. A delete
  * hold has no content (`upstream_version` null) and is marked `deleted`, so
- * discovery leaves it alone until a retry or a gbrain change.
+ * discovery leaves it alone until a retry or a foresights change.
  */
 export function preparationStalledHold(entry: Pick<SyncEntry, 'path' | 'sourcePath' | 'working' | 'renameFrom' | 'renameHeld' | 'action'>, slug: string, pageId: number | null,
   receipt: Pick<WriteRequest, 'request_id' | 'error_code' | 'error_detail'>, content: string | null, blobOid: string | null | undefined, syncArgv: string[]): HeldEntry {
@@ -243,7 +243,7 @@ export function preparationStalledHold(entry: Pick<SyncEntry, 'path' | 'sourcePa
   const interrupted = receipt.error_code === 'write_interrupted';
   const held = heldEntry(entry, slug, pageId, { code: interrupted ? 'write_interrupted' : 'preparation_stalled',
     message: `${entry.path}: ${interrupted ? `the database ended its ${kind}'s statements before they finished every time` : `its ${kind} could not finish preparing${where}`} (request ${receipt.request_id}), so it is held and the rest of the source synced. `
-      + `Inspect the writer with gbrain sources writer status, then gbrain sources retry-held and the same sync.` }, content, blobOid ? { oid: blobOid } : null);
+      + `Inspect the writer with foresights sources writer status, then foresights sources retry-held and the same sync.` }, content, blobOid ? { oid: blobOid } : null);
   return { ...held, meta: { ...held.meta, stall, ...(entry.action === 'delete' ? { deleted: true as const } : {}) } };
 }
 
@@ -307,7 +307,7 @@ export function unreadableFileHold(entry: Pick<SyncEntry, 'path' | 'sourcePath' 
   if (!isUnreadableSyncFile(error)) return null;
   const why = error instanceof OperationError && error.detail === UNREADABLE_SYNC_FILE ? error.message : `it cannot be read (${(error as NodeJS.ErrnoException).code})`;
   return heldEntry(entry, slug, pageId, { code: 'file_unreadable',
-    message: `Sync did not read ${entry.path}: ${why} Sync reads only regular files inside the source root and never follows a symlink. Make it a readable regular file there (or exclude it with sync.exclude) and commit, then run gbrain sources retry-held to re-test it.` }, null, blob());
+    message: `Sync did not read ${entry.path}: ${why} Sync reads only regular files inside the source root and never follows a symlink. Make it a readable regular file there (or exclude it with sync.exclude) and commit, then run foresights sources retry-held to re-test it.` }, null, blob());
 }
 
 const purgeTombstonesByRun = new WeakMap<SyncScreenRun, Promise<Map<string, string>>>();
@@ -390,8 +390,8 @@ export async function unreadPageImportScreen(engine: BrainEngine, input: { sourc
 
 /**
  * The hold a frozen import earns, or null to admit it. Throws
- * `sync_parser_regression` (policy `stop`, opt-in) when gbrain would hold bytes
- * the page's provenance says a validating gbrain imported.
+ * `sync_parser_regression` (policy `stop`, opt-in) when foresights would hold bytes
+ * the page's provenance says a validating foresights imported.
  */
 export async function screenFrozenImport(engine: BrainEngine, input: FrozenImportScreen, run: SyncScreenRun): Promise<HeldEntry | null> {
   const { entry, slug, pageId, snapshot, content, blob } = input;
@@ -400,13 +400,13 @@ export async function screenFrozenImport(engine: BrainEngine, input: FrozenImpor
     return heldEntry(entry, slug, pageId, { code: 'rename_held', reason: 'rename_source_changed', message: `${entry.path} is a rename of page ${entry.renameHeld.slug}, which changed after the rename was recorded, so the page was not moved.` }, content, blob);
   }
   if (entry.legacySlugs?.length && entry.legacyIdVeto) {
-    const held = heldEntry(entry, slug, pageId, { code: 'legacy_slug_conflict', reason: 'explicit_id_conflict', message: `${entry.path} imports as page ${slug}, but page ${entry.legacySlugs[0]}, which an older gbrain imported from a file of that name `
+    const held = heldEntry(entry, slug, pageId, { code: 'legacy_slug_conflict', reason: 'explicit_id_conflict', message: `${entry.path} imports as page ${slug}, but page ${entry.legacySlugs[0]}, which an older foresights imported from a file of that name `
       + `and records no file, has a frontmatter id that differs from the file's, so it is a different document and sync held the file instead of taking that page over.` }, content, blob);
     return { ...held, meta: { ...held.meta, legacy_slugs: entry.legacySlugs } };
   }
   if (entry.legacySlugs?.length) {
     const [only, several] = [entry.legacySlugs[0], entry.legacySlugs.length > 1];
-    const held = heldEntry(entry, slug, pageId, { code: 'legacy_slug_conflict', message: `${entry.path} imports as page ${slug}, but ${several ? `pages ${entry.legacySlugs.join(', ')}` : `page ${only}`}, which an older gbrain imported from a file of that name, `
+    const held = heldEntry(entry, slug, pageId, { code: 'legacy_slug_conflict', message: `${entry.path} imports as page ${slug}, but ${several ? `pages ${entry.legacySlugs.join(', ')}` : `page ${only}`}, which an older foresights imported from a file of that name, `
       + `record${several ? '' : 's'} no file${several ? ' and sync cannot tell which is its page' : ' and has a slug sync cannot write as it stands'}, so sync held the file instead of creating another page.` }, content, blob);
     return { ...held, meta: { ...held.meta, legacy_slugs: entry.legacySlugs } };
   }
@@ -433,16 +433,16 @@ export async function screenFrozenImport(engine: BrainEngine, input: FrozenImpor
       if (refusal.intended) {
         const intended = INTENDED_HOLDS[refusal.intended];
         return heldEntry(entry, slug, pageId, { code: intended.code, ...(refusal.line !== undefined ? { line: refusal.line } : {}),
-          message: `${entry.path} is held: ${intended.cause}${refusal.line !== undefined ? ` (line ${refusal.line})` : ''}, which gbrain ${VERSION} refuses on purpose although gbrain ${provenance.gbrain_version} `
+          message: `${entry.path} is held: ${intended.cause}${refusal.line !== undefined ? ` (line ${refusal.line})` : ''}, which foresights ${VERSION} refuses on purpose although foresights ${provenance.gbrain_version} `
             + `imported these exact bytes. ${intended.fix} The rest of the source keeps syncing.` }, content, blob);
       }
-      const why = `gbrain ${VERSION} refuses ${entry.path} (${refusal.reason ?? 'yaml_parse'}${refusal.line !== undefined ? `, line ${refusal.line}` : ''}), but gbrain ${provenance.gbrain_version} imported these exact bytes and validated them.`;
+      const why = `foresights ${VERSION} refuses ${entry.path} (${refusal.reason ?? 'yaml_parse'}${refusal.line !== undefined ? `, line ${refusal.line}` : ''}), but foresights ${provenance.gbrain_version} imported these exact bytes and validated them.`;
       if (run.policy.parserRegression === 'hold') return heldEntry(entry, slug, pageId, { code: 'parser_regression', message: `${why} Held; the rest of the source keeps syncing.` }, content, blob);
       throw opError('sync_parser_regression', `Sync stopped: ${why}`,
-        `This is a gbrain bug. Report it with the gbrain version (${VERSION}), the file (${entry.path}) and the code (${refusal.code}${refusal.reason ? `/${refusal.reason}` : ''}). `
+        `This is a foresights bug. Report it with the foresights version (${VERSION}), the file (${entry.path}) and the code (${refusal.code}${refusal.reason ? `/${refusal.reason}` : ''}). `
           + `Upgrade, or pin the last good version (${provenance.gbrain_version}), then run: ${input.retryCommand}. Sync stopped because GBRAIN_SYNC_PARSER_REGRESSION=stop is set for the process that syncs; without it (the default) such a file is held and the rest syncs.`,
         { fix: { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
-          why: 'Collects the gbrain version and brain health to attach to the bug report; the sync checkpoint did not advance past this file.' } });
+          why: 'Collects the foresights version and brain health to attach to the bug report; the sync checkpoint did not advance past this file.' } });
     }
   }
   // The stored hold names the path-derived slug only, never the declared frontmatter value.

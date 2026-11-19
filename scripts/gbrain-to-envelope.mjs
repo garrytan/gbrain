@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Export gbrain conversation pages to an envelope-v0 file (a JSON serialization
+ * Export foresights conversation pages to an envelope-v0 file (a JSON serialization
  * of AI chat history; format spec: github.com/memvelope/memvelope). The
  * counterpart of scripts/envelope-to-gbrain.mjs - that script reads the format,
  * this one writes it.
@@ -13,8 +13,8 @@
  *   (out.chatgpt.mve.json, out.claude.mve.json, ...), each named on stdout
  *   with its own counts; see the source_provider notes below.
  *
- * Zero dependencies. Deterministic. No network. It does NOT call gbrain - it
- * only reads Markdown files. Point it at a `gbrain export --dir` output tree, at
+ * Zero dependencies. Deterministic. No network. It does NOT call foresights - it
+ * only reads Markdown files. Point it at a `foresights export --dir` output tree, at
  * a brain repo, or at the directory envelope-to-gbrain.mjs wrote.
  *
  * Input selection:
@@ -64,7 +64,7 @@
  * The recorded-path header is matched strictly - `**Me** (YYYY-MM-DD HH:MM):`
  * or `**Assistant** (...)`, two-digit fields, one space, no text after the
  * colon - with one tolerance: trailing spaces or tabs after the colon.
- * gbrain's own `imessage-slack` pattern (the one these headers are written
+ * foresights's own `imessage-slack` pattern (the one these headers are written
  * for) tolerates them too, and one trailing space added by an editor used to
  * absorb the whole turn into its neighbour in silence.
  *
@@ -110,20 +110,20 @@
  * narrower: an exposed line still becomes a boundary only by carrying the
  * next expected clock.
  *
- * The body is cut at a gbrain timeline sentinel, in all four forms gbrain's
+ * The body is cut at a foresights timeline sentinel, in all four forms foresights's
  * own findTimelineSplitIndex accepts (src/core/markdown.ts, mirrored in
  * timelineSentinelAt below): `<!-- timeline -->`, `<!--timeline-->`, the
  * decorated rule under /^---\s+timeline\s+---$/i in any case and spacing, and
  * a bare `---` with content above it whose next non-blank line is a
  * `## Timeline` or `## History` heading. So a page's timeline never becomes
- * message text under any spelling gbrain itself would split on. Only a
+ * message text under any spelling foresights itself would split on. Only a
  * sentinel with no accepted turn after it is treated as a boundary; one with
  * turns below it is message text and is reported rather than cut at - where
- * gbrain's parser cuts at the FIRST hit and truncates every turn below, the
+ * foresights's parser cuts at the FIRST hit and truncates every turn below, the
  * one deliberate divergence, made because a quoted sentinel must not delete
  * the turns after it. A sentinel standing alone on its line INSIDE the final
  * message still cuts - from this side of the page it is indistinguishable
- * from gbrain's real delimiter, and gbrain's own parser reads that page the
+ * from foresights's real delimiter, and foresights's own parser reads that page the
  * same way - and the cut is what the timeline note on stderr is counting.
  * The bare-`---` form is safe against the legacy turn separator because of
  * its heading lookahead: a separator's next non-blank line is a turn header,
@@ -139,7 +139,7 @@
  * that kept them read `type: conversation # imported` as a different type
  * and `id: # placeholder` as an invented string id. Items accept the
  * importer's JSON-quoted scalars, the single-quoted / plain / block-scalar
- * forms gbrain's js-yaml rewrite produces (including `|-` literal ids
+ * forms foresights's js-yaml rewrite produces (including `|-` literal ids
  * carrying newlines and whitespace-only content lines, verified against
  * js-yaml's own emissions), items at column 0 or indented, and `null`;
  * member keys beyond `id` and `ts` are ignored so a future third field does
@@ -149,11 +149,11 @@
  * One stated limit: this line reader is more PERMISSIVE than js-yaml - a
  * page whose frontmatter js-yaml rejects outright (an unknown escape, a
  * plain scalar opening with `@` or a backtick) may still export here under
- * this reader's simpler rules, where gbrain itself would call the page a
+ * this reader's simpler rules, where foresights itself would call the page a
  * parse error.
  *
  * `title` falls back to the body's first H1 when frontmatter carries none,
- * the same precedence gbrain's own parser uses (src/core/markdown.ts,
+ * the same precedence foresights's own parser uses (src/core/markdown.ts,
  * inferTitleFromBody), and only then to `Untitled conversation` - a
  * whitespace-only title takes that fallback too, so a conversation titled
  * with pure whitespace comes back renamed. `title` and `source` are trimmed;
@@ -196,10 +196,10 @@
  *     which is read as the title fallback described above. Reported on
  *     stderr when non-blank content is dropped this way.
  *   - Everything after a timeline sentinel that no accepted turn follows -
- *     a real gbrain timeline, or the tail of a final message that quoted
+ *     a real foresights timeline, or the tail of a final message that quoted
  *     the sentinel - in any of the four forms above, the bare-`---` form
  *     included: a final message that legitimately ends with `---` and a
- *     `## Timeline` heading is cut, because gbrain's own parser reads that
+ *     `## Timeline` heading is cut, because foresights's own parser reads that
  *     page the same way. envelope-v0 has no field for a timeline. Each cut
  *     is warned per page, naming the body line, and tallied in the closing
  *     note.
@@ -257,7 +257,7 @@
  * re-imports into the very directory it came from and refreshes its page in
  * place, byte-identical - check 2 matches per-conversation ids - so no
  * page's `source:` changes hands. The residue sits on id-less pages: a
- * native gbrain page has no memvelope id, its conversation travels as
+ * native foresights page has no memvelope id, its conversation travels as
  * `id: null`, and re-importing the `unknown` envelope cannot find the
  * original page to refresh - it writes a NEW positional page
  * (`<date>-conv-N.md`) carrying `source: "unknown"` and leaves the original
@@ -273,11 +273,11 @@
  *     -> expect "wrote 1 conversation(s), 4 message(s)"
  *   bun test test/gbrain-to-envelope.test.ts
  *
- * STATUS: measured 2026-08-02 against gbrain v0.42.72.1, on two paths - the
+ * STATUS: measured 2026-08-02 against foresights v0.42.72.1, on two paths - the
  * short one (envelope -> envelope-to-gbrain.mjs -> here) and the long one
  * through a throwaway HOME-redirected PGLite brain (envelope -> importer ->
- * `gbrain import` -> `gbrain export --dir` -> here), so the pages read are
- * the ones gbrain's own parseMarkdown / serializeMarkdown pair really
+ * `foresights import` -> `foresights export --dir` -> here), so the pages read are
+ * the ones foresights's own parseMarkdown / serializeMarkdown pair really
  * produces. The repo's sample fixture round-trips deep-equal on both paths
  * with zero stderr bytes. A 3-conversation / 17-message probe - ids carrying
  * an embedded newline, a whole `---`/`type:`/`---` block, a middle dot,
@@ -285,18 +285,18 @@
  * with microseconds, a +05:30 offset, and null; two messages sharing one
  * minute; a whole-line quoted sentinel mid-conversation; fences spanning
  * turns - comes back with 17/17 messages and every id, role, ts and text
- * verbatim on both paths. gbrain's serializer hands the array back as
+ * verbatim on both paths. foresights's serializer hands the array back as
  * literal (`|-`) block-scalar ids, a folded (`>-`) long id, single-quoted
  * timestamps and reordered top-level keys; all of it reads. The only fields
  * that moved are the documented ones: created_at / updated_at (replaced by
  * the first and last message timestamps) and one message's trailing newline
- * (trimmed). One long-path caveat sits UPSTREAM of this script: gbrain's own
+ * (trimmed). One long-path caveat sits UPSTREAM of this script: foresights's own
  * parse/serialize pair re-spaces a whole-line HTML comment inside message
  * text (blank lines inserted around a sentinel written tight against its
  * neighbours) and swallows a sentinel on the last line of a body with no
  * real timeline - the probe's quoted sentinel was blank-padded, the one
- * spacing gbrain preserves, so those movements do not show above; they are
- * gbrain's, not this reader's.
+ * spacing foresights preserves, so those movements do not show above; they are
+ * foresights's, not this reader's.
  *
  * STATUS ADDENDUM, 2026-08-04, after the rebase onto the master that merged
  * the importer (#3788): the short path above re-verified against the merged
@@ -306,7 +306,7 @@
  * schema-conforming; re-importing all three into the same directory left
  * both id-carrying pages byte-identical and the native page untouched, plus
  * the one documented duplicate a null id mints. The sentinel closure is
- * canonical-path-invisible by construction: gbrain's serializer emits only
+ * canonical-path-invisible by construction: foresights's serializer emits only
  * `<!-- timeline -->` (measured 2026-08-03 against a real brain), so the
  * decorated and bare-rule forms arrive only on hand-edited or legacy pages -
  * which is where they were exporting a timeline as message text.
@@ -346,7 +346,7 @@ if (!dirStat.isDirectory()) {
 }
 
 // Sorted at every level, so the output is a function of the page set and not of
-// the order the filesystem hands back. `gbrain export` writes nested by slug,
+// the order the filesystem hands back. `foresights export` writes nested by slug,
 // the importer writes flat; both are covered by the same walk.
 function markdownFiles(dir) {
   const found = [];
@@ -360,7 +360,7 @@ function markdownFiles(dir) {
 }
 
 // Frontmatter is the block between the first `---` line and the next one. A
-// page without that block is not a gbrain page and is skipped rather than
+// page without that block is not a foresights page and is skipped rather than
 // guessed at.
 function splitPage(content) {
   const lines = content.split('\n');
@@ -535,7 +535,7 @@ function readBlockScalar(lines, headerIdx, header, ownerLead) {
   return { value: joinBlockScalar(collected, header.style, header.chomping, trailingBlanks), next: j };
 }
 
-// Top-level scalars only. gbrain writes these through js-yaml, which quotes
+// Top-level scalars only. foresights writes these through js-yaml, which quotes
 // with single quotes, escapes with double quotes, and folds anything long into
 // a block scalar; the importer writes them through JSON.stringify, which quotes
 // with double quotes. All of those are read here, along with the unquoted form.
@@ -583,7 +583,7 @@ function parseFrontmatter(lines) {
 }
 
 // What a plain (unquoted) YAML scalar means to js-yaml 3.14's default schema
-// - the reader and writer gbrain actually uses: null, boolean and number
+// - the reader and writer foresights actually uses: null, boolean and number
 // forms are not strings. The importer JSON-quotes every string it takes from
 // an envelope and js-yaml re-quotes any string that resolves to one of these
 // on the way back out, so an unquoted `id: 123` really is a number and
@@ -729,7 +729,7 @@ function decodeMemberScalar(raw) {
 
 /**
  * The `messages:` record, read out of the frontmatter lines: the per-message
- * identity the importer writes and gbrain's serializer rewrites (values and
+ * identity the importer writes and foresights's serializer rewrites (values and
  * order intact, quoting style not - so this parser accepts both quotings and
  * the block-scalar form js-yaml folds long values into).
  *
@@ -829,7 +829,7 @@ function parseMessagesRecord(lines) {
 /** The date a turn header is allowed to carry: exactly `YYYY-MM-DD`. */
 const HEADER_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-/** What `deriveDateContext()` in gbrain's conversation parser falls back to when
+/** What `deriveDateContext()` in foresights's conversation parser falls back to when
  *  a page carries no date at all. */
 const EPOCH_DATE = '1970-01-01';
 
@@ -874,12 +874,12 @@ function headerClock(ts) {
 // from the message id, which leaves an id free to contain one.
 const TURN_HEADER = /^\*\*(Me|Assistant)\*\* \((.*?) · (.*)\):$/;
 // The recorded-format turn header: speaker and minute-resolution clock, no
-// identity. Strict except for trailing whitespace, which gbrain's own
+// identity. Strict except for trailing whitespace, which foresights's own
 // `imessage-slack` pattern also tolerates - and which used to absorb a turn.
 const RECORDED_HEADER = /^\*\*(Me|Assistant)\*\* \((\d{4}-\d{2}-\d{2} \d{2}:\d{2})\):[ \t]*$/;
 // A whole line, after trimming - never a substring. A message that quotes the
 // sentinel mid-sentence is prose, and cutting there destroys every later turn.
-// gbrain's findTimelineSplitIndex (src/core/markdown.ts) accepts four forms;
+// foresights's findTimelineSplitIndex (src/core/markdown.ts) accepts four forms;
 // the set holds the exact spellings, DECORATED_SENTINEL the case/space-tolerant
 // `--- timeline ---` family, and timelineSentinelAt adds the fourth - a bare
 // `---` whose next non-blank line is a `## Timeline`/`## History` heading.
@@ -887,14 +887,14 @@ const TIMELINE_SENTINELS = new Set(['<!-- timeline -->', '<!--timeline-->', '---
 const DECORATED_SENTINEL = /^---\s+timeline\s+---$/i;
 const TIMELINE_HEADING = /^##\s+(timeline|history)\b/i;
 
-// Decision-identical to gbrain's own reading (findTimelineSplitIndex; keep in
+// Decision-identical to foresights's own reading (findTimelineSplitIndex; keep in
 // lockstep like headerClock): a bare `---` is a sentinel only when something
 // stands above it and the next non-blank line is the Timeline/History heading.
 // The two conditions are checked heading-first here because a legacy body puts
 // a `---` separator between every pair of turns, and the lookahead ends at the
 // very next non-blank line where the leading-content scan walks the whole
 // prefix. The caller keeps its fence mask: a fenced line is sample text, never
-// a candidate - the one deliberate divergence from gbrain's fence-blind parser,
+// a candidate - the one deliberate divergence from foresights's fence-blind parser,
 // and it predates this predicate.
 function timelineSentinelAt(lines, i) {
   const trimmed = lines[i].trim();
@@ -904,7 +904,7 @@ function timelineSentinelAt(lines, i) {
     const next = lines[j].trim();
     if (next.length === 0) continue;
     if (!TIMELINE_HEADING.test(next)) return false;
-    // gbrain skips a rule with nothing above it, so a body OPENING on
+    // foresights skips a rule with nothing above it, so a body OPENING on
     // `---` + `## Timeline` is content there and stays content here.
     return lines.slice(0, i).join('\n').trim().length > 0;
   }
@@ -1132,7 +1132,7 @@ function scanRecordedFences(lines, expected, warn) {
   return second.pass;
 }
 
-// gbrain's own title precedence, minus the filename fallback this script must
+// foresights's own title precedence, minus the filename fallback this script must
 // not use: frontmatter `title:` first, then the body's first H1.
 function titleFromBody(lines, fenced) {
   for (let i = 0; i < lines.length; i += 1) {
@@ -1172,7 +1172,7 @@ function cutAndSlice(lines, anchors, fenced, warn, stripLegacySeparator, build) 
     if (timelineSentinelAt(lines, i)) sentinels.push(i);
   }
 
-  // Cut only at a sentinel that no accepted turn follows. gbrain writes the
+  // Cut only at a sentinel that no accepted turn follows. foresights writes the
   // timeline after the whole body, so a sentinel with turns below it is a
   // message quoting the marker - the case that used to destroy every later
   // turn in silence.
@@ -1184,7 +1184,7 @@ function cutAndSlice(lines, anchors, fenced, warn, stripLegacySeparator, build) 
       cut = at;
       hasTimeline = true;
       // Named per page, not only tallied in the aggregate note: the tail cut
-      // away here may be a real gbrain timeline or the end of a message that
+      // away here may be a real foresights timeline or the end of a message that
       // quoted the sentinel - either way the operator can find the page.
       warn(`the body was cut at the timeline sentinel on body line ${at + 1}; nothing after it was exported.`);
       break;
@@ -1323,7 +1323,7 @@ for (const file of files) {
   // frontmatter-less. The cost is stated in the header: CRLF inside a message
   // comes back as LF.
   // A UTF-8 BOM is stripped like CRLF is normalized: gray-matter strips it
-  // too, so a BOM page is a first-class conversation to gbrain, and refusing
+  // too, so a BOM page is a first-class conversation to foresights, and refusing
   // to see its frontmatter made the whole conversation vanish into the
   // "without frontmatter" count.
   const page = splitPage(readFileSync(file, 'utf8').replace(/^﻿/, '').replace(/\r\n/g, '\n'));
@@ -1406,7 +1406,7 @@ for (const file of files) {
     warn(`conversation id ${JSON.stringify(id)} already used by another page; both are emitted.`);
   }
   if (id !== null) seenIds.add(id);
-  // Frontmatter first, then the body's H1 - gbrain's own precedence - so a
+  // Frontmatter first, then the body's H1 - foresights's own precedence - so a
   // title that js-yaml folded into a block scalar has a second way home.
   const title = (typeof front.title === 'string' && front.title.trim() !== '' ? front.title.trim() : read.title)
     || 'Untitled conversation';

@@ -3,7 +3,7 @@ import { readFix } from '../ops/op-fix.ts';
 
 /**
  * Size bounds for the shared-skills migration inventory (`inventorySkillpack`).
- * Database config, written only through the trusted local `gbrain config set`
+ * Database config, written only through the trusted local `foresights config set`
  * (no MCP operation writes config). Each value is capped by
  * INVENTORY_LIMIT_CEILINGS; confinement checks (symlinks, hard links, unsafe
  * paths, directory depth) are not configurable.

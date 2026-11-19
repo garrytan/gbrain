@@ -10,7 +10,7 @@
  *  - Happy path: OPENAI_API_KEY set → auto-pick OpenAI, persists embedding_model + dim
  *  - Fail-loud non-TTY no-key (D3 regression)
  *  - D6 regression: bug-reporter's three no-op config keys exit 1 with Levenshtein
- *  - `--no-embedding` D9 opt-in: init succeeds with sentinel; gbrain import refuses
+ *  - `--no-embedding` D9 opt-in: init succeeds with sentinel; foresights import refuses
  *  - D11 preflight: explicit bad --embedding-dimensions refuses BEFORE touching disk
  *
  * Picker interactive flow (real TTY) is covered by the real-PTY serial test
@@ -114,7 +114,7 @@ describe('v0.45 DX wave — non-TTY no-key defaults to keyless (typo still fail-
     // The notice names the upgrade affordance — the re-init recipe that
     // actually works, NOT `config set embedding_model` (which config.ts
     // hard-refuses as a schema-sizing no-op).
-    expect(r.stderr).toContain('gbrain init --force --pglite --embedding-model');
+    expect(r.stderr).toContain('foresights init --force --pglite --embedding-model');
     expect(r.stderr).not.toContain('config set embedding_model');
     // Config persisted with the deferred-embedding sentinel.
     const cfg = JSON.parse(readFileSync(join(tmpHome, '.gbrain', 'config.json'), 'utf-8'));
@@ -212,7 +212,7 @@ describe('v0.37 T12 — D6 regression: bug-reporter no-op keys exit 1 with Leven
 
   beforeAll(async () => {
     tmpHome = makeTempHome();
-    // Bootstrap a brain so `gbrain config set` has somewhere to write.
+    // Bootstrap a brain so `foresights config set` has somewhere to write.
     await runCli(['init', '--pglite', '--embedding-model', 'openai:text-embedding-3-large'], {
       gbrainHome: tmpHome,
       env: { OPENAI_API_KEY: 'sk-test' },
@@ -220,7 +220,7 @@ describe('v0.37 T12 — D6 regression: bug-reporter no-op keys exit 1 with Leven
   });
   afterAll(() => { rmSync(tmpHome, { recursive: true, force: true }); });
 
-  test('gbrain config set embedding.provider openai → exit 1 with suggestion', async () => {
+  test('foresights config set embedding.provider openai → exit 1 with suggestion', async () => {
     const r = await runCli(['config', 'set', 'embedding.provider', 'openai'], {
       gbrainHome: tmpHome,
       env: { OPENAI_API_KEY: 'sk-test' },
@@ -229,7 +229,7 @@ describe('v0.37 T12 — D6 regression: bug-reporter no-op keys exit 1 with Leven
     expect(r.stderr).toContain('Unknown config key');
   }, 60000);
 
-  test('gbrain config set embedding.model openai:text-embedding-3-large → suggests embedding_model', async () => {
+  test('foresights config set embedding.model openai:text-embedding-3-large → suggests embedding_model', async () => {
     const r = await runCli(['config', 'set', 'embedding.model', 'openai:text-embedding-3-large'], {
       gbrainHome: tmpHome,
       env: { OPENAI_API_KEY: 'sk-test' },
@@ -238,7 +238,7 @@ describe('v0.37 T12 — D6 regression: bug-reporter no-op keys exit 1 with Leven
     expect(r.stderr).toMatch(/Did you mean "embedding_model"/);
   }, 60000);
 
-  test('gbrain config set embedding.dimensions 1536 → suggests embedding_dimensions', async () => {
+  test('foresights config set embedding.dimensions 1536 → suggests embedding_dimensions', async () => {
     const r = await runCli(['config', 'set', 'embedding.dimensions', '1536'], {
       gbrainHome: tmpHome,
       env: { OPENAI_API_KEY: 'sk-test' },
@@ -247,7 +247,7 @@ describe('v0.37 T12 — D6 regression: bug-reporter no-op keys exit 1 with Leven
     expect(r.stderr).toMatch(/Did you mean "embedding_dimensions"/);
   }, 60000);
 
-  test('gbrain config set --force foo.bar baz → accepts with WARN', async () => {
+  test('foresights config set --force foo.bar baz → accepts with WARN', async () => {
     const r = await runCli(['config', 'set', 'foo.bar.unknown', 'somevalue', '--force'], {
       gbrainHome: tmpHome,
       env: { OPENAI_API_KEY: 'sk-test' },
@@ -256,7 +256,7 @@ describe('v0.37 T12 — D6 regression: bug-reporter no-op keys exit 1 with Leven
     expect(r.stderr).toContain('writing unknown key');
   }, 60000);
 
-  test('gbrain config set search.mode conservative → accepts (known key)', async () => {
+  test('foresights config set search.mode conservative → accepts (known key)', async () => {
     const r = await runCli(['config', 'set', 'search.mode', 'conservative'], {
       gbrainHome: tmpHome,
       env: { OPENAI_API_KEY: 'sk-test' },
@@ -298,7 +298,7 @@ describe('v0.37 T12 — D9 --no-embedding deferred-setup mode', () => {
       const bundle = out.slice(out.indexOf('[first_run_decisions]'));
       expect(out.match(/\[first_run_decisions\]/g)).toHaveLength(1);
       expect(bundle).toContain('(id: writeback)');
-      expect(bundle).toContain('(run: gbrain config set memory.auto_writeback salient)');
+      expect(bundle).toContain('(run: foresights config set memory.auto_writeback salient)');
       expect(bundle).toContain('default: off');
       expect(out.match(/Nothing needs an answer now/g)).toHaveLength(1);
       // The old separate writeback banner/[AGENT] ask and the skills pointer are gone.
@@ -306,16 +306,16 @@ describe('v0.37 T12 — D9 --no-embedding deferred-setup mode', () => {
       expect(out + r.stderr).not.toContain('Ask me to run');
       expect(out + r.stderr).not.toContain('recommended skill(s) not installed yet');
       // No bare-binary registration and no fabricated user fact.
-      expect(out).not.toContain('claude mcp add gbrain -- gbrain serve');
+      expect(out).not.toContain('claude mcp add foresights -- foresights serve');
       expect(out).not.toContain('dark mode');
       expect(out).not.toContain('people/me');
-      expect(out).toContain('gbrain remember "gbrain install check" --provenance install-check');
+      expect(out).toContain('foresights remember "foresights install check" --provenance install-check');
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
   }, 120000);
 
-  test('gbrain import refuses with config-set hint after --no-embedding init', async () => {
+  test('foresights import refuses with config-set hint after --no-embedding init', async () => {
     // Seed a markdown file to import.
     const repoDir = join(tmpHome, 'sample-repo');
     mkdirSync(repoDir, { recursive: true });
@@ -326,10 +326,10 @@ describe('v0.37 T12 — D9 --no-embedding deferred-setup mode', () => {
       env: {},
     });
     expect(r.exitCode).toBe(1);
-    expect(r.stderr).toMatch(/deferred setup|no-embedding|gbrain config set embedding_model/);
+    expect(r.stderr).toMatch(/deferred setup|no-embedding|(?:foresights|gbrain) config set embedding_model/);
   }, 120000);
 
-  test('gbrain import --no-embed flag bypasses the refusal (chunks land without vectors)', async () => {
+  test('foresights import --no-embed flag bypasses the refusal (chunks land without vectors)', async () => {
     // The CLI flag --no-embed (existing, separate from --no-embedding init flag)
     // should still work after --no-embedding init — import succeeds, just doesn't
     // embed. Validates we didn't accidentally block all imports.

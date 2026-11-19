@@ -1,7 +1,7 @@
 /**
  * Pricing table contract — supported-provider coverage gate.
  *
- * The post-upgrade reembed cost prompt in `gbrain upgrade` falls back to
+ * The post-upgrade reembed cost prompt in `foresights upgrade` falls back to
  * "estimate unavailable" on unknown providers, which is fine for safety
  * but bad UX if the provider IS in the recipe registry. These tests pin
  * the providers that v0.35.x officially supports as first-class.
@@ -208,7 +208,7 @@ describe('estimateCostFromChars', () => {
 });
 
 // #4344 — hosted-recipe coverage gate: every embedding model the voyage
-// recipe offers as HOSTED must have a pricing row, so `gbrain upgrade`'s
+// recipe offers as HOSTED must have a pricing row, so `foresights upgrade`'s
 // cost estimate never says "unavailable" for a model we ship in the picker.
 // voyage-4-nano is the documented exception (open-weight, no hosted rate —
 // a fabricated 0 would under-estimate hosted-API users).

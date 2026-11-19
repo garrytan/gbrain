@@ -3,7 +3,7 @@
  * watermark never skipped and each pass paid for a patterns child. An
  * in-cycle run now waits `dream.patterns.min_interval_hours` (default 6, 0
  * off) after the partition's last COMPLETED run; a direct
- * `gbrain dream --phase patterns` and `--once` are not held to it, and the
+ * `foresights dream --phase patterns` and `--once` are not held to it, and the
  * external-reflections partition keeps its own stamp.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test';

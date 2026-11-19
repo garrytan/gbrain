@@ -297,7 +297,7 @@ describe('isResolverUserError', () => {
   test('matches both assertSourceExists wordings (legacy + fail-closed)', () => {
     expect(isResolverUserError(new Error('Source "x" not found.'))).toBe(true);
     expect(isResolverUserError(new SourceTargetError(
-      'Source "x" not found or is archived. Available active sources: run `gbrain sources list`.',
+      'Source "x" not found or is archived. Available active sources: run `foresights sources list`.',
     ))).toBe(true);
   });
 

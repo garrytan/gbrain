@@ -43,7 +43,7 @@ This skill guarantees:
   least two independent, durable facts about them beyond this one item — never a stub
   (`skills/_brain-filing-rules.md` §Notability Gate)
 - Cross-links created bidirectionally (source ↔ author, source ↔ mentioned entities)
-- Raw source preserved for provenance via `gbrain files upload-raw`
+- Raw source preserved for provenance via `foresights files upload-raw`
 - Every fact has an inline `[Source: ...]` citation
 - Filing follows primary subject rules (not format-based)
 
@@ -63,7 +63,7 @@ Format: `- **YYYY-MM-DD** | Referenced in [page title](path) — brief context`
 
 1. **Fetch the content.** Use appropriate tools for the content type (web fetch for articles, API for tweets, PDF reader for documents).
 
-2. **Upload raw source.** Save the fetched content for provenance: `gbrain files upload-raw <file> --page <slug>`
+2. **Upload raw source.** Save the fetched content for provenance: `foresights files upload-raw <file> --page <slug>`
 
 3. **Identify the author — notability-gated.** Search brain for an existing author page first.
    - If page exists → update timeline with this new publication, then cross-link both directions
@@ -86,7 +86,7 @@ Format: `- **YYYY-MM-DD** | Referenced in [page title](path) — brief context`
    - Connections — does this involve known people/companies?
    - Don't just summarize. Tell the user things they wouldn't have noticed.
 
-6. **Sync.** `gbrain sync` to update the index.
+6. **Sync.** `foresights sync` to update the index.
 
 ## Output Format
 
@@ -118,15 +118,15 @@ Format: `- **YYYY-MM-DD** | Referenced in [page title](path) — brief context`
 - **No identifiable author:** Use `sources/` filing. Skip the people page but note the gap.
 - **Tweet thread vs single tweet:** Fetch the entire thread. Treat the thread as one unit.
 - **Video/podcast link:** Note that only metadata can be ingested unless a transcript is available. Ask the user for a transcript.
-- **Raw upload:** Use the `file_upload` tool (not CLI `gbrain files upload-raw`) when operating as an agent.
+- **Raw upload:** Use the `file_upload` tool (not CLI `foresights files upload-raw`) when operating as an agent.
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - The fetch fails (paywall, 404, timeout): save a stub with URL, metadata and the failure reason (`status: fetch_failed`) and ask the user to paste the content.
-- `gbrain files upload-raw` / `file_upload` is refused (path outside the allowed root, payload too large): tell the user the limit and offer a link or an excerpt instead.
-- `write_pending` (exit 10) on the page write: poll `gbrain write-request <request_id>` before reporting `ingested`.
+- `foresights files upload-raw` / `file_upload` is refused (path outside the allowed root, payload too large): tell the user the limit and offer a link or an excerpt instead.
+- `write_pending` (exit 10) on the page write: poll `foresights write-request <request_id>` before reporting `ingested`.
 
 ## Anti-Patterns
 

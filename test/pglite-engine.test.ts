@@ -1439,7 +1439,7 @@ describe('PGLiteEngine: traverseGraph cycle prevention', () => {
 describe('PGLiteEngine: getHealth graph metrics', () => {
   beforeEach(async () => {
     await truncateAll();
-    // Five entity pages — at MIN_ENTITY_PAGES_FOR_COVERAGE (gbrain#4147), so
+    // Five entity pages — at MIN_ENTITY_PAGES_FOR_COVERAGE (foresights#4147), so
     // the ratio tests below exercise real percentages, not the small-N null.
     await engine.putPage('people/alice', { ...testPage, type: 'person', title: 'Alice' });
     await engine.putPage('people/bob', { ...testPage, type: 'person', title: 'Bob' });
@@ -1468,7 +1468,7 @@ describe('PGLiteEngine: getHealth graph metrics', () => {
     expect(h.timeline_coverage).toBeCloseTo(1 / 5, 2);
   });
 
-  test('below the small-N floor the ratios are null, never a hard 0% (gbrain#4147)', async () => {
+  test('below the small-N floor the ratios are null, never a hard 0% (foresights#4147)', async () => {
     await truncateAll();
     await engine.putPage('people/solo', { ...testPage, type: 'person', title: 'Solo' });
     const h = await engine.getHealth();
@@ -1509,7 +1509,7 @@ describe('PGLiteEngine: v0.13.1 error-wrap on connect() (#223)', () => {
     const src = surfaceFileSource('pglite-engine', 'src/core/pglite-engine.ts');
     // Structural: the try/catch block must wrap PGlite.create() (the actual
     // abort site, NOT engine-factory.ts). The error message must name the
-    // issue and suggest gbrain doctor. Must NOT suggest "missing migrations"
+    // issue and suggest foresights doctor. Must NOT suggest "missing migrations"
     // as a cause (that was conflating #218 and #223 — migrations run AFTER
     // create()).
     // #2084 wrapped the create call in preservingProcessExitCode (Emscripten
@@ -1517,7 +1517,7 @@ describe('PGLiteEngine: v0.13.1 error-wrap on connect() (#223)', () => {
     expect(src).toContain('this._db = this._attachDatabase(await preservingProcessExitCode(() =>');
     expect(src).toContain('PGlite.create({');
     expect(src).toContain('https://github.com/garrytan/gbrain/issues/223');
-    expect(src).toContain('gbrain doctor');
+    expect(src).toContain('foresights doctor');
     expect(src).toContain('Original error:');
     // Regression guard: the user-visible error MESSAGE must not re-introduce
     // the misleading "missing migrations" hint. (A source comment explaining

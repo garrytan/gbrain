@@ -9,6 +9,7 @@
  * pruned. Rows are exempt from the op_checkpoints TTL sweep. No engine-sql imports, so `engine-sql/pages.ts` may import it.
  */
 import type { SqlEngine } from './model.ts';
+import { commandText } from '../brand.ts';
 
 export const DERIVED_ORIGIN_PARK_OP = 'derived-origin-park';
 export const DERIVED_ORIGIN_PARKED_CODE = 'derived_origin_parked';
@@ -19,12 +20,12 @@ export const DERIVED_ORIGIN_PARKED_CODE = 'derived_origin_parked';
  */
 export interface DerivedOriginPark { source_id: string; slug: string; page_id: number; blocking_slug: string | null; code: string | null; reason: string; parked_at: string; held_request_id?: string; held_deleted_us?: string }
 
-/** The command that finishes an owner purge a park held: `gbrain delete` makes a new request_id, and an explicit purge writes the purge tombstones. */
+/** The command that finishes an owner purge a park held: `foresights delete` makes a new request_id, and an explicit purge writes the purge tombstones. */
 export const finishPurgeArgv = (sourceId: string, slug: string): string[] => ['gbrain', 'delete', slug, '--purge', '--source-id', sourceId];
 
 /** The receipt clause of a held owner purge, after its condition ("Once ..., "): the command that finishes it, as a new request. */
 export function finishPurgeNote(sourceId: string, slug: string, requestId: string): string {
-  return `finish this purge with ${finishPurgeArgv(sourceId, slug).join(' ')} as a new request (not a replay of request_id ${requestId}): it writes the purge tombstones, which the automatic purge that otherwise removes the page does not.`;
+  return `finish this purge with ${commandText(finishPurgeArgv(sourceId, slug))} as a new request (not a replay of request_id ${requestId}): it writes the purge tombstones, which the automatic purge that otherwise removes the page does not.`;
 }
 
 /** SQL predicate for a purge scan over `pages` aliased `alias`: the page is not a parked origin. */

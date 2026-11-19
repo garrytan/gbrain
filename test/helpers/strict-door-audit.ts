@@ -2,7 +2,7 @@
  * G6 (git-canonical memory, docs/designs/GIT_CANONICAL_MEMORY.md): what a writer's batch left behind on a strict source
  * (`sources.config.canonical = "git"`). The door (src/core/persistence/git-door.ts) commits each published file before
  * its row, so after a batch every page the writer touched is at HEAD with the bytes its row holds, the tree is clean,
- * the git-gap census (`gbrain sources git-gap`) reports no gap, and the batch made at most one commit per publication
+ * the git-gap census (`foresights sources git-gap`) reports no gap, and the batch made at most one commit per publication
  * group. Read-only: plumbing reads of the checkout and the census.
  */
 import { expect } from 'bun:test';

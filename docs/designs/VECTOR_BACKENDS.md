@@ -6,7 +6,7 @@ builds and always resolves to `pgvector` (see Degrade path).
 
 ## Problem
 
-GBrain's ANN indexing is hardcoded to pgvector HNSW:
+Foresights's ANN indexing is hardcoded to pgvector HNSW:
 
 1. **Dimension cap.** HNSW indexes at most 2000 dims on `vector` columns and
    4000 on `halfvec` (`src/core/vector-index.ts:hnswMaxDimsForType`). Models
@@ -50,13 +50,13 @@ Fail-open, loud, and recorded — the same posture as the existing
 `chunkEmbeddingIndexSql` dims-too-big skip:
 
 - `initSchema`/migration probes `SELECT extname FROM pg_extension`. If the
-  requested extension is missing, GBrain:
+  requested extension is missing, Foresights:
   1. warns once per process on stderr
      (`[vector] vector.backend=pgvectorscale requested but extension not
      installed — resolved to pgvector`),
   2. resolves the backend to `pgvector` and emits pgvector DDL (search keeps
      working; never a hard failure),
-  3. surfaces a `gbrain doctor` finding with the exact fix
+  3. surfaces a `foresights doctor` finding with the exact fix
      (`CREATE EXTENSION vectorscale CASCADE;` + rebuild command).
 - `CREATE EXTENSION IF NOT EXISTS vectorscale` is attempted (managed hosts
   like Timescale/self-hosted allow it; Supabase currently does not ship
@@ -112,10 +112,10 @@ pgvector's column types and operators, so **no query SQL changes**:
   `set_config` calls; pgvector path byte-identical to today.
 - Backend switch on an existing brain: reuse the atomic-swap machinery
   (`vector-index.ts:dropAndRebuild`) — build the diskann index under a temp
-  name, swap, drop HNSW. Exposed as `gbrain embed reindex --backend=<b>`;
+  name, swap, drop HNSW. Exposed as `foresights embed reindex --backend=<b>`;
   doctor flags a resolved-backend vs actual-index-method mismatch
   (`pg_index` joined to `pg_am.amname`) as WARN with that exact command.
-- `gbrain doctor` additions: requested vs resolved backend, extension
+- `foresights doctor` additions: requested vs resolved backend, extension
   presence/version, index method per embedding column.
 
 ## Phase 2 — VectorChord (vchordrq)

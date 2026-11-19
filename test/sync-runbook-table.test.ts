@@ -28,6 +28,6 @@ test('#6696 (A5/A6): the background pause is a wait; the full or too-small cap n
   expect(classifySyncFault({ code: 'write_capacity_backpressure', detail: 'principal_terminal_bytes' })).toEqual({ class: 'connection', safe_actions: ['retry'], needs_human: false });
   for (const code of ['write_quota_exhausted', 'write_quota_insufficient']) {
     expect(classifySyncFault({ code, detail: 'brain_lifetime_ids' })).toMatchObject({ class: 'systemic', safe_actions: ['none'], needs_human: true,
-      human_reason: expect.stringContaining('gbrain config set') });
+      human_reason: expect.stringContaining('foresights config set') });
   }
 });

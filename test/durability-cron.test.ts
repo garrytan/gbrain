@@ -1,6 +1,6 @@
 /**
  * Durability cron generators (v0.42.44, D2 + D12): pure-string renderers.
- * Asserts the cron is DB-free (gbrain sources pull --path, NOT `pull <id>`),
+ * Asserts the cron is DB-free (foresights sources pull --path, NOT `pull <id>`),
  * secret-free, self-disabling, and that the launchd plist is periodic.
  */
 import { describe, test, expect } from 'bun:test';

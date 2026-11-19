@@ -208,7 +208,7 @@ test('a cleanup no rerun can finish names the owner revoke step and carries no n
   expect(await applyHarness(flags(), f.deps)).toBe(HARNESS_CLEANUP_PENDING_EXIT_CODE);
   expect(f.receipt().token.previous_ids).toEqual([f.mints[0].id]);
 
-  // The owner runs the step (gbrain auth revoke by id), then the re-run converges.
+  // The owner runs the step (foresights auth revoke by id), then the re-run converges.
   expect(await f.deps.revokeById!(stuck.fix.argv[4])).toBe(true);
   expect(await applyHarness(flags(), f.deps)).toBe(0);
   expect(f.receipt().token.previous_ids).toBeUndefined();

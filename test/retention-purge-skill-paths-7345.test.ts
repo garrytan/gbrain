@@ -1,5 +1,5 @@
 /**
- * #7345: the retention purge (`gbrain pages purge-deleted`, the dream/cycle purge phase) on a source with an adopted shared
+ * #7345: the retention purge (`foresights pages purge-deleted`, the dream/cycle purge phase) on a source with an adopted shared
  * skillpack.
  *
  * Before the fix the knowledge guard refused the hard delete of every soft-deleted page under `skills/`

@@ -1,6 +1,6 @@
 /**
  * Pins the envelope-v0 exporter contract: conforming output, honest handling of
- * the fields a gbrain page cannot carry, deterministic ordering, and loud
+ * the fields a foresights page cannot carry, deterministic ordering, and loud
  * skipping. The mirror of test/envelope-to-gbrain.test.ts - the corpus is built
  * by running the importer on its own fixture, so the round trip is the test.
  */
@@ -332,7 +332,7 @@ function timestampsIn(doc: any): Array<{ where: string; value: unknown }> {
   return found;
 }
 
-/** The page shape gbrain itself writes: js-yaml frontmatter, unquoted scalars. */
+/** The page shape foresights itself writes: js-yaml frontmatter, unquoted scalars. */
 function gbrainPage(front: string, body: string): string {
   return `---\n${front}\n---\n\n${body}\n`;
 }
@@ -387,8 +387,8 @@ describe('gbrain-to-envelope exporter', () => {
     expect(readFileSync(first.outPath, 'utf8')).toBe(readFileSync(second.outPath, 'utf8'));
   });
 
-  test('reads the frontmatter style gbrain itself writes, including nested slug directories', async () => {
-    // `gbrain export` serializes through js-yaml: plain unquoted scalars, a
+  test('reads the frontmatter style foresights itself writes, including nested slug directories', async () => {
+    // `foresights export` serializes through js-yaml: plain unquoted scalars, a
     // single-quoted date, and one file per slug under its slug directory. The
     // importer writes flat files with JSON-quoted values. Both are the same
     // page set and both must read.
@@ -550,7 +550,7 @@ describe('gbrain-to-envelope exporter', () => {
     const result = await exportPages({
       'a.md': gbrainPage(
         ['type: conversation', 'title: With timeline', 'source: chatgpt'].join('\n'),
-        `${TURNS}\n\n<!-- timeline -->\n\n- 2026-02-02: gbrain added a timeline entry.`,
+        `${TURNS}\n\n<!-- timeline -->\n\n- 2026-02-02: foresights added a timeline entry.`,
       ),
     });
 
@@ -661,8 +661,8 @@ describe('gbrain-to-envelope exporter', () => {
   test('D1: a message that quotes the timeline sentinel does not destroy the turns after it', async () => {
     // Guards the rule that only a sentinel with no speaker turn after it is a
     // timeline boundary. Cutting at the FIRST literal `<!-- timeline -->`
-    // instead, without asking whether that occurrence is gbrain's delimiter or
-    // ordinary prose, truncated a conversation ABOUT gbrain's page format -
+    // instead, without asking whether that occurrence is foresights's delimiter or
+    // ordinary prose, truncated a conversation ABOUT foresights's page format -
     // exactly the kind this brain holds - mid-sentence and lost every later
     // turn, at exit 0 with an empty stderr and a meta.message_count that agreed
     // with the reduced array. The loss was invisible from the output alone,
@@ -673,7 +673,7 @@ describe('gbrain-to-envelope exporter', () => {
         [
           '**Me** (2026-02-01T09:00:00.000Z · m1):',
           '',
-          'How does gbrain mark the timeline section inside a page?',
+          'How does foresights mark the timeline section inside a page?',
           '',
           '---',
           '',
@@ -745,14 +745,14 @@ describe('gbrain-to-envelope exporter', () => {
     expect(result.envelope.conversations[0].messages[0].text).toContain('Can you parse that shape?');
   });
 
-  test('D3: a folded frontmatter title and id survive the documented gbrain export path', async () => {
-    // Guards block-scalar frontmatter. This is byte-for-byte what gbrain's own
+  test('D3: a folded frontmatter title and id survive the documented foresights export path', async () => {
+    // Guards block-scalar frontmatter. This is byte-for-byte what foresights's own
     // serializeMarkdown produces (matter.stringify -> js-yaml at the default
     // lineWidth of 80): any string of 80+ characters becomes a folded block
     // scalar. A parseFrontmatter that dropped `>-` outright turned the title
     // silently into 'Untitled conversation' and an 80+ character id silently
     // into null - on the input path the script header advertises. The
-    // untruncated title is also one line below in the body's H1, which gbrain's
+    // untruncated title is also one line below in the body's H1, which foresights's
     // own parser falls back to (inferTitleFromBody), so both routes are pinned.
     const FOLDED_TITLE =
       'Onboarding checklist for the acme-example widget-co rollout and the fund-a reporting questions';
@@ -1011,7 +1011,7 @@ describe('gbrain-to-envelope exporter', () => {
           '',
           '**Assistant** (2026-02-01T09:05:00.000Z · m2):',
           '',
-          'That is right for gbrain pages too.',
+          'That is right for foresights pages too.',
           '',
           '---',
           '',
@@ -1035,9 +1035,9 @@ describe('gbrain-to-envelope exporter', () => {
     assertEnvelopeV0(result.envelope, { conversations: 1, messages: 4 });
     const messages = result.envelope.conversations[0].messages as Array<{ id: string; text: string }>;
     expect(messages.map((m) => m.id)).toEqual(['m1', 'm2', 'm3', 'm4']);
-    expect(messages[1].text).toContain('right for gbrain pages too');
+    expect(messages[1].text).toContain('right for foresights pages too');
     expect(messages[2].text).toContain('the closing line is also');
-    expect(messages[0].text).not.toContain('right for gbrain pages too');
+    expect(messages[0].text).not.toContain('right for foresights pages too');
     expect(result.stderr).toContain('is still open at the turn header');
   });
 
@@ -1237,7 +1237,7 @@ describe('gbrain-to-envelope exporter', () => {
   test('C: a turn header mangled with one trailing space still anchors its turn', async () => {
     // Pre-rebuild: the old header regex was `$`-anchored with no trailing-space
     // tolerance, so one space added by an editor or a sync absorbed the whole
-    // turn into its neighbour, silently. gbrain's own `imessage-slack` pattern
+    // turn into its neighbour, silently. foresights's own `imessage-slack` pattern
     // (src/core/conversation-parser/builtins.ts) tolerates trailing whitespace
     // after the colon, so the exporter now does too - and if a header is
     // mangled past recognition entirely, the frontmatter count no longer
@@ -1371,7 +1371,7 @@ describe('gbrain-to-envelope exporter', () => {
   });
 
   test('the timeline-cut note claims a cut, not a timeline the page may not have carried', async () => {
-    // The old note said the page "carried a gbrain timeline section". A final
+    // The old note said the page "carried a foresights timeline section". A final
     // message that ends by quoting the sentinel on its own line is cut
     // identically - from this side of the page the two cases cannot be told
     // apart - so the note now states only what happened: a cut, and where the
@@ -1383,7 +1383,7 @@ describe('gbrain-to-envelope exporter', () => {
         [
           '**Me** (2026-02-01T09:00:00.000Z · m1):',
           '',
-          'The marker gbrain uses is this, on its own line:',
+          'The marker foresights uses is this, on its own line:',
           '',
           '<!-- timeline -->',
           '',
@@ -1393,9 +1393,9 @@ describe('gbrain-to-envelope exporter', () => {
     });
 
     expect(result.exitCode).toBe(0);
-    expect(result.envelope.conversations[0].messages[0].text).toBe('The marker gbrain uses is this, on its own line:');
+    expect(result.envelope.conversations[0].messages[0].text).toBe('The marker foresights uses is this, on its own line:');
     expect(result.stderr).toContain('were cut at a timeline sentinel');
-    expect(result.stderr).not.toContain('carried a gbrain timeline');
+    expect(result.stderr).not.toContain('carried a foresights timeline');
   });
 
   // --- The recorded (frontmatter-identity) path's own contract. -------------
@@ -1442,8 +1442,8 @@ describe('gbrain-to-envelope exporter', () => {
     'second turn',
   ].join('\n');
 
-  test('recorded path: the quoting styles gbrain re-serializes to still read', async () => {
-    // gbrain's serializeMarkdown re-emits the array semantically, not
+  test('recorded path: the quoting styles foresights re-serializes to still read', async () => {
+    // foresights's serializeMarkdown re-emits the array semantically, not
     // textually: plain unquoted ids, single-quoted timestamps. Both must read
     // identically to the importer's JSON-quoted originals.
     const result = await exportPages({
@@ -1792,7 +1792,7 @@ describe('gbrain-to-envelope exporter', () => {
 
   test('G2: a UTF-8 BOM does not make a conversation vanish', async () => {
     // gray-matter strips a BOM, so a BOM page is a first-class conversation
-    // to gbrain; refusing to see its frontmatter dropped the whole
+    // to foresights; refusing to see its frontmatter dropped the whole
     // conversation into the anonymous "without frontmatter" count.
     const result = await exportPages({
       'a.md': '﻿' + recordedPage({ id: 'c-bom', record: RECORD_2, body: BODY_2 }),
@@ -1843,7 +1843,7 @@ describe('gbrain-to-envelope exporter', () => {
   });
 
   test('G4: js-yaml 3.14 int forms - sexagesimal and binary - are refused as non-string ids', async () => {
-    // `190:20:30` is the integer 685230 and `0b1010` is 10 to gbrain's own
+    // `190:20:30` is the integer 685230 and `0b1010` is 10 to foresights's own
     // YAML reader; exporting them as strings would emit ids the record does
     // not hold.
     const page = (name: string, idLine: string) => recordedPage({
@@ -1987,10 +1987,10 @@ describe('gbrain-to-envelope exporter', () => {
     expect(result.stderr).toContain('before the first turn header were not exported');
   });
 
-  test('G10: ids survive gbrain\'s own serializer byte-for-byte, whitespace shapes included', async () => {
+  test('G10: ids survive foresights\'s own serializer byte-for-byte, whitespace shapes included', async () => {
     // The block-scalar reader once collapsed whitespace-only content lines
     // and miscounted keep-chomping breaks, so ids like "a\n \nb" came back
-    // corrupted with zero stderr. This drives gbrain's actual serializer
+    // corrupted with zero stderr. This drives foresights's actual serializer
     // (gray-matter = js-yaml, the engine of serializeMarkdown) over a battery
     // of whitespace-hostile ids and requires every one back verbatim.
     const matter = (await import('../src/core/data-frontmatter.ts')).dataFrontmatter;
@@ -2320,18 +2320,18 @@ describe('gbrain-to-envelope exporter', () => {
     expect(third.conversations.map((c: any) => c.id)).toEqual(['c-c']);
   });
 
-  // --- Sweep 2.9: all four gbrain timeline-sentinel forms. ------------------
-  // gbrain's findTimelineSplitIndex (src/core/markdown.ts) accepts four forms:
+  // --- Sweep 2.9: all four foresights timeline-sentinel forms. ------------------
+  // foresights's findTimelineSplitIndex (src/core/markdown.ts) accepts four forms:
   // the two comment spellings, `--- timeline ---` under /^---\s+timeline\s+---$/i,
   // and a bare `---` whose next non-blank line is a `## Timeline`/`## History`
   // heading. The exporter knew three exact strings, so the case/space-tolerant
-  // decorated variants and the bare-`---` fallback cut in gbrain but exported
+  // decorated variants and the bare-`---` fallback cut in foresights but exported
   // as message text here. Each closed form joins the discipline the known forms
   // already had: fence-masked candidates, a cut only past the last accepted
   // turn, and a stderr line for the cut and for the refusal alike.
 
-  test('form 3 variants gbrain accepts (case, spacing) cut like the exact string', async () => {
-    const timelineTail = (sentinel: string) => `${TURNS}\n\n${sentinel}\n\n- 2026-02-02: gbrain added a timeline entry.`;
+  test('form 3 variants foresights accepts (case, spacing) cut like the exact string', async () => {
+    const timelineTail = (sentinel: string) => `${TURNS}\n\n${sentinel}\n\n- 2026-02-02: foresights added a timeline entry.`;
     const result = await exportPages({
       'a.md': gbrainPage(
         ['type: conversation', 'title: Uppercase sentinel', 'source: chatgpt', 'memvelope_conversation_id: c-upper'].join('\n'),
@@ -2350,15 +2350,15 @@ describe('gbrain-to-envelope exporter', () => {
     expect(result.stderr).toContain('cut at the timeline sentinel');
   });
 
-  test('form 4 - a bare --- above a Timeline or History heading cuts, as gbrain reads it', async () => {
+  test('form 4 - a bare --- above a Timeline or History heading cuts, as foresights reads it', async () => {
     const result = await exportPages({
       'a.md': gbrainPage(
         ['type: conversation', 'title: Bare rule form', 'source: chatgpt', 'memvelope_conversation_id: c-t4'].join('\n'),
-        `${TURNS}\n\n---\n\n## Timeline\n\n- 2026-02-02: gbrain added a timeline entry.`,
+        `${TURNS}\n\n---\n\n## Timeline\n\n- 2026-02-02: foresights added a timeline entry.`,
       ),
       'b.md': gbrainPage(
         ['type: conversation', 'title: History heading', 'source: chatgpt', 'memvelope_conversation_id: c-hist'].join('\n'),
-        `${TURNS}\n\n---\n\n## History of the rollout\n\n- 2026-02-02: gbrain added a timeline entry.`,
+        `${TURNS}\n\n---\n\n## History of the rollout\n\n- 2026-02-02: foresights added a timeline entry.`,
       ),
     });
 
@@ -2398,7 +2398,7 @@ describe('gbrain-to-envelope exporter', () => {
   });
 
   test('new sentinel forms follow the only-terminal rule: quoted mid-conversation they warn and do not cut', async () => {
-    // The mirror of D1 for the closed forms. gbrain's own parser cuts at the
+    // The mirror of D1 for the closed forms. foresights's own parser cuts at the
     // FIRST hit and truncates every turn below it - the upstream defect this
     // exporter deliberately does not copy. A decorated or bare-rule sentinel
     // with accepted turns after it is prose, kept, and reported.
@@ -2408,7 +2408,7 @@ describe('gbrain-to-envelope exporter', () => {
         [
           '**Me** (2026-02-01T09:00:00.000Z · m1):',
           '',
-          'gbrain also accepts this spelling:',
+          'foresights also accepts this spelling:',
           '',
           '--- TIMELINE ---',
           '',
@@ -2430,7 +2430,7 @@ describe('gbrain-to-envelope exporter', () => {
           '',
           '## Timeline',
           '',
-          'and gbrain reads a real one only after the last turn.',
+          'and foresights reads a real one only after the last turn.',
           '',
           '---',
           '',
@@ -2457,7 +2457,7 @@ describe('gbrain-to-envelope exporter', () => {
     // Forms 1 and 2 plus the exact decorated string predate this sweep; pinned
     // here so the "all four forms" claim has a receipt per form, not a set
     // membership nobody exercises.
-    const timelineTail = (sentinel: string) => `${TURNS}\n\n${sentinel}\n\n- 2026-02-02: gbrain added a timeline entry.`;
+    const timelineTail = (sentinel: string) => `${TURNS}\n\n${sentinel}\n\n- 2026-02-02: foresights added a timeline entry.`;
     const result = await exportPages({
       'a.md': gbrainPage(
         ['type: conversation', 'title: Tight comment', 'source: chatgpt', 'memvelope_conversation_id: c-tight'].join('\n'),

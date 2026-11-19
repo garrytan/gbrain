@@ -30,7 +30,7 @@ mock.module('../src/cli/commands/repair.ts', () => ({
     seen.atHandler = await engine.getConfig('version');
     try {
       await requireConsent({
-        command: 'repair', effects: ['paid'], actor: 'agent', what: 'gbrain repair', why: 'Synthetic paid work.',
+        command: 'repair', effects: ['paid'], actor: 'agent', what: 'foresights repair', why: 'Synthetic paid work.',
         risk: 'Spends up to the cap.', user_message: 'Spend about $0.10?', argv: ['gbrain', 'repair'], est_usd: 0.1, args,
       }, { interactive: false, preapprovals: {}, note: () => {} });
     } catch (e) {

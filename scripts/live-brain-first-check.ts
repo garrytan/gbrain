@@ -9,7 +9,7 @@
  * deployment isn't this repo's content, so coupling CI to it would
  * produce drift the moment OpenClaw evolves independently.
  *
- * Use this manually during dev / QA / after `gbrain doctor --fix` runs
+ * Use this manually during dev / QA / after `foresights doctor --fix` runs
  * to validate the wave against the real deployment.
  *
  * Usage:
@@ -142,8 +142,8 @@ function main(): number {
       console.log('STATUS: ok — no brain-first violators in the live deployment');
     } else {
       console.log('STATUS: warn — fix with:');
-      console.log('  gbrain doctor --fix       # auto-add canonical Convention callout (writes files)');
-      console.log('  gbrain doctor --fix --dry-run   # preview without writing');
+      console.log('  foresights doctor --fix       # auto-add canonical Convention callout (writes files)');
+      console.log('  foresights doctor --fix --dry-run   # preview without writing');
       console.log('  or add `brain_first: exempt` to each flagged skill\'s frontmatter');
     }
   }

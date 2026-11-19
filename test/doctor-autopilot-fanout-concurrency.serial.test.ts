@@ -1,5 +1,5 @@
 /**
- * #2194 fix #5: `gbrain doctor` warns when autopilot's per-tick fan-out exceeds
+ * #2194 fix #5: `foresights doctor` warns when autopilot's per-tick fan-out exceeds
  * the worker's effective concurrency. Fanning out more cycles than there are
  * worker slots guarantees waiters that race the stalled-sweeper — a silent
  * misconfig the operator never saw before this check.

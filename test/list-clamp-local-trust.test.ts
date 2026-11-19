@@ -1,7 +1,7 @@
 /**
  * list_pages clamp local-trust + offset threading — op-level coverage.
  *
- * Pins (upstream draft "gbrain list silently clamps --limit to 100"):
+ * Pins (upstream draft "foresights list silently clamps --limit to 100"):
  *   - Local callers (ctx.remote === false) get an explicit limit above 100
  *     honored — full enumeration is a legitimate local operation.
  *   - Remote callers keep the 100-row DoS cap, and the clamp is now LOUD:

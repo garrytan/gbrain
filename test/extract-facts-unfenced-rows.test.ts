@@ -398,7 +398,7 @@ for (const backend of testBackends()) {
         const doctor = await fenceIntegrityResult(engine, { sourceIds: ['default'] });
         expect(doctor.status).toBe('warn');
         expect(doctor.details).toMatchObject({ unbound_legacy_facts: { total: 2, pages: [{ source_id: 'default', slug: SLUG, rows: 2 }] } });
-        expect(doctor.message).toContain('gbrain config set persistence.unbound_write database_only');
+        expect(doctor.message).toContain('foresights config set persistence.unbound_write database_only');
         expect(doctor.fix).toMatchObject({ argv: ['gbrain', 'config', 'set', 'persistence.unbound_write', 'database_only'], ask_user: true });
       });
     }, 120_000);

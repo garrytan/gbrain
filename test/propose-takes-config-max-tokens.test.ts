@@ -239,8 +239,8 @@ describe('the phase resolves dream.propose_takes.call_timeout_ms into callBoundM
       expect(run.bound).toBeUndefined();
       expect(run.status).toBe('warn');
       expect(run.warnings).toHaveLength(1);
-      expect(run.warnings[0]).toContain(`gbrain config set ${BOUND_KEY}`);
-      expect(run.warnings[0]).toContain(`gbrain config get ${BOUND_KEY}`);
+      expect(run.warnings[0]).toContain(`foresights config set ${BOUND_KEY}`);
+      expect(run.warnings[0]).toContain(`foresights config get ${BOUND_KEY}`);
       if (raw.length > 2) expect(run.warnings[0]).not.toContain(raw);
     });
   }

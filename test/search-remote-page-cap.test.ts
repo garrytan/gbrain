@@ -86,8 +86,8 @@ describe('remotePageCap callers and the cap line', () => {
 
   test('the line names only the pages the cap left out, and the flag the reader passes', () => {
     const retrieval = { page_cap: { cap: 3, kept_pages: 3, dropped_pages: 9 } };
-    expect(pageCapLine(retrieval)).toBe('[gbrain search] 9 more pages matched only by meaning and were left out (default remote cap 3). Pass limit to read them.');
-    expect(pageCapLine(retrieval, '--limit')).toBe('[gbrain search] 9 more pages matched only by meaning and were left out (default remote cap 3). Pass --limit to read them.');
+    expect(pageCapLine(retrieval)).toBe('[foresights search] 9 more pages matched only by meaning and were left out (default remote cap 3). Pass limit to read them.');
+    expect(pageCapLine(retrieval, '--limit')).toBe('[foresights search] 9 more pages matched only by meaning and were left out (default remote cap 3). Pass --limit to read them.');
     expect(pageCapLine({})).toBeNull();
   });
 
@@ -142,7 +142,7 @@ for (const kind of testBackends()) {
         expect(slugsOf(out)).toHaveLength(DEFAULT_REMOTE_PAGE_CAP);
         const dropped = LEXICAL.length + VECTOR_ONLY.length - DEFAULT_REMOTE_PAGE_CAP;
         expect((out._meta as any)?.retrieval?.page_cap).toEqual({ cap: DEFAULT_REMOTE_PAGE_CAP, kept_pages: DEFAULT_REMOTE_PAGE_CAP, dropped_pages: dropped });
-        expect(out.content.slice(1).map(c => c.text)).toContain(`[gbrain search] ${dropped} more pages matched only by meaning and were left out (default remote cap ${DEFAULT_REMOTE_PAGE_CAP}). Pass limit to read them.`);
+        expect(out.content.slice(1).map(c => c.text)).toContain(`[foresights search] ${dropped} more pages matched only by meaning and were left out (default remote cap ${DEFAULT_REMOTE_PAGE_CAP}). Pass limit to read them.`);
       }, 60_000);
 
       test(`${tool}: a call the cap leaves alone carries no cap line`, async () => {

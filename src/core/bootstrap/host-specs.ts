@@ -16,7 +16,7 @@
  * `verifiedAt`. `'provisional'` means the shape is believed-correct from
  * docs/precedent but has not been re-verified against a live host — treat a
  * provisional writer's failure as "re-verify the spec" before debugging
- * gbrain code.
+ * foresights code.
  */
 
 import { existsSync, readdirSync } from 'node:fs';
@@ -111,7 +111,7 @@ export const TARGETS: Record<string, HostSpecTarget> = {
       'stdio lane (runHooks) must never manage a name the harness block ' +
       'owns, and vice versa. Codex 0.147.0 also ships a real hook system ' +
       '(hooks.json; PreToolUse…SessionEnd) — bootstrap wires SessionEnd; ' +
-      '`gbrain setup codex` also wires SessionStart/UserPromptSubmit, hash-owned ' +
+      '`foresights setup codex` also wires SessionStart/UserPromptSubmit, hash-owned ' +
       '(CODEX_HAS_HOOKS=true; codex-hooks.ts owns the two-file write incl. ' +
       'the config.toml trust entry, see CODEX_HOOKS_SPEC_TARGET there). ' +
       'Some codex builds gate HTTP MCP servers behind ' +
@@ -134,15 +134,15 @@ export const TARGETS: Record<string, HostSpecTarget> = {
       'comments parse in .json-named files, and global opencode.json AND ' +
       'opencode.jsonc are BOTH read (merged) when both exist; `opencode mcp ' +
       'add` writes the user-global opencode.jsonc via a comment-preserving ' +
-      'editor, so gbrain writes match that bar (jsonc-parser surgical edits, ' +
+      'editor, so foresights writes match that bar (jsonc-parser surgical edits, ' +
       'opencode-json.ts). MCP entries: {type:"local", command[], environment, ' +
       'enabled?} / {type:"remote", url, headers} — header values keep ' +
       '`{env:VAR}` interpolation verbatim; unknown keys tolerated in 1.18.18 ' +
-      'but gbrain writes NO marker key (ownership is a structural ' +
+      'but foresights writes NO marker key (ownership is a structural ' +
       'fingerprint — a future strict-schema flip must not brick the host). ' +
       '`mcp add` has no scope flag (always user-global); project opencode.json ' +
       'is read but a project-defined LOCAL server spawns with NO trust gate ' +
-      '(verified) — so gbrain defaults registration to USER scope and treats ' +
+      '(verified) — so foresights defaults registration to USER scope and treats ' +
       'project scope as explicit opt-in with a sharing warning. `mcp list` is ' +
       'the honest discriminator (spawns servers; ✓/✗ text; exit 0 regardless); ' +
       '`mcp debug` is OAuth-only. Keyless anonymous free tier answers headless ' +
@@ -153,7 +153,7 @@ export const TARGETS: Record<string, HostSpecTarget> = {
       'OPENCODE=1 (+OPENCODE_PID) in bash-tool children — detectHarness ' +
       'probes OPENCODE. AGENTS.md loads natively; CLAUDE.md is NOT ' +
       'double-loaded. opencode ships a JS plugin/event system — ' +
-      'OPENCODE_HAS_HOOKS=false means "gbrain does not wire it yet" (follow-up ' +
+      'OPENCODE_HAS_HOOKS=false means "foresights does not wire it yet" (follow-up ' +
       'filed), NOT "opencode has no hooks"; probes run with --pure + ' +
       'OPENCODE_DISABLE_AUTOUPDATE=1 because mcp list autoloads plugins. ' +
       'Skills: no attested native skills DIR for direct file installs; a ' +
@@ -192,7 +192,7 @@ export const CLAUDE_HOOK_EVENTS = [
 ] as const;
 export type ClaudeHookEvent = (typeof CLAUDE_HOOK_EVENTS)[number];
 
-/** `gbrain hook <subcommand>` per event (src/commands/hook.ts dispatch). */
+/** `foresights hook <subcommand>` per event (src/commands/hook.ts dispatch). */
 export const CLAUDE_HOOK_SUBCOMMAND: Record<ClaudeHookEvent, string> = {
   SessionStart: 'session-start',
   UserPromptSubmit: 'user-prompt',
@@ -232,7 +232,7 @@ export const GBRAIN_HOOK_MARKER_KEY = '_gbrain';
 export const GBRAIN_HOOK_MARKER_VALUE = 'bootstrap-v1';
 
 /**
- * Marker VALUE for harness-mode installs (`gbrain bootstrap harness`, #4043).
+ * Marker VALUE for harness-mode installs (`foresights bootstrap harness`, #4043).
  * Same `_gbrain` key, distinct value: a box can carry a workspace bootstrap
  * install (bootstrap-v1 in settings.local.json) AND a harness install
  * (bootstrap-harness-v1 in user settings.json or a project settings.local.json)
@@ -249,7 +249,7 @@ export const GBRAIN_HOOK_MARKER_VALUE = 'bootstrap-v1';
 export const GBRAIN_HARNESS_MARKER_VALUE = 'bootstrap-harness-v1';
 
 /**
- * Marker VALUE for `gbrain setup` installs. Advisory only: setup owns an
+ * Marker VALUE for `foresights setup` installs. Advisory only: setup owns an
  * entry by the exact hash its connection receipt recorded
  * (hooks.ts hookEntryHash), so an edited marked entry is never replaced or
  * removed, and two installs on one machine each keep their own entries.
@@ -421,7 +421,7 @@ export function codexArchivedSessionsDir(): string {
 
 /**
  * Codex hooks file — (CODEX_HOME || ~/.codex)/hooks.json, USER-GLOBAL (no
- * per-project scope for the user layer gbrain writes). Written by
+ * per-project scope for the user layer foresights writes). Written by
  * codex-hooks.ts together with its config.toml trust-state entry; see
  * CODEX_HOOKS_SPEC_TARGET there for the verified 0.147.0 facts.
  */
@@ -456,18 +456,18 @@ export function codexAgentsOverridePath(): string {
 }
 
 /** Codex hook events the BOOTSTRAP lane wires: SessionEnd capture only. The
- * SessionStart and UserPromptSubmit context hooks belong to `gbrain setup
+ * SessionStart and UserPromptSubmit context hooks belong to `foresights setup
  * codex`'s hash-owned writer (codex-hooks.ts `CODEX_SETUP_EVENTS`); they bake
- * no source, and `gbrain hook` resolves it per session from the payload cwd
+ * no source, and `foresights hook` resolves it per session from the payload cwd
  * (#5941). */
 export const CODEX_HOOK_EVENTS = ['SessionEnd'] as const;
 
 /**
- * Whether gbrain WIRES codex hooks. True as of the Memorable wave: bootstrap
+ * Whether foresights WIRES codex hooks. True as of the Memorable wave: bootstrap
  * writes a SessionEnd entry into hooks.json plus its config.toml trust-state
  * entry (codex-hooks.ts — the 0.147.0 trust gate makes an untrusted entry
  * silently inert). The bootstrap lane wires SESSION-END CAPTURE ONLY;
- * per-turn context comes from `gbrain setup codex`'s SessionStart and
+ * per-turn context comes from `foresights setup codex`'s SessionStart and
  * UserPromptSubmit hooks, or else the pull-protocol AGENTS.md gates (plan D5).
  */
 export const CODEX_HAS_HOOKS = true;
@@ -478,7 +478,7 @@ export const CODEX_HAS_HOOKS = true;
  * match at column 0; the writer requires exactly one begin/end pair.
  */
 export const CODEX_TOML_BLOCK_BEGIN =
-  `# gbrain:${GBRAIN_HARNESS_MARKER_VALUE} begin - managed by \`gbrain bootstrap harness\`; do not edit inside`;
+  `# gbrain:${GBRAIN_HARNESS_MARKER_VALUE} begin - managed by \`foresights bootstrap harness\`; do not edit inside`;
 export const CODEX_TOML_BLOCK_END = `# gbrain:${GBRAIN_HARNESS_MARKER_VALUE} end`;
 
 // ── opencode shapes ─────────────────────────────────────────────────────────
@@ -504,7 +504,7 @@ export function opencodeConfigDir(): string {
 
 /**
  * User-global opencode config FILE. Both `opencode.json` and `opencode.jsonc`
- * are read (merged) by the host when both exist; gbrain edits the file that
+ * are read (merged) by the host when both exist; foresights edits the file that
  * already carries content, preferring `.jsonc` (the name `opencode mcp add`
  * itself writes) when both or neither exist — one-owner-per-file keeps the
  * merge unambiguous for `mcp.gbrain`.
@@ -544,9 +544,9 @@ export function opencodeProjectConfigPath(workspaceDir: string): string {
 }
 
 /**
- * Whether gbrain WIRES opencode's hook/plugin system. False = not yet:
+ * Whether foresights WIRES opencode's hook/plugin system. False = not yet:
  * opencode ships a JS plugin/event system (and `--pure` to suppress it), but
- * gbrain's opencode plugin lane is a filed follow-up; per-turn context on
+ * foresights's opencode plugin lane is a filed follow-up; per-turn context on
  * opencode rides the pull-protocol AGENTS.md gates, which opencode loads
  * natively (verified — and CLAUDE.md is NOT double-loaded alongside it).
  */

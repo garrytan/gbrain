@@ -28,7 +28,7 @@ import { filesInCheckout, importAtRevision, writeLabelFile } from './label-write
 import { dependentsSql } from './private-labels.ts';
 
 const bounded = { timeoutMs: 120_000, jitOff: true, prepare: false };
-const PREVIEW = 'gbrain repair visibility';
+const PREVIEW = 'foresights repair visibility';
 const EDIT: LabelEdit = { set: { visibility: 'private' }, remove: [] };
 /** A page whose removal can open another: hidden by the privacy rules itself, or an atom a concept's provenance names. */
 const originSql = (alias: string) => `(${alias}.type = 'atom' OR NOT ${privacyPartSql(alias)})`;
@@ -170,7 +170,7 @@ export async function deletePageCarryingPrivate(ctx: OperationContext, p: Record
   await recordOwedPurge(ctx.engine, origin.id, String(p.request_id));
   return { ...result, purge_held: { code: DERIVED_ORIGIN_PARKED_CODE,
     message: `Not purged: ${block.slug ?? 'a page derived from it'} is private only through ${origin.slug} and could not be labelled private (${block.code ?? 'error'}: ${block.reason}). `
-      + `${origin.slug} is soft-deleted and parked: no purge removes it until that page carries its own label; gbrain doctor names it as derived_origin_parked. `
+      + `${origin.slug} is soft-deleted and parked: no purge removes it until that page carries its own label; foresights doctor names it as derived_origin_parked. `
       + `Once it does, ${finishPurgeNote(sourceId, origin.slug, String(p.request_id))}` } };
 }
 
@@ -247,7 +247,7 @@ export const originUncheckedHold = (sourceId: string, slug: string, requestId: s
  * note says the next purges finish it; an owner purge's (`owner`) names the command that finishes it as a new request.
  */
 export function midPurgeHold(owner?: { sourceId: string; slug: string; requestId: string }): { code: string; message: string } {
-  const held = 'Not purged: a page derived from this one was written during the purge and is not labelled private yet, so this page is kept soft-deleted and parked (gbrain doctor: derived_origin_parked)';
+  const held = 'Not purged: a page derived from this one was written during the purge and is not labelled private yet, so this page is kept soft-deleted and parked (foresights doctor: derived_origin_parked)';
   return { code: DERIVED_ORIGIN_PARKED_CODE, message: owner ? `${held}; the next purge labels that page. Once it does, ${finishPurgeNote(owner.sourceId, owner.slug, owner.requestId)}`
     : `${held}; the next purge labels it and frees this page, and the one after removes it.` };
 }

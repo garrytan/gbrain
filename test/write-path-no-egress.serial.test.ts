@@ -82,13 +82,13 @@ describe('CLI writes make no network connection', () => {
     ];
     for (const [args, input] of steps) {
       const r = await gbrain(args, input);
-      if (r.code !== 0) throw new Error(`gbrain ${args.join(' ')} exited ${r.code}: ${r.out}`);
+      if (r.code !== 0) throw new Error(`foresights ${args.join(' ')} exited ${r.code}: ${r.out}`);
     }
     const dir = join(home, 'notes');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'imported.md'), NOTE);
     const imp = await gbrain(['import', dir, '--no-embed']);
-    if (imp.code !== 0) throw new Error(`gbrain import exited ${imp.code}: ${imp.out}`);
+    if (imp.code !== 0) throw new Error(`foresights import exited ${imp.code}: ${imp.out}`);
     const repo = join(home, 'repo');
     mkdirSync(repo, { recursive: true });
     const fixture = await makeGitFixture(repo);
@@ -96,7 +96,7 @@ describe('CLI writes make no network connection', () => {
     fixture.commitAll('add synced note');
     for (const args of [['sources', 'add', 'synced', '--path', repo], ['sync', '--source', 'synced', '--no-pull', '--no-embed']]) {
       const r = await gbrain(args);
-      if (r.code !== 0) throw new Error(`gbrain ${args.join(' ')} exited ${r.code}: ${r.out}`);
+      if (r.code !== 0) throw new Error(`foresights ${args.join(' ')} exited ${r.code}: ${r.out}`);
     }
     expect(connections).toEqual([]);
     const search = await gbrain(['search', 'quarterly roadmap']);

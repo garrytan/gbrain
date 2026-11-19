@@ -3,7 +3,7 @@
 // Root cause: import-file.ts reconciled tags from frontmatter only via
 // DELETE-then-INSERT. The tags table has no provenance column and frontmatter
 // tags are stripped from stored frontmatter (markdown.ts:118), so every
-// re-import (notably `gbrain reindex --markdown`, which re-imports with
+// re-import (notably `foresights reindex --markdown`, which re-imports with
 // forceRechunk) deleted all enrichment / dream / signal-detector tags.
 //
 // Fix: re-import never deletes enrichment tags. Since A14 tags carry

@@ -33,7 +33,7 @@ let home: string;
 let blocker: string;
 
 /** The shell an agent runs a rendered command in: split on spaces (every argv here is space-free). */
-const argvOf = (command: string) => { const parts = command.split(' '); expect(parts[0]).toBe('gbrain'); return parts.slice(1); };
+const argvOf = (command: string) => { const parts = command.split(' '); expect(parts[0]).toBe('foresights'); return parts.slice(1); };
 const checkOf = (doc: Record<string, any>) => (doc.checks as Array<Record<string, any>>).find(c => c.name === CHECK)!;
 
 beforeAll(async () => {
@@ -97,7 +97,7 @@ describe('terminal write failures: doctor warning to verified clear', () => {
     // History never warns: the pre-fix knock-ons and the superseded refusal are counted apart from the blocker.
     expect(warned.details.historical_rows).toBe(21);
     expect(warned.fix.next).toBe('run');
-    expect(warned.fix.command).toBe(`gbrain sync --source ${SOURCE} --no-pull --json --brain host`);
+    expect(warned.fix.command).toBe(`foresights sync --source ${SOURCE} --no-pull --json --brain host`);
 
     const fixed = await gb(home, argvOf(warned.fix.command), { timeoutMs: 120_000 });
     expect(fixed.exitCode).toBe(0);

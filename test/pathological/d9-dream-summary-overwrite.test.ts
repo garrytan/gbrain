@@ -102,7 +102,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         const edited = b.file().replace('**Pages written:** 1.', `**Pages written:** 1.\n\n${FILE_EDIT}`);
         writeFileSync(b.path, edited);
         const held = await expectUnitNotAborted(() => b.run(SECOND));
-        expect({ drift: drift(held), fix: held?.includes('gbrain sync --source default') }).toEqual({ drift: true, fix: true });
+        expect({ drift: drift(held), fix: held?.includes('foresights sync --source default') }).toEqual({ drift: true, fix: true });
         expect({ file: b.file() === edited, body: (await b.body()).includes('acme-example-second') }).toEqual({ file: true, body: true });
         expect(await b.versionsHolding('**Pages written:** 1.')).toBeGreaterThan(0);
       });

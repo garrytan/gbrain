@@ -6,7 +6,7 @@
  * - doctor `uncommitted_sync_deletions` warns about exactly the sync-deleted tombstones whose file is ignored or never
  *   committed (a committed then git-rm'd control, and a page another writer deleted, never warn; a
  *   `sync-delete-tombstone` marker naming the page counts as a sync deletion);
- * - `gbrain repair uncommitted-deletions --source <id>` previews them with a hash and the purge caveat, refuses a wrong
+ * - `foresights repair uncommitted-deletions --source <id>` previews them with a hash and the purge caveat, refuses a wrong
  *   hash (preview_changed), exits 3 without --yes, and with the right hash restores each live and detached
  *   (database-only, no file written); the next sync, incremental and full, keeps them live and the control deleted;
  * - off the owner host the doctor check is not_applicable and the repair refuses not_owner_host;
@@ -122,7 +122,7 @@ for (const backend of testBackends()) describe(`[${backend}] #7130: restoring pa
     const found = await doctor(engine);
     expect(found).toMatchObject({ name: 'uncommitted_sync_deletions', status: 'warn', details: { count: 2, other_writer_count: 1, exact: true } });
     expect(found.details.samples.map((page: { slug: string; evidence: string }) => [page.slug, page.evidence]).sort()).toEqual([['notes/draft', 'never_committed'], ['scratch/agent', 'ignored']]);
-    expect(found.message).toContain('gbrain repair uncommitted-deletions --source default');
+    expect(found.message).toContain('foresights repair uncommitted-deletions --source default');
     expect(found.message).toContain('only a backup');
     expect(found.fix.argv).toEqual(['gbrain', 'repair', 'uncommitted-deletions', '--source', 'default', '--json']);
 
@@ -132,7 +132,7 @@ for (const backend of testBackends()) describe(`[${backend}] #7130: restoring pa
       ['default:notes/draft', 'restore:never_committed'], ['default:notes/hand', 'excluded:deleted_by_other'], ['default:scratch/agent', 'restore:ignored']]);
     expect(preview.affected).toBe(2);
     expect(preview.warnings[0]).toContain('Pages already purged cannot be restored by this command');
-    expect(preview.apply_command).toBe(`gbrain repair uncommitted-deletions --source default --apply --expect ${preview.preview_hash} --yes`);
+    expect(preview.apply_command).toBe(`foresights repair uncommitted-deletions --source default --apply --expect ${preview.preview_hash} --yes`);
     expect((await repair(engine, { includeAmbiguous: true })).affected).toBe(3);
 
     expect((await refusal(() => repair(engine, { apply: true, expect: 'f'.repeat(64) }))).code).toBe('preview_changed');
@@ -213,7 +213,7 @@ for (const backend of testBackends()) describe(`[${backend}] #7130: restoring pa
     expect(preview.affected).toBe(1);
     expect(preview.sample).toEqual([`default:${lower!.slug}`]);
     expect(preview.preview_hash).not.toBe(whole.preview_hash);
-    expect(preview.apply_command).toBe(`gbrain repair uncommitted-deletions --source default --after ${upper!.id} --apply --expect ${preview.preview_hash} --yes`);
+    expect(preview.apply_command).toBe(`foresights repair uncommitted-deletions --source default --after ${upper!.id} --apply --expect ${preview.preview_hash} --yes`);
     expect((await refusal(() => repair(engine, { apply: true, expect: preview.preview_hash }))).code).toBe('preview_changed');
     const applied = JSON.parse(await withEnv({ GBRAIN_INTERACTIVE: '0', CI: '1' }, () => capture(() => runRepairCommand(engine,
       ['uncommitted-deletions', '--source', 'default', '--after', String(upper!.id), '--apply', '--expect', preview.preview_hash, '--yes', '--json'])))).results[0];

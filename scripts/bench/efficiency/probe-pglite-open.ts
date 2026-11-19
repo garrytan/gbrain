@@ -8,7 +8,7 @@
  * fresh process per sample, interleaving four variants:
  *   stock-128MB  PGLite's stock vector/pg_trgm extensions (eager preload), the
  *                data directory's shared_buffers (128MB)
- *   lazy-128MB   gbrain's extensions (files written after start, loaded on first use)
+ *   lazy-128MB   foresights's extensions (files written after start, loaded on first use)
  *   stock-32MB / lazy-32MB  the same with `-c shared_buffers=32MB` (one-shot reads)
  * Each sample also times the first query that loads vector.so, so the cost the
  * lazy extensions move to first use stays visible. Prints p50/p95 per variant.

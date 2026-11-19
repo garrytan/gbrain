@@ -1,5 +1,5 @@
 /**
- * Output-format pin for `gbrain auth register-client` (cathedral-6 commit 1).
+ * Output-format pin for `foresights auth register-client` (cathedral-6 commit 1).
  *
  * The printed block is a PRODUCT contract, not just a test convenience:
  *   - src/commands/connect.ts defaultRegisterOAuthClient scrapes
@@ -52,7 +52,7 @@ describe('auth register-client output pin (byte-identical product contract)', ()
       '  Federated reads:     default',
       '',
       'Save the client secret — it will not be shown again.',
-      'Revoke with: gbrain auth revoke-client "gbrain_cl_abc123"',
+      'Revoke with: foresights auth revoke-client "gbrain_cl_abc123"',
     ]);
   });
 

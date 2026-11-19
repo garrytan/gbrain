@@ -147,7 +147,7 @@ export class SlugRegistry {
   /**
    * Suggest up to N disambiguator candidates for a slug, without taking any.
    * Caller renders them in a CLI prompt, user picks one. Used by
-   * `gbrain integrity --auto` when it finds two entities that slug-match
+   * `foresights integrity --auto` when it finds two entities that slug-match
    * but aren't obviously the same person.
    */
   async suggestDisambiguators(desiredSlug: string, n = 3): Promise<string[]> {

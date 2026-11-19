@@ -1,7 +1,7 @@
 /**
  * #5720: a managed sync of a file whose frontmatter `slug:` conflicts with its
  * path names the conflict, the path's expected slug, the frontmatter slug and
- * the fix, in the sync output and in `gbrain write-request`, instead of the
+ * the fix, in the sync output and in `foresights write-request`, instead of the
  * generic "The write did not commit" fallback and an empty outcome.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';

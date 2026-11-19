@@ -142,7 +142,7 @@ export function buildHardExcludeClause(slugColumn: string, prefixes: string[]): 
  *  - Page-level soft-delete: `<pageAlias>.deleted_at IS NULL` hides pages that
  *    `delete_page` flipped via `softDeletePage`.
  *  - Source-level archive: `NOT <sourceAlias>.archived` hides every page
- *    belonging to a source that `gbrain sources archive` soft-deleted.
+ *    belonging to a source that `foresights sources archive` soft-deleted.
  *
  * Unlike `buildSourceFactorCase`, this clause is NOT bypassed by `detail=high`.
  * Soft-deleted content stays hidden regardless of query detail level — the

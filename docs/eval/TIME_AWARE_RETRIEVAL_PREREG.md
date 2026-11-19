@@ -12,7 +12,7 @@ code is removed.
 | R1 | `think` date frame: current date line + content dates on page blocks | product (on) |
 | R2 | `think` notes-first reading | development arm (removed after its development result) |
 | F1 | Fact keys, benchmark user-turn fact prompt (replication of key expansion) | eval arm `--fact-keys … --fact-extractor paper` |
-| F2 | Fact keys, gbrain's production facts extractor as shipped | eval arm `--fact-extractor production` |
+| F2 | Fact keys, foresights's production facts extractor as shipped | eval arm `--fact-extractor production` |
 | F3 | Fact keys merged into the keyword index instead of embeddings | eval probe |
 | F4 | Facts as separately ranked keys (rank merging) | eval probe, expected to lose |
 | T1 | Soft time scope, reserved slots (top ⌈k/2⌉ kept) | eval arm `--time-scope reserved` |
@@ -30,7 +30,7 @@ year" counts inside a window and keeps its range).
   (same question ids in both), defined by the eval harness owner. Every
   mechanism choice (chunk vs page assignment, reserved vs partition, notes
   on/off/auto) uses only these questions.
-- **Sealed:** LoCoMo (never used by gbrain for tuning) and the sealed split of
+- **Sealed:** LoCoMo (never used by foresights for tuning) and the sealed split of
   LongMemEval-M. LongMemEval-S questions were all used for earlier ranking
   decisions, so M-sealed is reported as disclosed confirmation, never as sole
   proof. Sealed runs are executed once, by the eval custodian, after every
@@ -133,8 +133,8 @@ Recorded before any sealed cell runs.
    gate on LoCoMo and are removed; the time scope (T1/T2) failed its gate;
    notes-first reading (R2) showed no gain and was removed. The date frame
    (R1) is the only mechanism going to held-out data.
-2. **Frozen build.** Candidate gbrain
-   `2815a8368cb38d2bbc8bf23bf2c3d2ca34aa6756`; baseline gbrain
+2. **Frozen build.** Candidate foresights
+   `2815a8368cb38d2bbc8bf23bf2c3d2ca34aa6756`; baseline foresights
    `67c4ff27bd0a5a8a02ccb66cd663d3aa1daf9969` (the master the candidate
    contains). Later commits on the branch that change only documentation do
    not change the frozen build. (Corrected before any sealed cell ran: the

@@ -6,7 +6,7 @@
  * any index, so on a large request table it was a sequential scan that hit the
  * statement timeout after the paid children ran. The migration that builds
  * `persistence_requests_request_id` has the v179 online-index shape; the
- * Postgres blob omits the index, PGLite's carries it; `gbrain repair
+ * Postgres blob omits the index, PGLite's carries it; `foresights repair
  * request-indexes` rebuilds a dropped or INVALID one on a current schema.
  *
  * The migration is found by its name, never by its number: the number is
@@ -97,15 +97,15 @@ for (const backend of testBackends()) describe(`[${backend}] #6757 the request-i
     expect(await state()).toBe('valid');
   }, 120_000);
 
-  test('a dropped index is named by doctor and rebuilt by gbrain repair request-indexes; a second repair is a no-op', async () => {
+  test('a dropped index is named by doctor and rebuilt by foresights repair request-indexes; a second repair is a no-op', async () => {
     await engine.executeRaw(`DROP INDEX ${INDEX.name}`);
     const check = await requestIndexesCheck(engine);
     expect(check.status).toBe('warn');
     expect(check.message).toContain(`${INDEX.name} is missing`);
-    expect(check.message).toContain('gbrain repair request-indexes');
+    expect(check.message).toContain('foresights repair request-indexes');
     const scope = await resolveRepairScope(engine);
     const preview = await runRepair(ctx(), requestIndexesRepair, scope, { apply: false });
-    expect(preview).toMatchObject({ affected: 1, apply_command: 'gbrain repair request-indexes --apply' });
+    expect(preview).toMatchObject({ affected: 1, apply_command: 'foresights repair request-indexes --apply' });
     expect(await runRepair(ctx(), requestIndexesRepair, scope, { apply: true })).toMatchObject({ applied: 1, complete: true });
     expect(await state()).toBe('valid');
     expect(await runRepair(ctx(), requestIndexesRepair, scope, { apply: true })).toMatchObject({ affected: 0, applied: 0, complete: true });

@@ -1,10 +1,10 @@
 /**
- * gbrain claw-test CLI dispatch tests.
+ * foresights claw-test CLI dispatch tests.
  *
  * These tests exercise the harness's argument parsing, scenario loading,
  * agent registry resolution, and friction-report path. They do NOT spawn
- * real gbrain commands (no built binary in CI yet); the canonical scripted
- * E2E that walks `gbrain init → import → query → extract → verify` lives
+ * real foresights commands (no built binary in CI yet); the canonical scripted
+ * E2E that walks `foresights init → import → query → extract → verify` lives
  * in test/claw-test.slow.test.ts and gates on a built binary.
  */
 
@@ -232,7 +232,7 @@ describe('HermesRunner invoke argv/env (shim — no hermes binary needed)', () =
     // forward it or env-only OpenRouter operators get "no inference provider".
     process.env.OPENROUTER_API_KEY = 'or-sentinel-91c4';
     // Removed from BASE_ENV_ALLOWLIST in the adversarial review: an inherited
-    // GBRAIN_DATABASE_URL would flip only the AGENT's gbrain to Postgres while
+    // GBRAIN_DATABASE_URL would flip only the AGENT's foresights to Postgres while
     // staging + the oracle stay on the hermetic PGLite (split-brain).
     process.env.GBRAIN_DATABASE_URL = 'postgres://must-not-leak';
     try {
@@ -473,7 +473,7 @@ describe('GrokRunner vendor-config tripwire + preamble resilience (shim)', () =>
     }
   });
 
-  test('stays silent without a gbrain vendor entry; a broken --version never fails the run', async () => {
+  test('stays silent without a foresights vendor entry; a broken --version never fails the run', async () => {
     const home = mkdtempSync(join(tmpdir(), 'grok-vendor-'));
     try {
       writeFileSync(join(home, '.claude.json'), JSON.stringify({ mcpServers: { other: {} } }));

@@ -50,7 +50,7 @@ describe('generateLaunchdPlist for an external brain (#8017)', () => {
 
   test('launchd starts /bin/bash with the wrapper, and logs on the home volume', () => {
     const plist = generateLaunchdPlist(join(EXTERNAL, 'autopilot-run.sh'), HOST, job(EXTERNAL));
-    expect(plist).toMatch(/<key>ProgramArguments<\/key><array>\s*<string>\/bin\/bash<\/string>\s*<string>\/Volumes\/brain-disk\/gbrain\/\.gbrain\/autopilot-run\.sh<\/string>\s*<\/array>/);
+    expect(plist).toMatch(/<key>ProgramArguments<\/key><array>\s*<string>\/bin\/bash<\/string>\s*<string>\/Volumes\/brain-disk\/(?:foresights|gbrain)\/\.(?:foresights|gbrain)\/autopilot-run\.sh<\/string>\s*<\/array>/);
     expect(plist).toContain(`<key>StandardOutPath</key><string>${HOST}/Library/Logs/gbrain/${LABEL}.log</string>`);
     expect(plist).toContain(`<key>StandardErrorPath</key><string>${HOST}/Library/Logs/gbrain/${LABEL}.err</string>`);
     expect(plist).not.toContain('<string>/Volumes/brain-disk/gbrain/.gbrain/autopilot.log</string>');

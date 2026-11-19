@@ -1,5 +1,5 @@
 /**
- * #5693: two `gbrain apply-migrations` runners must never orchestrate the same
+ * #5693: two `foresights apply-migrations` runners must never orchestrate the same
  * brain at once. The first runner holds the orchestration lock through its
  * final status; a second runner refuses, naming the holder's host and pid,
  * and exits with the "already running" status instead of re-running every

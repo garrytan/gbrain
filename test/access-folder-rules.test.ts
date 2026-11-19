@@ -6,7 +6,7 @@
  *    (nested member and group rules both pass); unbound credentials, other
  *    members, granted_sources bots and both escape hatches read nothing there.
  *    Narrowing applies at once; widening (a rule removed, readers added) is
- *    held until a previewed, hash-bound gbrain access apply. Pages under a
+ *    held until a previewed, hash-bound foresights access apply. Pages under a
  *    narrowing still being stamped read as nobody.
  * 2. Fails when: a folder-ruled page leaks to an unlisted caller on a read
  *    path or under a hatch; a widening applies without approval; an

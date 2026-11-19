@@ -1,5 +1,5 @@
 /**
- * `gbrain repair fences` (#6188): repairs malformed facts and takes fences
+ * `foresights repair fences` (#6188): repairs malformed facts and takes fences
  * that sync held, that pages store, or that a checkout holds unsynced.
  *
  * Candidates come from the fence census (holds, stored pages, files), after
@@ -123,7 +123,7 @@ const ROTATION_OP = 'fence-repair-rotation';
 /** Held because no measured model has a key: the exact choice the user makes. */
 function noMeasuredModel(rows: readonly number[]): string {
   return `No model measured accurate enough for fence repair has a provider key here (${FENCE_REPAIR_MEASURED_MODELS.join(', ')}) and ${FENCE_REPAIR_MODEL_KEY} is unset, `
-    + `so row(s) ${rows.join(', ') || '?'} stay held. Fix them by hand, or ask the user which model to trust, then: gbrain config set ${FENCE_REPAIR_MODEL_KEY} <provider:model>.`;
+    + `so row(s) ${rows.join(', ') || '?'} stay held. Fix them by hand, or ask the user which model to trust, then: foresights config set ${FENCE_REPAIR_MODEL_KEY} <provider:model>.`;
 }
 
 function previewArgv(scope: RepairScope, selection: Selection): string[] {
@@ -282,7 +282,7 @@ export const fencesRepair: RepairHandler = {
       const read = await readFenceTarget(engine, src, { key: cand.key, path: cand.path });
       if (!read.ok) {
         if (read.reason !== 'gone') await keep({ item: name, reason: read.reason, tier: 'manual', resolution: read.reason === 'origin_conflict' ? read.message : read.reason === 'unsafe_path'
-          ? `${cand.path} is a symlink, sits under one, or resolves outside the source root; gbrain never writes through one. Replace it with the real file.`
+          ? `${cand.path} is a symlink, sits under one, or resolves outside the source root; foresights never writes through one. Replace it with the real file.`
           : `${cand.path} is not valid UTF-8; re-save it as UTF-8 and preview again.` });
         continue;
       }
@@ -297,7 +297,7 @@ export const fencesRepair: RepairHandler = {
         mode: target.mode, before: target.before, revision: target.snapshot?.revision ?? null, page_id: target.snapshot?.page.id ?? null, held: isHeld };
       if (analysis.status === 'proposal') {
         const bytes = afterBytes(target, analysis.after);
-        if (!bytes) { await keep({ item: name, reason: 'unparseable', tier: 'manual', resolution: `gbrain could not place the repaired fence back into ${target.path}; edit the fence there by hand.` }); continue; }
+        if (!bytes) { await keep({ item: name, reason: 'unparseable', tier: 'manual', resolution: `foresights could not place the repaired fence back into ${target.path}; edit the fence there by hand.` }); continue; }
         const at = fixLocation(analysis.fixes, []);
         approved.push({ ...base, tier: analysis.tier, after: bytes.sha, classes: classesOf(analysis.fixes), ...at, estimate_usd: 0, llm_waiting: 0 });
         const beforeText = target.content ?? `${target.page.compiled_truth}\n${target.page.timeline}`;
@@ -309,7 +309,7 @@ export const fencesRepair: RepairHandler = {
       const llmHeld = (reason: FenceReason, resolution: string, next: string | null = null) => keep({ item: name, reason, tier: 'llm', resolution, rows: at.rows }, next);
       if (!s.llmEnabled) {
         await llmHeld('llm_disabled', `Model repair is off (${selection.no_llm ? '--no-llm' : 'fences.repair.llm false'}), so row(s) ${at.rows.join(', ') || '?'} stay held (${reasons.join(', ')}). `
-          + 'Fix them by hand, or ask the user before turning model repair on: gbrain config set fences.repair.llm true.');
+          + 'Fix them by hand, or ask the user before turning model repair on: foresights config set fences.repair.llm true.');
         continue;
       }
       const model = s.model;
@@ -317,25 +317,25 @@ export const fencesRepair: RepairHandler = {
       if (target.mode === 'managed' && target.snapshot && !target.snapshot.page.deleted_at) {
         const fileTags = new Set(parseMarkdown(target.content ?? '', target.path ?? 'page.md').tags);
         if (target.snapshot.tags.some(tag => !fileTags.has(tag))) {
-          await keep({ item: name, reason: 'canonical_overlay', tier: 'manual', resolution: `The page of ${target.path} carries tags its file does not, so a repaired file could not publish as written; add the tags to the file's frontmatter (gbrain get --source ${src.id} -- ${target.slug} shows them), then preview again.` });
+          await keep({ item: name, reason: 'canonical_overlay', tier: 'manual', resolution: `The page of ${target.path} carries tags its file does not, so a repaired file could not publish as written; add the tags to the file's frontmatter (foresights get --source ${src.id} -- ${target.slug} shows them), then preview again.` });
           continue;
         }
       }
       const estimate = tier3Estimate(analysis.requests, { model, overrides: s.overrides, capSource: s.capSource }, analysis.tails);
       if (!estimate.ok) {
-        await llmHeld('no_pricing', `A spend cap is set but gbrain has no price for ${model}. ${estimate.guidance.lookup} Register it with: ${estimate.guidance.register_command}`);
+        await llmHeld('no_pricing', `A spend cap is set but foresights has no price for ${model}. ${estimate.guidance.lookup} Register it with: ${estimate.guidance.register_command}`);
         continue;
       }
       if (estimate.estimated && !unpricedWarned) {
         unpricedWarned = true;
-        warnings.push(`gbrain has no price for the fence repair model ${model}; model repair runs under the default caps and is metered at an estimated ceiling (the highest chat rate gbrain knows). Make it exact with: ${pricingSetCommand(model, 'chat')}`);
+        warnings.push(`foresights has no price for the fence repair model ${model}; model repair runs under the default caps and is metered at an estimated ceiling (the highest chat rate foresights knows). Make it exact with: ${pricingSetCommand(model, 'chat')}`);
       }
       if (s.perPageUsd === 0 || s.perDayUsd === 0) {
-        await llmHeld('budget_exhausted', `Model repair spend is set to 0 (fences.repair.max_usd_per_${s.perPageUsd === 0 ? 'page' : 'day'}), so these rows stay held. Raising it is the user's call: gbrain config set fences.repair.max_usd_per_${s.perPageUsd === 0 ? 'page' : 'day'} <usd>.`);
+        await llmHeld('budget_exhausted', `Model repair spend is set to 0 (fences.repair.max_usd_per_${s.perPageUsd === 0 ? 'page' : 'day'}), so these rows stay held. Raising it is the user's call: foresights config set fences.repair.max_usd_per_${s.perPageUsd === 0 ? 'page' : 'day'} <usd>.`);
         continue;
       }
       if (estimate.usd > s.perPageUsd + 1e-9) {
-        await llmHeld('budget_exhausted', `The estimated model cost ($${estimate.usd.toFixed(4)}) exceeds fences.repair.max_usd_per_page ($${s.perPageUsd.toFixed(2)}). Raising it is the user's call: gbrain config set fences.repair.max_usd_per_page <usd>.`);
+        await llmHeld('budget_exhausted', `The estimated model cost ($${estimate.usd.toFixed(4)}) exceeds fences.repair.max_usd_per_page ($${s.perPageUsd.toFixed(2)}). Raising it is the user's call: foresights config set fences.repair.max_usd_per_page <usd>.`);
         continue;
       }
       const memo = await store.read(attemptCandidate(target, src.incarnation));
@@ -375,7 +375,7 @@ export const fencesRepair: RepairHandler = {
       llm: { usd: llmUsd, cap_remaining_usd: s.llmEnabled ? s.dayRemaining : 0 }, scan: { fresh_at: freshAt, partial } };
   },
   async apply(ctx, raw, opts): Promise<RepairItemOutcome> {
-    if (ctx.remote !== false) throw trustedCliRequired('gbrain repair fences writes files and may call a paid model, so it runs only from the trusted local CLI or the maintenance job on the brain host.');
+    if (ctx.remote !== false) throw trustedCliRequired('foresights repair fences writes files and may call a paid model, so it runs only from the trusted local CLI or the maintenance job on the brain host.');
     const { entry, hash, last } = raw as FenceItem;
     try {
       return await retireAfterLastItem(ctx.engine, 'fences', hash, last, () => applyFence(ctx, entry, { embed: opts?.embed === true, expect: hash, allowanceUsd: opts?.llmAllowanceUsd, deadline: opts?.deadline, noLlm: opts?.noLlm === true }));
@@ -435,7 +435,7 @@ async function applyFence(ctx: OperationContext, entry: ApprovedFence, opts: App
   if (!read.ok) return skipped(moved, `The candidate is ${read.reason === 'gone' ? 'gone' : read.reason}.`);
   const target = read.target;
   if (target.before !== entry.before || (target.snapshot?.revision ?? null) !== entry.revision && target.mode !== 'managed' && target.mode !== 'legacy') {
-    return skipped(moved, `${entry.path ?? entry.slug} changed since it was ${opts.expect ? 'previewed' : 'read'}; preview again with gbrain repair fences --source ${src.id}.`);
+    return skipped(moved, `${entry.path ?? entry.slug} changed since it was ${opts.expect ? 'previewed' : 'read'}; preview again with foresights repair fences --source ${src.id}.`);
   }
   const runModel = (await settings(engine, { noLlm: opts.noLlm })).model;
   const analysisFor = (tailProse?: ReadonlySet<string>) => analysisOpts(engine, target, src, { apply: true, expect: opts.expect ?? null, model: runModel })
@@ -506,7 +506,7 @@ async function tier3(ctx: OperationContext, src: FenceSource, target: FenceTarge
     const message = opts.allowanceUsd !== undefined && !result.resetsAt
       ? `Stopped: ${result.message} ${entry.llm_waiting} page(s) wait for the model. Rerun with a larger --max-usd, or leave them to the maintenance run.`
       : `Stopped: the daily fence-repair budget is spent ($${(day?.committedUsd ?? 0).toFixed(4)} of $${s.perDayUsd.toFixed(2)} today). It resets at ${resets}; `
-        + `${entry.llm_waiting} page(s) wait for the model and the next run after that repairs them. Raising the cap is the user's call: gbrain config set fences.repair.max_usd_per_day <usd>.`;
+        + `${entry.llm_waiting} page(s) wait for the model and the next run after that repairs them. Raising the cap is the user's call: foresights config set fences.repair.max_usd_per_day <usd>.`;
     return { ...withSpend, stop: { reason: 'budget_exhausted', message, fix: { argv: ['gbrain', 'config', 'set', 'fences.repair.max_usd_per_day', '<usd>'], consent: ['paid'], actor: 'agent', requires_exclusive: false,
       why: `Model fence repair stopped at the daily cap; ${entry.llm_waiting} page(s) wait until ${resets} unless the cap is raised.`,
       user_message: `The daily model budget for fence repair ($${s.perDayUsd.toFixed(2)}) is spent and ${entry.llm_waiting} page(s) still wait. Raise it for today, or let them repair after ${resets}?`,

@@ -1,5 +1,5 @@
 // #7942: MCP schema inspection resolves the caller's source pack, the same
-// tiers capture and `gbrain schema active --source` use (per-source DB config).
+// tiers capture and `foresights schema active --source` use (per-source DB config).
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';

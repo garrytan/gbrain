@@ -1,5 +1,5 @@
 /**
- * `gbrain models` per-task routing report: the `models.dream.extract_atoms`
+ * `foresights models` per-task routing report: the `models.dream.extract_atoms`
  * row, and the resolver it shares with `runPhaseExtractAtoms()`.
  *
  * The row calls `resolveExtractAtomsModelWithSource()`, the SAME function the
@@ -66,7 +66,7 @@ async function captureModelsJson(engine: StubConfigEngine): Promise<{
   return JSON.parse(stdout);
 }
 
-describe('gbrain models per-task report — extract_atoms entry', () => {
+describe('foresights models per-task report — extract_atoms entry', () => {
   test('reports models.dream.extract_atoms with its configured routing', async () => {
     const engine = new StubConfigEngine();
     engine.set('models.dream.extract_atoms', 'openai:gpt-5.6-luna');
@@ -125,7 +125,7 @@ describe('gbrain models per-task report — extract_atoms entry', () => {
 
     engine.set('models.dream.extract_atoms', 'anthropic:claude-haiku-4-5');
     entry = (await captureModelsJson(engine)).per_task.find((r) => r.key === 'models.dream.extract_atoms');
-    expect(entry!.newer_available?.command).toBe('gbrain config set models.dream.extract_atoms anthropic:claude-haiku-5-5');
+    expect(entry!.newer_available?.command).toBe('foresights config set models.dream.extract_atoms anthropic:claude-haiku-5-5');
   });
 
   test('resolver source is config only for its own key', async () => {

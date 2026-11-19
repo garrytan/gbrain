@@ -1,7 +1,7 @@
 /**
  * Guest notes, slice 4 (GBRA-504, decision J1): the brain owner keeps a guest note as an owner page.
  *
- * promote_guest_note (CLI: gbrain guests promote) runs only for the owner: the trusted local CLI outside
+ * promote_guest_note (CLI: foresights guests promote) runs only for the owner: the trusted local CLI outside
  * enforced-member mode and outside an --as preview, or a remote or stdio caller that reads as the owner (bound to
  * config access.owner_member, speaking for no one else). Everyone else is refused guest_promotion_owner_only before
  * anything is read. The owner page is a normal put_page through the caller's own write path (git first where the target
@@ -23,14 +23,14 @@ import type { BrainEngine } from '../engine.ts';
 const DOCS = 'docs/guides/write-refusals.md#guest_promotion_owner_only';
 
 export function guestPromotionOwnerOnly(slug: unknown): OperationError {
-  const command = typeof slug === 'string' && slug.trim() ? 'gbrain guests promote ' + slug.trim().toLowerCase() : 'gbrain guests promote with the note\'s slug';
+  const command = typeof slug === 'string' && slug.trim() ? 'foresights guests promote ' + slug.trim().toLowerCase() : 'foresights guests promote with the note\'s slug';
   return new OperationError('guest_promotion_owner_only', 'Only the brain owner can keep a guest note as an owner page, so nothing was read or written.',
     'Do not retry. Ask the brain owner; if they want to keep the note, they run ' + command + ' on the brain host.', DOCS);
 }
 
 /**
  * The owner, and only the owner, may promote (see the module comment). Enforced-member mode never reaches here as a
- * trusted local caller: its gate (cli/enforced-member-classes.ts) refuses gbrain guests and promote_guest_note.
+ * trusted local caller: its gate (cli/enforced-member-classes.ts) refuses foresights guests and promote_guest_note.
  */
 export function isGuestPromotionOwner(ctx: Pick<OperationContext, 'remote' | 'viaSubagent' | 'accessIdentity' | 'applyRemoteReadPolicy'>): boolean {
   if (ctx.viaSubagent) return false;
@@ -54,7 +54,7 @@ async function guestNote(ctx: OperationContext, slug: string, guestSource: strin
   const found = rows.filter(r => !readable || readable.includes(r.source_id));
   if (!found.length) {
     throw new OperationError('page_not_found', 'No live guest note ' + slug + (guestSource ? ' in source ' + guestSource : '') + ' is visible here, so nothing was promoted.',
-      'Pass the slug of a page in a guest source (find_pages or gbrain guests promote --help); a deleted note is restored by the brain owner first.');
+      'Pass the slug of a page in a guest source (find_pages or foresights guests promote --help); a deleted note is restored by the brain owner first.');
   }
   if (found.length > 1) {
     throw new OperationError('invalid_params', 'Guest note ' + slug + ' exists in several guest sources (' + found.map(r => r.source_id).join(', ') + ').',

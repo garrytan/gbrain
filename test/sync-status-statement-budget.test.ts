@@ -1,5 +1,5 @@
 /**
- * #6712 PR 3 (L6): `gbrain sync status` costs a fixed number of statements
+ * #6712 PR 3 (L6): `foresights sync status` costs a fixed number of statements
  * however many request rows the source has.
  *
  * Protects: the plain status (and the --detail status) of a source with 61,000

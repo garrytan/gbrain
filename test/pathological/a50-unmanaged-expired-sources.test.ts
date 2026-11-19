@@ -6,7 +6,7 @@
  * Protects: a source whose cascade delete fails with an item-scoped error (a
  * statement timeout on a large source, a lock timeout) is reported in
  * `blocked` with its typed code and the manual purge as a fix
- * (`tell_user_to_run gbrain sources purge <id> --confirm-destructive`), and the
+ * (`tell_user_to_run foresights sources purge <id> --confirm-destructive`), and the
  * sweep goes on to the next source, so the purge phase's page purge and GC
  * still run. A run-scoped failure (lost connection, failed transaction) still
  * stops the sweep. Nothing is persisted, so the next sweep retries the source.
@@ -84,7 +84,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       expect(result.purged).toEqual(healthy);
       const blocked = result.blocked.find(b => b.id === poison);
       expectItemFailure(blocked ? { key: blocked.id, code: blocked.code, fix: blocked.fix } : undefined,
-        { key: poison, code: 'statement_timeout', fix: new RegExp(`"next":"tell_user_to_run".*"command":"gbrain sources purge ${poison} --confirm-destructive"|"command":"gbrain sources purge ${poison} --confirm-destructive".*"next":"tell_user_to_run"`) });
+        { key: poison, code: 'statement_timeout', fix: new RegExp(`"next":"tell_user_to_run".*"command":"foresights sources purge ${poison} --confirm-destructive"|"command":"foresights sources purge ${poison} --confirm-destructive".*"next":"tell_user_to_run"`) });
       expect(await sourceIds(engine, [poison, ...healthy, live])).toEqual([poison, live]);
       expectOthersUnchanged(poisonBefore, await snapshotItems(engine, poison));
       expectOthersUnchanged(liveBefore, await snapshotItems(engine, live));

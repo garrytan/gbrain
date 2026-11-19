@@ -68,7 +68,7 @@ export const DEAD_OWNER_SCAN_MS = 5_000;
 const phaseScope = new AsyncLocalStorage<{ observation: PhaseObservation; startedAt: number }>();
 
 /** #5233: one-line, redacted, length-capped error text for the consumer's stderr line. */
-/** #5929: the failed receipt's message plus, for an owner exception, its class, errno and gbrain frame (this log is owner-side). */
+/** #5929: the failed receipt's message plus, for an owner exception, its class, errno and foresights frame (this log is owner-side). */
 function failureLogText(row: WriteRequest): string | undefined {
   const extra = ownerExceptionLogText(row.error_detail);
   return row.error_message || extra ? `${row.error_message ?? ''}${extra}`.replaceAll('"', "'") : undefined;
@@ -872,7 +872,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     if (!this.opts.drainNotice || (!done && (now - drain.since < DRAIN_NOTICE_AFTER_MS || now - drain.noticedAt < DRAIN_NOTICE_EVERY_MS))) return;
     drain.noticedAt = now;
     process.stderr.write(`[persistence] phase=effects_drain state=${done ? 'done' : 'running'} settled_noop_embeddings=${drain.settled} ran=${drain.ran}`
-      + ` elapsed_s=${Math.round((now - drain.since) / 1000)}; requests are served while it drains; status: gbrain sources writer status --json\n`);
+      + ` elapsed_s=${Math.round((now - drain.since) / 1000)}; requests are served while it drains; status: foresights sources writer status --json\n`);
   }
   foregroundCompletions(worktreeId: string): number { return this.foregroundCounts.get(worktreeId) ?? 0; }
   /** CEO-A7: this process holds the claim, so its outcome reaches waiters through `onSettled` without a read. */
@@ -1007,8 +1007,8 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       this.lastLog = { key, at };
     }
     if (!this.opts.onError) process.stderr.write(`[persistence] phase=${phase} reason=${code}${poolCap ? ' cause=pool_exhausted' : ''}${detail ? ` message="${detail}"` : ''}${timing}${row ? requestLogFields(row) : ''}`
-      + '; unfinished work remains tracked; fix: gbrain sources writer status --json'
-      + `${poolCap ? '; pool: every gbrain process on this database shares the pooler\'s client limit, so run fewer long-running ones (share one gbrain serve --http) or raise the limit (docs/ENGINES.md#pool-sizing)' : ''}`
+      + '; unfinished work remains tracked; fix: foresights sources writer status --json'
+      + `${poolCap ? '; pool: every foresights process on this database shares the pooler\'s client limit, so run fewer long-running ones (share one foresights serve --http) or raise the limit (docs/ENGINES.md#pool-sizing)' : ''}`
       + '; docs: docs/ENGINES.md#persistence-consumer-log\n');
   }
   /** #5373: tracks work that outlived its claim until it settles; the returned promise never rejects. */

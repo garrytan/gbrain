@@ -423,7 +423,7 @@ describe('E2E synthesize — round-trip self-consumption guard (v0.23.2)', () =>
   }, 30_000);
 
   test('round-trip: bypassDreamGuard=true re-enables ingestion of marked output', async () => {
-    // Power-user escape hatch (`gbrain dream --unsafe-bypass-dream-guard`).
+    // Power-user escape hatch (`foresights dream --unsafe-bypass-dream-guard`).
     // The same marked file that was skipped above now gets discovered when
     // bypassDreamGuard is set at the phase entry. Proves the bypass plumbing
     // reaches discoverTranscripts at phase scope, not just at the

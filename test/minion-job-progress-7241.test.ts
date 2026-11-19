@@ -1,6 +1,6 @@
 /**
  * #7241: a live `sync`, `autopilot-cycle` or `autopilot-global-maintenance` job writes its phase to
- * `minion_jobs.progress`, so `gbrain jobs get` shows what it is doing instead of an empty progress column.
+ * `minion_jobs.progress`, so `foresights jobs get` shows what it is doing instead of an empty progress column.
  *
  * Each case drives the real handler against a real queue row claimed with a lock token (the worker's
  * token-fenced context from buildJobContext), then reads the column. A progress write that throws never

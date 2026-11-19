@@ -117,7 +117,7 @@ test('a stopped drain is resumable, its backlog is readable from any process, an
     const before = await imported();
     expect(before).toBeGreaterThan(0);
     const [backlog] = await readManagedSyncBacklog(engine, [f.id]);
-    expect(backlog).toMatchObject({ source_id: f.id, remaining: 6 - before, resume_command: `gbrain sync --source ${f.id} --no-pull --no-embed`,
+    expect(backlog).toMatchObject({ source_id: f.id, remaining: 6 - before, resume_command: `foresights sync --source ${f.id} --no-pull --no-embed`,
       rate_pages_per_min: null, pass: { outcome: 'resumable', stop_reason: 'timeout' } });
     expect(backlog!.index + backlog!.remaining).toBe(backlog!.total);
     const second = await performSync(engine, { sourceId: f.id, noPull: true, noEmbed: true, drain: true });

@@ -131,7 +131,7 @@ describe('recall policy through actual CLI and stdio MCP', () => {
     expect(body.results.map((row: any) => row.chunk)).toEqual(['The zebra telescope calibration code is QX-17. Store it in the blue case.']);
   });
 
-  test('gbrain protocol --json advertises optional recall input and response policy fields', () => {
+  test('foresights protocol --json advertises optional recall input and response policy fields', () => {
     const result = call(['protocol', '--json']);
     expect(result.status).toBe(0);
     const document = JSON.parse(result.stdout);
@@ -226,7 +226,7 @@ describe('recall policy through actual CLI and stdio MCP', () => {
     expect(JSON.parse(result.stdout)).toMatchObject({ error: 'invalid_params', protocol_version: 1 });
   });
 
-  test('gbrain call forwards query_first and preserves the legacy control on the same stored corpus', () => {
+  test('foresights call forwards query_first and preserves the legacy control on the same stored corpus', () => {
     const legacy = call(['call', 'recall', JSON.stringify({ ...params, budget_policy: 'facts_first' })]);
     expect(legacy.status).toBe(0);
     const baseline = JSON.parse(legacy.stdout);

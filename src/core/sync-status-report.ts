@@ -1,5 +1,5 @@
 /**
- * Per-source sync status report (`gbrain sources status` + the
+ * Per-source sync status report (`foresights sources status` + the
  * get_status_snapshot MCP op). Peeled out of src/commands/sync.ts
  * (containment sprint C13-C14) as a pure move.
  */
@@ -12,7 +12,7 @@ import { isSyncDisabledConfig } from './sync-policy.ts';
 import { lagFromContentMs } from './source-health.ts';
 
 /**
- * v0.40.3.0 — read-only per-source dashboard for `gbrain sources status`.
+ * v0.40.3.0 — read-only per-source dashboard for `foresights sources status`.
  *
  * Aggregates from existing tables (no schema changes):
  *   - sources:        last_commit, last_sync_at, archived, config.syncEnabled
@@ -26,7 +26,7 @@ import { lagFromContentMs } from './source-health.ts';
  *   - sync-failures.jsonl: unacknowledged failures (brain-global; the
  *     JSONL log isn't per-source. v0.40.4 TODO source-scopes it.)
  *
- * Staleness thresholds match `gbrain doctor`'s sync-freshness rule
+ * Staleness thresholds match `foresights doctor`'s sync-freshness rule
  * (24h / 72h). Sources that have NEVER synced (last_sync_at IS NULL)
  * report `staleness_hours: null` so callers can disambiguate "first run
  * pending" from "32h since last successful sync".
@@ -285,7 +285,7 @@ export async function buildSyncStatusReport(
 /**
  * v0.40.3.0 — render a `SyncStatusReport` as a human-readable table.
  *
- * `sink` defaults to `process.stdout` so the bare `gbrain sources status`
+ * `sink` defaults to `process.stdout` so the bare `foresights sources status`
  * invocation writes its table to stdout. `--json` callers don't use
  * this — they emit `JSON.stringify(report)` to stdout directly.
  */
@@ -339,6 +339,6 @@ export function printSyncStatusReport(
   write(`\nUnacknowledged sync failures (brain-wide): ${report.unacknowledged_failures}`);
   const severe = report.sources.filter((s) => s.staleness_class === 'severe').length;
   if (severe > 0) {
-    write(`WARNING: ${severe} source(s) are SEVERELY stale (>72h). Run \`gbrain sync --all\` to refresh.`);
+    write(`WARNING: ${severe} source(s) are SEVERELY stale (>72h). Run \`foresights sync --all\` to refresh.`);
   }
 }

@@ -50,7 +50,7 @@ export function computePgliteDataDirCheck(
     (a) => Date.now() - a.ts < REPAIR_RECURRENCE_WINDOW_MS,
   ).length;
   const recurrence = recentAttempts >= REPAIR_RECURRENCE_THRESHOLD
-    ? ` Auto-repair has run ${recentAttempts}x this week — the corruption keeps regenerating (likely an unclean-shutdown loop). Consider switching engines (docs/ENGINES.md: \`gbrain init --supabase\` or native Postgres).`
+    ? ` Auto-repair has run ${recentAttempts}x this week — the corruption keeps regenerating (likely an unclean-shutdown loop). Consider switching engines (docs/ENGINES.md: \`foresights init --supabase\` or native Postgres).`
     : '';
 
   switch (diagnosis.verdict) {
@@ -60,7 +60,7 @@ export function computePgliteDataDirCheck(
         status: 'warn',
         message:
           `Could not connect, and the PGLite data-dir lock is held by live PID ${diagnosis.lockHolderPid} — ` +
-          `another gbrain process (often \`gbrain serve\`) has the brain open. Stop it and re-run.${backupNote}`,
+          `another foresights process (often \`foresights serve\`) has the brain open. Stop it and re-run.${backupNote}`,
         remediation_status: 'human_only',
         ...(diagnosis.lockHolderPid ? { fix: exclusiveFix(agentFix(['gbrain', 'doctor', '--json'],
           'Re-runs doctor once it has the brain to itself.', 'pglite_data_dir', { requires_exclusive: true }),
@@ -70,7 +70,7 @@ export function computePgliteDataDirCheck(
       return {
         name: 'pglite_data_dir',
         status: 'warn',
-        message: `No PGLite data dir at ${dataDir}. Run \`gbrain init --pglite\` to create one.`,
+        message: `No PGLite data dir at ${dataDir}. Run \`foresights init --pglite\` to create one.`,
         remediation_status: 'human_only',
       };
     case 'unsupported-layout':
@@ -79,8 +79,8 @@ export function computePgliteDataDirCheck(
         status: 'fail',
         message:
           `PGLite data dir at ${dataDir} is not repairable in place (${diagnosis.detail}). ` +
-          `Rebuild from your brain repo: \`gbrain reinit-pglite\` (or back up ~/.gbrain, move the dir aside, ` +
-          `\`gbrain init --pglite\`, re-add sources + sync + embed).${backupNote}${recurrence}`,
+          `Rebuild from your brain repo: \`foresights reinit-pglite\` (or back up ~/.gbrain, move the dir aside, ` +
+          `\`foresights init --pglite\`, re-add sources + sync + embed).${backupNote}${recurrence}`,
         remediation_status: 'human_only',
       };
     case 'wal-corruption-likely':
@@ -90,7 +90,7 @@ export function computePgliteDataDirCheck(
         message:
           `PGLite failed to open and the data dir shows unclean-shutdown state (${diagnosis.detail}). ` +
           `This is the torn-WAL class behind issue #223 — repairable in place, data preserved: ` +
-          `\`gbrain pglite-repair --dry-run\` diagnoses it and prints the plan-bound repair command to run once the user approves.${backupNote}${recurrence}`,
+          `\`foresights pglite-repair --dry-run\` diagnoses it and prints the plan-bound repair command to run once the user approves.${backupNote}${recurrence}`,
         remediation_status: 'human_only',
         fix: pgliteRepairPreview(),
       };
@@ -102,9 +102,9 @@ export function computePgliteDataDirCheck(
         message:
           `PGLite failed to open but the data dir layout validates (${diagnosis.detail}). ` +
           `IF the connect error mentions \`Aborted()\` this is likely torn WAL state — ` +
-          `\`gbrain pglite-repair --dry-run\` diagnoses it and prints the plan-bound in-place repair command to run once the user approves ` +
+          `\`foresights pglite-repair --dry-run\` diagnoses it and prints the plan-bound in-place repair command to run once the user approves ` +
           `(repair discards the un-checkpointed WAL tail — don't run it for lock-contention or ` +
-          `catalog-corruption errors; 58P01/pgvector load failures need \`gbrain reinit-pglite\` instead).${backupNote}${recurrence}`,
+          `catalog-corruption errors; 58P01/pgvector load failures need \`foresights reinit-pglite\` instead).${backupNote}${recurrence}`,
         remediation_status: 'human_only',
         fix: pgliteRepairPreview(),
       };
@@ -114,13 +114,13 @@ export function computePgliteDataDirCheck(
 /**
  * issue #1685 (GAP A) — the single authoritative "worker is OOM-looping" signal.
  *
- * One `gbrain doctor` line replaces the hours of log archaeology the #1678
+ * One `foresights doctor` line replaces the hours of log archaeology the #1678
  * incident required: `cap=8192MB, N watchdog kills/24h → raise --max-rss`.
  *
  * UNIONS two sources so it's authoritative for BOTH worker modes (CODEX #5):
  *   - SUPERVISED workers: supervisor audit `worker_exited likely_cause=rss_watchdog`,
  *     read cross-week (CODEX #7) so a Mon read doesn't lose a Sun loop.
- *   - BARE `gbrain jobs work`: NO supervisor event is written; the only trace is
+ *   - BARE `foresights jobs work`: NO supervisor event is written; the only trace is
  *     `minion_jobs.error_text = 'aborted: watchdog'` (the same source queue_health
  *     subcheck 3 reads). Reading supervisor-only would miss bare workers entirely
  *     and the queue_health cross-reference would point at an unemitted check.
@@ -202,7 +202,7 @@ export async function computeWorkerOomLoopCheck(
   }
 
   const fixHint =
-    'raise --max-rss (gbrain jobs work --max-rss <bigger>; auto-sizes to min(0.5×RAM,16GB))';
+    'raise --max-rss (foresights jobs work --max-rss <bigger>; auto-sizes to min(0.5×RAM,16GB))';
   const capLabel = capSource === 'breaker' ? `cap=${capMb}MB` : `cap≈${capMb}MB (auto-sized default)`;
   const status: Check['status'] = breakerTripped || oomKills >= 5 ? 'fail' : 'warn';
   return {
@@ -278,7 +278,7 @@ export async function computePoolReapHealthCheck(
       name: 'pool_reap_health',
       status: 'fail',
       message:
-        `gbrain serve could not reconnect a retired connection ${r.connection_recovery_failures}× in last hour ` +
+        `foresights serve could not reconnect a retired connection ${r.connection_recovery_failures}× in last hour ` +
         `(${r.stuck} stuck, ${r.desyncs} desynced, ${r.connection_recoveries} recovered); ${fix}.`,
       details: { reaps: r.reaps, recoveries: r.recoveries, failures: r.failures, ...incidents, fix_hint: fix },
     };
@@ -291,7 +291,7 @@ export async function computePoolReapHealthCheck(
       name: 'pool_reap_health',
       status: 'warn',
       message:
-        `gbrain serve retired ${r.stuck} stuck and ${r.desyncs} desynced connection(s) in last hour ` +
+        `foresights serve retired ${r.stuck} stuck and ${r.desyncs} desynced connection(s) in last hour ` +
         `(${r.connection_recoveries} recovered); ${fix}.`,
       details: { reaps: r.reaps, recoveries: r.recoveries, failures: r.failures, ...incidents, fix_hint: fix },
     };

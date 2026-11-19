@@ -1,5 +1,5 @@
 /**
- * `gbrain skillpack scaffold/reference/remove` — harness lane (cathedral-7).
+ * `foresights skillpack scaffold/reference/remove` — harness lane (cathedral-7).
  *
  * Installs persona-curated bundled skills into a harness's native skills
  * dir (claude-code today; codex/opencode behind an explicit dest until
@@ -229,7 +229,7 @@ function resolveSlugs(gbrainRoot: string, a: HarnessArgs): { slugs: string[]; pe
 }
 
 /**
- * Best-effort engine open for the dual-plane config reads. `gbrain config
+ * Best-effort engine open for the dual-plane config reads. `foresights config
  * set` writes the DB plane, so a file-only read would tell users to run the
  * exact command they already ran. Any failure degrades to the file plane.
  */
@@ -288,8 +288,8 @@ async function stubPreflight(gbrainRoot: string, slugs: readonly string[]): Prom
     if (!publish) {
       console.error(
         'Error: stub mode requires skill publishing to be ON — the stubs point agents at the\n' +
-          'gbrain MCP get_skill op, which is gated by mcp.publish_skills (currently off).\n' +
-          'Enable it first: gbrain config set mcp.publish_skills true',
+          'foresights MCP get_skill op, which is gated by mcp.publish_skills (currently off).\n' +
+          'Enable it first: foresights config set mcp.publish_skills true',
       );
       process.exit(2);
     }
@@ -302,7 +302,7 @@ async function stubPreflight(gbrainRoot: string, slugs: readonly string[]): Prom
       console.error(
         'Error: stub mode could not resolve the skills dir the MCP server would serve\n' +
           'get_skill from (no mcp.skills_dir configured and auto-detection found nothing).\n' +
-          'Point the server at a skills tree: gbrain config set mcp.skills_dir <path>',
+          'Point the server at a skills tree: foresights config set mcp.skills_dir <path>',
       );
       process.exit(2);
     }
@@ -312,7 +312,7 @@ async function stubPreflight(gbrainRoot: string, slugs: readonly string[]): Prom
         `Error: stub mode would install pointers at skills the MCP server cannot serve\n` +
           `from ${serverDir}: ${missing.join(', ')}.\n` +
           'A stub for an unservable skill is a dead pointer. Fix the server skills dir\n' +
-          '(gbrain config set mcp.skills_dir <path>) or drop those skills.',
+          '(foresights config set mcp.skills_dir <path>) or drop those skills.',
       );
       process.exit(2);
     }
@@ -338,7 +338,7 @@ async function stubPreflight(gbrainRoot: string, slugs: readonly string[]): Prom
 export async function cmdScaffoldHarness(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(
-      'gbrain skillpack scaffold --harness <claude-code|openclaw|codex|opencode>\n' +
+      'foresights skillpack scaffold --harness <claude-code|openclaw|codex|opencode>\n' +
         '    [--persona <name>|all] [--skill <slug>]... [--dest PATH] [--scope user|project]\n' +
         '    [--stub] [--workspace PATH] [--skills follow|memory-only] [--dry-run] [--json]\n\n' +
         'Install a persona-curated set of bundled skills into a harness\'s native\n' +
@@ -354,7 +354,7 @@ export async function cmdScaffoldHarness(args: string[]): Promise<void> {
         '  --scope        claude-code only: user (default) → the user-level skills\n' +
         '                 dir; project → <workspace>/.claude/skills.\n' +
         '  --stub         Cold-pull mode: install pointer SKILL.md files that fetch\n' +
-        '                 the body via the gbrain MCP get_skill op (preflight-gated).\n' +
+        '                 the body via the foresights MCP get_skill op (preflight-gated).\n' +
         '  --skills       Explicitly follow the active shared catalog through its\n' +
         '                 source-bound router, or select memory-only. Existing\n' +
         '                 copied skills require a separate reviewed migration.\n' +
@@ -444,7 +444,7 @@ export async function cmdScaffoldHarness(args: string[]): Promise<void> {
             `skipped (plugin-lane additions, not in the openclaw bundle): ${laneOnly.join(', ')}`,
           );
         }
-        console.log('These skills are a fallback: OpenClaw agents seldom open a listed skill on their own. The primary route is the per-turn rule from `gbrain setup openclaw`.');
+        console.log('These skills are a fallback: OpenClaw agents seldom open a listed skill on their own. The primary route is the per-turn rule from `foresights setup openclaw`.');
       }
       process.exit(0);
     }
@@ -467,7 +467,7 @@ export async function cmdScaffoldHarness(args: string[]): Promise<void> {
     });
     if (!result.dryRun) await recordScaffoldBases(dest, result.files.filter(file => file.slug !== null));
 
-    // Coexistence: these same skills may also load from the gbrain plugin
+    // Coexistence: these same skills may also load from the foresights plugin
     // snapshot (marketplace install) — duplicate names in one session.
     const coexistence = {
       plugin_lane_overlap: slugs,
@@ -505,19 +505,19 @@ export async function cmdScaffoldHarness(args: string[]): Promise<void> {
           `\nmode_conflict (${result.summary.modeConflicts.length}): ${result.summary.modeConflicts.join(', ')}\n` +
             `  These skills are already installed in the other mode (the file marker is\n` +
             `  ground truth). Never silently converted — remove them first, then re-run:\n` +
-            `  gbrain skillpack remove --harness ${a.harness}${a.dest ? ' --dest <dir>' : ''} --skill <slug>`,
+            `  foresights skillpack remove --harness ${a.harness}${a.dest ? ' --dest <dir>' : ''} --skill <slug>`,
         );
       }
       // Bridge harnesses only reach here (openclaw returned above): the same
       // names may also load from the marketplace plugin snapshot.
       console.log(
-        `\nNote: these skill names may also load from the gbrain plugin snapshot if the\n` +
+        `\nNote: these skill names may also load from the foresights plugin snapshot if the\n` +
           `marketplace plugin is installed — duplicate names coexist in one session;\n` +
           `prefer one lane per machine.`,
       );
       if (!a.dryRun && result.summary.wroteNew > 0) {
         const target = `${a.dest ? ` --dest ${a.dest}` : ''}${a.scope === 'project' ? ' --scope project' : ''}${a.workspace ? ` --workspace ${a.workspace}` : ''}`;
-        console.log(`\nUpdate lens: gbrain skillpack reference --harness ${a.harness}${target} | remove: gbrain skillpack remove --harness ${a.harness}${target}`);
+        console.log(`\nUpdate lens: foresights skillpack reference --harness ${a.harness}${target} | remove: foresights skillpack remove --harness ${a.harness}${target}`);
       }
     }
     process.exit(0);
@@ -533,10 +533,10 @@ export async function cmdScaffoldHarness(args: string[]): Promise<void> {
 export async function cmdReferenceHarness(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(
-      'gbrain skillpack reference --harness <h> [<slug>] [--dest PATH] [--scope user|project] [--workspace PATH] [--apply-clean-hunks] [--dry-run] [--json]\n\n' +
+      'foresights skillpack reference --harness <h> [<slug>] [--dest PATH] [--scope user|project] [--workspace PATH] [--apply-clean-hunks] [--dry-run] [--json]\n\n' +
         'Targeting resolves like scaffold: explicit dest wins, else the harness\n' +
         'default for the scope (claude-code user scope unless --scope project).\n\n' +
-        'Diff a harness install against gbrain\'s current bundle. Stub installs\n' +
+        'Diff a harness install against foresights\'s current bundle. Stub installs\n' +
         'diff against the RENDERED stub (a fresh stub reads identical). With the\n' +
         'install-time hash ledger, differs splits into local_edit vs\n' +
         'upstream_drift. --apply-clean-hunks lands non-conflicting hunks on\n' +
@@ -546,7 +546,7 @@ export async function cmdReferenceHarness(args: string[]): Promise<void> {
   }
   const a = parseHarnessArgs(args, 'reference --harness');
   if (a.harness === 'openclaw') {
-    console.error('Error: openclaw installs are workspace scaffolds — use `gbrain skillpack reference <name>` (no harness flag).');
+    console.error('Error: openclaw installs are workspace scaffolds — use `foresights skillpack reference <name>` (no harness flag).');
     process.exit(2);
   }
   const gbrainRoot = findGbrainOrDie();
@@ -601,8 +601,8 @@ export async function cmdReferenceHarness(args: string[]): Promise<void> {
       }
       if (result.summary.differs > 0) {
         console.log(
-          '\n  local_edit → your change; keep it (gbrain is reference, not law).\n' +
-            '  upstream_drift → gbrain moved; `gbrain skillpack reference --harness ' + a.harness + ' <slug> --apply-clean-hunks` to align.',
+          '\n  local_edit → your change; keep it (foresights is reference, not law).\n' +
+            '  upstream_drift → foresights moved; `foresights skillpack reference --harness ' + a.harness + ' <slug> --apply-clean-hunks` to align.',
         );
       }
     }
@@ -619,7 +619,7 @@ export async function cmdReferenceHarness(args: string[]): Promise<void> {
 export async function cmdRemove(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h') || args.length === 0) {
     console.log(
-      'gbrain skillpack remove --harness <h> [--dest PATH] [--scope user|project] [--workspace PATH] [--skill <slug>]... [--dry-run] [--json]\n\n' +
+      'foresights skillpack remove --harness <h> [--dest PATH] [--scope user|project] [--workspace PATH] [--skill <slug>]... [--dry-run] [--json]\n\n' +
         'Targeting resolves like scaffold: explicit dest wins, else the harness\n' +
         'default for the scope.\n\n' +
         'Remove files the harness bridge WROTE (the bridge-state ledger) — never\n' +
@@ -754,7 +754,7 @@ export function collectBridgesStatus(gbrainRoot: string): BridgesStatusEntry[] {
 export function printBridgesStatus(gbrainRoot: string): void {
   const entries = collectBridgesStatus(gbrainRoot);
   if (entries.length === 0) return;
-  console.log('\nHarness bridges (gbrain skillpack scaffold with a harness):');
+  console.log('\nHarness bridges (foresights skillpack scaffold with a harness):');
   for (const e of entries) {
     console.log(
       `  ${e.harness.padEnd(12)} ${e.dest}\n` +

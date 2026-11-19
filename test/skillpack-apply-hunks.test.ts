@@ -180,7 +180,7 @@ describe('round-trip: unifiedDiff produces output parseUnifiedDiff + applyHunks 
   });
 
   it('user-edited file: identical diff applies clean to unrelated section', () => {
-    // gbrain bundle and user file both have lines 1-20. Bundle changed
+    // foresights bundle and user file both have lines 1-20. Bundle changed
     // line 5; user changed line 15. Distance is > 2*context, so the
     // hunk's post-context never reaches the user's edit. Apply succeeds.
     const gbrainOld =

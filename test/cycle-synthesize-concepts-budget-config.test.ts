@@ -115,8 +115,8 @@ describe('synthesize_concepts budget comes from cycle.synthesize_concepts.budget
       expect(out.details.budget_usd).toBe(1.5);
       const warning = out.warnings.find((w) => w.includes('invalid value'));
       expect(warning).toContain(KEY);
-      expect(warning).toContain(`gbrain config set ${KEY}`);
-      expect(warning).toContain(`gbrain config get ${KEY}`);
+      expect(warning).toContain(`foresights config set ${KEY}`);
+      expect(warning).toContain(`foresights config get ${KEY}`);
       if (bad !== '0') expect(warning).not.toContain(bad);
       expect(out.stderr).toContain(`${KEY} is set to an invalid value`);
     });
@@ -127,7 +127,7 @@ describe('synthesize_concepts budget comes from cycle.synthesize_concepts.budget
     expect(out.r.summary).toContain('1 over the $1.50 budget → template fallback');
     const capped = out.warnings.find((w) => w.includes('phase budget was reached'));
     expect(capped).toContain('1 LLM-eligible concept(s)');
-    expect(capped).toContain(`gbrain config set ${KEY} <usd>`);
+    expect(capped).toContain(`foresights config set ${KEY} <usd>`);
     expect(out.stderr).toContain('phase budget was reached');
   });
 
@@ -167,7 +167,7 @@ describe('config set validation for cycle.synthesize_concepts.budget_usd', () =>
   }
 });
 
-describe('gbrain config set refuses a non-positive budget before writing', () => {
+describe('foresights config set refuses a non-positive budget before writing', () => {
   let home: string;
 
   beforeAll(async () => {
@@ -189,7 +189,7 @@ describe('gbrain config set refuses a non-positive budget before writing', () =>
     const set = await runCli(['config', 'set', KEY, '0'], { home, timeoutMs: 120_000 });
     expect(set.exitCode).toBe(2);
     expect(set.stderr).toContain(`Error [invalid_params]: Invalid ${KEY}`);
-    expect(set.stderr).toContain(`Fix: gbrain config set ${KEY}`);
+    expect(set.stderr).toContain(`Fix: foresights config set ${KEY}`);
     expect(set.stderr).toContain('Why: ');
     expect(set.stdout).not.toContain('Set ');
     const get = await runCli(['config', 'get', KEY], { home, timeoutMs: 120_000 });

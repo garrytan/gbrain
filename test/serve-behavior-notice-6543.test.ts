@@ -44,8 +44,8 @@ test('serve logs pending behavior changes once per process and not on the next s
     expect(await logServeBehaviorNotice(engine, cfg, { write: line => lines.push(line) })).toBe(true);
     expect(await logServeBehaviorNotice(engine, cfg, { write: line => lines.push(line) })).toBe(false);
     expect(lines.length).toBe(1);
-    expect(lines[0]).toStartWith(`[gbrain serve] notice=${BEHAVIOR_NOTICE_CODE}: `);
-    expect(lines[0]).toContain('gbrain doctor --only behavior_changes');
+    expect(lines[0]).toStartWith(`[foresights serve] notice=${BEHAVIOR_NOTICE_CODE}: `);
+    expect(lines[0]).toContain('foresights doctor --only behavior_changes');
     __resetServeBehaviorNoticeForTests();
     expect(await logServeBehaviorNotice(engine, cfg, { write: line => lines.push(line) })).toBe(false);
     expect(lines.length).toBe(1);

@@ -68,7 +68,7 @@ d('planner stats on Postgres', () => {
 
       const check = await doctor();
       expect(check.details?.engine).toBe('postgres');
-      expect(check.details?.fix).toBe('gbrain repair planner-stats --apply');
+      expect(check.details?.fix).toBe('foresights repair planner-stats --apply');
       if (facts.stale) {
         expect(check.status).toBe('warn');
         expect(check.message).toContain('facts (');
@@ -132,7 +132,7 @@ d('planner stats on Postgres', () => {
       expect(check.status).toBe('warn');
       expect(check.message).toContain(`expression index ${TITLE_INDEX.name} (on pages) has no statistics`);
       expect(check.message).toContain('an operator runs the repair');
-      expect(check.message).toContain('gbrain repair planner-stats --apply');
+      expect(check.message).toContain('foresights repair planner-stats --apply');
       expect(check.message).not.toContain('pages (0 rows changed');
 
       const plan = await plannerStatsRepair.plan(getEngine(), { brain_id: 'host', source_ids: [] }, null);
@@ -211,7 +211,7 @@ d('planner stats on Postgres', () => {
       const { out, text } = await captureWarnings(() => buildIndexOnline(failing, 240, TITLE_INDEX));
       expect(out).toBe('created');
       expect(text).toContain(`${TITLE_INDEX.name} is built and valid, but ANALYZE pages failed`);
-      expect(text).toContain('gbrain repair planner-stats --apply');
+      expect(text).toContain('foresights repair planner-stats --apply');
       const [valid] = await base.executeRaw<{ valid: boolean }>('SELECT indisvalid AS valid FROM pg_index WHERE indexrelid = to_regclass($1)', [TITLE_INDEX.name]);
       expect(valid!.valid).toBe(true);
       expect(await readExpressionIndexesWithoutStats(base)).toEqual([{ index: TITLE_INDEX.name, table: 'pages' }]);

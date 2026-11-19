@@ -9,7 +9,7 @@
  *  (a) Per-client fit: a client resolving to the FULL surface whose 30d
  *      distinct-op set fits inside STARTER_OPS is paying the ~100-tool
  *      catalog for a starter-sized workload. Finding carries the exact fix:
- *      `gbrain auth rescope-client <id> --surface starter`.
+ *      `foresights auth rescope-client <id> --surface starter`.
  *  (b) Set-level drift (the standing STARTER_OPS curator): top-10 most-used
  *      ops (ranked by CLIENT COUNT, not raw calls — D12) missing from
  *      STARTER_OPS, and starter members (excluding
@@ -18,7 +18,7 @@
  *
  * Privacy (amendment 29): when the advisor runs REMOTE (ctx.remote), client
  * identifiers are REDACTED to aggregate counts ("2 clients fit the starter
- * surface — run gbrain advisor on the host for details"). Full per-client
+ * surface — run foresights advisor on the host for details"). Full per-client
  * detail is local-CLI-only. Op NAMES are not client identifiers and stay
  * visible in the drift finding on both surfaces.
  *
@@ -157,7 +157,7 @@ export const collectMcpClientFit: AdvisorCollector = {
           findings.push({
             id: 'mcp_starter_fit_aggregate',
             severity: 'info',
-            title: `${fits.length} MCP client${fits.length === 1 ? '' : 's'} fit the starter surface — run \`gbrain advisor\` on the host for details.`,
+            title: `${fits.length} MCP client${fits.length === 1 ? '' : 's'} fit the starter surface — run \`foresights advisor\` on the host for details.`,
             detail:
               'Each has 30 days of usage entirely inside STARTER_OPS while resolving to the full ' +
               'catalog. Client identifiers are shown on the host CLI only.',

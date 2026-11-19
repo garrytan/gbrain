@@ -3,7 +3,7 @@
  *
  * Protects: a bundle publication (recovery record version 2) whose transaction failed after its files were published,
  * with one file edited by hand meanwhile, is refused `unexpected_file_bytes` and stops every write on its worktree.
- * `gbrain repair stuck-recovery` now resolves it: the preview lists every file of the bundle with its prior and disk
+ * `foresights repair stuck-recovery` now resolves it: the preview lists every file of the bundle with its prior and disk
  * fingerprints; `--keep prior` or `--keep disk` applies to the whole bundle, bound to the preview hash, after every
  * file's bytes are backed up; the request ends by the owner's rule and the queued write behind it commits. The head
  * blocker and graduation's blocker for the request name the stuck-recovery preview.
@@ -113,8 +113,8 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         const queued = await pendingSiblingWrite(s.b);
         const read = (await readHeadBlockers(s.engine, [queued], localHostId())).get(queued)!;
         const blocker = (read as { blocker: Parameters<typeof headBlockerAction>[0] }).blocker;
-        expectItemFailure({ key: blocker.ids[0], code: blocker.state ?? undefined, fix: headBlockerAction(blocker, SOURCE, `gbrain sync --source ${SOURCE}`) },
-          { key: s.requestId, code: 'unexpected_file_bytes', fix: new RegExp(`^gbrain repair stuck-recovery --source ${SOURCE}`) });
+        expectItemFailure({ key: blocker.ids[0], code: blocker.state ?? undefined, fix: headBlockerAction(blocker, SOURCE, `foresights sync --source ${SOURCE}`) },
+          { key: s.requestId, code: 'unexpected_file_bytes', fix: new RegExp(`^foresights repair stuck-recovery --source ${SOURCE}`) });
         expect((await graduationBlockers(s.engine, localHostId())).find(b => b.kind === 'request' && b.id === s.requestId))
           .toMatchObject({ argv: ['gbrain', 'repair', 'stuck-recovery', '--source', SOURCE, '--request-id', s.requestId], needsUser: true });
 

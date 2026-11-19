@@ -22,7 +22,7 @@ every number below comes from those captures.
   minutes. No request sat in `preparing` for more than one sample (30 s).
   Cause unproven on this topology.
 - **What does reproduce the exact signature is a server-side wait with no
-  statement timeout.** Through the pooler, gbrain's `statement_timeout` and
+  statement timeout.** Through the pooler, foresights's `statement_timeout` and
   `idle_in_transaction_session_timeout` startup parameters are dropped
   (`SHOW statement_timeout` = `0` via the pooler, `5min` direct). A
   transaction-mode pooler either refuses those startup parameters (stock
@@ -94,7 +94,7 @@ Status after Lane A9 (plan item 1.4, the cause-specific fix):
   those still waits for the lock or the ceiling (the containment of Phase 1).
   Doctor's `persistence_session_timeouts` reports
   `session_timeouts_not_applied` when `SHOW statement_timeout` through the
-  configured URL reads `0` while gbrain configured one, naming the role-level
+  configured URL reads `0` while foresights configured one, naming the role-level
   fix.
 - **The reporter's trigger stays unproven.** The lock probe reproduces the
   signature; it does not show what held or queued an `ACCESS EXCLUSIVE` lock
@@ -130,17 +130,17 @@ hold path is not what produced them.
 16-vCPU `standard-16` Ubicloud VMs (`UBI_OWNER=gbra59`), pgvector/pg16 in
 Docker, PgBouncer 1.26 transaction mode (`IGNORE_STARTUP_PARAMETERS` includes
 `statement_timeout`), toxiproxy with 57 ms round trip in front of the
-pooler, `GBRAIN_PREPARE=false`, `timeout 3600 gbrain sync --source bench
+pooler, `GBRAIN_PREPARE=false`, `timeout 3600 foresights sync --source bench
 --no-pull --no-embed` in a non-TTY (stdout/stderr piped). Fixture: 1,500
 history pages imported in classic mode, 15,000 backlog pages committed after
 activation, 20 history entity pages and 20 backlog pages with a repeated
 facts-fence marker in the timeline, legacy `row_num IS NULL` facts seeded
 before activation. "Heavy" adoption: 1,000 legacy rows over 250 pages, 12
-doomed pages, `gbrain dream --phase extract_facts` every 60 s with 20 rows
+doomed pages, `foresights dream --phase extract_facts` every 60 s with 20 rows
 dripped before each run. "Light" (the reporter's scale, nine refusals per
 pass): 60 rows over 15 pages, 9 doomed, every 120 s, 6 rows dripped.
 
-| run | gbrain | pool | adoption load | pass 1 (3600 s) | pages/min | longest window with no committed page | `preparing` blocker > 30 s |
+| run | foresights | pool | adoption load | pass 1 (3600 s) | pages/min | longest window with no committed page | `preparing` blocker > 30 s |
 |---|---|---|---|---|---|---|---|
 | A heavy | 0.60.105.0 | 10 | heavy | 102 pages in 48 min, then stopped | 2.6 → 16 → 0 | 888 s (queued adoptions ahead of the sync) | none |
 | C heavy | 0.60.105.0 | 3 | heavy | 62 pages in 44 min, then stopped | 1.4 → 0 | 668 s (same) | none |
@@ -159,7 +159,7 @@ the harness), because each page's adoption waits for its receipt at
 
 ## Forced probes (local 4-core machine, PgBouncer, 20 ms round trip, 600-page backlog)
 
-| probe | gbrain | what the sync did | step in flight (SIGUSR2 dump) | `pg_stat_activity` | renewals |
+| probe | foresights | what the sync did | step in flight (SIGUSR2 dump) | `pg_stat_activity` | renewals |
 |---|---|---|---|---|---|
 | `--chaos-kind lock` (hold `LOCK TABLE pages IN ACCESS EXCLUSIVE MODE` via the pooler, 240 s) | 0.60.105.0 | 1 `managed_sync_import` `preparing` 23 → 240 s, 0 pages committed, resumed within 15 s of release | `page_origin` for the whole hold (`steps`: dispatch, sync_active@0, authority@22, binding@65, source_path@110, knowledge_guard@153, git_rev_parse@196, page_origin@215 ms) | 2 sync connections `active`, `Lock`/`relation`, blocked by the holder (`idle in transaction`); a `dream` connection joins the queue | every 10 s, `since_update_ms` ≤ 7 s |
 | same, 200 s | head (GBRA-45) | 25 lane members `preparing` for the hold, 345 → 345 pages | `page_origin` on every member | 11 lock waiters | same |
@@ -216,15 +216,15 @@ UBI_OWNER=gbra59 scripts/ubicloud/ubi-runner.sh run -s standard-16 --ttl-hours 4
 
 The same fixture and topology (16-vCPU `standard-16`, PgBouncer transaction
 mode with `statement_timeout` dropped, 57 ms, heavy adoption, non-TTY
-`timeout 3600 gbrain sync --source bench --no-pull --no-embed` looped until
+`timeout 3600 foresights sync --source bench --no-pull --no-embed` looped until
 the source reports synced) against the complete PR 1 head (14962f947 plus the
 Phase 4.1 bench captures, `capy/6278-phase41` 846bea44, VERSION 0.60.108.0
 with the 0.60.109.0 changelog). The bench now records, per pass, the hold
 records by code and reason, writer status, `preparation_stalled` receipts and
-the drain's closing lines (`post-pass-N.json`); one `gbrain dream --phase
+the drain's closing lines (`post-pass-N.json`); one `foresights dream --phase
 fence_repair` run 20 minutes into pass 1 (`fence-repair.json`); the fate of
-every seeded legacy row by shape (`legacy_outcome`); `gbrain doctor --only
-fence_integrity --json`; and `gbrain sources retry-held` plus the sync it
+every seeded legacy row by shape (`legacy_outcome`); `foresights doctor --only
+fence_integrity --json`; and `foresights sources retry-held` plus the sync it
 prints after the passes (`retry-held.json`). `scripts/bench/stall-repro-summarize.py
 <dir>` prints the figures below from `report.json` and `samples.jsonl`
 (steady pages/min is the middle 80% of a pass by time; the longest no-commit
@@ -232,7 +232,7 @@ window is the largest `committed_stale_ms` the 30 s sampler saw).
 
 ### Before/after
 
-| run | gbrain | pool | passes to synced | pages per pass | pages/min per pass (wall; steady) | longest window with no committed page | `sync_deadline_stop` | failed receipts | holds at end |
+| run | foresights | pool | passes to synced | pages per pass | pages/min per pass (wall; steady) | longest window with no committed page | `sync_deadline_stop` | failed receipts | holds at end |
 |---|---|---|---|---|---|---|---|---|---|
 | A heavy (Phase 0) | 0.60.105.0 | 10 | never (stopped after 48 min) | 102 | 2.6 → 16 → 0 | 888 s (queued adoptions) | none | 471 `repeated_marker` + 276 round-trip refusals on the comparable head run; 0.60.105 killed before the tail | 20 `invalid_fence` |
 | C heavy (Phase 0) | 0.60.105.0 | 3 | never (stopped after 44 min) | 62 | 1.4 → 0 | 668 s (same) | none | — | 20 |
@@ -342,8 +342,8 @@ from 09:41:26 to 09:46:26 and from 09:51:26 to 09:56:26. Captures:
   reads. The pass finished `synced` (2,980 of 3,000 written, 20 held) in
   3,471 s at 51.5 pages/min wall; 665 s was the longest no-commit window
   (lock 2 plus the adoption queue behind it).
-- **After the run:** `gbrain sources retry-held bench --json` scheduled 20
-  held files (all `invalid_fence` / `repeated_marker`) and printed `gbrain
+- **After the run:** `foresights sources retry-held bench --json` scheduled 20
+  held files (all `invalid_fence` / `repeated_marker`) and printed `foresights
   sync --source bench --no-pull` (the backlog was done, so the resume args
   came from the plain source command, not from a managed cursor; the
   `--no-embed` the run used was not carried). The printed sync re-screened
@@ -353,7 +353,7 @@ from 09:41:26 to 09:46:26 and from 09:51:26 to 09:56:26. Captures:
 
 - Every seeded repeated-marker page in the backlog (20) ended held
   `invalid_fence` / `repeated_marker` with the line, in every run, written
-  before admission (the sync's stdout lists each with `gbrain repair fences
+  before admission (the sync's stdout lists each with `foresights repair fences
   --source bench --only <path>` as the next step).
 - The 20 history pages with a repeated marker were never submitted as
   adoption writes: `extract_facts` reports them as `FACTS_FENCE_FAILED:
@@ -374,7 +374,7 @@ from 09:41:26 to 09:46:26 and from 09:51:26 to 09:56:26. Captures:
 
 ### Concurrent maintenance (G4, PR 2 territory)
 
-`gbrain dream --phase fence_repair --source bench --json` 20 minutes into
+`foresights dream --phase fence_repair --source bench --json` 20 minutes into
 pass 1 on the same host: status `ok`, `candidates: 22`, `repaired: 0`,
 `held_by_reason: { sync_in_progress: 22 }`, `owner_unavailable` absent,
 `scan_partial: true`, 9.6-9.8 s (pool 10 and pool 3 alike). As expected on
@@ -505,8 +505,8 @@ the drain's owner-pid fix. Captures under `stall-lock-b/`.
   (99 queued + 1 running at 09:57:29) without killing the pass, so whether a
   pass survives it depends on the window size against the remaining
   capacity; none of the four earlier runs hit it. Ten minutes later, after
-  the adoption queue drained, the `retry-held` route (`gbrain sources
-  retry-held bench`, then the printed `gbrain sync --source bench --no-pull
+  the adoption queue drained, the `retry-held` route (`foresights sources
+  retry-held bench`, then the printed `foresights sync --source bench --no-pull
   --no-embed`, `--no-embed` carried this time from the stalled hold's
   `sync_argv`) imported the rest: 2,755 entries in 1,006 s, `Managed sync
   synced`, 2,979 of 3,000 committed = 3,000 − 20 fence holds − 1 stalled

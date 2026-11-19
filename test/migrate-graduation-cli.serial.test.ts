@@ -1,5 +1,5 @@
 /**
- * `gbrain migrate` engine graduation CLI (plan §7, DX amendments): routing,
+ * `foresights migrate` engine graduation CLI (plan §7, DX amendments): routing,
  * flag parsing, the exit-3 consent payload, `--plan`, the run, run-scoped
  * verbs, the exit-code map (0/1/2/3/11/75/130) and secret hygiene, over a
  * fake orchestrator (the G2a module is exercised by its own lane's tests).
@@ -176,7 +176,7 @@ describe('runMigrateGraduation', () => {
     expect(r.code).toBe(0);
     const doc = JSON.parse(r.stdout);
     expect(doc).toMatchObject({ schema_version: 1, status: 'plan', plan: { planHash: plan.planHash } });
-    expect(doc.next.command).toBe(`gbrain migrate --to postgres --url-env GBRAIN_TARGET_URL --yes --expect ${plan.planHash}`);
+    expect(doc.next.command).toBe(`foresights migrate --to postgres --url-env GBRAIN_TARGET_URL --yes --expect ${plan.planHash}`);
   });
 
   test('the approved run: receipt, retained copy, doctor, mcp expose, credentials and MCP restart notes', async () => {
@@ -191,7 +191,7 @@ describe('runMigrateGraduation', () => {
     expect(r.api.calls[0]!.opts).toMatchObject({ expectPlanHash: plan.planHash, yes: true });
     const human = await run(['--to', 'postgres', '--url-env', 'GBRAIN_TARGET_URL', '--yes', '--expect', plan.planHash]);
     expect(human.stdout).toContain('Target doctor: no failing checks');
-    expect(human.stdout).toContain('gbrain mcp expose');
+    expect(human.stdout).toContain('foresights mcp expose');
   });
 
   test('--url - reads the URL from stdin and passes it only to the orchestrator', async () => {

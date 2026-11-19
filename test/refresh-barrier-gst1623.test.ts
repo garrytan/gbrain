@@ -350,7 +350,7 @@ test('item 21: an expired remember says one replay attempt is queued only when i
   } finally { await clearMaxWait(f); }
   const replayed = (await getWriteRequestById(f.engine, pinned.id))!, manual = (await getWriteRequestById(f.engine, unpinned.id))!;
   expect(replayed.error_message).toContain('one automatic replay attempt');
-  expect(replayed.error_message).toContain(`gbrain repair failed-writes --source ${f.alpha}`);
+  expect(replayed.error_message).toContain(`foresights repair failed-writes --source ${f.alpha}`);
   expect(manual.error_message).toContain('named no entity, so no sync replays it');
   for (const row of [replayed, manual]) expect(row.error_message).toContain('Do not save it again');
 }), 180_000);

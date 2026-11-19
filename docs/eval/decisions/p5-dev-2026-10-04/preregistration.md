@@ -47,7 +47,7 @@ templates not used in dev): recall >= 0.98; decoy types added by the grammar = 0
 **H3 — junk stays out.** False-positive audit: grammar lines minted per 1,000 list lines and precision on 300
 held-out minted lines (sampled from the lines the grammar reads, `--frame minted`) labeled by two judge models with human adjudication. Corpora: LongMemEval-S haystack sessions as
 markdown, LoCoMo transcripts, a permissively licensed public notes vault. Bar: precision >= 0.95; zero lines minted
-from timecodes, task markers, citations, dates or machine-written sections. gbrain's own docs and skills,
+from timecodes, task markers, citations, dates or machine-written sections. foresights's own docs and skills,
 amara-life-v1, transcript-distill-v1 and world-v1 were read in development and are dev data only.
 
 **H4 — forward references heal.** world-v1 written page by page in a seeded shuffled order with a stale sweep every
@@ -88,6 +88,6 @@ LME-S guardrail ≈ $24 per run.
 
 - Dev seeds used: H2 and H4 generator seeds 1–3 (dev diagnostics, not kit receipts); H5a N4 ledger seeds 1–3. The
   custodian should draw held-out seeds outside {1, 2, 3}.
-- Guard tuning used gbrain docs/skills (all of it): categories reject digits and all-caps markers.
+- Guard tuning used foresights docs/skills (all of it): categories reject digits and all-caps markers.
 - The link-type attachment fix was developed against two failure shapes reported from the edge-validity plan's dev run
   and measured on world-v1 type-accuracy (dev).

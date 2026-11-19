@@ -1,11 +1,15 @@
 ---
 name: setup
-description: Add keyless GBrain memory to an existing agent, or connect a hosted brain while preserving identity and configuration
+description: Add keyless Foresights memory to an existing agent, or connect a hosted brain while preserving identity and configuration
 triggers:
+  - "set up foresights"
   - "set up gbrain"
   - "initialize brain"
+  - "foresights setup"
   - "gbrain setup"
+  - "install foresights into this agent workspace"
   - "install gbrain into this agent workspace"
+  - "add foresights to my agent"
   - "add gbrain to my agent"
 tools:
   - get_stats
@@ -13,10 +17,10 @@ tools:
   - sync_brain
   - put_page
 mutating: true
-when_to_use: "Use when the user asks: \"set up gbrain\", \"initialize brain\", \"gbrain setup\", \"install gbrain into this agent workspace\", \"add gbrain to my agent\"."
+when_to_use: "Use when the user asks: \"set up foresights\", \"set up gbrain\", \"initialize brain\", \"foresights setup\", \"gbrain setup\"."
 ---
 
-# Set up GBrain memory
+# Set up Foresights memory
 
 Give the agent the user already has a reliable memory. Preserve its identity,
 native memory, existing instructions, and unrelated configuration. Start with
@@ -38,14 +42,14 @@ Use the user's existing context; do not repeat choices they already made.
 
 | Intent | Action |
 | --- | --- |
-| Add memory inside Grok Bot | First choice: use the brain on your own computer over MCP — [remote-mcp](../remote-mcp/SKILL.md) publishes it (`--funnel`, the Bot runs in the vendor cloud), then [hosted harness access](https://github.com/garrytan/gbrain/blob/master/docs/guides/hosted-harness-access.md) installs the private handoff in the Bot. No always-on machine: follow [Grok Bot](https://github.com/garrytan/gbrain/blob/master/docs/guides/grok-bot.md) and the isolated [setup helper](https://github.com/garrytan/gbrain/blob/master/docs/guides/in-agent-setup.md). Root: `/workspace/gbrain`, with data under `.gbrain`. |
-| Add memory inside Muse | First choice: use the brain on your own computer over MCP — [remote-mcp](../remote-mcp/SKILL.md) publishes it (`--funnel`), then [hosted harness access](https://github.com/garrytan/gbrain/blob/master/docs/guides/hosted-harness-access.md) installs the private handoff in Muse. No always-on machine: follow [Muse](https://github.com/garrytan/gbrain/blob/master/docs/guides/muse.md). Either way, establish its durable user-files location first. Do not invent `MUSE.md`, a persistent path, or a native MCP mechanism. |
-| Memory for a bot that answers several people | `gbrain setup <harness> --serves several --members <id,...>`; ask the user who the people are, never guess. Relay key file paths, never keys, and the `open pages` lines: ask who reads each folder (`--labelled-only` only on their word); keep the owner in every `--readers` list, and pass `--allow-without-owner` only on their word. Fix a `setup_serves_several`, `requester_scope_required` or `credential_scope_required` refusal with its `fix`. Pass `--stdio-member <id>` (claude-code, codex) only for a harness one person uses: it binds that harness's entry alone; refused where OpenClaw or Hermes runs. [Guide](https://github.com/garrytan/gbrain/blob/master/docs/guides/setup.md#a-brain-that-serves-several-people). |
-| Add memory to another existing agent | Follow [INSTALL_FOR_AGENTS.md](https://github.com/garrytan/gbrain/blob/master/INSTALL_FOR_AGENTS.md); the [coding-agent tutorial](https://github.com/garrytan/gbrain/blob/master/docs/tutorials/connect-coding-agent.md) covers Claude Code and Codex. |
-| Connect an existing hosted brain | Follow [mcp-access](../mcp-access/SKILL.md) and [hosted harness access](https://github.com/garrytan/gbrain/blob/master/docs/guides/hosted-harness-access.md). Select native OAuth/PKCE or a private machine handoff for the intended harness. |
-| Use the brain from other devices, apps or cloud agents over MCP | Follow [remote-mcp](../remote-mcp/SKILL.md): `gbrain mcp expose` publishes the local server on the Tailscale tailnet (Funnel only for cloud agents), then [mcp-access](../mcp-access/SKILL.md) / hosted access selects native OAuth or a private machine handoff for each consumer. |
-| Explicitly create a new personal agent with identity and a private repo | Follow [BOOTSTRAP_FOR_AGENTS.md](https://github.com/garrytan/gbrain/blob/master/BOOTSTRAP_FOR_AGENTS.md). `gbrain bootstrap` is for this explicit request. |
-| Explicitly configure per-worktree code engines with shared artifacts | Follow [topologies](https://github.com/garrytan/gbrain/blob/master/docs/architecture/topologies.md). Brain and source routing must be set independently. |
+| Add memory inside Grok Bot | First choice: use the brain on your own computer over MCP — [remote-mcp](../remote-mcp/SKILL.md) publishes it (`--funnel`, the Bot runs in the vendor cloud), then [hosted harness access](https://github.com/aimonk2025/gbrain/blob/master/docs/guides/hosted-harness-access.md) installs the private handoff in the Bot. No always-on machine: follow [Grok Bot](https://github.com/aimonk2025/gbrain/blob/master/docs/guides/grok-bot.md) and the isolated [setup helper](https://github.com/aimonk2025/gbrain/blob/master/docs/guides/in-agent-setup.md). Root: `/workspace/gbrain`, with data under `.gbrain`. |
+| Add memory inside Muse | First choice: use the brain on your own computer over MCP — [remote-mcp](../remote-mcp/SKILL.md) publishes it (`--funnel`), then [hosted harness access](https://github.com/aimonk2025/gbrain/blob/master/docs/guides/hosted-harness-access.md) installs the private handoff in Muse. No always-on machine: follow [Muse](https://github.com/aimonk2025/gbrain/blob/master/docs/guides/muse.md). Either way, establish its durable user-files location first. Do not invent `MUSE.md`, a persistent path, or a native MCP mechanism. |
+| Memory for a bot that answers several people | `foresights setup <harness> --serves several --members <id,...>`; ask the user who the people are, never guess. Relay key file paths, never keys, and the `open pages` lines: ask who reads each folder (`--labelled-only` only on their word); keep the owner in every `--readers` list, and pass `--allow-without-owner` only on their word. Fix a `setup_serves_several`, `requester_scope_required` or `credential_scope_required` refusal with its `fix`. Pass `--stdio-member <id>` (claude-code, codex) only for a harness one person uses: it binds that harness's entry alone; refused where OpenClaw or Hermes runs. [Guide](https://github.com/aimonk2025/gbrain/blob/master/docs/guides/setup.md#a-brain-that-serves-several-people). |
+| Add memory to another existing agent | Follow [INSTALL_FOR_AGENTS.md](https://github.com/aimonk2025/gbrain/blob/master/INSTALL_FOR_AGENTS.md); the [coding-agent tutorial](https://github.com/aimonk2025/gbrain/blob/master/docs/tutorials/connect-coding-agent.md) covers Claude Code and Codex. |
+| Connect an existing hosted brain | Follow [mcp-access](../mcp-access/SKILL.md) and [hosted harness access](https://github.com/aimonk2025/gbrain/blob/master/docs/guides/hosted-harness-access.md). Select native OAuth/PKCE or a private machine handoff for the intended harness. |
+| Use the brain from other devices, apps or cloud agents over MCP | Follow [remote-mcp](../remote-mcp/SKILL.md): `foresights mcp expose` publishes the local server on the Tailscale tailnet (Funnel only for cloud agents), then [mcp-access](../mcp-access/SKILL.md) / hosted access selects native OAuth or a private machine handoff for each consumer. |
+| Explicitly create a new personal agent with identity and a private repo | Follow [BOOTSTRAP_FOR_AGENTS.md](https://github.com/aimonk2025/gbrain/blob/master/BOOTSTRAP_FOR_AGENTS.md). `foresights bootstrap` is for this explicit request. |
+| Explicitly configure per-worktree code engines with shared artifacts | Follow [topologies](https://github.com/aimonk2025/gbrain/blob/master/docs/architecture/topologies.md). Brain and source routing must be set independently. |
 
 If intent is unclear, default to memory for the existing agent. Ask only for
 missing information needed to choose a safe target, such as which existing
@@ -56,8 +60,8 @@ brain to connect or which Muse directory is durable.
 For an existing installation, use its recorded absolute launcher when present:
 
 ```bash
-gbrain engine status --json
-gbrain engine status --probe
+foresights engine status --json
+foresights engine status --probe
 ```
 
 These commands work while the database is down. Inspect the engine,
@@ -75,12 +79,12 @@ For other local installations, resolve conflicting routing before following
 the canonical distribution and keyless initialization:
 
 ```bash
-bun install -g github:garrytan/gbrain#stable
-gbrain init --pglite --no-embedding
+bun install -g github:aimonk2025/gbrain#stable
+foresights init --pglite --no-embedding
 ```
 
 Install Bun first if missing, following
-[INSTALL_FOR_AGENTS.md](https://github.com/garrytan/gbrain/blob/master/INSTALL_FOR_AGENTS.md). Do not use the unrelated
+[INSTALL_FOR_AGENTS.md](https://github.com/aimonk2025/gbrain/blob/master/INSTALL_FOR_AGENTS.md). Do not use the unrelated
 npm package named `gbrain`, or `bun add` in the user's current project.
 Local/thin-client conversion requires explicit intent and preservation of the
 previous configuration.
@@ -89,16 +93,16 @@ previous configuration.
 prints a nine-cell cost matrix with `[AGENT]` markers. Connect memory first,
 then relay that matrix and the mode in effect in the reply that reports the
 install; apply the operator's choice when they give it. Follow Step 3.5 of
-[INSTALL_FOR_AGENTS.md](https://github.com/garrytan/gbrain/blob/master/INSTALL_FOR_AGENTS.md); use the printed matrix,
+[INSTALL_FOR_AGENTS.md](https://github.com/aimonk2025/gbrain/blob/master/INSTALL_FOR_AGENTS.md); use the printed matrix,
 not remembered prices. Illustrative model API costs are separate from a
 harness subscription. This choice does not enable paid APIs or capture.
 
-If the user explicitly wants Postgres, follow [engines](https://github.com/garrytan/gbrain/blob/master/docs/ENGINES.md)
+If the user explicitly wants Postgres, follow [engines](https://github.com/aimonk2025/gbrain/blob/master/docs/ENGINES.md)
 or [postgres-adopt](../postgres-adopt/SKILL.md). `--prefer-postgres` is optional.
 Tell the user once: on Postgres, a source with a checkout starts in classic
 mode, where the checkout is the source of truth and agents save pages as
-committed files followed by `gbrain sync`; direct saves need managed mode
-([unbound sources](https://github.com/garrytan/gbrain/blob/master/docs/guides/write-refusals.md#unbound-sources-on-postgres)).
+committed files followed by `foresights sync`; direct saves need managed mode
+([unbound sources](https://github.com/aimonk2025/gbrain/blob/master/docs/guides/write-refusals.md#unbound-sources-on-postgres)).
 Supabase uses a database connection string, not an anon key. Keep credentials
 private and do not copy ambient secrets into file configuration.
 
@@ -106,13 +110,13 @@ private and do not copy ambient secrets into file configuration.
 
 Skip local database initialization, import, and maintenance installation.
 Read [mcp-access](../mcp-access/SKILL.md). If the target harness uses native
-OAuth/PKCE, use its [native path](https://github.com/garrytan/gbrain/blob/master/docs/guides/hosted-harness-access.md#native-oauth-path):
+OAuth/PKCE, use its [native path](https://github.com/aimonk2025/gbrain/blob/master/docs/guides/hosted-harness-access.md#native-oauth-path):
 register the actual redirect URI and authentication method, initiate OAuth
 inside the client, and preserve the pending request through owner login and
 consent. Do not install a machine handoff in an OAuth-only client.
 
 For the machine path, the owner provisions a `memory-writer` grant through the
-authenticated admin API using `gbrain mcp grant` and a private
+authenticated admin API using `foresights mcp grant` and a private
 `--credentials-out` file. Use the actual harness identifier. A running PGLite
 server must use its existing engine; do not open the live database in a second
 process. A URL or ordinary OAuth token is not administration authority.
@@ -120,12 +124,12 @@ process. A URL or ordinary OAuth token is not administration authority.
 Privately transfer the handoff to the intended harness, then install there:
 
 ```bash
-gbrain connect https://brain.example.com/mcp --harness codex \
+foresights connect https://brain.example.com/mcp --harness codex \
   --credentials-file /absolute/private/agent-example.json --install
 ```
 
 Thin CLI adapters also need the verified persistent `--root`. Follow the
-adapter's reload instructions and the complete [hosted guide](https://github.com/garrytan/gbrain/blob/master/docs/guides/hosted-harness-access.md).
+adapter's reload instructions and the complete [hosted guide](https://github.com/aimonk2025/gbrain/blob/master/docs/guides/hosted-harness-access.md).
 Do not grant `admin` merely to make a convenience health command pass.
 Delegation requires an explicit choice, bound tools, an active source, and a
 path policy. New delegation has unlimited spending and concurrency 1; explain
@@ -156,11 +160,11 @@ provenance, keep the returned ID, and read it back in a separate call. Correct
 it, withdraw the test fact, and verify active recall omits it. Reconcile a lost
 mutation response before retrying.
 
-Run `gbrain doctor --json` for diagnostics. Missing optional embeddings are an
+Run `foresights doctor --json` for diagnostics. Missing optional embeddings are an
 unconfigured capability, not permission to add paid keys. A health score or a
 successful process exit alone does not prove the memory round trip.
 
-For hosted clients, run `gbrain mcp verify` with the private credentials file.
+For hosted clients, run `foresights mcp verify` with the private credentials file.
 Report transport, authentication, permissions, read/write, cleanup, and worker
 checks separately. Overall `partial` (exit 2) means native evidence is missing.
 
@@ -176,17 +180,17 @@ Only proceed with capabilities the user requested:
 | Capability | Next step |
 | --- | --- |
 | Import selected notes or chat exports | Confirm the selected source; follow [ingest](../ingest/SKILL.md) or [conversation archive](../conversation-archive/SKILL.md). Do not scan and import arbitrary directories. |
-| Connect an account | Follow [chat connectors](../chat-connectors/SKILL.md) or [Google setup](https://github.com/garrytan/gbrain/blob/master/docs/guides/google-connect.md), preserving their credential and consent boundaries. |
+| Connect an account | Follow [chat connectors](../chat-connectors/SKILL.md) or [Google setup](https://github.com/aimonk2025/gbrain/blob/master/docs/guides/google-connect.md), preserving their credential and consent boundaries. |
 | Automatic conversation capture | Follow [signal detector](../signal-detector/SKILL.md) after opt-in. Recall and explicit remembering work without it. |
 | Paid retrieval or enrichment | Configure the chosen capability and budget separately. Existing API keys do not imply permission to spend. |
 | Scheduled maintenance | For in-agent installs, reuse the generated routine ID and absolute launcher; start with bounded `doctor --fast --json`. Observe native activation. Hosted clients use the host's existing schedule. |
-| Sync a selected file source | Follow [live sync](https://github.com/garrytan/gbrain/blob/master/docs/guides/live-sync.md). Keyless sync uses `--no-pull --no-embed`; do not implicitly add embedding or a worker. |
+| Sync a selected file source | Follow [live sync](https://github.com/aimonk2025/gbrain/blob/master/docs/guides/live-sync.md). Keyless sync uses `--no-pull --no-embed`; do not implicitly add embedding or a worker. |
 | Import more data later | Offer [cold start](../cold-start/SKILL.md) as an optional next step; do not launch it automatically. |
 | Upgrade | Follow [gbrain-upgrade](../gbrain-upgrade/SKILL.md) and the installation's recorded repair/upgrade policy. |
 
 Facts, corrections, jobs, and accounting can exist only in the database.
 A Git clone is not a complete backup. For PGLite, use the
-[private backup and restore procedure](https://github.com/garrytan/gbrain/blob/master/docs/guides/in-agent-setup.md#6-back-up-the-complete-local-database).
+[private backup and restore procedure](https://github.com/aimonk2025/gbrain/blob/master/docs/guides/in-agent-setup.md#6-back-up-the-complete-local-database).
 Treat the whole archive as sensitive; off-VM copies require an explicit
 destination. Restore into an absent new root, then reattach external roots,
 connectors, and schedules explicitly.
@@ -195,7 +199,7 @@ connectors, and schedules explicitly.
 
 | Failure | Next action |
 | --- | --- |
-| Database unreachable | `gbrain engine status --probe`, then `gbrain db-repair`; apply safe fixes within authorized repair scope. |
+| Database unreachable | `foresights engine status --probe`, then `foresights db-repair`; apply safe fixes within authorized repair scope. |
 | Partial in-agent setup | Run the receipt's exact recovery command; preserve completed stages and memory. |
 | PGLite busy | Let the live owner finish, then retry. Never remove a live lock. |
 | Malformed or conflicting config | Report the conflict and intended target; do not reinitialize or overwrite unrelated settings. |
@@ -205,11 +209,11 @@ connectors, and schedules explicitly.
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
-- `gbrain init` prints `[AGENT]` blocks with the search-mode cost matrix: relay it and get the operator's choice before continuing.
-- An initialization error: never replace existing memory to recover. Run `gbrain doctor --json` and follow its `fix`.
-- `gbrain mcp verify` reports overall `partial` (exit 2): native evidence is missing; say activation is unverified instead of claiming it works.
+- `foresights init` prints `[AGENT]` blocks with the search-mode cost matrix: relay it and get the operator's choice before continuing.
+- An initialization error: never replace existing memory to recover. Run `foresights doctor --json` and follow its `fix`.
+- `foresights mcp verify` reports overall `partial` (exit 2): native evidence is missing; say activation is unverified instead of claiming it works.
 
 ## Anti-Patterns
 

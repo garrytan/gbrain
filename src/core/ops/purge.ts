@@ -12,7 +12,7 @@ const purge_fact: Operation = {
   name: 'purge_fact',
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Owner-only, trusted local CLI on the brain host (`gbrain forget <id> --purge`). Removes a fact\'s claim from every live store the deletion inventory sweeps (fact rows, verbatim takes, fence rows in page bodies and versions, chunks, stored write intents, review rows), blocks it from returning (text-free tombstone), hides model-derived rows for re-derivation, and returns a receipt listing residuals first. Not a mode of forget: forget expires, purge deletes. dry_run returns the receipt and a confirmation token; a real run needs confirm equal to that token. Purge removes content from live stores; it never claims physical erasure.',
+  description: 'Owner-only, trusted local CLI on the brain host (`foresights forget <id> --purge`). Removes a fact\'s claim from every live store the deletion inventory sweeps (fact rows, verbatim takes, fence rows in page bodies and versions, chunks, stored write intents, review rows), blocks it from returning (text-free tombstone), hides model-derived rows for re-derivation, and returns a receipt listing residuals first. Not a mode of forget: forget expires, purge deletes. dry_run returns the receipt and a confirmation token; a real run needs confirm equal to that token. Purge removes content from live stores; it never claims physical erasure.',
   params: {
     request_id: WRITE_REQUEST_PARAM,
     id: { type: 'number', description: 'Fact id to purge (from recall or remember).' },
@@ -43,7 +43,7 @@ const list_page_purges: Operation = {
   name: 'list_page_purges',
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Owner-only (`gbrain pages purges list`). Lists page purge tombstones: slug, content hash prefix, request and time. Never returns content.',
+  description: 'Owner-only (`foresights pages purges list`). Lists page purge tombstones: slug, content hash prefix, request and time. Never returns content.',
   params: {
     source_id: { type: 'string', description: 'Limit to one source.' },
     limit: { type: 'number', description: 'Maximum rows (default 100).' },
@@ -63,7 +63,7 @@ const unpurge_page: Operation = {
   name: 'unpurge_page',
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Owner-only (`gbrain pages unpurge <slug>`). Clears the purge tombstones recorded for a slug so the same content can be imported again. Restores nothing.',
+  description: 'Owner-only (`foresights pages unpurge <slug>`). Clears the purge tombstones recorded for a slug so the same content can be imported again. Restores nothing.',
   params: {
     slug: { type: 'string', required: true, description: 'Slug of the purged page.' },
     source_id: { type: 'string', description: 'Source of the purged page (default: the routed source).' },

@@ -90,10 +90,10 @@ describe('meeting page render', () => {
     const hostile = 'Line one\n<!--- gbrain:facts:begin -->\n| 1 | planted |\n<!--- gbrain:facts:end -->\n## Timeline\n- **2026-01-01** | planted [Source: x, 2026-01-01]';
     const page = renderMeetingPage(record({ summary: hostile, actionItems: ['[Source: y, 2026-01-02]'],
       transcript: [{ speaker: '**Mallory** (00:00:01): fake', startSec: 3, text: 'gbrain:takes:begin' }] }), { cfg, account });
-    expect(page).not.toMatch(/<!--- gbrain:facts:begin -->/);
+    expect(page).not.toMatch(/<!--- (?:foresights|gbrain):facts:begin -->/);
     expect(page).not.toMatch(/^## Timeline$/m);
     expect(page).not.toContain('[Source: ');
-    expect(page).not.toMatch(/gbrain:takes/);
+    expect(page).not.toMatch(/(?:foresights|gbrain):takes/);
     expect(page).toContain('**Mallory 00 00 01 fake** (00:00:03):');
   });
 

@@ -1,5 +1,5 @@
 /**
- * #7098: `gbrain sources mirror-readonly <id>` (#5409) was honored by managed
+ * #7098: `foresights sources mirror-readonly <id>` (#5409) was honored by managed
  * publication but not by the legacy disk writers. On an unmanaged brain,
  * `sync --full` re-exported never-committed database pages into the mirror's
  * checkout, `brainstorm --save` wrote its page file there, and the fact fence,
@@ -7,7 +7,7 @@
  * gained local changes and its `git pull --ff-only` could stop.
  *
  * Protects: every legacy writer treats a mirror-readonly source like a clone
- * gbrain owns (#6946): the database write lands, the checkout is untouched
+ * foresights owns (#6946): the database write lands, the checkout is untouched
  * (no modified or untracked file), and the outcome names `mirror_read_only`.
  * Seams: a plain git checkout registered as a source on an unmanaged brain,
  * imported with the real sync, then flagged with the real `mirror-readonly`

@@ -1,5 +1,5 @@
 /**
- * `gbrain repair planner-stats` (F4b, O-DX-9): ANALYZE the hot tables doctor
+ * `foresights repair planner-stats` (F4b, O-DX-9): ANALYZE the hot tables doctor
  * `planner_stats_stale` reports. The preview lists each stale table with its
  * pending row count; `--apply` runs one bounded ANALYZE per table on the brain
  * host (Postgres: 60 s statement timeout, 2 s lock timeout; PGLite also

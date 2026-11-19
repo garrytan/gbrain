@@ -1,4 +1,4 @@
-# DX Review (Phase 2.5, primary voice): GBrain Refactor Wave 1
+# DX Review (Phase 2.5, primary voice): Foresights Refactor Wave 1
 
 Methodology: gstack `/plan-devex-review` v2.0.0, executed in full (Step 0 + Passes 1-8 + scorecard) under the /autoplan
 overrides: mode **DX POLISH**, no questions asked, every issue auto-decided with the 6 principles (completeness, boil
@@ -84,7 +84,7 @@ Plan facts that are **wrong or incomplete [code]** (they drive several findings 
 
 ### Auto-detected product type
 
-This is not a public product change. The "product" is **the GBrain codebase as an internal SDK for contributors**
+This is not a public product change. The "product" is **the Foresights codebase as an internal SDK for contributors**
 (module layout, registries, generators, guards, docs) with a frozen external contract (CLI, MCP, package.json
 `exports`). Primary type: **Library/SDK (internal contributor API)**, secondary **CLI Tool** (zero-change contract).
 Auto-decided (no confirmation question in autoplan).
@@ -94,7 +94,7 @@ Auto-decided (no confirmation question in autoplan).
 ```
 TARGET DEVELOPER PERSONA (primary)
 ==================================
-Who:       A GBrain contributor or, more often, an AI coding agent (Claude Code, Codex) opening a PR
+Who:       A Foresights contributor or, more often, an AI coding agent (Claude Code, Codex) opening a PR
            against a repo that ships several releases a day with ~50 PRs open at once.
 Context:   Arrives with a narrow task: "add a storage method", "add migration v176", "add a doctor
            check", "add a CLI command", "add an admin HTTP route", "add a sync phase". Reads the
@@ -155,9 +155,9 @@ Champion under 15 min, Competitive 15-30, Needs Work 30-60, Red Flag over 60 (AI
 | Prisma Migrate | schema edit → migration | ~1 command [doc] | `prisma migrate dev --name x` scaffolds `migrations/<timestamp>_x/migration.sql`; timestamps avoid number collisions across branches. | prisma.io/docs/orm/prisma-migrate [doc] |
 | Rails | new migration | 1 generator command [doc] | `bin/rails g migration X` scaffolds a timestamped file; moved to timestamps specifically because sequential numbers collided on parallel branches. | guides.rubyonrails.org/active_record_migrations.html [doc] |
 | Express Router | new route group | [doc] | `express.Router()` modules mounted with `app.use('/admin', router)`; middleware at router level makes auth hard to forget. | expressjs.com/en/guide/routing.html [doc] |
-| **GBrain today** | clone → new storage method | 60-90 min [est], Red Flag | Write SQL twice in two dialect spellings (tagged `sql` vs `$n`), keep parity by 28 drift tests; JSONB double-encode only visible on Postgres e2e. | engines + `test/e2e/engine-parity.test.ts` [code] |
-| **GBrain today** | clone → new migration | 45-75 min [est] | Append to a 7,307-line file, pick max+1, often also edit `schema.sql` + `pglite-schema.ts` + forward-reference bootstrap in both engines. | `migrate.ts:196-6780` [code] |
-| **GBrain after plan (as written)** | same | 30-45 min [est] for migrated domains, unchanged for the 7 unmigrated ones | One SQL copy in `src/core/store/`, generated migration registry, doctor/route/command registries. Friction from stale docs, naming collisions, hidden generator coupling. | [plan] |
+| **Foresights today** | clone → new storage method | 60-90 min [est], Red Flag | Write SQL twice in two dialect spellings (tagged `sql` vs `$n`), keep parity by 28 drift tests; JSONB double-encode only visible on Postgres e2e. | engines + `test/e2e/engine-parity.test.ts` [code] |
+| **Foresights today** | clone → new migration | 45-75 min [est] | Append to a 7,307-line file, pick max+1, often also edit `schema.sql` + `pglite-schema.ts` + forward-reference bootstrap in both engines. | `migrate.ts:196-6780` [code] |
+| **Foresights after plan (as written)** | same | 30-45 min [est] for migrated domains, unchanged for the 7 unmigrated ones | One SQL copy in `src/core/store/`, generated migration registry, doctor/route/command registries. Friction from stale docs, naming collisions, hidden generator coupling. | [plan] |
 
 Limitation: peer times are "one command" documentation claims, not measured contributor journeys; only the DX choices
 are comparable, not the minutes.
@@ -291,7 +291,7 @@ Test: can the persona put a change in the right place after seeing one example? 
     entries are `{name, run}`; category is derived from `categorizeCheck(name)`**. The W0 golden still records ordered
     names + categories.
 11. **Command table vs lazy loading** [code]: every `case` today does `await import('./commands/x.ts')`, which is why
-    `gbrain --version` is fast. → **D16 (Mechanical): table entries are lazy loaders `() => import('./commands/x.ts')`**,
+    `foresights --version` is fast. → **D16 (Mechanical): table entries are lazy loaders `() => import('./commands/x.ts')`**,
     never static imports; the flag-registry generator reads the table (O6).
 12. **Sync placement** [code]: sync code already lives in `src/core/sync-*.ts` (12 files) and `src/commands/sync-*.ts`
     (3 files). → **D17 (Mechanical): accept `src/commands/sync/`** (matches `doctor/`, `skillpack/`, `connectors/`

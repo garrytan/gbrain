@@ -100,18 +100,18 @@ describe('wrong-root import produces content_hash_duplicates (#2250, PGLite)', (
     expect(c.status).toBe('warn');
     expect(c.message).toContain('alice-example <-> people/alice-example');
     expect(c.message).toContain('widget-co <-> projects/widget-co');
-    expect(c.message).toContain('Fix: GBRAIN_SOURCE=default gbrain delete <bare-slug> --force for each pair.');
+    expect(c.message).toContain('Fix: GBRAIN_SOURCE=default foresights delete <bare-slug> --force for each pair.');
     expect(c.message).not.toContain('purge-deleted');
     expect((c.details as any).pair_count).toBe(2);
   });
 
   // #3697 class 3 / #5018: a remediation that names a command which then
-  // fails. Follow the printed fix LITERALLY: parse `GBRAIN_SOURCE=<id> gbrain
+  // fails. Follow the printed fix LITERALLY: parse `GBRAIN_SOURCE=<id> foresights
   // <verb> <bare-slug> <flags>` out of the rendered message, resolve the verb
   // through the ops' CLI names, map the env pin to the active source and the
   // flags to params, and run it for every bare slug. Page writes are
   // revisioned, so a delete naming neither --force nor --expected-revision is
-  // refused with revision_conflict, and `gbrain pages delete` does not exist.
+  // refused with revision_conflict, and `foresights pages delete` does not exist.
   // The fix must soft-delete only the duplicates: an unrelated tombstone in
   // the brain survives (no hard purge of every tombstone).
   test('following the remediation literally soft-deletes the duplicates and keeps an unrelated tombstone', async () => {
@@ -126,7 +126,7 @@ describe('wrong-root import produces content_hash_duplicates (#2250, PGLite)', (
     expect((await run(byCliName('delete')!, 'default', { slug: 'notes/unrelated-example', force: true })).state).toBe('committed');
 
     const c = await checkContentHashDuplicates(engine);
-    const printed = String(c.message).match(/Fix: GBRAIN_SOURCE=([a-z0-9-]+) gbrain ([a-z-]+) <bare-slug>((?: --[a-z-]+)*) for each pair\./);
+    const printed = String(c.message).match(/Fix: GBRAIN_SOURCE=([a-z0-9-]+) (?:foresights|gbrain) ([a-z-]+) <bare-slug>((?: --[a-z-]+)*) for each pair\./);
     expect(printed).not.toBeNull();
     const [, sourceId, verb, flagText] = printed!;
     const op = byCliName(verb!);

@@ -1,5 +1,5 @@
 /**
- * PR #6400 (b): `gbrain projections drain` looped forever on one queue row
+ * PR #6400 (b): `foresights projections drain` looped forever on one queue row
  * whose revision no longer matched the live page, because the rebuild counted
  * an untouched "superseded" row as progress and never consumed it.
  *

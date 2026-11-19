@@ -6,7 +6,7 @@
  *
  * The supervisor now records the hostname it put in the lock on line 3 of its
  * PID file (line 1 pid, line 2 kernel start time: the recycled-pid fence that
- * `gbrain jobs supervisor stop` reads stays where it is). Doctor: same pid and
+ * `foresights jobs supervisor stop` reads stays where it is). Doctor: same pid and
  * the recorded host equals the lock holder's host → `ok` with
  * `host_label_drift`; a two-line legacy PID file with the same pid → `warn`
  * that says what the difference may mean (`same_pid_host_label_differs`); a

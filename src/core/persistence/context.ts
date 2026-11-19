@@ -61,7 +61,7 @@ export async function withCoordinatedWrite<T>(engine: BrainEngine, sourceIds: st
   // nothing is set when the identity row is missing. The OFFSET 0 subquery reads the enclosing values first.
   // A declared trust tier nests as min(outer, inner) (ranks compared in SQL); an undeclared one leaves the enclosing settings.
   // G7a: `gbrain.git_protocol` declares that this build applies the git-canonical rules (git-declared.ts); the managed
-  // writer guard refuses rows of a git-canonical source from a writer without it (an older gbrain).
+  // writer guard refuses rows of a git-canonical source from a writer without it (an older foresights).
   const names = ['gbrain.write_sources', ...ATTRIBUTION_SETTINGS, ...TRUST_SETTINGS, 'gbrain.git_protocol'];
   const [tier, origin] = trustValues(attribution.trust ?? null);
   const [brain] = await engine.executeRaw<Record<string, string | null>>(`SELECT b.brain_id,prev.*,

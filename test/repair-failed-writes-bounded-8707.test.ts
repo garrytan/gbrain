@@ -1,5 +1,5 @@
 /**
- * #8707: `gbrain repair failed-writes` previews stay bounded on a large request table, with the same classes as before.
+ * #8707: `foresights repair failed-writes` previews stay bounded on a large request table, with the same classes as before.
  *
  * The preview used to read the request table once per refused write, several times over (replay attempts by request id,
  * the later requests of the page, a correlated fact-recovery check the planner ran for every candidate), so on a large

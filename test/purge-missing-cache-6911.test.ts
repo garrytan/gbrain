@@ -2,7 +2,7 @@
  * #6911: a brain whose query_cache table is missing although its schema is at head. The coordinated purge must
  * still purge (query_cache is a rebuildable cache), its receipt must say the cache was absent, a missing user-data
  * table must still fail the purge loudly, doctor must report the missing table, and the preview-first
- * `gbrain repair missing-tables` must recreate the cache in the shape a fully migrated brain has.
+ * `foresights repair missing-tables` must recreate the cache in the shape a fully migrated brain has.
  * Real PGLite, plus Postgres when DATABASE_URL is set.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -217,8 +217,8 @@ describe('#6911 missing query_cache', () => {
       const warned = await missingTablesCheck(engine);
       expect(warned.status).toBe('warn');
       expect(warned.message).toBe('2 table(s) the applied migrations create are missing, and apply-migrations will not recreate them from the migrations that already ran. '
-        + 'Rebuildable cache(s) query_cache: preview recreating them empty with gbrain repair missing-tables, then apply the printed command after the user agrees. '
-        + 'gbrain_cycle_locks hold no user data: gbrain init --migrate-only recreates the ones the base schema defines; report any it does not (see docs/guides/repair.md#missing-tables).');
+        + 'Rebuildable cache(s) query_cache: preview recreating them empty with foresights repair missing-tables, then apply the printed command after the user agrees. '
+        + 'gbrain_cycle_locks hold no user data: foresights init --migrate-only recreates the ones the base schema defines; report any it does not (see docs/guides/repair.md#missing-tables).');
       expect(warned.fix?.argv).toEqual(['gbrain', 'repair', 'missing-tables', '--json']);
       expect((await readMissingTables(engine) as { missing: unknown[] }).missing).toEqual([
         { table: 'gbrain_cycle_locks', inventory_class: 'discard', loss_kind: 'operational', recreatable: false },
@@ -226,7 +226,7 @@ describe('#6911 missing query_cache', () => {
       await engine.executeRaw('DROP TABLE IF EXISTS core_edit_notices');
       const failed = await missingTablesCheck(engine);
       expect(failed.status).toBe('fail');
-      expect(failed.message).toContain('core_edit_notices hold user data: restore their rows from a backup before running gbrain init --migrate-only, gbrain upgrade or apply-migrations');
+      expect(failed.message).toContain('core_edit_notices hold user data: restore their rows from a backup before running foresights init --migrate-only, foresights upgrade or apply-migrations');
       await engine.initSchema();
       expect(await readMissingTables(engine)).toMatchObject({ status: 'checked', missing: [{ table: 'query_cache' }] });
       expect(await engine.executeRaw('SELECT count(*)::int AS n FROM core_edit_notices')).toEqual([{ n: 0 }]);

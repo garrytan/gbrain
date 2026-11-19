@@ -18,7 +18,7 @@ const CLAIM = /\b(?:expands?|expansion|expanding)\b[^.;\n]{0,40}\bin every mode\
 
 /** A claim that `tokenmax` turns expansion on by default. */
 /** Troubleshooting advice that sends agents to bare `query` for expansion. */
-const BARE_QUERY_EXPANSION_ADVICE = /`query` \(multi-query expansion\)|`gbrain query "[^"]*"` wastes an LLM expansion call|search runs without query expansion, so/i;
+const BARE_QUERY_EXPANSION_ADVICE = /`query` \(multi-query expansion\)|`(?:foresights|gbrain) query "[^"]*"` wastes an LLM expansion call|search runs without query expansion, so/i;
 
 const TOKENMAX_CLAIM = /\bexpan\w*\b[^.\n]{0,80}\bon (?:in|for|only in) `?tokenmax`?|`?tokenmax`?[^.\n]{0,30}\bexpansion ?[=:]? ?on\b|`?tokenmax`?[^.\n]{0,80}\bexpands by default\b/i;
 
@@ -34,7 +34,7 @@ describe('query expansion phrasing guard', () => {
   test('the pattern catches the retired claims and spares unrelated "every mode" text', () => {
     for (const old of [
       '`query` expands in every mode unless explicitly disabled',
-      'gbrain query requests expansion in every mode unless you pass --no-expand.',
+      'foresights query requests expansion in every mode unless you pass --no-expand.',
       '(the only verb that can expand) expands by default in every mode',
       'the `query` op always expands',
     ]) expect(old).toMatch(CLAIM);
@@ -45,18 +45,18 @@ describe('query expansion phrasing guard', () => {
 
   test('the tokenmax pattern catches the retired claims and spares the current wording', () => {
     for (const old of [
-      'Expansion follows the mode for `gbrain query` only: on in `tokenmax`, off in',
+      'Expansion follows the mode for `foresights query` only: on in `tokenmax`, off in',
       'expand unset follows the mode: off in conservative and balanced, on in tokenmax',
       'tokenmax (expansion=on, limit=50) has a different hash',
-      '3) tokenmax — no budget, 50 chunks, reranked, `gbrain query` expands by default.',
+      '3) tokenmax — no budget, 50 chunks, reranked, `foresights query` expands by default.',
     ]) expect(old).toMatch(TOKENMAX_CLAIM);
     for (const old of [
       '| `target_not_retrieved` | No arm returned it for this query. | `query` (multi-query expansion) or rephrase. |',
-      '`gbrain query "Alice Example"` wastes an LLM expansion call.',
+      '`foresights query "Alice Example"` wastes an LLM expansion call.',
       'Search runs without query expansion, so synonym- and outcome-phrased matches can be missed',
     ]) expect(old).toMatch(BARE_QUERY_EXPANSION_ADVICE);
     expect('`query --expand` (`expand: true`) or rephrase').not.toMatch(BARE_QUERY_EXPANSION_ADVICE);
-    for (const fine of ['`gbrain query` does not expand by default in any mode', 'tokenmax (limit=50, no token budget)', 'reranker on for balanced and tokenmax']) {
+    for (const fine of ['`foresights query` does not expand by default in any mode', 'tokenmax (limit=50, no token budget)', 'reranker on for balanced and tokenmax']) {
       expect(fine).not.toMatch(TOKENMAX_CLAIM);
     }
   });

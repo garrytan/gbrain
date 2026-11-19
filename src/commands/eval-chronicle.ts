@@ -1,10 +1,10 @@
-// v0.42.x — Life Chronicle (#2390) `gbrain eval chronicle` (Phase A.9).
+// v0.42.x — Life Chronicle (#2390) `foresights eval chronicle` (Phase A.9).
 // Deterministic, brings its own in-memory PGLite (no DB, no gateway), so the
 // CI fixture gate runs anywhere. Exit 0 only on a perfect score.
 import { PGLiteEngine } from '../core/pglite-engine.ts';
 import { runChronicleEval } from '../eval/chronicle/harness.ts';
 
-const HELP = `Usage: gbrain eval chronicle [--json]
+const HELP = `Usage: foresights eval chronicle [--json]
 
 Deterministic Life Chronicle (#2390) feature eval. Builds a synthetic month
 corpus with a known gold chronology + a planted ontology supersession + a

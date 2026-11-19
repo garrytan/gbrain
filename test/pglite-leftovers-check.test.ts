@@ -46,7 +46,7 @@ afterAll(() => {
 describe('isMigrationLeftoverName', () => {
   test('matches ONLY brain.pglite — the one dir the engines themselves create', () => {
     expect(isMigrationLeftoverName('brain.pglite')).toBe(true);
-    // gbrain never creates `brain.pglite.*` siblings — no version writes a
+    // foresights never creates `brain.pglite.*` siblings — no version writes a
     // pre-migrate copy (reviewer's full-history pickaxe found no creation
     // site), so every sibling has unknown provenance and is NOT claimed.
     expect(isMigrationLeftoverName('brain.pglite.pre-migrate-20260524')).toBe(false);
@@ -121,7 +121,7 @@ describe('assessPgliteLeftovers', () => {
   test('warns on a postgres brain with the abandoned store — siblings stay unclaimed', () => {
     const home = makeHome('migrated');
     const live = makeStore(home, 'brain.pglite', [4096, 2048]);
-    // A pre-migrate-named sibling (no gbrain version creates one — unknown
+    // A pre-migrate-named sibling (no foresights version creates one — unknown
     // provenance, e.g. an operator script) must never enter the warn.
     const pre = makeStore(home, 'brain.pglite.pre-migrate-20260524', [4096]);
     // Freeze mtime at a known date — the in-the-wild signature (#3856).
@@ -144,7 +144,7 @@ describe('assessPgliteLeftovers', () => {
     expect(a.message).toContain('safe to delete by hand');
     expect(a.message).toContain('backup');
     // #3697 guard: the remediation must not invent a CLI surface.
-    expect(a.message).not.toMatch(/gbrain (cleanup|migrate cleanup|prune)/);
+    expect(a.message).not.toMatch(/(?:foresights|gbrain) (cleanup|migrate cleanup|prune)/);
   });
 
   test('ok for a pre-migrate-named sibling alone — never claimed (unknown provenance)', () => {

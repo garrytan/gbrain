@@ -2,7 +2,7 @@
 /**
  * Warm search stage probe on a loaded production-soak brain (GBRA-156): the
  * soak topology at --rtt-ms, the loopback mock provider with --embed-ms and
- * --rerank-ms, one stdio `gbrain serve` (a warm MCP caller), and --n search
+ * --rerank-ms, one stdio `foresights serve` (a warm MCP caller), and --n search
  * calls whose `_meta.retrieval.timings` (stages_ms and parts_ms) are written
  * to <out>/calls.jsonl with the wall time. --trace records GBRAIN_SQL_TRACE.
  *

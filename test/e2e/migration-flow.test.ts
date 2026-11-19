@@ -2,7 +2,7 @@
  * E2E: v0.11.0 migration-flow against real Postgres + temp $HOME.
  *
  * Exercises the full orchestrator from Phase A (schema apply via
- * `gbrain init --migrate-only`) through Phase G (completed.jsonl append),
+ * `foresights init --migrate-only`) through Phase G (completed.jsonl append),
  * skipping Phase F (autopilot install) to avoid writing a launchd plist
  * or crontab entry on the CI host. Worker supervision + autopilot-cycle
  * handler are covered by the unit-layer tests (test/handlers.test.ts and
@@ -41,8 +41,8 @@ let origPath: string | undefined;
 let fakeBinDir: string;
 const CLI_PATH = join(import.meta.dir, '..', '..', 'src', 'cli.ts');
 
-// Module-level PATH shim. The orchestrator shells out to `gbrain init
-// --migrate-only` and `gbrain jobs smoke`. On source-install test envs
+// Module-level PATH shim. The orchestrator shells out to `foresights init
+// --migrate-only` and `foresights jobs smoke`. On source-install test envs
 // there's no `gbrain` on $PATH. Install a tiny bash shim that `exec`s
 // `bun run src/cli.ts` and prepend it to $PATH before any tests import
 // the orchestrator. Running at module-init (not beforeAll) guarantees
@@ -69,7 +69,7 @@ function freshTempHome(label: string) {
   // fallback uses Bun's cached homedir(), frozen at the e2e wrapper's HOME.)
   process.env.HOME = dir;
   process.env.GBRAIN_HOME = dir;
-  // Seed config so Phase A's `gbrain init --migrate-only` has a target.
+  // Seed config so Phase A's `foresights init --migrate-only` has a target.
   mkdirSync(join(dir, '.gbrain'), { recursive: true });
   writeFileSync(
     join(dir, '.gbrain', 'config.json'),
@@ -223,7 +223,7 @@ describeE2E('E2E: v0.11.0 orchestrator against live Postgres', () => {
       // Builtins rewritten in place; non-builtins left alone.
       const cronAfter = JSON.parse(readFileSync(join(claudeDir, 'cron', 'jobs.json'), 'utf-8'));
       expect(cronAfter.jobs[0].kind).toBe('shell');       // sync (builtin)
-      expect(cronAfter.jobs[0].cmd).toContain('gbrain jobs submit sync');
+      expect(cronAfter.jobs[0].cmd).toContain('foresights jobs submit sync');
       expect(cronAfter.jobs[1].kind).toBe('agentTurn');   // ea-inbox-sweep (non-builtin)
       expect(cronAfter.jobs[2].kind).toBe('shell');       // embed (builtin)
       expect(cronAfter.jobs[3].kind).toBe('agentTurn');   // morning-briefing (non-builtin)

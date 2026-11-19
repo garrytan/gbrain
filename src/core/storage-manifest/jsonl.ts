@@ -1,9 +1,9 @@
 /**
- * Storage shelf recovery as JSONL (GST-1943). `gbrain storage export --jsonl` writes one card per line, sorted by id,
+ * Storage shelf recovery as JSONL (GST-1943). `foresights storage export --jsonl` writes one card per line, sorted by id,
  * stamped fields (`registered_by`, `origin`) included, and the card page's access labels (visibility, readable_by) under
- * `labels`, so an import restricts each card as it was. `gbrain storage import --jsonl <file>` previews each line
+ * `labels`, so an import restricts each card as it was. `foresights storage import --jsonl <file>` previews each line
  * (create / identical / conflict / invalid) with a plan_hash, and the apply with that plan_hash registers the missing
- * cards through registerCard with origin `import`: gbrain stamps registered_by and origin again, so a file cannot set
+ * cards through registerCard with origin `import`: foresights stamps registered_by and origin again, so a file cannot set
  * them. A card on the shelf that differs from its line is a conflict, reported and never overwritten. Idempotent: a
  * rerun finds the cards it created identical. Trusted local CLI only. Lines are validated like a new card, so an
  * invalid line never echoes its values.

@@ -1,7 +1,7 @@
 /**
  * #5984 G3: the parameter types a pool has described, shared by every pool in
  * this process that talks to the same database and kept in a file under the
- * gbrain home so the next process skips those describe round trips too.
+ * foresights home so the next process skips those describe round trips too.
  *
  * Safety rules (docs/eval/managed-sync-catchup.md, "Statement descriptions"):
  * - the driver stores only built-in parameter types and drops a statement's

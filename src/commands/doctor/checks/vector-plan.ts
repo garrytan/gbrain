@@ -85,12 +85,12 @@ export async function vectorPlanCheck(engine: BrainEngine, opts: VectorPlanOpts 
     const usesHnsw = indexes.some(index => scans.some(scan => scan.endsWith(` using ${index.name}`)));
     const stale = column.name === 'embedding' ? await staleFraction(engine, embedded) : null;
     const staleNote = stale && stale.fraction > STALE_WARN
-      ? ` About ${(stale.fraction * 100).toFixed(1)}% of sampled embedded chunks have stale text; run \`gbrain embed --stale\` to re-embed them.` : '';
+      ? ` About ${(stale.fraction * 100).toFixed(1)}% of sampled embedded chunks have stale text; run \`foresights embed --stale\` to re-embed them.` : '';
     const details = { ...base, embedded_chunks_estimate: embedded, plan_scans: scans, hnsw_indexes: indexes, legacy_guard: guard,
       stale_fraction: stale?.fraction ?? null, stale_sampled_chunks: stale?.sampled ?? null };
 
     if (guard.enabled) {
-      const via = guard.via === 'env' ? `${VECTOR_LEGACY_GUARD_ENV} (unset it)` : `${VECTOR_LEGACY_GUARD_KEY} (gbrain config set ${VECTOR_LEGACY_GUARD_KEY} false)`;
+      const via = guard.via === 'env' ? `${VECTOR_LEGACY_GUARD_ENV} (unset it)` : `${VECTOR_LEGACY_GUARD_KEY} (foresights config set ${VECTOR_LEGACY_GUARD_KEY} false)`;
       return { name: NAME, status: 'warn', details: { ...details, outcome: 'legacy_guard' },
         message: `Vector legacy guard configured via ${via}; active after restarting the owning service (serve, autopilot, workers). `
           + `It restores the pre-#5824 statement, which large brains plan as ${scans.join(', ') || 'a sequential scan'}. `
@@ -108,7 +108,7 @@ export async function vectorPlanCheck(engine: BrainEngine, opts: VectorPlanOpts 
     return { name: NAME, status: 'warn', details: { ...details, outcome: 'index_unused' },
       message: `Vector search plan does not use the HNSW index on content_chunks.${column.name}: the planner chose ${scans.join(', ') || 'a non-index plan'}. `
         + `Risk: vector candidates may hit the 8 s budget on large brains, and hybrid search then returns keyword-only results (vector_candidates_incomplete). `
-        + `Index: ${indexState}. Fix: upgrade gbrain on the brain host (gbrain upgrade) and rerun gbrain doctor; `
+        + `Index: ${indexState}. Fix: upgrade foresights on the brain host (foresights upgrade) and rerun foresights doctor; `
         + `if this started right after an upgrade, roll back with ${VECTOR_LEGACY_GUARD_KEY} and report it on #5824. See ${DOCS}.${staleNote}` };
   } catch (error) {
     return { name: NAME, status: 'warn', message: `Vector plan could not be inspected: ${error instanceof Error ? error.message : String(error)}. Health is unknown.`,

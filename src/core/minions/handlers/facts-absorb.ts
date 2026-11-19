@@ -39,7 +39,7 @@ export function factsAbsorbShouldRetry(
  * drain aborts it, so backstop.ts submits this job instead and the
  * long-lived worker does the LLM work here. Inline mode: errors throw, so
  * minion retry/backoff handles transient failures and real ones stay visible
- * in `gbrain jobs list --status failed`. In the gateway-refresh set (model
+ * in `foresights jobs list --status failed`. In the gateway-refresh set (model
  * config re-stamped per job). #4310: wrapped in the provider-halt cooldown
  * (llm-halt-cooldown.ts) — a globally-broken provider defers the queue.
  */
@@ -64,7 +64,7 @@ export function makeFactsAbsorbHandler(engine: BrainEngine): MinionHandler {
       const refusal = writeRefusalCode(err);
       if (refusal && DETERMINISTIC_WRITE_REFUSALS.includes(refusal)) {
         throw new UnrecoverableError(`facts_absorb_write_refused (${refusal}): ${(err as Error).message} Not retried. ` +
-          `Fix the cause (gbrain sources writer status ${sourceId}), then gbrain jobs retry ${job.id}. See ${ERROR_CATALOGUE.facts_absorb_write_refused.docs}`);
+          `Fix the cause (foresights sources writer status ${sourceId}), then foresights jobs retry ${job.id}. See ${ERROR_CATALOGUE.facts_absorb_write_refused.docs}`);
       }
       throw err;
     };

@@ -22,11 +22,11 @@ User guide: [docs/guides/pinned-questions.md](../../guides/pinned-questions.md).
 
 - `src/core/questions/phase.ts` — Cycle phase `standing_questions` (global, writes): syncs question pages, refreshes due active pins (never answered, then stale, then new evidence since the watermark; cooldown per pin or `cycle.standing_questions.cooldown_days`) under one `BudgetMeter` (`cycle.standing_questions.budget_usd`) and `max_per_cycle`, stops on `budget_exhausted` or `no_model_key`, skips (reported `blocked:answer_too_long`) a pin whose last refresh did not fit the current output cap until the cap is raised, and stamps `cycle.standing_questions.last_run_at`. Kill switch `cycle.standing_questions.enabled=false`.
 
-- `src/core/questions/auto-think-migration.ts` — Maps the seven `dream.auto_think` keys onto pins without creating consent (every pin imports inactive: `migrated_disabled`, `migrated_zero_budget` or `migrated_enabled`; `auto_commit=false` → draft; cooldown and model per pin; budget, max and allow_unpriced seed `cycle.standing_questions.*` only when unset). Config reads and inserts only; idempotent. `autoThinkReplacement` is what `gbrain config get|set` prints for an old key.
+- `src/core/questions/auto-think-migration.ts` — Maps the seven `dream.auto_think` keys onto pins without creating consent (every pin imports inactive: `migrated_disabled`, `migrated_zero_budget` or `migrated_enabled`; `auto_commit=false` → draft; cooldown and model per pin; budget, max and allow_unpriced seed `cycle.standing_questions.*` only when unset). Config reads and inserts only; idempotent. `autoThinkReplacement` is what `foresights config get|set` prints for an old key.
 
 - `src/core/ops/questions.ts` — `questions_pin`, `questions_refresh`, `questions_unpin` (write, `writeInference` `explicit_llm` / `none`) and `questions_list`, `questions_status` (read). On the full surface registrations pin (not `STARTER_OPS`). CLI equivalents in `src/core/ops/cli-equivalent.ts`.
 
-- `src/commands/questions.ts` — `gbrain questions pin|list|status|refresh|unpin` through `handleToolCall` (trusted local); exit 1 when the answer is blocked or a refresh did not publish.
+- `src/commands/questions.ts` — `foresights questions pin|list|status|refresh|unpin` through `handleToolCall` (trusted local); exit 1 when the answer is blocked or a refresh did not publish.
 
 - Privacy and retrieval seams: `src/core/search/private-visibility.ts` treats `type: question` without a visibility as private and any page with the `pinned_question` marker as private whatever its `visibility`; `buildVisibilityClause` (`src/core/search/sql-ranking.ts`) keeps marker pages out of every search arm for every caller.
 

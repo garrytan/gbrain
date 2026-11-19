@@ -2,7 +2,7 @@
  * #7475: the autopilot self-upgrade swaps and relaunches only autopilot, so a serve the installed serve service runs
  * stayed on the old build (restart_pending true for days). The relaunched autopilot now restarts that serve once,
  * under the swap's own auto-mode, quiet-hours and idle gates, and audits the outcome. A serve the service does not
- * run is never touched: it is reported for `gbrain upgrade --restart-only`.
+ * run is never touched: it is reported for `foresights upgrade --restart-only`.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -34,7 +34,7 @@ describe('planServeRestart (#7475)', () => {
   test('a hand-started stale serve is never restarted, only reported', () => {
     const plan = planServeRestart([serve(77, OLD, { ancestors: [1] })], SERVE_SERVICE, NEW, null);
     expect(plan).toMatchObject({ outcome: 'manual' });
-    expect('detail' in plan && plan.detail).toContain('gbrain upgrade --restart-only');
+    expect('detail' in plan && plan.detail).toContain('foresights upgrade --restart-only');
     expect('detail' in plan && plan.detail).toContain('kill 77');
   });
 
@@ -127,7 +127,7 @@ describe('restartServeAfterSelfUpgrade (#7475)', () => {
   test('a restart_serve row does not hide doctor\'s held auto-upgrade warning', async () => {
     const { home, audit } = brainHome('auto', true);
     await withEnv({ GBRAIN_HOME: home, GBRAIN_AUDIT_DIR: audit }, async () => {
-      logSelfUpgrade({ channel: 'autopilot', action: 'unsupported_runtime', current: '0.42.0', latest: '0.99.0', outcome: 'skipped', reason: 'gbrain 0.99.0 requires Bun >=9.0.0' });
+      logSelfUpgrade({ channel: 'autopilot', action: 'unsupported_runtime', current: '0.42.0', latest: '0.99.0', outcome: 'skipped', reason: 'foresights 0.99.0 requires Bun >=9.0.0' });
       await restartServeAfterSelfUpgrade(idle, { state: { tried: false }, restart: async () => ({ outcome: 'unverified', detail: 'serve did not come back' }) });
       expect(checkSelfUpgradeHealth().message).toContain('Auto-upgrade to 0.99.0 held');
     });

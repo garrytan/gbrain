@@ -26,7 +26,7 @@ import { connectorDryRunResult } from '../connectors/api-source.ts';
  *    restarting. historyId is captured BEFORE the backfill starts, so the
  *    delta lane takes over with zero gap (overlap re-renders are idempotent).
  *
- * Credentials come from the vault (gbrain google connect) — never from
+ * Credentials come from the vault (foresights google connect) — never from
  * sources.config, which stores only the account pointer.
  */
 
@@ -401,7 +401,7 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
  * #5581: returns true when CURRENT mail is complete: the history delta
  * drained, no history-expired gap remains, and the recent inbox is
  * imported (backfill done or its floor past GMAIL_RECENT_HORIZON_MS). Held
- * threads never block it; `gbrain waiting` reports them as partial coverage.
+ * threads never block it; `foresights waiting` reports them as partial coverage.
  * False = the caller must NOT stamp `last_sync_at`. The deep historical
  * backfill runs AFTER current mail and does not gate freshness; its failures
  * still mark the run partial.
@@ -675,7 +675,7 @@ async function runExtractAndEmbed(
       const linksResult = await extractLinksForSlugs(deps.engine, deps.cfg.dir, pagesAffected, extractOpts);
       const timelineResult = await extractTimelineForSlugs(deps.engine, deps.cfg.dir, pagesAffected, extractOpts);
       // Stamp only the slugs both hooks actually read from disk; a page the
-      // extractor skipped stays stale for 'gbrain extract --stale'.
+      // extractor skipped stays stale for 'foresights extract --stale'.
       await stampExtracted(
         deps.engine,
         slugsSafeToStamp(linksResult, timelineResult)
@@ -683,7 +683,7 @@ async function runExtractAndEmbed(
       );
     } catch { /* extraction is best-effort */ }
   } else if (totalChanges > 100 && !deps.opts.noExtract) {
-    process.stderr.write(`[google] large sync (${totalChanges} pages); extraction deferred to 'gbrain extract --stale --source-id ${deps.sourceId}'\n`);
+    process.stderr.write(`[google] large sync (${totalChanges} pages); extraction deferred to 'foresights extract --stale --source-id ${deps.sourceId}'\n`);
   }
 
   if (!deps.opts.noEmbed && totalChanges <= 100 && pagesAffected.length > 0) {
@@ -693,7 +693,7 @@ async function runExtractAndEmbed(
       summary.embedded = pagesAffected.length;
     } catch { /* embed is best-effort */ }
   } else if (!deps.opts.noEmbed && totalChanges > 100) {
-    const drainHint = `run 'gbrain embed --stale --source ${deps.sourceId}' to drain now`;
+    const drainHint = `run 'foresights embed --stale --source ${deps.sourceId}' to drain now`;
     try {
       const { submitEmbedBackfill } = await import('../embed-backfill-submit.ts');
       const sub = await submitEmbedBackfill(deps.engine, deps.sourceId, { reason: 'google_sync_defer' });
@@ -728,7 +728,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
   managed: ManagedConnectorSync | null, fetchImpl?: FetchImpl, vaultOverride?: CredentialVault): Promise<SyncResult> {
   if (!cfg.account) {
     throw new Error(
-      `Google source "${sourceId}" has no account configured. Re-add it: gbrain sources add ${sourceId} --kind google --account <email>`,
+      `Google source "${sourceId}" has no account configured. Re-add it: foresights sources add ${sourceId} --kind google --account <email>`,
     );
   }
   const log = (msg: string): void => {
@@ -736,7 +736,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
   };
   // Access resolution: the vault is the default; command/env modes let a
   // stack that already holds Google access (gog, gcloud, a credential
-  // gateway) drive this source without gbrain's own OAuth flow. Non-vault
+  // gateway) drive this source without foresights's own OAuth flow. Non-vault
   // modes synthesize a minimal identity entry: no meta.scopes (so the scope
   // preflight below trusts cfg.services), no sendas_aliases (best-effort
   // live fetch below), account from the source config.
@@ -765,7 +765,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
     const vault = vaultOverride ?? openVault();
     const vaultEntry = await vault.get(credentialId(GOOGLE_PROVIDER, cfg.account));
     if (!vaultEntry) {
-      throw new CredentialError('not_connected', ` for ${cfg.account} — run: gbrain google connect --account ${cfg.account}`);
+      throw new CredentialError('not_connected', ` for ${cfg.account} — run: foresights google connect --account ${cfg.account}`);
     }
     entry = vaultEntry;
     tokens = new GoogleTokenProvider(vault, entry.id, fetchImpl ?? fetch);
@@ -978,7 +978,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
       await markStaleLoops(engine, sourceId);
     } catch { /* best-effort */ }
 
-    // last_sync_at feeds the trust-critical staleness gate (`gbrain waiting`
+    // last_sync_at feeds the trust-critical staleness gate (`foresights waiting`
     // refuses on stale sources). A sync whose GMAIL sweep failed did not
     // refresh the loops' data — stamping it would let a revoked token +
     // frequent cron keep the gate green forever (red-team F2 bypass).

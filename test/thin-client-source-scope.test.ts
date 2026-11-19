@@ -3,7 +3,7 @@
  *
  * The local CLI path resolves source scope in makeContext (ctx.sourceId); the
  * thin-client route short-circuits before that and sent params verbatim, so
- * `gbrain query --source X` against a remote brain silently searched unscoped
+ * `foresights query --source X` against a remote brain silently searched unscoped
  * (the server op ignores the unknown `source` key).
  *
  * applyThinClientSourceScope runs the engine-free tiers (flag → env → dotfile)

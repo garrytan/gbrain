@@ -1,6 +1,6 @@
 /**
  * H2 (test-gap wave) — runPhaseSkillopt's flag gate + cost caps: the only
- * brake on an unattended nightly LLM spender (`gbrain dream --phase skillopt`).
+ * brake on an unattended nightly LLM spender (`foresights dream --phase skillopt`).
  *
  * Pins, exactly as coded in src/core/skillopt/cycle-phase.ts:
  *   1. `cycle.skillopt.enabled` unset / non-'true' → status 'skipped',
@@ -126,7 +126,7 @@ describe('runPhaseSkillopt feature-flag gate', () => {
     // Pin the real user-facing strings — the skip must tell the operator the
     // exact enable command.
     expect(res.summary).toBe(
-      'feature flag off (gbrain config set cycle.skillopt.enabled true to enable)',
+      'feature flag off (foresights config set cycle.skillopt.enabled true to enable)',
     );
     expect(res.details).toEqual({ reason: 'feature_flag_off' });
     expect(runnerCalls.length).toBe(0);

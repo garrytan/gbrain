@@ -1,5 +1,5 @@
 /**
- * #6780: `gbrain config set` accepts each runtime knob registered in
+ * #6780: `foresights config set` accepts each runtime knob registered in
  * src/core/config-runtime-keys.ts without --force.
  *
  * Protects the user-visible contract the registry exists for: before the

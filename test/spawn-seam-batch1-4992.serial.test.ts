@@ -1,5 +1,5 @@
 /**
- * #4992 batch 1: the two detached `gbrain hook` launches a user feels on
+ * #4992 batch 1: the two detached `foresights hook` launches a user feels on
  * Windows (the Stop-hook workspace push and the session-end backup check) and
  * the three wave-13 holdovers (`brain-repo-durability.ts`, `hardened-git.ts`,
  * `claude-cli-language-model.ts`) go through `src/core/spawn.ts`, so every
@@ -50,7 +50,7 @@ beforeEach(() => {
   // A repository-locating variable the hook's git children must not inherit.
   process.env.GIT_DIR = join(tmp, 'not-a-repo', '.git');
   spawns = []; execFiles = [];
-  // Detached gbrain re-executions are recorded, never started.
+  // Detached foresights re-executions are recorded, never started.
   spawnSpy = spyOn(childProcess, 'spawn').mockImplementation(((command: string, args: string[], options: Record<string, unknown>) => {
     spawns.push({ command, args, options });
     return fakeChild();
@@ -88,7 +88,7 @@ function bootstrapWorkspace(name: string): string {
   return repo;
 }
 
-describe('gbrain hook detached launches (#4992 batch 1)', () => {
+describe('foresights hook detached launches (#4992 batch 1)', () => {
   test('the session-start workspace push is spawned detached with windowsHide: true', async () => {
     const repo = bootstrapWorkspace('boot-repo');
     expect(await runHook(['session-start'], { write: () => {}, stdin: '', cwd: repo })).toBe(0);

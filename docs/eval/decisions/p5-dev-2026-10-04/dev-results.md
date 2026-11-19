@@ -1,6 +1,6 @@
 # P5 dev results (development data; not eligible to set a default)
 
-Baseline gbrain master 6622a119e; candidate branch `capy/p5-line-grammar-wanted-pages`, pinned at 21befeb5b in
+Baseline foresights master 6622a119e; candidate branch `capy/p5-line-grammar-wanted-pages`, pinned at 21befeb5b in
 `decision.json`. H1, H2, H4 and H5a are dev diagnostics run from scripts against the two builds (the kit has no runners
 for them yet); the LME-S guardrail and the N4 resolver comparison run through `eval:decide` (gbrain-evals
 `p0-heldout-harness` 847ef5c), with the kit's output in `verdict.json`.

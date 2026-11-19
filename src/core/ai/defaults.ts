@@ -29,10 +29,10 @@ export function renderCanonicalMigrationCommands(opts: { colDims?: number | null
   /** Rebuild explanation when the recommended target changes the width. */
   note: string | null;
 } {
-  const base = `gbrain migrate embeddings --to ${NEW_INSTALL_DEFAULT_EMBEDDING_MODEL} --dim ${NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS}`;
+  const base = `foresights migrate embeddings --to ${NEW_INSTALL_DEFAULT_EMBEDDING_MODEL} --dim ${NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS}`;
   const colDims = opts.colDims ?? null;
   const openaiAlternative = colDims !== null && colDims <= 1536
-    ? `gbrain migrate embeddings --to openai:text-embedding-3-small --dim ${colDims} --dry-run`
+    ? `foresights migrate embeddings --to openai:text-embedding-3-small --dim ${colDims} --dry-run`
     : null;
   const note = colDims !== null && colDims !== NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS
     ? `(--dim ${NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS} rebuilds the ${colDims}d index — Voyage's valid widths are 256/512/1024/2048${openaiAlternative ? `; the OpenAI alternative keeps this brain's ${colDims}d width` : ''}.)`

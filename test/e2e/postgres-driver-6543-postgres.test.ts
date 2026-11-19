@@ -8,7 +8,7 @@
  *    a stale `57P01` on direct Postgres, `XX000 DbHandler exited` through
  *    Supavisor, so one terminated backend cost two failures.
  * 2. A statement that failed to build reported its connection ready for more,
- *    so a pool built with `max_pipeline: 0` (gbrain's transaction-pooler pools)
+ *    so a pool built with `max_pipeline: 0` (foresights's transaction-pooler pools)
  *    still pipelined the next statement behind the Unbuildable query.
  * 3. `UNDEFINED_VALUE` did not say which parameter was undefined, so the
  *    report's two build failures could not be traced to a column.

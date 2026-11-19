@@ -16,8 +16,8 @@ model and hurt another on instruction following, so it is not on by default
 To use it:
 
 ```bash
-gbrain config set memory.core.enabled true
-gbrain core init                 # or: gbrain core add <slug>
+foresights config set memory.core.enabled true
+foresights core init                 # or: foresights core add <slug>
 ```
 
 The save-before-compaction notice ([below](#saving-before-compaction)) is a
@@ -48,13 +48,13 @@ the rendered text.
 The easiest way to manage the set is the CLI:
 
 ```bash
-gbrain core list                 # core pages, priority order, rendered size
-gbrain core status --json        # usage against the budget, largest pages
-gbrain core add people/alice-example --priority 10
-gbrain core remove people/alice-example
-gbrain core show                 # the exact block a session receives
-gbrain core suggest              # read-only candidates; --apply marks them
-gbrain core init                 # creates a starter profile page and marks it core
+foresights core list                 # core pages, priority order, rendered size
+foresights core status --json        # usage against the budget, largest pages
+foresights core add people/alice-example --priority 10
+foresights core remove people/alice-example
+foresights core show                 # the exact block a session receives
+foresights core suggest              # read-only candidates; --apply marks them
+foresights core init                 # creates a starter profile page and marks it core
 ```
 
 ## Budget
@@ -71,11 +71,11 @@ always pass, so an over-budget brain can always be brought back under.
 
 What to do when a write is refused: move the detail into a linked non-core
 page and keep a one-line pointer in the core page, or ask the user to raise
-the budget (`gbrain config set memory.core.max_chars 6000`). `gbrain core
+the budget (`foresights config set memory.core.max_chars 6000`). `foresights core
 status --json` shows where the characters go.
 
 The owner's own git edits are never blocked: a sync that pushes core over
-budget still succeeds, and `gbrain doctor` reports the overage until it is
+budget still succeeds, and `foresights doctor` reports the overage until it is
 fixed. Every other write, including local CLI writes, is held to the budget.
 
 ## Owner only
@@ -90,7 +90,7 @@ which pages are core:
 - A remote caller cannot delete a core page (`core_delete_owner_only`).
 
 Both refusals mean the user has to act. Relay the command the message names
-(for example `gbrain core add --source default notes/x` or `gbrain core remove
+(for example `foresights core add --source default notes/x` or `foresights core remove
 people/alice-example`) and let the user run it.
 
 ## Remote edits
@@ -100,7 +100,7 @@ callers follow `memory.core.remote_edit`:
 
 | Value | Behavior |
 |---|---|
-| `notify` (default) | The edit is saved, and the next sessions show a short notice naming the page and revision until the owner runs `gbrain core ack <slug> --revision <token>`. `gbrain core diff <slug>` shows what changed. |
+| `notify` (default) | The edit is saved, and the next sessions show a short notice naming the page and revision until the owner runs `foresights core ack <slug> --revision <token>`. `foresights core diff <slug>` shows what changed. |
 | `allow` | The edit is saved with no notice. |
 | `refuse` | The edit is refused with `core_remote_edit_refused`. Make the edit on the brain host, or ask the user to switch the setting. |
 
@@ -111,7 +111,7 @@ callers follow `memory.core.remote_edit`:
 | Claude Code | The session-start hook prints the core block first, then the usual digest. The heartbeat records `core_chars` and `core_revision`. `GBRAIN_CORE=0` suppresses core for one session. |
 | OpenClaw | The context engine adds the core block on every turn from a read-only fetch, refreshed at most once a minute. |
 | Any MCP client | `context_pack` returns a `core` field and prepends the block to `text`; call it with no `entities` to get core alone. Core counts inside `budget_tokens`. |
-| Static instruction files | `gbrain compile-context --include-core` writes core into the compiled file. Targets include `codex-global` (`$CODEX_HOME/AGENTS.md`) and `hermes` (`.hermes.md`, kept out of git). Core is never written into a git-tracked file; `--remove-core` recompiles without it. |
+| Static instruction files | `foresights compile-context --include-core` writes core into the compiled file. Targets include `codex-global` (`$CODEX_HOME/AGENTS.md`) and `hermes` (`.hermes.md`, kept out of git). Core is never written into a git-tracked file; `--remove-core` recompiles without it. |
 
 ## Saving before compaction
 
@@ -131,7 +131,7 @@ Two pieces cover that:
   compaction point), the next prompt carries one notice telling the agent to
   save what matters now with `remember` and `items`. It fires once per compaction segment, only when `remember` is
   callable, and follows the capture policy (TTL, visibility, exclusions).
-  Turn it off with `gbrain config set memory.pressure.enabled false`.
+  Turn it off with `foresights config set memory.pressure.enabled false`.
 
 ## Configuration
 
@@ -146,7 +146,7 @@ Two pieces cover that:
 
 ## Troubleshooting
 
-`gbrain doctor` runs a `core_memory` check: core over budget, out-of-range
+`foresights doctor` runs a `core_memory` check: core over budget, out-of-range
 settings, core pages that are deleted or withheld, compiled files carrying an
 old core revision, and writers that predate the core guard. Each finding names
 its fix.

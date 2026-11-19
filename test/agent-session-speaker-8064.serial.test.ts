@@ -75,7 +75,7 @@ describe('resolveSessionSpeaker', () => {
 
   test('detection needs a headless harness process AND a harness ancestor', () => {
     expect(detectAgentLaunched([WORKER, SHELL, ORCH])).toBe(true);
-    expect(detectAgentLaunched([{ pid: 1, args: ['sh', '-c', 'gbrain hook stop'] }, WORKER, SHELL, ORCH])).toBe(true);
+    expect(detectAgentLaunched([{ pid: 1, args: ['sh', '-c', 'foresights hook stop'] }, WORKER, SHELL, ORCH])).toBe(true);
     expect(detectAgentLaunched([WORKER, { pid: 3, args: ['zsh'] }])).toBe(false);
     expect(detectAgentLaunched([ORCH, SHELL, { pid: 9, args: ['/usr/local/bin/claude'] }])).toBe(false);
     expect(detectAgentLaunched([{ pid: 4, args: ['/opt/codex', 'exec', 'task'] }, ORCH])).toBe(true);

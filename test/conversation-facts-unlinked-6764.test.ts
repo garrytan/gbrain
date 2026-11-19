@@ -10,7 +10,7 @@
  * (2) doctor `unlinked_facts` labels those rows origin `conversation`,
  * counts them apart from fence rows, and for rows the free conversation
  * relink could not resolve prescribes a bounded, source-qualified, capped
- * re-extraction (preview first) instead of plain `gbrain facts relink`,
+ * re-extraction (preview first) instead of plain `foresights facts relink`,
  * which never examines derived rows. (3) a
  * `remember --replaces` aimed at a conversation-derived fact names
  * re-extraction instead of forget-then-remember.
@@ -157,7 +157,7 @@ describe('#6764 unlinked_facts names conversation rows and their real fix', () =
     await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, source, created_at, valid_from) VALUES ('default', NULL, 'free fact', 'cli:remember', now(), now())`);
     const verdict = unlinkedFactsVerdict(await unlinkedFactsStats(engine, ['default']));
     expect(verdict.fix).toBeUndefined();
-    expect(verdict.message).toContain('gbrain facts relink --dry-run');
+    expect(verdict.message).toContain('foresights facts relink --dry-run');
   });
 });
 
@@ -172,7 +172,7 @@ describe('#6764 replacing a conversation-derived fact names re-extraction', () =
     expect(res.isError).toBe(true);
     const body = res.content[0]!.text!;
     expect(body).toContain('replaces_cross_page');
-    expect(body).toContain('gbrain extract-conversation-facts');
+    expect(body).toContain('foresights extract-conversation-facts');
     expect(body).not.toContain('Forget the old fact, then remember the new one.');
   });
 });

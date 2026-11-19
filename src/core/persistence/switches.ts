@@ -5,7 +5,7 @@
  * environment variable overrides the brain config key; `0` or `false` (either
  * source) turns a switch off, `1` or `true` turns it on. The snapshot
  * reads every switch key in one statement and is reused for SWITCH_TTL_MS, so
- * `gbrain config set <key> false` reaches a running `serve` within that time
+ * `foresights config set <key> false` reaches a running `serve` within that time
  * without a round trip per write. Config writes are trusted-local only (no
  * remote operation writes config), so a remote caller cannot flip a switch.
  */

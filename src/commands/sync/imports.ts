@@ -247,7 +247,7 @@ function startStallWatchdog(
       if (Date.now() - progressAt.last >= stallMs) {
         serr(
           `[sync] no import progress for ${stallSeconds}s — aborting (stall watchdog)${poolLine(run.engine)}. ` +
-          `The per-source lock will release; the next 'gbrain sync' resumes from the checkpoint.`,
+          `The per-source lock will release; the next 'foresights sync' resumes from the checkpoint.`,
         );
         run.stallAborted = true;
         stallController.abort();
@@ -277,7 +277,7 @@ async function importOnePath(run: SyncRun, ctx: ImportContext, eng: BrainEngine,
   // instead of the silent "deleted after the pin" skip below.
   if (isWindowsColonTarget(path)) {
     failedFiles.push({ path, error: `colon_slug_windows_write_through: ${path} has a ':' in its name, which Windows cannot store. `
-      + `Rename it without ':' on a macOS or Linux checkout and commit, then run gbrain sync${opts.sourceId ? ` --source ${opts.sourceId}` : ''} (${ERROR_CATALOGUE.colon_slug_windows_write_through.docs}).` });
+      + `Rename it without ':' on a macOS or Linux checkout and commit, then run foresights sync${opts.sourceId ? ` --source ${opts.sourceId}` : ''} (${ERROR_CATALOGUE.colon_slug_windows_write_through.docs}).` });
     progressAt.last = Date.now();
     progress.tick(1, `skip:${path}`);
     return;

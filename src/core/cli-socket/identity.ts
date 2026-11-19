@@ -4,7 +4,7 @@
  * serve answers only a CLI whose identity matches its own part by part
  * (`cliSocketIdentityMismatch`), so a CLI aimed at another database, another
  * GBRAIN_HOME, another brain (mount), an edited config file, a different
- * read-behavior environment or another gbrain release always takes its own
+ * read-behavior environment or another foresights release always takes its own
  * cold path, and the refusal names the part that differed. The socket path
  * alone never decides.
  */
@@ -173,7 +173,7 @@ export interface CliSocketIdentity {
   env: BehaviorEnv;
 }
 
-/** The brain id, the database target, the config home and file (realpath and content), the read-behavior env and the gbrain version. */
+/** The brain id, the database target, the config home and file (realpath and content), the read-behavior env and the foresights version. */
 export function cliSocketIdentity(input: CliSocketIdentityInput): CliSocketIdentity {
   const file = readConfigFile(input.configFile);
   return {

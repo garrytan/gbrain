@@ -1,5 +1,5 @@
 /**
- * `gbrain repair ontology-facts` (#6264): give the ontology back the
+ * `foresights repair ontology-facts` (#6264): give the ontology back the
  * observations the `extract_facts` fence step took from it.
  *
  * From v0.60.53.0 the fence step (`facts/unfenced-facts.ts`) fenced every
@@ -100,7 +100,7 @@ interface ApprovedFact extends OntologyFactCandidate { selection: string[] }
 interface FactItem extends RepairItem { fact: OntologyFactCandidate; hash: string; last: boolean }
 
 function previewCommand(scope: RepairScope): string {
-  return `gbrain repair ontology-facts${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
+  return `foresights repair ontology-facts${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
 }
 
 function item(fact: OntologyFactCandidate, hash: string, last: boolean): FactItem {
@@ -139,7 +139,7 @@ export const ontologyFactsRepair: RepairHandler = {
         listing: facts.map(f => ({ item: `${f.source_id}:${f.entity_slug}#${f.dimension}`, class: label(f), detail: detail(f) })) };
     }
     if (!opts.expect) {
-      throw new OperationError('invalid_params', 'gbrain repair ontology-facts --apply restores only the set a preview printed.',
+      throw new OperationError('invalid_params', 'foresights repair ontology-facts --apply restores only the set a preview printed.',
         `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`,
         'docs/guides/repair.md#explicit-only-repair-kinds');
     }

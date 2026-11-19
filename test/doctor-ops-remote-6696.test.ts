@@ -5,7 +5,7 @@
  *   sources, cached 60 s per engine and scope.
  * - `run_doctor` takes `tier: "ops"` and `only`, runs only the ops sections and
  *   refuses other tiers and unknown names.
- * - The thin client's `gbrain doctor --tier ops` / `--only persistence_capacity`
+ * - The thin client's `foresights doctor --tier ops` / `--only persistence_capacity`
  *   asks the serve what it lists: run_doctor with the parameters, else the
  *   read-scope bands, else the structured handoff `doctor_tier_unavailable`.
  * - `/admin/api/ops` is served from one ops run a minute.
@@ -238,7 +238,7 @@ describe('thin-client doctor --tier ops / --only routing', () => {
     await runScopedRemoteDoctor(config(), { tier: 'ops', only: null, json: true, label: '--tier ops' });
     expect(calls).toEqual([]);
     expect(out).toContain('doctor_tier_unavailable');
-    expect(out).toContain('gbrain doctor --tier ops --json');
+    expect(out).toContain('foresights doctor --tier ops --json');
     expect(currentExitCode()).not.toBe(0);
   });
 

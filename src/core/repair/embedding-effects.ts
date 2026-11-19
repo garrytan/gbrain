@@ -1,5 +1,5 @@
 /**
- * `gbrain repair embedding-effects` (#5629, #5734): settle embedding effects
+ * `foresights repair embedding-effects` (#5629, #5734): settle embedding effects
  * of committed writes that are stale queued or failed, so compaction and
  * activation stop waiting on them. Each effect ends `reconciled`,
  * `superseded`, `retry_queued` or `blocked` (see

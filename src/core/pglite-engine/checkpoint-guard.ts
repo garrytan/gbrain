@@ -109,7 +109,7 @@ export class PgliteCheckpointGuard {
     } catch (error) {
       throw new GBrainError('PGLite checkpoint failed',
         `a top-level CHECKPOINT before the next write transaction failed (${error instanceof Error ? error.message : String(error)}); the transaction was not started`,
-        'stop other gbrain processes, restart the command, and run `gbrain pglite-repair --dry-run` if it fails again');
+        'stop other foresights processes, restart the command, and run `foresights pglite-repair --dry-run` if it fails again');
     }
   }
 

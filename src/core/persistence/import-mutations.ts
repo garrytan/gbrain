@@ -61,7 +61,7 @@ export async function settleManagedImportBatch(engine: BrainEngine, batch: reado
   const t0 = Date.now();
   const settled: PromiseSettledResult<ImportResult>[] = !open.length ? [] : await importManagedFiles(engine, open.map(filePath => ({ filePath, sourcePath: sourcePathOf(filePath) })), opts)
     .catch(reason => open.map(() => ({ status: 'rejected' as const, reason })));
-  if (Date.now() - t0 > 5000 * open.length) console.error(`[gbrain phase] import.process_batch slow ${Date.now() - t0}ms files=${open.length} first=${sourcePathOf(open[0]!)}`);
+  if (Date.now() - t0 > 5000 * open.length) console.error(`[foresights phase] import.process_batch slow ${Date.now() - t0}ms files=${open.length} first=${sourcePathOf(open[0]!)}`);
   return batch.map(file => settled[open.indexOf(file)]);
 }
 const IMPORT_OP = 'managed-file-import';
@@ -83,7 +83,7 @@ type StoredImport = Omit<PendingImport, 'content'> & { content?: string };
 export async function managedImportWriteThroughRefusal(engine: BrainEngine, sourceId: string): Promise<OperationError | null> {
   if (writeThroughConfigured(await engine.getConfig('sync.write_through'))) return null;
   return opError('owner_unavailable', 'Managed import publishes through the canonical owner, and sync.write_through is off on this brain.',
-    `Nothing was imported and no write was admitted. Copy the files into source ${sourceId}'s checkout, commit them, then run gbrain sync --source ${sourceId}.`,
+    `Nothing was imported and no write was admitted. Copy the files into source ${sourceId}'s checkout, commit them, then run foresights sync --source ${sourceId}.`,
     { detail: 'disabled_by_config', retryable: false, fix: { argv: ['gbrain', 'sync', '--source', sourceId], consent: [], actor: 'agent',
       why: `Imports the files committed in source ${sourceId}'s checkout; run it after committing them.`, requires_exclusive: false } });
 }
@@ -129,7 +129,7 @@ export async function importManagedFiles(engine: BrainEngine, files: readonly Ma
     try {
       if (isImageFilePath(sourcePath) && process.env.GBRAIN_EMBEDDING_MULTIMODAL !== 'true') {
         throw opError('invalid_params', 'Image import requires GBRAIN_EMBEDDING_MULTIMODAL=true.',
-          `${sourcePath} is an image and multimodal embeddings are off, so it was not imported. Import only text files, or ask the user whether to enable GBRAIN_EMBEDDING_MULTIMODAL=true for the gbrain process (image embeddings can cost money).`);
+          `${sourcePath} is an image and multimodal embeddings are off, so it was not imported. Import only text files, or ask the user whether to enable GBRAIN_EMBEDDING_MULTIMODAL=true for the foresights process (image embeddings can cost money).`);
       }
       if (unowned) throw unowned;
       const root = join(binding!.local_path!, binding!.relative_path);
@@ -173,7 +173,7 @@ async function importPlanned(ctx: OperationContext, binding: WorktreeBinding,
   const resume = (member: (typeof members)[number], stored: StoredImport) => {
     // The key binds the input hash and slug, so a mismatch is a checkpoint this binary cannot pair with the bytes.
     if (stored.inputHash !== member.inputHash || stored.slug !== member.slug) throw opError('internal_error', 'A pending import checkpoint does not match the file it is keyed by.',
-      `The checkpointed import of ${member.sourcePath} (request ${stored.request_id}) in source ${sourceId} records a different input than the bytes just read under the same key, so nothing was resubmitted. Report it with gbrain doctor --json.`);
+      `The checkpointed import of ${member.sourcePath} (request ${stored.request_id}) in source ${sourceId} records a different input than the bytes just read under the same key, so nothing was resubmitted. Report it with foresights doctor --json.`);
     member.stored = stored;
     member.params = { ...stored, ...(member.content !== undefined ? { content: member.content } : {}) } as PendingImport;
   };

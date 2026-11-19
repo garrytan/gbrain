@@ -1,5 +1,5 @@
 /**
- * `gbrain repair redacted-facts` (#7125) and doctor `facts_redaction_marker`, on PGLite
+ * `foresights repair redacted-facts` (#7125) and doctor `facts_redaction_marker`, on PGLite
  * and, with a safe DATABASE_URL, Postgres (test/e2e/repair-redacted-facts-postgres.test.ts).
  *
  * Protects: a fact whose stored text lost a word to the pre-fix sanitizer
@@ -69,7 +69,7 @@ const putPage = (ctx: OperationContext, slug: string, content: string) =>
 for (const backend of testBackends()) {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
 
-  describe(`gbrain repair redacted-facts, managed (${backend})`, () => {
+  describe(`foresights repair redacted-facts, managed (${backend})`, () => {
     test('doctor finding, preview, hash-bound apply: fenced and database-only rows restored, unprovable and conflicting rows kept', async () => {
       await managedBrain(async ({ engine, ctx }) => {
         await putPage(ctx, NOTES, `---
@@ -107,7 +107,7 @@ ${fence}
         const finding = await factsRedactionMarkerCheck(engine);
         expect(finding.status).toBe('warn');
         expect(finding.details).toMatchObject({ affected: 5 });
-        expect(finding.message).toContain('gbrain repair redacted-facts');
+        expect(finding.message).toContain('foresights repair redacted-facts');
         const wave = (await runWaveChecks(engine, { only: 'wave' })).find(f => f.spec.id === 'facts_redaction_marker')!;
         expect(wave.state).toBe('finding');
         expect(wave.spec.count(wave.check.details!)).toBe(5);
@@ -117,7 +117,7 @@ ${fence}
         const classes = Object.fromEntries(preview.results[0].listing!.map(l => [Number(l.item.split('#')[1]), l.class]));
         expect(classes).toEqual({ [fencedId]: 'evidenced', [dbOnly]: 'evidenced', [unproven]: 'unproven', [noPage]: 'unproven', [conflicting]: 'ambiguous' });
         expect(preview.results[0].listing!.find(l => l.item.endsWith(`#${fencedId}`))!.detail).toContain(ABS_RESTORED);
-        expect(preview.results[0].apply_command).toMatch(/^gbrain repair redacted-facts --apply --expect [0-9a-f]+$/);
+        expect(preview.results[0].apply_command).toMatch(/^(?:foresights|gbrain) repair redacted-facts --apply --expect [0-9a-f]+$/);
         expect((await factText(engine, dbOnly)).fact).toBe(EXOS_DAMAGED);
 
         expect((await refusal(() => repair(engine, ['--apply']))).code).toBe('invalid_params');
@@ -179,7 +179,7 @@ ${SOURCE_TEXT}
     }, 180_000);
   });
 
-  describe(`gbrain repair redacted-facts, unmanaged (${backend})`, () => {
+  describe(`foresights repair redacted-facts, unmanaged (${backend})`, () => {
     let engine: BrainEngine;
     let close: (() => Promise<void>) | undefined;
     beforeAll(async () => {

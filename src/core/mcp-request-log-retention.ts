@@ -14,7 +14,7 @@
  *
  * It runs in two places: the cycle purge phase (Postgres, and PGLite with no
  * live serve), and a resident hourly ticker in the process that holds a PGLite
- * brain's lock (`gbrain serve` and `gbrain serve --http`), under a small
+ * brain's lock (`foresights serve` and `foresights serve --http`), under a small
  * wall-clock budget that yields between batches so live MCP traffic keeps the
  * single connection. Each run records its time, count and cap state
  * (`cycle.purge.mcp_request_log_last_prune`) for doctor's
@@ -51,7 +51,7 @@ export function parseMcpLogRetentionDays(raw: string | null | undefined): number
 export function mcpLogRetentionRefusal(value: string): string | null {
   if (OFF_VALUES.has(value.trim().toLowerCase()) || parseMcpLogRetentionDays(value) !== null) return null;
   return `${MCP_LOG_RETENTION_KEY} must be a whole number of days from ${MIN_MCP_LOG_RETENTION_DAYS} to ${MAX_MCP_LOG_RETENTION_DAYS} ` +
-    `(or 0 / off for no retention); nothing was written. Example: gbrain config set ${MCP_LOG_RETENTION_KEY} 90`;
+    `(or 0 / off for no retention); nothing was written. Example: foresights config set ${MCP_LOG_RETENTION_KEY} 90`;
 }
 
 /** Retention in effect; a config read failure reads as off. */
@@ -111,7 +111,7 @@ SELECT (SELECT count(*) FROM deleted)::int AS deleted, (SELECT max(created_at) F
 /** Prune rows older than `days` in bounded batches. Throws on a database error (each batch's statement rolls back whole). */
 export async function pruneMcpRequestLog(engine: BrainEngine, days: number, opts: McpLogPruneOpts = {}): Promise<McpLogPruneResult> {
   if (!(await rollupTablePresent(engine))) {
-    console.warn('[mcp-request-log] retention is on but mcp_request_log_rollup does not exist yet (run gbrain apply-migrations); nothing was pruned');
+    console.warn('[mcp-request-log] retention is on but mcp_request_log_rollup does not exist yet (run foresights apply-migrations); nothing was pruned');
     return { deleted: 0, capped: false, skipped: 'no_rollup_table', pruned_through: null };
   }
   const batchSize = opts.batchSize ?? MCP_LOG_PRUNE_BATCH;

@@ -1,13 +1,13 @@
 /**
  * test/integrations-install.test.ts — D6-C invariant.
  *
- * The `gbrain integrations install <recipe-id>` subcommand copies the
+ * The `foresights integrations install <recipe-id>` subcommand copies the
  * recipe's bundle into the operator's host repo. This test pins:
  *   - happy-path copy + manifest write
  *   - SHA-256 computed per file matches gbrain-side source
  *   - .gbrain-source.json shape (no upstream_repo field per D11-A)
  *   - path-traversal rejection (absolute, ..)
- *   - refusal to install into gbrain itself (or its parent)
+ *   - refusal to install into foresights itself (or its parent)
  *   - refusal when target has no .git
  *   - resolver rows appended when AGENTS.md present
  */
@@ -131,9 +131,9 @@ describe('installRecipeIntoHostRepo — refusals', () => {
     }
   });
 
-  it('refuses gbrain itself as target', async () => {
+  it('refuses foresights itself as target', async () => {
     await expect(installRecipeIntoHostRepo('agent-voice', { target: REPO_ROOT })).rejects.toThrow(
-      /refusing to install into gbrain/i,
+      /refusing to install into (?:foresights|gbrain)/i,
     );
   });
 
@@ -212,7 +212,7 @@ describe('refreshRecipeIntoHostRepo — D3-A refresh mode', () => {
     const manifest = JSON.parse(readFileSync(join(scratch, 'services/voice-agent/.gbrain-source.json'), 'utf8'));
     const entry = manifest.files.find((f: { target: string; sha256: string }) => f.target === 'services/voice-agent/code/server.mjs');
     expect(entry).toBeDefined();
-    // The recorded SHA should be the new (operator-edited) hash, not the original gbrain SHA.
+    // The recorded SHA should be the new (operator-edited) hash, not the original foresights SHA.
   });
 
   it('--auto take-theirs overwrites locally-modified files', async () => {

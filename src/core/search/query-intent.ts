@@ -423,7 +423,7 @@ export interface EngineIntentPatternState {
  * classify re-reads `search.intent_patterns`. There is no config-write
  * invalidation seam (engines have no write hooks), so a short TTL bounds
  * both the hot-path getConfig rate AND the staleness window after a
- * `gbrain config set`.
+ * `foresights config set`.
  */
 export const INTENT_PATTERN_TTL_MS = 30_000;
 
@@ -754,7 +754,7 @@ export function conceptNudge(query: string): string | null {
   if (!looksConceptShaped(query)) return null;
   const preview = query.length > 60 ? `${query.slice(0, 57)}...` : query;
   return (
-    `hint: concept-shaped question — try \`gbrain query "${preview}" --expand\` ` +
+    `hint: concept-shaped question — try \`foresights query "${preview}" --expand\` ` +
     `(multi-query expansion can recover synonym-phrased matches search can miss). ` +
     `A nonzero search count is not proof of completeness.`
   );

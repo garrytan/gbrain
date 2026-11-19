@@ -21,7 +21,7 @@ This folder is home. Treat it that way.
 
 ⛔ **PUBLIC REPO GUARD.** Before ANY public GitHub interaction: read `skills/public-repo-guard/SKILL.md`. Run PII scanner on ALL content.
 
-⚡ **MINIONS OVER SUB-AGENTS.** Use gbrain Minions (shell jobs) for batch/deterministic work. Sub-agents only when LLM reasoning is required mid-task. Always set `--timeout-ms 900000` for long jobs.
+⚡ **MINIONS OVER SUB-AGENTS.** Use foresights Minions (shell jobs) for batch/deterministic work. Sub-agents only when LLM reasoning is required mid-task. Always set `--timeout-ms 900000` for long jobs.
 
 ## Gate -1 — Acknowledge Immediately
 
@@ -44,7 +44,7 @@ If the owner mentions a **death, funeral, birth, hospitalization, emergency, dia
 
 Every the owner message: scan for entity mentions (people, companies, deals, YC batches). For each: search brain, load context, update if stale. Read `skills/entity-detector/ENTITY-DETECTION.md` for the full protocol.
 
-**Brain-First Content Resolution (MANDATORY):** When the owner references ANY content — article, essay, concept, tweet, meeting, book, person, company — by name or description, search gbrain FIRST. Never ask "which article?" or "can you share the link?" The brain has 100K pages. Search it. Only ask the owner if gbrain + memory + web all fail.
+**Brain-First Content Resolution (MANDATORY):** When the owner references ANY content — article, essay, concept, tweet, meeting, book, person, company — by name or description, search foresights FIRST. Never ask "which article?" or "can you share the link?" The brain has 100K pages. Search it. Only ask the owner if foresights + memory + web all fail.
 
 ## Gate 2 — Session Startup
 
@@ -141,6 +141,6 @@ Key rules always in effect:
 Coding on gstack/gbrain/GL/any dev project: read `skills/acp-coding/SKILL.md`, spawn Codex via ACP, give full context, monitor+relay. Slash: `/code`, `/codex`, `/ship`, `/qa`, `/review`, `/investigate`.
 
 <!-- gbrain:skillpack:begin -->
-<!-- Installed by gbrain 0.25.1. All 35 skills in this pack are already referenced in the resolver tables above. -->
+<!-- Installed by foresights 0.25.1. All 35 skills in this pack are already referenced in the resolver tables above. -->
 <!-- gbrain:skillpack:manifest cumulative-slugs="academic-verify,archive-crawler,article-enrichment,book-mirror,brain-ops,brain-pdf,briefing,citation-fixer,concept-synthesis,cron-scheduler,cross-modal-review,daily-task-manager,daily-task-prep,data-research,enrich,idea-ingest,ingest,maintain,media-ingest,meeting-ingestion,minion-orchestrator,perplexity-research,query,repo-architecture,reports,signal-detector,skill-creator,skillify,skillpack-check,soul-audit,strategic-reading,testing,voice-note-ingest,webhook-transforms" version="0.25.1" -->
 <!-- gbrain:skillpack:end -->

@@ -2,7 +2,7 @@
  * #4488 — an op that reports failure IN-BAND (`{status: 'error'}`) must exit
  * non-zero at the CLI.
  *
- * `gbrain put <slug>` with unparseable frontmatter returned the
+ * `foresights put <slug>` with unparseable frontmatter returned the
  * `{status:'error', error:'YAML parse failed…'}` envelope on stdout and
  * exited 0 — the page was never created, but scripts (and agents checking
  * `$?`) read it as success. The op runner only set a non-zero verdict on

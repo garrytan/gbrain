@@ -1,5 +1,5 @@
 /**
- * CLI handler for `gbrain jobs` subcommands.
+ * CLI handler for `foresights jobs` subcommands.
  * Thin wrapper around MinionQueue and MinionWorker.
  */
 
@@ -81,7 +81,7 @@ export { maybeRunWorkerStartupRecovery } from './jobs/work.ts';
  *   - DB-plane model config: re-resolved here (reconfigureGatewayWithEngine).
  *   - FILE-plane config (`~/.gbrain/config.json` — incl. provider API keys):
  *     re-folded here, so a key added to config.json reaches the worker at the
- *     next job. NOTE `gbrain config set *_api_key` writes the DB plane, which
+ *     next job. NOTE `foresights config set *_api_key` writes the DB plane, which
  *     loadConfigWithEngine deliberately never merges for key fields — routing
  *     those writes to the file plane is a filed TODO.
  *   - True process env vars: fixed at worker start; need a restart.
@@ -147,17 +147,17 @@ function registerBuiltinJob(
 }
 
 /**
- * The full jobs help block. Hoisted to a constant so `gbrain jobs --help`
+ * The full jobs help block. Hoisted to a constant so `foresights jobs --help`
  * (routed engine-free via cli.ts SELF_HELP_WITHOUT_ENGINE) and bare
- * `gbrain jobs` print the same text. Issue: jobs --help used to print the
+ * `foresights jobs` print the same text. Issue: jobs --help used to print the
  * generic CLI stub because 'jobs' was missing from CLI_ONLY_SELF_HELP.
  */
-const JOBS_HELP = `gbrain jobs — Minions job queue
+const JOBS_HELP = `foresights jobs — Minions job queue
 
 USAGE
-  gbrain jobs authorize-legacy --ids 12,34 [--expect <snapshot_digest> --yes] [--json]
-  gbrain jobs authorize-legacy --select "status=waiting|paused,name=synthesize" [--expect <hash> --yes] [--json]
-  gbrain jobs submit <name> [--params JSON] [--follow] [--priority N]
+  foresights jobs authorize-legacy --ids 12,34 [--expect <snapshot_digest> --yes] [--json]
+  foresights jobs authorize-legacy --select "status=waiting|paused,name=synthesize" [--expect <hash> --yes] [--json]
+  foresights jobs submit <name> [--params JSON] [--follow] [--priority N]
                             [--delay Nms] [--max-attempts N] [--max-stalled N]
                             [--max-waiting N]
                             [--backoff-type fixed|exponential] [--backoff-delay Nms]
@@ -167,25 +167,25 @@ USAGE
                             [--yes] [--max-usd USD|off]  (enrich, subagent: paid)
                             [--redact-secrets]   (shell only; scrubs inherit
                                                   values from stdout/stderr)
-  gbrain jobs list [--status S] [--queue Q] [--limit N] [--json]
-  gbrain jobs list --finished-since ISO|CURSOR [--queue Q] [--name N] [--json]
-  gbrain jobs list --group SPEND_GROUP [--json]
-  gbrain jobs get <id> [--json]
-  gbrain jobs wait <id> [--timeout 10m] [--json]  (exit 0 completed, 1 failed/dead/cancelled, 124 still running)
-  gbrain jobs cancel <id> | --group SPEND_GROUP
-  gbrain jobs cancel --select "status=waiting|paused,name=synthesize" [--expect <hash> --yes] [--json]
-  gbrain jobs retry <id>
-  gbrain jobs prune [--older-than 30d] [--dry-run]
-  gbrain jobs delete <id>
-  gbrain jobs stats [--queue Q] [--cluster-errors] [--json]
+  foresights jobs list [--status S] [--queue Q] [--limit N] [--json]
+  foresights jobs list --finished-since ISO|CURSOR [--queue Q] [--name N] [--json]
+  foresights jobs list --group SPEND_GROUP [--json]
+  foresights jobs get <id> [--json]
+  foresights jobs wait <id> [--timeout 10m] [--json]  (exit 0 completed, 1 failed/dead/cancelled, 124 still running)
+  foresights jobs cancel <id> | --group SPEND_GROUP
+  foresights jobs cancel --select "status=waiting|paused,name=synthesize" [--expect <hash> --yes] [--json]
+  foresights jobs retry <id>
+  foresights jobs prune [--older-than 30d] [--dry-run]
+  foresights jobs delete <id>
+  foresights jobs stats [--queue Q] [--cluster-errors] [--json]
                     (dream-inline-* queues report ABANDONED/live only with an
-                     explicit --queue; use \`gbrain doctor\` to discover them)
-  gbrain jobs smoke [--sigkill-rescue] [--wedge-rescue]
-  gbrain jobs watch [--json] [--follow] [--refresh-ms=N]
-  gbrain jobs work [--queue Q] [--concurrency N] [--max-rss MB]
+                     explicit --queue; use \`foresights doctor\` to discover them)
+  foresights jobs smoke [--sigkill-rescue] [--wedge-rescue]
+  foresights jobs watch [--json] [--follow] [--refresh-ms=N]
+  foresights jobs work [--queue Q] [--concurrency N] [--max-rss MB]
                    [--health-interval MS] [--nice N]
                    [--job-isolation inline|process]
-  gbrain jobs supervisor [start] [--detach] [--json]
+  foresights jobs supervisor [start] [--detach] [--json]
                          [--concurrency N] [--queue Q] [--pid-file PATH]
                          [--max-crashes N] [--health-interval N]
                          [--allow-shell-jobs] [--cli-path PATH]
@@ -196,12 +196,12 @@ USAGE
                priority without cutting concurrency — full throughput when the
                box is idle, yields to foreground work when it's busy. Propagates
                to spawned workers and their children. Env: GBRAIN_NICE (flag
-               wins). Effective value shows in 'jobs stats' and 'gbrain doctor'.
+               wins). Effective value shows in 'jobs stats' and 'foresights doctor'.
                Negative values need root.
-  gbrain jobs supervisor status [--json] [--pid-file PATH]
-  gbrain jobs supervisor stop [--json] [--pid-file PATH]
+  foresights jobs supervisor status [--json] [--pid-file PATH]
+  foresights jobs supervisor stop [--json] [--pid-file PATH]
 
-    Auto-restarting wrapper around 'gbrain jobs work'. Spawns the worker
+    Auto-restarting wrapper around 'foresights jobs work'. Spawns the worker
     as a child process and restarts on crash with exponential backoff
     (1s -> 60s cap). Writes a brain-scoped PID file to
     ~/.gbrain/supervisor-<brain-id>.pid by default (override via
@@ -230,11 +230,11 @@ USAGE
       3  PID file unwritable (permission / path error)
 
     EXAMPLES
-      gbrain jobs supervisor --concurrency 4         # foreground (Ctrl-C stops)
-      gbrain jobs supervisor start --detach --json   # agent-friendly: fork + return JSON
-      gbrain jobs supervisor status --json           # machine-readable health check
-      gbrain jobs supervisor stop                    # graceful stop
-      gbrain jobs supervisor --json --allow-shell-jobs  # JSONL events + shell-exec on
+      foresights jobs supervisor --concurrency 4         # foreground (Ctrl-C stops)
+      foresights jobs supervisor start --detach --json   # agent-friendly: fork + return JSON
+      foresights jobs supervisor status --json           # machine-readable health check
+      foresights jobs supervisor stop                    # graceful stop
+      foresights jobs supervisor --json --allow-shell-jobs  # JSONL events + shell-exec on
 
 HANDLER TYPES (built in)
   sync              Pull and import new pages from the repo; on a managed brain it drains to the job's deadline (--timeout-ms)
@@ -248,7 +248,7 @@ HANDLER TYPES (built in)
                     GBRAIN_ALLOW_SHELL_JOBS=1) on the worker. Params: {cmd?,
                     argv?, cwd, env?}. See: docs/guides/minions-shell-jobs.md
 
-Detailed help: gbrain jobs {work|supervisor|submit|watch|prune} --help
+Detailed help: foresights jobs {work|supervisor|submit|watch|prune} --help
 Other subcommands are fully described above.
 `;
 
@@ -260,10 +260,10 @@ Other subcommands are fully described above.
  * without an entry fall back to JOBS_HELP, which documents them fully.
  */
 const JOBS_SUBCOMMAND_HELP: Record<string, string> = {
-  work: `gbrain jobs work — start a worker daemon (PGLite: drain the queue and exit)
+  work: `foresights jobs work — start a worker daemon (PGLite: drain the queue and exit)
 
 USAGE
-  gbrain jobs work [--queue Q] [--concurrency N] [--max-rss MB]
+  foresights jobs work [--queue Q] [--concurrency N] [--max-rss MB]
                    [--health-interval MS] [--nice N]
                    [--job-isolation inline|process] [--allow-shell-jobs]
 
@@ -299,20 +299,20 @@ OPTIONS
 NOTES
   PGLite's exclusive file lock cannot host a long-lived daemon: there it runs
   the waiting jobs in the foreground and exits once the queue is drained
-  (stop any running \`gbrain serve\` first). On Postgres prefer:
-    gbrain jobs supervisor start --detach --json
+  (stop any running \`foresights serve\` first). On Postgres prefer:
+    foresights jobs supervisor start --detach --json
 `,
-  supervisor: `gbrain jobs supervisor — auto-restarting wrapper around 'gbrain jobs work'
+  supervisor: `foresights jobs supervisor — auto-restarting wrapper around 'foresights jobs work'
 
 USAGE
-  gbrain jobs supervisor [start] [--detach] [--json]
+  foresights jobs supervisor [start] [--detach] [--json]
                          [--concurrency N] [--queue Q] [--pid-file PATH]
                          [--max-crashes N] [--health-interval N]
                          [--allow-shell-jobs] [--cli-path PATH]
                          [--max-rss MB] [--nice N]
                          [--job-isolation inline|process]
-  gbrain jobs supervisor status [--json] [--pid-file PATH]
-  gbrain jobs supervisor stop [--json] [--pid-file PATH]
+  foresights jobs supervisor status [--json] [--pid-file PATH]
+  foresights jobs supervisor stop [--json] [--pid-file PATH]
 
 OPTIONS (start)
   --detach             Fork and print {event, supervisor_pid, pid_file} JSON
@@ -329,7 +329,7 @@ OPTIONS (start)
                        GBRAIN_SUPERVISOR_HARD_STOP_CRASHES.
   --health-interval N  Worker health probe cadence in ms
   --allow-shell-jobs   Enable the shell handler on the spawned worker
-  --cli-path PATH      Explicit gbrain binary for the worker child
+  --cli-path PATH      Explicit foresights binary for the worker child
   --max-rss MB         RSS watchdog for the worker (same rules as jobs work)
   --nice N             OS priority for supervisor + worker children
   --job-isolation M    Passed through to the worker (see jobs work --help)
@@ -339,10 +339,10 @@ EXIT CODES (start)
   2 another supervisor holds the PID lock   3 PID file unwritable
   4 DB queue lock lost (repeated refresh failures; restart re-acquires)
 `,
-  submit: `gbrain jobs submit — enqueue a background job
+  submit: `foresights jobs submit — enqueue a background job
 
 USAGE
-  gbrain jobs submit <name> [--params JSON] [--follow] [--priority N]
+  foresights jobs submit <name> [--params JSON] [--follow] [--priority N]
                             [--delay Nms] [--max-attempts N] [--max-stalled N]
                             [--max-waiting N]
                             [--backoff-type fixed|exponential] [--backoff-delay Nms]
@@ -353,10 +353,10 @@ USAGE
 
 OPTIONS
   --params JSON        Job payload (handler-specific; see HANDLER TYPES in
-                       'gbrain jobs --help')
+                       'foresights jobs --help')
   --follow             Run inline and stream progress (works on both engines;
                        required on PGLite, which has no background worker)
-  --queue-only         PGLite: queue without running (\`gbrain jobs work\` drains)
+  --queue-only         PGLite: queue without running (\`foresights jobs work\` drains)
   --priority N         Lower runs first (default 0)
   --delay Nms          Delay before the job becomes claimable (default 0)
   --max-attempts N     Retry budget (default 3)
@@ -374,10 +374,10 @@ OPTIONS
   --dry-run            Print what would be submitted, submit nothing
   --redact-secrets     (shell jobs) scrub inherited env values from output
 `,
-  watch: `gbrain jobs watch — live queue dashboard
+  watch: `foresights jobs watch — live queue dashboard
 
 USAGE
-  gbrain jobs watch [--json] [--follow] [--refresh-ms=N]
+  foresights jobs watch [--json] [--follow] [--refresh-ms=N]
 
 OPTIONS
   --json           JSON snapshots instead of the human dashboard
@@ -385,15 +385,15 @@ OPTIONS
   --refresh-ms=N   Refresh cadence in ms (default 1000). Equals form only —
                    'watch' does not accept a space-separated value.
 `,
-  'authorize-legacy': `gbrain jobs authorize-legacy — review old queued work locally
+  'authorize-legacy': `foresights jobs authorize-legacy — review old queued work locally
 
 USAGE
-  gbrain jobs authorize-legacy --ids 12,34 --json
-  gbrain jobs authorize-legacy --ids 12,34 --expect <snapshot_digest> --yes --json
-  gbrain jobs authorize-legacy --select "status=waiting|paused,name=synthesize|ingest_capture" [--json]
-  gbrain jobs authorize-legacy --select "status=waiting|paused,name=synthesize|ingest_capture" --expect <hash> --yes
+  foresights jobs authorize-legacy --ids 12,34 --json
+  foresights jobs authorize-legacy --ids 12,34 --expect <snapshot_digest> --yes --json
+  foresights jobs authorize-legacy --select "status=waiting|paused,name=synthesize|ingest_capture" [--json]
+  foresights jobs authorize-legacy --select "status=waiting|paused,name=synthesize|ingest_capture" --expect <hash> --yes
 
-Stop producers (gbrain serve, gbrain autopilot) and workers and cancel active jobs
+Stop producers (foresights serve, foresights autopilot) and workers and cancel active jobs
 first. A command without --yes only previews; apply requires the exact reviewed hash
 and --yes. --select keys: status (waiting, delayed, waiting-children, paused,
 completed, failed) and name, each taking | alternatives. The --select preview lists
@@ -401,12 +401,12 @@ counts by job name and status, the first 20 ids and the preview hash, and the ap
 authorizes exactly the previewed set. Dependencies are shown but never implicitly
 authorized. IDs, data, schedule and retries persist.
 `,
-  cancel: `gbrain jobs cancel — cancel a job, or preview-bound bulk cancel of legacy jobs
+  cancel: `foresights jobs cancel — cancel a job, or preview-bound bulk cancel of legacy jobs
 
 USAGE
-  gbrain jobs cancel <id> | --group SPEND_GROUP   (--group: every unfinished job of one paid command's approval)
-  gbrain jobs cancel --select "status=waiting|paused,name=synthesize" [--json]
-  gbrain jobs cancel --select "status=waiting|paused,name=synthesize" --expect <hash> --yes
+  foresights jobs cancel <id> | --group SPEND_GROUP   (--group: every unfinished job of one paid command's approval)
+  foresights jobs cancel --select "status=waiting|paused,name=synthesize" [--json]
+  foresights jobs cancel --select "status=waiting|paused,name=synthesize" --expect <hash> --yes
 
 --select picks live jobs whose submission authority is missing or unsupported
 (the rows that block workers after an upgrade across v0.50). Keys: status
@@ -414,12 +414,12 @@ USAGE
 Without --yes it only previews: counts by job name and status, the first 20 ids,
 parents that return to waiting, and the preview hash. The apply cancels exactly
 the previewed set; a selection that would cascade to a job outside it refuses.
-Stop producers and workers and cancel active jobs (gbrain jobs cancel <id>) first.
+Stop producers and workers and cancel active jobs (foresights jobs cancel <id>) first.
 `,
-  wait: `gbrain jobs wait — block until a job is completed, failed, dead or cancelled
+  wait: `foresights jobs wait — block until a job is completed, failed, dead or cancelled
 
 USAGE
-  gbrain jobs wait <id> [--timeout 10m] [--json]
+  foresights jobs wait <id> [--timeout 10m] [--json]
 
 OPTIONS
   --timeout DUR  Stop waiting after DUR (60, 60s, 10m, 1h; default 24h). The
@@ -432,10 +432,10 @@ EXIT CODES
   2    usage error
   124  the timeout elapsed and the job is still running
 `,
-  prune: `gbrain jobs prune — delete old terminal jobs
+  prune: `foresights jobs prune — delete old terminal jobs
 
 USAGE
-  gbrain jobs prune [--older-than 30d] [--dry-run]
+  foresights jobs prune [--older-than 30d] [--dry-run]
 
 OPTIONS
   --older-than AGE  Delete completed/failed/dead/cancelled jobs older than
@@ -445,7 +445,7 @@ OPTIONS
 `,
 };
 
-/** `gbrain jobs <sub>` dispatch table; runJobs resolves help and the thin-client refusal first. */
+/** `foresights jobs <sub>` dispatch table; runJobs resolves help and the thin-client refusal first. */
 const JOBS_SUBCOMMANDS: Record<string, (ctx: JobsCommandContext) => Promise<void>> = {
   'authorize-legacy': runJobsAuthorizeLegacy,
   submit: runJobsSubmit,
@@ -465,7 +465,7 @@ const JOBS_SUBCOMMANDS: Record<string, (ctx: JobsCommandContext) => Promise<void
   watch: runJobsWatch,
 };
 
-/** `gbrain jobs` (the worker included) runs in a local scope, so its own AI calls use the process gateway (engine-scope.ts). */
+/** `foresights jobs` (the worker included) runs in a local scope, so its own AI calls use the process gateway (engine-scope.ts). */
 export function runJobs(engineOrNull: BrainEngine | null, args: string[]): Promise<void> {
   return withLocalScope(() => runJobsCommand(engineOrNull, args));
 }
@@ -497,7 +497,7 @@ async function runJobsCommand(engineOrNull: BrainEngine | null, args: string[]):
   // inside MinionQueue.
   const localSupervisorStatus = sub === 'supervisor' && args[1] === 'status';
   if (!engineOrNull && sub !== 'list' && sub !== 'get' && sub !== 'wait' && !localSupervisorStatus) {
-    console.error(`\`gbrain jobs ${sub ?? ''}\` needs a local engine and cannot run on a thin client.`);
+    console.error(`\`foresights jobs ${sub ?? ''}\` needs a local engine and cannot run on a thin client.`);
     process.exit(1);
   }
   // Null only ever reaches the MCP-routed `list`/`get` branches, which
@@ -511,7 +511,7 @@ async function runJobsCommand(engineOrNull: BrainEngine | null, args: string[]):
 
   const run = Object.hasOwn(JOBS_SUBCOMMANDS, sub) ? JOBS_SUBCOMMANDS[sub] : undefined;
   if (!run) {
-    console.error(`Unknown subcommand: ${sub}. Run 'gbrain jobs --help' for usage.`);
+    console.error(`Unknown subcommand: ${sub}. Run 'foresights jobs --help' for usage.`);
     process.exit(1);
   }
   await run({ args, engine, engineOrNull, queue });
@@ -581,7 +581,7 @@ export async function registerBuiltinHandlers(
       if (process.env.GBRAIN_ALLOW_SHELL_JOBS === '1') {
         process.stderr.write('[minion worker] shell handler enabled (--allow-shell-jobs / GBRAIN_ALLOW_SHELL_JOBS=1)\n');
       } else {
-        process.stderr.write('[minion worker] shell handler registered in guarded mode (start with `gbrain jobs work --allow-shell-jobs`, or export GBRAIN_ALLOW_SHELL_JOBS=1, to execute shell jobs)\n');
+        process.stderr.write('[minion worker] shell handler registered in guarded mode (start with `foresights jobs work --allow-shell-jobs`, or export GBRAIN_ALLOW_SHELL_JOBS=1, to execute shell jobs)\n');
       }
     }
   }
@@ -612,7 +612,7 @@ export async function registerBuiltinHandlers(
 
   // ============================================================
   // v0.36+ brain-health-100 wave: 11 new handlers for autonomous
-  // remediation via `gbrain doctor --remediate` and autopilot.
+  // remediation via `foresights doctor --remediate` and autopilot.
   //
   // PROTECTED via PROTECTED_JOB_NAMES (D11): synthesize, patterns,
   // consolidate — they internally submit `subagent` jobs with

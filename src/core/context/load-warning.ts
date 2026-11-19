@@ -16,7 +16,7 @@ export async function loadContextModule<T>(module: string, load: () => Promise<T
       warned.add(module);
       const { code, name } = (err ?? {}) as { code?: unknown; name?: unknown };
       const reason = typeof code === 'string' ? code : typeof name === 'string' ? name : 'unknown error';
-      console.warn(`[gbrain] context engine: failed to load ${module} (${reason}); brain context is degraded`);
+      console.warn(`[foresights] context engine: failed to load ${module} (${reason}); brain context is degraded`);
     }
     throw err;
   }

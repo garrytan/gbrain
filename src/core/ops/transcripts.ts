@@ -39,7 +39,7 @@ const get_recent_transcripts: Operation = {
       const n = (v: unknown) => (typeof v === 'number' && Number.isSafeInteger(v) && v > 0 ? String(v) : undefined);
       const days = n(p.days);
       const limit = n(p.limit);
-      throw hostOnlyError(ctx, 'permission_denied', 'get_recent_transcripts is local-only — call via the gbrain CLI.',
+      throw hostOnlyError(ctx, 'permission_denied', 'get_recent_transcripts is local-only — call via the foresights CLI.',
         ['gbrain', 'transcripts', 'recent', ...(days ? ['--days', days] : []), ...(limit ? ['--limit', limit] : []),
           ...(p.summary === false ? ['--full'] : []), '--json'],
         'Raw transcripts are private host files; only the trusted local CLI reads them.');

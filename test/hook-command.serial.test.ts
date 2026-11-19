@@ -1,5 +1,5 @@
 /**
- * `gbrain hook <event>` (agent-bootstrap D5, A3, A9, G3, G4, G15, B3, B4,
+ * `foresights hook <event>` (agent-bootstrap D5, A3, A9, G3, G4, G15, B3, B4,
  * ENG-1, S3#2, S3#7, S3#8): in-process stdin→stdout contract against an
  * in-process IPC server (never a spawned serve — the hook-under-serve e2e is
  * a separate task). Fail-open everywhere, heartbeat schema allowlist, digest
@@ -317,7 +317,7 @@ describe('dispatch', () => {
         join(ws, '.claude', 'settings.json'),
         JSON.stringify({
           hooks: {
-            SessionStart: [{ hooks: [{ type: 'command', command: 'gbrain hook session-start', _gbrain: 'bootstrap-v1' }] }],
+            SessionStart: [{ hooks: [{ type: 'command', command: 'foresights hook session-start', _gbrain: 'bootstrap-v1' }] }],
           },
         }),
       );
@@ -755,7 +755,7 @@ describe('session-start', () => {
     mkdirSync(ws, { recursive: true });
     const out = collectStdout();
     await runHook(['session-start'], { ...out.io, stdin: '', cwd: ws });
-    expect(out.get()).toContain('run gbrain doctor');
+    expect(out.get()).toContain('run foresights doctor');
   });
 
   test('degraded-only history does NOT trigger the notice (designed fallbacks)', async () => {
@@ -767,7 +767,7 @@ describe('session-start', () => {
     mkdirSync(ws, { recursive: true });
     const out = collectStdout();
     await runHook(['session-start'], { ...out.io, stdin: '', cwd: ws });
-    expect(out.get()).not.toContain('run gbrain doctor');
+    expect(out.get()).not.toContain('run foresights doctor');
   });
 
   test('stale push-status surfaced; no buffered session text at session start [B4, #5558]', async () => {
@@ -904,7 +904,7 @@ describe('session-end', () => {
     expect(readFileSync(spooled('sess-dup.txt'), 'utf8')).toContain('resumed pass content');
   });
 
-  // #5413: a claude-cli scratch session (gbrain's own LLM call) must never
+  // #5413: a claude-cli scratch session (foresights's own LLM call) must never
   // reach the dream corpus — path fingerprint OR payload cwd both refuse.
   test('claude-cli self-transcript is skipped, not written to the corpus (#5413)', async () => {
     const projRoot = join(tmp, 'projects');
@@ -1146,7 +1146,7 @@ describe('heartbeat', () => {
 
 // ── bootstrap-workspace push gate [G4] ──────────────────────────────────────
 //
-// The initialized agent.json manifest is THE security boundary: `gbrain hook
+// The initialized agent.json manifest is THE security boundary: `foresights hook
 // <event>` run inside an arbitrary git repo must never spawn the workspace
 // push (which commits). Spawns are observed via the io.spawnPush seam.
 
@@ -1332,7 +1332,7 @@ describe('bootstrap push gate [G4]', () => {
       spawnPush: (root: string) => { spawned.push(root); },
       stdin: JSON.stringify({ session_id: 'sess-boot-end-pending', cwd: repo }),
     });
-    expect(spawned).toEqual([]); // deferred until `gbrain bootstrap repo`
+    expect(spawned).toEqual([]); // deferred until `foresights bootstrap repo`
   });
 });
 
@@ -1570,7 +1570,7 @@ describe('stop-hook per-turn push [D3]', () => {
     expect(spawned).toHaveLength(1);
     await runHook(['stop'], stopIo(b, spawned));
     expect(spawned).toHaveLength(1); // b is not the receipt's workspace — and does NOT clobber a's state
-    // #8427: a workspace the receipt does not name is not gbrain's, so no git runs there at all.
+    // #8427: a workspace the receipt does not name is not foresights's, so no git runs there at all.
     expect((await lastHeartbeat())?.reason).toBe('push_skipped_not_bootstrap');
     await runHook(['stop'], stopIo(a, spawned));
     expect(spawned).toHaveLength(1); // a still debounced — b's activity didn't reset a

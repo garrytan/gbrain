@@ -45,7 +45,7 @@ const connectors_status: Operation = {
   },
   handler: async (ctx, p) => {
     if (ctx.remote === true) {
-      throw hostOnlyError(ctx, 'permission_denied', 'connectors_status is local-only — call via the gbrain CLI.',
+      throw hostOnlyError(ctx, 'permission_denied', 'connectors_status is local-only — call via the foresights CLI.',
         ['gbrain', 'connectors', 'status', ...(p.provider === 'chatgpt' || p.provider === 'claude' ? [p.provider] : [])],
         'Connector credentials live on the brain host, so only its CLI reads their status.');
     }
@@ -93,7 +93,7 @@ const connector_sync: Operation = {
   },
   handler: async (ctx, p) => {
     if (ctx.remote === true) {
-      throw hostOnlyError(ctx, 'permission_denied', 'connector_sync is local-only — call via the gbrain CLI.',
+      throw hostOnlyError(ctx, 'permission_denied', 'connector_sync is local-only — call via the foresights CLI.',
         ['gbrain', 'connectors', 'sync', ...(p.provider === 'chatgpt' || p.provider === 'claude' ? [p.provider] : []), '--dry-run'],
         'Connector syncs use credentials stored on the brain host; the dry run previews how many conversations would import.');
     }

@@ -134,7 +134,7 @@ export async function runCoalesceCase(
     expect(error.code, label).toBe('permission_denied');
     if (expected === 'deny-legacy') {
       expect(error.docs, label).toBe(LEGACY_DOCS);
-      expect(error.suggestion, label).toContain(c.status === 'active' ? `gbrain jobs cancel ${first.id}` : 'gbrain jobs authorize-legacy --select');
+      expect(error.suggestion, label).toContain(c.status === 'active' ? `foresights jobs cancel ${first.id}` : 'foresights jobs authorize-legacy --select');
       expect(error.message, label).toContain(`job ${first.id} (${name}, ${c.status})`);
     } else {
       expect(error.message, label).toContain('coalescing across');

@@ -3,7 +3,7 @@
  * every page-tool call. The page tools do an exact slug lookup, so
  * `get_page("ops/tasks.md")` missed the existing `ops/tasks` page, and the
  * skill's first-run rule could then start a second list at slug
- * `ops/tasks.md` that sync, `resolveTodayTasks()` and `gbrain get ops/tasks`
+ * `ops/tasks.md` that sync, `resolveTodayTasks()` and `foresights get ops/tasks`
  * never read. Checked in the source skill and both generated copies.
  * Brains where the old skill already saved tasks at `ops/tasks.md` keep them:
  * the first-run rule carries that page's tasks over instead of starting an

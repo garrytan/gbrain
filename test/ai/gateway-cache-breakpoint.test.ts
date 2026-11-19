@@ -1,5 +1,5 @@
 /**
- * gbrain#2490 — gateway.chat() never caches a stable system prompt across
+ * foresights#2490 — gateway.chat() never caches a stable system prompt across
  * varying single-turn calls (page-summary, skillopt, enrich).
  *
  * Root cause: `chat()` passed `system` as a bare string and relied solely on
@@ -43,7 +43,7 @@ afterAll(() => {
   __setGenerateTextTransportForTests(null);
 });
 
-describe('gbrain#2490 — Anthropic cache breakpoint placement', () => {
+describe('foresights#2490 — Anthropic cache breakpoint placement', () => {
   beforeEach(() => {
     resetGateway();
     __setGenerateTextTransportForTests(null);
@@ -93,7 +93,7 @@ describe('gbrain#2490 — Anthropic cache breakpoint placement', () => {
     // documented top-level "auto-cache the last cacheable block" shorthand,
     // which is what gives a growing multi-turn toolLoop() conversation a
     // rolling cache breakpoint on each turn's tail. The explicit
-    // system-block marker (asserted above) is what actually fixes gbrain#2490
+    // system-block marker (asserted above) is what actually fixes foresights#2490
     // for single-turn callers — the two coexist, marking different blocks.
     expect(args.providerOptions?.anthropic?.cacheControl).toEqual({ type: 'ephemeral' });
   });

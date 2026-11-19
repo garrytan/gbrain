@@ -18,6 +18,7 @@ import {
 } from './mode.ts';
 import { describeRerankerFix } from '../ai/reranker-readiness.ts';
 import { rerankerReadinessForEngine } from '../ai/reranker-readiness-engine.ts';
+import { commandText } from '../brand.ts';
 
 export const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   cache_enabled: 'Semantic query cache on/off',
@@ -91,7 +92,7 @@ export const KNOB_NULL_LABELS: Partial<Record<keyof ModeBundle, string>> = {
   keyword_arm_confidence_floor: 'off (null)',
 };
 
-/** Render one resolved knob value for the human `gbrain search modes` table. */
+/** Render one resolved knob value for the human `foresights search modes` table. */
 export function formatKnobValue(knob: string, value: unknown): string {
   if (value === undefined) return '(undefined)';
   if (value === null) return KNOB_NULL_LABELS[knob as keyof ModeBundle] ?? '(null)';
@@ -135,7 +136,7 @@ export interface SearchModesReport {
   /**
    * #8744: when the configured contextual-retrieval tier is per_chunk_synopsis,
    * how many chunks actually carry synopsis vectors (import and sync embed at
-   * the title tier; the sweep is `gbrain reindex --synopsis`). Brain-wide
+   * the title tier; the sweep is `foresights reindex --synopsis`). Brain-wide
    * counts, so ABSENT on the remote surface.
    */
   synopsis_coverage?: SynopsisCoverageReport;
@@ -244,7 +245,7 @@ export async function buildModesReport(engine: BrainEngine): Promise<SearchModes
       required_key: null,
       key_present: false,
       self_hosted: false,
-      fix: `readiness check failed: ${e instanceof Error ? e.message : String(e)} — run gbrain doctor`,
+      fix: `readiness check failed: ${e instanceof Error ? e.message : String(e)} — run foresights doctor`,
     };
   }
 
@@ -255,7 +256,7 @@ export async function buildModesReport(engine: BrainEngine): Promise<SearchModes
     if (c.config.configured) {
       synopsis_coverage = { eligible_pages: c.eligible_pages, eligible_chunks: c.eligible_chunks, synopsis_pages: c.synopsis_pages,
         synopsis_chunks: c.synopsis_chunks, coverage_pct: c.coverage_pct, large_title_pages: c.large_title_pages,
-        line: sweep.formatSynopsisCoverageLine(c), fix: sweep.SYNOPSIS_SWEEP_ARGV.join(' ') };
+        line: sweep.formatSynopsisCoverageLine(c), fix: commandText(sweep.SYNOPSIS_SWEEP_ARGV) };
     }
   } catch { /* coverage is advisory; the doctor check synopsis_tier_coverage reports read failures */ }
 

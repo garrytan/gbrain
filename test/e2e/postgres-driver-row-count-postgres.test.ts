@@ -4,7 +4,7 @@
  * producing them) never reaches CommandComplete, so the count stayed behind and the next statement on that connection
  * stored its rows after that many empty slots: a one-row read came back as `[empty, row]`.
  *
- * gbrain's strict readers refuse such a result. A managed connector sync's first read of `persistence_brain` threw
+ * foresights's strict readers refuse such a result. A managed connector sync's first read of `persistence_brain` threw
  * `storage_error` ("requires exactly one known boolean persistence state") before the sweep started (the
  * `persistence-connector-retry` flake), and before those readers were strict the same read came back as
  * `enabled = false` (#6482). The driver now resets the count at every ReadyForQuery.

@@ -1,5 +1,5 @@
 /**
- * #6084 / #5328: doctor `child_table_orphans` and `gbrain repair
+ * #6084 / #5328: doctor `child_table_orphans` and `foresights repair
  * orphan-children` share `orphanPredicate`. `col NOT IN (SELECT id FROM pages)`
  * plans as a per-row SubPlan once the page ids outgrow work_mem, so the count
  * never finishes on a large brain. The correlated NOT EXISTS plans as an

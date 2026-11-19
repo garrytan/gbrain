@@ -3,13 +3,13 @@
  *
  * An `ingest_capture` job whose write landed records it under the job's idempotency key, in the page write's own
  * transaction on an unmanaged brain and right after the door commits on a managed one. Any later run of the same key (a
- * stalled attempt re-run after its write landed, a POST /ingest replayed after `gbrain jobs prune` removed the job
+ * stalled attempt re-run after its write landed, a POST /ingest replayed after `foresights jobs prune` removed the job
  * row) returns the stored result and writes nothing, so it cannot revert a newer edit. Each capture has its own key, so
  * ordered captures to one slug all apply. A managed write's door request carries a client request_id under
  * `appliedCaptureRequestPrefix(key)`, so a committed request the handler sent as the local writer, found without its row
  * (the worker died between the commit and the insert), counts as applied and backfills the row; a remote writer's request
  * under the same prefix never counts. Rows live 90 days, at least as long as the job rows the
- * queue-level dedupe relied on (`gbrain jobs prune` defaults to 30 days).
+ * queue-level dedupe relied on (`foresights jobs prune` defaults to 30 days).
  */
 
 import { createHash } from 'node:crypto';

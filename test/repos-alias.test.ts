@@ -1,7 +1,7 @@
 /**
- * v0.19.0 Layer 4 — `gbrain repos` routes into the v0.18.0 sources
+ * v0.19.0 Layer 4 — `foresights repos` routes into the v0.18.0 sources
  * subsystem. Tests the alias wiring + the deprecation notice so scripts
- * like `gbrain repos list` keep working after the underlying subsystem
+ * like `foresights repos list` keep working after the underlying subsystem
  * is replaced.
  */
 

@@ -17,7 +17,7 @@ export const ENGINE_MIGRATION_DOCS = 'docs/ENGINES.md#engine-migration-refused';
 const GRADUATION_DOCS = 'docs/guides/move-to-postgres.md#move-the-brain';
 const DOCTOR_VERIFY = { argv: ['gbrain', 'doctor', '--no-migrate', '--json'] };
 type EngineKind = 'pglite' | 'postgres';
-/** Which side of `gbrain migrate --to` a refusal names: the brain being moved, or the datastore it would land in. */
+/** Which side of `foresights migrate --to` a refusal names: the brain being moved, or the datastore it would land in. */
 export interface EngineMigrationSide { side: 'source' | 'target'; from: EngineKind; to: EngineKind }
 
 /**
@@ -33,8 +33,8 @@ function engineMigrationFix(m: EngineMigrationSide, why: string): Action {
         ? { name: 'empty_database_url', how: 'Ask the user for the connection string of an empty Postgres database (a new database or project).' }
         : { name: 'empty_brain_path', how: 'Ask the user for a path where no PGLite brain exists yet.' }],
       consent: [], actor: 'user', requires_exclusive: true, docs: ENGINE_MIGRATION_DOCS, verify: DOCTOR_VERIFY,
-      why: `${why} The migration target already holds another brain's write history, so gbrain will not copy into it; the source brain is untouched.`,
-      user_message: 'The database you chose to migrate into already holds another gbrain brain. Do you have an empty database to use instead? Nothing has changed in your current brain.' };
+      why: `${why} The migration target already holds another brain's write history, so foresights will not copy into it; the source brain is untouched.`,
+      user_message: 'The database you chose to migrate into already holds another foresights brain. Do you have an empty database to use instead? Nothing has changed in your current brain.' };
   }
   if (m.from === 'postgres') {
     return { consent: [], actor: 'agent', requires_exclusive: false, docs: ENGINE_MIGRATION_DOCS, verify: DOCTOR_VERIFY,
@@ -46,7 +46,7 @@ function engineMigrationFix(m: EngineMigrationSide, why: string): Action {
     why: `${why} The legacy copier cannot carry this history; graduation copies it intact and reaches this brain only while `
       + '`migrate.graduation` is not turned off. Turning it back on and previewing the plan changes nothing; the move itself runs only after the user approves that plan.',
     user_message: 'Your brain has write history, which the legacy copier cannot move. Graduation moves it with everything intact, and it is turned off on this machine: '
-      + 'should I turn it back on and preview the move to Postgres (nothing changes yet), or keep the brain on PGLite and share it with `gbrain mcp expose`?',
+      + 'should I turn it back on and preview the move to Postgres (nothing changes yet), or keep the brain on PGLite and share it with `foresights mcp expose`?',
     then: { argv: planArgv(), consent: [], actor: 'agent', requires_exclusive: false, docs: GRADUATION_DOCS,
       inputs: [{ name: DEFAULT_TARGET_URL_ENV, how: `Ask the user for the target Postgres connection string and export it as ${DEFAULT_TARGET_URL_ENV} in this shell; it never goes on the command line.` }],
       why: 'The read-only graduation plan: what moves, the blockers and the plan_hash the move is approved with. Nothing changes.' } };
@@ -66,10 +66,10 @@ export async function assertUnmanagedCanonicalWriter(engine: SqlEngine, operatio
       { why, reason: 'managed_brain', docs: ENGINE_MIGRATION_DOCS, fix: engineMigrationFix(opts.migration, why) });
   }
   throw opError('writer_coordinator_required', message,
-    `Run the same gbrain command again: it routes a managed brain through the coordinator, and the brain became managed while ${operation} ran.`,
+    `Run the same foresights command again: it routes a managed brain through the coordinator, and the brain became managed while ${operation} ran.`,
     { why, reason: 'managed_brain', fix: { consent: [], actor: 'agent', requires_exclusive: false, verify: DOCTOR_VERIFY,
-      why: `${why} Each gbrain command that changes sources or imports content takes the coordinated path on a managed brain, so the same command run again uses it; nothing was written.`,
-      user_message: `gbrain stopped ${operation} because your brain switched to managed writes while it ran. Nothing was written; running the same command again uses the managed path.` } });
+      why: `${why} Each foresights command that changes sources or imports content takes the coordinated path on a managed brain, so the same command run again uses it; nothing was written.`,
+      user_message: `foresights stopped ${operation} because your brain switched to managed writes while it ran. Nothing was written; running the same command again uses the managed path.` } });
 }
 
 /**
@@ -84,7 +84,7 @@ async function assertNotStrictSource(engine: SqlEngine, sourceId: string, operat
   throw opError('strict_requires_managed', `${operation} cannot write git-canonical source ${sourceId} on an unmanaged brain.`,
     `Nothing was written. Ask the user whether to turn on managed persistence for this brain (the supported way to make a source git-canonical), or to remove canonical: git from source ${sourceId}.`,
     { why, docs: 'docs/designs/GIT_CANONICAL_MEMORY.md', fix: { consent: [], actor: 'user', requires_exclusive: false, verify: DOCTOR_VERIFY, why,
-      user_message: `Source ${sourceId} is set to git-canonical, which only a managed brain can serve, so gbrain wrote nothing. Should this brain move to managed writes, or should ${sourceId} stop being git-canonical?` } });
+      user_message: `Source ${sourceId} is set to git-canonical, which only a managed brain can serve, so foresights wrote nothing. Should this brain move to managed writes, or should ${sourceId} stop being git-canonical?` } });
 }
 
 /** The legacy engine copier cannot transfer permanent IDs, withdrawals, ownership or the belief ledger. */

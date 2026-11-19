@@ -1,5 +1,5 @@
 /**
- * #6196 — there is no allow-protected flag. `gbrain jobs submit` sets the
+ * #6196 — there is no allow-protected flag. `foresights jobs submit` sets the
  * protected-job opt-in itself for protected names, so every comment, skill or
  * migration note that tells an operator to pass the flag sends an agent to a
  * command line that does not mean what it says. One repo-wide guard over

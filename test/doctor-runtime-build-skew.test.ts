@@ -1,6 +1,6 @@
 /**
  * #7245: doctor `runtime_build_skew` compares the builds of this host's
- * long-running gbrain processes with each other and with the build each one's
+ * long-running foresights processes with each other and with the build each one's
  * install holds on disk: serve (heartbeat row), the jobs supervisor (PID file),
  * worker parents (worker registry) and the job children they spawned (the
  * `job_build_skew:` history entry a child writes). Stub sources for the
@@ -60,7 +60,7 @@ describe('doctor runtime_build_skew', () => {
       supervisor: { pid: 6161, version: OLD, install_root: INSTALL },
     }), service);
     expect(check.status).toBe('fail');
-    expect(check.message).toStartWith(`runtime_build_skew: 3 gbrain builds are running on this host (newest v${VERSION})`);
+    expect(check.message).toStartWith(`runtime_build_skew: 3 foresights builds are running on this host (newest v${VERSION})`);
     expect(check.message).toContain(`serve pid 4242 v${OLDER}`);
     expect(check.message).toContain(`supervisor pid 6161 v${OLD} (its install now holds v${VERSION})`);
     expect(check.message).toContain(`worker pid 5151 v${OLD} (its install now holds v${VERSION})`);
@@ -83,13 +83,13 @@ describe('doctor runtime_build_skew', () => {
     expect(same.message).toContain(`runs v${VERSION}`);
     const idle = await runtimeBuildSkewCheck(stub([]).engine, HOST, sources(), service);
     expect(idle.status).toBe('ok');
-    expect(idle.message).toContain('No long-running gbrain process');
+    expect(idle.message).toContain('No long-running foresights process');
   });
 
   test('a worker whose install moved under it warns even when it is the only process', async () => {
     const check = await runtimeBuildSkewCheck(stub([]).engine, HOST, sources({ workers: [{ pid: 5151, version: OLD, install_root: INSTALL }] }), service);
     expect(check.status).toBe('warn');
-    expect(check.message).toStartWith(`runtime_build_skew: a gbrain process runs an older build than its install (newest v${OLD})`);
+    expect(check.message).toStartWith(`runtime_build_skew: a foresights process runs an older build than its install (newest v${OLD})`);
     expect((check.fix as { argv: string[] }).argv).toEqual(['gbrain', 'upgrade', '--restart-only']);
     expect(check.message).toContain('By hand: restart with `kill 5151`');
   });
@@ -98,8 +98,8 @@ describe('doctor runtime_build_skew', () => {
     const check = await runtimeBuildSkewCheck(stub([heartbeat()]).engine, HOST, sources({
       workers: [{ pid: 5151, version: OLD, install_root: INSTALL }], supervisor: { pid: 6161, version: OLD, install_root: INSTALL } }), service);
     expect(check.status).toBe('fail');
-    expect(check.message).toContain('By hand: restart with `gbrain jobs supervisor stop`');
-    expect(check.message).toContain('gbrain jobs supervisor start --detach');
+    expect(check.message).toContain('By hand: restart with `foresights jobs supervisor stop`');
+    expect(check.message).toContain('foresights jobs supervisor start --detach');
   });
 
   // GST-2688: a serve stopped on SIGTERM whose old build never deletes its heartbeat row still reads as renewed for

@@ -9,7 +9,7 @@ with its reason, written before the next cell runs.
 
 ## Builds
 
-- **Baseline:** gbrain master at the P8 pull request's merge base, pinned by SHA in each decision spec.
+- **Baseline:** foresights master at the P8 pull request's merge base, pinned by SHA in each decision spec.
 - **Candidate:** the P8 pull request head, pinned by SHA. Uncommitted edits are never measured.
 - **Harness:** gbrain-evals `p0-heldout-harness`, plus the P8 dev harness additions on `p8-dev-evals` (Cat 40
   `--advertised` arms and mid-run tool lists, the write-cost runner, the withdrawal-review generator and the
@@ -51,8 +51,8 @@ budget ledger. An underpowered, incomplete or invalid run never turns a default 
   names and attribute values (custodian-generated), plus at least 50 human-written paraphrase pairs. At least 200
   actionable families. About 30% of candidates are restatements; the rest are corrected values, negations, past-tense
   versions, compound claims and independent facts about the same person.
-- Procedure: `gbrain decide calibrate --slot conflict --call-site review_withdraw` on the calibrate half, then
-  `gbrain decide qualify` on the eval half (family-level Wilson bound). Neighbour retrieval measured with production
+- Procedure: `foresights decide calibrate --slot conflict --call-site review_withdraw` on the calibrate half, then
+  `foresights decide qualify` on the eval half (family-level Wilson bound). Neighbour retrieval measured with production
   embeddings (`text-embedding-3-large`, 1536 dimensions) against the lane's 0.80 cosine floor, by slice.
 - Gates, all required:
   - action precision lower bound ≥ 0.90;
@@ -78,7 +78,7 @@ budget ledger. An underpowered, incomplete or invalid run never turns a default 
 - Hermetic: planted fabricated, speaker-swapped, near-match and supported quotes per writer
   (`test/think-quote-verify.test.ts`, `test/cycle-synthesize-verify.test.ts`, concept and pattern tests).
   Gate: planted fabricated quotes persisted = 0.
-- Paid: `eval/runner/p8-quote-grounding.ts` — `gbrain think` (`claude-sonnet-5-5`) on held-out quote-eliciting and
+- Paid: `eval/runner/p8-quote-grounding.ts` — `foresights think` (`claude-sonnet-5-5`) on held-out quote-eliciting and
   natural questions over amara-life-v1 and sealed-confirmation-v2 that were never used in dev, sized to at least 300
   supported quote spans, clustered by question. An independent judge (`gpt-6.1-sol`) labels each span against the
   exact evidence the model was given.
@@ -88,7 +88,7 @@ budget ledger. An underpowered, incomplete or invalid run never turns a default 
 
 ### 7. Advertised tool surface (part 5, `mcp.advertised_surface`, new installs only)
 
-- Cat 40 (`eval/runner/cat40-model-ladder.ts`), gbrain arm, callable surface `full` in every arm, advertised
+- Cat 40 (`eval/runner/cat40-model-ladder.ts`), foresights arm, callable surface `full` in every arm, advertised
   `full` (control) vs `starter` vs `verbs`, the four models above, 2 repeats, uncapped tool results.
 - Data: a new seed-disjoint world from P0 with at least 100 tasks, including at least 20 hidden-tool tasks that need
   an operation outside the starter set (for example `add_link`, `find_trajectory`, takes search). Memory-only and

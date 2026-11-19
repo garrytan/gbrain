@@ -1,5 +1,5 @@
 /**
- * #7699: gbrain mcp verify's memory-writer fixture saves, reads back and
+ * #7699: foresights mcp verify's memory-writer fixture saves, reads back and
  * withdraws its fact on a brain that already holds a similarly named entity
  * page (same leading token, close title), and never touches that page.
  * The peer dispatches the real recall/remember/forget handlers as a remote
@@ -37,7 +37,7 @@ beforeAll(async () => {
   await registerLocalWriter(engine, 'cli'); await registerLocalWriter(engine, 'stdio');
   await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
   await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], () =>
-    tx.putPage(NEAR, { type: 'concept', title: 'GBrain verification', compiled_truth: '# GBrain verification\n\nHow connections are checked.', frontmatter: {} }, { sourceId }),
+    tx.putPage(NEAR, { type: 'concept', title: 'Foresights verification', compiled_truth: '# Foresights verification\n\nHow connections are checked.', frontmatter: {} }, { sourceId }),
     TEST_WRITE_ATTRIBUTION));
 }, 60_000);
 

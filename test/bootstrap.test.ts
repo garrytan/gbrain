@@ -6,7 +6,7 @@
  * bootstrap adds enough state for PGLITE_SCHEMA_SQL to replay safely.
  *
  * The bootstrap covers the wedge incidents from issues
- * #239/#266/#357/#366/#374/#375/#378/#396 — every gbrain release that added
+ * #239/#266/#357/#366/#374/#375/#378/#396 — every foresights release that added
  * a column-with-index in the schema blob without a corresponding bootstrap
  * triggered the same wedge family.
  *

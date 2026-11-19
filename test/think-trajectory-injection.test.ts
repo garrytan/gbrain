@@ -1,5 +1,5 @@
 /**
- * v0.40.2.0 — gbrain think trajectory injection contract.
+ * v0.40.2.0 — foresights think trajectory injection contract.
  *
  * Confirms runThink:
  *   - Splices the <trajectory> block into the user prompt for temporal /
@@ -329,7 +329,7 @@ describe('runThink — calibration-mode trajectory placement', () => {
 // v0.40.2.0 — resolution_source gate (Codex P5)
 // ─────────────────────────────────────────────────────────────────────
 //
-// gbrain think SKIPS candidates whose resolveEntitySlugWithSource
+// foresights think SKIPS candidates whose resolveEntitySlugWithSource
 // returns source='fallback_slugify'. This is the divergence from the
 // longmemeval harness (which accepts fallback_slugify because its
 // extractor populates the same slugify slug).

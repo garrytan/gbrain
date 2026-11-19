@@ -1,6 +1,6 @@
 /**
- * #8543: which thin-client `gbrain serve` argument lists start the stdio
- * bridge. The argv gbrain's own plugin manifests register must bridge (T20),
+ * #8543: which thin-client `foresights serve` argument lists start the stdio
+ * bridge. The argv foresights's own plugin manifests register must bridge (T20),
  * and a refused form's fix keeps its flags, so it is never "fixed" into a
  * bare serve, which on a thin client is the bridge.
  */

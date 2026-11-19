@@ -1,6 +1,6 @@
 /**
  * End-to-end: a `.env` in the CURRENT DIRECTORY must not be able to make the
- * gbrain CLI load code. Bun auto-loads cwd `.env` files (compiled binaries
+ * foresights CLI load code. Bun auto-loads cwd `.env` files (compiled binaries
  * included) and expands `${VAR}` inside them, so both the relative and the
  * `${PWD}`-expanded spellings of a code-loading variable are tried here.
  *
@@ -104,14 +104,14 @@ describe('cwd .env cannot drive GBRAIN_GUARDRAILS_MODULE (advisory PoC)', () => 
     // CLOSED — the module still never runs (marker absent), but instead of
     // quarantining + re-running (the old exit 0) preflight refuses (exit 1), so
     // the process never continues without the firewall the assignment implied.
-    test(`${label}: gbrain --version from the hostile dir runs no code and refuses (fail-closed)`, async () => {
+    test(`${label}: foresights --version from the hostile dir runs no code and refuses (fail-closed)`, async () => {
       const { dir, marker } = hostileRepo(envLine);
       const r = await runCli([process.execPath, CLI_PATH, '--version'], dir, hermeticEnv(dir));
       expect(existsSync(marker)).toBe(false);
       expect(r.exitCode).toBe(1);
       expect(r.stderr).toContain(EXPECTED_WARNING); // the quarantine warning still prints …
       expect(r.stderr).toContain("refusing to run without the operator's firewall"); // … then the refusal
-      expect(r.stdout).not.toMatch(/^gbrain \d/);
+      expect(r.stdout).not.toMatch(/^(?:foresights|gbrain) \d/);
     });
   }
 
@@ -128,7 +128,7 @@ describe('cwd .env cannot drive GBRAIN_GUARDRAILS_MODULE (advisory PoC)', () => 
   });
 
   // A3-3: fail-CLOSED when a cwd .env assigns GBRAIN_GUARDRAILS_MODULE. Key
-  // presence, not value: Bun merges the file before gbrain starts and never
+  // presence, not value: Bun merges the file before foresights starts and never
   // overrides a live variable, so an operator-exported module cannot be told
   // apart from the file's. Dropping it and re-running would leave the child
   // with NO firewall (the #3688 contract is fail-closed), so preflight refuses
@@ -140,7 +140,7 @@ describe('cwd .env cannot drive GBRAIN_GUARDRAILS_MODULE (advisory PoC)', () => 
     expect(r.exitCode).toBe(1);
     expect(r.stderr).toContain("refusing to run without the operator's firewall");
     expect(existsSync(marker)).toBe(false); // the module never imported
-    expect(r.stdout).not.toMatch(/^gbrain \d/);
+    expect(r.stdout).not.toMatch(/^(?:foresights|gbrain) \d/);
   });
 
   test('control: an exported GBRAIN_GUARDRAILS_MODULE survives when the cwd .env assigns a DIFFERENT protected key — the re-run still loads it', async () => {
@@ -204,7 +204,7 @@ describe('cli preflight ordering: cwd quarantine → ~/.gbrain/.env → guardrai
     const r = await runCli([process.execPath, CLI_PATH, '--version'], dir, env);
     expect(existsSync(marker)).toBe(false);
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toMatch(/^gbrain \d/);
+    expect(r.stdout).toMatch(/^(?:foresights|gbrain) \d/);
     expect(r.stderr).toContain('[env] Ignoring GBRAIN_HOME because a .env file in the current directory assigns it');
   });
 });
@@ -213,10 +213,10 @@ describe('cli preflight ordering: cwd quarantine → ~/.gbrain/.env → guardrai
 //
 // Removing a key from the parent environment is invisible to children spawned
 // without an explicit `env` — Bun hands them its startup environ snapshot,
-// cwd-.env values included. Preflight therefore re-runs gbrain once from a
+// cwd-.env values included. Preflight therefore re-runs foresights once from a
 // fresh EMPTY temp dir with the sanitized environment whenever the quarantine
 // dropped anything, and the re-run chdirs back in its own preflight
-// (cli-preflight.ts). The entry script below stands in for any gbrain command
+// (cli-preflight.ts). The entry script below stands in for any foresights command
 // that shells out from the cwd: real preflight, then `git status --porcelain`
 // with NO env/cwd option — the exact spawn shape the snapshot would poison —
 // plus a `sh` PRESENCE probe: `GIT_SSL_NO_VERIFY=` (empty) still disables TLS
@@ -320,7 +320,7 @@ async function gone(pid: number): Promise<boolean> {
   return false;
 }
 
-describe('a cwd .env cannot reach the programs gbrain spawns (sanitized re-run)', () => {
+describe('a cwd .env cannot reach the programs foresights spawns (sanitized re-run)', () => {
   test.skipIf(!GIT_BIN)('control: without preflight the planted git config runs the script and the TLS knob is live (the PoC is live here)', async () => {
     const { dir, evilMarker, entry } = hostileGitRepo();
     const r = await runCli([process.execPath, entry], dir, hermeticEnv(dir));
@@ -385,11 +385,11 @@ describe('a cwd .env cannot reach the programs gbrain spawns (sanitized re-run)'
     expect(r.stdout).toContain(`MARKER=${JSON.stringify(JSON.stringify({ cwd: dir, neutral: dir }))}`);
   });
 
-  test.skipIf(!GIT_BIN)('depth 2: a hopped process that spawns gbrain again from the hostile cwd hops once more and stops — exit code and exactly two warnings', async () => {
+  test.skipIf(!GIT_BIN)('depth 2: a hopped process that spawns foresights again from the hostile cwd hops once more and stops — exit code and exactly two warnings', async () => {
     const { dir, evilMarker, entry } = hostileGitRepo({
       entryBody: [
         `if (process.argv.includes('--level1')) { Bun.spawnSync(['git', 'status', '--porcelain']); process.exit(5); }`,
-        // level 0: the shape of every gbrain self-spawn — explicit env (the quarantined view), the hostile cwd.
+        // level 0: the shape of every foresights self-spawn — explicit env (the quarantined view), the hostile cwd.
         `const r = Bun.spawnSync([process.execPath, process.argv[1], '--preflight', '--level1'], { env: process.env, cwd: process.cwd(), stdio: ['ignore', 'inherit', 'inherit'] });`,
         `process.exit(r.exitCode ?? 1);`,
       ].join('\n'),
@@ -494,7 +494,7 @@ describe('a cwd .env cannot reach the programs gbrain spawns (sanitized re-run)'
   });
 
   // E4-6 (review cycle 4): `process.stdin.isTTY` was the proxy for "a terminal
-  // delivers Ctrl-C to the whole group". `gbrain serve --http </dev/null` in a
+  // delivers Ctrl-C to the whole group". `foresights serve --http </dev/null` in a
   // foreground terminal has a non-tty stdin AND a controlling terminal, so
   // Ctrl-C reached wrapper and child and the wrapper forwarded a SECOND SIGINT,
   // aborting the child's once('SIGINT') graceful handler (exit 130). The wrapper
@@ -823,7 +823,7 @@ describe('a cwd .env cannot reach the programs gbrain spawns (sanitized re-run)'
     expect(existsSync(evilMarker)).toBe(false);
     expect(r.exitCode).toBe(0);
     expect(r.stdout.trim().split('\n')).toHaveLength(1);
-    expect(r.stdout).toMatch(/^gbrain \d/);
+    expect(r.stdout).toMatch(/^(?:foresights|gbrain) \d/);
     const warnings = warningLines(r.stderr);
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain(`Ignoring ${HOSTILE_WARNING_KEYS} because`);
@@ -831,7 +831,7 @@ describe('a cwd .env cannot reach the programs gbrain spawns (sanitized re-run)'
 });
 
 // ── cwd == config dir: the operator's own .env is not a "cwd .env" (A4) ──────
-describe('running gbrain from inside its own config dir', () => {
+describe('running foresights from inside its own config dir', () => {
   /** A VALID provider module (registers one guardrail) that also drops a marker when imported. */
   function validProvider(): { path: string; marker: string } {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-a4-provider-'));
@@ -858,7 +858,7 @@ describe('running gbrain from inside its own config dir', () => {
     expect(r.stderr).not.toContain('[env] Ignoring');
     expect(r.stderr).not.toContain('guardrails:');
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toMatch(/^gbrain \d/);
+    expect(r.stdout).toMatch(/^(?:foresights|gbrain) \d/);
     expect(existsSync(marker)).toBe(true); // the operator's provider loaded
   });
 
@@ -880,7 +880,7 @@ describe('running gbrain from inside its own config dir', () => {
     expect(r.exitCode).toBe(1);
     expect(r.stderr).toContain('[env] Ignoring GBRAIN_GUARDRAILS_MODULE, GBRAIN_HOME because a .env file in the current directory assigns it');
     expect(r.stderr).toContain("refusing to run without the operator's firewall");
-    expect(r.stdout).not.toMatch(/^gbrain \d/);
+    expect(r.stdout).not.toMatch(/^(?:foresights|gbrain) \d/);
   });
 
   // E4-2 (review cycle 4): the exemption compares cwd with configDir(), which
@@ -925,7 +925,7 @@ describe('running gbrain from inside its own config dir', () => {
     expect(r.exitCode).toBe(1);
     expect(r.stderr).toContain('[env] Ignoring GBRAIN_GUARDRAILS_MODULE, HOME because a .env file in the current directory assigns it');
     expect(r.stderr).toContain("refusing to run without the operator's firewall");
-    expect(r.stdout).not.toMatch(/^gbrain \d/);
+    expect(r.stdout).not.toMatch(/^(?:foresights|gbrain) \d/);
   });
 });
 
@@ -934,9 +934,9 @@ describe('running gbrain from inside its own config dir', () => {
 //
 // A standalone Bun executable auto-loads a `bunfig.toml` from the process cwd
 // and runs its `preload` scripts BEFORE any of the binary's own code — before
-// cli-preflight, before the cwd-.env quarantine. gbrain is a global CLI that
+// cli-preflight, before the cwd-.env quarantine. foresights is a global CLI that
 // runs from arbitrary checkouts, so a hostile repo carrying bunfig.toml +
-// `preload` would get RCE from a plain `gbrain --version`. The binary is now
+// `preload` would get RCE from a plain `foresights --version`. The binary is now
 // built with `--no-compile-autoload-bunfig`, which makes a cwd bunfig.toml
 // inert (guarded at build time by scripts/check-compile-autoload.sh). The dev
 // runtime `bun src/cli.ts` stays bun-native — a contributor's cwd is trusted —
@@ -962,16 +962,16 @@ describe('a cwd bunfig.toml cannot preload code into the compiled binary', () =>
     const r = await runCli([COMPILED_BIN, '--version'], dir, hermeticEnv(dir));
     expect(existsSync(marker)).toBe(false); // --no-compile-autoload-bunfig made it inert
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toMatch(/^gbrain \d/);
+    expect(r.stdout).toMatch(/^(?:foresights|gbrain) \d/);
   });
 });
 
 // ── E4-4 (review cycle 4): script mode honours a cwd bunfig.toml — say so ────
 //
 // The documented install (`bun install -g github:…`, `git clone` + `bun link`)
-// maps the `gbrain` bin to src/cli.ts, so gbrain runs as an ordinary Bun
+// maps the `gbrain` bin to src/cli.ts, so foresights runs as an ordinary Bun
 // SCRIPT and Bun applies the cwd bunfig.toml — a top-level `preload` runs
-// before any gbrain code (measured on Bun 1.3.13: only `--config=/dev/null`
+// before any foresights code (measured on Bun 1.3.13: only `--config=/dev/null`
 // suppresses it; `-c`, `--no-bunfig`, `BUN_CONFIG_*` and a `[test]`-section
 // preload do not / do not apply). Preflight cannot undo what already ran; it
 // prints ONE stderr line naming the fact when it detects the shape — script
@@ -980,7 +980,7 @@ describe('a cwd bunfig.toml cannot preload code into the compiled binary', () =>
 // repo). The compiled binary is protected at build time (pinned above).
 describe('script mode + cwd bunfig.toml: preflight names the already-applied preload (E4-4)', () => {
   const SCRIPT_MODE_WARNING_HEAD =
-    '[env] gbrain is running as a bun script (not the compiled binary) and the bunfig.toml in the current directory declares a top-level preload';
+    '[env] foresights is running as a bun script (not the compiled binary) and the bunfig.toml in the current directory declares a top-level preload';
   const scriptModeWarnings = (stderr: string) => stderr.split('\n').filter((l) => l.startsWith(SCRIPT_MODE_WARNING_HEAD));
 
   /** A dir whose bunfig.toml is `bunfig`; tooling/pre.ts drops the returned marker when Bun preloads it. */
@@ -995,12 +995,12 @@ describe('script mode + cwd bunfig.toml: preflight names the already-applied pre
   }
   const TOP_LEVEL_PRELOAD = 'preload = ["./tooling/pre.ts"]\n';
 
-  test('bun src/cli.ts from a dir whose bunfig.toml has a top-level preload: the preload RUNS (Bun, before gbrain) and preflight prints the one-line warning', async () => {
+  test('bun src/cli.ts from a dir whose bunfig.toml has a top-level preload: the preload RUNS (Bun, before foresights) and preflight prints the one-line warning', async () => {
     const { dir, marker } = bunfigDir(TOP_LEVEL_PRELOAD);
     const r = await runCli([process.execPath, CLI_PATH, '--version'], dir, hermeticEnv(dir));
     expect(existsSync(marker)).toBe(true); // honest: script mode cannot prevent this — the warning IS the mitigation
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toMatch(/^gbrain \d/);
+    expect(r.stdout).toMatch(/^(?:foresights|gbrain) \d/);
     expect(scriptModeWarnings(r.stderr)).toHaveLength(1);
   });
 

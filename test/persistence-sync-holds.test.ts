@@ -1,5 +1,5 @@
 /**
- * #5988 Lane B: managed sync holds a file gbrain refuses deterministically
+ * #5988 Lane B: managed sync holds a file foresights refuses deterministically
  * instead of blocking the source. The rest imports, the checkpoint advances,
  * the hold stays until the file changes, leaves, or a newer reader imports
  * it. #6712 PR 4b: a non-company source runs the live pass, so there is no blocked cursor to convert in place: a failed
@@ -95,7 +95,7 @@ test('three good files and one broken one: the sync completes, holds one, advanc
   expect(result.held![0]!.fix.argv).toEqual(['gbrain', 'repair', 'frontmatter', '--source', s.id, '--include-ambiguous']);
   const text = printed(result);
   expect(text).toContain('Held notes/broken.md: invalid_frontmatter (needs_interpretation) at line 2, key "title"');
-  expect(text).toContain(`gbrain sources status ${s.id}`);
+  expect(text).toContain(`foresights sources status ${s.id}`);
   expect(text).not.toContain('alice-example');
   const [row] = await engine.executeRaw<{ completed_keys: unknown }>('SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint LIKE $2', [GIT_HOLD_OP, `${s.id}:%`]);
   expect(JSON.stringify(row!.completed_keys)).not.toContain('alice-example');
@@ -514,7 +514,7 @@ test('#6377: a slug-conflict hold carries the content-repair verdict only for th
   expect(item).toMatchObject({ content_repair: state, docs: 'docs/guides/write-refusals.md#merge_recommended' });
   expect(item.fix).toMatchObject({ actor: 'user', argv: ['gbrain', 'repair', 'content', '--source', s.id, '--only', 'notes/slug.md'] });
   expect(item.fix.user_message).toContain('`notes/elsewhere`');
-  expect(item.fix.user_message).toContain('gbrain does not merge pages by itself yet');
+  expect(item.fix.user_message).toContain('foresights does not merge pages by itself yet');
   // A re-screen of the same bytes (slug conflicts always re-screen) keeps the verdict, with or without a retry request.
   s.write('notes/ok.md', note('Ok 2')); commit(s.root, 'touch ok');
   await s.sync();

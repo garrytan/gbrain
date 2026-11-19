@@ -597,7 +597,7 @@ export async function buildGazetteer(
     if (opts.strict) throw err;
     if (!isMissingSchemaObject(err, 'table', 'page_aliases') && !aliasGazetteerWarned) {
       aliasGazetteerWarned = true;
-      console.error(`[gbrain] gazetteer alias load degraded (titles-only): ${err instanceof Error ? err.message : String(err)}`);
+      console.error(`[foresights] gazetteer alias load degraded (titles-only): ${err instanceof Error ? err.message : String(err)}`);
     }
   }
   const ignoreLc = new Set(Array.from(ignoreSet, (n) => n.toLowerCase()));
@@ -908,7 +908,7 @@ export interface StaleMention {
   to: string;
   /** `link_kind` as stored; NULL rows (legacy / pre-v98) report as 'plain'. */
   kind: string;
-  /** `link_type` as stored (a verb on typed_ner rows), which `gbrain unlink --link-type` must name. */
+  /** `link_type` as stored (a verb on typed_ner rows), which `foresights unlink --link-type` must name. */
   link_type: string;
 }
 

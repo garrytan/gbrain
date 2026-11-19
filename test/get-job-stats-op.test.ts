@@ -1,5 +1,5 @@
 /**
- * CLI→MCP gap-closure wave — get_job_stats op (`gbrain jobs stats` was the
+ * CLI→MCP gap-closure wave — get_job_stats op (`foresights jobs stats` was the
  * one jobs verb with no MCP equivalent). Pins the payload shape, the shared
  * wedge derivation (queue.ts deriveWedgeSignal — same math as the CLI line
  * and the doctor wedged_queue check, #1801), and the relation-missing guard.

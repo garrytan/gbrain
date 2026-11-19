@@ -240,7 +240,7 @@ export async function postprocessManagedSynthesis(
   };
   /**
    * #8110: a postprocess receipt found on the page that an earlier local CLI writer registration of this brain made
-   * (`gbrain auth local-writer register cli --replace` revoked it). It settles under this local writer's live grant,
+   * (`foresights auth local-writer register cli --replace` revoked it). It settles under this local writer's live grant,
    * checked as a stored request; a remote principal's row never qualifies.
    */
   const localLineage = (row: WriteRequest) => localMaintenance(row) && row.principal_kind === 'local_cli'
@@ -251,7 +251,7 @@ export async function postprocessManagedSynthesis(
   const postprocessOne = async (index: number, { ref, output, path, transcript, hash }: Item): Promise<'stop' | void> => {
     if (ref.source_id !== authority.writer.sourceId) {
       throw opError('source_changed', 'The synthesis output source changed.',
-        `Synthesis output ${ref.slug} belongs to source ${ref.source_id}, not ${authority.writer.sourceId} that this dream cycle writes, so it was not postprocessed. Check source ${authority.writer.sourceId}'s writer status, then run gbrain dream --phase synthesize --source ${authority.writer.sourceId} again.`,
+        `Synthesis output ${ref.slug} belongs to source ${ref.source_id}, not ${authority.writer.sourceId} that this dream cycle writes, so it was not postprocessed. Check source ${authority.writer.sourceId}'s writer status, then run foresights dream --phase synthesize --source ${authority.writer.sourceId} again.`,
         { fix: writerStatusFix(authority.writer.sourceId, `Shows source ${authority.writer.sourceId}'s maintenance writer and requests in flight, read-only.`) });
     }
     const revision = output?.request.outcome?.revision;
@@ -465,7 +465,7 @@ export function withPublishPending(pending: number, result: PhaseResult, deferra
     + `(${deferral.consecutive} pass(es) in a row); ${deferral.outputs} output(s) finish next cycle without another synthesis call`;
   return { ...result, status: 'warn', summary: [result.summary, read, deferral && pending <= deferral.outputs ? null : SYNTH_PUBLISH_DEFERRED].filter(Boolean).join('; '),
     details: { ...result.details, publish_pending: pending, ...(deferral && pending <= deferral.outputs ? {} : { publish_deferred: SYNTH_PUBLISH_DEFERRED }),
-      ...(deferral ? { postprocess_deferred: { ...deferral, doctor: 'gbrain doctor --only persistence_request_indexes --json' } } : {}) } };
+      ...(deferral ? { postprocess_deferred: { ...deferral, doctor: 'foresights doctor --only persistence_request_indexes --json' } } : {}) } };
 }
 
 /**

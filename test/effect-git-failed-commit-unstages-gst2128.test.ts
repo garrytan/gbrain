@@ -1,6 +1,6 @@
 /**
  * GST-2128: a Git effect whose commit failed left its targets staged in the checkout's shared index, and nothing ever
- * unstaged them. Each parked effect added more, and every `gbrain git commit-push` naming a directory that held one was
+ * unstaged them. Each parked effect added more, and every `foresights git commit-push` naming a directory that held one was
  * refused `commit_prestaged_paths`, because the files looked like another writer's work in progress. A failed effect
  * commit now puts the index entries it changed back as they were, so the folder stays committable.
  * Seams: none; the real `commitGitTargets` and `commitAndPush` over a real repository. A lock file on the branch ref

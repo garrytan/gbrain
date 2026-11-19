@@ -1,6 +1,6 @@
 /**
  * Claimed sources (#5575, legacy content): which sources the owner has
- * claimed as their own notes with `gbrain trust claim-sources`
+ * claimed as their own notes with `foresights trust claim-sources`
  * (trust/claim.ts). A claim lives in `sources.config` beside the
  * `sources set-trust` default it sets:
  *

@@ -1,8 +1,8 @@
 INPUT: dx 556d5039383893ec11becb0659d0f19e3223ffda241d09865268e59ff1291f63
 
-# DX review: GBrain Refactor Wave 1
+# DX review: Foresights Refactor Wave 1
 
-The developers here are GBrain contributors and AI agents writing PRs, the authors of the ~51 open PRs that touch these files, and downstream code that imports `package.json` exports. For them, "hello world" means three everyday tasks after the merge: add a migration, add a column, and add a CLI command or storage method. It also means rebasing an open PR onto the moved code. The plan is strong on verification: goldens, parity runs, the move-only verifier, and the moved-symbol map. It's weak on the post-merge contributor loop. It never writes down the new recipe for any of those everyday tasks. It only specifies failure text for one of its roughly nine new guards. And it leaves the library export contract out of "behavior-preserving." I checked these against the repo at 608a174 and cite the evidence below.
+The developers here are Foresights contributors and AI agents writing PRs, the authors of the ~51 open PRs that touch these files, and downstream code that imports `package.json` exports. For them, "hello world" means three everyday tasks after the merge: add a migration, add a column, and add a CLI command or storage method. It also means rebasing an open PR onto the moved code. The plan is strong on verification: goldens, parity runs, the move-only verifier, and the moved-symbol map. It's weak on the post-merge contributor loop. It never writes down the new recipe for any of those everyday tasks. It only specifies failure text for one of its roughly nine new guards. And it leaves the library export contract out of "behavior-preserving." I checked these against the repo at 608a174 and cite the evidence below.
 
 ## 1. Getting started / TTHW
 

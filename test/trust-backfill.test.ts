@@ -1,5 +1,5 @@
 /**
- * `gbrain trust backfill` and doctor `trust_tiers` (#5575: A8, CEO-10, CEO-17,
+ * `foresights trust backfill` and doctor `trust_tiers` (#5575: A8, CEO-10, CEO-17,
  * CEO-25, DX-5).
  *
  * Protects: legacy rows are classified from deterministic signals only

@@ -2,7 +2,7 @@
 id: agent-voice
 name: Voice Personas (Mars + Venus)
 version: 0.1.1
-description: WebRTC-first voice agent reference (Mars + Venus personas, optional Twilio adapter). Skillpack-as-reference paradigm — the install-time agent COPIES code into your host agent repo where it becomes user-owned and mutable, NOT a runtime gbrain dependency.
+description: WebRTC-first voice agent reference (Mars + Venus personas, optional Twilio adapter). Skillpack-as-reference paradigm — the install-time agent COPIES code into your host agent repo where it becomes user-owned and mutable, NOT a runtime foresights dependency.
 category: voice
 install_kind: copy-into-host-repo
 requires: []
@@ -20,7 +20,7 @@ cost_estimate: "$0.06-0.24/min OpenAI Realtime, optional $1-2/mo Twilio number"
 
 # Voice Personas: Mars + Venus
 
-A reference voice agent (WebRTC-first; OpenAI Realtime) shipped as **copy-into-your-repo** content rather than runtime gbrain skills. The install-time agent reads this recipe, copies the bundle into your host agent repo (e.g. `~/git/your-agent-repo/`), wires the resolver, and starts the voice server. From there, the code lives in YOUR repo, on YOUR cadence, with YOUR edits.
+A reference voice agent (WebRTC-first; OpenAI Realtime) shipped as **copy-into-your-repo** content rather than runtime foresights skills. The install-time agent reads this recipe, copies the bundle into your host agent repo (e.g. `~/git/your-agent-repo/`), wires the resolver, and starts the voice server. From there, the code lives in YOUR repo, on YOUR cadence, with YOUR edits.
 
 ## What ships in the bundle
 
@@ -34,24 +34,24 @@ A reference voice agent (WebRTC-first; OpenAI Realtime) shipped as **copy-into-y
 
 ## The skillpack-as-reference paradigm
 
-Earlier gbrain skillpacks installed to `~/.gbrain/skills/<name>/` as managed-block-canonical first-class skills. The user's local edits drifted from the canonical and updates were either "overwrite local" or "skip update" — neither is what an operator wants on code they've extended.
+Earlier foresights skillpacks installed to `~/.gbrain/skills/<name>/` as managed-block-canonical first-class skills. The user's local edits drifted from the canonical and updates were either "overwrite local" or "skip update" — neither is what an operator wants on code they've extended.
 
-This recipe ships a different shape: gbrain holds the up-to-date REFERENCE, and `gbrain integrations install agent-voice --target <host-repo>` COPIES it into the operator's repo. The code now lives in the host repo, on the operator's release cadence, with the operator's edits. Subsequent `--refresh` invocations diff host-side files against gbrain's reference and apply updates while preserving local edits by default (`--auto keep-mine|take-theirs` for CI lanes).
+This recipe ships a different shape: foresights holds the up-to-date REFERENCE, and `foresights integrations install agent-voice --target <host-repo>` COPIES it into the operator's repo. The code now lives in the host repo, on the operator's release cadence, with the operator's edits. Subsequent `--refresh` invocations diff host-side files against foresights's reference and apply updates while preserving local edits by default (`--auto keep-mine|take-theirs` for CI lanes).
 
-The shipped reference does NOT contain personal names, hardcoded private paths, or upstream-agent codenames. A CI guard (`scripts/check-no-pii-in-agent-voice.sh`) blocks any drift back; a deterministic import script (`scripts/import-from-upstream.sh`) refreshes the gbrain reference from an upstream voice-agent source.
+The shipped reference does NOT contain personal names, hardcoded private paths, or upstream-agent codenames. A CI guard (`scripts/check-no-pii-in-agent-voice.sh`) blocks any drift back; a deterministic import script (`scripts/import-from-upstream.sh`) refreshes the foresights reference from an upstream voice-agent source.
 
 ## Install
 
-> Note: this recipe's category is `voice`, which the `gbrain integrations list` dashboard does not render (it shows infra / sense / reflex sections only). Install it directly by id, as below.
+> Note: this recipe's category is `voice`, which the `foresights integrations list` dashboard does not render (it shows infra / sense / reflex sections only). Install it directly by id, as below.
 
 ```bash
 # 1. Detect target repo
 export TARGET_REPO=$OPENCLAW_WORKSPACE     # or your agent repo path
 
 # 2. Install
-gbrain integrations install agent-voice --target $TARGET_REPO
+foresights integrations install agent-voice --target $TARGET_REPO
 
-# 3. Set env vars in $TARGET_REPO/.env (NOT in gbrain)
+# 3. Set env vars in $TARGET_REPO/.env (NOT in foresights)
 echo "OPENAI_API_KEY=sk-..." >> $TARGET_REPO/.env
 echo "DEFAULT_PERSONA=venus" >> $TARGET_REPO/.env
 
@@ -73,15 +73,15 @@ Open `http://localhost:8765/call` and click Connect. The browser asks for mic pe
 
 For test-mode roundtrip checks, append `?test=1` to the URL — that enables the `window._gbrainTest` instrumentation namespace + MediaRecorder capture of the response audio.
 
-## Update (refresh from gbrain)
+## Update (refresh from foresights)
 
 ```bash
-# Pull latest gbrain → re-run the install with --refresh
-git -C $(which gbrain | xargs -I{} dirname {})/.. pull   # or your gbrain update path
-gbrain integrations install agent-voice --target $TARGET_REPO --refresh
+# Pull latest foresights → re-run the install with --refresh
+git -C $(which foresights | xargs -I{} dirname {})/.. pull   # or your foresights update path
+foresights integrations install agent-voice --target $TARGET_REPO --refresh
 ```
 
-`--refresh` reads the `.gbrain-source.json` manifest written by the original install, re-computes per-file SHA-256 against gbrain's current reference, and classifies each file into one of six states (identical / stale / locally-modified / host-deleted / source-deleted / new-in-manifest). Stale and new files are updated automatically; **locally-modified files are preserved by default** (`--auto take-theirs` to overwrite; `--dry-run` to preview). An append-only audit journal is written to `<target>/services/voice-agent/.gbrain-source.refresh.log`.
+`--refresh` reads the `.gbrain-source.json` manifest written by the original install, re-computes per-file SHA-256 against foresights's current reference, and classifies each file into one of six states (identical / stale / locally-modified / host-deleted / source-deleted / new-in-manifest). Stale and new files are updated automatically; **locally-modified files are preserved by default** (`--auto take-theirs` to overwrite; `--dry-run` to preview). An append-only audit journal is written to `<target>/services/voice-agent/.gbrain-source.refresh.log`.
 
 The full state machine and per-state decisions live in [`recipes/agent-voice/install/refresh-algorithm.md`](agent-voice/install/refresh-algorithm.md) — the single home for refresh semantics.
 
@@ -112,7 +112,7 @@ The full state machine and per-state decisions live in [`recipes/agent-voice/ins
                          │
                          ▼  stdio JSON-RPC
               ┌─────────────────────┐
-              │  gbrain serve (MCP)  │
+              │  foresights serve (MCP)  │
               └─────────────────────┘
 ```
 
@@ -139,7 +139,7 @@ The install copies the **unit suites only**; the E2E and eval suites stay gbrain
 cd $TARGET_REPO/services/voice-agent
 bun run test                   # unit tests
 
-# gbrain-side (from your gbrain checkout)
+# gbrain-side (from your foresights checkout)
 cd <gbrain-checkout>/recipes/agent-voice && bun install
 AGENT_VOICE_E2E=1 bun run test:e2e             # WebRTC roundtrip (~$0.10/run)
 AGENT_VOICE_FULL_E2E=1 bun run test:full-flow  # openclaw-driven install + roundtrip (~$1-2/run)
@@ -156,4 +156,4 @@ The full-flow E2E is **friction-discovery**, not a ship-gate. Pre-ship gates on 
 - Smart VAD presets (quiet/normal/noisy/very_noisy) — uses Realtime API's default VAD today.
 - WebRTC `/session` does not yet ship MediaRecorder fallback for environments where the WebAudio-tee fails.
 
-Each of the deferred items is filed as a TODO in the gbrain repo's `TODOS.md`.
+Each of the deferred items is filed as a TODO in the foresights repo's `TODOS.md`.

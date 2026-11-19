@@ -4,7 +4,7 @@
  * Input:  { url: string }
  * Output: { reachable: boolean, status?: number, finalUrl?: string }
  *
- * Used by `gbrain integrity` to detect dead-link citations on brain pages.
+ * Used by `foresights integrity` to detect dead-link citations on brain pages.
  * Always confidence=1.0 when the backend answers (status codes are ground
  * truth); confidence=0 only when the HTTP call itself fails (DNS, timeout)
  * and we genuinely don't know.

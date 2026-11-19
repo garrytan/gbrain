@@ -3,12 +3,12 @@
  * import embeds pages at the title tier and nothing scheduled the synopsis
  * sweep, so a brain searched on title-tier vectors with no warning. Pins:
  *   - doctor synopsis_tier_coverage warns on a tokenmax brain with no
- *     synopsis vectors (coverage and the gbrain reindex --synopsis fix), and
+ *     synopsis vectors (coverage and the foresights reindex --synopsis fix), and
  *     is not applicable on a balanced brain;
  *   - the preview's pages, chunks, tokens and dollars on the configured
  *     synopsis model, and that it queues and spends nothing;
  *   - switching to tokenmax on a TTY previews the sweep and asks before
- *     running `gbrain reindex --synopsis --yes`; a no queues nothing;
+ *     running `foresights reindex --synopsis --yes`; a no queues nothing;
  *   - a --yes run under a cap below one synopsis call is refused by the
  *     shared spend group and stamps nothing; a later run resumes;
  *   - --yes queues one contextual_reindex_per_chunk job per page under one
@@ -120,7 +120,7 @@ for (const kind of testBackends()) describe(`#8744 synopsis sweep (${kind})`, ()
     const check = await checkSynopsisTierCoverage(engine);
     expect(check.status).toBe('warn');
     expect(check.message).toContain('0% of chunks');
-    expect(check.message).toContain('gbrain reindex --synopsis');
+    expect(check.message).toContain('foresights reindex --synopsis');
     expect(check.message).toContain('No synopsis sweep job has ever run');
     expect(check.message).toContain('1 large page(s)');
     expect(check.details).toMatchObject({ coverage_pct: 0, synopsis_chunks: 0, eligible_pages: 2, large_title_pages: 1, sweep_jobs: 0 });
@@ -130,7 +130,7 @@ for (const kind of testBackends()) describe(`#8744 synopsis sweep (${kind})`, ()
     expect(scoped.details).toMatchObject({ eligible_chunks: 0, eligible_pages: 0, large_title_pages: 0 });
     expect(scoped.details).not.toHaveProperty('sweep_jobs');
     const report = await buildModesReport(engine);
-    expect(report.synopsis_coverage).toMatchObject({ coverage_pct: 0, synopsis_chunks: 0, fix: 'gbrain reindex --synopsis' });
+    expect(report.synopsis_coverage).toMatchObject({ coverage_pct: 0, synopsis_chunks: 0, fix: 'foresights reindex --synopsis' });
     expect(report.synopsis_coverage!.line).toContain('0% of chunks');
     expect(redactReadinessForRemote(report).synopsis_coverage).toBeUndefined();
   });
@@ -175,7 +175,7 @@ for (const kind of testBackends()) describe(`#8744 synopsis sweep (${kind})`, ()
       if (saved === undefined) delete process.env.GBRAIN_NO_MODE_SWITCH_UX; else process.env.GBRAIN_NO_MODE_SWITCH_UX = saved;
     }
     expect(prompts).toHaveLength(1);
-    expect(prompts[0]).toContain("Run 'gbrain reindex --synopsis --yes' now?");
+    expect(prompts[0]).toContain("Run 'foresights reindex --synopsis --yes' now?");
     expect(prompts[0]).toContain('for 2 page(s)');
     expect(prompts[0]).not.toContain('reindex --markdown');
     const jobs = await engine.executeRaw<{ n: number | string }>(`SELECT count(*)::int AS n FROM minion_jobs`);

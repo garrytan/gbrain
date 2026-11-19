@@ -1,7 +1,7 @@
 /**
  * GST-2768 PR 2: backfilled archive pages are keyword-only with their embedding held (reason archive_backfill) in the
  * existing page_embedding_budget ledger, whatever their size, so the embed sweep sends nothing until the owner approves
- * the previewed cost (gbrain embed --held). Pages the forward run writes for closed days are not held. Repo-less PGLite.
+ * the previewed cost (foresights embed --held). Pages the forward run writes for closed days are not held. Repo-less PGLite.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';

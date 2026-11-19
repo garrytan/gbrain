@@ -37,16 +37,16 @@ describe('normaliser rows', () => {
   });
 
   test('F0 refresh refusal: the literal fix string becomes fix.argv; suggestion unchanged', () => {
-    const e = catalogueError('refresh_dirty', 'The worktree has uncommitted changes.', 'gbrain sources refresh --source wiki --stash');
+    const e = catalogueError('refresh_dirty', 'The worktree has uncommitted changes.', 'foresights sources refresh --source wiki --stash');
     const env = toAgentError(e, cx({ transport: 'cli', render: render({ transport: 'cli' }) }));
     expect(env.fix?.argv).toEqual(['gbrain', 'sources', 'refresh', '--source', 'wiki', '--stash']);
-    expect(env.suggestion).toBe('gbrain sources refresh --source wiki --stash');
-    expect(env.docs).toBe('https://github.com/garrytan/gbrain/blob/master/docs/guides/write-refusals.md#refresh_dirty');
+    expect(env.suggestion).toBe('foresights sources refresh --source wiki --stash');
+    expect(env.docs).toBe('https://github.com/aimonk2025/gbrain/blob/master/docs/guides/write-refusals.md#refresh_dirty');
   });
 
   test('StructuredAgentError → its code and hint', () => {
-    const env = toAgentError(errorFor({ class: 'UsageError', code: 'code_def_requires_symbol', message: 'needs a symbol', hint: 'gbrain code-def <symbol>' }), cx());
-    expect(env).toMatchObject({ error: 'code_def_requires_symbol', code: 'code_def_requires_symbol', suggestion: 'gbrain code-def <symbol>' });
+    const env = toAgentError(errorFor({ class: 'UsageError', code: 'code_def_requires_symbol', message: 'needs a symbol', hint: 'foresights code-def <symbol>' }), cx());
+    expect(env).toMatchObject({ error: 'code_def_requires_symbol', code: 'code_def_requires_symbol', suggestion: 'foresights code-def <symbol>' });
   });
 
   test('no_pricing: fix with inputs for the rates; actor agent on CLI, host_admin remote', () => {

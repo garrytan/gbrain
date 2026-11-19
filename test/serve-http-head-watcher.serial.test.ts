@@ -1,5 +1,5 @@
 /**
- * #6858 ask 6: the on-commit HEAD watcher under the `gbrain serve --http`
+ * #6858 ask 6: the on-commit HEAD watcher under the `foresights serve --http`
  * lifecycle (the HTTP twin of the stdio wiring in serve.ts installResidentTickers).
  *
  * Protects: runServeHttp starts the watcher beside the movement watch, so with

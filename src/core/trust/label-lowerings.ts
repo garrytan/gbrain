@@ -1,5 +1,5 @@
 /**
- * GST-2468: `gbrain trust backfill --label-lowerings`, a read-only listing of the `lower_page` proposals whose lowering
+ * GST-2468: `foresights trust backfill --label-lowerings`, a read-only listing of the `lower_page` proposals whose lowering
  * write changed only a page's privacy labels (visibility, access, confidentiality) and the server's stamps (trust_tier,
  * source_kind, ingested_via, ingested_at): an operator's label change made through put_page, which rates as an agent
  * edit (trust/channel.ts), before label-only repairs had their own door (repair/label-write.ts). For each proposal it
@@ -8,7 +8,7 @@
  *   content     the body, timeline, title, type or another frontmatter key differs;
  *   unreadable  the replaced version is gone or stored in segments, or the page was purged.
  * Counts are grouped by proposer (agent_page_edit:put_page, derived_page:submit_job, ...) and class. It changes
- * nothing: raising a tier back is a trust decision (gbrain trust confirm or revert), never made here.
+ * nothing: raising a tier back is a trust decision (foresights trust confirm or revert), never made here.
  */
 import type { BrainEngine } from '../engine.ts';
 import { LABEL_KEYS } from '../persistence/label-edit.ts';
@@ -80,7 +80,7 @@ export async function listLabelLowerings(engine: BrainEngine, opts: { sourceId?:
       ...(row.revision !== null && typeof recorded === 'string' && recorded !== row.revision ? { changed_since: true as const } : {}) };
   });
   return { mode: 'preview', source_id: opts.sourceId ?? null, counts, items,
-    note: 'Read-only: nothing here changes a tier. Raising a page back is a trust decision for the owner (gbrain trust review).' };
+    note: 'Read-only: nothing here changes a tier. Raising a page back is a trust decision for the owner (foresights trust review).' };
 }
 
 export function renderLabelLowerings(report: LabelLoweringsReport): string {

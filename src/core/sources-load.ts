@@ -2,8 +2,8 @@
  * Shared source-table loader (v0.40 Federated Sync v2 — D7).
  *
  * Before v0.40, the only caller that enumerated `sources` was `runList` in
- * src/commands/sources.ts. v0.40 adds four more enumerators: `gbrain sync --all`
- * fan-out, autopilot per-source dispatch, `gbrain sources status`, and the
+ * src/commands/sources.ts. v0.40 adds four more enumerators: `foresights sync --all`
+ * fan-out, autopilot per-source dispatch, `foresights sources status`, and the
  * `federation_health` doctor check. Going from 1→5 inline SELECTs invites
  * silent drift the next time someone adds a column to `sources`.
  *
@@ -125,8 +125,8 @@ export function normalizeSourceConfig(config: unknown): Record<string, unknown> 
   const { value } = coerceSourceConfigObject(config);
   if (value) return value;
   console.warn(
-    `[gbrain] source config was not a recoverable JSON object; ` +
-    `storing {} instead. Run 'gbrain doctor' to find affected sources.`,
+    `[foresights] source config was not a recoverable JSON object; ` +
+    `storing {} instead. Run 'foresights doctor' to find affected sources.`,
   );
   return {};
 }
@@ -143,9 +143,9 @@ export function parseSourceConfig(config: unknown): Record<string, unknown> {
   if (layers > 1 || recoveredArray) {
     const shape = recoveredArray ? 'historical JSON array' : `${layers}-layer nested JSON string`;
     console.warn(
-      `[gbrain] source config was stored as a ${shape}; ` +
-      `it will be repaired on the next config-column write (e.g. 'gbrain sources federate' / 'unfederate'). ` +
-      `Run 'gbrain doctor' to find affected sources.`,
+      `[foresights] source config was stored as a ${shape}; ` +
+      `it will be repaired on the next config-column write (e.g. 'foresights sources federate' / 'unfederate'). ` +
+      `Run 'foresights doctor' to find affected sources.`,
     );
   }
   return value ?? {};
@@ -192,7 +192,7 @@ export function relativeSourceLocalPathSkipWarning(sourceId: string, localPath: 
   return (
     `[autopilot] skipping source '${sourceId}': relative local_path ` +
     `'${localPath}' cannot be resolved from a daemon. Point it at its checkout ` +
-    `with 'gbrain sources set-path ${sourceId} <absolute-directory>' (#7630: sync refuses a relative path).`
+    `with 'foresights sources set-path ${sourceId} <absolute-directory>' (#7630: sync refuses a relative path).`
   );
 }
 

@@ -1,5 +1,5 @@
 /**
- * MCP Streamable HTTP endpoint for `gbrain serve --http` (split out of
+ * MCP Streamable HTTP endpoint for `foresights serve --http` (split out of
  * serve-http.ts by refactor wave 1): bearer auth with the resource-audience
  * verifier, the per-request effective surface, tools/list and tools/call
  * through the shared dispatcher, request logging and the admin SSE feed.
@@ -74,7 +74,7 @@ interface McpRequestState {
   surfaceAllowedOps: ReadonlySet<string> | undefined;
   /** C1: search/query row shape for this request (thin-client header, else host `mcp.result_rows`). */
   resultRows: ResultRowsMode;
-  /** Large pages: the same header marks gbrain's thin client, whose default get_page mode stays whole. Never authority. */
+  /** Large pages: the same header marks foresights's thin client, whose default get_page mode stays whole. Never authority. */
   thinClient: boolean;
   /** GBRA-231: the X-Gbrain-On-Behalf-Of header (a shared agent's audience); bounded by the credential's may_act_for in dispatch. */
   onBehalfOfHeader: string | undefined;
@@ -141,7 +141,7 @@ export function mountMcp(app: Express, ctx: ServeHttpContext): void {
   }
 
   // v0.36.x #1076: MCP Streamable HTTP spec — GET /mcp opens an optional SSE
-  // backchannel for server-initiated messages. gbrain's transport is stateless
+  // backchannel for server-initiated messages. foresights's transport is stateless
   // and doesn't push server-initiated messages, so per spec we MUST return 405
   // (not 404) so probing clients (claude.ai, etc.) recognize this as an MCP
   // endpoint, not a missing route. Without this, clients display "endpoint not
@@ -200,7 +200,7 @@ export function mountMcp(app: Express, ctx: ServeHttpContext): void {
       canWrite ? resolveAgentWriteback(engine, config).then(r => r.bundle) : Promise.resolve(null),
       resolveResultRowsMode(engine, config),
     ]);
-    // C1: gbrain's thin client keeps full rows. The header is unverified and
+    // C1: foresights's thin client keeps full rows. The header is unverified and
     // selects a row shape only; it never gates anything security-relevant.
     const resultRows = resultRowsForRequest(req.get(GBRAIN_CLIENT_HEADER), hostResultRows);
     const mcpOperations = filterOpsForSurface(mcpOperationsBase, surface)

@@ -12,7 +12,7 @@
  *
  * After a successful sweep the runner kicks maybeDrainDeferredEmbeds — the
  * lock owner closes its own embedding loop (a no-op unless a prior delegated
- * sync deferred embeds), so a hand-run `gbrain sweep --once` against a live
+ * sync deferred embeds), so a hand-run `foresights sweep --once` against a live
  * serve converges the same backlog `embed --stale` would if it could connect.
  */
 

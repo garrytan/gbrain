@@ -376,7 +376,7 @@ jobs:
       - name: Backup archive round trip on this host (#5312)
         run: bun test --timeout 60000 test/backup-archive-roundtrip-5312.test.ts
       # The stale-socket sweep's native AF_UNIX reparse-point path exists only on Windows; macOS runs the POSIX cases
-      # here (#6573: the fixture root is under /private/tmp, so the data-dir socket stays under gbrain's 103-byte limit
+      # here (#6573: the fixture root is under /private/tmp, so the data-dir socket stays under foresights's 103-byte limit
       # instead of moving to the shortened fallback path); Linux runs them in the unit shards.
       - name: Stale AF_UNIX socket sweep (native tag check on Windows, POSIX cases on macOS) (#5312, #6573)
         if: runner.os == 'Windows' || runner.os == 'macOS'
@@ -573,7 +573,7 @@ jobs:
     # Step timeout from measurement: 3 x the worst cold CI time (121 s) is
     # about 6 minutes per attempt. tsc is single-threaded, so 4 vCPUs (16 GB)
     # do the work of verify's 8. A cold tsc of the tree peaks at about 6.5 GB
-    # RSS (6.51 GB on gbrain#9184's head, 2026-11-11), close to the heap cap
+    # RSS (6.51 GB on foresights#9184's head, 2026-11-11), close to the heap cap
     # in package.json's typecheck script; an incremental run seeded from a
     # distant head's tsbuildinfo goes past it and aborts (exit 134).
     # scripts/ci-typecheck.sh then runs it once more from cold, so the step
@@ -1015,7 +1015,7 @@ jobs:
           if-no-files-found: ignore
           overwrite: true
       # Protocol self-certification: init a scratch brain and run the
-      # conformance kit against gbrain's own stdio server. --synthesize is
+      # conformance kit against foresights's own stdio server. --synthesize is
       # safe here: no LLM key in CI, so it asserts the clean `unavailable`
       # protocol error instead of spending tokens.
       - name: MEMORY_VERBS conformance (self-certify, stdio)

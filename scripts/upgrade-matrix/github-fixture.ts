@@ -32,6 +32,8 @@ import { createServer, connect, type Server, type Socket } from 'node:net';
 import { join } from 'node:path';
 
 export const REPO = 'garrytan/gbrain';
+/** Every repository the fixture answers for: upstream (old releases' updaters ask it) and the fork (the candidate's updater asks it, core/brand.ts BRAND.repo). */
+export const REPOS: readonly string[] = [REPO, 'aimonk2025/gbrain'];
 export const GITHUB_HOSTS = ['api.github.com', 'codeload.github.com', 'raw.githubusercontent.com', 'github.com', 'objects.githubusercontent.com'] as const;
 export const DEFAULT_ALLOW_HOSTS = ['registry.npmjs.org'];
 export const FORWARDABLE_HOSTS = ['api.voyageai.com'] as const;
@@ -91,19 +93,21 @@ function refName(ref: string): string {
 /** The ref and file a fixture-served request names, or null when the fixture does not serve it. */
 export function parseFixturePath(host: string, path: string): { kind: 'tarball' | 'raw' | 'api'; ref: string; file?: string } | null {
   const p = decodeURIComponent(path.split('?')[0]!);
-  const repo = '/repos/' + REPO + '/';
-  if ((host === 'api.github.com' || host === 'loopback') && p.startsWith(repo)) {
-    const rest = p.slice(repo.length);
-    const tar = /^tarball(?:\/(.*))?$/.exec(rest);
-    if (tar) return { kind: 'tarball', ref: tar[1] || 'HEAD' };
-    return { kind: 'api', ref: rest };
-  }
-  if (host === 'codeload.github.com' && p.startsWith('/' + REPO + '/tar.gz/')) return { kind: 'tarball', ref: p.slice(REPO.length + 9) || 'HEAD' };
-  if (host === 'raw.githubusercontent.com' && p.startsWith('/' + REPO + '/')) {
-    const rest = p.slice(REPO.length + 2).replace(/^refs\/(heads|tags)\//, '');
-    const slash = rest.indexOf('/');
-    if (slash <= 0) return null;
-    return { kind: 'raw', ref: rest.slice(0, slash), file: rest.slice(slash + 1) };
+  for (const name of REPOS) {
+    const repo = '/repos/' + name + '/';
+    if ((host === 'api.github.com' || host === 'loopback') && p.startsWith(repo)) {
+      const rest = p.slice(repo.length);
+      const tar = /^tarball(?:\/(.*))?$/.exec(rest);
+      if (tar) return { kind: 'tarball', ref: tar[1] || 'HEAD' };
+      return { kind: 'api', ref: rest };
+    }
+    if (host === 'codeload.github.com' && p.startsWith('/' + name + '/tar.gz/')) return { kind: 'tarball', ref: p.slice(name.length + 9) || 'HEAD' };
+    if (host === 'raw.githubusercontent.com' && p.startsWith('/' + name + '/')) {
+      const rest = p.slice(name.length + 2).replace(/^refs\/(heads|tags)\//, '');
+      const slash = rest.indexOf('/');
+      if (slash <= 0) return null;
+      return { kind: 'raw', ref: rest.slice(0, slash), file: rest.slice(slash + 1) };
+    }
   }
   return null;
 }

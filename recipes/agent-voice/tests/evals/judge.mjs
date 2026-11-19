@@ -8,10 +8,10 @@
  *   4. Aggregates: pass criterion = every axis mean >= 7 AND no model scored any axis < 5
  *      AND >= 2/3 models returned parseable JSON
  *
- * Modeled on `evals/functional-area-resolver/harness.mjs` in the gbrain repo
+ * Modeled on `evals/functional-area-resolver/harness.mjs` in the foresights repo
  * (same gateway-routed pattern, same 2/3-quorum logic). Reused verbatim
- * conceptually; reimplemented to drop the gbrain SDK dependency so this file
- * runs in a host repo without gbrain installed.
+ * conceptually; reimplemented to drop the foresights SDK dependency so this file
+ * runs in a host repo without foresights installed.
  *
  * Provider routing:
  *   - Claude: ANTHROPIC_API_KEY

@@ -138,16 +138,16 @@ describe('signals and the warning', () => {
     expect(split.code).toBe('unscoped_multi_user_token');
     expect(split.kind).toBe('safety');
     expect(split.why).toContain('another person\'s messages');
-    expect(split.why).toContain('gbrain auth rescope --token bot --sources <source>');
-    expect(split.why).toContain('gbrain sources unfederate <id>');
+    expect(split.why).toContain('foresights auth rescope --token bot --sources <source>');
+    expect(split.why).toContain('foresights sources unfederate <id>');
     expect(split.fix).toMatchObject({ ask_user: true, argv: ['gbrain', 'auth', 'rescope', '--token', 'bot', '--member', '<member>'], consent: ['credentials'] });
     const one = sharedTokenNotice({ kind: 'oauth_client', id: 'c1' }, { census: within })!;
     expect(one.why).toContain('the chat sits in one source (default), so a source grant cannot separate it');
     expect(one.why).not.toContain('--sources');
-    expect(one.why).toContain('gbrain auth rescope --client c1 --member <id>');
+    expect(one.why).toContain('foresights auth rescope --client c1 --member <id>');
     expect(one.why).toContain('the fix is per-person access, not per-call narrowing');
     expect(split.why).toContain('the fix is per-person access, not per-call narrowing');
-    expect(one.why).toContain('gbrain auth create <name> --may-act-for <members>');
+    expect(one.why).toContain('foresights auth create <name> --may-act-for <members>');
     expect(one.fix!.argv).toEqual(['gbrain', 'auth', 'rescope', '--client', 'c1', '--member', '<member>']);
     for (const n of [split, one]) {
       expect(n.why).toContain('visibility: private (hidden from this agent unless its access may read private pages)');
@@ -156,14 +156,14 @@ describe('signals and the warning', () => {
       expect(n.why).not.toContain('not scoped to a person');
       expect(n.why).toContain('source_ids narrows only the call that sends it, so recall, list_pages or any read without it reads the token\'s full grant');
       expect(n.why).not.toContain('narrow single calls');
-      expect(n.why).toContain('gbrain access member add <id>, then gbrain auth create <name> --member <id>');
+      expect(n.why).toContain('foresights access member add <id>, then foresights auth create <name> --member <id>');
       expect(n.why).toContain('Never bind a shared agent\'s credential to one person: it then reads as that person for everyone who talks to it.');
       expect(n.why).not.toContain('gbrain#7812');
       expect(n.user_message).toBe(n.fix!.user_message);
     }
     const bot = sharedTokenNotice({ kind: 'stdio', harness: 'hermes' }, { harness: 'hermes' })!;
     expect(bot.why).toContain('GBRAIN_SOURCE=<source>');
-    expect(bot.why).toContain('gbrain auth create <name> --member <id>');
+    expect(bot.why).toContain('foresights auth create <name> --member <id>');
     expect(exposureFix({ kind: 'stdio', harness: 'hermes' }).why).not.toContain('cannot tell');
     expect(sharedTokenNotice({ kind: 'stdio', harness: 'claude-code' }, { harness: 'claude-code' })).toBeNull();
     expect(exposureFix({ kind: 'stdio', harness: 'hermes' }).argv).toEqual(['gbrain', 'setup', 'hermes', '--serves', 'several', '--members', '<id,...>']);
@@ -220,7 +220,7 @@ describe('doctor unscoped_multi_user_token', () => {
     await reset();
     const home = tmp();
     mkdirSync(join(home, '.gbrain'), { recursive: true });
-    writeFileSync(join(home, '.gbrain', 'agent-instructions.json'), JSON.stringify({ entries: [{ harness: 'hermes', path: join(home, '.hermes', 'SOUL.md'), status: 'installed', block_version: 1, access: { kind: 'mcp', server: 'gbrain' }, writer: 'gbrain setup hermes' }] }));
+    writeFileSync(join(home, '.gbrain', 'agent-instructions.json'), JSON.stringify({ entries: [{ harness: 'hermes', path: join(home, '.hermes', 'SOUL.md'), status: 'installed', block_version: 1, access: { kind: 'mcp', server: 'gbrain' }, writer: 'foresights setup hermes' }] }));
     const info = await doctor({}, home);
     expect(info).toMatchObject({ status: 'ok', severity: 'info' });
     expect(info.message).toContain('hermes serves a chat agent');
@@ -228,7 +228,7 @@ describe('doctor unscoped_multi_user_token', () => {
     await chat('chats/b', '#beta, Jul 2');
     const warn = await doctor({}, home);
     expect(warn.status).toBe('warn');
-    expect(warn.message).toContain('The gbrain access hermes uses reaches 2 channels');
+    expect(warn.message).toContain('The foresights access hermes uses reaches 2 channels');
   });
 
   test('a credential holding may_act_for is not flagged; a member-bound one still is', async () => {

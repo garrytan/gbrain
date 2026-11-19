@@ -7,14 +7,14 @@ behavior only; release history lives in `CHANGELOG.md` + git. Companion referenc
 scope/starter/gate), `docs/protocol/MEMORY_VERBS_v1.md` (surface modes),
 `docs/protocol/MCP_META_CHANNELS.md` (`_meta` conventions).
 
-The moves below assume `gbrain serve --http` (the OAuth transport); stdio
+The moves below assume `foresights serve --http` (the OAuth transport); stdio
 surfaces come first.
 tools/list is recomputed **per request** — none of these moves needs a
 server restart unless it says so.
 
 ## Stdio surfaces (the owner's pipe)
 
-A stdio `gbrain serve` resolves its surface once at start, then a session may
+A stdio `foresights serve` resolves its surface once at start, then a session may
 widen it:
 
 | Precedence | Source | `surface_source` |
@@ -32,11 +32,11 @@ one `surface_env_invalid` info notice naming the surface actually served.
 `serve --http` ignores `GBRAIN_SURFACE` (its ceiling widens only through an
 explicit `--surface` restart; `GBRAIN_MCP_FORCE_SURFACE` narrows it).
 
-**Registrations.** Every stdio registration gbrain writes pins `starter`
+**Registrations.** Every stdio registration foresights writes pins `starter`
 (`REGISTRATION_SURFACE` in `src/core/mcp-registration.ts`): readiness's
-`harness_wiring` fix, `gbrain init`'s quickstart line, `gbrain bootstrap
+`harness_wiring` fix, `foresights init`'s quickstart line, `foresights bootstrap
 hooks` for Claude Code, Codex and opencode, and the plugins.
-`gbrain init --surface` and `gbrain bootstrap hooks --surface` pick another.
+`foresights init --surface` and `foresights bootstrap hooks --surface` pick another.
 `bootstrap hooks` never narrows an existing install: a matching registration
 is kept untouched, and a replaced one keeps its form (a pinned `--surface x`
 stays `x`, a bare `serve` stays bare). The OpenClaw plugin manifest runs a
@@ -47,8 +47,8 @@ that `starter` lacks, with their CLI equivalents:
 
 | Tool | CLI equivalent |
 |---|---|
-| `get_timeline` | `gbrain timeline <slug>` |
-| `extract_facts` | `gbrain call extract_facts '<params_json>'` |
+| `get_timeline` | `foresights timeline <slug>` |
+| `extract_facts` | `foresights call extract_facts '<params_json>'` |
 
 A call to either on a starter session gets the hidden-tool hint below.
 
@@ -58,7 +58,7 @@ widens this session's tool set (never past `--access read-only` or
 tools' schemas so a client that ignores `list_changed` can call them by name.
 Nothing is written; a new session starts at the registered surface. Each widen
 writes a `surface_widened from=<x> to=<y> op=request_tools` line on stderr.
-`gbrain config set mcp.allow_session_widen false` turns widening off; the
+`foresights config set mcp.allow_session_widen false` turns widening off; the
 hidden-tool hint then names the lasting route instead.
 
 ```text
@@ -74,7 +74,7 @@ hidden-tool hint then names the lasting route instead.
 ```
 
 For a lasting change, put `GBRAIN_SURFACE=full` in the harness's per-server
-env block (`claude mcp add gbrain -e GBRAIN_SURFACE=full -- …`, the `env`
+env block (`claude mcp add foresights -e GBRAIN_SURFACE=full -- …`, the `env`
 table of the Codex server entry, or the plugin's `GBRAIN_SURFACE` setting),
 never a shell profile: an inherited `GBRAIN_SURFACE` overrides every pinned
 `--surface` on the machine.
@@ -89,7 +89,7 @@ advisor defaults ON for the owner's local stdio server (an explicit `false`
 hides it there too).
 
 ```bash
-gbrain config set mcp.publish_skills true      # or mcp.publish_advisor
+foresights config set mcp.publish_skills true      # or mcp.publish_advisor
 ```
 
 **Expected outcome:** the very next tools/list from any token includes the
@@ -102,15 +102,15 @@ resolves to hidden (fail-closed consent posture), never a failed list.
 ## Move 2 — rescope a client's surface
 
 ```bash
-gbrain auth clients --usage            # who needs it? (op counts, surface, last seen)
-gbrain auth rescope-client <client_id> --surface starter   # verbs | starter | full | clear
+foresights auth clients --usage            # who needs it? (op counts, surface, last seen)
+foresights auth rescope-client <client_id> --surface starter   # verbs | starter | full | clear
 ```
 
 Usage counts only successful calls (`success` / `success_with_warnings`) —
 a client flooding denials or errors shows zero usage, so denied traffic can
 never argue its way into a wider surface or the starter derivation.
 
-A memory or coding grant from `gbrain mcp provision` or a `gbrain agent register`
+A memory or coding grant from `foresights mcp provision` or a `foresights agent register`
 preset stores `full` with `surface_set_by = install`: it calls the full surface
 but lists only the memory verbs and `request_tools`. An operator rescope (any
 surface) lists that surface in full.
@@ -142,7 +142,7 @@ SELECT created_at, params FROM mcp_request_log
 self-registrations):
 
 ```bash
-gbrain config set mcp.default_surface_dcr starter   # verbs | starter | full
+foresights config set mcp.default_surface_dcr starter   # verbs | starter | full
 ```
 
 Dual-plane read (DB > file), applied on each client's next request,
@@ -175,7 +175,7 @@ SELECT count(*) FROM mcp_request_log
 When that count is ~0, clients have adapted; flip:
 
 ```bash
-gbrain config set mcp.strict_params reject
+foresights config set mcp.strict_params reject
 ```
 
 **Expected outcome (schema emission change):** besides rejecting unknown
@@ -231,12 +231,12 @@ Single-user brains where every connected agent is equally trusted can opt
 out:
 
 ```bash
-gbrain config set search.remote_private_pages visible   # also accepts true / 1
+foresights config set search.remote_private_pages visible   # also accepts true / 1
 ```
 
 **Expected outcome:** remote reads of private pages resolve again within
 ~30s (the trust resolver caches the config per engine for 30s; no restart).
-Clearing the key (`gbrain config set search.remote_private_pages ''`)
+Clearing the key (`foresights config set search.remote_private_pages ''`)
 restores enforcement on the same schedule. Resolver:
 `src/core/search/private-visibility.ts`; a failed config read counts as
 "not opted out" (enforce).
@@ -270,8 +270,8 @@ constructor fallback are always the defaults rendering.
 | `mcp.instructions_governing_rule` | `in_effect` | Instruction 7: the record whose terms are in effect on the date asked about governs, and a page's `date`/`effective_date` is when it was written. `newest` serves the earlier "prefer the newest governing source" sentence, for measuring the rule. |
 
 ```bash
-gbrain config set entity.record_types contract,amendment
-gbrain config set mcp.instructions_governing_rule newest   # measurement arm only
+foresights config set entity.record_types contract,amendment
+foresights config set mcp.instructions_governing_rule newest   # measurement arm only
 ```
 
 Clients read the new text at their next initialize (reconnect the harness).
@@ -296,7 +296,7 @@ Clients read the new text at their next initialize (reconnect the harness).
 **Total embed outage, what to expect (ENG-6):** semantic result caching
 remains disabled for both complete and partial degradations; neither reads
 nor writes a cached response. New searches report caching as disabled, while
-`gbrain search stats` can retain historical hits within its reporting window.
+`foresights search stats` can retain historical hits within its reporting window.
 Expect keyword-only degraded results carrying `_meta.retrieval.degraded`
 stages plus the model-visible block on empty results.
 

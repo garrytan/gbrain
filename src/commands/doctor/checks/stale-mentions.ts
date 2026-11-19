@@ -10,11 +10,11 @@
  * links ALONGSIDE the old ones.
  *
  * READ-ONLY by design; the write-side repair is the opt-in
- * `gbrain extract links --by-mention --rebuild` sweep (same issue). No
+ * `foresights extract links --by-mention --rebuild` sweep (same issue). No
  * RemediationStep here — a destructive write doesn't belong on a doctor
  * check's back.
  *
- * Never 'fail': the data is wrong but a per-pair `gbrain unlink` workaround
+ * Never 'fail': the data is wrong but a per-pair `foresights unlink` workaround
  * (or the --rebuild sweep) exists, which is the p2 bar.
  *
  * Lives in the doctor module dir per the peeled-façade rule — new code goes

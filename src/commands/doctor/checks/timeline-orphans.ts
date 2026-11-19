@@ -7,7 +7,7 @@
  * bullet left its old row behind. Extraction now retracts them page by page;
  * rows orphaned earlier stay until the page is re-extracted or the one-time
  * prune runs. Read-only and sampled; the write is the explicit
- * `gbrain extract timeline --prune-orphans` command.
+ * `foresights extract timeline --prune-orphans` command.
  */
 
 import type { BrainEngine } from '../../../core/engine.ts';
@@ -28,7 +28,7 @@ export async function timelineOrphansCheck(engine: BrainEngine): Promise<Check> 
       name: 'timeline_orphans',
       status: 'warn',
       message: `${res.orphans} timeline row(s) came from an earlier version of their page and are no longer in its text${coverage}. ` +
-        `Preview with: gbrain extract timeline --prune-orphans --dry-run, then remove with: gbrain extract timeline --prune-orphans. e.g. ${eg}`,
+        `Preview with: foresights extract timeline --prune-orphans --dry-run, then remove with: foresights extract timeline --prune-orphans. e.g. ${eg}`,
     };
   } catch (e) {
     return { name: 'timeline_orphans', status: 'warn', message: `timeline orphan scan skipped: ${e instanceof Error ? e.message : String(e)}` };

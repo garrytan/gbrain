@@ -1,5 +1,5 @@
 /**
- * `gbrain autopilot --retry-global [--phase <name>] [--json]` (GBRA-130 A-10):
+ * `foresights autopilot --retry-global [--phase <name>] [--json]` (GBRA-130 A-10):
  * ends the back-off of a brain-wide maintenance phase that kept failing, so the
  * next autopilot pass runs it again. The streak count stays: a phase that still
  * fails keeps the pass stamping past it and backs off again. Without --phase
@@ -30,5 +30,5 @@ export async function runAutopilotRetryGlobal(engine: BrainEngine, args: string[
     return;
   }
   console.log(`Released ${released.join(', ')}: the next brain-wide maintenance pass (at most every ${floorMin} min) runs ${released.length === 1 ? 'it' : 'them'} again.`);
-  if (active) console.log(`Pass job #${active.id} is running now and may restore the back-off when it saves; if \`gbrain doctor --only global_maintenance_stalled\` still shows it, run this again after the job finishes.`);
+  if (active) console.log(`Pass job #${active.id} is running now and may restore the back-off when it saves; if \`foresights doctor --only global_maintenance_stalled\` still shows it, run this again after the job finishes.`);
 }

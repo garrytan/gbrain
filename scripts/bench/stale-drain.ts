@@ -13,7 +13,7 @@
  * ms/page, plus the readPageSnapshot plan before and after the drain.
  * `--managed` flips persistence_brain.enabled so the drain takes the managed
  * `extractManagedStaleLinks` path; `--analyze-seed` runs a full ANALYZE after
- * seeding (the shape a fresh `gbrain import` leaves). PGLite runs in a
+ * seeding (the shape a fresh `foresights import` leaves). PGLite runs in a
  * file-backed temp directory; `--postgres` creates and drops
  * `gbrain_bench_stale_drain_<hex>` on the DATABASE_URL server.
  */

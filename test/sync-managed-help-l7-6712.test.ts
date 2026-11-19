@@ -1,7 +1,7 @@
 /**
  * #6712 PR 3 (L7): the managed sync surface an operator or a cron needs.
  *
- * - `gbrain sync --help` lists the "Managed brains" flags first (at most 10, exactly `MANAGED_HELP_FLAGS`), then a
+ * - `foresights sync --help` lists the "Managed brains" flags first (at most 10, exactly `MANAGED_HELP_FLAGS`), then a
  *   "Classic brains / advanced" section with every other flag; no flag is listed twice.
  * - Doctor's printed managed cron recipe passes the managed flag validator (parse, the managed-forbidden refusal, the
  *   hard-deadline resolution) and syncs every source of a managed brain. `--all`, `--hard-deadline`, `--no-bulk` and
@@ -9,7 +9,7 @@
  * - `--retry-failed` is a deprecated alias of the plain sync: it prints the `sync_retry_failed_deprecated` coaching
  *   notice once and syncs exactly like the plain command.
  * - Every removed state renders `superseded`: retired registry codes and the legacy knock-on receipts older builds wrote.
- * - The plain sync replays a content refusal without a new request while the file and the gbrain version that recorded it
+ * - The plain sync replays a content refusal without a new request while the file and the foresights version that recorded it
  *   are unchanged, and retries a failure an older build recorded (it carries no `gbrain_version`).
  *
  * Regression guarded: a managed flag dropped from the managed section or left out of `MANAGED_HELP_FLAGS`, the
@@ -125,8 +125,8 @@ test('sync --help lists the managed flags first (at most 10, exactly MANAGED_HEL
 test("doctor's managed cron recipe passes the managed flag validator and syncs every source", async () => withEnv(env, async () => {
   const sources = await managedSources(2);
   const check = await checkSyncConsolidation(engine);
-  const recipe = /`(gbrain sync [^`]+)`/.exec(check.message)?.[1];
-  expect(recipe).toBe('gbrain sync --all --no-pull --hard-deadline 13m');
+  const recipe = /`((?:foresights|gbrain) sync [^`]+)`/.exec(check.message)?.[1];
+  expect(recipe).toBe('foresights sync --all --no-pull --hard-deadline 13m');
   const args = recipe!.split(' ').slice(2);
   for (const flag of args.filter(arg => arg.startsWith('--'))) expect(MANAGED_HELP_FLAGS as string[]).toContain(flag);
   const flags = parseSyncFlags(args);
@@ -149,14 +149,14 @@ test('--all, --hard-deadline, --no-bulk and --no-lanes stay accepted on a manage
 
 test('--retry-failed is a deprecated alias of the plain sync: it prints the coaching notice once and syncs the same', async () => withEnv(env, async () => {
   expect(NOTICE_CODES.sync_retry_failed_deprecated).toMatchObject({ kind: 'coaching' });
-  expect(RETRY_FAILED_DEPRECATED).toContain('a plain gbrain sync now retries');
+  expect(RETRY_FAILED_DEPRECATED).toContain('a plain foresights sync now retries');
   resetRetryFailedNoticeForTests();
   const plainSource = (await managedSources(1))[0]!;
   const plain = await captured(() => runSync(engine, ['--source', plainSource.id, '--no-pull']));
   expect(plain.stderr).not.toContain('sync_retry_failed_deprecated');
   const aliasSource = (await managedSources(1))[0]!;
   const alias = await captured(() => runSync(engine, ['--source', aliasSource.id, '--no-pull', '--retry-failed']));
-  expect(alias.stderr.match(/\[gbrain notice sync_retry_failed_deprecated\]/g)).toHaveLength(1);
+  expect(alias.stderr.match(/\[(?:foresights|gbrain) notice sync_retry_failed_deprecated\]/g)).toHaveLength(1);
   expect(alias.stderr).toContain(RETRY_FAILED_DEPRECATED);
   expect(await lastCommit(plainSource.id)).toBe(plainSource.head);
   expect(await lastCommit(aliasSource.id)).toBe(aliasSource.head);

@@ -50,7 +50,7 @@ export async function conversationOutcomesStaleCheck(engine: BrainEngine, source
     return { name, status: 'warn', details,
       message: `${atLeast}${stale.length} conversation page(s) keep an extraction outcome from an older parser/extractor version (current ${CONVERSATION_EXTRACTOR_VERSION}); `
         + 'they are not reopened automatically. Preview re-extracting one with: '
-        + `gbrain extract-conversation-facts --source-id ${first.source_id} --slug ${first.slug} --force --dry-run — then run it without --dry-run (spend is capped by --max-cost-usd, default $5).` };
+        + `foresights extract-conversation-facts --source-id ${first.source_id} --slug ${first.slug} --force --dry-run — then run it without --dry-run (spend is capped by --max-cost-usd, default $5).` };
   } catch (error) {
     return { name, status: 'warn', details: { stale: 'unknown' },
       message: `Conversation extraction outcomes could not be inspected: ${error instanceof Error ? error.message : String(error)}. Health is unknown.` };
@@ -77,7 +77,7 @@ export async function conversationLabelFactsCheck(engine: BrainEngine, sourceIds
     if (!count) return { name, status: 'ok', details, message: 'No conversation fact carries the pre-fix meeting-label signature (a 1970-01-01 segment on a label page).' };
     return { name, status: 'warn', details,
       message: `${capped ? 'At least ' : ''}${count} conversation fact(s) were extracted by the pre-v0.60.69 parser from meeting-note labels (**Date:**, **Attendees:** …) `
-        + 'read as speakers, and recall still returns them. Preview the repair on the brain host (it makes no model calls): gbrain repair conversation-labels '
+        + 'read as speakers, and recall still returns them. Preview the repair on the brain host (it makes no model calls): foresights repair conversation-labels '
         + '— then run the apply command it prints after the user agrees.' };
   } catch (error) {
     return { name, status: 'warn', details: { evidenced: 'unknown' },

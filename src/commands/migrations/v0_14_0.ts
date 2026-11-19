@@ -47,7 +47,7 @@ async function phaseASchema(opts: OrchestratorOpts): Promise<{ result: Orchestra
     const config = loadConfig();
     if (!config) {
       return {
-        result: { name: 'schema', status: 'skipped', detail: 'no brain configured (run gbrain init first)' },
+        result: { name: 'schema', status: 'skipped', detail: 'no brain configured (run foresights init first)' },
         engine: null,
       };
     }

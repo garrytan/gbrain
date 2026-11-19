@@ -282,7 +282,7 @@ export async function partial(
     try { await flushCheckpoint(run); } catch { /* best effort — we're aborting */ }
   }
   serr(
-    `[sync] banked ${run.bankedFiles} file(s) this run; next 'gbrain sync' resumes from ` +
+    `[sync] banked ${run.bankedFiles} file(s) this run; next 'foresights sync' resumes from ` +
     `the checkpoint (last_commit unchanged at ${(lastCommit ?? '').slice(0, 8)}).`,
   );
   // db-availability loop (4b): a dead checkpoint IS a DB-access failure by
@@ -292,7 +292,7 @@ export async function partial(
   // bundled skills/db-repair skill pick this up from an agent-run sync.
   if (run.checkpointDead && shouldEmitDbAccessMarker()) {
     serr(`${DB_ACCESS_MARKER_PREFIX} conn_dropped`);
-    serr('The sync checkpoint pool died mid-run. Run: gbrain db-repair');
+    serr('The sync checkpoint pool died mid-run. Run: foresights db-repair');
   }
   return buildPartialResult({
     fromCommit: lastCommit,

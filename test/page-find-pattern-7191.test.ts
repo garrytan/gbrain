@@ -1,4 +1,4 @@
-/** #7191: pure pieces of gbrain find / stats --by (pattern forms, --by parsing, alias collapse). */
+/** #7191: pure pieces of foresights find / stats --by (pattern forms, --by parsing, alias collapse). */
 import { describe, expect, test } from 'bun:test';
 import { hiddenPrefixesFor, parseFindPattern } from '../src/core/page-find.ts';
 import { collapseTypes, groupPageCounts, normalizeTypeName, parseStatsBy } from '../src/core/page-counts.ts';

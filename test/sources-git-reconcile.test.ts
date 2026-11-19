@@ -1,5 +1,5 @@
 /**
- * `gbrain sources git-reconcile`: one idempotent call brings every source checkout level with its upstream.
+ * `foresights sources git-reconcile`: one idempotent call brings every source checkout level with its upstream.
  * Protects: a stranded local commit is published (merged in memory, the old remote tip kept as an ancestor, never a
  * force-push); a checkout behind fast-forwards; one level is a no-op that pushes nothing; a same-file conflict, a
  * secret in the local commits and a rewritten upstream each refuse with nothing pushed; eight concurrent callers
@@ -252,7 +252,7 @@ test('with automatic publishing turned off, local commits stay unpublished while
   } finally { await resetPlain(); }
 }, 120_000);
 
-test('a checkout gbrain did not clone for the source is never published by default; a sync-disabled or missing source is skipped', async () => {
+test('a checkout foresights did not clone for the source is never published by default; a sync-disabled or missing source is skipped', async () => {
   const engine = plain;
   try {
     const r = repo('foreign');
@@ -293,7 +293,7 @@ test('a checkout that fails with a plain error is reported for that checkout and
   }
 }, 120_000);
 
-test('a checkout with a recorded remote that gbrain did not clone keeps its local commits by default', async () => {
+test('a checkout with a recorded remote that foresights did not clone keeps its local commits by default', async () => {
   const engine = plain;
   const r = repo('recorded-remote');
   try {

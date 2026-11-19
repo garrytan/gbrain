@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { buildScoreboard, GATES, renderScoreboard, type Ev } from '../../scripts/bench/production-soak/scoreboard.ts';
 
-const start: Ev = { t: 0, kind: 'start', config: { rtt_ms: 65, hours: 1, commit_every_s: 180, label: 'unit' }, version: 'gbrain 0.0.0', gbrain_rev: 'abc' };
+const start: Ev = { t: 0, kind: 'start', config: { rtt_ms: 65, hours: 1, commit_every_s: 180, label: 'unit' }, version: 'foresights 0.0.0', gbrain_rev: 'abc' };
 const status = (at_s: number, head: string, last_commit: string, holds: number): Ev => ({ t: at_s * 1000, kind: 'status', at_s, head, last_commit, holds, ms: 100, state: 'resumable', reason: 'pass_unfinished', hold_codes: { file_drift: holds } });
 
 describe('production soak scoreboard', () => {

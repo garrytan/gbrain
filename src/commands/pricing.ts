@@ -1,10 +1,10 @@
 /**
- * `gbrain pricing` — register a model's per-token price in `pricing.overrides`.
+ * `foresights pricing` — register a model's per-token price in `pricing.overrides`.
  *
- *   gbrain pricing set <model> --input <usd/1M> --output <usd/1M> [--source <url>]
- *   gbrain pricing set <model> --rate <usd/1M> [--source <url>]     (embeddings, rerankers)
- *   gbrain pricing list [--json]
- *   gbrain pricing unset <model>
+ *   foresights pricing set <model> --input <usd/1M> --output <usd/1M> [--source <url>]
+ *   foresights pricing set <model> --rate <usd/1M> [--source <url>]     (embeddings, rerankers)
+ *   foresights pricing list [--json]
+ *   foresights pricing unset <model>
  *
  * Each write reads the stored JSON, changes one entry and writes it back, so
  * other models' overrides survive (`config set pricing.overrides` replaces
@@ -29,25 +29,25 @@ import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 
 const KEY = 'pricing.overrides';
 
-const HELP = `gbrain pricing — register model prices for cost caps
+const HELP = `foresights pricing — register model prices for cost caps
 
 USAGE
-  gbrain pricing set <model> --input <usd-per-1M> --output <usd-per-1M> [--source <url>]
-  gbrain pricing set <model> --rate <usd-per-1M> [--source <url>]
-  gbrain pricing list [--json]
-  gbrain pricing unset <model>
+  foresights pricing set <model> --input <usd-per-1M> --output <usd-per-1M> [--source <url>]
+  foresights pricing set <model> --rate <usd-per-1M> [--source <url>]
+  foresights pricing list [--json]
+  foresights pricing unset <model>
 
 Chat models take --input and --output (USD per 1M input / output tokens).
 Embedding and reranker models take one --rate (USD per 1M tokens).
 --source records where the rate came from, usually the provider's pricing page.
 
 Prices merge into the pricing.overrides config: other entries are kept.
-They win over gbrain's shipped price tables. A $0 rate is accepted with a
+They win over foresights's shipped price tables. A $0 rate is accepted with a
 warning: every call to that model then counts as free against all cost caps.
 
 A provider wildcard (<provider>:*) prices every model of a provider that
 bills by subscription, today only claude-cli:
-  gbrain pricing set 'claude-cli:*' --rate 0 --source <plan-url>
+  foresights pricing set 'claude-cli:*' --rate 0 --source <plan-url>
 An exact model entry still wins over the wildcard. Per-token API providers
 and a bare * are refused: one rate cannot be right for all their models.
 
@@ -73,10 +73,10 @@ export function readRawOverrides(raw: string | null): RawOverrides {
   try {
     value = JSON.parse(raw);
   } catch {
-    throw new Error(`${KEY} is not valid JSON, so it was left unchanged. Inspect it with: gbrain config get ${KEY}`);
+    throw new Error(`${KEY} is not valid JSON, so it was left unchanged. Inspect it with: foresights config get ${KEY}`);
   }
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error(`${KEY} is not a JSON object, so it was left unchanged. Inspect it with: gbrain config get ${KEY}`);
+    throw new Error(`${KEY} is not a JSON object, so it was left unchanged. Inspect it with: foresights config get ${KEY}`);
   }
   return value as RawOverrides;
 }
@@ -127,7 +127,7 @@ function flagValue(args: string[], flag: string): string | undefined {
 }
 
 function fail(message: string): void {
-  console.error(`gbrain pricing: ${message}`);
+  console.error(`foresights pricing: ${message}`);
   setCliExitVerdict(1);
 }
 
@@ -152,10 +152,10 @@ export function wildcardMatches(key: string): string[] {
 
 async function runSet(engine: BrainEngine, args: string[]): Promise<void> {
   const model = args[0];
-  if (!model || model.startsWith('--')) return fail('missing <model>. Usage: gbrain pricing set <model> --input <usd-per-1M> --output <usd-per-1M>');
+  if (!model || model.startsWith('--')) return fail('missing <model>. Usage: foresights pricing set <model> --input <usd-per-1M> --output <usd-per-1M>');
   const has = (flag: string) => args.includes(flag);
   if (!isAllowedPricingOverrideKey(model)) {
-    return fail(`"${model}" is not a model id gbrain can price. A provider wildcard (<provider>:*) is accepted only for providers that bill by subscription (claude-cli); register each model of a per-token provider separately.`);
+    return fail(`"${model}" is not a model id foresights can price. A provider wildcard (<provider>:*) is accepted only for providers that bill by subscription (claude-cli); register each model of a per-token provider separately.`);
   }
   const req: PricingSetRequest = { model: model.trim() };
   if (has('--rate')) {
@@ -199,10 +199,10 @@ async function runSet(engine: BrainEngine, args: string[]): Promise<void> {
     console.log('Cost caps now price this model at that rate. Retry the command that was refused.');
   }
   if (req.rate === 0 || (req.input === 0 && req.output === 0)) {
-    console.error(`gbrain pricing: warning: ${normalize(req.model)} is registered at $0, so its calls count as free against every cost cap. Use $0 only for local or flat-rate routes.`);
+    console.error(`foresights pricing: warning: ${normalize(req.model)} is registered at $0, so its calls count as free against every cost cap. Use $0 only for local or flat-rate routes.`);
   }
   if (normalize(req.model).endsWith(':*')) {
-    console.error(`gbrain pricing: ${normalize(req.model)} is an operator assumption that prices every ${normalize(req.model).slice(0, -2)} model, including ones gbrain ships a rate for, so cost caps no longer use those shipped rates. An exact model entry still wins.`);
+    console.error(`foresights pricing: ${normalize(req.model)} is an operator assumption that prices every ${normalize(req.model).slice(0, -2)} model, including ones foresights ships a rate for, so cost caps no longer use those shipped rates. An exact model entry still wins.`);
   }
 }
 
@@ -231,7 +231,7 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
     return;
   }
   if (rows.length === 0) {
-    console.log('No registered prices. Add one with: gbrain pricing set <model> --input <usd-per-1M> --output <usd-per-1M>');
+    console.log('No registered prices. Add one with: foresights pricing set <model> --input <usd-per-1M> --output <usd-per-1M>');
     return;
   }
   console.log('Registered prices (USD per 1M tokens; these win over the shipped tables):');
@@ -245,7 +245,7 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
 
 async function runUnset(engine: BrainEngine, args: string[]): Promise<void> {
   const model = args[0];
-  if (!model || model.startsWith('--')) return fail('missing <model>. Usage: gbrain pricing unset <model>');
+  if (!model || model.startsWith('--')) return fail('missing <model>. Usage: foresights pricing unset <model>');
   let current: RawOverrides;
   try {
     current = readRawOverrides(await engine.getConfig(KEY));
@@ -258,7 +258,7 @@ async function runUnset(engine: BrainEngine, args: string[]): Promise<void> {
     return;
   }
   await engine.setConfig(KEY, JSON.stringify(rest));
-  console.log(`Removed the registered price for ${normalize(model)}. Under a cost cap it is unpriced again unless gbrain ships a rate for it.`);
+  console.log(`Removed the registered price for ${normalize(model)}. Under a cost cap it is unpriced again unless foresights ships a rate for it.`);
 }
 
 export async function runPricing(engine: BrainEngine, args: string[]): Promise<void> {
@@ -270,5 +270,5 @@ export async function runPricing(engine: BrainEngine, args: string[]): Promise<v
   if (sub === 'set') return runSet(engine, rest);
   if (sub === 'list') return runList(engine, rest);
   if (sub === 'unset') return runUnset(engine, rest);
-  fail(`unknown subcommand "${sub}". Run gbrain pricing --help.`);
+  fail(`unknown subcommand "${sub}". Run foresights pricing --help.`);
 }

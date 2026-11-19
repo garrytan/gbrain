@@ -176,7 +176,7 @@ describe('#6712 PR 4b live pass fences (pglite)', () => {
       const drained = await runDrain({ pass: () => performManagedSync(engine, { ...OPTS, workingTree: true }) });
       expect({ status: drained.status, reason: drained.reason, stop: drained.drain?.stop_reason }).toEqual({ status: 'partial', reason: 'not_converged', stop: 'not_converged' });
       streaks.push(drained.pass!.not_converged_streak);
-      loops.push(drainNext(drained, 'gbrain sync --source default --no-pull', 'default')!.safe_to_loop);
+      loops.push(drainNext(drained, 'foresights sync --source default --no-pull', 'default')!.safe_to_loop);
     }
     installFaultHook(undefined);
     expect({ streaks, loops }).toEqual({ streaks: [1, 2, 3], loops: [true, true, false] });

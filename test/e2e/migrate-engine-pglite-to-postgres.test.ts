@@ -114,7 +114,7 @@ describePg('migrate-engine whole-brain PGLite to Postgres (D2)', () => {
     const [{ name }] = await targetFixture.engine.executeRaw<{ name: string }>('SELECT current_database() AS name');
     const url = new URL(DB_URL); url.pathname = `/${name}`; targetUrl = url.toString();
 
-    // Isolated gbrain home with a real pglite file config — the SOURCE brain.
+    // Isolated foresights home with a real pglite file config — the SOURCE brain.
     mkdirSync(gbrainDir, { recursive: true });
     writeFileSync(configFile, JSON.stringify({
       engine: 'pglite',
@@ -280,7 +280,7 @@ describePg('migrate-engine whole-brain PGLite to Postgres (D2)', () => {
     await source.connect({ engine: 'pglite', database_path: pgliteDir });
     expect(await tableCounts(source)).toEqual(seeded);
 
-    // Real argv contract: `gbrain migrate --to supabase --url <url>`.
+    // Real argv contract: `foresights migrate --to supabase --url <url>`.
     await runMigrateEngine(source, ['--to', 'supabase', '--url', targetUrl]);
     await source.disconnect();
     source = null;

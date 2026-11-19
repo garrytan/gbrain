@@ -2,7 +2,7 @@
  * Fix wave 3 timed recovery run: from an upgraded brain carrying every wave
  * finding (Lane D's fixture plus a connector source re-walking once after the
  * checkpoint migration, an orphan connector checkpoint and a page awaiting the
- * contextual-mode stamp), count the operator commands from `gbrain
+ * contextual-mode stamp), count the operator commands from `foresights
  * post-upgrade` to a `--remediation-plan` with no repairable finding. PGLite
  * here; Postgres through test/e2e/fix-wave-3-integration.test.ts.
  *
@@ -77,14 +77,14 @@ for (const backend of testBackends()) test(`${backend}: post-upgrade to a clean 
       const commands: string[] = [];
 
       const banner = (await postUpgradeRecoveryBanner(engine, 'host')).join('\n');
-      commands.push('gbrain post-upgrade');
+      commands.push('foresights post-upgrade');
       for (const expected of ['[AGENT] Relay this to your operator', 'connector_checkpoints: 1', 'timeline_history', 'safe_index_pending',
-        'connector_rewalk: 1 connector source(s) re-walk their window once', 'gbrain doctor --remediation-plan']) expect(banner).toContain(expected);
+        'connector_rewalk: 1 connector source(s) re-walk their window once', 'foresights doctor --remediation-plan']) expect(banner).toContain(expected);
       expect(banner).not.toContain('--yes');
       expect(banner).not.toContain('--apply');
 
       const run = await capture(async () => runRemediate(engine, await approvedRemediateArgs(engine, ['--remediate', '--yes', '--include-repairs', '--no-embed', '--max-usd', '1', '--json'])));
-      commands.push('gbrain doctor --remediate --yes --include-repairs --no-embed --max-usd 1');
+      commands.push('foresights doctor --remediate --yes --include-repairs --no-embed --max-usd 1');
       const body = JSON.parse(run.out);
       expect(body.repairs.map((r: { kind: string; status: string }) => [r.kind, r.status])).toEqual([
         ['timeline', 'completed'], ['visibility', 'completed'], ['safe-chunks', 'completed'], ['contextual-mode', 'completed'], ['connector-checkpoints', 'completed']]);
@@ -95,7 +95,7 @@ for (const backend of testBackends()) test(`${backend}: post-upgrade to a clean 
       expect(run.exit).toBe(0);
 
       const verify = await capture(() => runRemediationPlan(engine, ['--remediation-plan', '--json']));
-      commands.push('gbrain doctor --remediation-plan');
+      commands.push('foresights doctor --remediation-plan');
       expect(JSON.parse(verify.out).repair_steps).toEqual([]);
 
       const wallMs = Date.now() - started;

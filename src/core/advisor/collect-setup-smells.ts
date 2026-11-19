@@ -46,7 +46,7 @@ export const collectSetupSmells: AdvisorCollector = {
         id: 'embedding_identity_missing',
         severity: 'warn',
         title: 'The embedding model is unconfigured — existing vectors are not reinterpreted using a default.',
-        detail: 'Run gbrain migrate embeddings --status and preview an explicit migration with gbrain migrate embeddings --to voyage:voyage-4 --dim 1024 --dry-run. Keyword search remains available.',
+        detail: 'Run foresights migrate embeddings --status and preview an explicit migration with foresights migrate embeddings --to voyage:voyage-4 --dim 1024 --dry-run. Keyword search remains available.',
         fix: { command_argv: null },
         collector: 'setup-smells',
         ask_user: true,
@@ -69,7 +69,7 @@ export const collectSetupSmells: AdvisorCollector = {
           title: `Embedding resolves to ${effectiveModel} but ${keyName} is not set — embedding will fail at write time.`,
           detail:
             `Set ${keyName} in the environment (or add it to ~/.gbrain/config.json).` +
-            ' To switch providers: `gbrain init --force --embedding-model voyage:voyage-4` with VOYAGE_API_KEY set.',
+            ' To switch providers: `foresights init --force --embedding-model voyage:voyage-4` with VOYAGE_API_KEY set.',
           fix: { command_argv: null },
           collector: 'setup-smells',
           ask_user: true,

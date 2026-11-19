@@ -202,7 +202,7 @@ export const KEY_DEFAULT_LABEL = 'default: Jev key present';
 
 /** One-line opt-out for a slot on by the key-aware default. */
 export function keyDefaultOptOut(slot: DecideSlot): string {
-  return `gbrain decide disable ${slot}`;
+  return `foresights decide disable ${slot}`;
 }
 
 /** Readiness line for status/doctor: off, ready for on, on, on (default: Jev key present), on (inactive: <reason>), needs calibration, shadow. */

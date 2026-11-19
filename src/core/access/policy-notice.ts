@@ -33,7 +33,7 @@ export function accessPolicyNotices(op: string, ctx: OperationContext): Notice[]
         argv: ['gbrain', 'access', 'rule', 'status', '--source', source, '--json'], consent: [], actor: 'provider', requires_exclusive: false,
         why: 'The apply finishes on its own; check again shortly.',
         then: hostFix(ctx, ['gbrain', 'access', 'resume', '--source', source],
-          `Finishes an interrupted narrowing (database store); on a git store run gbrain sync --source ${source} --no-pull, and for an invalid file fix .gbrain/access.yml.`),
+          `Finishes an interrupted narrowing (database store); on a git store run foresights sync --source ${source} --no-pull, and for an invalid file fix .gbrain/access.yml.`),
       },
     }];
   } catch {

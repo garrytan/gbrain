@@ -1,5 +1,5 @@
 /**
- * Tailscale CLI seam for `gbrain mcp expose`.
+ * Tailscale CLI seam for `foresights mcp expose`.
  *
  * Everything here is either pure (parsers, argv builders, error classifier,
  * URL constants) or goes through the injectable `CommandRunner` exec seam,
@@ -240,7 +240,7 @@ export function tailscaleSetOperatorCommand(user: string): string {
 }
 
 /**
- * What the operator runs themselves when gbrain refuses to `sudo` a
+ * What the operator runs themselves when foresights refuses to `sudo` a
  * non-system binary: the DISCOVERED path, shell-quoted, because a binary
  * outside sudo's `secure_path` (`~/.local/bin`) is exactly the case that gets
  * here, and a bare `sudo tailscale` would then say "command not found"

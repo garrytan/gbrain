@@ -7,7 +7,7 @@
  *   bun scripts/bench/sync-pass-memory.ts cli  ... [--mode convert|sync] [--embed] [--extract] [--full] [--kill-after <s>] [--db-url <pooler url>]
  *   bun scripts/bench/sync-pass-memory.ts embed-seed ...   (embeds the template's pages through the stub, as a brain that already has vectors)
  *   (--tag <name> names the template and run databases, so several seeds can live side by side)
- * cli runs the real gbrain CLI as a child (GBRAIN_MEMORY_TRACE on, embeddings through a loopback stub with --embed) and
+ * cli runs the real foresights CLI as a child (GBRAIN_MEMORY_TRACE on, embeddings through a loopback stub with --embed) and
  * samples its RSS from /proc once a second.
  *
  * seed builds a managed Postgres brain whose default source holds --pages committed files written over --commits commits
@@ -141,7 +141,7 @@ async function seed(): Promise<void> {
       const ids = await tx.executeRaw<{ id: string }>("UPDATE pages SET type='concept', frontmatter=frontmatter || jsonb_build_object('type','concept','legacy_type',type,'subtype','imported','probe_label','database-ahead'), "
         + "knowledge_revision=gen_random_uuid(), revision_write_request_id=NULL WHERE source_id='default' AND id IN (" + ahead + ") RETURNING id::text", [AHEAD]);
       await tx.executeRaw("DELETE FROM op_checkpoints WHERE op='sync-import-provenance' AND split_part(fingerprint, ':', 3) = ANY($1::text[])", [ids.map(row => row.id)]);
-      // Pages an older gbrain imported: equal to their files, with no import record.
+      // Pages an older foresights imported: equal to their files, with no import record.
       if (LEGACY) await tx.executeRaw("DELETE FROM op_checkpoints WHERE op='sync-import-provenance' AND split_part(fingerprint, ':', 3) IN (SELECT id::text FROM pages WHERE source_id='default' ORDER BY slug DESC LIMIT $1)", [LEGACY]);
       if (DBONLY) await tx.executeRaw("INSERT INTO pages(source_id,slug,type,title,compiled_truth,timeline,frontmatter,database_only_reason) "
         + "SELECT 'default','dbonly/p'||lpad(n::text,6,'0'),'note','Database page '||n,'Only in the database '||n||'.','',jsonb_build_object('type','note','title','Database page '||n),'db_only' "
@@ -205,7 +205,7 @@ async function run(): Promise<void> {
 }
 
 
-/** The gbrain config of a CLI run: the database, and embeddings through the stub (`--embed`) or off. */
+/** The foresights config of a CLI run: the database, and embeddings through the stub (`--embed`) or off. */
 function writeConfig(database: string, embed: boolean): void {
   mkdirSync(join(home, '.gbrain'), { recursive: true });
   writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: 'postgres', database_url: flag('db-url', '') ? dbUrlAt(flag('db-url')!, database) : dbUrl(database),
@@ -214,7 +214,7 @@ function writeConfig(database: string, embed: boolean): void {
 const dbUrlAt = (base: string, name: string) => { const u = new URL(base); u.pathname = '/' + name; return u.toString(); };
 const rssOf = (pid: number) => { try { const m = /VmRSS:\s+(\d+) kB/.exec(readFileSync(`/proc/${pid}/status`, 'utf8')); return m ? Math.round(Number(m[1]) / 1024) : null; } catch { return null; } };
 
-/** Runs the gbrain CLI with the run's home and the stub's environment, sampling its RSS once a second; stdout, stderr and the samples are kept. */
+/** Runs the foresights CLI with the run's home and the stub's environment, sampling its RSS once a second; stdout, stderr and the samples are kept. */
 async function runCli(argv: string[], env: Record<string, string>, name: string, killAfterS?: number): Promise<{ code: number | null; stdout: string; stderr: string; peakMb: number }> {
   const child = Bun.spawn([process.execPath, join(import.meta.dir, '../../src/cli.ts'), ...argv], { cwd: root, env, stdout: 'pipe', stderr: 'pipe' });
   const out = join(dir, `samples-${name}.ndjson`);

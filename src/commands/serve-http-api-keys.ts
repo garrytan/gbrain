@@ -1,9 +1,9 @@
 /**
- * Owner-dashboard legacy API keys for `gbrain serve --http`
+ * Owner-dashboard legacy API keys for `foresights serve --http`
  * (`/admin/api/api-keys`): list, mint and revoke.
  *
  * Mint goes through `mintLegacyToken` (the same grant shape as
- * `gbrain auth create`): scopes default to `read,write` and `admin` is minted
+ * `foresights auth create`): scopes default to `read,write` and `admin` is minted
  * only when requested; sources are checked against active source ids; takes
  * holders against the holder grammar. The response reports the effective
  * grant and which defaults applied. The plaintext token appears only in the
@@ -30,7 +30,7 @@ const DOCS = 'docs/mcp/ADMIN.md#dashboard-api-keys';
 export interface ApiKeyMintRequest {
   name: string;
   scopes: string[];
-  /** undefined = no source grant (the `gbrain auth create` default). */
+  /** undefined = no source grant (the `foresights auth create` default). */
   sources?: string[];
   takesHolders: string[];
   defaultsApplied: Array<'scopes' | 'sources' | 'takes_holders'>;
@@ -49,7 +49,7 @@ function invalid(message: string, suggestion: string, why: string, fix: Action) 
   return opError('invalid_params', message, suggestion, { why, fix, docs: DOCS, reason: 'api_key_request_invalid' });
 }
 
-/** Validate a dashboard mint request and apply the `gbrain auth create` defaults; throws `invalid_params`. */
+/** Validate a dashboard mint request and apply the `foresights auth create` defaults; throws `invalid_params`. */
 export async function parseApiKeyMintRequest(engine: BrainEngine, body: unknown): Promise<ApiKeyMintRequest> {
   const raw = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
   const name = typeof raw.name === 'string' ? raw.name.trim() : '';
@@ -60,7 +60,7 @@ export async function parseApiKeyMintRequest(engine: BrainEngine, body: unknown)
   if (!name || name.length > API_KEY_NAME_MAX || /[\u0000-\u001f\u007f]/.test(name)) {
     throw invalid(`API key name must be 1-${API_KEY_NAME_MAX} printable characters.`,
       `Resubmit with a short printable name (at most ${API_KEY_NAME_MAX} characters).`,
-      'The name labels the key in the dashboard, request logs and gbrain auth list.',
+      'The name labels the key in the dashboard, request logs and foresights auth list.',
       listAction('Lists existing key names so the new one can be told apart.'));
   }
   const defaultsApplied: ApiKeyMintRequest['defaultsApplied'] = [];
@@ -78,7 +78,7 @@ export async function parseApiKeyMintRequest(engine: BrainEngine, body: unknown)
   }
   const localOnly = localCliOnlyScopeViolation(scopesParam ?? []);
   if (localOnly) {
-    throw invalid(localOnly, 'Resubmit without memory_confirm, or ask the user to mint the key on the brain host with gbrain auth create.',
+    throw invalid(localOnly, 'Resubmit without memory_confirm, or ask the user to mint the key on the brain host with foresights auth create.',
       'Confirming memory as the owner is granted only by the local CLI, never by the admin API.',
       { ...createFix(['--scopes', 'read,write,memory_confirm'], 'Mints the key with memory_confirm from the local CLI on the brain host.'), actor: 'user' });
   }
@@ -87,7 +87,7 @@ export async function parseApiKeyMintRequest(engine: BrainEngine, body: unknown)
   const sourcesParam = listParam(raw.sources);
   if (sourcesParam === null || (sourcesParam !== undefined && (sourcesParam.length === 0 || sourcesParam.some(id => !isValidSourceId(id))))) {
     throw invalid('sources must be a non-empty list of source ids (omit it for the default grant).',
-      'Resubmit with source ids from gbrain sources list, or omit sources.', 'Each source id names a repository in this brain; the first one is the write source.',
+      'Resubmit with source ids from foresights sources list, or omit sources.', 'Each source id names a repository in this brain; the first one is the write source.',
       { argv: ['gbrain', 'sources', 'list'], consent: [], actor: 'host_admin', why: 'Lists the source ids this brain serves.', requires_exclusive: false, docs: DOCS });
   }
   if (sourcesParam) {
@@ -95,7 +95,7 @@ export async function parseApiKeyMintRequest(engine: BrainEngine, body: unknown)
     const active = new Set(rows.map(r => r.id));
     const missing = sourcesParam.filter(id => !active.has(id));
     if (missing.length) {
-      throw invalid(`Unknown or archived source: ${missing.join(', ')}.`, 'Resubmit with active source ids from gbrain sources list.',
+      throw invalid(`Unknown or archived source: ${missing.join(', ')}.`, 'Resubmit with active source ids from foresights sources list.',
         'A key can only be granted sources this brain serves.',
         { argv: ['gbrain', 'sources', 'list'], consent: [], actor: 'host_admin', why: 'Lists the active source ids.', requires_exclusive: false, docs: DOCS });
     }

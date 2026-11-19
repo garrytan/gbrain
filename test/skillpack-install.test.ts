@@ -122,12 +122,12 @@ describe('findGbrainRoot', () => {
     mkdirSync(nested, { recursive: true });
     expect(findGbrainRoot(nested)).toBe(gbrainRoot);
   });
-  it('returns null when no gbrain root above', () => {
+  it('returns null when no foresights root above', () => {
     expect(findGbrainRoot('/tmp/definitely-not-a-gbrain-repo-XYZ')).toBeNull();
   });
   it('falls back to the module location when cwd has no markers (#1917)', () => {
     // Simulate a bun-global install: cwd is an unrelated directory with no
-    // gbrain markers anywhere above it. The no-arg call must still resolve
+    // foresights markers anywhere above it. The no-arg call must still resolve
     // via bundle.ts's own location (which lives in the real repo).
     const elsewhere = mkdtempSync(join(tmpdir(), 'skillpack-elsewhere-'));
     created.push(elsewhere);
@@ -545,7 +545,7 @@ describe('managed-block receipt + cumulative semantics (v0.19)', () => {
 
     // Inject a hand-added row inside the fence (between begin/end).
     // We splice right before the fence end marker so the row is
-    // unambiguously within gbrain's managed block.
+    // unambiguously within foresights's managed block.
     const path = join(skillsDir, 'RESOLVER.md');
     const orig = readFileSync(path, 'utf-8');
     const endMarker = '<!-- gbrain:skillpack:end -->';
@@ -598,7 +598,7 @@ describe('managed-block receipt + cumulative semantics (v0.19)', () => {
         '',
         '<!-- gbrain:skillpack:begin -->',
         '',
-        '<!-- Installed by gbrain 0.18.2 — do not hand-edit between markers. -->',
+        '<!-- Installed by foresights 0.18.2 — do not hand-edit between markers. -->',
         '',
         '| Trigger | Skill |',
         '|---------|-------|',

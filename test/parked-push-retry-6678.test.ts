@@ -243,7 +243,7 @@ describe('#6697 revoked writer: parked Git effect', () => {
     expect(byRequest[await publicId(healthy)].exit).toBeUndefined();
     expect(check.status).toBe('warn');
     expect(check.message).toContain(`doctor-revoked (git_push_unavailable); the original writer is revoked`);
-    expect(check.message).toContain(`doctor-healthy (git_push_unavailable); gbrain sources writer retry-effects ${sourceId} --request-id ${await publicId(healthy)} --dry-run`);
+    expect(check.message).toContain(`doctor-healthy (git_push_unavailable); foresights sources writer retry-effects ${sourceId} --request-id ${await publicId(healthy)} --dry-run`);
   }), 120_000);
 });
 

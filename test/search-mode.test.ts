@@ -392,8 +392,8 @@ describe('attributeKnob source attribution', () => {
   });
 
   test('override source labels the REAL config key path, not the knob name (#4605)', () => {
-    // `gbrain search modes` prints source_detail verbatim as a copy-pasteable
-    // `gbrain config set` target, so it must be the key mode.ts reads.
+    // `foresights search modes` prints source_detail verbatim as a copy-pasteable
+    // `foresights config set` target, so it must be the key mode.ts reads.
     const input = {
       mode: 'conservative',
       overrides: { cache_enabled: false, reranker_top_n_in: 5, relationalRetrieval: false },
@@ -703,7 +703,7 @@ describe('loadOverridesFromConfig flat-map parser', () => {
 });
 
 describe('SEARCH_MODE_CONFIG_KEYS is the full reset surface', () => {
-  test('every key starts with search. prefix (gbrain config unset --pattern search.* compatibility)', () => {
+  test('every key starts with search. prefix (foresights config unset --pattern search.* compatibility)', () => {
     for (const k of SEARCH_MODE_CONFIG_KEYS) {
       expect(k.startsWith('search.')).toBe(true);
     }
@@ -712,7 +712,7 @@ describe('SEARCH_MODE_CONFIG_KEYS is the full reset surface', () => {
   test('every ModeBundle field has a config key (consistency check)', () => {
     // If a new knob is added to ModeBundle, this test fails until the operator
     // adds the corresponding config key to SEARCH_MODE_CONFIG_KEYS. That's the
-    // intentional regression guard: `gbrain search modes --reset` must clear
+    // intentional regression guard: `foresights search modes --reset` must clear
     // every knob.
     const knobs = Object.keys(MODE_BUNDLES.balanced);
     expect(SEARCH_MODE_CONFIG_KEYS.length).toBeGreaterThanOrEqual(knobs.length);

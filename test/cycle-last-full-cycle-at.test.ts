@@ -26,7 +26,7 @@ let engine: PGLiteEngine;
 let brainDir: string;
 // Per-test GBRAIN_HOME isolation: cycle's PGLite path acquires a file
 // lock at `~/.gbrain/cycle.lock` (no sourceId scope). Without isolating
-// GBRAIN_HOME per test, parallel gbrain processes on the same machine
+// GBRAIN_HOME per test, parallel foresights processes on the same machine
 // (including sibling Conductor worktrees running their own tests)
 // contend for the same lock file — runCycle returns 'skipped' and the
 // last_full_cycle_at exit hook silently no-ops. Each test wraps its

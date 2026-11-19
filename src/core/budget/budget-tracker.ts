@@ -358,11 +358,11 @@ export class BudgetTracker {
         // TX2: hard-fail when a cap is set but pricing is missing — without
         // pricing we can't enforce the cap, and silently ignoring it would
         // void the contract. The refusal tells the agent to look the rate up
-        // and register it (`gbrain pricing set`), then retry.
+        // and register it (`foresights pricing set`), then retry.
         const pricing = noPricingGuidance(estimate.modelId, estimate.kind);
         const pricingFile = estimate.kind === 'chat' ? 'model-pricing.ts' : 'embedding-pricing.ts';
         const msg = `${noPricingMessage(pricing, { label: this.opts.label, capUsd: this.opts.maxCostUsd })} ` +
-          `(To ship the rate with gbrain itself, add it to src/core/${pricingFile}.)`;
+          `(To ship the rate with foresights itself, add it to src/core/${pricingFile}.)`;
         appendAuditLine(this.auditPath, {
           schema_version: 1,
           ts: new Date().toISOString(),

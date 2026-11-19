@@ -1,5 +1,5 @@
 /**
- * `gbrain reindex --aliases [--limit N] [--dry-run] [--json] [--source <id>]`
+ * `foresights reindex --aliases [--limit N] [--dry-run] [--json] [--source <id>]`
  * (T8 — backfill the free-text alias layer).
  *
  * Import-time projection (T3) covers NEW + changed pages; this backfills the

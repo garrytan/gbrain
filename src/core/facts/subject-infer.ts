@@ -5,7 +5,7 @@
  * by entity: the `## Facts` fence, entity-scoped recall and the System One
  * conflict sweep. This module names the entity a fact is about using identity
  * evidence only, so the write paths (remember, the facts backstop) and the
- * `gbrain facts relink` repair share one rule:
+ * `foresights facts relink` repair share one rule:
  *
  *   - page: the fact came from a live fact-entity page (the page being written,
  *     or a recorded page provenance for relink), and the text names no other

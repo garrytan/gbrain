@@ -51,7 +51,7 @@ function checkout(): Checkout {
   git(top, 'remote', 'add', 'origin', remote); git(top, 'push', '-q', '-u', 'origin', 'main');
   return { home, top, remote };
 }
-/** A script's plain `git commit`, never through gbrain's write path. */
+/** A script's plain `git commit`, never through foresights's write path. */
 function scriptCommit(root: string, files: Record<string, string>, message = 'script edit'): string {
   for (const [path, body] of Object.entries(files)) { mkdirSync(dirname(join(root, path)), { recursive: true }); writeFileSync(join(root, path), body); git(root, 'add', '--', path); }
   git(root, 'commit', '-q', '-m', message);

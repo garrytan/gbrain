@@ -1,5 +1,5 @@
 /**
- * `gbrain trust` CLI surface (#5575: DX-7, DX-16).
+ * `foresights trust` CLI surface (#5575: DX-7, DX-16).
  *
  * Protects: the help text of the trust noun (every owner subcommand, the
  * typed refs, "--yes never confirms") answers without a brain and is pinned
@@ -16,14 +16,14 @@ import { runCli } from './helpers/cli-spawn.ts';
 const home = mkdtempSync(join(tmpdir(), 'gbrain-trust-cli-'));
 const golden = join(import.meta.dir, 'fixtures/goldens/trust/help.txt');
 
-describe('gbrain trust help (DX-7)', () => {
+describe('foresights trust help (DX-7)', () => {
   test('help answers without a brain and matches the golden', async () => {
     const r = await runCli(['trust', '--help'], { home });
     expect(r.exitCode).toBe(0);
     if (process.env.GBRAIN_TEST_UPDATE_GOLDENS === '1') { mkdirSync(dirname(golden), { recursive: true }); writeFileSync(golden, r.stdout); }
     expect(r.stdout).toBe(readFileSync(golden, 'utf8'));
     for (const sub of ['review', 'confirm', 'release', 'drop', 'revert', 'explain', 'allow', 'disable']) expect(r.stdout).toContain(`  ${sub} `);
-    expect(r.stdout).toContain('gbrain trust backfill');
+    expect(r.stdout).toContain('foresights trust backfill');
     expect(r.stdout).toContain('--yes never confirms');
   }, 60_000);
 
@@ -36,7 +36,7 @@ describe('gbrain trust help (DX-7)', () => {
     finally { console.log = log; }
     expect(process.exitCode).toBe(2);
     process.exitCode = 0;
-    expect(lines.join('\n')).toContain('Usage: gbrain trust <review|confirm');
+    expect(lines.join('\n')).toContain('Usage: foresights trust <review|confirm');
   });
 
   test('#6550: --repair-unknown-markers applies only with both --slug and --expect, refusing before touching the engine', async () => {
@@ -59,6 +59,6 @@ describe('gbrain trust help (DX-7)', () => {
   test('quarantine help lists the trust aliases', async () => {
     const r = await runCli(['quarantine', '--help'], { home });
     expect(r.stdout).toContain('release <h<id>> | drop <h<id>>');
-    expect(r.stdout).toContain('Aliases of gbrain trust release|drop');
+    expect(r.stdout).toContain('Aliases of foresights trust release|drop');
   }, 60_000);
 });

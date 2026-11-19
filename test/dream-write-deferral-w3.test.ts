@@ -144,7 +144,7 @@ test('purge: a pending write defers (warn, never failed, no park), holds its sou
       const check = await dreamWriteDeferredCheck(engine);
       expect(check.status).toBe('warn');
       expect(check.message).toContain(requestId);
-      expect(check.message).toContain(`gbrain write-request -- ${requestId}`);
+      expect(check.message).toContain(`foresights write-request -- ${requestId}`);
       expect(check.fix).toMatchObject({ argv: ['gbrain', 'write-request', '--', requestId] });
       // Stops counting at the bound.
       await purgeDeletedPagesCoordinated(engine, 72, { automatic: true });
@@ -179,7 +179,7 @@ test('purge through runCycle: a deferred write is a warn phase, the cycle is par
       expect(phase.status).toBe('warn');
       expect(phase.error).toBeUndefined();
       expect(phase.details.purged_pages_write_deferred).toBe(1);
-      expect((phase.details.write_deferral as { pending: Array<{ status_command: string }> }).pending[0]!.status_command).toMatch(/^gbrain write-request -- /);
+      expect((phase.details.write_deferral as { pending: Array<{ status_command: string }> }).pending[0]!.status_command).toMatch(/^(?:foresights|gbrain) write-request -- /);
       expect(report.status).not.toBe('failed');
     } finally { await lock.release(); }
   });

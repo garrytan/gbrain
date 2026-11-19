@@ -26,7 +26,7 @@
  * `source_id`, not its incarnation, so a brain that went managed keeps its
  * count). The same work is "this transcript file in this source", whatever
  * its length or chunking; the rule stays 3 dead runs in 24 h, and only the
- * window or `gbrain dream reset-key` clears it ('@' cannot occur in an
+ * window or `foresights dream reset-key` clears it ('@' cannot occur in an
  * encoded identity, so the prefix never collides with a job key). The
  * per-transcript row exists only once its deaths span two content keys, so a
  * loop on one unchanged transcript still reports under its own key.
@@ -49,7 +49,7 @@ export function dreamPatternsSourceKey(sourceId: string): string {
 export const DREAM_PHASE_KEY_PREFIX = 'dream:phase:';
 /** Base-key prefix of the per-transcript synthesize count, whatever each pass's content hash. */
 export const DREAM_SYNTH_FILE_KEY_PREFIX = 'dream:synth-v2:@file:';
-/** Every key family `gbrain dream reset-key` accepts: the ones `--list` and the breaker refusals print. */
+/** Every key family `foresights dream reset-key` accepts: the ones `--list` and the breaker refusals print. */
 export const DREAM_RESETTABLE_KEY_PREFIXES = [...DREAM_BREAKER_KEY_PREFIXES, DREAM_PHASE_KEY_PREFIX] as const;
 
 /** The stable key every synthesize death of this transcript counts under (W3). */
@@ -69,7 +69,7 @@ export function dreamBreakerBaseKey(key: string): string {
 }
 
 export function dreamBreakerResetCommand(baseKey: string): string {
-  return `gbrain dream reset-key '${baseKey.replaceAll("'", "'\\''")}'`;
+  return `foresights dream reset-key '${baseKey.replaceAll("'", "'\\''")}'`;
 }
 
 /** 0 disables the breaker; unset or invalid values use the default. */
@@ -91,7 +91,7 @@ async function loadResets(engine: BrainEngine): Promise<Record<string, string>> 
 }
 
 /**
- * The one counting rule shared by the breaker, `gbrain dream reset-key --list`
+ * The one counting rule shared by the breaker, `foresights dream reset-key --list`
  * and the doctor check. Dead submissions finished before a key's persisted
  * reset time do not count. Backed by the partial index on dead subagent
  * finish times.

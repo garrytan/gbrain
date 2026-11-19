@@ -1,5 +1,5 @@
 /**
- * The serve side of the warm CLI socket (opt-in: `gbrain serve --cli-socket`
+ * The serve side of the warm CLI socket (opt-in: `foresights serve --cli-socket`
  * or config `serve.cli_socket`). Postgres brains only; PGLite already
  * delegates through the persistence owner socket. Every connection's peer uid
  * is read from the kernel and compared with this process's uid before a byte
@@ -48,7 +48,7 @@ export interface CliSocketServerOptions {
  */
 export async function startCliSocket(engine: BrainEngine, log: (line: string) => void): Promise<CliSocketBinding | null> {
   try { return await startCliSocketServer({ engine, log }); }
-  catch (error) { log(`[gbrain serve] cli-socket: not started: ${(error as Error).message}`); return null; }
+  catch (error) { log(`[foresights serve] cli-socket: not started: ${(error as Error).message}`); return null; }
 }
 
 function frame(value: HandshakeFrame | ResultFrame): string {
@@ -94,7 +94,7 @@ async function peerCredSelfTest(dir: string, support: Extract<PeerCredSupport, {
  * line saying why) when it does not bind; never throws into the serve.
  */
 export async function startCliSocketServer(opts: CliSocketServerOptions): Promise<CliSocketBinding | null> {
-  const log = (line: string) => opts.log(`[gbrain serve] cli-socket: ${line}`);
+  const log = (line: string) => opts.log(`[foresights serve] cli-socket: ${line}`);
   const uid = (opts.uid ?? (() => process.getuid?.()))();
   if (opts.engine.kind !== 'postgres') { log('not started: the CLI socket serves Postgres brains only (PGLite CLI calls already reach a running serve).'); return null; }
   let brainId: string;

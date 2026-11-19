@@ -378,8 +378,8 @@ describe('serve listener', () => {
     expect(await exchangeCliSocket(path, request({ ...serveIdentity(), version: '1.0.1' }), 5_000)).toEqual({ reason: 'refused (identity_mismatch): version' });
     expect(await exchangeCliSocket(path, request(serveIdentity('postgresql://alice-example@db.acme-example.test:6543/brain')), 5_000)).toEqual({ reason: 'refused (identity_mismatch): database port' });
     expect(started.lines.filter(line => line.includes('identity_mismatch'))).toEqual([
-      "[gbrain serve] cli-socket: refused a CLI call: identity_mismatch (version differs from this serve's); that CLI takes its cold path.",
-      "[gbrain serve] cli-socket: refused a CLI call: identity_mismatch (database port differs from this serve's); that CLI takes its cold path.",
+      "[foresights serve] cli-socket: refused a CLI call: identity_mismatch (version differs from this serve's); that CLI takes its cold path.",
+      "[foresights serve] cli-socket: refused a CLI call: identity_mismatch (database port differs from this serve's); that CLI takes its cold path.",
     ]);
     await exchangeCliSocket(path, request({ ...serveIdentity(), version: '1.0.1' }), 5_000);
     expect(started.lines.filter(line => line.includes('identity_mismatch')).length).toBe(2);
@@ -439,7 +439,7 @@ describe('serve listener', () => {
     const printed = err.join('');
     expect(printed).toContain('socket_identity_mismatch');
     expect(printed).toContain('env AZURE_OPENAI_API_VERSION differs');
-    expect(printed).toContain('gbrain doctor --only cli_socket_refusals --json');
+    expect(printed).toContain('foresights doctor --only cli_socket_refusals --json');
     expect(printed.match(/socket_identity_mismatch/g)!.length).toBe(1);
   });
 

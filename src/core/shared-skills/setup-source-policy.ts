@@ -16,19 +16,19 @@ export async function sharedSkillSourcePolicy(engine: BrainEngine, sourceId: str
   const [source] = await engine.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id=$1 AND NOT archived', [sourceId]);
   if (!source) {
     throw new OperationError('source_changed', 'The selected content source is missing or archived.',
-      `Source ${sourceId} is archived or not registered; choose an active content source (gbrain sources list --json shows them).`);
+      `Source ${sourceId} is archived or not registered; choose an active content source (foresights sources list --json shows them).`);
   }
   const config = parseSourceConfig(source.config);
   // A source can decline adoption implicitly by being connector-managed or an
   // unapproved external repo (below), or explicitly with
-  // `gbrain sources shared-skills <id> off` when it already delivers skills
+  // `foresights sources shared-skills <id> off` when it already delivers skills
   // another way (its own brain-resident skillpack over MCP, a plugin install).
   if (config.shared_skills === false) return { mode: 'preserve_files',
-    reason: `source_shared_skills_disabled: this source opted out of shared-skills catalog adoption (config.shared_skills=false). Its existing skill-delivery path (e.g. list_brain_skillpack/get_skill, or an external plugin install) is unaffected; no files or grants were touched. Turn adoption back on with gbrain sources shared-skills ${sourceId} on (${SHARED_SKILLS_OPT_OUT_DOCS}).` };
+    reason: `source_shared_skills_disabled: this source opted out of shared-skills catalog adoption (config.shared_skills=false). Its existing skill-delivery path (e.g. list_brain_skillpack/get_skill, or an external plugin install) is unaffected; no files or grants were touched. Turn adoption back on with foresights sources shared-skills ${sourceId} on (${SHARED_SKILLS_OPT_OUT_DOCS}).` };
   if (config.kind != null) return { mode: 'preserve_files',
-    reason: `source_skill_adoption_required: this connector-managed source is not a shared-skill write target. Preserve its generated/imported files and put approved shared skills in a separate content source. gbrain sources shared-skills ${sourceId} status explains it (${SHARED_SKILLS_OPT_OUT_DOCS}).` };
+    reason: `source_skill_adoption_required: this connector-managed source is not a shared-skill write target. Preserve its generated/imported files and put approved shared skills in a separate content source. foresights sources shared-skills ${sourceId} status explains it (${SHARED_SKILLS_OPT_OUT_DOCS}).` };
   if (config.remote_url != null || config.managed_clone === true) return { mode: 'explicit_pack_required',
-    reason: `source_skill_adoption_required: this external repository has no explicit brain-resident skillpack approval. No packaged skills were added. Review an existing brain_resident:true manifest or use a separate owned content source. gbrain sources shared-skills ${sourceId} status explains it (${SHARED_SKILLS_OPT_OUT_DOCS}).` };
+    reason: `source_skill_adoption_required: this external repository has no explicit brain-resident skillpack approval. No packaged skills were added. Review an existing brain_resident:true manifest or use a separate owned content source. foresights sources shared-skills ${sourceId} status explains it (${SHARED_SKILLS_OPT_OUT_DOCS}).` };
   return { mode: 'content' };
 }
 
@@ -42,6 +42,6 @@ export async function assertPackagedSkillSource(engine: BrainEngine, sourceId: s
   const policy = await sharedSkillSourcePolicy(engine, sourceId);
   if (policy.mode !== 'content') {
     throw new OperationError('source_writeback_required', policy.reason,
-      `Source ${sourceId} is not a shared-skill write target, so nothing was added to it. Install packaged skills into a separate content source the user owns (gbrain init --content-root with a new directory creates one).`);
+      `Source ${sourceId} is not a shared-skill write target, so nothing was added to it. Install packaged skills into a separate content source the user owns (foresights init --content-root with a new directory creates one).`);
   }
 }

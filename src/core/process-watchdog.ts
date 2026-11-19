@@ -1,7 +1,7 @@
 /**
  * Out-of-band hard-deadline watchdog (#1633).
  *
- * THE PROBLEM. A `gbrain sync` that spins (e.g. synchronous catastrophic-regex
+ * THE PROBLEM. A `foresights sync` that spins (e.g. synchronous catastrophic-regex
  * in pack link-inference) STARVES the main event loop. When the loop never
  * yields, the SIGTERM handler (process-cleanup.ts) can't run, a `--timeout`
  * `setTimeout` can't fire, and the abort-flag checks between import iterations
@@ -334,7 +334,7 @@ export function installProcessWatchdog(opts: ProcessWatchdogOpts): WatchdogHandl
  * The hard-deadline watchdog above bounds TOTAL wall-clock time — right for a
  * bounded batch (`sync`), wrong for a long-lived server whose legitimate
  * lifetime is unbounded. What a server needs bounded is main-loop
- * RESPONSIVENESS: `gbrain serve --http` wedged in a synchronous spin (ReDoS,
+ * RESPONSIVENESS: `foresights serve --http` wedged in a synchronous spin (ReDoS,
  * runaway parse) stops answering requests AND stops being able to run its own
  * SIGTERM cleanup, holding the PGLite write lock hostage exactly like the
  * #1633 sync incident.
@@ -354,7 +354,7 @@ export function installProcessWatchdog(opts: ProcessWatchdogOpts): WatchdogHandl
  * and forgives — a fresh full stall window is required post-wake.
  * ———————————————————————————————————————————————————————————————————————— */
 
-/** Env knob for `gbrain serve --http` (opt-in; ms; 0/unset = off).
+/** Env knob for `foresights serve --http` (opt-in; ms; 0/unset = off).
  * Large PGLite brains routinely hold the loop synchronously for tens of
  * seconds (WASM checkpoint, vacuum, big JSON parse) — prefer a value well
  * above the floor there (e.g. 60000+) so legitimate pauses never SIGTERM a

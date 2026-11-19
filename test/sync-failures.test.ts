@@ -9,8 +9,8 @@
  *   - failures append to ~/.gbrain/sync-failures.jsonl (with dedup)
  *   - incremental + full-sync + import git-continuity paths gate the
  *     sync.last_commit advance on "no failures"
- *   - `gbrain sync --skip-failed` acknowledges the current set
- *   - `gbrain doctor` surfaces unacknowledged failures
+ *   - `foresights sync --skip-failed` acknowledges the current set
+ *   - `foresights doctor` surfaces unacknowledged failures
  *
  * This suite exercises the helper + the dedup behavior. The full CLI
  * round-trip is covered by E2E tests.
@@ -140,7 +140,7 @@ describe('Bug 9 — doctor surfaces sync failures', () => {
     const source = doctorSource();
     expect(source).toContain('sync_failures');
     expect(source).toContain('unacknowledgedSyncFailures');
-    expect(source).toContain("'gbrain sync --skip-failed'");
+    expect(source).toContain("'foresights sync --skip-failed'");
   });
 
   // issue #1939: BOTH doctor surfaces (local buildChecks + remote
@@ -168,7 +168,7 @@ describe('Bug 9 — sync.ts CLI flag wiring', () => {
   test('runSync acks pre-existing unacked failures up-front when --skip-failed is set', async () => {
     // Without this gate, a user who fixes their broken YAML, re-runs sync
     // (which finds nothing new and prints "Already up to date."), and then
-    // runs `gbrain sync --skip-failed` to clear the log gets a no-op —
+    // runs `foresights sync --skip-failed` to clear the log gets a no-op —
     // performSync's inner ack path only fires when failedFiles.length > 0
     // in the current run. This test pins the up-front ack at the top of
     // runSync so the flag means "ack whatever is currently flagged".
@@ -678,6 +678,6 @@ describe('#4543 blocked output names failing files', () => {
     expect(source).toContain('formatFailedFileList(failedFiles)');
     expect(source).toContain('formatFailedFileList(result.failures)');
     // The actionable hint rides along in the blocked copy.
-    expect(source).toContain("gbrain frontmatter validate <path>");
+    expect(source).toContain("foresights frontmatter validate <path>");
   });
 });

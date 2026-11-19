@@ -1,5 +1,5 @@
 /**
- * `gbrain guests` (GBRA-504): guest sources, the database-only, federated sources an outside-guest broker saves notes
+ * `foresights guests` (GBRA-504): guest sources, the database-only, federated sources an outside-guest broker saves notes
  * into. `init` sets one up; `promote` keeps a guest note as an owner page (op promote_guest_note); `grant-owner-clients`
  * adds the guest source to the read list of each credential bound to the brain owner. init and grant-owner-clients
  * preview by default and apply only with --yes. Trusted local CLI only. Guide: docs/guides/guest-notes.md.
@@ -12,15 +12,15 @@ import { exitCliError } from '../cli/cli-error.ts';
 import { loadConfig } from '../core/config.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 
-export const GUESTS_USAGE = `Usage: gbrain guests init [--source <id>] [--writer ${GUEST_WRITER_FORMAT}]... [--yes]
-       gbrain guests promote <guest-slug> [--to <slug>] [--source <id>] [--guest-source <id>] [--json]
-       gbrain guests grant-owner-clients [--source <id>] [--yes] [--json]
+export const GUESTS_USAGE = `Usage: foresights guests init [--source <id>] [--writer ${GUEST_WRITER_FORMAT}]... [--yes]
+       foresights guests promote <guest-slug> [--to <slug>] [--source <id>] [--guest-source <id>] [--json]
+       foresights guests grant-owner-clients [--source <id>] [--yes] [--json]
 
   init sets up a guest source for notes saved by outside guests: database-only (no local
   path or repository), federated, pages capped at ${GUEST_TRUST_CEILING}, and writable
   only by the listed writers. The source defaults to "guests". Without --yes it
   prints what it would do and writes nothing. Change writers later with
-  gbrain sources writers <id>.
+  foresights sources writers <id>.
 
   promote keeps a guest note as your own page in --source (your default source when
   omitted), at --to (the note's slug when omitted), with promoted_from naming the note.
@@ -83,7 +83,7 @@ async function runInit(engine: BrainEngine, rest: string[]): Promise<void> {
 
   const plan = await planGuestSource(engine, sourceId, writers);
   if (plan.localPath) {
-    console.error(`Source "${sourceId}" has a local path (${plan.localPath}). A guest source is database-only, so gbrain will not make this one a guest source. Pick another name with --source.`);
+    console.error(`Source "${sourceId}" has a local path (${plan.localPath}). A guest source is database-only, so foresights will not make this one a guest source. Pick another name with --source.`);
     process.exit(2);
   }
   if (plan.pages > 0) {
@@ -91,9 +91,9 @@ async function runInit(engine: BrainEngine, rest: string[]): Promise<void> {
     process.exit(2);
   }
   const writerLine = (list: readonly string[]) => list.length > 0 ? list.join(', ')
-    : `none yet: nobody can save notes there until you add one (gbrain sources writers ${sourceId} --add ${GUEST_WRITER_FORMAT})`;
+    : `none yet: nobody can save notes there until you add one (foresights sources writers ${sourceId} --add ${GUEST_WRITER_FORMAT})`;
   if (!yes) {
-    console.log('Preview: gbrain guests init (nothing written; run again with --yes to apply)');
+    console.log('Preview: foresights guests init (nothing written; run again with --yes to apply)');
     console.log(`  Source "${sourceId}": ${!plan.exists ? 'will be created, database-only (no local path) and federated'
       : plan.guest ? 'is already a guest source' : plan.configGuest ? 'says guest: true in its config but has no guest_sources row; init adds it, so its writer list and ceiling are enforced'
       : 'exists with no local path; it becomes a guest source and is federated'}.`);
@@ -137,17 +137,17 @@ async function runGrantOwnerClients(engine: BrainEngine, rest: string[]): Promis
   const sourceId = checkedSource(flags['--source']?.at(-1) ?? 'guests');
   const [guest] = await engine.executeRaw('SELECT 1 FROM guest_sources WHERE source_id = $1', [sourceId]);
   if (!guest) {
-    console.error(`Source "${sourceId}" is not a guest source. Set one up with: gbrain guests init --source ${sourceId}`);
+    console.error(`Source "${sourceId}" is not a guest source. Set one up with: foresights guests init --source ${sourceId}`);
     process.exit(2);
   }
   const { owner, credentials } = await ownerCredentials(engine, sourceId);
   const missing = credentials.filter(c => !c.readsGuest);
   const outcomes = on.has('--yes') ? await grantOwnerCredentials(engine, sourceId, missing) : null;
   if (on.has('--json')) { console.log(JSON.stringify({ source: sourceId, owner, credentials: missing, ...(outcomes ? { outcomes } : {}) }, null, 2)); return; }
-  if (!owner) { console.log('No brain owner is set (gbrain access owner set <member>), so no credential reads as the owner.'); return; }
+  if (!owner) { console.log('No brain owner is set (foresights access owner set <member>), so no credential reads as the owner.'); return; }
   if (!missing.length) { console.log(`Every credential bound to ${owner} already reads "${sourceId}".`); return; }
   if (!outcomes) {
-    console.log(`Preview: gbrain guests grant-owner-clients (nothing written; run again with --yes to apply)`);
+    console.log(`Preview: foresights guests grant-owner-clients (nothing written; run again with --yes to apply)`);
     for (const c of missing) {
       console.log(`  ${c.kind} ${c.name} (${c.id}): ${c.after ? `${c.readSources.join(', ')} -> ${c.after.join(', ')}` : 'left alone: it has no source grant to add to'}`);
     }

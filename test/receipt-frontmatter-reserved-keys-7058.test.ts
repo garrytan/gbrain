@@ -2,7 +2,7 @@
  * #7058: an extract receipt must not store the parser-reserved `type` key
  * inside its frontmatter. Every extraction run writes a receipt, so a reserved
  * key there makes doctor's `stale_frontmatter_keys` grow each run, and the
- * `gbrain repair frontmatter-keys` sweep can never keep it at zero. The page's
+ * `foresights repair frontmatter-keys` sweep can never keep it at zero. The page's
  * `type` column (protection 1 of the anti-loop pair) still reads
  * `extract_receipt`, and `dream_generated: true` (protection 2) stays.
  */

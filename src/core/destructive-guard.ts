@@ -3,7 +3,7 @@ import { managedPersistenceEnabled } from './persistence/ownership.ts';
 /**
  * Destructive operation guard — v0.26.5
  *
- * Protects against accidental data loss in gbrain by requiring explicit
+ * Protects against accidental data loss in foresights by requiring explicit
  * confirmation for operations that cascade-delete pages, chunks, or embeddings.
  *
  * Three layers:
@@ -156,14 +156,14 @@ export function formatClientReferentsBlock(
     lines.push(``);
     lines.push(`Revoke each live client first (hard delete), then retry:`);
     for (const r of live) {
-      lines.push(`  gbrain auth revoke-client "${r.clientId}"`);
+      lines.push(`  foresights auth revoke-client "${r.clientId}"`);
     }
   }
   if (dead.length > 0) {
     lines.push(``);
-    lines.push(`Revoked-but-retained rows still block the FK — \`gbrain auth revoke-client "<id>"\` hard-deletes them:`);
+    lines.push(`Revoked-but-retained rows still block the FK — \`foresights auth revoke-client "<id>"\` hard-deletes them:`);
     for (const r of dead) {
-      lines.push(`  gbrain auth revoke-client "${r.clientId}"`);
+      lines.push(`  foresights auth revoke-client "${r.clientId}"`);
     }
   }
   lines.push(``);
@@ -309,7 +309,7 @@ export function checkDestructiveConfirmation(
 
   return (
     `\n${impact.summary}\n\n` +
-    `To proceed, pass --confirm-destructive (or use soft-delete: gbrain sources archive ${impact.sourceId}).\n` +
+    `To proceed, pass --confirm-destructive (or use soft-delete: foresights sources archive ${impact.sourceId}).\n` +
     `To preview without side effects: --dry-run`
   );
 }
@@ -320,7 +320,7 @@ export function checkDestructiveConfirmation(
  * Soft-delete a source: mark `archived = true` with a 72h TTL. Pages remain
  * in DB; the source is hidden from search via `buildVisibilityClause` and
  * federation is disabled via the existing `config.federated` JSONB key. After
- * TTL expires, the autopilot purge phase or manual `gbrain sources purge`
+ * TTL expires, the autopilot purge phase or manual `foresights sources purge`
  * permanently removes the row (cascade delete to pages + chunks).
  *
  * v0.26.5: archive state moved from `config` JSONB keys to real columns
@@ -466,7 +466,7 @@ export interface PurgeExpiredResult {
  * Permanently purge sources whose 72h TTL has expired. Cascades to pages
  * (and content_chunks via existing FKs).
  *
- * v0.26.5 used a single set-based DELETE; gbrain#4115 showed one FK-blocked
+ * v0.26.5 used a single set-based DELETE; foresights#4115 showed one FK-blocked
  * source (a revoked-but-retained oauth_client under v64's ON DELETE RESTRICT)
  * aborted the whole statement, wedging the nightly purge forever. The sweep is
  * now per-source: each DELETE re-checks the expiry predicate (no
@@ -560,7 +560,7 @@ export async function purgeExpiredSources(
           id,
           reason:
             'still referenced by a RESTRICT foreign key (revoked oauth_client not yet purged? the FK is physical, so soft-deleted clients also block) — ' +
-            'review with `gbrain auth clients`, revoke with `gbrain auth revoke-client "<client-id>"`, then retry',
+            'review with `foresights auth clients`, revoke with `foresights auth revoke-client "<client-id>"`, then retry',
         });
         continue;
       }
@@ -604,7 +604,7 @@ export function formatImpact(impact: DestructiveImpact): string {
   // the box (variable-width padding inside would misalign the frame).
   if ((impact.oauthClientCount ?? 0) > 0) {
     lines.push(`⚠️  ${impact.oauthClientCount} OAuth client(s) reference this source — a hard delete is`);
-    lines.push(`   blocked (FK RESTRICT) until they are revoked: gbrain auth revoke-client "<client-id>"`);
+    lines.push(`   blocked (FK RESTRICT) until they are revoked: foresights auth revoke-client "<client-id>"`);
     lines.push(``);
   }
   return lines.join('\n');
@@ -619,8 +619,8 @@ export function formatSoftDelete(sd: SoftDeletedSource): string {
     `  Expires: ${sd.expiresAt.toISOString()} (~${hours}h from now)`,
     `  Removed from search. Data intact.`,
     ``,
-    `  Restore:  gbrain sources restore ${sd.id}`,
-    `  Purge now: gbrain sources purge ${sd.id} --confirm-destructive`,
+    `  Restore:  foresights sources restore ${sd.id}`,
+    `  Purge now: foresights sources purge ${sd.id} --confirm-destructive`,
     ``,
   ].join('\n');
 }

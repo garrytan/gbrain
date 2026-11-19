@@ -9,7 +9,7 @@
  * Extension point: `PRINTED_COMMAND_PRODUCERS` is the list the guard runs.
  * Each producer seeds what its surface needs on the fixture brain and returns
  * the text (or rendered commands) the surface printed; the guard extracts
- * every `gbrain ...` command from it. Lane B (#6803 part 3) registers
+ * every `foresights ...` command from it. Lane B (#6803 part 3) registers
  * `sizeStateLines`, `budget_limited` (`embed --stale`), doctor
  * `partial_embedding`, the `meterPageBatch` hold line, `embed --held` and
  * the edited docs. Lane A's projection texts (A9) join by pushing producers
@@ -32,11 +32,11 @@ export interface GuardFixture {
 export interface PrintedCommandProducer {
   /** The surface, for the failure message. */
   name: string;
-  /** The printed text; every `gbrain ...` command in it is guarded. */
+  /** The printed text; every `foresights ...` command in it is guarded. */
   text(fixture: GuardFixture): Promise<string>;
   /** Placeholders a doc command carries, filled before the run (`<id>` -> a fixture source). */
   fill?: Record<string, string>;
-  /** Which extracted commands this producer owns (a doc section also names unrelated, mutating commands such as `gbrain upgrade`); default all. */
+  /** Which extracted commands this producer owns (a doc section also names unrelated, mutating commands such as `foresights upgrade`); default all. */
   owns?: (argv: string[]) => boolean;
   /** Env overlay for this producer's command runs (a surface that names a multimodal-only command runs on a multimodal brain). */
   env?: Record<string, string | undefined>;
@@ -49,9 +49,9 @@ export function registerPrintedCommandProducer(producer: PrintedCommandProducer)
 }
 
 const TOKEN = String.raw`[^\s;()\x60,"]+`;
-const COMMAND = new RegExp(`gbrain(?: ${TOKEN})+`, 'g');
+const COMMAND = new RegExp(`foresights(?: ${TOKEN})+`, 'g');
 
-/** Every `gbrain ...` command in `text` (single-space separated tokens), sentence punctuation trimmed. */
+/** Every `foresights ...` command in `text` (single-space separated tokens), sentence punctuation trimmed. */
 export function extractCommands(text: string): string[] {
   return [...new Set((text.match(COMMAND) ?? []).map(c => c.replace(/[.:]+$/, '')))];
 }

@@ -3,7 +3,7 @@
  *
  * 1. Protects: a page whose frontmatter named readable_by before the migration
  *    (no derived page_readers yet) is readable by no remote caller, the listed
- *    member included, and `gbrain repair access` restores exactly the listed
+ *    member included, and `foresights repair access` restores exactly the listed
  *    member's read without widening anything else.
  * 2. Fails when: an unrepaired row reads as open, the repair widens a read,
  *    touches a row whose value is already right, or bumps the page revision.

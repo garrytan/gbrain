@@ -2,7 +2,7 @@
  * v0.43 (#2095) — context_volunteer_events: the feedback-loop log behind
  * push-based context. One row per page the brain VOLUNTEERED, written
  * fire-and-forget by the volunteer_context op, the retrieval-reflex pointer
- * path (channel 'reflex'), and `gbrain watch` (channel 'watch').
+ * path (channel 'reflex'), and `foresights watch` (channel 'watch').
  *
  * "Used" is DERIVED, never written: a volunteered page counts as used when
  * pages.last_retrieved_at > volunteered_at (the existing bumpLastRetrievedAt
@@ -245,7 +245,7 @@ export async function awaitPendingVolunteerEventWrites(
   if (timer) clearTimeout(timer);
   if (outcome === 'timeout') {
     const unfinished = pendingVolunteerEventWrites.size;
-    // Drop the snapshot so a long-lived process (`gbrain watch`) doesn't
+    // Drop the snapshot so a long-lived process (`foresights watch`) doesn't
     // accumulate references to forever-pending work (last-retrieved C1).
     for (const p of snapshot) pendingVolunteerEventWrites.delete(p);
     return { unfinished };

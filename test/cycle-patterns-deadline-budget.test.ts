@@ -32,7 +32,7 @@ const CONFIG = {
 describe('clampSubagentBudgets', () => {
   const now = 1_000_000_000_000; // fixed epoch ms; the function takes nowMs explicitly
 
-  test('null deadline → config passthrough (direct `gbrain dream` back-compat)', () => {
+  test('null deadline → config passthrough (direct `foresights dream` back-compat)', () => {
     expect(clampSubagentBudgets(CONFIG, null, now)).toEqual({
       timeoutMs: CONFIG.subagentTimeoutMs,
       waitTimeoutMs: CONFIG.subagentWaitTimeoutMs,

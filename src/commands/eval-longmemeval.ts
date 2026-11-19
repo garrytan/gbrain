@@ -1,5 +1,5 @@
 /**
- * `gbrain eval longmemeval <dataset.jsonl>` — public LongMemEval benchmark
+ * `foresights eval longmemeval <dataset.jsonl>` — public LongMemEval benchmark
  * adapter and the repo's receipt producer for the strict retrieval metric.
  * Spins up an in-memory PGLite, imports each question's haystack, runs
  * hybridSearch, optionally generates an answer via the configured gateway
@@ -437,7 +437,7 @@ function parseArgs(args: string[]): ParsedArgs {
       const eq = a.indexOf('=');
       const name = eq >= 0 ? a.slice(0, eq) : a;
       const flag = byName.get(name);
-      if (!flag) throw new Error(`unknown flag ${name} for 'gbrain eval longmemeval' (see --help)`);
+      if (!flag) throw new Error(`unknown flag ${name} for 'foresights eval longmemeval' (see --help)`);
       if (flag.arg === undefined && eq >= 0) throw new Error(`${name} is a switch and takes no value (write ${name} on its own)`);
       let value = '';
       if (flag.arg !== undefined) {
@@ -460,9 +460,9 @@ function parseArgs(args: string[]): ParsedArgs {
 
 function printHelp(): void {
   const lines: string[] = [
-    `gbrain eval longmemeval <dataset.jsonl> [options]`,
+    `foresights eval longmemeval <dataset.jsonl> [options]`,
     ``,
-    `Run the LongMemEval benchmark against gbrain's hybrid retrieval. Spins up an`,
+    `Run the LongMemEval benchmark against foresights's hybrid retrieval. Spins up an`,
     `in-memory PGLite per benchmark run; the user's brain is never opened.`,
     ``,
     `Arguments:`,

@@ -4,7 +4,7 @@
  * own probe). Node's `execFileSync` writes the child's stderr straight
  * through to the parent's real stderr by default, so every one of these
  * *expected* misses used to dump git's raw `fatal: not a git repository
- * (or any of the parent directories): .git` line onto gbrain's own stderr —
+ * (or any of the parent directories): .git` line onto foresights's own stderr —
  * indistinguishable, to an operator grepping logs for `fatal:` as a crash
  * signature, from an actual crash. `discoverGitRoot` already handles the
  * failure (throws a friendlier `Error`, or `sync.ts`'s `#2964` auto-recovery

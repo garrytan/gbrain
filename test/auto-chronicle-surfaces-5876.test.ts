@@ -58,7 +58,7 @@ describe('doctor auto_chronicle', () => {
     expect(main.details).toMatchObject({ severity: 'info', readiness: 'missing', daily_limit: 200, ledger_available: true });
     const notice = byName(checks, 'auto_chronicle_default_on');
     expect(notice).toMatchObject({ status: 'ok', details: { code: 'auto_chronicle_default_on', severity: 'info', ask_user: true } });
-    expect(notice.message).toContain('gbrain config set auto_chronicle false');
+    expect(notice.message).toContain('foresights config set auto_chronicle false');
     expect(notice.message).toContain('$50.00 per day');
     for (const c of checks) expect(categorizeCheck(c.name)).toBe('brain');
   });
@@ -106,7 +106,7 @@ describe('doctor auto_chronicle', () => {
     expect(main.status).toBe('ok');
     expect(main.message).toContain('Last 24 h: 4 of 10 automatic extraction calls; largest writer oauth_client:client-a used 30% of the daily limit');
     expect(main.message).toContain('3 extracted, 0 failed, 1 skipped (history 1); $0.03 known spend + 1 unpriced call(s)');
-    expect(main.message).toContain('gbrain dream --phase chronicle');
+    expect(main.message).toContain('foresights dream --phase chronicle');
     expect(main.details).toMatchObject({ readiness: 'ok', auto_calls_24h: 4,
       spend_7d: { knownUsd: 0.03, unpricedCalls: 1, incompleteRecords: 0 } });
   });
@@ -136,7 +136,7 @@ describe('advisor', () => {
     expect(findings.some((f) => f.id === 'auto_chronicle_no_effect')).toBe(false);
     const f = findings.find((x) => x.id === 'auto_chronicle_default_on')!;
     expect(f).toMatchObject({ severity: 'info', ask_user: true, fix: { command_argv: ['gbrain', 'config', 'set', 'auto_chronicle', 'true'] } });
-    expect(f.detail).toContain('gbrain config set auto_chronicle false');
+    expect(f.detail).toContain('foresights config set auto_chronicle false');
   });
 
   test('swap-only upgrade: the stamped banner does not clear the finding; an explicit set does', async () => {

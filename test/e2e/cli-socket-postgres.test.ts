@@ -1,5 +1,5 @@
 /**
- * The opt-in warm CLI socket against a real Postgres brain: a `gbrain serve
+ * The opt-in warm CLI socket against a real Postgres brain: a `foresights serve
  * --cli-socket` answers CLI search/query/get/recall with the cold path's exact
  * bytes and exit code in far fewer database round trips, writes never use it,
  * a CLI bound to another config or another behavior env is refused by the
@@ -60,7 +60,7 @@ describe.skipIf(!DATABASE_URL)('warm CLI socket (postgres)', () => {
   /** The [AGENT] block a refused non-JSON call prints on stdout before the cold path's output. */
   function refusedNotice(part: string): string {
     const why = `[socket_identity_mismatch] The running serve's warm CLI socket refused this call because ${part} differs from the serve's (the value is never shown), so it ran on the slower cold path. Every call from this environment does until that part matches the serve's.`;
-    return `[AGENT]\nwhy: ${why}\nactor: agent\nnext: run: gbrain doctor --only cli_socket_refusals --json --brain host\n[/AGENT]\n`;
+    return `[AGENT]\nwhy: ${why}\nactor: agent\nnext: run: foresights doctor --only cli_socket_refusals --json --brain host\n[/AGENT]\n`;
   }
 
   function traceFile(): string { return join(home, `trace-${traceSeq++}.jsonl`); }
@@ -74,8 +74,8 @@ describe.skipIf(!DATABASE_URL)('warm CLI socket (postgres)', () => {
     serveLog = '';
     const child = spawn('bun', ['--no-env-file', 'run', 'src/cli.ts', 'serve', ...args], { cwd: process.cwd(), env: { ...env, ...extra }, stdio: ['pipe', 'ignore', 'pipe'] });
     child.stderr!.on('data', data => { serveLog += String(data); });
-    for (let i = 0; i < 240 && !serveLog.includes('Starting GBrain MCP server'); i++) await Bun.sleep(250);
-    expect(serveLog).toContain('Starting GBrain MCP server');
+    for (let i = 0; i < 240 && !serveLog.includes('Starting Foresights MCP server'); i++) await Bun.sleep(250);
+    expect(serveLog).toContain('Starting Foresights MCP server');
     return child;
   }
 
@@ -141,7 +141,7 @@ describe.skipIf(!DATABASE_URL)('warm CLI socket (postgres)', () => {
   test('without a socket, GBRAIN_DEBUG names the missing socket and the read runs cold', async () => {
     expect(existsSync(socketPath)).toBe(false);
     const run = await cli(READS.search!, { GBRAIN_DEBUG: '1' });
-    expect(run.stderr).toContain(`[cli-socket] cold path: no socket at ${socketPath}; start the serve with gbrain serve --cli-socket or set serve.cli_socket true`);
+    expect(run.stderr).toContain(`[cli-socket] cold path: no socket at ${socketPath}; start the serve with foresights serve --cli-socket or set serve.cli_socket true`);
     expect(run.stderr).not.toContain('[cli-socket] warm:');
     expect({ stdout: run.stdout, exitCode: run.exitCode }).toEqual({ stdout: cold.get('search')!.stdout, exitCode: cold.get('search')!.exitCode });
   }, 90_000);
@@ -268,7 +268,7 @@ describe.skipIf(!DATABASE_URL)('warm CLI socket (postgres)', () => {
     const run = await cli(['search', WORD, '--timeout=1ms']);
     expect(run.exitCode).toBe(124);
     expect(run.stdout).toContain('[AGENT]');
-    expect(run.stdout).toContain('[timeout] gbrain search did not finish within 1 ms on the warm CLI socket');
+    expect(run.stdout).toContain('[timeout] foresights search did not finish within 1 ms on the warm CLI socket');
     const after = await cli(READS.search!, { GBRAIN_DEBUG: '1' });
     expect(after.stderr).not.toContain('[cli-socket] cold path');
     expect(after.stdout).toBe(cold.get('search')!.stdout);

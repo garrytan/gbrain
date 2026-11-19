@@ -1,12 +1,12 @@
 /**
- * `gbrain sources writers <id>` (GBRA-504): lists or changes who may write a
+ * `foresights sources writers <id>` (GBRA-504): lists or changes who may write a
  * guest source (guest_sources.writers, which the trust trigger enforces).
  * Refuses a source that is not a guest source. Trusted local CLI only.
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { GUEST_WRITER_FORMAT, changeGuestWriters, isGuestWriter, readGuestSource } from '../core/guests/sources.ts';
 
-export const SOURCES_WRITERS_USAGE = `Usage: gbrain sources writers <id> [--add ${GUEST_WRITER_FORMAT}]... [--remove <writer>]... [--clear] [--json]
+export const SOURCES_WRITERS_USAGE = `Usage: foresights sources writers <id> [--add ${GUEST_WRITER_FORMAT}]... [--remove <writer>]... [--clear] [--json]
   Lists the writers of a guest source, or changes them. Only a listed writer can
   create or change pages there.`;
 
@@ -34,13 +34,13 @@ export async function runSourcesWriters(engine: BrainEngine, args: string[]): Pr
   }
   const [source] = await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE id = $1', [id]);
   if (!source) {
-    console.error(`Source "${id}" not found. List sources with: gbrain sources list`);
+    console.error(`Source "${id}" not found. List sources with: foresights sources list`);
     process.exit(4);
   }
   const changing = clear || add.length > 0 || remove.length > 0;
   const guest = changing ? await changeGuestWriters(engine, id, { clear, add, remove }) : await readGuestSource(engine, id);
   if (!guest) {
-    console.error(`Source "${id}" is not a guest source, so it has no writer list. Set one up with: gbrain guests init --source <id>`);
+    console.error(`Source "${id}" is not a guest source, so it has no writer list. Set one up with: foresights guests init --source <id>`);
     process.exit(2);
   }
   if (json) { console.log(JSON.stringify({ source: guest.source_id, writers: guest.writers, trust_ceiling: guest.trust_ceiling })); return; }

@@ -5,10 +5,10 @@
  * (class `facts`), one `choice` question per candidate (duplicate | supersede
  * | independent). Conflict is not a harmful-direction slot (v1 only writes
  * proposals). Its harmful-action reducer serves the review lane's acting call
- * sites: `gbrain decide qualify --slot conflict --call-site review_withdraw`
+ * sites: `foresights decide qualify --slot conflict --call-site review_withdraw`
  * bounds the precision of the withdrawals it would propose.
  *
- * `gbrain decide dataset --slot conflict --from facts-fixtures <path>` reads
+ * `foresights decide dataset --slot conflict --from facts-fixtures <path>` reads
  * labelled fact pairs, one JSON object per line:
  *   {"id":"p1","family":"alice-example-role","fact":"<new fact>","candidate":"<older fact>",
  *    "label":"duplicate"|"supersede"|"independent","slice"?:"<name>"}

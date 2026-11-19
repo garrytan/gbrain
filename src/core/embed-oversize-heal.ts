@@ -5,7 +5,7 @@ import { readProjectionSnapshot, installPageProjection } from './page-state/proj
  * model's per-input token limit.
  *
  * New imports respect `resolveMaxChunkTokens()` (#4530 + mxbai recipe cap),
- * but `gbrain embed --stale` re-embeds EXISTING `chunk_text` rows. Pages
+ * but `foresights embed --stale` re-embeds EXISTING `chunk_text` rows. Pages
  * chunked under the historical 2000-token default (or before a model-specific
  * `max_input_tokens` was declared) can still carry a single oversized row that
  * fails forever with "input length exceeds the context length" and makes the

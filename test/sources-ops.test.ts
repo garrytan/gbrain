@@ -674,7 +674,7 @@ describe('recloneIfMissing — refuses to delete an unowned working tree (#1881)
                    '{"remote_url":"https://github.com/example/repo"}'::jsonb)`,
         [ghost],
       );
-      await expect(recloneIfMissing(engine, 'ghost')).rejects.toThrow(/unmanaged_path|not a clone gbrain created/);
+      await expect(recloneIfMissing(engine, 'ghost')).rejects.toThrow(/unmanaged_path|not a clone (?:foresights|gbrain) created/);
     });
   });
 });
@@ -1093,8 +1093,8 @@ describe('addSource --path — #2707 git-repo validation', () => {
 // ---------------------------------------------------------------------------
 // addSource --path — #3903 attach path to an existing path-less source
 //
-// `gbrain sync --source X` on a no-local_path source prints
-// "Run: gbrain sources add X --path <path>", but addSource used to throw
+// `foresights sync --source X` on a no-local_path source prints
+// "Run: foresights sources add X --path <path>", but addSource used to throw
 // source_id_taken for ANY existing id — the only recovery it offered was
 // `sources remove --confirm-destructive`, which cascades page deletion.
 // Attaching a local_path to an existing row with local_path IS NULL is
@@ -1365,25 +1365,25 @@ describe('#7630 — a relative clone local_path never names the current director
       let threw: SourceOpError | null = null;
       try { await recloneIfMissing(engine, 'rel-reclone'); } catch (e) { threw = e as SourceOpError; }
       expect(threw?.code).toBe('unmanaged_path');
-      expect(threw?.message).toContain('gbrain sources set-path rel-reclone');
+      expect(threw?.message).toContain('foresights sources set-path rel-reclone');
       expect(existsSync(join(dir, 'KEEP_ME.md'))).toBe(true);
       expect(readdirSync(dir)).toEqual(['KEEP_ME.md']);
     });
   });
 
-  // #7646: the skipped cleanup is reported in the result (remote sources_remove sees only that) and the warning names gbrain's
+  // #7646: the skipped cleanup is reported in the result (remote sources_remove sees only that) and the warning names foresights's
   // own clone directory, which a later sources add <id> --url refuses while it holds files.
   test('removeSource reports clone_skipped_reason and names the clone directory it left', async () => {
     await insideRelativeClone('rel-orphan', { remote_url: 'https://github.com/example/repo', managed_clone: true }, async dir => {
       const cloneDir = defaultCloneDir('rel-orphan');
       mkdirSync(cloneDir, { recursive: true });
-      writeFileSync(join(cloneDir, 'README.md'), 'the clone gbrain made');
+      writeFileSync(join(cloneDir, 'README.md'), 'the clone foresights made');
       const errors: string[] = [];
       const spy = spyOn(console, 'error').mockImplementation((...a: unknown[]) => { errors.push(a.map(String).join(' ')); });
       let result: Awaited<ReturnType<typeof removeSource>>;
       try { result = await removeSource(engine, { id: 'rel-orphan', confirmDestructive: true }); } finally { spy.mockRestore(); }
       expect(result).toMatchObject({ clone_removed: false, clone_skipped_reason: 'relative_path' });
-      expect(errors.join('\n')).toContain(`gbrain's clone directory for this source is ${cloneDir}`);
+      expect(errors.join('\n')).toContain(`foresights's clone directory for this source is ${cloneDir}`);
       expect(existsSync(join(cloneDir, 'README.md'))).toBe(true);
       expect(existsSync(join(dir, 'KEEP_ME.md'))).toBe(true);
     });

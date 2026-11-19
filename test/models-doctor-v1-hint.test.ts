@@ -11,7 +11,7 @@ import type { AIGatewayConfig } from '../src/core/ai/types.ts';
 afterEach(() => resetGateway());
 
 /**
- * `gbrain models doctor` — the openai-compatible-proxy base-URL classifier.
+ * `foresights models doctor` — the openai-compatible-proxy base-URL classifier.
  *
  * On an auth (401/403) or model_not_found (404) probe failure, the doctor GETs
  * `/models` at the configured base URL and each canonical version off its root,

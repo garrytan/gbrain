@@ -1,5 +1,5 @@
 /**
- * `gbrain repair frontmatter` (#5988): finds every file and page a broken
+ * `foresights repair frontmatter` (#5988): finds every file and page a broken
  * frontmatter block left behind and fixes what it can without guessing.
  *
  * Scope: the Git-visible `.md`/`.mdx` files of each source plus every Git
@@ -84,7 +84,7 @@ export interface NeedsReview {
   source_id: string; path: string; code: string; reason?: string; key?: string; line?: number;
   /** The exact manual fix: the line to edit, or what to do with the file. */
   resolution: string;
-  /** `imported_before_hold`: a page exists from a gbrain that imported this file before it was held. */
+  /** `imported_before_hold`: a page exists from a foresights that imported this file before it was held. */
   flag?: string;
 }
 interface FileDiff { source_id: string; path: string; class: RepairClass; fixes: string[]; diff: string; selected: boolean }
@@ -177,18 +177,18 @@ function resolution(hold: Pick<ContentRefusal, 'code' | 'reason' | 'key' | 'line
   switch (hold.code) {
     // #6188: frontmatter repair never rewrites a fence; the fence repair does.
     case 'invalid_fence': return `${path}: ${fenceWhere(hold.fence)} is malformed (${hold.fence?.reason ?? hold.reason ?? 'invalid_fence'}), and frontmatter repair does not change fences. `
-      + `Preview its repair with gbrain repair fences --source ${sourceId} --only ${path} (read-only; it names the exact edit when gbrain will not repair it).`;
+      + `Preview its repair with foresights repair fences --source ${sourceId} --only ${path} (read-only; it names the exact edit when foresights will not repair it).`;
     case 'file_too_large': return `${path} is over the ${MAX_FILE_SIZE}-byte page limit, which no repair changes; every page under it imports and is searchable. Leave it out of the source with sync.exclude, or split it into files under the limit and commit.`;
     case 'frontmatter_slug_conflict': return `Remove the slug: line of ${path} (the path decides the slug), or move the file to the path its slug names.`;
     case 'content_rejected': return `Remove the junk the content-sanity gate matched in ${path}, or ask the user whether junk_disposition should stay reject.`;
-    case 'purged_content': return `${path} carries purged page content; delete or edit it and commit, or the owner clears the tombstone with gbrain pages unpurge.`;
+    case 'purged_content': return `${path} carries purged page content; delete or edit it and commit, or the owner clears the tombstone with foresights pages unpurge.`;
     case 'write_gate_rejected': return `The write gate refused ${path} as external instruction-like content; ask the user whether to edit it or whether write_gate.external_mode should stay reject.`;
     case 'rename_held': return `Re-run the preview with --include-ambiguous to re-bind the rename of ${path} to the current page, or restore the old file name.`;
     case 'tag_too_long': return `${path} has a frontmatter tag over the tag size limit, which no repair shortens; shorten it or split it into shorter tags and commit.`;
     case 'visibility_noncanonical': return `${path} asks for visibility: private in a spelling page privacy does not read, which no repair rewrites; write visibility: private on its own frontmatter line (lowercase) and commit.`;
-    case 'parser_regression': return `This is a gbrain bug: report the gbrain version, ${path} and the code; upgrade, or keep GBRAIN_SYNC_PARSER_REGRESSION=hold set for the process that syncs; never pin a release older than 0.60.305.0.`;
-    default: return hold.reason === 'ambiguous_protected_key' ? `Write ${where} on one line with one quoted value; gbrain never guesses who may read a page or where it came from.`
-      : hold.reason === 'ambiguous_identity_key' ? `Keep exactly one line for ${where}; gbrain never guesses which page a file is.`
+    case 'parser_regression': return `This is a foresights bug: report the foresights version, ${path} and the code; upgrade, or keep GBRAIN_SYNC_PARSER_REGRESSION=hold set for the process that syncs; never pin a release older than 0.60.305.0.`;
+    default: return hold.reason === 'ambiguous_protected_key' ? `Write ${where} on one line with one quoted value; foresights never guesses who may read a page or where it came from.`
+      : hold.reason === 'ambiguous_identity_key' ? `Keep exactly one line for ${where}; foresights never guesses which page a file is.`
       : `Fix ${where} by hand: one line per key, the whole value quoted on that line.`;
   }
 }
@@ -205,7 +205,7 @@ async function sourceRoots(engine: BrainEngine, scope: RepairScope, residuals: R
       catch (error) {
         if (!(error instanceof OperationError)) throw error;
         residuals.owner_elsewhere = (residuals.owner_elsewhere ?? 0) + 1;
-        warnings.push(`Source ${row.id}: this host is not its active canonical owner; run the preview on the owner host (gbrain sources writer status --source ${row.id}).`);
+        warnings.push(`Source ${row.id}: this host is not its active canonical owner; run the preview on the owner host (foresights sources writer status --source ${row.id}).`);
       }
       continue;
     }
@@ -272,7 +272,7 @@ function pageDamage(page: PageRow | undefined, content: string): string | null {
 }
 
 /**
- * #5966 (W14 P1.7): a file an earlier gbrain rendered for a slug its path
+ * #5966 (W14 P1.7): a file an earlier foresights rendered for a slug its path
  * cannot derive (a doubled hyphen the path collapses to one) carries no `slug:`
  * stamp, so every path-derived reader loses the page. The stamp is a SAFE
  * candidate only when the file is the page's recorded `source_path` (one page
@@ -304,16 +304,16 @@ async function analyzeFile(ctx: FileContext, path: string, hold: GitHoldRecord |
   const { src, includeAmbiguous } = ctx;
   const abs = join(src.root, path);
   const review = (code: string, text: string, extra: Partial<NeedsReview> = {}): Analysis => ({ review: { source_id: src.sourceId, path, code, resolution: text, ...extra } });
-  if (!existsSync(abs)) return hold ? review(hold.code, `${path} is gone; the next gbrain sync --source ${src.sourceId} --no-pull clears its hold.`) : null;
+  if (!existsSync(abs)) return hold ? review(hold.code, `${path} is gone; the next foresights sync --source ${src.sourceId} --no-pull clears its hold.`) : null;
   try { confinedRepairTarget(src.root, path, src.sourceId); } catch (error) {
     if (!(error instanceof OperationError)) throw error;
-    return hold ? review(hold.code, `${path} is a symlink, sits under one, or resolves outside the source root; gbrain never writes through one. Replace it with the real file, then preview again.`) : null;
+    return hold ? review(hold.code, `${path} is a symlink, sits under one, or resolves outside the source root; foresights never writes through one. Replace it with the real file, then preview again.`) : null;
   }
   const size = lstatSync(abs).size;
   if (size > MAX_FILE_SIZE) return review('file_too_large', resolution({ code: 'file_too_large' }, path, src.sourceId));
   const bytes = readFileSync(abs);
   const content = bytes.toString('utf8');
-  if (!Buffer.from(content, 'utf8').equals(bytes)) return review(hold?.code ?? 'invalid_frontmatter', `${path} is not valid UTF-8, so gbrain will not rewrite it; re-save it as UTF-8, then preview again.`);
+  if (!Buffer.from(content, 'utf8').equals(bytes)) return review(hold?.code ?? 'invalid_frontmatter', `${path} is not valid UTF-8, so foresights will not rewrite it; re-save it as UTF-8, then preview again.`);
   const sourcePath = hold?.source_path ?? path;
   const page = ctx.pages.get(sourcePath);
   if (page && 'ambiguous' in page) return review('origin_conflict', originConflictMessage(src.sourceId, sourcePath, page.ambiguous));
@@ -372,7 +372,7 @@ async function bindProposal(ctx: FileContext, path: string, hold: GitHoldRecord 
   const snapshot = await engine.readPageSnapshot(slug, { sourceId: src.sourceId, includeDeleted: true });
   // Wave B decision #1: the re-import compares the stored body whole, which a page stored in segments allows up to 24 MiB.
   if (proposal.reimport && snapshot && segmentedOverCeiling(snapshot.page)) {
-    const refusal = pageBodyOverCeilingError(snapshot.page, `gbrain repair frontmatter (re-import of ${path})`);
+    const refusal = pageBodyOverCeilingError(snapshot.page, `foresights repair frontmatter (re-import of ${path})`);
     return { source_id: src.sourceId, path, code: refusal.code, resolution: `${refusal.message} ${refusal.suggestion}` };
   }
   const base: PageSnapshot | null = proposal.rename_from ? await engine.readPageSnapshot(proposal.rename_from.slug, { sourceId: src.sourceId, includeDeleted: true }) : snapshot;
@@ -381,7 +381,7 @@ async function bindProposal(ctx: FileContext, path: string, hold: GitHoldRecord 
   if (publication.status === 'refused') return { source_id: src.sourceId, path, code: publication.refusal.code, ...(publication.refusal.reason ? { reason: publication.refusal.reason } : {}),
     ...(publication.refusal.line !== undefined ? { line: publication.refusal.line } : {}), resolution: resolution(publication.refusal, path, src.sourceId) };
   if (publication.status === 'overlay') return { source_id: src.sourceId, path, code: 'canonical_overlay',
-    resolution: `Importing the repaired ${path} would keep page data the file does not carry (tags added outside the file, a withdrawal or sanitized text), so it is not written. Edit the file by hand to carry them (gbrain get --source ${src.sourceId} -- ${slug} shows the page), then preview again.` };
+    resolution: `Importing the repaired ${path} would keep page data the file does not carry (tags added outside the file, a withdrawal or sanitized text), so it is not written. Edit the file by hand to carry them (foresights get --source ${src.sourceId} -- ${slug} shows the page), then preview again.` };
   const stored = proposal.reimport ? await materializedSnapshot(engine, snapshot) : null;
   if (stored && digest(canonicalRepairFields(stored.page, stored.tags)) === publication.digest) {
     return { source_id: src.sourceId, path, code: 'embedded_frontmatter', resolution: `The page of ${path} already matches its file; nothing to re-import.` };
@@ -451,7 +451,7 @@ export const frontmatterRepair: RepairHandler = {
     const preview = previewArgv(scope, selection, selection.include_ambiguous);
     if (opts?.apply) {
       if (!opts.expect) {
-        throw opError('invalid_params', 'gbrain repair frontmatter --apply writes only the set a preview printed.',
+        throw opError('invalid_params', 'foresights repair frontmatter --apply writes only the set a preview printed.',
           `Preview first: ${shellQuote(preview)} — show the user the per-file diffs, then run the apply command it prints (with --yes --expect <preview-hash>).`);
       }
       const approved = await loadApprovedSet<ApprovedSetItem>(engine, { command: 'frontmatter', hash: opts.expect, previewCommand: shellQuote(preview),
@@ -461,7 +461,7 @@ export const frontmatterRepair: RepairHandler = {
         const named = await busySyncPath(engine, sourceId, approved.items.filter(entry => entry.source_id === sourceId));
         if (named) throw opError('sync_in_progress', named.busy.unknown !== null ? `${repairBusyMessage(named.busy, sourceId, named.path)} The repair wrote nothing.`
           : `Source ${sourceId} has an unfinished managed sync or write that still names ${named.path}, so the repair wrote nothing.`,
-          `Finish that sync first: gbrain sync --source ${sourceId} --no-pull — then preview the repair again (${shellQuote(preview)}) and approve its new hash.`,
+          `Finish that sync first: foresights sync --source ${sourceId} --no-pull — then preview the repair again (${shellQuote(preview)}) and approve its new hash.`,
           { fix: { argv: ['gbrain', 'sync', '--source', sourceId, '--no-pull'], consent: [], actor: 'agent', requires_exclusive: false,
             why: `Finishes source ${sourceId}'s unfinished sync cursor, which would otherwise race the repair of a file it still names.` } });
       }

@@ -1,5 +1,5 @@
 /**
- * #7191: `find_pages` (gbrain find) and `get_stats` grouped mode on a real
+ * #7191: `find_pages` (foresights find) and `get_stats` grouped mode on a real
  * engine: pattern forms, visibility (deleted, archived source, private and
  * quarantined pages for remote callers), source scoping, type filters, the
  * limit/complete contract, --by grouping, --since and alias collapse.

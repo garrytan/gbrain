@@ -213,18 +213,18 @@ function askDateFix(identity: Identity, page: Page, tags: string[], revision: st
  * history (run locally; over MCP the user or host operator runs it); otherwise only a retained copy the user holds.
  */
 function recoveryFix(ctx: OperationContext, identity: Identity, asOf: string, why: ValidTimeWhy): Action {
-  const gitWhy = `gbrain does not hold every edition of ${identity.slug} around ${asOf} (${why}); the file's Git history does. Read the editions there and their valid_from lines.`;
+  const gitWhy = `foresights does not hold every edition of ${identity.slug} around ${asOf} (${why}); the file's Git history does. Read the editions there and their valid_from lines.`;
   if (identity.source_path && identity.world && identity.local_path) {
     if (ctx.remote === false && identity.local_path) {
       return { argv: ['git', '-C', identity.local_path, 'log', '--follow', '-p', '--', identity.source_path], consent: [], actor: 'agent', why: gitWhy, requires_exclusive: false };
     }
     return { ...hostFix(ctx, ['git', 'log', '--follow', '-p', '--', identity.source_path], gitWhy,
-      { user_message: `gbrain no longer holds every edition of ${identity.slug} around ${asOf}. In the Git checkout of source ${identity.source_id}, run the command shown and share the editions it prints.` }),
+      { user_message: `foresights no longer holds every edition of ${identity.slug} around ${asOf}. In the Git checkout of source ${identity.source_id}, run the command shown and share the editions it prints.` }),
       ...(ctx.remote === false ? {} : { actor: 'user' as const }) };
   }
   return { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
-    why: `gbrain does not hold every edition of ${identity.slug} around ${asOf} (${why}), and the page has no file whose history could fill the gap. Do not retry this read unchanged: the answer will not change.`,
-    user_message: `gbrain does not hold every edition of ${identity.slug} around ${asOf}. Do you have a retained copy or a backup of the page from then?` };
+    why: `foresights does not hold every edition of ${identity.slug} around ${asOf} (${why}), and the page has no file whose history could fill the gap. Do not retry this read unchanged: the answer will not change.`,
+    user_message: `foresights does not hold every edition of ${identity.slug} around ${asOf}. Do you have a retained copy or a backup of the page from then?` };
 }
 
 interface Edition { versionId: number | null; title: string; type: string; tags: string[]; frontmatter: Record<string, unknown>; compiled_truth: string; timeline: string; revision: string; segmented: boolean; generation?: number }

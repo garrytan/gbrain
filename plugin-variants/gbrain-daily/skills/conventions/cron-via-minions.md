@@ -17,7 +17,7 @@ start an isolated session that races the gateway for resources.
 {
   "schedule": "*/30 * * * *",
   "kind": "shell",
-  "cmd": "gbrain jobs submit ea-inbox-sweep --params '{\"slot\":\"$(date -u +%Y-%m-%dT%H:%M)\"}' --idempotency-key ea-inbox-sweep:$(date -u +%Y-%m-%dT%H:%M)"
+  "cmd": "foresights jobs submit ea-inbox-sweep --params '{\"slot\":\"$(date -u +%Y-%m-%dT%H:%M)\"}' --idempotency-key ea-inbox-sweep:$(date -u +%Y-%m-%dT%H:%M)"
 }
 
 # Good (PGLite): inline execution with --follow. PGLite's exclusive file
@@ -25,7 +25,7 @@ start an isolated session that races the gateway for resources.
 {
   "schedule": "*/30 * * * *",
   "kind": "shell",
-  "cmd": "gbrain jobs submit ea-inbox-sweep --params '{}' --follow"
+  "cmd": "foresights jobs submit ea-inbox-sweep --params '{}' --follow"
 }
 ```
 
@@ -33,7 +33,7 @@ start an isolated session that races the gateway for resources.
 
 - **Durability.** Gateway restart mid-task? Worker picks the job up on
   boot. No lost state.
-- **Observability.** `gbrain jobs list` + `gbrain jobs get <id>` show
+- **Observability.** `foresights jobs list` + `foresights jobs get <id>` show
   every run, its duration, its transcript, its token accounting.
 - **Steering.** Running jobs accept inbox messages. "Skip the
   newsletter thread, focus on the urgent DMs" lands as context on the
@@ -45,8 +45,8 @@ start an isolated session that races the gateway for resources.
 
 ## Who registers the handler?
 
-**GBrain only rewrites cron entries whose handler name matches a
-gbrain builtin** (`sync`, `embed`, `lint`, `import`, `extract`,
+**Foresights only rewrites cron entries whose handler name matches a
+foresights builtin** (`sync`, `embed`, `lint`, `import`, `extract`,
 `backlinks`, `autopilot-cycle`). For host-specific handlers
 (`ea-inbox-sweep`, `morning-briefing`, whatever your deployment runs
 on cron), the host platform ships the handler as code.
@@ -75,7 +75,7 @@ using `agentTurn`. Respect that. No auto-rewrite.
 
 ## Forward note
 
-A native scheduler loop inside `gbrain jobs work` (owning cron
+A native scheduler loop inside `foresights jobs work` (owning cron
 expressions directly, with no host-scheduler hand-off) has been on the
 roadmap since v0.11.1 but has not shipped. The host scheduler keeps
 firing on schedule; this convention only replaces the execution layer
@@ -89,5 +89,5 @@ firing on schedule; this convention only replaces the execution layer
   once they're in the queue.
 - `skills/cron-scheduler/SKILL.md` — scheduling guidance (quiet hours,
   staggering, idempotency). Now references this convention.
-- `skills/migrations/v0.11.0.md` — how GBrain migrates an existing host
+- `skills/migrations/v0.11.0.md` — how Foresights migrates an existing host
   cron manifest to this convention.

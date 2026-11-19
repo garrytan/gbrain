@@ -136,7 +136,7 @@ async function corpusSourceHoldProblem(engine: BrainEngine, fileCfg: ReturnType<
   if (held === 0) return null;
   return `${held} captured session file(s) from ${holds.sessions.length} session(s) are held because nothing records which source they belong to `
     + '(written before corpus files carried their source, or the session never resolved one); nothing extracts, synthesizes or mines them for atoms until they are mapped. '
-    + 'Ask the user which source they belong to, preview with gbrain sweep --assign-corpus <source>, then add --apply';
+    + 'Ask the user which source they belong to, preview with foresights sweep --assign-corpus <source>, then add --apply';
 }
 
 /**
@@ -156,8 +156,8 @@ async function openclawCompactionProblem(details: Record<string, unknown>): Prom
   const blind = (reasons.no_session ?? 0) + (reasons.transcript_runtime_unavailable ?? 0) + (reasons.transcript_read_failed ?? 0);
   if (skipped.length < runs.length || blind === 0) return null;
   const top = Object.entries(reasons).sort((a, b) => b[1] - a[1])[0]!;
-  return `OpenClaw ran ${runs.length} compaction(s) in ${COUNTER_WINDOW_DAYS}d and the gbrain checkpoint banked none (top skip: ${top[0]} x${top[1]}); `
-    + 'compaction-time facts are not being captured. Upgrade gbrain on the OpenClaw host and restart the gateway, then check again: gbrain doctor --json';
+  return `OpenClaw ran ${runs.length} compaction(s) in ${COUNTER_WINDOW_DAYS}d and the foresights checkpoint banked none (top skip: ${top[0]} x${top[1]}); `
+    + 'compaction-time facts are not being captured. Upgrade foresights on the OpenClaw host and restart the gateway, then check again: foresights doctor --json';
 }
 
 async function corpusBacklogProblem(engine: BrainEngine, fileCfg: ReturnType<typeof loadConfig>, details: Record<string, unknown>): Promise<string | null> {
@@ -175,11 +175,11 @@ async function corpusBacklogProblem(engine: BrainEngine, fileCfg: ReturnType<typ
   if (backlog.pastRetention === 0) return null;
   const kept = backlog.held ? ` (${backlog.held} held by a refusal that retrying cannot change are kept until extracted)` : '';
   return `${backlog.pastRetention} of ${backlog.pending} captured session file(s) are older than the ${days}-day corpus retention and were never extracted `
-    + `(oldest ${oldestDays}d); they are deleted at ${purgeDays}d${kept}. Extract them now: gbrain sweep --once --budget-ms 600000`;
+    + `(oldest ${oldestDays}d); they are deleted at ${purgeDays}d${kept}. Extract them now: foresights sweep --once --budget-ms 600000`;
 }
 
 /** #6785: the problem text a stopped corpus window carries; the check's fix keys on it. */
-const CORPUS_RETRY_COMMAND = 'gbrain sweep --retry-failed --apply';
+const CORPUS_RETRY_COMMAND = 'foresights sweep --retry-failed --apply';
 
 /**
  * #6785: corpus windows the sweep stopped paying for after
@@ -199,7 +199,7 @@ async function corpusFailureProblem(engine: BrainEngine, fileCfg: ReturnType<typ
   if (!stopped.length) return null;
   const [topCode] = [...codes.entries()].sort((a, b) => b[1] - a[1])[0]!;
   // #9279: a deterministic refusal stops its window after one paid attempt; retention keeps the file, and the first sweep on a new build retries it once.
-  const heldLine = held ? ` ${held} of them stopped at once on a refusal that retrying cannot change; retention keeps them and the first sweep after a gbrain upgrade retries each once.` : '';
+  const heldLine = held ? ` ${held} of them stopped at once on a refusal that retrying cannot change; retention keeps them and the first sweep after a foresights upgrade retries each once.` : '';
   return `${stopped.length} captured session file(s) stopped extracting after ${CORPUS_WINDOW_FAILURE_CAP} failed attempts at one window (top: ${topCode});${heldLine} `
     + `fix the cause, then retry them (paid): ${CORPUS_RETRY_COMMAND}`;
 }
@@ -207,7 +207,7 @@ async function corpusFailureProblem(engine: BrainEngine, fileCfg: ReturnType<typ
 const CORPUS_RETRY_FIX = {
   argv: ['gbrain', 'sweep', '--retry-failed', '--apply'], consent: ['paid'] as Effect[], actor: 'agent' as const, requires_exclusive: false,
   why: 'Clears the failure counts of corpus windows the sweep stopped retrying, so the next sweep pays to extract them again.',
-  user_message: 'Some captured session text stopped being turned into memory because extracting it kept failing (gbrain doctor names the error). Once the cause is fixed, retrying costs model calls. OK to retry them?',
+  user_message: 'Some captured session text stopped being turned into memory because extracting it kept failing (foresights doctor names the error). Once the cause is fixed, retrying costs model calls. OK to retry them?',
   verify: { argv: ['gbrain', 'doctor', '--only', MEMORY_WRITEBACK_CHECK_NAME, '--json'] },
 };
 
@@ -289,10 +289,10 @@ export async function buildMemoryWritebackCheck(engine: BrainEngine | null): Pro
       if (wb.read_error) {
         offProblems.push('the writeback config could not be read (fail-closed off THIS run — the real state is unknown; re-run with the database reachable)');
       } else if (!wb.mode_valid) {
-        offProblems.push(`memory.auto_writeback='${wb.raw_mode}' is unrecognized (expected off|salient|all) — resolved to off. Fix: gbrain config set memory.auto_writeback salient`);
+        offProblems.push(`memory.auto_writeback='${wb.raw_mode}' is unrecognized (expected off|salient|all) — resolved to off. Fix: foresights config set memory.auto_writeback salient`);
       }
       if (planeDrifted && !wb.read_error) {
-        offProblems.push(`DB plane resolves '${wb.raw_mode ?? 'unset'}' but the file mirror says '${fileWb.raw_mode ?? 'unset'}' — planes diverged (banked turns are held, not extracted, until re-synced). Fix: gbrain config set memory.auto_writeback <off|salient|all> (dual-writes both planes)`);
+        offProblems.push(`DB plane resolves '${wb.raw_mode ?? 'unset'}' but the file mirror says '${fileWb.raw_mode ?? 'unset'}' — planes diverged (banked turns are held, not extracted, until re-synced). Fix: foresights config set memory.auto_writeback <off|salient|all> (dual-writes both planes)`);
       }
       // Off-but-still-instructing (red-team review, this wave): an installed
       // block keeps directing every NEW session to save via `remember` (an
@@ -307,7 +307,7 @@ export async function buildMemoryWritebackCheck(engine: BrainEngine | null): Pro
       }
       if (lingering.length) {
         details.lingering_instruction_blocks = lingering;
-        offProblems.push(`ambient writeback is off but instruction blocks are still installed for ${lingering.join(', ')} — new sessions keep saving. Remove: gbrain bootstrap harness --yes (converges on off)`);
+        offProblems.push(`ambient writeback is off but instruction blocks are still installed for ${lingering.join(', ')} — new sessions keep saving. Remove: foresights bootstrap harness --yes (converges on off)`);
       }
       if (privateRemoteProblem) offProblems.push(privateRemoteProblem);
       const explicitOff = wb.raw_mode === 'off';
@@ -326,8 +326,8 @@ export async function buildMemoryWritebackCheck(engine: BrainEngine | null): Pro
         message: offProblems.length
           ? `ambient writeback off: ${offProblems.join('; ')}`
           : explicitOff
-            ? 'ambient writeback off (explicit): every capture lane, SessionEnd transcripts included, retires banked session text. Enforcement is incomplete until workers started on an older gbrain restart (details.restart_after_off). Enable: gbrain config set memory.auto_writeback salient'
-            : 'ambient writeback off (default): Stop-hook turn capture is off, but the compaction harvest and SessionEnd transcripts still extract (installing the harness hooks opted into them; stop them: gbrain config set memory.auto_writeback off). Enable: gbrain config set memory.auto_writeback salient',
+            ? 'ambient writeback off (explicit): every capture lane, SessionEnd transcripts included, retires banked session text. Enforcement is incomplete until workers started on an older foresights restart (details.restart_after_off). Enable: foresights config set memory.auto_writeback salient'
+            : 'ambient writeback off (default): Stop-hook turn capture is off, but the compaction harvest and SessionEnd transcripts still extract (installing the harness hooks opted into them; stop them: foresights config set memory.auto_writeback off). Enable: foresights config set memory.auto_writeback salient',
         details,
       };
     }
@@ -346,7 +346,7 @@ export async function buildMemoryWritebackCheck(engine: BrainEngine | null): Pro
     }
     if (privateRemoteProblem) problems.push(privateRemoteProblem);
     if (planeDrifted) {
-      problems.push(`file mirror says '${fileWb.raw_mode ?? 'unset'}' while the DB plane resolves '${wb.raw_mode}' — the engine-free Stop hook is acting on the wrong truth. Re-sync: gbrain config set memory.auto_writeback ${wb.raw_mode}`);
+      problems.push(`file mirror says '${fileWb.raw_mode ?? 'unset'}' while the DB plane resolves '${wb.raw_mode}' — the engine-free Stop hook is acting on the wrong truth. Re-sync: foresights config set memory.auto_writeback ${wb.raw_mode}`);
     }
 
     // Harness instruction blocks: receipt (installed) vs live probe (present)
@@ -371,23 +371,23 @@ export async function buildMemoryWritebackCheck(engine: BrainEngine | null): Pro
           // healthy-looking block on disk directing sessions at a rolled-back
           // endpoint, and only this receipt state knows.
           if (t.state === 'failed') {
-            problems.push(`${t.host} instruction block target previously FAILED (${t.error ?? 'unknown reason'}) — converge: gbrain bootstrap harness --yes (or --remove)`);
+            problems.push(`${t.host} instruction block target previously FAILED (${t.error ?? 'unknown reason'}) — converge: foresights bootstrap harness --yes (or --remove)`);
           }
           if (!existsSync(t.path)) {
             entry.probe = 'missing';
-            problems.push(`${t.host} instruction block missing at ${t.path} — after the user agrees, reinstall: gbrain bootstrap harness --yes`);
+            problems.push(`${t.host} instruction block missing at ${t.path} — after the user agrees, reinstall: foresights bootstrap harness --yes`);
           } else {
             const probe = probeAmbientBlock(readFileSync(t.path, 'utf8'));
             if (probe.state === 'absent' || probe.state === 'damaged') {
               entry.probe = probe.state === 'damaged' ? 'damaged' : 'missing';
-              problems.push(`${t.host} instruction block ${probe.state === 'damaged' ? 'has damaged markers' : 'missing'} at ${t.path} — after the user agrees, reinstall: gbrain bootstrap harness --yes`);
+              problems.push(`${t.host} instruction block ${probe.state === 'damaged' ? 'has damaged markers' : 'missing'} at ${t.path} — after the user agrees, reinstall: foresights bootstrap harness --yes`);
             } else if (probe.interior !== expectedBody) {
               entry.probe = 'drift';
               // The combo converges even when the file-plane posture stamp is
               // stale (e.g. facts.default_visibility flipped on ANOTHER
               // machine of a shared Postgres brain): the config set re-stamps
               // the mirror from DB truth, then the harness re-renders from it.
-              problems.push(`${t.host} instruction block is stale (config changed since install) — after the user agrees, refresh: gbrain config set memory.auto_writeback ${wb.mode} && gbrain bootstrap harness --yes`);
+              problems.push(`${t.host} instruction block is stale (config changed since install) — after the user agrees, refresh: foresights config set memory.auto_writeback ${wb.mode} && foresights bootstrap harness --yes`);
             } else {
               entry.probe = 'current';
             }
@@ -461,7 +461,7 @@ export async function buildMemoryWritebackCheck(engine: BrainEngine | null): Pro
         for (const e of failures) counts.set(e.reason ?? 'error', (counts.get(e.reason ?? 'error') ?? 0) + 1);
         const [topReason, topN] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]!;
         problems.push(`${failures.length}/${finished} writeback harvests failed in ${COUNTER_WINDOW_DAYS}d (top: ${topReason} x${topN}); `
-          + 'failed turns wait for the next serve sweep or corpus drain; clear them now with gbrain sweep --once --budget-ms 600000; '
+          + 'failed turns wait for the next serve sweep or corpus drain; clear them now with foresights sweep --once --budget-ms 600000; '
           + 'serve\'s stderr names the first failure of each reason');
       }
     } catch { /* heartbeat unreadable — counters stay absent */ }
@@ -474,13 +474,13 @@ export async function buildMemoryWritebackCheck(engine: BrainEngine | null): Pro
       message: (problems.length
         ? `ambient writeback ${wb.mode}: ${problems.join('; ')}`
         : `ambient writeback ${wb.mode} (ttl ${wb.transient_ttl}, template visibility ${wb.visibility}, audience ${audience.audience})`)
-        + (mutedDecisions ? '; first-run decisions are open but muted (`gbrain notices unmute first_run_decisions` shows them again)' : ''),
+        + (mutedDecisions ? '; first-run decisions are open but muted (`foresights notices unmute first_run_decisions` shows them again)' : ''),
       details,
-      ...(problems.some((p) => p.includes('gbrain bootstrap harness'))
+      ...(problems.some((p) => /(?:foresights|gbrain) bootstrap harness/.test(p))
         ? { fix: {
           argv: ['gbrain', 'bootstrap', 'harness', '--yes'], consent: ['persistent_install'] as Effect[], actor: 'agent' as const, requires_exclusive: false,
-          why: 'Rewrites the gbrain memory instruction block in each harness config from the current writeback settings.',
-          user_message: "gbrain's memory instructions in your agent app's config are missing or out of date. OK if I reinstall them?",
+          why: 'Rewrites the foresights memory instruction block in each harness config from the current writeback settings.',
+          user_message: "foresights's memory instructions in your agent app's config are missing or out of date. OK if I reinstall them?",
           verify: { argv: ['gbrain', 'doctor', '--only', MEMORY_WRITEBACK_CHECK_NAME, '--json'] } } }
         : failureProblem ? { fix: CORPUS_RETRY_FIX }
         : problems.length ? { fix_unavailable_reason: 'operator_judgement' as const } : {}),

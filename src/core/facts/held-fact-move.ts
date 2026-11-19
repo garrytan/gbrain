@@ -102,8 +102,8 @@ export async function refuseUnheldFact(engine: BrainEngine, sourceId: string, en
 
 /** holdingHome's `access_unreadable`: the folder rules covering the entity cannot be read now, so nothing was written; retry. */
 function accessStateUnreadable(sourceId: string, entity: string): OperationError {
-  return opError('access_policy_pending', `The folder access rules of source ${sourceId} that cover ${entity} cannot be read right now, so gbrain cannot tell which holding page keeps this fact to its entity's readers; nothing was written.`,
-    'Retry the same request shortly; if it keeps failing, the brain host checks the folder access tables (gbrain doctor names the check).',
+  return opError('access_policy_pending', `The folder access rules of source ${sourceId} that cover ${entity} cannot be read right now, so foresights cannot tell which holding page keeps this fact to its entity's readers; nothing was written.`,
+    'Retry the same request shortly; if it keeps failing, the brain host checks the folder access tables (foresights doctor names the check).',
     { docs: 'docs/guides/write-refusals.md#access_policy_pending', fix: { argv: ['gbrain', 'access', 'rule', 'status', '--source', sourceId, '--json'], consent: [], actor: 'provider',
       requires_exclusive: false, why: 'Shows the folder rules and anything pending; changes nothing. The write succeeds once the rules read again.' } });
 }
@@ -203,7 +203,7 @@ export function heldMoveIncomplete(held: Pick<HeldFactMoveOutcome, 'segmented_pa
   return [...held.segmented_pages.map(p => ({ code: 'HELD_VERSIONS_NOT_EDITED' as const,
     text: `${p.versions} saved version(s) of ${p.slug} are stored in segments and were not edited; readers of its saved versions can still read the moved rows in up to ${p.versions} of them.` })),
   ...held.pending.map(p => ({ code: 'HELD_FACT_PENDING' as const,
-    text: `the move of held facts off ${p.from} to ${p.slug} is accepted and still pending (request ${p.request_id}; gbrain write-request ${p.request_id} shows it), so until it commits they read as they did on ${p.from}.` }))];
+    text: `the move of held facts off ${p.from} to ${p.slug} is accepted and still pending (request ${p.request_id}; foresights write-request ${p.request_id} shows it), so until it commits they read as they did on ${p.from}.` }))];
 }
 
 /**

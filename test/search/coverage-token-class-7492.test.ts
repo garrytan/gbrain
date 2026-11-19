@@ -150,7 +150,7 @@ describe('the projection_pending notice is worded by class', () => {
     expect(n.code).toBe('degraded_recall');
     expect(n.why).not.toContain('being indexed');
     expect(n.why).toContain('will not be indexed on their own');
-    expect(n.why).toContain('gbrain projections drain');
+    expect(n.why).toContain('foresights projections drain');
     expect(n.why).toContain('paid re-import');
     expect(n.why).toContain('text_projection_readiness');
     expect(n.why).toContain('(3 of 40 pending page(s) could match this query)');

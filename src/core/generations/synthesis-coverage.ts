@@ -6,7 +6,7 @@
  *     (and the date the prompt puts in front of the topic), or the same lowercased title tokens;
  *   - coverage: every claim unit (each sentence outside a quote), every verbatim quote (a `>` block or a quoted span) and
  *     every citation (wikilink or link target) of the earlier page appears in some page of the new generation.
- * Anything else is unmatched: it stays live and `gbrain repair generations --kind synthesis --mode cleanup` lists it.
+ * Anything else is unmatched: it stays live and `foresights repair generations --kind synthesis --mode cleanup` lists it.
  */
 
 export interface SynthesisPage { slug: string; title: string; body: string }

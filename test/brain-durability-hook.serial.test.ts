@@ -63,7 +63,7 @@ async function waitForOrigin(bare: string, expectSha: string, ms = 30_000): Prom
 let root: string, work: string, bare: string;
 let oldHome: string | undefined, oldGbrainHome: string | undefined, oldPath: string | undefined;
 
-// #6530: the helper and hook delegate to `gbrain git commit-push`. Tests put a
+// #6530: the helper and hook delegate to `foresights git commit-push`. Tests put a
 // `gbrain` on PATH that runs this checkout's CLI under the current bun, so
 // harden captures it (resolveGbrainCliPath) exactly as it captures a real install.
 function installGbrainShim(dir: string): void {
@@ -592,7 +592,7 @@ describe('durability schedule (installCron:true) [D2/D12]', () => {
 
       // Invoke the scheduled command directly to PROVE it performs the pull.
       // Advance origin from a second clone, then run the exact DB-free pull the
-      // wrapper execs (`gbrain sources pull --path <repo> --branch main`).
+      // wrapper execs (`foresights sources pull --path <repo> --branch main`).
       const other = mkdtempSync(join(root, 'other-'));
       execFileSync('git', ['-c', 'protocol.file.allow=always', 'clone', '-q', bare, other], { stdio: 'ignore', env: process.env });
       git(other, 'config', 'user.email', 'o@o.o'); git(other, 'config', 'user.name', 'other');

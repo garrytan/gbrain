@@ -35,7 +35,7 @@ export function unknownManagedModeRefusal(rows: ReadonlyArray<unknown>, context:
   const shape = rows.length === 0 ? 'missing' : rows.length > 1 ? 'duplicated' : 'not a boolean';
   return opError('storage_error', `${context.subject ?? 'This operation'} requires exactly one known boolean persistence state.`,
     'Run the read-only probe in fix on the brain host and fix the persistence state it reports, then run the same command again; nothing was written.', {
-      why: `The persistence_brain singleton is ${shape} (${rows.length} row(s)), so gbrain cannot tell whether this brain is managed; `
+      why: `The persistence_brain singleton is ${shape} (${rows.length} row(s)), so foresights cannot tell whether this brain is managed; `
         + `${context.consequence ?? 'it refuses rather than route a managed brain through the unmanaged writer'}.`,
       detail: 'persistence_mode_unknown',
       fix: { ...readFix('Shows the brain\'s persistence mode and each source\'s writer binding without changing anything.',

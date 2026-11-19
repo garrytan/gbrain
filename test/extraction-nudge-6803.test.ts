@@ -2,7 +2,7 @@
  * #6803 part 6: the extraction nudge matches doctor and names the command that finishes.
  *
  * Protects: doctor's links_extraction_lag and the end-of-sync nudge share one predicate (attendance-blocked pages
- * excluded) and one threshold; the warn carries a default fix (plain \`gbrain extract --stale\`) plus both routes with an
+ * excluded) and one threshold; the warn carries a default fix (plain \`foresights extract --stale\`) plus both routes with an
  * estimate, and a fix expected to outlast an agent tool call renders tell_user_to_run; extract's routing flag is
  * --source-id, so rendered fixes never pin \`--source <id>\` (extract's fs|db mode selector); \`extract --stale --source <id>\`
  * refuses with invalid_params instead of running brain-wide; \`--source db\` is ambiguous when a source is named db;
@@ -86,8 +86,8 @@ for (const backend of testBackends()) {
       await seed(120);
       const check = await checkLinksExtractionLag(engine);
       expect(check.status).toBe('warn');
-      expect(check.message).toContain('gbrain extract --stale');
-      expect(check.message).toContain('gbrain extract --stale --catch-up');
+      expect(check.message).toContain('foresights extract --stale');
+      expect(check.message).toContain('foresights extract --stale --catch-up');
       const fix = renderAction(check.fix as Action, cli({ brain: 'teambrain' }));
       expect(fix.argv).toEqual(['gbrain', 'extract', '--stale', '--brain', 'teambrain']);
       expect(fix.verify?.argv).toEqual(['gbrain', 'extract', '--stale', '--dry-run', '--json', '--brain', 'teambrain']);
@@ -99,8 +99,8 @@ for (const backend of testBackends()) {
 
       const nudge = await captured(() => maybeExtractionNudge(engine, 'default'));
       expect(nudge.stderr).toContain('120 page(s) have un-extracted edges');
-      expect(nudge.stderr).toContain('gbrain extract --stale --source-id default');
-      expect(nudge.stderr).toContain('gbrain extract --stale --catch-up --source-id default');
+      expect(nudge.stderr).toContain('foresights extract --stale --source-id default');
+      expect(nudge.stderr).toContain('foresights extract --stale --catch-up --source-id default');
       expect(nudge.stderr).toContain('each run resumes where the last stopped');
       expect(nudge.stderr).not.toMatch(/--source default/);
     });

@@ -1,5 +1,5 @@
 /**
- * GST-2568: `file_drift` holds raised by gbrain's own frontmatter normalisation, and a repair preview that needs no winner.
+ * GST-2568: `file_drift` holds raised by foresights's own frontmatter normalisation, and a repair preview that needs no winner.
  *
  * A schema-pack retype (schema-pack/retype.ts) rewrites `pages.type` and stamps `legacy_type` (and optionally `subtype`)
  * in the database only, never in the file. A page with no import record whose file still names the old type then read as
@@ -63,7 +63,7 @@ const holds = async (engine: BrainEngine) => (await engine.executeRaw<{ r: { pat
 const row = async (engine: BrainEngine, slug: string) => (await engine.executeRaw<{ type: string; frontmatter: Record<string, unknown>; body: string; revision: string; deleted: boolean }>(
   "SELECT type, frontmatter, compiled_truth AS body, knowledge_revision::text AS revision, deleted_at IS NOT NULL AS deleted FROM pages WHERE source_id='default' AND slug=$1", [slug]))[0]!;
 
-/** Pages as an older gbrain left them: no import record, and a revision no import or write request produced. */
+/** Pages as an older foresights left them: no import record, and a revision no import or write request produced. */
 async function legacy(engine: BrainEngine, slugs?: string[]): Promise<void> {
   await coordinated(engine, "DELETE FROM op_checkpoints WHERE op='sync-import-provenance'");
   await coordinated(engine, `UPDATE pages SET knowledge_revision=gen_random_uuid(), revision_write_request_id=NULL WHERE source_id='default'${slugs ? ' AND slug=ANY($1::text[])' : ''}`, slugs ? [slugs] : []);
@@ -164,7 +164,7 @@ for (const backend of testBackends()) {
     rmSync(join(root, 'private/kept.md')); rmSync(join(root, 'excluded/kept.md'));
     writeFileSync(join(root, 'gbrain.yml'), 'storage:\n  db_only:\n    - private/\n');
     commitAll(root, 'move private pages to the database');
-    // The holds an older gbrain wrote for these pages before the folders were declared.
+    // The holds an older foresights wrote for these pages before the folders were declared.
     for (const slug of ['private/kept', 'excluded/kept']) await seedHold(engine, slug, { side: 'deleted', state: 'file_gone' });
     const result = await performManagedSync(engine, OPTS);
     expect([await holds(engine), result.holds_released]).toEqual([[], 2]);

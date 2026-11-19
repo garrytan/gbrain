@@ -158,9 +158,9 @@ const requestFix = (row: WriteRequest): Action => row.principal_kind === 'local_
   : ownerStatusFix(row.source_id);
 const confinementCheck = 'Inspect the canonical owner before resubmitting anything; how to repair the checkout is the user\'s decision.';
 function localEditRefusal(message: string, row: WriteRequest, skill: boolean, when: string): OperationError {
-  const review = skill ? `review the edited files of ${row.slug}` : `preview the difference with gbrain sources reconcile ${row.source_id} ${row.slug} --preview on the brain host and apply the resolved preview`;
+  const review = skill ? `review the edited files of ${row.slug}` : `preview the difference with foresights sources reconcile ${row.source_id} ${row.slug} --preview on the brain host and apply the resolved preview`;
   return opError('source_changed', message,
-    `A canonical file of ${row.slug} in source ${row.source_id} was edited outside gbrain ${when}, so it was not overwritten. Inspect request ${row.request_id} first; once it is final, ${review}, then submit the write again with a new request_id.`,
+    `A canonical file of ${row.slug} in source ${row.source_id} was edited outside foresights ${when}, so it was not overwritten. Inspect request ${row.request_id} first; once it is final, ${review}, then submit the write again with a new request_id.`,
     { fix: requestFix(row) });
 }
 function unexpectedRecoveryBytes(message: string, row: WriteRequest, when: string): OperationError {
@@ -176,7 +176,7 @@ function prepareParent(file: Pick<PageMutationFile, 'path' | 'root' | 'publishMo
   if (file.publishMode === undefined) mkdirSync(dirname(file.path), { recursive: true });
   else mkdirPrivate(dirname(file.path), file.root);
   if (!isWriteTargetContained(file.path, file.root)) throw opError('storage_error', 'Canonical parent path changed during publication.',
-    `A directory on the file's path was replaced (for example by a symlink) while gbrain created it, so the file was not written. ${confinementCheck}`,
+    `A directory on the file's path was replaced (for example by a symlink) while foresights created it, so the file was not written. ${confinementCheck}`,
     { fix: ownerStatusFix() });
 }
 function publishFile(file: PageMutationFile, stagingPath?: string, afterStagingFlush?: () => void, mode?: number | null): void {
@@ -199,7 +199,7 @@ function publishStagedContent(path: string, content: StreamedFileContent, stagin
   validateAtomicStagingPath(path, stagingPath);
   const staged = lstatSync(stagingPath);
   if (!staged.isFile() || staged.nlink !== 1 || staged.size !== content.bytes) throw opError('unexpected_staging_bytes', 'The staged canonical file changed before publication.',
-    'A recovery staging file changed outside gbrain. Inspect the pending recovery in writer status and tell the user; never delete or edit staging files by hand.', { fix: ownerStatusFix() });
+    'A recovery staging file changed outside foresights. Inspect the pending recovery in writer status and tell the user; never delete or edit staging files by hand.', { fix: ownerStatusFix() });
   afterStagingFlush?.();
   renameSync(stagingPath, path);
 }
@@ -267,7 +267,7 @@ const chargedSharedReads = new WeakSet<object>();
  */
 function writeInterruptedFailure(row: WriteRequest, interruption: TransientInterruption, attempts: number, limit: number): PublicationFailure {
   const fix = preparationKind(row) === 'sync'
-    ? `The file is held and the rest of the source syncs; reduce the load, then gbrain sources retry-held ${row.source_id} and the same gbrain sync with the same options.`
+    ? `The file is held and the rest of the source syncs; reduce the load, then foresights sources retry-held ${row.source_id} and the same foresights sync with the same options.`
     : 'Submit the write again with a new request_id once the database is less loaded.';
   const what = interruption.cause === 'publication_ceiling'
     ? `Publication of this write ran past persistence.publication_ceiling_ms and was cancelled ${attempts} time(s)${interruption.sqlstate ? ` (SQLSTATE ${interruption.sqlstate})` : ''}`
@@ -276,7 +276,7 @@ function writeInterruptedFailure(row: WriteRequest, interruption: TransientInter
       : `The database ended this write's statements ${attempts} time(s) (SQLSTATE ${interruption.sqlstate}, a statement timeout or cancel)`;
   return { code: 'write_interrupted',
     message: `${what}; it was retried with backoff ${limit} time(s), the limit of ${TRANSIENT_RETRIES_KEY} (${limit}), and is not prepared again. `
-      + `Run gbrain sources writer status --source ${row.source_id} --json to see the load on the owner. ${fix}`,
+      + `Run foresights sources writer status --source ${row.source_id} --json to see the load on the owner. ${fix}`,
     detail: { origin: 'database_interruption', cause: interruption.cause, sqlstate: interruption.sqlstate, attempts, limit, limit_key: TRANSIENT_RETRIES_KEY } as unknown as PublicationFailureDetail };
 }
 const TRANSIENT_RETRIES_KEY = PREPARATION_BUDGET_KEYS.transientRetries;
@@ -341,8 +341,8 @@ export function preparationStalledFailure(row: WriteRequest, info: PreparationSt
   const kind = preparationKind(row);
   const where = info.step ? `, last at step ${info.step} (waiting on ${info.waiting_on})` : '';
   const fix = kind === 'sync'
-    ? `Run gbrain sources writer status --source ${row.source_id} --json, then gbrain sources retry-held ${row.source_id}, then the same gbrain sync with the same options.`
-    : `Run gbrain sources writer status --source ${row.source_id} --json, fix or report what the step was waiting on, then submit the write again with a new request_id.`;
+    ? `Run foresights sources writer status --source ${row.source_id} --json, then foresights sources retry-held ${row.source_id}, then the same foresights sync with the same options.`
+    : `Run foresights sources writer status --source ${row.source_id} --json, fix or report what the step was waiting on, then submit the write again with a new request_id.`;
   return { code: 'preparation_stalled',
     message: `Preparation of this write was cut off ${info.attempts} time(s) at its deadline${where}, the limit of persistence.max_preparation_attempts (${info.limit}); it is not claimed again. ${fix}`,
     detail: { origin: 'preparation_stall', step: info.step, waiting_on: info.waiting_on, attempts: info.attempts, limit: info.limit } as unknown as PublicationFailureDetail };
@@ -592,7 +592,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       }
       if (built.length > 1 && (built.length > PAGES_RECOVERY_MAX_FILES || built.some(({ record }) => record.root !== built[0]!.record.root))) {
         throw opError('storage_error', 'A multi-page publication must stay under one canonical root.',
-          `Request ${row.request_id} in source ${row.source_id} writes ${built.length} page files that do not share one canonical root (or more than ${PAGES_RECOVERY_MAX_FILES}), so nothing was written. Inspect the request; if it repeats, run gbrain doctor --json and report it to the user.`,
+          `Request ${row.request_id} in source ${row.source_id} writes ${built.length} page files that do not share one canonical root (or more than ${PAGES_RECOVERY_MAX_FILES}), so nothing was written. Inspect the request; if it repeats, run foresights doctor --json and report it to the user.`,
           { fix: requestFix(row) });
       }
       // One file keeps its version 1 record; several page files share one version 3 record (model.ts PagesRecoveryRecord).
@@ -816,7 +816,7 @@ export async function recoverPublication(engine: BrainEngine, id: string, hostId
       try {
         if (!isTerminal(current)) for (const record of records) {
           const actual = isBundleRecovery(current.recovery) ? bundleFileHash(record) : fileHash(record.path);
-          if (actual !== record.beforeHash && actual !== record.afterHash) throw unexpectedRecoveryBytes('Canonical recovery bytes changed outside publication.', current, 'was edited outside gbrain and');
+          if (actual !== record.beforeHash && actual !== record.afterHash) throw unexpectedRecoveryBytes('Canonical recovery bytes changed outside publication.', current, 'was edited outside foresights and');
         }
         // A terminal outcome's prior-file copy is dropped unread when its canonical file still holds the prior bytes.
         await withFilesystemPublication([...new Set(records.map(record => record.root))], async () => {

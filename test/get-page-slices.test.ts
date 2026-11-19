@@ -1,5 +1,5 @@
 /**
- * #7180: get_page section and grep (gbrain get --section / --grep).
+ * #7180: get_page section and grep (foresights get --section / --grep).
  *
  * 1. Protects: a section is the first heading whose text equals the request
  *    (case-insensitive) down to the next heading of the same or higher level,
@@ -363,7 +363,7 @@ for (const kind of testBackends()) {
   });
 }
 
-describe('gbrain get --section / --grep', () => {
+describe('foresights get --section / --grep', () => {
   test('the flags parse to get_page params', () => {
     expect(parseOpArgs(getPage, ['notes/a', '--section', 'Next Steps'])).toEqual({ slug: 'notes/a', section: 'Next Steps' });
     expect(parseOpArgs(getPage, ['notes/a', '--grep', 'widget', '--context', '2'])).toEqual({ slug: 'notes/a', grep: 'widget', context: 2 });

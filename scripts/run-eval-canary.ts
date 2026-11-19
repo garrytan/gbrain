@@ -3,7 +3,7 @@ import { installPageProjection, readProjectionSnapshot } from '../src/core/page-
  * scripts/run-eval-canary.ts — hermetic CLI retrieval-quality canary.
  *
  * Boots a throwaway PGLite brain under a temp GBRAIN_HOME, seeds the qrels
- * fixture corpus, then spawns the REAL gbrain CLI to run the qrels
+ * fixture corpus, then spawns the REAL foresights CLI to run the qrels
  * correctness gate with the deterministic embedder (basis-vector query
  * embeddings). No API keys, no network, no writes to the personal brain,
  * no writes to tracked files in check mode.
@@ -158,7 +158,7 @@ async function main(): Promise<number> {
   const recordMode = process.argv.includes('--record');
   const startedAt = Date.now();
   const tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-eval-canary-'));
-  // Keep the RUNNER's own gbrain home inside the sandbox too, so nothing in
+  // Keep the RUNNER's own foresights home inside the sandbox too, so nothing in
   // the seeding path can read or write the operator's real ~/.gbrain.
   process.env.GBRAIN_HOME = tmpHome;
   try {

@@ -153,6 +153,6 @@ describe('IPC handlers read context.hot_memory.session_only', () => {
   });
 });
 
-test('the key is registered, so gbrain config set accepts it', () => {
+test('the key is registered, so foresights config set accepts it', () => {
   expect(KNOWN_CONFIG_KEYS).toContain(KEY);
 });

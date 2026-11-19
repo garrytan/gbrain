@@ -57,7 +57,7 @@ describe('#5012 printed result', () => {
     expect(out).toContain('[connector_item_failures]');
     expect(out).toContain('2 connector item(s) failed');
     expect(out).toContain('15 page(s) written');
-    expect(out).toContain("gbrain sync --source <id>");
+    expect(out).toContain("foresights sync --source <id>");
     expect(out).not.toContain('reason=timeout');
   });
 

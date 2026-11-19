@@ -79,7 +79,7 @@ test('disk PGLite CLI atom retry requires a safely stopped owner and persists ac
     const refused = await run(args, env, home, 45_000);
     expect(refused.timedOut).toBe(false);
     expect(refused.exitCode).not.toBe(0);
-    expect(refused.stderr).toMatch(/lock|already open|another gbrain/i);
+    expect(refused.stderr).toMatch(/lock|already open|another (?:foresights|gbrain)/i);
     expect(owner?.exitCode).toBeNull();
     expect(providerCalls).toBe(0);
     await stopOwner();

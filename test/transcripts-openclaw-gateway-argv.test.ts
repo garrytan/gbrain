@@ -161,7 +161,7 @@ describe('openclaw gateway call child environment', () => {
     expect(env.OPENCLAW_GATEWAY_TOKEN).toBe(syntheticToken('0004'));
   }, 30_000);
 
-  test('every OPENCLAW_* name and the gbrain Gateway names are protected from a working-folder .env', () => {
+  test('every OPENCLAW_* name and the foresights Gateway names are protected from a working-folder .env', () => {
     for (const k of ['OPENCLAW_GATEWAY_URL', 'OPENCLAW_GATEWAY_TOKEN', 'OPENCLAW_GATEWAY_PASSWORD', 'OPENCLAW_STATE_DIR', 'OPENCLAW_CONFIG_PATH', 'OPENCLAW_HOME', 'OPENCLAW_PROFILE', 'GBRAIN_OPENCLAW_GATEWAY_URL', 'GBRAIN_OPENCLAW_GATEWAY_TOKEN']) {
       expect([k, isCwdDotenvProtectedKey(k)]).toEqual([k, true]);
     }

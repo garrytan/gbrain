@@ -2,7 +2,7 @@
  * v0.13.1 migration (#7814): the retired `validate: false` grandfather.
  *
  * An upgrade runs v0.13.1 on any brain whose ledger never recorded it (a brain
- * `gbrain init` created before fresh-install stamps, or one opened from a new
+ * `foresights init` created before fresh-install stamps, or one opened from a new
  * GBRAIN_HOME). It used to stamp `validate: false` into every page and move
  * every content_hash. It must now record completion and change no page.
  * The whole upgrade runner is covered by test/upgrade-preserves-pages-7814.slow.test.ts.

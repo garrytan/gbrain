@@ -11,7 +11,7 @@
  * 2. Fails when: a derived page opens once the origin row goes, a file changes beyond its label line, or the remote
  *    stamp is not a maintenance write tied to its delete.
  * 3. Real seams: a claimed worktree with Git and managed persistence (helpers/managed-brain.ts), managed sync, the
- *    `gbrain pages purge-deleted` command entry, MCP dispatch with a minted owner token; PGLite always, Postgres with DATABASE_URL.
+ *    `foresights pages purge-deleted` command entry, MCP dispatch with a minted owner token; PGLite always, Postgres with DATABASE_URL.
  */
 import { describe, expect, spyOn, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
@@ -103,7 +103,7 @@ async function cli(engine: BrainEngine, args: string[]): Promise<void> {
   try { await withEnv({ GBRAIN_CONSENT: undefined }, () => runPages(engine, args)); }
   finally { log.mockRestore(); err.mockRestore(); }
 }
-/** `gbrain pages <args>` as the CLI runs it: its JSON output and exit verdict. */
+/** `foresights pages <args>` as the CLI runs it: its JSON output and exit verdict. */
 async function cliJson(engine: BrainEngine, args: string[]): Promise<{ out: Record<string, any> | null; exit: number }> {
   _resetCliExitVerdictForTests();
   const prior = process.exitCode;
@@ -261,7 +261,7 @@ for (const backend of testBackends()) {
       let held: Record<string, any>;
       try { held = await purge(randomUUID()); } finally { failing.mockRestore(); }
       expect(held.purge_held?.code).toBe('derived_origin_parked');
-      expect(held.purge_held.message).toContain(`gbrain delete ${origin} --purge --source-id default`);
+      expect(held.purge_held.message).toContain(`foresights delete ${origin} --purge --source-id default`);
       expect(await tombstones()).toEqual([]);
       expect((await page(engine, origin))?.deleted_at).not.toBeNull();
       const second = randomUUID();
@@ -293,7 +293,7 @@ for (const backend of testBackends()) {
       await expectCarried(engine, root, k, files);
     }, { setup, databaseUrl }), 300_000);
 
-    /** An explicit purge of `k`'s origin held by a forced label failure, as the owner's `gbrain delete --purge` is when a derived page cannot be labelled. */
+    /** An explicit purge of `k`'s origin held by a forced label failure, as the owner's `foresights delete --purge` is when a derived page cannot be labelled. */
     async function heldPurge(engine: BrainEngine, ctx: OperationContext, k: string): Promise<void> {
       const failing = spyOn(preparedMaintenance, 'publishMaintenancePages').mockImplementation(async () => { throw new Error('forced label failure'); });
       let held: Record<string, any>;

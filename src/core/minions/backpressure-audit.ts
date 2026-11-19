@@ -15,7 +15,7 @@
  * File: `~/.gbrain/audit/backpressure-YYYY-Www.jsonl` (override dir via
  * `GBRAIN_AUDIT_DIR` for container/sandbox deployments where `$HOME` is read-only).
  *
- * `gbrain jobs stats` surfaces a 24h coalesce summary from this file (the
+ * `foresights jobs stats` surfaces a 24h coalesce summary from this file (the
  * Backpressure line); deeper per-decision history stays a follow-up. The audit
  * trail is for operators debugging live queues, not for compliance — a
  * disk-full attacker can silently disable it.

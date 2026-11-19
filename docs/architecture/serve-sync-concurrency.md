@@ -1,6 +1,6 @@
-# `gbrain serve` ↔ `gbrain sync` concurrency (PGLite)
+# `foresights serve` ↔ `foresights sync` concurrency (PGLite)
 
-**Short version: on a PGLite brain, `gbrain sync` runs even while `gbrain
+**Short version: on a PGLite brain, `foresights sync` runs even while `foresights
 serve` is live — the sync is delegated to the serve process, which already
 owns the single-writer connection.**
 
@@ -62,9 +62,9 @@ acquire that lock and reconcile durable requests and recovery state before
 publishing. Legacy `.gbrain-lock` metadata remains for compatibility and
 diagnostics; deleting it cannot authorize takeover.
 
-Repeat the same `gbrain sync` options to resume the managed cursor. Unexpected
+Repeat the same `foresights sync` options to resume the managed cursor. Unexpected
 file bytes keep the affected root blocked for repair, while unrelated roots
-can continue. Use `gbrain sources writer status --probe --json` to inspect the
+can continue. Use `foresights sources writer status --probe --json` to inspect the
 owner and recovery state before attempting administrative repair.
 
 ## Diagnosing a sync hang
@@ -73,7 +73,7 @@ If a sync wedges (no progress, high CPU), re-run with the per-file begin trace
 so the stalling file is named:
 
 ```bash
-GBRAIN_SYNC_TRACE=1 gbrain sync --no-pull --no-embed --yes
+GBRAIN_SYNC_TRACE=1 foresights sync --no-pull --no-embed --yes
 ```
 
 The last `[sync] begin import: <path>` line with no following completion is the
@@ -85,10 +85,10 @@ catastrophic-backtracking `inference.regex`), complete the sync with the pack
 disabled and re-run extraction afterward:
 
 ```bash
-gbrain sync --no-schema-pack --no-pull --no-embed --yes
+foresights sync --no-schema-pack --no-pull --no-embed --yes
 ```
 
-`gbrain schema lint` flags the classic nested-quantifier ReDoS shapes
+`foresights schema lint` flags the classic nested-quantifier ReDoS shapes
 (`(a+)+`, `(a*)*`, …) in pack regexes as warnings.
 
 The manual diagnosis above has an automated cousin: the progress-aware stall
@@ -96,7 +96,7 @@ watchdog. If the import drain makes no forward progress for
 `GBRAIN_SYNC_STALL_ABORT_SECONDS` (default 900; keyed on file-import
 progress, not the lock heartbeat), the run aborts with
 `reason: 'stall_timeout'` and releases the per-source lock so the next
-`gbrain sync` resumes from the checkpoint. It fires BETWEEN files — a hang
+`foresights sync` resumes from the checkpoint. It fires BETWEEN files — a hang
 inside one file's import runs until the wall-clock hard deadline. `0`
 disables it. The full sync-resumability knob table lives in CLAUDE.md
 ("Sync resumability + lock tuning").

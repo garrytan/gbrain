@@ -2,9 +2,9 @@
  * #5216 follow-up journey: the command doctor `revision_backfill` prints
  * actually finishes the page revision backfill.
  *
- * Protects: on a brain created by `gbrain init` (managed) whose pages still
+ * Protects: on a brain created by `foresights init` (managed) whose pages still
  * wait for their revision with the schema version current, doctor warns with
- * `gbrain apply-migrations --force-schema`; `gbrain apply-migrations --yes`
+ * `foresights apply-migrations --force-schema`; `foresights apply-migrations --yes`
  * alone leaves the backfill where it was; the printed command completes it
  * and doctor clears.
  * Fails when: doctor has no revision_backfill check, prints a command that
@@ -31,7 +31,7 @@ test('journey: on a CLI-created brain, the command doctor prints finishes the ba
   try {
     const init = await runCli(['init', '--pglite', '--no-embedding'], { home, timeoutMs: 120_000 });
     expect(init.exitCode).toBe(0);
-    // The setup migrations gbrain init leaves pending re-run the schema pass; finish them first, as an upgraded brain has.
+    // The setup migrations foresights init leaves pending re-run the schema pass; finish them first, as an upgraded brain has.
     expect((await runCli(['apply-migrations', '--yes', '--no-autopilot-install'], { home, timeoutMs: 120_000 })).exitCode).toBe(0);
     await withEnv({ GBRAIN_HOME: home }, async () => {
       const engine = new PGLiteEngine();
@@ -56,7 +56,7 @@ test('journey: on a CLI-created brain, the command doctor prints finishes the ba
     };
     const before = await doctor();
     expect(before.status).toBe('warn');
-    expect((before.fix as { command?: string }).command).toBe('gbrain apply-migrations --force-schema');
+    expect((before.fix as { command?: string }).command).toBe('foresights apply-migrations --force-schema');
 
     const plain = await runCli(['apply-migrations', '--yes', '--no-autopilot-install'], { home, timeoutMs: 120_000 });
     expect(plain.exitCode).toBe(0);

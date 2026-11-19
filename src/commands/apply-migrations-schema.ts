@@ -1,5 +1,5 @@
 /**
- * #6089: the schema-version half of the `gbrain apply-migrations` exit
+ * #6089: the schema-version half of the `foresights apply-migrations` exit
  * contract. The runner never exits 0 while it leaves the schema behind.
  *
  * - One helper connects the configured brain and reads `config.version`; the
@@ -143,9 +143,9 @@ export async function checkSchemaAfterOrchestrators(opts: {
     return { reason: authorized ? 'still_behind' : 'not_applied', current, latest, pending, ...(timeout ? { timeout } : {}) };
   } catch (err) {
     if (err instanceof PgliteBusyError) throw err;
-    // A PGLite datastore without the config table was never initialized: `gbrain init` creates a brain, not this run.
+    // A PGLite datastore without the config table was never initialized: `foresights init` creates a brain, not this run.
     if (pglite && /relation "config" does not exist/i.test(err instanceof Error ? err.message : String(err))) {
-      console.error('The PGLite datastore has no gbrain schema yet, so there is no schema version to check; `gbrain init` creates it.');
+      console.error('The PGLite datastore has no foresights schema yet, so there is no schema version to check; `foresights init` creates it.');
       return null;
     }
     return { reason: 'schema_unreadable', current: null, ...(await pendingAbove(lastRead)), read_error: await redactDbError(err) };
@@ -157,8 +157,8 @@ function reportFix(why: string): Action {
   return { consent: [], actor: 'agent', requires_exclusive: false, why, verify: { argv: ['gbrain', 'doctor', '--json'] } };
 }
 
-const REPORT_SUGGESTION = 'Run `gbrain doctor --json` and tell the user what it reports, with the schema error from stderr. '
-  + 'If the gbrain install itself is broken, the deterministic clone install in README.md recovers it (issue #218).';
+const REPORT_SUGGESTION = 'Run `foresights doctor --json` and tell the user what it reports, with the schema error from stderr. '
+  + 'If the foresights install itself is broken, the deterministic clone install in README.md recovers it (issue #218).';
 
 /** `migrations_pending` for a run that leaves the schema behind. `rerunWithYes` is the fix when the run was not authorized. */
 export function schemaPendingError(p: SchemaPending, rerunWithYes: Action): OperationError {
@@ -166,7 +166,7 @@ export function schemaPendingError(p: SchemaPending, rerunWithYes: Action): Oper
   const where = `schema v${p.current}, latest v${p.latest}; pending: ${ids}`;
   if (p.reason === 'not_applied') {
     return opError('migrations_pending', `Schema migrations are behind (${where}); this run did not apply them.`,
-      'Apply them with `gbrain apply-migrations --yes` (or `--force-schema`).',
+      'Apply them with `foresights apply-migrations --yes` (or `--force-schema`).',
       { reason: p.reason, fix: rerunWithYes });
   }
   if (p.reason === 'still_behind' && p.timeout) {
@@ -192,5 +192,5 @@ export function schemaPendingError(p: SchemaPending, rerunWithYes: Action): Oper
 export function reportDatabaseUnreachable(probe: { reason: string; access?: string }): void {
   if (shouldEmitDbAccessMarker()) process.stderr.write(`${DB_ACCESS_MARKER_PREFIX} ${probe.access ?? 'unknown'}\n`);
   console.error(`Database unreachable (${probe.reason}): the schema version was not checked; orchestrators run their filesystem-only phases. `
-    + 'Diagnose it with `gbrain db-repair`; pass --require-db to fail instead.');
+    + 'Diagnose it with `foresights db-repair`; pass --require-db to fail instead.');
 }

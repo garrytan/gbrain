@@ -19,8 +19,8 @@ export async function purgedPageFactsCheck(engine: BrainEngine, sourceIds?: stri
     return { name: 'purged_page_facts', status: 'warn', details,
       message: `${total}${counted.capped ? '+' : ''} fact(s) extracted from pages that no longer exist are still active, left by purges that ran before #8859 was fixed `
         + `(${counted.evidenced} of purged pages, ${counted.ambiguous} of pages gone with no purge record); recall still returns them. `
-        + 'Preview the retirement on the brain host: gbrain repair purged-page-facts — then run the apply command it prints after the user agrees '
-        + '(rows with no purge record only with gbrain repair purged-page-facts --include-ambiguous).' };
+        + 'Preview the retirement on the brain host: foresights repair purged-page-facts — then run the apply command it prints after the user agrees '
+        + '(rows with no purge record only with foresights repair purged-page-facts --include-ambiguous).' };
   } catch (error) {
     return { name: 'purged_page_facts', status: 'warn',
       message: `Facts left by purged pages could not be inspected: ${error instanceof Error ? error.message : String(error)}. Health is unknown.`,

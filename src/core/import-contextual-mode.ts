@@ -3,7 +3,7 @@
  * canonical write (#5621): the page/source/global override chain, with the
  * per-chunk synopsis tier demoted to the free title tier (the synopsis tier
  * is the Minion backfill's job), plus the corpus generation that tier embeds
- * under. Shared by `importFromContent` and `gbrain repair contextual-mode`,
+ * under. Shared by `importFromContent` and `foresights repair contextual-mode`,
  * so an existing page is stamped exactly as a fresh import would stamp it.
  *
  * `strict` (coordinated writes and repairs) fails on any source-row read

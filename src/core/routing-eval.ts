@@ -14,7 +14,7 @@
  *     match) and ambiguity declarations (`ambiguous_with: [...]` — list
  *     of skills this intent is allowed to also match).
  *
- *   Layer B (LLM tie-break, optional): only runs via `gbrain routing-eval
+ *   Layer B (LLM tie-break, optional): only runs via `foresights routing-eval
  *     --llm`. Not yet implemented in this release; the CLI accepts the
  *     flag (emits a stderr notice and runs Layer A only) so call sites
  *     are ready. A future release will wire up the tie-break layer.

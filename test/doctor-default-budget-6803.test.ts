@@ -1,10 +1,10 @@
 /**
- * #6803 C5 (Decision 1): the non-interactive default budget of CLI `gbrain doctor --json›.
+ * #6803 C5 (Decision 1): the non-interactive default budget of CLI `foresights doctor --json›.
  *
  * - Applies only to plain CLI `--json› with stderr not a terminal; `--budget-ms›, `--tier›, `--fix›,
  *   `--remediate› and `--remediation-plan› keep their own behavior.
  * - It starts with the check run (connect and migrations are not counted), and its stderr line prints then.
- * - `gbrain config set doctor.default_budget_ms 0› (file plane), read back through the pre-connect reader,
+ * - `foresights config set doctor.default_budget_ms 0› (file plane), read back through the pre-connect reader,
  *   turns it off; `--budget-ms 0› turns it off for one run; `--tier ops› keeps its 4000 ms deadline.
  * - `doctor.entry_budget_ms› and `doctor.orphan_ratio.full_scan_max_pages› are accepted on the DB plane.
  * - Only the CLI doctor command applies it (MCP run_doctor and the remote paths never import it).
@@ -19,7 +19,7 @@ import { KNOWN_CONFIG_KEYS, loadConfigFileOnly } from '../src/core/config.ts';
 import { runCli } from './helpers/cli-spawn.ts';
 import { withEnv } from './helpers/with-env.ts';
 
-const NOTICE = '[gbrain doctor] non-interactive run';
+const NOTICE = '[foresights doctor] non-interactive run';
 
 describe('nonInteractiveDefaultBudget', () => {
   test('only plain --json with a non-terminal stderr gets the default', () => {

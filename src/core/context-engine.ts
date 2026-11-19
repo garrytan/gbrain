@@ -1,5 +1,5 @@
 /**
- * GBrain Context Engine for OpenClaw
+ * Foresights Context Engine for OpenClaw
  *
  * Deterministic context injection: runs on every `assemble()` call to inject
  * structured temporal, spatial, and operational context into the system prompt.
@@ -148,7 +148,7 @@ export function __resetSdkLoadStateForTests(): void {
 }
 
 export const ENGINE_ID = 'gbrain-context';
-export const ENGINE_NAME = 'GBrain Context Engine';
+export const ENGINE_NAME = 'Foresights Context Engine';
 /**
  * Engine contract version — bumps when the engine's public method shape
  * changes (ContextEngine interface, AssembleResult fields, etc), NOT when
@@ -1152,7 +1152,7 @@ export function createGBrainContextEngine(ctx: {
     // identical compaction dedups on content_hash inside the helper. The
     // whole block is fail-open for the checkpoint: any refusal in here can
     // never change the checkpoint's status. cfg was loaded fresh THIS call,
-    // so `gbrain config set …enabled false` applies on the next compaction
+    // so `foresights config set …enabled false` applies on the next compaction
     // without a gateway restart (GBRAIN_MEMORABLE, an env, needs one).
     // This lane NEVER compacts the receipts file — the hook lane is the ONE
     // compactor of session-receipts.jsonl

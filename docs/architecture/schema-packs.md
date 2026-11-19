@@ -1,6 +1,6 @@
 # Schema Packs
 
-A schema pack tells gbrain what shape your brain takes — which directories
+A schema pack tells foresights what shape your brain takes — which directories
 exist, what types live in them, how the agent should infer types from
 paths, and which link verbs connect what to what. The schema pack is the
 **dynamic, always-consulted artifact** every skill reads when filing,
@@ -16,7 +16,7 @@ layer in `src/core/schema-pack/`.
 Seven bundled packs (`src/core/schema-pack/base/`):
 
 - **`gbrain-base-v2`** — the 15-type canonical taxonomy. Fresh installs
-  (`gbrain init`) activate this by default. See
+  (`foresights init`) activate this by default. See
   [`type-taxonomy.md`](./type-taxonomy.md) for the full type list and the
   upgrade path from `gbrain-base`.
 
@@ -33,7 +33,7 @@ Seven bundled packs (`src/core/schema-pack/base/`):
   operational-brain pattern, activate this with:
 
   ```bash
-  gbrain schema use gbrain-recommended
+  foresights schema use gbrain-recommended
   ```
 
 - **`gbrain-creator`**, **`gbrain-investor`**, **`gbrain-engineer`**,
@@ -42,30 +42,30 @@ Seven bundled packs (`src/core/schema-pack/base/`):
   [`lens-packs.md`](./lens-packs.md).
 
 Plus user-installed packs at `~/.gbrain/schema-packs/<name>/pack.yaml`
-that you author with `gbrain schema init` or `gbrain schema fork`.
+that you author with `foresights schema init` or `foresights schema fork`.
 
 ## CLI surface
 
 Inspection verbs:
 
 ```bash
-gbrain schema active [--source <id>] [--json]  # show resolved pack + which tier set it
-gbrain schema list       # list bundled + installed packs
-gbrain schema show       # pretty-print the active pack
-gbrain schema validate   # validate a manifest's shape
-gbrain schema use <pack> # activate a pack (writes ~/.gbrain/config.json)
+foresights schema active [--source <id>] [--json]  # show resolved pack + which tier set it
+foresights schema list       # list bundled + installed packs
+foresights schema show       # pretty-print the active pack
+foresights schema validate   # validate a manifest's shape
+foresights schema use <pack> # activate a pack (writes ~/.gbrain/config.json)
 ```
 
-`gbrain config set schema_pack <pack>` sets the brain-wide database override,
-which takes precedence over the file setting written by `gbrain schema use`.
-Use `gbrain config unset schema_pack` to remove that database override, then
-`gbrain schema active` to confirm the resolved pack and its selection tier.
-`gbrain config get schema_pack` and `gbrain config show` report the same
+`foresights config set schema_pack <pack>` sets the brain-wide database override,
+which takes precedence over the file setting written by `foresights schema use`.
+Use `foresights config unset schema_pack` to remove that database override, then
+`foresights schema active` to confirm the resolved pack and its selection tier.
+`foresights config get schema_pack` and `foresights config show` report the same
 resolved pack and name its tier.
 
 ### Per-source resolution
 
-`gbrain schema active --source <id>` resolves the pack the engine uses for
+`foresights schema active --source <id>` resolves the pack the engine uses for
 that source, including the per-source database override
 (`schema_pack.source.<id>`), and prints `Resolved for source <id>: <tier>`
 (`per-source-db`, `db-config`, `home-config`, `env` or `default`). Under
@@ -74,34 +74,34 @@ that source, including the per-source database override
 `not_configured`).
 
 - An unregistered or archived source is refused with `unknown_source`; its fix
-  is `gbrain sources list --json`, which lists the ids `--source` accepts.
+  is `foresights sources list --json`, which lists the ids `--source` accepts.
 - When the brain database can't be read, the database tiers are skipped and
   the answer comes from the environment and `~/.gbrain/config.json` only. Text
   mode prints a `Degraded: database unreadable` line on stderr and exits 0;
   `--json` exits nonzero with a `database_error` envelope that still carries
-  the file-plane answer (`degraded: true`). Run `gbrain doctor --json`, then
-  `gbrain schema active --json` again.
+  the file-plane answer (`degraded: true`). Run `foresights doctor --json`, then
+  `foresights schema active --json` again.
 
 Authoring + discovery verbs:
 
 ```bash
-gbrain schema detect              # propose types matching brain shape
-gbrain schema suggest             # LLM-refined proposals on top of detect
-gbrain schema review-candidates   # promote / rename / ignore candidates
-gbrain schema review-orphans      # surface pages with no matching type
-gbrain schema init <name>         # scaffold a stub pack    (experimental)
-gbrain schema fork <a> <b>        # copy + rename a pack    (experimental)
-gbrain schema edit <name>         # surface the pack path   (experimental)
-gbrain schema diff <a> <b>        # set-diff two packs      (experimental)
-gbrain schema graph               # ASCII type listing      (experimental)
-gbrain schema lint [--with-db]    # duplicates + missing prefixes; --with-db adds data-plane rules
-gbrain schema explain <type>      # plain-English type description (experimental)
-gbrain schema downgrade --to <p>  # restore previous pack (recovery)
-gbrain schema usage --since 30d   # per-verb invocation counts (telemetry)
+foresights schema detect              # propose types matching brain shape
+foresights schema suggest             # LLM-refined proposals on top of detect
+foresights schema review-candidates   # promote / rename / ignore candidates
+foresights schema review-orphans      # surface pages with no matching type
+foresights schema init <name>         # scaffold a stub pack    (experimental)
+foresights schema fork <a> <b>        # copy + rename a pack    (experimental)
+foresights schema edit <name>         # surface the pack path   (experimental)
+foresights schema diff <a> <b>        # set-diff two packs      (experimental)
+foresights schema graph               # ASCII type listing      (experimental)
+foresights schema lint [--with-db]    # duplicates + missing prefixes; --with-db adds data-plane rules
+foresights schema explain <type>      # plain-English type description (experimental)
+foresights schema downgrade --to <p>  # restore previous pack (recovery)
+foresights schema usage --since 30d   # per-verb invocation counts (telemetry)
 ```
 
 The verbs marked `experimental` are demand-gated: usage is tracked via the
-schema-events audit (`gbrain schema usage`), which informs whether
+schema-events audit (`foresights schema usage`), which informs whether
 rarely-used verbs get deprecated.
 
 With `--with-db`, `schema lint` also runs two data-plane rules over the
@@ -113,34 +113,34 @@ brains can resolve different packs per source), though the CLI currently
 runs a global scan. The same classification warns once per type per run at
 sync/import so alias types stop filing into unexpected directories
 silently; silence the ingest warnings with
-`gbrain config set schema.type_warnings false` (the `--with-db` lint rules
+`foresights config set schema.type_warnings false` (the `--with-db` lint rules
 are unaffected).
 
 ## Undeclared page types
 
 A page type is **undeclared** when the active pack neither declares it as a
-page type nor lists it as an alias. gbrain stores such a type as written and
+page type nor lists it as an alias. foresights stores such a type as written and
 reports it everywhere it measures conformance, all with the same
 classification as `schema lint --with-db`'s `stored_type_undeclared`:
 
-- `put_page` (MCP, `gbrain put`, `gbrain call put_page`) commits the page and
+- `put_page` (MCP, `foresights put`, `foresights call put_page`) commits the page and
   returns `type_warning` with `code: page_type_undeclared`, the cause, the fix
   and this anchor. It warns rather than rejects; `capture` still rejects an
   undeclared explicit type, and dream subagent writes still normalize it to
   `note` with `legacy_type`.
-- `gbrain lint <dir>` flags it as `type-undeclared` on the `type:` line.
-- `gbrain schema review-orphans` / MCP `schema_review_orphans` list untyped
+- `foresights lint <dir>` flags it as `type-undeclared` on the `type:` line.
+- `foresights schema review-orphans` / MCP `schema_review_orphans` list untyped
   AND undeclared-type pages (`reason`, `undeclared_types`, a true
   `orphan_count`); `schema_stats` reports `undeclared_pages` and counts them
   against `coverage`.
 - doctor `schema_pack_consistency` (the MCP `run_doctor` report) warns on any
   undeclared type, per source against that source's pack.
 
-Fix one by declaring it (`gbrain schema add-type <type> --primitive <p>
+Fix one by declaring it (`foresights schema add-type <type> --primitive <p>
 --prefix <dir/>`, or `--no-prefix` for a type set by frontmatter only) or by rewriting the pages with a declared type. On a managed
 brain the `unify-types` job cannot apply yet, so rewrite the page with
 `put_page` (read it with `get_page include_content:true`, change `type:`, put it
-back). gbrain's own outputs use declared types: `gbrain report` and the dream
+back). foresights's own outputs use declared types: `foresights report` and the dream
 drift report write `type: note` with a `report_type`, and the meeting
 transcript sidecar is `type: source` under `sources/meetings/`.
 
@@ -156,14 +156,14 @@ this chain top-down. First match wins.
 | 3 | Per-source DB config key `schema_pack:source:<id>` | |
 | 4 | Brain-wide DB config key `schema_pack` | |
 | 5 | `gbrain.yml schema:` section | Repo-checked. |
-| 6 | `~/.gbrain/config.json` `schema_pack` field | What `gbrain schema use` (and `gbrain init`, which sets `gbrain-base-v2`) writes. |
+| 6 | `~/.gbrain/config.json` `schema_pack` field | What `foresights schema use` (and `foresights init`, which sets `gbrain-base-v2`) writes. |
 | 7 | Default: `gbrain-base` | Always present. |
 
 Tier 7 is `gbrain-base`, not `gbrain-base-v2`. Only a brain whose
-`gbrain init` never wrote `schema_pack` reaches tier 7, and its pages carry the
+`foresights init` never wrote `schema_pack` reaches tier 7, and its pages carry the
 legacy 24-type taxonomy. Pointing the fallback at v2 would change type
 inference, alias closure and enrichment for those brains without running v2's
-`migration_from` retype rules, which `gbrain schema upgrade` applies as a
+`migration_from` retype rules, which `foresights schema upgrade` applies as a
 reviewed step. Relation direction and meeting attendance are decided in the
 extractor, so both packs store the same edges; see
 [Relation direction](#relation-direction).
@@ -186,17 +186,17 @@ only an explicit attendee list makes a person an attendee, stored person ->
 meeting (see [attendance evidence](../guides/attendance-evidence.md)). A pack
 that gives `attended` a phrase `regex` decides attendance itself and keeps its
 outgoing semantics. A brain whose links were extracted before v0.60.30.0
-re-derives them with `gbrain extract links --source db --include-frontmatter`.
+re-derives them with `foresights extract links --source db --include-frontmatter`.
 
 A link type's `inference.regex` runs before the in-code link matchers, so a
 pack regex decides the verb for a markdown link when it matches. A rule marked
-`ner_only: true` runs only for NER body mentions (`gbrain extract ner`). The
+`ner_only: true` runs only for NER body mentions (`foresights extract ner`). The
 bundled `gbrain-base` and `gbrain-base-v2` packs mark their `founded`,
 `works_at`, `invested_in` and `advises` sketch regexes this way, so a bare
 "started" or "joined" near a markdown link does not label it `founded` or
 `works_at`; the tuned in-code matchers decide those links. A brain whose links
 were extracted before v0.60.36.0 re-derives them with
-`gbrain extract links --source db`.
+`foresights extract links --source db`.
 
 ## How the agent uses the active pack
 
@@ -211,7 +211,7 @@ Every read + write path consults the active pack at runtime:
 - **`extract_facts`** runs only on `extractable: true` types.
 - **`enrichment-service`** routes person/company enrichment based on the
   pack's primitive declarations.
-- **Entity counters** (`get_health` / `gbrain health` `entity_page_count`,
+- **Entity counters** (`get_health` / `foresights health` `entity_page_count`,
   `link_coverage`, `timeline_coverage`, `most_connected`; doctor
   `graph_coverage` and `orphan_ratio`) count the types the pack declares with
   `primitive: entity`, resolved per source when sources carry their own pack.
@@ -226,25 +226,25 @@ Every read + write path consults the active pack at runtime:
 
 ## The magical moment
 
-Persona A (Notion refugee) installs gbrain, imports her exports, and the
+Persona A (Notion refugee) installs foresights, imports her exports, and the
 brain looks unfamiliar — the default `gbrain-base` pack expects
 `people/`, `companies/`, etc., but her files live under `Projects/`,
 `Reading/`, `Daily Notes/`. The friction signal fires in two places:
 
-1. **Import warn:** the end of `gbrain import` prints
+1. **Import warn:** the end of `foresights import` prints
    `[schema] X of Y pages (Z%) have no type matching the active schema
-   pack. Run gbrain schema detect to propose a pack matching your
+   pack. Run foresights schema detect to propose a pack matching your
    content shape.`
-2. **`gbrain doctor` schema_pack_consistency check** keeps surfacing
+2. **`foresights doctor` schema_pack_consistency check** keeps surfacing
    the warning persistently after the import session ends.
 
 She runs the magical moment:
 
 ```bash
-gbrain schema detect              # heuristic clustering on her actual shape
-gbrain schema suggest             # LLM-refined proposals
-gbrain schema review-candidates   # human gate on promotion
-gbrain schema review-candidates --apply Projects/   # accept
+foresights schema detect              # heuristic clustering on her actual shape
+foresights schema suggest             # LLM-refined proposals
+foresights schema review-candidates   # human gate on promotion
+foresights schema review-candidates --apply Projects/   # accept
 ```
 
 The agent (via the EIIRP skill, `skills/eiirp/SKILL.md`) automates phases 1-3 of this for any
@@ -254,11 +254,11 @@ the agent maintains, not a hardcoded ceremony the user authors.
 ## Authoring your own pack
 
 ```bash
-gbrain schema init my-pack            # scaffolds ~/.gbrain/schema-packs/my-pack/pack.yaml
+foresights schema init my-pack            # scaffolds ~/.gbrain/schema-packs/my-pack/pack.yaml
 $EDITOR ~/.gbrain/schema-packs/my-pack/pack.yaml
-gbrain schema validate my-pack        # check shape
-gbrain schema use my-pack             # activate
-gbrain schema active                  # confirm
+foresights schema validate my-pack        # check shape
+foresights schema use my-pack             # activate
+foresights schema active                  # confirm
 ```
 
 A minimal pack:
@@ -326,19 +326,19 @@ The rules:
 ## Recovery + revert
 
 A pack activation is config, not code, so reverting code alone doesn't
-undo it. `gbrain schema downgrade` restores the active-pack config field:
+undo it. `foresights schema downgrade` restores the active-pack config field:
 
 ```bash
-gbrain schema downgrade --to gbrain-base
+foresights schema downgrade --to gbrain-base
 # OR auto-detect previous from ~/.gbrain/schema-pack-history.jsonl:
-gbrain schema downgrade
+foresights schema downgrade
 ```
 
 **Code revert alone is NOT sufficient.** The full revert procedure:
 
 1. `git revert <merge-commit>` — restores the code.
-2. `gbrain schema downgrade --to gbrain-base` — restores config.
-3. (Optional) `gbrain pages purge-deleted --older-than 0h` — hard-deletes
+2. `foresights schema downgrade --to gbrain-base` — restores config.
+3. (Optional) `foresights pages purge-deleted --older-than 0h` — hard-deletes
    soft-deleted pages that no longer have a matching type in the active
    pack.
 
@@ -353,7 +353,7 @@ mappings; ship JSON for those). Quoted scalars decode their escapes:
 
 - A double-quoted scalar carries the JSON escape subset (`\\`, `\"`, `\/`,
   `\b`, `\f`, `\n`, `\r`, `\t`, `\uXXXX`), which is exactly what every
-  `gbrain schema` mutation writes. An escape outside that subset (`"\q"`, a
+  `foresights schema` mutation writes. An escape outside that subset (`"\q"`, a
   YAML-only `"\x41"`) refuses with the line number instead of being kept as
   literal text.
 - A single-quoted scalar is literal text; `''` is one quote.
@@ -372,22 +372,22 @@ Every mutation now parses its own output and refuses with
 `schema_pack_emit_mismatch` when it does not read back as the manifest, so
 the growth cannot recur. A pack that already grew is handled like this:
 
-- `gbrain schema <mutation>`, `gbrain schema active` and every query refuse
+- `foresights schema <mutation>`, `foresights schema active` and every query refuse
   to load a pack file above 8 MiB with `schema_pack_too_large` (the size is
-  read before any byte is), and `gbrain doctor` warns on a mutable pack above
+  read before any byte is), and `foresights doctor` warns on a mutable pack above
   1 MiB (`schema_pack_active`, `details.code: schema_pack_oversized`).
 - The original text is not recoverable automatically: after N doublings only
   the author knows the intended regex. Open the pack file the message names
   (`~/.gbrain/schema-packs/<name>/pack.yaml`), find the grown lines (usually
   `inference.regex` under `link_types`; each is a very long run of
   backslashes), rewrite each as the intended expression, save, and re-run
-  `gbrain schema validate <name>`. A `cp pack.yaml pack.yaml.bak` first costs
+  `foresights schema validate <name>`. A `cp pack.yaml pack.yaml.bak` first costs
   nothing.
 - `GBRAIN_SCHEMA_PACK_MAX_BYTES=<bytes>` raises the load bound for one
   command when a pack is legitimately large; `GBRAIN_SCHEMA_PACK_WARN_BYTES`
   moves the doctor warn bound.
 
-**Say to your agent:** *"gbrain says my schema pack is too large; help me
+**Say to your agent:** *"foresights says my schema pack is too large; help me
 restore the regex lines by hand."*
 
 ## Distribution

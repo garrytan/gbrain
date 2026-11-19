@@ -88,10 +88,10 @@ export function inputTruncatedLine(originLabel: string, input: ExtractAtomsInput
   if (input.plan && !cut) return null;
   if (cut?.kind === 'tail_window') {
     return `[extract_atoms] ${originLabel}: ${cut.total_chars} chars were appended since the last extraction; the model read the newest ${cut.processed_chars}. `
-      + `Atoms are kept, the item is not marked complete, and doctor's extraction_input_truncated lists it: gbrain config set ${EXTRACT_MAX_INPUT_CHARS_KEY} <n>`;
+      + `Atoms are kept, the item is not marked complete, and doctor's extraction_input_truncated lists it: foresights config set ${EXTRACT_MAX_INPUT_CHARS_KEY} <n>`;
   }
   return `[extract_atoms] ${originLabel}: input truncated to ${maxInputChars} of ${input.inputChars} chars; the model did not read the tail. ` +
-    `Atoms from the head are kept, the item is not marked complete and is skipped until the cap rises: gbrain config set ${EXTRACT_MAX_INPUT_CHARS_KEY} <n>`;
+    `Atoms from the head are kept, the item is not marked complete and is skipped until the cap rises: foresights config set ${EXTRACT_MAX_INPUT_CHARS_KEY} <n>`;
 }
 
 /**

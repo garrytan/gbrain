@@ -1,5 +1,5 @@
 /**
- * #7632 on PGLite: every gbrain function that pins a search_path ends it with pg_temp, so a temp table named like a
+ * #7632 on PGLite: every foresights function that pins a search_path ends it with pg_temp, so a temp table named like a
  * purge or withdrawal ledger hides nothing from the guard that reads it. PGLite has one role, the owner, and before the
  * change its guards read the empty temp table and stored the purged write. The guards are otherwise as on master.
  */

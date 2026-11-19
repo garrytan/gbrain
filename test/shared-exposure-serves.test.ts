@@ -65,7 +65,7 @@ describe('one-person brain', () => {
     await engine.executeRaw("INSERT INTO access_members (id) VALUES ('owner-example'), ('bob-example')");
     const home = tmp();
     mkdirSync(join(home, '.gbrain'), { recursive: true });
-    writeFileSync(join(home, '.gbrain', 'agent-instructions.json'), JSON.stringify({ entries: [{ harness: 'openclaw', path: join(home, 'SOUL.md'), status: 'installed', block_version: 1, access: { kind: 'mcp', server: 'gbrain' }, writer: 'gbrain setup openclaw' }] }));
+    writeFileSync(join(home, '.gbrain', 'agent-instructions.json'), JSON.stringify({ entries: [{ harness: 'openclaw', path: join(home, 'SOUL.md'), status: 'installed', block_version: 1, access: { kind: 'mcp', server: 'gbrain' }, writer: 'foresights setup openclaw' }] }));
     const check = await doctor(home);
     expect(check).toMatchObject({ status: 'ok', readiness_state: 'not_applicable' });
     expect(check.message).toContain('config access.serves is one');
@@ -90,11 +90,11 @@ describe('brain that serves several people', () => {
     for (const c of [census, across]) {
       const n = sharedTokenNotice({ kind: 'legacy_token', name: 'team-bot' }, { census: c, serves: 'several' })!;
       const fix = n.why.slice(n.why.indexOf('Fix: '));
-      expect(fix.startsWith('Fix: bind the credential to the person who uses this agent (gbrain auth rescope --token team-bot --member <id>)')).toBe(true);
-      expect(fix).toContain('gbrain auth rescope --token team-bot --may-act-for <members>');
+      expect(fix.startsWith('Fix: bind the credential to the person who uses this agent (foresights auth rescope --token team-bot --member <id>)')).toBe(true);
+      expect(fix).toContain('foresights auth rescope --token team-bot --may-act-for <members>');
       expect(fix.indexOf('--member <id>')).toBeLessThan(fix.indexOf('--may-act-for'));
       if (c === across) {
-        expect(fix).toContain('narrowing only, which leaves the token unbound: gbrain auth rescope --token team-bot --sources <source>');
+        expect(fix).toContain('narrowing only, which leaves the token unbound: foresights auth rescope --token team-bot --sources <source>');
         expect(fix.indexOf('--may-act-for')).toBeLessThan(fix.indexOf('--sources'));
       } else {
         expect(fix).not.toContain('--sources');
@@ -104,7 +104,7 @@ describe('brain that serves several people', () => {
     const client = sharedTokenNotice({ kind: 'oauth_client', id: 'c1' }, { census, serves: 'several' })!;
     expect(client.fix!.argv).toEqual(['gbrain', 'auth', 'rescope', '--client', 'c1', '--member', '<member>']);
     const bot = sharedTokenNotice({ kind: 'stdio', harness: 'openclaw' }, { harness: 'openclaw', serves: 'several' })!;
-    expect(bot.why).toContain('Fix: label each person and bind this harness\'s server (gbrain setup openclaw --serves several --members <id,...>');
+    expect(bot.why).toContain('Fix: label each person and bind this harness\'s server (foresights setup openclaw --serves several --members <id,...>');
   });
 });
 

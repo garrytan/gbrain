@@ -1,5 +1,5 @@
 /**
- * TLS for every postgres() pool gbrain opens (one resolver, every call site).
+ * TLS for every postgres() pool foresights opens (one resolver, every call site).
  *
  * The vendored postgres.js defaults to `ssl: false`, so a URL without an
  * sslmode connected in plaintext even to a database across the internet. Each
@@ -11,7 +11,7 @@
  *   2. Otherwise a host on this machine keeps the driver default (no TLS):
  *      localhost, 127.0.0.0/8, ::1 (and ::ffff:127.x) or a Unix socket path.
  *   3. Otherwise TLS is required (`ssl: 'require'`). That includes private
- *      addresses and Docker service names: gbrain cannot tell a trusted network
+ *      addresses and Docker service names: foresights cannot tell a trusted network
  *      from an untrusted one by name, so they opt out like any other host.
  *
  * The one opt-out is `sslmode=disable` in the URL. `require` encrypts the

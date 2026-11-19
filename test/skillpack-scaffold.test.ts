@@ -184,7 +184,7 @@ describe('runScaffold — partial-state policy (F-CDX-6)', () => {
     writeFileSync(join(ws, 'skills', 'book-mirror', 'SKILL.md'), '# pre-existing skill content\n');
     writeFileSync(join(ws, 'skills', 'book-mirror', 'routing-eval.jsonl'), '{}\n');
 
-    // Now scaffold (gbrain bundle has the paired source declared); the
+    // Now scaffold (foresights bundle has the paired source declared); the
     // existing skill files are preserved, the missing paired source lands.
     const result = runScaffold({
       gbrainRoot,

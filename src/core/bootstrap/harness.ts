@@ -1,8 +1,8 @@
 /**
- * harness.ts — `gbrain bootstrap harness` (#4043): default brain wiring for
+ * harness.ts — `foresights bootstrap harness` (#4043): default brain wiring for
  * agent-framework-driven coding (a downstream framework spawning Claude Code
  * `claude -p` / codex exec / opencode run on a box that already hosts a brain
- * + a running `gbrain serve --http`).
+ * + a running `foresights serve --http`).
  *
  * What it wires, per harness:
  * - Claude Code: user-scope HTTP MCP registration (`claude mcp add --scope
@@ -33,7 +33,7 @@
  * - [C5] Session-transcript capture is its own consent item; --no-capture
  *   wires the context events only (SessionStart/UserPromptSubmit/PreCompact).
  * - [F3] Non-loopback --url is refused unless --token supplies the remote
- *   credential (remote brains are `gbrain connect`'s charter).
+ *   credential (remote brains are `foresights connect`'s charter).
  * - [F7] Version-skew honesty: a serve older than the CLI verifies scoped
  *   tokens through pre-scopes code (full access) until restarted — say so.
  * - [C9] --remove is engine-free-first: host removals always run; the token
@@ -474,7 +474,7 @@ export function harnessDetectDeps(o?: HarnessDetectOverrides): Partial<HarnessDe
 export async function mintHarnessToken(opts: Parameters<NonNullable<HarnessDeps['mint']>>[0]): Promise<MintedLegacyToken> {
   const cfg = loadConfig();
   if (!cfg) {
-    throw new Error('no brain configured — run `gbrain init` first (the harness wires an EXISTING brain).');
+    throw new Error('no brain configured — run `foresights init` first (the harness wires an EXISTING brain).');
   }
   const engineConfig = toEngineConfig(cfg);
   const engine = await createEngine(engineConfig);
@@ -527,7 +527,7 @@ export interface HookSourceBinding {
  * (refuse without --source; bind an explicit --source unverified). */
 async function defaultResolveHookSource(explicit: string | null): Promise<HookSourceBinding> {
   const cfg = loadConfig();
-  if (!cfg) throw new Error('no brain configured (run `gbrain init` first)');
+  if (!cfg) throw new Error('no brain configured (run `foresights init` first)');
   const engineConfig = toEngineConfig(cfg);
   const engine = await createEngine(engineConfig);
   await engine.connect(engineConfig);
@@ -587,7 +587,7 @@ export function buildConsentBlock(p: {
   turnRuleHosts?: string[];
 }): string {
   const lines: string[] = [
-    'gbrain bootstrap harness — wire framework-spawned coding sessions to this brain',
+    'foresights bootstrap harness — wire framework-spawned coding sessions to this brain',
     '',
     'Will do, on this machine:',
   ];
@@ -595,7 +595,7 @@ export function buildConsentBlock(p: {
   lines.push(
     p.tokenSupplied
       ? `  ${n++}. Use the supplied bearer token — written ${p.skills === 'follow' ? 'into' : 'ONLY into'} the host registrations below ` +
-          `${p.skills === 'follow' ? 'and a private 0600 enrollment cleanup credential' : '(gbrain keeps no copy)'}. ` +
+          `${p.skills === 'follow' ? 'and a private 0600 enrollment cleanup credential' : '(foresights keeps no copy)'}. ` +
           `The remove flow does NOT revoke supplied tokens (they are not ours to revoke).`
       : `  ${n++}. Mint an independent bearer token per harness under '${p.tokenName}' (scopes: ${p.scopes.join('+')}; sees takes marked 'world'; ` +
           `reads span this brain's federated sources). Any prior harness token is revoked ` +
@@ -657,12 +657,12 @@ export function buildConsentBlock(p: {
   const hookLine = turnRule + (!(p.wireClaude && p.hooks)
     ? (p.codexCapture ? 'One hook is wired: Codex SessionEnd transcript capture.' : turnRule ? 'No other hooks are wired by this invocation.' : 'No hooks are wired by this invocation.')
     : p.capture
-      ? 'Hooks run in every Claude Code session (context injection + transcript capture); auto-commit/push lanes stay inert outside gbrain agent workspaces.'
-      : 'Hooks run in every Claude Code session (context injection only — capture is OFF); auto-commit/push lanes stay inert outside gbrain agent workspaces.');
+      ? 'Hooks run in every Claude Code session (context injection + transcript capture); auto-commit/push lanes stay inert outside foresights agent workspaces.'
+      : 'Hooks run in every Claude Code session (context injection only — capture is OFF); auto-commit/push lanes stay inert outside foresights agent workspaces.');
   const offRamps = [
     'GBRAIN_HOOKS=0 (runtime)',
-    '`gbrain bootstrap harness --remove`',
-    '`gbrain auth revoke --id <id>` (see auth list)',
+    '`foresights bootstrap harness --remove`',
+    '`foresights auth revoke --id <id>` (see auth list)',
     ...(p.wireClaude ? [`\`claude mcp remove ${p.name} --scope user\``] : []),
     ...(p.wireCodex ? ['edit the codex config'] : []),
     ...(p.wireOpencode ? ['edit the opencode config'] : []),
@@ -813,17 +813,17 @@ async function cleanupStalePriorTargets(
 async function liveServeRefusal(opts: { tokenName: string; follow: boolean; source?: string }): Promise<BootstrapError> {
   const scopes = opts.follow ? ['read', 'write', 'skills_member_self'] : ['read', 'write'];
   const operations = await harnessOperationSnapshot(opts.follow);
-  const steps = ['stop the serve that holds this brain', `gbrain auth create ${opts.tokenName} --scopes ${scopes.join(',')}`,
-    `gbrain auth rescope --token ${opts.tokenName} --operations ${operations.join(',')}${opts.source ? ` --sources ${opts.source}` : ''}`,
-    'start `gbrain serve --http` again', 're-run this `gbrain bootstrap harness` command with --token <the token step 2 printed>'];
-  return new BootstrapError('LIVE_SERVE', 'a live `gbrain serve` holds this PGLite brain, so the harness cannot mint a token, and with the serve ' +
+  const steps = ['stop the serve that holds this brain', `foresights auth create ${opts.tokenName} --scopes ${scopes.join(',')}`,
+    `foresights auth rescope --token ${opts.tokenName} --operations ${operations.join(',')}${opts.source ? ` --sources ${opts.source}` : ''}`,
+    'start `foresights serve --http` again', 're-run this `foresights bootstrap harness` command with --token <the token step 2 printed>'];
+  return new BootstrapError('LIVE_SERVE', 'a live `foresights serve` holds this PGLite brain, so the harness cannot mint a token, and with the serve ' +
     `stopped its health check fails. Pre-mint the token with the harness grant (scopes ${scopes.join(',')} and its operation list), then use ` +
     `--token:\n${steps.map((step, i) => `  ${i + 1}. ${step}`).join('\n')}\n(Postgres brains mint fine while the serve runs.)`, { details: { steps, scopes, operations } });
 }
 
 /** The engine could not open because a live serve holds the PGLite brain (vs any other failure). */
 function isLiveServeFailure(msg: string, d: Pick<Required<HarnessDeps>, 'pgliteLiveServe'>): boolean {
-  return /already open through `gbrain serve`|LiveServeLockError/i.test(msg) || d.pgliteLiveServe();
+  return /already open through `(?:foresights|gbrain) serve`|LiveServeLockError/i.test(msg) || d.pgliteLiveServe();
 }
 
 /** #5893: the token a host's rotation carries grants from, with the operations a skills-policy change adds. */
@@ -835,7 +835,7 @@ async function rotationCarry(prior: HarnessReceipt | null | undefined, host: Har
 }
 
 function withheldOperationsNote(name: string, count: number): string {
-  return `token ${name}: carried the previous grants; ${count} newer operation(s) withheld — preview with \`gbrain auth rescope-token ${name} --refresh-operations\`.`;
+  return `token ${name}: carried the previous grants; ${count} newer operation(s) withheld — preview with \`foresights auth rescope-token ${name} --refresh-operations\`.`;
 }
 
 async function harnessOperationSnapshot(follow: boolean): Promise<string[]> {
@@ -901,7 +901,7 @@ function logAmbientPostureNotes(
   if (!registrarMode && wb.visibility_posture === 'private') {
     d.logError(
       'WARNING: facts.default_visibility is private, but this harness reads the brain over HTTP MCP — ' +
-        `${PRIVATE_DEFAULT_REMOTE_CONSEQUENCE} (then run gbrain bootstrap harness again; it asks the user first).`,
+        `${PRIVATE_DEFAULT_REMOTE_CONSEQUENCE} (then run foresights bootstrap harness again; it asks the user first).`,
     );
   }
 }
@@ -962,13 +962,13 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
   if (flags.url !== undefined && !isLoopbackHostname(hostname) && flags.token === undefined) {
     d.logError(
       `--url points at a non-loopback host (${hostname}) but the token would be minted in the LOCAL brain — ` +
-        'those are different databases. For a remote brain use `gbrain connect --install`; ' +
+        'those are different databases. For a remote brain use `foresights connect --install`; ' +
         'to use harness mode as a pure registrar for a LAN serve, pass --token <bearer> from that brain.',
     );
     return 2;
   }
   // [X13] Registrar mode: a non-loopback --url + --token registers a REMOTE
-  // serve, but hooks always talk to the LOCAL brain (gbrain bin + local
+  // serve, but hooks always talk to the LOCAL brain (foresights bin + local
   // config) — wiring them here would split-brain the box. MCP only.
   const registrarMode = flags.url !== undefined && !isLoopbackHostname(hostname);
   if (registrarMode && !flags.noHooks && (wireClaude || wireCodex)) {
@@ -1046,14 +1046,14 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
     if (flags.projects.length > 0 && priorUserHooks) {
       d.logError(
         'this box already carries USER-scope harness hooks; --project would double-fire every event ' +
-          '(Claude Code merges the scopes). Run `gbrain bootstrap harness --remove` first, then re-apply with --project.',
+          '(Claude Code merges the scopes). Run `foresights bootstrap harness --remove` first, then re-apply with --project.',
       );
       return 2;
     }
     if (flags.projects.length === 0 && !flags.noHooks && priorProjectHooks) {
       d.logError(
         'this box already carries PROJECT-scope harness hooks; user-scope wiring would double-fire every event. ' +
-          'Run `gbrain bootstrap harness --remove` first, or re-apply with the same --project list.',
+          'Run `foresights bootstrap harness --remove` first, or re-apply with the same --project list.',
       );
       return 2;
     }
@@ -1070,7 +1070,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
     d.logError(
       `user-scope harness hooks already exist in ${d.userSettingsPath} (edited entries included; possibly from another GBRAIN_HOME's ` +
         'install); --project wiring would double-fire every event. Remove that install first ' +
-        '(`gbrain bootstrap harness --remove` under its home).',
+        '(`foresights bootstrap harness --remove` under its home).',
     );
     return 2;
   }
@@ -1119,8 +1119,8 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
       // binding, which is exactly the source the serve resolves (#4897). Say
       // so, and name the override.
       d.logError(
-        'WARNING: a live `gbrain serve` holds this PGLite brain, so the harness could not read which source it ' +
-          "serves; wiring the hooks unpinned (they resolve through the live serve). If `gbrain sources list` " +
+        'WARNING: a live `foresights serve` holds this PGLite brain, so the harness could not read which source it ' +
+          "serves; wiring the hooks unpinned (they resolve through the live serve). If `foresights sources list` " +
           "shows a default other than 'default', re-run with --source <id>.",
       );
       bound = { source_id: 'default', grant: ['default'] };
@@ -1131,7 +1131,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
       throw new BootstrapError(
         'SOURCE_UNRESOLVED',
         `could not resolve the source the serve binds its hooks to (${msg}) — pass --source <id> ` +
-          '(`gbrain sources list` shows the registered ids) and re-run.',
+          '(`foresights sources list` shows the registered ids) and re-run.',
       );
     }
   }
@@ -1318,7 +1318,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
     d.logError(`FAILED (${t.host}/${t.kind}${t.scope !== 'user' ? ` ${t.scope}` : ''}): ${err}`);
   };
 
-  // 6. Claude Code wiring — under a config-dir lock [X11]: serializes gbrain
+  // 6. Claude Code wiring — under a config-dir lock [X11]: serializes foresights
   // writers (even with different GBRAIN_HOMEs) against the same user-scope
   // files. The race with Claude Code ITSELF is irreducible by any lock we
   // hold; the docs say so.
@@ -1441,7 +1441,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
           continue;
         }
         // Same precedent as the permission pre-approval above: the block
-        // orders agents to save through THIS host's gbrain registration —
+        // orders agents to save through THIS host's foresights registration —
         // if that registration didn't land (foreign-url refusal, write
         // failure), installing the block would direct ambient saves at
         // whatever server already owns the name, a consent the operator
@@ -1463,7 +1463,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
         };
         const bin = flags.gbrainBin ?? d.gbrainBin;
         if (!bin) {
-          failTarget(t, 'cannot resolve an absolute gbrain binary path — pass --gbrain-bin <abs path>');
+          failTarget(t, 'cannot resolve an absolute foresights binary path — pass --gbrain-bin <abs path>');
           continue;
         }
         const r = writeClaudeHooksAt(settingsPath, {
@@ -1501,7 +1501,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
 
   // 7. Codex wiring — the managed TOML block is the single write mechanism.
   // Same [X11] discipline as the claude lane: config.toml is user-global, so
-  // gbrain writers with different GBRAIN_HOMEs serialize on ITS directory.
+  // foresights writers with different GBRAIN_HOMEs serialize on ITS directory.
   for (const t of targets) {
     if (t.host !== 'codex') continue;
     const token = tokens.get(t.host)!;
@@ -1515,7 +1515,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
             t,
             `codex ignores ${t.path} while ${d.codexAgentsOverride} exists (AGENTS.override.md loads ` +
               `exclusively, per developers.openai.com/codex/guides/agents-md) — fold the ambient-writeback ` +
-              `block into that file yourself, or remove it and re-run \`gbrain bootstrap harness\`.`,
+              `block into that file yourself, or remove it and re-run \`foresights bootstrap harness\`.`,
           );
         } else if (!t.path || ambientBody === null) {
           // Same decoupling guard as the claude lane: fail the TARGET.
@@ -1560,7 +1560,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
         d.logError(
           `WARNING: the '${pluginOwner}' codex plugin also provides an MCP server named '${flags.name}' — ` +
             'after this wire, two servers with the same name exist in different layers (plugin + managed block); ' +
-            'duplicate tool registration behavior is host-defined. Keep one: `codex plugin remove gbrain`, ' +
+            'duplicate tool registration behavior is host-defined. Keep one: `codex plugin remove foresights`, ' +
             'or re-run with `--remove` to drop the managed block.',
         );
       }
@@ -1590,7 +1590,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
       if (wireCodexCapture) {
         const hooksBin = flags.gbrainBin ?? d.gbrainBin;
         if (!hooksBin) {
-          d.logError('codex hooks skipped: cannot resolve an absolute gbrain binary path — pass --gbrain-bin <abs path>.');
+          d.logError('codex hooks skipped: cannot resolve an absolute foresights binary path — pass --gbrain-bin <abs path>.');
         } else {
           // Paths derive from THIS TARGET's config.toml (CODEX_HOME-resolved
           // upstream, test-injectable) — never the ambient global default.
@@ -1636,7 +1636,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
           }
         }
         // Two-filename merge blind spot: opencode merges BOTH user-global
-        // filenames, so a same-name gbrain entry in the SIBLING file would
+        // filenames, so a same-name foresights entry in the SIBLING file would
         // survive this write as a shadow registration. Reconcile under the
         // same config-dir lock (ours → removed with a note; foreign →
         // refuse loudly naming both files).
@@ -1655,7 +1655,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
       confirm(t);
       d.log(
         `opencode wired: mcp.${flags.name} remote entry with inline bearer header in ${t.path} (0600). ` +
-          'opencode ships a plugin/event system, but gbrain does not wire it yet — per-turn context on ' +
+          'opencode ships a plugin/event system, but foresights does not wire it yet — per-turn context on ' +
           'opencode is MCP tools + the pull protocol (AGENTS.md loads natively). Restart opencode: it ' +
           'reads config at session start.',
       );
@@ -1674,7 +1674,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
   // CANARY first (ship-review P0, three reviewers convergent): the smoke
   // sends the real bearer to whatever answers on the port, and an impostor
   // squatting 127.0.0.1 could accept it, fake an identity, and trigger
-  // previous-token revocation. A real gbrain serve validates bearers against
+  // previous-token revocation. A real foresights serve validates bearers against
   // the brain DB, so it MUST reject a random same-format token with an auth
   // failure — an impostor cannot tell the canary from the real token (same
   // format, both unknown to it), so it either rejects both (smoke fails,
@@ -1687,7 +1687,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
       ok: false,
       reason: 'auth',
       message:
-        'the endpoint accepted an INVALID credential — whatever answers on this port is not a gbrain serve ' +
+        'the endpoint accepted an INVALID credential — whatever answers on this port is not a foresights serve ' +
         'backed by this brain (loopback impostor guard). Wiring rolled back; nothing revoked.',
     };
   } else {
@@ -1829,7 +1829,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
         failTarget(it, 'instruction block removed after the failed smoke (its registration was rolled back)');
       } catch (e) {
         d.logError(`could not remove the ambient-writeback block from ${it.path} after the failed smoke: ${e instanceof Error ? e.message : String(e)}`);
-        failTarget(it, 'smoke failed and the instruction block could not be removed — run `gbrain bootstrap harness --remove` to converge');
+        failTarget(it, 'smoke failed and the instruction block could not be removed — run `foresights bootstrap harness --remove` to converge');
       }
     }
     // The fresh mint was sent to an endpoint that failed verification — a
@@ -1843,7 +1843,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
       } catch (e) {
         d.logError(
           `could not revoke the fresh-minted token (${e instanceof Error ? e.message : String(e)}) — ` +
-            `revoke it manually: gbrain auth revoke with the id flag (${id}).`,
+            `revoke it manually: foresights auth revoke with the id flag (${id}).`,
         );
       }
     }
@@ -1932,7 +1932,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
     // ever fires on engine-classified personal brains).
     const declaredAudience = (d.loadFileConfig()?.brain?.audience ?? '').trim().toLowerCase();
     if (declaredAudience !== 'shared') {
-      d.log('ambient writeback off — enable with `gbrain config set memory.auto_writeback salient` and re-run.');
+      d.log('ambient writeback off — enable with `foresights config set memory.auto_writeback salient` and re-run.');
     }
   }
 
@@ -2011,7 +2011,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
   // 11. Degradation + skew honesty.
   if (health.engine === 'postgres') {
     d.log(
-      '\nNote: this brain runs on Postgres — per-turn hook injection needs a running `gbrain serve` for this ' +
+      '\nNote: this brain runs on Postgres — per-turn hook injection needs a running `foresights serve` for this ' +
         'brain (hooks heartbeat no_pglite_path/no_serve until one is up; the engine-uniform IPC listener keys its ' +
         'socket off the connection URL under ~/.gbrain/run). MCP tools are the active seam: sessions ' +
         'search/read/write the brain on demand; the pre-wired hooks light up whenever a serve runs.',
@@ -2020,7 +2020,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
   if (health.version && flags.token === undefined && isServeOlderThanScopes(health.version)) {
     d.log(
       `\nNote: serve v${health.version} predates token scoping — this token verifies as FULL-ACCESS until you ` +
-        'restart `gbrain serve` on this binary version.',
+        'restart `foresights serve` on this binary version.',
     );
   }
 
@@ -2064,7 +2064,7 @@ export async function removeHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
     return 0;
   }
   if (state.state === 'newer') {
-    d.logError('the harness receipt was written by a newer gbrain — upgrade gbrain before removing.');
+    d.logError('the harness receipt was written by a newer foresights — upgrade foresights before removing.');
     return 1;
   }
   if (state.state === 'invalid') {
@@ -2252,9 +2252,9 @@ export async function removeHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
   if (!tokenDone) {
     if (d.pgliteLiveServe()) {
       d.logError(
-        'a live `gbrain serve` holds this PGLite brain — token(s) NOT revoked. Host wiring is removed; ' +
-          `stop the serve and re-run \`gbrain bootstrap harness --remove\`, or run ` +
-          `\`gbrain auth revoke\` with the id flag per id (${idsToRevoke.join(', ')}).`,
+        'a live `foresights serve` holds this PGLite brain — token(s) NOT revoked. Host wiring is removed; ' +
+          `stop the serve and re-run \`foresights bootstrap harness --remove\`, or run ` +
+          `\`foresights auth revoke\` with the id flag per id (${idsToRevoke.join(', ')}).`,
       );
     } else {
       const unrevoked: string[] = [];
@@ -2268,7 +2268,7 @@ export async function removeHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
           unrevoked.push(id);
           d.logError(
             `token revoke failed (${e instanceof Error ? e.message : String(e)}) — ` +
-              `run \`gbrain auth revoke\` with the id flag (${id}) manually.`,
+              `run \`foresights auth revoke\` with the id flag (${id}) manually.`,
           );
         }
       }
@@ -2316,7 +2316,7 @@ export function parseClaudeMcpGetBearer(out: string): string | null {
  * serve carries a credential that must never be transmitted to receipt.url.
  * Reads the current `http_headers = { Authorization = "Bearer <t>" }` shape
  * (#4574 — codex-cli >=0.149 rejects inline `bearer_token`), with a legacy
- * `bearer_token = "<t>"` fallback so machines wired by older gbrain still
+ * `bearer_token = "<t>"` fallback so machines wired by older foresights still
  * have their token recovered for status/rotation. */
 export function parseCodexBlockBearer(configText: string, expectedUrl?: string): string | null {
   const norm = configText.replace(/\r\n/g, '\n');
@@ -2391,7 +2391,7 @@ export async function statusHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
         } else if (info.found && info.url) {
           claudeLiveError =
             `registration now points at ${info.url}, not ${receipt.url} — owned by another install; ` +
-            're-run `gbrain bootstrap harness --force` to reclaim, or --remove';
+            're-run `foresights bootstrap harness --force` to reclaim, or --remove';
         } else if (info.found) {
           // No URL line: a stdio (or other non-HTTP) launch. Only a same-scope
           // entry is a replacement; a project-scope one merely shadows ours
@@ -2400,7 +2400,7 @@ export async function statusHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
           if (type && type.toLowerCase() !== 'http' && /^\s*Scope:\s*User\b/im.test(out)) {
             claudeLiveError =
               `registration at user scope is now a ${type} serve (a \`claude mcp add\` or ` +
-              '`bootstrap hooks --scope user` replaced the HTTP wiring) — re-run `gbrain bootstrap harness` to reclaim';
+              '`bootstrap hooks --scope user` replaced the HTTP wiring) — re-run `foresights bootstrap harness` to reclaim';
           }
         }
       }
@@ -2447,7 +2447,7 @@ export async function statusHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
         ? `token: OK ('${receipt.token.name}' via ${tokenSource} — authenticated; get_brain_identity ` +
           'unavailable, the serve likely runs a narrowed --surface)'
         : `token: FAILED (${smoke.reason}) — ${redactToken(smoke.message, token)}. ` +
-          'Someone may have revoked it; re-run `gbrain bootstrap harness` to rotate.';
+          'Someone may have revoked it; re-run `foresights bootstrap harness` to rotate.';
   } else {
     tokenLine = `token: verify unavailable (no registration to recover the bearer from) — honest degrade, not a failure.`;
   }
@@ -2578,20 +2578,20 @@ export async function statusHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
       );
     }
     for (const c of hookCarriers) {
-      d.log(`  hook entries in ${c.path}: ${c.state === 'ok' ? `${c.ours} gbrain (${c.unmarked} without the _gbrain marker)` : c.state}` +
+      d.log(`  hook entries in ${c.path}: ${c.state === 'ok' ? `${c.ours} foresights (${c.unmarked} without the _gbrain marker)` : c.state}` +
         `${c.duplicates.length ? `; duplicated: ${c.duplicates.join(', ')}` : ''}${c.unowned.length ? `; not this install's (left in place): ${c.unowned.join(', ')}` : ''}`);
     }
     for (const line of cleanupLines(cleanup)) d.log(line);
     if (receipt.verify_pending) d.log(pendingVerifyStatusLine(receipt.verify_pending));
     if (degraded) {
-      d.log('per-turn injection: needs a running gbrain serve on Postgres (MCP tools are the active seam).');
+      d.log('per-turn injection: needs a running foresights serve on Postgres (MCP tools are the active seam).');
     }
     if (skew) d.log(`note: ${skew}`);
   }
   if (removalPending) {
     d.logError(
       `removal pending: host wiring is gone but token revocation or shared-skills cleanup is unfinished — ` +
-        'stop the serve and re-run `gbrain bootstrap harness --remove`, or revoke it with `gbrain auth revoke` and the id flag.',
+        'stop the serve and re-run `foresights bootstrap harness --remove`, or revoke it with `foresights auth revoke` and the id flag.',
     );
   }
   return statusOk ? (cleanup.length ? HARNESS_CLEANUP_PENDING_EXIT_CODE : 0) : 1;
@@ -2599,7 +2599,7 @@ export async function statusHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
 
 // ── Home preflight ──────────────────────────────────────────────────────────
 
-/** Ensure the gbrain home exists before locking in it (the bootstrap lock's
+/** Ensure the foresights home exists before locking in it (the bootstrap lock's
  * missing-dir message says "workspace directory", which would mislead here). */
 export function ensureHarnessHome(home: string): void {
   mkdirSync(join(home, 'bootstrap'), { recursive: true });

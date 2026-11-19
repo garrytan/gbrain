@@ -108,7 +108,7 @@ describe('the shared fence check', () => {
 
 /**
  * Every reason the screen and the projection can put in a refusal, hold or
- * receipt. #6188 PR4: their holds and source steps route to `gbrain repair
+ * receipt. #6188 PR4: their holds and source steps route to `foresights repair
  * fences` (D6), never to frontmatter repair.
  */
 const PR1_REASONS: readonly FenceReason[] = ['repeated_marker', 'missing_begin', 'marker_near_miss', 'unparseable', 'no_header', 'row_before_header',
@@ -128,7 +128,7 @@ describe('every PR1 reason routes to the fence repair, never to frontmatter repa
     }
   });
 
-  test('hold fixes and source steps for every PR1 reason name gbrain repair fences; messages, suggestions and fixes never name frontmatter repair', () => {
+  test('hold fixes and source steps for every PR1 reason name foresights repair fences; messages, suggestions and fixes never name frontmatter repair', () => {
     for (const reason of PR1_REASONS) {
       const location: FenceMessageLocation = { reason, fence: 'takes', section: 'body', rows: [2], columns: ['who'], line: 5 };
       const error = fenceOperationError(location, 'notes/example', 'default');

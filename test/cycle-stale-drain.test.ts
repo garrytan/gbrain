@@ -5,7 +5,7 @@
  * reported (or an fs walk of brainDir). Pages left stale for any other
  * reason — an extractor version bump, DB-only writes, a prior aborted
  * sweep — never re-extracted on the cycle, so the links_extracted_at
- * backlog grew unboundedly until someone hand-ran `gbrain extract --stale`.
+ * backlog grew unboundedly until someone hand-ran `foresights extract --stale`.
  * This pins that the extract phase follows the targeted pass with a
  * bounded, source-scoped extractStaleFromDB drain and reports
  * staleRemaining in the phase details.
@@ -152,7 +152,7 @@ describe('cycle extract phase stale drain (#4062)', () => {
 
   test('standalone stale helper prints its human summary when neither quiet nor JSON', async () => {
     // The quiet/JSON variants above pin silence; this pins that the default
-    // CLI path (`gbrain extract --stale`) still tells the operator what ran.
+    // CLI path (`foresights extract --stale`) still tells the operator what ran.
     const log = spyOn(console, 'log').mockImplementation(() => {});
     const stdout = spyOn(process.stdout, 'write').mockReturnValue(true);
     try {

@@ -1,10 +1,10 @@
 /**
- * gbrain frontmatter install-hook — Install a pre-commit hook in a brain
- * source's git repo that runs `gbrain frontmatter validate` against staged
+ * foresights frontmatter install-hook — Install a pre-commit hook in a brain
+ * source's git repo that runs `foresights frontmatter validate` against staged
  * .md/.mdx files. Skips sources outside any git repo with a one-line note.
  *
  * Usage:
- *   gbrain frontmatter install-hook [--source <id>] [--force] [--uninstall]
+ *   foresights frontmatter install-hook [--source <id>] [--force] [--uninstall]
  *
  *   --source <id>  Limit to one registered source. Default: all sources.
  *   --force        Overwrite an existing pre-commit hook (writes <hook>.bak).
@@ -12,7 +12,7 @@
  *
  * Hook contract:
  *   - Located at <git root>/.githooks/pre-commit. The root is discovered the
- *     way `gbrain sync` does (#4600): a source registered as a SUBDIRECTORY of
+ *     way `foresights sync` does (#4600): a source registered as a SUBDIRECTORY of
  *     a host repo (the `<workspace>/brain` layout bootstrap creates) gets ONE
  *     hook at the host root, pathspec-scoped to that subdirectory; several
  *     nested sources union their scopes; a source registered at the root
@@ -25,8 +25,8 @@
  *     active hook in the repo's own hooks dir (`.git/hooks` — wiring makes git
  *     ignore it for EVERY hook type). Either way the hook is written and the
  *     reason + manual wiring step printed.
- *   - When the gbrain binary is missing, the hook prints a one-line warning
- *     and exits 0 (don't break commits if a developer uninstalls gbrain).
+ *   - When the foresights binary is missing, the hook prints a one-line warning
+ *     and exits 0 (don't break commits if a developer uninstalls foresights).
  *   - Bypass via `git commit --no-verify`.
  */
 
@@ -45,8 +45,8 @@ const SCOPE_MARKER = '# gbrain-scope: ';
 const VERSION_MARKER = '# gbrain-hook-version: ';
 /**
  * Bump when the generated script changes behavior. 2: one
- * `gbrain frontmatter validate --staged` process checks the staged blobs.
- * A gbrain hook without the marker is version 1 (validated working-tree bytes).
+ * `foresights frontmatter validate --staged` process checks the staged blobs.
+ * A foresights hook without the marker is version 1 (validated working-tree bytes).
  */
 export const FRONTMATTER_HOOK_VERSION = 2;
 
@@ -75,7 +75,7 @@ const git = (root: string, args: string[]): string =>
  * Render the hook script. Empty `scopes` = the whole repo; otherwise
  * `git diff --cached` is limited to the listed pathspecs. Git runs hooks from
  * the worktree root, so the root-relative paths it lists resolve as-is for
- * `gbrain frontmatter validate --staged`, which checks the staged blobs (not
+ * `foresights frontmatter validate --staged`, which checks the staged blobs (not
  * the working-tree bytes) of all of them in one process.
  */
 function renderHookScript(scopes: string[]): string {
@@ -121,7 +121,7 @@ fi
 
 /**
  * The generated-script version of an installed hook: null when the content
- * is not a gbrain frontmatter hook, 1 for gbrain hooks written before the marker.
+ * is not a foresights frontmatter hook, 1 for foresights hooks written before the marker.
  */
 export function frontmatterHookVersion(hook: string): number | null {
   if (!hook.includes(HOOK_BANNER)) return null;
@@ -134,16 +134,16 @@ export interface InstalledFrontmatterHook {
   hookPath: string;
   version: number;
   current: boolean;
-  /** Present when outdated: refreshes the script (an existing gbrain hook is replaced without a .bak). */
+  /** Present when outdated: refreshes the script (an existing foresights hook is replaced without a .bak). */
   fix?: string[];
 }
 
 /**
- * The gbrain pre-commit hook guarding `localPath`, read-only: null when the
- * path is outside git, the hook path is a symlink, no gbrain hook is
+ * The foresights pre-commit hook guarding `localPath`, read-only: null when the
+ * path is outside git, the hook path is a symlink, no foresights hook is
  * installed at its root, or the clone has hooks off on purpose (git never runs
  * the file, and install-hook skips it). Doctor and post-upgrade use `current` to recommend
- * `gbrain frontmatter install-hook --force`.
+ * `foresights frontmatter install-hook --force`.
  */
 export function inspectFrontmatterHook(localPath: string, sourceId?: string): InstalledFrontmatterHook | null {
   let root: string, hookPath: string;
@@ -194,7 +194,7 @@ export async function runFrontmatterInstallHook(args: string[]): Promise<void> {
 
   const config = loadConfig();
   if (!config) {
-    throw new Error('No brain configured. Run: gbrain init');
+    throw new Error('No brain configured. Run: foresights init');
   }
   const engineConfig = toEngineConfig(config);
   const engine = await createEngine(engineConfig);
@@ -204,7 +204,7 @@ export async function runFrontmatterInstallHook(args: string[]): Promise<void> {
     if (sources.length === 0) {
       console.log(sourceId
         ? `Source "${sourceId}" not found.`
-        : 'No registered sources. Run `gbrain sources list` to inspect.');
+        : 'No registered sources. Run `foresights sources list` to inspect.');
       return;
     }
 
@@ -240,7 +240,7 @@ export async function runFrontmatterInstallHook(args: string[]): Promise<void> {
           console.log(`[${src.id}] hook removed`);
           installed++;
         } else {
-          console.log(`[${src.id}] no gbrain pre-commit hook found; nothing to uninstall`);
+          console.log(`[${src.id}] no foresights pre-commit hook found; nothing to uninstall`);
         }
         continue;
       }
@@ -281,12 +281,12 @@ export async function runFrontmatterInstallHook(args: string[]): Promise<void> {
 }
 
 function printHelp() {
-  console.log(`gbrain frontmatter install-hook — install pre-commit hook in source git repos
+  console.log(`foresights frontmatter install-hook — install pre-commit hook in source git repos
 
 Usage:
-  gbrain frontmatter install-hook [--source <id>] [--force] [--uninstall]
+  foresights frontmatter install-hook [--source <id>] [--force] [--uninstall]
 
-The hook runs \`gbrain frontmatter validate\` against staged .md/.mdx files,
+The hook runs \`foresights frontmatter validate\` against staged .md/.mdx files,
 blocking commits with malformed frontmatter. Bypass with 'git commit --no-verify'.
 A source registered as a subdirectory of a host repo gets the hook at the host
 root, scoped to that subdirectory.
@@ -322,7 +322,7 @@ interface HookTarget {
 }
 
 /**
- * Discover the git root enclosing `localPath` (the same helper `gbrain sync`
+ * Discover the git root enclosing `localPath` (the same helper `foresights sync`
  * uses, so both commands accept the same shapes) and the root-relative scope.
  * Both sides are realpath'd: `git rev-parse --show-toplevel` returns the
  * resolved path, and an unresolved /tmp on macOS (/private/tmp) would
@@ -436,7 +436,7 @@ const samePath = (a: string, b: string): boolean => {
  * `.githooks/<hook>` or a live `.git/hooks/<hook>` both block it too.
  */
 export function hooksPathBlocker(root: string): string | null {
-  if (hooksOffInClone(root)) return `hooks are off in this clone's own config (core.hooksPath=${HOOKS_OFF}), and gbrain leaves them off`;
+  if (hooksOffInClone(root)) return `hooks are off in this clone's own config (core.hooksPath=${HOOKS_OFF}), and foresights leaves them off`;
   const current = currentHooksPath(root);
   if (current) {
     // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- fixed literal tail under the discovered git root
@@ -463,7 +463,7 @@ export function installHook(localPath: string, force: boolean): InstallResult {
   if (existsSync(hookPath)) {
     const existing = readFileSync(hookPath, 'utf8');
     if (existing.includes(HOOK_BANNER)) {
-      // Already a gbrain hook — refresh it, keeping every scope it guards.
+      // Already a foresights hook — refresh it, keeping every scope it guards.
       // One hook per root: a nested source joins the pathspec union; a
       // whole-repo hook (root source, or no marker) already covers everything.
       const prior = parseScopes(existing);

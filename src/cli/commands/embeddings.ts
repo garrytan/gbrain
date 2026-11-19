@@ -1,5 +1,5 @@
 /**
- * `gbrain embeddings`: pre-connect dispatch (opens the selected brain's own
+ * `foresights embeddings`: pre-connect dispatch (opens the selected brain's own
  * engine), run by handleCliOnly before the connectEngine() terminator. The
  * record lives in src/cli/command-table.ts.
  */

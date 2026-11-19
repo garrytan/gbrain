@@ -1,5 +1,5 @@
 /**
- * On a managed canonical worktree, `gbrain git commit-push` commits only the named paths and never pushes: the
+ * On a managed canonical worktree, `foresights git commit-push` commits only the named paths and never pushes: the
  * persistence owner publishes. A commit that already existed (a script's bare commit, or one an earlier call made)
  * used to answer "nothing to commit; origin/main at -", exit 0, and log `[push] ok-already-on-remote`, which the
  * push-log reader counts as a push that landed, while the branch sat ahead of (or diverged from) its upstream. It now
@@ -65,7 +65,7 @@ test('a commit that already exists is reported as not on the upstream, not as no
   const text = await commitPush(f, false, 'companies/acme-example.md');
   expect(text.exitCode).toBe(0);
   expect(text.stdout).toContain('nothing to commit; not pushed: 1 commit(s) on main are not on origin/main as last fetched');
-  expect(text.stdout).toContain(`gbrain git commit-push --push-only --keep-checkout --scan-secrets --path ${f.brain} publishes them`);
+  expect(text.stdout).toContain(`foresights git commit-push --push-only --keep-checkout --scan-secrets --path ${f.brain} publishes them`);
   expect(pushLog(f)).toBe('');
   expect(remoteTip(f)).toBe(before);
   expect(git(f.brain, 'rev-parse', 'HEAD')).toBe(ours);

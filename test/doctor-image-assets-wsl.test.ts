@@ -1,6 +1,6 @@
 /**
  * #1835 — doctor `image_assets`: Windows drive paths (`D:/…`, `D:\…`) written
- * by a Windows gbrain install must not be reported as "missing from disk"
+ * by a Windows foresights install must not be reported as "missing from disk"
  * on POSIX hosts that cannot resolve them.
  *
  * Behavioral test through the master-existing `buildChecks` seam — it

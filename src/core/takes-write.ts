@@ -1,5 +1,5 @@
 /**
- * Shared takes write-through core — consumed by the `gbrain takes` CLI
+ * Shared takes write-through core — consumed by the `foresights takes` CLI
  * (src/commands/takes.ts) and the takes_* MCP ops (src/core/ops/takes.ts).
  *
  * MARKDOWN IS CANONICAL (the extract-takes contract, src/core/cycle/
@@ -129,7 +129,7 @@ export async function resolveTakesRepoDir(engine: BrainEngine): Promise<string |
 /**
  * P1-1 (source isolation): resolve the ACTUAL per-source markdown path for a
  * write, mirroring write-through.ts's topology so a source-scoped take lands in
- * the SAME working tree `gbrain sync` reads it back from. The old
+ * the SAME working tree `foresights sync` reads it back from. The old
  * `join(brainDir, slug.md)` ignored the page's source entirely, so a non-default
  * source's write clobbered a same-slug file in the wrong tree.
  *
@@ -140,7 +140,7 @@ export async function resolveTakesRepoDir(engine: BrainEngine): Promise<string |
  *      source at the root, non-default nested under `.sources/<id>/`.
  *
  * #3605: in BOTH topologies the page's vetted recorded path (`source_path`,
- * or a contained `file://` `source_uri` from `gbrain capture --file`) is
+ * or a contained `file://` `source_uri` from `foresights capture --file`) is
  * preferred over a slug-derived name — the on-disk name is often NOT the slug
  * (`people/Jane Doe.md` has slug `people/jane-doe`), so deriving `<slug>.md`
  * minted a stray twin on add and refused update/resolve with
@@ -388,10 +388,10 @@ function assertFenceRoundTrips(parsed: ParseResult): void {
     throw new TakesWriteError(
       'fence_unparsed',
       `The page's takes fence has rows this version can't safely round-trip: ${parsed.warnings[0]}`,
-      // #3697: this used to name `gbrain extract takes --slugs`, which is not the
+      // #3697: this used to name `foresights extract takes --slugs`, which is not the
       // command grammar (extract has links/timeline/all; takes extraction lives
-      // under `gbrain takes extract`). Point at surfaces that exist.
-      "Reconcile the page's takes fence before mutating — it contains rows this version can't safely round-trip. Preview its repair with `gbrain repair fences` (read-only; it names the exact edit when gbrain will not repair it), fix the malformed fence rows by hand, or re-extract via `gbrain takes extract --from-pages --include-covered`.",
+      // under `foresights takes extract`). Point at surfaces that exist.
+      "Reconcile the page's takes fence before mutating — it contains rows this version can't safely round-trip. Preview its repair with `foresights repair fences` (read-only; it names the exact edit when foresights will not repair it), fix the malformed fence rows by hand, or re-extract via `foresights takes extract --from-pages --include-covered`.",
     );
   }
 }

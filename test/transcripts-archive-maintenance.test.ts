@@ -1,6 +1,6 @@
 /**
  * GST-2768 PR 3: the conversation archive runs from the existing maintenance pass. Unattended upkeep (the serve's
- * idle tick, gbrain maintain --unattended, the schedule) runs the archive step when the archive resolves on, skips it
+ * idle tick, foresights maintain --unattended, the schedule) runs the archive step when the archive resolves on, skips it
  * when it resolves off, and records an archive error without failing the pass; doctor reads the record. PGLite,
  * repo-less, synthetic sessions only.
  */

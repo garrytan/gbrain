@@ -1,5 +1,5 @@
 /**
- * #7338: a managed source activated over pages an older gbrain imported (no import record) sweeps those pages a bounded
+ * #7338: a managed source activated over pages an older foresights imported (no import record) sweeps those pages a bounded
  * number per pass (#7189). Before the fix, a Git edit to a page the sweep had not reached yet classified `drift` with an
  * unknown side and was held `file_drift`, so the edit never became searchable. That's what turned the managed serve-watch
  * freshness cells red. A page that still holds its file at the baseline commit changed only in Git, so the edit imports.
@@ -27,7 +27,7 @@ const OPTS = { sourceId: 'default', noPull: true, noEmbed: true, noExtract: true
 const name = (i: number) => `n${String(i).padStart(4, '0')}`;
 const body = (i: number, text: string) => `---\ntype: concept\ntitle: notes/${name(i)}\n---\n\n${text}\n`;
 
-/** Turns the synced pages into pages an older gbrain imported: the same rows with no import record, and no pass row. */
+/** Turns the synced pages into pages an older foresights imported: the same rows with no import record, and no pass row. */
 async function legacyPages(engine: BrainEngine): Promise<void> {
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
   try {

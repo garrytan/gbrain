@@ -45,7 +45,7 @@ export async function reportPersistenceCliError(error: unknown, json = false,
   if (pending) {
     console.error(`Poll: ${poll}`);
     if (!acceptPending) console.error(`Exit ${PENDING_WRITE_EXIT_CODE}: accepted, not yet committed. Wait longer with --wait <seconds>, or pass --accept-pending to exit 0 (${WRITE_EXIT_DOCS}).`);
-    else if (!acceptPendingCovers(pending)) console.error(`Exit ${PENDING_WRITE_EXIT_CODE}: accepted, but queued for an owner host that runs no consumer and has been quiet past the stale window (the receipt's diagnostic.owner); --accept-pending does not cover it. Run gbrain doctor --only owner_host_stale --json (${WRITE_EXIT_DOCS}).`);
+    else if (!acceptPendingCovers(pending)) console.error(`Exit ${PENDING_WRITE_EXIT_CODE}: accepted, but queued for an owner host that runs no consumer and has been quiet past the stale window (the receipt's diagnostic.owner); --accept-pending does not cover it. Run foresights doctor --only owner_host_stale --json (${WRITE_EXIT_DOCS}).`);
   }
   setCliExitVerdict(writeErrorExitCode(error, acceptPending));
   return true;

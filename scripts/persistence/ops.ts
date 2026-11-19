@@ -167,7 +167,7 @@ export const CONNECTOR_SLUG = 'gh/acme-example/app/1';
 const CONNECTOR_CONFIG = { kind: 'github', gh_scope: 'repos', gh_repos: 'acme-example/app', gh_token_env: 'CRASH_ROBOT_CONNECTOR_TOKEN' };
 export function connectorSourceConfig(): Record<string, string> { return { ...CONNECTOR_CONFIG }; }
 
-/** Git's refusal while another Git process (a gbrain Git effect committing a page) holds the checkout's index or a ref lock. */
+/** Git's refusal while another Git process (a foresights Git effect committing a page) holds the checkout's index or a ref lock. */
 const GIT_LOCK_BUSY = /\.lock'?: File exists|cannot lock ref/;
 const USER_COMMIT_RETRY_MS = 20_000;
 

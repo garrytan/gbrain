@@ -1,5 +1,5 @@
 /**
- * #4720 — `gbrain recall <term>` keyword fallback in keyless mode.
+ * #4720 — `foresights recall <term>` keyword fallback in keyless mode.
  *
  * The bare positional is entity-first (listFactsByEntity). resolveEntitySlug
  * never returns null for non-empty input (slugify is the floor), so a literal

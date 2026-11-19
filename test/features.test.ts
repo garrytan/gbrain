@@ -124,7 +124,7 @@ describe('CLI routing', () => {
   });
 });
 
-// Behavioral coverage for `gbrain features --json`: every supported feature
+// Behavioral coverage for `foresights features --json`: every supported feature
 // check fires in a fixture brain that has the gap and stays silent in one that
 // does not. `dead-links` is not exercised: links.to_page_id cascades on page
 // delete, so neither engine can report a dangling link (tracked in TODOS.md).
@@ -297,7 +297,7 @@ describe('runFeatures behavior', () => {
     expect(await featuresTeaserForDoctor(engine)).toBeNull();
 
     await seedChunks('notes/feature-0', [true, false]);
-    expect(await featuresTeaserForDoctor(engine)).toBe("Tip: 1 missing embeddings. Run 'gbrain features' to fix.");
+    expect(await featuresTeaserForDoctor(engine)).toBe("Tip: 1 missing embeddings. Run 'foresights features' to fix.");
   });
 
   it('brains under three pages skip the priority-2 checks', async () => {

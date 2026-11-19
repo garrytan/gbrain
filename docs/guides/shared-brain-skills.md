@@ -11,7 +11,7 @@ agent's identity. Those permissions remain separate.
 
 ## Where the content lives
 
-For a fresh local brain, `gbrain init` creates the default source under
+For a fresh local brain, `foresights init` creates the default source under
 `configDir()/content/<persistent-brain-id>/default`. Normally this is
 `~/.gbrain/content/<persistent-brain-id>/default`. **`GBRAIN_HOME` is the parent
 of the config directory**, not the config directory itself: setting it to
@@ -30,7 +30,7 @@ content-root/
 
 The release-pinned `gbrain-memory` pack contains those three self-contained,
 prose-only skills, with provenance and licensing. It needs no development
-checkout or helper scripts. The upstream GBrain application repository is not
+checkout or helper scripts. The upstream Foresights application repository is not
 your content repository.
 
 Fresh owned-root setup also approves following this packaged prose and its
@@ -71,7 +71,7 @@ doctor does not inspect or execute commands against stored filesystem paths.
 Use `list_skills` with `{"schema_version":2}` over MCP, or:
 
 ```bash
-gbrain skills --schema-version 2 --json
+foresights skills --schema-version 2 --json
 ```
 
 The result contains compact descriptions and triggers, qualified identities,
@@ -101,7 +101,7 @@ evidence that the calling harness installed or used a skill.
 
 Resource clients can read **`gbrain://skills`** for catalog and revision-bound
 body/manifest/asset links. Resources use the same operation, source, surface,
-publication, and grant checks as tools. This is GBrain's resource binding, not
+publication, and grant checks as tools. This is Foresights's resource binding, not
 a claim of conformance to a draft Skills-over-MCP extension.
 
 The **starter** surface includes shared-skill discovery and membership tools,
@@ -156,12 +156,12 @@ limited packaged policy is not permission to expand disclosure later.
 
 Use `get_skill_policy` with publisher authority to inspect the current policy
 and CAS epoch, including when sharing is disabled. The trusted host can call
-these operations through `gbrain call`; a remote memory grant cannot self-approve.
+these operations through `foresights call`; a remote memory grant cannot self-approve.
 
 ## Connect each installation
 
 Follow [hosted access](hosted-harness-access.md) to provision on the host and
-install the private handoff inside the intended harness. New `gbrain mcp grant`
+install the private handoff inside the intended harness. New `foresights mcp grant`
 connections default to `--skills follow`; `--skills memory-only` opts out of
 membership, not necessarily catalog reads. Existing grants are unchanged when
 the follow choice is omitted. Reapplying a profile preserves previously
@@ -179,7 +179,7 @@ For an existing client, preview only the follow change without resetting its
 profile, finite spending cap, or write fences:
 
 ```bash
-gbrain mcp grant agent-example --client CLIENT_ID --if-version REVISION \
+foresights mcp grant agent-example --client CLIENT_ID --if-version REVISION \
   --harness codex --skills follow --url https://brain.example.com/mcp \
   --dry-run --json
 ```
@@ -194,7 +194,7 @@ For a **dedicated editor**, the trusted host's advanced grant parser accepts
 the named scope and explicit operation snapshot:
 
 ```bash
-gbrain auth rescope-client EDITOR_CLIENT_ID --if-version REVISION \
+foresights auth rescope-client EDITOR_CLIENT_ID --if-version REVISION \
   --scopes read,write,skill_editor \
   --allowed-operations list_skills,get_skill,get_skill_asset,put_skill,delete_skill \
   --dry-run --json
@@ -209,7 +209,7 @@ its own reviewed `admin,skill_publisher` and policy-operation permissions;
 do not silently turn a memory client into that principal.
 
 The [generated adapter reference](harness-adapters.md) lists all 13 registry IDs;
-`gbrain mcp adapters` returns their current metadata. Do not infer native skill
+`foresights mcp adapters` returns their current metadata. Do not infer native skill
 support from a name or supported transport.
 
 - Claude Code, Codex, and opencode managed connections install an owned,
@@ -260,7 +260,7 @@ modified or unowned copies require conflict resolution. No legacy body or
 native shadow copy is automatically deleted or converted by this plan.
 
 After resolving that inventory, a local bridge can approve following with
-`gbrain skillpack scaffold --harness codex --dest /absolute/native/skills --skills follow`.
+`foresights skillpack scaffold --harness codex --dest /absolute/native/skills --skills follow`.
 Use the actual supported harness and native destination, and `--skills memory-only`
 on that same target for cleanup. The bridge reserves one source/destination per
 verified local CLI principal and harness. Reuse that target for repair or rejoin;
@@ -326,7 +326,7 @@ Human/Git edits to canonical files are proposals, not live catalog revisions.
 The trusted host can publish a reviewed proposal through the same coordinator:
 
 ```bash
-gbrain call --source default import_skill_proposal \
+foresights call --source default import_skill_proposal \
   "$(cat /absolute/private/reviewed-skill-proposal.json)"
 ```
 
@@ -343,8 +343,8 @@ Do not simply regenerate hashes to dismiss an unreviewed conflict.
 Retention administration is local-only, not an MCP editor permission:
 
 ```bash
-gbrain call --source default get_skill_retention '{}'
-gbrain call --source default prune_skill_revisions '{}'
+foresights call --source default get_skill_retention '{}'
+foresights call --source default prune_skill_revisions '{}'
 ```
 
 Inspect status before pruning. A prune handles at most 128 eligible revisions;
@@ -354,7 +354,7 @@ references, and permanent write receipts. Source and brain storage budgets can
 block new publications with `skill_retention_capacity`; wait for protections to
 expire or prune eligible history rather than deleting active records manually.
 
-`retain_skill_revision`, also through trusted-local `gbrain call`, pins an exact
+`retain_skill_revision`, also through trusted-local `foresights call`, pins an exact
 source/incarnation/pack/name/revision for `hours` greater than zero and at most
 24, under bounded quotas. A pin preserves storage, not read or execution
 authority. Unpinned old revisions can become `revision_unavailable`; retain
@@ -364,7 +364,7 @@ downloaded files, other history, or backups.
 ## Migrate an existing brain
 
 Use the mechanical [v0.53.0.0 migration checklist](../../skills/migrations/v0.53.0.0.md).
-Start on the host with `gbrain apply-migrations --dry-run --json`. It inventories
+Start on the host with `foresights apply-migrations --dry-run --json`. It inventories
 registered roots and reports stage-specific conflicts, not arbitrary home
 directories or disconnected devices. Keep operational DB and content backups
 before applying changes. DB-only export requires an explicit absent destination,
@@ -386,20 +386,20 @@ per-source `action_required` as completion even if the migration ledger says
 the mechanical checkpoint completed.
 
 While a source's inventory, ownership (writer), projection or policy stage, or
-a brain-level pending action, is still open, `gbrain apply-migrations --list` shows 0.53.0 as
+a brain-level pending action, is still open, `foresights apply-migrations --list` shows 0.53.0 as
 `applied_pending_host_work` (not `applied`), `--list --json` adds an
 `applied_pending_host_work` array whose `fix.argv` is the read-only
-inventory, and `gbrain doctor` warns on `minions_migration` with
+inventory, and `foresights doctor` warns on `minions_migration` with
 `details.code: migration_host_work_pending`:
 
 ```bash
-gbrain apply-migrations --migration 0.53.0 --dry-run --json   # each source's next step; changes nothing
-gbrain apply-migrations --yes                                  # after the work: the re-check records it done
+foresights apply-migrations --migration 0.53.0 --dry-run --json   # each source's next step; changes nothing
+foresights apply-migrations --yes                                  # after the work: the re-check records it done
 ```
 
 The `members` stage alone (no installation enrolled yet, as on every new
 brain) is not host work, and neither is a source that opted out with
-`gbrain sources shared-skills <id> off`; a brain that declines the migration
+`foresights sources shared-skills <id> off`; a brain that declines the migration
 (below) never reports it.
 
 The host report's `member_installations` inventories known members per source,
@@ -414,25 +414,25 @@ installations are not proven migrated by that inventory.
 the v0.53.0 migration from running on every upgrade."* The agent runs
 
 ```bash
-gbrain config set shared_skills.migration.enabled false
+foresights config set shared_skills.migration.enabled false
 ```
 
 The key is brain-level database config, so it applies to every machine that
-uses that database. From then on `gbrain apply-migrations` (including
-`gbrain upgrade` and `gbrain post-upgrade`) skips
+uses that database. From then on `foresights apply-migrations` (including
+`foresights upgrade` and `foresights post-upgrade`) skips
 v0.53.0 entirely: no inventory, no `shared_skills.migration.v1*` config
-writes, and the applied-migration re-check does not run. `gbrain
+writes, and the applied-migration re-check does not run. `foresights
 apply-migrations --list` and `--dry-run` show it as `declined` with the key,
-`gbrain doctor` reports `minions_migration` ok with `declined: ['0.53.0']`
-(`gbrain doctor --fast` cannot read the key and never lists v0.53.0 as not run),
-and `get_health.migrations.declined` lists it. An explicit `gbrain
+`foresights doctor` reports `minions_migration` ok with `declined: ['0.53.0']`
+(`foresights doctor --fast` cannot read the key and never lists v0.53.0 as not run),
+and `get_health.migrations.declined` lists it. An explicit `foresights
 apply-migrations --migration 0.53.0` refuses with `migration_declined` (exit
 3) and the command that turns it back on instead of overriding the owner's
 choice from one machine. To adopt shared skills later:
 
 ```bash
-gbrain config set shared_skills.migration.enabled true
-gbrain apply-migrations --yes
+foresights config set shared_skills.migration.enabled true
+foresights apply-migrations --yes
 ```
 
 Per-source opt-outs (next section) still apply once the migration runs.
@@ -441,7 +441,7 @@ Per-source opt-outs (next section) still apply once the migration runs.
 
 **Say to your agent:** *"Stop the shared-skills migration from touching the
 acme-example source; it already serves its own skills."* The agent runs
-`gbrain sources shared-skills acme-example off` on the brain host.
+`foresights sources shared-skills acme-example off` on the brain host.
 
 The 0.53.0 migration adopts the skillpack of every owned content source. A
 source that already delivers skills another way (its own brain-resident pack
@@ -451,18 +451,18 @@ the migration preserves the source's files and reports
 `source_shared_skills_disabled`.
 
 Prerequisites: a shell on the brain host (the command reads and writes the
-host's source configuration) and the source id from `gbrain sources list`.
+host's source configuration) and the source id from `foresights sources list`.
 
 ```bash
-gbrain sources shared-skills acme-example status --json   # read-only
-gbrain sources shared-skills acme-example off             # opt out
-gbrain sources shared-skills acme-example on              # back to the default
+foresights sources shared-skills acme-example status --json   # read-only
+foresights sources shared-skills acme-example off             # opt out
+foresights sources shared-skills acme-example on              # back to the default
 ```
 
 Expected result: every form prints `config.shared_skills` (`false`, or unset,
 which means on), the effective policy mode (`content`, `preserve_files` or
 `explicit_pack_required`) with its reason code, an explanation, and any parked
-inventory. After `off`, the next `gbrain apply-migrations --migration 0.53.0 --yes`
+inventory. After `off`, the next `foresights apply-migrations --migration 0.53.0 --yes`
 reports the source as `source_shared_skills_disabled` and changes none of its
 files or grants. `on` deletes the key; the default is on.
 
@@ -478,14 +478,14 @@ is the read-only `status --json` form. On a hosted brain, ask the host's
 operator to run it there. An unknown action exits with `invalid_params` and
 names the `status` form.
 
-Verify: `gbrain sources shared-skills <id> status --json`, the `shared_skills`
-object in `gbrain sources status <id> --json`, or
-`gbrain doctor --only shared_skills_sources`, which lists opted-out sources.
+Verify: `foresights sources shared-skills <id> status --json`, the `shared_skills`
+object in `foresights sources status <id> --json`, or
+`foresights doctor --only shared_skills_sources`, which lists opted-out sources.
 
 ### Oversized skill packs
 
 The migration inventories a pack within bounded limits. These database config
-keys hold today's defaults; `gbrain config set` refuses a value above the
+keys hold today's defaults; `foresights config set` refuses a value above the
 ceiling. Only the brain host's CLI writes them.
 
 | Key | Default | Ceiling |
@@ -503,13 +503,13 @@ holds `parked` (the bound, the limits in force and when it parked), the stage
 reports `payload_too_large` with the next step, and the rest of the migration
 completes instead of recording a partial run. Later runs skip the source
 without re-reading the pack. Resume it in one of three ways, then run
-`gbrain apply-migrations --migration 0.53.0 --yes`:
+`foresights apply-migrations --migration 0.53.0 --yes`:
 
-1. Raise the named bound: `gbrain config set shared_skills.inventory.max_file_bytes 524288`.
-2. Opt the source out: `gbrain sources shared-skills <id> off`.
-3. Shrink the pack, then release it: `gbrain sources shared-skills <id> on`.
+1. Raise the named bound: `foresights config set shared_skills.inventory.max_file_bytes 524288`.
+2. Opt the source out: `foresights sources shared-skills <id> off`.
+3. Shrink the pack, then release it: `foresights sources shared-skills <id> on`.
 
-`gbrain doctor` warns `shared_skills_sources` while a source is parked.
+`foresights doctor` warns `shared_skills_sources` while a source is parked.
 
 A pack whose adoption could never publish is refused at inventory instead of
 after it: one canonical adoption writes one `SKILL.md` per declared skill plus
@@ -524,7 +524,7 @@ When skill files change after the migration inventory, the inventory stage
 reports a conflict that lists the changed paths and the exact acceptance
 command with a digest of the current files. Review the changes with the user;
 only after they agree run
-`gbrain apply-migrations --migration 0.53.0 --accept-reviewed-inventory <source>=<digest> --yes`.
+`foresights apply-migrations --migration 0.53.0 --accept-reviewed-inventory <source>=<digest> --yes`.
 A later edit changes the digest, so the old command is refused again. Hashes
 are byte-exact, so a checkout that rewrites line endings (CRLF on Windows)
 counts as a change: pin `*.md text eol=lf` in `.gitattributes` before
@@ -534,8 +534,8 @@ completed inventory whose root moved still refuses (#5569).
 
 An install whose 0.53.0 migration already shows as wedged (three partial runs
 before parking existed) resumes with
-`gbrain apply-migrations --force-retry 0.53.0`, then
-`gbrain apply-migrations --migration 0.53.0 --yes`; the oversized source parks
+`foresights apply-migrations --force-retry 0.53.0`, then
+`foresights apply-migrations --migration 0.53.0 --yes`; the oversized source parks
 and the migration completes.
 
 ## Troubleshoot, leave, and recover
@@ -543,7 +543,7 @@ and the migration completes.
 Inspect this installation's local receipt without credentials or a live host:
 
 ```bash
-gbrain connect --harness codex --status --json
+foresights connect --harness codex --status --json
 ```
 
 Use the installation's actual harness and connection `--name`; thin CLI
@@ -568,7 +568,7 @@ rather than assuming it shares a `connect` installation's receipt path.
 ### Membership inactive after a re-enrollment
 
 **Say to your agent:** *"My shared skills say membership inactive; refresh them."*
-The agent runs `gbrain bootstrap harness --refresh-skills` on the harness host.
+The agent runs `foresights bootstrap harness --refresh-skills` on the harness host.
 
 A `leave_brain` then `join_brain` by the same principal (for example to bind a
 follow policy the owner approved later) moves the server's enrollment epoch
@@ -577,18 +577,18 @@ on, while the receipt and native router keep the old one, so the router's
 bootstrap-managed installation:
 
 ```bash
-gbrain bootstrap harness --refresh-skills
-gbrain bootstrap harness --status
+foresights bootstrap harness --refresh-skills
+foresights bootstrap harness --status
 ```
 
 `--refresh-skills` re-joins each live entry under its recorded credential
 and follow policy, so the receipt and router adopt the current epoch; no
 token is minted or revoked. `--status` prints each entry's receipt epoch, and
-`gbrain doctor` warns `bootstrap_harness_health` (code
+`foresights doctor` warns `bootstrap_harness_health` (code
 `shared_skills_epoch_superseded`) when the receipt epoch differs from the
 brain's membership row. A refresh whose recorded policy is wider than the
 active membership answers `follow_approval_required`: leave and re-run
-`gbrain bootstrap harness` after owner approval. A rotation leave whose own
+`foresights bootstrap harness` after owner approval. A rotation leave whose own
 epoch was superseded completes locally (`remote_membership_reason:
 superseded`) so the previous token can be revoked.
 
@@ -604,7 +604,7 @@ Managed removal disables local following and attempts owned-file cleanup even
 when offline or already revoked. `remote_membership_pending: true` means the
 host has not acknowledged leave; retry remote cleanup when possible. A
 bootstrap-managed enrollment whose credential is already revoked cannot leave
-remotely; `gbrain bootstrap harness` finishes its local cleanup and records it
+remotely; `foresights bootstrap harness` finishes its local cleanup and records it
 as left with reason `credential_revoked`, because a revoked principal's
 membership is inert ([cleanup pending](bootstrap.md#cleanup-pending)). Do not
 claim a server-side departure from successful local deletion, or delete edited
@@ -631,7 +631,7 @@ operational database and present both copies as independent brains.
 ### Restore a local archive as a new brain
 
 For supported local PGLite installations, create a private archive with
-`gbrain backup create --output /absolute/private/brain.gbrain-backup` after
+`foresights backup create --output /absolute/private/brain.gbrain-backup` after
 pausing writers. It contains sensitive full DB state and installer-managed
 files, **not every canonical content root**, even on the same disk. Inspect the
 archive's `omitted` inventory and back up excluded canonical files separately.
@@ -641,7 +641,7 @@ archive.
 Restore only into a new, absent root whose parent already exists:
 
 ```bash
-gbrain backup restore /absolute/private/brain.gbrain-backup \
+foresights backup restore /absolute/private/brain.gbrain-backup \
   --into /absolute/restored-brain --json
 ```
 
@@ -669,7 +669,7 @@ the brain ID while still rotating the serving epoch/key, revoking archived
 credentials and memberships, detaching owners, and disabling publication:
 
 ```bash
-gbrain backup restore /absolute/private/brain.gbrain-backup \
+foresights backup restore /absolute/private/brain.gbrain-backup \
   --into /absolute/recovered-brain --mode recovery \
   --confirm-quiesced --confirm-backup-compatible --confirm-authority-reviewed \
   --json

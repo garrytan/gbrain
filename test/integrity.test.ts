@@ -1,5 +1,5 @@
 /**
- * gbrain integrity tests — pure regex + frontmatter-extract paths.
+ * foresights integrity tests — pure regex + frontmatter-extract paths.
  *
  * The three-bucket auto path runs end-to-end in a manual smoke script
  * against a real brain; the unit tests here focus on the pure detection
@@ -249,7 +249,7 @@ describe('runIntegrity CLI dispatch', () => {
     } finally {
       console.log = origLog;
     }
-    expect(logs.join('\n')).toMatch(/gbrain integrity/i);
+    expect(logs.join('\n')).toMatch(/(?:foresights|gbrain) integrity/i);
   });
 
   test('no subcommand behaves like --help', async () => {

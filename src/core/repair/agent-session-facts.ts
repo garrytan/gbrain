@@ -1,5 +1,5 @@
 /**
- * `gbrain repair agent-session-facts` (#8064): re-attribute facts the capture
+ * `foresights repair agent-session-facts` (#8064): re-attribute facts the capture
  * lanes (`hook:writeback`, `hook:compact`, `sweep:corpus`) saved as the
  * owner's own from sessions an orchestrator launched (headless workers on the
  * owner's account), and retire the takes consolidate promoted from them. The
@@ -318,7 +318,7 @@ export function agentSessionFlagArgs(opts: AgentSessionOptions): string[] {
 
 function previewCommand(scope: RepairScope, all: string[], opts: AgentSessionOptions, includeAmbiguous: boolean): string {
   const source = scope.source_ids.length === 1 && all.length > 1 ? ` --source ${scope.source_ids[0]}` : '';
-  return `gbrain repair ${COMMAND}${source}${agentSessionFlagArgs(opts).map(arg => ` ${shellQuote(arg)}`).join('')}${includeAmbiguous ? ' --include-ambiguous' : ''}`;
+  return `foresights repair ${COMMAND}${source}${agentSessionFlagArgs(opts).map(arg => ` ${shellQuote(arg)}`).join('')}${includeAmbiguous ? ' --include-ambiguous' : ''}`;
 }
 
 async function activeSources(engine: BrainEngine): Promise<string[]> {
@@ -391,7 +391,7 @@ export const agentSessionFactsRepair: RepairHandler = {
           ...(unreadable_corpus_files.length ? { unreadable_corpus_files: unreadable_corpus_files.length } : {}) } };
     }
     if (!opts.expect) {
-      throw new OperationError('invalid_params', `gbrain repair ${COMMAND} --apply re-attributes only the set a preview printed.`,
+      throw new OperationError('invalid_params', `foresights repair ${COMMAND} --apply re-attributes only the set a preview printed.`,
         `Preview first: ${command} — then run the apply command it prints after the user agrees: ${command} --apply --expect <preview-hash> --yes`,
         'docs/guides/repair.md#explicit-only-repair-kinds');
     }

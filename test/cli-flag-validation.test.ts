@@ -1,7 +1,7 @@
 /**
  * #2185 — strict unknown-flag validation.
  *
- * The repro that filed the issue: `gbrain init --migrate-only --dry-run`
+ * The repro that filed the issue: `foresights init --migrate-only --dry-run`
  * applied REAL migrations — no handler consults --dry-run, and the ad-hoc
  * `args.includes()` flag style silently ignores anything it doesn't look for.
  * The pre-dispatch validator in src/cli.ts fails loud instead.
@@ -135,7 +135,7 @@ describe('#2185 acceptance — real usage stays legal', () => {
   });
 
   // Pre-landing review regression: the validator rejected the CLI-local
-  // flags makeContext consumes OUTSIDE the op contract — `gbrain search
+  // flags makeContext consumes OUTSIDE the op contract — `foresights search
   // "x" --source y` and `--dry-run` invocations exited 1 as unknown flags.
   test('op commands accept --source/--dry-run (makeContext CLI-locals, not wire params)', () => {
     const search = operationsByName.search;
@@ -293,7 +293,7 @@ describe('#2185 subprocess smokes — end-to-end error surface', () => {
   test('init --migrate-only --dry-run fails loud BEFORE any engine work', () => {
     const r = run(['init', '--migrate-only', '--dry-run']);
     expect(r.status).toBe(2);
-    expect(r.stderr).toContain("unknown flag --dry-run for 'gbrain init'");
+    expect(r.stderr).toContain("unknown flag --dry-run for 'foresights init'");
     // Pre-engine: no migration output may appear.
     expect(r.stderr).not.toContain('migration');
   });
@@ -301,7 +301,7 @@ describe('#2185 subprocess smokes — end-to-end error surface', () => {
   test('typo on an op command fails loud with the command named', () => {
     const r = run(['search', 'needle', '--jsno']);
     expect(r.status).toBe(2);
-    expect(r.stderr).toContain("unknown flag --jsno for 'gbrain search'");
+    expect(r.stderr).toContain("unknown flag --jsno for 'foresights search'");
   });
 
   test('--help still short-circuits before validation', () => {
@@ -315,7 +315,7 @@ describe('#2185 subprocess smokes — end-to-end error surface', () => {
     // The bogus flag proves validation still ran on what remained.
     const r = run(['init', '--migrate-only', '--quiet', '--definitely-bogus-xyz']);
     expect(r.status).toBe(2);
-    expect(r.stderr).toContain("unknown flag --definitely-bogus-xyz for 'gbrain init'");
+    expect(r.stderr).toContain("unknown flag --definitely-bogus-xyz for 'foresights init'");
     expect(r.stderr).not.toContain('--quiet');
   });
 
@@ -324,7 +324,7 @@ describe('#2185 subprocess smokes — end-to-end error surface', () => {
     // alongside --source proves ordering: --source accepted, bogus rejected.
     const r = run(['search', 'needle', '--source', 'nope-source', '--definitely-bogus-xyz']);
     expect(r.status).toBe(2);
-    expect(r.stderr).toContain("unknown flag --definitely-bogus-xyz for 'gbrain search'");
+    expect(r.stderr).toContain("unknown flag --definitely-bogus-xyz for 'foresights search'");
     expect(r.stderr).not.toContain('unknown flag --source');
   });
 });
@@ -333,7 +333,7 @@ describe('#5700 parseOpArgs refuses to swallow a known flag as a value', () => {
   test('a non-boolean flag followed by a known flag of the same command is an argument error', async () => {
     const { parseOpArgs } = await import('../src/cli/main.ts');
     const put = operations.find(o => o.cliHints?.name === 'put')!;
-    // The reported shape: `gbrain put x --content --source default` with the
+    // The reported shape: `foresights put x --content --source default` with the
     // body on stdin used to store the literal "--source" as the page body,
     // drop the real --source, and never read the pipe (content already set).
     expect(() => parseOpArgs(put, ['repro-a', '--content', '--source', 'default'])).toThrow(
@@ -416,7 +416,7 @@ describe('#5700 subprocess smoke — the reported invocation fails loud', () => 
   test('put --help documents stdin and that --content needs a value', () => {
     const r = run(['put', '--help']);
     expect(r.status).toBe(0);
-    expect(r.stdout).toContain('gbrain put <slug> [options] < file   (--content read from stdin)');
+    expect(r.stdout).toContain('foresights put <slug> [options] < file   (--content read from stdin)');
     expect(r.stdout).toMatch(/--content .*\(required: --content needs a value; omit --content, or put it last, to read stdin\)/);
   });
 });

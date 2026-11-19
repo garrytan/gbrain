@@ -1,5 +1,5 @@
 /**
- * skillpack/migrate-fence.ts — `gbrain skillpack migrate-fence`.
+ * skillpack/migrate-fence.ts — `foresights skillpack migrate-fence`.
  *
  * One-shot conversion for users running on the old (v0.19–v0.32.x)
  * managed-block model. Strips the `<!-- gbrain:skillpack:begin -->` /
@@ -31,13 +31,13 @@ import { findResolverFile } from '../resolver-filenames.ts';
 const MANAGED_BEGIN = '<!-- gbrain:skillpack:begin -->';
 const MANAGED_END = '<!-- gbrain:skillpack:end -->';
 const RECEIPT_RE =
-  /<!-- gbrain:skillpack:manifest cumulative-slugs="([^"]*)" version="([^"]*)" -->/;
+  /<!-- (?:foresights|gbrain):skillpack:manifest cumulative-slugs="([^"]*)" version="([^"]*)" -->/;
 const ROW_RE = /`skills\/([^/]+)\/SKILL\.md`/g;
 
 export interface MigrateFenceOptions {
   /** Absolute path to the target workspace (parent of skills/). */
   targetWorkspace: string;
-  /** Absolute path to gbrain repo root (source-of-truth bundle). When
+  /** Absolute path to foresights repo root (source-of-truth bundle). When
    *  unset, copy-missing-skills is skipped (caller's resolver-file
    *  scrub still runs). */
   gbrainRoot?: string;
@@ -66,7 +66,7 @@ export interface MigrateFenceResult {
 }
 
 /**
- * Parse a resolver file's content for the gbrain managed-block fence.
+ * Parse a resolver file's content for the foresights managed-block fence.
  * Returns null when no fence is present. Returns a structured shape
  * with begin/end offsets when present.
  */
@@ -199,10 +199,10 @@ export function stripFence(content: string, parsed: ParsedFence): string {
 
   // Strip the receipt comment line (regex-friendly).
   const innerSansReceipt = inner.replace(RECEIPT_RE, '');
-  // Strip the "Installed by gbrain X.Y.Z — do not hand-edit" reminder
+  // Strip the "Installed by foresights X.Y.Z — do not hand-edit" reminder
   // (matches even when version varies).
   const innerSansReminder = innerSansReceipt.replace(
-    /<!-- Installed by gbrain [^>]*-->/,
+    /<!-- Installed by (?:foresights|gbrain) [^>]*-->/,
     '',
   );
 

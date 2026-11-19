@@ -13,7 +13,7 @@
  * File format: JSON object `{schema: 1, entries: [...]}` at
  * `skills/<name>/skillopt/rejected.json`.
  *
- * Atomic writes via .tmp + rename (mirrors gbrain's atomic-write convention).
+ * Atomic writes via .tmp + rename (mirrors foresights's atomic-write convention).
  */
 
 import { assertLegacySkillFilesystemWrite } from '../skillpack/writer-guard.ts';

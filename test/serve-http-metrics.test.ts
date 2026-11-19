@@ -1,5 +1,5 @@
 /**
- * /metrics surface for `gbrain serve --http` (#3893, reimplemented from
+ * /metrics surface for `foresights serve --http` (#3893, reimplemented from
  * @y2688's PR).
  *
  * Two properties the original community PR got wrong are pinned here:

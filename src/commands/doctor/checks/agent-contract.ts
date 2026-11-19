@@ -38,9 +38,9 @@ function preapprovePaid(): Action {
   return {
     argv: preapprovalCommand(PREAPPROVE_PAID_MAX_USD_PER_RUN, '<usd>'),
     consent: ['paid'], actor: 'user', requires_exclusive: false, verify: doctorVerify(NAME),
-    inputs: [{ name: USD_INPUT, how: 'Ask the user the most gbrain may spend per run without asking first (for example 1).' }],
+    inputs: [{ name: USD_INPUT, how: 'Ask the user the most foresights may spend per run without asking first (for example 1).' }],
     why: 'Unattended paid runs stopped for consent or hit their derived cap. A per-run preapproval lets them proceed up to that amount; only the user may grant it.',
-    user_message: 'Some background gbrain work stopped because it would spend money and nobody was there to approve it. Want to let gbrain spend up to a fixed amount per run without asking? If so, run this with your limit in dollars.',
+    user_message: 'Some background foresights work stopped because it would spend money and nobody was there to approve it. Want to let foresights spend up to a fixed amount per run without asking? If so, run this with your limit in dollars.',
     docs: 'docs/protocol/AGENT_OPERATOR_v1.md',
   };
 }
@@ -50,7 +50,7 @@ function preapproveInstall(): Action {
     argv: preapprovalCommand(PREAPPROVE_PERSISTENT_INSTALL, 'true'),
     consent: ['persistent_install'], actor: 'user', requires_exclusive: false, verify: doctorVerify(NAME),
     why: 'Unattended runs that install background services or harness config stopped for consent. This preapproval covers installs only, never credentials.',
-    user_message: 'gbrain wanted to install a background service and nobody was there to approve it. Run this if you want such installs to proceed without asking.',
+    user_message: 'foresights wanted to install a background service and nobody was there to approve it. Run this if you want such installs to proceed without asking.',
     docs: 'docs/protocol/AGENT_OPERATOR_v1.md',
   };
 }
@@ -70,7 +70,7 @@ export function agentContractCheck(events: readonly Event[], now = Date.now()): 
     internal_errors: faults.length, consent_refused: refused.length, derived_cap_exhausted: capped.length, json_document_missing: noDoc.length,
   };
   const parts: string[] = [];
-  if (faults.length) parts.push(`${faults.length} error(s) reached an agent without a specific next step (${top(faults)}); report them to the user with \`gbrain doctor --json\` output`);
+  if (faults.length) parts.push(`${faults.length} error(s) reached an agent without a specific next step (${top(faults)}); report them to the user with \`foresights doctor --json\` output`);
   if (refused.length) parts.push(`${refused.length} unattended run(s) stopped for consent (${top(refused)})`);
   if (capped.length) parts.push(`${capped.length} paid run(s) hit their derived spend cap (${top(capped)})`);
   if (noDoc.length) parts.push(`${noDoc.length} \`--json\` run(s) printed no JSON document (${top(noDoc)})`);
@@ -84,7 +84,7 @@ export function agentContractCheck(events: readonly Event[], now = Date.now()): 
     unknown_build: counted.filter((e) => !e.version).length, versions };
   const incident = { scope: builds.this_build > 0 ? 'current' : 'historical', since: counted.reduce((min, e) => (e.ts < min ? e.ts : min), counted[0]!.ts) };
   const range = versions.length > 1 ? `${versions[0]} to ${versions.at(-1)}` : versions[0];
-  const elsewhere = [builds.other_builds ? `${builds.other_builds} of ${counted.length} were recorded by another gbrain build (${range})` : '',
+  const elsewhere = [builds.other_builds ? `${builds.other_builds} of ${counted.length} were recorded by another foresights build (${range})` : '',
     builds.unknown_build ? `${builds.unknown_build} by a build that did not record its version` : ''].filter(Boolean).join(' and ');
   const history = elsewhere ? ` ${elsewhere}; recheck after upgrading, or once they age out of the ${AGENT_CONTRACT_WINDOW_DAYS}-day window.` : '';
   return {

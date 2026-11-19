@@ -1,5 +1,5 @@
 /**
- * #4888 — `gbrain sync --json` must keep stdout pure JSON. Every human line
+ * #4888 — `foresights sync --json` must keep stdout pure JSON. Every human line
  * performSync emits through slog() used to land on stdout AHEAD of the
  * envelope, so the documented `--json | jq` contract failed on the success
  * path. Under --json those lines route to stderr; the final envelope is the

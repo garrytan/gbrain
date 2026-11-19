@@ -1,12 +1,13 @@
 /**
  * advisor/render.ts — the shared `=`-bar agent-readable renderer.
  *
- * One renderer for BOTH `gbrain advisor` and the post-install advisory so the
+ * One renderer for BOTH `foresights advisor` and the post-install advisory so the
  * two surfaces never drift (eng-review: shared render). Print-never-execute: the
  * output tells the harness to show the user and ask before acting.
  */
 
 import type { AdvisorFinding, AdvisorReport, AdvisorSeverity } from './types.ts';
+import { commandText } from '../brand.ts';
 
 const BAR = '='.repeat(72);
 
@@ -18,7 +19,7 @@ const SEV_LABEL: Record<AdvisorSeverity, string> = {
 
 function fixLine(f: AdvisorFinding): string | null {
   if (!f.fix.command_argv || f.fix.command_argv.length === 0) return null;
-  return f.fix.command_argv.join(' ');
+  return commandText(f.fix.command_argv);
 }
 
 /** Render a full advisor report as the agent-readable `=`-bar block. */
@@ -26,12 +27,12 @@ export function renderAdvisorReport(report: AdvisorReport): string {
   const lines: string[] = [];
   lines.push('');
   lines.push(BAR);
-  lines.push(`gbrain advisor — ${report.findings.length} thing${report.findings.length === 1 ? '' : 's'} worth your attention (gbrain ${report.version})`);
+  lines.push(`foresights advisor — ${report.findings.length} thing${report.findings.length === 1 ? '' : 's'} worth your attention (foresights ${report.version})`);
   lines.push(BAR);
   lines.push('');
 
   if (report.findings.length === 0) {
-    lines.push('Nothing pressing — this brain looks healthy. Re-run `gbrain advisor` any time.');
+    lines.push('Nothing pressing — this brain looks healthy. Re-run `foresights advisor` any time.');
     lines.push(BAR);
     lines.push('');
     return lines.join('\n');
@@ -52,7 +53,7 @@ export function renderAdvisorReport(report: AdvisorReport): string {
   lines.push('');
   const appliable = report.findings.filter((f) => f.fix.dispatch_id);
   if (appliable.length > 0) {
-    lines.push(`         gbrain advisor --apply <id>     # e.g. ${appliable[0]!.fix.dispatch_id}`);
+    lines.push(`         foresights advisor --apply <id>     # e.g. ${appliable[0]!.fix.dispatch_id}`);
   } else {
     lines.push('         (run the per-finding `fix:` command above)');
   }
@@ -78,11 +79,11 @@ export function renderRecommendedSkills(opts: {
   const verb = opts.context === 'init' ? 'installed' : 'upgraded to';
   lines.push('');
   lines.push(BAR);
-  lines.push(`gbrain ${opts.version} — RECOMMENDED SKILLS FOR THE AGENT TO INSTALL`);
+  lines.push(`foresights ${opts.version} — RECOMMENDED SKILLS FOR THE AGENT TO INSTALL`);
   lines.push(BAR);
   lines.push('');
   lines.push(
-    `The user just ${verb} gbrain ${opts.version}. ${opts.skills.length} ` +
+    `The user just ${verb} foresights ${opts.version}. ${opts.skills.length} ` +
       `${opts.skills.length === 1 ? 'skill is' : 'skills are'} recommended but not yet installed.`,
   );
   lines.push('');

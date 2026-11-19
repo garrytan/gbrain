@@ -1,5 +1,5 @@
 /**
- * #5872: `gbrain models` reported `models.eval.longmemeval` on the reasoning
+ * #5872: `foresights models` reported `models.eval.longmemeval` on the reasoning
  * tier while the nightly quality probe answered on the Anthropic fallback,
  * and no judge-slot route appeared at all. The report now carries the
  * probe's routes as the probe resolves them: the reader and extractor from
@@ -65,7 +65,7 @@ afterEach(() => {
   resetGateway();
 });
 
-describe('gbrain models — nightly quality probe routes', () => {
+describe('foresights models — nightly quality probe routes', () => {
   test('JSON: reader and extractor match their report rows, each slot names its origin', async () => {
     configureBrainGateway();
     const home = emptyHome();

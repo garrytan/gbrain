@@ -2,7 +2,7 @@
  * scripts/check-skill-refs.mjs — the CLI-ref lane (#6197) and the
  * outside-root link rule (#6198), exercised on fixture skill trees.
  *
- * #6197: skills/maintain told agents to run `nohup gbrain embed refresh`
+ * #6197: skills/maintain told agents to run `nohup foresights embed refresh`
  * in an inline code span; `refresh` parses as a page slug, so the command
  * never refreshed anything. The lane scanned only fenced blocks and only
  * warned. It now scans inline spans too and fails on an unknown top-level
@@ -41,29 +41,29 @@ describe('check-skill-refs CLI-ref lane (#6197)', () => {
   it('fails on a known-bad subcommand inside an inline code span', () => {
     const r = check(fixture({ 'demo/SKILL.md': skill('Refresh with `nohup gbrain embed refresh > /tmp/e.log 2>&1 &`.') }));
     expect(r.code).toBe(1);
-    expect(r.out).toContain('`gbrain embed refresh` does not run as written');
-    expect(r.out).toContain('gbrain embed --stale --dry-run');
+    expect(r.out).toContain('`foresights embed refresh` does not run as written');
+    expect(r.out).toContain('foresights embed --stale --dry-run');
   });
 
   it('fails on an unknown top-level command in an inline span', () => {
-    const r = check(fixture({ 'demo/SKILL.md': skill('Run `gbrain frobnicate-pages --all` first.') }));
+    const r = check(fixture({ 'demo/SKILL.md': skill('Run `foresights frobnicate-pages --all` first.') }));
     expect(r.code).toBe(1);
-    expect(r.out).toContain('`gbrain frobnicate-pages` is not a gbrain command');
+    expect(r.out).toContain('`foresights frobnicate-pages` is not a foresights command');
   });
 
   it('fails on an unknown top-level command in a fenced block', () => {
     const r = check(fixture({ 'demo/SKILL.md': skill('```bash\ngbrain sync --no-pull\ngbrain frobnicate-pages\n```') }));
     expect(r.code).toBe(1);
-    expect(r.out).toContain('`gbrain frobnicate-pages` is not a gbrain command');
+    expect(r.out).toContain('`foresights frobnicate-pages` is not a foresights command');
   });
 
-  it('passes real commands and ignores prose that only mentions gbrain', () => {
+  it('passes real commands and ignores prose that only mentions foresights', () => {
     const r = check(fixture({
       'demo/SKILL.md': skill([
-        'Preview with `gbrain embed --stale --dry-run`, then `GBRAIN_HOME=/x gbrain sync --source alpha-example --no-pull`.',
-        'Report: `Turned off gbrain update checks (re-enable: gbrain config set self_upgrade.mode notify).`',
+        'Preview with `foresights embed --stale --dry-run`, then `GBRAIN_HOME=/x foresights sync --source alpha-example --no-pull`.',
+        'Report: `Turned off foresights update checks (re-enable: foresights config set self_upgrade.mode notify).`',
         '````markdown\n```bash\ngbrain doctor --json\n```\n````',
-        '```text\n🧠 gbrain checkup — 2 things worth your attention\n# gbrain frobnicate in a comment is not a command\n```',
+        '```text\n🧠 foresights checkup — 2 things worth your attention\n# gbrain frobnicate in a comment is not a command\n```',
       ].join('\n\n')),
     }));
     expect(r.out).not.toContain('FAIL');
@@ -81,7 +81,7 @@ describe('check-skill-refs outside-root links (#6198)', () => {
 
   it('keeps links inside the skills root and exempts skills/migrations/**', () => {
     const r = check(fixture({
-      'demo/SKILL.md': skill('See [quality](../conventions/quality.md) and [the url](https://github.com/garrytan/gbrain/blob/master/docs/ENGINES.md).'),
+      'demo/SKILL.md': skill('See [quality](../conventions/quality.md) and [the url](https://github.com/aimonk2025/gbrain/blob/master/docs/ENGINES.md).'),
       'conventions/quality.md': '# Quality\n',
       'migrations/v0.1.0.md': '# Old\n\nSee [docs](../../docs/ENGINES.md).\n',
     }), '--no-cli-refs');

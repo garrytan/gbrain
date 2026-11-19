@@ -4,11 +4,11 @@
  * Input:  { handle: string, keywords?: string, maxCandidates?: number }
  * Output: { url?, tweet_id?, text?, created_at?, candidates[] }
  *
- * Driven by `gbrain integrity --auto`: a brain page says "Garry tweeted about
+ * Driven by `foresights integrity --auto`: a brain page says "Garry tweeted about
  * foo" without a link. This resolver calls the X API v2 recent-search, finds
  * the matching tweet, and returns the URL + an honest confidence score.
  *
- * Confidence scoring (the contract `gbrain integrity` relies on):
+ * Confidence scoring (the contract `foresights integrity` relies on):
  *   - 1 candidate AND (no keywords OR keywords match text well): 0.9
  *   - 1 candidate but weak keyword match:                        0.6
  *   - 2-5 candidates, strongest scored: best/(best+rest*0.3)    variable
@@ -260,7 +260,7 @@ export const xHandleToTweetResolver: Resolver<XHandleToTweetInput, XHandleToTwee
 // ---------------------------------------------------------------------------
 
 /**
- * Confidence buckets align with `gbrain integrity --auto` three-bucket logic:
+ * Confidence buckets align with `foresights integrity --auto` three-bucket logic:
  *   >=0.8 auto-repair
  *   0.5-0.8 goes to review queue
  *   <0.5 skip + log

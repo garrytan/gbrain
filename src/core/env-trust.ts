@@ -13,7 +13,7 @@
  *
  *   - The #427 DATABASE_URL guard (`config.ts:effectiveEnvDatabaseUrl`) is a
  *     VALUE match: the URL is ignored when it equals a cwd-.env assignment.
- *     Running gbrain inside a web-app checkout must not retarget the brain at
+ *     Running foresights inside a web-app checkout must not retarget the brain at
  *     that app's database. That value guard never touches
  *     `GBRAIN_DATABASE_URL`; the key-presence quarantine below is what drops
  *     it when a cwd .env ASSIGNS it (a planted brain URL is never intent).
@@ -27,11 +27,11 @@
  * endpoint-redirect and posture-widening GBRAIN_* keys
  * (`CWD_DOTENV_PROTECTED_KEYS`) AND the loader / git / node / XDG-config /
  * TLS-trust / pager-editor / proxy / AI-endpoint / shell-startup hijack families
- * a cwd .env could plant for the programs gbrain spawns (`CWD_DOTENV_PROTECTED_PREFIXES`,
+ * a cwd .env could plant for the programs foresights spawns (`CWD_DOTENV_PROTECTED_PREFIXES`,
  * `CWD_DOTENV_PROTECTED_TOOLCHAIN_KEYS`) — `isCwdDotenvProtectedKey` is the
  * single predicate. Routing/tuning GBRAIN_* keys and everything not listed
  * still load from a cwd .env. Dropping is in-process; making the drop reach
- * the programs gbrain spawns is `cli-preflight.ts`'s neutral-cwd re-run.
+ * the programs foresights spawns is `cli-preflight.ts`'s neutral-cwd re-run.
  *
  * Grammar: this parser must accept AT LEAST every line shape Bun's loader
  * accepts, or an assignment Bun honours becomes invisible to the guard. Bun
@@ -151,7 +151,7 @@ export function cwdDotenvAssignsKey(key: string, dir: DirOrAssignments = process
 
 /**
  * GBRAIN_* variables a cwd `.env` file must never be allowed to set. Each
- * one either makes gbrain load or execute something, relocates its
+ * one either makes foresights load or execute something, relocates its
  * operator-owned roots, or widens a security posture — so a value planted by
  * a cloned repository is never operator intent.
  *
@@ -167,15 +167,15 @@ export function cwdDotenvAssignsKey(key: string, dir: DirOrAssignments = process
  * the read site.
  */
 export const CWD_DOTENV_PROTECTED_KEYS: readonly string[] = [
-  // --- code-loading: gbrain import()s the named module -------------------
+  // --- code-loading: foresights import()s the named module -------------------
   'GBRAIN_GUARDRAILS_MODULE',        // guardrail provider module loaded before dispatch
   'GBRAIN_PLUGIN_PATH',              // plugin / skillpack module path
-  // --- exec-target: gbrain spawns the named program ------------------------
+  // --- exec-target: foresights spawns the named program ------------------------
   'GBRAIN_CLAUDE_CLI_BIN',           // binary run for the claude-cli language model
   'GBRAIN_CLAUDE_CLI_HERMETIC_CONFIG', // becomes that binary's CLAUDE_CONFIG_DIR → its hooks/settings
   'GBRAIN_CLAUDE_CLI_USER_SETTINGS', // #8342: =1 lets the user's ~/.claude CLAUDE.md and settings.json back into that binary's calls
   'GBRAIN_JOB_CHILD_CLI',            // CLI the job-isolation worker spawns per job
-  'GBRAIN_BIN_OVERRIDE',             // gbrain binary used by claw-test
+  'GBRAIN_BIN_OVERRIDE',             // foresights binary used by claw-test
   // --- root / registry redirect ------------------------------------------
   'GBRAIN_HOME',                     // relocates ~/.gbrain (config, .env, keys, registry)
   'GBRAIN_COORDINATION_HOME',        // #6765: where a checkout's writer coordination lock goes when GBRAIN_HOME is inside it; a planted value moves the lock two writers must share
@@ -205,7 +205,7 @@ export const CWD_DOTENV_PROTECTED_KEYS: readonly string[] = [
 ];
 
 /**
- * Non-GBRAIN hijack families a cwd `.env` could plant for the PROGRAMS gbrain
+ * Non-GBRAIN hijack families a cwd `.env` could plant for the PROGRAMS foresights
  * spawns (git, the claude CLI, bun/node workers, shell jobs). These are
  * normally absent from an operator's environment, which is exactly why a
  * file-planted value lands (Bun never overrides a variable that already
@@ -250,7 +250,7 @@ export const CWD_DOTENV_PROTECTED_TOOLCHAIN_KEYS: readonly string[] = [
   'OPENSSL_CONF',                 // a planted openssl.cnf names a provider/engine .so that OpenSSL dlopen()s at init
   'OPENSSL_ENGINES',              // the directory OpenSSL loads engine .so files from
   'OPENSSL_MODULES',              // the directory OpenSSL 3 loads provider .so files from
-  // --- per-user roots read raw from the environment by gbrain AND its children ---
+  // --- per-user roots read raw from the environment by foresights AND its children ---
   'TMPDIR', 'TMP', 'TEMP',        // os.tmpdir() honours these at call time: a planted (even relative) value steers the sanitized re-run's neutral dir and every temp write into the hostile tree
   'HOME', 'USERPROFILE',          // inert while exported (Bun never overrides a live variable) but under systemd/cron HOME is often UNSET, and the planted value then reaches process.env.HOME and every child's $HOME → ~/.gitconfig, ~/.ssh, ~/.gbrain resolve inside the checkout
   // --- programs the children hand control to -------------------------------
@@ -263,9 +263,9 @@ export const CWD_DOTENV_PROTECTED_TOOLCHAIN_KEYS: readonly string[] = [
   'PERL5OPT',                     // implicit perl -M module load
   'RUBYOPT',                      // implicit ruby -r preload
   'RUBYLIB',                      // ruby library path
-  // --- shell startup files / interpreter homes: every NON-INTERACTIVE shell gbrain's children start (the git hooks gbrain writes, `sh -c` in workspace-push and shell jobs) reads these before its first command ---
+  // --- shell startup files / interpreter homes: every NON-INTERACTIVE shell foresights's children start (the git hooks foresights writes, `sh -c` in workspace-push and shell jobs) reads these before its first command ---
   'BASH_ENV',                     // bash sources this file at the start of every non-interactive shell — arbitrary code before the script's first line
-  // `ENV` (sh/ksh startup file) is deliberately NOT listed: every shell gbrain's children run reads it for INTERACTIVE shells only, and `ENV=production` is a routine key in project .env files.
+  // `ENV` (sh/ksh startup file) is deliberately NOT listed: every shell foresights's children run reads it for INTERACTIVE shells only, and `ENV=production` is a routine key in project .env files.
   'SHELLOPTS',                    // imported read-only into every bash: an inherited `xtrace` turns PS4 into code that runs on every traced command
   'PS4',                          // the xtrace prompt — expanded, `$(…)` command substitution included, before each traced command
   'BASHOPTS',                     // imported shopt set for every bash (expand_aliases, sourcepath, …) — changes how the child parses its own script
@@ -274,7 +274,7 @@ export const CWD_DOTENV_PROTECTED_TOOLCHAIN_KEYS: readonly string[] = [
   'PYTHONHOME',                   // relocates the python stdlib → the interpreter imports planted code on start (PYTHONPATH is listed above)
   'PERLLIB',                      // perl's other library-path variable (PERL5LIB is listed above)
   'GCONV_PATH',                   // glibc loads iconv gconv modules — shared objects — from this directory on any charset conversion, in every glibc-linked child
-  // --- proxy MITM of every HTTP client gbrain or its children run -----------
+  // --- proxy MITM of every HTTP client foresights or its children run -----------
   'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY',
   'http_proxy', 'https_proxy', 'all_proxy',
   // --- AI CLI / API endpoint redirection ------------------------------------
@@ -282,7 +282,7 @@ export const CWD_DOTENV_PROTECTED_TOOLCHAIN_KEYS: readonly string[] = [
   'ANTHROPIC_BASE_URL',           // redirects Anthropic API traffic (and the key with it) to a planted host
   'ANTHROPIC_AUTH_TOKEN',         // substitutes the bearer credential the SDK / claude CLI send
   'OPENAI_BASE_URL',              // redirects OpenAI-compatible API traffic
-  // --- the same redirection for every other provider gbrain's gateway / probes / recipes read from env (build-gateway-config.ts, probes.ts, recipes/*) — the API key travels to the planted host
+  // --- the same redirection for every other provider foresights's gateway / probes / recipes read from env (build-gateway-config.ts, probes.ts, recipes/*) — the API key travels to the planted host
   'OPENROUTER_BASE_URL',
   'LITELLM_BASE_URL',
   'OLLAMA_BASE_URL',
@@ -335,7 +335,7 @@ export function formatQuarantineWarning(keys: readonly string[]): string {
  *     children spawned without an explicit `env` option (Bun hands them the
  *     environ snapshot it took at startup — verified on Bun 1.3.13). So
  *     whenever this returns a non-empty list, `cli-preflight.ts` re-runs
- *     gbrain once from a fresh EMPTY temporary directory with the sanitized
+ *     foresights once from a fresh EMPTY temporary directory with the sanitized
  *     environment: the re-run's Bun never sees the cwd .env, its environ
  *     simply LACKS the dropped keys (deleted, never carried as `''` — git and
  *     the dynamic loader presence-check `GIT_SSL_NO_VERIFY=` /

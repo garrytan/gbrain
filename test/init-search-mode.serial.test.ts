@@ -1,5 +1,5 @@
 /**
- * `gbrain init --search-mode <mode>` through the real binary: the operator's
+ * `foresights init --search-mode <mode>` through the real binary: the operator's
  * choice is recorded (`search.mode_source: operator`) and the `--json`
  * document carries no first-run `search_mode` decision; on a brain with
  * another mode it refuses (exit 2, naming both fixes) unless `--force`; a
@@ -21,7 +21,7 @@ function decisionIds(stdout: string): string[] {
   return (doc.notices ?? []).flatMap(n => (n.decisions ?? []).map(d => d.id));
 }
 
-describe('gbrain init --search-mode', () => {
+describe('foresights init --search-mode', () => {
   test('records the operator\'s choice, asks nothing, refuses a different mode later unless --force', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-init-search-mode-'));
     const opts = { home, env: KEYLESS, timeoutMs: 180_000 };
@@ -37,7 +37,7 @@ describe('gbrain init --search-mode', () => {
     const err = JSON.parse(refused.stdout) as { code: string; message: string };
     expect(err.code).toBe('invalid_params');
     expect(err.message).toContain('This brain already has search.mode tokenmax');
-    expect(err.message).toContain('gbrain config set search.mode balanced');
+    expect(err.message).toContain('foresights config set search.mode balanced');
     expect(err.message).toContain('--force');
     expect((await runCli(['config', 'get', 'search.mode'], opts)).stdout.trim()).toBe('tokenmax');
 

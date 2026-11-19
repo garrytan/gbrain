@@ -6,7 +6,7 @@
  *
  * Seeds every BrainBench page (evals/brainbench, default source) into one
  * in-memory PGLite brain and replays every know-to-ask user turn through
- * assembleTurnContext — the handler `gbrain serve` registers for the hook's
+ * assembleTurnContext — the handler `foresights serve` registers for the hook's
  * turn_context IPC kind — with the hook's window (4 prior turns + the
  * prompt). Each round runs every turn with S6 off, then with S6 on against a
  * fixture TypeSafe transport whose per-request delay is drawn from a

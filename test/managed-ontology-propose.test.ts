@@ -1,7 +1,7 @@
 /**
  * ontology_propose on a managed brain (eval wave N1-1).
  *
- * `gbrain init` turns managed persistence on, and the managed writer guard
+ * `foresights init` turns managed persistence on, and the managed writer guard
  * refuses direct `facts` writes. An ontology observation is a database-only
  * fact row, so ontology_propose commits it as a coordinated write holding the
  * source capability and the entity's page key, like manual links. A direct

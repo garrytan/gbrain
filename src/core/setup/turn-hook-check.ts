@@ -38,12 +38,12 @@ export const TURN_HOOK_NATIVE_INSPECT: Record<string, string> = {
 
 export interface TurnHookState {
   harness: string;
-  /** wired: a per-turn hook is configured; untrusted: configured but the harness will not run it yet; missing: none; not_supported: the harness has no per-turn hook gbrain can install. */
+  /** wired: a per-turn hook is configured; untrusted: configured but the harness will not run it yet; missing: none; not_supported: the harness has no per-turn hook foresights can install. */
   state: 'wired' | 'untrusted' | 'missing' | 'not_supported';
   /** Which lane carries it. */
   via?: 'setup' | 'bootstrap' | 'turn-rule' | 'plugin' | 'native';
   detail: string;
-  /** The hook command gbrain can run to prove it (Claude Code and Codex, not plugin lanes). */
+  /** The hook command foresights can run to prove it (Claude Code and Codex, not plugin lanes). */
   command?: string;
   /** The file the command came from. */
   source?: string;
@@ -78,7 +78,7 @@ export function inspectTurnHook(harness: string, opts: { projectDir?: string; ma
       if (effective) return { harness, state: 'wired', via: isTurnRuleEntry(effective) ? 'turn-rule' : effective[GBRAIN_HOOK_MARKER_KEY] === 'setup-v1' ? 'setup' : 'bootstrap', detail: `UserPromptSubmit hook in ${path}`, command: String(effective.command), source: path, native_inspect };
     }
     if (plugin) return { harness, state: 'wired', via: 'plugin', detail: `the '${plugin.plugin}' plugin declares the UserPromptSubmit hook`, native_inspect };
-    return { harness, state: 'missing', detail: `no gbrain UserPromptSubmit hook in ${files.join(' or ')}`, native_inspect };
+    return { harness, state: 'missing', detail: `no foresights UserPromptSubmit hook in ${files.join(' or ')}`, native_inspect };
   }
   if (harness === 'codex') {
     let groups: ReturnType<typeof codexHookCensus> = [];
@@ -94,7 +94,7 @@ export function inspectTurnHook(harness: string, opts: { projectDir?: string; ma
         detail: trusted ? `UserPromptSubmit hook in ${codexHooksPath()}, trusted in ${codexConfigPath()}` : `UserPromptSubmit hook in ${codexHooksPath()} has no matching trust entry in ${codexConfigPath()}, so Codex does not run it` };
     }
     if (plugin) return { harness, state: 'wired', via: 'plugin', detail: `the '${plugin.plugin}' plugin declares the UserPromptSubmit hook (Codex runs it once you trust it in /hooks)`, native_inspect };
-    return { harness, state: 'missing', detail: `no gbrain UserPromptSubmit hook in ${codexHooksPath()}`, native_inspect };
+    return { harness, state: 'missing', detail: `no foresights UserPromptSubmit hook in ${codexHooksPath()}`, native_inspect };
   }
   if (harness === 'openclaw') {
     const dir = openclawTurnPluginDir();
@@ -110,19 +110,19 @@ export function inspectTurnHook(harness: string, opts: { projectDir?: string; ma
     const soul = 'error' in target ? '' : target.path;
     const recorded = readBrainFirstLedger().find((e) => e.harness === harness && e.path === soul && e.status === 'installed');
     const h = inspectHermesTurnHook(soul ? dirname(soul) : '', recorded?.access);
-    if (h.state === 'absent') return { harness, state: 'missing', detail: `no gbrain pre_llm_call hook in ${h.path}`, native_inspect };
-    if (h.state === 'unapproved') return { harness, state: 'untrusted', via: 'native', detail: `the gbrain pre_llm_call hook in ${h.path} is not in Hermes's shell-hooks-allowlist.json, so Hermes does not run it`, native_inspect };
+    if (h.state === 'absent') return { harness, state: 'missing', detail: `no foresights pre_llm_call hook in ${h.path}`, native_inspect };
+    if (h.state === 'unapproved') return { harness, state: 'untrusted', via: 'native', detail: `the foresights pre_llm_call hook in ${h.path} is not in Hermes's shell-hooks-allowlist.json, so Hermes does not run it`, native_inspect };
     return { harness, state: 'wired', via: 'native', detail: `pre_llm_call hook in ${h.path}, approved`, native_inspect };
   }
-  return { harness, state: 'not_supported', detail: `${harness} has no per-turn hook gbrain can install; the rule reaches it only through its instruction file` };
+  return { harness, state: 'not_supported', detail: `${harness} has no per-turn hook foresights can install; the rule reaches it only through its instruction file` };
 }
 
 /**
  * A hook the setup or turn-rule lane wrote that would let the session
- * directory's bunfig.toml or .env load (#8424): its command starts gbrain in
+ * directory's bunfig.toml or .env load (#8424): its command starts foresights in
  * the session's directory (written before the hook launcher existed), or the
  * launcher it names is missing, changed, or shares its directory with a file
- * gbrain did not write.
+ * foresights did not write.
  */
 export interface HookLauncherProblem {
   harness: 'claude-code' | 'codex' | 'opencode';
@@ -195,10 +195,10 @@ export function hookLauncherProblem(harness: 'claude-code' | 'codex', opts: { pr
     const launcher = hookLauncherInCommand(f.command);
     if (!launcher) {
       return { harness, lane: f.lane, source: f.source, reason: 'session_cwd', ...(f.edited ? { edited: true } : {}), ...(f.receiptPath ? { receiptPath: f.receiptPath } : {}),
-        detail: `gbrain's ${f.lane} hook in ${f.source} starts gbrain in the session's directory, so Bun loads that directory's bunfig.toml and .env before gbrain runs${f.edited ? '; it was edited after setup wrote it, so setup keeps it as is' : ''}` };
+        detail: `foresights's ${f.lane} hook in ${f.source} starts foresights in the session's directory, so Bun loads that directory's bunfig.toml and .env before foresights runs${f.edited ? '; it was edited after setup wrote it, so setup keeps it as is' : ''}` };
     }
     const s = hookLauncherState(launcher);
-    if (s.state !== 'current') return { harness, lane: f.lane, source: f.source, reason: s.state, ...(f.receiptPath ? { receiptPath: f.receiptPath } : {}), detail: `gbrain's ${f.lane} hook in ${f.source} runs through ${launcher}, but ${s.detail}` };
+    if (s.state !== 'current') return { harness, lane: f.lane, source: f.source, reason: s.state, ...(f.receiptPath ? { receiptPath: f.receiptPath } : {}), detail: `foresights's ${f.lane} hook in ${f.source} runs through ${launcher}, but ${s.detail}` };
   }
   return null;
 }
@@ -210,7 +210,7 @@ function hookEnv(): Record<string, string> {
 }
 const defaultRun: Run = (argv, stdin) => {
   try {
-    // From the home directory: a project's own gbrain hook would make the turn-rule lane yield there.
+    // From the home directory: a project's own foresights hook would make the turn-rule lane yield there.
     const r = bunSpawnSync(argv, { stdin: stdin === undefined ? 'ignore' : Buffer.from(stdin), stdout: 'pipe', stderr: 'pipe', env: hookEnv(), cwd: process.env.HOME || undefined, timeout: 60_000 });
     return { ok: r.exitCode === 0, output: `${r.stdout.toString()}${r.stderr.toString()}` };
   } catch (e) { return { ok: false, output: (e as Error).message }; }
@@ -239,7 +239,7 @@ export function verifyTurnHook(harness: string, opts: { projectDir?: string; run
     if (harness === 'claude-code' && state.source !== claudeUserSettingsPath()) return { ok: true, state, reason: 'project_unverified', message: `${state.detail}; a hook outside the user settings file (project or managed) is not run here, so check it with ${state.native_inspect}` };
     const r = run(['sh', '-c', state.command], JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: '', session_id: 'gbrain-install-check' }));
     if (!r.ok) return fail('hook_failed', `the UserPromptSubmit hook exited non-zero (${r.output.trim().split('\n').at(-1) || 'no output'})`);
-    if (!r.output.includes('GBrain: before answering')) return fail('no_rule', 'the UserPromptSubmit hook ran but did not add the brain-first rule (is the brain-first block installed for this harness?)');
+    if (!/(?:Foresights|GBrain): before answering/.test(r.output)) return fail('no_rule', 'the UserPromptSubmit hook ran but did not add the brain-first rule (is the brain-first block installed for this harness?)');
     return { ok: true, state, reason: 'ran', message: `${state.detail}; it ran and added the rule` };
   }
   if (harness === 'openclaw') {
@@ -255,8 +255,8 @@ export function verifyTurnHook(harness: string, opts: { projectDir?: string; run
     if (!bin) return { ok: true, state, reason: 'native_unavailable', message: `${state.detail}; hermes is not on PATH, so run ${state.native_inspect} on the Hermes host` };
     const r = run([bin, 'hooks', 'doctor']);
     const block = r.output.split(/\n(?=\s*\[)/).find((b) => /\[pre_llm_call\]/.test(b) && b.includes('GBrain'));
-    if (!r.ok || !block) return fail('not_loaded', `\`hermes hooks doctor\` does not list gbrain's pre_llm_call hook`);
-    if (/✗|⚠/.test(block)) return fail('not_loaded', `\`hermes hooks doctor\` reports a problem with gbrain's pre_llm_call hook: ${block.split('\n').filter((l) => /✗|⚠/.test(l)).map((l) => l.trim()).join(' ')}`);
+    if (!r.ok || !block) return fail('not_loaded', `\`hermes hooks doctor\` does not list foresights's pre_llm_call hook`);
+    if (/✗|⚠/.test(block)) return fail('not_loaded', `\`hermes hooks doctor\` reports a problem with foresights's pre_llm_call hook: ${block.split('\n').filter((l) => /✗|⚠/.test(l)).map((l) => l.trim()).join(' ')}`);
     return { ok: true, state, reason: 'ran', message: `${state.detail}; hermes hooks doctor reports it healthy` };
   }
   return { ok: true, state, reason: 'wired', message: state.detail };
@@ -273,20 +273,20 @@ export function turnHookFix(harness: string, rerun: string[]): Action {
   const verify = harness === 'openclaw' ? ['openclaw', 'plugins', 'inspect', OPENCLAW_TURN_PLUGIN_ID, '--runtime', '--json']
     : harness === 'hermes' ? ['hermes', 'hooks', 'doctor'] : ['gbrain', 'doctor', '--only', 'harness_wiring', '--json'];
   return { argv: rerun, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify: { argv: verify },
-    why: `Writes the per-turn hook that puts "check gbrain first" next to every turn; without it agents rarely use the brain. ${native ? `The harness's own check: ${native}.` : ''}`.trim() };
+    why: `Writes the per-turn hook that puts "check foresights first" next to every turn; without it agents rarely use the brain. ${native ? `The harness's own check: ${native}.` : ''}`.trim() };
 }
 
 /**
- * The installer lanes' per-turn hook (`gbrain connect --install`, the hosted
- * harness install, `gbrain bootstrap harness`): with the brain-first block
- * accepted, install the turn-rule hook unless another gbrain lane already
+ * The installer lanes' per-turn hook (`foresights connect --install`, the hosted
+ * harness install, `foresights bootstrap harness`): with the brain-first block
+ * accepted, install the turn-rule hook unless another foresights lane already
  * carries the rule, then prove it loads; declined, remove it. opencode and
  * other clients get `not_supported` (no per-turn hook to install).
  */
 export function installerTurnHook(opts: { harness: string; accepted: boolean; gbrainBin: string | null; gbrainHome?: string; paths?: TurnHookPaths; rerun: string; verify?: boolean }): { outcome: TurnHookOutcome; verdict: TurnHookVerdict | null } {
   const { harness } = opts;
   if (!isTurnRuleHarness(harness)) {
-    return { outcome: { harness, action: 'skip', path: '', detail: `${harness} has no per-turn hook gbrain can install; the rule reaches it through its instruction file only` }, verdict: null };
+    return { outcome: { harness, action: 'skip', path: '', detail: `${harness} has no per-turn hook foresights can install; the rule reaches it through its instruction file only` }, verdict: null };
   }
   if (!opts.accepted) return { outcome: removeTurnRuleHook({ harness, paths: opts.paths }), verdict: null };
   if (process.env.GBRAIN_HOOKS === '0') return { outcome: { harness, action: 'skip', path: '', detail: 'GBRAIN_HOOKS=0 is set: no per-turn hook installed' }, verdict: null };

@@ -107,7 +107,7 @@ async function raced(seam: 'open' | 'read', flip: () => Promise<void>, read: () 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-pinned-reads-'));
 afterAll(() => { rmSync(home, { recursive: true, force: true }); });
 
-/** `gbrain export --dir out`; a non-zero exit throws with what it printed. */
+/** `foresights export --dir out`; a non-zero exit throws with what it printed. */
 async function quietExport(out: string): Promise<void> {
   const { log, error } = console;
   const exit = process.exit;

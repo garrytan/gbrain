@@ -199,7 +199,7 @@ export function describeContentDriftSweep(s: ContentDriftSweepStatus): string {
     case 'partial': return `content-drift sweep (${s.scope}) reached its time budget at chunk id ${s.cursor}: ${counts}; the next run resumes there`;
     case 'stopped': return `content-drift sweep (${s.scope}) stopped at chunk id ${s.cursor}: ${counts}; the next run resumes there`;
     case 'waiting': return `content-drift sweep (${s.scope}) is idle until ${s.next_pass_at} (last pass completed ${s.last_completed_at})`;
-    case 'unsupported': return `content-drift sweep (${s.scope}) skipped: this schema predates embedded_text_hash; run gbrain apply-migrations --yes`;
+    case 'unsupported': return `content-drift sweep (${s.scope}) skipped: this schema predates embedded_text_hash; run foresights apply-migrations --yes`;
     case 'failed': return `content-drift sweep (${s.scope}) FAILED at chunk id ${s.cursor} after ${counts}: ${s.error}; the cursor stays before the failed batch`;
   }
 }

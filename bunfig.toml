@@ -22,7 +22,7 @@ timeout = 60_000
 #
 # Same treatment for the sync failure ledger: broken-fixture import/sync tests
 # were appending rows into the operator's real ~/.gbrain/sync-failures.jsonl,
-# which `gbrain doctor` reads and warns on. See
+# which `foresights doctor` reads and warns on. See
 # test/helpers/sync-failures-preload.ts.
 # #3485: database-url-guard-preload runs FIRST — it refuses to start the run
 # while DATABASE_URL/GBRAIN_DATABASE_URL is ambient without the explicit

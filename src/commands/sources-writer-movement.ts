@@ -1,5 +1,5 @@
 /**
- * GST-2688: the path `gbrain upgrade` from about v0.60.150 to v0.60.248 loads
+ * GST-2688: the path `foresights upgrade` from about v0.60.150 to v0.60.248 loads
  * into the OLD process after the new release is on disk
  * (`(await import('./sources-writer-movement.ts')).MOVEMENT_SUPERVISOR_STEP`).
  * That process keeps its old copies of every module it already loaded, so a

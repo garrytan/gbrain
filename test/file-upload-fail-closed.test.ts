@@ -115,7 +115,7 @@ describe('file_upload fail-closed (#4302)', () => {
   });
 
   // A #2339-era row holds metadata as the jsonb STRING scalar `"{}"` (the
-  // shape `gbrain repair-jsonb` heals via `jsonb_typeof = 'string'`). jsonb
+  // shape `foresights repair-jsonb` heals via `jsonb_typeof = 'string'`). jsonb
   // `||` merges only object||object and ARRAY-WRAPS any other left operand,
   // so a bare `files.metadata || EXCLUDED.metadata` would turn the row into
   // `["{}", {...}]` — invisible to repair-jsonb and unreadable by every

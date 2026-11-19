@@ -1,6 +1,6 @@
-# Add GBrain memory to Claude Code or Codex
+# Add Foresights memory to Claude Code or Codex
 
-Keep the coding agent and identity you already use. GBrain adds explicit memory
+Keep the coding agent and identity you already use. Foresights adds explicit memory
 with provenance, corrections, and access from other harnesses. Start with a
 local, keyless brain; connect a hosted brain if you already have one.
 
@@ -17,8 +17,8 @@ For Grok Bot or Muse, use their [dedicated](../guides/grok-bot.md)
 Paste this into the coding agent you want to use:
 
 ```text
-Add GBrain memory to this existing agent. Follow:
-https://raw.githubusercontent.com/garrytan/gbrain/master/docs/tutorials/connect-coding-agent.md
+Add Foresights memory to this existing agent. Follow:
+https://raw.githubusercontent.com/aimonk2025/gbrain/master/docs/tutorials/connect-coding-agent.md
 Preserve my identity and unrelated configuration. Inspect any existing brain
 before initializing. Start keyless, relay the required search-mode matrix, and
 confirm my choice. Save only explicit requests to remember unless I opt into
@@ -34,11 +34,11 @@ here using the actual harness adapter.
 
 ### B1. Install and inspect
 
-Install Bun if needed, then the canonical GBrain distribution:
+Install Bun if needed, then the canonical Foresights distribution:
 
 ```bash
-bun install -g github:garrytan/gbrain#stable
-gbrain engine status --json
+bun install -g github:aimonk2025/gbrain#stable
+foresights engine status --json
 ```
 
 Follow [INSTALL_FOR_AGENTS.md](../../INSTALL_FOR_AGENTS.md) for prerequisites and
@@ -51,7 +51,7 @@ reused or explicitly converted; do not replace it because a probe failed.
 For the intended unconfigured local brain:
 
 ```bash
-gbrain init --pglite --no-embedding
+foresights init --pglite --no-embedding
 ```
 
 PGLite runs locally without a database server or Docker. **Tell the user the
@@ -65,16 +65,16 @@ subscription. Choosing a mode does not enable paid APIs or automatic capture.
 Replace the suffix with a new random value and use the current date:
 
 ```bash
-gbrain remember "Project-example's test phrase is amber-orbit-RANDOM-SUFFIX" \
+foresights remember "Project-example's test phrase is amber-orbit-RANDOM-SUFFIX" \
   --entity projects/gbrain-setup --provenance "explicit setup test, YYYY-MM-DD" --json
-gbrain recall projects/gbrain-setup --json
+foresights recall projects/gbrain-setup --json
 ```
 
 Keep the returned fact ID. The separate read must return the exact phrase with
 its provenance. No bulk import is needed to make the first memory useful.
 
 If you want to import an existing folder, select it explicitly and start with
-`gbrain import /absolute/chosen/notes --no-embed`. Do not scan and import
+`foresights import /absolute/chosen/notes --no-embed`. Do not scan and import
 unrelated files or start embedding work implicitly.
 
 ### B4. Connect your coding agent
@@ -83,13 +83,13 @@ Configure the agent you are using:
 
 ```bash
 # Claude Code
-gbrain setup claude-code
+foresights setup claude-code
 
 # Codex
-gbrain setup codex
+foresights setup codex
 ```
 
-These register a local stdio MCP process that starts through gbrain's
+These register a local stdio MCP process that starts through foresights's
 launcher, so a session opened in a cloned repository never loads its
 `bunfig.toml` or `.env` (pass `--no-hooks` to skip setup's hooks). Use the same intended brain and source
 you inspected above; if an isolated installation already provided an absolute
@@ -134,12 +134,12 @@ environment. Dashboard access and client management use the separate
 ### A1. On the host, grant memory access
 
 Start from the host's existing HTTPS MCP deployment (on your own computer,
-`gbrain mcp expose` provides one; see [use your brain from anywhere over
+`foresights mcp expose` provides one; see [use your brain from anywhere over
 MCP](../guides/remote-mcp.md)). Preview or create a separate `memory-writer`
 client for each intended agent:
 
 ```bash
-gbrain mcp grant coding-example --harness codex --profile memory-writer \
+foresights mcp grant coding-example --harness codex --profile memory-writer \
   --source default --url https://brain.example.com/mcp \
   --admin-token-file /absolute/private/owner-token \
   --credentials-out /absolute/private/coding-example.json --json
@@ -158,7 +158,7 @@ is a separate explicit capability with tool and path bindings.
 Transfer the credential file privately, then run:
 
 ```bash
-gbrain connect https://brain.example.com/mcp --harness codex \
+foresights connect https://brain.example.com/mcp --harness codex \
   --credentials-file /absolute/private/coding-example.json --install
 ```
 
@@ -169,7 +169,7 @@ Keep the credential file out of chat and Git.
 ### A3. Verify the connection and the agent separately
 
 ```bash
-gbrain mcp verify --client CLIENT_ID --harness codex \
+foresights mcp verify --client CLIENT_ID --harness codex \
   --url https://brain.example.com/mcp \
   --credentials-file /absolute/private/coding-example.json --json
 ```
@@ -194,7 +194,7 @@ freshness, provider-local processing, or recovery from Markdown export.
 Add this section to the agent's existing instructions:
 
 ```markdown
-## GBrain memory
+## Foresights memory
 
 Recall relevant saved context before answering questions about preferences,
 decisions, projects, or prior work. On the memory surface, use recall or entity;
@@ -244,7 +244,7 @@ reattach schedules and external sources. Hosted backups belong on the host.
 
 Remove a manually added local MCP entry using the client's documented controls,
 and remove only the memory instruction section you added. For a managed hosted
-connection, repeat `gbrain connect` with its handoff and `--remove`.
+connection, repeat `foresights connect` with its handoff and `--remove`.
 Revoke the client on the host when its authority should end. Removing a client
 configuration does not delete memory or revoke credentials.
 
@@ -252,13 +252,13 @@ configuration does not delete memory or revoke credentials.
 
 | Symptom | Next step | Who acts | Consent | Verify |
 | --- | --- | --- | --- | --- |
-| PGLite busy | Close the current owner before opening another process. Never delete a live lock. | user | none | `gbrain doctor --only connection --json` |
-| Wrong or empty brain | Inspect root, engine, brain, and source routing; do not initialize over existing memory. | agent | none | `gbrain engine status --json` |
+| PGLite busy | Close the current owner before opening another process. Never delete a live lock. | user | none | `foresights doctor --only connection --json` |
+| Wrong or empty brain | Inspect root, engine, brain, and source routing; do not initialize over existing memory. | agent | none | `foresights engine status --json` |
 | Only seven tools visible | Expected for the verbs surface; use `recall` and `remember` rather than classic tool names. | agent | none | the harness's tool list |
 | Hosted read works but write fails | Inspect issued/current scopes, operation grants, source access, and write fences. | brain host | none | the token's scopes in the client list |
 | Credential delivery interrupted | Resume delivery on the host with the existing client ID. | brain host | `credentials` | the client list |
-| Server checks pass, new conversation fails | Reload the client, confirm native instruction activation, and observe the actual GBrain call. | user (reloads the client) | none | a `recall` in a new conversation |
-| Optional embeddings unavailable | Continue keyless or explicitly configure the capability; do not silently spend. | agent, after the user agrees | `credentials`, `paid` to enable embeddings | `gbrain doctor --only embeddings --json` |
+| Server checks pass, new conversation fails | Reload the client, confirm native instruction activation, and observe the actual Foresights call. | user (reloads the client) | none | a `recall` in a new conversation |
+| Optional embeddings unavailable | Continue keyless or explicitly configure the capability; do not silently spend. | agent, after the user agrees | `credentials`, `paid` to enable embeddings | `foresights doctor --only embeddings --json` |
 
 As of **2026-09-10**, local CLI and HTTP tests establish the server behavior
 described in [validation evidence](../guides/harness-validation.md).

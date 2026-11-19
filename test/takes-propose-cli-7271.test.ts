@@ -2,7 +2,7 @@
  * #7271: the takes proposal CLI.
  *
  * 1. Protects: \`takes list --status <x>\` refuses (takes list has no status filter) and points proposed takes at
- *    \`gbrain takes propose --json\` instead of silently listing active takes; \`takes propose --accept <id>\` without
+ *    \`foresights takes propose --json\` instead of silently listing active takes; \`takes propose --accept <id>\` without
  *    --dir works on a configured brain (a managed brain whose source has its checkout, and a repo-less brain), because
  *    the takes_add mutation resolves its own write root; the accept prints the accepted claim and its page.
  * 2. Fails when: --status is ignored again, accept requires sync.repo_path or --dir again, or the accept line drops
@@ -69,7 +69,7 @@ describe('#7271 takes list --status', () => {
       const r = await run(engine, ['list', '--status', value]);
       expect(r.exitCode).toBe(1);
       expect(r.stderr).toContain('--expired');
-      expect(r.stderr).toContain('gbrain takes propose --json');
+      expect(r.stderr).toContain('foresights takes propose --json');
       expect(r.stdout).toBe('');
     });
   }

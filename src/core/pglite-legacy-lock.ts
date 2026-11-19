@@ -1,5 +1,5 @@
 /**
- * The engine-free core of `gbrain pglite-repair --legacy-lock` (GBRA-130 C-3):
+ * The engine-free core of `foresights pglite-repair --legacy-lock` (GBRA-130 C-3):
  * a legacy (pre-kernel) `<data-dir>/.gbrain-lock/` whose owner `acquireLock`
  * cannot prove dead refuses `pglite_busy` reason `legacy_owner_unverified`
  * forever, so this is its exit.
@@ -12,7 +12,7 @@
  * statfs; macOS `df -P` plus `mount`, local only with the `local` flag). That evidence covers only this host and PID namespace; it cannot
  * see other containers, PID namespaces or hosts sharing the folder, so it is
  * never stated as proof. A live holder (an open file under the data dir, a
- * live recorded PID whose command could be gbrain, or a comparable live PID),
+ * live recorded PID whose command could be foresights, or a comparable live PID),
  * a network/shared filesystem, or a filesystem whose locality cannot be read
  * (neither Linux nor macOS, a failed probe, an unrecognised type, a macOS
  * mount without the `local` flag: fail closed) makes the lock
@@ -155,7 +155,7 @@ function filesystemOf(dataDir: string, probe: LegacyLockProbe): LegacyLockEviden
   } catch { return { type: null, magic: null, network: null }; }
 }
 
-/** Whether a live recorded PID could still be the legacy gbrain: its command is unreadable, names gbrain, or names the recorded script. */
+/** Whether a live recorded PID could still be the legacy gbrain: its command is unreadable, names foresights, or names the recorded script. */
 function couldBeOwner(command: string | null, recorded: string | null): boolean {
   if (command === null) return true;
   if (command.includes('gbrain')) return true;
@@ -186,17 +186,17 @@ function evidenceFor(dataDir: string, pid: number | null, recordedCommand: strin
   const holder = evidence.fd_scan.holders[0];
   if (holder) return { evidence, refusal: { reason: 'live_holder', message: `Process ${holder.pid} (${holder.command ?? 'command unreadable'}) has ${holder.paths[0]} open, so the data dir is still in use on this host.` } };
   if (pidAlive && (verdict === 'live' || couldBeOwner(pidCommand, recordedCommand))) {
-    return { evidence, refusal: { reason: 'live_holder', message: `The recorded legacy PID ${pid} is running (${pidCommand ?? 'command unreadable'}) and may still be the old gbrain.` } };
+    return { evidence, refusal: { reason: 'live_holder', message: `The recorded legacy PID ${pid} is running (${pidCommand ?? 'command unreadable'}) and may still be the old foresights.` } };
   }
   const fs = evidence.filesystem, platform = probe.platform ?? process.platform;
   if (fs.network) {
     return { evidence, refusal: { reason: 'network_filesystem', message: `The data dir is on a ${fs.type} filesystem that other hosts can mount; this host cannot see their processes.` } };
   }
   if (fs.network === null) {
-    const why = platform !== 'linux' && platform !== 'darwin' ? `gbrain reads filesystem locality only on Linux and macOS and this host runs ${platform}`
+    const why = platform !== 'linux' && platform !== 'darwin' ? `foresights reads filesystem locality only on Linux and macOS and this host runs ${platform}`
       : fs.type === null ? `reading its filesystem type (${platform === 'darwin' ? 'df and mount' : 'statfs'}) failed`
-      : `its filesystem ${fs.type} is not one gbrain can confirm is a local disk`;
-    return { evidence, refusal: { reason: 'filesystem_unverified', message: `gbrain could not confirm that the data dir is on a local filesystem (${why}), so another host sharing this folder could still hold the lock.` } };
+      : `its filesystem ${fs.type} is not one foresights can confirm is a local disk`;
+    return { evidence, refusal: { reason: 'filesystem_unverified', message: `foresights could not confirm that the data dir is on a local filesystem (${why}), so another host sharing this folder could still hold the lock.` } };
   }
   return { evidence, refusal: null };
 }

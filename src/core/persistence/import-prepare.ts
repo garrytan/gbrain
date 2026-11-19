@@ -92,7 +92,7 @@ function managedImportRefusal(refusal: ContentRefusal, sourcePath: string): Oper
     : refusal.code === 'write_gate_rejected' ? `The write gate refuses ${sourcePath} (external instruction-like content under write_gate.external_mode=reject); tell the user, the decision is theirs.`
     : refusal.code === 'visibility_noncanonical' ? `Write visibility: private on its own frontmatter line of ${sourcePath} (lowercase key and value), then import it again.`
     : refusal.code === 'tag_too_long' ? `Shorten the tag the message names in ${sourcePath}, or split it into shorter tags, then import it again.`
-    : `Fix line ${refusal.line ?? '?'} of ${sourcePath}${refusal.key ? ` (key "${refusal.key}")` : ''}: one line per key with its whole value quoted. Run gbrain frontmatter validate on the file to see every problem, then import it again.`;
+    : `Fix line ${refusal.line ?? '?'} of ${sourcePath}${refusal.key ? ` (key "${refusal.key}")` : ''}: one line per key with its whole value quoted. Run foresights frontmatter validate on the file to see every problem, then import it again.`;
   return contentRefusalError(refusal, suggestion, { legacy_error: 'invalid_params' });
 }
 
@@ -104,7 +104,7 @@ function managedImportPathChecks(sourcePath: string): void {
   }
   if (isReservedSkillBundlePath(sourcePath)) {
     throw opError('skill_bundle_required', 'Import cannot publish skill paths. Use the shared skill publisher.',
-      `${sourcePath} is a reserved skill path, so import skipped it. Publish skills with put_skill (CLI: gbrain put-skill) and the catalog expected_revision; skill text imported as knowledge is never published as instructions.`);
+      `${sourcePath} is a reserved skill path, so import skipped it. Publish skills with put_skill (CLI: foresights put-skill) and the catalog expected_revision; skill text imported as knowledge is never published as instructions.`);
   }
 }
 
@@ -204,7 +204,7 @@ export async function prepareManagedImportMutation(engine: BrainEngine, row: Wri
   const refValid = !!bodyRef && bodyRef.kind === 'input_file' && bodyRef.input_path === p!.inputPath && typeof bodyRef.sha256 === 'string' && Number.isSafeInteger(bodyRef.bytes);
   if (!p || p.kind !== 'managed_file_import' || (typeof p.content === 'string' ? bodyRef !== undefined : !refValid) || typeof p.inputPath !== 'string' || typeof p.sourcePath !== 'string') {
     throw opError('invalid_params', 'The durable file import intent is incomplete.',
-      `Import request ${row.request_id} in source ${row.source_id} has no complete file intent, so it published nothing. Read its receipt, then import the file again with gbrain import --source ${row.source_id}.`,
+      `Import request ${row.request_id} in source ${row.source_id} has no complete file intent, so it published nothing. Read its receipt, then import the file again with foresights import --source ${row.source_id}.`,
       { fix: receiptFix(row) });
   }
   const binding = await getWorktreeBinding(engine, row.source_id);

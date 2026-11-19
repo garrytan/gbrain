@@ -6,7 +6,7 @@
  * sync path resolves through the full ambient chain (--source > GBRAIN_SOURCE
  * > dotfile > cwd > sole-non-default). Under GBRAIN_SOURCE=workspace (the
  * serve-delegation e2e harness, and any real install that scopes via env),
- * `gbrain sync --force-break-lock` inspected `gbrain-sync:default` — absent —
+ * `foresights sync --force-break-lock` inspected `gbrain-sync:default` — absent —
  * printed "nothing to break", exit 0, and left the DEAD holder's row on
  * `gbrain-sync:workspace`. The follow-up sync then refused for the 60s
  * takeover grace: exactly the Pin 4 failure in

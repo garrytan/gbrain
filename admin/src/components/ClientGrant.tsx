@@ -198,7 +198,7 @@ export function HarnessGuides({ serverUrl, clientId, credentialFile = true }: { 
     <p>Follow your harness guide for the supported connection and reload steps. Grok Bot and Muse can use GBrain inside their own computer when its prerequisites pass.</p>
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>{catalog?.harnesses.map(harness => <a key={harness.id} href={harness.documentation} target="_blank" rel="noreferrer">{harness.label}</a>)}</div>
     {credentialFile ? <><p className="grant-help">Use the credential file saved at registration in the target environment. Restrict its file permissions to the owner before connecting.</p>
-      <div className="code-block"><pre style={{ whiteSpace: 'pre-wrap' }}>{`gbrain connect ${serverUrl}/mcp --credentials-file /absolute/private/credentials.json --harness YOUR_HARNESS --install`}</pre></div></>
+      <div className="code-block"><pre style={{ whiteSpace: 'pre-wrap' }}>{`foresights connect ${serverUrl}/mcp --credentials-file /absolute/private/credentials.json --harness YOUR_HARNESS --install`}</pre></div></>
       : <p className="grant-help">Follow your harness guide for this credential type. The thin CLI used by Grok Bot and Muse requires a renewable OAuth client with client_credentials; register one above to use that connection.</p>}
     <p className="grant-help">Client ID: {clientId}. Installing on the server host does not configure a different agent's computer.</p>
   </section>;

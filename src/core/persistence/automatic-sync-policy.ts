@@ -26,7 +26,7 @@ export async function automaticGitPullDisabled(engine: PolicyEngine): Promise<bo
  * no worktree binding. A managed brain or a claimed source syncs local HEAD
  * without pulling; missing or malformed persistence metadata refuses instead of
  * granting a pull. `autopilot.git_pull=false` (#6451) turns the pull off for
- * every source before any of that is read. Explicit `gbrain sync` intent is
+ * every source before any of that is read. Explicit `foresights sync` intent is
  * resolved elsewhere.
  */
 export async function automaticSyncPull(engine: PolicyEngine, source: { id: string; config: unknown }): Promise<boolean> {

@@ -1,5 +1,5 @@
 /**
- * `gbrain repair embedding-effects` settlement (#5629, #5734). A committed
+ * `foresights repair embedding-effects` settlement (#5629, #5734). A committed
  * write can keep an embedding effect that never finishes: queued with no owner
  * run for over an hour, or failed after its retry allowance. Either one blocks
  * receipt compaction and activation (`writer_not_quiesced`). Each candidate
@@ -25,7 +25,7 @@
  * Every state change is a compare-and-set on state, attempts, execution token
  * and recovery. A candidate that changed since planning is `changed_since_preview`.
  * Two failed effects are not candidates (GBRA-130 A-15): one with parked targets
- * (`targets_parked`; `gbrain sources writer retry-effects` retries those) and a
+ * (`targets_parked`; `foresights sources writer retry-effects` retries those) and a
  * zero-norm refusal, which a retry repeats by design.
  */
 import { trueUpRequests } from './receipt-true-up.ts';
@@ -195,7 +195,7 @@ async function queueRetry(tx: BrainEngine, effect: PersistenceEffect, opts: { dr
   if (opts.dryRun) return { ...base, paid, ...(exhausted ? { reason: 'grant_new_retry_cycle' } : {}) };
   if (paid && !grantId) {
     throw opError('invalid_params', 'An embedding retry grant needs a repair run id.',
-      'Paid embedding retries run only through gbrain repair embedding-effects, which supplies the run id. Preview it with gbrain repair embedding-effects --json and apply it after the user approves the cost.');
+      'Paid embedding retries run only through foresights repair embedding-effects, which supplies the run id. Preview it with foresights repair embedding-effects --json and apply it after the user approves the cost.');
   }
   const now = new Date().toISOString();
   const data = { ...effect.data, repair_requeued_at: now,

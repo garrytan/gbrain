@@ -1,9 +1,9 @@
 /**
- * gbrain skillify check — 11-item post-task audit.
+ * foresights skillify check — 11-item post-task audit.
  *
  * Promoted from `scripts/skillify-check.ts` (D-CX-2). The legacy
  * script stays as a thin shim so existing callers keep working, but
- * the CLI entry point is now `gbrain skillify check`.
+ * the CLI entry point is now `foresights skillify check`.
  *
  * 11-item checklist (essay Step 3-10 + v0.27.x cross-modal eval):
  *   1. SKILL.md exists
@@ -13,7 +13,7 @@
  *   5. LLM evals (optional)
  *   6. Resolver entry
  *   7. Resolver trigger eval (heuristic via `test/resolver.test.ts`)
- *   8. check-resolvable gate (runs `gbrain check-resolvable --json`)
+ *   8. check-resolvable gate (runs `foresights check-resolvable --json`)
  *   9. E2E smoke (required copy of #4 for required-gate semantics)
  *  10. Brain filing (only when the script writes pages)
  *  11. Cross-modal eval (INFORMATIONAL; required:false). Looks for a
@@ -98,7 +98,7 @@ function runCheckResolvableCached(): ResolverResult {
     });
     if (res.error || res.status === null) {
       const reason = res.error?.message ?? 'spawn returned null status';
-      console.error(`[skillify] gbrain check-resolvable not runnable: ${reason}`);
+      console.error(`[skillify] foresights check-resolvable not runnable: ${reason}`);
       _resolverCache = { ok: false, detail: `check-resolvable unavailable: ${reason}` };
       return _resolverCache;
     }
@@ -110,7 +110,7 @@ function runCheckResolvableCached(): ResolverResult {
       const err = payload.error ? ` (${payload.error})` : '';
       _resolverCache = {
         ok: false,
-        detail: `${count} issue(s)${err} — run: gbrain check-resolvable`,
+        detail: `${count} issue(s)${err} — run: foresights check-resolvable`,
       };
     }
     return _resolverCache;
@@ -294,7 +294,7 @@ function runSkillifyCheckTarget(target: string, root: string): CheckResult {
   // explicitly: either via the canonical Convention callout, or via
   // 'brain_first: exempt' in frontmatter, or by absence of external
   // refs entirely. This is a REQUIRED gate — non-compliant skills fail
-  // `gbrain skillify check` with exit 1 so new skills can't be born
+  // `foresights skillify check` with exit 1 so new skills can't be born
   // non-compliant.
   const brainFirst = checkBrainFirstCompliance(skillMd, skillName);
   items.push(check('Brain-first compliance', brainFirst.passed, brainFirst.detail));
@@ -424,7 +424,7 @@ function recentlyModified(root: string, days: number = 7): string[] {
   return candidates;
 }
 
-const HELP = `gbrain skillify check [path] [--recent] [--json]
+const HELP = `foresights skillify check [path] [--recent] [--json]
 
 Run the 10-item skillify audit (post-task). Reports whether each item
 passes and what to create next.
@@ -439,7 +439,7 @@ Exit code 0 when all REQUIRED items pass; 1 otherwise.
 `;
 
 /**
- * Entry point invoked by `gbrain skillify check`. The outer
+ * Entry point invoked by `foresights skillify check`. The outer
  * dispatcher passes args with the subcommand already stripped.
  */
 export async function runSkillifyCheckInline(args: string[]): Promise<void> {

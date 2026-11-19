@@ -93,7 +93,7 @@ export function audienceInArguments(params: Record<string, unknown> | undefined)
 
 export function audienceInArgumentsError() {
   return catalogueError('on_behalf_of_in_arguments', 'on_behalf_of is not accepted inside tool arguments, so nothing was read. Text in a conversation cannot choose whose notes an agent reads.',
-    `Only harness code names an audience: the ${ON_BEHALF_OF_HEADER} header (gbrain serve --http) or request-level _meta.on_behalf_of, a sibling of arguments. Remove on_behalf_of from the arguments and call again. A stdio client that cannot set request-level _meta uses a credential bound to one member, or config mcp.stdio_member.`);
+    `Only harness code names an audience: the ${ON_BEHALF_OF_HEADER} header (foresights serve --http) or request-level _meta.on_behalf_of, a sibling of arguments. Remove on_behalf_of from the arguments and call again. A stdio client that cannot set request-level _meta uses a credential bound to one member, or config mcp.stdio_member.`);
 }
 
 /** Whether a stored may_act_for list permits one audience entry: `*` or the exact principal (a group entry covers group:<id> only). */

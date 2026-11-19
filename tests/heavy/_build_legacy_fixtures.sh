@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/heavy/build_legacy_fixtures.sh
 # Build a legacy brain fixture by:
-#   1. Bringing a fresh DB to LATEST shape (via `gbrain doctor` which triggers initSchema)
+#   1. Bringing a fresh DB to LATEST shape (via `foresights doctor` which triggers initSchema)
 #   2. Applying a down-mutation SQL file to strip forward-referenced state
 #
 # Deterministic alternative to committed pg_dump blobs (which rot via pg_dump
@@ -63,7 +63,7 @@ echo "[build_legacy_fixtures] db=$DATABASE_URL"
 echo "[build_legacy_fixtures] dropping public schema..."
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
 
-# Step 2: bring to LATEST via gbrain. The CLI's `doctor --json` triggers
+# Step 2: bring to LATEST via foresights. The CLI's `doctor --json` triggers
 # engine.connect() which runs applyForwardReferenceBootstrap → SCHEMA_SQL →
 # runMigrations. On an empty DB this is a no-op bootstrap + full schema replay
 # + zero migrations (already at LATEST).

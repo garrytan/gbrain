@@ -58,7 +58,7 @@ export async function runCompactionPass(engine: BrainEngine, opts: { hostId: str
  * synthesis postprocess compares the child's committed content with the page) and connector writes (a later retry's `retryOf` resolves
  * an earlier refusal). Refused receipts only where the producer writes again from current content and nothing reads the
  * intent: managed sync, file import, reconcile and file repair page writes, and maintenance pages. Every other refusal keeps
- * its intent until the retention window: a caller's write (`gbrain repair failed-writes` replays it), conversation facts
+ * its intent until the retention window: a caller's write (`foresights repair failed-writes` replays it), conversation facts
  * (the frozen extraction), atom members, connector items (their held-retry pointer).
  */
 const EARLY_SQL = (r: string) => `((${r}.state IN ('committed','cancelled') AND ${r}.operation<>'submit_job' AND COALESCE(${r}.intent->>'kind','') NOT LIKE 'connector_%'

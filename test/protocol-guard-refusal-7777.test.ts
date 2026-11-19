@@ -99,7 +99,7 @@ for (const backend of backends) describe(`${backend}: protocol guard refusals du
       const row = await claimed(db, slug);
       const done = await publishMutation(db, row, { observedRevision: null, apply: async tx => {
         await tx.putPage(slug, input('must roll back'), { sourceId });
-        // An older gbrain declares no protocol: the request guard calls gbrain_require_persistence_protocol, which raises.
+        // An older foresights declares no protocol: the request guard calls gbrain_require_persistence_protocol, which raises.
         await tx.executeRaw(NO_PROTOCOL);
         await tx.executeRaw('UPDATE persistence_requests SET updated_at=now() WHERE id=$1::uuid', [row.id]);
         return { status: 'created' };

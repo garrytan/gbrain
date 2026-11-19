@@ -1,6 +1,6 @@
 /**
  * GBRA-130 C-3: a legacy `<data-dir>/.gbrain-lock/` left by a crashed
- * pre-kernel gbrain, whose metadata is torn or missing or (on Linux) carries
+ * pre-kernel foresights, whose metadata is torn or missing or (on Linux) carries
  * no matching pid_ns+boot_id, used to make every first kernel-v1 acquisition
  * refuse a retryable `pglite_busy` forever; the only exit was deleting the
  * directory by hand.
@@ -10,7 +10,7 @@
  *
  * Protects: the refusal says why (`pglite_busy` reason
  * `legacy_owner_unverified`, not retryable, class consent, exit 3, fix.next
- * ask_user with the read-only preview); `gbrain pglite-repair --legacy-lock`
+ * ask_user with the read-only preview); `foresights pglite-repair --legacy-lock`
  * previews the advisory evidence and plan hash, and the approved apply moves
  * the legacy dir aside, writes the kernel-v1 marker and lets a normal open
  * succeed with every page unchanged. A live holder, a network filesystem and
@@ -63,8 +63,8 @@ function plantLegacyLock(dataDir: string, mode: LegacyMode | { pid: number }): s
   mkdirSync(dir, { recursive: true });
   rmSync(`${dataDir}.gbrain-owner.json`, { force: true });
   if (mode === 'corrupt') writeFileSync(join(dir, 'lock'), '{corrupt');
-  else if (mode === 'dead pid without markers') writeFileSync(join(dir, 'lock'), JSON.stringify({ pid: deadPid(), acquired_at: 1, command: 'gbrain serve' }));
-  else if (typeof mode === 'object') writeFileSync(join(dir, 'lock'), JSON.stringify({ pid: mode.pid, acquired_at: 1, command: 'gbrain sync' }));
+  else if (mode === 'dead pid without markers') writeFileSync(join(dir, 'lock'), JSON.stringify({ pid: deadPid(), acquired_at: 1, command: 'foresights serve' }));
+  else if (typeof mode === 'object') writeFileSync(join(dir, 'lock'), JSON.stringify({ pid: mode.pid, acquired_at: 1, command: 'foresights sync' }));
   return dir;
 }
 
@@ -116,7 +116,7 @@ function macProbe(mountPoint: string, extraLine: string | null): LegacyLockProbe
   } };
 }
 
-/** A child that keeps a file inside the data dir open, as a live pre-kernel gbrain would. */
+/** A child that keeps a file inside the data dir open, as a live pre-kernel foresights would. */
 async function liveHolder(dataDir: string): Promise<Bun.Subprocess> {
   writeFileSync(join(dataDir, 'PG_VERSION'), '17\n');
   const ready = join(dataDir, '..', 'holder-ready');
@@ -139,8 +139,8 @@ describe('C-3 PGLite legacy lock: an unverifiable pre-kernel owner has an exit',
       expect({ code: error.code, reason: error.reason, retryable: error.retryable })
         .toEqual({ code: 'pglite_busy', reason: 'legacy_owner_unverified', retryable: false });
       expectItemFailure({ key: dataDir, code: error.reason, fix: error.fix },
-        { key: dataDir, code: 'legacy_owner_unverified', fix: /^gbrain pglite-repair --legacy-lock --path \S+ --dry-run --json$/ });
-      expect(renderFix(error.fix)).toBe(`gbrain pglite-repair --legacy-lock --path ${dataDir} --dry-run --json`);
+        { key: dataDir, code: 'legacy_owner_unverified', fix: /^(?:foresights|gbrain) pglite-repair --legacy-lock --path \S+ --dry-run --json$/ });
+      expect(renderFix(error.fix)).toBe(`foresights pglite-repair --legacy-lock --path ${dataDir} --dry-run --json`);
       expect((error.fix as { ask_user?: boolean }).ask_user).toBe(true);
       expect(existsSync(dir)).toBe(true);
       expect(existsSync(`${dataDir}.gbrain-owner.json`)).toBe(false);
@@ -158,7 +158,7 @@ describe('C-3 PGLite legacy lock: an unverifiable pre-kernel owner has an exit',
     const envelope = JSON.parse(out.slice(out.indexOf('{')));
     expect({ exit: run.exitCode, code: envelope.code, reason: envelope.reason, class: envelope.class, retryable: envelope.retryable, next: envelope.fix?.next, command: envelope.fix?.command })
       .toEqual({ exit: 3, code: 'pglite_busy', reason: 'legacy_owner_unverified', class: 'consent', retryable: false, next: 'ask_user',
-        command: `gbrain pglite-repair --legacy-lock --path ${dataDir} --dry-run --json` });
+        command: `foresights pglite-repair --legacy-lock --path ${dataDir} --dry-run --json` });
     expect(typeof envelope.fix.user_message).toBe('string');
   }, 60_000);
 
@@ -239,7 +239,7 @@ describe('C-3 pglite-repair --legacy-lock refusals', () => {
       const refused = await apply(dataDir, shown.json.plan_hash);
       expect({ code: refused.code, error: refused.json.code, reason: refused.json.reason })
         .toEqual({ code: 1, error: 'legacy_lock_removal_refused', reason: 'live_holder' });
-      expect(refused.json.fix?.command).toBe(`gbrain pglite-repair --legacy-lock --path ${dataDir} --dry-run --json`);
+      expect(refused.json.fix?.command).toBe(`foresights pglite-repair --legacy-lock --path ${dataDir} --dry-run --json`);
     });
     expect(readFileSync(join(dir, 'lock'), 'utf8')).toContain(String(child.pid));
     expect(existsSync(`${dataDir}.gbrain-owner.json`)).toBe(false);
@@ -267,7 +267,7 @@ describe('C-3 pglite-repair --legacy-lock refusals', () => {
       writeFileSync(join(dir, 'lock'), '{also corrupt');
       const refused = await apply(dataDir, shown.json.plan_hash);
       expect({ code: refused.code, error: refused.json.code }).toEqual({ code: 1, error: 'preview_changed' });
-      expect(refused.json.fix?.command).toBe(`gbrain pglite-repair --legacy-lock --path ${dataDir} --dry-run --json`);
+      expect(refused.json.fix?.command).toBe(`foresights pglite-repair --legacy-lock --path ${dataDir} --dry-run --json`);
     });
     expect(readFileSync(join(dir, 'lock'), 'utf8')).toBe('{also corrupt');
     expect(existsSync(`${dataDir}.gbrain-owner.json`)).toBe(false);
@@ -283,7 +283,7 @@ describe('C-3 pglite-repair --legacy-lock: review fixes F4-F6', () => {
     let holder: Bun.Subprocess | undefined;
     const consentEnv: ConsentEnv = { interactive: true, readLine: async () => {
       holder = await liveHolder(dataDir);
-      writeFileSync(join(dir, 'lock'), JSON.stringify({ pid: holder.pid, acquired_at: Date.now(), command: 'gbrain sync' }));
+      writeFileSync(join(dir, 'lock'), JSON.stringify({ pid: holder.pid, acquired_at: Date.now(), command: 'foresights sync' }));
       return { kind: 'line', text: 'y' };
     } };
     await withEnv({ GBRAIN_HOME: join(root, 'home') }, async () => {
@@ -291,7 +291,7 @@ describe('C-3 pglite-repair --legacy-lock: review fixes F4-F6', () => {
       expect(holder).toBeDefined();
       expect({ code: refused.code, error: refused.json.code, reason: refused.json.reason, action: refused.json.action })
         .toEqual({ code: 1, error: 'legacy_lock_removal_refused', reason: 'live_holder', action: undefined });
-      expect(refused.json.fix?.command).toBe(`gbrain pglite-repair --legacy-lock --path ${dataDir} --dry-run --json`);
+      expect(refused.json.fix?.command).toBe(`foresights pglite-repair --legacy-lock --path ${dataDir} --dry-run --json`);
     });
     expect(readFileSync(join(dir, 'lock'), 'utf8')).toContain(String(holder!.pid));
     expect(existsSync(`${dataDir}.gbrain-owner.json`)).toBe(false);
@@ -310,7 +310,7 @@ describe('C-3 pglite-repair --legacy-lock: review fixes F4-F6', () => {
     await withEnv({ GBRAIN_HOME: join(root, 'home') }, async () => {
       const refused = await repairWith(dataDir, { consentEnv });
       expect({ asked, code: refused.code, error: refused.json.code }).toEqual({ asked: 1, code: 1, error: 'preview_changed' });
-      expect(refused.json.fix?.command).toBe(`gbrain pglite-repair --legacy-lock --path ${dataDir} --dry-run --json`);
+      expect(refused.json.fix?.command).toBe(`foresights pglite-repair --legacy-lock --path ${dataDir} --dry-run --json`);
     });
     expect(readFileSync(join(dir, 'lock'), 'utf8')).toBe('{torn by a pre-kernel writer');
     expect(existsSync(`${dataDir}.gbrain-owner.json`)).toBe(false);
@@ -346,12 +346,12 @@ describe('C-3 pglite-repair --legacy-lock: review fixes F4-F6', () => {
   }
 
   const UNKNOWN_LOCALITY: Array<[string, LegacyLockProbe]> = [
-    ['a platform gbrain cannot probe', { platform: 'win32' }],
+    ['a platform foresights cannot probe', { platform: 'win32' }],
     ['a macOS smbfs mount', macProbe('/Volumes/share', SMB_LINE)],
     ['a macOS nfs mount', macProbe('/Volumes/brain', NFS_LINE)],
     ['a macOS autofs home', macProbe('/System/Volumes/Data/home', 'map auto_home on /System/Volumes/Data/home (autofs, automounted, nobrowse)')],
     ['a macOS apfs mount without the local flag', macProbe('/Volumes/remote', '/dev/disk9s1 on /Volumes/remote (apfs, nodev, nosuid)')],
-    ['a macOS local mount of a type gbrain does not know', macProbe('/dev', 'devfs on /dev (devfs, local, nobrowse)')],
+    ['a macOS local mount of a type foresights does not know', macProbe('/dev', 'devfs on /dev (devfs, local, nobrowse)')],
     ['a macOS mount point with no mount line', macProbe('/Volumes/gone', null)],
     ['a macOS df output that does not parse', { platform: 'darwin', exec: (file: string) => file === '/bin/df' ? 'df: unexpected\n' : MAC_MOUNT }],
     ['a macOS probe command that fails', { platform: 'darwin', exec: () => { throw new Error('spawn /bin/df ETIMEDOUT'); } }],

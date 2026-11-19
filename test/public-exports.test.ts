@@ -12,7 +12,7 @@
  * downstream consumer (gbrain-evals) doesn't silently break first.
  *
  * To add a new public export: extend `EXPECTED_EXPORTS` below. To
- * REMOVE one: bump gbrain's minor (breaking-interface per CLAUDE.md
+ * REMOVE one: bump foresights's minor (breaking-interface per CLAUDE.md
  * "Removing any of these is a breaking change going forward").
  */
 

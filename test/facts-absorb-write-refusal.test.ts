@@ -67,7 +67,7 @@ test('a claimed-worktree refusal is logged with its code and dead-letters withou
     expect(chatCalls).toBe(0);
     expect(error).toBeInstanceOf(UnrecoverableError);
     expect(error.message).toContain('facts_absorb_write_refused (writer_coordinator_required)');
-    expect(error.message).toContain('gbrain jobs retry 4242');
+    expect(error.message).toContain('foresights jobs retry 4242');
     expect(error.message).toContain('docs/guides/write-refusals.md#facts_absorb_write_refused');
     const rows = await absorbRows('notes/weekly-review');
     expect(rows.at(-1)?.summary).toStartWith('write_refused: writer_coordinator_required (OperationError)');

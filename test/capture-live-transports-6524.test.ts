@@ -1,5 +1,5 @@
 /**
- * #6524: `gbrain capture` was dead on every brain with a running `gbrain
+ * #6524: `foresights capture` was dead on every brain with a running `foresights
  * serve` and on every thin client. Both transports reach the capture op
  * through `dispatchToolCall`, whose unknown-parameter check (#5970) rejects a
  * write carrying any undeclared key, and the CLI has sent its provenance trio
@@ -8,10 +8,10 @@
  * dispatch, which is why the breakage never reproduced locally.
  *
  * Both probes drive the real CLI subprocess:
- *   - resident owner: a stdio `gbrain serve` holds the PGLite brain and the
+ *   - resident owner: a stdio `foresights serve` holds the PGLite brain and the
  *     CLI's capture is delegated to it over IPC; the stored row keeps the
  *     trusted local provenance (`capture-cli` / `cli-positional`);
- *   - thin client: a `gbrain serve --http` subprocess plus a thin-client
+ *   - thin client: a `foresights serve --http` subprocess plus a thin-client
  *     home whose CLI reaches it through `callRemoteTool`; the capture is
  *     admitted and the owner stamps `mcp:capture` (remote provenance is
  *     server-owned).
@@ -77,7 +77,7 @@ test('a capture delegated to a running stdio serve (resident PGLite owner) commi
   }
 }, 180_000);
 
-test('a thin-client capture against a running `gbrain serve --http` commits with the server-stamped provenance', async () => {
+test('a thin-client capture against a running `foresights serve --http` commits with the server-stamped provenance', async () => {
   const reg = await gbrain(home, ['auth', 'register-client', 'capture-6524-thin', '--grant-types', 'client_credentials',
     '--scopes', 'read write', '--token-endpoint-auth-method', 'client_secret_post']);
   const clientId = /Client ID:\s+(\S+)/.exec(reg.stdout)?.[1];

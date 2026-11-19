@@ -3,7 +3,7 @@
  *
  * Locks in the behavior that `sync --source X` writes pages to source X,
  * not the silent `'default'` fallback. The original bug surfaced as
- * `gbrain sources list` reporting 0 pages for a named source while
+ * `foresights sources list` reporting 0 pages for a named source while
  * `pages.source_id` was littered with `'default'` rows.
  *
  * Tested against PGLite (in-memory) so the suite runs without a Postgres

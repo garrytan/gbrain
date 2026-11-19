@@ -1,5 +1,5 @@
 /**
- * gbrain check-resolvable — Standalone CLI gate for skill-tree integrity.
+ * foresights check-resolvable — Standalone CLI gate for skill-tree integrity.
  *
  * Thin wrapper over `src/core/check-resolvable.ts`. Exit contract (D-CX-3,
  * post-codex-review):
@@ -64,7 +64,7 @@ export interface Flags {
 // working. Future deferred checks get appended here.
 export const DEFERRED: DeferredCheck[] = [];
 
-const HELP_TEXT = `gbrain check-resolvable [options]
+const HELP_TEXT = `foresights check-resolvable [options]
 
 Validate the skill tree: reachability, MECE overlap, DRY violations, and
 gap detection. Exits non-zero on errors. Warnings are advisory by default;
@@ -165,7 +165,7 @@ export function resolveSkillsDir(flags: Flags): {
     openclaw_workspace_home_root: '~/.openclaw/workspace (AGENTS.md at workspace root)',
     cwd_walk_up: 'skills/ found by walking up from cwd (v0.33)',
     cwd_skills: './skills',
-    install_path: 'gbrain install path (read-only fallback)',
+    install_path: 'foresights install path (read-only fallback)',
   }[detected.source!]!;
 
   return {
@@ -286,14 +286,14 @@ export async function runCheckResolvable(args: string[]): Promise<void> {
     // SAFETY GATE (v0.31.7 follow-up to D5): refuse --fix when the skills
     // dir came from the install-path fallback. autoFixDryViolations writes
     // to SKILL.md files; running --fix from a directory with no resolver up
-    // the cwd tree would resolve to the bundled gbrain repo via the
+    // the cwd tree would resolve to the bundled foresights repo via the
     // read-only install-path fallback and silently mutate it. Codex caught
     // this leak in the v0.31.7 ship review (D6 lock).
     if (source === 'install_path') {
       process.stderr.write(
-        'gbrain check-resolvable --fix refused: skills dir resolved via install-path fallback (read-only).\n' +
+        'foresights check-resolvable --fix refused: skills dir resolved via install-path fallback (read-only).\n' +
         'The --fix flag writes to SKILL.md files; running it against the bundled install\n' +
-        'tree would silently mutate gbrain itself. Set $GBRAIN_SKILLS_DIR, $OPENCLAW_WORKSPACE,\n' +
+        'tree would silently mutate foresights itself. Set $GBRAIN_SKILLS_DIR, $OPENCLAW_WORKSPACE,\n' +
         'or pass --skills-dir <path> to point at the workspace you actually want to fix.\n',
       );
       process.exit(1);

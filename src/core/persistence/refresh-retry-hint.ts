@@ -1,5 +1,5 @@
 /**
- * GST-1582: when a write or managed sync refused by an active `gbrain sources refresh` (`worktree_refreshing`) should
+ * GST-1582: when a write or managed sync refused by an active `foresights sources refresh` (`worktree_refreshing`) should
  * retry, from the refresh's actual state instead of a fixed second. A refresh tick takes minutes, so a fixed 1 s hint
  * sent an obedient caller back into the same tick to be refused again. The estimate is the median duration of the
  * worktree's last completed refreshes minus how long this one has run, never below its phase's floor: a refresh with no

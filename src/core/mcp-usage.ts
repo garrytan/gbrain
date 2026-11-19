@@ -4,7 +4,7 @@
  * Consumed by three surfaces that must never disagree on what counts as an
  * "operation call" (each reads it through readClientOpUsageWithCoverage, so a
  * window that reaches back past pruned history says so):
- *   - `gbrain auth clients --usage` (E4, src/commands/auth.ts)
+ *   - `foresights auth clients --usage` (E4, src/commands/auth.ts)
  *   - the advisor starter-fit collector (E3, src/core/advisor/collect-mcp-client-fit.ts)
  *   - `scripts/derive-starter-ops.ts` (amendment 23 / D12)
  *

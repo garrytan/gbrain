@@ -81,7 +81,7 @@ describe('jobs stats — DIVERGENT QUEUE + waiting-TTL screams', () => {
     await seedJobs({ waiting: 20, completed: 2, ttlCancelled: 6 });
     const out = await captureStats(['stats']);
     expect(out).toContain("DIVERGENT QUEUE type 'subagent'");
-    expect(out).toContain('gbrain config set minions.quota_max_waiting.subagent');
+    expect(out).toContain('foresights config set minions.quota_max_waiting.subagent');
     // TTL sweep visibility rides the divergence report + its own line.
     expect(out).toContain('Waiting-TTL cancelled 6 job(s) in the last 24h');
     expect(out).toContain('minions.ttl_waiting_hours');

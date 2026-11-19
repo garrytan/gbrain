@@ -1,6 +1,6 @@
 /**
  * Engine-plane wrapper around the pure `rerankerReadiness` leaf — the ONE place
- * doctor (`reranker_health`) and `gbrain search modes` build the env snapshot,
+ * doctor (`reranker_health`) and `foresights search modes` build the env snapshot,
  * so the two surfaces cannot drift apart.
  *
  * Plane precedence: when the gateway is configured (every CLI command after

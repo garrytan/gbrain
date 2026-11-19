@@ -54,7 +54,7 @@ const PASTE_WAIT_MS = 300_000;
 
 /** Bounded credential read (C5): an open-but-silent stdin times out with a message instead of hanging. */
 async function readStdin(firstByteMs?: number): Promise<string | null> {
-  const read = await readStdinPayload("printf '%s' \"$COOKIE\" | gbrain connectors auth <provider> --cookie -",
+  const read = await readStdinPayload("printf '%s' \"$COOKIE\" | foresights connectors auth <provider> --cookie -",
     { credential: true, maxBytes: CREDENTIAL_MAX_BYTES, inactivityMs: CREDENTIAL_INACTIVITY_MS, ...(firstByteMs !== undefined ? { firstByteMs } : {}) });
   if (read.ok) return read.text.trim();
   console.error(read.message);
@@ -72,13 +72,13 @@ export function headlessCredentialBlock(provider: string, prov: Pick<ChatHistory
   return agentBlock({
     ask: `Ask the user to copy their ${provider} session cookie from a logged-in browser (steps below), then pass it on stdin.`,
     why: `Syncing ${provider} history needs the user's own browser session; there is no headless sign-in, and only the user can copy it.`,
-    risk: `The cookie grants access to the user's ${provider} account; gbrain stores it only on this machine (0600) and sends it only to ${provider}.`,
+    risk: `The cookie grants access to the user's ${provider} account; foresights stores it only on this machine (0600) and sends it only to ${provider}.`,
     consent: 'credentials',
     actor: 'user',
     next: 'tell_user_to_run',
     if_yes: `printf '%s' "<cookie>" | ${shellQuote(argv)}`,
-    if_no: 'Nothing was saved. The official export works without a cookie: gbrain transcripts ingest <export-file>.',
-    verify: `gbrain connectors status ${provider}`,
+    if_no: 'Nothing was saved. The official export works without a cookie: foresights transcripts ingest <export-file>.',
+    verify: `foresights connectors status ${provider}`,
   }, { showUser: prov.sessionInstructions() });
 }
 
@@ -128,14 +128,14 @@ function printFirstRun(provider: string): void {
     [
       '',
       'Next steps:',
-      `  gbrain connectors sync ${provider} --dry-run     # preview how many conversations`,
-      `  gbrain connectors sync ${provider} --limit 5      # import a small sample first`,
-      `  gbrain conversation-parser scan conversations/${provider === 'chatgpt' ? 'chatgpt' : 'claude'}/<slug>  # validate one page`,
-      `  gbrain connectors sync ${provider} --full         # import everything`,
+      `  foresights connectors sync ${provider} --dry-run     # preview how many conversations`,
+      `  foresights connectors sync ${provider} --limit 5      # import a small sample first`,
+      `  foresights conversation-parser scan conversations/${provider === 'chatgpt' ? 'chatgpt' : 'claude'}/<slug>  # validate one page`,
+      `  foresights connectors sync ${provider} --full         # import everything`,
       '',
       `To keep it synced automatically (opt-in; polls your account on a schedule):`,
-      `  gbrain config set connectors.${provider}.auto_sync true`,
-      `  gbrain autopilot --install`,
+      `  foresights config set connectors.${provider}.auto_sync true`,
+      `  foresights autopilot --install`,
     ].join('\n'),
   );
 }
@@ -148,7 +148,7 @@ export async function runConnectorAuth(_engine: BrainEngine, args: string[]): Pr
     return;
   }
   if (!isConnectorProviderName(provider)) {
-    console.error(`Usage: gbrain connectors auth <chatgpt|claude> [--cookie -|--token V] [--try-oauth] [--force], or gbrain connectors auth <fireflies|slack> --token -`);
+    console.error(`Usage: foresights connectors auth <chatgpt|claude> [--cookie -|--token V] [--try-oauth] [--force], or foresights connectors auth <fireflies|slack> --token -`);
     setCliExitVerdict(1);
     return;
   }
@@ -258,7 +258,7 @@ async function tryOauth(prov: ChatHistoryProvider, flags: AuthFlags): Promise<bo
 export async function runConnectorLogout(args: string[]): Promise<void> {
   const provider = args.find((a) => !a.startsWith('-')) ?? '';
   if (!isConnectorProviderName(provider) && !isTokenProviderName(provider)) {
-    console.error('Usage: gbrain connectors logout <chatgpt|claude|fireflies|slack>');
+    console.error('Usage: foresights connectors logout <chatgpt|claude|fireflies|slack>');
     setCliExitVerdict(1);
     return;
   }

@@ -4,10 +4,10 @@
 
 A shared agent (a Slack, Telegram or Discord bot, a shared OpenClaw or Hermes)
 often answers its owner inside a group chat. The owner should get the same
-work they would get in a direct message, so gbrain never narrows that read.
+work they would get in a direct message, so foresights never narrows that read.
 What the agent needs is a way to tell which parts of the answer the people in
 the room could not have read themselves. A **room** gives it that: the harness
-says who is in the chat, gbrain answers at the caller's normal scope, and every
+says who is in the chat, foresights answers at the caller's normal scope, and every
 page and fact in the answer carries a `room_access` mark.
 
 A room is a hint, never a filter. Declaring one never refuses, shortens,
@@ -20,7 +20,7 @@ it returned before rooms existed.
 2. On every call made for a turn in a shared chat, name the people in it:
 
    ```text
-   X-Gbrain-Room: alice-example, group:team-a                 # HTTP header (gbrain serve --http)
+   X-Gbrain-Room: alice-example, group:team-a                 # HTTP header (foresights serve --http)
    "_meta": { "room": ["alice-example", "group:team-a"] }     # request-level _meta, a sibling of arguments
    ```
 
@@ -38,7 +38,7 @@ tool runs, so no handler, cache, retry or stored write ever sees it.
 
 Text in the chat can put words into tool arguments, so an argument can only
 add people, never remove them. When the argument names a different room than
-the harness did, gbrain marks the answer for everyone either one names and
+the harness did, foresights marks the answer for everyone either one names and
 adds the `room_conflict` notice. Naming a smaller room in an argument changes
 nothing else.
 
@@ -48,7 +48,7 @@ nothing else.
 |---|---|---|
 | `{readable: true}` | everyone in the room could read this item themselves | use it freely in the reply |
 | `{readable: false, reason}` | someone in the room could not read it | use it to do the work; keep it out of the reply unless the ask needs it, and offer it in a direct message |
-| `{readable: "unknown", reason}` | gbrain could not tell | treat it like `false` |
+| `{readable: "unknown", reason}` | foresights could not tell | treat it like `false` |
 
 Every item marked `readable: true` is one an `on_behalf_of` read for the same
 room would return. Marks never count the calling credential's private-pages
@@ -62,7 +62,7 @@ page is marked `private_label` for any room. The reasons for `false`, checked in
 | `labelled_only` | someone in the room reads only pages labelled for them, and this one is not |
 | `private_label` | the page is `visibility: private` |
 | `derived` | it was built from a page the room cannot read |
-| `personal_source` | it sits in someone's personal source (`gbrain access member source`) and the room holds anyone else, a group or a guest |
+| `personal_source` | it sits in someone's personal source (`foresights access member source`) and the room holds anyone else, a group or a guest |
 
 When any item is not `true`, the answer carries the `room_above_level`
 safety notice, so a model that never sees `_meta` still sees the warning.
@@ -130,7 +130,7 @@ stamp (`_meta.degraded.reasons` and the `[gbrain degraded: …]` block) names
 | `invalid` | the room was empty or malformed | send a list of member ids, `group:<id>` or `guest` |
 | `not_permitted` | the credential's `may_act_for` does not cover the room | the operator widens `may_act_for` |
 | `unknown_principal` | the room names a disabled or unknown member or group | fix the name, or add the member |
-| `unbound` | the connection is bound to no member (on the CLI: the brain names no owner and no `--as` was given) | bind the credential to a member; on the CLI, `gbrain access owner set <member>` or pass `--as` |
+| `unbound` | the connection is bound to no member (on the CLI: the brain names no owner and no `--as` was given) | bind the credential to a member; on the CLI, `foresights access owner set <member>` or pass `--as` |
 | `mark_failed`, `deadline` | judging failed or took more than 3 seconds | retry; nothing was changed |
 | `op_not_covered` | the tool does not mark its results | none needed; this one adds no degraded stamp, so a write is never read as partial |
 | `response_cap` | the marked answer would not fit the connection's size cap | ask for less (a window, a page of rows) to get marks |
@@ -147,28 +147,28 @@ treat every item as above the room.
 ## From the CLI
 
 Every operation command takes `--room <list>` (comma-separated, the same
-grammar): `gbrain query "launch plan" --room alice-example,group:team-a`. The
+grammar): `foresights query "launch plan" --room alice-example,group:team-a`. The
 command prints exactly what it prints without the flag; the room only adds
-marks. The local CLI marks the brain owner's view (`gbrain access owner set`),
+marks. The local CLI marks the brain owner's view (`foresights access owner set`),
 or the view of the member `--as` names.
 
 - With `--json`, every item carries `room_access` and the document carries
   `_meta.room`. An answer that is a list becomes `{ "results": [...], "_meta":
   { "room": {...} } }`.
 - Without `--json`, stdout is unchanged and stderr gets one
-  `[gbrain room: ...]` summary line plus a line for each item the room cannot
+  `[foresights room: ...]` summary line plus a line for each item the room cannot
   read or that is unknown.
 - `--room` with no value (a trailing `--room`, or `--room=`) is a room that
   could not be read, never a dropped flag: the command runs, every item is
   unknown with reason `invalid`, the degraded stamp shows, and it exits 0.
-- It works the same when a running `gbrain serve` owns a PGLite brain (that
+- It works the same when a running `foresights serve` owns a PGLite brain (that
   owner marks the answer) and on a thin client (`--room` goes as
   `_meta.room` and the host marks the answer). A host or owner that predates
   room marks leaves every item unknown (`not_supported`).
-- A command outside the operations (`gbrain think`, `gbrain doctor`, ...) runs
+- A command outside the operations (`foresights think`, `foresights doctor`, ...) runs
   unchanged and prints a line saying it marks nothing: treat all of its output
   as above the room's level. The same line marks a page too large for one
-  answer, which `gbrain get` streams in parts: that output carries no
+  answer, which `foresights get` streams in parts: that output carries no
   `room_access` and no `_meta.room`, even with `--json`, so a `--json` document
   without `_meta.room` is never a readable one.
 

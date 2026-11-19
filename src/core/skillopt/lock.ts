@@ -2,7 +2,7 @@
  * SkillOpt per-skill DB lock (D14).
  *
  * Thin wrapper around `tryAcquireDbLock` from `src/core/db-lock.ts`. The
- * lock id is `skillopt:<skill-name>` so two concurrent `gbrain skillopt foo`
+ * lock id is `skillopt:<skill-name>` so two concurrent `foresights skillopt foo`
  * runs serialize cleanly without blocking other skills.
  *
  * Default TTL: 60 minutes — generous for a full epoch run, but the auto-
@@ -11,7 +11,7 @@
  *
  * Why a DB lock instead of a filesystem `.lock`:
  *  - Cross-host correct (matters for Conductor workspaces sharing a brain).
- *  - Reuses the existing primitive (same TTL semantics as gbrain sync,
+ *  - Reuses the existing primitive (same TTL semantics as foresights sync,
  *    extract-conversation-facts, autopilot cycle).
  *  - Crashed holders auto-release via TTL expiry (no PID-liveness landmine).
  */
@@ -48,7 +48,7 @@ export async function tryAcquireSkilloptLock(
  *
  * Throws a StructuredAgentError with `code: 'lock_busy'` when another
  * live holder has the lock — the user is shown the paste-ready remediation
- * "another run is in progress; wait or check `gbrain jobs supervisor status`".
+ * "another run is in progress; wait or check `foresights jobs supervisor status`".
  *
  * Lock is always released on `fn` completion (success OR throw) via
  * try/finally. The background refresh interval is cleared in the finally.
@@ -66,7 +66,7 @@ export async function withSkilloptLock<T>(
       class: 'LockBusy',
       code: 'lock_busy',
       message: `Another SkillOpt run is in progress for skill '${skillName}'.`,
-      hint: `Wait for it to finish, or check 'gbrain jobs supervisor status'. Stale lock holders auto-expire after ${ttlMinutes} minutes.`,
+      hint: `Wait for it to finish, or check 'foresights jobs supervisor status'. Stale lock holders auto-expire after ${ttlMinutes} minutes.`,
     });
   }
 

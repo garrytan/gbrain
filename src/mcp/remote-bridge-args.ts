@@ -1,6 +1,6 @@
 /**
- * `gbrain serve` on a thin client: which argument lists start the stdio
- * bridge (bare, or with gbrain's own registration flags), and the refusal for
+ * `foresights serve` on a thin client: which argument lists start the stdio
+ * bridge (bare, or with foresights's own registration flags), and the refusal for
  * every other form. Engine-free and SDK-free, so the CLI routing step can load
  * it before deciding. A refused invocation's fix keeps its flags (an
  * allowlisted name, and its value only when it has a safe shape), so
@@ -23,13 +23,13 @@ const VALUE_FLAGS: Record<string, RegExp | null> = {
 };
 const BOOLEAN_FLAGS = new Set(['--http', '--source-guard', '--fail-fast', '--cli-socket', '--enable-dcr', '--enable-dcr-insecure', '--log-full-params', '--suppress-bootstrap-token', '--print-admin-token']);
 const HTTP_FLAGS = new Set(['--http', '--port', '--bind', '--public-url', '--token-ttl', '--enable-dcr', '--enable-dcr-insecure', '--log-full-params', '--suppress-bootstrap-token', '--print-admin-token', '--scopes']);
-const BRIDGE_NOTE = 'Bare `gbrain serve` on this thin client is the stdio bridge to that brain (it accepts --surface, --advertise and --source-guard).';
+const BRIDGE_NOTE = 'Bare `foresights serve` on this thin client is the stdio bridge to that brain (it accepts --surface, --advertise and --source-guard).';
 
 const flagName = (a: string): string => (a.startsWith('--') && a.includes('=') ? a.slice(0, a.indexOf('=')) : a);
 
 function badValue(flag: string, raw: string | undefined): OperationError {
   const got = raw === undefined || raw.startsWith('--') ? 'no value' : `"${raw}"`;
-  return opError('invalid_params', `gbrain serve ${flag} takes verbs, starter or full (got ${got}).`,
+  return opError('invalid_params', `foresights serve ${flag} takes verbs, starter or full (got ${got}).`,
     `Edit the ${flag} value in this harness entry's args to verbs, starter or full, then start a new session.`, {
       fix: { argv: ['gbrain', 'serve', flag, 'starter'], consent: [], actor: 'user', requires_exclusive: false,
         why: `On a thin client ${flag} narrows the stdio bridge's tool list; its value is one of verbs, starter or full.` },
@@ -93,7 +93,7 @@ export function serveThinClientRefusal(refused: string[], mcpUrl: string): Opera
   }
   if (names.has('--access')) {
     return opError('requires_local_engine', `\`${shown}\` is not routable (thin-client of ${mcpUrl}): it asks this bridge to enforce a restriction, and a thin client cannot enforce one locally.`,
-      `Give this harness its own narrow client instead: on the brain host, register an OAuth client with only the scopes it needs (read, for a read-only harness), then run gbrain init --mcp-only with it under a separate GBRAIN_HOME and point the harness entry there (docs/guides/hosted-harness-access.md). ${BRIDGE_NOTE}`, {
+      `Give this harness its own narrow client instead: on the brain host, register an OAuth client with only the scopes it needs (read, for a read-only harness), then run foresights init --mcp-only with it under a separate GBRAIN_HOME and point the harness entry there (docs/guides/hosted-harness-access.md). ${BRIDGE_NOTE}`, {
         why: 'The brain host enforces what each client may do; a filter in this process would be advice, not a boundary.',
         fix: { argv: ['gbrain', 'auth', 'register-client', '<name>', '--grant-types', 'client_credentials', '--scopes', 'read'], consent: [], actor: 'host_admin', requires_exclusive: false,
           why: 'A read-only client row on the brain host is the restriction; this machine then uses it from its own GBRAIN_HOME.',

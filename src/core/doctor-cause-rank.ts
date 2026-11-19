@@ -1,7 +1,7 @@
 /**
  * issue #1685 (GAP C) — cause-ranked doctor issues.
  *
- * The #1685 posture ask: `gbrain doctor` is the single health truth, and it
+ * The #1685 posture ask: `foresights doctor` is the single health truth, and it
  * surfaces CAUSE before symptoms. During the #1678 incident the loud lines were
  * all downstream DB-cascade noise (CONNECTION_ENDED, lock-renewal-failed) while
  * the one true cause (RSS-watchdog OOM kill) scrolled by once. This module ranks

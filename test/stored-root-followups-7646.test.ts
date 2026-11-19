@@ -13,7 +13,7 @@
  *   embedding on, and refuses a foreign-OS path the same way;
  * - a queued sync job on a relative anchor completes as a skip carrying the ask-the-user fix (no stored path);
  * - page and fact writes record the database-only reason relative_root;
- * - gbrain dream names the failed phase's ask-the-user fix instead of a rerun that refuses again.
+ * - foresights dream names the failed phase's ask-the-user fix instead of a rerun that refuses again.
  *
  * PGLite always; Postgres when DATABASE_URL is set (test/e2e/stored-root-followups-7646-postgres.test.ts).
  */
@@ -124,7 +124,7 @@ for (const backend of testBackends()) {
         expect(await sourceCommitAnchorAllowed(engine, 'default', foreign)).toEqual({ owns: false, configured: '.' });
         const { lines } = await cli(() => writeSyncAnchor(engine, 'default', 'last_commit', 'f'.repeat(40), undefined, foreign));
         expect((await engine.executeRaw<{ last_commit: string | null }>("SELECT last_commit FROM sources WHERE id='default'"))[0]!.last_commit).toBeNull();
-        expect(lines.join('\n')).toContain('gbrain sources set-path default <absolute-directory>');
+        expect(lines.join('\n')).toContain('foresights sources set-path default <absolute-directory>');
       } finally {
         rmSync(foreign, { recursive: true, force: true });
       }
@@ -301,13 +301,13 @@ for (const backend of testBackends()) {
       });
       expect(existsSync(join(folder, 'notes'))).toBe(false);
       const { withNoRepoWriteThroughWarning } = await import('../src/core/write-through.ts');
-      expect(withNoRepoWriteThroughWarning<{ written: boolean; skipped?: string; warning?: string }>({ written: false, skipped: 'relative_root' }, 'default').warning).toContain('gbrain sources set-path default <absolute-directory>');
+      expect(withNoRepoWriteThroughWarning<{ written: boolean; skipped?: string; warning?: string }>({ written: false, skipped: 'relative_root' }, 'default').warning).toContain('foresights sources set-path default <absolute-directory>');
     }, 120_000);
 
-    // Value: protects=gbrain dream on a relative default row names the sync phase's ask-the-user step instead of telling the user to
+    // Value: protects=foresights dream on a relative default row names the sync phase's ask-the-user step instead of telling the user to
     //   rerun the phase, which refuses again; fails_when=the cycle_failed line keeps the generic rerun advice; why_new=#7630 pinned
     //   the phase result only; seam=none; no_claim=the --json envelope (needs the CLI's JSON guard; same askPhase lookup)
-    test('gbrain dream names the failed sync phase\'s ask-the-user fix', async () => {
+    test('foresights dream names the failed sync phase\'s ask-the-user fix', async () => {
       const repo = gitRepo('gbrain-7646-dream-');
       try {
         await engine.executeRaw("UPDATE sources SET local_path='.' WHERE id='default'");
@@ -317,8 +317,8 @@ for (const backend of testBackends()) {
         expect(exit).toBe(1);
         const text = lines.join('\n');
         expect(text).toContain('the sync phase needs the user before it can run');
-        expect(text).toContain('gbrain sources set-path default <absolute-directory>');
-        expect(text).not.toContain('re-run one with: gbrain dream --phase sync');
+        expect(text).toContain('foresights sources set-path default <absolute-directory>');
+        expect(text).not.toContain('re-run one with: foresights dream --phase sync');
       } finally {
         process.chdir(folder);
         rmSync(repo, { recursive: true, force: true });

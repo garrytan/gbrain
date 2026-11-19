@@ -2,7 +2,7 @@
  * `embed-backfill` minion handler (v0.40 Federated Sync v2).
  *
  * Decouples embedding from the sync pipeline so:
- *   - `gbrain sync --all` finishes fast (pages searchable via keyword
+ *   - `foresights sync --all` finishes fast (pages searchable via keyword
  *     immediately), embed-backfill catches up async (D18).
  *   - Webhook-driven syncs don't block on Voyage rate limits (D5 + D18).
  *   - Fresh-source onboarding (federate a 50K-page repo) doesn't make
@@ -373,7 +373,7 @@ export function makeEmbedBackfillHandler(
         // #7193: the stale count leaves out large pages held for approval or at their cap; the remainder names them too.
         const held = await readBudgetLimited(engine, { sourceId, signature: currentEmbeddingSignature() }).catch(() => null);
         const heldNote = held && held.pending_chunks > 0
-          ? ` (${held.pending_chunks} of them on ${held.held + held.capped} large page(s) held for approval or at their spend cap; gbrain embed --held --dry-run --source ${sourceId} lists them)` : '';
+          ? ` (${held.pending_chunks} of them on ${held.held + held.capped} large page(s) held for approval or at their spend cap; foresights embed --held --dry-run --source ${sourceId} lists them)` : '';
         const message = `embed-backfill: incomplete; ${(result.remaining ?? 0) + (held?.pending_chunks ?? 0)} chunks remain${heldNote} and ${result.blocked ?? 0} projections are blocked. Durable progress is retained; inspect provider and projection readiness before retrying.`;
         // #6803: a run that embedded nothing records its blocker fingerprint, so
         // automatic submission backs off and stops after identical failures
@@ -393,7 +393,7 @@ export function makeEmbedBackfillHandler(
           } catch { /* the stall record is bookkeeping; the incomplete failure below stands either way */ }
         }
         if (repeated) {
-          throw new UnrecoverableError(`${message} No progress since the previous attempt and the same blockers remain; see gbrain doctor --only embed_backfill_stalled.`);
+          throw new UnrecoverableError(`${message} No progress since the previous attempt and the same blockers remain; see foresights doctor --only embed_backfill_stalled.`);
         }
         throw new Error(message);
       }

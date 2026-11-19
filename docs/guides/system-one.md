@@ -1,11 +1,11 @@
 # System One: fast typed decisions inside your brain
 
-GBrain makes many small judgment calls on every search and every dream
+Foresights makes many small judgment calls on every search and every dream
 cycle: is this result evidence for the question, is this transcript worth
 synthesizing, does this new fact contradict an old one. Today each call is a
 hand-written rule or a full chat-model call. System One lets a decision model
 make those calls instead. It answers with a probability or a labelled choice,
-and GBrain's code owns every threshold, floor and fallback.
+and Foresights's code owns every threshold, floor and fallback.
 
 The first provider is TypeSafe's Jev (under a second per request, $0.042 per
 million input tokens, output free). Any chat model you already configured can
@@ -14,7 +14,7 @@ the reranker: [TypeSafe (Jev)](../ai-providers/typesafe.md). Contract for
 contributors: [`docs/architecture/decide.md`](../architecture/decide.md).
 
 Every decision point is a **slot**. Each slot is **off** (today's behavior)
-or **on** (GBrain acts on the decision). Without a TypeSafe key every slot is
+or **on** (Foresights acts on the decision). Without a TypeSafe key every slot is
 off, nothing is sent anywhere, and output is byte-identical to a brain
 without System One.
 
@@ -27,7 +27,7 @@ by default: **dream triage** (`triage`) and **contradiction proposals**
 reference calibrations. The other seven slots stay off, because on our eval
 sets they either did not help or could not pass the safety gate
 ([`docs/eval/system-one/`](../eval/system-one/)). The default-on set is
-exactly the set `gbrain decide enable --recommended` turns on; both come
+exactly the set `foresights decide enable --recommended` turns on; both come
 from the same reference calibration rows.
 
 What that sends to TypeSafe: transcript windows (conversation text) when a
@@ -35,7 +35,7 @@ dream cycle triages, and fact text when the contradiction sweep runs after
 `extract_facts`. For these two slots only, the key counts as your opt-in for
 that data, including private conversations and private facts. Private and
 derived pages are never sent by these slots, and `decide.egress.deny_sources`
-still applies. Nothing is written to your config: `gbrain decide status`
+still applies. Nothing is written to your config: `foresights decide status`
 shows `on (default: Jev key present)` and the opt-out on the next line.
 
 What it costs: in our end-to-end run, dream spend went from $1.50 to $2.60
@@ -46,10 +46,10 @@ daily cap (`decide.budget.daily_usd`, $1.00) applies.
 To opt out, any explicit setting wins:
 
 ```bash
-gbrain decide disable triage            # or: gbrain decide disable conflict
-gbrain decide disable --all             # every slot off
-gbrain config set decide.egress.private deny   # no default slot sends private data
-gbrain config set decide.provider none         # no decide slot runs at all
+foresights decide disable triage            # or: foresights decide disable conflict
+foresights decide disable --all             # every slot off
+foresights config set decide.egress.private deny   # no default slot sends private data
+foresights config set decide.provider none         # no decide slot runs at all
 ```
 
 A slot's own mode or provider, or a `deny` on its consent key
@@ -67,40 +67,40 @@ minutes. The first probe sends nothing from your brain.
 <!-- system-one-quickstart:begin -->
 ```bash
 export TYPESAFE_API_KEY=<your-key>
-gbrain decide probe
-gbrain decide probe --query "When does Acme Example ship the beta?"
-gbrain decide status
-gbrain decide enable --recommended
+foresights decide probe
+foresights decide probe --query "When does Acme Example ship the beta?"
+foresights decide status
+foresights decide enable --recommended
 ```
 
 Example output from a three-page brain (your latency, cost, pages and
 probabilities will differ; `...` marks lines left out here):
 
 ```console
-$ gbrain decide probe
+$ foresights decide probe
 TypeSafe Jev probe: resolved jev-1.13.0 (requested typesafe:jev-1.13.0) in 439 ms, 383 input tokens, $0.000016.
 Key: TYPESAFE_API_KEY. No brain content was sent.
-Next: gbrain decide probe --query "<a question your brain can answer>"
-$ gbrain decide probe --query "When does Acme Example ship the beta?"
+Next: foresights decide probe --query "<a question your brain can answer>"
+$ foresights decide probe --query "When does Acme Example ship the beta?"
 This sends your query and 2 result snippet(s) to TypeSafe (typesafe:jev-1.13.0) once; 1 private result(s) stay local. Nothing is changed or stored.
 Jev jev-1.13.0: 260 ms, $0.000019. Probability = evidence probability; Jev rank = its rerank order.
 today  jev  probability  slug
     1    2       0.08  meetings/2026-09-22-weekly-sync
     2    1       0.93  notes/launch-plan
     3    -    private  notes/board-prep
-Next: gbrain decide status   (with a key, the slots with a measured win are on by default)
-$ gbrain decide status
+Next: foresights decide status   (with a key, the slots with a measured win are on by default)
+$ foresights decide status
 System One (decide): provider none; key: TYPESAFE_API_KEY
 egress: private=deny; consent query=deny candidates=deny facts=deny conversation=deny; deny_sources: none; fallback: none; key default allows: triage (conversation), conflict (facts)
 ...
   triage         on (default: Jev key present) threshold 0.770 (reference ref:triage-jev-1.13.0-2026-09-30) ~$2.0227/1k transcripts (estimate)
-    on by default because a TypeSafe key is present (sends conversation text to TypeSafe); opt out: gbrain decide disable triage
+    on by default because a TypeSafe key is present (sends conversation text to TypeSafe); opt out: foresights decide disable triage
 ...
   conflict       on (default: Jev key present) threshold 0.520 (reference ref:conflict-jev-1.13.0-2026-09-30) ~$0.1618/1k swept facts (estimate)
-    on by default because a TypeSafe key is present (sends fact text to TypeSafe); opt out: gbrain decide disable conflict
-$ gbrain decide enable --recommended
-triage: already on (default: Jev key present); nothing written. Opt out: gbrain decide disable triage
-conflict: already on (default: Jev key present); nothing written. Opt out: gbrain decide disable conflict
+    on by default because a TypeSafe key is present (sends fact text to TypeSafe); opt out: foresights decide disable conflict
+$ foresights decide enable --recommended
+triage: already on (default: Jev key present); nothing written. Opt out: foresights decide disable triage
+conflict: already on (default: Jev key present); nothing written. Opt out: foresights decide disable conflict
 ```
 <!-- system-one-quickstart:end -->
 
@@ -127,10 +127,10 @@ What each step shows:
    nothing. It matters when an explicit setting turned a default off: both
    slots read private data, so with `decide.egress.private deny` set it
    refuses them, names the missing key and changes nothing. Allow it with
-   `gbrain config set decide.egress.private allow` and run the command again,
+   `foresights config set decide.egress.private allow` and run the command again,
    or route those slots to an `llm:` provider. When no slot qualifies for
    your model, it says so and exits non-zero. Turn one slot on yourself with
-   `gbrain decide enable <slot>` (see [Turning a slot on](#turning-a-slot-on)).
+   `foresights decide enable <slot>` (see [Turning a slot on](#turning-a-slot-on)).
 
 A CI test (`test/decide/quickstart-doc.serial.test.ts`) runs this block
 against a seeded brain with a fixture transport and checks every output line
@@ -138,11 +138,11 @@ above, so the block and the CLI cannot drift apart.
 
 ## The slots
 
-Plain names are what `status` and the CLI print. `gbrain decide status`
+Plain names are what `status` and the CLI print. `foresights decide status`
 marks any slot your binary does not include with `(not available in this
 build)`, and `enable` refuses it with `slot_unavailable`.
 
-| Slot | Plain name | When on, GBrain... | If Jev fails or is late | Data it sends |
+| Slot | Plain name | When on, Foresights... | If Jev fails or is late | Data it sends |
 |---|---|---|---|---|
 | `rerank` | search reranking | orders search candidates by Jev's relevance score | keeps the fused (RRF) order | query, candidate text |
 | `intent` | query routing | picks the query intent (entity, temporal, event, concept, general) when Jev is confident | uses the regex classifier | query |
@@ -157,9 +157,9 @@ build)`, and `enable` refuses it with `slot_unavailable`.
 ### search reranking (`rerank`)
 
 The Jev reranker from #5178, running on the decide core. Voyage stays the
-default reranker. `gbrain decide enable rerank` sets
+default reranker. `foresights decide enable rerank` sets
 `search.reranker.model typesafe:jev-1.13.0` and `search.reranker.enabled
-true`, and remembers what they were; `gbrain decide disable rerank` restores
+true`, and remembers what they were; `foresights decide disable rerank` restores
 them. Rerank has no threshold and no calibration, so it can be `ready for
 on` with only a key. The reranker selection is your consent for query and
 candidate text, as it is for Voyage. Details, scoring rubric and caveats:
@@ -208,8 +208,8 @@ a security boundary.
 
 ### know-to-ask (`recall_needed`)
 
-Runs in `gbrain serve`'s turn-context handler, beside the reflex rules that
-answer `gbrain hook user-prompt`. One question over the prompt and the last
+Runs in `foresights serve`'s turn-context handler, beside the reflex rules that
+answer `foresights hook user-prompt`. One question over the prompt and the last
 turn: "does answering this need the user's stored memory?". When on, it fires
 one keyword-only search (limit 3) the reflex rules would have missed, such as
 lowercase names or indirect references, and suppresses reflex injection when
@@ -268,15 +268,15 @@ explicitly, facts default to private, so on Jev it needs
 `decide.egress.private allow`, or route it to an `llm:` provider.
 
 The sweep only compares facts that belong to an entity; a fact saved without
-one is skipped as `no_entity`. When `gbrain decide status` shows a large
-`no_entity` share, link those facts with `gbrain facts relink`
+one is skipped as `no_entity`. When `foresights decide status` shows a large
+`no_entity` share, link those facts with `foresights facts relink`
 ([guide](facts-relink.md)); linked facts are queued for the next sweep.
 
 ```bash
-gbrain decide sweep --slot conflict [--since <fact id>] [--source <id>] [--json]   # run the sweep now
-gbrain decide proposals list [--status pending|accepted|rejected|stale|undone|all]  # both facts' text, locally
-gbrain decide proposals accept <id> | reject <id>           # or --all-from <sweep id>
-gbrain decide proposals undo <id>                           # reverse an accepted proposal
+foresights decide sweep --slot conflict [--since <fact id>] [--source <id>] [--json]   # run the sweep now
+foresights decide proposals list [--status pending|accepted|rejected|stale|undone|all]  # both facts' text, locally
+foresights decide proposals accept <id> | reject <id>           # or --all-from <sweep id>
+foresights decide proposals undo <id>                           # reverse an accepted proposal
 ```
 
 ### Ambiguous-band review (rides `conflict`)
@@ -297,7 +297,7 @@ site, calibration and qualification:
 precision lower bound 0.970, end-to-end recall 0.977), and the binary ships
 that reference calibration for TypeSafe `jev-1.13.0`, so it proposes wherever
 the contradiction slot is on with a TypeSafe key. Turn it off with
-`gbrain config set decide.slots.conflict.review_withdraw false`. The duplicate
+`foresights config set decide.slots.conflict.review_withdraw false`. The duplicate
 kinds are off by default. A kind proposes only when its calibration for call
 site `review_<kind>` is qualified for action precision
 (`decide.slots.conflict.min_action_precision`, default 0.90); until then it
@@ -306,9 +306,9 @@ override does not count as a qualification for review kinds. To qualify a kind
 on your own data:
 
 ```bash
-gbrain decide calibrate --slot conflict --call-site review_duplicate_page --dataset pairs.jsonl
-gbrain decide qualify --slot conflict --call-site review_duplicate_page --dataset pairs.jsonl
-gbrain config set decide.slots.conflict.review_duplicate_page true
+foresights decide calibrate --slot conflict --call-site review_duplicate_page --dataset pairs.jsonl
+foresights decide qualify --slot conflict --call-site review_duplicate_page --dataset pairs.jsonl
+foresights config set decide.slots.conflict.review_duplicate_page true
 ```
 
 Work is queued in the same transaction as the event that creates it: a
@@ -321,27 +321,27 @@ may restate. The text of a forgotten private fact is sent only when
 Review proposals list with `r` ids next to supersede proposals:
 
 ```bash
-gbrain decide proposals list
-gbrain decide proposals accept r12 --yes          # a withdraw is permanent: confirm with the user first
-gbrain decide proposals reject r12
-gbrain decide proposals accept --all-from <sweep id> --include-withdrawals --yes
+foresights decide proposals list
+foresights decide proposals accept r12 --yes          # a withdraw is permanent: confirm with the user first
+foresights decide proposals reject r12
+foresights decide proposals accept --all-from <sweep id> --include-withdrawals --yes
 ```
 
 `--all-from` skips withdraw proposals unless `--include-withdrawals` is given.
 Accepting re-checks that the claim is still withdrawn and that the affected
 fact is still active and unchanged; otherwise the proposal goes `stale`. A
 withdraw has no undo: the withdrawal ledger is durable, so to state the claim
-again, remember a corrected wording with new provenance. `gbrain decide
+again, remember a corrected wording with new provenance. `foresights decide
 status` shows each kind's pending count, oldest pending age, and 30-day
 accepted and rejected counts.
 
 ## Turning a slot on
 
 ```bash
-gbrain decide enable <slot>        # summary of what leaves the machine and the cost, then asks
-gbrain decide enable <slot> --yes  # the same, without the question (scripts, agents)
-gbrain decide disable <slot>       # back to off
-gbrain decide disable --all        # every slot off
+foresights decide enable <slot>        # summary of what leaves the machine and the cost, then asks
+foresights decide enable <slot> --yes  # the same, without the question (scripts, agents)
+foresights decide disable <slot>       # back to off
+foresights decide disable --all        # every slot off
 ```
 
 `enable` does everything the slot needs in one confirmed step. It prints
@@ -362,7 +362,7 @@ data. The refusal names the reason, the fix command and the
 [troubleshooting](#troubleshooting) anchor.
 
 With `decide.provider none` (the default), `enable <slot>` refuses with
-`no_provider` unless you name one: `gbrain decide enable evidence --provider
+`no_provider` unless you name one: `foresights decide enable evidence --provider
 typesafe:jev-1.13.0`. Rerank is the exception; it uses the pinned Jev id.
 `--provider llm:<provider:model>` routes a slot to a chat model you already
 use (for example, the evidence gate on Jev and dream triage on a local model
@@ -406,14 +406,14 @@ Optional fields: `slice` (a workload label reported per slice), `rank`
 remove). Then:
 
 ```bash
-gbrain decide dataset --slot evidence --from jsonl labels.jsonl --out evidence.jsonl   # frozen 50/50 split by family
-gbrain decide calibrate --slot evidence --dataset evidence.jsonl --dry-run             # token and cost estimate, no calls
-gbrain decide calibrate --slot evidence --dataset evidence.jsonl                       # threshold, reliability table, ECE
-gbrain decide qualify --slot evidence --dataset evidence.jsonl                         # precision gate on the eval half
-gbrain decide enable evidence
+foresights decide dataset --slot evidence --from jsonl labels.jsonl --out evidence.jsonl   # frozen 50/50 split by family
+foresights decide calibrate --slot evidence --dataset evidence.jsonl --dry-run             # token and cost estimate, no calls
+foresights decide calibrate --slot evidence --dataset evidence.jsonl                       # threshold, reliability table, ECE
+foresights decide qualify --slot evidence --dataset evidence.jsonl                         # precision gate on the eval half
+foresights decide enable evidence
 ```
 
-`dataset` sources in this build (`gbrain decide dataset --slot <slot> --from
+`dataset` sources in this build (`foresights decide dataset --slot <slot> --from
 <source> <path>`): `jsonl` (any slot, pre-labelled lines), `longmemeval`
 (evidence gate, abstention, query routing), `brainbench` (query routing),
 `know-to-ask` (know-to-ask), `cat35` (dream triage), `grounding-labels`
@@ -445,18 +445,18 @@ on the eval half's failures spoils the bound.
   are configurable; the full table is in
   [`decide.md`](../architecture/decide.md#fixed-by-design-versus-configurable).
 
-`gbrain config set decide.slots.<slot>.<key>` validates the value and prints
+`foresights config set decide.slots.<slot>.<key>` validates the value and prints
 the effective-mode line when the slot would not act as requested:
 
 ```
-evidence: requested: on / effective: off / cause: no_calibration (no local or reference calibration row for (slot, call site, provider, model)) / fix: gbrain decide calibrate --slot evidence --dataset <jsonl> / docs: docs/guides/system-one.md#no_calibration
+evidence: requested: on / effective: off / cause: no_calibration (no local or reference calibration row for (slot, call site, provider, model)) / fix: foresights decide calibrate --slot evidence --dataset <jsonl> / docs: docs/guides/system-one.md#no_calibration
 ```
 
 ### The kill switch
 
-`gbrain decide disable --all` turns every slot off, restores the reranker
+`foresights decide disable --all` turns every slot off, restores the reranker
 settings `enable rerank` changed, and stops the contradiction sweep.
-`gbrain config set decide.provider none` stops every decide slot as well. A
+`foresights config set decide.provider none` stops every decide slot as well. A
 Jev reranker you selected by hand with `search.reranker.model` keeps running
 until you change that key.
 
@@ -473,11 +473,11 @@ evidence       on (inactive: model_drift)
 ```
 
 plus a `requested: ... / effective: ... / cause: ... / fix: ...` line naming
-the one command that fixes it. A new GBrain release never silently moves an
+the one command that fixes it. A new Foresights release never silently moves an
 enabled slot to a newer reference calibration; `status` shows `newer
 reference available: ref:<id>` only when a shipped reference exists for the
 same slot, call site, provider and model as the calibration in use, and you
-adopt it with the command it prints, `gbrain decide calibrations adopt
+adopt it with the command it prints, `foresights decide calibrations adopt
 ref:<id>` (`adopt local:<id>` or `adopt <id>` picks one you built with
 `calibrate`).
 
@@ -528,11 +528,11 @@ consent for that provider.
   only the items egress refused, as a separate decision with its own
   calibration. Timeouts, 429s and budget exhaustion never go to the fallback.
 
-`gbrain decide status --egress` prints the provider by data class matrix
+`foresights decide status --egress` prints the provider by data class matrix
 and the key that decides each cell. What stays on the machine no matter
 what: [TypeSafe data handling](../ai-providers/typesafe.md#what-never-leaves-the-machine).
 
-## Reading `gbrain decide status`
+## Reading `foresights decide status`
 
 ```
 System One (decide): provider typesafe:jev-1.13.0; key: TYPESAFE_API_KEY
@@ -564,19 +564,19 @@ Readiness values:
 
 | Readiness | Meaning | Next step |
 |---|---|---|
-| `off` | The slot is off (or cannot be enabled yet, for example no key). | `gbrain decide enable <slot>` names what is missing. |
-| `ready for on` | `enable` would succeed now. | `gbrain decide enable <slot>` |
+| `off` | The slot is off (or cannot be enabled yet, for example no key). | `foresights decide enable <slot>` names what is missing. |
+| `ready for on` | `enable` would succeed now. | `foresights decide enable <slot>` |
 | `needs calibration` | The slot needs a calibration or qualification first. | A reference calibration, or [your own](#calibrating-on-your-own-data-advanced). |
-| `on` | GBrain acts on the slot's decisions. | Nothing. |
+| `on` | Foresights acts on the slot's decisions. | Nothing. |
 | `on (inactive: <reason>)` | Requested on, running with off behavior. | The printed fix, or [troubleshooting](#troubleshooting). |
 
-`gbrain decide status --json` carries the same data plus per-slot `status`:
+`foresights decide status --json` carries the same data plus per-slot `status`:
 `pending` (no receipts yet), `active`, `blocked` (every receipt skipped) or
 `demoted` (skipped because the slot is inactive).
 
 ## Reading doctor
 
-`gbrain doctor` has one System One check, `decide_health`. With every slot
+`foresights doctor` has one System One check, `decide_health`. With every slot
 off it reports `System One is off (every decide slot is off; nothing is
 sent).` Otherwise it summarizes each active slot (a key-aware default reads
 `triage=on (default: Jev key present)`, followed by the opt-out command)
@@ -604,8 +604,8 @@ no config surface prints. No query, prompt, page or transcript text is
 stored.
 
 ```bash
-gbrain decide receipts [--slot <slot>] [--since <hours>] [--json]    # aggregates only
-gbrain decide receipts --slot evidence --what-if-threshold 0.4       # replay a threshold, no provider call
+foresights decide receipts [--slot <slot>] [--since <hours>] [--json]    # aggregates only
+foresights decide receipts --slot evidence --what-if-threshold 0.4       # replay a threshold, no provider call
 ```
 
 `--what-if-threshold` works for slots whose decision can be replayed exactly
@@ -619,7 +619,7 @@ on writes roughly 50,000 to 80,000 rows a day. Rows are kept for
 `decide.receipts.retention_days` (7) and pruned by the dream cycle's `purge`
 phase.
 
-`gbrain search "<query>" --explain` prints one `decide <slot>: ...` line per
+`foresights search "<query>" --explain` prints one `decide <slot>: ...` line per
 slot that ran on the query (mode, provider and resolved model, threshold and
 outcome counts), and a skipped slot's reason. With every slot off, explain
 output is unchanged.
@@ -658,11 +658,11 @@ once receipts exist.
 
 > Turn System One off everywhere.
 
-Your agent runs `gbrain decide probe`, `gbrain decide probe --query "..."`
-(showing you the egress line before adding `--yes`), `gbrain decide enable
---recommended`, `gbrain decide status` and `gbrain doctor`, the fix command
+Your agent runs `foresights decide probe`, `foresights decide probe --query "..."`
+(showing you the egress line before adding `--yes`), `foresights decide enable
+--recommended`, `foresights decide status` and `foresights doctor`, the fix command
 from the `requested / effective / cause / fix` line, and
-`gbrain decide disable --all`. `gbrain decide` runs only on the brain host;
+`foresights decide disable --all`. `foresights decide` runs only on the brain host;
 a thin client refuses it.
 
 ## Troubleshooting
@@ -672,28 +672,28 @@ cause, a fix command and a link to a row here.
 
 | Reason | What it means | Recovery |
 |---|---|---|
-| <a id="no_provider"></a>`no_provider` | `decide.provider` is `none`, so the slot has no provider. | `gbrain decide enable <slot> --provider typesafe:jev-1.13.0` (or `--provider llm:<provider:model>`). |
-| <a id="no_key"></a>`no_key` | Neither `TYPESAFE_API_KEY` nor `JEV_TYPESAFE_API_KEY` is set in the process or `~/.gbrain/.env`. | `export TYPESAFE_API_KEY=... && gbrain decide probe`. |
-| <a id="no_calibration"></a>`no_calibration` | No local or reference calibration exists for this slot, call site, provider and model. | A reference calibration for your model, or `gbrain decide calibrate --slot <slot> --dataset <jsonl>`. |
-| <a id="no_qualification"></a>`no_qualification` | The calibration has no precision bound yet. | `gbrain decide qualify --slot <slot> --dataset <jsonl>`. |
-| <a id="pack_shape_mismatch"></a>`pack_shape_mismatch` | The calibration was measured with a different request shape (for example, another slot is now packed into the same request). | Recalibrate: `gbrain decide calibrate --slot <slot> --dataset <jsonl>`. |
-| <a id="action_precision_low"></a>`action_precision_low` | The slot's harmful action was not precise enough on the eval half. | Leave it off, calibrate on better data, or bypass on purpose with `gbrain config set decide.slots.<slot>.force_on true` (doctor lists it). |
-| <a id="insufficient_n"></a>`insufficient_n` | Too few harmful actions to prove the bound, even if all were right. | Build a larger dataset: `gbrain decide dataset --slot <slot> --from <source> <path>`. |
-| <a id="policy_changed"></a>`policy_changed` | The threshold, margin, floors, question version or request shape changed since qualification. | `gbrain decide qualify --slot <slot> --dataset <jsonl>`. |
-| <a id="model_drift"></a>`model_drift` | The provider answered with a different model than the calibration's. Calls run with off behavior. | `gbrain decide calibrations list --slot <slot>`, then adopt a calibration for the new model, or pin the old id. |
-| <a id="egress_private_denied"></a>`egress_private_denied` | The slot sends private content and `decide.egress.private` is `deny`. | `gbrain config set decide.egress.private allow`, or route the slot to an `llm:` provider (`decide.slots.<slot>.provider`) or set `decide.egress_fallback`. |
-| <a id="egress_class_denied"></a>`egress_class_denied` | The data class has no consent for this provider. | `gbrain decide enable <slot>` shows what leaves the machine, then writes consent. |
-| <a id="egress_fallback_missing"></a>`egress_fallback_missing` | Items egress refused have no fallback provider. | `gbrain config set decide.egress_fallback llm:<provider:model>`, or accept the fail direction for them. |
-| <a id="split_mismatch"></a>`split_mismatch` | The calibration was built from a different dataset split, or not from the calibrate half only. | `gbrain decide calibrate --slot <slot> --dataset <jsonl>` on the same dataset file. |
-| <a id="pinned_model_unavailable"></a>`pinned_model_unavailable` | The provider no longer serves the pinned model. Calls take the fail direction. | `gbrain config set decide.provider typesafe:<new-id> && gbrain decide calibrations list`, then recalibrate or adopt a reference calibration for the new id. |
-| <a id="unpriced_model"></a>`unpriced_model` | The configured `typesafe:<model>` id has no shipped tariff and no operator price, so its spend cannot be metered against `decide.budget.daily_usd`. Nothing was sent. | Register the price the endpoint bills: `gbrain pricing set typesafe:<model> --rate <usd-per-1M-input-tokens> --source <pricing-page-url>`, then `gbrain decide probe`. |
-| <a id="budget_exhausted"></a>`budget_exhausted` | Today's third-party decide spend reached `decide.budget.daily_usd`. Slots take their fail direction until UTC midnight. | Wait, or `gbrain config set decide.budget.daily_usd <usd>`. |
-| <a id="thin_client"></a>`thin_client` | This install is a thin client; `gbrain decide` runs on the brain host. | Run `gbrain decide` on the brain host. |
-| <a id="malformed_response"></a>`malformed_response` | The response missed a question or carried an invalid value. The decision took its fail direction. | `gbrain decide probe`; if it persists, check TypeSafe's status. |
-| <a id="reranker_not_jev"></a>`reranker_not_jev` | `rerank` is on but `search.reranker.model` is not a TypeSafe model, so it behaves as off. | `gbrain decide enable rerank`. |
-| <a id="slot_unavailable"></a>`slot_unavailable` | The slot is not included in this build. | `gbrain decide status`; upgrade when the slot ships. |
-| <a id="llm_capability"></a>`llm_capability` | The `llm:` route cannot enforce structured output or report its model identity. | Use a structured-output route: `gbrain config set decide.slots.<slot>.provider llm:<provider:model>`. |
-| <a id="no_recorded_win"></a>`no_recorded_win` | `enable --recommended` found no slot with a recorded win and a passing reference calibration for your model. Nothing changed. | See [`docs/eval/system-one/`](../eval/system-one/); enable a single slot with `gbrain decide enable <slot>`. |
+| <a id="no_provider"></a>`no_provider` | `decide.provider` is `none`, so the slot has no provider. | `foresights decide enable <slot> --provider typesafe:jev-1.13.0` (or `--provider llm:<provider:model>`). |
+| <a id="no_key"></a>`no_key` | Neither `TYPESAFE_API_KEY` nor `JEV_TYPESAFE_API_KEY` is set in the process or `~/.gbrain/.env`. | `export TYPESAFE_API_KEY=... && foresights decide probe`. |
+| <a id="no_calibration"></a>`no_calibration` | No local or reference calibration exists for this slot, call site, provider and model. | A reference calibration for your model, or `foresights decide calibrate --slot <slot> --dataset <jsonl>`. |
+| <a id="no_qualification"></a>`no_qualification` | The calibration has no precision bound yet. | `foresights decide qualify --slot <slot> --dataset <jsonl>`. |
+| <a id="pack_shape_mismatch"></a>`pack_shape_mismatch` | The calibration was measured with a different request shape (for example, another slot is now packed into the same request). | Recalibrate: `foresights decide calibrate --slot <slot> --dataset <jsonl>`. |
+| <a id="action_precision_low"></a>`action_precision_low` | The slot's harmful action was not precise enough on the eval half. | Leave it off, calibrate on better data, or bypass on purpose with `foresights config set decide.slots.<slot>.force_on true` (doctor lists it). |
+| <a id="insufficient_n"></a>`insufficient_n` | Too few harmful actions to prove the bound, even if all were right. | Build a larger dataset: `foresights decide dataset --slot <slot> --from <source> <path>`. |
+| <a id="policy_changed"></a>`policy_changed` | The threshold, margin, floors, question version or request shape changed since qualification. | `foresights decide qualify --slot <slot> --dataset <jsonl>`. |
+| <a id="model_drift"></a>`model_drift` | The provider answered with a different model than the calibration's. Calls run with off behavior. | `foresights decide calibrations list --slot <slot>`, then adopt a calibration for the new model, or pin the old id. |
+| <a id="egress_private_denied"></a>`egress_private_denied` | The slot sends private content and `decide.egress.private` is `deny`. | `foresights config set decide.egress.private allow`, or route the slot to an `llm:` provider (`decide.slots.<slot>.provider`) or set `decide.egress_fallback`. |
+| <a id="egress_class_denied"></a>`egress_class_denied` | The data class has no consent for this provider. | `foresights decide enable <slot>` shows what leaves the machine, then writes consent. |
+| <a id="egress_fallback_missing"></a>`egress_fallback_missing` | Items egress refused have no fallback provider. | `foresights config set decide.egress_fallback llm:<provider:model>`, or accept the fail direction for them. |
+| <a id="split_mismatch"></a>`split_mismatch` | The calibration was built from a different dataset split, or not from the calibrate half only. | `foresights decide calibrate --slot <slot> --dataset <jsonl>` on the same dataset file. |
+| <a id="pinned_model_unavailable"></a>`pinned_model_unavailable` | The provider no longer serves the pinned model. Calls take the fail direction. | `foresights config set decide.provider typesafe:<new-id> && foresights decide calibrations list`, then recalibrate or adopt a reference calibration for the new id. |
+| <a id="unpriced_model"></a>`unpriced_model` | The configured `typesafe:<model>` id has no shipped tariff and no operator price, so its spend cannot be metered against `decide.budget.daily_usd`. Nothing was sent. | Register the price the endpoint bills: `foresights pricing set typesafe:<model> --rate <usd-per-1M-input-tokens> --source <pricing-page-url>`, then `foresights decide probe`. |
+| <a id="budget_exhausted"></a>`budget_exhausted` | Today's third-party decide spend reached `decide.budget.daily_usd`. Slots take their fail direction until UTC midnight. | Wait, or `foresights config set decide.budget.daily_usd <usd>`. |
+| <a id="thin_client"></a>`thin_client` | This install is a thin client; `foresights decide` runs on the brain host. | Run `foresights decide` on the brain host. |
+| <a id="malformed_response"></a>`malformed_response` | The response missed a question or carried an invalid value. The decision took its fail direction. | `foresights decide probe`; if it persists, check TypeSafe's status. |
+| <a id="reranker_not_jev"></a>`reranker_not_jev` | `rerank` is on but `search.reranker.model` is not a TypeSafe model, so it behaves as off. | `foresights decide enable rerank`. |
+| <a id="slot_unavailable"></a>`slot_unavailable` | The slot is not included in this build. | `foresights decide status`; upgrade when the slot ships. |
+| <a id="llm_capability"></a>`llm_capability` | The `llm:` route cannot enforce structured output or report its model identity. | Use a structured-output route: `foresights config set decide.slots.<slot>.provider llm:<provider:model>`. |
+| <a id="no_recorded_win"></a>`no_recorded_win` | `enable --recommended` found no slot with a recorded win and a passing reference calibration for your model. Nothing changed. | See [`docs/eval/system-one/`](../eval/system-one/); enable a single slot with `foresights decide enable <slot>`. |
 
 Receipt skip reasons (`error_reason` on skipped or error rows) also include
 `egress`, `late`, `timeout`, `rate_limited`, `provider_error`, `mixed_model`,
@@ -709,14 +709,14 @@ turning a slot on, and nothing requires it.
 ranking, pruning, gating or write:
 
 ```bash
-gbrain decide enable <slot> --shadow   # same summary and consent as enable
-gbrain decide disable <slot>
+foresights decide enable <slot> --shadow   # same summary and consent as enable
+foresights decide disable <slot>
 ```
 
 - On search paths shadow runs in the background and adds no latency and no
   meta. It samples by `decide.slots.<slot>.shadow_sample` (the evidence gate
   and injection signal default to 0.1, the rest to 1.0).
-- `gbrain search "<query>" --explain` waits for shadow on that one query and
+- `foresights search "<query>" --explain` waits for shadow on that one query and
   prints its `decide` lines. `decide.slots.<slot>.shadow_wait on` does this
   for every query, which adds the slot's real latency to every search.
 - Rerank in shadow beside a non-Jev reranker (Voyage or none) scores the
@@ -731,20 +731,20 @@ gbrain decide disable <slot>
   and `decide.provider none` stops shadow along with everything else.
 
 Evals can set slot modes for one process with `GBRAIN_DECIDE_SLOTS` (for
-example `triage=on`). Only eval commands and `gbrain dream --eval-run` honor
+example `triage=on`). Only eval commands and `foresights dream --eval-run` honor
 it, it never bypasses consent, egress or the daily cap, and every receipt
 records it.
-`gbrain dream --eval-run` honors it for dream cycles. The eval commands
+`foresights dream --eval-run` honors it for dream cycles. The eval commands
 take the same setting as flags, so matched pairs differ only in the slot
 under test:
 
 ```bash
-gbrain eval longmemeval <data.jsonl> --no-trajectory --decide <slot>=<off|on|shadow> [--decide ...]
+foresights eval longmemeval <data.jsonl> --no-trajectory --decide <slot>=<off|on|shadow> [--decide ...]
     [--decide-provider <id>] [--decide-calibration <file|ref:<id>>] [--decide-threshold <slot>=<x>]
     [--decide-force-on <slot>] [--decide-dataset <jsonl>] [--eval-pool-depth <N>]
-gbrain eval brainbench [--suite know-to-ask] --decide recall_needed=on [same --decide-* flags]
-gbrain eval retrieval-quality <fixture.jsonl> --json --decide <slot>=<mode> [--decide-provider <id>] [--decide-dataset <jsonl>]
-gbrain decide judge-agreement --suite <longmemeval|grounding> --input <file> [--limit N]
+foresights eval brainbench [--suite know-to-ask] --decide recall_needed=on [same --decide-* flags]
+foresights eval retrieval-quality <fixture.jsonl> --json --decide <slot>=<mode> [--decide-provider <id>] [--decide-dataset <jsonl>]
+foresights decide judge-agreement --suite <longmemeval|grounding> --input <file> [--limit N]
     [--provider <id>] [--threshold 0.5] [--dry-run] [--json] [--out FILE]
 ```
 
@@ -756,7 +756,7 @@ gbrain decide judge-agreement --suite <longmemeval|grounding> --input <file> [--
   thresholds, `force_on`, awaited shadow, calibrations). `retrieval-quality`
   runs on your brain and never writes its config: it refuses with the
   catalogued line when the provider, key or consent is missing.
-- `--decide-calibration` takes the JSON `gbrain decide calibrate --slot <slot>
+- `--decide-calibration` takes the JSON `foresights decide calibrate --slot <slot>
   --json` prints (or a reference id). With `--decide-dataset`, a calibration
   whose `split_hash` differs from that dataset, or that is not calibrate-only,
   is refused with `split_mismatch`, and LongMemEval runs only the eval half.

@@ -101,7 +101,7 @@ Two paths write rows:
    content_hash / codes. Cost: one row per file synced. Zero extra parse
    work — the parse already happened.
 
-2. **Incremental scan** (`gbrain frontmatter scan --incremental`). Walks
+2. **Incremental scan** (`foresights frontmatter scan --incremental`). Walks
    the disk via `walkBrainTree`, for each file checks `mtime > last_scanned_at`
    OR `content_hash != stored`, only re-parses changed files. Most ticks:
    zero work after the first full backfill. Also exposed as an autopilot
@@ -135,7 +135,7 @@ stale data as authoritative.
 
 1. **First-ever scan.** A fresh upgrade has no rows in
    `frontmatter_scan_state`. Two options:
-   - Lazy: doctor reports "no scan state yet; run `gbrain frontmatter scan
+   - Lazy: doctor reports "no scan state yet; run `foresights frontmatter scan
      --incremental` once" (operator-driven).
    - Eager: the migration that creates the table also enqueues an autopilot
      cycle job to do the first full scan.
@@ -154,7 +154,7 @@ stale data as authoritative.
    - A reconcile step in the incremental scanner: any path-row not seen
      during the walk gets deleted.
    - Or: doctor reports "N stale rows in frontmatter_scan_state" as a
-     freshness signal, with `gbrain frontmatter scan --reconcile` as the
+     freshness signal, with `foresights frontmatter scan --reconcile` as the
      remediation.
 
 ## Cost estimate

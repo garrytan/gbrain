@@ -3,7 +3,7 @@
  * Build the skill resolver library (src/core/skills/resolver/index.ts) as
  * one dependency-free ES module for Node adapters: the release asset
  * gbrain-skill-resolver.mjs and its .sha256 (docs/guides/skill-resolver.md#library).
- * Same builder as `gbrain skills library` (src/commands/skill-resolver-library.ts).
+ * Same builder as `foresights skills library` (src/commands/skill-resolver-library.ts).
  *
  * Usage: bun scripts/build-skill-resolver-bundle.ts --out <file.mjs> [--smoke]
  * Writes <file.mjs>.sha256 beside it (sha256sum format). --smoke imports the

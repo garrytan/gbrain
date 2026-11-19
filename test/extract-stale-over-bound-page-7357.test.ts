@@ -1,6 +1,6 @@
 /**
  * #7357: one page whose body holds a run longer than the block bound (a line or fence over 8 MiB) used to fail
- * `gbrain extract --stale` with page_body_segmented, managed or not, after the link phase spent its half of the budget:
+ * `foresights extract --stale` with page_body_segmented, managed or not, after the link phase spent its half of the budget:
  * the mention pass read the page block by block and the refusal escaped the run, so no later page was scanned and the
  * run exited 1 every time. Now the link phase and the mention pass each report that page, leave it stale and due, and
  * finish the other pages.

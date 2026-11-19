@@ -1,5 +1,5 @@
 /**
- * `gbrain repair failed-writes` (#5983): caller writes the pre-fix managed
+ * `foresights repair failed-writes` (#5983): caller writes the pre-fix managed
  * writer guard refused are replayed from their failed receipts' intent once
  * the guard is fixed, exactly once, and never over a later write of the page.
  * Runs on PGLite and, through test/e2e, Postgres.
@@ -107,7 +107,7 @@ test('refused caller writes replay once from their failed receipts; later writes
           `${sourceId}:people/dana-example add_timeline_entry replay`,
         ]);
         expect(preview.residuals).toEqual({ superseded: 2, duplicate: 1 });
-        expect(preview.apply_command).toMatch(new RegExp(`^gbrain repair failed-writes --source ${sourceId} --apply --expect [0-9a-f]+$`));
+        expect(preview.apply_command).toMatch(new RegExp(`^foresights repair failed-writes --source ${sourceId} --apply --expect [0-9a-f]+$`));
 
         await expect((await repairRunner(engine, { apply: true, logger })).run('failed-writes', scope, { explicit: true, sourceFlag: sourceId }))
           .rejects.toThrow(/replays only the set a preview printed/);

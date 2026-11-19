@@ -1,5 +1,5 @@
 /**
- * #7158: `gbrain search|query --timings` — the global flag is claimed only by
+ * #7158: `foresights search|query --timings` — the global flag is claimed only by
  * search/query/ask, `--json --timings` wraps the rows as
  * `{ results, timings_ms, cost }` (plain `--json` keeps the bare array), and
  * the CLI phases (startup, connect, context) sit beside the op's stages.

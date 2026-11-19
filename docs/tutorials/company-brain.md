@@ -8,16 +8,16 @@ team deployment described below. Its source policy keeps sync keyless and
 writeback-free; the personal-brain reuse and automatic enrichment steps in this
 tutorial are a different workflow, not follow-up steps for that import.
 
-This tutorial picks up where the [personal brain tutorial](personal-brain.md) leaves off. You already have a working agent (OpenClaw on Render, talking to you on Telegram, with GBrain as memory and Supabase storing embeddings). Now you want your whole team to use it as shared institutional memory, with each person seeing only what they're allowed to see.
+This tutorial picks up where the [personal brain tutorial](personal-brain.md) leaves off. You already have a working agent (OpenClaw on Render, talking to you on Telegram, with Foresights as memory and Supabase storing embeddings). Now you want your whole team to use it as shared institutional memory, with each person seeing only what they're allowed to see.
 
 **Time:** about 90 more minutes on top of the personal-brain install.
 **Cost:** under $100 a month sustained for a 25-person company.
 
-> **Want a team brain without operating one?** [gbrain.io](https://gbrain.io/?ref=company-brain) is hosted GBrain built for exactly this: one brain the whole team prompts together, accounts connected once with a permission level for each AI, and pricing per workspace rather than per person. Keep reading to deploy and run it yourself.
+> **Want a team brain without operating one?** [gbrain.io](https://gbrain.io/?ref=company-brain) is hosted Foresights built for exactly this: one brain the whole team prompts together, accounts connected once with a permission level for each AI, and pricing per workspace rather than per person. Keep reading to deploy and run it yourself.
 
 If you haven't done the personal-brain install yet, [start there first](personal-brain.md). Come back when you've got the agent responding to you on Telegram. This tutorial assumes that's already working.
 
-I'm Garry Tan. I built GBrain to run my own AI agents at Y Combinator. It runs as a company brain too: parallel sync across team sources, per-user OAuth scoping, leak-free isolation across every read path. This is the recipe I'd run if I were standing it up for a 10-50 person company today.
+I'm Garry Tan. I built Foresights to run my own AI agents at Y Combinator. It runs as a company brain too: parallel sync across team sources, per-user OAuth scoping, leak-free isolation across every read path. This is the recipe I'd run if I were standing it up for a 10-50 person company today.
 
 ---
 
@@ -33,7 +33,7 @@ The personal brain you built is a single-user system: one git repo, one agent, y
 
 ### What this is NOT
 
-It is **not** a different install. The agent runtime, Supabase backend, GBrain CLI, and AlphaClaw harness from the personal brain stay exactly as you set them up. We're adding to that stack, not replacing it.
+It is **not** a different install. The agent runtime, Supabase backend, Foresights CLI, and AlphaClaw harness from the personal brain stay exactly as you set them up. We're adding to that stack, not replacing it.
 
 It is also **not** a thin-client-everywhere setup. Your personal agent stays as it is (OpenClaw + Telegram). Each teammate adds their own client of choice (Claude Code, Cursor, Claude Desktop, their own OpenClaw, whatever) and points it at the brain.
 
@@ -48,29 +48,29 @@ It is also **not** a thin-client-everywhere setup. Your personal agent stays as 
 
 ## Part 2: Switch the brain backend to multi-user Postgres
 
-The personal-brain install uses Supabase as the embeddings layer but the GBrain runtime itself might be using PGLite (single-machine) depending on which path you took. For a company brain, you want a real Postgres for the runtime too. If your personal-brain install is already on Postgres or Supabase end-to-end, skip to Part 3.
+The personal-brain install uses Supabase as the embeddings layer but the Foresights runtime itself might be using PGLite (single-machine) depending on which path you took. For a company brain, you want a real Postgres for the runtime too. If your personal-brain install is already on Postgres or Supabase end-to-end, skip to Part 3.
 
 If you're on PGLite, move the brain. Run from the agent host machine, same one you set up in the personal-brain tutorial, with the Supabase transaction-pooler URL in `GBRAIN_TARGET_URL`:
 
 ```bash
-gbrain migrate --to postgres --url-env GBRAIN_TARGET_URL --json
+foresights migrate --to postgres --url-env GBRAIN_TARGET_URL --json
 ```
 
 That prints the plan (what moves, what stays on this machine, estimated time) and exits 3 without changing anything. After you agree, run the command it prints:
 
 ```bash
-gbrain migrate --to postgres --url-env GBRAIN_TARGET_URL --yes --expect <plan_hash>
+foresights migrate --to postgres --url-env GBRAIN_TARGET_URL --yes --expect <plan_hash>
 ```
 
-Every page, fact, take, version, embedding, link, token and OAuth client moves with its history, and the run verifies every table before switching over. It ends with the target's `gbrain doctor` result. Full walkthrough and recovery: [Move a PGLite brain to Postgres](../guides/move-to-postgres.md).
+Every page, fact, take, version, embedding, link, token and OAuth client moves with its history, and the run verifies every table before switching over. It ends with the target's `foresights doctor` result. Full walkthrough and recovery: [Move a PGLite brain to Postgres](../guides/move-to-postgres.md).
 
 **Say to your agent:** *"Move my brain to Supabase so the team can share it. Show me the plan first."*
 
 Verify:
 
 ```bash
-gbrain doctor
-gbrain stats
+foresights doctor
+foresights stats
 ```
 
 Page count and chunk count should match what you had on PGLite.
@@ -83,13 +83,13 @@ The personal brain has one source (called `default`) holding everything. For a c
 
 ```bash
 # A shared all-hands source for content everyone reads
-gbrain sources add shared --path /srv/brain-repos/shared --name "Shared company wiki"
+foresights sources add shared --path /srv/brain-repos/shared --name "Shared company wiki"
 
 # A scoped source for sales/customer notes
-gbrain sources add customers --path /srv/brain-repos/customers --name "Customer notes"
+foresights sources add customers --path /srv/brain-repos/customers --name "Customer notes"
 
 # A scoped source for internal-only docs (legal, HR, performance, board)
-gbrain sources add internal --path /srv/brain-repos/internal --name "Internal-only"
+foresights sources add internal --path /srv/brain-repos/internal --name "Internal-only"
 ```
 
 Each `--path` is a directory on disk where you've checked out a git repo. Create them:
@@ -103,7 +103,7 @@ git clone git@github.com:your-org/customers.git customers
 git clone git@github.com:your-org/internal-docs.git internal
 ```
 
-You can also keep the existing personal-brain repo as one of the sources. Just pick the role it plays (probably `shared` if it's already org-wide content). When agents on the host write pages into a source, `gbrain sources push <id>` (run on the host) commits and pushes those changes back to the source's git repo, so the repo stays the durable system of record.
+You can also keep the existing personal-brain repo as one of the sources. Just pick the role it plays (probably `shared` if it's already org-wide content). When agents on the host write pages into a source, `foresights sources push <id>` (run on the host) commits and pushes those changes back to the source's git repo, so the repo stays the durable system of record.
 
 ### Two scoping models (pick the one that matches your shape)
 
@@ -123,56 +123,56 @@ readable_by: [alice-example, group:team-a]
 ```
 
 ```bash
-gbrain access member add alice-example --groups team-a
-gbrain access member add bob-example
-gbrain auth rescope --token alice-laptop --member alice-example
-gbrain access check --token alice-laptop          # what this credential can read, axis by axis
-gbrain access who-can-read notes/renewal-notes    # the members and groups a page admits
+foresights access member add alice-example --groups team-a
+foresights access member add bob-example
+foresights auth rescope --token alice-laptop --member alice-example
+foresights access check --token alice-laptop          # what this credential can read, axis by axis
+foresights access who-can-read notes/renewal-notes    # the members and groups a page admits
 ```
 
-A credential bound with `--member` whose write source is `default` (a token with no `--sources` or `--sources default`, or an OAuth client left at its registration default) or a federated source (`gbrain sources federate <id>`) writes where every credential without a source grant reads, so a page it creates is written with `readable_by: [member:<id>]` and only that member reads it; it keeps those readers when the member rewrites it without the field, and the member shares it by naming readers (`readable_by: [alice-example, group:team-a]`). An edit to an existing page that names no readers leaves it shared, `remember` facts go on the member's own page as before, and `POST /ingest` refuses such a credential. Pages derived from such a page (extracted atoms, chronicle events, `derived_from` pages, and a synthesized concept that uses it) follow the rule for pages with readers and are readable by no remote caller, the writer included. A page that teammates should read, such as a shared `people/` or `companies/` entity page or a page in a folder a rule already scopes to a group, names its readers when it is created; otherwise the first member to create a slug keeps it, and every other remote credential writing that slug (another member, an unbound token, a shared agent) gets `page_not_found`. The operator widens such a page from the brain host by adding `readable_by` to it. A member-bound `put_page` over a page deleted within the last 72 hours is a create, so it is kept to the member too. A credential whose write source is a source that is not federated (`--sources private-alice-example,default`, first id the write source) keeps writing exactly what it sends. Earlier releases wrote these pages with no readers, so other members and unbound tokens read them; run `gbrain access who-can-read <slug>` on pages your members wrote and add `readable_by` on the host where needed.
+A credential bound with `--member` whose write source is `default` (a token with no `--sources` or `--sources default`, or an OAuth client left at its registration default) or a federated source (`foresights sources federate <id>`) writes where every credential without a source grant reads, so a page it creates is written with `readable_by: [member:<id>]` and only that member reads it; it keeps those readers when the member rewrites it without the field, and the member shares it by naming readers (`readable_by: [alice-example, group:team-a]`). An edit to an existing page that names no readers leaves it shared, `remember` facts go on the member's own page as before, and `POST /ingest` refuses such a credential. Pages derived from such a page (extracted atoms, chronicle events, `derived_from` pages, and a synthesized concept that uses it) follow the rule for pages with readers and are readable by no remote caller, the writer included. A page that teammates should read, such as a shared `people/` or `companies/` entity page or a page in a folder a rule already scopes to a group, names its readers when it is created; otherwise the first member to create a slug keeps it, and every other remote credential writing that slug (another member, an unbound token, a shared agent) gets `page_not_found`. The operator widens such a page from the brain host by adding `readable_by` to it. A member-bound `put_page` over a page deleted within the last 72 hours is a create, so it is kept to the member too. A credential whose write source is a source that is not federated (`--sources private-alice-example,default`, first id the write source) keeps writing exactly what it sends. Earlier releases wrote these pages with no readers, so other members and unbound tokens read them; run `foresights access who-can-read <slug>` on pages your members wrote and add `readable_by` on the host where needed.
 
-A remote caller whose credential is bound to a listed member (directly or through a group) reads the page on every read path; every other remote caller, including an unbound token, an unbound stdio server, a bot with `--private-pages granted-sources` and an operator escape hatch (`GBRAIN_REMOTE_PRIVATE_PAGES=1`, `search.remote_private_pages=visible`), gets the same `not_found` as for a page that does not exist. `readable_by` only narrows: a `visibility: private` page stays private to a listed member unless the member's credential also has `--private-pages granted-sources`. What every designation means for each kind of caller is in [access designations](../guides/access-designations.md). A malformed `readable_by` reads as nobody. A page derived from a restricted page (an extracted atom, a synthesized concept, a chronicle event) is readable by no remote caller. The local CLI is unchanged; `--as <member>` previews one member's view. Pages that already carried `readable_by` before you upgraded read as nobody until `gbrain repair access` (preview, then `--apply`) derives their readers. This works the same on a repo-less brain: members, groups and bindings live in the database.
+A remote caller whose credential is bound to a listed member (directly or through a group) reads the page on every read path; every other remote caller, including an unbound token, an unbound stdio server, a bot with `--private-pages granted-sources` and an operator escape hatch (`GBRAIN_REMOTE_PRIVATE_PAGES=1`, `search.remote_private_pages=visible`), gets the same `not_found` as for a page that does not exist. `readable_by` only narrows: a `visibility: private` page stays private to a listed member unless the member's credential also has `--private-pages granted-sources`. What every designation means for each kind of caller is in [access designations](../guides/access-designations.md). A malformed `readable_by` reads as nobody. A page derived from a restricted page (an extracted atom, a synthesized concept, a chronicle event) is readable by no remote caller. The local CLI is unchanged; `--as <member>` previews one member's view. Pages that already carried `readable_by` before you upgraded read as nobody until `foresights repair access` (preview, then `--apply`) derives their readers. This works the same on a repo-less brain: members, groups and bindings live in the database.
 
-On a brain with two or more enabled members, Model C is required, not optional: a remote read from a token or OAuth client bound to no member is refused with [`requester_scope_required`](../guides/write-refusals.md#requester_scope_required) (connections that already existed get 14 days of notices first), and `gbrain auth create` refuses an unbound token. Bind each teammate's credential with `--member`; a bot serving a channel names its audience per call (`--may-act-for`); `--reads-unscoped --yes` opts one credential out on purpose.
+On a brain with two or more enabled members, Model C is required, not optional: a remote read from a token or OAuth client bound to no member is refused with [`requester_scope_required`](../guides/write-refusals.md#requester_scope_required) (connections that already existed get 14 days of notices first), and `foresights auth create` refuses an unbound token. Bind each teammate's credential with `--member`; a bot serving a channel names its audience per call (`--may-act-for`); `--reads-unscoped --yes` opts one credential out on purpose.
 
 **Folder rules: keep a whole folder to some members.** Instead of tagging every page, give a prefix its readers. On a repo-less brain (the default install) the rules live in the database:
 
 ```bash
-gbrain access rule add --prefix partners/alice-example/ --readers alice-example,group:team-a --source team-a   # preview
-gbrain access rule add --prefix partners/alice-example/ --readers alice-example,group:team-a --source team-a --yes
-gbrain access rule list --source team-a           # store, revisions, applied rules, anything held or pending
+foresights access rule add --prefix partners/alice-example/ --readers alice-example,group:team-a --source team-a   # preview
+foresights access rule add --prefix partners/alice-example/ --readers alice-example,group:team-a --source team-a --yes
+foresights access rule list --source team-a           # store, revisions, applied rules, anything held or pending
 ```
 
-A remote read of a page under a rule needs the caller's member to be on every rule covering it and on the page's own `readable_by`; hatches, grants and `--as` never relax it. Narrowing applies at once. Moving a rule's prefix restricts the new folder at once and keeps the old folder under the old readers until approval. A change that widens (removing a rule or a reader, or releasing a moved rule's old folder) is held until `gbrain access apply --source team-a` previews who would gain access and `gbrain access apply --source team-a --yes --expect <plan_hash>` approves it. If an apply stops halfway, its prefixes read as nobody until `gbrain access resume --source team-a`. `gbrain access rule history` and `rule revert --to <revision>` work over the revision log, and `gbrain export` carries the applied rules so `gbrain import` installs them before any page.
+A remote read of a page under a rule needs the caller's member to be on every rule covering it and on the page's own `readable_by`; hatches, grants and `--as` never relax it. Narrowing applies at once. Moving a rule's prefix restricts the new folder at once and keeps the old folder under the old readers until approval. A change that widens (removing a rule or a reader, or releasing a moved rule's old folder) is held until `foresights access apply --source team-a` previews who would gain access and `foresights access apply --source team-a --yes --expect <plan_hash>` approves it. If an apply stops halfway, its prefixes read as nobody until `foresights access resume --source team-a`. `foresights access rule history` and `rule revert --to <revision>` work over the revision log, and `foresights export` carries the applied rules so `foresights import` installs them before any page.
 
-**Page rules: keep one page to some members.** `gbrain access rule add --slug notes/plan-example --readers alice-example --source team-a` (preview, then `--yes`) covers exactly that slug, never a folder of the same name or a longer slug; in `access.yml` it is `slug: notes/plan-example` in place of `prefix:`. It writes nothing to the page, so it also narrows a page at the source root, or one whose file was removed from git outside gbrain, where a `put_page` with `visibility: private` refuses `source_changed` ([canonical_file_missing](../guides/write-refusals.md#canonical_file_missing)). It binds the owner too, so list the owner's member to keep the owner reading it. Removing the rule is the undo, a widening held until `gbrain access apply`. Upgrade every gbrain host that shares the brain first: an older host keeps the page restricted, but refuses its own `gbrain access rule` commands and stops syncing a git-backed source that holds a page rule until it is upgraded.
+**Page rules: keep one page to some members.** `foresights access rule add --slug notes/plan-example --readers alice-example --source team-a` (preview, then `--yes`) covers exactly that slug, never a folder of the same name or a longer slug; in `access.yml` it is `slug: notes/plan-example` in place of `prefix:`. It writes nothing to the page, so it also narrows a page at the source root, or one whose file was removed from git outside foresights, where a `put_page` with `visibility: private` refuses `source_changed` ([canonical_file_missing](../guides/write-refusals.md#canonical_file_missing)). It binds the owner too, so list the owner's member to keep the owner reading it. Removing the rule is the undo, a widening held until `foresights access apply`. Upgrade every foresights host that shares the brain first: an older host keeps the page restricted, but refuses its own `foresights access rule` commands and stops syncing a git-backed source that holds a page rule until it is upgraded.
 
 Renaming a page into a ruled folder restricts it at once, and the atoms, concepts, chronicle events and `derived_from` pages made from it follow it, through later renames too. A page that later takes the old slug does not inherit them: they stay under the moved page's rules.
 
-On a git-backed source the same rules live in `.gbrain/access.yml`: `rule add|rm` commit it through `gbrain git commit-push`, a hand edit takes effect when you commit it and run `gbrain sync`, and a widening commit stays held until `gbrain access apply` approves it (recorded in `.gbrain/access.approved`). A source keeps the store it had when its first rule was created; `gbrain access rule migrate --source <id>` (preview, then `--yes`) moves the rules when you attach or remove a repo, and `--to database` puts a source that has no rules yet in the database store without committing anything (a read-only mirror, or a hook that refuses commits). A database rebuilt from the repo replays every committed `access.yml` since the last approval, so a removal that was held stays held; the source reads as nobody remotely until that replay finishes, and a shallow clone stays that way until `git fetch --unshallow`. A first rule edit on a source with no folder-rule history installs its rules without that whole-source pause, and on a shallow clone (or a partial clone missing that history) a rule edit on a source with no revision yet refuses before writing anything (`access_policy_history_unreadable`). An edit whose result is `invalid` exits non-zero. Remote callers cannot write `.gbrain/`.
+On a git-backed source the same rules live in `.gbrain/access.yml`: `rule add|rm` commit it through `foresights git commit-push`, a hand edit takes effect when you commit it and run `foresights sync`, and a widening commit stays held until `foresights access apply` approves it (recorded in `.gbrain/access.approved`). A source keeps the store it had when its first rule was created; `foresights access rule migrate --source <id>` (preview, then `--yes`) moves the rules when you attach or remove a repo, and `--to database` puts a source that has no rules yet in the database store without committing anything (a read-only mirror, or a hook that refuses commits). A database rebuilt from the repo replays every committed `access.yml` since the last approval, so a removal that was held stays held; the source reads as nobody remotely until that replay finishes, and a shallow clone stays that way until `git fetch --unshallow`. A first rule edit on a source with no folder-rule history installs its rules without that whole-source pause, and on a shallow clone (or a partial clone missing that history) a rule edit on a source with no revision yet refuses before writing anything (`access_policy_history_unreadable`). An edit whose result is `invalid` exits non-zero. Remote callers cannot write `.gbrain/`.
 
 **Shared agents: one agent, each person's view.** When one agent serves everyone (a Slack or Telegram bot), its harness code names whom each turn serves, and the agent reads only what all of them may read. List the people its credential may act for, then have the harness send the audience on every MCP request:
 
 ```bash
-gbrain auth rescope --token team-bot --may-act-for alice-example,bob-example,group:team-a,guest
-gbrain access check --token team-bot --as alice-example,guest   # what that audience reads, and whether may_act_for covers it
+foresights auth rescope --token team-bot --may-act-for alice-example,bob-example,group:team-a,guest
+foresights access check --token team-bot --as alice-example,guest   # what that audience reads, and whether may_act_for covers it
 ```
 
 ```text
-X-Gbrain-On-Behalf-Of: alice-example                  # a DM with Alice (gbrain serve --http)
+X-Gbrain-On-Behalf-Of: alice-example                  # a DM with Alice (foresights serve --http)
 X-Gbrain-On-Behalf-Of: alice-example, bob-example, guest   # a channel with a non-member in it
 "_meta": { "on_behalf_of": ["alice-example"] }          # request-level _meta, a sibling of arguments (stdio and HTTP)
 ```
 
-A page is returned only when every audience entry may read it (`guest` reads no restricted page, `group:team-a` counts as one entry for a large channel), within the agent's own source grant. The agent's `--private-pages granted-sources` and the operator hatches relax `visibility: private` only when the audience is exactly one member; a channel never sees a private page. The audience is read on every call, so a DM followed by a channel turn gets each its own view. An entry outside `may_act_for` refuses `on_behalf_of_not_permitted` (the operator widens the list with the command it prints), a disabled or unknown member refuses `on_behalf_of_unknown_member`, and an audience inside tool arguments, where conversation text could set it, refuses `on_behalf_of_in_arguments`. Every response carries the applied view in `_meta.access`, and `whoami` returns it as `access.applied` for a model whose harness hides `_meta`. Writes and `submit_agent` jobs keep the audience they were made for and re-check it before they commit or call a tool. A local stdio server takes its list from `gbrain config set mcp.stdio_may_act_for <list>`. `*` permits any member, lets the harness learn which member and group ids exist from the refusals, and `gbrain doctor` warns about it (`access_may_act_for_wildcard`). Each assertion is appended to `~/.gbrain/audit/access-audience-YYYY-Www.jsonl`. Where each person runs their own agent, a credential bound to that person's member stays the simpler setup. Shared agents work the same on a repo-less brain: `may_act_for` and the audience are database and request state. When the brain's owner asks the agent something in a channel, the harness declares the channel as a room (`X-Gbrain-Room` or `_meta.room`) instead: the owner gets the whole answer and every item says whether the room could have read it ([rooms](../guides/rooms.md)).
+A page is returned only when every audience entry may read it (`guest` reads no restricted page, `group:team-a` counts as one entry for a large channel), within the agent's own source grant. The agent's `--private-pages granted-sources` and the operator hatches relax `visibility: private` only when the audience is exactly one member; a channel never sees a private page. The audience is read on every call, so a DM followed by a channel turn gets each its own view. An entry outside `may_act_for` refuses `on_behalf_of_not_permitted` (the operator widens the list with the command it prints), a disabled or unknown member refuses `on_behalf_of_unknown_member`, and an audience inside tool arguments, where conversation text could set it, refuses `on_behalf_of_in_arguments`. Every response carries the applied view in `_meta.access`, and `whoami` returns it as `access.applied` for a model whose harness hides `_meta`. Writes and `submit_agent` jobs keep the audience they were made for and re-check it before they commit or call a tool. A local stdio server takes its list from `foresights config set mcp.stdio_may_act_for <list>`. `*` permits any member, lets the harness learn which member and group ids exist from the refusals, and `foresights doctor` warns about it (`access_may_act_for_wildcard`). Each assertion is appended to `~/.gbrain/audit/access-audience-YYYY-Www.jsonl`. Where each person runs their own agent, a credential bound to that person's member stays the simpler setup. Shared agents work the same on a repo-less brain: `may_act_for` and the audience are database and request state. When the brain's owner asks the agent something in a channel, the harness declares the channel as a room (`X-Gbrain-Room` or `_meta.room`) instead: the owner gets the whole answer and every item says whether the room could have read it ([rooms](../guides/rooms.md)).
 
 **A trusted system that names the person (QM).** When a system such as QM already authenticates each person, it names one person per call instead of an audience. Grant its client-credentials client the attest right and link each person's canonical id to their member:
 
 ```bash
-gbrain auth register-client qm --grant-types client_credentials --scopes "read write"
-gbrain auth rescope --client <client_id> --attest-actor qm      # default ops: get_write_request,memory_recall,memory_write
-gbrain access member link alice-example --qm U0ALICE            # --dry-run previews; unlink and links manage them
+foresights auth register-client qm --grant-types client_credentials --scopes "read write"
+foresights auth rescope --client <client_id> --attest-actor qm      # default ops: get_write_request,memory_recall,memory_write
+foresights access member link alice-example --qm U0ALICE            # --dry-run previews; unlink and links manage them
 ```
 
 Each request then carries `x-qm-actor: U0ALICE`, and each attested operation runs as `alice-example` (page reads, and the person's own memory writes), never reading `visibility: private` pages, whatever the client's own grant says. A fact the person saves (`remember`) goes on their own page `memory/members/<member>`, which names them as its only reader, so another member, the client's bare calls and an unbound credential never recall it, and no one but that member writes under `memory/members/<member>` remotely. A credential bound to a member may save with `share: true` to put the fact on its subject's page for everyone who reads the source, and its `visibility: "world"` is refused (`member_share_required`); the brain owner's own credential saves shared by default instead, unless it passes `visibility: "private"` or the page or `facts.default_visibility` keeps facts private; an attested call (`x-qm-actor`) never shares (`attested_share_refused`). Every `remember` reply names the `page` and `visibility` the fact got; `delta` cursors, write receipts and agent jobs (`submit_agent`, `get_agent_job`) are kept to the person the same way, and `forget` or `forget_fact` withdraws only a fact on the person's own page. QM itself calls `memory_recall` and `memory_write` ([QM guide](../guides/qm.md)). Not attestable yet, because what they read or write is not yet kept to the person: `list_write_conflicts`, `capture`, `extract_facts` and `takes_add|update|resolve|supersede`; every page write (`add_timeline_entry`, `add_link`, `put_page`, `edit_page`, tags, deletes, uploads and the rest) waits for owner-approved proposals. Under the header, `tools/list` lists only the attested operations and `resources/read` is refused. An `acting_user` argument must equal the header and is stripped. A client without the right, an operation outside `--attest-ops`, or an id that is not 1-256 visible ASCII characters refuses `actor_not_attested`; an id with no link to an enabled member refuses `actor_unlinked`. Ids compare exactly, unlink and disable take effect on the next call, and queued writes and jobs re-check the link before they commit or call a tool. Links and the right are database state, so this works the same on a repo-less brain.
@@ -208,7 +208,7 @@ Same shape for `internal/`: `internal/alice-example/` for her HR docs, `internal
 Now sync everything:
 
 ```bash
-gbrain sync --all
+foresights sync --all
 ```
 
 Each source syncs in parallel under its own lock so they don't step on each other. Output looks like:
@@ -223,7 +223,7 @@ Each source syncs in parallel under its own lock so they don't step on each othe
 Check the dashboard:
 
 ```bash
-gbrain sources status
+foresights sources status
 ```
 
 You should see all three sources with recent sync timestamps and page counts.
@@ -235,7 +235,7 @@ You should see all three sources with recent sync timestamps and page counts.
 The personal brain talks to you through the AlphaClaw harness over Telegram. For a company brain we need a path that each teammate's AI client can hit independently. The HTTP MCP server is that path.
 
 ```bash
-gbrain serve --http --port 3131 --bind 0.0.0.0
+foresights serve --http --port 3131 --bind 0.0.0.0
 ```
 
 The `--bind 0.0.0.0` is important. By default the server binds to localhost only, which is correct for a personal install but blocks remote teammates. Setting `0.0.0.0` accepts connections from any interface. (Full detail on `--bind` / `--public-url`, including the ECONNREFUSED failure mode they prevent, lives in [DEPLOY.md — Expose the server](../mcp/DEPLOY.md#3-expose-the-server).)
@@ -248,14 +248,14 @@ For development, tunnel the local server out via ngrok:
 ngrok http 3131 --domain your-brain.ngrok.app
 ```
 
-If the brain runs on your own computer rather than a server, `gbrain mcp expose` publishes it over HTTPS on your Tailscale tailnet (`--funnel` for agents that run in a vendor's cloud), keeps it running as a user service, and needs no `--bind 0.0.0.0`; see [use your brain from anywhere over MCP](../guides/remote-mcp.md).
+If the brain runs on your own computer rather than a server, `foresights mcp expose` publishes it over HTTPS on your Tailscale tailnet (`--funnel` for agents that run in a vendor's cloud), keeps it running as a user service, and needs no `--bind 0.0.0.0`; see [use your brain from anywhere over MCP](../guides/remote-mcp.md).
 
 For production, put your server behind a real hostname with a real TLS certificate. Let's call your final URL `https://brain.acme-co.com` for the rest of this tutorial.
 
 Re-run the server with the public URL so the OAuth discovery metadata matches what clients hit:
 
 ```bash
-gbrain serve --http --port 3131 --bind 0.0.0.0 --public-url https://brain.acme-co.com
+foresights serve --http --port 3131 --bind 0.0.0.0 --public-url https://brain.acme-co.com
 ```
 
 You should be able to hit `https://brain.acme-co.com/health` and get `{"status":"ok"}` back.
@@ -268,21 +268,21 @@ Each teammate (or each AI agent for a teammate) gets their own OAuth client. The
 
 ```bash
 # Alice (sales): writes customers/alice-example, reads customers + shared
-gbrain auth register-client alice-example \
+foresights auth register-client alice-example \
   --grant-types client_credentials \
   --scopes "read write" \
   --source customers \
   --federated-read customers,shared
 
 # Bob (ops): writes internal/bob-example, reads internal + shared
-gbrain auth register-client bob-example \
+foresights auth register-client bob-example \
   --grant-types client_credentials \
   --scopes "read write" \
   --source internal \
   --federated-read internal,shared
 
 # Carol (legal): writes shared/legal, reads all three
-gbrain auth register-client carol-example \
+foresights auth register-client carol-example \
   --grant-types client_credentials \
   --scopes "read write" \
   --source shared \
@@ -293,24 +293,24 @@ Each `register-client` command prints a `client_id` and a `client_secret`. Save 
 
 A note on the flags:
 
-- `--scopes "read write"` (space-separated, quoted — the OAuth wire format; a comma-separated list is rejected at registration) lets the client query the brain and write new pages. You can omit `write` for read-only clients (executive summaries, dashboards). The `admin` scope is needed for operational commands like `gbrain remote doctor` and is usually reserved for your own admin client.
-- `--source` controls write authority. A client can only write to one source. Within that source, your folder convention from Part 3 keeps each person's writes in their own subfolder — and you can make that server-enforced with `--bound-slug-prefixes alice-example/`: every slug-mutating write op (put_page, delete_page, tags, links, timeline, revert, raw data) outside the bound prefixes is rejected with `permission_denied`. Update the binding later with `gbrain auth rescope-client <id> --bound-slug-prefixes <p1,p2|none>`. **Adding a binding to an existing client narrows it in ways you should expect:** ops that write by something other than a slug (`extract_entities`, `extract_facts`, `forget_fact`, `ontology_propose`, `sources_add`/`sources_remove`) and `POST /ingest` become unavailable to that client, and `put_page`'s automatic fact extraction is skipped — all because none of them can be confined to a prefix. Reads are unaffected. See [the qm-harness guide](../integrations/qm-harness.md) for the full model.
+- `--scopes "read write"` (space-separated, quoted — the OAuth wire format; a comma-separated list is rejected at registration) lets the client query the brain and write new pages. You can omit `write` for read-only clients (executive summaries, dashboards). The `admin` scope is needed for operational commands like `foresights remote doctor` and is usually reserved for your own admin client.
+- `--source` controls write authority. A client can only write to one source. Within that source, your folder convention from Part 3 keeps each person's writes in their own subfolder — and you can make that server-enforced with `--bound-slug-prefixes alice-example/`: every slug-mutating write op (put_page, delete_page, tags, links, timeline, revert, raw data) outside the bound prefixes is rejected with `permission_denied`. Update the binding later with `foresights auth rescope-client <id> --bound-slug-prefixes <p1,p2|none>`. **Adding a binding to an existing client narrows it in ways you should expect:** ops that write by something other than a slug (`extract_entities`, `extract_facts`, `forget_fact`, `ontology_propose`, `sources_add`/`sources_remove`) and `POST /ingest` become unavailable to that client, and `put_page`'s automatic fact extraction is skipped — all because none of them can be confined to a prefix. Reads are unaffected. See [the qm-harness guide](../integrations/qm-harness.md) for the full model.
 - `--federated-read` controls read scope. A client can read from one or more sources.
 
 ### Verify the scoping actually scopes
 
-Before you hand the brain to teammates, verify isolation. The clean way is a **thin-client install** on a second machine (or a scratch shell): `gbrain init --mcp-only` writes a config that routes every CLI command through your remote server as one specific OAuth client, so a plain `gbrain search` exercises exactly the path teammates will use.
+Before you hand the brain to teammates, verify isolation. The clean way is a **thin-client install** on a second machine (or a scratch shell): `foresights init --mcp-only` writes a config that routes every CLI command through your remote server as one specific OAuth client, so a plain `foresights search` exercises exactly the path teammates will use.
 
 ```bash
 # As Alice (on a machine that is NOT the brain host)
-gbrain init --mcp-only \
+foresights init --mcp-only \
   --issuer-url https://brain.acme-co.com \
   --mcp-url https://brain.acme-co.com/mcp \
   --oauth-client-id <Alice's client_id> \
   --oauth-client-secret <Alice's client_secret>
 
-gbrain whoami                          # confirms which client you're acting as
-gbrain search "performance review"
+foresights whoami                          # confirms which client you're acting as
+foresights search "performance review"
 ```
 
 Alice should see results only from `customers` and `shared`. The performance-review notes live in `internal`, which she's not scoped to read. She shouldn't see them.
@@ -318,62 +318,62 @@ Alice should see results only from `customers` and `shared`. The performance-rev
 Now re-run the same check as Bob. On the same test machine, swap the credentials with `--force` (it overwrites the thin-client config):
 
 ```bash
-gbrain init --mcp-only --force \
+foresights init --mcp-only --force \
   --issuer-url https://brain.acme-co.com \
   --mcp-url https://brain.acme-co.com/mcp \
   --oauth-client-id <Bob's client_id> \
   --oauth-client-secret <Bob's client_secret>
 
-gbrain whoami
-gbrain search "performance review"
+foresights whoami
+foresights search "performance review"
 ```
 
 Bob should see the performance-review notes from `internal`, plus anything related from `shared`. He shouldn't see anything that lives only in `customers`.
 
 If both queries return correctly scoped results, isolation is working. (There is no per-query "act as client X" flag — the thin-client config decides which credential the CLI uses; only the client secret can be overridden at call time via `GBRAIN_REMOTE_CLIENT_SECRET`.)
 
-### Multi-agent: one brain, many agents (`gbrain agent register`)
+### Multi-agent: one brain, many agents (`foresights agent register`)
 
-The raw `register-client` flow above is the per-teammate primitive. When the client you're onboarding is an **AI agent harness** (a teammate's Claude Code, a coding agent working a project repo, your OpenClaw), there's a packaged one-command path: `gbrain agent register` mints the scoped OAuth client, mints a 30-day access token, and prints the exact wiring block for the harness — all in one step. It runs on the brain host and is a trusted local operation — not a delegation mechanism. (When to use which path lives in [the onboarding decision table](../guides/agent-to-gbrain.md#onboarding-paths--the-decision-table) — link there, it's the single copy.)
+The raw `register-client` flow above is the per-teammate primitive. When the client you're onboarding is an **AI agent harness** (a teammate's Claude Code, a coding agent working a project repo, your OpenClaw), there's a packaged one-command path: `foresights agent register` mints the scoped OAuth client, mints a 30-day access token, and prints the exact wiring block for the harness — all in one step. It runs on the brain host and is a trusted local operation — not a delegation mechanism. (When to use which path lives in [the onboarding decision table](../guides/agent-to-gbrain.md#onboarding-paths--the-decision-table) — link there, it's the single copy.)
 
 Two presets cover the common shapes, with semantics worth knowing honestly:
 
-- **`daily-driver`** — a personal assistant agent: writes to one source, reads broadly. The read grant is a **snapshot** of all non-archived sources at registration time, excluding other agents' `*-workspace` scratch sources (name one explicitly in `--federated-read` to share it) — a source you add next month is NOT automatically readable; re-grant with `gbrain auth rescope-client <client_id> --federated-read <updated list>`.
+- **`daily-driver`** — a personal assistant agent: writes to one source, reads broadly. The read grant is a **snapshot** of all non-archived sources at registration time, excluding other agents' `*-workspace` scratch sources (name one explicitly in `--federated-read` to share it) — a source you add next month is NOT automatically readable; re-grant with `foresights auth rescope-client <client_id> --federated-read <updated list>`.
 - **`coding-agent`** — a write-isolated project agent: its writes land in an auto-created, DB-only `<name>-workspace` source (so a misbehaving agent can't scribble on your wiki), and it reads only the project sources you name via `--federated-read` (required — a coding agent that can read nothing but its own scratch space is a misconfiguration).
 
-Both presets start the client on the **full** tool surface; its grant (scopes, sources and write fence) still bounds what it can do. A harness that caps its tool count can register with `--surface starter`, or narrow a specific client later with `gbrain auth rescope-client <client_id> --surface starter`.
+Both presets start the client on the **full** tool surface; its grant (scopes, sources and write fence) still bounds what it can do. A harness that caps its tool count can register with `--surface starter`, or narrow a specific client later with `foresights auth rescope-client <client_id> --surface starter`.
 
 A worked example — a coding agent for alice-example's widget project, wired into Claude Code:
 
 ```bash
 # On the brain host. proj-widget is the project source it may read
-# (create it first with `gbrain sources add proj-widget` if needed).
-gbrain agent register aurora-coder \
+# (create it first with `foresights sources add proj-widget` if needed).
+foresights agent register aurora-coder \
   --harness claude-code \
   --preset coding-agent \
   --federated-read proj-widget,shared \
   --url https://brain.acme-co.com/mcp
 ```
 
-The output prints the client id, the resolved scoping (write source `aurora-coder-workspace`, federated reads, surface tier, token expiry), and a paste-ready block for the harness. Credentials print redacted by default; re-run with `--show-token` when you're ready to paste, or use `--json` for provisioning scripts. A `daily-driver` for yourself looks like `gbrain agent register nova-daily --harness claude-code --preset daily-driver --url https://brain.acme-co.com/mcp`.
+The output prints the client id, the resolved scoping (write source `aurora-coder-workspace`, federated reads, surface tier, token expiry), and a paste-ready block for the harness. Credentials print redacted by default; re-run with `--show-token` when you're ready to paste, or use `--json` for provisioning scripts. A `daily-driver` for yourself looks like `foresights agent register nova-daily --harness claude-code --preset daily-driver --url https://brain.acme-co.com/mcp`.
 
 Verify the new agent's scoping the same way you verified teammates above — a thin-client install acting as that client (`--force` overwrites the scratch config from the previous check):
 
 ```bash
 # On a machine that is NOT the brain host (or the same scratch shell)
-gbrain init --mcp-only --force \
+foresights init --mcp-only --force \
   --issuer-url https://brain.acme-co.com \
   --mcp-url https://brain.acme-co.com/mcp \
   --oauth-client-id <aurora-coder's client_id> \
   --oauth-client-secret <aurora-coder's client_secret>
 
-gbrain whoami
-gbrain search "widget launch plan"
+foresights whoami
+foresights search "widget launch plan"
 ```
 
-`gbrain whoami` should name the aurora-coder client; the search should return results only from `proj-widget`, `shared`, and its own workspace.
+`foresights whoami` should name the aurora-coder client; the search should return results only from `proj-widget`, `shared`, and its own workspace.
 
-**Renewal.** The minted access token defaults to a 30-day TTL (registration always writes a per-client TTL — the server default for CLI-minted tokens is one hour, which would be useless in a pasted config). When a token expires, rotate with `gbrain agent register --reissue <client_id> --harness claude-code --url https://brain.acme-co.com/mcp`: it rotates the client secret, mints a fresh token, and reprints the block. Rotation is not revocation — outstanding access tokens stay valid until they expire; revoke the client (`gbrain auth revoke-client <client_id>`) to kill them immediately.
+**Renewal.** The minted access token defaults to a 30-day TTL (registration always writes a per-client TTL — the server default for CLI-minted tokens is one hour, which would be useless in a pasted config). When a token expires, rotate with `foresights agent register --reissue <client_id> --harness claude-code --url https://brain.acme-co.com/mcp`: it rotates the client secret, mints a fresh token, and reprints the block. Rotation is not revocation — outstanding access tokens stay valid until they expire; revoke the client (`foresights auth revoke-client <client_id>`) to kill them immediately.
 
 ---
 
@@ -381,7 +381,7 @@ gbrain search "widget launch plan"
 
 The personal-brain install runs the dream cycle (overnight enrichment) once per night for one user. A company brain needs per-person crons because each teammate has their own context: Alice wants a 7am customer-pipeline digest, Bob wants a 9am ops-status report, Carol wants a contract-compliance check every Monday.
 
-Each cron is just a scheduled `gbrain agent run` call scoped to the teammate's client credentials. The schedule lives in the workspace repo (the one AlphaClaw deployed in the personal-brain tutorial), in a `crons/` directory. A typical layout:
+Each cron is just a scheduled `foresights agent run` call scoped to the teammate's client credentials. The schedule lives in the workspace repo (the one AlphaClaw deployed in the personal-brain tutorial), in a `crons/` directory. A typical layout:
 
 ```
 your-org/myagent/
@@ -412,13 +412,13 @@ copy to customers/alice-example/digests/YYYY-MM-DD-pipeline.md.
 
 The `client:` field tells the cron runner which OAuth client to use, which enforces the scoping. Alice's cron can only read Alice's sources and write to Alice's folder. It cannot accidentally touch Bob's customer notes.
 
-To install the cron schedule, commit the file to the workspace repo and let AlphaClaw pick it up on next deploy. The cron-scheduler skill (one of the bundled skills GBrain installed) handles the dispatch. (The `client:` frontmatter field is a workspace/harness convention — your cron runner reads it and picks the matching OAuth credential; GBrain enforces the scoping once the credential is used.)
+To install the cron schedule, commit the file to the workspace repo and let AlphaClaw pick it up on next deploy. The cron-scheduler skill (one of the bundled skills Foresights installed) handles the dispatch. (The `client:` frontmatter field is a workspace/harness convention — your cron runner reads it and picks the matching OAuth credential; Foresights enforces the scoping once the credential is used.)
 
 ---
 
 ## Part 7: Add per-person skills
 
-The bundled skills GBrain installs are generic. Your team probably wants a few that are specific to them. Examples:
+The bundled skills Foresights installs are generic. Your team probably wants a few that are specific to them. Examples:
 
 - `onboarding-new-hire`. Only Carol (HR) runs this. Walks through generating a welcome packet, scheduling intro meetings, provisioning accounts.
 - `customer-success-followup`. Only Alice (sales) runs this. Pulls latest customer page, drafts a follow-up email, posts to her review queue.
@@ -437,15 +437,15 @@ your-org/myagent/
         └── SKILL.md
 ```
 
-Each `SKILL.md` declares the trigger (verbs in plain English the agent listens for) and the procedure. Use the `gbrain skillify scaffold <name>` command to generate the boilerplate:
+Each `SKILL.md` declares the trigger (verbs in plain English the agent listens for) and the procedure. Use the `foresights skillify scaffold <name>` command to generate the boilerplate:
 
 ```bash
-gbrain skillify scaffold onboarding-new-hire
+foresights skillify scaffold onboarding-new-hire
 ```
 
 That creates the directory + SKILL.md + routing entry. Edit the SKILL.md to describe the procedure, commit, deploy. The agent picks up the new skill on next request.
 
-Per-person scoping for skills is a routing-layer **convention, enforced by your agent harness, not by GBrain**: declare something like `allowed_clients: [carol-example]` in the skill's frontmatter and instruct your agent (in its routing rules) to refuse the skill for anyone else. The hard guarantee stays at the data layer — even if the agent runs the skill anyway, Alice's OAuth credential still can't read or write outside her scoped sources.
+Per-person scoping for skills is a routing-layer **convention, enforced by your agent harness, not by Foresights**: declare something like `allowed_clients: [carol-example]` in the skill's frontmatter and instruct your agent (in its routing rules) to refuse the skill for anyone else. The hard guarantee stays at the data layer — even if the agent runs the skill anyway, Alice's OAuth credential still can't read or write outside her scoped sources.
 
 ### Shared rule files at the skills root
 
@@ -475,7 +475,7 @@ Slack is the integration most teams want first, and it has enough sharp edges to
 
 **Per-channel scoping mirrors per-person scoping.** Sensitive channels (#executive, #legal, #performance) should be scoped to teammates with the appropriate `--federated-read`. The brain stores everything, but who can query for it is gated by the same OAuth client model from Part 5.
 
-The actual skills that implement this in production are named `slack`, `slack-scan`, `slack-archive`. Scaffold equivalents in your workspace with `gbrain skillify scaffold slack-scan`, then edit the generated SKILL.md to declare your channel mapping and triggers.
+The actual skills that implement this in production are named `slack`, `slack-scan`, `slack-archive`. Scaffold equivalents in your workspace with `foresights skillify scaffold slack-scan`, then edit the generated SKILL.md to declare your channel mapping and triggers.
 
 ---
 
@@ -522,36 +522,36 @@ Repeat this flow for every new teammate. About 45 minutes per person, total. Com
 
 Each teammate runs their AI client (Claude Code, Codex, Claude Desktop, OpenClaw, Hermes, whatever) configured to point at your brain server. Two pieces, both direct-to-server — there is no local relay in between:
 
-**1. The GBrain CLI, as a thin client (recommended for everyone).** On their machine:
+**1. The Foresights CLI, as a thin client (recommended for everyone).** On their machine:
 
 ```bash
 curl -fsSL https://bun.sh/install | bash
-bun install -g github:garrytan/gbrain
+bun install -g github:aimonk2025/gbrain
 
-gbrain init --mcp-only \
+foresights init --mcp-only \
   --issuer-url https://brain.acme-co.com \
   --mcp-url https://brain.acme-co.com/mcp \
   --oauth-client-id <their client_id> \
   --oauth-client-secret <their client_secret>
 ```
 
-The thin-client install creates a local config that knows how to talk to your brain but never opens its own database. From then on, plain CLI commands (`gbrain search`, `gbrain query`, `gbrain think`, `gbrain whoami`, ...) route through your remote server transparently, as that teammate's OAuth client. Local-only commands (`gbrain sync`, `gbrain serve`, `gbrain embed`, ...) are refused with a hint — those run on the brain host, not on teammate laptops.
+The thin-client install creates a local config that knows how to talk to your brain but never opens its own database. From then on, plain CLI commands (`foresights search`, `foresights query`, `foresights think`, `foresights whoami`, ...) route through your remote server transparently, as that teammate's OAuth client. Local-only commands (`foresights sync`, `foresights serve`, `foresights embed`, ...) are refused with a hint — those run on the brain host, not on teammate laptops.
 
 **2. Their AI client, connected directly to `https://brain.acme-co.com/mcp`.** Each client has its own connection shape; the per-client pages in [`docs/mcp/`](../mcp/) are the reference:
 
-- **Claude Code / Codex** — the scoped path is `gbrain agent register <name> --harness claude-code|codex --url https://brain.acme-co.com/mcp` run on the brain host (the Part 5 multi-agent subsection): it mints a source-scoped OAuth client plus a 30-day token and prints the exact paste block for the harness. The `gbrain connect https://brain.acme-co.com/mcp --token <token> --install` lane (see [CLAUDE_CODE.md](../mcp/CLAUDE_CODE.md) / [CODEX.md](../mcp/CODEX.md)) also works but uses **bearer tokens** (`gbrain auth create <name>`), which are full-access unless minted with `--scopes` — fine for you as the admin, wrong for source-scoped teammates.
+- **Claude Code / Codex** — the scoped path is `foresights agent register <name> --harness claude-code|codex --url https://brain.acme-co.com/mcp` run on the brain host (the Part 5 multi-agent subsection): it mints a source-scoped OAuth client plus a 30-day token and prints the exact paste block for the harness. The `foresights connect https://brain.acme-co.com/mcp --token <token> --install` lane (see [CLAUDE_CODE.md](../mcp/CLAUDE_CODE.md) / [CODEX.md](../mcp/CODEX.md)) also works but uses **bearer tokens** (`foresights auth create <name>`), which are full-access unless minted with `--scopes` — fine for you as the admin, wrong for source-scoped teammates.
 - **Claude Desktop** — remote servers are added through the GUI: **Settings > Integrations**, URL `https://brain.acme-co.com/mcp`. Do **not** put a remote server in `claude_desktop_config.json`; that file only works for local stdio servers and fails silently for remote ones. See [CLAUDE_DESKTOP.md](../mcp/CLAUDE_DESKTOP.md).
 - **ChatGPT** ([CHATGPT.md](../mcp/CHATGPT.md)) and **Perplexity** ([PERPLEXITY.md](../mcp/PERPLEXITY.md)) — both speak OAuth to the server directly, so per-teammate scoping carries into those tools. Perplexity uses the same `client_credentials` clients you registered in Part 5. ChatGPT needs an `authorization_code` (PKCE) client — register one per teammate with the same `--source` / `--federated-read` flags.
-- **OpenClaw / Hermes forks** — if the teammate's own agent runs on a machine with a full local gbrain install, it can use local stdio (`gbrain serve`) against its own brain and reach yours over HTTP MCP like any other remote client.
+- **OpenClaw / Hermes forks** — if the teammate's own agent runs on a machine with a full local foresights install, it can use local stdio (`foresights serve`) against its own brain and reach yours over HTTP MCP like any other remote client.
 
 ---
 
 ## Part 11: First real query as a teammate
 
-Have Alice run a real query from her machine. The interesting verb is `gbrain think`, which gives back a synthesized answer instead of raw pages.
+Have Alice run a real query from her machine. The interesting verb is `foresights think`, which gives back a synthesized answer instead of raw pages.
 
 ```bash
-gbrain think "What's the latest update from acme-co? When did we last talk to them?"
+foresights think "What's the latest update from acme-co? When did we last talk to them?"
 ```
 
 What Alice gets back, assuming the brain has been syncing for a week and her sources contain a customer page for acme-co and several meeting notes:
@@ -590,22 +590,22 @@ Bob asking the same question would get nothing about acme-co. He's not scoped to
 
 Three commands do most of the operational work.
 
-### Background daemon: `gbrain autopilot`
+### Background daemon: `foresights autopilot`
 
 The personal-brain install already turned this on. For a company brain, the same autopilot covers all your sources because they live in one database. It runs every five minutes; on a healthy brain (health score 95+) it sleeps; on a brain that's drifting it submits targeted maintenance jobs.
 
-### Self-healing: `gbrain doctor --remediate`
+### Self-healing: `foresights doctor --remediate`
 
 ```bash
-gbrain doctor --remediate --yes --target-score 90 --max-usd 5
+foresights doctor --remediate --yes --target-score 90 --max-usd 5
 ```
 
 Computes a dependency-ordered plan of maintenance jobs that would raise the brain's health score to the `--target-score`, runs the plan, refuses to spend past the `--max-usd` cap. Safe to cron.
 
-### Monitoring: `gbrain sources status` and the admin dashboard
+### Monitoring: `foresights sources status` and the admin dashboard
 
 ```bash
-gbrain sources status
+foresights sources status
 ```
 
 Returns a per-source dashboard: when each source last synced, how many pages, how many embedded, how many unacked sync failures. The at-a-glance health check.
@@ -628,11 +628,11 @@ preserved at Git revision `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29`
 establish a supported replacement's latency or throughput. The later
 LongMemEval result is separately dated and labeled.
 
-- **Embedding cost:** the default (`voyage:voyage-4`) is $0.06 per million tokens; the snapshot's retired hosted stack is $0.05. For comparison, GBrain configured with OpenAI is $0.13.
+- **Embedding cost:** the default (`voyage:voyage-4`) is $0.06 per million tokens; the snapshot's retired hosted stack is $0.05. For comparison, Foresights configured with OpenAI is $0.13.
 - **Ingest speed:** about 22 seconds for a small test corpus of 164 pages on the host machine. For a 10K-page corpus, expect about 20 minutes the first time, then most syncs are incremental and finish in seconds.
-- **Query latency:** about 122 ms median for a `gbrain search`. For comparison, the same query through GBrain with OpenAI takes about 282 ms.
+- **Query latency:** about 122 ms median for a `foresights search`. For comparison, the same query through Foresights with OpenAI takes about 282 ms.
 - **Synthesized-answer latency:** a few seconds, dominated by the Anthropic API.
-- **Retrieval quality:** on the public LongMemEval benchmark (S split, cleaned revision, 470 scored questions), GBrain measures 95.53% session-level `recall_all@5` on its release default path (`voyage:rerank-2.5` on, autocut off) and 93.40% with the reranker off: every gold session inside the top 5 retrieved sessions, retrieval only, no reader model (measured 2026-09-06 at v0.48.4.0 by `gbrain eval longmemeval`; receipts in the sibling gbrain-evals repo and `docs/eval-bench.md`).
+- **Retrieval quality:** on the public LongMemEval benchmark (S split, cleaned revision, 470 scored questions), Foresights measures 95.53% session-level `recall_all@5` on its release default path (`voyage:rerank-2.5` on, autocut off) and 93.40% with the reranker off: every gold session inside the top 5 retrieved sessions, retrieval only, no reader model (measured 2026-09-06 at v0.48.4.0 by `foresights eval longmemeval`; receipts in the sibling gbrain-evals repo and `docs/eval-bench.md`).
 
 Full methodology and per-run receipt JSONs live in [the gbrain-evals repo](https://github.com/garrytan/gbrain-evals/blob/main/docs/benchmarks/2026-05-23-v0.40.6.0-snapshot.md).
 
@@ -644,32 +644,32 @@ For a 25-person company at sustained use, expect about $40 a month in embeddings
 
 ### "My teammate can't see anything"
 
-Check `gbrain auth list` on the host and confirm their client has `--source` set to a source that actually exists. Empty or null `--source` means the client falls through to the `default` source, which probably has no content if you set up three named sources. Under Model C, run `gbrain access check --token <their token>` to see what the credential reads, axis by axis, and `gbrain access who-can-read <slug>` for a page they expect: a credential bound to no member, or to one missing from the page's `readable_by` or a folder rule covering it, gets `not_found`.
+Check `foresights auth list` on the host and confirm their client has `--source` set to a source that actually exists. Empty or null `--source` means the client falls through to the `default` source, which probably has no content if you set up three named sources. Under Model C, run `foresights access check --token <their token>` to see what the credential reads, axis by axis, and `foresights access who-can-read <slug>` for a page they expect: a credential bound to no member, or to one missing from the page's `readable_by` or a folder rule covering it, gets `not_found`.
 
 ### "Sync is slow and feels stuck"
 
-The first sync embeds every page, which takes time. Check `gbrain sources status` for the live page count. If it's climbing you're not stuck, you're just embedding. If you've got a 10K-page corpus and your embedding provider is throttling you, the per-source parallel sync looks like progress on three sources at once rather than one source moving fast.
+The first sync embeds every page, which takes time. Check `foresights sources status` for the live page count. If it's climbing you're not stuck, you're just embedding. If you've got a 10K-page corpus and your embedding provider is throttling you, the per-source parallel sync looks like progress on three sources at once rather than one source moving fast.
 
 ### "I see a page I shouldn't see"
 
-This shouldn't happen, but if you suspect it, run `gbrain search "<query>" --json` from a thin-client install configured with the constrained client's credentials (the Part 5 verification setup) and inspect the `source_id` field on every returned result. Every row should be in the client's `--federated-read` set. If one isn't, file an issue with the exact slug and source IDs.
+This shouldn't happen, but if you suspect it, run `foresights search "<query>" --json` from a thin-client install configured with the constrained client's credentials (the Part 5 verification setup) and inspect the `source_id` field on every returned result. Every row should be in the client's `--federated-read` set. If one isn't, file an issue with the exact slug and source IDs.
 
 ### "The synthesized answer is wrong"
 
-The brain layer is grounded in the retrieved pages. If the retrieved pages contain bad information, the answer will too. The gap-analysis note often catches this: if the answer says "based on retrieved pages from date X" and date X is six months ago, the brain is telling you the information is stale. Run `gbrain sync --all` to refresh and try again.
+The brain layer is grounded in the retrieved pages. If the retrieved pages contain bad information, the answer will too. The gap-analysis note often catches this: if the answer says "based on retrieved pages from date X" and date X is six months ago, the brain is telling you the information is stale. Run `foresights sync --all` to refresh and try again.
 
 ### "OAuth `/token` endpoint returns 401 for my client"
 
-Verify the client secret matches what was printed at register-client time. The server stores only a SHA-256 hash; if you lost the original, you have to revoke the client and re-register. Use `gbrain auth revoke-client <client_id>` and re-run `register-client`.
+Verify the client secret matches what was printed at register-client time. The server stores only a SHA-256 hash; if you lost the original, you have to revoke the client and re-register. Use `foresights auth revoke-client <client_id>` and re-run `register-client`.
 
 ### "Postgres connection is exhausting"
 
-Each parallel sync worker opens its own pool. With three sources and the default four workers per source, you can hit your Postgres connection limit if it's set low. Either reduce the worker count with `gbrain sync --all --parallel 2 --workers 2`, or raise your Postgres `max_connections` to at least 100. Supabase's free tier defaults to 60, which is tight.
+Each parallel sync worker opens its own pool. With three sources and the default four workers per source, you can hit your Postgres connection limit if it's set low. Either reduce the worker count with `foresights sync --all --parallel 2 --workers 2`, or raise your Postgres `max_connections` to at least 100. Supabase's free tier defaults to 60, which is tight.
 
 ### "I want to add a fourth teammate but they need access to all three sources"
 
 ```bash
-gbrain auth register-client diana-example \
+foresights auth register-client diana-example \
   --grant-types client_credentials \
   --scopes "read write" \
   --source shared \
@@ -688,8 +688,8 @@ What to do next:
 
 - **Wire ingestion** from external systems (Granola, Linear, Slack) using the [ingestion source contract](../skillpack-anatomy.md). Most companies want their meetings auto-ingested so the brain stays current without anyone typing notes.
 - **Set up team-specific dashboards** through the admin UI. Each team lead can have their own view of brain health and activity.
-- **Explore the rest of the brain layer.** `gbrain whoknows` (find the expert on a topic), `gbrain find-trajectory` (how a metric changed over time), `gbrain founder scorecard` (especially useful for VC and ops teams), the contradiction-detection cycle that surfaces conflicts between different people's notes.
+- **Explore the rest of the brain layer.** `foresights whoknows` (find the expert on a topic), `foresights find-trajectory` (how a metric changed over time), `foresights founder scorecard` (especially useful for VC and ops teams), the contradiction-detection cycle that surfaces conflicts between different people's notes.
 
 If you're building in this space (which YC has flagged as the [company-brain category in its Request for Startups](https://www.ycombinator.com/rfs#company-brain)), you might as well build on this. Everything described above is open source, MIT licensed, and what I run in production behind my own AI agents.
 
-Questions, gotchas, or wins worth sharing? Open an issue at [github.com/garrytan/gbrain](https://github.com/garrytan/gbrain/issues).
+Questions, gotchas, or wins worth sharing? Open an issue at [github.com/aimonk2025/gbrain](https://github.com/aimonk2025/gbrain/issues).

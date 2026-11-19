@@ -98,7 +98,7 @@ describe('isSupabaseAutoMaintenance', () => {
     expect(isSupabaseAutoMaintenance({ active: true, application_name: 'postgres-meta' })).toBe(true);
   });
 
-  test('false for gbrain', () => {
+  test('false for foresights', () => {
     expect(isSupabaseAutoMaintenance({ active: true, application_name: 'gbrain-worker' })).toBe(false);
   });
 

@@ -1,5 +1,5 @@
 /**
- * #4350 — `gbrain migrate` must carry the WHOLE brain, not just pages.
+ * #4350 — `foresights migrate` must carry the WHOLE brain, not just pages.
  *
  * Pre-fix, the engine migration copied pages/chunks/tags/timeline/links/
  * sources plus exactly three config keys. Everything else was silently

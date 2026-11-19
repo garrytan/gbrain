@@ -1,10 +1,10 @@
 /**
- * v0.41.6.0 D1 E2E — `gbrain sync` preflight rejects missing creds
+ * v0.41.6.0 D1 E2E — `foresights sync` preflight rejects missing creds
  * cleanly without writing N failures to sync-failures.jsonl.
  *
  * Repro from the production bug report:
  *   unset OPENAI_API_KEY
- *   gbrain sync --repo /tmp/test --full --yes
+ *   foresights sync --repo /tmp/test --full --yes
  *
  * Pre-v0.41.6.0: 565 identical "OpenAI embedding requires
  * OPENAI_API_KEY" entries in ~/.gbrain/sync-failures.jsonl, bookmark
@@ -14,7 +14,7 @@
  * sync-failures.jsonl entries.
  *
  * Hermetic: GBRAIN_HOME points at a tmpdir; OPENAI_API_KEY explicitly
- * unset; runs against PGLite via `gbrain init --pglite` so no real
+ * unset; runs against PGLite via `foresights init --pglite` so no real
  * Postgres needed.
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
@@ -34,7 +34,7 @@ beforeAll(() => {
   const gbrainDir = join(tmpHome, '.gbrain');
   mkdirSync(gbrainDir, { recursive: true });
   // Pre-populate config.json so we can exercise the preflight without
-  // running `gbrain init` (which refuses when multiple provider env keys
+  // running `foresights init` (which refuses when multiple provider env keys
   // are already in the parent shell — out of scope for this test).
   // GBRAIN_HOME is hermetic; this config is private to this test run.
   writeFileSync(join(gbrainDir, 'config.json'), JSON.stringify({
@@ -88,7 +88,7 @@ function runCli(args: string[], env: Record<string, string | undefined>): { code
   return { code: res.status ?? -1, stdout: res.stdout, stderr: res.stderr };
 }
 
-describe('v0.41.6.0 D1 E2E — gbrain sync preflight rejects missing OPENAI_API_KEY', () => {
+describe('v0.41.6.0 D1 E2E — foresights sync preflight rejects missing OPENAI_API_KEY', () => {
   test('exits non-zero with paste-ready stderr message', () => {
     const result = runCli(['sync', '--repo', repoDir, '--full', '--yes'], {});
 

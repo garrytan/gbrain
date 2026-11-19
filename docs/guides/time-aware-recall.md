@@ -1,6 +1,6 @@
 # Time-aware recall
 
-`gbrain think` answers in a date frame. It knows today's date in your brain's
+`foresights think` answers in a date frame. It knows today's date in your brain's
 timezone, it sees the content date of each page it reads, and it resolves
 relative time words against the right one: "last month" in your question
 against today, "yesterday" inside a meeting note against that note's date.
@@ -8,15 +8,15 @@ against today, "yesterday" inside a meeting note against that note's date.
 ## Say to your agent
 
 - *"What did I decide about pricing last month?"* — your agent runs
-  `gbrain think "What did I decide about pricing last month?"`; the answer is
+  `foresights think "What did I decide about pricing last month?"`; the answer is
   grounded in today's date and each page's date.
-- *"Answer as if today were March 1, 2024."* — `gbrain think "…" --reference-date 2024-03-01`.
+- *"Answer as if today were March 1, 2024."* — `foresights think "…" --reference-date 2024-03-01`.
 
 ## What the reader sees
 
 - **Current date.** The user message carries `Current date: YYYY-MM-DD (<zone>)`
   just before the question. The zone is `brain.timezone`
-  (`gbrain config set brain.timezone America/Los_Angeles`); unset means UTC.
+  (`foresights config set brain.timezone America/Los_Angeles`); unset means UTC.
   `--reference-date` / MCP `reference_date` replaces today with a past or
   current YYYY-MM-DD; a malformed or future date is refused with
   `invalid_params` before any model call.

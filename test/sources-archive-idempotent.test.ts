@@ -1,5 +1,5 @@
 /**
- * #2792 — `gbrain sources archive` idempotency.
+ * #2792 — `foresights sources archive` idempotency.
  *
  * Pre-fix, archiving an already-archived source collapsed into the same
  * reasonless "Failed to archive" exit-4 path as a DB error, pushing operators
@@ -69,7 +69,7 @@ describe('#2792 — sources archive is idempotent', () => {
     expect(exit).toBeNull(); // no process.exit — success path
     const out = logs.join('\n');
     expect(out).toContain('already archived');
-    expect(out).toContain('gbrain sources restore arch-idem');
+    expect(out).toContain('foresights sources restore arch-idem');
     expect(errs.join('\n')).not.toContain('Failed to archive');
   });
 

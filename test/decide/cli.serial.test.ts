@@ -1,5 +1,5 @@
 /**
- * `gbrain decide` end to end through the real CLI on a fresh PGLite brain:
+ * `foresights decide` end to end through the real CLI on a fresh PGLite brain:
  * engine-free help, status --json golden (keyless, all off), catalogued
  * refusals (no_provider, no_key), decide.* config validation and the
  * effective-mode line, receipts --what-if-threshold replay on seeded receipts
@@ -28,13 +28,13 @@ afterAll(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-describe('gbrain decide CLI', () => {
+describe('foresights decide CLI', () => {
   test('--help answers without a brain', async () => {
     const empty = mkdtempSync(join(tmpdir(), 'gbrain-decide-nobrain-'));
     try {
       const r = await runCli(['decide', '--help'], { home: empty, env: KEYLESS });
       expect(r.exitCode).toBe(0);
-      expect(r.stdout).toContain('Usage: gbrain decide');
+      expect(r.stdout).toContain('Usage: foresights decide');
       expect(r.stdout).toContain('enable <slot>');
       expect(r.stdout).toContain('sweep --slot conflict');
       expect(r.stdout).toContain('proposals list');

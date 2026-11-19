@@ -1,7 +1,7 @@
 /**
  * #7891: pages whose provenance stamps (`source_kind`, `ingested_via`, `ingested_at`) a write rewrote, or whose
  * lowering markers a write removed, before #7892 made those stamps server-owned on remote writes. Read-only; the
- * doctor check `provenance_stamp_drift` and the explicit repair `gbrain repair provenance` both read it.
+ * doctor check `provenance_stamp_drift` and the explicit repair `foresights repair provenance` both read it.
  *
  * Each live page's history is its `page_versions` rows in id order followed by the live row. A transition from one
  * snapshot to the next was made by the older snapshot's `archived_write_request_id` (the live revision's own

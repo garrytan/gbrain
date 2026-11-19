@@ -5,12 +5,12 @@
  * retrieval path. This module counts those pages and re-seals them from their
  * unchanged canonical body through the projection installer: no page write,
  * no journal admission and no provider call. Vectors of chunks whose text is
- * unchanged are kept; re-chunked key chunks wait for `gbrain embed --stale`.
+ * unchanged are kept; re-chunked key chunks wait for `foresights embed --stale`.
  *
  * A page whose re-chunk fails item-scoped is held under op_checkpoints
  * `credential-reseal-hold` (page id, revision, chunker generation, error code,
  * consecutive attempts): its chunks stay withheld, doctor
- * text_projection_readiness lists it, and `gbrain repair safe-chunks --source
+ * text_projection_readiness lists it, and `foresights repair safe-chunks --source
  * <id> --apply` retries it. A hold never blocks a retry and stops applying when
  * the page changes, seals or the chunker generation moves.
  */
@@ -65,12 +65,12 @@ const LIVE_HOLD = `p.deleted_at IS NULL AND p.knowledge_revision::text = h.compl
   AND h.completed_keys->0->>'producer' = '${PRODUCER}' AND p.text_projection_revision IS DISTINCT FROM p.knowledge_revision`;
 const HOLD_PAGES = `op_checkpoints h JOIN pages p ON p.id = (h.completed_keys->0->>'page_id')::int`;
 
-/** SQL predicate over `pages p`: the page has a live credential re-chunk hold (`gbrain repair safe-chunks` retries it). */
+/** SQL predicate over `pages p`: the page has a live credential re-chunk hold (`foresights repair safe-chunks` retries it). */
 export const CREDENTIAL_RESEAL_HELD = `(p.text_projection_revision IS DISTINCT FROM p.knowledge_revision AND EXISTS (SELECT 1 FROM op_checkpoints h
   WHERE h.op='${HOLD_OP}' AND h.fingerprint = p.id::text AND p.knowledge_revision::text = h.completed_keys->0->>'revision'
   AND h.completed_keys->0->>'producer' = '${PRODUCER}'))`;
 
-/** The command that retries a held page: `gbrain repair safe-chunks` for its source (a segmented page is rebuilt by the projection drain). */
+/** The command that retries a held page: `foresights repair safe-chunks` for its source (a segmented page is rebuilt by the projection drain). */
 function holdFix(hold: Pick<CredentialResealHold, 'source_id'>, segmented: boolean): Action {
   return segmented
     ? { argv: ['gbrain', 'projections', 'drain'], preview_argv: ['gbrain', 'projections', 'drain', '--dry-run', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
@@ -133,8 +133,8 @@ export async function resealCredentialProjections(engine: BrainEngine): Promise<
       if (error instanceof PageRevisionConflictError) { run.succeed(); result.superseded++; continue; }
       const failure = run.fail(`${row.source_id}:${row.slug}`, error);
       failed.push({ page_id: Number(row.id), source_id: row.source_id, slug: row.slug, revision: row.revision, code: failure.code, message: redactConnectionInfo(failure.message) });
-      process.stderr.write(`[gbrain] Credential-safe re-chunk failed for ${row.source_id}:${row.slug} (${failure.code}); its chunks stay withheld. `
-        + `Retry: gbrain repair safe-chunks --source ${row.source_id} --apply\n`);
+      process.stderr.write(`[foresights] Credential-safe re-chunk failed for ${row.source_id}:${row.slug} (${failure.code}); its chunks stay withheld. `
+        + `Retry: foresights repair safe-chunks --source ${row.source_id} --apply\n`);
     }
   }
   result.held = await recordCredentialResealHolds(engine, failed);

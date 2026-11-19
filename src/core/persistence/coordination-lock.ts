@@ -81,7 +81,7 @@ export function coordinationHomeIgnored(root: string, recordedPath: string): Coo
   return { configured_directory: resolved.directory, recorded_path: recorded,
     move_step: `Nothing moves: every process keeps locking ${recorded}, because GBRAIN_COORDINATION_HOME only places the lock of a checkout that has no reservation yet, and no claim, transfer or environment change rewrites a recorded one. `
       + `Make ${dirname(recorded)} survive container recreation (mount it), and unset GBRAIN_COORDINATION_HOME for this checkout's processes if it was meant to move the lock. `
-      + 'No gbrain command relocates a recorded lock yet (docs/architecture/topologies.md#coordination-lock).' };
+      + 'No foresights command relocates a recorded lock yet (docs/architecture/topologies.md#coordination-lock).' };
 }
 
 /** How long a repair waits for another repairer of the same root before refusing. */
@@ -98,7 +98,7 @@ export async function repairWedgedReservation(engine: SqlEngine, root: string, h
   if (!readWedgedPhysicalRootReservation(root)) return;
   const guard = await acquireNativeLock(reservationRepairGuardPath(root), { timeoutMs: REPAIR_GUARD_WAIT_MS });
   if (!guard) throw opError('writer_lock_unavailable', 'Another process is repairing this checkout\'s reservation.',
-    `Another gbrain process is moving the coordination lock recorded for ${root} out of the checkout, so nothing was claimed. Run the claim again once that process has finished.`,
+    `Another foresights process is moving the coordination lock recorded for ${root} out of the checkout, so nothing was claimed. Run the claim again once that process has finished.`,
     { fix: statusFix() });
   try {
     const wedged = readWedgedPhysicalRootReservation(root);

@@ -1,7 +1,7 @@
 /**
  * reconcile-links reconciles one selected source and fails on a real write error.
  *
- * Protects: `gbrain reconcile-links --source <id>` scans, reads and links only
+ * Protects: `foresights reconcile-links --source <id>` scans, reads and links only
  * that source's pages (both edge directions inside it), refuses `__all__`,
  * and a link write that fails for any reason other than a missing target
  * fails the run instead of reporting `ok`.

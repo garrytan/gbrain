@@ -2,7 +2,7 @@
  * Invocation-level guard: refuse to start a test run while a database URL is
  * ambient in the environment, unless the invoker explicitly opted in.
  *
- * Why this exists (#3485): `gbrain init` writes DATABASE_URL into
+ * Why this exists (#3485): `foresights init` writes DATABASE_URL into
  * ~/.gbrain/.env pointing at the developer's real brain. Several test files
  * connect to whatever DATABASE_URL names and run TRUNCATE/DELETE/DROP — a
  * bare `bun test` with that env sourced has destroyed a real brain before.

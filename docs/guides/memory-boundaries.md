@@ -2,7 +2,7 @@
 
 **Say to your agent:** *"Remember my preference for short recommendations, but keep this session's setup and credentials out of shared memory."*
 
-GBrain can carry durable facts and preferences between agents that have access to
+Foresights can carry durable facts and preferences between agents that have access to
 the same brain and source. It does not replace the harness's identity,
 instructions, configuration, or permission controls.
 
@@ -24,10 +24,10 @@ active in another harness.
 Automatic capture is opt-in, except the [conversation archive](conversation-archive.md): on a
 personal brain it is on by default and keeps one redacted page per conversation
 per day from the harness sessions on this machine (nothing leaves a keyless
-machine; `gbrain transcripts archive off` stops it, and a shared brain is only
+machine; `foresights transcripts archive off` stops it, and a shared brain is only
 offered it). It extracts no facts. Installing the harness hooks opts into the
-compaction and SessionEnd capture lanes; `gbrain config set
-memory.auto_writeback off` stops every capture lane, and `gbrain bootstrap
+compaction and SessionEnd capture lanes; `foresights config set
+memory.auto_writeback off` stops every capture lane, and `foresights bootstrap
 harness --remove` stops the hooks from banking session text at all (see
 [ambient writeback](ambient-writeback.md#capture-lanes-and-the-off-switch)).
 Time-limited facts need an explicit TTL; ordinary
@@ -51,9 +51,9 @@ just after the save, and a page over 1 MiB embeds later through the stale
 sweep: see [large pages](#large-pages)). With default settings each saved page of an
 extraction-eligible type (note, meeting, email and similar) also gets one facts
 extraction call after it is saved; it runs as a queued job, is attributed to the
-write that caused it, and stops with `gbrain config set facts.extraction_enabled
+write that caused it, and stops with `foresights config set facts.extraction_enabled
 false`.
-`gbrain config set facts.page_write_notability_filter medium-and-up` keeps
+`foresights config set facts.page_write_notability_filter medium-and-up` keeps
 only high- and medium-notability facts from page writes (`high-only` keeps the
 high tier, as sync does; `all`, the default, keeps every tier). Image OCR, when turned on (`embedding_image_ocr`), runs before the save.
 Set `GBRAIN_AI_CALL_LOG=<path>` to record every model call a process makes (kind,
@@ -66,11 +66,11 @@ prompt or response text).
 |---|---|
 | Trusted local `put_page` / capture | Extracts supported page references without an LLM when auto-linking is enabled. |
 | MCP `put_page` / capture / `edit_page`, including stdio | Saves body references as text; no inline graph extraction. The receipt reports `auto_links.skipped: remote`. |
-| Post-commit `links` effect of an MCP page write | Adds untyped `mentions` edges (`link_source: mcp-remote-mention`) for the body's markdown links, `[[wikilinks]]` and page-path mentions whose target already exists in the same source, is not deleted, is visible to the writer and is inside its slug grant. No typed, frontmatter, timeline or cross-source edges and no new pages. The receipt reports `auto_links.mention_links: queued`; `get_write_request` lists the effect with `added`/`removed` counts, plus `invalid_targets` (reason `invalid_slug`) for any target that is not a valid slug (`[[../x]]`, a backslash, an encoded separator): those are skipped and the page's other edges still land (#7008). A remote `append_page` to the page body queues the same effect over the appended text only: it adds edges for what that text mentions and never removes one (#7122). `gbrain config set mcp.remote_auto_links off` (or `auto_link off`) disables it. |
-| Stdio `gbrain serve` | Has bounded, best-effort startup and idle maintenance sweeps, unless disabled. This is eventual maintenance, not a guarantee that a remote write immediately has edges. |
-| `gbrain serve --http` | Does not self-sweep. The host must run maintenance explicitly. |
+| Post-commit `links` effect of an MCP page write | Adds untyped `mentions` edges (`link_source: mcp-remote-mention`) for the body's markdown links, `[[wikilinks]]` and page-path mentions whose target already exists in the same source, is not deleted, is visible to the writer and is inside its slug grant. No typed, frontmatter, timeline or cross-source edges and no new pages. The receipt reports `auto_links.mention_links: queued`; `get_write_request` lists the effect with `added`/`removed` counts, plus `invalid_targets` (reason `invalid_slug`) for any target that is not a valid slug (`[[../x]]`, a backslash, an encoded separator): those are skipped and the page's other edges still land (#7008). A remote `append_page` to the page body queues the same effect over the appended text only: it adds edges for what that text mentions and never removes one (#7122). `foresights config set mcp.remote_auto_links off` (or `auto_link off`) disables it. |
+| Stdio `foresights serve` | Has bounded, best-effort startup and idle maintenance sweeps, unless disabled. This is eventual maintenance, not a guarantee that a remote write immediately has edges. |
+| `foresights serve --http` | Does not self-sweep. The host must run maintenance explicitly. |
 
-For an HTTP brain, ask the host operator to run `gbrain sweep --once` (it can
+For an HTTP brain, ask the host operator to run `foresights sweep --once` (it can
 delegate to the live server over local IPC), or explicitly extract links and
 timeline entries for the intended source. Use an authorized `add_link` operation
 for an edge needed immediately, then verify it with `get_links` or a graph query.
@@ -88,13 +88,13 @@ removes its row, because the page is the system of record for timeline rows.
 **Say to your agent:** *"Import this long conversation export as one page and
 make it searchable. Tell me what embedding it will cost before you spend
 anything."* The agent imports the file on the brain host with
-`gbrain import <file>`, checks that keyword search finds it, and asks before
-running `gbrain embed`.
+`foresights import <file>`, checks that keyword search finds it, and asks before
+running `foresights embed`.
 
-**Say to your agent:** *"I upgraded gbrain. Which of my big pages couldn't be
+**Say to your agent:** *"I upgraded foresights. Which of my big pages couldn't be
 found before, and what would it cost to embed them now?"* The agent runs
-`gbrain reindex --oversized --dry-run --json` and `gbrain doctor --json`, then
-asks before `gbrain embed --held --source <id> --max-usd <N>`, one source at a time.
+`foresights reindex --oversized --dry-run --json` and `foresights doctor --json`, then
+asks before `foresights embed --held --source <id> --max-usd <N>`, one source at a time.
 
 A page stays one page whatever its size: one slug, one title, one set of
 links. Size no longer decides whether search can find it. Every Markdown page
@@ -106,7 +106,7 @@ is off. Don't split a page by hand to make it searchable.
 | Page body | Keyword search | Meaning (vector) search |
 | --- | --- | --- |
 | Up to 1 MiB | right after the write | right after the write |
-| Over 1 MiB, up to the page ceiling (a *large* page) | right after the write | after the write commits, when the stale sweep embeds it (`gbrain embed --stale`, sync's embed pass, autopilot) |
+| Over 1 MiB, up to the page ceiling (a *large* page) | right after the write | after the write commits, when the stale sweep embeds it (`foresights embed --stale`, sync's embed pass, autopilot) |
 | Over the page ceiling | refused with [`file_too_large`](write-refusals.md#file_too_large); nothing is stored | — |
 
 Code files keep a lower limit; see [limits per entry point](#large-page-limits).
@@ -115,7 +115,7 @@ A large page commits without vectors, so a big write never waits on the
 embedding provider. It also differs from a small page in three ways. Its
 chunks use the free title context tier, never a per-chunk model synopsis.
 Before it is embedded, the junk check samples its head, middle and tail
-instead of reading the whole body. And gbrain keeps a bounded number of
+instead of reading the whole body. And foresights keeps a bounded number of
 version snapshots of it, so a page appended to every day doesn't store its
 whole body again in history on every write.
 
@@ -139,7 +139,7 @@ An ordinary page carries no field.
 | --- | --- | --- |
 | `deferred` | `large_page` | Over 1 MiB: committed with chunks and no vectors; the embedding sweep embeds it after the commit, under `embed.max_usd_per_page`. |
 | `partial` | `spend_cap` | The per-page cap stopped embedding; the rest stays keyword-only. |
-| `held` | e.g. `upgrade_backfill` | Embedding waits for the user's approval of the previewed cost (`gbrain embed --held --dry-run`, then one source at a time). |
+| `held` | e.g. `upgrade_backfill` | Embedding waits for the user's approval of the previewed cost (`foresights embed --held --dry-run`, then one source at a time). |
 | `skipped` | `oversized` | Over the operator's `bytes_block`: chunked and keyword-searchable, never embedded. |
 | `skipped` | `operator_marker` | Another `embed_skip` marker: chunked and keyword-searchable, never embedded. |
 
@@ -150,7 +150,7 @@ receipt: the write is refused as `request_too_large`.
 ### Adding to or uploading a large page
 
 Don't send a growing page back whole to add a line. `append_page` (CLI
-`gbrain append <slug>`, text from `--file` or stdin) adds text to the end of a
+`foresights append <slug>`, text from `--file` or stdin) adds text to the end of a
 page in time proportional to the text. It takes a `request_id`, so a retry
 never appends twice, and `expected_tail_sha256` refuses `tail_changed` when
 another writer appended first. `edit_page` on a page stored in segments
@@ -162,8 +162,8 @@ A page bigger than one request (see the limits below) goes in an upload session:
 `begin_page_upload`, then `upload_page_part` from part 0, then
 `commit_page_upload`, which returns `put_page`'s receipt. `get_page_upload`
 resumes after a lost reply and `abort_page_upload` discards the session.
-On a remote brain, `gbrain put --file`, `gbrain capture --file` and
-`gbrain append` switch to a session when the request is over the connection's
+On a remote brain, `foresights put --file`, `foresights capture --file` and
+`foresights append` switch to a session when the request is over the connection's
 limit. A session belongs to the connection, source and
 page that began it, its staged bytes count against the `persistence.limits`
 upload quotas, and an idle session expires.
@@ -173,11 +173,11 @@ upload quotas, and an idle session expires.
 
 **Say to your agent:** *"Show me just the Next steps section of the
 acme-example meeting page."* The agent runs
-`gbrain get <slug> --section "Next steps"` (MCP: `get_page` with
+`foresights get <slug> --section "Next steps"` (MCP: `get_page` with
 `section`) instead of reading the whole page.
 
 **Say to your agent:** *"Where does the widget plan page mention pricing?"*
-The agent runs `gbrain get <slug> --grep pricing --context 1` (MCP:
+The agent runs `foresights get <slug> --grep pricing --context 1` (MCP:
 `get_page` with `grep` and `context`).
 
 `--section` returns the first section whose heading matches (case does not
@@ -188,7 +188,7 @@ headings above it. If no heading matches, the error lists the page's headings
 1, at most 5), with line numbers and `total_matches`. It returns at most 50
 matching paragraphs and 100,000 characters, and says `truncated` when it
 stops early. The line numbers are the ones a `--body window` read takes:
-`gbrain get <slug> --body window --lines 100-140` reads lines 100 to 140
+`foresights get <slug> --body window --lines 100-140` reads lines 100 to 140
 (`--lines 100` reads one line, `--bytes 0-999` the first 1,000 bytes).
 Both read the same text a window does, so they show a remote caller nothing a
 window would not, and they work on segmented pages one segment at a time.
@@ -206,22 +206,22 @@ are stored exactly as before; a segmented page goes back to one column when a
 write leaves it at or under 512 KiB.
 
 A body that arrives as one string (`put_page`, `put_pages`, `capture` content
-and `gbrain put` stdin) stays limited to 24 MiB per call. A larger page comes
-in by `gbrain import` or `gbrain sync` of its file. On a source backed by
-files that is only the file at its own place in the checkout, which gbrain
-never rewrites; a database-only source takes it by `gbrain import`.
+and `foresights put` stdin) stays limited to 24 MiB per call. A larger page comes
+in by `foresights import` or `foresights sync` of its file. On a source backed by
+files that is only the file at its own place in the checkout, which foresights
+never rewrites; a database-only source takes it by `foresights import`.
 
-The switch stays off while an older gbrain writes to the same brain: a
-gbrain older than the release that turned it on by default (v0.60.290.0
+The switch stays off while an older foresights writes to the same brain: a
+foresights older than the release that turned it on by default (v0.60.290.0
 included), or one that stamps no version, that in the last 7 days admitted or
 published a managed write, logged an import, sync or connector run, or ran a
 resident process keeps new pages inline, even when the setting is `on`.
-`gbrain doctor` check `segmented_storage` shows the configured and effective
-value and names each blocking host by UUID. Run `gbrain upgrade` there; the
+`foresights doctor` check `segmented_storage` shows the configured and effective
+value and names each blocking host by UUID. Run `foresights upgrade` there; the
 hold clears 7 days after that writer's last write. An older binary's
 single-page write on a brain without managed persistence (a classic brain
 shared by several hosts) is not detected: upgrade every host that writes to
-such a brain, or run `gbrain config set pages.segmented_storage off` until
+such a brain, or run `foresights config set pages.segmented_storage off` until
 they are upgraded.
 
 <a id="segmented-searchable"></a>
@@ -231,14 +231,14 @@ a segmented page, is searchable when it commits (`searchable: true`). A larger
 new page commits first and builds its chunks and keyword index right after,
 about 10 seconds for 20 MB: its receipt says `searchable: "pending"`, with
 `searchable_retry_after_ms` and a `searchable_fix` that reads the receipt again
-(`get_write_request`, `gbrain write-request -- <id>`). Read it at that interval
+(`get_write_request`, `foresights write-request -- <id>`). Read it at that interval
 until it says `searchable: true`; search finds the page from then on. Until
 then, search does not return the page. If it still says `"pending"` after a
-minute, no running gbrain process is building it (a brain with no resident
-writer, or a build that died): `gbrain projections drain`, the fix's fallback,
+minute, no running foresights process is building it (a brain with no resident
+writer, or a build that died): `foresights projections drain`, the fix's fallback,
 builds it now, and doctor `text_projection_readiness` names how many such
 pages wait. A quarantined page says
-`searchable: false`. A managed `gbrain import` or `gbrain sync` of such a
+`searchable: false`. A managed `foresights import` or `foresights sync` of such a
 page replies the same way, when the write commits: its result says
 `searchable: "pending"` and `projection: "pending"` with the `request_id` to read
 again, `searchable_retry_after_ms` and `searchable_fix`, and the build does not
@@ -253,14 +253,14 @@ plus 2 MiB, never less than 256 MiB (514 MiB on Postgres and 258 MiB on PGLite
 at the default ceilings). A value you set is kept; a page that does not fit it
 is refused with `request_too_large` before anything is touched. A restored
 page is searchable when the restore commits, or, when its chunks were never
-built, right after it (`gbrain projections drain` builds it if that build
+built, right after it (`foresights projections drain` builds it if that build
 dies).
 
 <a id="segmented-withdrawal-mirror"></a>
 **Withdrawals rewrite a segmented page's file.** `forget`, `forget_fact` and
 `purge_fact` on a page stored in segments, on a source backed by files,
 rewrite its canonical file as they rewrite an inline page's: the file shows the
-row forgotten, or loses the purged row, and holds the bytes `gbrain export`
+row forgotten, or loses the purged row, and holds the bytes `foresights export`
 writes for the page. The file is streamed from the segments into its staging
 file, one segment at a time, and never held whole. `forget` and `forget_fact`
 publish the struck file in their own write, before the withdrawal commits;
@@ -278,8 +278,8 @@ Those checks say how many such pages they passed by: `oversized_pages`,
 `scraper_junk_pages`, `markdown_body_completeness`,
 `link_resolution_opportunity`, `fence_integrity`, `core_memory` and
 `extract_health` (its facts-backlog overlay) carry `skipped_segmented: N` in
-`gbrain doctor --json` and end their message with `skipped (segmented): N`.
-`gbrain repair frontmatter` reports the same count (residual
+`foresights doctor --json` and end their message with `skipped (segmented): N`.
+`foresights repair frontmatter` reports the same count (residual
 `skipped_segmented` and a warning) for the stored bodies it does not check;
 it still checks their files. An `ok` from such a check covers only the pages
 it read. The field is absent when no page is stored in segments.
@@ -290,7 +290,7 @@ frontmatter re-import of a page stored in segments works the same way up to
 24 MiB; over it the file is listed `needs_review` with `page_body_segmented`
 and nothing is written.
 
-While the switch is off (`gbrain config set pages.segmented_storage off`, or
+While the switch is off (`foresights config set pages.segmented_storage off`, or
 held by an older writer), new pages are stored inline up to 24 MiB as before.
 Pages already stored in segments stay readable and exportable; a write that
 would leave one over 24 MiB is refused until the switch is on again.
@@ -304,15 +304,15 @@ wrong with the page.
 
 | Entry point | Limit | What to do above it today |
 | --- | --- | --- |
-| Markdown import and sync (`gbrain import`, `gbrain sync`, the managed sync blob read) | the page ceiling: 256 MiB on Postgres, 128 MiB on PGLite (24 MiB while segmented storage is off); above 24 MiB on a source backed by files, only from the file's own place in the checkout | — |
-| CLI stdin (`gbrain put`, `gbrain capture --stdin`) | 24 MiB (was 5 MB) | `gbrain import` the file |
-| MCP stdio (local agents, `gbrain serve`) | 64 MiB per JSON-RPC message (the MCP SDK default of 10 MiB is raised), so a JSON-escaped page at the ceiling fits | — |
-| MCP over HTTP (`gbrain serve --http`) | 4 MiB request body (the MCP SDK default; `GBRAIN_HTTP_MAX_BODY_BYTES` overrides it) | an [upload session](#adding-to-a-large-page), or sync or the CLI on the brain host |
+| Markdown import and sync (`foresights import`, `foresights sync`, the managed sync blob read) | the page ceiling: 256 MiB on Postgres, 128 MiB on PGLite (24 MiB while segmented storage is off); above 24 MiB on a source backed by files, only from the file's own place in the checkout | — |
+| CLI stdin (`foresights put`, `foresights capture --stdin`) | 24 MiB (was 5 MB) | `foresights import` the file |
+| MCP stdio (local agents, `foresights serve`) | 64 MiB per JSON-RPC message (the MCP SDK default of 10 MiB is raised), so a JSON-escaped page at the ceiling fits | — |
+| MCP over HTTP (`foresights serve --http`) | 4 MiB request body (the MCP SDK default; `GBRAIN_HTTP_MAX_BODY_BYTES` overrides it) | an [upload session](#adding-to-a-large-page), or sync or the CLI on the brain host |
 | Legacy HTTP transport | 1 MiB (`GBRAIN_HTTP_MAX_BODY_BYTES`) | the same |
 | `put_pages` batch | 8 MiB per batch | send large pages one per `put_page`, or by file |
 | Persistence journal | 64 MiB of outstanding JSON-escaped write intent per principal (was 32 MiB), 256 MiB per brain | nothing: a second large write waits for the first |
 | Local persistence socket (IPC) | 32 MiB per frame, JSON-escaped | nothing for ordinary text; only a pathological page (mostly quotes or backslashes) reaches it below the ceiling |
-| Pre-push secret scan | 512 MiB per staged file: up to 25 MiB a file is scanned whole, above it in bounded windows streamed from git; gbrain still never writes a canonical file over 25 MiB | split the file, or `git rm --cached` it |
+| Pre-push secret scan | 512 MiB per staged file: up to 25 MiB a file is scanned whole, above it in bounded windows streamed from git; foresights still never writes a canonical file over 25 MiB | split the file, or `git rm --cached` it |
 | GitHub | warns at 50 MB, rejects at 100 MB | — |
 | Export | streams a page stored in segments, up to the page ceiling; aborts on an inline page whose payload is over 32 MiB, which the 24 MiB ceiling makes unreachable | — |
 | Company-brain inspection | 5 MB per file | unchanged |
@@ -328,7 +328,7 @@ describes how to read the next window.
 Embedding a large page costs about $0.15 per 10 MB at the default embedding
 model, so a 24 MiB page costs about $0.40 and one at the 256 MiB ceiling about $4. Each page has a paid
 spend cap, `embed.max_usd_per_page` (default $2), covering its embedding at
-every paid entry point (the stale sweep, `gbrain embed`, the post-write
+every paid entry point (the stale sweep, `foresights embed`, the post-write
 embedding job). A large page uses the free title context tier, never paid
 per-chunk synopses; conversation facts keep their own 25 MiB input bound and
 are not yet metered by this cap. When several caps apply,
@@ -337,15 +337,15 @@ the lowest wins: the per-page cap, the run's consent cap (`--max-usd`),
 over its cap is still keyword-searchable, and its newest chunks are embedded
 first, up to the cap. Doctor's `partial_embedding` check counts such pages by
 source and prints each source's approve command with a concrete N,
-`gbrain embed --held --source <id> --max-usd <N>`; raising a cap is the
+`foresights embed --held --source <id> --max-usd <N>`; raising a cap is the
 user's call.
 
 <a id="large-pages-upgrade"></a>
 **After upgrading.** Older releases stored a page over 500 KB with an
-`embed_skip` marker (reason `oversized`) and no chunks. `gbrain upgrade` (its
-`gbrain post-upgrade` step) re-chunks and keyword-indexes those pages itself
+`embed_skip` marker (reason `oversized`) and no chunks. `foresights upgrade` (its
+`foresights post-upgrade` step) re-chunks and keyword-indexes those pages itself
 for up to two minutes, on the CPU, on keyless brains too, and prints a receipt;
-`gbrain reindex --oversized` does the rest. The backfill is idempotent and
+`foresights reindex --oversized` does the rest. The backfill is idempotent and
 resumes where it stopped. It removes only gate-written markers whose reason is
 `oversized`, and the matching `content_flag: oversized`; a page above the
 operator's effective `bytes_block` keeps both and is re-chunked for keyword
@@ -353,17 +353,17 @@ search with no vectors. The backfill never embeds. A page whose rewrite is
 refused (an invalid fence the canonical owner will not write, for example)
 keeps its marker and is listed under `failed`; the hold placed for it is put
 back, so it is not left waiting for an approval that cannot embed it. Until
-its content is repaired, the chunk safety net (`gbrain embed --stale`, the
+its content is repaired, the chunk safety net (`foresights embed --stale`, the
 cycle's embed phase) gives it chunks for keyword search with no vectors, and
 doctor `oversized_pages` counts the marked pages with and without chunks.
 Backfilled pages over 1 MiB are held for consent; the post-upgrade notice,
-`gbrain embed --stale` (its `budget_limited` line) and doctor's
+`foresights embed --stale` (its `budget_limited` line) and doctor's
 `partial_embedding` check show how many are held and what embedding them
 would cost; doctor also says how many holds have waited more than a day
 without a decision, and since when. Pages between 500 KB and 1 MiB cost a cent or two each and embed
 through the normal sweep under the existing caps.
 
-Nothing releases a hold automatically. `gbrain embed --held --dry-run` lists
+Nothing releases a hold automatically. `foresights embed --held --dry-run` lists
 every source, writes nothing and prints one approve command per source; an
 approval covers one source, so `--held --max-usd` needs `--source` when held
 pages span several sources. `--max-usd N` is two things at once: the run's
@@ -378,14 +378,14 @@ refused, with every hold and cap unchanged, when embeddings are unavailable
 (disabled, no provider credentials) or the paid model has no price.
 
 ```bash
-gbrain reindex --oversized --dry-run --json      # preview the backfill: free, no provider calls
-gbrain reindex --oversized --source <id>         # run it now for one source
-gbrain embed --held --dry-run                    # every source: held pages, the cost to finish, one approve command each (free)
-gbrain embed --held --source <id> --max-usd 2    # embed one source's held pages: $2 caps the run and is each page's extra allowance (paid)
-gbrain embed --slugs <slug> --source <id> --max-usd 1  # embed one page, capped at $1 (paid)
-gbrain search "<a phrase from deep in the page>" # keyword search finds it before any embedding
-gbrain doctor --only partial_embedding --json    # pages embedded only up to their cap
-gbrain config set embed.max_usd_per_page 5       # raise the per-page cap (ask the user first)
+foresights reindex --oversized --dry-run --json      # preview the backfill: free, no provider calls
+foresights reindex --oversized --source <id>         # run it now for one source
+foresights embed --held --dry-run                    # every source: held pages, the cost to finish, one approve command each (free)
+foresights embed --held --source <id> --max-usd 2    # embed one source's held pages: $2 caps the run and is each page's extra allowance (paid)
+foresights embed --slugs <slug> --source <id> --max-usd 1  # embed one page, capped at $1 (paid)
+foresights search "<a phrase from deep in the page>" # keyword search finds it before any embedding
+foresights doctor --only partial_embedding --json    # pages embedded only up to their cap
+foresights config set embed.max_usd_per_page 5       # raise the per-page cap (ask the user first)
 ```
 
 ## Where text goes
@@ -396,7 +396,7 @@ embeddings receive the text being embedded; rerankers receive the query and
 candidate passages; expansion receives the query; synthesis and LLM extraction
 receive the relevant retrieved content or source text. Self-hosted providers have
 their own deployment boundary. The connected agent's own model also receives
-whatever memory its harness includes in context, even on a keyless GBrain setup.
+whatever memory its harness includes in context, even on a keyless Foresights setup.
 Reporting back through Wakeshift (off by default, owner opt-in) sends a watched
 job's, write request's or cron's id, status and times (and a removed member's
 hashed id to forget), never page text, titles or slugs; see
@@ -443,7 +443,7 @@ mention after the real fence. Pinned by `test/fence-marker-code-context.test.ts`
 
 Markdown export is a portable view of pages, **not a full database backup**.
 DB-only facts and pages (extract receipts included), revision history, the belief ledger (what the brain
-had recorded, and when; `gbrain beliefs`), withdrawal state, jobs, settings,
+had recorded, and when; `foresights beliefs`), withdrawal state, jobs, settings,
 and authentication records may not be recoverable from Markdown. Use the engine's
 full backup/restore path and verify a restore into a separate location. Treat
 database backups as sensitive. See the [system-of-record contract](../architecture/system-of-record.md)
@@ -465,7 +465,7 @@ The text stays in the row, the file, page history and backups.
 
 The struck rows are written first: every page file that carries the claim is
 published in one write (one Git commit on a source that commits through
-gbrain), and the withdrawal commits with it. A forget waits for the source's
+foresights), and the withdrawal commits with it. A forget waits for the source's
 writer like any other write, so while that writer is unavailable the forget is
 accepted and pending, and the fact is still recalled. The withdrawal itself is
 a database row, and only `forget` records one: a page write or sync of a struck
@@ -491,15 +491,15 @@ three follow-ups per batch, each visible as its own write receipt; the refused
 receipts stay as they were). An extraction admitted under a request id replays
 its receipt; give it a new `request_id` to extract again.
 
-`gbrain forget <id> --purge` **purges**: an owner-only command on the brain
-host that removes the claim from the live stores gbrain controls and returns a
+`foresights forget <id> --purge` **purges**: an owner-only command on the brain
+host that removes the claim from the live stores foresights controls and returns a
 receipt. It is a separate operation (`purge_fact`), never a mode of the
 `forget` verb, and no MCP connection can call it; agents get
 `trusted_local_only` with the command to give the user.
 
 **Say to your agent:** *"I saved a secret by mistake. Show me what purging fact
 42 would remove, then purge it once I confirm."* The agent runs
-`gbrain forget 42 --purge --dry-run` and hands the purge itself to you.
+`foresights forget 42 --purge --dry-run` and hands the purge itself to you.
 
 What one purge does, in one transaction:
 
@@ -517,7 +517,7 @@ What one purge does, in one transaction:
 - redacts stored write intents that carry the claim (a write that is running
   or recovering blocks the purge with `purge_blocked_pending_recovery` until it
   finishes; retry with the same request id; a write still queued, or deferred
-  behind a `gbrain sources refresh`, whose staged body holds the claim is
+  behind a `foresights sources refresh`, whose staged body holds the claim is
   cancelled with `purged_content` instead), deletes legacy query-cache rows and drops the fact's
   rewording-review rows (close active matches are returned first as
   `similar_active`);
@@ -545,13 +545,13 @@ it is not physical erasure. Out of its reach, and named in every receipt: the
 brain repository's git history (the commits that carry the row are listed,
 never rewritten) and every other clone or remote, backups taken before the
 purge (a restore brings back the content and an older purge ledger; with the
-belief ledger on, `gbrain doctor --only belief_ledger_coverage` asks you to
+belief ledger on, `foresights doctor --only belief_ledger_coverage` asks you to
 replay those purges when the restore could not), provider
 copies (embedding and decision providers), Markdown exports and compiled
 context files, and deleted rows in database pages and the write-ahead log until
 vacuum. On PGLite, `--vacuum` compacts the touched tables; on Postgres the
 receipt names the `VACUUM` the operator runs, and WAL archives, replicas and
-point-in-time recovery stay outside gbrain. Claim text in page prose (outside a
+point-in-time recovery stay outside foresights. Claim text in page prose (outside a
 facts fence) is reported as `source_prose`: edit or purge that page. Each store
 in the receipt is `deleted`, `retained_inactive`, `unverified` (a probe hit its
 time or row bound) or `out_of_reach`; "verified" covers only the swept stores.
@@ -562,12 +562,12 @@ The tombstone fingerprint of a short claim is guessable: anyone who already
 knows the claim can confirm it was purged. It never reveals what an unknown
 claim said.
 
-`gbrain delete <slug> --purge` purges a whole page the same way: facts filed on
+`foresights delete <slug> --purge` purges a whole page the same way: facts filed on
 it (tombstoned), its takes, take proposals, open loops, core notices, stored
 write intents, attached file records and blobs, and the page row with its
 chunks, versions, timeline, links and raw data. It records the page's content
 hash and the hash of every saved version, so the same content or an older version of it is refused under any slug until
-`gbrain pages unpurge <slug>`; `gbrain pages purges list` shows the tombstones.
+`foresights pages unpurge <slug>`; `foresights pages purges list` shows the tombstones.
 An edited file imports normally. Its response carries the same store-by-store
 `receipt` as a fact purge, naming other pages whose prose still states one of
 the purged page's facts. A write refused because it carries purged content,
@@ -580,11 +580,11 @@ the page, the automatic one included, writes the purge tombstones.
 
 <a id="purge-mirror"></a>
 A restore replays every purge newer than the backup from the purge mirror,
-`purge-events.jsonl` in gbrain's config directory (`$GBRAIN_HOME/.gbrain`,
+`purge-events.jsonl` in foresights's config directory (`$GBRAIN_HOME/.gbrain`,
 else `~/.gbrain`), and a replayed page purge sweeps the same stores as the
-live purge. A host that runs each gbrain writer in a home directory it removes
+live purge. A host that runs each foresights writer in a home directory it removes
 after the run loses that mirror, so run every writer with `GBRAIN_HOME` set to
-one durable directory. `gbrain doctor --only purge_mirror` warns when a purge
+one durable directory. `foresights doctor --only purge_mirror` warns when a purge
 from the last 30 days has no line in the mirror this process uses.
 
 ## Verify in the actual harness

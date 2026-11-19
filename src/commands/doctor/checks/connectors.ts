@@ -33,6 +33,7 @@ import {
   readConnectorState,
   sourceIdKey,
 } from '../../../core/connectors/config-keys.ts';
+import { commandText } from '../../../core/brand.ts';
 
 export async function connectorsHealthCheck(engine: BrainEngine): Promise<Check> {
   const name = 'connectors';
@@ -59,15 +60,15 @@ export async function connectorsHealthCheck(engine: BrainEngine): Promise<Check>
       const needsFull = getConnectorProvider(provider)?.routesByOrg ? failed.filter((e) => !e.orgId).length : 0;
       problems.push(
         `${provider}: ${failed.length} unresolved conversation(s) — archive incomplete; sync retries them automatically ` +
-          `(\`gbrain connectors status ${provider} --json\` lists them)` +
-          (needsFull ? `; ${needsFull} need one full re-sync: ask the user, then run \`${fullSyncArgv(provider, sourceId).join(' ')}\`` : ''),
+          `(\`foresights connectors status ${provider} --json\` lists them)` +
+          (needsFull ? `; ${needsFull} need one full re-sync: ask the user, then run \`${commandText(fullSyncArgv(provider, sourceId))}\`` : ''),
       );
       if (needsFull && !fix) {
         fix = {
           argv: fullSyncArgv(provider, sourceId),
           consent: ['credentials'],
           actor: 'agent',
-          why: `${needsFull} ${provider} conversation(s) failed before gbrain recorded which organization they belong to, so only a full re-sync can fetch them.`,
+          why: `${needsFull} ${provider} conversation(s) failed before foresights recorded which organization they belong to, so only a full re-sync can fetch them.`,
           user_message:
             `${needsFull} ${provider} conversation(s) are missing from your archive. Recovering them re-downloads your whole ${provider} ` +
             'history with your saved session (many requests to the provider; changed pages are re-imported). Run it now?',
@@ -80,7 +81,7 @@ export async function connectorsHealthCheck(engine: BrainEngine): Promise<Check>
 
     const authErrorAt = await engine.getConfig(authErrorAtKey(provider));
     if (authErrorAt && cred.savedAt && authErrorAt > cred.savedAt) {
-      problems.push(`${provider}: re-auth needed — run \`gbrain connectors auth ${provider}\``);
+      problems.push(`${provider}: re-auth needed — run \`foresights connectors auth ${provider}\``);
       continue; // a dead credential subsumes staleness
     }
 

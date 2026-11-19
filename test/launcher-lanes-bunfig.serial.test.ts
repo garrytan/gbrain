@@ -1,14 +1,14 @@
 /**
- * #8426, #8428: the stdio MCP entries for gbrain serve and the remaining hook
- * lanes (gbrain bootstrap's workspace hooks and Codex SessionEnd capture,
- * gbrain bootstrap harness's hooks, the plugin hook) never let the session
+ * #8426, #8428: the stdio MCP entries for foresights serve and the remaining hook
+ * lanes (foresights bootstrap's workspace hooks and Codex SessionEnd capture,
+ * foresights bootstrap harness's hooks, the plugin hook) never let the session
  * directory's bunfig.toml or .env run. Each entry is written by its real
  * writer and started the way the harness starts it, from a checkout whose
  * bunfig.toml preload drops a marker file; the marker must never appear.
  * serve still resolves .gbrain-source from that session directory, which the
  * launcher passes on in GBRAIN_HOOK_CWD.
  *
- * SERIAL: spawns gbrain serve against one PGLite brain and mutates HOME.
+ * SERIAL: spawns foresights serve against one PGLite brain and mutates HOME.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -53,7 +53,7 @@ beforeAll(() => {
   writeFileSync(join(root, 'source-b', 'b.md'), '# b\n');
   const run = (args: string[]) => {
     const r = Bun.spawnSync([gbrain, ...args], { cwd: root, env, stdout: 'pipe', stderr: 'pipe', timeout: 120_000 });
-    if (r.exitCode !== 0) throw new Error(`gbrain ${args.join(' ')} failed: ${r.stderr.toString()}`);
+    if (r.exitCode !== 0) throw new Error(`foresights ${args.join(' ')} failed: ${r.stderr.toString()}`);
   };
   run(['init', '--pglite', '--no-embedding']);
   // Two sources, so only the session directory's .gbrain-source picks source-b.
@@ -113,13 +113,13 @@ async function waitForDetached() {
 const readJson = (p: string) => JSON.parse(readFileSync(p, 'utf8'));
 
 describe('#8426: a stdio MCP entry started from a checkout whose bunfig.toml preloads code', () => {
-  test('control: gbrain serve started in that checkout runs the preload (the hole the launcher closes)', async () => {
+  test('control: foresights serve started in that checkout runs the preload (the hole the launcher closes)', async () => {
     clearMarker();
     expect(await serveFromSession(gbrain, ['serve'], {}, 'notes/control')).toBe('source-b');
     expect(existsSync(marker)).toBe(true);
   }, 90_000);
 
-  test('gbrain setup claude-code: the MCP entry starts serve through the launcher, and serve still reads the session .gbrain-source', async () => {
+  test('foresights setup claude-code: the MCP entry starts serve through the launcher, and serve still reads the session .gbrain-source', async () => {
     clearMarker();
     const entry = desiredMcpEntry({ name: 'gbrain', scope: 'user', launcher: gbrain, brainHome: join(home, '.gbrain'), gbrainHomeEnv: home, sourceId: null, surface: 'full', advertise: null, events: [] }) as { command: string; args: string[]; env: Record<string, string> };
     expect(entry.command).toBe(launcher);
@@ -127,7 +127,7 @@ describe('#8426: a stdio MCP entry started from a checkout whose bunfig.toml pre
     expect(existsSync(marker)).toBe(false);
   }, 90_000);
 
-  test('gbrain setup codex: the [mcp_servers] table starts serve through the launcher', async () => {
+  test('foresights setup codex: the [mcp_servers] table starts serve through the launcher', async () => {
     clearMarker();
     const entry = desiredCodexMcpEntry({ launcher: gbrain, brainHome: join(home, '.gbrain'), gbrainHomeEnv: home, sourceId: null, surface: 'full', advertise: null }) as { command: string; args: string[]; env: Record<string, string> };
     expect(entry.command).toBe(launcher);
@@ -175,7 +175,7 @@ describe('#8426: serve reads relative paths from the session directory', () => {
   }, 90_000);
 });
 
-describe('#8426, #8428: gbrain bootstrap hooks registers serve and writes its hooks through the launcher', () => {
+describe('#8426, #8428: foresights bootstrap hooks registers serve and writes its hooks through the launcher', () => {
   test('claude-code: the user-scope claude mcp add argv and the workspace hooks', async () => {
     const ws = bootstrapWorkspace();
     const calls: string[][] = [];
@@ -273,14 +273,14 @@ describe('#8426, #8428: gbrain bootstrap hooks registers serve and writes its ho
     await withEnv(procEnv, async () => { expect(launcherLaneFindings().filter((f) => f.harness === 'opencode')).toEqual([]); });
     writeFileSync(json, JSON.stringify({ mcp: { gbrain: old } }, null, 2));
     writeFileSync(config, JSON.stringify({ mcp: { gbrain: { type: 'remote', url: 'https://brain.example/mcp', enabled: true } } }, null, 2));
-    await withEnv(procEnv, async () => { expect(launcherLaneFindings().filter((f) => f.harness === 'opencode')).toMatchObject([{ source: json, owner: 'none', detail: expect.stringContaining('a remote gbrain entry') }]); });
+    await withEnv(procEnv, async () => { expect(launcherLaneFindings().filter((f) => f.harness === 'opencode')).toMatchObject([{ source: json, owner: 'none', detail: expect.stringContaining('a remote foresights entry') }]); });
     rmSync(json);
     writeFileSync(config, JSON.stringify({ mcp: { gbrain: { ...old, command: entry.command } } }, null, 2));
   }, 120_000);
 });
 
 describe('#8428: the harness and plugin hook lanes', () => {
-  test('gbrain bootstrap harness: the user-scope hooks start gbrain through the launcher', async () => {
+  test('foresights bootstrap harness: the user-scope hooks start foresights through the launcher', async () => {
     const settings = join(root, 'harness-settings.json');
     writeClaudeHooksAt(settings, { gbrainBin: gbrain, hookLauncher: launcher, env: { GBRAIN_HOOK_LANE: 'harness' }, marker: GBRAIN_HARNESS_MARKER_VALUE });
     const commands = Object.values(readJson(settings).hooks as Record<string, Array<{ hooks: Array<{ command: string }> }>>).flatMap((groups) => groups.flatMap((g) => g.hooks.map((h) => h.command)));
@@ -293,7 +293,7 @@ describe('#8428: the harness and plugin hook lanes', () => {
     await waitForDetached();
   }, 120_000);
 
-  test('the plugin hook (Claude Code and Codex manifests) runs gbrain from the plugin launcher directory', () => {
+  test('the plugin hook (Claude Code and Codex manifests) runs foresights from the plugin launcher directory', () => {
     const pluginRoot = join(root, 'plugin snapshot');
     mkdirSync(join(pluginRoot, '.agents'), { recursive: true });
     copyFileSync(join(ROOT, 'plugin-variants', 'gbrain-coding', '.agents', 'gbrain-launcher'), join(pluginRoot, '.agents', 'gbrain-launcher'));
@@ -311,7 +311,7 @@ describe('#8428: the harness and plugin hook lanes', () => {
       const r = runHook(command.replaceAll(token, pluginRoot), { GBRAIN_BIN: gbrain });
       expect(r.exitCode, r.stderr).toBe(0);
       expect(existsSync(marker)).toBe(false);
-      // A launcher that exits 0 without starting gbrain also leaves no marker: a recording binary shows it ran, from where, and with which session directory.
+      // A launcher that exits 0 without starting foresights also leaves no marker: a recording binary shows it ran, from where, and with which session directory.
       rmSync(seen, { force: true });
       expect(runHook(command.replaceAll(token, pluginRoot), { GBRAIN_BIN: recorder }).exitCode).toBe(0);
       expect(readFileSync(seen, 'utf8')).toBe(`${hostile}|${join(pluginRoot, '.agents')}|hook\n`);

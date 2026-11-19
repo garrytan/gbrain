@@ -143,7 +143,7 @@ describe('isContentRefusal', () => {
     expect(isContentRefusal('invalid_params', frontmatterSlugConflictMessage('books/a/ch01.md', 'books/other', 'books/a/ch01'))).toBe(true);
   });
 
-  test('matches the strings older gbrain versions stored', () => {
+  test('matches the strings older foresights versions stored', () => {
     for (const message of [
       'Invalid YAML frontmatter: Malformed YAML frontmatter at line 3. Quote scalar values that contain ": " or fix the frontmatter block.',
       'Invalid YAML frontmatter: YAML parse failed: incomplete explicit mapping pair; a key node is missed at line 3, column 54. Quote scalar values that contain ": " or fix the frontmatter block.',

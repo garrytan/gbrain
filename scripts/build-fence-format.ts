@@ -2,7 +2,7 @@
 /**
  * Generated region of docs/guides/fence-format.md (#6188, D23): the facts and
  * takes fence format, rendered from the parser and repair constants so the
- * reference cannot drift from what gbrain accepts and rewrites.
+ * reference cannot drift from what foresights accepts and rewrites.
  *
  *   bun run scripts/build-fence-format.ts          rewrite the region
  *   bun run scripts/build-fence-format.ts --check  exit 1 when the committed region is stale
@@ -84,7 +84,7 @@ const GATE_TEXT = {
 const TIER_TEXT: Record<Exclude<FenceTier, 'deterministic'>, string> = {
   resolver: 'Tier 2, verified holder lookup, free',
   llm: 'Tier 3, the repair model rewrites only the named rows, or answers HOLD when a row has two readings',
-  manual: 'a person edits the fence; gbrain never guesses',
+  manual: 'a person edits the fence; foresights never guesses',
 };
 
 /** Synthetic examples; both must parse with zero warnings. */
@@ -138,7 +138,7 @@ function layouts(kind: FenceKind): string {
   const wide = all.slice(BASE_WIDTH[kind], WIDE_WIDTH[kind]);
   const { attributed, attributedSep } = CANONICAL_HEADER[kind];
   return [
-    `- **Narrow, ${BASE_WIDTH[kind]} cells** (what gbrain writes unless a row needs a wide column):`,
+    `- **Narrow, ${BASE_WIDTH[kind]} cells** (what foresights writes unless a row needs a wide column):`,
     '',
     '  ```text',
     `  ${CANONICAL_HEADER[kind].narrow}`,
@@ -183,7 +183,7 @@ function holderTable(): string {
       : alias ? `Rewritten to ${code(alias)} (\`holder_alias\`).` : 'Not a holder: `holder_unresolved`. Tier 2 resolves it only to one verified page; otherwise a person fixes it.';
     return `| ${code(holder)} | ${valid ? 'yes' : 'no'} | ${outcome} |`;
   });
-  return ['| Written | Valid | What gbrain does |', '| --- | --- | --- |', ...rows].join('\n');
+  return ['| Written | Valid | What foresights does |', '| --- | --- | --- |', ...rows].join('\n');
 }
 
 function synonymLines(table: Readonly<Record<string, string>>): string {
@@ -205,11 +205,11 @@ function normalizedTable(): string {
     column_default: `A required facts column missing from the whole header gets its write default: ${Object.entries(COLUMN_DEFAULTS.facts).map(([c, v]) => `${code(c)} ${code(v)}`).join(', ')}. Takes have no defaults; a takes fence with no weight is \`weight_missing\`.`,
     header_alias: 'A header whose every column has a known spelling (see [header spellings](#header-spellings)) becomes the canonical header, and each row\'s cells move into canonical order unchanged.',
     enum_synonym: `Facts notability ${synonymLines(NOTABILITY_SYNONYMS)}; visibility ${codes(PRIVATE_SYNONYMS)} → \`private\`, and \`public\` → \`world\` only on a world-visible page (\`private\` otherwise); case and spacing variants of a canonical value. Any other word is \`enum_unmapped\`.`,
-    kind_map: `Facts: ${synonymLines(FACT_KIND_SYNONYMS)}; any other word → \`fact\`, with the word kept in \`context\` (for example ${code(appendOriginalKind('', 'partnership'))}). A facts kind cell longer than three words, or with sentence punctuation, a link or strikethrough, is not read as a kind: it is \`claim_split\`, usually the end of a claim an unescaped \`|\` cut in two. Takes: ${synonymLines(TAKE_KIND_SYNONYMS)}; any other word is \`takes_kind_unsupported\`, because gbrain never chooses a takes kind.`,
+    kind_map: `Facts: ${synonymLines(FACT_KIND_SYNONYMS)}; any other word → \`fact\`, with the word kept in \`context\` (for example ${code(appendOriginalKind('', 'partnership'))}). A facts kind cell longer than three words, or with sentence punctuation, a link or strikethrough, is not read as a kind: it is \`claim_split\`, usually the end of a claim an unescaped \`|\` cut in two. Takes: ${synonymLines(TAKE_KIND_SYNONYMS)}; any other word is \`takes_kind_unsupported\`, because foresights never chooses a takes kind.`,
     holder_alias: `Takes holder ${codes(brainWords)} (any case) → \`brain\`.`,
     confidence_format: `A percent or a number with stray spaces in \`confidence\` or \`weight\` becomes a decimal: \`85%\` → ${code(confidenceFormat('85%')!)}, \`0. 8\` → ${code(confidenceFormat('0. 8')!)}. A number outside 0 to 1 is \`confidence_out_of_range\`.`,
     holder_verified: 'Tier 2, not Tier 1: a takes holder written as a name becomes the one `people/` or `companies/` page it resolves to exactly. On a world-visible page a private page never matches. Anything less certain stays `holder_unresolved`.',
-    quote_marker: 'Repair only (`gbrain repair fences` and the content-repair lane), never on a write: a facts or takes marker quoted in prose (text follows it on its line, or it sits on a blockquote line, outside code and table lines, and it begins or ends no fence that holds rows) is wrapped in backticks, so readers see an example rather than a fence. The edit is kept only when every row of every fence stays where it was and the privacy boundary hides at least what it hid. A page whose only problem is such a mention reads `quoted_marker`.',
+    quote_marker: 'Repair only (`foresights repair fences` and the content-repair lane), never on a write: a facts or takes marker quoted in prose (text follows it on its line, or it sits on a blockquote line, outside code and table lines, and it begins or ends no fence that holds rows) is wrapped in backticks, so readers see an example rather than a fence. The edit is kept only when every row of every fence stays where it was and the privacy boundary hides at least what it hid. A page whose only problem is such a mention reads `quoted_marker`.',
   } satisfies Record<FixClass, string>;
   const rows = Object.entries(text).map(([cls, what]) => `| ${code(cls)} | ${what} |`);
   return ['| Class | What it rewrites |', '| --- | --- |', ...rows].join('\n');
@@ -269,8 +269,8 @@ export function renderFenceFormatRegion(): string {
     '',
     `- \`#\` is ${ALLOWED.facts['#']![0]}, unique per fence kind across the whole page: the body and the timeline count together.`,
     '- A struck row keeps its number, and `superseded by #N` must name a row on the page.',
-    '- gbrain renumbers a row whose number is zero, negative, not a number or a duplicate. When two rows share a number, the row that matches the stored row keeps it. A new number is one above every number on the page (live and struck, both sections) and every stored row number of the page, so a freed number is not reused. A number whose only trace was deleted before this release is not known and could be reused.',
-    '- gbrain does not renumber a duplicate that a `superseded by #N` reference names (`superseded_ambiguous`), or rows hidden from a remote caller.',
+    '- foresights renumbers a row whose number is zero, negative, not a number or a duplicate. When two rows share a number, the row that matches the stored row keeps it. A new number is one above every number on the page (live and struck, both sections) and every stored row number of the page, so a freed number is not reused. A number whose only trace was deleted before this release is not known and could be reused.',
+    '- foresights does not renumber a duplicate that a `superseded by #N` reference names (`superseded_ambiguous`), or rows hidden from a remote caller.',
     '',
     '<a id="examples"></a>',
     '## Examples',
@@ -288,7 +288,7 @@ export function renderFenceFormatRegion(): string {
     '```',
     '',
     '<a id="normalized"></a>',
-    '## What gbrain fixes by itself',
+    '## What foresights fixes by itself',
     '',
     'These rules run on every write path for free. They edit or move cell text and never re-render a table. A fence they fix completely is written back in fixed form; each fix is reported by its class, row and column.',
     '',
@@ -304,7 +304,7 @@ export function renderFenceFormatRegion(): string {
     headerSpellings('takes'),
     '',
     '<a id="never-guessed"></a>',
-    '## What gbrain never guesses',
+    '## What foresights never guesses',
     '',
     'A problem the rules above cannot fix exactly is held or refused with a reason. The reason says which tier clears it:',
     '',

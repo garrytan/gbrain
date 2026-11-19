@@ -1,5 +1,5 @@
 /**
- * GBRA-130 A-65: `gbrain repair captured-facts` classifies paste-only capture facts by reading the session corpus.
+ * GBRA-130 A-65: `foresights repair captured-facts` classifies paste-only capture facts by reading the session corpus.
  * A corpus file or directory it could not read was skipped silently: the walk's `readdirSync` and the paste
  * check's `readFileSync` swallowed the error, so a session whose only paste-holding file was unreadable counted as
  * `not_suspect` (its fact looked cleared) and the preview said nothing about the files it never read.

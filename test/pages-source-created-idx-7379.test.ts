@@ -1,5 +1,5 @@
 /**
- * #7379: `gbrain facts relink --conversation` (and doctor `unlinked_facts`) re-arm an
+ * #7379: `foresights facts relink --conversation` (and doctor `unlinked_facts`) re-arm an
  * unmemoized miss when a live page was created in the fact's source after the
  * attempt (`conversationTriedSql`, src/core/facts/conversation-memo.ts). That
  * probe runs once per attempt row, and with no pages index on created_at every

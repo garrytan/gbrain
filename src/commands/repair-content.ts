@@ -1,5 +1,5 @@
 /**
- * `gbrain repair content [--source <id>] [--only <path>]... [--skip <path>]... [--no-llm] [--max-usd <n>] [--diff]
+ * `foresights repair content [--source <id>] [--only <path>]... [--skip <path>]... [--no-llm] [--max-usd <n>] [--diff]
  *                        [--apply [--expect <h1>[,<h2>]]] [--json]`
  *
  * The content-repair lane (#6377) as one command: every kind in
@@ -7,15 +7,15 @@
  * source and file selection, each kind printing its own preview hash. `content`
  * is a lane, not a repair kind: it has no registry entry, no cursor of its own
  * and no help row under "Kinds"; it runs the registered kinds through the same
- * runner `gbrain repair <kind>` uses, so every refusal, receipt and cap is the
+ * runner `foresights repair <kind>` uses, so every refusal, receipt and cap is the
  * kind's own. Dry run unless `--apply`: the preview plans every kind before
  * anything is written and prints each kind's own hash; `--apply --expect
  * <h1>,<h2>` applies exactly the previewed sets, one hash per kind in lane
- * order; `--apply` alone applies each kind's current plan as `gbrain repair
+ * order; `--apply` alone applies each kind's current plan as `foresights repair
  * <kind> --apply` does. `--max-usd` is the lane's allowance
  * for the run: what the first kind spends is gone for the next. Thin clients
  * refuse (cli.ts); the parse and the help text live in repair.ts so one flag
- * grammar serves every `gbrain repair` form.
+ * grammar serves every `foresights repair` form.
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';

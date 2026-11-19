@@ -1,16 +1,16 @@
 /**
- * v0.36.1.x #1100: PGLite + `gbrain apply-migrations` chain spawn test.
+ * v0.36.1.x #1100: PGLite + `foresights apply-migrations` chain spawn test.
  *
- * Spawns `gbrain init --migrate-only` followed by `gbrain apply-migrations
+ * Spawns `foresights init --migrate-only` followed by `foresights apply-migrations
  * --yes --non-interactive` against a fresh tmpdir, asserts the full
  * migration chain walks to head without wedging on the v0.11.0 Minions
  * phase A subprocess deadlock.
  *
- * Pre-fix, this exact sequence hit `GBrain: Timed out waiting for PGLite
+ * Pre-fix, this exact sequence hit `Foresights: Timed out waiting for PGLite
  * lock` because:
  *   1. apply-migrations pre-flight schema-version probe held the
  *      single-writer lock briefly and raced the v0.11.0 subprocess.
- *   2. v0.11.0 phase A spawned `gbrain init --migrate-only` as a child;
+ *   2. v0.11.0 phase A spawned `foresights init --migrate-only` as a child;
  *      the child inherited HOME and tried to acquire the same lock.
  *
  * The fix routes phase A in-process for PGLite and skips the pre-flight
@@ -35,8 +35,8 @@ const REPO = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
 /**
  * Make a shim `gbrain` binary that routes to `bun run <repo>/src/cli.ts`.
  *
- * The v0.11.0 orchestrator chain spawns subprocesses via `execSync('gbrain
- * jobs smoke')` and `execSync('gbrain init --migrate-only')` (the Postgres
+ * The v0.11.0 orchestrator chain spawns subprocesses via `execSync('foresights
+ * jobs smoke')` and `execSync('foresights init --migrate-only')` (the Postgres
  * path; PGLite now routes in-process, but phase B's smoke still shells out).
  * On a developer machine `gbrain` resolves via `bun link`; on CI it
  * doesn't exist on PATH and execSync fails with "command not found",
@@ -103,10 +103,10 @@ describe('apply-migrations on fresh PGLite (v0.36.1.x #1100)', () => {
           embedding_dimensions: 1536,
         }) + '\n',
       );
-      // PATH shim so orchestrator phase-B execSync('gbrain jobs smoke')
+      // PATH shim so orchestrator phase-B execSync('foresights jobs smoke')
       // and similar resolve to our shim instead of requiring a global
       // install. This matches the contract users hit in production
-      // (gbrain on PATH) without depending on `bun link` having run.
+      // (foresights on PATH) without depending on `bun link` having run.
       const env = {
         HOME: home,
         GBRAIN_HOME: home,

@@ -1,11 +1,11 @@
 /**
- * `gbrain repair safe-chunks` (#5050/#5247): re-seal pages of every kind that
+ * `foresights repair safe-chunks` (#5050/#5247): re-seal pages of every kind that
  * were chunked before the safe-chunk fence (chunker v4). Remote reads withhold
  * their chunks until then. Each item rebuilds the page's chunks from its
  * unchanged canonical body through the projection installer: no page write,
  * version, journal admission or lifetime ID, so it is safe on a managed brain.
  * Vectors of unchanged embedding inputs are kept; the rest are embedded after
- * the re-seal unless --no-embed is passed (then `gbrain embed --stale` does it).
+ * the re-seal unless --no-embed is passed (then `foresights embed --stale` does it).
  *
  * It also retries the pages the v0.60.31 credential re-chunk held
  * (page-state/credential-reseal.ts, GBRA-130 A-27), whatever their chunker.
@@ -71,7 +71,7 @@ export const safeChunksRepair: RepairHandler = {
       const embedded = await embedStalePages(ctx.engine, [item.slug], item.source_id);
       // The re-seal stands; vectors the provider did not return stay in the ordinary stale backlog.
       if (embedded.pagesProcessed === 0) ctx.logger.warn(`[repair safe-chunks] ${item.source_id}:${item.slug} re-sealed, but some chunks were not embedded. `
-        + `Run: gbrain embed --stale --source ${item.source_id}`);
+        + `Run: foresights embed --stale --source ${item.source_id}`);
     }
     return true;
   },

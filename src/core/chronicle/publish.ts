@@ -18,7 +18,7 @@
  *   - A complete generation (`replaces`) retires the previous generation's
  *     owned events it did not reproduce, with their timeline projection rows, in
  *     the activation: versioned, soft-deleted, `retired_by: life-chronicle`, and
- *     restorable with `gbrain repair generations --kind chronicle-event`. A result
+ *     restorable with `foresights repair generations --kind chronicle-event`. A result
  *     below the shrink floor is held and retires nothing; so does an empty or
  *     partial one (#7013). An empty generation retires only with a proof: the
  *     revision became ineligible (`originIneligible`) or the depth page is gone
@@ -252,7 +252,7 @@ export async function prepareChronicleMutation(engine: BrainEngine, row: WriteRe
   const p = row.intent as ChronicleIntent | null;
   if (!p || !p.depth || !Array.isArray(p.owned_hashes) || row.authority.remote) {
     throw opError('invalid_params', 'Unsupported Life Chronicle maintenance intent.',
-      'Life Chronicle maintenance is submitted only by the chronicle phase on the brain host; let `gbrain dream --phase chronicle` resubmit it rather than replaying this request.');
+      'Life Chronicle maintenance is submitted only by the chronicle phase on the brain host; let `foresights dream --phase chronicle` resubmit it rather than replaying this request.');
   }
   const owned = new Set(p.owned_hashes);
   const retire = p.kind === CHRONICLE_RETIRE_INTENT;

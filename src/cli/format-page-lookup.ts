@@ -1,7 +1,7 @@
 /**
- * #7191: human renderers for `gbrain find` (find_pages) and grouped
- * `gbrain stats --by` (get_stats). `--json` prints the op result instead
- * (formatResult). Find rows are tab-separated like `gbrain list`; the
+ * #7191: human renderers for `foresights find` (find_pages) and grouped
+ * `foresights stats --by` (get_stats). `--json` prints the op result instead
+ * (formatResult). Find rows are tab-separated like `foresights list`; the
  * truncation note goes to stderr so stdout stays parseable.
  */
 import type { StatsByResult } from '../core/page-counts.ts';

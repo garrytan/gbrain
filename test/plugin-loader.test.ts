@@ -123,7 +123,7 @@ describe('loadSinglePlugin', () => {
     const dir = writePlugin('empty', { omit_manifest: true });
     const res = loadSinglePlugin(dir);
     expect('error' in res).toBe(true);
-    if ('error' in res) expect(res.error).toMatch(/missing gbrain\.plugin\.json/);
+    if ('error' in res) expect(res.error).toMatch(/missing (?:foresights|gbrain)\.plugin\.json/);
   });
 
   test('invalid manifest JSON returns error', () => {

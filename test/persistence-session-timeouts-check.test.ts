@@ -1,7 +1,7 @@
 /**
  * #6278 (plan item 1.4): doctor `persistence_session_timeouts`. Protects: the
  * check warns `session_timeouts_not_applied` when `SHOW statement_timeout`
- * through the configured URL reads `0` while gbrain configured one (a
+ * through the configured URL reads `0` while foresights configured one (a
  * transaction-mode pooler dropped the startup parameter), naming the pooler,
  * that `GBRAIN_STATEMENT_TIMEOUT` is ignored there, that the preparation
  * budget covers preparation reads, and the role-level fix; it is `ok` when the
@@ -19,7 +19,7 @@ const postgres = (applied: string) => ({ kind: 'postgres', executeRaw: async (sq
 test('a pooler that drops the startup parameter is reported as session_timeouts_not_applied with the fix', async () => withEnv({ GBRAIN_STATEMENT_TIMEOUT: undefined }, async () => {
   const check = await sessionTimeoutsCheck(postgres('0'));
   expect(check).toMatchObject({ name: 'persistence_session_timeouts', status: 'warn', details: { configured: '5min', applied: '0', reason: 'session_timeouts_not_applied' } });
-  for (const text of ['session_timeouts_not_applied', 'transaction-mode pooler', 'GBRAIN_STATEMENT_TIMEOUT is ignored', 'preparation budget covers the gap', "ALTER ROLE <gbrain role> SET statement_timeout = '5min'"]) {
+  for (const text of ['session_timeouts_not_applied', 'transaction-mode pooler', 'GBRAIN_STATEMENT_TIMEOUT is ignored', 'preparation budget covers the gap', "ALTER ROLE <foresights role> SET statement_timeout = '5min'"]) {
     expect(check.message).toContain(text);
   }
 }));

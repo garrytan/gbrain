@@ -3,7 +3,7 @@
  *
  * Writes one row per `RateLeaseUnavailableError` bounce to the
  * `minion_lease_pressure_log` table (migration v94). The doctor check
- * `subagent_health` and `gbrain jobs stats lease_pressure` read this
+ * `subagent_health` and `foresights jobs stats lease_pressure` read this
  * table to surface pressure to operators.
  *
  * Why DB table (not JSONL): doctor + jobs stats need SQL aggregation
@@ -13,7 +13,7 @@
  *
  * Denormalization at write time (Eng D8 / codex pass-3 #7): `queue_name`,
  * `job_name`, `model`, `provider`, `root_owner_id` are persisted inline so
- * post-NULL forensic queries (after `gbrain jobs prune` pulls the job row)
+ * post-NULL forensic queries (after `foresights jobs prune` pulls the job row)
  * still carry enough context to answer "was there pressure on Anthropic
  * messages last Tuesday at 3pm." Without denormalization, post-NULL rows
  * would be timestamp-only residue.
@@ -83,8 +83,8 @@ export async function logLeasePressure(
 }
 
 /**
- * Read lease-pressure events in a rolling window. Used by `gbrain doctor`'s
- * `subagent_health` check and by `gbrain jobs stats lease_pressure`.
+ * Read lease-pressure events in a rolling window. Used by `foresights doctor`'s
+ * `subagent_health` check and by `foresights jobs stats lease_pressure`.
  * Returns the raw rows so callers can do their own aggregation; the count
  * is the operationally useful aggregate.
  */

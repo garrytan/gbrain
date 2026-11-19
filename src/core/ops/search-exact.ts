@@ -1,5 +1,5 @@
 /**
- * #7191 ask 2: the `search_exact` op (CLI `gbrain search --exact "<phrase>"`).
+ * #7191 ask 2: the `search_exact` op (CLI `foresights search --exact "<phrase>"`).
  * The scan, its visibility predicate and its completeness contract live in
  * src/core/search/exact-scan.ts; this file validates params and resolves the
  * caller's scope the way `search` does.

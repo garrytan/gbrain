@@ -1,5 +1,5 @@
 /**
- * `gbrain facts relink` (#5836): link facts saved without an entity to the
+ * `foresights facts relink` (#5836): link facts saved without an entity to the
  * entity they are about. Trusted local CLI only; the work lives in
  * src/core/facts/relink.ts and src/core/facts/relink-publish.ts.
  */
@@ -11,14 +11,14 @@ import { CONVERSATION_RELINK_PAGES, runConversationRelink, type ConversationReli
 import { DEFAULT_MAX_RESUBMITS, FACTS_ABSORB_RETRY_MAX_KEY, factsRetryDeadCommand, readDeadFactsAbsorbRetry, updateDeadFactsAbsorbKeys } from '../core/facts/dead-absorb-retry.ts';
 
 export function factsHelpText(): string {
-  return `Usage: gbrain facts <subcommand>
+  return `Usage: foresights facts <subcommand>
 
 Subcommands:
   relink      Link facts saved without an entity to the person, company or
               project they are about, onto that entity page's ## Facts fence.
   retry-dead  Show or reset the retry set of dead page-write facts-absorb jobs.
 
-gbrain facts relink [flags]
+foresights facts relink [flags]
   --source <id>          Source to repair (default: the resolved source)
   --dry-run              Show what would link; writes nothing, calls no model
   --limit <n>            Facts to examine this run (default ${RELINK_DEFAULT_LIMIT})
@@ -32,7 +32,7 @@ gbrain facts relink [flags]
   --examples <n>         Example facts per outcome (default 3)
   --json                 Machine-readable report (schema_version ${1})
 
-gbrain facts relink --conversation [--source <id>] [--slugs <a,b>] [--dry-run] [--json]
+foresights facts relink --conversation [--source <id>] [--slugs <a,b>] [--dry-run] [--json]
   Link the conversation extractor's facts saved without an entity (plain
   relink never examines them), free only: a fact naming exactly one entity
   page in full is linked, one write per page. Without --slugs, the
@@ -45,9 +45,9 @@ retired (expired, kept in history). Linked facts are queued for the System One
 conflict sweep when that slot is on. Free tiers cost nothing; the model tier
 uses facts.extraction_model and stops at --max-usd.
 
-gbrain facts retry-dead [--list] [--json]
-gbrain facts retry-dead --reset <key>|--all [--json]
-gbrain facts retry-dead --clear <key>|--all [--json]
+foresights facts retry-dead [--list] [--json]
+foresights facts retry-dead --reset <key>|--all [--json]
+foresights facts retry-dead --clear <key>|--all [--json]
   A put_page's facts-absorb job that died on a provider or configuration
   failure is re-submitted by the next maintenance pass (the facts_drain
   phase) once extraction is servable again, at most
@@ -115,7 +115,7 @@ function continuation(report: RelinkReport, args: string[]): string | null {
     if (args[i] === '--after-id') { i++; continue; }
     kept.push(args[i]!);
   }
-  return `gbrain facts relink ${[...kept, '--after-id', String(report.next_after_id)].join(' ')}`;
+  return `foresights facts relink ${[...kept, '--after-id', String(report.next_after_id)].join(' ')}`;
 }
 
 export function formatRelinkReport(report: RelinkReport, args: string[]): string {
@@ -145,7 +145,7 @@ export function formatRelinkReport(report: RelinkReport, args: string[]): string
   if (report.stopped) lines.push(`Stopped early: ${report.stopped}.`);
   const next = continuation(report, args);
   if (next) lines.push(`More unlinked facts remain. Continue with:\n  ${next}`);
-  else if (report.dry_run && report.linked) lines.push(`Apply with:\n  gbrain facts relink ${args.filter(a => a !== '--dry-run').join(' ')}`.trimEnd());
+  else if (report.dry_run && report.linked) lines.push(`Apply with:\n  foresights facts relink ${args.filter(a => a !== '--dry-run').join(' ')}`.trimEnd());
   return lines.join('\n');
 }
 
@@ -154,9 +154,9 @@ export function formatConversationRelinkReport(r: ConversationRelinkReport, args
     + ` (mention tier, no model call); ${r.unresolved} unresolved${r.changed ? `; ${r.changed} changed before the write (run again)` : ''}.`];
   if (r.not_user_attributed) lines.push(`  not_user_attributed: ${r.not_user_attributed}. ${RELINK_REASONS.not_user_attributed.fix}`);
   for (const p of r.pages) lines.push(`  ${p.slug}: ${p.linked} linked, ${p.unresolved} unresolved`);
-  if (r.dry_run && r.linked) lines.push(`Apply with:\n  gbrain facts relink ${args.filter(a => a !== '--dry-run').join(' ')}`);
+  if (r.dry_run && r.linked) lines.push(`Apply with:\n  foresights facts relink ${args.filter(a => a !== '--dry-run').join(' ')}`);
   if (r.reextract_slugs.length) {
-    const base = `gbrain extract-conversation-facts --source-id ${r.source_id} --slugs ${r.reextract_slugs.join(',')} --force`;
+    const base = `foresights extract-conversation-facts --source-id ${r.source_id} --slugs ${r.reextract_slugs.join(',')} --force`;
     lines.push(`No entity could be proven for ${r.unresolved} fact(s). Re-extraction calls the fact model again (paid); preview, then run with the amount the user approves:\n  ${base} --dry-run\n  ${base} --max-cost-usd <N>`);
   }
   return lines.join('\n');
@@ -176,7 +176,7 @@ async function runConversation(engine: BrainEngine, args: string[], config: GBra
       if (a === '--source') opts.sourceId = v; else opts.slugs = v.split(',').map(s => s.trim()).filter(Boolean);
       i++;
     } else {
-      console.error(`gbrain facts relink --conversation: ${a === '--source' || a === '--slugs' ? `${a} requires a value` : `unknown flag ${a} (takes --source, --slugs, --dry-run, --json)`}`);
+      console.error(`foresights facts relink --conversation: ${a === '--source' || a === '--slugs' ? `${a} requires a value` : `unknown flag ${a} (takes --source, --slugs, --dry-run, --json)`}`);
       return 1;
     }
   }
@@ -190,23 +190,23 @@ async function runRetryDead(engine: BrainEngine, args: string[]): Promise<number
   if (args.includes('--help') || args.includes('-h')) { console.log(factsHelpText()); return 0; }
   const json = args.includes('--json');
   const action = args.includes('--reset') ? 'reset' : args.includes('--clear') ? 'clear' : null;
-  if (args.includes('--reset') && args.includes('--clear')) { console.error('gbrain facts retry-dead: pass one of --reset or --clear.'); return 1; }
+  if (args.includes('--reset') && args.includes('--clear')) { console.error('foresights facts retry-dead: pass one of --reset or --clear.'); return 1; }
   if (!action) {
     const status = await readDeadFactsAbsorbRetry(engine);
     if (json) { console.log(JSON.stringify(status, null, 2)); return 0; }
     console.log(`Dead facts-absorb retry set (limit ${status.max_resubmits} re-submit(s) per job${status.max_resubmits === 0 ? ', disabled' : ''}):`);
     console.log(`  pending ${status.pending}, exhausted ${status.exhausted.length}, cleared ${status.cleared}, not retryable ${status.not_retryable.length}${status.waiting_on ? ` (waiting on ${status.waiting_on})` : ''}`);
     for (const e of status.exhausted) console.log(`  exhausted  job ${e.job_id} ${e.slug ?? ''} after ${e.resubmits} re-submit(s); reset: ${factsRetryDeadCommand('--reset', e.key)}`);
-    for (const e of status.not_retryable.slice(0, 20)) console.log(`  not retryable  job ${e.job_id} ${e.slug ?? ''}: fix the cause in its error (gbrain jobs get ${e.job_id}), then gbrain jobs retry ${e.job_id}`);
+    for (const e of status.not_retryable.slice(0, 20)) console.log(`  not retryable  job ${e.job_id} ${e.slug ?? ''}: fix the cause in its error (foresights jobs get ${e.job_id}), then foresights jobs retry ${e.job_id}`);
     return 0;
   }
   const flag = args.indexOf(`--${action}`);
   const target = args[flag + 1];
   const all = args.includes('--all');
-  if (!all && (!target || target.startsWith('--'))) { console.error(`gbrain facts retry-dead --${action} needs a key (facts-absorb:write:<request id>) or --all; gbrain facts retry-dead --list shows them.`); return 1; }
+  if (!all && (!target || target.startsWith('--'))) { console.error(`foresights facts retry-dead --${action} needs a key (facts-absorb:write:<request id>) or --all; foresights facts retry-dead --list shows them.`); return 1; }
   const changed = await updateDeadFactsAbsorbKeys(engine, action, all ? 'all' : [target!]);
   if (json) console.log(JSON.stringify({ status: action, keys: changed }, null, 2));
-  else if (changed.length === 0) console.log(`No dead facts-absorb job matches ${all ? '--all' : target}; gbrain facts retry-dead --list shows the set.`);
+  else if (changed.length === 0) console.log(`No dead facts-absorb job matches ${all ? '--all' : target}; foresights facts retry-dead --list shows the set.`);
   else console.log(action === 'reset'
     ? `Reset ${changed.length} key(s); the next maintenance pass may re-submit them (one paid extraction call each).`
     : `Cleared ${changed.length} key(s); they stay dead and are not re-submitted again.`);
@@ -222,7 +222,7 @@ export async function runFactsCommand(engine: BrainEngine, args: string[], confi
   }
   if (sub === 'retry-dead') return runRetryDead(engine, args.slice(1));
   if (sub !== 'relink') {
-    console.error(`gbrain facts: unknown subcommand ${sub}\n\n${factsHelpText()}`);
+    console.error(`foresights facts: unknown subcommand ${sub}\n\n${factsHelpText()}`);
     return 1;
   }
   const rest = args.slice(1);
@@ -233,7 +233,7 @@ export async function runFactsCommand(engine: BrainEngine, args: string[], confi
   if (rest.includes('--conversation')) return runConversation(engine, rest, config, sourceId);
   const parsed = parseRelinkArgs(rest, sourceId);
   if (parsed.error) {
-    console.error(`gbrain facts relink: ${parsed.error}`);
+    console.error(`foresights facts relink: ${parsed.error}`);
     return 1;
   }
   const isTty = process.stderr.isTTY === true;

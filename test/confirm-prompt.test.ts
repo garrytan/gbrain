@@ -65,7 +65,7 @@ describe('promptYesNo (#4318)', () => {
  * with the same close-before-resolve race: `rl.close()` inside the
  * rl.question callback fired the unguarded `rl.on('close', ...)` listener
  * synchronously, so `resolve(false)` won before the typed "y" resolve ran —
- * `gbrain pglite-repair` always treated an affirmative interactive answer as
+ * `foresights pglite-repair` always treated an affirmative interactive answer as
  * decline. Pins the exact call now wired at that call site (question text +
  * `{ output: process.stderr }`, matching `src/commands/pglite-repair.ts`) so
  * a regression to the old inline shape — or a stdout-leaking `output`

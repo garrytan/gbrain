@@ -214,10 +214,10 @@ describe('a webhook capture keeps a page\'s stored readers (GST-2112)', () => {
       expect(res.status).toBe(409);
       const answer = await res.json() as { error: string; message: string };
       expect(answer.error).toBe('revision_backfill_pending');
-      expect(answer.message).toContain('gbrain apply-migrations --force-schema');
+      expect(answer.message).toContain('foresights apply-migrations --force-schema');
       expect(answer.message).toContain('docs/guides/write-refusals.md#revision-backfill');
       expect(await queuedJobs()).toBe(before);
-      await expect(makeIngestCaptureHandler(engine)(bobJob(BACKFILL, page('Backfill pending', READERS, 'Captured before the backfill.')))).rejects.toMatchObject({ code: 'revision_backfill_pending', message: expect.stringContaining('gbrain apply-migrations --force-schema') });
+      await expect(makeIngestCaptureHandler(engine)(bobJob(BACKFILL, page('Backfill pending', READERS, 'Captured before the backfill.')))).rejects.toMatchObject({ code: 'revision_backfill_pending', message: expect.stringContaining('foresights apply-migrations --force-schema') });
       expect(await readers(BACKFILL)).toEqual(['alice-example', 'bob-example']);
       expect((await stored(BACKFILL))?.compiled_truth).toContain('Original body.');
     } finally {

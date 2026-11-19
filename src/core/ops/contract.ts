@@ -34,7 +34,7 @@ export function __registerOperationErrorRenderer(r: OperationErrorWireRenderer):
  * v0.31 (eD6 / eE7): ErrorCode is now an OPEN union via the
  * `(string & {})` autocomplete-friendly hack. Downstream consumers (e.g.
  * gbrain-evals) get autocomplete on the named codes AND remain TS-forward-
- * compatible when gbrain adds new codes in future releases. This shape is
+ * compatible when foresights adds new codes in future releases. This shape is
  * the standard Anthropic-API/OpenAI-API pattern.
  *
  * v0.31 added: 'rate_limited', 'extraction_failed', 'fact_not_found'.
@@ -232,7 +232,7 @@ export async function withRelationGuard<T>(fn: () => Promise<T>, what: string): 
       throw opError(
         'unavailable',
         `${what} is unavailable on this brain: a required table is missing.`,
-        'The brain is missing a table this gbrain expects (usually pending schema migrations). Doctor on the brain host reports what is missing and the command that repairs it.',
+        'The brain is missing a table this foresights expects (usually pending schema migrations). Doctor on the brain host reports what is missing and the command that repairs it.',
         { reason: 'schema_missing' },
       );
     }
@@ -306,7 +306,7 @@ export interface AuthInfo {
   /** GBRA-218: the stored `may_act_for` audience list (shared agents, PR B); stored and reported only. */
   mayActFor?: string[] | null;
   /**
-   * GST-363: the brain operator let this credential read unscoped on purpose (`reads_unscoped` is set, gbrain auth
+   * GST-363: the brain operator let this credential read unscoped on purpose (`reads_unscoped` is set, foresights auth
    * rescope --reads-unscoped --yes). Undefined when no verifier read it; access/requester-scope.ts then looks it up.
    */
   readsUnscoped?: boolean;
@@ -361,7 +361,7 @@ export interface AuthInfo {
    * NULL → 'default' for pre-existing rows so this field is populated
    * on the upgrade path; brand-new public-client registrations may
    * still leave it null until an operator explicitly scopes via
-   * `gbrain auth scope-client`.
+   * `foresights auth scope-client`.
    */
   sourceId?: string;
   /**
@@ -440,8 +440,8 @@ export interface AuthInfo {
   surface?: string;
   /**
    * #5575 (CEO-18): the token's read floor (`oauth_clients.min_trust` /
-   * `access_tokens.min_trust`), set only by the local CLI (`gbrain auth create
-   * --min-trust`, `gbrain auth set-min-trust`). Every read op applies
+   * `access_tokens.min_trust`), set only by the local CLI (`foresights auth create
+   * --min-trust`, `foresights auth set-min-trust`). Every read op applies
    * max(this floor, the caller's `min_trust` param), so a client can raise it
    * but never lower it. Undefined = no floor (or a brain before the column).
    */
@@ -481,7 +481,7 @@ export interface OperationContext {
   dryRun: boolean;
   /**
    * OAuth auth info (v0.8+). Present when the caller authenticated via OAuth 2.1
-   * through `gbrain serve --http`, or a remote-owned delegated worker tool.
+   * through `foresights serve --http`, or a remote-owned delegated worker tool.
    * Worker auth carries the current read grant; explicit tool bindings grant
    * delegated operations independently of the parent's direct read/write scopes.
    */
@@ -568,7 +568,7 @@ export interface OperationContext {
   /** The stdio session's surface (stdio MCP only): `request_tools` widens it for this session, `whoami` reports it. */
   stdioSurface?: StdioSurfaceState;
   /**
-   * GST-363: the member this stdio server was started with (`gbrain serve --stdio-member <id>`, written into one
+   * GST-363: the member this stdio server was started with (`foresights serve --stdio-member <id>`, written into one
    * harness's own MCP entry). Set only by the stdio server from its process argv, never from a request; it wins over
    * config mcp.stdio_member, and a named member that is not enabled reads as nobody.
    */
@@ -615,7 +615,7 @@ export interface OperationContext {
    */
   allowedSlugPrefixes?: string[];
   /**
-   * #5994: the stored authority of a failed write that `gbrain repair
+   * #5994: the stored authority of a failed write that `foresights repair
    * failed-writes` replays. Set only by that trusted local repair lane; no
    * transport, dispatcher or job hydrates it. Admission reuses it as the
    * write's authority ceiling (principal, delegation, source incarnation,
@@ -655,7 +655,7 @@ export interface OperationContext {
   writeWaitMs?: number;
   /**
    * Row shape for `search`/`query` results in content[0]. Set by the MCP
-   * transports: 'full' for gbrain's own thin client (X-Gbrain-Client header)
+   * transports: 'full' for foresights's own thin client (X-Gbrain-Client header)
    * and for hosts with `mcp.result_rows: full`, otherwise 'lean'. Unset means
    * 'lean' for remote callers; trusted local callers (`remote === false`)
    * always get full rows. A per-call `fields: "full"` overrides 'lean'.
@@ -663,7 +663,7 @@ export interface OperationContext {
    */
   resultRows?: 'lean' | 'full';
   /**
-   * Large pages (Wave A): the caller identified itself as gbrain's thin client
+   * Large pages (Wave A): the caller identified itself as foresights's thin client
    * (X-Gbrain-Client header). A thin client that names no `body` mode on
    * get_page renders compiled_truth as the whole page, so the read is full
    * or refused, never a window. Shape only, never authority.
@@ -809,7 +809,7 @@ export interface ExplicitReadBinding {
 /**
  * How an op's response is treated before it reaches any caller. `operations.ts`
  * wraps the handler of every `'retrieval'` op once at registration, so the CLI,
- * both MCP transports, subagent tools and `gbrain call` all get the same pass:
+ * both MCP transports, subagent tools and `foresights call` all get the same pass:
  * `redactRetrievalOutput` (canonical scanner, assignment rule on, uncapped)
  * over the whole response, early returns included.
  * - `{ retrieval: { localVerbatim } }`: same pass, but the named top-level keys
@@ -881,7 +881,7 @@ export interface Operation {
   publishGateKey?: 'mcp.publish_skills' | 'mcp.publish_advisor' | 'mcp.publish_memory_settings' | 'mcp.publish_wakeshift';
   /**
    * MEMORY_VERBS v1: marks the seven frozen protocol verbs (recall, remember,
-   * entity, synthesize, forget, context_pack, delta). `gbrain serve --surface
+   * entity, synthesize, forget, context_pack, delta). `foresights serve --surface
    * verbs` exposes EXACTLY the ops with `verb: true`; 'starter' (the ~20-op
    * daily-driver tier) sits between verbs and `full` (default), which exposes
    * everything.
@@ -933,7 +933,7 @@ export interface Operation {
 /**
  * Everything about an operation except its handler: the data tools/list,
  * surface filtering, publish gates and CLI arg parsing read. Checked in as
- * src/core/operation-manifest.generated.ts so `gbrain serve` and the CLI
+ * src/core/operation-manifest.generated.ts so `foresights serve` and the CLI
  * dispatcher can answer without loading every handler module.
  */
 export type OperationMeta = Omit<Operation, 'handler'>;

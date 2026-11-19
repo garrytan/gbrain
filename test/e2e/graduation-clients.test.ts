@@ -1,6 +1,6 @@
 /**
  * Engine graduation versus every other client of the brain: older released
- * binaries, a `gbrain serve` respawned mid-copy, a resident serve that must
+ * binaries, a `foresights serve` respawned mid-copy, a resident serve that must
  * hand the source over, and stale CLI or MCP configurations after cutover.
  *
  * Protects: §3.3 and §6.4 of the plan plus §13 CEO/DX (tombstone, marker

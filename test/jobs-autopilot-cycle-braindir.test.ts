@@ -3,10 +3,10 @@
  * checkout-less brain.
  *
  * Pre-fix jobs.ts defaulted repoPath to cwd `'.'` when no repo was configured,
- * then fed that into runCycle — so a queued cycle (what `gbrain remote ping`
+ * then fed that into runCycle — so a queued cycle (what `foresights remote ping`
  * triggers) on a checkout-less postgres brain ran filesystem phases against the
  * worker's cwd instead of skipping them. Now it passes `null`, so the handler
- * follows the same no_brain_dir contract as `gbrain dream`.
+ * follows the same no_brain_dir contract as `foresights dream`.
  *
  * Drives the REAL handler (captured from registerBuiltinHandlers) — not a
  * source-grep — so a future refactor that reintroduces the '.' fallback fails

@@ -11,7 +11,7 @@ per page), and imports it into a fresh brain under a temporary `GBRAIN_HOME`:
 PGLite in a fresh data dir, or Postgres in a fresh database created from
 `DATABASE_URL` and dropped afterwards. The default `--import-mode cli` writes
 the Markdown corpus once into `--corpus-dir` (reused while its manifest
-matches) and runs the real `gbrain import` per source, timing each file from
+matches) and runs the real `foresights import` per source, timing each file from
 its progress events; `--import-mode content` keeps the per-page
 `importFromContent` loop. It then extracts links, timeline, facts and takes,
 writes the vectors onto every chunk so the vector arm runs keylessly through
@@ -26,13 +26,13 @@ captures every statement each op sends and replays the reads under
 `EXPLAIN ANALYZE` for the planner check. With the brain closed, it then runs
 the large-brain operational ceilings through the real CLI
 (`scripts/scale/f4d.ts`), each an enforced data check with its measurement in
-the report's `f4d` section: a `gbrain sync` of a fresh source (1,000 files at 10k and up) past a 1 s
-progress-aware deadline completes (`f4d_sync_deadline`); `gbrain embed
+the report's `f4d` section: a `foresights sync` of a fresh source (1,000 files at 10k and up) past a 1 s
+progress-aware deadline completes (`f4d_sync_deadline`); `foresights embed
 --stale` against a local stub embedding endpoint stops at its time budget with
 exit 11, the remaining count and the resume command (`f4d_embed_budget_stop`;
-nothing leaves the machine); `gbrain serve` answers initialize and a search
+nothing leaves the machine); `foresights serve` answers initialize and a search
 without hitting its boot deadline (`f4d_serve_boot`); and at 20,000 pages and
-up, `gbrain sources add` registers a 20,000-file checkout on a fresh managed
+up, `foresights sources add` registers a 20,000-file checkout on a fresh managed
 brain (`f4d_sources_add_20k`). Each phase logs its start and end, so a run
 stopped by a job timeout shows where it was. The report leads with the headline
 metric, MCP search p50 at the run's size as shipped (no manual ANALYZE).

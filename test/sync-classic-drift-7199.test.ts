@@ -59,7 +59,7 @@ async function dbEdit(engine: BrainEngine, ctx: OperationContext, slug: string, 
 const PAGE_COLUMNS = ['title', 'type', 'compiled_truth', 'timeline', 'frontmatter', 'content_hash'] as const;
 const pageRow = async (engine: BrainEngine, slug: string) => (await engine.executeRaw<Record<string, unknown>>(
   `SELECT ${PAGE_COLUMNS.join(', ')} FROM pages WHERE source_id='default' AND slug=$1`, [slug]))[0]!;
-/** Writes a page row back as an older gbrain left it: managed persistence off around the write. */
+/** Writes a page row back as an older foresights left it: managed persistence off around the write. */
 async function restorePage(engine: BrainEngine, slug: string, row: Record<string, unknown>) {
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
   try {
@@ -67,7 +67,7 @@ async function restorePage(engine: BrainEngine, slug: string, row: Record<string
       [slug, row.title, row.type, row.compiled_truth, row.timeline, JSON.stringify(row.frontmatter), row.content_hash]);
   } finally { await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1'); }
 }
-/** A side-unknown hold as a gbrain before the last-synced-commit comparison wrote it: no drift screen version, no recorded comparison. */
+/** A side-unknown hold as a foresights before the last-synced-commit comparison wrote it: no drift screen version, no recorded comparison. */
 async function unscreened(engine: BrainEngine, path: string) {
   await engine.executeRaw("UPDATE op_checkpoints SET completed_keys=jsonb_build_array((completed_keys->0) #- '{meta,baseline_screened}' #- '{meta,drift_version}') WHERE op='sync-hold' AND fingerprint LIKE '%:' || $1", [path]);
 }
@@ -77,7 +77,7 @@ for (const databaseUrl of process.env.DATABASE_URL ? [undefined, process.env.DAT
     await engine.setConfig('sync.write_through', 'false');
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
     await classicPages(engine);
-    // c's page moved in the database through a request; d's moved with no request on record (an older gbrain's write).
+    // c's page moved in the database through a request; d's moved with no request on record (an older foresights's write).
     await dbEdit(engine, ctx, 'notes/c', note('notes/c', 'A database-only edit of notes/c.'));
     await restorePage(engine, 'notes/d', { ...await pageRow(engine, 'notes/d'), compiled_truth: 'An unrecorded database edit of notes/d.' });
     for (const slug of SLUGS) writeFileSync(join(root, `${slug}.md`), note(slug, `A newer file body of ${slug}.`));
@@ -106,7 +106,7 @@ for (const databaseUrl of process.env.DATABASE_URL ? [undefined, process.env.DAT
 
     const lines: string[] = [];
     printHoldNotes(result, line => lines.push(line));
-    expect(lines[0]).toBe('Synced; 2 file(s) held for a person (gbrain sync status --source default).');
+    expect(lines[0]).toBe('Synced; 2 file(s) held for a person (foresights sync status --source default).');
     expect((await performManagedSync(engine, OPTS)).status).toBe('up_to_date');
   }, { databaseUrl, setup }), 240_000);
 
@@ -119,7 +119,7 @@ for (const databaseUrl of process.env.DATABASE_URL ? [undefined, process.env.DAT
     for (const slug of ['notes/a', 'notes/c']) writeFileSync(join(root, `${slug}.md`), note(slug, `A newer file body of ${slug}.`));
     commit(root, 'edits after activation');
     expect((await performManagedSync(engine, OPTS)).held?.map(hold => hold.path).sort()).toEqual(['notes/a.md', 'notes/c.md']);
-    // a's page row goes back to what the classic import wrote: the page an older gbrain held although it equals an earlier
+    // a's page row goes back to what the classic import wrote: the page an older foresights held although it equals an earlier
     // committed version of its file.
     await restorePage(engine, 'notes/a', classic);
     // Control: a hold that recorded its comparison is not re-screened, so a stays held.

@@ -24,14 +24,14 @@ import { checkError, infoCheck } from '../check-fix.ts';
 import { isGbrainManagedSkillsDir } from '../../../core/skill-manifest.ts';
 
 /**
- * W4: a skills folder found only by walking up from the cwd that gbrain did not install (an agent's own skills, no
- * gbrain manifest or skillpack block) is not graded against gbrain's conventions: resolver_health and skill_currency
+ * W4: a skills folder found only by walking up from the cwd that foresights did not install (an agent's own skills, no
+ * foresights manifest or skillpack block) is not graded against foresights's conventions: resolver_health and skill_currency
  * report it as info. --skills-dir, $GBRAIN_SKILLS_DIR and $OPENCLAW_WORKSPACE still grade whatever they name.
  */
 function foreignSkillsCheck(ctx: DoctorContext, name: string): Check | null {
   const { dir, source } = ctx.skillsDirResolution;
   if (!dir || (source !== 'cwd_walk_up' && source !== 'cwd_skills') || isGbrainManagedSkillsDir(dir)) return null;
-  return infoCheck(name, `not a gbrain skills folder (${dir}); pass --skills-dir to grade it`, 'not_applicable');
+  return infoCheck(name, `not a foresights skills folder (${dir}); pass --skills-dir to grade it`, 'not_applicable');
 }
 
 async function runResolverHealth(ctx: DoctorContext): Promise<Check[]> {
@@ -49,16 +49,16 @@ async function runResolverHealth(ctx: DoctorContext): Promise<Check[]> {
     //
     // SAFETY GATE (v0.31.7 follow-up to D5): refuse --fix when the skills
     // dir came from the install-path fallback. autoFixDryViolations writes
-    // to SKILL.md files; a user running `cd ~ && gbrain doctor --fix`
+    // to SKILL.md files; a user running `cd ~ && foresights doctor --fix`
     // without an explicit signal would have install_path resolve to the
-    // bundled gbrain repo and silently rewrite the install-tree skills.
+    // bundled foresights repo and silently rewrite the install-tree skills.
     // Codex caught this leak in the v0.31.7 ship review (D6 lock).
     if (doFix) {
       if (detected.source === 'install_path') {
         process.stderr.write(
-          'gbrain doctor --fix refused: skills dir resolved via install-path fallback (read-only).\n' +
+          'foresights doctor --fix refused: skills dir resolved via install-path fallback (read-only).\n' +
           'The --fix flag writes to SKILL.md files; running it against the bundled install\n' +
-          'tree would silently mutate gbrain itself. Set $GBRAIN_SKILLS_DIR, $OPENCLAW_WORKSPACE,\n' +
+          'tree would silently mutate foresights itself. Set $GBRAIN_SKILLS_DIR, $OPENCLAW_WORKSPACE,\n' +
           'or pass --skills-dir <path> to point at the workspace you actually want to fix.\n',
         );
       } else {
@@ -117,7 +117,7 @@ async function runRetrievalReflex(ctx: DoctorContext): Promise<Check[]> {
 
   // 1b-2. Per-channel push-context visibility (the hook lane's feedback
   // loop). Engine-aware sibling of the reflex heartbeat check above — the
-  // LOCAL `gbrain doctor` is the primary operator surface for this, so it
+  // LOCAL `foresights doctor` is the primary operator surface for this, so it
   // runs here as well as on the remote report path. Skipped in fs-only mode.
   if (scope === 'all' && engine && !fastMode) {
     checks.push(await checkVolunteerChannels(engine));

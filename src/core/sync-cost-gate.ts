@@ -1,5 +1,5 @@
 /**
- * Inline-embed cost gate + token estimation for `gbrain sync` (#2139).
+ * Inline-embed cost gate + token estimation for `foresights sync` (#2139).
  * Peeled out of src/commands/sync.ts (containment sprint C13-C14) as a pure
  * move — see that file for the command surface that drives this gate.
  */
@@ -375,8 +375,8 @@ async function resolveBackfillCapUsd(engine: BrainEngine): Promise<number> {
 // spend-control surface is discoverable at the moment of need (humans + agents),
 // not only after reading source. Closes the issue's "takes archaeology" complaint.
 const SPEND_HINT =
-  'widen: gbrain config set sync.cost_gate_min_usd 5 | ' +
-  'never gate: gbrain config set spend.posture tokenmax | ' +
+  'widen: foresights config set sync.cost_gate_min_usd 5 | ' +
+  'never gate: foresights config set spend.posture tokenmax | ' +
   'docs: docs/operations/spend-controls.md';
 
 /** Honest token label — delta vs full-tree ceiling, with the ceiling reasons. */
@@ -566,7 +566,7 @@ export async function runInlineCostGate(
     ? ` (includes ~${staleChars.toLocaleString()} stale-backlog chars swept by --full)`
     : '';
   const staleNote = !full && staleChars > 0
-    ? ` (plus ~${staleChars.toLocaleString()} stale-backlog chars pending \`gbrain embed --stale\`)`
+    ? ` (plus ~${staleChars.toLocaleString()} stale-backlog chars pending \`foresights embed --stale\`)`
     : '';
   const previewMsg =
     `${label} preview (inline embed): ${inline.changedSources} changed source(s), ` +
@@ -602,7 +602,7 @@ export async function runInlineCostGate(
     const sm = await engine.getConfig('search.mode');
     if (typeof sm === 'string' && sm.trim().toLowerCase() === 'tokenmax') {
       searchModeHint =
-        ` (search.mode=tokenmax detected — \`gbrain config set spend.posture tokenmax\` ` +
+        ` (search.mode=tokenmax detected — \`foresights config set spend.posture tokenmax\` ` +
         `makes cost gates informational)`;
     }
   } catch {
@@ -654,7 +654,7 @@ export async function runInlineCostGate(
     console.log(
       `${previewMsg} Exceeds floor $${formatUsdLimit(floorUsd)} in a non-interactive ` +
       `session — importing now, deferring embeds to capped backfill jobs. ` +
-      `Drain: run the jobs worker or \`gbrain embed --stale\`. Pass --yes to embed inline.\n${SPEND_HINT}`,
+      `Drain: run the jobs worker or \`foresights embed --stale\`. Pass --yes to embed inline.\n${SPEND_HINT}`,
     );
     return { action: 'proceed', autoDeferEmbeds: true };
   }

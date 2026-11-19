@@ -257,12 +257,12 @@ export const chatgptProvider: ChatHistoryProvider = {
       '  1. Open https://chatgpt.com in a browser where you are logged in.',
       '  2. Open DevTools → Network, refresh, click any request to chatgpt.com.',
       '  3. Copy the full `Cookie:` request header value.',
-      '  4. Run: gbrain connectors auth chatgpt --cookie -   (paste, then Ctrl-D)',
+      '  4. Run: foresights connectors auth chatgpt --cookie -   (paste, then Ctrl-D)',
       '',
       'Your cookie is stored only on this machine at ~/.gbrain/connectors/chatgpt.json (0600)',
       'and is sent only to chatgpt.com. If a sync is blocked by a Cloudflare challenge,',
       'use the official export instead (Settings → Data controls → Export) and',
-      '`gbrain transcripts ingest conversations.json`.',
+      '`foresights transcripts ingest conversations.json`.',
     ].join('\n');
   },
 };

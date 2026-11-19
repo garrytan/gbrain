@@ -10,7 +10,7 @@
  *     Sonnet fallback rate, so an oversized run is still stopped.
  *   - `--max-usd N` (legacy `--max-cost N`): a `user` cap. A run that would
  *     call a model nothing prices is refused before any work, with the shared
- *     no_pricing guidance (look up the rate, `gbrain pricing set`, retry).
+ *     no_pricing guidance (look up the rate, `foresights pricing set`, retry).
  *   - `--max-usd off`: no USD cap on the tracker or the checks; spend is still
  *     ledgered and `--strict-budget` still applies.
  * Operator `pricing.overrides` reach every price the run computes.

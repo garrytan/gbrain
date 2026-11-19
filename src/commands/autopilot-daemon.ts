@@ -1,5 +1,5 @@
 /**
- * `gbrain autopilot` daemon: boot, the managed worker, shutdown and the tick
+ * `foresights autopilot` daemon: boot, the managed worker, shutdown and the tick
  * loop. runAutopilot (src/commands/autopilot.ts) dispatches here when no
  * install/uninstall/status/pause mode flag is present.
  */
@@ -83,7 +83,7 @@ export async function runAutopilotDaemon(engine: BrainEngine, args: string[]): P
   const noWorker = !shouldSpawnAutopilotWorker(args);
 
   if (!repoPath) {
-    console.error('No repo path. Use --repo or run gbrain sync --repo first.');
+    console.error('No repo path. Use --repo or run foresights sync --repo first.');
     process.exit(1);
   }
 
@@ -377,7 +377,7 @@ function acquireAutopilotLock(lockPath: string): void {
       // from launchd/systemd logs without strace-ing the lock probe.
       const detail =
         decision.holderState === 'alive-autopilot'
-          ? 'a live gbrain autopilot process'
+          ? 'a live foresights autopilot process'
           : decision.holderState === 'alive-unknown'
             ? 'a live process whose command line could not be inspected (fresh lock — will become stealable once stale)'
             : 'a live non-gbrain process holding a fresh lock (will become stealable once stale)';
@@ -393,18 +393,18 @@ function acquireAutopilotLock(lockPath: string): void {
   } catch { /* best-effort */ }
 }
 
-/** Spawn the managed `gbrain jobs work` child under ChildWorkerSupervisor (Minions dispatch mode). */
+/** Spawn the managed `foresights jobs work` child under ChildWorkerSupervisor (Minions dispatch mode). */
 async function startAutopilotWorker(
   processingState: OwnerProcessingState | null,
   state: AutopilotDaemonState,
   shutdown: (sig: string) => Promise<void>,
 ): Promise<ChildWorkerSupervisor> {
   const invocation = resolveChildCliInvocation({}, process.execPath, process.argv[1], resolveGbrainCliPath);
-  if (!invocation) throw new Error('Could not resolve the worker CLI. Repair the current GBrain installation.');
+  if (!invocation) throw new Error('Could not resolve the worker CLI. Repair the current Foresights installation.');
   // Cgroup-aware auto-sized RSS watchdog cap (issue #1678). The old flat
   // 2048MB killed legit embed work (~10GB) on every cycle → silent
   // ~400×/24h respawn loop. resolveDefaultMaxRssMb clamps 0.5×min(cgroup,
-  // RAM) to [4096,16384]. Bare `gbrain jobs work` resolves the same default;
+  // RAM) to [4096,16384]. Bare `foresights jobs work` resolves the same default;
   // we pass it explicitly so the spawn log + child agree.
   const { resolveDefaultMaxRssMb } = await import('../core/minions/rss-default.ts');
   const autopilotMaxRssMb = resolveDefaultMaxRssMb();
@@ -481,7 +481,7 @@ async function warnNoChatProviderOnce(state: AutopilotDaemonState): Promise<void
           `phases (chronicle event extraction, propose_takes, synthesize, …) will skip. ` +
           `Shell-profile exports often do not reach launchd/systemd: put KEY=value lines in ` +
           `${join(gbrainHomePath(), 'env')} (sourced by the wrapper), then re-run ` +
-          '`gbrain autopilot --install` to reload the daemon.',
+          '`foresights autopilot --install` to reload the daemon.',
         );
       }
     } catch { /* gateway unconfigured — the cycle surfaces its own errors */ }
@@ -535,13 +535,13 @@ async function probeDatabaseOrReconnect(
       state.autopilotReconnectFails++;
       const klass = classifyReconnectError(e);
       if (klass === 'crash') {
-        // A gbrain BUG, not an operator misconfiguration. Say so plainly
+        // A foresights BUG, not an operator misconfiguration. Say so plainly
         // instead of blaming the config, and keep retrying: a code defect must
         // not permanently disable the daemon. The consecutive-failure cap below
         // still bounds it.
         console.error(
           `[autopilot] BUG: internal error during reconnect (${(e as Error).message ?? 'unknown'}). ` +
-          `This is a gbrain defect, not a configuration problem — please report it. ` +
+          `This is a foresights defect, not a configuration problem — please report it. ` +
           `Retrying (${state.autopilotReconnectFails}/${AUTOPILOT_MAX_RECONNECT_FAILS}).`,
         );
       } else if (klass === 'unrecoverable') {

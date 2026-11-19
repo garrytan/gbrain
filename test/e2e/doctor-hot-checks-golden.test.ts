@@ -1,6 +1,6 @@
 /**
  * GBRA-75 wave 10: Postgres twin of test/doctor-hot-checks-golden.test.ts.
- * Full `gbrain doctor --json` on the hot-check fixture
+ * Full `foresights doctor --json` on the hot-check fixture
  * (test/helpers/doctor-hot-checks-fixture.ts), first run and a second run
  * after edits, on a scratch database per capture
  * (`gbrain_test_doctor_hot_<uuid>`). Captured on 3f960312a before the doctor
@@ -62,7 +62,7 @@ async function capture(adminUrl: string): Promise<PgCaptures> {
   const h = makeDoctorHome('doctor-hot-checks-pg');
   homes.push(h);
   const init = await runGbrain(h, ['init', '--non-interactive', '--url', url, '--no-embedding']);
-  if (init.exitCode !== 0) throw new Error(`gbrain init failed (${init.exitCode}): ${init.stderr}`);
+  if (init.exitCode !== 0) throw new Error(`foresights init failed (${init.exitCode}): ${init.stderr}`);
   const sql: Sql = async (statements) => {
     const db = postgres(url, { max: 1, prepare: false });
     try {
@@ -88,7 +88,7 @@ async function capture(adminUrl: string): Promise<PgCaptures> {
   return { first, second, url, name };
 }
 
-describeE2E('gbrain doctor --json golden on the hot-check fixture (Postgres)', () => {
+describeE2E('foresights doctor --json golden on the hot-check fixture (Postgres)', () => {
   test('first and second doctor runs match the 3f960312a capture', async () => {
     assertSafeE2eDatabaseUrl(DATABASE_URL!);
     const normalizer = pgNormalizer(new URL(DATABASE_URL!));

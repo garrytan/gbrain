@@ -1,8 +1,8 @@
 /**
  * Serve-delegated sync — the CLI half (decision ladders + poll loop).
  *
- * On a PGLite brain a live `gbrain serve` holds the single-writer lock for
- * its lifetime, so `gbrain sync` cannot open the brain (LiveServeLockError
+ * On a PGLite brain a live `foresights serve` holds the single-writer lock for
+ * its lifetime, so `foresights sync` cannot open the brain (LiveServeLockError
  * since #2348 — a live holder is never displaced). Instead of failing, the
  * pre-connect hook in cli.ts calls maybeDelegateSyncToServe: when the holder
  * is a live serve, the sync runs INSIDE the serve over the resolve-IPC socket
@@ -202,7 +202,7 @@ export async function maybeDelegateSyncToServe(dataDir: string, args: string[]):
   const parsed = parseDelegatedSyncArgs(args);
   if (!parsed.ok) {
     serr(
-      `[sync] a live \`gbrain serve\` (PID ${holder.pid}) holds this PGLite brain, and ` +
+      `[sync] a live \`foresights serve\` (PID ${holder.pid}) holds this PGLite brain, and ` +
       `\`${parsed.refused}\` isn't supported through serve-delegated sync. ` +
       remediation(holder.pid),
     );
@@ -236,9 +236,9 @@ export async function maybeDelegateSyncToServe(dataDir: string, args: string[]):
   const secret = readIpcSecret(dataDir);
   if (!existsSync(sock) || !secret) {
     serr(
-      `[sync] a live \`gbrain serve\` (PID ${holder.pid}) holds this PGLite brain's ` +
-      `single-writer lock but exposes no sync IPC (older gbrain, \`serve --http\`, or ` +
-      `GBRAIN_SERVE_SYNC_IPC=0). ` + remediation(holder.pid, 'If that serve runs an older gbrain, restart it on this version.'),
+      `[sync] a live \`foresights serve\` (PID ${holder.pid}) holds this PGLite brain's ` +
+      `single-writer lock but exposes no sync IPC (older foresights, \`serve --http\`, or ` +
+      `GBRAIN_SERVE_SYNC_IPC=0). ` + remediation(holder.pid, 'If that serve runs an older foresights, restart it on this version.'),
     );
     await setVerdict(1);
     return true;
@@ -261,7 +261,7 @@ export async function maybeDelegateSyncToServe(dataDir: string, args: string[]):
     start = await requestSyncStart(sock, { secret, clientToken, options });
     if (start === IPC_UNAVAILABLE) {
       serr(
-        `[sync] the live \`gbrain serve\` (PID ${holder.pid}) is not answering its IPC socket. ` +
+        `[sync] the live \`foresights serve\` (PID ${holder.pid}) is not answering its IPC socket. ` +
         remediation(holder.pid, 'It may be wedged.'),
       );
       await setVerdict(1);
@@ -270,8 +270,8 @@ export async function maybeDelegateSyncToServe(dataDir: string, args: string[]):
   }
   if ('degraded' in (start as object)) {
     serr(
-      `[sync] the running \`gbrain serve\` (PID ${holder.pid}) predates serve-delegated sync. ` +
-      remediation(holder.pid, 'Restart it on this gbrain version.'),
+      `[sync] the running \`foresights serve\` (PID ${holder.pid}) predates serve-delegated sync. ` +
+      remediation(holder.pid, 'Restart it on this foresights version.'),
     );
     await setVerdict(1);
     return true;
@@ -303,7 +303,7 @@ export async function maybeDelegateSyncToServe(dataDir: string, args: string[]):
     serr(`[sync] attached to an already-completed delegated sync (job ${jobId}).`);
   } else {
     serr(
-      `[sync] live \`gbrain serve\` (PID ${holder.pid}) holds the PGLite lock — delegating ` +
+      `[sync] live \`foresights serve\` (PID ${holder.pid}) holds the PGLite lock — delegating ` +
       `the sync through it (job ${jobId}; Ctrl-C aborts, progress is checkpointed).`,
     );
   }
@@ -331,7 +331,7 @@ function startRefusalText(resp: { error?: string; jobId?: string }): string {
     busy: `another delegated sync (job ${resp.jobId ?? '?'}) is already running inside the serve — wait for it to finish and re-run.`,
     unauthorized: `the serve rejected the IPC secret — restart the serve (it re-provisions \`.gbrain-ipc-secret\`) and re-run.`,
     shutting_down: `the serve is shutting down — re-run in a moment (or after it exits, sync runs directly).`,
-    source_mismatch: `the serve is bound to a different source than this sync targets — run \`gbrain sync --source <the serve's source>\`, or stop the serve to sync this source directly.`,
+    source_mismatch: `the serve is bound to a different source than this sync targets — run \`foresights sync --source <the serve's source>\`, or stop the serve to sync this source directly.`,
     unsupported_kind: `the serve has sync delegation disabled (GBRAIN_SERVE_SYNC_IPC=0 or a startup failure).`,
   };
   return messages[resp.error ?? ''] ?? `the serve refused the delegated sync (${resp.error}).`;
@@ -398,9 +398,9 @@ async function pollDelegatedJob(ctx: {
 
   const crashHint = () =>
     serr(
-      `[sync] progress is checkpointed — re-run \`gbrain sync\` to resume. Note: the dead ` +
+      `[sync] progress is checkpointed — re-run \`foresights sync\` to resume. Note: the dead ` +
       `serve's sync lock row may take up to 60s to become reclaimable; if the re-run reports ` +
-      `a dead-PID lock, \`gbrain sync --break-lock\` clears it.`,
+      `a dead-PID lock, \`foresights sync --break-lock\` clears it.`,
     );
 
   try {
@@ -514,7 +514,7 @@ export type ManagedDelegationOutcome =
  * #6543: only a forced rung (the serve cannot take the run) really runs a consumer beside the serve; on the others this
  * process admits its writes and, with persistence.single_consumer on, the serve's consumer publishes them.
  */
-const ownConsumerLine = (pid: number, cause: string, forced: boolean, fix = 'Restart that serve on this gbrain version to run the catch-up inside it.'): string => forced
+const ownConsumerLine = (pid: number, cause: string, forced: boolean, fix = 'Restart that serve on this foresights version to run the catch-up inside it.'): string => forced
   ? `[sync] ${cause}; this run uses its own consumer beside the serve (PID ${pid}). ${fix}`
   : `[sync] ${cause}; this run does not delegate to the serve (PID ${pid}): it admits its own writes, and with persistence.single_consumer on the serve's consumer publishes them. ${fix}`;
 
@@ -587,8 +587,8 @@ export async function maybeDelegateManagedSyncToServe(engine: BrainEngine, args:
   const { sock, secret } = deps.socket ? await deps.socket(sourceId)
     : { sock: await hookResolveSocketForConfig(cfg, sourceId, { delegation: true }), secret: readIpcSecretForConfig(cfg) };
   if (!sock || !existsSync(sock) || !secret) {
-    return own('no_socket', fallbackLine(pid, 'the running gbrain serve exposes no sync IPC socket (older gbrain, or GBRAIN_SERVE_SYNC_IPC=0 on the serve)', false,
-      sameBuild ? `That serve already runs this gbrain version (v${VERSION}), so restarting it changes nothing here: unset GBRAIN_SERVE_SYNC_IPC=0 on the serve, or read its log for why its sync IPC did not start.` : undefined));
+    return own('no_socket', fallbackLine(pid, 'the running foresights serve exposes no sync IPC socket (older foresights, or GBRAIN_SERVE_SYNC_IPC=0 on the serve)', false,
+      sameBuild ? `That serve already runs this foresights version (v${VERSION}), so restarting it changes nothing here: unset GBRAIN_SERVE_SYNC_IPC=0 on the serve, or read its log for why its sync IPC did not start.` : undefined));
   }
   // 5. The hand-off: this CLI's durable writer registration (the one its own consumer would run under).
   dispatch.endSyncDispatchRead();
@@ -602,7 +602,7 @@ export async function maybeDelegateManagedSyncToServe(engine: BrainEngine, args:
   const options: DelegatedSyncOptions = {
     // #6696 (A5): an operator's sync keeps the capacity background producers leave free.
     sourceId, timeoutSeconds, origin: 'interactive',
-    // The table's forwarded booleans only: a field a newer gbrain retired (src/core/wire-skew.ts) is never in it, so it is never sent.
+    // The table's forwarded booleans only: a field a newer foresights retired (src/core/wire-skew.ts) is never in it, so it is never sent.
     ...pick(opts as unknown as Record<string, boolean | undefined>, Object.values(WIRE_BOOL_FLAGS)) as Partial<DelegatedSyncOptions>,
     ...(opts.lanes !== undefined ? { lanes: opts.lanes } : {}),
     // Sent only when set, so a serve that predates the field keeps accepting every run without a deferral.
@@ -620,18 +620,18 @@ export async function maybeDelegateManagedSyncToServe(engine: BrainEngine, args:
   let start = await requestSyncStart(sock, { secret, clientToken, options, registration });
   if (start === IPC_UNAVAILABLE && await ownerAlive()) start = await requestSyncStart(sock, { secret, clientToken, options, registration });
   if (start === IPC_UNAVAILABLE) {
-    return own('no_socket', fallbackLine(pid, 'the running gbrain serve is not answering its IPC socket', true,
-      sameBuild ? `That serve already runs this gbrain version (v${VERSION}); it may be wedged.` : undefined), true);
+    return own('no_socket', fallbackLine(pid, 'the running foresights serve is not answering its IPC socket', true,
+      sameBuild ? `That serve already runs this foresights version (v${VERSION}); it may be wedged.` : undefined), true);
   }
   if ('degraded' in (start as object)) {
-    return own('older_serve', fallbackLine(pid, 'the running gbrain serve predates serve-delegated managed sync', true), true);
+    return own('older_serve', fallbackLine(pid, 'the running foresights serve predates serve-delegated managed sync', true), true);
   }
   const startResp = start as Exclude<SyncStartIpcResult, typeof IPC_UNAVAILABLE | { degraded: string }>;
   if (!startResp.ok) {
     if (startResp.refusal) throw operationErrorFromEnvelope(startResp.refusal);
     if (startResp.error === 'unsupported_kind') {
       // #6543: a current serve that echoes the protocol with unsupported_kind is healthy with delegation off on its side: it keeps consuming.
-      return own('older_serve', fallbackLine(pid, 'the running gbrain serve runs with serve-delegated managed sync off (GBRAIN_SERVE_SYNC_IPC=0 on the serve)', false, 'Unset it on the serve to run the catch-up inside it.'));
+      return own('older_serve', fallbackLine(pid, 'the running foresights serve runs with serve-delegated managed sync off (GBRAIN_SERVE_SYNC_IPC=0 on the serve)', false, 'Unset it on the serve to run the catch-up inside it.'));
     }
     if (startResp.error === 'permission_denied') throw operationErrorFromEnvelope({ error: 'permission_denied', message: 'The serve refused this CLI\'s writer registration.' });
     return own('serve_refused', fallbackLine(pid, startRefusalText(startResp).replace(/\.$/, ''), false, 'Fix that, or let this run finish without the serve.'));
@@ -639,7 +639,7 @@ export async function maybeDelegateManagedSyncToServe(engine: BrainEngine, args:
   const jobId = startResp.jobId!;
   serr(startResp.completed
     ? `[sync] attached to an already-completed delegated sync inside the serve (job ${jobId}).`
-    : `[sync] a live gbrain serve (PID ${pid}) owns this host's writes — running the managed catch-up inside it as this CLI's writer (job ${jobId}; Ctrl-C aborts, the cursor is durable).`);
+    : `[sync] a live foresights serve (PID ${pid}) owns this host's writes — running the managed catch-up inside it as this CLI's writer (job ${jobId}; Ctrl-C aborts, the cursor is durable).`);
   const polled = await pollDelegatedJob({ sock, secret, jobId, pid, alive: ownerAlive, signal: opts.signal });
   if (polled.kind === 'lost') return own('serve_lost', '[sync] continuing the catch-up with this process\'s own consumer; the durable cursor resumes where the serve left it.');
   if (polled.kind === 'failed') throw polled.error;
@@ -657,7 +657,7 @@ function pick<T extends object, K extends keyof T>(source: T, keys: readonly K[]
 }
 
 /**
- * GBRA-133 PR 2a: `gbrain sync trigger` while a live serve holds the PGLite brain. The request is recorded as a wanted
+ * GBRA-133 PR 2a: `foresights sync trigger` while a live serve holds the PGLite brain. The request is recorded as a wanted
  * marker through the serve (sync_nudge, acknowledged) and its notifier starts the sync: action nudged, exit 0. A serve
  * running without a notifier (GBRAIN_NOTIFIER=0) records it too; the outcome then carries resident: null and the
  * no_resident notice with the fix. Returns false off PGLite or when no serve holds the brain (the engine path records
@@ -674,14 +674,14 @@ export async function maybeTriggerThroughServe(config: { engine?: string; databa
   const json = args.includes('--json');
   const sock = resolveSocketPath(dataDir);
   const secret = readIpcSecret(dataDir);
-  const refuse = async (why: string) => { serr(`[sync trigger] a live gbrain serve (PID ${holder.pid}) holds this PGLite brain and ${why} ` + remediation(holder.pid, '')); await setVerdict(1); return true; };
-  if (!existsSync(sock) || !secret) return refuse('exposes no sync IPC (older gbrain, serve --http, or GBRAIN_SERVE_SYNC_IPC=0).');
+  const refuse = async (why: string) => { serr(`[sync trigger] a live foresights serve (PID ${holder.pid}) holds this PGLite brain and ${why} ` + remediation(holder.pid, '')); await setVerdict(1); return true; };
+  if (!existsSync(sock) || !secret) return refuse('exposes no sync IPC (older foresights, serve --http, or GBRAIN_SERVE_SYNC_IPC=0).');
   const r = await requestSyncNudge(sock, { secret, version: SYNC_NUDGE_VERSION, sourceId, requestedBy: 'sync_trigger' });
   if (r === IPC_UNAVAILABLE) return refuse('is not answering its IPC socket.');
-  if ('degraded' in (r as object)) return refuse('predates sync_nudge; restart it on this gbrain version.');
+  if ('degraded' in (r as object)) return refuse('predates sync_nudge; restart it on this foresights version.');
   const resp = r as SyncNudgeResponse;
   if (!resp.ok || !resp.marker) {
-    if (resp.error === 'unknown_source') { serr(`Source "${sourceId}" not found. List with: gbrain sources list`); await setVerdict(1); return true; }
+    if (resp.error === 'unknown_source') { serr(`Source "${sourceId}" not found. List with: foresights sources list`); await setVerdict(1); return true; }
     return refuse(`refused the request (${resp.error ?? 'unknown error'}).`);
   }
   const { printTriggerOutcome } = await import('./sync/trigger.ts');

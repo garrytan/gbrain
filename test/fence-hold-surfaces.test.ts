@@ -3,7 +3,7 @@
  * tells an agent on every surface.
  *
  * Protects: one hold-repair router: a fence-only source names
- * `gbrain repair fences --source <id>` and never frontmatter, a
+ * `foresights repair fences --source <id>` and never frontmatter, a
  * frontmatter-only source never names the fence repair, a mixed source names
  * both; a single fence hold's fix is that file's preview
  * (`--only <path>`). The fix follows the hold's state: auto-repair pending
@@ -87,7 +87,7 @@ describe('one fence hold: the fix by state (D17, E35)', () => {
   test('manual-only reasons, gate rejections and model failures name the exact edit through the preview, then the sync', () => {
     const manual = gitHoldFix(manualHold(), ACTIVE);
     expect(manual.argv).toEqual(preview('people/alice-example.md'));
-    expect(manual.why).toContain('gbrain will not guess this repair');
+    expect(manual.why).toContain('foresights will not guess this repair');
     expect(manual.why).toContain('Column `kind` of row(s) 2 in the takes fence');
     expect(manual.then?.argv).toEqual(['gbrain', 'sync', '--source', 'notes-example', '--no-pull']);
     expect(next(manual, cli)).toBe('run');
@@ -139,10 +139,10 @@ describe('structured location (D16)', () => {
         auto_retry: true, next_attempt_after: '2026-10-06T09:00:00.000Z' } });
     expect(holdLine(item, 'Held')).toBe('  Held people/alice-example.md: invalid_fence (holder_unresolved) in the takes fence (body), row 3, column who, at line 12; '
       + 'its page keeps its last good revision and is read-only for put_page until the file is repaired. No action needed: the next maintenance run repairs it. '
-      + 'Preview: gbrain repair fences --source notes-example --only people/alice-example.md (docs/guides/write-refusals.md#fence-holder_unresolved)');
-    expect(holdLine(gitHoldItem(fenceHold(), INACTIVE), 'Held')).toContain('Next: gbrain repair fences --source notes-example --only people/alice-example.md, '
-      + 'then gbrain repair fences --source notes-example --only people/alice-example.md --apply');
-    expect(holdLine(gitHoldItem(tier3Hold(), LLM_OFF), 'Held')).toContain('Ask the user first, then: gbrain config set fences.repair.llm true');
+      + 'Preview: foresights repair fences --source notes-example --only people/alice-example.md (docs/guides/write-refusals.md#fence-holder_unresolved)');
+    expect(holdLine(gitHoldItem(fenceHold(), INACTIVE), 'Held')).toContain('Next: foresights repair fences --source notes-example --only people/alice-example.md, '
+      + 'then foresights repair fences --source notes-example --only people/alice-example.md --apply');
+    expect(holdLine(gitHoldItem(tier3Hold(), LLM_OFF), 'Held')).toContain('Ask the user first, then: foresights config set fences.repair.llm true');
     expect(gitHoldItem(fenceHold(), INACTIVE).fence).toMatchObject({ auto_retry: false, next_attempt_after: null });
     expect(gitHoldDocs('invalid_fence', 'prepare_time')).toBe('docs/guides/write-refusals.md#fence-prepare_time');
     expect(gitHoldDocs('invalid_frontmatter', 'yaml_parse')).toBe('docs/guides/write-refusals.md#invalid_frontmatter-yaml_parse');
@@ -173,13 +173,13 @@ describe('source-level routing on every surface (D6)', () => {
   test('fence-only, frontmatter-only and mixed sources name the right repair commands', () => {
     const fences = holdRepairSteps('notes-example', { fences: 2, others: 0 });
     expect(fences.argv).toEqual(lane);
-    expect(fences.commands).toEqual(['gbrain repair content --source notes-example']);
+    expect(fences.commands).toEqual(['foresights repair content --source notes-example']);
     expect(fences.text).not.toContain('frontmatter');
     const frontmatter = holdRepairSteps('notes-example', { fences: 0, others: 2 });
     expect(frontmatter.argv).toEqual(['gbrain', 'repair', 'frontmatter', '--source', 'notes-example']);
     expect(frontmatter.text).not.toContain('fence');
     const mixed = holdRepairSteps('notes-example', { fences: 1, others: 1 });
-    expect(mixed.commands).toEqual(['gbrain repair frontmatter --source notes-example', 'gbrain repair content --source notes-example']);
+    expect(mixed.commands).toEqual(['foresights repair frontmatter --source notes-example', 'foresights repair content --source notes-example']);
     // #6377: slug-conflict holds take the same lane route as fence holds.
     const slugs = holdRepairSteps('notes-example', { fences: 0, others: 0, slug_conflicts: 1 });
     expect(slugs.argv).toEqual(lane);
@@ -197,19 +197,19 @@ describe('source-level routing on every surface (D6)', () => {
     expect(local.fix!.why).not.toContain('frontmatter');
     const remote = heldFilesNotice(fenceOnly, true)!;
     expect(remote.fix).toMatchObject({ actor: 'host_admin', argv: lane });
-    expect(remote.fix!.user_message).toContain("'gbrain repair content --source notes-example'");
+    expect(remote.fix!.user_message).toContain("'foresights repair content --source notes-example'");
     expect(remote.fix!.user_message).not.toContain('frontmatter');
     expect(deriveNext(remote.fix!, http)).toBe('tell_user_to_run');
     expect(heldFilesNotice([{ source_id: 'notes-example', missing: 1, stale: 0 }], false)!.fix!.argv).toEqual(['gbrain', 'repair', 'frontmatter', '--source', 'notes-example']);
     const mixed = hostOperatorFix([{ source_id: 'notes-example', route: { fences: 1, others: 1 } }], 'Held.');
-    expect(mixed.user_message).toContain("'gbrain repair frontmatter --source notes-example'");
-    expect(mixed.user_message).toContain("'gbrain repair content --source notes-example'");
+    expect(mixed.user_message).toContain("'foresights repair frontmatter --source notes-example'");
+    expect(mixed.user_message).toContain("'foresights repair content --source notes-example'");
     const frontmatter = hostOperatorFix([{ source_id: 'notes-example' }], 'Held.');
-    expect(frontmatter.user_message).toContain("'gbrain repair frontmatter --source notes-example' on the brain host");
+    expect(frontmatter.user_message).toContain("'foresights repair frontmatter --source notes-example' on the brain host");
     expect(frontmatter.user_message).not.toContain('repair content');
     expect(recordRoute(fenceHold())).toEqual({ fences: 1, others: 0 });
     expect(recordRoute({ code: 'frontmatter_slug_conflict' })).toEqual({ fences: 0, others: 0, slug_conflicts: 1 });
-    expect(hostOperatorFix([{ source_id: 'notes-example', route: recordRoute({ code: 'frontmatter_slug_conflict' }) }], 'Held.').user_message).toContain("'gbrain repair content --source notes-example'");
+    expect(hostOperatorFix([{ source_id: 'notes-example', route: recordRoute({ code: 'frontmatter_slug_conflict' }) }], 'Held.').user_message).toContain("'foresights repair content --source notes-example'");
   });
 
   test('get_page file_held: the local fix is that file\'s preview; the remote read gets tell_user_to_run saying whether it clears by itself (Codex CEO #7)', () => {
@@ -224,7 +224,7 @@ describe('source-level routing on every surface (D6)', () => {
     const inactive = fileHeldField({ record: fenceHold(), revision: 'r1', fenceAuto: INACTIVE }, true);
     expect(inactive.fix.user_message).toContain('It does not clear by itself because no maintenance run is active on the brain host');
     const manual = fileHeldField({ record: manualHold(), revision: 'r1', fenceAuto: ACTIVE }, true);
-    expect(manual.fix.user_message).toContain('needs an edit gbrain will not guess');
+    expect(manual.fix.user_message).toContain('needs an edit foresights will not guess');
     const paid = fileHeldField({ record: tier3Hold(), revision: 'r1', fenceAuto: LLM_OFF }, true);
     expect(paid.fix).toMatchObject({ argv: ['gbrain', 'config', 'set', 'fences.repair.llm', 'true'], consent: ['paid'], actor: 'host_admin' });
     expect(next(paid.fix, http)).toBe('tell_user_to_run');
@@ -234,14 +234,14 @@ describe('source-level routing on every surface (D6)', () => {
 
   test('write refusals over a held fence file name the fence repair, never frontmatter; a blocked fence receipt names both the edit and the preview', () => {
     const held = heldFileDiagnostic(heldFileMessage('drift', 'invalid_fence'), 'notes-example')!;
-    expect(held.suggestion).toContain('gbrain repair fences --source notes-example');
+    expect(held.suggestion).toContain('foresights repair fences --source notes-example');
     expect(held.suggestion).not.toContain('repair frontmatter');
-    expect(heldFileDiagnostic(heldFileMessage('drift', 'invalid_frontmatter'), 'notes-example')!.suggestion).toContain('gbrain repair frontmatter --source notes-example');
+    expect(heldFileDiagnostic(heldFileMessage('drift', 'invalid_frontmatter'), 'notes-example')!.suggestion).toContain('foresights repair frontmatter --source notes-example');
     expect(heldFileDiagnostic(heldFileMessage('drift', 'invalid_frontmatter'), 'notes-example')!.suggestion).not.toContain('repair fences');
     const blocked = writeFailureDiagnostic('invalid_params', fenceHold().message);
     expect(blocked).toMatchObject({ reason: 'invalid_fence', message: fenceHold().message });
     expect(blocked.suggestion).toContain('the takes fence (body), row 3');
-    expect(blocked.suggestion).toContain('gbrain repair fences');
+    expect(blocked.suggestion).toContain('foresights repair fences');
     expect(writeFailureDiagnostic('invalid_params', 'The value is invalid.').reason).toBe('invalid_params');
   });
 });

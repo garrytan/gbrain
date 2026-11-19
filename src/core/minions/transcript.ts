@@ -8,7 +8,7 @@
  *
  * The output is suitable for:
  *  - an attachment on the completed subagent job row
- *  - inline display in `gbrain agent logs <job>` after the heartbeat stream
+ *  - inline display in `foresights agent logs <job>` after the heartbeat stream
  *  - committing as a brain page under wiki/agents/<subagentId>/transcript-*
  *
  * Does NOT redact anything — the caller writes to a location they control.

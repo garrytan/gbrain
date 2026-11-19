@@ -1,5 +1,5 @@
 /**
- * `gbrain repair agent-session-facts` (#8064) and doctor `agent_session_facts`, on keyless PGLite brains with no
+ * `foresights repair agent-session-facts` (#8064) and doctor `agent_session_facts`, on keyless PGLite brains with no
  * git repository (an unmanaged brain, and a managed one whose content root is a plain directory).
  *
  * Protects: capture-lane facts from agent-launched sessions (speaker sidecar, an operator --cwd prefix or --session id)
@@ -87,7 +87,7 @@ function corpusFixture(base: string) {
   return { corpus, agents };
 }
 
-describe('gbrain repair agent-session-facts, unmanaged repo-less brain', () => {
+describe('foresights repair agent-session-facts, unmanaged repo-less brain', () => {
   let engine: PGLiteEngine;
   let base: string;
   let corpus: string;
@@ -155,7 +155,7 @@ describe('gbrain repair agent-session-facts, unmanaged repo-less brain', () => {
     const finding = await agentSessionFactsCheck(engine);
     expect(finding.status).toBe('warn');
     expect(finding.details).toMatchObject({ evidenced: 2, ambiguous: 1, excluded: 1, unclassifiable: 1 });
-    expect(finding.message).toContain('gbrain repair agent-session-facts');
+    expect(finding.message).toContain('foresights repair agent-session-facts');
     expect(finding.message).toContain('agreement');
     const wave = (await runWaveChecks(engine, { only: 'wave' })).find(f => f.spec.id === 'agent_session_facts')!;
     expect(wave.state).toBe('finding');
@@ -271,7 +271,7 @@ async function seedEntity(engine: BrainEngine, root: string, slug: string, title
   writeFileSync(join(root, `${slug}.md`), serializePageToMarkdown(snapshot.page, snapshot.tags));
 }
 
-describe('gbrain repair agent-session-facts, managed repo-less brain', () => {
+describe('foresights repair agent-session-facts, managed repo-less brain', () => {
   test('fenced rows are rewritten in their page, database-only rows by one maintenance request; a fenced take struck in its page, a database-only one retired by the request', async () => {
     const base = mkdtempSync(join(tmpdir(), 'gbrain-agent-session-managed-'));
     try {

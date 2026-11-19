@@ -110,7 +110,7 @@ describe('#4583 ship-review — unscoped sync refusal vs --dry-run', () => {
     // The warning survives, prefixed so the operator knows it is advisory here...
     expect(stderr).toContain('[dry-run] a real run would be refused');
     // ...and carries the same routing guidance as the refusal.
-    expect(stderr).toContain('gbrain sync --source <id>');
+    expect(stderr).toContain('foresights sync --source <id>');
     const rows = await engine.executeRaw<{ n: number }>(
       `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = 'default'`,
     );

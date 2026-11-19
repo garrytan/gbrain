@@ -1,5 +1,5 @@
 /**
- * `gbrain pages unsearchable --source <id> [--state <state>] [--limit N] [--json]`
+ * `foresights pages unsearchable --source <id> [--state <state>] [--limit N] [--json]`
  * (#6696 B3): read-only listing of what search cannot fully see in one source,
  * one row per (page, embedding state) with its reason, chunk count, bytes and
  * the state's protocol fix. States and their exits: src/core/embedding-state.ts.
@@ -27,7 +27,7 @@ import {
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 1000;
 
-export const UNSEARCHABLE_USAGE = 'Usage: gbrain pages unsearchable --source <id> [--state <state>] [--limit N] [--json]';
+export const UNSEARCHABLE_USAGE = 'Usage: foresights pages unsearchable --source <id> [--state <state>] [--limit N] [--json]';
 
 export interface UnsearchableArgs { source: string | null; state: EmbeddingState | null; limit: number; json: boolean }
 
@@ -99,7 +99,7 @@ export async function runPagesUnsearchable(engine: BrainEngine, args: string[]):
     + `${summary.counts.keyword_only ?? 0} keyword_only); ${EMBEDDING_STATES.map(s => `${s} ${summary.counts[s] ?? 0}`).join(', ')}.`);
   if (awaitingSync.held_files > 0 || awaitingSync.sync_state === 'behind') {
     console.log(`Not yet in any state: ${awaitingSync.held_files} file(s) held by sync (${awaitingSync.new_files} new, ${awaitingSync.stale_pages} newer than their page); sync ${awaitingSync.sync_state}. `
-      + `gbrain sync status --source ${sourceId} --json shows why.`);
+      + `foresights sync status --source ${sourceId} --json shows why.`);
   }
   if (rows.length === 0) { console.log(parsed.state ? `No pages in state ${parsed.state}.` : 'Nothing unsearchable.'); return; }
   for (const row of rows) {

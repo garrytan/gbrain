@@ -128,12 +128,12 @@ export interface LoopbackHandle {
   close(): void;
 }
 
-const SUCCESS_HTML = `<!doctype html><html><head><meta charset="utf-8"><title>gbrain — connected</title></head>
+const SUCCESS_HTML = `<!doctype html><html><head><meta charset="utf-8"><title>foresights — connected</title></head>
 <body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:90vh;background:#0a0a0f;color:#e0e0e0">
 <div style="text-align:center"><h1 style="color:#22c55e">Connected</h1>
 <p>You can close this tab and return to your agent.</p></div></body></html>`;
 
-const DENIED_HTML = `<!doctype html><html><head><meta charset="utf-8"><title>gbrain — not connected</title></head>
+const DENIED_HTML = `<!doctype html><html><head><meta charset="utf-8"><title>foresights — not connected</title></head>
 <body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:90vh;background:#0a0a0f;color:#e0e0e0">
 <div style="text-align:center"><h1 style="color:#ef4444">Not connected</h1>
 <p>The consent was denied or invalid. Return to your agent for the fix.</p></div></body></html>`;
@@ -175,7 +175,7 @@ export function startLoopback(opts: {
         const code = params.get('code');
         if (!code) {
           // Favicon probes etc. — not the redirect.
-          return new Response('gbrain oauth callback', { status: 404 });
+          return new Response('foresights oauth callback', { status: 404 });
         }
         if (params.get('state') !== opts.state) {
           rejectCode(new CredentialError('state_mismatch'));

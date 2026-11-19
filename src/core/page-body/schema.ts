@@ -381,7 +381,7 @@ CREATE TRIGGER page_segment_derivations_refuse_purging BEFORE INSERT OR UPDATE O
  * `page_view_digests` is absent while migration v248 runs. Postgres only: PGLite has no role system, and its
  * bootstrap enables RLS on no core table either. Source-scoped policies are operator SQL (docs/ENGINES.md).
  * Only a full initSchema replays this block: a migration that creates one of these tables enables RLS itself
- * (v275 backfills the v273 tables), since `gbrain apply-migrations --yes` runs migrations without the blob.
+ * (v275 backfills the v273 tables), since `foresights apply-migrations --yes` runs migrations without the blob.
  */
 export const PAGE_BODY_RLS_TABLES = ['page_segment_texts', 'page_body_manifest', 'page_body_stagings', 'page_body_staging_parts', 'page_view_digests', 'page_body_staging_texts', 'page_segment_derivations',
   'page_derivation_spend', 'page_segment_derivation_purges', 'page_segment_derivation_purge_pages'] as const;

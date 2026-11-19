@@ -20,7 +20,7 @@
  * Atomicity: write the fence to `<file>.tmp`, re-parse the .tmp body,
  * THEN `renameSync` to the canonical file. If parse fails the .tmp
  * stays in place as quarantine evidence and the JSONL surface
- * (`facts.write_failures.jsonl`) records the failure for `gbrain
+ * (`facts.write_failures.jsonl`) records the failure for `foresights
  * doctor` to surface. The on-disk markdown file is never corrupted
  * mid-write (renameSync is atomic on POSIX) and the DB is never
  * inserted when the fence isn't valid (Codex Q7 atomic-write
@@ -121,7 +121,7 @@ export interface FenceWriteResult {
   ids: number[];
   /** True when the path fell through to DB-only: local_path unset, `sync.write_through` off, or a read-only checkout (`databaseOnlyReason`). */
   legacyFallback?: true;
-  /** Why a `legacyFallback` is expected: `mirror_read_only` (#7098) or `url_clone` (#6946, a clone gbrain owns and pulls), so the checkout is never written. */
+  /** Why a `legacyFallback` is expected: `mirror_read_only` (#7098) or `url_clone` (#6946, a clone foresights owns and pulls), so the checkout is never written. */
   databaseOnlyReason?: 'mirror_read_only' | 'url_clone' | 'file_database_drift';
   /** A held file mirror's typed diagnostic and repair instructions; facts take the DB-only fallback. */
   warning?: string;
@@ -169,7 +169,7 @@ const FAILURE_LOG_PATH = (): string => gbrainPath('facts.write_failures.jsonl');
 
 function recordWriteFailure(slug: string, sourceId: string, warnings: string[], filePath: string): void {
   // Best-effort JSONL append — never throws back into the caller. The
-  // log is the operator-visibility surface; `gbrain doctor` reads it
+  // log is the operator-visibility surface; `foresights doctor` reads it
   // to surface facts.write_failures.
   try {
     const dir = dirname(FAILURE_LOG_PATH());
@@ -215,7 +215,7 @@ export function gitPathState(repoPath: string, filePath: string): FactFenceGitPa
     const lines = status.split('\n').filter((l) => l.length > 0);
     if (lines.length === 0) return 'clean';
     // Distinguish dirt that IS the target fence file (safe for the
-    // path-limited commit to sweep — a prior gbrain fence-commit that failed
+    // path-limited commit to sweep — a prior foresights fence-commit that failed
     // leaves exactly this shape) from genuinely foreign dirt: unmerged
     // conflict states, rename entries naming a second path, or any entry the
     // parse can't positively attribute to `rel` (git quotes special chars).
@@ -309,7 +309,7 @@ export function stubEntityPage(
  *
  * Returns `legacyFallback: true` when `target.localPath` is null (also
  * under `sync.write_through` off and, with `databaseOnlyReason`, for a
- * read-only mirror (#7098) or a clone gbrain owns, #6946) —
+ * read-only mirror (#7098) or a clone foresights owns, #6946) —
  * the caller is responsible for falling through to the legacy
  * DB-only `engine.insertFact` path. We don't do the legacy fallback
  * here because the caller has the FactsBackstopCtx (visibility,
@@ -440,7 +440,7 @@ export async function writeFactsToFence(
         // entity page on disk.
         //
         // Sunset target: v0.36, for arm 1 ONLY (the 'unprefixed' reason in
-        // the audit log). Once `stub_guard_24h` (the gbrain doctor surface
+        // the audit log). Once `stub_guard_24h` (the foresights doctor surface
         // backed by the audit log written here) reads <5 unprefixed
         // hits/week for 3 consecutive weeks on production brains, the
         // prefix-expansion in resolveEntitySlug is sufficient and arm 1 can
@@ -586,7 +586,7 @@ export async function writeFactsToFence(
         if (fileBefore === null ? existsSync(filePath) : !existsSync(filePath) || readFileSync(filePath, 'utf-8') !== fileBefore) return null;
         if (stored && !await bestEffortStoredBodyMirror(tx, target.sourceId, target.slug, stored,
           savepoint => withPageTierKept(savepoint, target, () => mirrorFileBody(savepoint, target.sourceId, target.slug, tmpBody, stored)),
-          err => console.warn(`[facts.fence] FACTS_PAGE_MIRROR_FAILED: ${target.slug} (source ${target.sourceId}): ${err instanceof Error ? err.message : String(err)}; page cache stale until gbrain sync --source ${target.sourceId}`))) return null;
+          err => console.warn(`[facts.fence] FACTS_PAGE_MIRROR_FAILED: ${target.slug} (source ${target.sourceId}): ${err instanceof Error ? err.message : String(err)}; page cache stale until foresights sync --source ${target.sourceId}`))) return null;
         if (!stored && await readStoredBody(tx, target.sourceId, target.slug, true)) return null;
         const inserted = await insertFenceRows(tx, target.sourceId, enriched, facts, derivation);
         if (fileBefore === null ? existsSync(filePath) : !existsSync(filePath) || readFileSync(filePath, 'utf-8') !== fileBefore) {

@@ -5,9 +5,9 @@
  * Single source of truth for "re-embed one page with the active CR mode."
  * Composed by THREE consumers:
  *
- *   1. `src/core/import-file.ts` — sync-time re-embed during `gbrain sync`
+ *   1. `src/core/import-file.ts` — sync-time re-embed during `foresights sync`
  *      (synchronous, inline).
- *   2. `src/commands/reindex.ts` — `gbrain reindex --markdown` batch sweep
+ *   2. `src/commands/reindex.ts` — `foresights reindex --markdown` batch sweep
  *      (per-page loop, synchronous within the command process).
  *   3. `src/core/minions/handlers/contextual-reindex-per-chunk.ts` — Minion
  *      job handler for the post-upgrade-prompt-accepted backfill (async,

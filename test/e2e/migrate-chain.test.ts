@@ -8,7 +8,7 @@
  * Covers:
  *   - Post-migration schema invariants (the v15→v23 chain's end state).
  *     Verifies migration 21 + 23 restructure didn't break anything.
- *   - gbrain doctor --locks detects a real idle-in-transaction connection
+ *   - foresights doctor --locks detects a real idle-in-transaction connection
  *     via a second postgres-js client.
  *   - runMigrationsUpTo helper advances config.version to the target and
  *     stops (doesn't blow past).
@@ -203,7 +203,7 @@ describeE2E('PR #356 — withReservedConnection round-trip', () => {
     // that backend, which is a mild side effect, not a correctness issue.
     // What we assert here: the SET is actually effective INSIDE the
     // callback. The leak-or-not behavior is a postgres-js contract, not
-    // something gbrain should try to hide.
+    // something foresights should try to hide.
     const engine = getEngine();
     const observed = await engine.withReservedConnection(async (conn) => {
       await conn.executeRaw("SET application_name = 'gbrain-test-reserved'");

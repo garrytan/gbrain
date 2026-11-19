@@ -23,7 +23,7 @@
  * #5751: a caller may waive two admit reasons that its no-op publication can
  * never resolve (so admitting them re-admits the same item on every run): a
  * pending contextual-mode stamp (only an import that changes the page, or
- * `gbrain repair contextual-mode`, stamps it) and canonical file bytes that
+ * `foresights repair contextual-mode`, stamps it) and canonical file bytes that
  * differ from the prepared content while parsing to the same page. Every
  * other check still runs; the result lists each waiver it applied.
  */
@@ -121,7 +121,7 @@ export async function inspectUnchanged(engine: Pick<BrainEngine, 'kind' | 'execu
  * above the safe-chunk fence (the no-op rebuilds neither, as kernelPageWork says), and every chunk of its current generation
  * has a vector in the active column for its exact text. Such a no-op queues no embedding effect (a re-sync, a conversion's
  * strict pass); a page with projection work, a chunk never embedded, or one embedded for other text still gets one, as
- * before. A model change keeps the column's vectors until `gbrain embed --stale`, as for any page that was not written.
+ * before. A model change keeps the column's vectors until `foresights embed --stale`, as for any page that was not written.
  */
 export async function chunksEmbeddedAsIs(engine: Pick<BrainEngine, 'kind' | 'executeRaw'>, pageId: number): Promise<boolean> {
   const { column } = await embeddingWriteTarget(engine);

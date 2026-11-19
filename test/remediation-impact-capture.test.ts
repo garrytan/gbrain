@@ -1,7 +1,7 @@
 /**
  * Remediation impact history (#6109).
  *
- * `gbrain onboard --history` reads migration_impact_log. runRemediation is
+ * `foresights onboard --history` reads migration_impact_log. runRemediation is
  * its writer: every executed step whose job moves a tracked metric records
  * that metric just before its job is submitted and again once the job is
  * terminal. Each metric must be the number the rest of the brain reports

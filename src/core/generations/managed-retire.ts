@@ -72,7 +72,7 @@ export async function prepareGenerationRetireMember(engine: BrainEngine, row: Wr
   if (!p || p.kind !== GENERATION_RETIRE_INTENT || row.authority.remote || !p.generationKey || p.generationKey.sourceId !== row.source_id
     || !generationAdapter(p.generationKey.kind)?.publishesInPlace) {
     throw opError('permission_denied', 'Unsupported generation retirement request.',
-      `Request ${row.request_id} in source ${row.source_id} is not a generation retirement the trusted local writer admitted, so the coordinator refused it before any change. Retirements run only from the gbrain CLI on the brain host.`);
+      `Request ${row.request_id} in source ${row.source_id} is not a generation retirement the trusted local writer admitted, so the coordinator refused it before any change. Retirements run only from the foresights CLI on the brain host.`);
   }
   await assertMemberPending(engine, row, p.activationId, p.generationKey.kind);
   await authorizeWrite(engine, row.authority, 'delete_page', row.slug);

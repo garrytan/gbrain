@@ -1,5 +1,5 @@
 /**
- * #8052: `gbrain repair provenance --apply` stamps a connector page's stored tier as its `trust_tier` frontmatter
+ * #8052: `foresights repair provenance --apply` stamps a connector page's stored tier as its `trust_tier` frontmatter
  * marker (`restamp`, #7918), and the next managed connector import re-rendered the page without it, so doctor
  * `provenance_stamp_drift` listed the page again after every import and could never reach zero on a brain with
  * active connector sources.

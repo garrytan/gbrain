@@ -1,9 +1,9 @@
 /**
  * GBRA-130 C-1 / A-16: a withdrawal-mirror effect stuck in recovery after a hand edit.
  *
- * Protects: a `forget` queued by a gbrain before GBRA-190 G4 (test/helpers/legacy-forget.ts; a current forget publishes
+ * Protects: a `forget` queued by a foresights before GBRA-190 G4 (test/helpers/legacy-forget.ts; a current forget publishes
  * its files itself and the mirror only drains such rows) whose mirror crashed after writing the file, followed by a hand edit of that file (it matches
- * neither the pre-withdrawal nor the withdrawn bytes), blocks every write on the worktree. `gbrain repair
+ * neither the pre-withdrawal nor the withdrawn bytes), blocks every write on the worktree. `foresights repair
  * stuck-recovery` resolves it with `--keep withdrawn` only: the preview lists the file, both fingerprints and the
  * request; the apply is bound to the preview hash, backs the edited bytes up first, writes the recorded withdrawn
  * bytes and lets the effect finish, so the queued write behind it commits. The forgotten fact stays forgotten after
@@ -120,8 +120,8 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       const read = (await readHeadBlockers(s.engine, [queued], localHostId())).get(queued)!;
       expect(read.status).toBe('blocked');
       const blocker = (read as { blocker: Parameters<typeof headBlockerAction>[0] }).blocker;
-      expectItemFailure({ key: blocker.ids[0], code: blocker.state ?? undefined, fix: headBlockerAction(blocker, SOURCE, `gbrain sync --source ${SOURCE}`) },
-        { key: s.effectId, code: 'unexpected_file_bytes', fix: new RegExp(`^gbrain repair stuck-recovery --source ${SOURCE} --request-id ${s.requestId}$`) });
+      expectItemFailure({ key: blocker.ids[0], code: blocker.state ?? undefined, fix: headBlockerAction(blocker, SOURCE, `foresights sync --source ${SOURCE}`) },
+        { key: s.effectId, code: 'unexpected_file_bytes', fix: new RegExp(`^foresights repair stuck-recovery --source ${SOURCE} --request-id ${s.requestId}$`) });
       expect((await graduationBlockers(s.engine, localHostId())).find(b => b.kind === 'effect_recovery' && b.id === s.effectId))
         .toMatchObject({ argv: ['gbrain', 'repair', 'stuck-recovery', '--source', SOURCE, '--request-id', s.requestId], needsUser: true });
 
@@ -134,7 +134,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       expect(details.recoveries[0].files[0]).toMatchObject({ matches: 'neither', disk: { sha256: sha256(EDITED) },
         prior: { sha256: s.record.beforeHash }, withdrawn: { sha256: s.record.afterHash } });
       expect(details.choices.map((choice: { keep: string }) => choice.keep)).toEqual(['withdrawn']);
-      expect(details.choices[0].apply_command).toBe(`gbrain repair stuck-recovery --source ${SOURCE} --keep withdrawn --apply --expect ${preview.preview_hash} --yes`);
+      expect(details.choices[0].apply_command).toBe(`foresights repair stuck-recovery --source ${SOURCE} --keep withdrawn --apply --expect ${preview.preview_hash} --yes`);
 
       for (const keep of ['disk', 'prior']) {
         await expect(repair(s.engine, { apply: true, expect: preview.preview_hash!, keep })).rejects.toMatchObject({ code: 'recovery_choice_refused' });
@@ -168,7 +168,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       const preview = await expectUnitNotAborted(() => repair(s.engine));
       const refused = (preview.details as Record<string, any>).refused;
       expect(refused).toHaveLength(1);
-      const argv = `gbrain repair stuck-recovery --source ${SOURCE} --request-id ${s.requestId}`;
+      const argv = `foresights repair stuck-recovery --source ${SOURCE} --request-id ${s.requestId}`;
       expectItemFailure({ key: refused[0].effect_id, code: refused[0].code, fix: refused[0].fix }, { key: s.effectId, code: 'recovery_effect_unsupported', fix: new RegExp(`^${argv}$`) });
       expect(refused[0].fix).toMatchObject({ ask_user: true });
       const named = await repair(s.engine, { requestId: s.requestId }).catch(error => error);

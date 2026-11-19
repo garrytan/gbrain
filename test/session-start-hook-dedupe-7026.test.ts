@@ -1,7 +1,7 @@
 /**
- * #7026 part 1: Claude Code records `gbrain hook session-start` stdout as a
+ * #7026 part 1: Claude Code records `foresights hook session-start` stdout as a
  * SessionStart `hook_success` attachment, not as hook_additional_context.
- * The parser keeps that block (from gbrain's envelope on) as an injected
+ * The parser keeps that block (from foresights's envelope on) as an injected
  * block, so the first prompt's turn context does not repeat the facts the
  * session-start pack already showed, and core memory printed before the
  * envelope does not suppress pointers. Other tools' SessionStart output is
@@ -40,7 +40,7 @@ function transcript(lines: string[]): string {
 }
 
 describe('#7026 SessionStart hook_success is an injected block', () => {
-  test('gbrain session-start output is kept from the envelope on; a foreign SessionStart output is excluded', () => {
+  test('foresights session-start output is kept from the envelope on; a foreign SessionStart output is excluded', () => {
     const p = transcript([
       sessionStartLine('SessionStart', 'project-sync: repo is 2 commits behind; see companies/acme-example'),
       sessionStartLine('SessionStart', composeSessionStartOutput(CORE, ['MEMORY digest line', PACK])),

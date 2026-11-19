@@ -1,5 +1,5 @@
 /**
- * GBRA-133: the read-only push probe of `gbrain sources writer git-durability --enable` refused a checkout whose
+ * GBRA-133: the read-only push probe of `foresights sources writer git-durability --enable` refused a checkout whose
  * remote branch had moved since the last fetch (`[rejected] ... (fetch first)` or `(non-fast-forward)`), so enable
  * failed with git_push_unavailable even though the Git effect publishes that case itself: it merges the remote commits
  * in memory and pushes the merge without moving the checkout (#7010, `pushGitRoot`). The probe now passes a

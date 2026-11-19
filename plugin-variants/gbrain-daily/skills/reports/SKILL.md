@@ -31,7 +31,7 @@ This skill guarantees:
 - Reports saved with timestamped filenames and frontmatter
 - Keyword routing: query → report category mapping
 - Latest report loadable by category name
-- Reports are searchable via gbrain search/query
+- Reports are searchable via foresights search/query
 - Outbound reports pass the Actionability Gate (below) before delivery
 
 ## Phases
@@ -100,7 +100,7 @@ delivering any report with links:
 1. Compose the report.
 2. Scan every link against the failure modes above:
    - **Brain-page links:** run `git status` in the brain repo — an uncommitted
-     page behind a link is a Dead link; commit + push first. `gbrain get <slug>`
+     page behind a link is a Dead link; commit + push first. `foresights get <slug>`
      confirms the page exists at all.
    - **External links:** a profile, homepage, or channel URL standing in for
      specific content is Indirect.
@@ -138,11 +138,11 @@ and any saved report that carries external links.
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - A report link fails the delivery scan (broken, dead, indirect): fix it before delivery; a missing link is a warning, not a blocker.
-- Saving the report returns `write_pending` (exit 10): the link 404s until the write commits; poll `gbrain write-request <request_id>` before sharing it.
-- A report lookup (`gbrain search`) is empty with a degraded notice: say the search was keyword-only rather than "no prior report".
+- Saving the report returns `write_pending` (exit 10): the link 404s until the write commits; poll `foresights write-request <request_id>` before sharing it.
+- A report lookup (`foresights search`) is empty with a degraded notice: say the search was keyword-only rather than "no prior report".
 
 ## Anti-Patterns
 

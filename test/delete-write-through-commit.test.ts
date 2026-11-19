@@ -9,7 +9,7 @@
  * sync" every tick until a human committed it by hand.
  *
  * Fix: `deletePageThrough` best-effort commits the removal (path-limited) when
- * the repo carries the gbrain durability post-commit hook, exactly as
+ * the repo carries the foresights durability post-commit hook, exactly as
  * `writePageThrough` does for writes. Unhardened repos keep the old
  * unlink-only behavior.
  */
@@ -32,7 +32,7 @@ function git(cwd: string, ...args: string[]): string {
   }).trim();
 }
 
-/** Hook file carrying the gbrain durability banner (what `isDurabilityHardened`
+/** Hook file carrying the foresights durability banner (what `isDurabilityHardened`
  *  looks for) with a no-op body so tests never attempt a real push. */
 function installFakeDurabilityHook(repoPath: string): void {
   const hooksDir = join(repoPath, '.git', 'hooks');

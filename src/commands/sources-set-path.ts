@@ -1,5 +1,5 @@
 /**
- * gbrain sources set-path <id> <path> — non-destructive local_path repair.
+ * foresights sources set-path <id> <path> — non-destructive local_path repair.
  *
  * Reported incident (#4739): a brain's `default` source sat with
  * `local_path: null` while the sync.repo_path fallback was broken, and there
@@ -35,8 +35,8 @@ export async function runSetPath(engine: BrainEngine, rawArgs: string[]): Promis
   const rawPath = args[1];
 
   if (!id || !rawPath) {
-    console.error('Usage: gbrain sources set-path <id> <path> [--force] | gbrain sources set-path <id> --clear');
-    console.error("  Sets the source's local_path — the on-disk directory gbrain treats as");
+    console.error('Usage: foresights sources set-path <id> <path> [--force] | foresights sources set-path <id> --clear');
+    console.error("  Sets the source's local_path — the on-disk directory foresights treats as");
     console.error('  its write-through target and walks for sync/audit. Non-destructive: only');
     console.error('  updates the pointer, never touches files on disk.');
     console.error("  Refuses a path that overlaps another source's tree; --force bypasses that guard.");
@@ -44,7 +44,7 @@ export async function runSetPath(engine: BrainEngine, rawArgs: string[]): Promis
     process.exit(2);
   }
 
-  // Same treatment addSource applies (#3696 / gbrain#2955): absolutize a
+  // Same treatment addSource applies (#3696 / foresights#2955): absolutize a
   // relative path and normalize MSYS/Git-Bash drive spellings BEFORE the
   // existence check and the UPDATE. Storing '.' or '/c/Users/x' verbatim
   // would plant the exact phantom-path class this repair command exists to
@@ -58,7 +58,7 @@ export async function runSetPath(engine: BrainEngine, rawArgs: string[]): Promis
   );
   if (existing.length === 0) {
     console.error(`Error: source "${id}" not found.`);
-    console.error(`  Run 'gbrain sources list' to see registered sources.`);
+    console.error(`  Run 'foresights sources list' to see registered sources.`);
     process.exit(4);
   }
 
@@ -96,22 +96,22 @@ export async function runSetPath(engine: BrainEngine, rawArgs: string[]): Promis
   } else {
     console.log(`Set source "${id}" local_path (was NULL) -> ${path}`);
   }
-  console.log('Run `gbrain doctor` to confirm the change resolves any related warning.');
+  console.log('Run `foresights doctor` to confirm the change resolves any related warning.');
 }
 
-/** #5673: `gbrain sources set-path <id> --clear` for connector sources; #7630: and for any relative local_path. */
+/** #5673: `foresights sources set-path <id> --clear` for connector sources; #7630: and for any relative local_path. */
 async function runClearPath(engine: BrainEngine, args: string[]): Promise<void> {
   const [id, extra] = args;
   if (!id || extra !== undefined || args.some(a => a.startsWith('-'))) {
-    console.error('Usage: gbrain sources set-path <id> --clear');
-    console.error('  --clear takes no path: it removes a connector source\'s local_path, or any source\'s relative one. To set a path, run gbrain sources set-path <id> <path>.');
+    console.error('Usage: foresights sources set-path <id> --clear');
+    console.error('  --clear takes no path: it removes a connector source\'s local_path, or any source\'s relative one. To set a path, run foresights sources set-path <id> <path>.');
     process.exit(2);
   }
   try {
     const { prior, connector } = await clearConnectorLocalPath(engine, id);
     console.log(prior === null ? `Source "${id}" has no local_path; nothing to clear.` : `Cleared source "${id}" local_path (was ${prior}).`);
     console.log(connector ? 'Autopilot keeps syncing it from its provider on the autopilot interval.'
-      : `No file or page changed. Sync of "${id}" refuses until a directory is set: gbrain sources set-path ${id} <absolute-directory>.`);
+      : `No file or page changed. Sync of "${id}" refuses until a directory is set: foresights sources set-path ${id} <absolute-directory>.`);
   } catch (e) {
     if (!(e instanceof OperationError)) throw e;
     console.error(`Error (${e.code}): ${e.message}`);

@@ -1,5 +1,5 @@
 /**
- * System One inside `gbrain think` on PGLite with a fixture transport.
+ * System One inside `foresights think` on PGLite with a fixture transport.
  *
  * Protects: gather's searches run S3 under call site `think`; S2's think
  * question replaces classifyIntent for trajectory gating (regex on late or

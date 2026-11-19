@@ -1,6 +1,6 @@
 /**
  * commands/connectors/auth-token.ts — the API-token lane for providers that back
- * a source kind (`gbrain connectors auth fireflies --token -`, `gbrain connectors auth slack --token -`).
+ * a source kind (`foresights connectors auth fireflies --token -`, `foresights connectors auth slack --token -`).
  *
  * The key arrives on stdin only: a key in argv lands in shell history and the
  * process list, so `--token <value>` is refused before anything is read. The
@@ -37,12 +37,12 @@ interface ProbedAccount { id: string; label: string | null }
 
 /** What each provider's token is called, where the user copies it, and the source command that uses it. */
 const PROVIDER_TEXT: Record<TokenProviderName, { what: string; where: string; add: string }> = {
-  fireflies: { what: 'API key', where: "in Fireflies' settings, under Developer settings", add: 'gbrain sources add meetings --kind meetings --provider fireflies' },
-  slack: { what: 'Slack app token', where: "the Bot User OAuth Token (xoxb-…) on the OAuth & Permissions page of the user's own internal Slack app", add: 'gbrain sources add slack --kind slack --channels <channel-id,…>' },
+  fireflies: { what: 'API key', where: "in Fireflies' settings, under Developer settings", add: 'foresights sources add meetings --kind meetings --provider fireflies' },
+  slack: { what: 'Slack app token', where: "the Bot User OAuth Token (xoxb-…) on the OAuth & Permissions page of the user's own internal Slack app", add: 'foresights sources add slack --kind slack --channels <channel-id,…>' },
 };
 
 async function probeAccount(provider: TokenProviderName, token: string, deps: ApiTokenAuthDeps): Promise<ProbedAccount> {
-  const common = { token, userAgent: `gbrain/${VERSION} (+https://github.com/garrytan/gbrain)`, maxRequests: 3, ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}) };
+  const common = { token, userAgent: `gbrain/${VERSION} (+https://github.com/aimonk2025/gbrain)`, maxRequests: 3, ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}) };
   switch (provider) {
     case 'fireflies': {
       const account = await meetingProvider(provider, common).probe();
@@ -84,13 +84,13 @@ export async function runApiTokenAuth(provider: TokenProviderName, flags: ApiTok
     process.stdout.write(agentBlock({
       ask: `Ask the user for their ${PROVIDER_TEXT[provider].what} (${PROVIDER_TEXT[provider].where}), then pass it on stdin.`,
       why: `Syncing ${provider} needs the user's own ${PROVIDER_TEXT[provider].what}, and only the user can copy it.`,
-      risk: `The token reads what the user's ${provider} account can read; gbrain stores it only on this machine (0600) and sends it only to ${provider}.`,
+      risk: `The token reads what the user's ${provider} account can read; foresights stores it only on this machine (0600) and sends it only to ${provider}.`,
       consent: 'credentials',
       actor: 'user',
       next: 'tell_user_to_run',
       if_yes: example,
       if_no: 'Nothing was saved.',
-      verify: `gbrain connectors status ${provider}`,
+      verify: `foresights connectors status ${provider}`,
     }));
     setCliExitVerdict(1);
     return;
@@ -121,7 +121,7 @@ export async function verifyAndSaveApiToken(provider: TokenProviderName, token: 
   console.log(`Saved the ${PROVIDER_TEXT[provider].what} to ${credentialPath(provider)} (0600).`);
   console.log(['', 'Next steps:',
     `  ${PROVIDER_TEXT[provider].add}   # add the source (nothing syncs yet)`,
-    `  gbrain sync --source ${provider === 'slack' ? 'slack' : 'meetings'}   # the first sync; autopilot keeps it fresh after that`,
+    `  foresights sync --source ${provider === 'slack' ? 'slack' : 'meetings'}   # the first sync; autopilot keeps it fresh after that`,
   ].join('\n'));
   return true;
 }

@@ -1,5 +1,5 @@
 /**
- * skillify/templates.ts — template strings for `gbrain skillify scaffold`.
+ * skillify/templates.ts — template strings for `foresights skillify scaffold`.
  *
  * Pure-string generators. No I/O here; the caller writes files.
  */
@@ -8,7 +8,7 @@ import { yamlScalar } from '../frontmatter-inference.ts';
 
 /**
  * SKILLIFY_STUB sentinel (D-CX-9). Every scaffolded script body
- * carries this marker until an implementer replaces it. `gbrain
+ * carries this marker until an implementer replaces it. `foresights
  * check-resolvable --strict` fails if the sentinel is present in any
  * committed skill script — it means a scaffold shipped without a
  * real implementation.
@@ -98,7 +98,7 @@ export function skillMdTemplate(v: ScaffoldVars): string {
   );
   lines.push('');
   lines.push('```bash');
-  lines.push('gbrain eval cross-modal \\');
+  lines.push('foresights eval cross-modal \\');
   lines.push(`  --task "What this skill is supposed to accomplish" \\`);
   lines.push(`  --output skills/${v.name}/SKILL.md`);
   lines.push('```');
@@ -113,7 +113,7 @@ export function skillMdTemplate(v: ScaffoldVars): string {
     'land at `~/.gbrain/.gbrain/eval-receipts/<slug>-<sha8>.json` (sha-8 of SKILL.md',
   );
   lines.push(
-    'content). `gbrain skillify check` surfaces the receipt status as informational.',
+    'content). `foresights skillify check` surfaces the receipt status as informational.',
   );
   lines.push(
     'See `skills/skillify/SKILL.md` Phase 3 for the full 11-item checklist.',
@@ -149,7 +149,7 @@ export function testTemplate(v: ScaffoldVars): string {
   return `/**
  * Tests for skills/${v.name}/scripts/${v.name}.mjs
  *
- * Scaffolded by gbrain skillify scaffold. Replace these stubs with
+ * Scaffolded by foresights skillify scaffold. Replace these stubs with
  * real cases — start with the regression case for the failure that
  * triggered this skill (essay Step 3).
  */

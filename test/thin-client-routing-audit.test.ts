@@ -1,8 +1,8 @@
 /**
  * v0.32/v0.33 thin-client routing audit — the ROUTE additions.
  *
- * On a thin-client install (`remote_mcp` in config) `gbrain forget` and
- * `gbrain jobs list|get` must call the remote MCP op instead of reading an
+ * On a thin-client install (`remote_mcp` in config) `foresights forget` and
+ * `foresights jobs list|get` must call the remote MCP op instead of reading an
  * empty local store, and `runJobs` must refuse any other subcommand that
  * arrives with a null engine. The REFUSE additions are spawned in
  * test/cli-dispatch-thin-client.test.ts (refusedCommands); the recall route
@@ -70,7 +70,7 @@ async function thinClient(fn: () => Promise<void>): Promise<{ out: string; exitC
 const job = { id: 7, name: 'embed', queue: 'default', status: 'completed', priority: 0, attempts_made: 1, max_attempts: 3, attempts_started: 1, stalled_counter: 0, max_stalled: 1, backoff_type: 'fixed', backoff_delay: 0, backoff_jitter: 0, stacktrace: [], data: {}, created_at: '2026-01-01T00:00:00.000Z' };
 
 describe('thin-client routing audit — ROUTE additions call the remote op', () => {
-  test('gbrain forget <id> calls the remote forget op and never a local engine', async () => {
+  test('foresights forget <id> calls the remote forget op and never a local engine', async () => {
     reply = { id: '42', expired: true };
     const { out } = await thinClient(() => runForget(async () => { throw new Error('local engine opened'); }, ['42', '--reason', 'fixture']));
     expect(calls.map(c => c.tool)).toEqual(['forget']);
@@ -78,7 +78,7 @@ describe('thin-client routing audit — ROUTE additions call the remote op', () 
     expect(out).toContain('Forgot fact id=42');
   });
 
-  test('gbrain forget --source on a thin client is refused with the same forget minus --source as the fix', async () => {
+  test('foresights forget --source on a thin client is refused with the same forget minus --source as the fix', async () => {
     const requestId = '0190c6d2-1111-7000-8000-000000000042';
     const docs: string[] = [];
     const final = spyOn(cliForceExit, 'writeStdoutFinal').mockImplementation(async (doc: string) => { docs.push(doc); });
@@ -93,14 +93,14 @@ describe('thin-client routing audit — ROUTE additions call the remote op', () 
     expect(envelope.suggestion).toContain('Drop --source');
   });
 
-  test('gbrain jobs list calls list_jobs with the parsed filters', async () => {
+  test('foresights jobs list calls list_jobs with the parsed filters', async () => {
     reply = [job];
     const { out } = await thinClient(() => runJobs(null, ['list', '--status', 'completed', '--queue', 'default', '--limit', '5', '--json']));
     expect(calls).toEqual([{ tool: 'list_jobs', args: { status: 'completed', queue: 'default', limit: 5 } }]);
     expect(JSON.parse(out)[0].id).toBe(7);
   });
 
-  test('gbrain jobs get <id> calls get_job with a numeric id', async () => {
+  test('foresights jobs get <id> calls get_job with a numeric id', async () => {
     reply = job;
     const { out } = await thinClient(() => runJobs(null, ['get', '7']));
     expect(calls).toEqual([{ tool: 'get_job', args: { id: 7 } }]);
@@ -110,7 +110,7 @@ describe('thin-client routing audit — ROUTE additions call the remote op', () 
   test('runJobs refuses a non-routable subcommand that arrives with a null engine', async () => {
     const { out, exitCode } = await thinClient(() => runJobs(null, ['stats']));
     expect(exitCode).toBe(1);
-    expect(out).toContain('`gbrain jobs stats` needs a local engine and cannot run on a thin client.');
+    expect(out).toContain('`foresights jobs stats` needs a local engine and cannot run on a thin client.');
     expect(calls).toEqual([]);
   });
 });

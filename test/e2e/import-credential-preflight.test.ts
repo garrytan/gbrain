@@ -1,8 +1,8 @@
 /**
- * v0.41.6.0 D1 E2E — `gbrain import` preflight rejects missing creds.
+ * v0.41.6.0 D1 E2E — `foresights import` preflight rejects missing creds.
  *
  * Sibling of sync-credential-preflight.test.ts. Closes outside-voice F4:
- * pre-v0.41.6.0, `gbrain import <dir>` per-file embed wrote N identical
+ * pre-v0.41.6.0, `foresights import <dir>` per-file embed wrote N identical
  * "missing OPENAI_API_KEY" failures the same way sync did.
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
@@ -56,7 +56,7 @@ function runCli(args: string[], env: Record<string, string | undefined>): { code
   return { code: res.status ?? -1, stdout: res.stdout, stderr: res.stderr };
 }
 
-describe('v0.41.6.0 D1 E2E — gbrain import preflight rejects missing OPENAI_API_KEY', () => {
+describe('v0.41.6.0 D1 E2E — foresights import preflight rejects missing OPENAI_API_KEY', () => {
   test('exits non-zero with paste-ready stderr message', () => {
     const result = runCli(['import', repoDir], {});
     expect(result.code).not.toBe(0);

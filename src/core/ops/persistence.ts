@@ -91,8 +91,8 @@ async function receiptAccess(ctx: OperationContext, operation: ReceiptOperation,
 }
 
 /**
- * #9426: the brain host's operator reading a receipt another principal owns. `gbrain sources writer failures` (trusted
- * local CLI only) lists every principal's terminal receipts and names `gbrain write-request <id> --json` as each row's
+ * #9426: the brain host's operator reading a receipt another principal owns. `foresights sources writer failures` (trusted
+ * local CLI only) lists every principal's terminal receipts and names `foresights write-request <id> --json` as each row's
  * inspect step, but an owner write runs under the principal that submitted it (a fact extraction under the page write's
  * MCP client), so the own-principal lookup answered not_found. The same trusted local CLI, inside its own grant, reads
  * the receipt by request_id; a request_id two principals share stays not_found, and so does a receipt another local

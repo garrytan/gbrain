@@ -41,7 +41,7 @@ describe('H1b: --json parses, every WARN has an executable fix, every plan comma
     const bad: string[] = [];
     for (const args of commands) {
       const r = await gb(home, [...args, '--json'], { timeoutMs: 90_000 });
-      try { expectJsonContract(r, `gbrain ${args.join(' ')} --json`); } catch (e) { bad.push(`${args.join(' ')} (exit ${r.exitCode}): ${String(e).slice(0, 300)}`); }
+      try { expectJsonContract(r, `foresights ${args.join(' ')} --json`); } catch (e) { bad.push(`${args.join(' ')} (exit ${r.exitCode}): ${String(e).slice(0, 300)}`); }
     }
     expect(bad).toEqual([]);
   }, 900_000);

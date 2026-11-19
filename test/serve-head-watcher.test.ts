@@ -169,7 +169,7 @@ describe('serve HEAD watcher (commit notifier)', () => {
     expect(row).toMatchObject({ state: 'retry', reason: 'notifier_stalled', last_error_code: 'notifier_stalled' });
     expect(row.first_due_at).not.toBeNull();
     expect(h.s.lines.filter(l => l.includes('notifier_stalled'))).toHaveLength(1);
-    expect(h.s.lines.some(l => l.includes('gbrain sync --source acme-example --no-pull'))).toBe(true);
+    expect(h.s.lines.some(l => l.includes('foresights sync --source acme-example --no-pull'))).toBe(true);
   });
 
   test('lost wake: a failed or blocked run keeps the source; failed retries, blocked waits for the operator until HEAD moves', async () => {

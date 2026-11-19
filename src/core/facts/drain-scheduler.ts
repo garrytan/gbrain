@@ -1,6 +1,6 @@
 /**
  * The one in-process scheduler for the automatic facts drain (drain.ts), used
- * by stdio `gbrain serve` and `gbrain serve --http`. Its own unref'd timer
+ * by stdio `foresights serve` and `foresights serve --http`. Its own unref'd timer
  * (never the 3-second idle maintenance sweep) ticks every 10 minutes; a tick
  * runs one bounded drain when the owner saw no foreground activity since the
  * previous tick, or when 30 minutes passed since the last run, so sustained

@@ -8,7 +8,7 @@
  * subagent_rate_leases, gbrain_cycle_locks, budget_ledger, budget_reservations.
  *
  * Phase structure mirrors v0.18.0:
- *   A. Schema — `gbrain init --migrate-only` runs the migration chain,
+ *   A. Schema — `foresights init --migrate-only` runs the migration chain,
  *      picking up v24 on brains currently at v23 (post-v0.18.0) or earlier.
  *
  * Without this orchestrator, the `apply-migrations` registry stops at
@@ -60,7 +60,7 @@ export const v0_18_1: Migration = {
       'v0.18.1 fixes a latent security gap: 10 gbrain-managed public tables ' +
       'shipped without RLS. On Supabase, they were reachable by the anon key. ' +
       'Migration v24 backfills RLS on existing brains automatically when ' +
-      '`gbrain apply-migrations` runs. `gbrain doctor` now scans every ' +
+      '`foresights apply-migrations` runs. `foresights doctor` now scans every ' +
       'public table (no hardcoded allowlist) and exits 1 on gaps. For tables ' +
       'that should stay anon-readable on purpose, operators set a ' +
       '`GBRAIN:RLS_EXEMPT reason=<why>` comment via psql. See ' +

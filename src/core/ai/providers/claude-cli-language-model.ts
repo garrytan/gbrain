@@ -64,7 +64,7 @@ let cwdEnsured = false;
 function ensureCleanCwd(): string {
   if (!cwdEnsured) {
     // #4472: the per-PID naming leaks one scratch dir per crashed/killed
-    // gbrain process forever — sweep dead-PID leftovers once per process at
+    // foresights process forever — sweep dead-PID leftovers once per process at
     // provider init. Best-effort: a sweep failure never breaks a chat call.
     try { sweepDeadClaudeCliScratchDirs(); } catch { /* best-effort */ }
     mkdirSync(CLAUDE_CWD, { recursive: true });
@@ -446,11 +446,11 @@ function runClaude(
       // full Claude Code agent. `--tools ""` disables every built-in tool
       // (Bash/Read/WebSearch/...); `--strict-mcp-config` ignores all user-level
       // MCP servers (without it, each call would boot the user's MCP servers —
-      // including gbrain's own MCP → recursion + PGLite single-writer lock
+      // including foresights's own MCP → recursion + PGLite single-writer lock
       // contention). Verified against claude CLI 2.1.145 --help.
       '--tools', '',
       '--strict-mcp-config',
-      // #5820: the child must not run the user's Claude Code hooks — gbrain's
+      // #5820: the child must not run the user's Claude Code hooks — foresights's
       // own Stop hook would bank this call's prompt as a "conversation" and
       // extracting it spawns another call. Unlike --bare this keeps the
       // subscription login (credentials are not settings). Accepted by every
@@ -462,7 +462,7 @@ function runClaude(
     }
     // Env scrub: guarantee the CLI authenticates via its own OAuth session
     // (subscription), never via an inherited API key. Without this, an
-    // ANTHROPIC_API_KEY in gbrain's env (the exact setup this recipe is meant
+    // ANTHROPIC_API_KEY in foresights's env (the exact setup this recipe is meant
     // to replace) silently flips billing to per-token API usage.
     //
     // Also scrub the CLAUDE_CODE_USE_* backend-switch flags: Bedrock, Vertex
@@ -477,7 +477,7 @@ function runClaude(
     delete env.ANTHROPIC_BASE_URL;
     // Prefix wipe, not a denylist (review hardening): the backend-switch
     // family grows one CLAUDE_CODE_USE_* flag per new cloud backend, and any
-    // future switch inherited from gbrain's env would silently re-route the
+    // future switch inherited from foresights's env would silently re-route the
     // child's billing. Subscription-only is the recipe's contract.
     for (const k of Object.keys(env)) {
       if (k.startsWith('CLAUDE_CODE_USE_')) delete env[k];

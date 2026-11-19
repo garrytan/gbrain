@@ -2,7 +2,7 @@
  * .github/workflows/fix-wave-gate.yml + scripts/fix-wave-gate.ts — the contributor gate.
  *
  * Protects: contributor PRs into master fail unless the head repository is
- * garrytan/gbrain or a human maintainer applied `maintainer-override`; GBRA
+ * aimonk2025/gbrain or a human maintainer applied `maintainer-override`; GBRA
  * thread PRs (same-repo heads) always pass; a PR cannot change its own result
  * by editing the workflow or script. Regressions it catches: trusting a branch
  * name instead of the head repository, a bot or non-maintainer override, a

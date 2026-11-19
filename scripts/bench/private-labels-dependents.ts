@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 /**
- * Time the statement a `gbrain repair private-labels` preview (and every `--apply --expect`) runs to find the pages a
+ * Time the statement a `foresights repair private-labels` preview (and every `--apply --expect`) runs to find the pages a
  * window's clears expose (windowDependents), on a synthetic Postgres brain. Opt-in, never run in CI.
  *
  *   bun scripts/bench/private-labels-dependents.ts [--pages 300000] [--other-pages 100000] [--links-per-page 8]
- *     [--lineage] [--window 1000] [--class alias|alias-and-visibility] [--checkout <gbrain checkout>]
+ *     [--lineage] [--window 1000] [--class alias|alias-and-visibility] [--checkout <foresights checkout>]
  *     [--database-url <admin url>] [--keep] [--reuse-db <name>] [--label <name>] [--out <file.json>]
  *
  * Creates a scratch database (default admin URL: the CI compose Postgres on 127.0.0.1:5434) holding a source of --pages

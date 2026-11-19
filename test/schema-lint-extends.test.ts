@@ -1,4 +1,4 @@
-// #4373 — `gbrain schema lint <child>` and the MCP schema_lint op's
+// #4373 — `foresights schema lint <child>` and the MCP schema_lint op's
 // named-pack branch must lint the MERGED manifest: page types inherited
 // through `extends` count as declared, matching validate/use/active (which
 // all consume loadActivePack → resolvePack → mergeInheritedManifest).
@@ -151,7 +151,7 @@ describe('schema_lint op — named pack with extends (#4373)', () => {
   });
 });
 
-describe('gbrain schema lint <pack> CLI — extends (#4373)', () => {
+describe('foresights schema lint <pack> CLI — extends (#4373)', () => {
   it('lints the merged manifest: exit 0, no inherited-type errors', () => {
     // bun's spawnSync does NOT inherit process.env mutations, so pass env
     // explicitly (same isolation pattern as test/schema-cli.test.ts).

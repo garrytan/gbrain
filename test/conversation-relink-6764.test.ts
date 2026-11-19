@@ -1,5 +1,5 @@
 /**
- * #6764 (d1b): the free conversation relink, `gbrain facts relink --conversation`.
+ * #6764 (d1b): the free conversation relink, `foresights facts relink --conversation`.
  *
  * Protects: a conversation-extractor fact stored without an entity that names
  * exactly one live entity page is linked for free (write-mode inference, no
@@ -99,14 +99,14 @@ async function cli(db: BrainEngine, argv: string[]): Promise<{ code: number; out
   try { return { code: await runFactsCommand(db, argv, config, 'default'), out: lines.join('\n') }; } finally { log.mockRestore(); }
 }
 
-describe('#6764 gbrain facts relink --conversation (unmanaged)', () => {
+describe('#6764 foresights facts relink --conversation (unmanaged)', () => {
   beforeEach(async () => { await resetPgliteState(engine); await seed(engine); });
 
   test('the dry run writes nothing and names the paid fallback for the unresolved page', async () => {
     const { code, out } = await cli(engine, ['relink', '--conversation', '--slugs', MEETING, '--dry-run']);
     expect(code).toBe(0);
     expect(out).toContain('DRY RUN: would link 1 conversation fact(s) on 1 page(s) in source default');
-    expect(out).toContain(`gbrain extract-conversation-facts --source-id default --slugs ${MEETING} --force --dry-run`);
+    expect(out).toContain(`foresights extract-conversation-facts --source-id default --slugs ${MEETING} --force --dry-run`);
     expect((await facts(engine)).map(r => r.entity_slug)).toEqual([null, null, null]);
     expect(await engine.executeRaw('SELECT 1 FROM fact_relink_attempts')).toHaveLength(0);
   });
@@ -176,7 +176,7 @@ describe('#6764 doctor: free relink first, paid re-extraction only for rows it t
     expect(fix.argv).toEqual(['gbrain', 'facts', 'relink', '--conversation', '--source', 'default', '--slugs', `${MEETING},${OTHER}`]);
     expect(fix.preview_argv).toEqual([...fix.argv!, '--dry-run']);
     expect(renderAction(fix as never, cliRenderContext()).next).toBe('run');
-    expect(before.message).toContain('link them for free (preview first): gbrain facts relink --conversation');
+    expect(before.message).toContain('link them for free (preview first): foresights facts relink --conversation');
     expect((await cli(engine, fix.preview_argv!.slice(2))).code).toBe(0);
     expect((await unlinkedFactsStats(engine, ['default']))!.window.conversation).toBe(3);
     expect((await cli(engine, fix.argv!.slice(2))).code).toBe(0);
@@ -184,7 +184,7 @@ describe('#6764 doctor: free relink first, paid re-extraction only for rows it t
     expect(after.details).toMatchObject({ window: { conversation: 1 }, conversation: { fix: 'reextract', pages: 1, slugs: [MEETING] } });
     expect(after.fix).toMatchObject({ consent: ['paid', 'egress'], ask_user: true });
     expect(after.fix!.argv).toEqual(['gbrain', 'extract-conversation-facts', '--source-id', 'default', '--slugs', MEETING, '--force', '--max-cost-usd', '<N>']);
-    expect(after.message).not.toContain('gbrain facts relink --conversation');
+    expect(after.message).not.toContain('foresights facts relink --conversation');
   });
 
   test('memoized unresolved rows are left out of the 25% new-fact rule and named in the paid fallback', async () => {
@@ -205,7 +205,7 @@ describe('#6764 doctor: free relink first, paid re-extraction only for rows it t
   });
 });
 
-describe('#6764 gbrain facts relink --conversation (managed)', () => {
+describe('#6764 foresights facts relink --conversation (managed)', () => {
   test('one receipted coordinator request per page links the row', async () => {
     await managedBrain(async ({ engine: db }) => {
       const report = await runConversationRelink(db, config, { sourceId: 'default', slugs: [MEETING, OTHER] });

@@ -1,5 +1,5 @@
 /**
- * Shared `gbrain <verb> [--flag ...]` scanner for the doc↔CLI truth checks
+ * Shared `foresights <verb> [--flag ...]` scanner for the doc↔CLI truth checks
  * (test/docs-cli-commands.test.ts, test/remediation-command-resolution.test.ts).
  *
  * One definition of "a live verb", "command position", "code regions of a
@@ -49,7 +49,7 @@ export interface CodeLine { code: string; line: number; historical: boolean }
 
 /**
  * Fenced-block lines (backslash continuations joined) + inline code spans
- * that START with `gbrain `. Comment and ASCII-diagram lines are skipped.
+ * that START with `foresights `. Comment and ASCII-diagram lines are skipped.
  */
 export function codeRegions(text: string): CodeLine[] {
   const out: CodeLine[] = [];
@@ -77,17 +77,17 @@ export function codeRegions(text: string): CodeLine[] {
       continue;
     }
     const historical = l.includes(HISTORICAL_MARKER) || markedAbove(i);
-    for (const m of l.matchAll(/`(gbrain [^`]+)`/g)) out.push({ code: m[1]!, line: i + 1, historical });
+    for (const m of l.matchAll(/`((?:foresights|gbrain) [^`]+)`/g)) out.push({ code: m[1]!, line: i + 1, historical });
   }
   return out;
 }
 
 export interface Invocation { verb: string; argv: string[] }
 
-/** `gbrain <verb>` invocations at command position, with their argv up to the next shell operator. */
+/** `foresights <verb>` invocations at command position, with their argv up to the next shell operator. */
 export function gbrainInvocations(code: string): Invocation[] {
   const out: Invocation[] = [];
-  for (const m of code.matchAll(/\bgbrain\s+([A-Za-z][\w-]*)/g)) {
+  for (const m of code.matchAll(/\b(?:foresights|gbrain)\s+([A-Za-z][\w-]*)/g)) {
     const verb = m[1]!;
     if (!/^[a-z][a-z0-9_-]{2,}$/.test(verb)) continue;
     if (!commandPosition(code.slice(0, m.index))) continue;
@@ -167,5 +167,5 @@ export function flagRejection(inv: Invocation): string | null {
   const migrationError = migrationCliArgumentError(command, subArgs);
   if (migrationError) return migrationError.message;
   const flag = validateCommandFlags(command, subArgs);
-  return flag ? `unknown flag ${flag} for 'gbrain ${typed}'` : null;
+  return flag ? `unknown flag ${flag} for 'foresights ${typed}'` : null;
 }

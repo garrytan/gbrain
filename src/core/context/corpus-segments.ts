@@ -465,7 +465,7 @@ export function parseWbFileName(name: string): { sessionId: string; hash: string
 /**
  * The harness session a `.txt` corpus file belongs to: the session-end
  * `<sessionId>.txt`, a checkpoint segment or a writeback turn file. Used to
- * classify gbrain's own claude-cli sessions (#5413) across every form.
+ * classify foresights's own claude-cli sessions (#5413) across every form.
  */
 export function corpusFileSessionId(name: string): string {
   return parseSegmentFileName(name)?.sessionId ?? parseWbFileName(name)?.sessionId
@@ -492,7 +492,7 @@ export function writebackOffSidecarJson(): string {
 
 /** The TERMINAL self_capture `.ingested` sidecar payload (#5413/#5820) —
  * written identically by the serve harvest and the sweep, so neither retries
- * a corpus file captured from gbrain's own claude-cli session. */
+ * a corpus file captured from foresights's own claude-cli session. */
 export function selfCaptureSidecarJson(): string {
   return JSON.stringify({ ingested_at: new Date().toISOString(), skipped: 'self_capture' }) + '\n';
 }
@@ -719,14 +719,14 @@ export function corpusFileAwaitsExtraction(full: string, name: string): boolean 
  * #6785: per-file record of the one corpus window (or writeback turn) whose
  * extraction keeps failing after the model call. Written under the file's
  * `.in-progress` claim by context/corpus-windows.ts; removed when that
- * window commits, or by `gbrain sweep --retry-failed --apply`.
+ * window commits, or by `foresights sweep --retry-failed --apply`.
  */
 export const CORPUS_FAILURE_SUFFIX = '.failures.json';
 /** Failed attempts after which a window is not retried until an operator retry or one extraction-config change. */
 export const CORPUS_WINDOW_FAILURE_CAP = 5;
 /**
  * #9279: failure codes no retry on the same build can change (the write refuses the same way every time). One such
- * failure stops the window at once; the first sweep on another gbrain build retries it once; retention keeps the file.
+ * failure stops the window at once; the first sweep on another foresights build retries it once; retention keeps the file.
  */
 export const CORPUS_DETERMINISTIC_FAILURE_CODES: readonly string[] = ['page_body_segmented'];
 
@@ -744,7 +744,7 @@ export interface CorpusFailureRecord {
   fingerprint: string | null;
   /** True once a fingerprint change re-armed a capped window; a second change does not. */
   rearmed: boolean;
-  /** #9279: the gbrain version that recorded a deterministic failure (CORPUS_DETERMINISTIC_FAILURE_CODES). */
+  /** #9279: the foresights version that recorded a deterministic failure (CORPUS_DETERMINISTIC_FAILURE_CODES). */
   build?: string;
   /** #9279: true once the automatic retry on a newer build ran; only an operator retry runs the window after that. */
   upgrade_retried?: boolean;

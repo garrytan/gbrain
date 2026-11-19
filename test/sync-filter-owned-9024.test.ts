@@ -59,9 +59,9 @@ for (const backend of testBackends()) describe('[' + backend + '] a committed fi
         await performManagedSync(engine, OPTS);
         const held = (await holds(engine)).filter(hold => hold.path === 'secret/one.md');
         expect(held.map(hold => hold.code)).toEqual(['content_filter_owned']);
-        expect(held[0]!.message).toContain("gbrain does not run a repository's filter programs during sync");
+        expect(held[0]!.message).toContain("foresights does not run a repository's filter programs during sync");
         expect(held[0]!.message).toContain(gitCrypt ? 'encrypted with git-crypt' : 'stored through the Git filter "secret"');
-        expect(held[0]!.message).not.toMatch(/gbrain config set|--allow/);
+        expect(held[0]!.message).not.toMatch(/(?:foresights|gbrain) config set|--allow/);
         expect(await live(engine)).toEqual(['ok', 'seed']);
         writeFileSync(join(root, 'ok2.md'), note('ok2')); commit(root, 'ok2');
         await performManagedSync(engine, OPTS);
@@ -123,7 +123,7 @@ for (const backend of testBackends()) describe('[' + backend + '] a committed fi
     const held = (await holds(engine)).filter(hold => hold.path === 'notes/plain.md');
     expect(held.map(hold => hold.code)).toEqual(['content_filter_owned']);
     expect(held[0]!.message).toContain('remove the filter attribute from .gitattributes');
-    expect(held[0]!.message).toContain('gbrain sources retry-held default');
+    expect(held[0]!.message).toContain('foresights sources retry-held default');
     expect(await live(engine)).not.toContain('notes/plain');
     writeFileSync(join(root, '.gitattributes'), ''); commit(root, 'drop the attribute');
     await performManagedSync(engine, OPTS);
@@ -136,7 +136,7 @@ for (const backend of testBackends()) describe('[' + backend + '] a committed fi
 
   test('the stop path (nothing held) does not tell the user to run retry-held', () => {
     expect(filterOwnedRefusal('a.md', 'text', 'secret', 'default', false)!.message).not.toContain('retry-held');
-    expect(filterOwnedRefusal('a.md', 'text', 'secret', 'default', true)!.message).toContain('gbrain sources retry-held default');
+    expect(filterOwnedRefusal('a.md', 'text', 'secret', 'default', true)!.message).toContain('foresights sources retry-held default');
   });
 
   for (const source of [true, false]) for (const lazyOff of [true, false]) {

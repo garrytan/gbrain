@@ -1,10 +1,10 @@
 /**
- * gbrain google setup — the one-command orchestrator (approved D1-A).
+ * foresights google setup — the one-command orchestrator (approved D1-A).
  *
  * connect (skipped when tokens exist) → register the google source (if
  * needed) → wall-clock-budgeted first sync (newest mail first; the
  * remainder resumes automatically on later syncs) → the first
- * `gbrain waiting` digest. The magical moment arrives in the same session
+ * `foresights waiting` digest. The magical moment arrives in the same session
  * as consent; every step is idempotent, so re-running resumes wherever the
  * last run stopped.
  */
@@ -59,7 +59,7 @@ export async function runGoogleSetup(args: string[]): Promise<void> {
       const { cliRenderContext, renderAction } = await import('../core/agent-output.ts');
       const fix = renderAction(access.fix, cliRenderContext());
       const reachable = services.filter((service) => access.services[service]?.status === 'ok');
-      const narrower = reachable.length > 0 ? `gbrain google setup --account ${account} --services ${reachable.join(',')}` : null;
+      const narrower = reachable.length > 0 ? `foresights google setup --account ${account} --services ${reachable.join(',')}` : null;
       if (json) {
         process.stdout.write(JSON.stringify({ ok: false, status: 'api_access_blocked', account, api_access: { ...access, fix },
           ...(narrower ? { reachable_services_command: narrower } : {}) }, null, 2) + '\n');
@@ -68,9 +68,9 @@ export async function runGoogleSetup(args: string[]): Promise<void> {
         process.stderr.write([`Google account ${account} cannot reach every service yet; nothing was registered or synced.`,
           ...access.problems.map((p) => p.code === 'api_not_enabled'
             ? `  - ${p.api_title} (${p.api}) is disabled for Google Cloud project ${p.project ?? 'unknown'}. Enable it: ${p.enable_url}`
-            : `  - ${p.service}: access was not granted. Run: gbrain google connect --reauth ${account}`),
-          'Then re-run: gbrain google setup', ...(narrower ? [`Or set up only the services it can reach now: ${narrower}`] : [])].join('\n') + '\n'
-          + agentBlock({ why: fix.why, actor: fix.actor, next: fix.next, verify: 'gbrain google status --json' }, { showUser: fix.user_message ?? '' }));
+            : `  - ${p.service}: access was not granted. Run: foresights google connect --reauth ${account}`),
+          'Then re-run: foresights google setup', ...(narrower ? [`Or set up only the services it can reach now: ${narrower}`] : [])].join('\n') + '\n'
+          + agentBlock({ why: fix.why, actor: fix.actor, next: fix.next, verify: 'foresights google status --json' }, { showUser: fix.user_message ?? '' }));
       }
       setCliExitVerdict(2);
       return;

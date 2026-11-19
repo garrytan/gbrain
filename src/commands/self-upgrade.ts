@@ -17,14 +17,15 @@ import { writeCliError } from '../cli/cli-error.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { loadConfig, saveConfig } from '../core/config.ts';
 import { CLEAR_NEVER_INSTALLED_APPLY, findNeverInstalledFailures } from '../core/self-upgrade-recovery.ts';
+import { commandText } from '../core/brand.ts';
 
 /**
- * `gbrain self-upgrade --clear-never-installed [--apply] [--json]` (#6828).
+ * `foresights self-upgrade --clear-never-installed [--apply] [--json]` (#6828).
  * Preview by default: lists each `self_upgrade.failed_versions` entry the
  * audit proves was never installed (a no-op swap reported "swapped" and the
  * relaunch of the same version recorded it known-bad) and the entries it
  * keeps. `--apply` removes exactly the proven entries from the file-plane
- * config. Reversible: `gbrain config set self_upgrade.failed_versions` puts
+ * config. Reversible: `foresights config set self_upgrade.failed_versions` puts
  * one back. Nothing else changes and nothing is installed.
  */
 function runClearNeverInstalled(apply: boolean, json: boolean): void {
@@ -63,16 +64,16 @@ function runClearNeverInstalled(apply: boolean, json: boolean): void {
   }
   if (kept.length > 0) console.log(`Kept (not proven never installed): ${kept.join(', ')}`);
   if (applied) console.log('The auto channel installs them once they are published on its release channel.');
-  else console.log(`Clear them: ${CLEAR_NEVER_INSTALLED_APPLY.join(' ')}`);
+  else console.log(`Clear them: ${commandText(CLEAR_NEVER_INSTALLED_APPLY)}`);
 }
 
 /**
- * `gbrain self-upgrade [--check-only] [--snooze] [--force] [--json] [--channel stable|alpha] [--no-bun-floor-check]`
+ * `foresights self-upgrade [--check-only] [--snooze] [--force] [--json] [--channel stable|alpha] [--no-bun-floor-check]`
  *
  * The universal substrate every agent ecosystem (Codex / Claude Code / Hermes /
  * OpenClaw / Perplexity-server) can call to stay current. The CLI startup hook
  * emits a marker; the agent skill / autopilot daemon act on it by running THIS
- * command. The action is always the hardcoded `gbrain upgrade` — never
+ * command. The action is always the hardcoded `foresights upgrade` — never
  * parameterized by any marker content (forged-marker guard).
  *
  *   --check-only  Report whether an upgrade is available; never apply.
@@ -80,15 +81,15 @@ function runClearNeverInstalled(apply: boolean, json: boolean): void {
  *   --force       Apply even if not behind (re-run the install-method swap).
  *   --json        Machine-readable output for the check.
  *   --channel     stable or alpha for this run (latest is an alias for alpha).
- *   --no-bun-floor-check  Passed through to `gbrain upgrade` (#5855).
+ *   --no-bun-floor-check  Passed through to `foresights upgrade` (#5855).
  */
 export async function runSelfUpgrade(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(
-      'Usage: gbrain self-upgrade [--check-only] [--force] [--json] [--channel stable|alpha] [--no-bun-floor-check]\n' +
-        '       gbrain self-upgrade --snooze [--json]\n' +
-        '       gbrain self-upgrade --clear-never-installed [--apply] [--json]\n\n' +
-        'Check for and apply gbrain updates on this install\'s release channel (stable by default;\n' +
+      'Usage: foresights self-upgrade [--check-only] [--force] [--json] [--channel stable|alpha] [--no-bun-floor-check]\n' +
+        '       foresights self-upgrade --snooze [--json]\n' +
+        '       foresights self-upgrade --clear-never-installed [--apply] [--json]\n\n' +
+        'Check for and apply foresights updates on this install\'s release channel (stable by default;\n' +
         'alpha follows every release). The shared entry point used by the CLI startup marker,\n' +
         'the gbrain-upgrade agent skill, and the autopilot silent channel.\n\n' +
         '  --check-only  Report whether an upgrade is available, on which channel and why; do not apply.\n' +
@@ -181,23 +182,23 @@ export async function runSelfUpgrade(args: string[]): Promise<void> {
     } else if (failure) {
       console.log(`${failure.message} ${failure.fix}`);
     } else if (withdrawn) {
-      console.log(`gbrain ${VERSION} was withdrawn from the stable channel. Run: gbrain self-upgrade (installs the current stable, ${offered})`);
+      console.log(`foresights ${VERSION} was withdrawn from the stable channel. Run: foresights self-upgrade (installs the current stable, ${offered})`);
     } else if (offered) {
-      console.log(`Update available on the ${channel} channel: ${VERSION} -> ${offered}. Run: gbrain self-upgrade`);
+      console.log(`Update available on the ${channel} channel: ${VERSION} -> ${offered}. Run: foresights self-upgrade`);
       if (changelogDiff) {
         console.log('\nWhat changed:\n');
         console.log(changelogDiff);
       }
       if (release?.url) console.log(`\nRelease: ${release.url}`);
     } else {
-      console.log(`gbrain ${VERSION} is up to date on the ${channel} channel.`);
+      console.log(`foresights ${VERSION} is up to date on the ${channel} channel.`);
     }
     return;
   }
 
-  // Stable is resolved and verified again by gbrain upgrade (record + tags), which refuses with the typed code.
+  // Stable is resolved and verified again by foresights upgrade (record + tags), which refuses with the typed code.
   if (!offered && !force && !stableFailure) {
-    console.log(`gbrain ${VERSION} is up to date on the ${channel} channel.`);
+    console.log(`foresights ${VERSION} is up to date on the ${channel} channel.`);
     return;
   }
 
@@ -209,16 +210,16 @@ export async function runSelfUpgrade(args: string[]): Promise<void> {
   });
 }
 
-/** `gbrain self-upgrade --snooze`: record "Not now" for the offered version on this channel. */
+/** `foresights self-upgrade --snooze`: record "Not now" for the offered version on this channel. */
 function runSnooze(channel: ReleaseChannel, json: boolean): void {
   const offered = pendingUpgradeVersion(VERSION, Date.now(), channel);
   if (!offered) {
     if (json) console.log(JSON.stringify({ snoozed: false, channel, reason: 'no update is pending on this channel' }, null, 2));
-    else console.log(`No gbrain update is pending on the ${channel} channel; nothing to snooze.`);
+    else console.log(`No foresights update is pending on the ${channel} channel; nothing to snooze.`);
     return;
   }
   const record = writeSnooze(offered, Date.now(), channel);
   const until = new Date(record.until).toISOString();
   if (json) console.log(JSON.stringify({ snoozed: true, channel, version: offered, level: record.level, until }, null, 2));
-  else console.log(`Snoozed the gbrain ${offered} update on the ${channel} channel until ${until} (run gbrain self-upgrade any time).`);
+  else console.log(`Snoozed the foresights ${offered} update on the ${channel} channel until ${until} (run foresights self-upgrade any time).`);
 }

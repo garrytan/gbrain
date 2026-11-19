@@ -1,7 +1,7 @@
 /**
- * v0.42 Wave C2 — `gbrain extract benchmark` CLI.
+ * v0.42 Wave C2 — `foresights extract benchmark` CLI.
  *
- *   gbrain extract benchmark --pack <pack> --kind <type> [--json]
+ *   foresights extract benchmark --pack <pack> --kind <type> [--json]
  *
  * Reads the pack's fixture corpus (declared by the v0.42 ExtractableSpec
  * `fixture_corpus` field, or the conventional `fixtures/extract/<type>.jsonl`
@@ -14,7 +14,7 @@
  * `validateFixturePath()` below; reused by the benchmark's read step).
  *
  * Per plan C2: fail-loud on missing fixtures with paste-ready
- * `gbrain schema scaffold-extractable` hint.
+ * `foresights schema scaffold-extractable` hint.
  *
  * Exit codes:
  *   - 0 PASS: all fixtures meet the per-fixture recall floor
@@ -25,7 +25,7 @@
  *
  * v0.42 scope: benchmark dispatch DOES NOT actually call the LLM —
  * the conversation-parser cathedral already has its own eval harness
- * (`gbrain eval conversation-parser`), and the facts.prose generic
+ * (`foresights eval conversation-parser`), and the facts.prose generic
  * LLM handler is deferred to Wave E. v0.42 benchmark instead reports
  * the fixture corpus shape + path resolution + recall-floor config so
  * pack authors can validate the scaffolding cleanly. When Wave E adds
@@ -203,7 +203,7 @@ export function parseBenchmarkFixtures(jsonl: string): BenchmarkFixture[] {
 }
 
 /**
- * CLI entry: `gbrain extract benchmark`.
+ * CLI entry: `foresights extract benchmark`.
  */
 export async function runExtractBenchmark(
   engine: BrainEngine,
@@ -216,7 +216,7 @@ export async function runExtractBenchmark(
   const kindName = kindIdx >= 0 && kindIdx + 1 < args.length ? args[kindIdx + 1] : undefined;
 
   if (!packName || !kindName) {
-    console.error('Usage: gbrain extract benchmark --pack <pack> --kind <type> [--json]');
+    console.error('Usage: foresights extract benchmark --pack <pack> --kind <type> [--json]');
     process.exit(2);
   }
 
@@ -273,7 +273,7 @@ export async function runExtractBenchmark(
     console.error(
       `Fixture corpus not found: ${fixturePath}\n\n` +
       `Run this to generate stub fixtures (5 placeholder cases):\n` +
-      `  gbrain schema scaffold-extractable ${kindName} --pack ${packName}`,
+      `  foresights schema scaffold-extractable ${kindName} --pack ${packName}`,
     );
     process.exit(2);
   }

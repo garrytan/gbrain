@@ -1,5 +1,5 @@
 /**
- * Compatibility windows, recorded in one place: wire fields a gbrain process still accepts from an older peer after it
+ * Compatibility windows, recorded in one place: wire fields a foresights process still accepts from an older peer after it
  * stopped using them, and config keys a published notice names as the way back.
  *
  * Master ships many PATCH releases a day, so a window counted in releases lasts hours. Each window is a calendar
@@ -40,8 +40,8 @@ export function retiredWireFields(wire: SyncWire): ReadonlyMap<string, WireSkewW
 /** The one notice a resident prints when it ignores retired fields an older client sent. */
 export function retiredWireNotice(fields: readonly string[]): string {
   const windows = fields.map(field => (Object.values(WIRE_SKEW_WINDOWS) as WireSkewWindow[]).find(window => window.field === field)!);
-  return `[gbrain notice] this gbrain ignores ${windows.map(window => `\`${window.field}\` (sent by gbrain below ${window.floor}; accepted until ${window.accept_until})`).join(', ')} `
-    + 'from an older sync client and runs without it. Upgrade the gbrain that runs `gbrain sync` to match this one.';
+  return `[gbrain notice] this foresights ignores ${windows.map(window => `\`${window.field}\` (sent by foresights below ${window.floor}; accepted until ${window.accept_until})`).join(', ')} `
+    + 'from an older sync client and runs without it. Upgrade the foresights that runs `foresights sync` to match this one.';
 }
 
 export interface ConfigRollbackWindow { key: string; floor: string; honored_until: string; named_in: string; restores: string }

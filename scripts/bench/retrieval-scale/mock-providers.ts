@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Retrieval scale bench: local stand-ins for the embedding and rerank
- * providers (GBRA-156), so a latency run measures gbrain and not a provider.
+ * providers (GBRA-156), so a latency run measures foresights and not a provider.
  *
  *   bun scripts/bench/retrieval-scale/mock-providers.ts --manifest manifest.json [--port 0] [--embed-ms 0] [--rerank-ms 0]
  *

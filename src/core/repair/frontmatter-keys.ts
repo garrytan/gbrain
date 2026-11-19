@@ -1,5 +1,5 @@
 /**
- * `gbrain repair frontmatter-keys [--source <id>]` (#6454): strip the
+ * `foresights repair frontmatter-keys [--source <id>]` (#6454): strip the
  * parser's reserved top-level keys (`type`, `title`, `tags`, `slug`) that
  * older imports stored inside `pages.frontmatter`. Since `comparableFrontmatter`
  * (markdown.ts) those keys are not drift and never render, so this sweep is
@@ -32,7 +32,7 @@ type BatchItem = RepairItem & { batch: Batch; hash: string; last: boolean };
 export const REVISION_ADVANCE_WARNING = 'Each swept page advances its knowledge_revision once (the database revision trigger), so a client holding an '
   + 'older revision of a swept page gets one revision_conflict and re-reads; nothing else about the page changes.';
 
-const previewCommand = (scope: RepairScope) => `gbrain repair frontmatter-keys${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
+const previewCommand = (scope: RepairScope) => `foresights repair frontmatter-keys${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
 
 async function staleRows(engine: BrainEngine, sourceId: string): Promise<StaleRow[]> {
   const rows: StaleRow[] = [];
@@ -87,7 +87,7 @@ export const frontmatterKeysRepair: RepairHandler = {
         details: { total, by_key: byKey, sample: planned.flatMap(batch => batch.rows.map(row => ({ source_id: batch.source_id, slug: row.slug, keys: row.keys }))).slice(0, SAMPLE) } };
     }
     if (!opts.expect) {
-      throw new OperationError('invalid_params', 'gbrain repair frontmatter-keys --apply sweeps only the set a preview printed.',
+      throw new OperationError('invalid_params', 'foresights repair frontmatter-keys --apply sweeps only the set a preview printed.',
         `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`, 'docs/guides/repair.md#frontmatter-keys');
     }
     const approved = await loadApprovedSet<Batch>(engine, { command: 'frontmatter-keys', hash: opts.expect, previewCommand: command });

@@ -1,5 +1,5 @@
 /**
- * Network ingestion for `gbrain serve --http`: the OAuth-authenticated
+ * Network ingestion for `foresights serve --http`: the OAuth-authenticated
  * POST /ingest webhook source (v0.38) and the HMAC-verified
  * POST /webhooks/github push / item-event sync trigger (v0.40, v0.46).
  */
@@ -269,7 +269,7 @@ async function handleGitHubItemEvent(
     if (!covered) {
       res.setHeader('Retry-After', '30');
       res.status(429).json({ error: 'webhook_backlog_full', source_id: source.id,
-        message: `${GITHUB_ITEM_MAX_WAITING} item refreshes are already waiting for this source; redeliver this event once they drain, or run gbrain sync --source ${source.id}.` });
+        message: `${GITHUB_ITEM_MAX_WAITING} item refreshes are already waiting for this source; redeliver this event once they drain, or run foresights sync --source ${source.id}.` });
       return;
     }
     res.status(202).json({ job_id: job.id, source_id: source.id, item: ref });
@@ -292,7 +292,7 @@ function ingestTargetSlug(callerSlug: string): string {
 
 /**
  * The job a server before v0.60.609.0 recorded for this capture, or null. Its key had no slug part
- * (`ingest:webhook:<client>:<write source>:<content hash>`), and a job row keeps its key until `gbrain jobs prune`
+ * (`ingest:webhook:<client>:<write source>:<content hash>`), and a job row keeps its key until `foresights jobs prune`
  * removes it, which nothing runs on a schedule, so such a row can answer a retry for as long as the brain keeps it. A
  * retry that missed it queued a second job, and that job wrote the old body over any edit made since. The row answers
  * only for the target slug it was queued with: the old key collapsed one body sent to two slugs, which is the dropped
@@ -544,7 +544,7 @@ async function handleIngest(
       message: authInfo.fenceProjectionDegraded
         ? 'POST /ingest is unavailable: this brain\'s oauth_clients projection is missing ' +
           'bound_slug_prefixes, so client write bindings cannot be evaluated. ' +
-          'Run `gbrain apply-migrations --yes` on the brain host.'
+          'Run `foresights apply-migrations --yes` on the brain host.'
         : 'POST /ingest is not available to clients restricted to slug prefixes ' +
           `(bound_slug_prefixes: ${boundPrefixes!.join(', ')}). Write through the MCP put_page op, ` +
           'which enforces the prefix fence and your source scope.',
@@ -618,7 +618,7 @@ async function handleIngest(
         // Idempotency: the same content from the same client to the same
         // slug is one capture. While its job row exists the queue hands
         // back that job; the ingest_capture handler applies a capture once
-        // per key for 90 days, even after `gbrain jobs prune` removed its
+        // per key for 90 days, even after `foresights jobs prune` removed its
         // job row (GST-1856), so a replay never rewrites the page. Different
         // content gets different jobs. Daemon-side dedup catches the 24h window.
         // The effective write source is part of the key: a client rescoped
@@ -822,7 +822,7 @@ function mountGitHubWebhook(app: Express, ctx: ServeHttpContext): void {
       const secret = cfg.webhook_secret;
       const verified = verifyWebhookSig(secret, sigHeader, payload);
       if (!source || !verified) {
-        if (source && !(typeof secret === 'string' && secret)) console.error(`webhook: push for source ${source.id} refused: no webhook secret is set (run: gbrain sources webhook set ${source.id})`);
+        if (source && !(typeof secret === 'string' && secret)) console.error(`webhook: push for source ${source.id} refused: no webhook secret is set (run: foresights sources webhook set ${source.id})`);
         res.status(401).json({ error: 'signature_mismatch' });
         return;
       }
@@ -861,7 +861,7 @@ export interface PushAnswerSink { status(code: number): { json(body: unknown): u
  * it is never lost to coalescing: a classic source queues one sync (priority -10, single flight per source through
  * maxPending 1; this replaced the 30 s idempotency bucket, which dropped a second push inside the bucket while the
  * first job ran) and a later run re-checks the marker. A managed source never pulls, so instead of a 202 for a job
- * that cannot import the push it answers refresh_required (409) with the gbrain sources refresh fix, keeping the
+ * that cannot import the push it answers refresh_required (409) with the foresights sources refresh fix, keeping the
  * marker until the source reaches that commit.
  */
 export async function submitGitHubPush(engine: BrainEngine, sourceId: string, after: unknown, res: PushAnswerSink): Promise<void> {
@@ -874,7 +874,7 @@ export async function submitGitHubPush(engine: BrainEngine, sourceId: string, af
   if (managed) {
     const { opError } = await import('../core/ops/contract.ts');
     const error = opError('refresh_required', `A push arrived for managed source ${sourceId}; a managed source never pulls, so the pushed commit waits for a refresh.`,
-      `Run gbrain sources refresh ${sourceId} on the brain host; the resident notifier then syncs the refreshed checkout.`,
+      `Run foresights sources refresh ${sourceId} on the brain host; the resident notifier then syncs the refreshed checkout.`,
       { fix: { argv: ['gbrain', 'sources', 'refresh', sourceId], consent: [], actor: 'user', requires_exclusive: false,
         why: 'Fast-forwards the managed checkout to its upstream under the writer lock and runs the managed --no-pull sync.' } });
     res.status(409).json({ ...error.toJSON(), ...base, status: 'refresh_required' });

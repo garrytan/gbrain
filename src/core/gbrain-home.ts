@@ -1,5 +1,5 @@
 /**
- * gbrain-home.ts — the single choke point for resolving + creating the gbrain
+ * gbrain-home.ts — the single choke point for resolving + creating the foresights
  * home directory (agent-bootstrap plan: S3#10, CX2-8).
  *
  * Semantics are `config.ts:configDir()`'s, by DELEGATION (not duplication):
@@ -7,7 +7,7 @@
  * back to `~/.gbrain`. Pre-CX2-8, `brain-repo-durability.ts` used the env
  * value directly while config appended `.gbrain`, so with `GBRAIN_HOME` set
  * the credential store and push log landed OUTSIDE the directory the rest of
- * gbrain considered home. Every module that derives paths under the gbrain
+ * foresights considered home. Every module that derives paths under the foresights
  * home (durability, workspace-push, bootstrap) resolves through here so the
  * two semantics can never diverge again.
  *
@@ -20,7 +20,7 @@ import { chmodSync, existsSync, mkdirSync } from 'fs';
 import { configDir } from './config.ts';
 
 /**
- * Resolve the gbrain home directory WITHOUT touching the filesystem.
+ * Resolve the foresights home directory WITHOUT touching the filesystem.
  * Exactly `configDir()` — exported under a task-shaped name so call sites
  * read as "the home resolver", and so a future non-config-coupled resolver
  * has one place to land.
@@ -30,7 +30,7 @@ export function resolveGbrainHome(): string {
 }
 
 /**
- * Resolve + create the gbrain home directory with 0700 permissions.
+ * Resolve + create the foresights home directory with 0700 permissions.
  * Chmods an already-existing home to 0700 best-effort (never throws for a
  * permissions failure — an unwritable mode bit must not break a push or a
  * harden run; the create failure itself DOES throw, because callers are

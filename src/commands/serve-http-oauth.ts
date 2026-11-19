@@ -1,5 +1,5 @@
 /**
- * OAuth surface of `gbrain serve --http`: CORS / preflight gates, the DCR TTL
+ * OAuth surface of `foresights serve --http`: CORS / preflight gates, the DCR TTL
  * hook, hash-only confidential client credentials, the MCP SDK auth router with
  * its discovery patches, the owner login-link handoff and owner consent.
  */
@@ -171,7 +171,7 @@ export function mountOAuth(app: Express, ctx: ServeHttpContext): void {
     provider: oauthProvider,
     issuerUrl,
     scopesSupported: scopesSupportedForDiscovery({ enableDcr }),
-    resourceName: 'GBrain MCP Server',
+    resourceName: 'Foresights MCP Server',
     // Advertise /mcp as the protected resource (see mcpResourceUrl above).
     resourceServerUrl: mcpResourceUrl,
   };
@@ -211,7 +211,7 @@ export function mountOAuth(app: Express, ctx: ServeHttpContext): void {
 
   // Back-compat alias: with resourceServerUrl set the SDK mounts the PRM only
   // at the path-based URL, so clients that still probe the bare root (what
-  // gbrain advertised before) would 404 mid-flight. Rewrite the root onto the
+  // foresights advertised before) would 404 mid-flight. Rewrite the root onto the
   // SDK's own handler — one document, same cors()/allowedMethods, no copy.
   const legacyPrmPath = '/.well-known/oauth-protected-resource';
   app.all(legacyPrmPath, (req: Request, _res: Response, next: NextFunction) => {
@@ -222,7 +222,7 @@ export function mountOAuth(app: Express, ctx: ServeHttpContext): void {
   app.use(authRouter);
   app.get('/.well-known/gbrain', (_req, res) => {
     res.json({ version: VERSION, protocol: 'mcp', endpoint: mcpResourceUrl.toString(), profiles: GRANT_PROFILES,
-      adapters: publicHarnessMetadata(), administration: mcpAdministrationGuidance(mcpResourceUrl.toString()), documentation: 'https://github.com/garrytan/gbrain/blob/master/docs/mcp/README.md' });
+      adapters: publicHarnessMetadata(), administration: mcpAdministrationGuidance(mcpResourceUrl.toString()), documentation: 'https://github.com/aimonk2025/gbrain/blob/master/docs/mcp/README.md' });
   });
 }
 
@@ -319,7 +319,7 @@ export function mountOwnerLoginLinks(app: Express, ctx: ServeHttpContext): void 
     if (!isValid) {
       res.status(401).send(`<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>GBrain</title>
+<title>Foresights</title>
 <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;background:#0a0a0f;color:#e0e0e0;min-height:100vh;display:flex;align-items:center;justify-content:center}
 .box{max-width:400px;padding:32px;text-align:left}
 .logo{font-size:28px;font-weight:600;margin-bottom:24px}
@@ -328,10 +328,10 @@ export function mountOwnerLoginLinks(app: Express, ctx: ServeHttpContext): void 
 .hint b{color:#e0e0e0}
 .prompt{background:rgba(0,0,0,0.3);border-radius:6px;padding:8px 12px;margin-top:8px;font-family:monospace;font-size:12px;color:#88aaff}
 </style></head><body><div class="box">
-<div class="logo">GBrain</div>
+<div class="logo">Foresights</div>
 <div class="msg">⚠️ This admin link has expired, was already used, or the server has restarted.</div>
 <div class="hint"><b>Ask the server administrator or the harness hosting this server for a fresh link:</b>
-<div class="prompt">Run gbrain mcp admin login-link --url ${mcpResourceUrl.toString().replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))} using the protected owner credential. If connecting OAuth, restart authorization in the native client and include its new --oauth-request ID.</div>
+<div class="prompt">Run foresights mcp admin login-link --url ${mcpResourceUrl.toString().replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))} using the protected owner credential. If connecting OAuth, restart authorization in the native client and include its new --oauth-request ID.</div>
 </div></div></body></html>`);
       return;
     }

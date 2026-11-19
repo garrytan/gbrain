@@ -1,24 +1,24 @@
-# qm (multi-user agent harness) — gbrain as the company brain
+# qm (multi-user agent harness) — foresights as the company brain
 
-Connect gbrain to [qm](https://github.com/yc-software/qm) — the multiplayer
+Connect foresights to [qm](https://github.com/yc-software/qm) — the multiplayer
 agent harness where each employee and each channel gets an isolated agent
 scope — so every scope's agent can search and write one shared, indexed,
 isolation-enforced company brain. The same recipe fits any harness with
 per-person sandboxes that can run a CLI.
 
-**Shape:** one central `gbrain serve --http` (OAuth 2.1) next to qm's core;
+**Shape:** one central `foresights serve --http` (OAuth 2.1) next to qm's core;
 the `gbrain` binary baked into qm's sandbox image as a thin client; one OAuth
 client per employee, read-fenced by source federation and write-fenced by
 `bound_slug_prefixes`. Zero qm code changes — everything lives in the qm
 *deployment directory*.
 
 qm's native memory (per-scope notebook) stays as-is for fast per-turn recall.
-gbrain adds what qm doesn't have: semantic + hybrid search, cross-scope
+foresights adds what qm doesn't have: semantic + hybrid search, cross-scope
 knowledge, entity graphs, and durable memory that outlives a scope.
 
 ## Topology
 
-| gbrain concept | qm concept |
+| foresights concept | qm concept |
 |---|---|
 | one brain (one Postgres/Supabase DB) | the org |
 | source `agents` (path-less, shared) | all agent-written memory |
@@ -81,9 +81,9 @@ boundary, and it does not make every side effect prefix-clean:
 - **Reads are source-granular unless you add folder rules.** Without them,
   everyone entitled to a source can read every prefix in it. To keep
   `emp-<slug>/` to one employee inside `agents`, make them a member
-  (`gbrain access member add <slug>`), bind their client to it
-  (`gbrain auth rescope --client <id> --member <slug>`) and add a
-  folder rule (`gbrain access rule add --prefix emp-<slug>/ --readers <slug>
+  (`foresights access member add <slug>`), bind their client to it
+  (`foresights auth rescope --client <id> --member <slug>`) and add a
+  folder rule (`foresights access rule add --prefix emp-<slug>/ --readers <slug>
   --source agents`, preview, then `--yes`); see Model C in the
   [company-brain tutorial](../tutorials/company-brain.md). A separate source
   remains the strongest separation.
@@ -110,7 +110,7 @@ boundary, and it does not make every side effect prefix-clean:
   source writes to `default`. If its source is unregistered, archived, or
   deleted before the job runs (or deleted while it writes), the job fails with `source_changed`
   (`detail: webhook_source_unavailable`) and nothing is written; restore the
-  source and run `gbrain jobs retry` on the job. If you point a webhook integration at
+  source and run `foresights jobs retry` on the job. If you point a webhook integration at
   this route, give its client an explicit `--source` so its captures do not
   accumulate in the brain's `default` source. Bound clients are still refused
   the route outright, because the slug fence cannot run on this path.
@@ -129,29 +129,29 @@ boundary, and it does not make every side effect prefix-clean:
 ```bash
 # 1. Engine: Postgres/Supabase. PGLite is single-process and cannot serve
 #    many concurrent sandboxes.
-gbrain init --supabase --embedding-model voyage:voyage-4-large
+foresights init --supabase --embedding-model voyage:voyage-4-large
 
 # 2. Modes + gates (publish_* default OFF and fail as silent 403s):
-gbrain config set search.mode balanced
-gbrain config set mcp.publish_skills true
-gbrain config set mcp.publish_advisor true
+foresights config set search.mode balanced
+foresights config set mcp.publish_skills true
+foresights config set mcp.publish_advisor true
 
 # 3. Read-only org sources + first sync:
-gbrain sources add org-wiki --path ~/brains/org-wiki
-gbrain sync --all        # cron this
+foresights sources add org-wiki --path ~/brains/org-wiki
+foresights sync --all        # cron this
 
 # 4. Serve over HTTP MCP (OAuth 2.1), listing the 7 memory verbs:
-gbrain serve --http --bind 0.0.0.0 --port 3131 \
+foresights serve --http --bind 0.0.0.0 --port 3131 \
   --public-url https://brain.acme-example.com --advertise verbs
 ```
 
-`--advertise verbs` is the registration default gbrain's own installers use
+`--advertise verbs` is the registration default foresights's own installers use
 (`--surface starter --advertise verbs` since v0.60.503.0). QM sends every listed
 tool schema on every request, so a bare serve costs each turn about 11,800 input
 tokens for 33 tool schemas; with `--advertise verbs` it lists the seven verbs
 plus `request_tools`. Every operation stays callable, so the `gbrain` tool in the
 sandbox keeps working: the server keeps the `full` ceiling here because the
-skill's `gbrain link` (`add_link`) is outside `starter`.
+skill's `foresights link` (`add_link`) is outside `starter`.
 
 Never hand sandboxes `DATABASE_URL` — direct DB access bypasses OAuth, source
 federation, and the write fence entirely.
@@ -185,10 +185,10 @@ In the org's qm deployment repo (the directory `qm init` produced):
 
 1. **Tool:** copy [`qm-harness-snippets/tool.json`](qm-harness-snippets/tool.json)
    to `sandbox/tools/gbrain/tool.json` and drop the compiled `gbrain` binary
-   beside it (`bun build --compile --no-compile-autoload-bunfig --outfile gbrain src/cli.ts`, built for
+   beside it (`bun build --compile --no-compile-autoload-bunfig --outfile foresights src/cli.ts`, built for
    the sandbox image's OS/arch). `auth.credentialPaths` marks
    `~/.gbrain/config.json` as the scope's resident credential file;
-   `auth.check` wires `gbrain whoami` into qm's connector status (read-scope;
+   `auth.check` wires `foresights whoami` into qm's connector status (read-scope;
    see the note below on why `remote doctor` cannot be used here).
 2. **Skill:** copy [`qm-harness-snippets/SKILL.md`](qm-harness-snippets/SKILL.md)
    to `sandbox/skills/gbrain/SKILL.md` (edit slug conventions to taste).
@@ -197,11 +197,11 @@ In the org's qm deployment repo (the directory `qm init` produced):
 Per scope, one-time (agent- or operator-run, credentials from the handoff):
 
 ```bash
-gbrain init --mcp-only \
+foresights init --mcp-only \
   --issuer-url https://brain.acme-example.com \
   --mcp-url https://brain.acme-example.com/mcp \
   --oauth-client-id gbrain_cl_... --oauth-client-secret gbrain_cs_...
-gbrain whoami                       # must succeed
+foresights whoami                       # must succeed
 ```
 
 Use `--oauth-client-secret`, not `GBRAIN_REMOTE_CLIENT_SECRET`: an env-sourced
@@ -211,8 +211,8 @@ once it leaves scope — and qm's `sandbox.secretEnv` is org-wide, so there is n
 per-scope env to keep it in. With the flag, the credential lands in the config
 file on the scope's durable disk and this runs once per scope, ever.
 
-`gbrain remote doctor` is **not** the health check here: `run_doctor` is an
-`admin`-scope op and these clients are `read write` on purpose. `gbrain whoami`
+`foresights remote doctor` is **not** the health check here: `run_doctor` is an
+`admin`-scope op and these clients are `read write` on purpose. `foresights whoami`
 is read-scope and reports the client's identity, source, and grants.
 
 ## Verify isolation before rollout
@@ -221,11 +221,11 @@ From two differently-scoped sandboxes (or two thin-client configs):
 
 ```bash
 # alice-example (bound to emp-alice-example/, chan-eng/):
-gbrain put emp-alice-example/notes/test --content "mine"        # OK
-gbrain put chan-eng/notes/test --content "shared"               # OK
-gbrain put emp-bob-example/notes/test --content "not mine"      # permission_denied
-gbrain put chan-product/notes/test --content "not my channel"   # permission_denied
-gbrain search "test"                                            # sees agents + org-wiki only
+foresights put emp-alice-example/notes/test --content "mine"        # OK
+foresights put chan-eng/notes/test --content "shared"               # OK
+foresights put emp-bob-example/notes/test --content "not mine"      # permission_denied
+foresights put chan-product/notes/test --content "not my channel"   # permission_denied
+foresights search "test"                                            # sees agents + org-wiki only
 ```
 
 ## Cost + operations
@@ -237,16 +237,16 @@ gbrain search "test"                                            # sees agents + 
   on the `submit_agent` path (`src/core/minions/budget-meter.ts`), which these
   `read write` clients cannot reach — so it does **not** cap spend from
   ordinary `search`/`put_page` traffic. Treat runaway-agent containment as an
-  open item: watch the admin SPA (`/admin`) and `gbrain search stats`, and cap
+  open item: watch the admin SPA (`/admin`) and `foresights search stats`, and cap
   at the model/harness layer.
-- Backfills on a live brain: `gbrain embed --stale --pace` (see Pace Mode in
+- Backfills on a live brain: `foresights embed --stale --pace` (see Pace Mode in
   CLAUDE.md / `docs/operations/spend-controls.md`).
 
 ## Deliberately deferred
 
-- **qm `MemoryService` decorator** (mirror notebook captures into gbrain,
+- **qm `MemoryService` decorator** (mirror notebook captures into foresights,
   fan `recall` out and merge, `volunteer_context` push): needs a qm code
   change; today's integration is agent-initiated via the CLI + skill.
 - **MCP-native attach:** qm pins `strictMcpConfig` with only its in-process
-  server, so gbrain's MCP-discovered brain-resident skillpacks don't reach
+  server, so foresights's MCP-discovered brain-resident skillpacks don't reach
   qm agents; the sandbox skill above covers it.

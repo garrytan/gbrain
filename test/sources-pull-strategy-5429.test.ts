@@ -1,5 +1,5 @@
 /**
- * `gbrain sources set-pull-strategy <id> <rebase|merge>` (#5429): the one
+ * `foresights sources set-pull-strategy <id> <rebase|merge>` (#5429): the one
  * writer persists `sources.config.pull_strategy` by a single-key merge, the
  * reader `pullStrategyOf` defaults anything else to `rebase`, and `sources
  * list --json` reads it back. An invalid value, a missing source and a

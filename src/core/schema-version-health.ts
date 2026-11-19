@@ -10,8 +10,8 @@ export function schemaVersionHealth(
   opts: { remote?: boolean } = {},
 ): SchemaVersionHealth {
   const migrationFix = opts.remote
-    ? 'Run `gbrain apply-migrations --yes` on the host.'
-    : 'Fix: gbrain apply-migrations --yes';
+    ? 'Run `foresights apply-migrations --yes` on the host.'
+    : 'Fix: foresights apply-migrations --yes';
 
   if (version === latestVersion) {
     return { status: 'ok', message: `Version ${version} (latest: ${latestVersion})` };

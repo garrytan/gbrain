@@ -1,8 +1,8 @@
 /**
- * progress-tail — parses gbrain's --progress-json events out of child stderr.
+ * progress-tail — parses foresights's --progress-json events out of child stderr.
  *
  * The actual contract (verified post-Codex):
- *   - `gbrain --progress-json <subcommand>` writes JSONL events to STDERR
+ *   - `foresights --progress-json <subcommand>` writes JSONL events to STDERR
  *   - Stable phase names are dotted snake_case: `import.files`, `extract.links_fs`,
  *     `embed.pages`, `doctor.db_checks`, etc.
  *   - Each event line is a JSON object; non-progress stderr lines (warnings,

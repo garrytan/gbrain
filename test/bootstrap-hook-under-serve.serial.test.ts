@@ -3,7 +3,7 @@
  * hook-under-serve + lock-contention — the PERMANENT pins the reviews
  * mandated).
  *
- * A REAL `gbrain serve` subprocess (bun src/cli.ts serve) runs against a
+ * A REAL `foresights serve` subprocess (bun src/cli.ts serve) runs against a
  * temp PGLite brain under a sandboxed GBRAIN_HOME while the in-process hook
  * command exercises the stdin→IPC→stdout contract:
  *
@@ -327,7 +327,7 @@ describe('bootstrap hook under a live serve (serial e2e) [A7]', () => {
       lockErr = e;
     }
     expect(lockErr).toBeInstanceOf(LiveServeLockError);
-    expect((lockErr as Error).message).toContain('gbrain serve');
+    expect((lockErr as Error).message).toContain('foresights serve');
   }, 90_000);
 
   test('Pin 3: compact banks the window into the session cursor; the post-compaction session-start serves a warm pack carrying the seeded entity', async () => {

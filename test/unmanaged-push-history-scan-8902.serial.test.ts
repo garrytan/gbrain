@@ -1,7 +1,7 @@
 /**
  * #8902: four pushes from an unmanaged checkout publish every local commit the remote lacks, so each scans that range,
- * not only what it just wrote: the access-policy commit, the durability-scaffolding commit, `gbrain sources push` and the
- * first push of `gbrain bootstrap repo`. The policy commit and sources push keep the commit and report the refusal
+ * not only what it just wrote: the access-policy commit, the durability-scaffolding commit, `foresights sources push` and the
+ * first push of `foresights bootstrap repo`. The policy commit and sources push keep the commit and report the refusal
  * (committed_not_pushed, blocked_history; GST-2456); the other two throw it. Real git against local bare remotes (bootstrap's remote must be a GitHub URL,
  * so its gh calls and its push are faked and recorded); synthetic credentials only. HOME, GBRAIN_HOME and the file
  * transport switch are process-wide.
@@ -152,7 +152,7 @@ describe('durability scaffolding commit', () => {
   }, T);
 });
 
-describe('gbrain sources push', () => {
+describe('foresights sources push', () => {
   test('with nothing new to commit, refuses the earlier commits it would push and keeps them local', async () => {
     const head = (removedSecret(), git(root, 'rev-parse', 'HEAD'));
     await blocked(sourcesPush());
@@ -203,7 +203,7 @@ describe('gbrain sources push', () => {
   }, T);
 });
 
-describe('gbrain bootstrap repo, first push after the remote branch is gone', () => {
+describe('foresights bootstrap repo, first push after the remote branch is gone', () => {
   const url = 'https://github.com/alice-example/agent-workspace';
   let pushes: string[][];
   const runner: ExecRunner = async argv => {

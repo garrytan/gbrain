@@ -23,7 +23,7 @@
  * inherited unless GROK_HOME points elsewhere — against a hermetic BRAIN.
  * Grok-specific contamination channel (observed): grok reads VENDOR MCP
  * configs — ~/.claude.json and project .mcp.json — for folders the operator
- * has trusted. If the operator's ~/.claude.json registers gbrain, a live-lane
+ * has trusted. If the operator's ~/.claude.json registers foresights, a live-lane
  * grok turn in a trusted folder can bind the operator's REAL brain while the
  * oracle probes the hermetic one. `invoke()` logs a loud warning when it
  * detects that case; the fully hermetic lane is the door e2e
@@ -127,7 +127,7 @@ export class GrokRunner implements AgentRunner {
   /**
    * Loud tripwire for the vendor-config contamination channel: when the HOME
    * grok will see carries a ~/.claude.json with an mcpServers.gbrain entry,
-   * a trusted-folder grok turn may route gbrain tool calls at the operator's
+   * a trusted-folder grok turn may route foresights tool calls at the operator's
    * REAL brain. Warning only (live mode deliberately runs the operator's
    * agent); the hermetic lane is the door e2e.
    */

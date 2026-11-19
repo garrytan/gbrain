@@ -14,7 +14,7 @@
  *     deleted so gbrainHomePath() and the raw-$HOME paths autopilot.ts uses
  *     (systemdUnitPath, installCrontab's log path) resolve into the SAME
  *     temp tree.
- *   - No DATABASE_URL / provider keys: `gbrain init --pglite` seeds the
+ *   - No DATABASE_URL / provider keys: `foresights init --pglite` seeds the
  *     brain `--install` needs (cli.ts connects an engine before dispatching
  *     `autopilot --install`; `--status`/`--uninstall` are engine-free).
  *
@@ -41,7 +41,7 @@
  *
  * The autopilot cron line carries no comment marker: it is identified by the
  * wrapper filename `autopilot-run.sh` (uninstall filters lines containing
- * 'gbrain autopilot' OR 'autopilot-run.sh'; crontabIndicatesAutopilotInstall
+ * 'foresights autopilot' OR 'autopilot-run.sh'; crontabIndicatesAutopilotInstall
  * matches the same). That identification-by-substring is exactly why the
  * destructive-filter assertion (foreign lines survive byte-identical) matters.
  *
@@ -165,7 +165,7 @@ exit 0
 `,
   );
 
-  // Fake gbrain: writeWrapperScript resolves the CLI via `which gbrain` and
+  // Fake gbrain: writeWrapperScript resolves the CLI via `which foresights` and
   // bakes the resolved path into the wrapper; it is never EXECUTED by these
   // tests, it just has to resolve deterministically.
   writeShim(join(shimDir, 'gbrain'), '#!/bin/sh\nexit 0\n');
@@ -193,7 +193,7 @@ exit 0
   delete runEnv.GOOGLE_API_KEY;
   delete runEnv.OPENCLAW_HOME;
 
-  // Sanity: the shims MUST shadow any real binaries before a single gbrain
+  // Sanity: the shims MUST shadow any real binaries before a single foresights
   // command runs — fail loud here rather than touching the real machine.
   for (const bin of ['crontab', 'systemctl']) {
     const which = spawnSync('sh', ['-c', `command -v ${bin}`], {
@@ -218,7 +218,7 @@ exit 0
   );
   if (init.status !== 0) {
     throw new Error(
-      `gbrain init failed (code=${init.status}):\nSTDOUT:\n${init.stdout}\nSTDERR:\n${init.stderr}`,
+      `foresights init failed (code=${init.status}):\nSTDOUT:\n${init.stdout}\nSTDERR:\n${init.stderr}`,
     );
   }
 }, 150_000);
@@ -236,7 +236,7 @@ describe('autopilot linux lifecycle (PATH-shimmed crontab/systemctl)', () => {
   // byte-identity against it.
   let stateAfterInstall = '';
 
-  test('PGLite refusal: install without --force exits 1 recommending `gbrain serve` (single-writer lock)', () => {
+  test('PGLite refusal: install without --force exits 1 recommending `foresights serve` (single-writer lock)', () => {
     // Master's db-availability wave: a daemonized autopilot on a PGLite
     // brain would hold the exclusive DB lock 24/7, so install refuses
     // without --force. Pin the refusal (exit 1, serve recommendation, no
@@ -252,7 +252,7 @@ describe('autopilot linux lifecycle (PATH-shimmed crontab/systemctl)', () => {
   test('install --target linux-cron adds ONE autopilot line; foreign lines survive byte-identical', () => {
     const r = runCli(['autopilot', '--install', '--force', '--yes', '--target', 'linux-cron', '--repo', repoDir]);
     expect(r.status, `install failed:\nSTDOUT:\n${r.stdout}\nSTDERR:\n${r.stderr}`).toBe(0);
-    expect(r.stdout).toContain('Installed crontab entry for gbrain autopilot (every 5 minutes)');
+    expect(r.stdout).toContain('Installed crontab entry for foresights autopilot (every 5 minutes)');
 
     // Exact table: foreign block byte-identical, autopilot line appended.
     // The line's "marker" is the wrapper filename autopilot-run.sh — that
@@ -319,7 +319,7 @@ describe('autopilot linux lifecycle (PATH-shimmed crontab/systemctl)', () => {
     expect(existsSync(unitPath())).toBe(true);
     expect(statSync(unitPath()).mode & 0o777).toBe(0o644);
     const unit = readFileSync(unitPath(), 'utf-8');
-    expect(unit).toContain('Description=GBrain Autopilot');
+    expect(unit).toContain('Description=Foresights Autopilot');
     expect(unit).toContain(`ExecStart=${wrapperPath()}`);
     expect(unit).toContain('Restart=always');
     expect(unit).toContain('RestartSec=30');
@@ -345,7 +345,7 @@ describe('autopilot linux lifecycle (PATH-shimmed crontab/systemctl)', () => {
     const r = runCli(['autopilot', '--uninstall'], 60_000);
     expect(r.status, `uninstall failed:\nSTDOUT:\n${r.stdout}\nSTDERR:\n${r.stderr}`).toBe(0);
     expect(r.stdout).toContain('Removed systemd user service: gbrain-autopilot.service');
-    expect(r.stdout).toContain('Removed crontab entry for gbrain autopilot');
+    expect(r.stdout).toContain('Removed crontab entry for foresights autopilot');
 
     // systemd arm: disable --now, unlink the unit, then daemon-reload.
     expect(existsSync(unitPath())).toBe(false);

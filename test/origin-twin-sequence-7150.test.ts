@@ -2,7 +2,7 @@
  * #7150: the production sequence behind #6948, replayed end to end on a managed source against current master. A legacy
  * page with no recorded origin sits beside the page that records a file, with the same body; the source is trust-claimed
  * (the `trust_claim` channel the second page's history showed), a writer then tries to give the legacy page the held
- * origin, file repair targets the file, and finally the twin state an older gbrain left behind meets a sync. Before #6948
+ * origin, file repair targets the file, and finally the twin state an older foresights left behind meets a sync. Before #6948
  * the twin stopped every managed sync of the source with `page_identity_changed` naming one slug. Now:
  *
  * - the trust claim re-tiers rows and assigns no origin;
@@ -85,7 +85,7 @@ for (const backend of testBackends()) describe(`[${backend}] #7150 the origin-tw
     return { id, root, opts };
   }
 
-  /** What an older gbrain left: the legacy page records the held file too (no current writer can, so it is set directly). */
+  /** What an older foresights left: the legacy page records the held file too (no current writer can, so it is set directly). */
   async function legacyTwin(sourceId: string) {
     await dropOriginIndex(engine);
     await write(sourceId, tx => tx.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2', [sourceId, TWIN, FILE]));
@@ -111,7 +111,7 @@ for (const backend of testBackends()) describe(`[${backend}] #7150 the origin-tw
     expect(assigned).toMatchObject({ code: 'page_identity_changed', detail: 'origin_already_claimed' });
     expect(assigned.message + String((assigned as { hint?: string }).hint ?? '')).toContain(FILE);
     expect((await page(f.id, TWIN))!.source_path).toBeNull();
-    // 3. The state an older gbrain left. File repair resolves the file to the page its path names and refuses the twin.
+    // 3. The state an older foresights left. File repair resolves the file to the page its path names and refuses the twin.
     await legacyTwin(f.id);
     expect(await canonicalOriginPage(engine, f.id, FILE)).toMatchObject({ slug: CANONICAL });
     expect(await refusal(() => prepareDriftPage(engine, f.id, TWIN, 'file', new Date().toISOString()))).toMatchObject({ code: 'page_identity_changed', detail: 'origin_conflict' });

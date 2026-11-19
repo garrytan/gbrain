@@ -1,5 +1,5 @@
 /**
- * skill-resolver-setup.ts — `gbrain setup <claude-code|codex|hermes>
+ * skill-resolver-setup.ts — `foresights setup <claude-code|codex|hermes>
  * --skill-loading resolve` (and its undo, `--skill-loading off|spring` and `setup --remove`).
  *
  * On: build the harness's user-level catalog (<harness>-user, from
@@ -95,7 +95,7 @@ export async function syncSkillResolverSetup(opts: { harness: ResolverHarness; g
   const out: ResolverSetupResult = { harness, mode: 'on', steps: [] };
   const cfg = readResolverConfig(home);
   if (cfg.state === 'unreadable') return { ...out, error: { code: 'skill_resolver_config_unreadable', scanned: [], message: `${cfg.path} cannot be read (${cfg.why}), so setup did not touch it or anything else for the skill resolver.` } };
-  if (!opts.gbrainBin.startsWith('/')) return { ...out, error: incomplete(null, 'no absolute gbrain binary was found for the hook (harnesses inherit no PATH); pass --gbrain-bin', 'Nothing was written.') };
+  if (!opts.gbrainBin.startsWith('/')) return { ...out, error: incomplete(null, 'no absolute foresights binary was found for the hook (harnesses inherit no PATH); pass --gbrain-bin', 'Nothing was written.') };
   const catalog = userCatalog(harness);
   let wanted: string[];
   try { wanted = [...new Set([...harnessSkillDirs(harness), ...configuredSkillDirs(cfg.state === 'ok' ? resolverSection(cfg.doc) : {}, harness)])]; } catch (e) { return { ...out, error: incomplete(null, (e as Error).message.replace(/\.$/, ''), 'Nothing was written.') }; }

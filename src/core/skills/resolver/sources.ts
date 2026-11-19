@@ -1,6 +1,6 @@
 /**
- * Catalog sources for `gbrain skills index build`: SKILL.md directories
- * (--dir), gbrain's bundled skills (--bundled) and an adapter's JSON list
+ * Catalog sources for `foresights skills index build`: SKILL.md directories
+ * (--dir), foresights's bundled skills (--bundled) and an adapter's JSON list
  * (--from-json), plus an optional routing table (--routing). Each becomes a
  * list of normalized skill records, the skills it skipped (with a reason)
  * and, for directories, a stat fingerprint the turn path compares cheaply.
@@ -182,7 +182,7 @@ export function readDirSources(dirs: readonly string[], rootNamespaces: readonly
   return { kind: 'dir', skills, skipped, fingerprint: fp };
 }
 
-/** gbrain's own bundled skills (owner audience), ids `gbrain:<name>`. */
+/** foresights's own bundled skills (owner audience), ids `gbrain:<name>`. */
 export async function readBundledSource(): Promise<SourceRead> {
   const b = await import('../bundled.ts');
   const { parseSkillFrontmatter } = await import('../../skill-frontmatter.ts');

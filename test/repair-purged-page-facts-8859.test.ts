@@ -45,7 +45,7 @@ const hashOf = (json: RepairJson) => json.results[0]!.apply_command.match(/--exp
 const active = async (engine: BrainEngine, ids: number[]) => (await engine.executeRaw<{ id: number }>(
   'SELECT id FROM facts WHERE id = ANY($1::bigint[]) AND expired_at IS NULL ORDER BY id', [ids])).map(r => Number(r.id));
 
-/** Rows as an older gbrain left them: written under replica role, so no current writer guard applies, and dated before
+/** Rows as an older foresights left them: written under replica role, so no current writer guard applies, and dated before
  * the purges the tests then record unless `recent`. */
 const legacy = <T>(engine: BrainEngine, sql: string, params: unknown[]) => engine.transaction(async tx => {
   await tx.executeRaw('SET LOCAL session_replication_role = replica');

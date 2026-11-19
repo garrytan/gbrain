@@ -226,7 +226,7 @@ describe('#5195 legacy shared-name jobs and moved brains', () => {
     mkdirSync(unitDir(), { recursive: true });
     mkdirSync(join(brainC, '.gbrain'), { recursive: true });
     writeFileSync(join(brainC, '.gbrain', 'autopilot-run.sh'), '#!/bin/sh\n', { mode: 0o755 });
-    writeFileSync(join(unitDir(), 'gbrain-autopilot.service'), `[Unit]\nDescription=GBrain Autopilot\n[Service]\nExecStart=${brainC}/.gbrain/autopilot-run.sh\n`);
+    writeFileSync(join(unitDir(), 'gbrain-autopilot.service'), `[Unit]\nDescription=Foresights Autopilot\n[Service]\nExecStart=${brainC}/.gbrain/autopilot-run.sh\n`);
 
     const before = status(brainC);
     expect(before.installed).toBe(true);
@@ -238,13 +238,13 @@ describe('#5195 legacy shared-name jobs and moved brains', () => {
     expect(defaultView.job.shared_job_of_other_brain.home).toBe(join(brainC, '.gbrain'));
     // ...and its uninstall leaves that job alone, naming the right command.
     const defaultUninstall = run(null, ['--uninstall']);
-    expect(defaultUninstall.out).toContain(`GBRAIN_HOME='${brainC}' gbrain autopilot --uninstall`);
+    expect(defaultUninstall.out).toContain(`GBRAIN_HOME='${brainC}' foresights autopilot --uninstall`);
     expect(existsSync(join(unitDir(), 'gbrain-autopilot.service'))).toBe(true);
     // ...and its install refuses rather than taking that brain's job over.
     const refused = install(null, 'linux-systemd');
     expect(refused.status).toBe(1);
     expect(refused.out).toContain('autopilot job gbrain-autopilot.service runs the brain at');
-    expect(refused.out).toContain(`GBRAIN_HOME='${brainC}' gbrain autopilot --install`);
+    expect(refused.out).toContain(`GBRAIN_HOME='${brainC}' foresights autopilot --install`);
 
     const r = install(brainC, 'linux-systemd');
     expect(r.status).toBe(0);

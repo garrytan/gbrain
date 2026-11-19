@@ -1,5 +1,5 @@
 /**
- * v0.41.16.0 — `gbrain eval conversation-parser` CLI behavior tests.
+ * v0.41.16.0 — `foresights eval conversation-parser` CLI behavior tests.
  *
  * Covers argv parsing, exit codes (0/1/2), --json envelope shape,
  * --no-llm flag, --min-recall override, USAGE errors. Pure file I/O,

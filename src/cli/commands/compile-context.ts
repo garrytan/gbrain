@@ -1,5 +1,5 @@
 /**
- * `gbrain compile-context`: pre-connect dispatch (opens its own engine), run by
+ * `foresights compile-context`: pre-connect dispatch (opens its own engine), run by
  * handleCliOnly before the connectEngine() terminator. Moved verbatim from
  * src/cli.ts (refactor wave 1, W4 cli); the record lives in src/cli/command-table.ts.
  */

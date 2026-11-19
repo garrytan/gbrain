@@ -72,7 +72,7 @@ describe('dispatch response meta (WP2/D3/D8)', () => {
     // F2: the keyword count line rides right after the rows, before the notices.
     // GBRA-200: the degraded stamp is the last block and `_meta.degraded`.
     expect(out.content.length).toBe(5);
-    expect(out.content[1].text).toStartWith('[gbrain search] Rows are a ranked top-K');
+    expect(out.content[1].text).toStartWith('[foresights search] Rows are a ranked top-K');
     expect(out.content[3].text).toStartWith('[gbrain notice degraded_recall kind=degraded]');
     expect(out.content[4].text).toStartWith('[gbrain degraded: embed_unavailable]');
     expect((out._meta as Record<string, any>).degraded).toEqual({ reasons: ['embed_unavailable'] });
@@ -104,7 +104,7 @@ describe('dispatch response meta (WP2/D3/D8)', () => {
     const out = await callSearch();
     // No empty-retrieval block; F3's degraded notice rides every affected HTTP call.
     expect(out.content.length).toBe(4);
-    expect(out.content[1].text).toStartWith('[gbrain search] Rows are a ranked top-K');
+    expect(out.content[1].text).toStartWith('[foresights search] Rows are a ranked top-K');
     expect(out.content[2].text).toStartWith('[gbrain notice degraded_recall kind=degraded]');
     expect(out.content[3].text).toStartWith('[gbrain degraded: embed_unavailable]');
     const retrieval = (out._meta as Record<string, any>).retrieval;

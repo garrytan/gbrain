@@ -1,5 +1,5 @@
 /**
- * v0.40.4.0 — `gbrain search --explain` formatter.
+ * v0.40.4.0 — `foresights search --explain` formatter.
  *
  * Pins output format for the per-stage attribution view. Stable shape so
  * scripts that grep `--explain` output don't break under refactors.

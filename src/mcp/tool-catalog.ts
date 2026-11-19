@@ -57,7 +57,7 @@ export function renderToolCatalogMarkdown(): string {
     `Every non-localOnly operation on the MCP surface: ${ops.length} tools across ` +
       `${areas.length} areas. **Starter** marks membership in the ~${STARTER_OPS.size}-op ` +
       '`starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be ' +
-      'true before remote callers see/call the op (`gbrain config set <key> true`). ' +
+      'true before remote callers see/call the op (`foresights config set <key> true`). ' +
       'What a given token actually sees is further filtered per request by scope, ' +
       'bound-client fence, publish gates, and the per-client surface — see ' +
       '`docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.',

@@ -1,5 +1,5 @@
 /**
- * skillpack/pack-publish.ts — `gbrain skillpack pack` orchestrator.
+ * skillpack/pack-publish.ts — `foresights skillpack pack` orchestrator.
  *
  * Runs the publisher's local validation + deterministic tarball emit:
  *   1. runDoctor(--quick) over the pack root; refuse if tier_eligibility

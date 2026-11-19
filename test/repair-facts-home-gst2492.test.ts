@@ -1,5 +1,5 @@
 /**
- * GST-2492 PR 2: `gbrain repair facts-home --source <id>` gives the facts of a strict source that live in the database
+ * GST-2492 PR 2: `foresights repair facts-home --source <id>` gives the facts of a strict source that live in the database
  * alone a home in Git.
  *
  * 1. Protects: the preview groups every such fact and writes nothing; `--apply --expect <hash>` writes exactly the facts
@@ -50,7 +50,7 @@ const classes = (result: { listing?: Array<{ class: string }> }) => (result.list
 const page = (title: string) => `---\ntype: note\ntitle: ${title}\n---\n\nNotes about ${title}.\n`;
 const put = (ctx: OperationContext, slug: string, title: string) => operationsByName.put_page!.handler(ctx, { slug, content: page(title), request_id: randomUUID() });
 const extracted = (claim: string) => ({ fact: claim, kind: 'fact' as const, notability: 'medium' as const, source: 'extraction 2026-11-11', visibility: 'world' as const, embedding: null, sessionId: null });
-/** A database-only fact row an older gbrain left (written outside the owner's write guards, as only its publications may). */
+/** A database-only fact row an older foresights left (written outside the owner's write guards, as only its publications may). */
 async function unguarded(engine: BrainEngine, write: () => Promise<unknown>): Promise<void> {
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
   try { await write(); } finally { await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1'); }
@@ -102,7 +102,7 @@ async function rebuild(root: string, databaseUrl: string | undefined, claims: st
   } finally { rmSync(home, { recursive: true, force: true }); }
 }
 
-for (const backend of testBackends()) describe(`[${backend}] gbrain repair facts-home (GST-2492 PR 2)`, () => {
+for (const backend of testBackends()) describe(`[${backend}] foresights repair facts-home (GST-2492 PR 2)`, () => {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
   const brain = (run: (brain: ManagedBrain) => Promise<void>) => managedBrain(run, { databaseUrl, setup: gitRepo });
 
@@ -190,7 +190,7 @@ for (const backend of testBackends()) describe(`[${backend}] gbrain repair facts
     const preview = await repair(engine);
     expect(classes(preview)).toEqual([]);
     expect(preview.warnings).toEqual([expect.stringContaining('Source default is not strict')]);
-    expect(preview.details).toMatchObject({ strict: false, verify: 'gbrain sources git-gap default --json' });
+    expect(preview.details).toMatchObject({ strict: false, verify: 'foresights sources git-gap default --json' });
     const applied = await repair(engine, { apply: true, expect: preview.preview_hash });
     expect(applied.applied).toBe(0);
     expect(await factRow(engine, SUBJECTLESS)).toMatchObject({ row_num: null, source_markdown_slug: null });

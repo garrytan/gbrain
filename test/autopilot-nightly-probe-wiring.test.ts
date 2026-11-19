@@ -34,7 +34,7 @@ describe('autopilot wiring: nightly quality probe', () => {
   test('feature flag gate present: dual-plane read (DB row wins, file plane fallback)', () => {
     // Per D10: the scheduler ONLY checks the feature flag. The 24h rate-limit
     // lives inside runNightlyQualityProbe itself (no scheduler-side precheck).
-    // The flag resolves through resolveProbeEnabled so `gbrain config set
+    // The flag resolves through resolveProbeEnabled so `foresights config set
     // autopilot.nightly_quality_probe.enabled true` (the doctor hint, DB
     // plane) and ~/.gbrain/config.json (file plane) BOTH work — a file-only
     // read made the printed hint a silent no-op.

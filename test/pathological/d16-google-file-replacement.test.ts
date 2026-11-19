@@ -99,7 +99,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         }
         const hold = readGoogleState(b.root).item_holds as { items: Record<string, { code: string; state: string; message: string }> };
         expect(hold.items['contact:people/c1']).toMatchObject({ code: 'file_database_drift', state: 'held' });
-        expect(hold.items['contact:people/c1']!.message).toContain(`gbrain sync --source ${SOURCE}`);
+        expect(hold.items['contact:people/c1']!.message).toContain(`foresights sync --source ${SOURCE}`);
         expect(await b.body(GOOD)).toContain('Upstream 1');
         expectOthersUnchanged(before, await snapshotItems(b.engine, SOURCE), { expectProgress: [GOOD] });
       });

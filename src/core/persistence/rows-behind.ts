@@ -28,7 +28,7 @@
  * from the content comparison alone, without running the importer's confirmation.
  * Applies only on the owner host of a managed source with a checkout and a checkpoint; everything else, a repo-less
  * brain included, is `not_applicable` with its reason. Read-only. Readers: doctor `sync_rows_behind_checkpoint` and
- * `gbrain repair rows-behind`.
+ * `foresights repair rows-behind`.
  */
 import { realpathSync } from 'node:fs';
 import { relative, sep } from 'node:path';

@@ -1,5 +1,5 @@
 /**
- * #8645: an unmanaged Google connector page whose checkout file lacks only gbrain's own `## Facts` fence is
+ * #8645: an unmanaged Google connector page whose checkout file lacks only foresights's own `## Facts` fence is
  * replaceable (#7292), but once one of that fence's facts was forgotten the re-render was refused
  * file_database_drift on every run and held after three. The guard compared the file plus the live page's fence,
  * which carries the withdrawal overlay, against the raw stored body, which does not. Now each stored state is compared

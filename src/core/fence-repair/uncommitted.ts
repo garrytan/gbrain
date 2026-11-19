@@ -2,10 +2,10 @@
  * #6188 (T2): "uncommitted fence repair" notices. A legacy (unmanaged)
  * source has no Git effect, so when the fence repair rewrites one of its
  * files it backs the file up, imports it, and records a notice here naming
- * the path, the backup and the exact `gbrain git commit-push` step. The
+ * the path, the backup and the exact `foresights git commit-push` step. The
  * notice stays until that path is committed: every read checks
  * `git status --porcelain -- <path>` and drops the notices whose path is
- * clean. `gbrain sources status` and doctor `fence_integrity` show them.
+ * clean. `foresights sources status` and doctor `fence_integrity` show them.
  *
  * One row per (source, incarnation, path) in `op_checkpoints`
  * (`fence-repair-uncommitted`); the record carries source_id and
@@ -77,7 +77,7 @@ export async function readUncommittedFenceRepairs(engine: Exec, sourceIds?: read
   return out;
 }
 
-/** What `gbrain sources status` shows per source (JSON `fence_repairs_uncommitted`); a read error shows nothing. */
+/** What `foresights sources status` shows per source (JSON `fence_repairs_uncommitted`); a read error shows nothing. */
 export interface UncommittedFenceRepairView { path: string; repaired_at: string; backup: string | null; commit_step: string; classes: string[] }
 
 export async function uncommittedFenceRepairsBySource(engine: Exec, sourceIds: readonly string[]): Promise<Map<string, UncommittedFenceRepairView[]>> {
@@ -90,6 +90,6 @@ export async function uncommittedFenceRepairsBySource(engine: Exec, sourceIds: r
 }
 
 export function uncommittedFenceRepairLines(sourceId: string, notices: readonly UncommittedFenceRepairView[]): string[] {
-  return [`  ${sourceId}: ${notices.length} uncommitted fence repair(s); gbrain rewrote and imported them (backups kept), commit each when you are ready:`,
+  return [`  ${sourceId}: ${notices.length} uncommitted fence repair(s); foresights rewrote and imported them (backups kept), commit each when you are ready:`,
     ...notices.map(notice => `    ${notice.path} (${notice.classes.join(', ')}): ${notice.commit_step}`)];
 }

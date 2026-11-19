@@ -3,7 +3,7 @@
  *
  * Field-report case: a `shell` tool sat in the registry and the subagent
  * never used it because the default system prompt was one generic line
- * (`'You are a helpful assistant running as a gbrain subagent.'`) and gave
+ * (`'You are a helpful assistant running as a foresights subagent.'`) and gave
  * the model no guidance on WHICH tool to reach for. This module fixes that
  * by splicing a deterministic tool-guidance preamble into the system prompt
  * based on the actual `toolDefs` array, including any plugin-registered
@@ -32,7 +32,7 @@
 import type { ToolDef } from './types.ts';
 
 export const DEFAULT_SUBAGENT_SYSTEM =
-  'You are a helpful assistant running as a gbrain subagent.';
+  'You are a helpful assistant running as a foresights subagent.';
 
 export interface SystemPromptOpts {
   /** Skip the auto-generated tool guidance preamble. */
@@ -75,7 +75,7 @@ export function buildSystemPrompt(
  *
  *   When the task asks you to write a file, run a command, or modify the
  *   filesystem, prefer a `shell` or `bash` tool if one is in your registry.
- *   Brain tools (`put_page`, `search`, `query`) write to the gbrain database,
+ *   Brain tools (`put_page`, `search`, `query`) write to the foresights database,
  *   not to local files.
  *
  * Tools are listed in the order the caller passed them — NO sorting. The
@@ -105,7 +105,7 @@ export function renderToolPreamble(toolDefs: ToolDef[]): string {
     '',
     'When the task asks you to write a file, run a command, or modify the',
     'filesystem, prefer a `shell` or `bash` tool if one is in your registry.',
-    'Brain tools (`put_page`, `search`, `query`) write to the gbrain database,',
+    'Brain tools (`put_page`, `search`, `query`) write to the foresights database,',
     'not to local files.',
   ].join('\n');
 }

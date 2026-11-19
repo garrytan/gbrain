@@ -6,7 +6,7 @@
  * `file_database_drift`) until someone reconciles it. Three readers share this
  * module:
  *
- *   - the audit (`gbrain sources reconcile <source> --audit --conflicts`, MCP
+ *   - the audit (`foresights sources reconcile <source> --audit --conflicts`, MCP
  *     `list_write_conflicts`): conflict receipts grouped by slug, read through a
  *     bounded window of request sequences (the request table's unique sequence
  *     index), paginated by slug with a completeness flag. Remote callers get
@@ -17,7 +17,7 @@
  *     which check `liveFileDrift` before admission or spend; the concept phase
  *     records each skip in `dream.concepts.drift_skips` with per-entry atomic
  *     updates and releases it once the file and database agree again;
- *   - doctor `maintenance_write_drift` and `gbrain repair file-drift`.
+ *   - doctor `maintenance_write_drift` and `foresights repair file-drift`.
  */
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
@@ -52,8 +52,8 @@ export const DRIFT_SKIPS_KEY = 'dream.concepts.drift_skips';
 export const CONFLICT_WINDOW_DEFAULT = 100_000;
 export const CONFLICT_WINDOW_MAX = 1_000_000;
 
-export const auditConflictsCommand = (sourceId: string) => `gbrain sources reconcile ${sourceId} --brain host --audit --conflicts`;
-export const fileDriftRepairCommand = (sourceId: string) => `gbrain repair file-drift --source ${sourceId} --all-drifted --prefer file`;
+export const auditConflictsCommand = (sourceId: string) => `foresights sources reconcile ${sourceId} --brain host --audit --conflicts`;
+export const fileDriftRepairCommand = (sourceId: string) => `foresights repair file-drift --source ${sourceId} --all-drifted --prefer file`;
 
 /** The drift classes `--all-drifted` groups by (reconcile-additive.ts verdicts; `no_drift` reads as formatting only). */
 export const DRIFT_CLASSES = ['structurally_additive', 'additive_with_suggestions', 'review_required', 'formatting_only', 'error'] as const;
@@ -380,7 +380,7 @@ export async function auditDriftConflicts(engine: BrainEngine, sourceId: string,
   if (report.totals.slugs) {
     report.next_actions.push(access.trusted
       ? `Preview the resolution of every drifted page with ${fileDriftRepairCommand(sourceId)} (or --prefer database); it previews by default and writes nothing.`
-      : 'The brain host operator resolves drifted pages with gbrain repair file-drift on the brain host; relay the slugs to the user.');
+      : 'The brain host operator resolves drifted pages with foresights repair file-drift on the brain host; relay the slugs to the user.');
   }
   if (!coversHistory) report.next_actions.push(`Older receipts lie outside the ${window}-sequence window; widen it with --window (at most ${CONFLICT_WINDOW_MAX}).`);
   return report;

@@ -224,7 +224,7 @@ if (backends.includes('pglite')) {
       expect(estimateChatCallUsd({ ...call, capSource: 'default' })).toEqual({ ok: true, quote: { usd: ceilingUsd, estimated: true, source: 'ceiling' } });
       const refused = estimateChatCallUsd({ ...call, capSource: 'user' });
       expect(refused).toMatchObject({ ok: false, reason: 'no_pricing', guidance: { code: 'no_pricing', model: call.model, kind: 'chat' } });
-      expect(!refused.ok && refused.guidance.register_command).toStartWith('gbrain pricing set acme-example:frontier-next');
+      expect(!refused.ok && refused.guidance.register_command).toStartWith('foresights pricing set acme-example:frontier-next');
       expect(chatCallUsd(call.model, { inputTokens: 2_000, outputTokens: 1_000 })).toEqual({ usd: ceilingUsd, estimated: true, source: 'ceiling' });
 
       expect(estimateChatCallUsd({ model: 'anthropic:claude-sonnet-5-5', inputTokens: 2_000, maxOutputTokens: 1_000, capSource: 'user' }))

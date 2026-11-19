@@ -1,5 +1,5 @@
 /**
- * gbrain decide sweep --claims: the keyless claim-conflict lane on demand
+ * foresights decide sweep --claims: the keyless claim-conflict lane on demand
  * (facts/claim-conflicts.ts). Its own lane: no --slot, no TypeSafe key, and it runs
  * whether or not dream.claim_conflicts.mode is on. --dry-run previews the pairs and
  * writes nothing; --source sweeps one active source (an unknown or archived
@@ -12,7 +12,7 @@ import { runClaimConflicts, type ClaimConflictPair } from '../../core/facts/clai
 import { writeCliError } from '../../cli/cli-error.ts';
 import { flagValue } from '../decide.ts';
 
-const USAGE = 'Usage: gbrain decide sweep --claims [--source <id>] [--dry-run] [--json]';
+const USAGE = 'Usage: foresights decide sweep --claims [--source <id>] [--dry-run] [--json]';
 
 function pairLine(sourceId: string, p: ClaimConflictPair, dryRun: boolean): string {
   const slot = [p.claim_metric, p.claim_unit, p.claim_period].filter(Boolean).join(' ');
@@ -40,7 +40,7 @@ export async function runClaimsSweepCommand(engine: BrainEngine, args: string[])
     console.log('claim conflicts ' + run.sweep_id + ': ' + run.status + ' (' + run.detail + ')');
     for (const s of run.sources) for (const p of s.pairs) console.log(pairLine(s.source_id, p, run.dry_run));
     for (const w of run.warnings) console.log('warning: ' + w);
-    if (run.proposals_written > 0) console.log('Review: gbrain trust review --kind contradiction');
+    if (run.proposals_written > 0) console.log('Review: foresights trust review --kind contradiction');
   }
   return run.status === 'failed' ? 1 : 0;
 }

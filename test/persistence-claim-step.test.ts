@@ -51,7 +51,7 @@ describe('claimPhaseStamp and claimStateOf', () => {
     expect(JSON.parse(claimPhaseStamp(clock, 'tok-1'))).toEqual({ phase: 'preparing', claimed_at: '2026-10-08T03:00:00.000Z', since: '2026-10-08T03:00:00.000Z', token: 'tok-1',
       step: 'origin_check', step_since: '2026-10-08T03:01:00.000Z', waiting_on: 'db', last_sql: null, owner: { kind: 'sync', pid: 4242, version: '0.60.200.0' } });
   });
-  test('the default owner is this process: the gbrain command (cli when none), pid, build, (#6317) its nonce and pid namespace and (#6650) its boot id and start time', () => {
+  test('the default owner is this process: the foresights command (cli when none), pid, build, (#6317) its nonce and pid namespace and (#6650) its boot id and start time', () => {
     const owner = claimOwner();
     expect(owner).toEqual({ kind: expect.any(String), pid: process.pid, version: VERSION, nonce: expect.stringMatching(/^[0-9a-f]{16}$/), pid_ns: process.platform === 'linux' ? expect.stringMatching(/^pid:\[\d+\]$/) : null,
       boot_id: readBootId(), start: processStartTime(process.pid) });

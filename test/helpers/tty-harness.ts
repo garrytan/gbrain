@@ -5,7 +5,7 @@
  * (`claude -p`, `codex exec`) — perfect for pass/fail door proofs, blind to
  * everything a human actually experiences: pickers, spinners, silence windows,
  * permission dialogs, interview prompts, rendered copy. This harness spawns any
- * CLI (gbrain itself, `claude`, `codex`) under a REAL pseudo-terminal via Bun's
+ * CLI (foresights itself, `claude`, `codex`) under a REAL pseudo-terminal via Bun's
  * built-in `terminal:` spawn option (Bun >= 1.3.10, pinned in package.json
  * engines + CI), so the child renders exactly what a user's terminal shows —
  * and records WHEN every byte arrived, so "the user stared at a frozen screen

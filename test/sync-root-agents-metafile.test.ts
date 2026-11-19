@@ -1,9 +1,9 @@
 /**
- * #5186 (W14 P1.5b): `gbrain harden` scaffolds `AGENTS.md` / `CLAUDE.md` at the
+ * #5186 (W14 P1.5b): `foresights harden` scaffolds `AGENTS.md` / `CLAUDE.md` at the
  * source root as agent instructions, not brain content. Sync classifies the
  * root-level pair as `metafile` (depth 0 only; `docs/AGENTS.md` is still a
  * page), full import skips them the same way, and a root `agents` page an
- * earlier gbrain indexed survives re-sync under the #1433 metafile guard.
+ * earlier foresights indexed survives re-sync under the #1433 metafile guard.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { execSync } from 'child_process';
@@ -61,7 +61,7 @@ describe('#5186 — a hardened root AGENTS.md is not imported, and an existing r
     expect(await engine.getPage('agents')).toBeNull();
   }, 60_000);
 
-  test('a root agents page indexed by an earlier gbrain survives re-sync (#1433 guard)', async () => {
+  test('a root agents page indexed by an earlier foresights survives re-sync (#1433 guard)', async () => {
     const { performSync } = await import('../src/commands/sync.ts');
     await performSync(engine, { repoPath, full: true, noPull: true, noEmbed: true });
     await engine.putPage('agents', { type: 'concept', title: 'Agents', compiled_truth: 'Pre-existing page that should survive re-sync.', timeline: '', frontmatter: { type: 'concept' } });

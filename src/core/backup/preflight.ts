@@ -1,5 +1,5 @@
 /**
- * #6649: `gbrain backup create` on PGLite checks, before it takes the writer
+ * #6649: `foresights backup create` on PGLite checks, before it takes the writer
  * lock or opens the database, that this recovery format can hold the brain:
  * the data dir must be the managed `<root>/.gbrain/brain.pglite` with no
  * symlink on the way (a flat or symlinked home is `unmanaged_database_path`),
@@ -61,15 +61,15 @@ export function pgliteBackupLayout(root: string, dbPath: string): PgliteBackupLa
   return 'managed';
 }
 
-const RUNBOOK_STEPS = 'Take a quiesced physical copy instead: stop every gbrain writer on this brain (gbrain serve, jobs and autopilot, agent sessions), ' +
+const RUNBOOK_STEPS = 'Take a quiesced physical copy instead: stop every foresights writer on this brain (foresights serve, jobs and autopilot, agent sessions), ' +
   'copy the whole data directory and config.json into a new, isolated GBRAIN_HOME, point that config\'s database_path at the copy, ' +
-  `then verify the copy with gbrain doctor --json run with GBRAIN_HOME set to it before relying on it (runbook: ${PHYSICAL_COPY_RUNBOOK}).`;
+  `then verify the copy with foresights doctor --json run with GBRAIN_HOME set to it before relying on it (runbook: ${PHYSICAL_COPY_RUNBOOK}).`;
 
 /** The runbook needs the user (writers stop, a copy is made); the agent then runs doctor read-only. */
 export function physicalCopyFix(): Action {
   return {
     ask_user: true, argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'agent', requires_exclusive: false, docs: PHYSICAL_COPY_RUNBOOK,
-    why: 'Read-only, after the user agrees to the physical copy: doctor opens the brain only when no other gbrain process holds it, so a clean run shows the writers are stopped.',
+    why: 'Read-only, after the user agrees to the physical copy: doctor opens the brain only when no other foresights process holds it, so a clean run shows the writers are stopped.',
     user_message: RUNBOOK_STEPS, verify: { argv: ['gbrain', 'doctor', '--json'] },
   };
 }

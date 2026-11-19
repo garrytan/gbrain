@@ -1,5 +1,5 @@
 /**
- * F0 `gbrain sources refresh`, spec test 1.8.2 (O-ENG-9, "restart converges").
+ * F0 `foresights sources refresh`, spec test 1.8.2 (O-ENG-9, "restart converges").
  *
  * Protects: a process killed after `git merge --ff-only` and before the merged
  * bookkeeping commits leaves the worktree fenced; the next owner start moves

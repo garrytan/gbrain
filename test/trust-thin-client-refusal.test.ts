@@ -1,5 +1,5 @@
 /**
- * A thin-client install refuses `gbrain trust` (owner actions run on the brain
+ * A thin-client install refuses `foresights trust` (owner actions run on the brain
  * host) with a host-side fix that keeps the typed ref, so the user can run the
  * exact command there (#5575 DX-3/DX-7). Spawns the CLI against a seeded
  * thin-client home; no engine or network is reached.
@@ -19,7 +19,7 @@ beforeAll(() => {
 });
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
-describe('thin-client gbrain trust refusal', () => {
+describe('thin-client foresights trust refusal', () => {
   test('the fix argv carries the subcommand and its typed ref; an unsafe ref is left out', async () => {
     const env = { GBRAIN_REMOTE_CLIENT_SECRET: undefined };
     const fixOf = async (args: string[]) => {

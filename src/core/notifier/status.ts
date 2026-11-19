@@ -15,6 +15,7 @@ import { residentNotifier } from './resident.ts';
 import { parseOnCommit } from '../commit-notifier.ts';
 import { SYNC_ON_COMMIT_KEY } from '../sync-config-keys.ts';
 import { HOLDER_STALL_MS, holderStalled, publicDrainHolder, readLiveDrainLease, type DrainHolder } from '../persistence/sync-lease.ts';
+import { commandText } from '../brand.ts';
 
 type Exec = Pick<BrainEngine, 'executeRaw' | 'kind'>;
 type FreshnessExec = Exec & Pick<BrainEngine, 'getConfig'>;
@@ -134,7 +135,7 @@ export async function readSourceFreshness(engine: FreshnessExec, scope: { source
 const syncNowFix = (sourceId: string, why: string): Action => ({ argv: ['gbrain', 'sync', '--source', sourceId, '--no-pull'], consent: [], actor: 'agent', requires_exclusive: false, why });
 
 /**
- * The notifier block of `gbrain sync status` (and doctor): the resident that syncs the source or none with the fix,
+ * The notifier block of `foresights sync status` (and doctor): the resident that syncs the source or none with the fix,
  * its state, the retry schedule, the last error and, for a local caller, the trace file. Remote callers get no trace
  * path, pid or host id (the sync_status projection rule).
  */
@@ -162,8 +163,8 @@ export async function readNotifierBlock(engine: BrainEngine, sourceId: string, o
     ? syncNowFix(sourceId, recorded
       ? `The ${recorded.kind} resident recorded as this source's notifier${recorded.pid ? ` (PID ${recorded.pid})` : ''} holds no live notifier lease${recorded.lease_expired_at ? ` (it lapsed at ${recorded.lease_expired_at})` : ''}, `
         + `so nothing watches this source now; this syncs the checkout HEAD now. If that resident is still running, it is not renewing its lease: restart it, and it catches up on its own.`
-      : onCommit ? 'No resident (gbrain serve, gbrain jobs work or the autopilot daemon) watches this source; this syncs the checkout HEAD now. A resident started later catches up on its own.'
-        : 'No resident watches this source\'s HEAD: sync.on_commit is off, so a running resident (gbrain serve, gbrain jobs work or the autopilot daemon) syncs only explicit requests; this syncs the checkout HEAD now. `gbrain config set sync.on_commit true` turns on watching.')
+      : onCommit ? 'No resident (foresights serve, foresights jobs work or the autopilot daemon) watches this source; this syncs the checkout HEAD now. A resident started later catches up on its own.'
+        : 'No resident watches this source\'s HEAD: sync.on_commit is off, so a running resident (foresights serve, foresights jobs work or the autopilot daemon) syncs only explicit requests; this syncs the checkout HEAD now. `foresights config set sync.on_commit true` turns on watching.')
     : !live ? (holderStalled(holder, lease?.db_now) ? syncNowFix(sourceId, `No notifier watches this source, and the ${holder!.kind} process holding its drain lease has made no commit or cursor save for ${HOLDER_STALL_MS / 60_000} min or more; `
       + 'a foreground sync follows it and takes over when its lease lapses.') : null)
     : stalled ? syncNowFix(sourceId, `The notifier made no progress after ${Number(row.attempts ?? 0)} attempts (${row.last_error_code ?? row.reason ?? 'blocked'}); a foreground sync shows the error`
@@ -185,6 +186,6 @@ export function formatNotifierBlock(sourceId: string, b: NotifierBlock): string 
     : b.recorded_resident ? `none running; ${b.recorded_resident.kind}${b.recorded_resident.pid ? ` (PID ${b.recorded_resident.pid})` : ''} was recorded but holds no live lease${b.recorded_resident.lease_expired_at ? ` (lapsed ${b.recorded_resident.lease_expired_at})` : ''}` : 'none running';
   const state = b.state ? `${b.state}${b.reason ? ` (${b.reason})` : ''}${b.next_retry_at && b.state === 'retry' ? `, next retry ${b.next_retry_at}` : ''}${b.attempts ? `, ${b.attempts} attempt(s)` : ''}` : 'idle';
   const markers = b.pending_markers.length ? `; wanted: ${b.pending_markers.map(m => `${m.intent}${m.wanted_head ? ` ${m.wanted_head.slice(0, 8)}` : ''}`).join(', ')}` : '';
-  const fix = b.fix ? `. Fix: ${b.fix.argv?.join(' ')}` : '';
+  const fix = b.fix ? `. Fix: ${(b.fix.argv ? commandText(b.fix.argv) : undefined)}` : '';
   return `notifier for ${sourceId}: ${who}; ${state}${markers}${b.last_error?.trace_path ? `; trace ${b.last_error.trace_path}` : ''}${fix}`;
 }

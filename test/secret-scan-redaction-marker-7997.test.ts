@@ -2,7 +2,7 @@
  * #7997: the transcript importer replaces what it removes with `<REDACTED:kind>` (a user pattern becomes
  * `<REDACTED:user-pattern>`). The labeled_credential pair pattern split that marker at its colon and claimed
  * `login **<REDACTED:user-pattern>**` as a user/password pair, so a correctly redacted page never cleared
- * `gbrain transcripts audit-secrets`, and the pair match swallowed a real password written after the marker. Now:
+ * `foresights transcripts audit-secrets`, and the pair match swallowed a real password written after the marker. Now:
  * - a marker after a credential label is never a credential, in any label form;
  * - a credential written beside a marker is still claimed, and the marker is left as written;
  * - re-redacting a redacted transcript changes nothing, and the audit reports zero pages for it (PGLite).

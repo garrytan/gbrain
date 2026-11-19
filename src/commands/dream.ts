@@ -1,25 +1,25 @@
 /**
- * gbrain dream — run one brain maintenance cycle.
+ * foresights dream — run one brain maintenance cycle.
  *
  * The README brand promise: "the agent runs while I sleep, the dream
  * cycle ... I wake up and the brain is smarter." Cron-friendly, JSON
  * report, phase-selectable.
  *
  * Thin alias over runCycle (src/core/cycle.ts). Both this command and
- * `gbrain autopilot` converge on the same primitive so there's one
+ * `foresights autopilot` converge on the same primitive so there's one
  * source of truth for what "overnight maintenance" means.
  *
  * Usage:
- *   gbrain dream                       # full 6-phase cycle
- *   gbrain dream --dry-run             # preview, no writes
- *   gbrain dream --json                # CycleReport JSON (for agents)
- *   gbrain dream --phase lint          # run a single phase
- *   gbrain dream --pull                # also git pull the brain repo
- *   gbrain dream --dir /path/to/brain  # explicit brain location
+ *   foresights dream                       # full 6-phase cycle
+ *   foresights dream --dry-run             # preview, no writes
+ *   foresights dream --json                # CycleReport JSON (for agents)
+ *   foresights dream --phase lint          # run a single phase
+ *   foresights dream --pull                # also git pull the brain repo
+ *   foresights dream --dir /path/to/brain  # explicit brain location
  *
- * Cron: 0 2 * * * gbrain dream --json >> /var/log/gbrain-dream.log
+ * Cron: 0 2 * * * foresights dream --json >> /var/log/gbrain-dream.log
  *
- * Related: `gbrain autopilot --install` for continuous daemonized
+ * Related: `foresights autopilot --install` for continuous daemonized
  * maintenance. dream is the one-shot, autopilot is the scheduler.
  */
 
@@ -73,7 +73,7 @@ interface DreamArgs {
   /**
    * v0.41.13: per-source cycle scoping. Threaded into runCycle as
    * `sourceId` so `cycle.ts:1947-1967` writes `last_full_cycle_at`
-   * to `sources.config` on success — without it, `gbrain doctor`'s
+   * to `sources.config` on success — without it, `foresights doctor`'s
    * `cycle_freshness` check stays stale forever. Accepts `--source
    * <id>` and the alias `--source-id <id>` (the v0.37.7.0 #1167
    * canonical name across import/extract/graph-query); both work
@@ -117,7 +117,7 @@ function dreamExit(e: OperationError, json = jsonRequested(process.argv.slice(2)
 }
 
 function sourceError(e: Error): OperationError {
-  return opError('unknown_source', e.message, 'Run `gbrain sources list` for the registered source ids, then pass one with --source.');
+  return opError('unknown_source', e.message, 'Run `foresights sources list` for the registered source ids, then pass one with --source.');
 }
 
 /**
@@ -149,7 +149,7 @@ function parseArgs(args: string[]): DreamArgs {
   const json = jsonRequested(args);
   const phaseValues = collectFlagValues(args, '--phase');
   if (phaseValues === null) {
-    dreamExit(usageError('--phase <name>: missing value. Usage: gbrain dream --phase <name>', 'Example: gbrain dream --phase lint'), json);
+    dreamExit(usageError('--phase <name>: missing value. Usage: foresights dream --phase <name>', 'Example: foresights dream --phase lint'), json);
   }
   // issue #2860 (Codex P3): captured BEFORE --input/--drain get a chance to
   // implicitly default `phases` below, so --once's validation can require
@@ -163,10 +163,10 @@ function parseArgs(args: string[]): DreamArgs {
   for (const rawPhase of phaseValues) {
     if (rawPhase === 'auto_think') {
       dreamExit(usageError('The auto_think phase is replaced by pinned questions: dream.auto_think.questions became pins (inactive when auto_think was off).',
-        'Run gbrain dream --phase standing_questions to refresh due pins; gbrain questions list shows them.'), json);
+        'Run foresights dream --phase standing_questions to refresh due pins; foresights questions list shows them.'), json);
     }
     if (!(ALL_PHASES as string[]).includes(rawPhase)) {
-      dreamExit(usageError(`Unknown phase "${rawPhase}". Valid: ${ALL_PHASES.join(', ')}`, 'Example: gbrain dream --phase lint'), json);
+      dreamExit(usageError(`Unknown phase "${rawPhase}". Valid: ${ALL_PHASES.join(', ')}`, 'Example: foresights dream --phase lint'), json);
     }
     if (!phases.includes(rawPhase as CyclePhase)) phases.push(rawPhase as CyclePhase);
   }
@@ -180,19 +180,19 @@ function parseArgs(args: string[]): DreamArgs {
   const dateIdx = args.indexOf('--date');
   const date = dateIdx !== -1 ? args[dateIdx + 1] ?? null : null;
   if (date && !ISO_DATE_RE.test(date)) {
-    dreamExit(usageError(`--date must be YYYY-MM-DD; got "${date}"`, 'Example: gbrain dream --phase synthesize --date 2026-01-31'), json);
+    dreamExit(usageError(`--date must be YYYY-MM-DD; got "${date}"`, 'Example: foresights dream --phase synthesize --date 2026-01-31'), json);
   }
 
   const fromIdx = args.indexOf('--from');
   const from = fromIdx !== -1 ? args[fromIdx + 1] ?? null : null;
   if (from && !ISO_DATE_RE.test(from)) {
-    dreamExit(usageError(`--from must be YYYY-MM-DD; got "${from}"`, 'Example: gbrain dream --phase synthesize --from 2026-01-01 --to 2026-01-31'), json);
+    dreamExit(usageError(`--from must be YYYY-MM-DD; got "${from}"`, 'Example: foresights dream --phase synthesize --from 2026-01-01 --to 2026-01-31'), json);
   }
 
   const toIdx = args.indexOf('--to');
   const to = toIdx !== -1 ? args[toIdx + 1] ?? null : null;
   if (to && !ISO_DATE_RE.test(to)) {
-    dreamExit(usageError(`--to must be YYYY-MM-DD; got "${to}"`, 'Example: gbrain dream --phase synthesize --from 2026-01-01 --to 2026-01-31'), json);
+    dreamExit(usageError(`--to must be YYYY-MM-DD; got "${to}"`, 'Example: foresights dream --phase synthesize --from 2026-01-01 --to 2026-01-31'), json);
   }
   if (from && to && from > to) {
     dreamExit(usageError(`--from (${from}) is after --to (${to}); empty range`, 'Pass --from on or before --to.'), json);
@@ -218,18 +218,18 @@ function parseArgs(args: string[]): DreamArgs {
   const sourceValues = collectFlagValues(args, '--source');
   const sourceIdValues = collectFlagValues(args, '--source-id');
   if (sourceValues === null) {
-    dreamExit(usageError('--source <id>: missing value. Usage: gbrain dream --source <source-id>', 'Example: gbrain dream --source default'), json);
+    dreamExit(usageError('--source <id>: missing value. Usage: foresights dream --source <source-id>', 'Example: foresights dream --source default'), json);
   }
   if (sourceIdValues === null) {
-    dreamExit(usageError('--source-id <id>: missing value. Usage: gbrain dream --source-id <source-id>', 'Example: gbrain dream --source-id default'), json);
+    dreamExit(usageError('--source-id <id>: missing value. Usage: foresights dream --source-id <source-id>', 'Example: foresights dream --source-id default'), json);
   }
   const uniqSource = Array.from(new Set(sourceValues));
   const uniqSourceId = Array.from(new Set(sourceIdValues));
   if (uniqSource.length > 1) {
-    dreamExit(usageError(`specify --source once; got [${uniqSource.map(v => `"${v}"`).join(', ')}]`, 'Run one dream per source: gbrain dream --source <id>.'), json);
+    dreamExit(usageError(`specify --source once; got [${uniqSource.map(v => `"${v}"`).join(', ')}]`, 'Run one dream per source: foresights dream --source <id>.'), json);
   }
   if (uniqSourceId.length > 1) {
-    dreamExit(usageError(`specify --source-id once; got [${uniqSourceId.map(v => `"${v}"`).join(', ')}]`, 'Run one dream per source: gbrain dream --source <id>.'), json);
+    dreamExit(usageError(`specify --source-id once; got [${uniqSourceId.map(v => `"${v}"`).join(', ')}]`, 'Run one dream per source: foresights dream --source <id>.'), json);
   }
   if (uniqSource.length === 1 && uniqSourceId.length === 1 && uniqSource[0] !== uniqSourceId[0]) {
     dreamExit(usageError(
@@ -248,14 +248,14 @@ function parseArgs(args: string[]): DreamArgs {
   if (windowIdx !== -1) {
     const raw = args[windowIdx + 1];
     if (raw === undefined || !/^\d+$/.test(raw.trim()) || parseInt(raw, 10) <= 0) {
-      dreamExit(usageError(`--window must be a positive integer (seconds); got "${raw}"`, 'Example: gbrain dream --drain --window 300'), json);
+      dreamExit(usageError(`--window must be a positive integer (seconds); got "${raw}"`, 'Example: foresights dream --drain --window 300'), json);
     }
     windowSeconds = parseInt(raw, 10);
   }
   if (drain) {
     if (phases.length === 0) phases = ['extract_atoms'];
     else if (phases.length > 1 || phases[0] !== 'extract_atoms') {
-      dreamExit(usageError(`--drain currently supports only --phase extract_atoms (got "${phases.join(', ')}")`, 'Example: gbrain dream --drain --phase extract_atoms'), json);
+      dreamExit(usageError(`--drain currently supports only --phase extract_atoms (got "${phases.join(', ')}")`, 'Example: foresights dream --drain --phase extract_atoms'), json);
     }
   }
 
@@ -273,7 +273,7 @@ function parseArgs(args: string[]): DreamArgs {
   //
   // Codex review finding: `--help` must short-circuit BEFORE this exits(2),
   // matching the "IRON RULE" pinned by test/dream.test.ts's
-  // "--help --source whatever prints help and exits 0" case — `gbrain
+  // "--help --source whatever prints help and exits 0" case — `foresights
   // dream --help --once` (no --phase) must show help, not a usage error.
   const once = args.includes('--once');
   const wantsHelp = args.includes('--help') || args.includes('-h');
@@ -283,8 +283,8 @@ function parseArgs(args: string[]): DreamArgs {
       'phase\'s dream.<phase>.enabled / cycle.<phase>.enabled gate for ' +
       'this run only; never touches config). A phase implied by --input ' +
       'or --drain does not count — --once would silently do nothing for ' +
-      'those. Usage: gbrain dream --phase <name> --once',
-      'Example: gbrain dream --phase synthesize --once'), json);
+      'those. Usage: foresights dream --phase <name> --once',
+      'Example: foresights dream --phase synthesize --once'), json);
   }
   // #4493 corollary: --once bypasses ONE phase's enabled gate; with several
   // named phases there is no single target, and force-enabling them all at
@@ -293,7 +293,7 @@ function parseArgs(args: string[]): DreamArgs {
     dreamExit(usageError(
       `--once supports a single --phase target; got [${phases.join(', ')}]. ` +
       'Run each phase in its own --phase <name> --once invocation.',
-      'Example: gbrain dream --phase synthesize --once'), json);
+      'Example: foresights dream --phase synthesize --once'), json);
   }
 
   return {
@@ -321,12 +321,12 @@ function parseArgs(args: string[]): DreamArgs {
  * Resolution order (v0.41.30 — postgres support):
  *   1. An explicit --dir argument (exits 1 if it doesn't exist — a real mistake).
  *   2. T1: when --source resolved to a source that has an on-disk `local_path`,
- *      use it (matches `gbrain sync`, lets that source's filesystem phases run).
+ *      use it (matches `foresights sync`, lets that source's filesystem phases run).
  *   3. The legacy `sync.repo_path` config key (pre-v0.18 default-source brains).
  *   4. `null` — no local checkout. The cycle then SKIPS filesystem phases
  *      (lint/backlinks/sync/synthesize/extract/patterns) with reason
  *      `no_brain_dir` and runs the DB-only phases (resolve_symbol_edges, embed,
- *      orphans, ...). This is what makes `gbrain dream` work on a postgres /
+ *      orphans, ...). This is what makes `foresights dream` work on a postgres /
  *      Supabase brain with no checkout. `runDream` owns the only hard error:
  *      no checkout AND no engine = truly nothing to run.
  *
@@ -365,7 +365,7 @@ async function resolveBrainDir(
 
   if (engine) {
     const configured = await engine.getConfig('sync.repo_path');
-    // #7630: a relative stored path names whatever directory gbrain runs from, so it is no checkout.
+    // #7630: a relative stored path names whatever directory foresights runs from, so it is no checkout.
     if (configured && isAbsolute(configured) && existsSync(configured)) {
       return resolve(configured);
     }
@@ -377,9 +377,9 @@ async function resolveBrainDir(
 }
 
 function printHelp(args: string[]): Promise<void> {
-  return printHelpText('dream', `Usage: gbrain dream [options]
-       gbrain dream retriage [flags]   (see: gbrain dream retriage --help)
-       gbrain dream reset-key <key> | --list   (see: gbrain dream reset-key --help)
+  return printHelpText('dream', `Usage: foresights dream [options]
+       foresights dream retriage [flags]   (see: foresights dream retriage --help)
+       foresights dream reset-key <key> | --list   (see: foresights dream reset-key --help)
 
 Run one brain maintenance cycle. Eight phases:
   lint -> backlinks -> sync -> synthesize -> extract -> patterns -> embed -> orphans
@@ -429,7 +429,7 @@ Options:
 
   --source <id>       Scope the cycle to one source so doctor's
                       cycle_freshness check sees a fresh stamp on
-                      completion. When omitted, gbrain derives the
+                      completion. When omitted, foresights derives the
                       source from --dir / the configured checkout
                       when it matches a source's local_path (#1869),
                       or from the default-like source selected by
@@ -477,21 +477,21 @@ Options:
   --help, -h          Show this help
 
 Examples:
-  gbrain dream
-  gbrain dream --dry-run --json
-  gbrain dream --phase lint
-  gbrain dream --phase patterns --once   # run once, ignore dream.patterns.enabled=false
-  gbrain dream --phase synthesize --input ~/transcripts/2026-04-25.txt
-  gbrain dream --phase synthesize --from 2026-04-01 --to 2026-04-25
-  0 2 * * * gbrain dream --json         # nightly via cron
+  foresights dream
+  foresights dream --dry-run --json
+  foresights dream --phase lint
+  foresights dream --phase patterns --once   # run once, ignore dream.patterns.enabled=false
+  foresights dream --phase synthesize --input ~/transcripts/2026-04-25.txt
+  foresights dream --phase synthesize --from 2026-04-01 --to 2026-04-25
+  0 2 * * * foresights dream --json         # nightly via cron
 
 Configure synthesize:
-  gbrain config set dream.synthesize.session_corpus_dir /path/to/transcripts
-  gbrain config set cycle.timezone Asia/Kolkata  # optional; defaults to host timezone
+  foresights config set dream.synthesize.session_corpus_dir /path/to/transcripts
+  foresights config set cycle.timezone Asia/Kolkata  # optional; defaults to host timezone
 
 Related:
-  gbrain autopilot --install            # continuous maintenance as a daemon
-  gbrain autopilot                      # same maintenance cycle, scheduled
+  foresights autopilot --install            # continuous maintenance as a daemon
+  foresights autopilot                      # same maintenance cycle, scheduled
 `, args);
 }
 
@@ -671,7 +671,7 @@ async function runDrain(
   if ((result.input_truncated ?? 0) > 0) {
     process.stderr.write(
       `[drain] ${result.input_truncated} item(s) cut at cycle.extract_atoms.max_input_chars: the model did not read their tail; ` +
-      'head atoms are kept, the items are not marked complete and are skipped until the cap rises (gbrain config set cycle.extract_atoms.max_input_chars <n>)\n',
+      'head atoms are kept, the items are not marked complete and are skipped until the cap rises (foresights config set cycle.extract_atoms.max_input_chars <n>)\n',
     );
   }
   const { drainBudgetNotice, usd } = await import('../core/cycle/extract-atoms-budget-notice.ts');
@@ -695,7 +695,7 @@ async function runDrain(
   const stop = `[drain] stopped: ${result.stopped}${outcome.status === 'provider_failure' ? ` (${outcome.reason})` : ''}; ${result.remaining ?? '?'} page(s) remaining.`;
   process.stderr.write(budgetNotice
     ? `[drain] stopped: budget; spent ${usd(result.spent_usd)} of the ${usd(result.budget_usd)} per-run cap (cycle.extract_atoms.budget_usd); ` +
-      `${result.remaining ?? '?'} page(s) remaining. Rerun: ${drainCommand(opts)}, or raise the cap: gbrain config set cycle.extract_atoms.budget_usd <usd>\n`
+      `${result.remaining ?? '?'} page(s) remaining. Rerun: ${drainCommand(opts)}, or raise the cap: foresights config set cycle.extract_atoms.budget_usd <usd>\n`
     : outcome.retryable
       ? `${stop} Rerun: ${drainCommand(opts)}\n`
       : `${stop} Fix: ${nonRetryableFixLine(outcome.code!, fix!)}\n`,
@@ -711,7 +711,7 @@ function nonRetryableFixLine(code: string, fix: Action): string {
 }
 
 function drainCommand(opts: DreamArgs): string {
-  return `gbrain dream --drain --window ${opts.windowSeconds}${opts.source ? ` --source ${opts.source}` : ''}`;
+  return `foresights dream --drain --window ${opts.windowSeconds}${opts.source ? ` --source ${opts.source}` : ''}`;
 }
 
 export async function runDream(engine: BrainEngine | null, args: string[]): Promise<CycleReport | void> {
@@ -735,7 +735,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   }
   // Fail-loud guard (structured-review r3 P1): the CLI flag registry unions
   // retriage's flags into `dream`, so the pre-dispatch validator accepts
-  // `gbrain dream --reconcile-queue` — but without the `retriage` positional,
+  // `foresights dream --reconcile-queue` — but without the `retriage` positional,
   // parseArgs would ignore the flag and silently run the full (paid, writing)
   // maintenance cycle instead of the reconciliation the user asked for.
   {
@@ -743,9 +743,9 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     const stray = args.find(a => RETRIAGE_ONLY_FLAGS.includes(a));
     if (stray) {
       setCliExitVerdict(writeCliRefusal(usageError(
-        `gbrain dream: ${stray} belongs to the 'retriage' subcommand — ` +
-        `did you mean: gbrain dream retriage ${args.join(' ')}`,
-        `Run it as: gbrain dream retriage ${args.join(' ')}`), 'dream', { json: jsonRequested(args) }));
+        `foresights dream: ${stray} belongs to the 'retriage' subcommand — ` +
+        `did you mean: foresights dream retriage ${args.join(' ')}`,
+        `Run it as: foresights dream retriage ${args.join(' ')}`), 'dream', { json: jsonRequested(args) }));
       return;
     }
   }
@@ -753,7 +753,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   const opts = parseArgs(args);
 
   // ─── IRON RULE: --help short-circuits BEFORE any engine-bearing work ─
-  // Tests pin this ordering so `gbrain dream --help --source whatever`
+  // Tests pin this ordering so `foresights dream --help --source whatever`
   // ALWAYS prints help and exits 0, never reaching the engine-null gate
   // below. If you reorder this, test/dream.test.ts ("--help --source whatever") fails.
   if (opts.help) {
@@ -771,7 +771,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   //      last_full_cycle_at to an archived source would mask data
   //      staleness when the source is later restored)
   let resolvedSourceId: string | undefined;
-  // #4700: a bare `gbrain dream` whose brain routes bare commands to a
+  // #4700: a bare `foresights dream` whose brain routes bare commands to a
   // non-default source (sources.default config, or sole-non-default routing)
   // IS the canonical default cycle for that brain — run the full implicit
   // phase set instead of the freshness-only source cycle. Explicit
@@ -803,9 +803,9 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   if (opts.source !== null || envScoped) {
     if (engine === null) {
       dreamExit(opError('database_error',
-        'gbrain dream --source <id> / GBRAIN_SOURCE=<id> requires a connected brain ' +
-        '(no engine available); omit the source scope or run `gbrain init` first',
-        'Fix the brain connection (`gbrain doctor --json` names the cause), or run without a source scope.'), opts.json);
+        'foresights dream --source <id> / GBRAIN_SOURCE=<id> requires a connected brain ' +
+        '(no engine available); omit the source scope or run `foresights init` first',
+        'Fix the brain connection (`foresights doctor --json` names the cause), or run without a source scope.'), opts.json);
     }
     try {
       // A null explicit falls through to tier 2 (GBRAIN_SOURCE: validate +
@@ -831,8 +831,8 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     if (src?.archived === true) {
       dreamExit(opError('unknown_source',
         `source ${resolvedSourceId} is archived; restore with ` +
-        `\`gbrain sources restore ${resolvedSourceId}\` before cycling`,
-        `Ask the user whether to restore it (gbrain sources restore ${resolvedSourceId}), then run dream again.`), opts.json);
+        `\`foresights sources restore ${resolvedSourceId}\` before cycling`,
+        `Ask the user whether to restore it (foresights sources restore ${resolvedSourceId}), then run dream again.`), opts.json);
     }
   }
 
@@ -844,8 +844,8 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   if (brainDir === null && engine === null) {
     dreamExit(opError('no_brain',
       'No brain directory found and no database connection. ' +
-      'Pass --dir <path> or configure a brain via `gbrain init`.',
-      'Pass --dir <path>, fix the brain connection, or create a brain with `gbrain init` (see `gbrain init --help`).'), opts.json);
+      'Pass --dir <path> or configure a brain via `foresights init`.',
+      'Pass --dir <path>, fix the brain connection, or create a brain with `foresights init` (see `foresights init --help`).'), opts.json);
   }
 
   // #1869: a path-scoped run (--dir, or the configured sync.repo_path) whose
@@ -877,8 +877,8 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   // ─── issue #1678: bounded single-hold extract_atoms drain ──────────
   if (opts.drain) {
     if (engine === null) {
-      dreamExit(opError('database_error', 'gbrain dream --drain requires a connected brain (no engine available)',
-        'Fix the brain connection (`gbrain doctor --json` names the cause), then run the drain again.'), opts.json);
+      dreamExit(opError('database_error', 'foresights dream --drain requires a connected brain (no engine available)',
+        'Fix the brain connection (`foresights doctor --json` names the cause), then run the drain again.'), opts.json);
     }
     return runDrain(engine, opts, resolvedSourceId, brainDir);
   }
@@ -923,13 +923,13 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     // D2: under the --json guard a failed cycle is one envelope leading with the CycleReport keys.
     writeCliError(opError('cycle_failed', `The dream cycle ${report.status === 'failed' ? 'failed' : 'had failing phases'}${failedPhases.length ? ` (${failedPhases.join(', ')})` : ''}.`,
       askPhase ? `The ${askPhase.phase} phase needs the user: ${askPhase.summary} Follow phases[].fix before rerunning.`
-        : `Read phases[].error for the cause, fix it, then rerun the phase: gbrain dream --phase ${failedPhases[0] ?? '<phase>'}`),
+        : `Read phases[].error for the cause, fix it, then rerun the phase: foresights dream --phase ${failedPhases[0] ?? '<phase>'}`),
     'dream', { json: true, stderr: false, legacy: { ...report }, ...(askPhase ? { extra: { fix: askPhase.fix } } : {}) });
   }
   if (failed && !opts.json && failedPhases.length > 0) {
     console.error(askPhase
       ? `Dream failed: the ${askPhase.phase} phase needs the user before it can run: ${askPhase.fix?.user_message ?? askPhase.summary}`
-      : `Dream failed: ${failedPhases.length} phase(s) failed (${failedPhases.join(', ')}); see the phase errors above. After fixing the cause, re-run one with: gbrain dream --phase ${failedPhases[0]}`);
+      : `Dream failed: ${failedPhases.length} phase(s) failed (${failedPhases.join(', ')}); see the phase errors above. After fixing the cause, re-run one with: foresights dream --phase ${failedPhases[0]}`);
   }
   if (failed) process.exit(1);
 

@@ -17,7 +17,7 @@ async function runExtractionDateGrounding(ctx: DoctorContext): Promise<Check[]> 
   const engine = connectedEngine(ctx);
   const checks: Check[] = [];
   const [variant, optIn] = await Promise.all([getExtractorVariant(engine), isConsumerDateGroundingOn(engine, 'chronicle')]);
-  const reextract = 'Facts extracted before this was on keep their original wording; re-extract a source only with the user\'s consent (gbrain extract-conversation-facts --source-id <id> --dry-run previews it).';
+  const reextract = 'Facts extracted before this was on keep their original wording; re-extract a source only with the user\'s consent (foresights extract-conversation-facts --source-id <id> --dry-run previews it).';
   checks.push({
     name: 'extraction_date_grounding',
     status: 'ok',

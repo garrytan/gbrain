@@ -5,7 +5,7 @@
  * That path exists on one build sandbox and nowhere else, so every other
  * clone got a dangling symlink and `bun install` aborted with
  * `ENOENT: could not open the "node_modules" directory` — which also took
- * out `gbrain upgrade`'s bun-link path, since it shells out to bun install.
+ * out `foresights upgrade`'s bun-link path, since it shells out to bun install.
  *
  * `.gitignore` did not stop it: a `node_modules/` pattern with a trailing
  * slash matches directories only, so the symlink was never ignored. The

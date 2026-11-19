@@ -1,5 +1,5 @@
 /**
- * `gbrain search tune --apply` must report only the config changes that
+ * `foresights search tune --apply` must report only the config changes that
  * actually landed. Before this fix the --json lane printed
  * `applied: recs.map(apply_command)` BEFORE any write ran, the text lane
  * printed a checkmark for apply commands the helper silently ignored, and a
@@ -60,19 +60,19 @@ let engine: FakeConfigEngine;
 
 const SET_MODE: TuneRecommendation = {
   knob: 'search.mode', current: 'conservative', suggested: 'balanced',
-  reason: 'r1', apply_command: 'gbrain config set search.mode balanced',
+  reason: 'r1', apply_command: 'foresights config set search.mode balanced',
 };
 const SET_THRESHOLD: TuneRecommendation = {
   knob: 'search.cache.similarity_threshold', current: 0.9, suggested: 0.94,
-  reason: 'r2', apply_command: 'gbrain config set search.cache.similarity_threshold 0.94',
+  reason: 'r2', apply_command: 'foresights config set search.cache.similarity_threshold 0.94',
 };
 const UNSET_CACHE: TuneRecommendation = {
   knob: 'search.cache.enabled', current: false, suggested: true,
-  reason: 'r3', apply_command: 'gbrain config unset search.cache.enabled',
+  reason: 'r3', apply_command: 'foresights config unset search.cache.enabled',
 };
 const UNSUPPORTED: TuneRecommendation = {
   knob: 'search.weird', current: 'a', suggested: 'b',
-  reason: 'r4', apply_command: 'gbrain config set search.weird b extra',
+  reason: 'r4', apply_command: 'foresights config set search.weird b extra',
 };
 
 function useRecs(recs: TuneRecommendation[]): void {
@@ -168,7 +168,7 @@ describe('search tune --apply --json', () => {
     expect((error as Error).message).toBe('synthetic config write failure');
     const r = JSON.parse(out);
     expect(r.applied).toEqual([SET_MODE.apply_command]);
-    expect(r.revert_commands).toEqual(['gbrain config set search.mode conservative']);
+    expect(r.revert_commands).toEqual(['foresights config set search.mode conservative']);
     expect(r.apply_error.command).toBe(SET_THRESHOLD.apply_command);
     expect(engine.config.get('search.mode')).toBe('balanced');
     expect(engine.config.get('search.cache.similarity_threshold')).toBe('0.9');
@@ -190,7 +190,7 @@ describe('search tune --apply --json', () => {
     engine.failOnCall = 2;
     const { out } = await run(['--apply', '--json']);
     expect(JSON.parse(out).results).toEqual([
-      { command: SET_MODE.apply_command, status: 'applied', revert_command: 'gbrain config set search.mode conservative' },
+      { command: SET_MODE.apply_command, status: 'applied', revert_command: 'foresights config set search.mode conservative' },
       { command: SET_THRESHOLD.apply_command, status: 'failed', message: 'synthetic config write failure' },
       { command: UNSET_CACHE.apply_command, status: 'not_attempted' },
     ]);
@@ -204,7 +204,7 @@ describe('search tune --apply --json', () => {
     expect(error).toBeNull();
     const r = JSON.parse(out);
     expect(r.applied).toEqual([SET_MODE.apply_command, UNSET_CACHE.apply_command]);
-    expect(r.revert_commands).toEqual(['gbrain config set search.mode conservative', 'gbrain config set search.cache.enabled false']);
+    expect(r.revert_commands).toEqual(['foresights config set search.mode conservative', 'foresights config set search.cache.enabled false']);
     expect(r.apply_error).toBeUndefined();
   });
 
@@ -238,8 +238,8 @@ describe('search tune --apply (text)', () => {
     expect(error).toBeNull();
     expect(checkmarks(out)).toEqual([`✓ ${SET_MODE.apply_command}`, `✓ ${UNSET_CACHE.apply_command}`]);
     expect(out).toContain('To revert these changes:');
-    expect(out).toContain('gbrain config set search.mode conservative');
-    expect(out).toContain('gbrain config set search.cache.enabled false');
+    expect(out).toContain('foresights config set search.mode conservative');
+    expect(out).toContain('foresights config set search.cache.enabled false');
     expect(engine.calls.length).toBe(2);
   });
 
@@ -250,7 +250,7 @@ describe('search tune --apply (text)', () => {
     expect((error as Error).message).toBe('synthetic config write failure');
     expect(checkmarks(out)).toEqual([`✓ ${SET_MODE.apply_command}`]);
     expect(out).toContain(`✗ ${SET_THRESHOLD.apply_command}`);
-    expect(revertSection(out)).toEqual(['gbrain config set search.mode conservative']);
+    expect(revertSection(out)).toEqual(['foresights config set search.mode conservative']);
     expect(engine.calls.length).toBe(2);
   });
 
@@ -278,7 +278,7 @@ describe('search tune --apply (text)', () => {
     useRecs([SET_MODE]);
     const { out } = await run([]);
     expect(engine.calls).toEqual([]);
-    expect(out).toContain('Run `gbrain search tune --apply`');
+    expect(out).toContain('Run `foresights search tune --apply`');
   });
 
   test('--help stays read-only', async () => {

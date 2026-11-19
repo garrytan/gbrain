@@ -1,6 +1,6 @@
 # Search Mode Evaluation Methodology
 
-_How gbrain measures the difference between `conservative`, `balanced`, and `tokenmax`. Written haters-immune: every claim is reproducible — pinned datasets, recorded seeds, and the exact run commands below._
+_How foresights measures the difference between `conservative`, `balanced`, and `tokenmax`. Written haters-immune: every claim is reproducible — pinned datasets, recorded seeds, and the exact run commands below._
 
 ## 1. What this measures and what it doesn't
 
@@ -13,7 +13,7 @@ _How gbrain measures the difference between `conservative`, `balanced`, and `tok
 - Latency under concurrent load.
 - Production cost (the cost numbers are model-pricing estimates × dataset size, not your actual API spend).
 
-If you want to know how a mode behaves on YOUR brain, run `gbrain search stats --days 30` after a real usage window, then run `gbrain search tune` for actionable recommendations.
+If you want to know how a mode behaves on YOUR brain, run `foresights search stats --days 30` after a real usage window, then run `foresights search tune` for actionable recommendations.
 
 ## 2. Datasets and sizes
 
@@ -25,7 +25,7 @@ No private brain content is used in any reported result. The NDJSON run records 
 
 ## 3. Sample selection
 
-- **Random seed:** `42` throughout. LongMemEval's dev slice and splits are sampled with seed 42 (`evals/longmemeval/`); `gbrain eval run-all --seed N` records the seed in every per-run record.
+- **Random seed:** `42` throughout. LongMemEval's dev slice and splits are sampled with seed 42 (`evals/longmemeval/`); `foresights eval run-all --seed N` records the seed in every per-run record.
 - **No per-question curation.** Splits are taken whole; no question is filtered for reporting.
 - **No mode-specific tuning.** The same dataset + same seed feeds every mode. The mode bundle is the only independent variable. A mode Δ therefore measures the joint effect of every knob the bundles differ on — today that's `tokenBudget`, `expansion`, `relationalRetrieval` (the typed-edge fourth recall arm, ON for balanced/tokenmax, OFF for conservative), and `searchLimit`; the canonical diff is `MODE_BUNDLES` in `src/core/search/mode.ts`.
 - **Cache comparability across upgrades.** Semantic result-cache reads and writes are temporarily disabled in every mode, regardless of configuration. Every query uses fresh retrieval. The retained storage machinery still keys rows on `KNOBS_HASH_VERSION` and the active knobs + embedding column/provider; historical runs with result caching enabled are not directly comparable to current runs for latency or provider spend.
@@ -34,35 +34,35 @@ No private brain content is used in any reported result. The NDJSON run records 
 
 ## 4. Run procedure
 
-Each suite runs through its own command, once per mode. `gbrain eval run-all`
+Each suite runs through its own command, once per mode. `foresights eval run-all`
 runs only the suites wired into it (BrainBench, which is search-mode
 independent and runs once per sweep); naming `longmemeval` or `replay` in its
 `--suites` exits 1 with `eval_suite_unwired` and these per-suite commands as
 the fix.
 
 ```bash
-# Setup: in your gbrain working tree, with OPENAI_API_KEY + ANTHROPIC_API_KEY exported.
+# Setup: in your foresights working tree, with OPENAI_API_KEY + ANTHROPIC_API_KEY exported.
 git rev-parse HEAD  # record the commit for the methodology footer
 
 # LongMemEval, all 3 modes; --record appends each run to the ledger.
 for mode in conservative balanced tokenmax; do
-  gbrain eval longmemeval <dataset.jsonl> --mode "$mode" --limit 500 --record
+  foresights eval longmemeval <dataset.jsonl> --mode "$mode" --limit 500 --record
 done
 
 # Replay captured production queries against each mode (needs a brain with captured queries).
 for mode in conservative balanced tokenmax; do
-  gbrain eval replay --mode "$mode"
+  foresights eval replay --mode "$mode"
 done
 
 # BrainBench (hermetic, mode-independent), recorded once per sweep.
-gbrain eval run-all --seed 42
+foresights eval run-all --seed 42
 
 # Render the comparison.
-gbrain eval compare --md > docs/eval/results/<version>/README.md
-gbrain eval compare --json > docs/eval/results/<version>/comparison.json
+foresights eval compare --md > docs/eval/results/<version>/README.md
+foresights eval compare --json > docs/eval/results/<version>/comparison.json
 ```
 
-`gbrain eval longmemeval --record` and `gbrain eval run-all` write per-run records to `<repo>/.gbrain-evals/eval-results.jsonl`. Every record carries: `run_id`, `ran_at`, `suite`, `mode`, `commit`, `seed`, `limit`, `params`, `status`, `duration_ms`. `gbrain eval run-all` exits 1 when a suite's record says `failed`; the record is kept. When a release publishes eval numbers, the dumps under `docs/eval/results/<version>/` carry the raw question-level outputs so a reviewer can re-score with their own metric implementation. **No dumps are committed in the repo right now** — reproduce by running the commands above; determinism (§3) means your re-run matches the reported orderings.
+`foresights eval longmemeval --record` and `foresights eval run-all` write per-run records to `<repo>/.gbrain-evals/eval-results.jsonl`. Every record carries: `run_id`, `ran_at`, `suite`, `mode`, `commit`, `seed`, `limit`, `params`, `status`, `duration_ms`. `foresights eval run-all` exits 1 when a suite's record says `failed`; the record is kept. When a release publishes eval numbers, the dumps under `docs/eval/results/<version>/` carry the raw question-level outputs so a reviewer can re-score with their own metric implementation. **No dumps are committed in the repo right now** — reproduce by running the commands above; determinism (§3) means your re-run matches the reported orderings.
 
 ## 5. Threats to validity
 
@@ -71,7 +71,7 @@ Honest list. We name what would let a critic dismiss the numbers.
 - **LongMemEval skews English + technical.** The questions are software-engineering and consumer-product flavored. Performance on a brain rich in non-English / non-technical content (writing, art history, etc.) may differ.
 - **BrainBench is small** (1240 docs) relative to a production brain (10K-100K pages). Absolute scores aren't predictive of your hit rate; the _delta_ between modes is.
 - **char/4 token heuristic.** Token-budget enforcement and cost estimates use a character-count / 4 heuristic. Accurate within ~5-10% for English with the OpenAI tiktoken family; off worse for Voyage (we don't use Voyage in chat retrieval, so it doesn't bias the reported numbers, but if you do, your budget caps will be approximate).
-- **Expansion's quality lift varies by query distribution.** On LongMemEval-S (cleaned September 2025 revision, 470 scored, k=5, measured 2026-09-02 at gbrain v0.48.2.0 via the gbrain-evals runner) LLM multi-query expansion measures 54.89% `recall_all@5` against 93.19% without it, so expansion is off in `conservative`/`balanced`; the lift on rarer-entity / longer-tail queries is unmeasured here. We report the corpus we measured; YMMV.
+- **Expansion's quality lift varies by query distribution.** On LongMemEval-S (cleaned September 2025 revision, 470 scored, k=5, measured 2026-09-02 at foresights v0.48.2.0 via the gbrain-evals runner) LLM multi-query expansion measures 54.89% `recall_all@5` against 93.19% without it, so expansion is off in `conservative`/`balanced`; the lift on rarer-entity / longer-tail queries is unmeasured here. We report the corpus we measured; YMMV.
 - **The dev slice is inside the published 470.** Knob choices made on the 40 dev questions leak into the full-470 headline by construction; the 430-question decision set is the number a critic should read, and both are published side by side. Nothing is tuned on the frozen corpus beyond the pre-registered single mechanism per gap.
 - **Expansion variants are non-deterministic.** Haiku multi-query variants differ run to run, so budget cells are compared only on RECORDED variants (`--expansion-replay`), which makes the budget the sole difference between cells but means the replayed cells share one draw of the variant lottery.
 - **Reranker receipts depend on a hosted model.** `voyage:rerank-2.5` rows are reproducible only while that snapshot is served; the harness records the reranker model per run and fails a "reranker on" run that silently fell open.
@@ -111,7 +111,7 @@ Then we publish whether the data agrees. **If a hypothesis fails, that's documen
 
 ## 8. Re-run cadence
 
-This document + the eval results are regenerated on every release that touches retrieval-affecting code. The `gbrain doctor eval_drift` check surfaces changes to the curated watch-list in `src/core/eval/drift-watch.ts`:
+This document + the eval results are regenerated on every release that touches retrieval-affecting code. The `foresights doctor eval_drift` check surfaces changes to the curated watch-list in `src/core/eval/drift-watch.ts`:
 
 - `src/core/search/**`
 - `src/core/embedding.ts`
@@ -124,9 +124,9 @@ Additions to the watch-list require a CHANGELOG line.
 
 ## Statistical-significance discipline
 
-`gbrain eval compare` computes statistics only from per-query rows. A run
+`foresights eval compare` computes statistics only from per-query rows. A run
 contributes rows when its ledger record names its per-question output in
-`params.output` (`gbrain eval longmemeval --record --output <file>` writes
+`params.output` (`foresights eval longmemeval --record --output <file>` writes
 both). The per-question file must sit inside the repository root; a path
 that escapes it (`..`, an outside absolute path, or a symlink) is refused and
 listed in `paired_unavailable`. For each pair of runs (every mode pair in a suite, or exactly
@@ -159,7 +159,7 @@ Every metric the report prints has a plain-English entry in `docs/eval/METRIC_GL
 
 ## Cost anchors
 
-The mode-picker prompt at `gbrain init` and the CLAUDE.md `## Search Mode` table both surface these rough cost anchors. Working through the math so they're auditable:
+The mode-picker prompt at `foresights init` and the CLAUDE.md `## Search Mode` table both surface these rough cost anchors. Working through the math so they're auditable:
 
 **Variables:**
 - `T` = avg tokens per search-result chunk. The recursive chunker targets 300 words / chunk → ~400 tokens (English, OpenAI tiktoken approx).
@@ -191,15 +191,15 @@ The mode-picker prompt at `gbrain init` and the CLAUDE.md `## Search Mode` table
 | balanced | \$50 | \$500 | \$5,000 |
 | tokenmax | \$100 | \$1,000 | \$10,000 |
 
-**gbrain's own cost** on top:
+**foresights's own cost** on top:
 - Query embedding (text-embedding-3-large @ \$0.13/M tokens): ~\$0.00001 per query. Negligible at every scale.
 - Tokenmax Haiku expansion call (\$1/M input, \$5/M output, ~500 input + 200 output per call): ~\$0.0015 per query, or \$150/mo at 100K queries. Repeated queries still run expansion while semantic result caching is disabled.
 - Per-page indexing (one-time): bounded by your import volume, not query volume. Not modeled here.
 
-**Cache hit adjustment.** Apply no semantic result-cache discount to these estimates while result caching is disabled. Downstream prompt caching can independently reduce cached-input charges, but it does not skip GBrain retrieval. The prompt-cache assumptions in the agent-loop example below describe that separate mechanism.
+**Cache hit adjustment.** Apply no semantic result-cache discount to these estimates while result caching is disabled. Downstream prompt caching can independently reduce cached-input charges, but it does not skip Foresights retrieval. The prompt-cache assumptions in the agent-loop example below describe that separate mechanism.
 
 **Why these numbers DRIFT from your actual bill:**
-- Your agent's system prompt + reasoning tokens add input that gbrain doesn't see.
+- Your agent's system prompt + reasoning tokens add input that foresights doesn't see.
 - Compaction reduces input over a long session.
 - Most agents make 1-5 searches per turn; cost-per-turn is what bills you, not cost-per-query.
 - The model price column drifts as providers reprice; pin the rate via `src/core/model-pricing.ts` (the canonical chat-pricing table) for a current snapshot.
@@ -256,11 +256,11 @@ The per-query math above is honest but theoretical: it treats each search as an 
 | Average cost per turn | ~\$0.85 |
 | Anthropic prompt-cache hit rate | ~88% |
 
-A "turn" here is one agent loop iteration: read user message, plan, execute tool calls (including gbrain searches), generate response. Each turn typically includes 2-4 gbrain searches.
+A "turn" here is one agent loop iteration: read user message, plan, execute tool calls (including foresights searches), generate response. Each turn typically includes 2-4 foresights searches.
 
 **Per-mode scaling from the tokenmax anchor:**
 
-The cost difference between modes is concentrated in the search-attributable fraction of per-turn cost. System prompt, tool definitions, conversation history, and reasoning tokens don't change with mode — only the chunks gbrain delivers do. Assume 3 searches per turn at the mode's `searchLimit`:
+The cost difference between modes is concentrated in the search-attributable fraction of per-turn cost. System prompt, tool definitions, conversation history, and reasoning tokens don't change with mode — only the chunks foresights delivers do. Assume 3 searches per turn at the mode's `searchLimit`:
 
 | Mode | Search tokens/turn | Search cost/turn (at \$3/M effective) | Search-attributable @ 860 turns | Δ vs tokenmax |
 |---|---|---|---|---|
@@ -281,7 +281,7 @@ tokens all bill at that rate:
 
 **4x spread across natural pairings.** The model tier dominates because
 the per-token rate applies to the WHOLE per-turn payload (system + tools
-+ history + reasoning + search), not just gbrain's chunks. Mode choice
++ history + reasoning + search), not just foresights's chunks. Mode choice
 contributes ~10-20% on top of that base.
 
 **Mismatched pairings push you off the curve:**
@@ -312,7 +312,7 @@ no improvement.
 - The 88% cache hit rate is the high end of what's achievable. Half that is closer to a default agent without cache-aware prompt layout.
 - The "Δ vs tokenmax" math assumes the OTHER cost components (system, tools, history, reasoning) stay constant. In practice, conservative's smaller per-turn payload also leaves more room in the context window for history → which can change agent behavior in either direction.
 
-This anchor + the per-query math both live in this doc on purpose. The per-query framing is what an isolated benchmark would measure (and what the per-mode `gbrain eval longmemeval` runs produce). The realistic-scale anchor is what an operator actually pays. Both are honest; neither is the whole truth.
+This anchor + the per-query math both live in this doc on purpose. The per-query framing is what an isolated benchmark would measure (and what the per-mode `foresights eval longmemeval` runs produce). The realistic-scale anchor is what an operator actually pays. Both are honest; neither is the whole truth.
 
 ## Reproducibility footer
 

@@ -211,7 +211,7 @@ test('check 2b (S1): a provider render that brings its own facts fence owns it: 
   }
 }), 180_000);
 
-test('check 3 (S1): a quiet run over a page with a user timeline entry still stamps freshness, so gbrain waiting stays fresh; a provider outage neither stamps nor loses the entry', async () => withEnv(env, async () => {
+test('check 3 (S1): a quiet run over a page with a user timeline entry still stamps freshness, so foresights waiting stays fresh; a provider outage neither stamps nor loses the entry', async () => withEnv(env, async () => {
   for (const engine of engines) {
     const f = await source(engine, googleConfig);
     let down = false;
@@ -258,7 +258,7 @@ test('check 4 (S1): a checkpoint orphaned by a content change is listed by the r
     expect(findings.connector_checkpoints!.state).toBe('finding');
     const steps = await planRepairSteps(engine, { noEmbed: true });
     const step = steps.find(s => s.kind === 'connector-checkpoints');
-    expect(step).toMatchObject({ command: 'gbrain repair connector-checkpoints --apply', paid: false, embeds: 'none', lifetime_ids: 0, checks: ['connector_checkpoints'] });
+    expect(step).toMatchObject({ command: 'foresights repair connector-checkpoints --apply', paid: false, embeds: 'none', lifetime_ids: 0, checks: ['connector_checkpoints'] });
     const run = await capture(async () => runRemediate(engine, await approvedRemediateArgs(engine, ['--remediate', '--yes', '--include-repairs', '--no-embed', '--max-usd', '0', '--json'])));
     const body = JSON.parse(run.out);
     expect(body.repairs.find((r: { kind: string }) => r.kind === 'connector-checkpoints')).toMatchObject({ status: 'completed' });
@@ -311,7 +311,7 @@ test('check 6 (S1): a retired connector intent fails with its delivered hint and
     const done = await waitForWrite(engine, row, { engine: engine.kind }, 20_000);
     expect(done).toMatchObject({ state: 'failed', error_code: 'connector_intent_outdated', consumer_version: null, published_at: null });
     const delivered = (() => { try { writeResponse(done); } catch (error) { return error as { suggestion?: string; docs?: string }; } return {}; })();
-    expect(delivered.suggestion).toContain('Upgrade gbrain on the host that runs connector jobs');
+    expect(delivered.suggestion).toContain('Upgrade foresights on the host that runs connector jobs');
     expect(delivered.docs).toBe('docs/guides/write-refusals.md#connector-intent-outdated');
     // The failed legacy request is never counted as an old writer; an unstamped published one is.
     await disposePersistenceConsumer(engine);
@@ -323,7 +323,7 @@ test('check 6 (S1): a retired connector intent fails with its delivered hint and
     await protocol(engine, "UPDATE persistence_requests SET consumer_version=NULL WHERE id=$1::uuid", [template!.id]);
     const warned = await writerVersionCheck(engine);
     expect(warned.status).toBe('warn');
-    expect(warned.message).toContain('gbrain upgrade');
+    expect(warned.message).toContain('foresights upgrade');
   }
 }), 180_000);
 
@@ -397,7 +397,7 @@ test('check 8 (S1, Postgres): an unbound write, binding between admission and pu
     // After binding, the kept page sits outside canonical files: doctor warns and names reconcile.
     const bound = await checkUnboundSource(engine);
     expect(bound.status).toBe('warn');
-    expect(bound.message).toContain('gbrain sources reconcile <source> <slug>');
+    expect(bound.message).toContain('foresights sources reconcile <source> <slug>');
     // A canonical file appears at its slug path; Lane D's reconcile accepts the marked page and resolves it.
     mkdirSync(join(f.dir, 'notes'), { recursive: true });
     writeFileSync(join(f.dir, 'notes/kept.md'), '---\ntitle: Example\ntype: note\nfile_field: kept\n---\n\nWritten into the checkout.\n');
@@ -439,7 +439,7 @@ test('check 9: every registered repair kind reaches the remediation plan with it
     const kinds = AUTO_REPAIR_REGISTRY.map(spec => spec.kind);
     expect(kinds).toEqual(['timeline', 'visibility', 'safe-chunks', 'contextual-mode', 'connector-checkpoints', 'request-indexes', 'connector-fences', 'take-supersession', 'orphan-bindings', 'embedding-effects', 'attribution-backfill', 'planner-stats', 'fences', 'slug-conflicts', 'access']);
     const planned = Object.fromEntries((await planRepairSteps(engine, { noEmbed: true })).map(step => [step.kind, step]));
-    expect(planned['contextual-mode']).toMatchObject({ paid: false, embeds: 'inline', command: 'gbrain repair contextual-mode --no-embed --apply' });
+    expect(planned['contextual-mode']).toMatchObject({ paid: false, embeds: 'inline', command: 'foresights repair contextual-mode --no-embed --apply' });
     expect(planned['connector-checkpoints']).toMatchObject({ paid: false, embeds: 'none' });
     expect(planned['safe-chunks']).toBeDefined();
     expect(planned['contextual-mode'].rationale).toContain('after safe-chunks re-seals them');

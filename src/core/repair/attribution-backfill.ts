@@ -1,5 +1,5 @@
 /**
- * `gbrain repair attribution-backfill` (Foundations 1, F1b): fill write
+ * `foresights repair attribution-backfill` (Foundations 1, F1b): fill write
  * attribution that the journal proves exactly, for rows written before the
  * attribution columns existed. No inference: a row is filled only when
  * exactly one committed request proves it wrote that row, and only while its

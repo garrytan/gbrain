@@ -30,7 +30,7 @@
  * Postgres readiness (F4 keeps the existing degraded-serve path for Postgres):
  * a serve whose database does not exist yet completes the handshake, every
  * tool call returns one classified isError block with a fix, and once the
- * database exists (`gbrain init`, the fix) the same session recovers and
+ * database exists (`foresights init`, the fix) the same session recovers and
  * recalls without a restart.
  *
  * Tier 1 (no API keys). Skips without DATABASE_URL.
@@ -88,7 +88,7 @@ async function brainQuery<T>(url: string, fn: (sql: ReturnType<typeof postgres>)
 
 function doc(run: GbrainRun): Record<string, any> {
   if (run.json === null || typeof run.json !== 'object') {
-    throw new Error(`gbrain ${run.args.join(' ')} (exit ${run.exitCode}) did not print one JSON document.\nstdout: ${run.stdout.slice(0, 2000)}\nstderr: ${run.stderr.slice(0, 2000)}`);
+    throw new Error(`foresights ${run.args.join(' ')} (exit ${run.exitCode}) did not print one JSON document.\nstdout: ${run.stdout.slice(0, 2000)}\nstderr: ${run.stderr.slice(0, 2000)}`);
   }
   return run.json as Record<string, any>;
 }

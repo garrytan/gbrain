@@ -5,7 +5,7 @@
  * 1. Protects: a committed transcript that quotes the facts markers in prose above a real fence is held `invalid_fence`
  *    with reason `quoted_marker` (not a person's `repeated_marker`), listed as repairable; `sync unblock --apply`
  *    wraps the mentions in backticks through the managed write-back with a receipt, and the next sync imports the page
- *    with its real fence. A hold an older gbrain screened (no `quote_version`) is screened once more, without moving the
+ *    with its real fence. A hold an older foresights screened (no `quote_version`) is screened once more, without moving the
  *    parser version. On a brain with no repository, `repair content` previews the stored page as `quote_marker` and
  *    `--apply --expect` rewrites it in the database; the real fence's rows land.
  * 2. Fails when: the hold stays manual, unblock refuses it, the edit drops a row or misses the receipt, or the db path
@@ -111,7 +111,7 @@ test('a transcript that quotes the markers in prose is held quoted_marker, and s
   }
 }), 240_000);
 
-test('an invalid_fence hold an older gbrain screened is screened once more, and the parser version does not move', () => {
+test('an invalid_fence hold an older foresights screened is screened once more, and the parser version does not move', () => {
   const meta = { recovery_version: RECOVERY_VERSION, fence_version: FENCE_VERSION };
   expect(holdRescreenDue({ code: 'invalid_fence', meta }, false)).toBe(true);
   expect(holdRescreenDue({ code: 'invalid_fence', meta: { ...meta, quote_version: QUOTE_SCREEN_VERSION } }, false)).toBe(false);

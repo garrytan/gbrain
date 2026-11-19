@@ -1,19 +1,19 @@
 /**
- * skillpack/harvest.ts — `gbrain skillpack harvest <slug> --from <host-repo-root>`.
+ * skillpack/harvest.ts — `foresights skillpack harvest <slug> --from <host-repo-root>`.
  *
  * Inverse of scaffold: lifts a skill from a host agent repo into
- * gbrain's tree so other clients can scaffold it via the normal path.
+ * foresights's tree so other clients can scaffold it via the normal path.
  *
  * Source contract (D11): `--from` points at the host repo root.
  * `<from>/skills/<slug>/` is the skill dir. Paired source files
  * declared in the host skill's frontmatter `sources:` array land at
- * the mirror path inside gbrain.
+ * the mirror path inside foresights.
  *
  * Security (D13): every harvested file goes through canonical-path
  * validation and symlink rejection. `realpath(file).startsWith
  * (realpath(host-skill-dir))`. Mirrors `validateUploadPath` from
  * `src/core/operations.ts`. Without this gate, a malicious or careless
- * symlink could leak secrets into gbrain's source tree.
+ * symlink could leak secrets into foresights's source tree.
  *
  * Privacy (D4, T7): after copying but before declaring success, the
  * harvested files are scanned against a regex allowlist of "private
@@ -45,7 +45,7 @@ export interface HarvestOptions {
   slug: string;
   /** Absolute path to the host agent repo root. */
   hostRepoRoot: string;
-  /** Absolute path to gbrain repo root (destination). */
+  /** Absolute path to foresights repo root (destination). */
   gbrainRoot: string;
   /** Skip the privacy linter. */
   noLint?: boolean;
@@ -112,7 +112,7 @@ export function runHarvest(opts: HarvestOptions): HarvestResult {
   const gbrainSkillDir = join(opts.gbrainRoot, 'skills', opts.slug);
   if (existsSync(gbrainSkillDir) && !opts.overwriteLocal) {
     throw new HarvestError(
-      `Slug collision: gbrain already has skills/${opts.slug}/. Pass --overwrite-local to replace.`,
+      `Slug collision: foresights already has skills/${opts.slug}/. Pass --overwrite-local to replace.`,
       'slug_collision',
     );
   }

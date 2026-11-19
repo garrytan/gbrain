@@ -2,7 +2,7 @@
  * test/e2e/openclaw-reference-compat.test.ts — W1 ship-blocker gate.
  *
  * This is THE test that proves v0.17 delivers on its headline claim:
- * `gbrain check-resolvable` against an OpenClaw-reference workspace
+ * `foresights check-resolvable` against an OpenClaw-reference workspace
  * layout (AGENTS.md at workspace root, skills/ below, no manifest.json)
  * runs cleanly and surfaces sensible issues.
  *
@@ -49,7 +49,7 @@ describe('OpenClaw reference workspace compat (W1 + W2 + W3)', () => {
 
   it('auto-detects skills dir via $OPENCLAW_WORKSPACE (D-CX-4 priority)', () => {
     // Priority: explicit env wins over repo-root walk. Without the
-    // env var, we'd get gbrain's own repo. With it set, we should
+    // env var, we'd get foresights's own repo. With it set, we should
     // get the fixture's skills dir.
     const detected = autoDetectSkillsDir(process.cwd(), { OPENCLAW_WORKSPACE: FIXTURE });
     expect(detected.dir).toBe(SKILLS_DIR);
@@ -88,7 +88,7 @@ describe('OpenClaw reference workspace compat (W1 + W2 + W3)', () => {
     expect(filing).toEqual([]);
   });
 
-  it('CLI subprocess: gbrain check-resolvable --json --skills-dir FIXTURE clean', () => {
+  it('CLI subprocess: foresights check-resolvable --json --skills-dir FIXTURE clean', () => {
     const r = spawnSync(
       'bun',
       [CLI, 'check-resolvable', '--json', '--skills-dir', SKILLS_DIR],

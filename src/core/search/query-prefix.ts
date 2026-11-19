@@ -1,7 +1,7 @@
 /**
  * #5691 / #3783: the opt-in query instruction for instruction-style embedding
  * models. `embedding_query_prefix` lives in the brain's database config
- * (`gbrain config set embedding_query_prefix …`), so every mounted brain uses
+ * (`foresights config set embedding_query_prefix …`), so every mounted brain uses
  * its own value. Search reads it once per request and threads the exact bytes
  * to the query embedding and the query-cache key; keyword search and stored
  * document vectors never see it, and the gateway's global state is untouched.

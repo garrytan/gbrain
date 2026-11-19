@@ -27,7 +27,7 @@ function runGate(cwd: string): { code: number; stdout: string; stderr: string } 
   // GBRAIN_SCAN_ROOT pins the gate's scan directory to our fake repo.
   // Without this, `git rev-parse --show-toplevel` inside the gate can walk
   // up past our /tmp/gate-test-* fakeRepo (when its `git init -q` silently
-  // failed under shard-concurrency load) into the real gbrain repo and
+  // failed under shard-concurrency load) into the real foresights repo and
   // scan the clean src+scripts — false-negative the negative-case test.
   // v0.40.10 flake-hardening fix.
   const r = spawnSync('bash', [SCRIPT_PATH], {

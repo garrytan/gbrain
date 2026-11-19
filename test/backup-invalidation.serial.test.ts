@@ -282,7 +282,7 @@ describe('sources harden — invalidation after the harden loop', () => {
 describe('bootstrap repo — recordRepoInReceipt contract (source-text pin)', () => {
   // WHY source-text and not behavior: recordRepoInReceipt is module-private
   // to src/core/bootstrap/repo.ts, and the only public path to it is the full
-  // `gbrain bootstrap repo` flow — which requires a gh binary, a GitHub-shaped
+  // `foresights bootstrap repo` flow — which requires a gh binary, a GitHub-shaped
   // origin, and a repo-privacy verification ladder that cannot run in this
   // sandbox (the git shim also swallows subprocess exit codes). The REAL
   // behavior (invalidateBackupStatus deleting the cache file) is pinned above

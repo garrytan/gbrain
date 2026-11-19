@@ -1,5 +1,5 @@
 /**
- * `gbrain decide judge-agreement` math and input parsing (pure; no provider).
+ * `foresights decide judge-agreement` math and input parsing (pure; no provider).
  *
  * Protects: Cohen's kappa and its large-sample 95% CI on hand-computed
  * tables, the degenerate cases (no items, both judges constant), per-slice

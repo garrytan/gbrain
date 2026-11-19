@@ -1,11 +1,11 @@
 /**
- * gbrain feedback — inspect and reset use-attributed retrieval feedback.
+ * foresights feedback — inspect and reset use-attributed retrieval feedback.
  *
  * Usage:
- *   gbrain feedback status [--json]
- *   gbrain feedback reset [--source ID] [--page SLUG]
+ *   foresights feedback status [--json]
+ *   foresights feedback reset [--source ID] [--page SLUG]
  *
- * Zero LLM calls. Ratings come from `gbrain rate` / the rate_answer op.
+ * Zero LLM calls. Ratings come from `foresights rate` / the rate_answer op.
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
@@ -14,10 +14,10 @@ import { droppedFeedbackEvents } from '../core/feedback/record.ts';
 import { feedbackStatus, resetRetrievalWeights } from '../core/feedback/store.ts';
 import { feedbackStageErrors } from '../core/search/feedback-boost.ts';
 
-const HELP = `Usage: gbrain feedback <status|reset> [options]
+const HELP = `Usage: foresights feedback <status|reset> [options]
 
 Inspect and reset the brain's use-attributed retrieval feedback (ratings from
-\`gbrain rate\` / rate_answer and think/synthesize citations).
+\`foresights rate\` / rate_answer and think/synthesize citations).
 
   status [--json]                    counts, weight spread, lowest-weighted pages with a next step
   reset [--source ID] [--page SLUG]  return learned weights to neutral (all, one source, or one page)
@@ -67,7 +67,7 @@ export async function runFeedback(engine: BrainEngine, args: string[]): Promise<
     `Learned weights: ${status.weights_total} (${status.weights_off_neutral} away from neutral)`,
   ];
   if (status.top_client_share_7d !== null && status.top_client_share_7d > 0.8 && status.ratings_explicit > 10) {
-    lines.push(`Warning: one client made ${Math.round(status.top_client_share_7d * 100)}% of ratings in the last 7 days. If that is not expected, run \`gbrain feedback reset\` and review that client's write grant.`);
+    lines.push(`Warning: one client made ${Math.round(status.top_client_share_7d * 100)}% of ratings in the last 7 days. If that is not expected, run \`foresights feedback reset\` and review that client's write grant.`);
   }
   if (status.highest.length > 0) {
     lines.push('', 'Most trusted pages:');
@@ -80,7 +80,7 @@ export async function runFeedback(engine: BrainEngine, args: string[]): Promise<
     }
   }
   if (status.events === 0) {
-    lines.push('', 'No answers recorded yet. Answers from query/search/think/synthesize/recall carry an answer_id; rate one with `gbrain rate <answer_id> 1-5`.');
+    lines.push('', 'No answers recorded yet. Answers from query/search/think/synthesize/recall carry an answer_id; rate one with `foresights rate <answer_id> 1-5`.');
   }
   process.stdout.write(lines.join('\n') + '\n');
 }

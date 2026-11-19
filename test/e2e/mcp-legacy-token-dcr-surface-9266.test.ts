@@ -4,7 +4,7 @@
  * (and no way to pre-seed one), so it keeps the server ceiling and stays
  * bounded by its own scope, source and operation grants.
  *
- * Real `gbrain serve --http` processes against a hermetic PGLite brain:
+ * Real `foresights serve --http` processes against a hermetic PGLite brain:
  *   - legacy token (read+write, operations whoami+add_link) under the starter
  *     default: add_link is listed and callable, put_page stays refused;
  *   - an OAuth client with no surface row still resolves to starter;

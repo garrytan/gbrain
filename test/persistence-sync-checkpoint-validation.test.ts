@@ -152,7 +152,7 @@ test('#5762 a validation statement timeout fails the checkpoint terminally with 
   const diagnostic = result.managedWrite!;
   expect(diagnostic).toMatchObject({ write_error: 'checkpoint_validation_timeout', reason: 'checkpoint_validation_timeout', detail: 'indexes_valid',
     docs: 'docs/guides/write-refusals.md#checkpoint-validation-timeout', write_request: { state: 'failed' } });
-  expect(diagnostic.suggestion).toContain(`gbrain sync --source ${f.id} --no-pull --no-embed --no-extract`);
+  expect(diagnostic.suggestion).toContain(`foresights sync --source ${f.id} --no-pull --no-embed --no-extract`);
   expect(diagnostic.suggestion).toContain(diagnostic.write_request.request_id);
   const [checkpoint] = await engine.executeRaw<{ state: string; error_code: string; blocked_reason: string | null }>(
     "SELECT state,error_code,blocked_reason FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_checkpoint'", [f.id]);
@@ -281,33 +281,33 @@ test('GBRA-133 PR 3a a pass checkpoint left pending when its pass ends is supers
 test('#5762 the hint names one of three index states and keeps the saved processing flags', async () => {
   const syncOptions = { full: false, workingTree: true, srcSubpath: null, exclude: [], includeHidden: [], strategy: null };
   const input = { requestId: 'req-1', sourceId: 'notes', processingOptions: { noEmbed: true, noExtract: false, noSchemaPack: true }, syncOptions };
-  const retry = 'gbrain sync --source notes --no-pull --no-embed --no-schema-pack --working-tree';
+  const retry = 'foresights sync --source notes --no-pull --no-embed --no-schema-pack --working-tree';
   const building = formatCheckpointTimeoutHint([{ name: 'persistence_requests_sync_run_open', state: 'building',
     progress: { phase: 'building index: scanning table', blocks_done: 10, blocks_total: 40 } }], input);
   expect(building).toMatchObject({ detail: 'index_building' });
   expect(building.suggestion).toBe(`This release's request-index build is still running (persistence_requests_sync_run_open: building index: scanning table, 10/40 blocks). `
-    + `Wait for it to finish (gbrain doctor shows persistence_request_indexes), then run: ${retry}`);
+    + `Wait for it to finish (foresights doctor shows persistence_request_indexes), then run: ${retry}`);
   const missing = formatCheckpointTimeoutHint([{ name: 'persistence_requests_sync_run_open', state: 'valid' },
     { name: 'persistence_requests_sync_run_committed', state: 'invalid' }], input);
   expect(missing).toMatchObject({ detail: 'index_missing' });
-  expect(missing.suggestion).toBe(`The request index persistence_requests_sync_run_committed is INVALID. Rebuild it: gbrain repair request-indexes --apply — then run: ${retry}`);
+  expect(missing.suggestion).toBe(`The request index persistence_requests_sync_run_committed is INVALID. Rebuild it: foresights repair request-indexes --apply — then run: ${retry}`);
   const valid = formatCheckpointTimeoutHint([{ name: 'persistence_requests_sync_run_open', state: 'valid' }], input);
   expect(valid.detail).toBe('indexes_valid');
   expect(valid.suggestion).toBe(`The request indexes are valid, so there is nothing to wait for. Run: ${retry}. If it times out again, report request req-1 `
-    + 'and attach the persistence_request_indexes and persistence_request_growth entries of gbrain doctor --json.');
+    + 'and attach the persistence_request_indexes and persistence_request_growth entries of foresights doctor --json.');
   expect(WRITE_ERROR_CODES).toContain('checkpoint_validation_timeout');
   // Every option that selects the cursor is printed, so the retry resumes the same cursor.
   expect(checkpointRetryCommand({ sourceId: 'notes', processingOptions: null, syncOptions: { full: true, workingTree: false, srcSubpath: 'docs/team a',
     exclude: ['drafts/**', "it's"], includeHidden: ['.notes'], strategy: 'markdown' } })).toBe(
-    "gbrain sync --source notes --no-pull --full --src-subpath 'docs/team a' --exclude 'drafts/**' --exclude 'it'\\''s' --include-hidden .notes --strategy markdown");
+    "foresights sync --source notes --no-pull --full --src-subpath 'docs/team a' --exclude 'drafts/**' --exclude 'it'\\''s' --include-hidden .notes --strategy markdown");
   // A relative --src-subpath keeps the --repo base it resolved against.
   expect(checkpointRetryCommand({ sourceId: 'notes', processingOptions: { noEmbed: true, noExtract: true, noSchemaPack: false },
     syncOptions: { ...syncOptions, workingTree: false, srcSubpath: 'guides' }, repoPath: '/work/repo/docs' }))
-    .toBe('gbrain sync --source notes --no-pull --repo /work/repo/docs --no-embed --no-extract --src-subpath guides');
+    .toBe('foresights sync --source notes --no-pull --repo /work/repo/docs --no-embed --no-extract --src-subpath guides');
   // A compacted receipt, or a checkpoint admitted before its cursor options were recorded: no assumed defaults.
   expect(checkpointRetryCommand({ sourceId: 'notes', processingOptions: { noEmbed: true, noExtract: false, noSchemaPack: false } }))
-    .toBe('gbrain sync --source notes --no-pull with the same options as the failed run (this receipt no longer records them)');
-  expect(checkpointRetryCommand({ sourceId: 'notes' })).toBe('gbrain sync --source notes --no-pull with the same options as the failed run (this receipt no longer records them)');
+    .toBe('foresights sync --source notes --no-pull with the same options as the failed run (this receipt no longer records them)');
+  expect(checkpointRetryCommand({ sourceId: 'notes' })).toBe('foresights sync --source notes --no-pull with the same options as the failed run (this receipt no longer records them)');
 });
 
 test('#5762 a dropped index reads as missing and the hint then names the rebuild command', async () => each(async engine => {

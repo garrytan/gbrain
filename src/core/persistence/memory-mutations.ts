@@ -125,7 +125,7 @@ async function planRememberTarget(ctx: OperationContext, sourceId: string, sourc
   // GST-2492: on a strict source (Git is the record) a named entity with no page holds its fact in Git, as a row of a
   // holding page that names the entity, until the entity's page exists: memory/unattributed, or for an entity under a
   // folder access rule its folder's holding page, which every rule covering the entity covers by path. The fences and the
-  // authority above ran on the entity (decision D1); the holding row is gbrain's own companion write, authorized as a write
+  // authority above ran on the entity (decision D1); the holding row is foresights's own companion write, authorized as a write
   // to that entity. A folder's holding page takes the folder's storage class (database-only under storage.db_only or a path
   // Git ignores, as the entity's own page would be); a shared one kept out of Git keeps the fact database-only, as before.
   const { holdingHome, refuseUnheldFact } = await import('../facts/held-fact-move.ts');
@@ -404,8 +404,8 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
     ? `Fact #${rawId} is one this credential reads but cannot withdraw. Nothing was forgotten.`
     : `Fact #${rawId} is not on your member page ${ownPage}, so this credential cannot withdraw it. Nothing was forgotten.`,
   ownerSpeaksForItself(ctx)
-    ? `The brain owner's credential withdraws shared facts, facts on its member page and other facts it reads on pages it can write. The brain host withdraws this one with gbrain forget ${rawId}.`
-    : `A member credential withdraws only the facts on its own member page. The brain host withdraws this one with gbrain forget ${rawId}.`);
+    ? `The brain owner's credential withdraws shared facts, facts on its member page and other facts it reads on pages it can write. The brain host withdraws this one with foresights forget ${rawId}.`
+    : `A member credential withdraws only the facts on its own member page. The brain host withdraws this one with foresights forget ${rawId}.`);
   let ownerReach = false;
   if (ownPage && !mine) {
     // #9101: a fact the caller reads (one it shared, or a teammate's shared fact) is refused by name; a fact it cannot read stays not_found.
@@ -469,7 +469,7 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
   }
   if (fileBacked && target?.kind === 'publish' && target.databaseOnlyReason === 'disabled_by_config') {
     throw verbError('unavailable', 'This brain has sync.write_through off, so forget cannot strike the claim in the page files that carry it.',
-      'Turn write-through back on (gbrain config set sync.write_through true), then forget the fact again; nothing was withdrawn.', 'sync_write_through_off');
+      'Turn write-through back on (foresights config set sync.write_through true), then forget the fact again; nothing was withdrawn.', 'sync_write_through_off');
   }
   if (target?.kind === 'publish' && target.databaseOnlyReason) authority.databaseOnlyReason = target.databaseOnlyReason;
   const binding = target?.kind === 'unbound' ? await claimWorktree(ctx.engine, sourceId, target.root, undefined, undefined, { automatic: true })

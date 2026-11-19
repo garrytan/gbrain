@@ -39,7 +39,7 @@ describe('production soak fixture', () => {
     expect(Number(last.slice(0, 4)) - Number(first.slice(0, 4))).toBeGreaterThanOrEqual(1);
   });
 
-  test('the backlog after import-base commits the files gbrain must hold', () => {
+  test('the backlog after import-base commits the files foresights must hold', () => {
     const repo = ma.sources.find((s: any) => s.id === 'default').repo;
     const backlog = git(repo, 'diff', '--name-only', 'import-base', 'final').split('\n');
     for (const f of ma.problem_files) expect(backlog).toContain(f.path);

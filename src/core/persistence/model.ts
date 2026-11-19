@@ -24,7 +24,7 @@ export interface WriteAuthority {
    */
   actingFor?: string[] | { system: string; external_id: string; member: string };
   /**
-   * GST-363: the member a local_stdio writer's serve was started with (`gbrain serve --stdio-member`). Preparation and
+   * GST-363: the member a local_stdio writer's serve was started with (`foresights serve --stdio-member`). Preparation and
    * publication re-resolve it live (a disabled member reads as nobody); absent, they read config mcp.stdio_member.
    */
   stdioMember?: string;
@@ -35,7 +35,7 @@ export interface WriteAuthority {
   /**
    * GST-2492: the entity a remember held on memory/unattributed is for (a strict source, the entity has no page). The
    * write is authorized as a write to that entity (its slug fences, grant prefixes and visibility), never to the
-   * holding page, which is gbrain's own companion to it.
+   * holding page, which is foresights's own companion to it.
    */
   heldFor?: string;
   /**

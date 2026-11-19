@@ -84,7 +84,7 @@ describe('resolveEmbeddingColumn — resolution chain', () => {
     expect(err?.columnName).toBe('nonexistent');
     expect(err?.validColumns).toEqual(['embedding', 'embedding_image']);
     expect(err?.message).toContain('Declared columns:');
-    expect(err?.message).toContain('gbrain config set');
+    expect(err?.message).toContain('foresights config set');
   });
 
   test('SQL-injection-shaped name rejected before registry lookup', () => {

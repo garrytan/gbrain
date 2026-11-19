@@ -1,13 +1,13 @@
 /**
- * `gbrain chronicle-backfill` core (#5876, D6/E10): the history path.
+ * `foresights chronicle-backfill` core (#5876, D6/E10): the history path.
  *
  * Discovers meeting, conversation and calendar pages by type AND by the
  * rescue slug prefixes (any type), applies the shared eligibility rules
  * (invite end always; recency only with `recent`), consults the ledger so
  * content already extracted or queued is never paid for again (the ledger
- * survives `gbrain jobs prune`), and queues `pending` rows with
+ * survives `foresights jobs prune`), and queues `pending` rows with
  * trigger='backfill' up to one global limit. The `chronicle` phase executes
- * them (`gbrain dream --phase chronicle`); backfill rows are exempt from the
+ * them (`foresights dream --phase chronicle`); backfill rows are exempt from the
  * daily limit and run even when automatic extraction is off. A dry run
  * changes nothing and reports the candidates, an estimated cost and the skip
  * reasons. Spending needs explicit consent (`yes`), keyed on the flag only.
@@ -191,10 +191,10 @@ export async function runChronicleBackfill(engine: BrainEngine, opts: ChronicleB
       (maxUsd === null ? '' : `; worst case $${(result.worst_case_usd as number).toFixed(2)} of the $${maxUsd.toFixed(2)} --max-usd bound ` +
         `($${result.per_page_worst_case_usd!.toFixed(2)} per page: ${maxAttempts} attempts at the per-page cap plus one call's overshoot)`);
   const capNote = result.cap_reached
-    ? ` More eligible pages did not fit under --max-usd $${maxUsd!.toFixed(2)}; a larger bound is a new paid run, so ask the user first (preview: gbrain chronicle-backfill ${flags} --dry-run).`
+    ? ` More eligible pages did not fit under --max-usd $${maxUsd!.toFixed(2)}; a larger bound is a new paid run, so ask the user first (preview: foresights chronicle-backfill ${flags} --dry-run).`
     : '';
   if (dryRun || !opts.yes) {
-    result.next_command = result.queued > 0 ? `gbrain chronicle-backfill ${flags} --yes` : '';
+    result.next_command = result.queued > 0 ? `foresights chronicle-backfill ${flags} --yes` : '';
     result.ask_user = result.queued > 0;
     result.message = result.queued === 0
       ? `Nothing to backfill: ${result.eligible} eligible page(s), ${result.already_done} already extracted or queued.`
@@ -202,7 +202,7 @@ export async function runChronicleBackfill(engine: BrainEngine, opts: ChronicleB
         (dryRun ? '' : ' (backfill spends money, so it needs --yes; nothing was queued).');
     if (result.queued === 0 && result.cap_reached) {
       result.ask_user = true;
-      result.next_command = `gbrain chronicle-backfill ${flags} --dry-run`;
+      result.next_command = `foresights chronicle-backfill ${flags} --dry-run`;
       result.message = `No page fits under --max-usd $${maxUsd!.toFixed(2)}: each page can spend up to $${result.per_page_worst_case_usd!.toFixed(2)} ` +
         `(${maxAttempts} attempts at the $${settings.jobBudgetUsd.toFixed(2)} per-page cap plus one call's overshoot). Ask the user for a larger --max-usd.`;
     } else result.message += capNote;
@@ -213,14 +213,14 @@ export async function runChronicleBackfill(engine: BrainEngine, opts: ChronicleB
   result.ask_user = false;
   if (result.queued === 0 && result.cap_reached) {
     result.ask_user = true;
-    result.next_command = `gbrain chronicle-backfill ${flags} --dry-run`;
+    result.next_command = `foresights chronicle-backfill ${flags} --dry-run`;
     result.message = `Nothing queued: no page fits under --max-usd $${maxUsd!.toFixed(2)} (each page can spend up to $${result.per_page_worst_case_usd!.toFixed(2)}). Ask the user for a larger --max-usd.`;
     return result;
   }
   result.message = result.queued === 0
     ? `Nothing queued: ${result.eligible} eligible page(s), ${result.already_done} already extracted or queued.`
     : `Queued ${result.queued} page(s). ${cost}. They run in the next cycle (at most 50 per run); to run now: ${RUN_NOW_COMMAND}` +
-      (result.limit_reached ? `. More pages remain; each batch is paid, so ask the user before the next one (preview: gbrain chronicle-backfill ${flags} --dry-run).` : '.') +
+      (result.limit_reached ? `. More pages remain; each batch is paid, so ask the user before the next one (preview: foresights chronicle-backfill ${flags} --dry-run).` : '.') +
       capNote;
   return result;
 }

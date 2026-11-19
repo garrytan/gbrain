@@ -1,10 +1,10 @@
 /**
- * #5988 legacy (unmanaged) sync holds. A file whose content gbrain refuses
+ * #5988 legacy (unmanaged) sync holds. A file whose content foresights refuses
  * deterministically (unreadable or ambiguous frontmatter, a frontmatter slug
  * naming another page, over-size, an operator content reject) is held in the
  * shared Git hold store instead of failing the run: it stays out of
  * `failedFiles` and the #1939 auto-skip streak, never gates the bookmark, and
- * is re-screened on later runs until it imports, is deleted, or a newer gbrain
+ * is re-screened on later runs until it imports, is deleted, or a newer foresights
  * can read it. `sync.holds=fail` keeps today's fail-closed behavior, and
  * company-brain sources never hold (their approved manifest keeps blocking).
  */

@@ -1,17 +1,17 @@
 /**
  * MinionSupervisor — Process manager for the Minion worker.
  *
- * Spawns `gbrain jobs work` as a child process and restarts it on crash
+ * Spawns `foresights jobs work` as a child process and restarts it on crash
  * with exponential backoff. Provides health monitoring, PID file locking
  * (atomic via O_CREAT|O_EXCL), and graceful shutdown.
  *
  * ENGINE: Postgres only. PGLite uses an exclusive file lock that blocks
- * any separate worker process, so `gbrain jobs supervisor` cannot work
+ * any separate worker process, so `foresights jobs supervisor` cannot work
  * against a PGLite brain — `src/commands/jobs.ts` rejects that combination
  * at the CLI layer. The health-check SQL below assumes Postgres schema.
  *
  * Usage:
- *   gbrain jobs supervisor [--concurrency N] [--queue Q] [--pid-file PATH]
+ *   foresights jobs supervisor [--concurrency N] [--queue Q] [--pid-file PATH]
  *                          [--max-crashes N] [--health-interval N]
  *                          [--allow-shell-jobs] [--json]
  *
@@ -77,13 +77,13 @@ export interface SupervisorOpts {
   concurrency: number;
   /** Queue name (passed to child). Default: 'default'. */
   queue: string;
-  /** PID file path. Default: `<gbrain home>/supervisor-<brain-id>.pid`, GBRAIN_HOME honoured (parent dir auto-created). */
+  /** PID file path. Default: `<foresights home>/supervisor-<brain-id>.pid`, GBRAIN_HOME honoured (parent dir auto-created). */
   pidFile: string;
   /** Max consecutive crashes before giving up. Default: 10. */
   maxCrashes: number;
   /** Health check interval in ms. Default: 60000. */
   healthInterval: number;
-  /** Path to the gbrain CLI executable (MUST be a compiled binary; .ts sources cannot be spawned). */
+  /** Path to the foresights CLI executable (MUST be a compiled binary; .ts sources cannot be spawned). */
   cliPath: string;
   cliArgsPrefix?: string[];
   /** Allow shell jobs on child worker. Default: false. When true, sets GBRAIN_ALLOW_SHELL_JOBS=1 on the
@@ -178,7 +178,7 @@ const DEFAULTS: Omit<SupervisorOpts, 'cliPath'> = {
 };
 
 /**
- * Build the argv the supervisor uses to spawn `gbrain jobs work`. Extracted from
+ * Build the argv the supervisor uses to spawn `foresights jobs work`. Extracted from
  * runSuperviseLoop so it's unit-testable (issue #1815, Codex). Appends `--nice N`
  * when the operator requested a niceness, alongside the existing concurrency /
  * queue / max-rss flags. The spawned worker re-applies the niceness to itself;
@@ -356,7 +356,7 @@ export const QUEUE_PROBE_TIMEOUT_MS = 1500;
  *     doctor-style oldest-waiting age, generalized past embed-backfill;
  *   - supervisor DB-lock liveness (`inspectLock`/`isLockHolderLive` on
  *     `supervisorLockId(queue)` — the HOME-independent authority, #2227)
- *     plus the host-local worker registry (standalone `gbrain jobs work`
+ *     plus the host-local worker registry (standalone `foresights jobs work`
  *     holds no supervisor lock; the MCP server runs on the brain host);
  *   - the autopilot pause marker (a paused system makes `worker_alive`
  *     truthful-but-misleading on its own).
@@ -442,11 +442,11 @@ async function probeQueueStateInner(
   const warnings: string[] = [];
   if (paused) {
     warnings.push(existsSync(autopilotOperatorPauseMarkerPath())
-      ? 'system paused by the operator (gbrain autopilot resume clears it) — job will not start until the pause clears'
+      ? 'system paused by the operator (foresights autopilot resume clears it) — job will not start until the pause clears'
       : 'system paused for migration — job will not start until the pause clears');
   }
-  if (livenessUnknown) warnings.push(`worker liveness unknown for queue '${queue}': the worker registry is unreadable (${registryErrno}); check gbrain jobs supervisor status`);
-  else if (!workerAlive) warnings.push(`no live worker detected for queue '${queue}' — job will wait until one starts (gbrain jobs work --queue ${queue})`);
+  if (livenessUnknown) warnings.push(`worker liveness unknown for queue '${queue}': the worker registry is unreadable (${registryErrno}); check foresights jobs supervisor status`);
+  else if (!workerAlive) warnings.push(`no live worker detected for queue '${queue}' — job will wait until one starts (foresights jobs work --queue ${queue})`);
   if (sig.waiting > threshold) {
     warnings.push(`waiting depth ${sig.waiting} exceeds GBRAIN_QUEUE_WAITING_THRESHOLD (${threshold})`);
   }
@@ -483,8 +483,8 @@ export const ExitCodes = {
  * pidfile path. TTL > refresh-interval × max-failures so we always exit
  * before our lock could lapse and let a second supervisor take over.
  */
-// Exported (issue #2227) so observability surfaces (`gbrain jobs supervisor
-// status`, `gbrain doctor`) compute the lock-freshness steal grace with the
+// Exported (issue #2227) so observability surfaces (`foresights jobs supervisor
+// status`, `foresights doctor`) compute the lock-freshness steal grace with the
 // SAME TTL the supervisor refreshes against, when detecting a live supervisor
 // via the DB lock instead of the (possibly split-$HOME) pidfile.
 export const SUPERVISOR_LOCK_TTL_MIN = 5;
@@ -518,7 +518,7 @@ export function resolveSupervisorLockWaitSeconds(): number {
  * to different ids and BOTH acquired the "singleton" lock in the one shared
  * locks table. Queue-only keying makes same-DB + same-queue collide correctly,
  * while different physical databases never collide (separate locks tables).
- * Exported so `gbrain doctor` queries the same row to surface the holder +
+ * Exported so `foresights doctor` queries the same row to surface the holder +
  * effective --max-rss.
  */
 export function supervisorLockId(queue: string): string {
@@ -835,7 +835,7 @@ export class MinionSupervisor {
       ...processStartStamp('supervisor_start', process.pid),
       // Resolved to absolute at emit time (relative to THIS process's cwd,
       // the only context in which a relative --pid-file was meaningful) so a
-      // later reader (e.g. `gbrain doctor`, possibly running from a
+      // later reader (e.g. `foresights doctor`, possibly running from a
       // different cwd) doesn't misresolve it. `this.opts.pidFile` itself
       // stays as-given for this process's own reads/writes below, which are
       // already correctly relative to this same cwd.
@@ -843,7 +843,7 @@ export class MinionSupervisor {
       concurrency: this.opts.concurrency,
       queue: this.opts.queue,
       max_crashes: this.opts.maxCrashes,
-      // #1849: record the EFFECTIVE --max-rss so `gbrain doctor` can surface
+      // #1849: record the EFFECTIVE --max-rss so `foresights doctor` can surface
       // the cap a rogue second supervisor would have fought over.
       max_rss_mb: this.opts.maxRssMb,
       // Niceness (issue #1815): record requested + effective so doctor/status can

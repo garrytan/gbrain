@@ -5,7 +5,7 @@
  * (`managed_file_repair` with `fenceRepair`, or a trusted local `put_page`
  * with `fence_repair`), its Git commit subject `gbrain: repair fence in
  * <path> (<classes>)` and, in a batched commit, one `<path> (<classes>)` body
- * line per repaired path; refusals of a fence repair routed to `gbrain repair
+ * line per repaired path; refusals of a fence repair routed to `foresights repair
  * fences` (D6); `fence_repair` refused from every remote caller; location-only
  * privacy of receipts and commit messages.
  * Fails when: the commit note is dropped anywhere between the preparer and
@@ -48,7 +48,7 @@ const engines: BrainEngine[] = [];
 let closePostgres: (() => Promise<void>) | undefined;
 const env = { GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home, OPENAI_API_KEY: undefined, VOYAGE_API_KEY: undefined, ANTHROPIC_API_KEY: undefined };
 const git = (root: string, ...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-/** The last commit's message without a trailing trailer paragraph: a host's git may append one (a co-author line); gbrain writes none. */
+/** The last commit's message without a trailing trailer paragraph: a host's git may append one (a co-author line); foresights writes none. */
 const lastMessage = (root: string) => git(root, 'log', '-1', '--format=%B').trimEnd().replace(/\n\n(?:[A-Za-z-]+: [^\n]*\n?)+$/, '');
 const commits = (root: string) => Number(git(root, 'rev-list', '--count', 'HEAD').trim());
 
@@ -189,7 +189,7 @@ test('a managed_file_repair with a fence receipt commits under the fence subject
   }
 }), 180_000);
 
-test('without a receipt the repair keeps the generic subject and names the frontmatter repair; with one, refusals name gbrain repair fences', () => each(async engine => {
+test('without a receipt the repair keeps the generic subject and names the frontmatter repair; with one, refusals name foresights repair fences', () => each(async engine => {
   const s = await managed(engine, { 'notes/plain.md': page('Plain', 'First version.\n') });
   const before = s.read('notes/plain.md'), after = page('Plain', 'Second version.\n');
   const { slug, resultDigest, revision } = await s.digestOf('notes/plain.md', after);
@@ -198,17 +198,17 @@ test('without a receipt the repair keeps the generic subject and names the front
   const stale = 'b'.repeat(64);
   const frontmatter = await refusal(() => submitManagedFileRepair(localCtx(engine, s.id), { ...input, requestId: randomUUID(), beforeHash: stale }));
   expect(frontmatter.code).toBe('changed_since_preview');
-  expect(frontmatter.suggestion).toContain(`gbrain repair frontmatter --source ${s.id}`);
+  expect(frontmatter.suggestion).toContain(`foresights repair frontmatter --source ${s.id}`);
   expect(frontmatter.fix?.argv).toEqual(['gbrain', 'repair', 'frontmatter', '--source', s.id]);
   const fences = await refusal(() => submitManagedFileRepair(localCtx(engine, s.id), { ...input, requestId: randomUUID(), beforeHash: stale,
     fenceRepair: { ...receiptFor(before, after, ['close_fence']), before_sha256: stale } }));
   expect(fences.code).toBe('changed_since_preview');
-  expect(fences.suggestion).toContain(`gbrain repair fences --source ${s.id}`);
+  expect(fences.suggestion).toContain(`foresights repair fences --source ${s.id}`);
   expect(fences.fix?.argv).toEqual(['gbrain', 'repair', 'fences', '--source', s.id]);
   expect(JSON.stringify({ message: fences.message, suggestion: fences.suggestion, fix: fences.fix })).not.toContain('frontmatter');
   let confined: unknown;
   try { confinedRepairTarget(s.root, '../outside.md', s.id, 'fences'); } catch (error) { confined = error; }
-  expect((confined as OperationError).suggestion).toContain('gbrain repair fences writes only regular files');
+  expect((confined as OperationError).suggestion).toContain('foresights repair fences writes only regular files');
 
   const requestId = randomUUID();
   const outcome = await submitManagedFileRepair(localCtx(engine, s.id), { ...input, requestId, beforeHash: sha256(before) });

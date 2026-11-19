@@ -17,7 +17,7 @@ times in each. A diagnostic outside the gate appends ", and when?" to the questi
 - Relational fixture: the reserve fired on 38 of 38, but the appended words already drop page recall to 0 with the
   key off, so this copy shows nothing.
 
-With the key off, `query` output on these sets matches garrytan/gbrain@eb696b3df, apart from wall-clock recency
+With the key off, `query` output on these sets matches aimonk2025/gbrain@eb696b3df, apart from wall-clock recency
 scores. The facts arm's own gate-2 numbers are unchanged.
 
 Gate 1 (BEAM dev, harness lane) has not run.

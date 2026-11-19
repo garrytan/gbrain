@@ -1,5 +1,5 @@
 /**
- * `gbrain setup claude-code` (D8): the CLI-only command row's behavior test,
+ * `foresights setup claude-code` (D8): the CLI-only command row's behavior test,
  * spawning `bun src/cli.ts setup` against a temp HOME / GBRAIN_HOME.
  *
  * Authoring gate:
@@ -80,7 +80,7 @@ function entries(b: Box, event: string): any[] {
   return (readJson(settings(b)).hooks?.[event] ?? []).flatMap((g: any) => g.hooks ?? []);
 }
 
-describe('gbrain setup claude-code: install lifecycle', () => {
+describe('foresights setup claude-code: install lifecycle', () => {
   test('fresh install creates a keyless brain, wires MCP + read-context hooks only, verifies; a second run changes nothing', async () => {
     const b = box();
     const first = await setup(b, ['claude-code', '--json']);
@@ -100,7 +100,7 @@ describe('gbrain setup claude-code: install lifecycle', () => {
     expect(bundle).toMatchObject({ code: 'first_run_decisions', kind: 'ask' });
     expect(bundle.decisions.map((d: any) => d.id)).not.toContain('harness_wiring');
     expect(bundle.user_message).not.toContain("Reply 'defaults'");
-    expect(bundle.user_message).toContain('Report back (Wakeshift): off. gbrain wakeshift enable turns it on.');
+    expect(bundle.user_message).toContain('Report back (Wakeshift): off. foresights wakeshift enable turns it on.');
 
     const before = [readFileSync(claudeJson(b), 'utf8'), readFileSync(settings(b), 'utf8'), readFileSync(receipt(b), 'utf8')];
     const second = await setup(b, ['claude-code', '--json']);
@@ -124,7 +124,7 @@ describe('gbrain setup claude-code: install lifecycle', () => {
     const b = box();
     const r = await setup(b, ['claude-code']);
     expect(r.exitCode).toBe(0);
-    for (const stale of ['Do this next', 'claude mcp add', "Reply 'defaults'", 'Before continuing', 'gbrain install check', '(id: harness_wiring)']) expect(r.stdout).not.toContain(stale);
+    for (const stale of ['Do this next', 'claude mcp add', "Reply 'defaults'", 'Before continuing', 'foresights install check', '(id: harness_wiring)']) expect(r.stdout).not.toContain(stale);
     expect(r.stdout).toContain('Brain ready at ');
     const next = r.stdout.indexOf('Next: open a new Claude Code session');
     const block = r.stdout.indexOf('[AGENT]');
@@ -140,7 +140,7 @@ describe('gbrain setup claude-code: install lifecycle', () => {
     expect(hosted).toBeGreaterThan(r.stdout.indexOf('[first_run_decisions]'));
     expect(r.stdout.slice(block, hosted)).toContain('in the reply that reports this install');
     expect(r.stdout.slice(block, hosted)).toContain('(id: search_mode)');
-    expect(r.stdout.slice(block, hosted)).toContain('Report back (Wakeshift): off. gbrain wakeshift enable turns it on.');
+    expect(r.stdout.slice(block, hosted)).toContain('Report back (Wakeshift): off. foresights wakeshift enable turns it on.');
     expect(r.stdout.slice(hosted)).toContain('https://gbrain.io/?ref=cli-setup');
     expect(r.stdout.trimEnd().endsWith('[/AGENT]')).toBe(true);
   });
@@ -159,7 +159,7 @@ describe('gbrain setup claude-code: install lifecycle', () => {
     const r = await setup(b, ['claude-code']);
     expect(r.exitCode).toBe(0);
     const next = r.stdout.indexOf('Next: open a new Claude Code session');
-    const memory = r.stdout.indexOf('Memory: save what the user asks you to remember as a fact with gbrain remember "<fact>", naming its entity and provenance');
+    const memory = r.stdout.indexOf('Memory: save what the user asks you to remember as a fact with foresights remember "<fact>", naming its entity and provenance');
     expect(next).toBeGreaterThan(-1);
     expect(memory).toBeGreaterThan(next);
     expect(r.stdout.indexOf('[AGENT]')).toBeGreaterThan(memory);
@@ -282,7 +282,7 @@ describe('gbrain setup claude-code: install lifecycle', () => {
   });
 });
 
-describe('gbrain setup: setup migrations on the brain it creates (Cat 41 run 4)', () => {
+describe('foresights setup: setup migrations on the brain it creates (Cat 41 run 4)', () => {
   /** The migration records a fresh setup leaves, byte for byte apart from timestamps, the temp home, the brain id and the release stamp (captured on master). */
   const ledgerFiles = ['completed.jsonl', 'pending-host-work.jsonl', 'v0.22.4-audit.json'];
   const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
@@ -299,7 +299,7 @@ describe('gbrain setup: setup migrations on the brain it creates (Cat 41 run 4)'
     const r = await setup(b, ['claude-code']);
     expect(r.exitCode).toBe(0);
     expect(r.stderr).toMatch(/\[setup\] Migrations: \d+ recorded as not needed on a new brain; \d+ setup migration\(s\) applied by setup without installing services \([^)]+\); none pending\./);
-    expect(r.stdout + r.stderr).not.toContain('Finish setup: gbrain apply-migrations');
+    expect(r.stdout + r.stderr).not.toContain('Finish setup: foresights apply-migrations');
     expect(r.stdout).toContain('Verify: ok (smoke_passed)');
     expect(await pendingSetupMigrations(b)).toEqual([]);
     const doctor = await runCli(['doctor', '--json'], { env: { ...CLEAN, HOME: b.home, GBRAIN_HOME: b.gbrainHome } });
@@ -325,13 +325,13 @@ describe('gbrain setup: setup migrations on the brain it creates (Cat 41 run 4)'
     writeFileSync(join(b.home, '.claude', 'AGENTS.md'), '# my agent\n');
     const r = await setup(b, ['claude-code']);
     expect(r.exitCode).toBe(0);
-    expect(r.stderr).toContain(`0.11.0 left pending because it edits ${join(b.home, '.claude', 'AGENTS.md')}, which setup does not own. Finish it: gbrain apply-migrations --yes --no-autopilot-install`);
+    expect(r.stderr).toContain(`0.11.0 left pending because it edits ${join(b.home, '.claude', 'AGENTS.md')}, which setup does not own. Finish it: foresights apply-migrations --yes --no-autopilot-install`);
     expect(readFileSync(join(b.home, '.claude', 'AGENTS.md'), 'utf8')).toBe('# my agent\n');
     expect(await pendingSetupMigrations(b)).toEqual(['0.11.0']);
   });
 });
 
-describe('gbrain setup claude-code: target first', () => {
+describe('foresights setup claude-code: target first', () => {
   test('an explicit --surface full lists every operation, and a later run without flags keeps that registration as it is', async () => {
     const b = box();
     const first = await setup(b, ['claude-code', '--surface', 'full', '--json']);
@@ -432,7 +432,7 @@ describe('gbrain setup claude-code: target first', () => {
   });
 });
 
-describe('gbrain setup: consent and refusals', () => {
+describe('foresights setup: consent and refusals', () => {
   test('provider keys present + capture declined + an existing opt-out: no capture hooks, no provider traffic, keyless brain', async () => {
     const seen: string[] = [];
     const recorder: Server = createServer((sock) => {
@@ -537,7 +537,7 @@ describe('hooks.ts ownership: hash-keyed for setup, marker-keyed for bootstrap (
   });
 });
 
-// ── gbrain setup codex ──────────────────────────────────────────────────────
+// ── foresights setup codex ──────────────────────────────────────────────────────
 
 const codexDir = (b: Box) => join(b.home, '.codex');
 const codexToml = (b: Box) => join(codexDir(b), 'config.toml');
@@ -553,7 +553,7 @@ function groups(b: Box, event: string): any[] {
 }
 const setupGroups = (b: Box, event: string) => groups(b, event).filter((g) => g.hooks?.[0]?.command?.includes('GBRAIN_HOOK_LANE=setup'));
 
-describe('gbrain setup codex: install lifecycle', () => {
+describe('foresights setup codex: install lifecycle', () => {
   test('fresh install: keyless brain, MCP table, read-context hooks and their trust entries only, verified; a second run changes nothing', async () => {
     const b = box();
     const first = await setup(b, ['codex', '--json']);
@@ -564,7 +564,7 @@ describe('gbrain setup codex: install lifecycle', () => {
     expect(first.doc.states).toEqual(['configured', 'connection-verified', 'native-verified']);
     expect(first.doc.capability).toMatchObject({ harness: 'codex', setup: 'supported', push: 'native-verified', read_events: ['SessionStart', 'UserPromptSubmit'] });
     expect(first.doc.consent.capture).toMatchObject({ value: 'declined', source: 'default' });
-    expect(first.doc.notices.find((n: any) => n.code === 'first_run_decisions').user_message).toContain('Report back (Wakeshift): off. gbrain wakeshift enable turns it on.');
+    expect(first.doc.notices.find((n: any) => n.code === 'first_run_decisions').user_message).toContain('Report back (Wakeshift): off. foresights wakeshift enable turns it on.');
     expect(readJson(join(b.gbrainHome, '.gbrain', 'config.json')).embedding_disabled).toBe(true);
     expect(toml(b).mcp_servers.gbrain).toEqual({ command: launcher(b), args: [b.bin, 'serve', '--surface', 'starter', '--advertise', 'verbs'], env: { GBRAIN_HOME: b.gbrainHome },
       env_vars: [...CODEX_FORWARDED_PROVIDER_ENV] });
@@ -648,7 +648,7 @@ describe('gbrain setup codex: install lifecycle', () => {
     expect(resumed.exitCode).toBe(0);
     expect(resumed.doc.target.brain.kind).toBe('local-pglite');
     expect(resumed.doc.steps.find((s: any) => s.step === 'mcp').action).toBe('keep');
-    expect(readFileSync(codexToml(b), 'utf8').match(/^\[mcp_servers\.gbrain\]$/gm)).toHaveLength(1);
+    expect(readFileSync(codexToml(b), 'utf8').match(/^\[mcp_servers\.(?:foresights|gbrain)\]$/gm)).toHaveLength(1);
     expect(groups(b, 'SessionStart')).toHaveLength(1);
     expect(groups(b, 'UserPromptSubmit')).toHaveLength(1);
     expect(trustKeys(b)).toEqual([trustKey(b, 'session_start', 0), trustKey(b, 'user_prompt_submit', 0)]);
@@ -771,7 +771,7 @@ describe('gbrain setup codex: install lifecycle', () => {
   });
 });
 
-describe('gbrain setup codex: consent and flags', () => {
+describe('foresights setup codex: consent and flags', () => {
   test('provider keys present + capture declined + existing opt-outs: no capture hook, no provider traffic, keyless brain', async () => {
     const seen: string[] = [];
     const recorder: Server = createServer((sock) => {
@@ -880,7 +880,7 @@ describe('codex trust hash and hash-owned TOML tables', () => {
     const path = join(dir, 'config.toml');
     const original = 'model = "o5"\n\n[profiles.fast]\nmodel = "o5-mini"\n';
     writeFileSync(path, original);
-    appendCodexTomlTable(path, ['mcp_servers', 'gbrain'], { command: '/bin/gbrain', args: ['serve'], env: { GBRAIN_HOME: '/h' } }, 'gbrain setup (gbrain): test');
+    appendCodexTomlTable(path, ['mcp_servers', 'gbrain'], { command: '/bin/gbrain', args: ['serve'], env: { GBRAIN_HOME: '/h' } }, 'foresights setup (foresights): test');
     writeFileSync(path, `${readFileSync(path, 'utf8')}\n# user note about the next table\n[profiles.slow]\nmodel = "o5"\n`);
     expect(() => appendCodexTomlTable(path, ['mcp_servers', 'gbrain'], { command: '/x' })).toThrow(/never defines a table twice/);
     expect(removeCodexTomlTable(path, ['mcp_servers', 'gbrain'])).toBe('removed');
@@ -929,7 +929,7 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
         const key = `${hooksJson(b)}:${states[event]}:${index}:0`;
         const table = { trusted_hash: codexHookTrustHash(states[event]!, h.command, h.timeout) };
         removeCodexTomlTable(codexToml(b), ['hooks', 'state', key]);
-        appendCodexTomlTable(codexToml(b), ['hooks', 'state', key], table, 'gbrain setup: trust');
+        appendCodexTomlTable(codexToml(b), ['hooks', 'state', key], table, 'foresights setup: trust');
         r.trust.owned[event] = { key, hash: ownedEntryFingerprint({ key, table }) };
       });
     }
@@ -952,7 +952,7 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
     await withEnv(env(b), async () => {
       const lines: string[] = [];
       await refreshHookLaunchers((l) => lines.push(l));
-      expect(lines.join('\n')).toContain("gbrain setup's claude-code hooks");
+      expect(lines.join('\n')).toContain("foresights setup's claude-code hooks");
       expect(hookLauncherProblem('claude-code')).toBeNull();
     });
     expect(viaLauncher(b, claudeCommands())).toBe(true);
@@ -987,7 +987,7 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
       await refreshHookLaunchers((l) => lines.push(l));
       expect(lines.join('\n')).toContain('UserPromptSubmit hook');
       expect(lines.join('\n')).toContain('was edited after setup wrote it');
-      expect(lines.join('\n')).not.toContain('now start gbrain from its own directory');
+      expect(lines.join('\n')).not.toContain('now start foresights from its own directory');
       const problem = hookLauncherProblem('claude-code');
       expect(problem).toMatchObject({ lane: 'setup', reason: 'session_cwd', edited: true });
       const fix = hookLauncherFix(problem!);
@@ -1034,7 +1034,7 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
     const b = box();
     expect((await setup(b, ['claude-code', '--json'])).exitCode).toBe(0);
     await withEnv(env(b), async () => {
-      expect(syncTurnRuleHook({ harness: 'claude-code', gbrainBin: b.bin, gbrainHome: b.gbrainHome, rerun: 'gbrain setup claude-code --instructions-only' }).action).toBe('write');
+      expect(syncTurnRuleHook({ harness: 'claude-code', gbrainBin: b.bin, gbrainHome: b.gbrainHome, rerun: 'foresights setup claude-code --instructions-only' }).action).toBe('write');
     });
     const s = readJson(settings(b));
     const turnRule = (s.hooks.UserPromptSubmit as any[]).flatMap((g) => g.hooks).find((e) => isTurnRuleEntry(e));
@@ -1058,8 +1058,8 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
       expect(hookLauncherProblem('codex')).toMatchObject({ lane: 'setup', reason: 'session_cwd' });
       const lines: string[] = [];
       await refreshHookLaunchers((l) => lines.push(l));
-      expect(lines.join('\n')).toContain("gbrain setup's codex hooks");
-      expect(lines.join('\n')).toContain(`run gbrain setup codex --gbrain-bin ${b.bin} to rewrite them`);
+      expect(lines.join('\n')).toContain("foresights setup's codex hooks");
+      expect(lines.join('\n')).toContain(`run foresights setup codex --gbrain-bin ${b.bin} to rewrite them`);
       expect(hookLauncherProblem('codex')).toMatchObject({ lane: 'setup', reason: 'session_cwd' });
     });
     expect({ hooks: readFileSync(hooksJson(b), 'utf8'), config: readFileSync(codexToml(b), 'utf8') }).toEqual(before);
@@ -1081,7 +1081,7 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
     await withEnv(env(b), async () => {
       const lines: string[] = [];
       await refreshHookLaunchers((l) => lines.push(l));
-      expect(lines.join('\n')).not.toContain('now start gbrain from its own directory');
+      expect(lines.join('\n')).not.toContain('now start foresights from its own directory');
       expect(hookLauncherProblem('codex')).toMatchObject({ lane: 'setup', reason: 'session_cwd' });
     });
     expect({ hooks: readFileSync(hooksJson(b), 'utf8'), config: readFileSync(codexToml(b), 'utf8') }).toEqual(before);
@@ -1114,7 +1114,7 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
       expect(hookLauncherFix(problem!)).toMatchObject({ actor: 'agent', argv: ['gbrain', 'setup', 'claude-code', '--gbrain-bin', b.bin] });
       const lines: string[] = [];
       await refreshHookLaunchers((l) => lines.push(l));
-      expect(lines.join('\n')).toContain("gbrain setup's claude-code MCP server and hooks now start gbrain from its own directory");
+      expect(lines.join('\n')).toContain("foresights setup's claude-code MCP server and hooks now start foresights from its own directory");
       expect(launcherLaneFindings()).toEqual([]);
     });
     const moved = readJson(claudeJson(b)).mcpServers.gbrain;
@@ -1142,7 +1142,7 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
     const lines: string[] = [];
     await withEnv({ ...env(b), GBRAIN_HOME: brainB }, async () => { await refreshHookLaunchers((l) => lines.push(l)); });
     const after = readJson(claudeJson(b)).mcpServers;
-    expect(lines.join('\n')).toContain("gbrain setup's claude-code MCP server and hooks now start gbrain from its own directory");
+    expect(lines.join('\n')).toContain("foresights setup's claude-code MCP server and hooks now start foresights from its own directory");
     expect(after.beta.command).toBe(launcher({ ...b, gbrainHome: brainB }));
     expect(after.beta.env.GBRAIN_HOME).toBe(brainB);
     expect(after.gbrain.env.GBRAIN_HOME).toBe(brainA);
@@ -1158,7 +1158,7 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
       const codex = harnessWiringEntry({ transport: 'cli', harnesses: ['codex'], lockOwner: null, gbrainBin: b.bin }).fix!;
       expect(codex).toMatchObject({ actor: 'user' });
       expect(codex.argv).toBeUndefined();
-      expect(codex.user_message).toContain(`run it yourself: gbrain setup codex --no-hooks --gbrain-bin ${b.bin}`);
+      expect(codex.user_message).toContain(`run it yourself: foresights setup codex --no-hooks --gbrain-bin ${b.bin}`);
     });
   });
 
@@ -1248,13 +1248,13 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
     const r = readJson(codexReceipt(b));
     const old = { command: b.bin, args: ['serve'], env: { GBRAIN_HOME: b.gbrainHome } };
     expect(removeCodexTomlTable(codexToml(b), ['mcp_servers', 'gbrain'])).toBe('removed');
-    appendCodexTomlTable(codexToml(b), ['mcp_servers', 'gbrain'], old, 'gbrain setup (gbrain): owned by fingerprint');
+    appendCodexTomlTable(codexToml(b), ['mcp_servers', 'gbrain'], old, 'foresights setup (foresights): owned by fingerprint');
     r.entry_hash = ownedEntryFingerprint(old);
     writeFileSync(codexReceipt(b), JSON.stringify(r, null, 2));
     await withEnv(env(b), async () => {
       const lines: string[] = [];
       await refreshHookLaunchers((l) => lines.push(l));
-      expect(lines.join('\n')).toContain(`run gbrain setup codex --no-hooks --gbrain-bin ${b.bin} to rewrite them`);
+      expect(lines.join('\n')).toContain(`run foresights setup codex --no-hooks --gbrain-bin ${b.bin} to rewrite them`);
     });
   });
 
@@ -1265,7 +1265,7 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
     const toml = readFileSync(codexToml(b), 'utf8');
     const old = { command: b.bin, args: ['serve'], env: { GBRAIN_HOME: b.gbrainHome } };
     expect(removeCodexTomlTable(codexToml(b), ['mcp_servers', 'gbrain'])).toBe('removed');
-    appendCodexTomlTable(codexToml(b), ['mcp_servers', 'gbrain'], old, 'gbrain setup (gbrain): owned by fingerprint');
+    appendCodexTomlTable(codexToml(b), ['mcp_servers', 'gbrain'], old, 'foresights setup (foresights): owned by fingerprint');
     r.entry_hash = ownedEntryFingerprint(old);
     writeFileSync(codexReceipt(b), JSON.stringify(r, null, 2));
     expect(toml).toContain(launcher(b));
@@ -1275,7 +1275,7 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
       expect(hookLauncherProblems([])).toMatchObject({ harness: 'codex', lane: 'mcp', reason: 'session_cwd', owner: 'setup' });
       const lines: string[] = [];
       await refreshHookLaunchers((l) => lines.push(l));
-      expect(lines.join('\n')).toContain(`gbrain setup's codex MCP server in ${codexToml(b)} start gbrain in the session's directory; run gbrain setup codex --gbrain-bin ${b.bin} to rewrite them`);
+      expect(lines.join('\n')).toContain(`foresights setup's codex MCP server in ${codexToml(b)} start foresights in the session's directory; run foresights setup codex --gbrain-bin ${b.bin} to rewrite them`);
     });
     expect({ hooks: readFileSync(hooksJson(b), 'utf8'), config: readFileSync(codexToml(b), 'utf8') }).toEqual(before);
     expect((await setup(b, ['codex', '--json'])).exitCode).toBe(0);

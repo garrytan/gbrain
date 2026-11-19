@@ -3,7 +3,7 @@
  *
  * Ported from electric-sql/pglite PR #994 by @yestheboxer (Apache-2.0,
  * https://github.com/electric-sql/pglite/pull/994 — closed upstream as
- * "should be a separate tool"; gbrain is that tool). The byte surgery is
+ * "should be a separate tool"; foresights is that tool). The byte surgery is
  * regression-tested upstream (create DB → insert → corrupt WAL → reopen →
  * row readable) and deliberately NOT "improved" here.
  *
@@ -20,7 +20,7 @@
  * `./vector` export blocker — see the TODOS.md "pglite upgrade blocker" entry.
  * Every unsupported shape throws `WalResetUnsupportedError` (fail-closed).
  *
- * gbrain adaptation on top of the upstream port: both file writes (the new
+ * foresights adaptation on top of the upstream port: both file writes (the new
  * WAL segment AND pg_control) go through tmp-file + fsync(tmp) + rename +
  * fsync(parent dir) instead of upstream's in-place `writeFileSynced` — a
  * mid-write kill (SIGKILL, `process.exit(124)` from a read-only command
@@ -232,7 +232,7 @@ export async function resetWal(rootDir: string): Promise<WalResetResult> {
     throw new WalResetUnsupportedError(
       'pg_control CRC mismatch — the control file itself is damaged; WAL reset ' +
       'would launder corrupt checkpoint counters. Rebuild the brain instead ' +
-      '(`gbrain reinit-pglite`).',
+      '(`foresights reinit-pglite`).',
     );
   }
 

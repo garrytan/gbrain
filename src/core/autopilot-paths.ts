@@ -9,7 +9,7 @@
  * literal it finds. A single `await import()` of the autopilot command module inside
  * `migrate-engine.ts` therefore folded autopilot's ENTIRE flag surface (install,
  * uninstall, interval, no-worker, status, repo, ...) into the migrate command's
- * accepted-flag allowlist, which would have made `gbrain migrate` silently
+ * accepted-flag allowlist, which would have made `foresights migrate` silently
  * accept and ignore any of them. Pinned by `test/cli-flag-validation.test.ts`.
  *
  * Flag names appear here WITHOUT leading dashes on purpose — the generator
@@ -310,7 +310,7 @@ export function autopilotWrapperOwner(
 
 /**
  * Cooperative pause. While present the tick loop keeps heartbeating but does no
- * work. `gbrain migrate` uses it to quiesce the daemon for the
+ * work. `foresights migrate` uses it to quiesce the daemon for the
  * duration of a cross-engine copy, so the daemon cannot keep writing into an
  * engine that is about to stop being the configured one.
  *
@@ -345,7 +345,7 @@ export function autopilotDisableStrikesPath(): string {
 }
 
 /**
- * First line of every pause marker written by `gbrain migrate` — the ownership
+ * First line of every pause marker written by `foresights migrate` — the ownership
  * signature that separates a migrate-owned pause (safe to adopt when its pid
  * is dead) from an operator's manual hold (never touched).
  */
@@ -369,7 +369,7 @@ export function markerHolderAlive(body: string): 'alive' | 'dead' | 'unknown' {
 
 /**
  * The operator's own pause (the autopilot pause subcommand), kept apart from
- * the migration/restore hold above: installing autopilot and upgrading gbrain
+ * the migration/restore hold above: installing autopilot and upgrading foresights
  * clear a leaked migration hold but never this marker, and resuming clears
  * only this marker, never a live migration's hold.
  */

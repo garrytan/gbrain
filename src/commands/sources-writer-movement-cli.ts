@@ -1,5 +1,5 @@
 /**
- * `gbrain sources writer movement [<source>] [--wait <dur>] [--warn-only] [--json]`
+ * `foresights sources writer movement [<source>] [--wait <dur>] [--warn-only] [--json]`
  * (#6317, I2): a deploy ends with data movement, not process liveness.
  *
  * It snapshots every active managed source (`readSourceMovement`: committed
@@ -21,7 +21,7 @@
  * the backlog read failed) → 1 with its own code `movement_unknown` (`reason:
  * backlog_read_failed`); `--warn-only` prints the same envelopes and exits 0.
  * A read failure keeps its own code (`fix.next: report`), never
- * `managed_sync_not_moving`. `gbrain upgrade`
+ * `managed_sync_not_moving`. `foresights upgrade`
  * never runs this (it owns no relaunch); it prints the bare command for the
  * supervisor's step.
  */
@@ -43,7 +43,7 @@ import { adminHostConfig } from './persistence-admin.ts';
 import { reportPersistenceCliError } from './persistence-delegate.ts';
 
 export const MOVEMENT_HELP = `Usage:
-  gbrain sources writer movement [<source>] [--source <id>] [--wait <dur>] [--warn-only] [--json] [--brain <id>]
+  foresights sources writer movement [<source>] [--source <id>] [--wait <dur>] [--warn-only] [--json] [--brain <id>]
 
 Proves that managed sync data moves: snapshots every active managed source,
 waits the window, and judges each one from committed pages and the head's step
@@ -57,7 +57,7 @@ normally), held (advanced only by holds; the hold kind's repair route is printed
 sync backlog could not be read, so pending work is not known; never nothing_pending).
 Exit 1 with code managed_sync_not_moving for not_moving and parked, 1 with code
 movement_unknown for unknown; 0 otherwise.
-Run it after restarting serve and the workers: gbrain sources writer movement`;
+Run it after restarting serve and the workers: foresights sources writer movement`;
 
 export { MOVEMENT_SUPERVISOR_STEP } from './movement-step.ts';
 
@@ -124,7 +124,7 @@ export function movementReport(before: SourceMovement | undefined, after: Source
       return { source_id: id, state, exit: 1, code: 'movement_unknown', reason: 'backlog_read_failed',
         why: `${id}: the managed sync backlog could not be read (${after.unknown?.error ?? 'no detail'}), so whether sync work is pending is not known; this is not a nothing-pending verdict.`,
         fix: renderAction({ argv: ['gbrain', 'sources', 'writer', 'movement', id, '--json'], consent: [], actor: 'agent', requires_exclusive: false,
-          why: 'Read-only: reads the backlog again. If it keeps failing, gbrain doctor --json checks the database connection.', verify }, ctx), before, after };
+          why: 'Read-only: reads the backlog again. If it keeps failing, foresights doctor --json checks the database connection.', verify }, ctx), before, after };
     case 'nothing_pending':
       return { source_id: id, state, exit: 0, code: null, why: `${id}: no managed sync is pending${after.holds.count ? ` (${after.holds.count} held file(s) await their repair)` : ''}.`, fix: null, before, after };
     case 'moved':
@@ -235,9 +235,9 @@ export async function runMovementCheck(engine: BrainEngine, opts: { sourceId?: s
   const sources = after.map(m => movementReport(byId.get(m.source_id), m, window.window_ms));
   const failing = sources.find(r => r.exit !== 0);
   const error = !failing ? undefined : toAgentError(failing.code === 'movement_unknown'
-    ? opError('movement_unknown', failing.why, `Rerun gbrain sources writer movement ${failing.source_id}; if the backlog read keeps failing, run gbrain doctor --json.`,
+    ? opError('movement_unknown', failing.why, `Rerun foresights sources writer movement ${failing.source_id}; if the backlog read keeps failing, run foresights doctor --json.`,
       { reason: failing.reason, fix: readFix('Read-only: reads the managed sync backlog again.', { argv: ['gbrain', 'sources', 'writer', 'movement', failing.source_id, '--json'] }) })
-    : opError('managed_sync_not_moving', failing.why, `Run ${writerStatusCommand(failing.source_id)} and follow the running claim's next step; verify with gbrain sources writer movement ${failing.source_id}.`,
+    : opError('managed_sync_not_moving', failing.why, `Run ${writerStatusCommand(failing.source_id)} and follow the running claim's next step; verify with foresights sources writer movement ${failing.source_id}.`,
       { reason: failing.reason, fix: readFix('Read-only: the request at the head, its step, wait cause, owner and next action.', { argv: ['gbrain', 'sources', 'writer', 'status', '--source', failing.source_id, '--json'] }) }),
   { transport: 'cli', command: 'sources writer movement', render: cliRenderContext() });
   return { schema_version: 1, window_ms: window.window_ms, budget_ms: window.budget_ms, window_source: window.source, waited_ms: waited, sources, exit_code: failing ? 1 : 0, ...(error ? { error } : {}) };

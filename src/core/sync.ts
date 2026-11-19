@@ -115,7 +115,7 @@ export const CODE_EXTENSIONS: ReadonlySet<string> = new Set<string>([
   '.yaml', '.yml',
   '.toml',
   // v0.36.x #878: Terraform / HCL. Closes the silent-data-loss bug where
-  // Terraform repos were invisible to `gbrain sync --strategy code`.
+  // Terraform repos were invisible to `foresights sync --strategy code`.
   // detectCodeLanguage() returns null for these so they chunk via the
   // recursive chunker (no tree-sitter grammar), which is the correct
   // fallback — same path as toml / yaml without language-specific AST.
@@ -138,7 +138,7 @@ export const CODE_EXTENSIONS: ReadonlySet<string> = new Set<string>([
  *   D       path/to/deleted-file.md
  *   R100    old/path.md     new/path.md
  *
- * Status coverage, against the options gbrain actually passes (name-status with
+ * Status coverage, against the options foresights actually passes (name-status with
  * `-M` only, see `sync-delta.ts` — note NO `-C` copy detection):
  *   A/M/D/R — the everyday statuses.
  *   T       — TYPECHANGE. Reachable in normal operation: replacing a file with
@@ -353,7 +353,7 @@ export function matchesAnyGlob(path: string, patterns?: string[]): boolean {
  * Directory names that walkers must NEVER descend into. Used at descent
  * time (before recursion) to prune entire subtrees — saves the IO cost of
  * walking thousands of vendor / generated / hidden files only to filter
- * them at file-emit time. Used by every walker in gbrain (sync, extract,
+ * them at file-emit time. Used by every walker in foresights (sync, extract,
  * transcript-discovery, etc.).
  *
  * Pattern: dirname matching at single path-segment granularity. Walkers
@@ -407,7 +407,7 @@ export function pruneDir(name: string, parentDir?: string): boolean {
   if (!name) return true;
   if (name.startsWith('.')) return false;
   if (PRUNE_DIR_NAMES.has(name)) return false;
-  // `.raw` is the literal directory name; `*.raw` is the gbrain sidecar
+  // `.raw` is the literal directory name; `*.raw` is the foresights sidecar
   // convention (e.g. `people/pedro.raw/` holds raw source for pedro.md).
   // Both forms should be skipped at descent time.
   if (name.endsWith('.raw')) return false;
@@ -458,7 +458,7 @@ export function pruneDir(name: string, parentDir?: string): boolean {
  * descent and would need prefix-of-a-glob reasoning to honor the same
  * waiver safely (a directory named `.dira` must stay open for descent to
  * reach `.dira/entries/*.md` even though `.dira` alone doesn't match that
- * glob). Every `gbrain sources add`'d git repository — which is virtually
+ * glob). Every `foresights sources add`'d git repository — which is virtually
  * all of them, including every hq-shaped brain — goes through the
  * git-listing fast path this function guards, so the gap is scoped to
  * importing a bare (non-git) directory.
@@ -479,7 +479,7 @@ export function isPathPruned(path: string, includeHidden?: string[]): boolean {
  * v0.41.13 (#1433): pre-fix, the cleanup loop in performSync treated all
  * unsyncable-modified paths the same and DELETED any pre-existing page for
  * them. That silently dropped `log.md` / `schema.md` / `README.md` pages
- * that had been indexed by older gbrain versions (or via direct put_page).
+ * that had been indexed by older foresights versions (or via direct put_page).
  * The fix guards that loop on `unsyncableReason(...) === 'metafile'` and
  * preserves those rows.
  */
@@ -566,8 +566,8 @@ export function sanitizePathForDisplay(path: string): string {
 export const SYNC_SKIP_FILES = ['schema.md', 'index.md', 'log.md', 'README.md', 'RESOLVER.md'] as const;
 
 /**
- * #5186 (W14 P1.5b): `gbrain harden` scaffolds these at the source root as
- * agent instructions, not brain content; `gbrain nav` writes `hot.md` there
+ * #5186 (W14 P1.5b): `foresights harden` scaffolds these at the source root as
+ * agent instructions, not brain content; `foresights nav` writes `hot.md` there
  * (next to the root `index.md` / `log.md` it rebuilds, which SYNC_SKIP_FILES
  * already covers). Metafiles at depth 0 only: a `docs/AGENTS.md` or a
  * `notes/hot.md` is an ordinary page.
@@ -682,7 +682,7 @@ function classifySync(path: string, opts: SyncableOptions = {}): SyncableReason 
 }
 
 /**
- * Filter a file path to determine if it should be synced to GBrain.
+ * Filter a file path to determine if it should be synced to Foresights.
  * Strategy-aware: 'markdown' (default) = .md/.mdx only, 'code' = code files only, 'auto' = both.
  */
 export function isSyncable(path: string, opts: SyncableOptions = {}): boolean {
@@ -796,7 +796,7 @@ export function slugifyCodePath(filePath: string): string {
 }
 
 /**
- * Convert a repo-relative file path to a GBrain page slug.
+ * Convert a repo-relative file path to a Foresights page slug.
  */
 export function pathToSlug(
   filePath: string,

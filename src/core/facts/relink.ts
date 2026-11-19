@@ -1,5 +1,5 @@
 /**
- * `gbrain facts relink` (#5836): link active facts saved without an entity to
+ * `foresights facts relink` (#5836): link active facts saved without an entity to
  * the entity they are about, moving each row by id onto that entity page's
  * `## Facts` fence (see relink-publish.ts for the publication contract).
  *

@@ -1,17 +1,17 @@
 /**
- * `gbrain git commit-push` (#6530): the one way an agent, cron or skill
+ * `foresights git commit-push` (#6530): the one way an agent, cron or skill
  * commits and pushes in a brain checkout that other writers share. DB-free
  * and trusted-local only (it pushes with this host's git credentials); the
  * protocol lives in src/core/git/commit-push.ts.
  *
- *   gbrain git commit-push [--path <dir>] -m <msg> [--json] [--] <paths…>
- *   gbrain git commit-push --push-only [--keep-checkout] [--path <dir>] [--expect-remote <sha> --resolve <p>=ours|theirs|file:<f>…]
- *   gbrain git commit-push --pull [--path <dir>] [--require-clean]
- *   gbrain git commit-push --untrack [--path <dir>] -m <msg> [--] <paths…>
- *   gbrain git commit-push --dry-run [--untrack] [--path <dir>] [-m <msg>] [--] <paths…>
- *   gbrain git commit-push --pending [--path <dir>] [-m <msg>]
- *   gbrain git guard [--install | --uninstall] [--path <dir>] [--json]
- *   gbrain git scan [--path <dir>] [--from <rev>] [--to <rev>] [--scan-timeout <s>] [--json]
+ *   foresights git commit-push [--path <dir>] -m <msg> [--json] [--] <paths…>
+ *   foresights git commit-push --push-only [--keep-checkout] [--path <dir>] [--expect-remote <sha> --resolve <p>=ours|theirs|file:<f>…]
+ *   foresights git commit-push --pull [--path <dir>] [--require-clean]
+ *   foresights git commit-push --untrack [--path <dir>] -m <msg> [--] <paths…>
+ *   foresights git commit-push --dry-run [--untrack] [--path <dir>] [-m <msg>] [--] <paths…>
+ *   foresights git commit-push --pending [--path <dir>] [-m <msg>]
+ *   foresights git guard [--install | --uninstall] [--path <dir>] [--json]
+ *   foresights git scan [--path <dir>] [--from <rev>] [--to <rev>] [--scan-timeout <s>] [--json]
  */
 import { existsSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
@@ -28,14 +28,14 @@ import { managedFilesystemRootFor, staleEnclosingMarker } from '../core/persiste
 import { rangeSecretRefusal, scanRange } from '../core/git/range-secret-scan.ts';
 import { canonicalFilesystemPath, checkoutGitMetadata, managedRootMarkerFor, registeredManagedRootRecords } from '../core/persistence/root-registry.ts';
 
-const HELP = `Usage: gbrain git commit-push [--path <dir>] -m <msg> [--json] [--] <paths...>
-       gbrain git commit-push --push-only [--path <dir>] [--branch <b>]
-       gbrain git commit-push --push-only [--keep-checkout] [--path <dir>] --expect-remote <sha> --resolve <path>=ours|theirs|file:<file>...
-       gbrain git commit-push --pull [--path <dir>] [--require-clean]
-       gbrain git commit-push --pending [--path <dir>] [-m <msg>]
-       gbrain git commit-push --untrack [--path <dir>] -m <msg> [--] <paths...>
-       gbrain git guard [--install | --uninstall] [--path <dir>] [--json]
-       gbrain git scan [--path <dir>] [--from <rev>] [--to <rev>] [--scan-timeout <s>] [--json]
+const HELP = `Usage: foresights git commit-push [--path <dir>] -m <msg> [--json] [--] <paths...>
+       foresights git commit-push --push-only [--path <dir>] [--branch <b>]
+       foresights git commit-push --push-only [--keep-checkout] [--path <dir>] --expect-remote <sha> --resolve <path>=ours|theirs|file:<file>...
+       foresights git commit-push --pull [--path <dir>] [--require-clean]
+       foresights git commit-push --pending [--path <dir>] [-m <msg>]
+       foresights git commit-push --untrack [--path <dir>] -m <msg> [--] <paths...>
+       foresights git guard [--install | --uninstall] [--path <dir>] [--json]
+       foresights git scan [--path <dir>] [--from <rev>] [--to <rev>] [--scan-timeout <s>] [--json]
 
 Commit only the named paths and push them, safely, in a checkout other agents
 share: a short commit lock and a separate push lock per checkout, no
@@ -54,7 +54,7 @@ Flags:
   --branch <name>     With --push-only: publish HEAD to this remote branch (one exact name).
   --keep-checkout     With --push-only: never move the checkout and skip its pre-push hook. The one
                       publish allowed in a managed canonical worktree (its Git effects' integrate_conflict
-                      fix); gbrain sources refresh brings the merged remote files in afterwards.
+                      fix); foresights sources refresh brings the merged remote files in afterwards.
   --scan-secrets      Accepted for older scripts: every push scans what the unpublished commits add
                       (messages, added lines, merge resolutions) and refuses publish_secret_found on a finding.
   --scan-timeout <s>  The secret scan's time budget in seconds (default 300); a first push of a long
@@ -68,7 +68,7 @@ Flags:
   --resolve <p>=<v>   After integrate_conflict: which side wins for path p (ours, theirs, file:<merged copy>).
   --expect-remote <sha>  Required with --resolve: the remote commit the choice was made against
                       (printed by integrate_conflict); a remote that moved since is reported again.
-  --pending           Commit the write-through files gbrain wrote but could not commit (the pending
+  --pending           Commit the write-through files foresights wrote but could not commit (the pending
                       ledger doctor's dirty_age reports), then push.
   --allow-outside-source-root  Commit and publish files outside the checkout's source root(s)
                       (git config gbrain.sourceRoot); only after the user agrees.
@@ -87,14 +87,14 @@ directory. Exit 0 on pushed, committed_local, nothing_to_commit, push_deferred a
 pushed_checkout_lagging (a notice names the blocking files); 4 when the commit is local but no push was
 confirmed (push_unconfirmed); 1 on other failures, each with an "Error [<code>]" line. Guide: docs/guides/shared-checkout-git.md
 
-gbrain git guard [--install | --uninstall]: the opt-in commit guard, a local
+foresights git guard [--install | --uninstall]: the opt-in commit guard, a local
 prepare-commit-msg hook that refuses commits in this checkout not made through
-gbrain (git commit, -a and --no-verify included; merges and commits that finish a
+foresights (git commit, -a and --no-verify included; merges and commits that finish a
 merge, cherry-pick, revert or rebase pass). A person bypasses it once with
 GBRAIN_COMMIT_GUARD=off git <command>. Without a flag it prints whether the guard
 is installed.
 
-gbrain git scan: the secret scan a push runs, over --from..--to (default: the
+foresights git scan: the secret scan a push runs, over --from..--to (default: the
 upstream as last fetched, ..HEAD), with the checkout's .gbrain-scan-allow. It
 fetches, locks, writes and pushes nothing. It prints what a push would refuse
 (would_refuse) and each finding's path, line, rule, commit and fingerprint, never
@@ -167,12 +167,12 @@ function parseResolutions(specs: string[]): Map<string, Resolution> {
 
 /**
  * #8662: on a host whose brain records its source checkouts, a checkout resolved from the working directory that is none of
- * them and carries no mark of a gbrain brain checkout is refused before anything is staged (a wrapper that changed into
- * another repository). A legacy source is not in that record, so `gbrain sources harden`'s marks admit it: a
+ * them and carries no mark of a foresights brain checkout is refused before anything is staged (a wrapper that changed into
+ * another repository). A legacy source is not in that record, so `foresights sources harden`'s marks admit it: a
  * gbrain.sourceRoot or gbrain.cliPath entry, or the committed scripts/brain-commit-push.sh (whose own calls pass no --path).
  * An explicit --path names its checkout and is not checked here. GST-1623: a registered checkout must contain the resolved
  * one, or be a directory of it that its HEAD tracks; a repository that only encloses a registered checkout (a nested clone)
- * is not a source checkout, even with the stale marker an older gbrain wrote in its git dir (#7988).
+ * is not a source checkout, even with the stale marker an older foresights wrote in its git dir (#7988).
  */
 function assertSourceCheckout(repo: string): void {
   const registered = registeredManagedRootRecords();
@@ -191,14 +191,14 @@ function assertSourceCheckout(repo: string): void {
   const first = registered[0]!.root;
   const listed = registered.slice(0, 5).map(record => `${record.root}${record.source_id ? ` (${record.source_id})` : ''}`).join(', ') + (registered.length > 5 ? ` and ${registered.length - 5} more` : '');
   throw opError('checkout_not_a_source', `${repo} is not a source checkout of this brain; its source checkouts on this host are ${listed}. Nothing was staged.`,
-    `Pass the brain checkout with an absolute --path, for example gbrain git commit-push --path ${first} -m <msg> -- <paths>; a script or cron wrapper that changes directory first must name it the same way.`,
+    `Pass the brain checkout with an absolute --path, for example foresights git commit-push --path ${first} -m <msg> -- <paths>; a script or cron wrapper that changes directory first must name it the same way.`,
     { fix: { argv: ['gbrain', 'git', 'commit-push', '--dry-run', '--path', first], consent: [], actor: 'user', requires_exclusive: false,
       why: 'The dry run shows the checkout, branch and lock commit-push uses with that --path, writing nothing.',
-      user_message: `gbrain git commit-push resolved ${repo}, which is not one of this brain's source checkouts (${listed}). Change the script or wrapper that ran it to pass --path with the absolute brain checkout.`,
+      user_message: `foresights git commit-push resolved ${repo}, which is not one of this brain's source checkouts (${listed}). Change the script or wrapper that ran it to pass --path with the absolute brain checkout.`,
       verify: { argv: ['gbrain', 'git', 'commit-push', '--dry-run', '--path', first] } } });
 }
 
-/** `gbrain git scan`: the push's secret scan over a range, read-only, so an operator can see what a push would refuse. */
+/** `foresights git scan`: the push's secret scan over a range, read-only, so an operator can see what a push would refuse. */
 function runScan(p: Parsed): number {
   const repo = checkoutRoot(p.path ?? process.cwd());
   if (p.scanTimeout !== undefined && !/^[1-9]\d{0,5}$/.test(p.scanTimeout)) {
@@ -212,7 +212,7 @@ function runScan(p: Parsed): number {
   const to = rev(p.to ?? 'HEAD', '--to');
   const timeoutMs = p.scanTimeout ? Number(p.scanTimeout) * 1000 : undefined;
   const started = Date.now();
-  const scan = scanRange(repo, from, to, timeoutMs, line => process.stderr.write(`[gbrain] ${line}\n`));
+  const scan = scanRange(repo, from, to, timeoutMs, line => process.stderr.write(`[foresights] ${line}\n`));
   const refusal = rangeSecretRefusal(repo, from, to, scan, { timeoutMs });
   const commits = Number(execFileSync('git', ['-C', repo, 'rev-list', '--count', `${from}..${to}`], { env: gitChildEnv({ ...GIT_ENV }) }).toString().trim());
   const seconds = Math.round((Date.now() - started) / 100) / 10;
@@ -237,8 +237,8 @@ export async function runGit(args: string[]): Promise<number> {
     if (p.help || !p.sub) { console.log(HELP); return p.sub || p.help ? 0 : 2; }
     if (p.sub === 'guard') return runGuard(p);
     if (p.sub === 'scan') return runScan(p);
-    if (p.sub !== 'commit-push') throw opError('commit_paths_invalid', `Unknown subcommand: gbrain git ${p.sub}.`, HELP.split('\n')[0]);
-    if (p.install || p.uninstall) throw opError('commit_paths_invalid', '--install and --uninstall belong to gbrain git guard.', 'Run gbrain git guard --install.');
+    if (p.sub !== 'commit-push') throw opError('commit_paths_invalid', `Unknown subcommand: foresights git ${p.sub}.`, HELP.split('\n')[0]);
+    if (p.install || p.uninstall) throw opError('commit_paths_invalid', '--install and --uninstall belong to foresights git guard.', 'Run foresights git guard --install.');
     const repo = checkoutRoot(p.path ?? process.cwd());
     if (!p.path) assertSourceCheckout(repo);
     const cwd = p.path ? realpathSync(p.path) : process.cwd();
@@ -290,7 +290,7 @@ export async function runGit(args: string[]): Promise<number> {
       ...(p.allowOutside ? { allowOutsideSourceRoot: true } : {}),
       ...(p.keepCheckout ? { keepCheckout: true } : {}),
       ...(p.scanTimeout ? { scanTimeoutMs: Number(p.scanTimeout) * 1000 } : {}),
-      scanProgress: (line: string) => process.stderr.write(`[gbrain] ${line}\n`),
+      scanProgress: (line: string) => process.stderr.write(`[foresights] ${line}\n`),
       ...(p.untrack ? { untrack: true } : {}),
       ...(p.branch ? { branch: p.branch } : {}),
       ...(p.resolve.length ? { resolutions: parseResolutions(p.resolve) } : {}),
@@ -302,7 +302,7 @@ export async function runGit(args: string[]): Promise<number> {
       return 0;
     }
     if (result.no_remote) {
-      emit(json, { ...result, repo }, result.committed ? `committed ${result.committed.slice(0, 7)} on ${result.branch}; not pushed: ${repo} has no Git remote (add one with git remote add origin <url>, then gbrain git commit-push --push-only)`
+      emit(json, { ...result, repo }, result.committed ? `committed ${result.committed.slice(0, 7)} on ${result.branch}; not pushed: ${repo} has no Git remote (add one with git remote add origin <url>, then foresights git commit-push --push-only)`
         : `nothing to commit; not pushed: ${repo} has no Git remote`);
       return 0;
     }
@@ -310,7 +310,7 @@ export async function runGit(args: string[]): Promise<number> {
       const upstream = result.upstream;
       const state = !upstream ? `${result.branch} has no upstream`
         : result.unpublished === 0 ? `${result.branch} is on ${upstream} as last fetched`
-        : `${result.unpublished ?? 'an unknown number of'} commit(s) on ${result.branch} ${result.unpublished === null ? 'may not be' : 'are not'} on ${upstream} as last fetched; a managed checkout publishes through its owner (gbrain git commit-push --push-only --keep-checkout --scan-secrets --path ${repo} publishes them)`;
+        : `${result.unpublished ?? 'an unknown number of'} commit(s) on ${result.branch} ${result.unpublished === null ? 'may not be' : 'are not'} on ${upstream} as last fetched; a managed checkout publishes through its owner (foresights git commit-push --push-only --keep-checkout --scan-secrets --path ${repo} publishes them)`;
       emit(json, { ...result, repo }, `${result.committed ? `committed ${result.committed.slice(0, 7)} on ${result.branch}` : 'nothing to commit'}; not pushed: ${state}`);
       return 0;
     }
@@ -322,7 +322,7 @@ export async function runGit(args: string[]): Promise<number> {
       result.outcome === 'nothing_to_commit' ? `nothing to commit; ${result.remote}/${result.branch} at ${short}`
         : `pushed ${short} to ${result.remote}/${result.branch}${result.integrated ? `; merged ${result.integrated} remote commit(s)` : ''}; checkout ${result.checkout}`);
     if (result.quarantined && !json) {
-      process.stderr.write(`[gbrain notice] quarantine: the remote also changed ${result.quarantined.paths.join(', ')}; its version was published and this machine's version is kept under ${result.quarantined.ref}. gbrain doctor lists it (quarantined_changes).\n`);
+      process.stderr.write(`[gbrain notice] quarantine: the remote also changed ${result.quarantined.paths.join(', ')}; its version was published and this machine's version is kept under ${result.quarantined.ref}. foresights doctor lists it (quarantined_changes).\n`);
     }
     if (result.superseded_remote_paths && !json) {
       process.stderr.write(`[gbrain notice] kept this machine's version of ${result.superseded_remote_paths.join(', ')}: the remote held a version this checkout had already replaced. See docs/guides/shared-checkout-git.md#conflicts.\n`);
@@ -363,7 +363,7 @@ function runGuard(p: Parsed): number {
   const s = p.install ? installGuard(repo) : p.uninstall ? uninstallGuard(repo) : { ...guardStatus(repo), changed: false };
   emit(p.json, { ...s }, p.install ? `commit guard ${s.changed ? 'installed' : 'already current'}: ${s.hook}`
     : p.uninstall ? (s.changed ? `commit guard removed: ${s.hook}` : 'commit guard was not installed')
-    : s.installed ? `commit guard installed: ${s.hook}` : s.foreign ? `not installed; ${s.hook} is another tool's hook` : 'commit guard not installed (gbrain git guard --install)');
+    : s.installed ? `commit guard installed: ${s.hook}` : s.foreign ? `not installed; ${s.hook} is another tool's hook` : 'commit guard not installed (foresights git guard --install)');
   return 0;
 }
 

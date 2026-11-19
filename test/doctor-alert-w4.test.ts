@@ -253,7 +253,7 @@ describe('alert tier on a real repo-less PGLite brain', () => {
       const report = await run();
       expect(report.alert!.level).toBe('act');
       expect(report.alert!.items.map((i) => i.check)).toEqual(['jsonb_integrity']);
-      expect(report.alert!.items[0]!.message).toContain('gbrain repair-jsonb');
+      expect(report.alert!.items[0]!.message).toContain('foresights repair-jsonb');
     } finally {
       await engine.executeRaw(`UPDATE pages SET frontmatter = (frontmatter #>> '{}')::jsonb WHERE slug = 'notes/alpha-example'`);
     }

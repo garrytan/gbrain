@@ -1,6 +1,6 @@
 /**
  * S7 triage matched pair: the production triage pass (runTriagePass, the
- * same function `gbrain dream` and `gbrain dream retriage` call) over the
+ * same function `foresights dream` and `foresights dream retriage` call) over the
  * EVAL half of the frozen S7 dataset, once with decide.slots.triage.mode off
  * (today: the configured LLM judge + passesTriageGate + rescue band) and once
  * with it on (Jev per-window probabilities, max window vs the qualified

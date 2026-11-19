@@ -1,7 +1,7 @@
 /**
  * abort-check.ts — one canonical place for cooperative-abort checks (#1737).
  *
- * gbrain has several long-running loops (embed --stale, embed --all, dream
+ * foresights has several long-running loops (embed --stale, embed --all, dream
  * cycle phases) that each grew their own `signal?.aborted` check. When a job
  * is killed by the Minions worker (wall-clock timeout, lock loss, SIGTERM) the
  * handler keeps running unless every loop cooperatively checks its signal — and

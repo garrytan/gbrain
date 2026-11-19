@@ -240,7 +240,7 @@
 "test('NO scheduler-side rate-limit check (D10 simplification)', () => {",
 "test('probe call wrapped in try/catch that does NOT bump consecutiveErrors', () => {",
 "test('DI shape: isEnabled / hasEmbeddingProvider / resolveMaxUsd / resolveRepoRoot / runLongMemEval / runCross",
-"test('resolveRepoRoot prefers the gbrain package root (committed fixture home), not the brain repoPath', () =>",
+"test('resolveRepoRoot prefers the foresights package root (committed fixture home), not the brain repoPath', () =>",
 "test('hasEmbeddingProvider reads from gateway.isAvailable(\"embedding\") (codex round-2 #12 \u2014 in-process, not su",
 "test('max_usd resolves dual-plane (default = 5 pinned by resolveProbeMaxUsd unit tests)', () => {"
 ]
@@ -255,9 +255,9 @@
 "77",
 [
 "test('invokes the phase module and the audit trail', () => {",
-"test('flag reads dual-plane: DB row (gbrain config set) wins, file plane fallback', () => {",
+"test('flag reads dual-plane: DB row (foresights config set) wins, file plane fallback', () => {",
 "test('D10 mode-gate present: tokenmax brains run the probe by default', () => {",
-"test('fixtures resolve from the gbrain package root, NOT the brain repoPath', () => {",
+"test('fixtures resolve from the foresights package root, NOT the brain repoPath', () => {",
 "test('missing fixtures skip quietly (no audit row, once-per-process stderr note)', () => {",
 "test('rate_limited outcomes are NOT audit-logged (flood guard)', () => {",
 "test('rate-limit gate delegates to the audit module, not inline event reads', () => {",
@@ -533,7 +533,7 @@
 "13818",
 "1091",
 [
-"test(`${label}: gbrain --version from the hostile dir runs no code and refuses (fail-closed)`, async () => {",
+"test(`${label}: foresights --version from the hostile dir runs no code and refuses (fail-closed)`, async () => {",
 "test('control: the same module exported from the shell (absolute path) IS loaded', async () => {",
 "test('fail-closed: a cwd .env assigning GBRAIN_GUARDRAILS_MODULE (operator also exported one) refuses to run \u2014",
 "test('control: an exported GBRAIN_GUARDRAILS_MODULE survives when the cwd .env assigns a DIFFERENT protected k",
@@ -543,7 +543,7 @@
 "test.skipIf(!GIT_BIN)('with preflight: git never sees the injection, dropped keys are ABSENT (not \"\"), cwd + a",
 "test.skipIf(!GIT_BIN)(`forged marker (${label}) planted in the .env does not suppress the hop`, async () => {",
 "test.skipIf(!GIT_BIN)('harness self-check: a planted JSON marker really lands in process.env (no preflight)', ",
-"test.skipIf(!GIT_BIN)('depth 2: a hopped process that spawns gbrain again from the hostile cwd hops once more ",
+"test.skipIf(!GIT_BIN)('depth 2: a hopped process that spawns foresights again from the hostile cwd hops once more ",
 "test.skipIf(!GIT_BIN || !SCRIPT_BIN)('Ctrl-C with a controlling terminal but all three stdio non-tty: the wrap",
 "test(\"through cli.ts: SIGTERM to the wrapper \u2014 the wrapper outlives the child's graceful exit(0), relays 0, th",
 "test('SIGKILL on the wrapper: the re-run notices within seconds, exits (137) and removes the neutral dir the w",
@@ -964,7 +964,7 @@
 "test('counts facts \u2014 a zero-page fact-holding source is data at risk, not \"safe to remove\"', async () => {",
 "test('a fact-only source requires --confirm-destructive (facts gate exactly like pages)', () => {",
 "test('listArchivedSources filters via the archived column, not JSONB', async () => {",
-"test('gbrain#4115 \u2014 an FK-blocked source is reported and skipped; the deletable one still purges', async () =>",
+"test('foresights#4115 \u2014 an FK-blocked source is reported and skipped; the deletable one still purges', async () =>",
 "test('a soft-deleted referent alone BLOCKS the remove/purge pre-check with the retained-row guidance', async (",
 "test('assessDestructiveImpact folds the referent count; formatImpact shows it', async () => {",
 "test('purgeExpiredSources purges only the unreferenced expired source and reports the FK-held one as blocked',",
@@ -1083,7 +1083,7 @@
 "test('RLS check skips on PGLite (no PostgREST, not applicable)', async () => {",
 "test('RLS check reads pg_description and recognizes the GBRAIN:RLS_EXEMPT escape hatch', async () => {",
 "test('rls_event_trigger check exists, scoped after schema_version, healthy on (O,A) only', async () => {",
-"test('graph_coverage hint uses canonical `gbrain extract all`, not removed verbs', async () => {",
+"test('graph_coverage hint uses canonical `foresights extract all`, not removed verbs', async () => {",
 "test('takes_weight_grid: 0 takes \u2192 ok with \"No takes yet\"', async () => {",
 "test('takes_weight_grid: 100% on-grid \u2192 ok', async () => {",
 "test('takes_weight_grid: >10% off-grid \u2192 fail with fix hint', async () => {",
@@ -1195,7 +1195,7 @@
 [
 "test('rendered AGENTS.md + HEARTBEAT.md name context-pack (session start) and delta (heartbeat)', async () => ",
 "test('INSTALL: keyless init \u2192 interview \u2192 render \u2192 real `codex mcp add` \u2192 verify', async () => {",
-"test('SMOKE: real `codex exec` \u2192 gbrain MCP \u2192 brain \u2192 seeded fact', async () => {",
+"test('SMOKE: real `codex exec` \u2192 foresights MCP \u2192 brain \u2192 seeded fact', async () => {",
 "test('BOUNDARY: real `codex exec` session start \u2192 context_pack/delta over MCP', async () => {",
 "test('managed block + plain user statement \u2192 unprompted remember lands the fact', async () => {"
 ]
@@ -1236,7 +1236,7 @@
 [
 "test('version pin: hermes --version matches HERMES_VERSION when the CI pin is set', () => {",
 "test('INSTALL: keyless init \u2192 real `hermes mcp add` handshake \u2192 config carries server + env \u2192 mcp test passes'",
-"test('SMOKE: real hermes -z answers the seeded fact through the gbrain MCP server', async () => {"
+"test('SMOKE: real hermes -z answers the seeded fact through the foresights MCP server', async () => {"
 ]
 ],
 [
@@ -1566,9 +1566,9 @@
 "151",
 "45",
 [
-"test('warning does not name the nonexistent `gbrain sources update` verb', () => {",
-"test('warning names the real attach remedy (`gbrain sources add ... --path`)', () => {",
-"test('every `gbrain sources <verb>` the backstop recommends exists in the dispatcher', () => {"
+"test('warning does not name the nonexistent `foresights sources update` verb', () => {",
+"test('warning names the real attach remedy (`foresights sources add ... --path`)', () => {",
+"test('every `foresights sources <verb>` the backstop recommends exists in the dispatcher', () => {"
 ]
 ],
 [
@@ -1908,9 +1908,9 @@
 "9878",
 "183",
 [
-"test('no schema phase still execSyncs `gbrain init --migrate-only`', () => {",
+"test('no schema phase still execSyncs `foresights init --migrate-only`', () => {",
 "test('every schema phase calls runMigrateOnlyCore + is awaited', () => {",
-"test('NO migration orchestrator anywhere spawns `gbrain init --migrate-only`', () => {"
+"test('NO migration orchestrator anywhere spawns `foresights init --migrate-only`', () => {"
 ]
 ],
 [
@@ -2699,7 +2699,7 @@
 "test('stub preflight gate 2: an unservable slug is refused with the skills_dir hint', () => {",
 "test('reference --harness: positional slug lens + apply guard requires a single skill', () => {",
 "test('active shared brain installs a live source-bound router only after follow approval and cleanly opts out'",
-"test('stub preflight honors the DB config plane (gbrain config set, no config.json key)', () => {"
+"test('stub preflight honors the DB config plane (foresights config set, no config.json key)', () => {"
 ]
 ],
 [
@@ -2940,7 +2940,7 @@
 "test('has timeout on upgrade execSync calls', () => {",
 "test('return type includes bun-link variant (v0.28.5 cluster D)', () => {",
 "test('does not reference npm in case labels or messages', () => {",
-"test('bun-link signal walks .git/config for garrytan/gbrain match', () => {",
+"test('bun-link signal walks .git/config for aimonk2025/gbrain match', () => {",
 "test('detectBunLink does not gate on isSymbolicLink (bun resolves argv[1])', () => {",
 "test('detectBunLink returns repoRoot, not a string literal', () => {",
 "test('bun-link upgrade uses execFileSync for shell-injection safety', () => {",
@@ -2965,7 +2965,7 @@
 "test('A.2: getPostgresSchema() with explicit args still routes the override', async () => {",
 "test('CDX2-12: sync is in CLI_ONLY_SELF_HELP', async () => {",
 "test('reinit-pglite is registered in CLI_ONLY + CLI_ONLY_SELF_HELP', () => {",
-"test('embeddingMismatchMessage PGLite branch recommends `gbrain reinit-pglite`', async () => {"
+"test('embeddingMismatchMessage PGLite branch recommends `foresights reinit-pglite`', async () => {"
 ]
 ],
 [

@@ -1,10 +1,10 @@
 /**
  * skillpack/bundle.ts — read the bundled-skills manifest.
  *
- * gbrain ships a curated set of skills (plus shared rule/convention
+ * foresights ships a curated set of skills (plus shared rule/convention
  * files they depend on) that agents install into their OpenClaw
- * workspace via `gbrain skillpack install`. The source of truth is
- * `openclaw.plugin.json` at the gbrain repo root.
+ * workspace via `foresights skillpack install`. The source of truth is
+ * `openclaw.plugin.json` at the foresights repo root.
  */
 
 import { existsSync, readFileSync, statSync, readdirSync } from 'fs';
@@ -18,7 +18,7 @@ export interface BundleManifest {
   name: string;
   version: string;
   description?: string;
-  skills: string[]; // e.g. "skills/brain-ops" (relative to gbrain root)
+  skills: string[]; // e.g. "skills/brain-ops" (relative to foresights root)
   shared_deps: string[]; // files + dirs every skill depends on
   excluded_from_install?: string[];
 }
@@ -39,9 +39,9 @@ export class BundleError extends Error {
 
 /**
  * Walk up from `start` (default cwd) looking for an `openclaw.plugin.json`
- * sibling to `src/cli.ts`. That pair identifies a gbrain repo root.
+ * sibling to `src/cli.ts`. That pair identifies a foresights repo root.
  *
- * When no explicit `start` is given and the cwd walk fails (e.g. gbrain was
+ * When no explicit `start` is given and the cwd walk fails (e.g. foresights was
  * installed globally via `bun install -g` and the user is in an unrelated
  * directory, #1917), fall back to walking up from this module's own location
  * and from the running entrypoint (`process.argv[1]`). Both resolve the
@@ -84,7 +84,7 @@ export function findGbrainRoot(start?: string): string | null {
 }
 
 /**
- * Parse `openclaw.plugin.json` from the supplied gbrain root (absolute).
+ * Parse `openclaw.plugin.json` from the supplied foresights root (absolute).
  * Throws BundleError on missing file or malformed JSON.
  */
 export function loadBundleManifest(gbrainRoot: string): BundleManifest {
@@ -178,7 +178,7 @@ function walkFiles(absDir: string, prefix: string, out: BundleEntry[], sharedDep
 }
 
 export interface EnumerateOptions {
-  /** Absolute path to gbrain repo root (source). */
+  /** Absolute path to foresights repo root (source). */
   gbrainRoot: string;
   /** If set, scope enumeration to just this skill by its slug (last
    *  segment of `skills/<slug>`). Undefined enumerates everything. */
@@ -207,7 +207,7 @@ export interface EnumerateOptions {
  * the slug is the leading directory segment.
  */
 function manifestUniverseSkillPaths(gbrainRoot: string): string[] {
-  // gbrainRoot is the detected gbrain repo root (findGbrainRoot) joined with
+  // gbrainRoot is the detected foresights repo root (findGbrainRoot) joined with
   // literals, on the local CLI plane — no untrusted input.
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   const manifestPath = join(gbrainRoot, 'skills', 'manifest.json');
@@ -339,12 +339,12 @@ export function enumerateBundle(opts: EnumerateOptions): BundleEntry[] {
 
 /**
  * Return the set of skill slugs whose files under `skills/<slug>/` changed
- * between `version` and HEAD in the gbrain source tree. Used by
- * `gbrain skillpack reference --since <version>` so an agent can sweep
+ * between `version` and HEAD in the foresights source tree. Used by
+ * `foresights skillpack reference --since <version>` so an agent can sweep
  * only the skills that actually moved since the last time it looked.
  *
  * Returns `null` (not an empty array) when:
- *   - the gbrain root is not a git checkout (tarball install)
+ *   - the foresights root is not a git checkout (tarball install)
  *   - the version tag doesn't resolve in this repo
  *   - any other git error
  *

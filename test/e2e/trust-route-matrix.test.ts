@@ -18,7 +18,7 @@
  * local TTY cell (the typed token) is covered in-process by
  * test/trust-owner-actions.test.ts and test/forget-purge-cli.test.ts.
  *
- * Postgres only (a real `gbrain serve --http` and thin-client CLI
+ * Postgres only (a real `foresights serve --http` and thin-client CLI
  * processes). Run: DATABASE_URL=... bun run test:e2e
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -135,7 +135,7 @@ describeWhen('memory-trust route matrix (DX-19) over serve-http, a thin client a
   test('serve-http agent token: confirm is insufficient_scope with a fix for the user, purge is trusted_local_only, owner actions are not tools', async () => {
     const confirm = await mcp(agentToken, 'confirm_memory', { ref: `f${factId}` });
     expect(confirm).toContain('insufficient_scope');
-    expect(confirm).toContain('gbrain trust confirm');
+    expect(confirm).toContain('foresights trust confirm');
     expect(await mcp(agentToken, 'purge_fact', { id: factId, dry_run: true })).toContain('trusted_local_only');
     const listed = await tools(agentToken);
     expect(listed).toContain('confirm_memory');
@@ -154,7 +154,7 @@ describeWhen('memory-trust route matrix (DX-19) over serve-http, a thin client a
     }
     const purge = await spawn(['forget', String(factId), '--purge', '--yes', '--request-id', crypto.randomUUID()], clientHome);
     expect(purge.exitCode, cliDiagnostic('thin client forget --purge', purge)).not.toBe(0);
-    expect(purge.stderr).toContain(`gbrain forget ${factId} --purge`);
+    expect(purge.stderr).toContain(`foresights forget ${factId} --purge`);
     expect(await tierOf(factId)).toBe('agent_written');
     expect(await holdStatus(holdId)).toBe('held');
     expect(await sql('SELECT 1 FROM facts WHERE id = $1', [factId])).toHaveLength(1);

@@ -279,7 +279,7 @@ describe('findCodeDef — DEF_TYPES fallthrough residual (#3789)', () => {
   }
 }
 `;
-    const kotlinPropertySrc = `val fixtureKotlinBannerProperty: String = "a deliberately long top-level Kotlin property value that keeps this chunk comfortably above the small-sibling merge threshold used by the gbrain code chunker fixtures"
+    const kotlinPropertySrc = `val fixtureKotlinBannerProperty: String = "a deliberately long top-level Kotlin property value that keeps this chunk comfortably above the small-sibling merge threshold used by the foresights code chunker fixtures"
 
 fun fixtureKotlinHelper(input: String): String {
   return input.trim().lowercase().replace(" ", "-") + "/" + fixtureKotlinBannerProperty.length

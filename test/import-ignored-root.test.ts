@@ -1,5 +1,5 @@
 /**
- * `gbrain import <dir>` where the enclosing git repository ignores `dir`
+ * `foresights import <dir>` where the enclosing git repository ignores `dir`
  * itself (a scratch or cache folder inside a checkout, such as the scale
  * tier's `.context/scale-corpus`). `git ls-files --exclude-standard` lists
  * nothing there, so collection used to return zero files and the import

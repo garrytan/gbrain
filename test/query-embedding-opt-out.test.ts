@@ -111,7 +111,7 @@ for (const backend of testBackends()) {
         const notice = notices.find(n => n.code === 'degraded_recall')!;
         expect(notice.why).toContain("keyword-only by the user's choice");
         expect(notice.why).toContain('No query text was sent to an embedding provider');
-        expect(notice.why).toContain('gbrain doctor --json');
+        expect(notice.why).toContain('foresights doctor --json');
         expect(notice.fix).toBeUndefined();
         expect(notice.user_message).toBeUndefined();
       });

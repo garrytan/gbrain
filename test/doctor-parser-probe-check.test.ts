@@ -18,7 +18,7 @@ describe('computeConversationParserProbeHealthCheck', () => {
   test('disabled + no events → ok with paste-ready enable hint', () => {
     const check = computeConversationParserProbeHealthCheck(false, []);
     expect(check.status).toBe('ok');
-    expect(check.message).toContain('gbrain config set autopilot.conversation_parser_probe.enabled true');
+    expect(check.message).toContain('foresights config set autopilot.conversation_parser_probe.enabled true');
   });
 
   test('enabled + no events yet → ok, next run by autopilot', () => {

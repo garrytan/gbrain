@@ -4,7 +4,7 @@
  * per source it runs `scanOverwrittenEdits` (`persistence/overwritten-edits.ts`, at most `OVERWRITE_SCAN_LIMIT` candidate
  * versions, newest first) and reports each source's count and first slugs. `warn` only for `high` findings; `unknown`
  * ones (no persistence outcome on the writer's receipt, the import's content no longer readable, a segmented version)
- * are counted separately and never warn. The fix previews `gbrain repair overwritten-edits`, which writes nothing.
+ * are counted separately and never warn. The fix previews `foresights repair overwritten-edits`, which writes nothing.
  */
 import type { Check } from '../../doctor.ts';
 import { agentFix, checkError } from '../check-fix.ts';
@@ -43,7 +43,7 @@ async function runOverwrittenEdits(ctx: DoctorContext): Promise<Check[]> {
       message: `${high} page(s) lost a database edit to an incremental sync that published a committed file edit over it without a file_drift hold `
         + `(${found.map(scan => `${scan.source_id}: ${scan.high}`).join('; ')}; e.g. ${found.flatMap(scan => scan.edits.filter(edit => edit.confidence === 'high').slice(0, 3).map(edit => `${scan.source_id}:${edit.slug}`)).slice(0, 5).join(', ')})`
         + `${unknown ? `; ${unknown} more could not be classified (unknown)` : ''}${bounded}. Each edit is still in the page's history. Preview the restore with `
-        + `gbrain repair overwritten-edits --source ${first.source_id}; it shows both versions and writes nothing.`,
+        + `foresights repair overwritten-edits --source ${first.source_id}; it shows both versions and writes nothing.`,
       fix: agentFix(preview, 'Lists each page with the database edit, the sync import that replaced it and a diff; it writes nothing. Restoring is the user\'s call.',
         'sync_overwritten_db_edits', { ask_user: true, docs: DOCS,
           user_message: `${high} page(s) (for example ${sample.slug}) had a database edit replaced by a later file edit during sync, with no warning. `

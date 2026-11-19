@@ -1,7 +1,7 @@
 /**
  * GST-1465, GST-1472, GST-1477: the refresh-recovery follow-ups from the GST-1457 reviews (#8661).
  *
- * Protects: "git is the parent" on every manual way out of an interrupted `gbrain sources refresh`. `--abandon` never lifts the fence
+ * Protects: "git is the parent" on every manual way out of an interrupted `foresights sources refresh`. `--abandon` never lifts the fence
  * while a member's database is past the start commit, whether its `last_commit` moved or a sliced pass imported part of the target
  * (GST-1465 #1), or while a sync pass that pinned the target still holds a member's drain lease (GST-1465 #2). Every way out a refusal
  * or writer status names actually finishes the refresh, or the refusal names its own distinct reason: a HEAD past the target (GST-1472
@@ -133,7 +133,7 @@ test('GST-1465 #2: --abandon refuses while a pass that pinned the target holds a
     await refused(refreshWorktree(f.engine, f.alpha, { resume: true }), 'refresh_recovery_required');
     const held = await refused(refreshWorktree(f.engine, f.alpha, { abandon: true }), 'sync_drain_lease_held');
     expect(held.message).toContain(f.alpha);
-    expect(held.suggestion).toContain(`gbrain sources refresh ${f.alpha} --abandon`);
+    expect(held.suggestion).toContain(`foresights sources refresh ${f.alpha} --abandon`);
     expect(await states(f)).toEqual(['recovery_required']);
   } finally { installFaultHook(undefined); release(); await pass; }
   const after = await settle(refreshWorktree(f.engine, f.alpha, { abandon: true }));
@@ -161,7 +161,7 @@ for (const state of ['fenced', 'merged'] as const) {
     expect(f.head()).toBe(target);
     const past = commitFile(f.root, 'alpha/three.md', page('Alpha three', 'A local commit on top of the target.'));
     const abandon = await refused(refreshWorktree(f.engine, f.alpha, { abandon: true }), 'refresh_in_progress');
-    expect(abandon.suggestion).toContain(`gbrain sources refresh ${f.alpha} --resume`);
+    expect(abandon.suggestion).toContain(`foresights sources refresh ${f.alpha} --resume`);
     expect(abandon.suggestion).not.toContain('reset --hard');
     expect(await states(f)).toEqual([state]);
     expect(await refreshWorktree(f.engine, f.alpha, { resume: true })).toMatchObject({ refresh_id: orphan.id, status: 'completed' });

@@ -201,7 +201,7 @@ describe('hooks previews the source_id + creates brain/ eagerly [defect: multi-r
     // `not_a_git_repo` (#2707) the instant the printed command is pasted —
     // the exact same `{ force: true }` the engine-backed verify fixtures use
     // to register a brand new brain/ (test/bootstrap-verify.serial.test.ts).
-    expect(out.out).toContain(`gbrain sources add workspace --path ${brainDir} --force`);
+    expect(out.out).toContain(`foresights sources add workspace --path ${brainDir} --force`);
     // The collision-fallback id is previewed too, pinned to the SAME formula
     // verify.ts would derive (not just the id's shape) — so preview/verify
     // drift, or a change to the derivation formula, fails this test.
@@ -224,7 +224,7 @@ describe('hooks previews the source_id + creates brain/ eagerly [defect: multi-r
         ),
       );
       expect(repaired.result).toBe(0);
-      expect(repaired.out).toContain(`gbrain sources add workspace --path ${brainDir} --force`);
+      expect(repaired.out).toContain(`foresights sources add workspace --path ${brainDir} --force`);
       // Idempotent mkdir never clobbers what the human already committed.
       expect(existsSync(join(brainDir, 'probe.md'))).toBe(true);
     });
@@ -551,7 +551,7 @@ describe('MCP registration verification [FIX7]', () => {
       const verb = argv[2];
       if (sub !== 'mcp') return { code: 0, stdout: '', stderr: '' };
       if (verb === 'add') {
-        if (currentReg !== null) return { code: 1, stdout: '', stderr: 'MCP server gbrain already exists' };
+        if (currentReg !== null) return { code: 1, stdout: '', stderr: 'MCP server foresights already exists' };
         currentReg = OURS; // a fresh add registers THIS workspace
         return { code: 0, stdout: '', stderr: '' };
       }
@@ -623,7 +623,7 @@ describe('MCP registration verification [FIX7]', () => {
     const runner: ExecRunner = async (argv: string[]) => {
       calls.push(argv);
       if (argv[1] !== 'mcp') return { code: 0, stdout: '', stderr: '' };
-      if (argv[2] === 'add') return { code: 1, stdout: '', stderr: 'MCP server gbrain already exists' };
+      if (argv[2] === 'add') return { code: 1, stdout: '', stderr: 'MCP server foresights already exists' };
       if (argv[2] === 'get') return { code: 0, stdout: FOREIGN, stderr: '' };
       if (argv[2] === 'remove') return { code: 1, stdout: '', stderr: 'nope' };
       return { code: 0, stdout: '', stderr: '' };
@@ -768,7 +768,7 @@ describe('MCP host failure × hooks at the dispatcher (exit-127 skip / broken se
     });
     expect(r.result).toBe(1);
     // The refusal explains WHY (the file may carry permissions/allowlist
-    // entries gbrain must not clobber) and names the repair path.
+    // entries foresights must not clobber) and names the repair path.
     expect(r.err).toContain('not valid JSON');
     expect(readFileSync(settingsPath, 'utf8')).toBe(broken);
     // MCP (step 1) landed before the hook failure — the receipt says exactly that.
@@ -792,8 +792,8 @@ describe('receipt overwrite guard wired into every writer [CX2-12]', () => {
     try {
       const r = await capture(() => runBootstrap(['render', '--workspace', ws, '--force']));
       expect(r.result).toBe(1);
-      expect(r.err).toContain('newer gbrain');
-      expect(r.err).toContain('upgrade gbrain');
+      expect(r.err).toContain('newer foresights');
+      expect(r.err).toContain('upgrade foresights');
       // The newer receipt survives byte-for-byte (nothing clobbered it).
       const after = JSON.parse(readFileSync(receiptPath(home), 'utf8')) as { receipt_version: number };
       expect(after.receipt_version).toBe(2);
@@ -813,7 +813,7 @@ describe('receipt overwrite guard wired into every writer [CX2-12]', () => {
         }),
       );
       expect(r.result).toBe(1);
-      expect(r.err).toContain('upgrade gbrain');
+      expect(r.err).toContain('upgrade foresights');
     } finally {
       writeFileSync(receiptPath(home), before, 'utf8');
     }
@@ -823,7 +823,7 @@ describe('receipt overwrite guard wired into every writer [CX2-12]', () => {
     const isoHome = mkdtempSync(join(tmpdir(), 'gb-dispatch-attach-home-'));
     try {
       writeNewerReceipt(isoHome);
-      expect(() => attachWorkspace(ws, { gbrainHomeDir: isoHome })).toThrow(/upgrade gbrain/);
+      expect(() => attachWorkspace(ws, { gbrainHomeDir: isoHome })).toThrow(/upgrade (?:foresights|gbrain)/);
       const surviving = JSON.parse(readFileSync(receiptPath(isoHome), 'utf8')) as { created_paths: string[] };
       expect(surviving.created_paths).toEqual(['/somewhere/important']);
     } finally {
@@ -906,7 +906,7 @@ describe('uninstall --delete-brain ordering + engine-free stats', () => {
       writeFileSync(receiptPath(isoHome), JSON.stringify(receipt), 'utf8');
       mkdirSync(join(ws2, 'brain'), { recursive: true });
       writeFileSync(join(ws2, 'brain', 'page.md'), '# page', 'utf8');
-      // Durability wiring fixture [B6]: a gbrain post-commit hook that
+      // Durability wiring fixture [B6]: a foresights post-commit hook that
       // uninstall previously left behind.
       execFileSync('git', ['init', '-q'], { cwd: ws2 });
       const hookPath = join(ws2, '.git', 'hooks', 'post-commit');
@@ -1039,9 +1039,9 @@ describe('cloud-setup-script emitter [D16]', () => {
     const s = r.out;
     // npm transport (bun fetching is proxy-incompatible in cloud sandboxes)…
     expect(s).toContain('npm install -g bun');
-    expect(s).toContain('github.com/garrytan/gbrain');
+    expect(s).toContain('github.com/aimonk2025/gbrain');
     // …but NEVER the unrelated npm registry package.
-    expect(s).not.toMatch(/npm install -g gbrain(\s|$)/m);
+    expect(s).not.toMatch(/npm install -g (?:foresights|gbrain)(\s|$)/m);
     // PATH-resolved launcher + in-session follow-ups.
     expect(s).toContain('/usr/local/bin/gbrain');
     expect(s).toContain('bootstrap attach');
@@ -1104,7 +1104,7 @@ describe('HOME_WORKSPACE guard — refuses to bootstrap directly into the home d
       const r = await capture(() => runBootstrap(['status', '--workspace', projectDir]));
       expect(r.result).toBe(0);
       expect(r.err).not.toContain('refusing to bootstrap directly into your home directory');
-      expect(r.out).toContain(`gbrain bootstrap status — ${projectDir}`);
+      expect(r.out).toContain(`foresights bootstrap status — ${projectDir}`);
     } finally {
       if (savedHome === undefined) delete process.env.HOME;
       else process.env.HOME = savedHome;
@@ -1255,7 +1255,7 @@ describe('HOME_WORKSPACE guard — refuses to bootstrap directly into the home d
       const r = await capture(() => runBootstrap(['status', '--workspace', fakeHome]));
       expect(r.result).toBe(0);
       expect(r.err).not.toContain('refusing to bootstrap directly into your home directory');
-      expect(r.out).toContain(`gbrain bootstrap status — ${fakeHome}`);
+      expect(r.out).toContain(`foresights bootstrap status — ${fakeHome}`);
     } finally {
       if (savedHome === undefined) delete process.env.HOME;
       else process.env.HOME = savedHome;
@@ -1335,8 +1335,8 @@ describe('HOME_WORKSPACE guard — refuses to bootstrap directly into the home d
       const r = await capture(() => runBootstrap(['render', '--workspace', fakeHome]));
       expect(r.result).toBe(1);
       expect(r.err).toContain('refusing to bootstrap directly into your home directory');
-      expect(r.err).toContain('gbrain bootstrap status');
-      expect(r.err).toContain('gbrain bootstrap uninstall');
+      expect(r.err).toContain('foresights bootstrap status');
+      expect(r.err).toContain('foresights bootstrap uninstall');
     } finally {
       if (savedHome === undefined) delete process.env.HOME;
       else process.env.HOME = savedHome;

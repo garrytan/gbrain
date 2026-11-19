@@ -283,7 +283,7 @@ test('unmanaged reindex-code reports page_projection_conflict once the bounded r
       const result = await runReindexCode(engine, { sourceId, noEmbed: true, force: true });
       const failure = result.failures?.find(f => f.slug === slug);
       expect(failure?.error).toStartWith(`[page_projection_conflict] The search projection of ${slug} (source ${sourceId}) changed during preparation`);
-      expect(failure?.error).toContain('Re-run gbrain reindex-code; it re-reads the current projection.');
+      expect(failure?.error).toContain('Re-run foresights reindex-code; it re-reads the current projection.');
     } finally { restore(); }
   }
 });

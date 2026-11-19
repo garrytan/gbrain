@@ -1,5 +1,5 @@
 /**
- * #7679 state matrix 7c of `gbrain sources refresh`: an interrupted refresh row of each kind, settled by the owner scan, a
+ * #7679 state matrix 7c of `foresights sources refresh`: an interrupted refresh row of each kind, settled by the owner scan, a
  * plain refresh and --resume. Split from persistence-worktree-refresh.test.ts with 7d
  * (worktree-refresh-unmoved-matrix-7679.test.ts) so each Postgres file fits run-e2e.sh's per-file cap (#8025). Postgres runs
  * through test/e2e/worktree-refresh-settle-matrix-postgres.test.ts.
@@ -102,7 +102,7 @@ test('7c. #7679 state matrix: an interrupted refresh of each kind, settled by th
       // drain only; seam=none; no_claim=a real process death (the crash is a hook throw; the refresh lock is released as on exit).
       const [status] = (await runPersistenceAdministration(f.engine, 'writer_status', { source_id: f.alpha }) as { worktree_refreshes: Array<Record<string, any>> }).worktree_refreshes;
       expect(status, label).toMatchObject({ refresh_id: orphan.id, state: 'draining', liveness: 'orphaned', auto_recovery: 'next_refresh',
-        fix: { argv: ['gbrain', 'sources', 'refresh', f.alpha, '--resume'] }, next: `gbrain sources refresh ${f.alpha} --resume` });
+        fix: { argv: ['gbrain', 'sources', 'refresh', f.alpha, '--resume'] }, next: `foresights sources refresh ${f.alpha} --resume` });
     }
     if (action === 'owner_scan') {
       const [state, moved] = scanned[kind];
@@ -124,7 +124,7 @@ test('7c. #7679 state matrix: an interrupted refresh of each kind, settled by th
         expect(await rows(), label).toEqual(['recovery_required']);
       } else {
         const refused = await refusedWith(run, 'refresh_in_progress');
-        expect(refused.suggestion, label).toContain(`gbrain sources refresh ${f.alpha} --resume`);
+        expect(refused.suggestion, label).toContain(`foresights sources refresh ${f.alpha} --resume`);
         expect(await rows(), label).toEqual([stateOf(kind)]);
       }
       expect(f.head(), label).toBe(head);

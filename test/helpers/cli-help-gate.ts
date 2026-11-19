@@ -22,9 +22,9 @@ export const GATE_PARTS = 4;
 const REPO = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '');
 const PROBE = join(REPO, 'test/helpers/cli-side-effect-probe.ts');
 /** Files any run may touch without acting: the agent-contract event log is written by the error/exit seam. */
-const TREE_ALLOW = [/^\.gbrain\/agent-contract\//];
+const TREE_ALLOW = [/^\.(?:foresights|gbrain)\/agent-contract\//];
 /** Bookkeeping a brain connection writes (managed-root registration, the behavior-notice baseline): allowed only for cases that connect on purpose. */
-const CONNECT_ALLOW = [/^\.gbrain\/persistence\/managed-roots\//, /^\.gbrain\/notices\/behavior-changes\//];
+const CONNECT_ALLOW = [/^\.(?:foresights|gbrain)\/persistence\/managed-roots\//, /^\.(?:foresights|gbrain)\/notices\/behavior-changes\//];
 
 export interface GateCase {
   argv: string[];
@@ -44,9 +44,9 @@ export interface GateCase {
 
 /** The usage marker each router prints. */
 const ROUTER_USAGE: Record<string, string> = {
-  pages: 'gbrain pages —', cache: 'gbrain cache —', integrity: 'Usage: gbrain integrity', hook: 'Usage: gbrain hook',
-  search: 'Usage: gbrain search <modes', 'edge-proposals': 'Usage: gbrain edge-proposals', schema: 'gbrain schema —',
-  config: 'Usage: gbrain config', core: 'Usage: gbrain core', loops: 'gbrain loops —',
+  pages: 'foresights pages —', cache: 'foresights cache —', integrity: 'Usage: foresights integrity', hook: 'Usage: foresights hook',
+  search: 'Usage: foresights search <modes', 'edge-proposals': 'Usage: foresights edge-proposals', schema: 'foresights schema —',
+  config: 'Usage: foresights config', core: 'Usage: foresights core', loops: 'foresights loops —',
 };
 
 /** Every case, in a stable order. */
@@ -103,7 +103,7 @@ function offlineEnv(root: string, unsuppressed: boolean, log: string): Record<st
     env[k] = v;
   }
   Object.assign(env, { HOME: root, GBRAIN_HOME: root, GBRAIN_NON_INTERACTIVE: '1', GBRAIN_NO_RETRY_CONNECT: '1', GBRAIN_TEST_SIDE_EFFECT_LOG: log,
-    // Bun's own transpiler cache, kept outside HOME so the tree comparison sees only gbrain's writes.
+    // Bun's own transpiler cache, kept outside HOME so the tree comparison sees only foresights's writes.
     BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(tmpdir(), 'gbrain-help-gate-bun-cache') });
   if (unsuppressed) delete env.NODE_ENV;
   else env.NODE_ENV = 'test';
@@ -232,7 +232,7 @@ export async function runGate(fx: GateFixture, cases: GateCase[], workers = 4): 
         if (ch.tables.length) problems.push(`brain tables changed ${ch.tables.join(', ')}`);
       }
       if (problems.length || c.mayWrite) copyFixture(fx, root);
-      const line = `gbrain ${c.argv.join(' ')}: ${problems.join('; ')}`;
+      const line = `foresights ${c.argv.join(' ')}: ${problems.join('; ')}`;
       if (verbose) appendFileSync(verbose, `${problems.length ? 'FAIL' : 'ok  '} ${line}${problems.length ? `\n    stderr: ${r.stderr.trim().split('\n').slice(-2).join(' | ')}` : ''}\n`);
       if (problems.length) failures.push(line);
     }

@@ -1,12 +1,12 @@
 /**
- * Group/world-readable files that gbrain wrote under a Google source
+ * Group/world-readable files that foresights wrote under a Google source
  * directory outside `~/.gbrain` (the home is forced 0700, so files inside it
  * are already private). Releases before the security fix wave wrote pages
  * and cursor state with the process umask, typically 0644, and only a
  * rewrite tightens them, so historical mail can stay readable by other local
  * users.
  *
- * Only gbrain's own layout is considered: the cursor state file and its
+ * Only foresights's own layout is considered: the cursor state file and its
  * siblings (`.google-source.json*`), page files recorded for the source
  * under `emails/`, `calendar/` and `people/`, their stale `.tmp` files, and
  * the directories between the source root and those pages. The root the
@@ -134,9 +134,9 @@ export function tightenGoogleEntry(root: string, entry: Pick<LooseEntry, 'rel' |
 }
 
 export function googleFileModesPreviewCommand(sourceId: string): string {
-  return `gbrain repair google-file-modes --source ${sourceId}`;
+  return `foresights repair google-file-modes --source ${sourceId}`;
 }
 
 export function googleFileModesApplyCommand(sourceId: string): string {
-  return `gbrain repair google-file-modes --source ${sourceId} --apply`;
+  return `foresights repair google-file-modes --source ${sourceId} --apply`;
 }

@@ -578,7 +578,7 @@ describe('status surface + completion smoke check (D6/D11)', () => {
       const live = await checkEmbeddingMigrationState(engine);
       expect(live.status).toBe('warn');
       expect(live.message).toContain('voyage:voyage-4');
-      expect(live.message).toContain('gbrain migrate embeddings --to voyage:voyage-4 --dim 1024');
+      expect(live.message).toContain('foresights migrate embeddings --to voyage:voyage-4 --dim 1024');
       expect(live.message).toContain('--status');
     } finally {
       await engine.unsetConfig(MIGRATION_STATE_KEY);
@@ -885,7 +885,7 @@ describe('marker integrity across surfaces', () => {
     expect(marker.state?.superseded?.[0]?.to_model).toBe('openai:text-embedding-3-large');
 
     const state = marker.state as MigrationState;
-    expect(renderResumeCommand(state)).toBe('gbrain migrate embeddings --to openai:text-embedding-3-small --dim 1536 --yes');
+    expect(renderResumeCommand(state)).toBe('foresights migrate embeddings --to openai:text-embedding-3-small --dim 1536 --yes');
 
     // Converge again: resume B for real (drains the invalidated chunks).
     embeddedTexts = [];

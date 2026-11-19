@@ -1,6 +1,6 @@
 /**
  * GST-2768: a personal archive with more folders than a source's rule limit (MAX_RULES) that becomes shared. The
- * re-scope keeps every earlier day to the owner, leaves a rulebook that still validates, and gbrain access rule list,
+ * re-scope keeps every earlier day to the owner, leaves a rulebook that still validates, and foresights access rule list,
  * rule add and access apply keep working afterwards. Checked with remote=true credentials bound to members through
  * get_page and search. Repo-less PGLite; every value is synthetic.
  */
@@ -199,7 +199,7 @@ describe('what status and doctor say after the folder-cap fallback (pglite, remo
     const line = await statusLine();
     expect(line).toMatchObject({ code: 'archive_rescope_folder_cap' });
     expect(line!.message).toContain('now holds ' + (MAX_RULES + 1) + ' rules');
-    expect(line!.message).toContain('gbrain access rule export then import fails validation');
-    expect((await doctorLine()).message).toContain('gbrain access rule export then import fails validation');
+    expect(line!.message).toContain('foresights access rule export then import fails validation');
+    expect((await doctorLine()).message).toContain('foresights access rule export then import fails validation');
   }, 600_000);
 });

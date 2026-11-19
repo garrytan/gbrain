@@ -7,9 +7,9 @@
  * (unless this process sees remote privacy relaxed, or a reading member's grant opens that source's private pages). "Members" are the enabled members other than the owner;
  * a labelled-only member reads no open page, and each other member reads the sources its bound tokens and OAuth
  * clients read. Read-only and best effort everywhere it is shown: access serves several (preview and receipt),
- * gbrain access serves, doctor open_shared_pages and post-upgrade. Callers gate on brainServes first, so a
+ * foresights access serves, doctor open_shared_pages and post-upgrade. Callers gate on brainServes first, so a
  * one-person brain, or one pinned to access.serves one, never runs it. Everything is database state, so a repo-less
- * brain gets it unchanged. gbrain repair visibility --propose (commands/repair-propose.ts) reads the same pages through
+ * brain gets it unchanged. foresights repair visibility --propose (commands/repair-propose.ts) reads the same pages through
  * withOpenScope, openPageSql and membersReadOpen.
  */
 import type { BrainEngine } from '../engine.ts';
@@ -25,7 +25,7 @@ import { brainServes } from './serves.ts';
 
 export const OPEN_PAGES_TOP = 10;
 export const OPEN_PAGES_TIMEOUT_MS = 30_000;
-const RETRY = 'gbrain doctor --only open_shared_pages --json';
+const RETRY = 'foresights doctor --only open_shared_pages --json';
 
 export interface OpenFolder { source: string; folder: string; pages: number; sensitive: number }
 export interface OpenPages {
@@ -244,13 +244,13 @@ export function openPagesLines(read: OpenPagesRead, opts: { prefix?: string; lab
   return [
     head + openPagesHeadline(o),
     `${pad}${where}.`,
-    ...(o.top_sensitive ? [`${pad}DMs, chat and mail: keep members to pages labelled for them (${opts.labelledOnly ?? 'gbrain access member labelled-only <member> on'}), then name each page set's readers: gbrain repair visibility --source ${o.top_sensitive.source} --slugs-file <file> --readers ${readers} (preview, then --apply --expect <hash>).`] : []),
-    ...(shared ? [`${pad}A folder its readers share: gbrain access rule add --prefix ${shared.folder}/ --readers ${readers} --source ${shared.source} (preview, then --yes).`] : []),
+    ...(o.top_sensitive ? [`${pad}DMs, chat and mail: keep members to pages labelled for them (${opts.labelledOnly ?? 'foresights access member labelled-only <member> on'}), then name each page set's readers: foresights repair visibility --source ${o.top_sensitive.source} --slugs-file <file> --readers ${readers} (preview, then --apply --expect <hash>).`] : []),
+    ...(shared ? [`${pad}A folder its readers share: foresights access rule add --prefix ${shared.folder}/ --readers ${readers} --source ${shared.source} (preview, then --yes).`] : []),
     `${pad}New pages: put readable_by: [${o.owner ? `${o.owner}, ` : ''}<list>] in their frontmatter.`,
   ];
 }
 
-/** gbrain post-upgrade: the open DM, chat and mail pages on a brain that serves several people. Best effort; prints nothing otherwise. */
+/** foresights post-upgrade: the open DM, chat and mail pages on a brain that serves several people. Best effort; prints nothing otherwise. */
 export async function printOpenPagesUpgradeNotice(engine: BrainEngine): Promise<void> {
   try {
     if ((await brainServes(engine)).serves !== 'several') return;

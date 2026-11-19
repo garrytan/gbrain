@@ -73,7 +73,7 @@ function stallPaths(engine: BrainEngine, sourceId: string, paths: Set<string>, p
     const [row] = await engine.executeRaw<{ path: string | null }>("SELECT intent->>'path' AS path FROM persistence_requests WHERE request_id=$1::uuid", [detail.requestId]);
     if (!row?.path || !paths.has(row.path)) return;
     fired.push(row.path);
-    throw new OperationError(codeOf(row.path), `Preparation of ${row.path} did not finish within its attempts (forced probe).`, 'Inspect the writer with gbrain sources writer status.');
+    throw new OperationError(codeOf(row.path), `Preparation of ${row.path} did not finish within its attempts (forced probe).`, 'Inspect the writer with foresights sources writer status.');
   });
   return { fired };
 }
@@ -147,7 +147,7 @@ test('an import whose preparation stalls is held in the same run, the run finish
   expect(result.holds_fix!.argv).toEqual(['gbrain', 'sources', 'writer', 'status', '--source', s.id, '--json']);
   expect(result.holds_fix!.why).toContain('not file problems');
   for (const blob of [JSON.stringify(result), printed(result)]) expect(blob).not.toContain('repair frontmatter');
-  // The stored record: the receipt, this gbrain's version, the resume arguments; the summary counts it under `stalled`.
+  // The stored record: the receipt, this foresights's version, the resume arguments; the summary counts it under `stalled`.
   const [record] = await s.holds();
   expect(record).toMatchObject({ code: 'preparation_stalled', upstream_version: expect.any(String), meta: { stall: { request_id: failed[0]!.request_id, gbrain_version: VERSION,
     sync_argv: ['--source', s.id, '--no-pull', '--no-embed', '--no-extract'] } } });
@@ -167,12 +167,12 @@ test('an import whose preparation stalls is held in the same run, the run finish
   expect(holdRescreenDue(waiting, false)).toBe(false);
   expect(await s.sync()).toMatchObject({ status: 'up_to_date', holds_outstanding: 1 });
   expect(await s.failedRequests()).toHaveLength(HOLD_ATTEMPTS_NEEDS_HUMAN);
-  // ...a different gbrain version would re-screen it...
+  // ...a different foresights version would re-screen it...
   expect(holdRescreenDue({ code: 'preparation_stalled', meta: { ...waiting.meta, stall: { ...waiting.meta.stall!, gbrain_version: '0.0.1' } } }, false)).toBe(true);
   // ...doctor and retry-held route it the same way, and the retry's sync keeps the run's options.
   const check = await gitHeldFilesCheck(engine, [s.id]);
   expect(check.status).toBe('warn');
-  expect(check.message).toContain('gbrain sources writer status --source ' + s.id);
+  expect(check.message).toContain('foresights sources writer status --source ' + s.id);
   expect(check.message).not.toContain('repair frontmatter');
   const retry = await retryHeld(engine, s.id);
   expect(retry).toMatchObject({ scheduled: 1, items: [{ key: 'notes/stuck.md', code: 'preparation_stalled' }] });

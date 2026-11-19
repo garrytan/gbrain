@@ -1,5 +1,5 @@
 /**
- * Lane E4 (agent-first operator wave): `gbrain dream` propagates phase errors.
+ * Lane E4 (agent-first operator wave): `foresights dream` propagates phase errors.
  * A cycle where one phase reports `fail` and another succeeds derives
  * `partial`; before this fix that exited 0 (success) unless the failure was a
  * contained throw. Any failed phase now exits 1.

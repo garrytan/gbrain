@@ -105,7 +105,7 @@ describe('PGLite outermost transaction guard', () => {
       await tx.executeRaw("INSERT INTO guard_probe VALUES (7, 'never')");
     }).catch(error => error);
     expect(refused).toBeInstanceOf(GBrainError);
-    expect(String(refused.message)).toContain('gbrain pglite-repair');
+    expect(String(refused.message)).toContain('foresights pglite-repair');
     expect(entered).toBe(false);
     expect(await engine.executeRaw('SELECT id FROM guard_probe WHERE id=7')).toEqual([]);
   });

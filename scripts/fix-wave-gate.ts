@@ -3,7 +3,7 @@
  * scripts/fix-wave-gate.ts — the decision behind .github/workflows/fix-wave-gate.yml.
  *
  * A pull request into master passes when either:
- *   - its head repository is garrytan/gbrain (only maintainers can push
+ *   - its head repository is aimonk2025/gbrain (only maintainers can push
  *     there; covers capy/* and garrytan/* branches), or
  *   - the `maintainer-override` label is on it AND the most recent `labeled`
  *     timeline event for that label was made by a human on MAINTAINERS.
@@ -25,12 +25,12 @@
  */
 import { appendFileSync, readFileSync } from 'node:fs';
 
-export const TRUSTED_HEAD_REPO = 'garrytan/gbrain';
+export const TRUSTED_HEAD_REPO = 'aimonk2025/gbrain';
 export const OVERRIDE_LABEL = 'maintainer-override';
 /** Humans who may apply the override label. Edit only through a reviewed PR to master. */
 export const MAINTAINERS: readonly string[] = ['garrytan'];
 export const COMMENT_MARKER = '<!-- fix-wave-gate -->';
-const CONTRIBUTING_URL = 'https://github.com/garrytan/gbrain/blob/master/CONTRIBUTING.md#how-an-outside-pull-request-is-handled';
+const CONTRIBUTING_URL = 'https://github.com/aimonk2025/gbrain/blob/master/CONTRIBUTING.md#how-an-outside-pull-request-is-handled';
 
 interface Repo { id?: number; full_name?: string }
 interface Actor { login?: string; type?: string }
@@ -68,8 +68,8 @@ export function gateMessage(handle: string): string {
     'For a larger change, show us:',
     '',
     '- a way to reproduce the problem on current master, or a failing test;',
-    '- what goes wrong for someone using gbrain because of it;',
-    '- the version you saw it on (`gbrain version`).',
+    '- what goes wrong for someone using foresights because of it;',
+    '- the version you saw it on (`foresights version`).',
     '',
     'A limit of 3 open pull requests applies only to someone whose recent pull requests have mostly been closed without being taken. It never applies to anyone who has had a pull request taken (merged or rebuilt) in the last 90 days.',
     '',

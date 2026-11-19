@@ -90,7 +90,7 @@ export async function assertRetainedEmbeddingRebuildability(tx: BrainEngine, dim
     throw new Error(`retained_vector_check_failed: Cannot determine whether retained vectors can be rebuilt; migration mutations refused.${code ? ` Database error SQLSTATE ${code}.` : ''} Inspect the selected brain and database/schema access before retrying.`, { cause: error });
   }
   if (counts.pages + counts.facts + counts.takes + archivedWork > 0) {
-    throw new Error(`retained_vectors_blocked: ${counts.pages} page chunk(s), ${counts.facts} fact(s), ${counts.takes} take(s) cannot be rebuilt by this migration; ${archivedWork} archived page(s) have blocked embedding work. No invalidation is permitted. Inspect the blockers: archived sources require deliberate gbrain sources restore <id>; embed_skip, importer-only media, and deleted pages require an explicit retention/recovery decision. No source or page is restored automatically. See docs/guides/embedding-migration.md#recovery.`);
+    throw new Error(`retained_vectors_blocked: ${counts.pages} page chunk(s), ${counts.facts} fact(s), ${counts.takes} take(s) cannot be rebuilt by this migration; ${archivedWork} archived page(s) have blocked embedding work. No invalidation is permitted. Inspect the blockers: archived sources require deliberate foresights sources restore <id>; embed_skip, importer-only media, and deleted pages require an explicit retention/recovery decision. No source or page is restored automatically. See docs/guides/embedding-migration.md#recovery.`);
   }
   return clearCompanions;
 }

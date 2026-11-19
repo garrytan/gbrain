@@ -5,7 +5,7 @@ The evaluation custodian ran it on build 6fa1a77b3, using 60 sealed synthetic us
 case families: rejection, quotation, correction, repeated suggestion and acceptance.
 
 The candidate was `facts.attribution=true`. The baseline was the same build with the setting absent. Both arms ran
-gbrain's conversation-facts extractor through the decision kit's facts lane, with two extractions per arm, and a fixed
+foresights's conversation-facts extractor through the decision kit's facts lane, with two extractions per arm, and a fixed
 reader that answers from the saved facts of the top five sessions with 5 replicates.
 
 | Gate | Baseline → candidate | 95% CI | Result |

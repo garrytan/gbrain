@@ -52,7 +52,7 @@ describe('remember --visibility private says the fact is not pushed (#6606)', ()
     expect(notice).toBeDefined();
     expect(notice!.why).toContain('will not reach a new agent session');
     expect(notice!.why).toContain('saving it again with visibility world');
-    expect(notice!.why).toContain(`\`gbrain forget ${result.id}\` drops the private copy`);
+    expect(notice!.why).toContain(`\`foresights forget ${result.id}\` drops the private copy`);
     expect(formatRememberResult(result, { visibility: 'private' })).toContain('note: private — local CLI recall only; not pushed into new agent sessions');
   });
 

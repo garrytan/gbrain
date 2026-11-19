@@ -2,14 +2,14 @@
  * Lane H3 (agent operator wave): the error normaliser's output SURVIVES every
  * surface. One instance of each family `toAgentError` handles must reach an
  * agent with the same frozen `error`, canonical `code` and `fix` over
- *   (1) MCP: a real `gbrain serve` stdio subprocess (SDK client) and the
+ *   (1) MCP: a real `foresights serve` stdio subprocess (SDK client) and the
  *       shared dispatch it runs, plus the production `serve --http` app over
  *       real HTTP;
  *   (2) CLI human output (stderr `Error [code]` / `Fix:` lines);
  *   (3) CLI `--json` (one envelope document on stdout);
  *   (4) the thin client: `callRemoteTool` parsing a real server response, the
  *       CLI renderer it hands the RemoteMcpError to, and a real thin-client
- *       `gbrain` subprocess against a real `gbrain serve --http` subprocess.
+ *       `gbrain` subprocess against a real `foresights serve --http` subprocess.
  * test/agent-error.test.ts pins the normaliser in isolation; this file pins
  * the surfaces.
  *
@@ -19,32 +19,32 @@
  * human/--json rows for CONSTRUCTED families drive `renderCliError`, the
  * renderer every CLI catch writes through, because no CLI command throws them
  * on a keyless brain):
- *   OperationError        REAL: get_page / `gbrain get` on a missing slug (every surface, both thin clients).
- *   StructuredAgentError  REAL on CLI (`gbrain code-def`, nested legacy shape + v1 siblings); CONSTRUCTED on MCP.
- *   GBrainError           REAL on CLI (`gbrain mounts add … --engine sqlite`); CONSTRUCTED on MCP.
+ *   OperationError        REAL: get_page / `foresights get` on a missing slug (every surface, both thin clients).
+ *   StructuredAgentError  REAL on CLI (`foresights code-def`, nested legacy shape + v1 siblings); CONSTRUCTED on MCP.
+ *   GBrainError           REAL on CLI (`foresights mounts add … --engine sqlite`); CONSTRUCTED on MCP.
  *   PhaseError (legacy {class,code,message} object) CONSTRUCTED: only cycle phase containment builds it.
  *   AIConfigError / CredentialError (class-local `.fix`) CONSTRUCTED: keyless brains never reach a provider.
  *   RemoteMcpError        REAL: thin-client CLI against a closed port; CONSTRUCTED when relayed by a server op.
  *   GBRAIN_DB_ACCESS      REAL on CLI (GBRAIN_DATABASE_URL at a closed port); CONSTRUCTED (ECONNREFUSED) on MCP.
- *   withRelationGuard     REAL: get_job_stats after dropping minion_jobs (CLI `gbrain call`, stdio, serve-http).
- *   F0 refresh refusal    REAL on CLI (`gbrain sources refresh` → refresh_no_upstream); CONSTRUCTED (catalogueError) on MCP.
+ *   withRelationGuard     REAL: get_job_stats after dropping minion_jobs (CLI `foresights call`, stdio, serve-http).
+ *   F0 refresh refusal    REAL on CLI (`foresights sources refresh` → refresh_no_upstream); CONSTRUCTED (catalogueError) on MCP.
  *   no_pricing            CONSTRUCTED from a real BudgetTracker.reserve (user cap × unpriced model).
- *   SourceTargetError     REAL on CLI (`gbrain import` with GBRAIN_SOURCE naming no source / a malformed id); CONSTRUCTED on MCP.
+ *   SourceTargetError     REAL on CLI (`foresights import` with GBRAIN_SOURCE naming no source / a malformed id); CONSTRUCTED on MCP.
  *   unknown throw         CONSTRUCTED: a plain Error → internal_error; HTTP redacts its path/PID/key name.
  *
  * Product bugs this file found (each fixed in the owning module; the rows
  * below fail without the fix):
- *   - `gbrain call` printed every OperationError through the frozen write-
+ *   - `foresights call` printed every OperationError through the frozen write-
  *     receipt writer (`{error, code, message, suggestion}`), so op failures lost
  *     `fix`, `docs_cmd`, `class` and `contract_version` (src/commands/call.ts).
- *   - `gbrain sources refresh --json` refusals carried no v1 sibling keys
+ *   - `foresights sources refresh --json` refusals carried no v1 sibling keys
  *     (`error`, `docs_cmd`, `contract_version`, …) (src/commands/sources-refresh.ts).
  *   - `--brain <unknown>` refused with no suggestion and no fix
  *     (src/core/persistence/local-client.ts).
  *   - SourceTargetError (unknown/archived/malformed --source or GBRAIN_SOURCE)
  *     had no normaliser row, so it rendered as `internal_error` ("Server-side
  *     failure … not a caller mistake"); it is now unknown_source /
- *     invalid_source with a `gbrain sources list --json` fix (src/core/agent-output.ts).
+ *     invalid_source with a `foresights sources list --json` fix (src/core/agent-output.ts).
  *
  * H3 row map (docs/designs/AGENT_OPERATOR_WAVE.md, Lane H, H3):
  *   normaliser families × MCP / CLI human / CLI --json / thin client → this file
@@ -190,7 +190,7 @@ function expectSurvives(env: Record<string, any>, want: Expect, where: string, p
 
 /**
  * CLI human: the `Error [code]` line plus the fix's shell command (the
- * GBRAIN_DB_ACCESS seam keeps its golden-pinned `… Run: gbrain db-repair`
+ * GBRAIN_DB_ACCESS seam keeps its golden-pinned `… Run: foresights db-repair`
  * line), or a `Fix:` line carrying the suggestion when there is no fix.
  */
 function expectHuman(stderr: string, env: Record<string, any>, want: Expect): void {
@@ -216,7 +216,7 @@ const BRAIN_PIN = ['--brain', 'host'];
 interface Family { name: string; make(): unknown; want: Expect; localPin?: string[] }
 
 const FAMILIES: Family[] = [
-  { name: 'StructuredAgentError', make: () => errorFor({ class: 'UsageError', code: 'code_def_requires_symbol', message: 'code-def requires a symbol name', hint: 'gbrain code-def <symbol>' }),
+  { name: 'StructuredAgentError', make: () => errorFor({ class: 'UsageError', code: 'code_def_requires_symbol', message: 'code-def requires a symbol name', hint: 'foresights code-def <symbol>' }),
     want: { error: 'code_def_requires_symbol', code: 'code_def_requires_symbol', fixArgv: null } },
   { name: 'GBrainError', make: () => new GBrainError('Invalid engine: "sqlite"', 'Must be "postgres" or "pglite"', 'Pass --engine pglite or --engine postgres'),
     want: { error: 'config_error', code: 'config_error', fixArgv: null } },
@@ -230,11 +230,11 @@ const FAMILIES: Family[] = [
     want: { error: 'timeout', code: 'timeout', fixArgv: ['gbrain', 'remote', 'doctor'] } },
   { name: 'GBRAIN_DB_ACCESS', make: () => Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:5432'), { code: 'ECONNREFUSED' }),
     want: { error: 'database_error', code: 'database_error', fixArgv: ['gbrain', 'db-repair'] }, localPin: BRAIN_PIN },
-  { name: 'F0 refresh refusal', make: () => catalogueError('refresh_dirty', 'The worktree has uncommitted changes.', 'gbrain sources refresh --source wiki --stash'),
+  { name: 'F0 refresh refusal', make: () => catalogueError('refresh_dirty', 'The worktree has uncommitted changes.', 'foresights sources refresh --source wiki --stash'),
     want: { error: 'refresh_dirty', code: 'refresh_dirty', fixArgv: ['gbrain', 'sources', 'refresh', '--source', 'wiki', '--stash'] }, localPin: BRAIN_PIN },
   { name: 'no_pricing', make: unpriced,
     want: { error: 'no_pricing', code: 'no_pricing', fixArgv: ['gbrain', 'pricing', 'set', 'example:unpriced-model-x', '--input', '<usd-per-1M-input-tokens>', '--output', '<usd-per-1M-output-tokens>', '--source', '<pricing-page-url>'] }, localPin: BRAIN_PIN },
-  { name: 'SourceTargetError', make: () => new SourceTargetError('Source "h3-no-such-source" not found or is archived. Available active sources: run `gbrain sources list` to see registered sources, or create/restore "h3-no-such-source" before retrying.'),
+  { name: 'SourceTargetError', make: () => new SourceTargetError('Source "h3-no-such-source" not found or is archived. Available active sources: run `foresights sources list` to see registered sources, or create/restore "h3-no-such-source" before retrying.'),
     want: { error: 'unknown_source', code: 'unknown_source', fixArgv: ['gbrain', 'sources', 'list', '--json'] }, localPin: BRAIN_PIN },
   { name: 'unknown throw', make: () => new Error('boom opening /home/alice-example/.gbrain/brain.pglite (pid 4242) without OPENAI_API_KEY'),
     want: { error: 'internal_error', code: 'internal_error', fixArgv: DOCTOR }, localPin: BRAIN_PIN },
@@ -312,7 +312,7 @@ describe('OperationError (REAL: a missing page) on every surface', () => {
     expectSurvives(http, want, 'serve-http', httpPin);
   }, 120_000);
 
-  test('real thin-client CLI against a real `gbrain serve --http` (human and --json)', async () => {
+  test('real thin-client CLI against a real `foresights serve --http` (human and --json)', async () => {
     const reg = await gbrain(homeA, ['auth', 'register-client', 'h3-thin-client', '--grant-types', 'client_credentials',
       '--scopes', 'read write admin', '--token-endpoint-auth-method', 'client_secret_post']);
     const clientId = /Client ID:\s+(\S+)/.exec(reg.stdout)?.[1];
@@ -375,10 +375,10 @@ describe('REAL CLI triggers for the other families', () => {
     expectSurvives(json.json, want, 'cli --json', BRAIN_PIN);
     expect(json.json.suggestion).toContain('GBRAIN_DB_ACCESS');
     expect(json.stdout).not.toContain('GSTACK_EXAMPLE_NONCE');
-    // Human output is the golden-pinned GBRAIN_DB_ACCESS seam (`… Run: gbrain db-repair`), not the rendered fix line.
+    // Human output is the golden-pinned GBRAIN_DB_ACCESS seam (`… Run: foresights db-repair`), not the rendered fix line.
     const humanErr = (await gbrain(homeA, ['get', MISSING], env)).stderr;
     expect(humanErr).toContain('Error [database_error]: ');
-    expect(humanErr).toContain('Run: gbrain db-repair');
+    expect(humanErr).toContain('Run: foresights db-repair');
   }, 90_000);
 
   test('F0 refresh refusal: the legacy refusal keys stay and the v1 siblings ride beside them (human and --json)', async () => {
@@ -405,7 +405,7 @@ describe('REAL CLI triggers for the other families', () => {
       expect(typeof json.json.error).toBe('string');
       const human = await gbrain(homeC, ['get', MISSING]);
       expect(human.exitCode).toBe(1);
-      expect(human.stderr).toContain('gbrain remote doctor');
+      expect(human.stderr).toContain('foresights remote doctor');
     } finally {
       rmSync(homeC, { recursive: true, force: true });
     }
@@ -432,7 +432,7 @@ describe('REAL CLI triggers for the other families', () => {
     const json = await gbrain(homeA, ['--brain', 'h3-no-such-mount', 'get', MISSING, '--json']);
     expect(json.exitCode).not.toBe(0);
     expectSurvives(json.json, want, 'cli --json');
-    expect(json.json.suggestion).toContain('gbrain mounts list');
+    expect(json.json.suggestion).toContain('foresights mounts list');
     expectHuman((await gbrain(homeA, ['--brain', 'h3-no-such-mount', 'get', MISSING])).stderr, json.json, want);
   }, 90_000);
 });
@@ -440,7 +440,7 @@ describe('REAL CLI triggers for the other families', () => {
 describe('withRelationGuard (REAL: the job table is gone)', () => {
   const want: Expect = { error: 'unavailable', code: 'unavailable', fixArgv: DOCTOR };
 
-  test('gbrain call, the stdio serve and serve-http all carry error, code and the diagnostic fix', async () => {
+  test('foresights call, the stdio serve and serve-http all carry error, code and the diagnostic fix', async () => {
     const drop = async (engine: PGLiteEngine) => { await engine.executeRaw('DROP TABLE IF EXISTS minion_jobs CASCADE'); };
     const a = new PGLiteEngine();
     await a.connect({ engine: 'pglite', database_path: join(homeA, '.gbrain', 'brain.pglite') });
@@ -448,7 +448,7 @@ describe('withRelationGuard (REAL: the job table is gone)', () => {
 
     const call = await gbrain(homeA, ['call', 'get_job_stats', '{}']);
     expect(call.exitCode).toBe(1);
-    expectSurvives(call.json, want, 'gbrain call', BRAIN_PIN);
+    expectSurvives(call.json, want, 'foresights call', BRAIN_PIN);
     expect(call.json.message).toContain('a required table is missing');
     // The suggestion is rendered from the fix: it quotes the fix command and names no other one.
     expect(call.json.suggestion).toContain(call.json.fix.command);
@@ -493,7 +493,7 @@ describe('#8621: a partly failed remember batch over HTTP and the thin client', 
       mkdirSync(join(homeT, '.gbrain'), { recursive: true });
       writeFileSync(join(homeT, '.gbrain', 'config.json'), JSON.stringify(thinClientConfig(serve, oauth)));
       const cli = await withOpHandler('remember', handler, () => gbrain(homeT, ['remember', '--items', JSON.stringify(args.items), '--provenance', 'test']));
-      expect({ exitCode: cli.exitCode, stderr: cli.stderr }).toMatchObject({ exitCode: 1, stderr: expect.stringContaining("gbrain remember: operation reported status 'error'") });
+      expect({ exitCode: cli.exitCode, stderr: cli.stderr }).toMatchObject({ exitCode: 1, stderr: expect.stringContaining("foresights remember: operation reported status 'error'") });
       expect(cli.stdout).toContain('saved 1 of 2 fact(s), 1 failed');
       expect(cli.stdout).toContain('items[1]: inserted (fact #7)');
     } finally { rmSync(homeT, { recursive: true, force: true }); }

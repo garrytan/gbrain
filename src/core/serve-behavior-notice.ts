@@ -1,5 +1,5 @@
 /**
- * #6543 C2: `gbrain serve` writes the behavior changes an upgrade turned on to its own log (stderr) once per process,
+ * #6543 C2: `foresights serve` writes the behavior changes an upgrade turned on to its own log (stderr) once per process,
  * so an operator who only watches the serve log sees them too. Read-only toward delivery: the brain baseline is read
  * with `persist: false`, and the CLI/stdio markers and the HTTP `config` row are never claimed, so the next CLI command
  * and every MCP client still get their own notice. The serve log keeps its own marker under
@@ -43,7 +43,7 @@ export async function logServeBehaviorNotice(
     } catch (e) {
       if ((e as NodeJS.ErrnoException)?.code === 'EEXIST') return false;
     }
-    (opts.write ?? (line => process.stderr.write(line)))(`[gbrain serve] notice=${notice.code}: ${notice.why}\n`);
+    (opts.write ?? (line => process.stderr.write(line)))(`[foresights serve] notice=${notice.code}: ${notice.why}\n`);
     return true;
   } catch {
     return false;

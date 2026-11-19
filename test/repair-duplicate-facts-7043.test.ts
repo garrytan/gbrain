@@ -1,5 +1,5 @@
 /**
- * #7043 (reported by @mikez93): `gbrain repair duplicate-facts` retires exact
+ * #7043 (reported by @mikez93): `foresights repair duplicate-facts` retires exact
  * copies of one active fact. In each group of active facts of one source and
  * visibility with one fingerprint, the oldest fenced row (else the oldest row) is kept and the others are
  * superseded by it (expired_at set, superseded_by the kept row; never a

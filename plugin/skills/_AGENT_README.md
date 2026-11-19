@@ -1,6 +1,6 @@
 # Agent onboarding — what to do with the files in this directory
 
-You (the agent) are running on a host that scaffolded gbrain skills here. This
+You (the agent) are running on a host that scaffolded foresights skills here. This
 file is the operating contract. Read it on every cold start. It is short on
 purpose.
 
@@ -20,7 +20,7 @@ skills/
 ```
 
 Other files in the host repo's `src/`, `docs/`, `recipes/` etc. are owned by the
-host, not by gbrain. Don't treat them as gbrain artifacts.
+host, not by foresights. Don't treat them as foresights artifacts.
 
 ## Shared-brain skills are a different ownership model
 
@@ -54,7 +54,7 @@ Never run scaffold/reference mutation or `rm` instructions below against a
 managed canonical skill or cache. Preserve edited copies as conflicts; request
 authorized publication or managed leave/removal instead. Leaving removes only
 unchanged owned artifacts and does not revoke credentials or erase history.
-The guide in the GBrain distribution is
+The guide in the Foresights distribution is
 `docs/guides/shared-brain-skills.md`; existing installations follow
 `skills/migrations/v0.53.0.0.md` without changing unrelated consent.
 
@@ -84,8 +84,8 @@ skill — read its SKILL.md body in full and follow the workflow described there
 useful for scanning every skill and its trigger phrases in one place, and it
 carries the disambiguation rules for overlapping matches. If the two disagree,
 frontmatter wins. (There is no machine-managed block inside `RESOLVER.md` or
-`AGENTS.md`; that pattern was retired.) `RESOLVER.md` ships in the gbrain
-install's `skills/` directory; `gbrain skillpack scaffold` does not copy it,
+`AGENTS.md`; that pattern was retired.) `RESOLVER.md` ships in the foresights
+install's `skills/` directory; `foresights skillpack scaffold` does not copy it,
 and the Claude Code / Codex plugin lanes do not ship it. Where it is absent,
 routing rests on each skill's frontmatter alone (`triggers:`, `description`,
 and the `when_to_use` the plugin lanes add from the triggers).
@@ -129,60 +129,60 @@ to confirm the file path is sanctioned.
 
 If the SKILL.md frontmatter declares `sources:` (paired source files), those
 live at their mirror path in the host repo (e.g. `src/commands/<slug>.ts`).
-They are reference code that the gbrain CLI calls. You do not run them
+They are reference code that the foresights CLI calls. You do not run them
 directly unless the SKILL.md tells you to.
 
-## Updates — when gbrain ships a new version
+## Updates — when foresights ships a new version
 
-For independent scaffolded copies, the user runs `gbrain upgrade`. Those skill
+For independent scaffolded copies, the user runs `foresights upgrade`. Those skill
 files DO NOT change automatically.
-gbrain becomes a reference library you compare against.
+foresights becomes a reference library you compare against.
 
 On every cold start, or any time the user mentions an upgrade, run:
 
 ```bash
-gbrain skillpack reference --all
+foresights skillpack reference --all
 ```
 
 That sweeps every bundled skill and reports per-skill `identical / differs /
-missing` counts. Skills the user never edited take gbrain's version whole with
-`gbrain skillpack reference --all --update-untouched` (`--dry-run` previews;
-edited or pinned skills are skipped; `gbrain skillpack restore <id>` undoes it).
+missing` counts. Skills the user never edited take foresights's version whole with
+`foresights skillpack reference --all --update-untouched` (`--dry-run` previews;
+edited or pinned skills are skipped; `foresights skillpack restore <id>` undoes it).
 For each remaining `differs`:
 
 ```bash
-gbrain skillpack reference <slug>
+foresights skillpack reference <slug>
 ```
 
-This prints a unified diff between gbrain's bundle and the local file. Read
+This prints a unified diff between foresights's bundle and the local file. Read
 it, then decide per file:
 
-- **Local edit was intentional.** Keep your version. gbrain is reference, not
+- **Local edit was intentional.** Keep your version. foresights is reference, not
   law.
 - **Local edit was accidental drift** (e.g. you wrote stale content into the
   skill body). Either patch by hand, or run
-  `gbrain skillpack reference <slug> --apply-clean-hunks` (read the WARNING
+  `foresights skillpack reference <slug> --apply-clean-hunks` (read the WARNING
   about two-way merge below first).
-- **Genuinely new gbrain change in a section you don't care about.** Skip or
+- **Genuinely new foresights change in a section you don't care about.** Skip or
   apply per your judgment.
 
-For `missing` files (gbrain added a new bundled skill since you scaffolded),
-run `gbrain skillpack scaffold <new-slug>` to bring it in.
+For `missing` files (foresights added a new bundled skill since you scaffolded),
+run `foresights skillpack scaffold <new-slug>` to bring it in.
 
 ### `reference --apply-clean-hunks` — two-way merge warning
 
-This command does a two-way diff against gbrain's current bundle. It does
+This command does a two-way diff against foresights's current bundle. It does
 NOT have access to the version you originally scaffolded. Consequence: if
-the user's local file differs from gbrain in ANY section (including
-intentional user edits), those sections WILL be aligned to gbrain.
+the user's local file differs from foresights in ANY section (including
+intentional user edits), those sections WILL be aligned to foresights.
 
-Always run plain `gbrain skillpack reference <slug>` first to inspect.
+Always run plain `foresights skillpack reference <slug>` first to inspect.
 Use `--apply-clean-hunks` only when you're confident the local edits were
-accidental or you want to fully reset to gbrain's current bundle.
+accidental or you want to fully reset to foresights's current bundle.
 
 ## Removing a scaffolded skill
 
-There is no `uninstall` command (`gbrain skillpack uninstall` exits with an
+There is no `uninstall` command (`foresights skillpack uninstall` exits with an
 error pointing here). The files are yours.
 
 ```bash
@@ -197,7 +197,7 @@ list before deleting.
 ## When in doubt
 
 The single source of truth for the model is
-`docs/guides/skillpacks-as-scaffolding.md` in the gbrain repo. The skill
+`docs/guides/skillpacks-as-scaffolding.md` in the foresights repo. The skill
 files you scaffolded are the source of truth for individual skill behavior.
 This file (`_AGENT_README.md`) is the routing contract — keep it short.
 

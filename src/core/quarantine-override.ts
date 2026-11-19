@@ -4,7 +4,7 @@
  *
  * The content-quality gate re-derives `quarantine` and `content_flag` on every
  * import, so deleting the marker never sticks: the next sync (or the owner's
- * publication) re-stamps it. `gbrain quarantine clear <slug> --force` writes
+ * publication) re-stamps it. `foresights quarantine clear <slug> --force` writes
  * this key instead. It is bound to the page's title, type and body: while
  * they are unchanged the gate keeps its classifier verdict (junk patterns,
  * operator literals, markup ratio) off the page; any change to them expires

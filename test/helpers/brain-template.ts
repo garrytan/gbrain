@@ -17,7 +17,7 @@
  *     regenerated. Host identity lives in the caller's GBRAIN_HOME.
  *
  * Use it for fixtures that need any initialized disk brain. Tests of
- * `gbrain init` or migration behavior keep a real initSchema on an empty
+ * `foresights init` or migration behavior keep a real initSchema on an empty
  * directory.
  */
 import { randomBytes } from 'node:crypto';

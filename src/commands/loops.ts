@@ -1,19 +1,19 @@
 /**
- * gbrain waiting / gbrain loops — the open-loop engine's human CLI.
+ * foresights waiting / foresights loops — the open-loop engine's human CLI.
  *
- *   gbrain waiting [--top N] [--json] [--stale-ok]
+ *   foresights waiting [--top N] [--json] [--stale-ok]
  *     The killer output: ranked people waiting on you, what you promised,
  *     evidence quotes + Gmail deep links, entity-card context.
  *     REFUSES (with the exact fix) when the google sources haven't synced
  *     within 24h — stale-but-confident output on a trust-critical surface is
  *     worse than none (outside-voice F2). --stale-ok bypasses.
  *
- *   gbrain loops list [--status s] [--type t] [--json]
- *   gbrain loops show <id> [--json]
- *   gbrain loops done <id> / drop <id>
- *   gbrain loops drop sender <email> [--source <id>] [--note <text>] [--dry-run]
- *   gbrain loops mute <sender|thread> <value> [--source <id>] [--dry-run]
- *   gbrain loops unmute <sender|thread> <value> [--source <id>] [--dry-run]
+ *   foresights loops list [--status s] [--type t] [--json]
+ *   foresights loops show <id> [--json]
+ *   foresights loops done <id> / drop <id>
+ *   foresights loops drop sender <email> [--source <id>] [--note <text>] [--dry-run]
+ *   foresights loops mute <sender|thread> <value> [--source <id>] [--dry-run]
+ *   foresights loops unmute <sender|thread> <value> [--source <id>] [--dry-run]
  *
  * All paths dispatch through the trusted-local op layer (handleToolCall,
  * remote:false) so CLI and MCP share one behavior. Reads default to the
@@ -35,7 +35,7 @@ export { LOOPS_SUBCOMMANDS as SUBCOMMANDS } from '../cli/subcommands.ts';
 export function printUsage(): void {
   process.stdout.write(
     [
-      'gbrain loops — inspect and manage open loops',
+      'foresights loops — inspect and manage open loops',
       '  list  [--status open|done|dropped|stale] [--type <loop_type>] [--source <id>] [--json]',
       '  show  <id> [--json]',
       '  done  <id> [--note <text>]   mark handled',
@@ -47,7 +47,7 @@ export function printUsage(): void {
       '  unmute sender <email> | thread <thread-id>  [--source <id>] [--dry-run]',
       '        undo a mute; loops it closed are re-checked on the next sync',
       '',
-      'The ranked digest lives at: gbrain waiting',
+      'The ranked digest lives at: foresights waiting',
     ].join('\n') + '\n',
   );
 }
@@ -107,14 +107,14 @@ export async function runWaiting(engine: BrainEngine, args: string[]): Promise<v
   if (args.includes('--help') || args.includes('-h')) {
     process.stdout.write(
       [
-        'gbrain waiting — who is waiting on you, what you promised, the context to respond',
+        'foresights waiting — who is waiting on you, what you promised, the context to respond',
         '  --top N        max counterparties (default 3)',
         '  --source <id>  scope to one source (default: every source in the brain)',
         '  --json         agent envelope (groups, staleness, completeness, held items, sources)',
         '  --stale-ok     show possibly-outdated loops even when google sources have not synced in 24h',
         '  --as-of <iso>  rank and age loops as of this time (default: now), to reproduce an order',
         '',
-        'Manage loops: gbrain loops --help · Setup: gbrain google setup · Docs: docs/guides/open-loops.md',
+        'Manage loops: foresights loops --help · Setup: foresights google setup · Docs: docs/guides/open-loops.md',
       ].join('\n') + '\n',
     );
     return;
@@ -141,13 +141,13 @@ export async function runWaiting(engine: BrainEngine, args: string[]): Promise<v
       ),
       '',
       'Fix: run a sync first, then retry:',
-      ...staleSrc.map((s) => `  gbrain sync --source ${s.id}`),
+      ...staleSrc.map((s) => `  foresights sync --source ${s.id}`),
       '',
       '(or pass --stale-ok to see the possibly-outdated loops anyway)',
     ];
     if (json) {
       process.stdout.write(
-        JSON.stringify({ ok: false, status: 'stale', sources: result.sources, next_action: { command: staleSrc[0] ? `gbrain sync --source ${staleSrc[0].id}` : 'gbrain sync --all' } }, null, 2) + '\n',
+        JSON.stringify({ ok: false, status: 'stale', sources: result.sources, next_action: { command: staleSrc[0] ? `foresights sync --source ${staleSrc[0].id}` : 'foresights sync --all' } }, null, 2) + '\n',
       );
     } else {
       process.stderr.write(lines.join('\n') + '\n');
@@ -166,11 +166,11 @@ export async function runWaiting(engine: BrainEngine, args: string[]): Promise<v
     process.stdout.write(`\n${noise.loop_count} open reply-owed loop(s) come from ${noise.sender_count} sender(s) whose mail is automated; `
       + `the detector would not open them now. Preview closing them, sender by sender:\n`
       + noise.senders.slice(0, 10).map((x) => `  ${x.preview_command}   (${x.open_loops})`).join('\n') + '\n'
-      + (noise.sender_count > 10 ? `  … and ${noise.sender_count - 10} more sender(s); every sender: gbrain waiting --json\n` : ''));
+      + (noise.sender_count > 10 ? `  … and ${noise.sender_count - 10} more sender(s); every sender: foresights waiting --json\n` : ''));
   }
   if (result.groups.length > 0 || result.no_counterparty) {
     process.stdout.write(
-      `\n(close: gbrain loops done <id> · mute a sender: gbrain loops mute sender <email> · details: gbrain loops list)\n`,
+      `\n(close: foresights loops done <id> · mute a sender: foresights loops mute sender <email> · details: foresights loops list)\n`,
     );
   }
 }
@@ -191,8 +191,8 @@ async function showLoop(
   const token = rest.find((a) => /^\d+$/.test(a));
   const loopId = token === undefined ? NaN : Number(token);
   if (!Number.isSafeInteger(loopId) || loopId < 1) {
-    exitCliError(usageError('gbrain loops show needs a loop id of 1 or more.',
-      'Usage: gbrain loops show <id> [--json]. Example: gbrain loops show 42 (`gbrain loops list` prints ids).'), 'loops', { json });
+    exitCliError(usageError('foresights loops show needs a loop id of 1 or more.',
+      'Usage: foresights loops show <id> [--json]. Example: foresights loops show 42 (`foresights loops list` prints ids).'), 'loops', { json });
   }
   const { loops } = (await handleToolCall(
     engine,
@@ -203,7 +203,7 @@ async function showLoop(
   const loop = loops[0];
   if (loop === undefined) {
     setCliExitVerdict(writeCliError(opError('not_found', `No loop ${loopId} in the sources this command reads.`,
-      'Run `gbrain loops list` to see loop ids.', {
+      'Run `foresights loops list` to see loop ids.', {
         why: 'A loop in a source this command does not read, or one excluded by --status or --type, is reported the same way as an id that does not exist.',
         fix: { argv: ['gbrain', 'loops', 'list'], consent: [], actor: 'agent', why: 'Prints the loops this command can read, with their ids.', requires_exclusive: false },
       }), 'loops', { json }));
@@ -227,7 +227,7 @@ function idList(ids: number[]): string {
 }
 
 /**
- * #5012: `gbrain loops drop sender <email>` closes every open reply-owed
+ * #5012: `foresights loops drop sender <email>` closes every open reply-owed
  * (unanswered_inbound) loop from one sender as `dropped`, one `loops_close`
  * per loop, so each id reports its own outcome. `--dry-run` is the consent
  * step: it lists the ids and count and changes nothing. A drop is final: no
@@ -236,8 +236,8 @@ function idList(ids: number[]): string {
 async function dropSender(engine: BrainEngine, rest: string[], json: boolean): Promise<void> {
   const email = rest[1]?.trim().toLowerCase();
   if (!email || email.startsWith('-') || !email.includes('@')) {
-    exitCliError(usageError('gbrain loops drop sender needs an email address.',
-      'Usage: gbrain loops drop sender <email> [--source <id>] [--note <text>] [--dry-run]. Preview first with --dry-run.'), 'loops', { json });
+    exitCliError(usageError('foresights loops drop sender needs an email address.',
+      'Usage: foresights loops drop sender <email> [--source <id>] [--note <text>] [--dry-run]. Preview first with --dry-run.'), 'loops', { json });
   }
   const source = sourceFlag(rest);
   const noteIdx = rest.indexOf('--note');
@@ -245,7 +245,7 @@ async function dropSender(engine: BrainEngine, rest: string[], json: boolean): P
   const { listSenderInboundLoops } = await import('../core/loops/loops-store.ts');
   const loops = await listSenderInboundLoops(engine, email!, source ? [source] : null);
   const ids = loops.map((l) => l.id);
-  const apply = `gbrain loops drop sender ${email}${source ? ` --source ${source}` : ''}${note !== undefined ? ` --note ${JSON.stringify(note)}` : ''}`;
+  const apply = `foresights loops drop sender ${email}${source ? ` --source ${source}` : ''}${note !== undefined ? ` --note ${JSON.stringify(note)}` : ''}`;
   if (rest.includes('--dry-run')) {
     if (json) {
       process.stdout.write(JSON.stringify({ ok: true, status: 'dry_run', sender: email, source_id: source ?? null, would_close: ids, count: ids.length,
@@ -276,7 +276,7 @@ async function dropSender(engine: BrainEngine, rest: string[], json: boolean): P
   } else {
     process.stdout.write(`Dropped ${closed.length} open reply-owed loop(s) from ${email}${idList(closed)}.\n`
       + (failed.length > 0 ? `${failed.length} could not be dropped: ${failed.slice(0, 10).map((f) => `${f.id} (${f.reason})`).join(', ')}\n` : '')
-      + (closed.length > 0 ? `To stop new loops from this sender too: gbrain loops mute sender ${email}${source ? ` --source ${source}` : ''}\n` : ''));
+      + (closed.length > 0 ? `To stop new loops from this sender too: foresights loops mute sender ${email}${source ? ` --source ${source}` : ''}\n` : ''));
   }
   if (failed.length > 0) setCliExitVerdict(1);
 }
@@ -334,7 +334,7 @@ export async function runLoops(engine: BrainEngine, args: string[]): Promise<voi
   if (sub === 'done' || sub === 'drop') {
     const id = Number(rest.find((a) => /^\d+$/.test(a)));
     if (!Number.isFinite(id) || id <= 0) {
-      console.error(`Usage: gbrain loops ${sub} <id>`);
+      console.error(`Usage: foresights loops ${sub} <id>`);
       process.exit(2);
     }
     const noteIdx = rest.indexOf('--note');
@@ -376,7 +376,7 @@ export async function runLoops(engine: BrainEngine, args: string[]): Promise<voi
     const kind = rest[0];
     const value = rest[1];
     if ((kind !== 'sender' && kind !== 'thread') || !value) {
-      console.error(`Usage: gbrain loops ${sub} sender <email> | thread <thread-id> [--source <id>]`);
+      console.error(`Usage: foresights loops ${sub} sender <email> | thread <thread-id> [--source <id>]`);
       process.exit(2);
     }
     // A suppression row is only consulted by the detector inside ITS source —
@@ -390,7 +390,7 @@ export async function runLoops(engine: BrainEngine, args: string[]): Promise<voi
       else {
         console.error(
           gs.length === 0
-            ? `No google source found — pass --source <id> to scope the ${sub} (gbrain sources list).`
+            ? `No google source found — pass --source <id> to scope the ${sub} (foresights sources list).`
             : `Multiple google sources — pass --source <id> (one of: ${gs.join(', ')}).`,
         );
         process.exit(2);
@@ -454,6 +454,6 @@ export async function runLoops(engine: BrainEngine, args: string[]): Promise<voi
     return;
   }
 
-  console.error(`Unknown subcommand: ${sub} (try: gbrain loops --help)`);
+  console.error(`Unknown subcommand: ${sub} (try: foresights loops --help)`);
   process.exit(2);
 }

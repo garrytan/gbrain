@@ -23,7 +23,7 @@ export const PROTECTED_JOB_NAMES: ReadonlySet<string> = new Set([
   'shell',
   // v0.15: subagent + aggregator are protected because they call the
   // Anthropic API. MCP callers can't submit them directly; only the
-  // `gbrain agent run` CLI path (which sets allowProtectedSubmit) or a
+  // `foresights agent run` CLI path (which sets allowProtectedSubmit) or a
   // trusted local `submit_job` (ctx.remote=false) can insert these rows.
   'subagent',
   'subagent_aggregator',
@@ -59,7 +59,7 @@ export const PROTECTED_JOB_NAMES: ReadonlySet<string> = new Set([
   // pages to link rows, AND flips the active schema pack. One-time
   // consenting user decision. PROTECTED + manual-only
   // (src/core/remediation/manual-only.ts) ensures no automatic run submits
-  // it; the user submits it explicitly via `gbrain jobs submit unify-types`
+  // it; the user submits it explicitly via `foresights jobs submit unify-types`
   // (the local CLI submit path sets allowProtectedSubmit for protected names
   // itself).
   'unify-types',
@@ -72,7 +72,7 @@ export const PROTECTED_JOB_NAMES: ReadonlySet<string> = new Set([
   // calls Haiku to extract atoms (~$0.30/source/run), so it MUST NOT be
   // submittable by an MCP/OAuth-scoped caller — same posture as the protected
   // `extract-takes-from-pages`. Only trusted local callers (the autopilot
-  // auto-drain branch, an explicit `gbrain jobs submit extract-atoms-drain`
+  // auto-drain branch, an explicit `foresights jobs submit extract-atoms-drain`
   // from the CLI — which sets allowProtectedSubmit for protected names itself;
   // no submit flag exists or is needed) can insert it.
   'extract-atoms-drain',

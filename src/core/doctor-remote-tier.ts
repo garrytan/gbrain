@@ -1,5 +1,5 @@
 /**
- * #6696 B2: thin-client `gbrain doctor --tier ops` and `--only <check>`.
+ * #6696 B2: thin-client `foresights doctor --tier ops` and `--only <check>`.
  *
  * The thin client asks the serve what it lists for this token (tools/list,
  * already filtered by scope) and sends a parameter only where it is
@@ -40,7 +40,7 @@ export function bandChecks(bands: BandsResult, only: ReadonlySet<string> | null)
     const status = c.band === 'critical' ? 'fail' : c.band === 'ok' ? 'ok' : 'warn';
     checks.push({ name: 'persistence_capacity', status, details: { band: c.band, days: c.days, max_pct_band: c.max_pct_band, forecast: c.forecast, ...(c.band === 'unknown' ? { health: 'unknown' } : {}) },
       message: c.band === 'unknown' ? 'Write capacity could not be read on the serve. Health is unknown.'
-        : `Write capacity band ${c.band} (highest use ${c.max_pct_band}%, days to exhaustion ${c.days.replaceAll('_', ' ')}).${c.band === 'ok' ? '' : ' Run on the brain host: gbrain doctor --only persistence_capacity --json'}` });
+        : `Write capacity band ${c.band} (highest use ${c.max_pct_band}%, days to exhaustion ${c.days.replaceAll('_', ' ')}).${c.band === 'ok' ? '' : ' Run on the brain host: foresights doctor --only persistence_capacity --json'}` });
   }
   const f = bands.write_failures;
   if (!only || only.has('persistence_terminal_failures')) {
@@ -48,7 +48,7 @@ export function bandChecks(bands: BandsResult, only: ReadonlySet<string> | null)
     checks.push({ name: 'persistence_terminal_failures', status: f.band === 'unknown' || blocked ? 'warn' : 'ok',
       details: { band: f.band, active_blockers: f.active_blockers, window_days: f.window_days, ...(f.band === 'unknown' ? { health: 'unknown' } : {}) },
       message: f.band === 'unknown' ? 'Write failures could not be read on the serve. Health is unknown.'
-        : `Unresolved write failures in your sources: ${f.band}; active blockers: ${f.active_blockers}.${blocked ? ' Run on the brain host: gbrain doctor --only persistence_terminal_failures --json' : ''}` });
+        : `Unresolved write failures in your sources: ${f.band}; active blockers: ${f.active_blockers}.${blocked ? ' Run on the brain host: foresights doctor --only persistence_terminal_failures --json' : ''}` });
   }
   return checks;
 }
@@ -57,8 +57,8 @@ export function bandChecks(bands: BandsResult, only: ReadonlySet<string> | null)
 export async function runScopedRemoteDoctor(config: GBrainConfig, req: { tier?: string; only: ReadonlySet<string> | null; json: boolean; label: string; alert?: boolean }): Promise<void> {
   const { tier, only, json } = req;
   const handoff = (why: string) => {
-    const out = renderCliError(opError('doctor_tier_unavailable', `The remote brain cannot answer gbrain doctor ${req.label} for this client: ${why}`,
-      'Run gbrain doctor --tier ops --json on the brain host, or upgrade and restart its serve.'), { json, command: 'doctor', tty: !!process.stderr.isTTY });
+    const out = renderCliError(opError('doctor_tier_unavailable', `The remote brain cannot answer foresights doctor ${req.label} for this client: ${why}`,
+      'Run foresights doctor --tier ops --json on the brain host, or upgrade and restart its serve.'), { json, command: 'doctor', tty: !!process.stderr.isTTY });
     if (out.stdout) process.stdout.write(out.stdout);
     if (out.stderr) process.stderr.write(out.stderr);
     setCliExitVerdict(out.exitCode);
@@ -90,14 +90,14 @@ export async function runScopedRemoteDoctor(config: GBrainConfig, req: { tier?: 
 }
 
 /**
- * W4 `gbrain doctor --alert` on a thin client: the serve ran the page-class checks (run_doctor `only`); exit by its
+ * W4 `foresights doctor --alert` on a thin client: the serve ran the page-class checks (run_doctor `only`); exit by its
  * alert verdict with this client's consecutive-unknown count. A serve older than the alert reports none: unknown.
  */
 async function printAlert(report: Record<string, unknown>, json: boolean): Promise<void> {
   const { recordAlertStreak, alertExitCode, ALERT_DOCS } = await import('../commands/doctor/alert.ts');
   const served = report.alert as import('../commands/doctor/alert.ts').DoctorAlert | undefined;
   const alert = recordAlertStreak(served ?? { level: 'unknown', items: [], unknown: [], docs: ALERT_DOCS });
-  if (!served) process.stderr.write('[gbrain doctor] the remote serve predates doctor --alert, so the verdict is unknown; upgrade and restart it.\n');
+  if (!served) process.stderr.write('[foresights doctor] the remote serve predates doctor --alert, so the verdict is unknown; upgrade and restart it.\n');
   if (json) void writeJsonDocument(JSON.stringify({ ...report, alert }));
   else {
     console.log(`Alert (remote): ${alert.level}`);

@@ -1,6 +1,6 @@
 /**
  * System One S6 recall_needed wired through the real turn-context call site
- * (assembleTurnContext, the handler `gbrain serve` registers for the hook's
+ * (assembleTurnContext, the handler `foresights serve` registers for the hook's
  * turn_context IPC kind) on PGLite with a fixture TypeSafe transport.
  *
  * Protects: all-off output is byte-identical and sends nothing; on mode fires

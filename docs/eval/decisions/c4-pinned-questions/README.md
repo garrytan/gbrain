@@ -9,14 +9,14 @@ safety gate passes with zero leakage, including 144 restricted-grant probes in r
 
 Pinned answers stay available for owners who want them. They are the cheapest way to serve an entity question
 read many times: at 100 reads per write, a correct pinned answer costs $0.00057, against $0.00152 for the
-anchored reader at equal tokens and $0.00284 at full evidence. Opt-in means gbrain creates no pin by itself.
+anchored reader at equal tokens and $0.00284 at full evidence. Opt-in means foresights creates no pin by itself.
 Pinning a question is the owner's consent for its paid refresh (plan C1), and a brain with no pins makes no
 model call. The refresh phase and `context_pack` delivery stay on for pins that exist, so no setting changed.
 
 The anchored retrieval ships in pinned refresh (`retrieveEvidence` in `src/core/questions/refresh.ts`). Where
 else it should apply is under "Where anchored retrieval applies" below.
 
-Measured build: gbrain 1384a0db (the `capy/mpw-integration` branch). Stage: dev.
+Measured build: foresights 1384a0db (the `capy/mpw-integration` branch). Stage: dev.
 
 ## Benefit gate
 
@@ -36,8 +36,8 @@ retrieval. Run 3 is designed to separate the two. It reuses run 2's workload gen
   tokens, with a floor of 200. No answer is maintained between batches.
 - **Sensitivity arms, reported but not decisive.** The anchored control and query + reader each also run at
   full evidence: every item pinned refresh sees, or the top 16 hybrid hits, with no token budget.
-- **Embeddings on for every arm.** Pages are embedded with `voyage:voyage-4` (1024 dimensions, gbrain's default)
-  after every write batch, and search runs in gbrain's default mode (balanced: hybrid keyword + vector with the
+- **Embeddings on for every arm.** Pages are embedded with `voyage:voyage-4` (1024 dimensions, foresights's default)
+  after every write batch, and search runs in foresights's default mode (balanced: hybrid keyword + vector with the
   default reranker). Pinned refresh, query + reader, the anchored control and `think` all search the same
   embedded brain.
 - **Three seeds:** 42, 7 and 1234. Results report each seed, the mean and the spread (min and max).
@@ -56,7 +56,7 @@ accuracy is higher or its mean freshness lag is lower, and if there are zero lea
 
 #### Run 3 results
 
-Every arm ran on 3 seeds with `voyage:voyage-4` embeddings and gbrain's default balanced search. Each cell is
+Every arm ran on 3 seeds with `voyage:voyage-4` embeddings and foresights's default balanced search. Each cell is
 the mean across seeds, with the min and max in brackets. The reads-per-write ratio does not change accuracy or
 freshness.
 
@@ -190,7 +190,7 @@ recorded in `verdict.json` as a diagnostic and was not a decision input.
 
 #### Models
 
-- Answer and refresh model: `anthropic:claude-opus-4-7`, gbrain's default for questions
+- Answer and refresh model: `anthropic:claude-opus-4-7`, foresights's default for questions
   (`models.standing_questions`, which resolves to the deep tier). The cost-lever arm refreshes with
   `anthropic:claude-sonnet-5-5`.
 - `think` arm: the same default model.
@@ -201,7 +201,7 @@ attempt).
 
 ### Run 1: corrections rewrite the evidence page
 
-Measured build: gbrain a4267eed7. Verdict at the time: opt-in. Run 1 found that the benefit gate did not pass
+Measured build: foresights a4267eed7. Verdict at the time: opt-in. Run 1 found that the benefit gate did not pass
 against query plus a reader. Accuracy was at the ceiling for every arm, and pinned answers did not cost less
 per correct answer until a pin had been read about 240 times.
 
@@ -233,7 +233,7 @@ accuracy or freshness advantage. It decides on cost alone.
 
 #### Models
 
-- Answer and refresh model: `anthropic:claude-opus-4-7`. This is gbrain's default for questions
+- Answer and refresh model: `anthropic:claude-opus-4-7`. This is foresights's default for questions
   (`models.standing_questions`, which resolves to the deep tier).
 - `think` arm: the same default model.
 - Reader for the pinned and query arms: `anthropic:claude-sonnet-5-5`, the fixed reader of the B suites.

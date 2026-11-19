@@ -3,7 +3,7 @@
  *
  * validateModelId reads the recipe REGISTRY (not gateway _config), so it works without
  * configureGateway — that's the property makeJudgeClient + tryBuildGatewayClient rely on
- * (C1 #6). probeChatModel adds the key layer via hasAnthropicKey (env OR gbrain config
+ * (C1 #6). probeChatModel adds the key layer via hasAnthropicKey (env OR foresights config
  * file — also gateway-config-independent). Non-Anthropic providers pass the probe (lazy
  * key check deferred to gateway.chat).
  *
@@ -167,7 +167,7 @@ describe('probeChatModelWithKey (provider-agnostic key check, #6705)', () => {
     await withEnv(noOpenAiKey(), async () => {
       expect(probeChatModelWithKey('openai:gpt-5.6')).toEqual({
         ok: false, reason: 'unavailable',
-        detail: 'no OpenAI API key configured (set OPENAI_API_KEY or run: gbrain config set openai_api_key ...)',
+        detail: 'no OpenAI API key configured (set OPENAI_API_KEY or run: foresights config set openai_api_key ...)',
       });
     });
   });
@@ -178,7 +178,7 @@ describe('probeChatModelWithKey (provider-agnostic key check, #6705)', () => {
       expect(p.ok).toBe(false);
       if (!p.ok) {
         expect(p.detail).toContain('set MINIMAX_API_KEY)');
-        expect(p.detail).not.toContain('gbrain config set');
+        expect(p.detail).not.toContain('foresights config set');
       }
     });
   });

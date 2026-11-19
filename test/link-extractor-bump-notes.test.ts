@@ -13,5 +13,5 @@ test('LINK_EXTRACTOR_VERSION_TS is pinned; a bump needs its EXTRACTOR_BUMP_NOTES
   const note = notes?.[LINK_EXTRACTOR_VERSION_TS];
   expect(note).toBeDefined();
   expect(note).toContain('brain-wide');
-  expect(note).toContain('gbrain extract --stale --catch-up');
+  expect(note).toContain('foresights extract --stale --catch-up');
 });

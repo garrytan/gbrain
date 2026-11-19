@@ -58,7 +58,7 @@ const KEYLESS: CapabilityReport = {
   mode: 'keyless',
 };
 
-/** Resolve the embedding provider the same way `gbrain init` would from env.
+/** Resolve the embedding provider the same way `foresights init` would from env.
  * OpenAI (1536d) matches the committed `embedding` column width, so no schema
  * transition is needed; Voyage (1024d) requires resizing the column exactly
  * the way the provider-agnostic migration does. */

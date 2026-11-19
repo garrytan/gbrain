@@ -117,7 +117,7 @@ describe('page revision rollout (#5216)', () => {
     const first = await resumePageRevisionBackfill(torn, { batchSize: 10, log: line => logs.push(line) });
     expect(first.status).toBe('pending');
     expect(first.failed.map(f => f.id)).toEqual([Number(badId)]);
-    expect(logs.join('\n')).toContain('gbrain repair orphan-children');
+    expect(logs.join('\n')).toContain('foresights repair orphan-children');
     const after = await revisions();
     expect(after['notes/rev-a']).toMatch(/^[0-9a-f-]{36}$/);
     expect(after['notes/rev-b']).toBeNull();

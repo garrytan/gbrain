@@ -1,5 +1,5 @@
 /**
- * `gbrain facts`: pre-connect dispatch (opens its own engine), so `--help`
+ * `foresights facts`: pre-connect dispatch (opens its own engine), so `--help`
  * answers without a configured brain. The record lives in
  * src/cli/command-table.ts (thinClient: 'refuse': relink publishes onto the
  * brain host's entity pages).
@@ -19,7 +19,7 @@ export async function run(args: string[], ctx: CliDispatchContext): Promise<void
     const flag = args.indexOf('--source');
     const sourceId = await resolveSourceId(eng, flag >= 0 ? args[flag + 1] : null);
     if (sourceId === ALL_SOURCES && args[0] !== 'retry-dead') {
-      console.error('gbrain facts relink repairs one source at a time; pass --source <id>.');
+      console.error('foresights facts relink repairs one source at a time; pass --source <id>.');
       setCliExitVerdict(1);
       return;
     }

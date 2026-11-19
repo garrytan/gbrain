@@ -87,7 +87,7 @@ describe('doctor checkCycleFreshness', () => {
     const result = await checkCycleFreshness(engine, { nowMs: NOW });
     expect(result.status).toBe('fail');
     expect(result.message).toMatch(/stale/);
-    expect(result.message).toMatch(/gbrain dream --source/);
+    expect(result.message).toMatch(/(?:foresights|gbrain) dream --source/);
   });
 
   test('source with NO last_full_cycle_at (never cycled) returns warn, not fail (#2540)', async () => {
@@ -101,7 +101,7 @@ describe('doctor checkCycleFreshness', () => {
     const result = await checkCycleFreshness(engine, { nowMs: NOW });
     expect(result.status).toBe('warn');
     expect(result.message).toMatch(/never completed a full cycle/);
-    expect(result.message).toMatch(/gbrain dream --source/);
+    expect(result.message).toMatch(/(?:foresights|gbrain) dream --source/);
   });
 
   test('E2: a never-cycled source with no pages is information, not a warning', async () => {

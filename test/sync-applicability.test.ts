@@ -60,7 +60,7 @@ describe('syncContentDirectory', () => {
     expect(await syncContentDirectory(engine, { sourceId: 'notes-example' })).toBeNull();
   }));
 
-  test('a user directory outside gbrain content keeps the existing sync path', () => inHome(async () => {
+  test('a user directory outside foresights content keeps the existing sync path', () => inHome(async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-user-notes-'));
     await addSource('user-example', dir);
     expect(await syncContentDirectory(engine, { sourceId: 'user-example' })).toBeNull();

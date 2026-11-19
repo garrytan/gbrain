@@ -1,7 +1,7 @@
 /**
  * `mute_notice` (agent operator contract v1, A6): persist a dismissal for a
  * coaching/info notice. Remote callers mute for their own client only; the
- * trusted local CLI (`gbrain notices mute`) mutes for the owner globally.
+ * trusted local CLI (`foresights notices mute`) mutes for the owner globally.
  */
 import type { Operation } from './contract.ts';
 import { opError } from './contract.ts';

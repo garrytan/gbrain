@@ -8,9 +8,9 @@
  * (the OAuth provider never read the grant, so every remote caller was
  * pinned to ['world'] regardless of what the operator configured).
  *
- * Spins up a real `gbrain serve --http` against real Postgres, seeds a page
+ * Spins up a real `foresights serve --http` against real Postgres, seeds a page
  * with a brain-held and a world-held take, inserts legacy tokens with three
- * different grants directly (the same rows `gbrain auth create/permissions`
+ * different grants directly (the same rows `foresights auth create/permissions`
  * writes), and asserts `takes_list` over POST /mcp filters per grant:
  *
  *   ['world','brain'] → sees both takes
@@ -87,7 +87,7 @@ describeE2E('serve --http honors permissions.takes_holders for legacy bearer tok
     ]);
 
     // Legacy bearer tokens with three grant shapes — the same permissions
-    // rows `gbrain auth create --takes-holders` / `set-takes-holders` write.
+    // rows `foresights auth create --takes-holders` / `set-takes-holders` write.
     fullToken = await insertLegacyToken('takes-e2e-full', ['world', 'brain']);
     worldToken = await insertLegacyToken('takes-e2e-world', ['world']);
     denyAllToken = await insertLegacyToken('takes-e2e-denyall', []);

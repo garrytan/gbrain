@@ -38,15 +38,15 @@ A private GitHub repo is the product artifact — the agent's portable body:
   sentinel distinguishes a template clone from a bootstrapped workspace).
 - **Identity:** SOUL.md, USER.md, MEMORY.md, AGENTS.md, CLAUDE.md, HEARTBEAT.md,
   ACCESS_POLICY.md, GITHUB.md — rendered ONLY from interview answers, never invented.
-- **Content:** `brain/` (the gbrain source), `memory/` (daily notes), `skills/`,
+- **Content:** `brain/` (the foresights source), `memory/` (daily notes), `skills/`,
   `state/` (committed: interview.json, portable mcp.json; local-only files gitignored).
-- **Compatibility promise:** hosted gbrain mounts `format_version: 1` repos natively;
+- **Compatibility promise:** hosted foresights mounts `format_version: 1` repos natively;
   compatibility is a test against this spec.
 
 ## Premises (all settled)
 
 1. **Free desktop tier of the hosted ladder** — the desktop ceiling (laptop asleep =
-   agent asleep; data outgrows the disk) is the graduation mechanic to hosted gbrain.
+   agent asleep; data outgrows the disk) is the graduation mechanic to hosted foresights.
 2. **One agent-body format, two doors.** Portability up the ladder is moat #1.
 3. **Awake-when-you-are is the honest desktop contract.** Session-triggered schedules
    (jobs run at turn/session boundaries while the harness is open); true 24/7 crons
@@ -67,7 +67,7 @@ open >10 days from first code commit)
 
 0. **Spike + quota gate** (manual, gates door-1 ship; per-harness quota measured; a
    p90 day must fit ≤10% of weekly subscription quota or schedule scope is cut).
-1. **Shared body + engine machinery:** `gbrain bootstrap` family, templates, format
+1. **Shared body + engine machinery:** `foresights bootstrap` family, templates, format
    spec, secret-scan-gated persistence, verify, uninstall (v1 via CEO-review
    expansion; receipt-keyed scope per the PLAN's CX2-12).
 2. **Codex door ships first** (runbook variant + approvals preflight + capability
@@ -87,7 +87,7 @@ open >10 days from first code commit)
 | Codex `notify` transcript sweeper | fast-follow | mandated MCP writes cover v1 |
 | Windows (named-pipe IPC) | deferred | v1 = macOS + Linux |
 | Networked Docker paste-flow e2e | fast-follow | offline container e2e covers 80% at 20% of the flake |
-| `gbrain quota` meter command | TODOS | measurement ships as script+doc; productize when per-harness token counting is proven |
+| `foresights quota` meter command | TODOS | measurement ships as script+doc; productize when per-harness token counting is proven |
 | True 24/7 crons on desktop | never | hosted-tier by design |
 
 ## Success criteria
@@ -111,7 +111,7 @@ open >10 days from first code commit)
 Paste block + tag-pinned runbook (`BOOTSTRAP_FOR_AGENTS.md`, fetched at the
 `latest-stable` ref — advanced by the release job only after assets publish, so
 published copies never rot); optional GitHub template repo (generated at release from
-the same renderer); binary via `bun install -g github:garrytan/gbrain#stable`
+the same renderer); binary via `bun install -g github:aimonk2025/gbrain#stable`
 (never npm). The paste block lives in the README's `## Install` section, as
 per-harness subsections ordered "For Codex — the recommended first step" → "For
 Claude Code" → "For OpenClaw or Hermes" (the 2026-08-09 ordering decision, recorded

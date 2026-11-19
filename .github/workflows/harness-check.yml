@@ -1,26 +1,26 @@
-# harness-check (GBRA-108, GBRA-156): the keyless check of this pull request's gbrain commit against harness-evals' harness
-# machinery (garrytan/harness-evals, scripts/gbrain-check.ts; docs/gbrain-arm.md, "Checking a gbrain commit"). The job clones
-# harness-evals at HARNESS_EVALS_PIN, builds the gbrain sidecar image for the pull request's head commit with
+# harness-check (GBRA-108, GBRA-156): the keyless check of this pull request's foresights commit against harness-evals' harness
+# machinery (garrytan/harness-evals, scripts/gbrain-check.ts; docs/gbrain-arm.md, "Checking a foresights commit"). The job clones
+# harness-evals at HARNESS_EVALS_PIN, builds the foresights sidecar image for the pull request's head commit with
 # scripts/build-gbrain-image.sh (keyword target: four keyword brains and the install bundle, no key), runs the keyless rungs of
 # gbrain-check.ts against that image (the fake harness through the real runner and the world's gbrain tap: one trial per
 # surface, one gbrain-docs mount, one company-brain trial under scope "sources" with two members, plus the direct source_ids
 # probe of the company brain), and fails only when the cross-scope page count is not zero: a page or row returned to a member
 # whose grant does not hold its source. Every other failed assertion (tool counts, a missing search tool, a retrieval miss,
 # a bundle digest, the Hermes context, the installer files) is written to the job summary as a warning, so a pull request
-# that changes gbrain's tool list or install output is told and not blocked. A non-required check: no branch protection rule
+# that changes foresights's tool list or install output is told and not blocked. A non-required check: no branch protection rule
 # names it. No model key, no paid trial: the metering proxy runs with placeholder keys the fake harness never uses, and the
 # only secret read is HARNESS_EVALS_READ_TOKEN, a read-only token for the private harness-evals repository (Settings >
 # Secrets and variables > Actions; a fine-grained token with Contents: read on garrytan/harness-evals). Nothing here embeds
 # a key. Without that secret the job skips: a ::notice:: and a job-summary line say why, and it succeeds.
 #
-# The image is built from the commit on github.com/garrytan/gbrain, which the Dockerfile fetches by sha, so the check covers
+# The image is built from the commit on github.com/aimonk2025/gbrain, which the Dockerfile fetches by sha, so the check covers
 # branches of this repository; a pull request from a fork has no such commit, and the first step refuses it before the
 # secret check (a fork run gets no secrets either way).
 #
 # Bumping the pin: HARNESS_EVALS_PIN is a commit on harness-evals main. Pick the new main head
 # (git ls-remote https://github.com/garrytan/harness-evals refs/heads/main), set it below, and run the same steps once by hand
 # (docs/ci-event-parity.md#harness-check) against master before merging the bump, so a change on the harness-evals side
-# shows up in a sample run and not in every gbrain pull request. Actions are pinned to commit SHAs; Bun to the version
+# shows up in a sample run and not in every foresights pull request. Actions are pinned to commit SHAs; Bun to the version
 # harness-evals' own ci.yml pins.
 name: harness-check
 

@@ -1,6 +1,6 @@
 /**
- * D8 adoption funnel from the real CLI: `gbrain status --funnel` runs before
- * any brain exists, `gbrain init` on a fresh home counts one clean install once
+ * D8 adoption funnel from the real CLI: `foresights status --funnel` runs before
+ * any brain exists, `foresights init` on a fresh home counts one clean install once
  * recording is on, and a home that never turned it on gets no funnel file.
  */
 import { afterAll, expect, test } from 'bun:test';

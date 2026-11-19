@@ -22,7 +22,7 @@
  * skipped) or the source has a `local_path` and the page's canonical file
  * exists on this host. Everything else is counted and left alone: a NULL
  * entity slug, a missing page or file, a source without a checkout here, or
- * (unmanaged, #6946, #7098) a clone gbrain owns or a read-only mirror, whose
+ * (unmanaged, #6946, #7098) a clone foresights owns or a read-only mirror, whose
  * checkout is never written.
  *
  * Adoption oracle (#6278, `adoptableClaim`): the fence codec trims a claim,
@@ -115,9 +115,9 @@ export interface UnfencedFactsOutcome {
   skipped_no_local_path: number;
   skipped_no_page: number;
   skipped_archived: number;
-  /** Unmanaged (#6946): rows of a clone gbrain owns (`sources add --url`), kept database-only so its checkout keeps fast-forwarding. */
+  /** Unmanaged (#6946): rows of a clone foresights owns (`sources add --url`), kept database-only so its checkout keeps fast-forwarding. */
   skipped_url_clone: number;
-  /** Unmanaged (#7098): rows of a read-only mirror source (`gbrain sources mirror-readonly`), kept database-only for the same reason. */
+  /** Unmanaged (#7098): rows of a read-only mirror source (`foresights sources mirror-readonly`), kept database-only for the same reason. */
   skipped_mirror_read_only: number;
   pages_touched: number;
   /** `<slug> (<reason>)` per page whose fence write failed; its rows stay unfenced. */
@@ -160,7 +160,7 @@ export interface UnadoptableFactRecord {
   fact_id: number;
   reason: 'fence_unrenderable' | 'duplicate_claim';
   class: UnrenderableClass | 'duplicate_claim';
-  /** `prior_refusal`: the refused request, readable with `gbrain write-request -- <id>`. */
+  /** `prior_refusal`: the refused request, readable with `foresights write-request -- <id>`. */
   request_id?: string;
 }
 
@@ -287,7 +287,7 @@ export function unboundRefusedSentence(pages: UnfencedFactsOutcome['unbound_refu
   return `${pages.reduce((n, page) => n + page.rows, 0)} unfenced fact row(s) on ${pages.length} database-only page(s) of a source with a checkout but no canonical owner stay unfenced: `
     + `${pages.slice(0, 5).map(page => `${page.slug} (${page.source_id}): ${page.rows} row(s)`).join('; ')}${pages.length > 5 ? '; …' : ''}. `
     + `They stay active and searchable and those pages skip destructive fact reconciliation. To fence them into the database page, the user can allow database-only writes to unbound sources `
-    + `with gbrain config set ${UNBOUND_WRITE_KEY} database_only (a brain-wide choice: such pages stay database-only after binding).`;
+    + `with foresights config set ${UNBOUND_WRITE_KEY} database_only (a brain-wide choice: such pages stay database-only after binding).`;
 }
 
 /** Read the unfenced active rows of one source (or every source) and group the fenceable ones per page. */

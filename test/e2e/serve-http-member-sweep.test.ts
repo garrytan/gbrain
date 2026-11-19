@@ -1,10 +1,10 @@
 /**
- * GST-240 / GST-359 C2: the keyless two-member check over a real `gbrain serve --http`.
+ * GST-240 / GST-359 C2: the keyless two-member check over a real `foresights serve --http`.
  *
  * A keyless brain (PGLite, no embedding provider, no repo; and Postgres when DATABASE_URL is set) with two members,
- * alice-example and bob-example, each holding a member key (`gbrain auth create --member`), plus a QM
- * client-credentials client holding the attest right for every attestable operation (`gbrain auth rescope
- * --attest-actor qm --attest-ops ...`), both members linked through the real CLI (`gbrain access member link`).
+ * alice-example and bob-example, each holding a member key (`foresights auth create --member`), plus a QM
+ * client-credentials client holding the attest right for every attestable operation (`foresights auth rescope
+ * --attest-actor qm --attest-ops ...`), both members linked through the real CLI (`foresights access member link`).
  *
  * 1. Protects: 0 cross-member rows across every operation the attest grant may call, for Bob as an attested actor,
  *    Bob's member key, the bare attest client and an unbound key; a fact Alice saves through her member key is

@@ -30,7 +30,7 @@ describe('hosted_option notice', () => {
       const n = hostedOptionNotice(where, new Set())!;
       expect(n).toMatchObject({ code: 'hosted_option', kind: 'coaching' });
       expect(n.user_message).toContain(`https://gbrain.io/?ref=${ref}`);
-      expect(n.user_message).toContain('gbrain notices mute hosted_option');
+      expect(n.user_message).toContain('foresights notices mute hosted_option');
       expect(n.user_message).not.toMatch(/\?(\s|$)/);
       expect(inertText(n.user_message!)).toBe(n.user_message!);
       expect(inertText(n.why)).toBe(n.why);
@@ -63,7 +63,7 @@ describe('hosted_option notice', () => {
     expect(captured(() => writeHostedOption('setup', new Set(['hosted_option']), { tty: true })).stderr).toBe('');
   });
 
-  test('the in-agent ready text names hosted GBrain only for a brain it created, with the install\'s own launcher in the mute hint', async () => {
+  test('the in-agent ready text names hosted Foresights only for a brain it created, with the install\'s own launcher in the mute hint', async () => {
     await inHome(() => {
       const log = spyOn(console, 'log').mockImplementation(() => {});
       try {

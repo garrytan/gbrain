@@ -24,7 +24,7 @@ test('a bare DB model refuses with the migrate preview for the gateway provider'
   const error = await resolveManagedFactsEmbedding(engine, { engine: 'pglite' } as GBrainConfig).then(() => null, e => e);
   expect(error).toMatchObject({ code: 'embedding_configuration' });
   expect(error.suggestion).toContain('"text-embedding-3-small" with no provider prefix');
-  expect(error.suggestion).toContain('gbrain migrate embeddings --to openai:text-embedding-3-small --dry-run');
+  expect(error.suggestion).toContain('foresights migrate embeddings --to openai:text-embedding-3-small --dry-run');
   expect(error.fix).toMatchObject({ argv: ['gbrain', 'migrate', 'embeddings', '--to', 'openai:text-embedding-3-small', '--dry-run'], actor: 'agent' });
 });
 

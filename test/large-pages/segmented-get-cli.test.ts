@@ -1,11 +1,11 @@
 /**
  * Wave B PR 2 (spec 7.2, 7.4): around_chunk_id on a segmented page and both
- * `gbrain get` paths of one.
+ * `foresights get` paths of one.
  *
  * 1. Protects: around_chunk_id resolves a segmented chunk from its occurrence
  *    and segment-relative span (anchor stored_span, chunk_span holding the
  *    chunk), and a chunk whose occurrence an edit retired is revision_changed
- *    rather than a guess. The local `gbrain get` streams a segmented page
+ *    rather than a guess. The local `foresights get` streams a segmented page
  *    segment by segment, byte-identical to the same page stored inline; the
  *    thin client pages it, verifies size + sha256, and prints window by window.
  * 2. Fails when: around_chunk_id falls back to the page offset or a text match,
@@ -49,7 +49,7 @@ const SLUG = 'logs/cli-segmented';
 const TWIN = 'logs/cli-inline';
 
 for (const kind of testBackends()) {
-  describe(`gbrain get and around_chunk_id on a segmented page (${kind})`, () => {
+  describe(`foresights get and around_chunk_id on a segmented page (${kind})`, () => {
     let close: () => Promise<void>;
 
     beforeAll(async () => {
@@ -111,7 +111,7 @@ for (const kind of testBackends()) {
       expect((await get({ slug, body: 'window', around_chunk_id: Number(current!.id) }, true)).anchor).toBe('stored_span');
     }, 300_000);
 
-    test('local gbrain get streams the page segment by segment, byte-identical to the inline print', async () => {
+    test('local foresights get streams the page segment by segment, byte-identical to the inline print', async () => {
       const e = await refusal(get({ slug: SLUG }));
       expect(e.code).toBe('page_body_segmented');
       const writes: string[] = [];

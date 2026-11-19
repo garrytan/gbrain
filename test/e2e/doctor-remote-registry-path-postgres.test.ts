@@ -1,5 +1,5 @@
 /**
- * Wave 20 review: the remote doctor (run_doctor / gbrain remote doctor) must
+ * Wave 20 review: the remote doctor (run_doctor / foresights remote doctor) must
  * not show a remote caller the brain host's filesystem path to the worker
  * registry when that registry can't be read. The local doctor keeps it.
  *

@@ -198,7 +198,7 @@ describe('pglite_scratch_probe — doctorReportRemote parity (#2674)', () => {
         const stub = {
           kind: 'pglite',
           getStats: async () => {
-            throw new Error('Could not acquire PGLite lock. Another gbrain process is using the database.');
+            throw new Error('Could not acquire PGLite lock. Another foresights process is using the database.');
           },
         } as unknown as BrainEngine;
         const report = await doctorReportRemote(stub);

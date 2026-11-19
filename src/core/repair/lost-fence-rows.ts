@@ -1,5 +1,5 @@
 /**
- * `gbrain repair lost-fence-rows`: put back the fact and take rows an older gbrain retired after a page rewrite dropped
+ * `foresights repair lost-fence-rows`: put back the fact and take rows an older foresights retired after a page rewrite dropped
  * their `## Facts` or takes section. The rewrite itself was safe: the rows stayed live, held `fence_absent`. But the
  * next `remember`, `takes_add`, fact extraction or `facts relink` built a new section holding only its own rows, and the write
  * after that read the new section as the user's answer: the facts expired and the takes were deleted, with no receipt.
@@ -43,7 +43,7 @@ import { compareTrust, isTrustTier, storedTrustTier, type TrustTier } from '../t
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairScope } from './core.ts';
 
 const DOCS = 'docs/guides/repair.md#lost-fence-rows';
-const COMMAND = 'gbrain repair lost-fence-rows';
+const COMMAND = 'foresights repair lost-fence-rows';
 
 /** One retired row the records prove was lost to a re-created section, with the cell to restore. */
 interface LostRow { kind: 'fact' | 'take'; id: number; row_num: number; claim: string; version_id: number; retired_at: string; fact?: ParsedFact; take?: ParsedTake; trust_tier?: string | null }

@@ -12,7 +12,7 @@ export function autopilotInstallPendingCheck(): Check | null {
   const todo = pendingAutopilotInstall();
   if (!todo || autopilotInstalledForBrain()) return null;
   const inputs = todo.repo === null
-    ? [{ name: 'REPO_PATH', how: 'Ask the user for the path of the brain repo the autopilot should keep in sync (the directory gbrain sync imports).' }]
+    ? [{ name: 'REPO_PATH', how: 'Ask the user for the path of the brain repo the autopilot should keep in sync (the directory foresights sync imports).' }]
     : undefined;
   return {
     name: 'minions_migration',

@@ -1,7 +1,7 @@
 /**
  * PID-1 orphan zombie reaper (#2443).
  *
- * `gbrain serve` in a container frequently runs as PID 1 (image without
+ * `foresights serve` in a container frequently runs as PID 1 (image without
  * tini / `docker run --init`). PID 1 inherits every orphaned process in the
  * PID namespace: when a spawned worker's own child outlives it, the
  * grandchild re-parents to PID 1 and, on exit, becomes a zombie that the Bun

@@ -28,7 +28,7 @@ export async function writerVersionCheck(engine: BrainEngine): Promise<Check> {
     return { name: 'writer_version', status: 'warn', details,
       message: `${count} committed request(s) in the last ${WINDOW_DAYS} days were admitted or published by a writer older than v${WRITER_VERSION_FLOOR} or by an unstamped binary: `
         + `${listed.join('; ')}${flagged.length > SAMPLE ? ` (first ${SAMPLE} of ${flagged.length} shown)` : ''}. `
-        + `A writer older than v${WRITER_VERSION_FLOOR} may still delete database-only timeline rows. Run \`gbrain upgrade\` on that host. `
+        + `A writer older than v${WRITER_VERSION_FLOOR} may still delete database-only timeline rows. Run \`foresights upgrade\` on that host. `
         + 'This is an observation, not prevention: older writers are not blocked.' };
   } catch (error) {
     return { name: 'writer_version', status: 'warn',

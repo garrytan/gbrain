@@ -27,7 +27,7 @@
  *
  * Every `load` (and D3 curated `help`, `() => import('./help/<name>.ts')`) is
  * `() => import('<string literal>')` so `bun build --compile` bundles each
- * module and `gbrain --version` loads none of them
+ * module and `foresights --version` loads none of them
  * (test/cli-command-table.test.ts; scripts/check-compile-autoload.sh).
  *
  * Adding a CLI-only command: add a record here plus its module under
@@ -146,7 +146,7 @@ export type CliCommandRecord =
   });
 
 export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: dispatched by dispatchPreConnectCommand before the connectEngine() terminator.
-  // selfHelp: v0.40.6.0 Schema Cathedral v3 — `gbrain schema --help` should hit schema.ts
+  // selfHelp: v0.40.6.0 Schema Cathedral v3 — `foresights schema --help` should hit schema.ts
   // printHelp() with the full 22+ verb taxonomy, not the generic short-circuit's one-line stub.
   { name: 'schema', phase: 'pre-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/schema.ts') },
   // selfHelp: MEMORY_VERBS v1 (Cathedral 1): protocol ships its own detailed HELP (subcommands,
@@ -157,7 +157,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // GBRA-377: `skills index|resolve` (routed by cli/command-route.ts); engine-free on every install shape.
   { name: 'skill-resolver', phase: 'pre-connect', thinClient: 'none', selfHelp: true, skipStartupHooks: true, load: () => import('./commands/skill-resolver.ts') },
   { name: 'notices', phase: 'pre-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/notices.ts') },
-  // selfHelp: `gbrain init --help` prints its own usage from runInit; route around the generic
+  // selfHelp: `foresights init --help` prints its own usage from runInit; route around the generic
   // one-line short-circuit (matches `connect`). Without this, `init` is in CLI_ONLY but not
   // CLI_ONLY_SELF_HELP, so the dispatcher's generic short-circuit fires and the printInitHelp()
   // guard in init.ts is dead code.
@@ -191,11 +191,11 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   { name: 'google', phase: 'pre-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/google.ts') },
   { name: 'creds', phase: 'pre-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/creds.ts') },
   { name: 'remote', phase: 'pre-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/remote.ts') },
-  // selfHelp: `gbrain connect --help` prints its own usage (flags + examples) from runConnect; route
+  // selfHelp: `foresights connect --help` prints its own usage (flags + examples) from runConnect; route
   // around the generic one-line short-circuit.
   { name: 'connect', phase: 'pre-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/connect.ts') },
-  // D8: `gbrain setup <harness>` orchestrates init + harness wiring. Engine-free (a new brain is
-  // created by the `gbrain init` child it runs); thinClient 'none' because it resolves a hosted
+  // D8: `foresights setup <harness>` orchestrates init + harness wiring. Engine-free (a new brain is
+  // created by the `foresights init` child it runs); thinClient 'none' because it resolves a hosted
   // target itself and refuses with setup_hosted_connection instead of creating a local brain.
   { name: 'setup', phase: 'pre-connect', thinClient: 'none', selfHelp: true, json: 'document', load: () => import('./commands/setup.ts') },
   // CLI_ONLY: Agent-bootstrap family (ENG-2 three-touchpoint rule): `bootstrap` + `hook` are
@@ -253,7 +253,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   { name: 'compile-context', phase: 'pre-connect-own-engine', thinClient: 'refuse', selfHelp: true, routes_source: true, load: () => import('./commands/compile-context.ts') },
   { name: 'smoke-test', phase: 'pre-connect', thinClient: 'none', load: () => import('./commands/smoke-test.ts') },
   // selfHelp: #4152: dream ships its own printHelp AND the `dream retriage --help` subverb help
-  // (dispatched engine-free before parseArgs). The generic stub would hide both — `gbrain dream
+  // (dispatched engine-free before parseArgs). The generic stub would hide both — `foresights dream
   // retriage --help` printed the one-line dream stub instead of the retriage contract (outside-voice
   // CX9).
   // thin client: v0.31.1 (CDX-2 op coverage matrix): more local-only commands
@@ -322,7 +322,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   { name: 'book-mirror', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/book-mirror.ts') },
   // selfHelp: v0.37 fix wave (Lane D.4 + CDX2-12): sync's --no-embed flag was unreachable via help
   // because the dispatcher's generic CLI-only short-circuit fired before runSync could print its own
-  // usage block. Adding `sync` here routes `gbrain sync --help` into runSync.
+  // usage block. Adding `sync` here routes `foresights sync --help` into runSync.
   { name: 'sync', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, json: 'document', routes_source: true, slowRead: args => args.includes('status') ? `sync status for ${sourceArg(args) ? `source ${sourceArg(args)}` : 'the selected source'}` : null, load: () => import('./commands/sync.ts') },
   // selfHelp: #3834: extract ships detailed help for its mode-specific flags. Keep the generic
   // CLI-only stub from hiding that contract.
@@ -338,7 +338,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   { name: 'autopilot', phase: 'post-connect', thinClient: 'none', help: () => import('./help/autopilot.ts'), load: () => import('./commands/autopilot.ts') },
   { name: 'graph-query', phase: 'post-connect', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/graph-query.ts') },
   { name: 'reconcile-links', phase: 'post-connect', thinClient: 'none', load: () => import('./commands/reconcile-links.ts') },
-  // selfHelp: gbrain repair prints REPAIR_HELP (kinds + dry-run/apply contract).
+  // selfHelp: foresights repair prints REPAIR_HELP (kinds + dry-run/apply contract).
   // thin client: Wave 2 repair core: repairs publish coordinated writes on the brain host.
   { name: 'repair', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/repair.ts') },
   { name: 'diag', phase: 'post-connect', thinClient: 'refuse', json: 'document', read_only: true, slowRead: () => 'the diagnostic bundle', help: () => import('./help/diag.ts'), load: () => import('./commands/diag.ts') },
@@ -369,7 +369,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // reader). Without this the generic stub hides both.
   { name: 'transcripts', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, routes_source: true, load: () => import('./commands/transcripts.ts') },
   { name: 'models', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/models.ts') },
-  // selfHelp: `gbrain takes --help` printed the generic one-line stub, so the nine subcommands
+  // selfHelp: `foresights takes --help` printed the generic one-line stub, so the nine subcommands
   // (add/update/supersede/resolve/scorecard/calibration/revisit/ extract/search) were undiscoverable
   // from the CLI — the detailed usage block in runTakes (src/commands/takes.ts) was unreachable.
   // Same holdout pattern as `capture`, `sync`, and `schema` above.
@@ -387,8 +387,8 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // at `case 'notability-eval'` but never dispatchable.
   { name: 'notability-eval', phase: 'post-connect', thinClient: 'none', load: () => import('./commands/notability-eval.ts') },
   // selfHelp: sources ships its own printHelp() (sources.ts, wired to `case '--help'`) covering all
-  // ~28 subcommands, but was missing from this set — so `gbrain sources --help` hit the generic
-  // one-line stub, which itself says "run gbrain --help for the full command list", and the
+  // ~28 subcommands, but was missing from this set — so `foresights sources --help` hit the generic
+  // one-line stub, which itself says "run foresights --help for the full command list", and the
   // top-level help's own SOURCES block promises `sources --help` as the place to find the long tail
   // (rename, default, attach, current, federate, set-cr-mode, webhook, harden, ...). That made the
   // pointer circular and those subcommands undiscoverable from the CLI in either direction.

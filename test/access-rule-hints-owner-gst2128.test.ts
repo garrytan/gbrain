@@ -1,5 +1,5 @@
 /**
- * GST-2128 item 1: since GST-2698 (#9371), `gbrain access rule add` refuses a reader list that leaves out the brain owner
+ * GST-2128 item 1: since GST-2698 (#9371), `foresights access rule add` refuses a reader list that leaves out the brain owner
  * unless --allow-without-owner. Every hint that prints a rule-add command for a named member must print one that command
  * accepts.
  *
@@ -9,7 +9,7 @@
  *    owner set each prints the member alone, as before.
  * 2. Fails when: a hint prints a list without the owner on a brain that has one, or adds an owner where none is set.
  * 3. Real seams: the doctor entry, assertLabelledOnlyCreate, labelSeveral and remotePagesFederationExposes on a
- *    repo-less source, then the gbrain access rule CLI module on the printed argv, PGLite and Postgres.
+ *    repo-less source, then the foresights access rule CLI module on the printed argv, PGLite and Postgres.
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -99,7 +99,7 @@ for (const backend of testBackends()) {
       try { await runAccessRules(engine, 'rule', ['add', '--prefix', 'people/alice-example/', '--readers', `bob-example,${OWNER}`, '--yes', '--json'], true); } finally { spy.mockRestore(); }
       const receipt = await withEnv({ GBRAIN_HOME: home }, () => labelSeveral(engine, ['alice-example'], 'default', false, true));
       const detail = receipt.rules.find(r => r.prefix === 'people/alice-example/')!.detail!;
-      const argv = detail.slice(detail.indexOf('gbrain access rule add')).split(' ');
+      const argv = detail.slice(detail.indexOf('foresights access rule add')).split(' ');
       expect(readers(argv)).toBe(`alice-example,${OWNER}`);
       expect(await preview(engine, argv)).toBeNull();
       const quiet = spyOn(console, 'log').mockImplementation(() => {});

@@ -23,7 +23,7 @@
  *     handler. Set by the webhook source (network input) and skillpack
  *     sources that fetch URLs. When true, put_page skips auto-link and
  *     applies the slug-allowlist gate. Untrusted in-process callers (CLI
- *     `gbrain capture`) leave it false.
+ *     `foresights capture`) leave it false.
  *
  *   - The api_version constant on the skillpack manifest decouples the
  *     contract from skillpack release cadence. v1 sources fail loudly with a
@@ -127,7 +127,7 @@ export interface IngestionEvent {
 
 /**
  * Health probe surface for sources that want to expose state to
- * `gbrain doctor ingestion_health`. Optional — sources that don't implement
+ * `foresights doctor ingestion_health`. Optional — sources that don't implement
  * it surface as `ok` from the daemon side (no signal == healthy assumption).
  */
 export interface IngestionSourceHealth {

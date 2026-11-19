@@ -1,5 +1,5 @@
 /**
- * Large page files for the Wave B delete/restore tests: a file of about `bytes` body bytes in gbrain's
+ * Large page files for the Wave B delete/restore tests: a file of about `bytes` body bytes in foresights's
  * serialization (`type` before `title`, as serializePageToMarkdown writes them), so a restore writes it back
  * byte for byte, written in 8 MiB pieces so a test never holds it whole; and a streamed SHA-256 of a file.
  */

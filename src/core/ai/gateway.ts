@@ -1,5 +1,5 @@
 /**
- * AI Gateway — unified seam for every AI call gbrain makes.
+ * AI Gateway — unified seam for every AI call foresights makes.
  *
  * v0.14 exports:
  *   - configureGateway(config) — called once by cli.ts connectEngine()
@@ -89,7 +89,7 @@ const guardedExpansion = createGuardedGeneration(() => DEFAULT_MAX_OUTPUT_TOKENS
 // ---- Gateway-wide AI-HTTP timeout (v0.42.20.0, #1762/#1775) ----
 //
 // Plain `fetch` (Bun/Node) has NO default request timeout, so a stalled provider
-// socket makes an `await` never settle — which hangs `gbrain capture`/`search`
+// socket makes an `await` never settle — which hangs `foresights capture`/`search`
 // and, on PGLite, pins the single-writer lock. The AI SDK's `maxRetries` only
 // fires on a SETTLED error; a half-open socket never settles. So we bound at the
 // SDK CALL layer: default an `abortSignal` into every generateText / generateObject
@@ -547,7 +547,7 @@ export function refreshGatewayEnvFromFilePlane(): void {
  * config plane.
  *
  * Sync `configureGateway` stays for pre-connect callers (rare bootstrap
- * paths like `gbrain --version` that never touch a brain). Per Codex F3
+ * paths like `foresights --version` that never touch a brain). Per Codex F3
  * in the v0.31.12 plan review: spelling out the sync→async boundary instead
  * of hand-waving "config-build time."
  *
@@ -851,7 +851,7 @@ export function requireConfig(): AIGatewayConfig {
   if (!config) {
     throw new AIConfigError(
       'AI gateway is not configured. Call configureGateway() during engine connect.',
-      'This is a gbrain bug — file an issue at https://github.com/garrytan/gbrain/issues',
+      'This is a foresights bug — file an issue at https://github.com/aimonk2025/gbrain/issues',
     );
   }
   return config;
@@ -877,8 +877,8 @@ export function getEmbeddingDimensions(): number {
 
 function unverifiedEmbeddingIdentityError(): AIConfigError {
   return new AIConfigError(
-    'This brain has no explicit embedding model. Its stored vectors must not be interpreted using a new default. Run gbrain migrate embeddings --status and preview an explicit migration with --dry-run.',
-    `Run gbrain migrate embeddings --status, then ${renderCanonicalMigrationCommands().recommendedDryRun}. Review the cost and explicitly approve the migration. Keyword search and read-only access remain available.`,
+    'This brain has no explicit embedding model. Its stored vectors must not be interpreted using a new default. Run foresights migrate embeddings --status and preview an explicit migration with --dry-run.',
+    `Run foresights migrate embeddings --status, then ${renderCanonicalMigrationCommands().recommendedDryRun}. Review the cost and explicitly approve the migration. Keyword search and read-only access remain available.`,
   );
 }
 
@@ -899,7 +899,7 @@ export function getExpansionModel(): string {
 /**
  * #4107: the model generateOcrText() routes to — `embedding_image_ocr_model`
  * when set, else the expansion model. A direct "provider:model" string like
- * embedding_multimodal_model (never models.tier-resolved), so `gbrain config
+ * embedding_multimodal_model (never models.tier-resolved), so `foresights config
  * set embedding_image_ocr_model` points OCR exactly where the user aimed it.
  */
 export function getImageOcrModel(): string {
@@ -1427,7 +1427,7 @@ export const perplexityCompatFetch = (async (input: RequestInfo | URL, init?: Re
  * row PER SEARCH (the gateway's applyResolveAuth throws AIConfigError for the
  * missing key). The
  * FIRST skip per process per model writes ONE `no_key` row to the
- * rerank-failures audit JSONL (doctor's reranker_health + `gbrain search
+ * rerank-failures audit JSONL (doctor's reranker_health + `foresights search
  * modes` read it); nothing is printed — shell-per-query agents would see a
  * line on every search, and today's keyless state is stderr-silent.
  */
@@ -1443,7 +1443,7 @@ function noKeyOnce(modelStr: string, keyName: string, query: string, docCount: n
       doc_count: docCount,
       error_summary:
         `${keyName} not set — rerank calls skipped this process (results pass through ` +
-        `unreranked); fix: export ${keyName}=… or gbrain config set search.reranker.enabled false`,
+        `unreranked); fix: export ${keyName}=… or foresights config set search.reranker.enabled false`,
     });
     gw().noKeyNoticed.add(modelStr);
   } catch {
@@ -1826,7 +1826,7 @@ async function embedSubBatch(
     const embeddings: number[][] = result.embeddings.map((e: number[]) => fitMatryoshkaPrefix(recipe, modelId, e, expectedDims)); // PR #5921
     for (const embedding of embeddings) {
       if (Array.isArray(embedding) && embedding.length !== expectedDims) {
-        throw embeddingDimMismatchError(modelId, embedding.length, expectedDims, `gbrain migrate --embedding-model ${getEmbeddingModel()} --embedding-dimensions ${embedding.length}`, { provider: recipe.id, baseUrl: gw().config?.base_urls?.[recipe.id], defaultBaseUrl: recipe.base_url_default });
+        throw embeddingDimMismatchError(modelId, embedding.length, expectedDims, `foresights migrate --embedding-model ${getEmbeddingModel()} --embedding-dimensions ${embedding.length}`, { provider: recipe.id, baseUrl: gw().config?.base_urls?.[recipe.id], defaultBaseUrl: recipe.base_url_default });
       }
     }
 
@@ -2868,11 +2868,11 @@ export interface ChatToolDef {
 }
 
 /**
- * Convert gbrain's provider-neutral ChatMessage[] into AI SDK v6 ModelMessage[].
+ * Convert foresights's provider-neutral ChatMessage[] into AI SDK v6 ModelMessage[].
  *
  * The original code passed `opts.messages as any` straight to generateText,
  * which worked on AI SDK v4/v5 but v6 tightened ModelMessage validation:
- *   - tool results must be a `role: 'tool'` message (gbrain pushes them as
+ *   - tool results must be a `role: 'tool'` message (foresights pushes them as
  *     `role: 'user'` with tool-result blocks), and
  *   - each tool-result `output` must be a structured `{ type, value }` part,
  *     not a bare value.
@@ -3287,7 +3287,7 @@ export function validateModelId(
  * can't run SHOULD hard-error, not silently degrade), AND by `tryBuildGatewayClient`
  * + `makeJudgeClient`. One shared predicate, no drift.
  *
- * The key layer uses `hasAnthropicKey` (env OR gbrain config file), which is
+ * The key layer uses `hasAnthropicKey` (env OR foresights config file), which is
  * gateway-config-INDEPENDENT — it works before `configureGateway()` and in unit
  * tests, and preserves the historical key-detection source (codex #6; the prior
  * draft used `isAvailable`, which reads gateway `_config.env` and would have
@@ -3308,7 +3308,7 @@ export function probeChatModel(modelStr: string): ChatModelProbe {
     return {
       ok: false,
       reason: 'unavailable',
-      detail: 'no Anthropic API key configured (set ANTHROPIC_API_KEY or run: gbrain config set anthropic_api_key ...)',
+      detail: 'no Anthropic API key configured (set ANTHROPIC_API_KEY or run: foresights config set anthropic_api_key ...)',
     };
   }
   return { ok: true };
@@ -3542,7 +3542,7 @@ async function classifyGatewayGuardrail(input: {
  * land on the same engine, raising the hit rate (OpenAI cites 60%→87%).
  *
  * Hash the system prompt + sorted tool names — that's the stable prefix
- * gbrain's repeated loops (enrich, page-summary, skillopt, subagent) actually
+ * foresights's repeated loops (enrich, page-summary, skillopt, subagent) actually
  * share. Returns undefined when there's no system prompt (nothing stable to
  * key on), so one-off requests don't get pinned to a single engine. An
  * explicit key can still be set per provider/model via
@@ -3692,7 +3692,7 @@ async function chatAdmitted(opts: ChatOpts, admitted: {
     // cache breakpoint on each turn's tail for free, without us having to
     // hand-roll the marker-walking logic subagent.ts's raw-SDK path uses.
     //
-    // But "last cacheable block" is the wrong block for gbrain#2490's
+    // But "last cacheable block" is the wrong block for foresights#2490's
     // actual callers (page-summary, skillopt, enrich): those are
     // single-turn calls with a STABLE system prompt and a DIFFERENT user
     // message every time, so the auto-marker lands on the ever-varying
@@ -4398,7 +4398,7 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
       noKeyOnce(modelStr, missingKey, input.query, input.documents.length);
       throw new RerankError(
         `Reranker ${modelStr} needs ${missingKey} (not set) — rerank skipped, results pass ` +
-          `through unreranked. Fix: export ${missingKey}=… or gbrain config set search.reranker.enabled false`,
+          `through unreranked. Fix: export ${missingKey}=… or foresights config set search.reranker.enabled false`,
         'no_key',
       );
     }

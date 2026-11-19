@@ -163,7 +163,7 @@ for (const backend of testBackends()) {
 }
 
 // Value: protects=a quoted fact's date header stays outside its fence while the fact's words stay inside, with or without an evidence delivery; fails_when=fact rows lose the gbrain-header exception, or the exception reaches past the first line; why_new=only page rows kept a header ahead of the marker; seam=fenceTranscriptRows; no_claim=page rows (covered above)
-describe('#8042 fact rows: the date header gbrain wrote stays first, the fact is fenced', () => {
+describe('#8042 fact rows: the date header foresights wrote stays first, the fact is fenced', () => {
   const fact = (chunk_text: string) => ({ slug: 'facts/7', type: 'note', result_type: 'fact', fact_id: '7', chunk_text,
     fact_row: { id: 7, valid_from: '2025-06-02T00:00:00.000Z', valid_until: null, source: 'cli', from_quoted_page: true } }) as unknown as SearchResult;
   const header = '[observed unknown; valid 2025-06-02 to unknown]';

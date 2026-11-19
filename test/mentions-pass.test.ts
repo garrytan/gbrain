@@ -1,5 +1,5 @@
 /**
- * Entity mention index, the pass (mentions/pass.ts) as `gbrain extract
+ * Entity mention index, the pass (mentions/pass.ts) as `foresights extract
  * --stale` runs it on PGLite.
  *
  * Protects: default-on mention links from the stale sweep alone; incremental
@@ -284,7 +284,7 @@ describe('upgrade, slot builds and dry runs', () => {
     await engine.executeRaw('DELETE FROM mention_gazetteer_entries');
     await engine.executeRaw('DELETE FROM mention_index_status');
     expect(await engine.countStalePagesForExtraction({ versionTs: '1970-01-01T00:00:00Z' })).toBe(0);
-    expect((await mentionIndexUpgradeNotice(engine))?.join('\n')).toContain('gbrain extract --stale --catch-up');
+    expect((await mentionIndexUpgradeNotice(engine))?.join('\n')).toContain('foresights extract --stale --catch-up');
     const r = await sweep(engine);
     expect(r.pagesProcessed).toBe(0);
     expect(await mentionLinks(engine)).toEqual(['tickets/t1 -> crm/123']);

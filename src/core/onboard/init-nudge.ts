@@ -84,9 +84,9 @@ export async function runInitNudge(engine: BrainEngine): Promise<void> {
     // lines, an [AGENT] block for a non-interactive caller (no more silence
     // exactly when an agent runs init).
     const why = parts.length === 0
-      ? `Init checks incomplete (${checksRan}/${checksAttempted}) — run 'gbrain onboard --check' for full recommendations.`
-      : `Brain has opportunities: ${parts.join(', ')}. Run 'gbrain onboard --check' to see the plan.` +
-        (partial ? ` (${checksRan}/${checksAttempted} checks complete; run gbrain onboard --check for full recommendations)` : '');
+      ? `Init checks incomplete (${checksRan}/${checksAttempted}) — run 'foresights onboard --check' for full recommendations.`
+      : `Brain has opportunities: ${parts.join(', ')}. Run 'foresights onboard --check' to see the plan.` +
+        (partial ? ` (${checksRan}/${checksAttempted} checks complete; run foresights onboard --check for full recommendations)` : '');
     writeCliNotices([{
       code: 'onboard_opportunities', kind: 'coaching', why,
       fix: { argv: ['gbrain', 'onboard', '--check'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Lists each recommendation with its command; read-only.' },
@@ -106,7 +106,7 @@ export async function runUpgradeBanner(_engine: BrainEngine): Promise<void> {
     if (process.env.GBRAIN_NO_ONBOARD_NUDGE === '1') return;
     writeCliNotices([{
       code: 'onboard_opportunities', kind: 'coaching',
-      why: "Upgrade complete. Run 'gbrain onboard --check' to see if the new version surfaces any new opportunities.",
+      why: "Upgrade complete. Run 'foresights onboard --check' to see if the new version surfaces any new opportunities.",
       fix: { argv: ['gbrain', 'onboard', '--check'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Lists each recommendation with its command; read-only.' },
     }]);
   } catch {

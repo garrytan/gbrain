@@ -1,5 +1,5 @@
 /**
- * GST-363: gbrain setup --stdio-member, spawned against a temp HOME / GBRAIN_HOME (PGLite). Split from
+ * GST-363: foresights setup --stdio-member, spawned against a temp HOME / GBRAIN_HOME (PGLite). Split from
  * test/setup-serves-several.test.ts; the box and readers are in test/helpers/setup-serves-box.ts.
  *
  * 1. Protects: --stdio-member refuses an unknown member, a harness other than claude-code and codex, --instructions-only,
@@ -16,7 +16,7 @@ import { brainWithPages, box, fakeOpenclaw, gbrain, removeTempDirs, ROSTER, setu
 
 afterAll(removeTempDirs);
 
-describe('gbrain setup --serves (spawned, PGLite)', () => {
+describe('foresights setup --serves (spawned, PGLite)', () => {
   test('--stdio-member refuses an unknown member, off claude-code and codex, with --instructions-only or --no-stdio-member, and on a host with OpenClaw or Hermes; nothing is written', async () => {
     const b = box();
     await brainWithPages(b);
@@ -37,7 +37,7 @@ describe('gbrain setup --serves (spawned, PGLite)', () => {
       const r = await gbrain(b, ['setup', ...args, '--gbrain-bin', b.bin], env);
       expect(r.exitCode).toBe(2);
       expect(r.stderr).toContain(says);
-      if (says.endsWith('on this host')) expect(r.stderr).toContain('gbrain auth create <name> --member <id>');
+      if (says.endsWith('on this host')) expect(r.stderr).toContain('foresights auth create <name> --member <id>');
       expect(await stdioKey(b)).toBe('');
       expect(existsSync(join(b.home, '.claude.json'))).toBe(false);
     }
@@ -72,7 +72,7 @@ describe('gbrain setup --serves (spawned, PGLite)', () => {
     writeFileSync(join(b.home, '.claude', 'settings.json'), JSON.stringify({ enabledPlugins: { 'gbrain@gbrain': true } }));
     const plugin = await gbrain(b, ['setup', 'claude-code', '--stdio-member', 'alice-example', '--gbrain-bin', b.bin]);
     expect(plugin.exitCode).toBe(2);
-    expect(plugin.stderr).toContain("plugin serves this claude-code gbrain MCP server");
+    expect(plugin.stderr).toContain("plugin serves this claude-code foresights MCP server");
     expect(existsSync(join(b.home, '.claude.json'))).toBe(false);
 
     const serveRefusals: Array<[string[], string, Record<string, string>]> = [

@@ -12,7 +12,7 @@ JSON benefit. Section 5.2 separately finds that replacing original records with
 facts or summaries generally hurts QA, except for multi-session reasoning.
 Section 5.3 retains the original record while enriching its search key.
 
-This supplies the closest replication target for GBrain: distinguish finding
+This supplies the closest replication target for Foresights: distinguish finding
 evidence from using evidence, and test notes without deleting source material.
 Its oracle setup does not establish performance on noisy retrieval. Its reader
 models differ from our Sonnet 4.6 pilot, and retrieval improvements belong in a

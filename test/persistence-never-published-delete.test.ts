@@ -11,7 +11,7 @@ import { withEnv } from './helpers/with-env.ts';
 
 // #5336: a subagent-sandbox page is published to the database only and never
 // gets a canonical file. A trusted local delete of it must not fail closed as
-// if the file had been removed outside gbrain, and its receipt must not claim
+// if the file had been removed outside foresights, and its receipt must not claim
 // a file or Git effect it did not perform; a trusted edit keeps refusing.
 let engine: PGLiteEngine;
 let home: string;

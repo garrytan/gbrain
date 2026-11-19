@@ -6,7 +6,7 @@
  * the cluster when it's genuinely several, never K just because K was the limit.
  * Fixes part of issue #1663 (the "20 vs 1" precision problem), recommendation #2.
  *
- * WHY this runs on the cross-encoder rerank score and NOTHING else: gbrain
+ * WHY this runs on the cross-encoder rerank score and NOTHING else: foresights
  * measured (PrecisionMemBench Phase-1, documented in return-policy.ts) that the
  * RRF/cosine rank1→rank2 gap is ~identical whether rank-1 is right (0.602) or
  * wrong (0.569) — mechanical decay, not a trustworthy separatrix. The reranker's

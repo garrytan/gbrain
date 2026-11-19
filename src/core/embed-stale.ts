@@ -7,7 +7,7 @@ import { readContentChunksEmbeddingDim } from './embedding-dim-check.ts';
  * outside-voice catch).
  *
  * Single source of truth for the cursor-paginated, source-grouped, rate-limit-
- * aware embedding pipeline. Both `gbrain embed --stale` (CLI) and the
+ * aware embedding pipeline. Both `foresights embed --stale` (CLI) and the
  * `embed-backfill` job (Minion) call this helper so the working machinery
  * — keyset pagination, batch grouping by `source_id::slug`, merge-with-existing
  * via `getChunks` + `upsertChunks`, AbortSignal threading into in-flight HTTPs,
@@ -212,7 +212,7 @@ export async function stampIfPageProvenanceComplete(
 }
 
 /** Probe input for `probeEmbedder`. Exported so tests can detect probe calls. */
-export const EMBED_PROBE_TEXT = 'gbrain embedder preflight probe';
+export const EMBED_PROBE_TEXT = 'foresights embedder preflight probe';
 
 /**
  * #4283: live embedder health check, run BEFORE any signature-drift

@@ -4,9 +4,9 @@
  * Protects, on an on-disk two-source PGLite brain with large pages held
  * `upgrade_backfill` (the post-upgrade backfill's state) and a local
  * OpenAI-compatible embeddings server standing in for the provider:
- * - `gbrain embed --stale` reports `budget_limited` and prints the phrase
+ * - `foresights embed --stale` reports `budget_limited` and prints the phrase
  *   with the approve commands, with `failures: 0` (was silent);
- * - `gbrain embed --held --dry-run` exits 0 on two sources and lists both
+ * - `foresights embed --held --dry-run` exits 0 on two sources and lists both
  *   (was exit 1); `--held --max-usd N` without `--source` refuses with
  *   `invalid_params` naming the per-source commands and releases nothing;
  * - on a provider that bills nothing (#6847), `--slugs <slug> --source <id>
@@ -43,7 +43,7 @@ const verify = async (brain: HeldBrain, fix: Fix) => {
   return json(run.stdout);
 };
 const row = async (brain: HeldBrain, slug: string) => (await budgetRows(brain)).find(r => r.slug === slug)!;
-const approve = (source: string, n: string) => `gbrain embed --held --source ${source} --max-usd ${n}`;
+const approve = (source: string, n: string) => `foresights embed --held --source ${source} --max-usd ${n}`;
 
 let fake: FakeEmbeddings;
 beforeAll(() => { fake = startFakeEmbeddings(); });
@@ -118,8 +118,8 @@ describe('a provider that bills nothing (ollama)', () => {
 
     const hold = await gbrain(brain, ['embed', '--slugs', 'archive/day-b', '--source', 'alpha']);
     expect(hold.exitCode, hold.stderr).toBe(0);
-    const printed = /With the user's approval: (gbrain embed [^\n]+)/.exec(hold.stderr)?.[1];
-    expect(printed).toStartWith('gbrain embed --slugs archive/day-b --source alpha --max-usd 0.01');
+    const printed = /With the user's approval: ((?:foresights|gbrain) embed [^\n]+)/.exec(hold.stderr)?.[1];
+    expect(printed).toStartWith('foresights embed --slugs archive/day-b --source alpha --max-usd 0.01');
     const released = await gbrain(brain, argvOf(printed!));
     expect(released.exitCode, released.stderr).toBe(0);
     expect(await row(brain, 'archive/day-b')).toMatchObject({ state: 'open', embedded: 2 });

@@ -1,23 +1,23 @@
 /**
  * Model routes of the nightly quality probe (#5872), resolved against the
  * live brain by the caller that holds the engine — the same shape as the
- * #3676 search-config snapshot. `gbrain eval longmemeval` and
- * `gbrain eval cross-modal` run without a brain by design, so the autopilot
+ * #3676 search-config snapshot. `foresights eval longmemeval` and
+ * `foresights eval cross-modal` run without a brain by design, so the autopilot
  * step resolves here and passes the result through their existing flags and
  * `RunOpts`:
  *
  *   reader     models.eval.longmemeval → models.tier.reasoning → models.default
  *              → GBRAIN_MODEL → key-aware reasoning default
- *              → `gbrain eval longmemeval --model <reader>`
+ *              → `foresights eval longmemeval --model <reader>`
  *   extractor  models.tier.utility → models.default → GBRAIN_MODEL
  *              → key-aware utility default
  *              → LongMemEval `RunOpts.extractorModel`
  *   slots      models.eval.cross_modal.slot_{a,b,c}; unset or blank leaves the
  *              panel default (DEFAULT_SLOTS) under the #4636 substitution
- *              → `gbrain eval cross-modal --slot-<x>-model <m>`
+ *              → `foresights eval cross-modal --slot-<x>-model <m>`
  *
- * The reader chain is the one `gbrain models` reports for
- * `models.eval.longmemeval`; `gbrain models` reads these routes too, so the
+ * The reader chain is the one `foresights models` reports for
+ * `models.eval.longmemeval`; `foresights models` reads these routes too, so the
  * report shows what the probe takes.
  */
 
@@ -75,7 +75,7 @@ export class NightlyProbeModelRoutesError extends Error {
 /**
  * The judge-slot pins `models.eval.cross_modal.slot_{a,b,c}`, alias-expanded;
  * unset and blank keys are absent. The one reader for the nightly probe and
- * `gbrain eval cross-modal` (#6486), so the two cannot resolve a pin
+ * `foresights eval cross-modal` (#6486), so the two cannot resolve a pin
  * differently.
  */
 export async function readCrossModalSlotConfig(engine: ConfigReader): Promise<Partial<Record<NightlyProbeSlotId, string>>> {
@@ -88,11 +88,11 @@ export async function readCrossModalSlotConfig(engine: ConfigReader): Promise<Pa
 }
 
 /**
- * `gbrain eval cross-modal`'s slot reader (#6486): opens the brain through
+ * `foresights eval cross-modal`'s slot reader (#6486): opens the brain through
  * `connect` (the CLI passes a probe-only connect, which starts no migration),
  * reads the pins and closes it. Called only when a slot has no flag; the
  * caller treats a throw (no brain, brain busy) as "no pins", so the command
- * stays usable before `gbrain init`.
+ * stays usable before `foresights init`.
  */
 export async function readCrossModalSlotConfigFrom(
   connect: () => Promise<ConfigReader & { disconnect(): Promise<void> }>,

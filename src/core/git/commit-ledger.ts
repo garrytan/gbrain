@@ -1,5 +1,5 @@
 /**
- * PR B Part 3 (docs/designs/REFRESH_WRITE_BARRIER.md): the commit ledger. Every commit gbrain makes in a repository is
+ * PR B Part 3 (docs/designs/REFRESH_WRITE_BARRIER.md): the commit ledger. Every commit foresights makes in a repository is
  * appended as one JSON line to `<git common dir>/gbrain/commit-ledger.jsonl`, which lives inside `.git` (never tracked,
  * shared by every worktree, readable without a database). doctor's `foreign_writers` names every locally created commit
  * that is not in it.
@@ -154,7 +154,7 @@ async function writeLockedAsync(root: string, build: (loc: Location) => LedgerRe
   } catch (error) { warnOnce(root, error); }
 }
 
-/** Ledger a commit gbrain made in the repository holding `root` (any directory inside it). Never throws. */
+/** Ledger a commit foresights made in the repository holding `root` (any directory inside it). Never throws. */
 export function recordCommit(root: string, entry: LedgerCommit): void {
   if (entry.sha) writeLocked(root, loc => commitRecord(loc, entry));
 }

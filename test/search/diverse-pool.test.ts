@@ -24,7 +24,7 @@ describe('normalizeDiversePoolDepth', () => {
     for (const bad of ['101', '-1', '2.5', '', 'many', null, undefined, true]) expect(normalizeDiversePoolDepth(bad)).toBeUndefined();
   });
 
-  test('gbrain config set refuses an out-of-contract value and names a valid one', () => {
+  test('foresights config set refuses an out-of-contract value and names a valid one', () => {
     expect(searchConfigValueRefusal('search.diverse_pool_depth', '100')).toBeNull();
     expect(searchConfigValueRefusal('search.diverse_pool_depth', 'off')).toBeNull();
     const refusal = searchConfigValueRefusal('search.diverse_pool_depth', '500');

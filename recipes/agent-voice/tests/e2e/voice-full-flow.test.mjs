@@ -9,7 +9,7 @@
  *   1. Create scratch dir → /tmp/agent-voice-fullflow-<uuid>/
  *   2. Seed as fake host repo (.git init, AGENTS.md stub)
  *   3. Spawn openclaw with BRIEF.md that says:
- *      "Run `gbrain integrations install agent-voice --target $PWD`.
+ *      "Run `foresights integrations install agent-voice --target $PWD`.
  *       Then start the voice server: `bun run start` (or `npm start`).
  *       Wait for /health to respond."
  *   4. Wait ≤5min for openclaw exit OR /health response.
@@ -50,7 +50,7 @@ let serverProcess;
 let openclawProcess;
 
 function findGbrainBin() {
-  // Try the local checkout's CLI first; fall back to global gbrain.
+  // Try the local checkout's CLI first; fall back to global foresights.
   const local = resolve(__dirname, '..', '..', '..', '..', 'src', 'cli.ts');
   if (existsSync(local)) return { bin: 'bun', args: ['run', local] };
   const which = spawnSync('which', ['gbrain'], { encoding: 'utf-8' });
@@ -79,7 +79,7 @@ beforeAll(async () => {
   writeFileSync(join(scratchDir, 'AGENTS.md'), '# stub\n');
 
   const gbrainBin = findGbrainBin();
-  if (!gbrainBin) throw new Error('gbrain CLI not found (checked local checkout + $PATH)');
+  if (!gbrainBin) throw new Error('foresights CLI not found (checked local checkout + $PATH)');
 
   // Write BRIEF.md the openclaw runner will pick up.
   const brief = [
@@ -98,7 +98,7 @@ beforeAll(async () => {
     '4. Wait for ' + SERVER_URL + '/health to return {ok: true}.',
     '5. Print "READY" and exit.',
     '',
-    'If anything is confusing, run `gbrain friction log` with severity=error.',
+    'If anything is confusing, run `foresights friction log` with severity=error.',
   ].join('\n');
   writeFileSync(join(scratchDir, 'BRIEF.md'), brief);
 
@@ -167,7 +167,7 @@ describe.skipIf(!SHOULD_RUN)('voice-full-flow E2E (openclaw + roundtrip)', () =>
     expect(existsSync(join(scratchDir, 'services/voice-agent/code/lib/personas/venus.mjs'))).toBe(true);
 
     // No PII leak — re-run the guard against the copied tree.
-    // (We can't easily invoke the gbrain-side guard here; the guard ran during install via gbrain CI.)
+    // (We can't easily invoke the gbrain-side guard here; the guard ran during install via foresights CI.)
     // Spot-check: any term from $AGENT_VOICE_PII_BLOCKLIST should not appear in any copied file.
     // Literal banned names deliberately NOT in this source file per CLAUDE.md.
     if (process.env.AGENT_VOICE_PII_BLOCKLIST) {

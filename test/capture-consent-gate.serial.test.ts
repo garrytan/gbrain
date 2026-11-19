@@ -86,7 +86,7 @@ afterEach(() => {
   else process.env.GBRAIN_HOME = savedHome;
 });
 
-/** Both planes, the way `gbrain config set memory.auto_writeback <mode>` writes them. */
+/** Both planes, the way `foresights config set memory.auto_writeback <mode>` writes them. */
 async function setMode(mode: string | null, opts: { db?: boolean; file?: boolean } = {}): Promise<void> {
   const cfgPath = join(homeDir, '.gbrain', 'config.json');
   if (opts.file !== false) {
@@ -124,7 +124,7 @@ const sweep = () => runMaintenanceSweep(engine, { sourceId: 'default', capabilit
 const corpusText = (turns: string[]): string =>
   turns.map((t, i) => `${i % 2 === 0 ? '[user]' : '[assistant]'}\n${t}`).join('\n\n') + '\n';
 
-/** A Claude Code transcript + `gbrain hook session-end`, exactly as the harness runs it. */
+/** A Claude Code transcript + `foresights hook session-end`, exactly as the harness runs it. */
 async function sessionEnd(sessionId: string, turns: string[]): Promise<void> {
   const projects = join(homeDir, 'claude', 'projects', 'p1');
   mkdirSync(projects, { recursive: true });
@@ -368,7 +368,7 @@ describe('two brains on one machine', () => {
       turns: parseCorpusTurns(text).map((t) => t.sha256) }) + '\n');
     const later = text + '\n[user]\neta said to brain A after the upgrade\n';
     recordCaptureIfOff(OFF, file, later);
-    // An older gbrain on brain B still writes the single legacy file and drops A's turns from it.
+    // An older foresights on brain B still writes the single legacy file and drops A's turns from it.
     await asBrainB(async () => {
       writeFileSync(legacy, JSON.stringify({ version: 1, brain: brainIdentity(), source: null, at: new Date().toISOString(), turns: [] }) + '\n');
     });

@@ -1,5 +1,5 @@
 /**
- * `gbrain repair redacted-facts` (#7125): restore the words the prompt
+ * `foresights repair redacted-facts` (#7125): restore the words the prompt
  * sanitizer deleted from stored facts.
  *
  * Before the fix, fact extraction applied the prompt-injection patterns
@@ -44,7 +44,7 @@
  * row gets its text rewritten
  * by one database-only maintenance request on a managed brain (one
  * transaction on an unmanaged brain); its vector is then stale by its text
- * hash and `gbrain embed` re-embeds it. Page history keeps the damaged
+ * hash and `foresights embed` re-embeds it. Page history keeps the damaged
  * revisions. Nothing runs on upgrade.
  */
 import type { BrainEngine } from '../engine.ts';
@@ -217,7 +217,7 @@ const DETAILS: Record<string, string> = {
 };
 
 function previewCommand(scope: RepairScope, all: string[]): string {
-  return `gbrain repair redacted-facts${scope.source_ids.length === 1 && all.length > 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
+  return `foresights repair redacted-facts${scope.source_ids.length === 1 && all.length > 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
 }
 
 async function activeSources(engine: BrainEngine): Promise<string[]> {
@@ -259,7 +259,7 @@ export const redactedFactsRepair: RepairHandler = {
         residuals: { evidenced: count('evidenced'), ambiguous: count('ambiguous'), unproven: count('unproven'), segmented: count('segmented') } };
     }
     if (!opts.expect) {
-      throw new OperationError('invalid_params', 'gbrain repair redacted-facts --apply restores only the set a preview printed.',
+      throw new OperationError('invalid_params', 'foresights repair redacted-facts --apply restores only the set a preview printed.',
         `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`,
         'docs/guides/repair.md#redacted-facts');
     }

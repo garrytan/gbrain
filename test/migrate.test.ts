@@ -1381,10 +1381,10 @@ describe('PR #356 — 57014 catch path emits actionable 4-part diagnostic', () =
     const msgs = errSpy.mock.calls.map(c => String(c[0]));
     const joined = msgs.join('\n');
     expect(joined).toContain('exhausted retries');
-    expect(joined).toContain('gbrain doctor --locks');
-    expect(joined).toContain('gbrain apply-migrations --yes');
+    expect(joined).toContain('foresights doctor --locks');
+    expect(joined).toContain('foresights apply-migrations --yes');
     expect(joined).toContain('Verify:');
-    expect(joined).toContain('gbrain doctor');
+    expect(joined).toContain('foresights doctor');
 
     errSpy.mockRestore();
   });
@@ -1583,7 +1583,7 @@ describe('migration v48 — takes_weight_round_to_grid (v0.32)', () => {
   test('uses transaction:false (codex review #2 — non-blocking, idempotent via WHERE)', () => {
     // The original plan called this "mid-statement resume" — that was wrong.
     // What transaction:false actually buys is freeing the migration runner
-    // from a long transaction so other gbrain processes can interleave.
+    // from a long transaction so other foresights processes can interleave.
     const v48 = MIGRATIONS.find(m => m.version === 48);
     expect(v48?.transaction).toBe(false);
   });
@@ -1622,7 +1622,7 @@ describe('migration v48 — takes_weight_round_to_grid (v0.32)', () => {
 
 describe('migration v49 — eval_takes_quality_runs (v0.32)', () => {
   // v0.32 EXP-5 — Renumbered from v47 → v49 after merging master's v0.31.3 wave.
-  // DB-authoritative receipts table for `gbrain eval takes-quality`.
+  // DB-authoritative receipts table for `foresights eval takes-quality`.
   // Codex review #6 corrected the original two-phase split-brain plan: DB row
   // is the source of truth (carries full receipt JSON), disk artifact is
   // best-effort. The 4-sha unique key (corpus, prompt, models, rubric) makes
@@ -2051,7 +2051,7 @@ describe('migrate v81 — pages_provenance_columns', () => {
   test('v81 does NOT create any index (provenance is admin-surface only)', () => {
     const sql = (v81!.sql ?? '').toLowerCase();
     // Documented in the migration comment: provenance queries are admin-
-    // surface only (admin SPA Sources tab + gbrain doctor
+    // surface only (admin SPA Sources tab + foresights doctor
     // ingestion_health). Throwing an index on a low-cardinality TEXT
     // column would inflate the brain repo for negligible read benefit.
     expect(sql).not.toContain('create index');
@@ -2174,7 +2174,7 @@ describe('migrate v81 — round-trip on PGLite', () => {
 //
 // Adds nullable `event_type TEXT` to facts so the typed-claim substrate
 // (v0.35.4 / v67) can carry event-shaped rows alongside metric-shaped
-// rows. The migration is the substrate behind v0.40.2.0's `gbrain think`
+// rows. The migration is the substrate behind v0.40.2.0's `foresights think`
 // trajectory injection AND the LongMemEval harness's intent routing.
 //
 // Renumbered v81 → v82 → v89 across two successive master merges:

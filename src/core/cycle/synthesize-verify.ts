@@ -1,6 +1,6 @@
 /**
  * synthesize-verify.ts — mechanical claim verification on dream pages
- * (F1b/F4b, eval write-path fix wave; grounding gate, gbrain 10x amendment 7).
+ * (F1b/F4b, eval write-path fix wave; grounding gate, foresights 10x amendment 7).
  *
  * The synthesis prompt mandates verbatim quotes and source-exact numbers;
  * measured against the Cat 35 benchmark, fewer than half of quoted spans in

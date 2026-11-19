@@ -5,7 +5,7 @@
   "decided_at": "2026-10-05T19:30:00Z",
   "measured_build": "garrytan/gbrain@1384a0db",
   "deciding_run": "run_3",
-  "preregistration": "docs/eval/decisions/c4-pinned-questions/README.md, pushed in garrytan/gbrain@e17258eb before any run-3 cell",
+  "preregistration": "docs/eval/decisions/c4-pinned-questions/README.md, pushed in aimonk2025/gbrain@e17258eb before any run-3 cell",
   "safety_gate": {
     "status": "pass",
     "scenarios": 33,
@@ -13,7 +13,7 @@
       "pglite": "33/33",
       "postgres": "33/33"
     },
-    "full_ci": "bun run ci:ubicloud green on garrytan/gbrain@170422f4 (capy/mpw-integration, merged with master c9ba7782): 3475 items, 0 failed",
+    "full_ci": "bun run ci:ubicloud green on aimonk2025/gbrain@170422f4 (capy/mpw-integration, merged with master c9ba7782): 3475 items, 0 failed",
     "appended_workload_leakage": {
       "probes": 48,
       "leaks": 0,
@@ -53,7 +53,7 @@
     "reason": "Pinned beat the anchored control in seeds 7 and 1234 but not in seed 42 (0.972 vs 0.986 accuracy, 0.033 vs 0.017 lag), so the rule fails without a leak: a tie. Mean accuracy 0.981 pinned vs 0.968 control at equal tokens; the control at full evidence scored 1.000, as did think. The anchoring is the measured win: at equal tokens it lifts query+reader from 0.884 to 0.968 accuracy and stale-wrong from 0.116 to 0."
   },
   "overall": "opt_in",
-  "default_decision": "Pinned questions ship opt-in: gbrain creates no pin by itself, pinning a question is the owner consent for its paid refresh, and the standing_questions phase and context_pack delivery stay on for pins that exist (no setting changes). The anchored retrieval ships in pinned refresh (retrieveEvidence). Recommended next applications, each behind its own measured gate: query/search for entity-scoped latest-state questions, think gather for current-state questions about one entity, and context_pack entity cards.",
+  "default_decision": "Pinned questions ship opt-in: foresights creates no pin by itself, pinning a question is the owner consent for its paid refresh, and the standing_questions phase and context_pack delivery stay on for pins that exist (no setting changes). The anchored retrieval ships in pinned refresh (retrieveEvidence). Recommended next applications, each behind its own measured gate: query/search for entity-scoped latest-state questions, think gather for current-state questions about one entity, and context_pack entity cards.",
   "cost_note": "Pinned remains the cheapest correct answer for an entity question read often: at 100 reads per write $0.00057 per correct answer vs $0.00152 for the anchored reader at equal tokens and $0.00284 at full evidence; break-even about 110 reads per pin against the equal-token anchored reader and about 46 against the full-evidence one.",
   "caveats": [
     "Synthetic seeded workload, 6 entities, 3 seeds; dev stage.",
@@ -2190,7 +2190,7 @@
         }
       ],
       "diagnostic_pre_fix_attempt": {
-        "measured_build": "garrytan/gbrain@183fee7f (refresh retrieval without scope anchoring)",
+        "measured_build": "aimonk2025/gbrain@183fee7f (refresh retrieval without scope anchoring)",
         "metered_spend_usd": 2.9324,
         "finding": "Pinned refresh retrieval ranked every note sharing the question words alike and missed each entity newest note once notes accumulated, so pinned matched query+reader (0.528/0.542 vs 0.514 accuracy). Fixed in baadfc04 (src/core/questions/refresh.ts anchoredSlugs) with a regression test; not a decision input.",
         "summary": [

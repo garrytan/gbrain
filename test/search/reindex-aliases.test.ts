@@ -1,5 +1,5 @@
 /**
- * T8 — `gbrain reindex --aliases` backfill. Seeds pages with frontmatter
+ * T8 — `foresights reindex --aliases` backfill. Seeds pages with frontmatter
  * aliases (as if imported before the T3 projection landed), runs the backfill,
  * and verifies page_aliases is populated. Idempotent + --dry-run + --source.
  */

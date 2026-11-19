@@ -225,7 +225,7 @@ describe('per-brain settings are read per engine', () => {
   test('the write_capacity_low throttle is per brain', async () => {
     const setting = 'persistence.capacity.lifetime_ids';
     const row = { scope: 'brain', resource: 'lifetime_ids' as const, used: 90, limit: 100, pct: 90, days_to_exhaustion: null,
-      ['config_key']: setting, recommended_limit: 200, command: `gbrain config set ${setting} 200` };
+      ['config_key']: setting, recommended_limit: 200, command: `foresights config set ${setting} 200` };
     const snapshot: CapacitySnapshot = { rows: [row], low: [row], paused: [], pause_pct: 95, status: 'ok' };
     const a = configEngine({});
     expect(await capacityNotices(a, { throttle: true, snapshot })).toHaveLength(1);

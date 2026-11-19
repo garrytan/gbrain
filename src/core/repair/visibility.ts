@@ -1,5 +1,5 @@
 /**
- * `gbrain repair visibility` (#5525): tighten-only backfill that stamps an
+ * `foresights repair visibility` (#5525): tighten-only backfill that stamps an
  * explicit `visibility` on extracted atoms and synthesized concepts.
  *
  *   atom     origin page -> effectiveVisibility(origin); transcript or missing origin -> private;
@@ -258,7 +258,7 @@ export async function prepareFactVisibilityTighten(engine: BrainEngine, row: Wri
   const ids = (row.intent as { fact_ids?: unknown } | null)?.fact_ids;
   if (!Array.isArray(ids) || !ids.every(id => Number.isSafeInteger(id))) {
     throw opError('invalid_params', 'The fact visibility intent does not name its facts.',
-      `Request ${row.request_id} in source ${row.source_id} does not name the facts to make private, so nothing changed. Preview gbrain repair visibility again and apply it after the user approves.`);
+      `Request ${row.request_id} in source ${row.source_id} does not name the facts to make private, so nothing changed. Preview foresights repair visibility again and apply it after the user approves.`);
   }
   await authorizeWrite(engine, row.authority, 'submit_job', row.slug);
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
@@ -321,7 +321,7 @@ function missingFileHeld(item: Pick<RepairItem, 'source_id' | 'slug'>, error: un
   return { applied: false, outcome: CANONICAL_FILE_MISSING, detail: { path: `${item.slug}.md` },
     reason: `${item.source_id}:${item.slug} has no file in its source's checkout and is not under a declared storage.db_only path, so a label write would put the `
       + `database ahead of Git; nothing was written. If the page belongs in the database only, declare its folder under storage.db_only in gbrain.yml, commit it `
-      + `and preview again; if its file was removed by mistake, restore it (gbrain repair ghost-pages --source ${item.source_id} lists pages whose file is gone).` };
+      + `and preview again; if its file was removed by mistake, restore it (foresights repair ghost-pages --source ${item.source_id} lists pages whose file is gone).` };
 }
 
 /**
@@ -330,7 +330,7 @@ function missingFileHeld(item: Pick<RepairItem, 'source_id' | 'slug'>, error: un
  * On a brain without managed persistence a page whose file sits in its source's checkout gets the same splice in that
  * file (label-write.ts writeLabelFile). Null once written; the held outcome for a page stored in segments, a file the
  * repair cannot write, or a managed page whose canonical file is missing (`canonical_file_missing`: never written, or gone
- * outside gbrain, outside any declared storage.db_only path). A page that moved since it was read throws
+ * outside foresights, outside any declared storage.db_only path). A page that moved since it was read throws
  * `revision_conflict`, which the apply counts as skipped.
  */
 async function labelWrite(ctx: Parameters<RepairHandler['apply']>[0], item: RepairItem, snapshot: PageSnapshot, content: string, edit: LabelEdit, batch?: string): Promise<RepairItemOutcome | null> {
@@ -341,7 +341,7 @@ async function labelWrite(ctx: Parameters<RepairHandler['apply']>[0], item: Repa
     const refusal = await labelFileRefusal(ctx.engine, snapshot, content, edit);
     if (refusal?.reason === 'label_edit_refused') throw refusal.error;
   }
-  const write = { revision: snapshot.revision, content, edit, embed: true, preview: 'gbrain repair visibility', ...(batch ? { batch } : {}) };
+  const write = { revision: snapshot.revision, content, edit, embed: true, preview: 'foresights repair visibility', ...(batch ? { batch } : {}) };
   let written: Awaited<ReturnType<typeof writeLabelFile>>;
   try {
     written = path ? await writeLabelFile(ctx.engine, item, { ...write, path })
@@ -350,7 +350,7 @@ async function labelWrite(ctx: Parameters<RepairHandler['apply']>[0], item: Repa
     return missingFileHeld(item, error);
   }
   if (written === null) throw opError('revision_conflict', `${item.source_id}:${item.slug} changed after it was read, so it was not written.`,
-    'Preview gbrain repair visibility again; the page is listed with its current state.');
+    'Preview foresights repair visibility again; the page is listed with its current state.');
   return typeof written === 'string' ? null : written;
 }
 
@@ -386,14 +386,14 @@ interface ApprovedVisibility { target: RepairCursor; source_id: string; slug: st
 interface Selection { source_ids: string[]; class: VisibilityClass | null; slugs?: string[] }
 
 const visibilityPreviewCommand = (scope: RepairScope, selection: Selection, sourceFlag?: boolean) =>
-  `gbrain repair visibility${sourceFlag && scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}${selection.class ? ` --class ${selection.class}` : ''}${(selection.slugs ?? []).map(slug => ` --slug ${slug}`).join('')}`;
+  `foresights repair visibility${sourceFlag && scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}${selection.class ? ` --class ${selection.class}` : ''}${(selection.slugs ?? []).map(slug => ` --slug ${slug}`).join('')}`;
 
 function selectedClass(opts?: RepairPlanOptions): VisibilityClass | null {
   const value = opts?.driftClass;
   if (value === undefined) return null;
   if ((VISIBILITY_CLASSES as readonly string[]).includes(value)) return value as VisibilityClass;
-  throw opError('invalid_params', `--class for gbrain repair visibility takes ${VISIBILITY_CLASSES.join(', ')} (got "${value}").`,
-    'Preview every class with gbrain repair visibility, or one with e.g. gbrain repair visibility --class facts.');
+  throw opError('invalid_params', `--class for foresights repair visibility takes ${VISIBILITY_CLASSES.join(', ')} (got "${value}").`,
+    'Preview every class with foresights repair visibility, or one with e.g. foresights repair visibility --class facts.');
 }
 
 const isStatementTimeout = (error: unknown) => (error as { code?: string } | null)?.code === '57014';
@@ -424,12 +424,12 @@ export const visibilityRepair: RepairHandler = {
   async plan(engine: BrainEngine, scope: RepairScope, after: RepairCursor | null, opts?: RepairPlanOptions): Promise<RepairPlan> {
     if (opts?.readers) return planReaders(engine, scope, after, { ...opts, readers: opts.readers });
     const named = [...new Set(opts?.slugs ?? [])].sort();
-    if (named.length && opts?.driftClass !== undefined) throw opError('invalid_params', 'gbrain repair visibility takes --slug or --class, not both.',
+    if (named.length && opts?.driftClass !== undefined) throw opError('invalid_params', 'foresights repair visibility takes --slug or --class, not both.',
       'Name pages with --slug to make exactly them private, or preview a class with --class.');
     const selection: Selection = { source_ids: scope.source_ids, class: selectedClass(opts), ...(named.length ? { slugs: named } : {}) };
     const classes: readonly VisibilityClass[] = named.length ? ['pages'] : selection.class ? [selection.class] : VISIBILITY_CLASSES;
     const command = visibilityPreviewCommand(scope, selection, true);
-    if (named.length && opts?.apply && !opts.expect) throw opError('invalid_params', 'gbrain repair visibility --slug applies only the set a preview printed.',
+    if (named.length && opts?.apply && !opts.expect) throw opError('invalid_params', 'foresights repair visibility --slug applies only the set a preview printed.',
       `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`);
     if (opts?.apply && opts.expect) {
       const approved = await loadApprovedSet<ApprovedVisibility>(engine, { command: 'visibility', hash: opts.expect, previewCommand: command,
@@ -489,7 +489,7 @@ export const visibilityRepair: RepairHandler = {
     const hash = previewHash(hashParts(scope, selection, items));
     const owner = await ownerMemberId(engine);
     const twins = await openTwins(engine, items.filter(item => item.target.phase !== 4 && item.change?.to === 'private'), owner ? [owner] : [],
-      (source, slugs) => `gbrain repair visibility --source ${source}${slugs.map(slug => ` --slug ${slug}`).join('')}`);
+      (source, slugs) => `foresights repair visibility --source ${source}${slugs.map(slug => ` --slug ${slug}`).join('')}`);
     if (twins.count) residuals.open_twins = twins.count;
     if (items.length) await saveApprovedSet<ApprovedVisibility>(engine, { command: 'visibility', hash },
       items.map(item => ({ target: item.target, source_id: item.source_id, slug: item.slug, chars: item.chars, action: item.action, change: item.change!, selection })));
@@ -498,7 +498,7 @@ export const visibilityRepair: RepairHandler = {
       ...(pendingPastWindow || notRead.length ? [`This preview lists one window of ${items.length} item(s)${pendingPastWindow ? `; ${pendingPastWindow} more found past it` : ''}${notRead.length ? `; not read: ${notRead.join(', ')}` : ''}. `
         + `Apply this window (or decide not to), then preview again for the next one: ${next}`] : []),
       ...timedOut.map(cls => `Class ${cls} did not finish within the ${PLAN_STATEMENT_MS} ms statement bound and is not listed; the other classes are. `
-        + `Preview the others with --class, or run gbrain doctor --only derived_visibility for the counts.`),
+        + `Preview the others with --class, or run foresights doctor --only derived_visibility for the counts.`),
       ...openTwinsWarning(twins),
       ...(held.length ? [`${held.length} page(s) are held and not in this preview's set: their files would refuse the label write now. details.held names what differs for each and the step that clears it; preview again after it.`] : []),
     ];

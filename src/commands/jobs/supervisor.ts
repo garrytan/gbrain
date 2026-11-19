@@ -1,4 +1,4 @@
-/** `gbrain jobs supervisor` (dispatched by runJobs in src/commands/jobs.ts). */
+/** `foresights jobs supervisor` (dispatched by runJobs in src/commands/jobs.ts). */
 import { hasFlag, parseFlag, parseJobIsolationFlag, parseMaxRssFlag, parseNiceFlag, type JobsCommandContext } from './shared.ts';
 import { applyNiceness, formatNice, getEffectiveNiceness } from '../../core/minions/niceness.ts';
 import { resolveChildCliInvocation } from '../../core/minions/job-isolation.ts';
@@ -10,10 +10,10 @@ import type { BrainEngine } from '../../core/engine.ts';
 
 export async function runJobsSupervisor({ args, engine, engineOrNull }: JobsCommandContext): Promise<void> {
   // Dispatcher for supervisor subcommands:
-  //   gbrain jobs supervisor                    → foreground start (back-compat)
-  //   gbrain jobs supervisor start [--detach]   → foreground or detached start
-  //   gbrain jobs supervisor status             → JSON liveness + queue stats
-  //   gbrain jobs supervisor stop               → SIGTERM + drain wait
+  //   foresights jobs supervisor                    → foreground start (back-compat)
+  //   foresights jobs supervisor start [--detach]   → foreground or detached start
+  //   foresights jobs supervisor status             → JSON liveness + queue stats
+  //   foresights jobs supervisor stop               → SIGTERM + drain wait
   const { MinionSupervisor, DEFAULT_PID_FILE } = await import('../../core/minions/supervisor.ts');
   const { writeSupervisorEvent } = await import('../../core/minions/handlers/supervisor-audit.ts');
 
@@ -42,13 +42,13 @@ export async function runJobsSupervisor({ args, engine, engineOrNull }: JobsComm
   // (written directly: the `jobs` record has no record-wide json contract, see runJobsSupervisor's detach branch).
   if (!isStartCmd) {
     process.exit(writeCliRefusal(usageError(`Unknown supervisor subcommand: ${supCmd}. Expected: start, status, stop.`,
-      'Example: gbrain jobs supervisor start --detach --json'), 'jobs', { json: jsonMode }));
+      'Example: foresights jobs supervisor start --detach --json'), 'jobs', { json: jsonMode }));
   }
 
   const config = (await import('../../core/config.ts')).loadConfig();
   if (config?.engine === 'pglite') {
     process.exit(writeCliRefusal(opError('config_error', 'Supervisor requires Postgres. PGLite uses an exclusive file lock that blocks other processes.',
-      'On PGLite, run background maintenance through `gbrain serve` (or run jobs inline with `gbrain jobs submit --follow`).'),
+      'On PGLite, run background maintenance through `foresights serve` (or run jobs inline with `foresights jobs submit --follow`).'),
     'jobs', { json: jsonMode, human: 'Error: Supervisor requires Postgres. PGLite uses an exclusive file lock that blocks other processes.' }));
   }
 
@@ -66,13 +66,13 @@ export async function runJobsSupervisor({ args, engine, engineOrNull }: JobsComm
     const parsed = parseInt(supHealthRaw, 10);
     if (!Number.isFinite(parsed) || parsed < 0) {
       process.exit(writeCliRefusal(usageError(`--health-interval must be a non-negative integer (ms), got "${supHealthRaw}"`,
-        'Example: gbrain jobs supervisor start --health-interval 60000'), 'jobs',
+        'Example: foresights jobs supervisor start --health-interval 60000'), 'jobs',
       { json: jsonMode, human: `Error: --health-interval must be a non-negative integer (ms), got "${supHealthRaw}"` }));
     }
     if (parsed > 0 && parsed < 1000) {
       const msg = `--health-interval ${parsed} is suspiciously low (likely a unit-confusion typo). ` +
         `The flag takes milliseconds; for 60-second probes pass 60000. Use 0 to disable.`;
-      process.exit(writeCliRefusal(usageError(msg, 'Example: gbrain jobs supervisor start --health-interval 60000'), 'jobs', { json: jsonMode, human: `Error: ${msg}` }));
+      process.exit(writeCliRefusal(usageError(msg, 'Example: foresights jobs supervisor start --health-interval 60000'), 'jobs', { json: jsonMode, human: `Error: ${msg}` }));
     }
     healthInterval = parsed;
   }
@@ -99,7 +99,7 @@ export async function runJobsSupervisor({ args, engine, engineOrNull }: JobsComm
     : resolveChildCliInvocation({}, process.execPath, process.argv[1], resolveGbrainCliPath);
   if (!workerInvocation) {
     writeCliRefusal(opError('config_error', 'Could not resolve this worker installation. Repair the CLI or pass --cli-path.',
-      'Pass --cli-path <path to the gbrain CLI>, or reinstall gbrain.'), 'jobs', { json: jsonMode });
+      'Pass --cli-path <path to the foresights CLI>, or reinstall foresights.'), 'jobs', { json: jsonMode });
     process.exit(WORKER_EXIT_CONFIGURATION);
   }
 
@@ -121,7 +121,7 @@ export async function runJobsSupervisor({ args, engine, engineOrNull }: JobsComm
     );
     if (started.pid === undefined) {
       process.exit(writeCliRefusal(opError('unavailable', 'The detached supervisor process could not be started.',
-        `Run \`gbrain jobs supervisor start\` in the foreground to see the error${started.stderrPath ? `, or read ${started.stderrPath}` : ''}.`),
+        `Run \`foresights jobs supervisor start\` in the foreground to see the error${started.stderrPath ? `, or read ${started.stderrPath}` : ''}.`),
       'jobs', { json: true }));
     }
     const payload = {
@@ -146,7 +146,7 @@ export async function runJobsSupervisor({ args, engine, engineOrNull }: JobsComm
     supNiceResult = applyNiceness(supNice);
     if (!supNiceResult.applied) {
       console.error(
-        `[gbrain jobs] could not set supervisor niceness to ${supNice}: ${supNiceResult.error ?? 'unknown'}. ` +
+        `[foresights jobs] could not set supervisor niceness to ${supNice}: ${supNiceResult.error ?? 'unknown'}. ` +
         `Negative nice needs privilege; running at niceness ${supNiceResult.effective ?? 'unchanged'}.`,
       );
     }
@@ -172,7 +172,7 @@ export async function runJobsSupervisor({ args, engine, engineOrNull }: JobsComm
   await supervisor.start();
 }
 
-/** `gbrain jobs supervisor status`: liveness + queue stats; always exits the process. */
+/** `foresights jobs supervisor status`: liveness + queue stats; always exits the process. */
 async function showSupervisorStatus(
   { args, engine, engineOrNull }: Pick<JobsCommandContext, 'args' | 'engine' | 'engineOrNull'>,
   pidFile: string,
@@ -216,7 +216,7 @@ async function showSupervisorStatus(
   // event (concurrency + effective --max-rss) so split-$HOME deployments
   // see what the live-but-pidfile-invisible supervisor is running.
   const startedEvt = events.filter(e => e.event === 'started').pop() ?? null;
-  // Shared classifier — same code path runs in `gbrain doctor` so the
+  // Shared classifier — same code path runs in `foresights doctor` so the
   // two surfaces cannot drift on what counts as a crash. Supersedes
   // v0.35.4.0's binary `classifyWorkerExit({code})` on this surface;
   // see doctor.ts for the layering rationale.
@@ -307,7 +307,7 @@ async function showSupervisorStatus(
 const STOP_WAIT_MS = 45_000;
 
 /**
- * `gbrain jobs supervisor stop`: SIGTERM, wait for the exit, then verify the
+ * `foresights jobs supervisor stop`: SIGTERM, wait for the exit, then verify the
  * stop before calling it drained; always exits the process. #5062: "the pid
  * is gone" is not enough. Success also needs the supervisor's own `stopped`
  * audit row (after its `shutting_down`) saying the worker drained, every
@@ -391,7 +391,7 @@ async function stopSupervisor(engine: BrainEngine, args: string[], pidFile: stri
   if (!run.started) {
     report({ stopped: true, supervisor_pid: supervisorPid, queue, reason: 'unverified', drained: false, audit_files: run.files },
       `Supervisor ${supervisorPid} exited, but its audit trail has no record of the run (missing, pruned or corrupt; searched ${run.files.length ? run.files.join(', ') : 'no existing audit files'}), so the drain cannot be verified. ` +
-      'Inspect in-flight jobs with `gbrain jobs list --status active`.', false);
+      'Inspect in-flight jobs with `foresights jobs list --status active`.', false);
   }
   const events = run.events;
   const shuttingIdx = events.map(e => e.event).lastIndexOf('shutting_down');
@@ -434,7 +434,7 @@ async function stopSupervisor(engine: BrainEngine, args: string[], pidFile: stri
     ? `Supervisor ${supervisorPid} stopped; worker drained.`
     : `Supervisor ${supervisorPid} exited but the stop is not verified as drained (${reason}): ` +
       `${JSON.stringify(checks)}${liveWorkers.length > 0 ? `; live worker pid(s): ${liveWorkers.join(', ')}` : ''}. ` +
-      'Inspect in-flight jobs with `gbrain jobs list --status active`.';
+      'Inspect in-flight jobs with `foresights jobs list --status active`.';
   if (legacyPairing) console.error('Warning: audit rows written before worker exits carried a pid were paired with spawns by order.');
   report({ stopped: true, supervisor_pid: supervisorPid, queue, reason, drained, checks,
     ...(liveWorkers.length > 0 ? { live_worker_pids: liveWorkers } : {}),

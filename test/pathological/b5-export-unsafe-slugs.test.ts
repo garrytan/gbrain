@@ -1,9 +1,9 @@
 /**
  * B-5 (GBRA-130): a slug put_page or an entity stub accepted never wedges
- * `gbrain export`, and new identities that cannot be file names are refused
+ * `foresights export`, and new identities that cannot be file names are refused
  * at admission.
  *
- * Protects (export): pages an older gbrain stored under slugs no portable file
+ * Protects (export): pages an older foresights stored under slugs no portable file
  * name can hold (`ns:foo`, `meetings/2026-01-01:standup`, `companies/aux`,
  * `people/con`, `people/nul.x`, an 81-CJK-character segment) export under
  * escaped names with a `slug:` stamp instead of aborting the whole export;
@@ -111,7 +111,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       const long = report!.escaped.find(e => e.slug === CJK81)!;
       expect(long).toMatchObject({ source_id: 'default', restorable: false });
       expect(files).toContain(long.path);
-      expectItemFailure({ key: long.slug, code: long.reason, fix: long.fix }, { key: CJK81, code: 'segment_too_long', fix: new RegExp(`^gbrain put notes/漢{78}`) });
+      expectItemFailure({ key: long.slug, code: long.reason, fix: long.fix }, { key: CJK81, code: 'segment_too_long', fix: new RegExp(`^foresights put notes/漢{78}`) });
       expect(report!.escaped.filter(e => e.restorable).map(e => e.slug).sort()).toEqual(Object.keys(ESCAPED).sort());
       expect(messages.join('\n')).toContain('companies/aux -> companies/aux~.md');
       expectOthersUnchanged(before, await snapshotItems(engine, 'default'));
@@ -128,7 +128,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       const lines = text.split('\n').filter(line => line.includes('(export_path_collision)'));
       const parsed = lines.map(line => /^ {2}- (\S+) -> (\S+) collides with (\S+) \((\w+)\); fix: (.*)$/.exec(line)!).map(m => ({ key: m[1], code: m[4], fix: m[5] }));
       expect(parsed.map(p => p.key).sort()).toEqual(['default:one.md/two', 'other:notes/shared']);
-      expectItemFailure(parsed.find(p => p.key === 'other:notes/shared'), { key: 'other:notes/shared', code: 'export_path_collision', fix: new RegExp(`^gbrain export --source other --dir ${out}-other$`) });
+      expectItemFailure(parsed.find(p => p.key === 'other:notes/shared'), { key: 'other:notes/shared', code: 'export_path_collision', fix: new RegExp(`^foresights export --source other --dir ${out}-other$`) });
       expectItemFailure(parsed.find(p => p.key === 'default:one.md/two'), { key: 'default:one.md/two', code: 'export_path_collision', fix: /delete_page one\.md\/two/ });
       for (const source of ['default', 'other']) {
         await engine.executeRaw('DELETE FROM pages WHERE slug = $1', ['one.md/two']);
@@ -162,7 +162,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         const before = await snapshotItems(engine, 'default');
         for (const [slug, suggestion] of [['companies/aux', 'companies/aux-page'], ['people/nul.x', 'people/nul-page.x'], ['people/con', 'people/con-page']]) {
           const error = await refusal(putPage.handler(ctx, { slug, content: body(slug) }));
-          expectItemFailure({ key: slug, code: String(error.code), fix: error.fix }, { key: slug, code: 'invalid_params', fix: new RegExp(`^gbrain get ${suggestion.replace('.', '\\.')}$`) });
+          expectItemFailure({ key: slug, code: String(error.code), fix: error.fix }, { key: slug, code: 'invalid_params', fix: new RegExp(`^foresights get ${suggestion.replace('.', '\\.')}$`) });
           expect(error.detail).toBe('slug_not_portable');
           const dry = await refusal(putPage.handler({ ...ctx, dryRun: true }, { slug, content: body(slug) }));
           expect(dry.detail).toBe('slug_not_portable');

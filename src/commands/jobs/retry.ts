@@ -1,4 +1,4 @@
-/** `gbrain jobs retry` (dispatched by runJobs in src/commands/jobs.ts). */
+/** `foresights jobs retry` (dispatched by runJobs in src/commands/jobs.ts). */
 import type { JobsCommandContext } from './shared.ts';
 
 export async function runJobsRetry({ args, queue }: JobsCommandContext): Promise<void> {

@@ -270,7 +270,7 @@ describe('serializeFrontmatter', () => {
   // a throw from a silent coercion.
   describe('title quoting round-trips through the YAML parser', () => {
     const cases: Array<[string, string]> = [
-      ['leading backtick (blocked docs/guides/skillopt.md)', '`gbrain skillopt` — Self-evolving skills'],
+      ['leading backtick (blocked docs/guides/skillopt.md)', '`foresights skillopt` — Self-evolving skills'],
       ['leading @ (YAML c-reserved)', '@mentions and you'],
       ['leading % (directive indicator)', '% completion tracking'],
       ['leading dash (parsed as a sequence — title went undefined)', '- dash leading title'],
@@ -371,7 +371,7 @@ describe('DIRECTORY_RULES', () => {
     return sameFields && [...(r.tags ?? [])].sort().join(',') === derived;
   };
 
-  // Transcripts matching gbrain's sensitivity vocabulary are dropped before any
+  // Transcripts matching foresights's sensitivity vocabulary are dropped before any
   // LLM call. A shipped DIRECTORY_RULE that maps a specific person's folder
   // onto one of those categories encodes a private fact about a real individual
   // into every install, which the Privacy rule in CLAUDE.md forbids for
@@ -421,7 +421,7 @@ describe('DIRECTORY_RULES', () => {
 
   test('a path under a removed prefix now reports the generic rule', () => {
     // Accepted, and pinned rather than incidental: `matchedRule` is a
-    // diagnostic label, surfaced as results[].rule by `gbrain frontmatter`
+    // diagnostic label, surfaced as results[].rule by `foresights frontmatter`
     // (frontmatter.ts:486). Deleting a rule necessarily changes which rule is
     // named. Everything the label does NOT cover — title/type/date/source/tags,
     // i.e. every field serializeFrontmatter persists — is unchanged.

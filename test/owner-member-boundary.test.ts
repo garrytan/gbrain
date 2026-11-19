@@ -1,7 +1,7 @@
 /**
  * GST-2484: the owner exemption covers privacy, never member access, on every read path.
  *
- * 1. Protects: a credential bound to the brain owner (gbrain access owner set) reads a member-restricted page (one that
+ * 1. Protects: a credential bound to the brain owner (foresights access owner set) reads a member-restricted page (one that
  *    names readers with readable_by, or sits under a folder rule) only when its readers list the owner, on every read
  *    path: get_page, list_pages, search (hybrid and keyword, fields: full), query and recall. That is the boundary
  *    docs/guides/access-designations.md documents for a shared brain. visibility: private stays readable by the owner.

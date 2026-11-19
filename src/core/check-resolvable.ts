@@ -3,7 +3,7 @@
  *
  * Three call sites:
  * 1. `bun test` — unit tests import and assert on checkResolvable()
- * 2. `gbrain doctor` — runtime health check with actionable agent guidance
+ * 2. `foresights doctor` — runtime health check with actionable agent guidance
  * 3. skill-creator skill — mandatory post-creation validation gate
  *
  * @param skillsDir — the `skills/` directory (NOT repo root). Parser joins
@@ -126,7 +126,7 @@ export interface ResolverEntry {
  * Parse RESOLVER.md / AGENTS.md into structured entries. Supports two formats
  * that can mix in one file:
  *
- *   Format 1 (table) — original gbrain shape:
+ *   Format 1 (table) — original foresights shape:
  *     | trigger phrase | `skills/<name>/SKILL.md` |
  *
  *   Format 2 (compact list, v0.41.7.0) — OpenClaw-native shape:
@@ -396,7 +396,7 @@ export function checkResolvable(
   }
 
   // `cwd_walk_up` (tier 1b of autoDetectSkillsDir) accepts ANY ancestor `skills/` dir
-  // with no gbrain signal, and an OpenClaw workspace's `skills/` (`openclaw_workspace_*`)
+  // with no foresights signal, and an OpenClaw workspace's `skills/` (`openclaw_workspace_*`)
   // holds skills other tools install, so a foreign skill would otherwise score as a hard
   // unreachable error. Downgrade to a warning only when ALL hold: found via one of
   // those; no resolver file contributes rows (RESOLVER.md is gbrain-native, so its mere presence stays
@@ -656,7 +656,7 @@ export function checkResolvable(
 
   // D-CX-9 SKILLIFY_STUB sentinel check: scan every SKILL.md + script
   // file under skillsDir for the sentinel marker emitted by
-  // `gbrain skillify scaffold`. Presence means a scaffolded skill
+  // `foresights skillify scaffold`. Presence means a scaffolded skill
   // shipped without a real implementation — warning-severity in
   // default mode, error-promoted under --strict via D-CX-3.
   for (const skill of manifest) {

@@ -6,7 +6,7 @@ import { assertInlineBody } from './page-body/page-shape.ts';
  * `add_timeline_entry` historically wrote ONLY the `timeline_entries` table.
  * On an FS/git-canonical brain (markdown on disk is the committable source of
  * truth) that stranded every manual entry: invisible to git, absent from
- * `gbrain get <slug>`, and silently lost on any FS→DB rebuild because no
+ * `foresights get <slug>`, and silently lost on any FS→DB rebuild because no
  * bullet in the canonical markdown could reconstruct it.
  *
  * This module routes manual timeline writes through the SAME target seam
@@ -41,7 +41,7 @@ import { assertInlineBody } from './page-body/page-shape.ts';
  *
  * Reconcile note: the pages row's `content_hash` is deliberately NOT updated
  * here — the on-disk file now hashes differently from the stored hash, so the
- * next `gbrain sync` re-imports the page (refreshing chunks + re-extracting
+ * next `foresights sync` re-imports the page (refreshing chunks + re-extracting
  * the timeline, which conflicts-no-ops against the row written here). Same
  * eventual-consistency contract as the facts fence lane.
  */

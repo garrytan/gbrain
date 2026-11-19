@@ -279,7 +279,7 @@ describe('slugify', () => {
 //
 // Same resolution chain as resolveEntitySlug, but returns the source
 // tag (`exact_page` | `fuzzy_match` | `fallback_slugify`) so trajectory
-// routing in `gbrain think` (Commit 2) can gate on
+// routing in `foresights think` (Commit 2) can gate on
 // `resolution_source !== 'fallback_slugify'` and avoid querying invented
 // slugs in production. The longmemeval harness accepts fallback_slugify
 // because its extractor uses the same slugify fallback (they cohere).

@@ -86,7 +86,7 @@ export async function performFullSync(
   //
   // v0.31.2 (codex C6): use the strategy-aware walker. Pre-fix this
   // hardcoded `collectMarkdownFiles(repoPath)` and filtered with
-  // default-markdown `isSyncable(rel)`, so `gbrain sync --strategy
+  // default-markdown `isSyncable(rel)`, so `foresights sync --strategy
   // code --dry-run` always reported zero files even when ~1500 code
   // files were waiting.
   // #5988: paths are relative to the slug base, the same keys holds and the ledger use.
@@ -116,7 +116,7 @@ export async function performFullSync(
   // source (incremental path already does this).
   // #753/#774: thread exclude (--exclude CLI) + slugRoot (monorepo subdir).
   const _fullImportT0 = Date.now();
-  serr(`[gbrain phase] sync.fullsync.import start strategy=${opts.strategy ?? 'markdown'}`);
+  serr(`[foresights phase] sync.fullsync.import start strategy=${opts.strategy ?? 'markdown'}`);
   opts.onProgress?.({ phase: 'full_import' });
   await moveHeldRenames(engine, holds, holdRoot);
   // GBRA-217: a re-import of a source that already has pages reads its reasons from the whole history (a first sync creates
@@ -163,7 +163,7 @@ export async function performFullSync(
     });
   }
   serr(
-    `[gbrain phase] sync.fullsync.import done ${Date.now() - _fullImportT0}ms ` +
+    `[foresights phase] sync.fullsync.import done ${Date.now() - _fullImportT0}ms ` +
     `imported=${result.imported} skipped=${result.skipped} errors=${result.errors}`,
   );
 
@@ -216,7 +216,7 @@ export async function performFullSync(
     serr(
       `\n  Auto-skipped ${fullGate.autoSkipped.length} file(s) that failed >= ` +
       `${resolveAutoSkipThreshold()} consecutive syncs. These pages are NOT indexed; ` +
-      `'gbrain doctor' will warn until they're fixed.`,
+      `'foresights doctor' will warn until they're fixed.`,
     );
   }
 
@@ -243,7 +243,7 @@ export async function performFullSync(
       if (e instanceof EmbeddingDimMismatchError) {
         serr('\n' + e.recipeMessage + '\n');
         serr(`Tip: pass --no-embed to sync without embedding, then`);
-        serr(`run 'gbrain embed --stale' after fixing the schema.\n`);
+        serr(`run 'foresights embed --stale' after fixing the schema.\n`);
       }
       // Other errors stay best-effort.
     }
@@ -337,7 +337,7 @@ async function reportBlockedFullSync(
         `\nFull sync blocked: a rename left a stale duplicate that could not be removed:\n` +
         `${fullRenameRows.map(f => `  ${f.path}: ${f.error}`).join('\n')}\n\n` +
         `If the delete keeps failing in your environment, remove the stale row ` +
-        `yourself: 'gbrain delete <stale-slug>' with the stale slug named above ` +
+        `yourself: 'foresights delete <stale-slug>' with the stale slug named above ` +
         `(only rows whose backing file is gone are ever named — never a live page). ` +
         `A sentinel reading 'stale row ?' names nothing on purpose: that run could not ` +
         `prove ANY row stale — fix the unreadable tracked file it reports instead. ` +
@@ -359,13 +359,13 @@ async function reportBlockedFullSync(
         `${codeBreakdown}\n\n` +
         `These are provider-health failures (timeout / rate limit / quota), not bad ` +
         `files — do NOT use --skip-failed for them. Check the embedding provider, ` +
-        `then re-run 'gbrain sync --full'.`,
+        `then re-run 'foresights sync --full'.`,
       );
     } else {
       serr(
         `\nFull sync blocked: ${fileFailCount} file(s) failed:\n` +
         `${codeBreakdown}\n${formatFailedFileList(result.failures)}\n\n` +
-        `Pinpoint a file with 'gbrain frontmatter validate <path>' (--fix auto-repairs), ` +
+        `Pinpoint a file with 'foresights frontmatter validate <path>' (--fix auto-repairs), ` +
         `fix the YAML and re-run, or use '--skip-failed'. A file ` +
         `that keeps failing auto-skips after ${resolveAutoSkipThreshold()} consecutive syncs.`,
       );
@@ -531,7 +531,7 @@ async function reconcileFullSyncDeletes(
       const trip = syncDeleteTrip(deletableSlugs.length, plan.reconcilableCount, caps);
       if (trip && !massReconcileAllowed()) {
         serr(`\n  WARNING: refusing to reconcile-delete ${deletableSlugs.length} of ${plan.reconcilableCount} file-backed page(s) for source '${sid}' (${syncDeleteTripText(trip, caps)}). ` +
-          `No pages were deleted. Check the checkout first; if the removal is intended, raise the cap (gbrain config set ${trip === 'max_deletes' ? 'sync.max_deletes' : 'sync.max_delete_ratio'}.source.${sid} <value>) or re-run with GBRAIN_ALLOW_MASS_RECONCILE=1.`);
+          `No pages were deleted. Check the checkout first; if the removal is intended, raise the cap (foresights config set ${trip === 'max_deletes' ? 'sync.max_deletes' : 'sync.max_delete_ratio'}.source.${sid} <value>) or re-run with GBRAIN_ALLOW_MASS_RECONCILE=1.`);
         deletableSlugs = [];
       }
       if (dbOnlySlugs.length > 0) {
@@ -543,22 +543,22 @@ async function reconcileFullSyncDeletes(
             const r = await writePageThrough(engine, slug, { sourceId: sid, expectedFileBytes: null });
             if (r.written) { reExported++; continue; }
             if (r.skipped === 'disabled_by_config' || r.skipped === 'mirror_read_only' || r.skipped === 'url_clone') continue;
-            if (r.skipped === 'file_changed') throw new OperationError('file_database_drift', 'The checkout file exists; re-export only restores absent files.', `If the file holds the newer edit, run gbrain sync --source ${sid} to import it; otherwise ask the user which version to keep.`);
+            if (r.skipped === 'file_changed') throw new OperationError('file_database_drift', 'The checkout file exists; re-export only restores absent files.', `If the file holds the newer edit, run foresights sync --source ${sid} to import it; otherwise ask the user which version to keep.`);
             if (r.error) throw new Error(r.error);
             if (r.skipped === 'over_push_scan_cap') {
               reExportFailures++;
-              const fix = 'Kept the database page. Its file would pass the pre-push secret-scan cap, so it stays database-only and no sync re-exports it; read it with gbrain get.';
+              const fix = 'Kept the database page. Its file would pass the pre-push secret-scan cap, so it stays database-only and no sync re-exports it; read it with foresights get.';
               reexportFailures.push({ slug, path: pathBySlug.get(slug)!, code: 'over_push_scan_cap', message: 'The rendered file is over the pre-push secret-scan cap.', fix });
               serr(`  ${slug} (over_push_scan_cap) ${fix}`);
               continue;
             }
-            throw new OperationError('storage_error', `The page was not re-exported (${r.skipped}).`, 'Run gbrain doctor --json for the write-through target, then sync again.');
+            throw new OperationError('storage_error', `The page was not re-exported (${r.skipped}).`, 'Run foresights doctor --json for the write-through target, then sync again.');
           } catch (error) {
             const failure = classifyItemFailure(error);
             if (failure.scope === 'run') throw error;
             reExportFailures++;
-            const fix = `Kept the database page and any existing file. If the file is newer, import it with gbrain sync --source ${sid} --include-gitignored; ` +
-              `if the database is newer, fix the cause above and run gbrain sync --source ${sid} --full --no-pull to re-export it; when both changed, ask the user which edit wins.`;
+            const fix = `Kept the database page and any existing file. If the file is newer, import it with foresights sync --source ${sid} --include-gitignored; ` +
+              `if the database is newer, fix the cause above and run foresights sync --source ${sid} --full --no-pull to re-export it; when both changed, ask the user which edit wins.`;
             reexportFailures.push({ slug, path: pathBySlug.get(slug)!, code: failure.code, message: failure.message, fix });
             serr(`  ${slug} (${failure.code}: ${failure.message}) ${fix}`);
           }
@@ -568,7 +568,7 @@ async function reconcileFullSyncDeletes(
           `(DB-only write-through — not deleting).` +
           (reExported > 0 ? ` Re-exported ${reExported} of them to the working tree.` : '') +
           (reExportFailures > 0 ? ` ${reExportFailures} re-export failure(s), listed above.` : '') +
-          `\n  Commit + push them (e.g. scripts/brain-commit-push.sh, or 'gbrain sources harden') ` +
+          `\n  Commit + push them (e.g. scripts/brain-commit-push.sh, or 'foresights sources harden') ` +
           `so the next sync sees them as file-backed.`,
         );
       }

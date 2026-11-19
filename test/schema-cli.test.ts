@@ -1,4 +1,4 @@
-// v0.38 Phase C: gbrain schema CLI smoke tests.
+// v0.38 Phase C: foresights schema CLI smoke tests.
 //
 // Tests the runSchema dispatch + each subcommand's output shape via
 // the public CLI entrypoint. Hermetic — spawns the real CLI through
@@ -35,7 +35,7 @@ afterAll(() => {
   rmSync(DEFAULT_GBRAIN_HOME, { recursive: true, force: true });
 });
 
-describe('gbrain schema CLI (Phase C)', () => {
+describe('foresights schema CLI (Phase C)', () => {
   // Every argv here is read-only against the shared DEFAULT_GBRAIN_HOME:
   // bundled-pack reads, the default-resolution `active`, and error paths
   // verified to exit before any config write (no-arg `use` exits 2 at the
@@ -65,13 +65,13 @@ describe('gbrain schema CLI (Phase C)', () => {
 
   function cached(...argv: string[]): CliResult {
     const r = batched.get(argv.join(' '));
-    if (!r) throw new Error(`not in READ_ONLY_ARGVS batch: gbrain ${argv.join(' ')}`);
+    if (!r) throw new Error(`not in READ_ONLY_ARGVS batch: foresights ${argv.join(' ')}`);
     return r;
   }
 
   test('schema with no subcommand shows help text', () => {
     // Note: `schema --help` is intercepted by the CLI's parent help system
-    // and prints generic help (`gbrain --help` for full command list). The
+    // and prints generic help (`foresights --help` for full command list). The
     // schema-specific help fires when no subcommand is provided.
     const r = cached('schema');
     expect(r.stdout + r.stderr).toMatch(/schema|active|list|show|validate|use/i);
@@ -183,7 +183,7 @@ describe('gbrain schema CLI (Phase C)', () => {
   });
 });
 
-describe('gbrain schema use (Phase C, gap-fill T3)', () => {
+describe('foresights schema use (Phase C, gap-fill T3)', () => {
   let home: string;
 
   beforeEach(() => {

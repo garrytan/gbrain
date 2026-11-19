@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Convert LoCoMo conversations into a LongMemEval-format dataset for
- * `gbrain eval longmemeval`. Conversion rules: src/eval/longmemeval/locomo.ts.
+ * `foresights eval longmemeval`. Conversion rules: src/eval/longmemeval/locomo.ts.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { convertLocomo, LOCOMO_SEALED_CONVERSATIONS, type LocomoSample } from '../src/eval/longmemeval/locomo.ts';

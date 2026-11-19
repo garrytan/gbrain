@@ -34,7 +34,7 @@ mutating: false
 
 Answer questions using the brain's knowledge with 3-layer search and synthesis.
 
-> **Memory verbs (MEMORY_VERBS v1, gbrain ≥ 0.43).** When connected to a brain
+> **Memory verbs (MEMORY_VERBS v1, foresights ≥ 0.43).** When connected to a brain
 > over MCP, prefer the seven frozen memory verbs for memory work — they carry
 > provenance, evidence, and a server-enforced token budget:
 > - **`recall(query | entity, budget_tokens)`** — the budget-packed memory read.
@@ -65,22 +65,22 @@ This skill guarantees:
    - Semantic query for conceptual questions
    - Structured queries (list by type, backlinks) for relational questions
 2. **Execute searches:**
-   - Cheap-hybrid search gbrain for exact tokens / known names (search)
-   - Full-hybrid search gbrain for concept questions (query; `--expand` adds multi-query expansion)
-   - List pages in gbrain by type or check backlinks for structural queries
+   - Cheap-hybrid search foresights for exact tokens / known names (search)
+   - Full-hybrid search foresights for concept questions (query; `--expand` adds multi-query expansion)
+   - List pages in foresights by type or check backlinks for structural queries
    - Narrow with filters instead of grepping the brain checkout: `--types '["meeting"]'`,
-     `--match keyword`, `gbrain query "<q>" --since 2026-09-01 --until 2026-09-30`, `--source <id>`.
-     Every call and flag: "Which gbrain call for which lookup" in `skills/conventions/brain-first.md`.
-3. **Read top results.** Read the top 3-5 pages from gbrain to get full context.
+     `--match keyword`, `foresights query "<q>" --since 2026-09-01 --until 2026-09-30`, `--source <id>`.
+     Every call and flag: "Which foresights call for which lookup" in `skills/conventions/brain-first.md`.
+3. **Read top results.** Read the top 3-5 pages from foresights to get full context.
 4. **Synthesize answer** with citations. Every claim traces back to a specific page slug.
 5. **Flag gaps.** If the brain doesn't have info, say "the brain doesn't have information on X" rather than hallucinating. Read the result's notices first (see "When it fails"): a degraded or truncated result is not a gap.
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - Check each retrieval result for notices before answering: on MCP, extra text blocks whose first line looks like [gbrain notice empty_retrieval kind=degraded], mirrored in `_meta.gbrain_notices`; on the CLI, the `[AGENT]` block, `search_degraded`, or a `note: search degraded` line.
-- `empty_retrieval` with `kind=degraded` (or `search_degraded: keyword_only_no_embedding_provider`): an empty result is NOT proof the user has no notes. Tell the user "your brain is searching keywords only right now, so I may be missing notes on X", try exact names and synonyms with `gbrain search`, and point to the notice's fix (usually enabling embeddings).
+- `empty_retrieval` with `kind=degraded` (or `search_degraded: keyword_only_no_embedding_provider`): an empty result is NOT proof the user has no notes. Tell the user "your brain is searching keywords only right now, so I may be missing notes on X", try exact names and synonyms with `foresights search`, and point to the notice's fix (usually enabling embeddings).
 - `empty_retrieval` with "retrieval healthy": nothing was degraded, but this one query matched nothing. Before saying "the brain doesn't have information on X", try the display name, a synonym or a hybrid search (`--match hybrid`, the default).
 - `listing_truncated` or `budget_truncated`: the list was cut off. Say "showing the first N", and page or narrow the query before claiming something is absent.
 - `page_not_found` from `get_page`: the slug is wrong or in another source; search by title (and check `--source`) before reporting the page missing.
@@ -124,7 +124,7 @@ questions on their existing facts-first route. Do not change `context_pack` or
 existing third-party calls.
 
 ```bash
-gbrain recall --query 'zebra telescope' --budget-tokens 75 --budget-policy query_first --json
+foresights recall --query 'zebra telescope' --budget-tokens 75 --budget-policy query_first --json
 ```
 
 Equivalent MCP request:
@@ -150,7 +150,7 @@ This guidance and advertised tool schemas do not prove native-harness adoption.
 Confirm an observed query-first call in a fresh harness conversation before
 claiming activation; otherwise report adoption as unverified.
 
-- `gbrain search` / `gbrain query` return ranked chunks with context snippets.
+- `foresights search` / `foresights query` return ranked chunks with context snippets.
   These are often enough to answer the question directly.
 - Hits on conversation pages (sessions, transcripts, meetings, chat logs)
   already come back as the whole session by default (`return_unit: "auto"`,
@@ -160,9 +160,9 @@ claiming activation; otherwise report adoption as unverified.
   page, budgeted by `token_budget`, default 6,000) or `"window"` (neighbor
   chunks). `return_unit: "chunk"` opts out.
   Each result then carries the evidence in `chunk_text` plus a `delivered`
-  block; see [evidence delivery](https://github.com/garrytan/gbrain/blob/master/docs/evidence-delivery.md).
-  `gbrain query "when did the launch move?" --return-unit page --token-budget 6000`
-- Only use `gbrain get <slug>` to load the full page when a chunk confirms the
+  block; see [evidence delivery](https://github.com/aimonk2025/gbrain/blob/master/docs/evidence-delivery.md).
+  `foresights query "when did the launch move?" --return-unit page --token-budget 6000`
+- Only use `foresights get <slug>` to load the full page when a chunk confirms the
   page is relevant and you need more context (e.g., compiled truth, timeline).
 - **"Tell me about X"** -- get the full page (the user wants the complete picture).
 - **"Did anyone mention Y?"** -- search results are enough (the user wants a yes/no with evidence).
@@ -193,37 +193,37 @@ For relationship questions ("who knows who at X?", "connections between A and B"
 "who works at Acme?", "who attended the standup?"), use the graph layer instead
 of full-text search:
 
-- `gbrain graph-query <slug> --type <link_type> --depth N --direction in|out|both`
+- `foresights graph-query <slug> --type <link_type> --depth N --direction in|out|both`
 - Available link types: `attended`, `works_at`, `invested_in`, `founded`, `advises`, `mentions`, `source`
 - `--direction in` answers "who points to X?" (e.g., who works at company X)
 - `--direction out` answers "what does X point to?" (default)
 - `--depth N` controls multi-hop traversal (default 5)
 
 Examples:
-- "Who works at Acme?" → `gbrain graph-query companies/acme --type works_at --direction in`
-- "Who attended Demo Day W26?" → `gbrain graph-query meetings/demo-day-w26 --type attended --direction out`
-- "What companies has Emily advised?" → `gbrain graph-query people/emily --type advises --direction out`
-- "Who has Alice met (via meetings)?" → `gbrain graph-query people/alice --type attended --depth 2`
+- "Who works at Acme?" → `foresights graph-query companies/acme --type works_at --direction in`
+- "Who attended Demo Day W26?" → `foresights graph-query meetings/demo-day-w26 --type attended --direction out`
+- "What companies has Emily advised?" → `foresights graph-query people/emily --type advises --direction out`
+- "Who has Alice met (via meetings)?" → `foresights graph-query people/alice --type attended --depth 2`
 
-Combine with `gbrain query` for queries that need BOTH semantic similarity AND
+Combine with `foresights query` for queries that need BOTH semantic similarity AND
 graph structure. Search results are ranked with a small backlink boost so well-
 connected entities surface higher.
 
 ## Search Quality Awareness
 
 If search results seem off (wrong results, missing known pages, irrelevant hits):
-- Run `gbrain doctor --json` to check index health
+- Run `foresights doctor --json` to check index health
 - Check embedding coverage -- partial embeddings degrade hybrid search
-- Compare keyword search (`gbrain search`) vs hybrid search (`gbrain query`)
+- Compare keyword search (`foresights search`) vs hybrid search (`foresights query`)
   for the same query to isolate whether the issue is embedding-related
 - Report search quality issues in the maintain workflow (see maintain skill)
 
 ## Tools Used
 
-- Keyword search gbrain (search)
-- Hybrid search gbrain (query)
-- Read a page from gbrain (get_page)
-- List pages in gbrain with filters (list_pages)
-- Check backlinks in gbrain (get_backlinks)
-- Traverse the link graph in gbrain (traverse_graph)
-- View timeline entries in gbrain (get_timeline)
+- Keyword search foresights (search)
+- Hybrid search foresights (query)
+- Read a page from foresights (get_page)
+- List pages in foresights with filters (list_pages)
+- Check backlinks in foresights (get_backlinks)
+- Traverse the link graph in foresights (traverse_graph)
+- View timeline entries in foresights (get_timeline)

@@ -1,6 +1,6 @@
 # Engine graduation spike: PGLite to Postgres copy route
 
-Day-1 spike for verified engine graduation (plan §5.1 and the day-1 items of §13). It measures two logical copy routes from a PGLite brain into a Postgres target, the target triggers that rewrite or refuse a verbatim copy, which trigger-bypass mechanism each target role permits, which `gbrain doctor --no-migrate --json` checks write, how released binaries treat a tombstoned data dir, and time to value.
+Day-1 spike for verified engine graduation (plan §5.1 and the day-1 items of §13). It measures two logical copy routes from a PGLite brain into a Postgres target, the target triggers that rewrite or refuse a verbatim copy, which trigger-bypass mechanism each target role permits, which `foresights doctor --no-migrate --json` checks write, how released binaries treat a tombstoned data dir, and time to value.
 
 **Recommendation: Route B, the inventory-driven in-process copier, streaming `COPY ... FROM STDIN` in primary-key keyset batches.** Each table copies in its own target transaction under `SET LOCAL session_replication_role = replica` when the role permits it, otherwise under `ALTER TABLE ... DISABLE TRIGGER USER`. It passes verify on every fixture and target tested, adds no dependency, needs no superuser, works through transaction-mode PgBouncer, and is 3x faster with a fifth of the peak memory of Route A at 10k pages. Route A also passes verify, but only after five workarounds. It needs `psql` and a new dependency, and through a transaction-mode pooler it leaves `search_path = ''` on every pooled server connection.
 
@@ -111,15 +111,15 @@ Under `replica` neither ordering nor self-FKs matter, and nothing outlives the t
 
 1. `vector` is untrusted on the pgvector image: `permission denied to create extension "vector"`. It has to be installed beforehand. `pg_trgm` and `pgcrypto` are trusted.
 2. The v24 RLS backfill requires `BYPASSRLS` on the role.
-3. The v35 auto-RLS event trigger needs a superuser. When a superuser pre-creates it, `auto_enable_rls()` must be owned by the gbrain role, or `initSchema` fails with `must be owner of function public.auto_enable_rls`.
+3. The v35 auto-RLS event trigger needs a superuser. When a superuser pre-creates it, `auto_enable_rls()` must be owned by the foresights role, or `initSchema` fails with `must be owner of function public.auto_enable_rls`.
 
 On `supabase/postgres` the `postgres` role passes all three with no preparation (`initSchema` took 1.1 s).
 
-Through PgBouncer, gbrain's client sends `statement_timeout` and `idle_in_transaction_session_timeout` as startup parameters. A stock PgBouncer refuses the connection (`unsupported startup parameter: statement_timeout`) unless `ignore_startup_parameters` lists them, as the CI compose file does. With that, `initSchema` itself succeeds through transaction-mode PgBouncer.
+Through PgBouncer, foresights's client sends `statement_timeout` and `idle_in_transaction_session_timeout` as startup parameters. A stock PgBouncer refuses the connection (`unsupported startup parameter: statement_timeout`) unless `ignore_startup_parameters` lists them, as the CI compose file does. With that, `initSchema` itself succeeds through transaction-mode PgBouncer.
 
 ## Doctor checks that write
 
-`gbrain doctor --no-migrate --json` ran against copied Postgres targets under a statement-level `BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE` fence on every table (`ENABLE ALWAYS`, raising), and with `log_statement=all`. It also ran against the PGLite sources with a per-table and per-sequence digest taken before and after.
+`foresights doctor --no-migrate --json` ran against copied Postgres targets under a statement-level `BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE` fence on every table (`ENABLE ALWAYS`, raising), and with `log_statement=all`. It also ran against the PGLite sources with a per-table and per-sequence digest taken before and after.
 
 | Check or path | Write | Where | Behaviour under the fence |
 |---|---|---|---|
@@ -129,7 +129,7 @@ Through PgBouncer, gbrain's client sends `statement_timeout` and `idle_in_transa
 
 No other statement in either log modified data: 855 statements on the 1k target and 151 checks, no DDL, no advisory locks, no `set_config`. Two failing checks matter for the cutover gate:
 
-- `sync_freshness` fails on both the source and the target of every generator brain, because the fixture never runs `gbrain sync`. The gate "no failing check on the target" cannot pass on these fixtures unless they sync, or unless the gate compares against the source doctor.
+- `sync_freshness` fails on both the source and the target of every generator brain, because the fixture never runs `foresights sync`. The gate "no failing check on the target" cannot pass on these fixtures unless they sync, or unless the gate compares against the source doctor.
 - `wedged_queue` fails on the Postgres target and never on PGLite (`src/commands/doctor/checks/queue-jobs.ts:341` returns ok for every non-Postgres engine). It fires when a queue has waiting jobs, no healthy active job, no live worker, and a last completion older than 15 minutes. That is exactly the quiesced state of a graduating brain that carries waiting jobs, as the legacy brain does. Unless the verify-step doctor exempts it with its reason, it blocks every cutover of such a brain.
 
 ## Older binaries against a tombstoned path

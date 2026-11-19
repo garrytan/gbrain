@@ -1,7 +1,7 @@
 /**
  * Owner trust actions over the resident owner's local administration socket
- * (#5575: DX-2, ENG-15). When a `gbrain serve` holds a PGLite brain, the CLI
- * cannot open it, so `gbrain trust` sends three administration requests over
+ * (#5575: DX-2, ENG-15). When a `foresights serve` holds a PGLite brain, the CLI
+ * cannot open it, so `foresights trust` sends three administration requests over
  * the 0600 persistence socket (persistence/ipc.ts `kind: 'administration'`,
  * CLI lane only, verified against the CLI's durable registration):
  *
@@ -27,7 +27,7 @@ export const TRUST_ADMIN_OPERATIONS = ['trust_read', 'trust_preview', 'trust_app
 export type TrustAdminOperation = typeof TRUST_ADMIN_OPERATIONS[number];
 
 const bad = (message: string) => opError('invalid_params', message,
-  'This gbrain CLI and the running owner disagree on the trust request shape; run the same release on both (restart the serve after upgrading).');
+  'This foresights CLI and the running owner disagree on the trust request shape; run the same release on both (restart the serve after upgrading).');
 const optString = (value: unknown, key: string): string | undefined => {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== 'string') throw bad(`${key} must be a string.`);

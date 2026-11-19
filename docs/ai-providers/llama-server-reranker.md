@@ -3,7 +3,7 @@
 [`llama-server`](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)
 is the HTTP wrapper that ships with llama.cpp. With `--reranking`, it
 exposes an OpenAI-style `POST /v1/rerank` endpoint that returns
-`{results: [{index, relevance_score}]}` — exactly the wire shape gbrain
+`{results: [{index, relevance_score}]}` — exactly the wire shape foresights
 supports for cross-encoder rerankers. The
 `llama-server-reranker` recipe routes
 `gateway.rerank()` at your local llama.cpp instance.
@@ -66,7 +66,7 @@ usual CPU choice).
 > score is meaningless (around 1e-28 in the llama.cpp issue tracker). List
 > the tensors with the dump script in llama.cpp's `gguf-py`
 > (`python gguf-py/gguf/scripts/gguf_dump.py ./models/<file>.gguf | grep cls.output`)
-> and expect a match. `gbrain models doctor` also catches it (step 5).
+> and expect a match. `foresights models doctor` also catches it (step 5).
 
 ### 3. Launch llama-server with --reranking AND --alias
 
@@ -80,7 +80,7 @@ usual CPU choice).
 
 The `--alias` matters: without it, llama-server's `/v1/models` (and the
 `model` field rerank requests echo) defaults to the full gguf file
-path, which makes the gbrain config string ugly and brittle. With
+path, which makes the foresights config string ugly and brittle. With
 `--alias qwen3-reranker-0.6b`, your config string is short and stable.
 `--pooling rank` selects the reranking head explicitly.
 
@@ -88,18 +88,18 @@ path, which makes the gbrain config string ugly and brittle. With
 launch. If you also run a local embedder via the
 [`llama-server`](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)
 recipe, run two separate llama-server processes on two different ports
-(typically 8080 for embeddings, 8081 for reranking — gbrain's defaults
+(typically 8080 for embeddings, 8081 for reranking — foresights's defaults
 match that convention).
 
-### 4. Wire gbrain at your server
+### 4. Wire foresights at your server
 
 ```bash
-# Point gbrain at the llama.cpp host (skip if running locally on default port)
-gbrain config set provider_base_urls.llama-server-reranker http://your-host:8081/v1
+# Point foresights at the llama.cpp host (skip if running locally on default port)
+foresights config set provider_base_urls.llama-server-reranker http://your-host:8081/v1
 
 # Tell search to use this reranker
-gbrain config set search.reranker.model llama-server-reranker:qwen3-reranker-0.6b
-gbrain config set search.reranker.enabled true
+foresights config set search.reranker.model llama-server-reranker:qwen3-reranker-0.6b
+foresights config set search.reranker.enabled true
 ```
 
 The `qwen3-reranker-0.6b` after the colon is your `--alias` value from
@@ -116,11 +116,11 @@ export LLAMA_SERVER_RERANKER_API_KEY=your-bearer-token
 ### 5. Verify
 
 ```bash
-gbrain models doctor
+foresights models doctor
 # Expect: ✔ reranker_config llama-server-reranker:qwen3-reranker-0.6b ok
 #         ✔ reranker_config llama-server-reranker:qwen3-reranker-0.6b ok (reachable; ranks a relevant passage above an unrelated one)
 
-gbrain search "some query" --json | jq '.[].rerank_score'
+foresights search "some query" --json | jq '.[].rerank_score'
 # Expect: rerank_score on every row
 ```
 
@@ -129,7 +129,7 @@ unrelated passage. If it reports `config` ("scores an unrelated passage as
 high as a relevant one"), the server answers but the model can't rank:
 usually a broken conversion. Replace the GGUF (step 2).
 
-If `gbrain models doctor` reports the reachability probe as `network`
+If `foresights models doctor` reports the reachability probe as `network`
 status, two common causes:
 
 1. The server is reachable but in embedding mode, not reranking mode.
@@ -148,7 +148,7 @@ search-mode resolution unless you override it:
 
 ```bash
 # Tighten or loosen per-search timeout (overrides recipe default):
-gbrain config set search.reranker.timeout_ms 60000
+foresights config set search.reranker.timeout_ms 60000
 ```
 
 Per-call overrides in `SearchOpts.reranker_timeout_ms` still win for
@@ -177,7 +177,7 @@ hard-fail when configured for local rerank. Local rerank costs
 electricity, not API tokens.
 
 ```bash
-GBRAIN_MAX_USD=0.01 gbrain search "..." --reranker llama-server-reranker:qwen3-reranker-0.6b
+GBRAIN_MAX_USD=0.01 foresights search "..." --reranker llama-server-reranker:qwen3-reranker-0.6b
 # Works: rerank fires, recorded at $0, cumulative cap untouched.
 ```
 

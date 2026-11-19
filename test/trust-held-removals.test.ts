@@ -303,7 +303,7 @@ async function repairCli(b: Brain, args: string[]): Promise<Record<string, any>>
   return JSON.parse(printed).results[0];
 }
 
-describe('gbrain repair accepted-takes (the v0.60.253.0 accept bug)', () => {
+describe('foresights repair accepted-takes (the v0.60.253.0 accept bug)', () => {
   test('a take the v0.60.253.0 accept removed stays gone through a republish and reconcile; the repair restores exactly the accepted row from the records (managed and unmanaged)', async () => withEnv({ GBRAIN_HOME: home }, async () => {
     for (const [engine, managed] of engines.flatMap(e => [[e, true], [e, false]] as const)) {
       const b = await brain(engine);

@@ -21,7 +21,7 @@
  * command. The version string is regex-validated AND monotonic-checked before
  * it reaches the agent's context (a malicious brain page / MCP response can
  * neither forge a "downgrade-as-upgrade" nor change the action — the action is
- * always the hardcoded `gbrain upgrade` / `gbrain self-upgrade`).
+ * always the hardcoded `foresights upgrade` / `foresights self-upgrade`).
  *
  * NO DB. The hot path runs before `connectEngine()` and thin clients have no
  * local DB, so all state is file-based under `~/.gbrain/` (honors GBRAIN_HOME).
@@ -112,9 +112,9 @@ export function currentReleaseChannel(): ReleaseChannel | null {
 
 /** The command that moves this install to `target`, rendered against what currently decides the channel. */
 export function channelSwitchCommand(target: ReleaseChannel, res: ChannelResolution): string {
-  if (res.source === 'flag') return `gbrain upgrade --channel ${target}`;
-  if (res.source === 'env') return `${RELEASE_CHANNEL_ENV}=${target} (it overrides self_upgrade.channel), or unset ${RELEASE_CHANNEL_ENV} and run gbrain config set self_upgrade.channel ${target}`;
-  return `gbrain config set self_upgrade.channel ${target}`;
+  if (res.source === 'flag') return `foresights upgrade --channel ${target}`;
+  if (res.source === 'env') return `${RELEASE_CHANNEL_ENV}=${target} (it overrides self_upgrade.channel), or unset ${RELEASE_CHANNEL_ENV} and run foresights config set self_upgrade.channel ${target}`;
+  return `foresights config set self_upgrade.channel ${target}`;
 }
 
 /** A usage-error sentence for an invalid channel value. */
@@ -522,7 +522,7 @@ export function offeredVersion(runningVersion: string, latest: string | null, kn
  * The one shared "is an upgrade actually pending for THIS binary?" predicate.
  * Returns the offered version (offeredVersion) when the effective channel's cache is present and fresh — else
  * null. The running-version comparison is the load-bearing part: the cache
- * records the version of whatever binary WROTE it (an older gbrain on PATH can
+ * records the version of whatever binary WROTE it (an older foresights on PATH can
  * write it via the detached refresh), so consumers must never trust
  * `marker.current` to describe themselves. Every upgrade-nag surface (CLI
  * startup marker, doctor, advisor, get_brain_identity) routes through here so
@@ -633,10 +633,10 @@ export function releaseRefreshLock(lockPath: string): void {
   }
 }
 
-// ── Swap receipt (what `gbrain upgrade --swap-only` actually installed) ──────
+// ── Swap receipt (what `foresights upgrade --swap-only` actually installed) ──────
 
 /**
- * #6828: the autopilot channel names a file in this env var; `gbrain upgrade`
+ * #6828: the autopilot channel names a file in this env var; `foresights upgrade`
  * writes what its swap installed there. Exit 0 alone cannot tell a swap from
  * a no-op (`bun update` on a tag whose head is already installed exits 0 and
  * changes nothing), and a no-op must never relaunch or record known-bad.
@@ -652,7 +652,7 @@ export const SWAP_RECEIPT_ENV = 'GBRAIN_SWAP_RECEIPT';
 export interface SwapReceipt {
   outcome: 'installed' | 'not_installed' | 'installed_broken';
   from: string;
-  /** What `gbrain --version` reported after the swap; null when unreadable. */
+  /** What `foresights --version` reported after the swap; null when unreadable. */
   installed: string | null;
 }
 
@@ -693,7 +693,7 @@ export interface SelfUpgradeState {
   attempting_version?: string;
   last_check_ts?: number;
   last_applied_version?: string;
-  /** #8776: `external` declares that a launcher outside gbrain's service starts autopilot again when it exits, so upgrades hand it over instead of refusing. */
+  /** #8776: `external` declares that a launcher outside foresights's service starts autopilot again when it exits, so upgrades hand it over instead of refusing. */
   autopilot_launcher?: 'external';
 }
 
@@ -784,7 +784,7 @@ export function resolveSelfUpgradeMode(
   return 'notify';
 }
 
-// ── `gbrain config set self_upgrade.<leaf>` (file plane) ─────────────────────
+// ── `foresights config set self_upgrade.<leaf>` (file plane) ─────────────────────
 
 const QUIET_HOURS_DEFAULT_START = 23;
 const QUIET_HOURS_DEFAULT_END = 8;
@@ -802,7 +802,7 @@ export function resolveQuietHoursWindow(
   };
 }
 
-/** Every `self_upgrade.*` leaf `gbrain config set` accepts. All of them route
+/** Every `self_upgrade.*` leaf `foresights config set` accepts. All of them route
  * to ~/.gbrain/config.json: each reader (the cli.ts startup check, the
  * autopilot channel, doctor) reads the file plane only, so a DB-plane write
  * would be accepted and never read (#5489). */
@@ -901,7 +901,7 @@ function parseFailedVersions(raw: string): SelfUpgradeConfigParse {
 }
 
 /**
- * Parse the raw `gbrain config set self_upgrade.<leaf> <value>` string into
+ * Parse the raw `foresights config set self_upgrade.<leaf> <value>` string into
  * the typed value the file-plane readers expect. Refuses anything a reader
  * would silently ignore (an unknown mode reads as `notify`).
  */
@@ -921,7 +921,7 @@ export function parseSelfUpgradeConfigValue(leaf: SelfUpgradeConfigLeaf, raw: st
       return { ok: false, error: `must be true or false (got '${raw}')` };
     }
     case 'autopilot_launcher':
-      return raw.trim() === 'external' ? { ok: true, value: 'external' } : { ok: false, error: `must be external (got '${raw}'); unset it to refuse upgrades while autopilot runs outside gbrain's service` };
+      return raw.trim() === 'external' ? { ok: true, value: 'external' } : { ok: false, error: `must be external (got '${raw}'); unset it to refuse upgrades while autopilot runs outside foresights's service` };
     case 'quiet_hours':
       return parseQuietHours(raw);
     case 'failed_versions':

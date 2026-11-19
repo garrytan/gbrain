@@ -10,10 +10,10 @@
  * Phases (idempotent, additive):
  *   A. Schema     — verify migration v45 is applied (the schema runner
  *                   in src/core/migrate.ts does the actual DDL during
- *                   `gbrain upgrade`/initSchema). Asserts post-condition.
+ *                   `foresights upgrade`/initSchema). Asserts post-condition.
  *   B. Record     — runner-owned ledger write (handled by apply-migrations.ts).
  *
- * No content mutation. No data loss. Operator runs `gbrain doctor` after
+ * No content mutation. No data loss. Operator runs `foresights doctor` after
  * upgrade to verify the `facts_health` check is green.
  */
 
@@ -45,12 +45,12 @@ async function phaseASchema(
     // Column shape (v47 adds notability column + CHECK) is enforced by that
     // migration alone — see MIGRATIONS[v47]. The orchestrator does not need
     // to gate on column shape; v47 is idempotent and runs as part of the
-    // same `gbrain apply-migrations --yes` invocation.
+    // same `foresights apply-migrations --yes` invocation.
     if (v < 45) {
       return {
         name: 'schema',
         status: 'failed',
-        detail: `expected schema version >= 45 (facts hot memory); got ${v}. Run \`gbrain apply-migrations --yes\` to apply.`,
+        detail: `expected schema version >= 45 (facts hot memory); got ${v}. Run \`foresights apply-migrations --yes\` to apply.`,
       };
     }
     // Post-condition: facts table exists.
@@ -122,7 +122,7 @@ export const v0_31_0: Migration = {
     description:
       'v0.31 adds a real-time working-memory layer. Every substantive conversation turn ' +
       "extracts facts (events, preferences, commitments, beliefs) into a hot `facts` " +
-      'table via a cheap Haiku pass folded into signal-detector. `gbrain recall` queries ' +
+      'table via a cheap Haiku pass folded into signal-detector. `foresights recall` queries ' +
       'them by entity / session / recency / kind. The agent automatically sees relevant ' +
       'hot memory at conversation time via the MCP `_meta.brain_hot_memory` channel. ' +
       "The dream cycle's new 10th phase `consolidate` clusters related facts and promotes " +

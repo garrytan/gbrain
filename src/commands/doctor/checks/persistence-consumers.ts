@@ -9,7 +9,7 @@
  *   overlap is reported, not bounded. Short-lived rows (`put`, `cli`) and
  *   rows younger than 30 s are listed only.
  * - `consumers_without_heartbeat` (T1c): owners stamped on this host's live
- *   running claims that have no heartbeat row: an older gbrain build, which
+ *   running claims that have no heartbeat row: an older foresights build, which
  *   never writes one, or a consumer whose renewals fail.
  * - `host_identity_mismatch` (I1): a worktree this filesystem holds whose
  *   binding belongs to another `host.json` identity (same machine id, or the
@@ -34,6 +34,7 @@ import { consumerOverlap, hostIdentityMismatches, ownersWithoutHeartbeat, OVERLA
 import { isEmbeddedIdentityValue, localHostIdentity } from '../../../core/persistence/identity.ts';
 import { agentFix, checkError, doctorVerify } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { commandText } from '../../../core/brand.ts';
 
 const DOCS = 'docs/guides/troubleshooting.md#two-consumers-on-host';
 const IDENTITY_DOCS = 'docs/guides/troubleshooting.md#host-identity-mismatch';
@@ -71,8 +72,8 @@ export async function consumersWithoutHeartbeatCheck(engine: BrainEngine, hostId
     return { name: 'consumers_without_heartbeat', status: 'warn', details,
       message: `consumers_without_heartbeat: ${owners.length} process(es) hold live claims on this host without a consumer heartbeat row `
         + `(${owners.map(owner => `${owner.kind ?? 'unknown'} pid ${owner.pid}${owner.version ? ` v${owner.version}` : ''}: ${owner.requests} claim(s) on ${owner.sources.join(', ')}`).join('; ')}). `
-        + 'A gbrain older than this release writes no heartbeat, so the consumer election cannot see it and a new process beside it starts a second full consumer. '
-        + 'Restart that process on this gbrain version.',
+        + 'A foresights older than this release writes no heartbeat, so the consumer election cannot see it and a new process beside it starts a second full consumer. '
+        + 'Restart that process on this foresights version.',
       fix: agentFix(STATUS_ARGV, 'Read-only: shows each running claim\'s owner (kind, pid, build) next to host.consumers.', 'consumers_without_heartbeat', { docs: DOCS }) };
   } catch (error) {
     return checkError('consumers_without_heartbeat', 'compare running claims with the consumer heartbeat rows', error, { details: { count: 'unknown', health: 'unknown', docs: DOCS } });
@@ -124,7 +125,7 @@ export async function serveBuildDriftCheck(engine: BrainEngine, hostId: string,
     const details = { count: older.length, this_version: VERSION, owner: owner ? { kind: owner.kind, pid: owner.pid, mode: owner.mode, version: owner.version } : null,
       older: older.map(row => ({ kind: row.kind, pid: row.pid, mode: row.mode, version: row.version })), newer: newer.map(row => ({ kind: row.kind, pid: row.pid, version: row.version })), docs: DRIFT_DOCS };
     if (!live.length) return { name: 'serve_build_drift', status: 'ok', details,
-      message: 'No live gbrain consumer on this host writes a heartbeat row. A serve that predates heartbeats writes none; consumers_without_heartbeat names it when it holds claims.' };
+      message: 'No live foresights consumer on this host writes a heartbeat row. A serve that predates heartbeats writes none; consumers_without_heartbeat names it when it holds claims.' };
     if (!older.length) return { name: 'serve_build_drift', status: 'ok', details,
       message: newer.length ? `This checkout (v${VERSION}) is older than the running ${newer.map(label).join('; ')}; upgrade this checkout before running one-shot commands from it.`
         : `Every live consumer on this host runs this build (v${VERSION}).` };
@@ -133,7 +134,7 @@ export async function serveBuildDriftCheck(engine: BrainEngine, hostId: string,
     return { name: 'serve_build_drift', status: 'warn', details,
       message: `serve_build_drift: serve is running an older build than this checkout; restart serve and workers. This binary is v${VERSION}; running: ${older.map(label).join('; ')}. `
         + 'Until they restart, one-shot commands from this checkout run newer code against an older consumer. '
-        + `Restart with \`${argv.join(' ')}\`${argv[0] === 'kill' ? ' and start it again the way it was launched' : ''}, then restart each other listed process. `
+        + `Restart with \`${commandText(argv)}\`${argv[0] === 'kill' ? ' and start it again the way it was launched' : ''}, then restart each other listed process. `
         + 'A serve that predates heartbeats writes no row; consumers_without_heartbeat names it.',
       fix: { argv, consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify('serve_build_drift'), docs: DRIFT_DOCS,
         why: `Restarts ${label(target)} on this build (v${VERSION}); restart every other listed process the same way.` } };

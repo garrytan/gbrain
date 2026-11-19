@@ -1,9 +1,9 @@
 /**
- * gbrain bench publish — turn a captured-run NDJSON into a baseline file (v0.41).
+ * foresights bench publish — turn a captured-run NDJSON into a baseline file (v0.41).
  *
  * The LOOP-closing verb. Without `bench publish`, the eval gate has nothing
  * to gate against except hand-curated fixtures. This verb takes the output
- * of `gbrain eval export` and writes a `*.baseline.ndjson` file with:
+ * of `foresights eval export` and writes a `*.baseline.ndjson` file with:
  *   - line 1: metadata header (label, thresholds, source_hash, baseline_mean_latency_ms)
  *   - lines 2..N: raw captured rows with `query_hash` stamped on each
  *
@@ -18,7 +18,7 @@
  * + sort + hash all together is impossible). In-memory read + sort + write.
  *
  * Usage:
- *   gbrain bench publish --from <captured.ndjson> --to <X.baseline.ndjson>
+ *   foresights bench publish --from <captured.ndjson> --to <X.baseline.ndjson>
  *     [--threshold-jaccard FLOAT] [--threshold-top1 FLOAT]
  *     [--threshold-latency-multiplier FLOAT] [--label STRING]
  *     [--force] [--json]
@@ -119,13 +119,13 @@ function parseArgs(args: string[]): PublishOpts {
 }
 
 function printHelp(): void {
-  console.log(`gbrain bench publish — write a baseline file from captured queries
+  console.log(`foresights bench publish — write a baseline file from captured queries
 
 Usage:
-  gbrain bench publish --from <captured.ndjson> --to <X.baseline.ndjson> [flags]
+  foresights bench publish --from <captured.ndjson> --to <X.baseline.ndjson> [flags]
 
 Required:
-  --from FILE                    Input NDJSON from \`gbrain eval export\`
+  --from FILE                    Input NDJSON from \`foresights eval export\`
   --to FILE                      Output baseline path (recommend .baseline.ndjson extension)
 
 Optional:
@@ -145,11 +145,11 @@ Exit codes:
 
 Examples:
   # Publish your own personal baseline
-  gbrain eval export --limit 200 --tool query > /tmp/captured.ndjson
-  gbrain bench publish --from /tmp/captured.ndjson --to ~/.gbrain/baselines/personal.baseline.ndjson --label "personal-2026-05"
+  foresights eval export --limit 200 --tool query > /tmp/captured.ndjson
+  foresights bench publish --from /tmp/captured.ndjson --to ~/.gbrain/baselines/personal.baseline.ndjson --label "personal-2026-05"
 
   # Gate against it later
-  gbrain eval gate --baseline ~/.gbrain/baselines/personal.baseline.ndjson
+  foresights eval gate --baseline ~/.gbrain/baselines/personal.baseline.ndjson
 `);
 }
 
@@ -280,7 +280,7 @@ export async function runBenchPublish(args: string[]): Promise<void> {
   // --json the stream ends with the status:error envelope line.
   const json = jsonRequested(args);
   const fail: (e: OperationError) => never = e => process.exit(writeCliRefusal(e, 'bench', { json }));
-  const example = 'Example: gbrain bench publish --from captured.ndjson --to personal.baseline.ndjson --json';
+  const example = 'Example: foresights bench publish --from captured.ndjson --to personal.baseline.ndjson --json';
   if (!opts.from) {
     printHelp();
     fail(usageError('Error: --from FILE is required', example));
@@ -290,7 +290,7 @@ export async function runBenchPublish(args: string[]): Promise<void> {
     fail(usageError('Error: --to FILE is required', example));
   }
   if (!existsSync(opts.from)) {
-    fail(opError('not_found', `Error: --from file not found: ${opts.from}`, 'Capture one first: gbrain eval export --tool query > captured.ndjson'));
+    fail(opError('not_found', `Error: --from file not found: ${opts.from}`, 'Capture one first: foresights eval export --tool query > captured.ndjson'));
   }
   if (existsSync(opts.to) && !opts.force) {
     fail(usageError(`Error: --to path already exists: ${opts.to}\nUse --force to overwrite.`, 'Pass --force to overwrite it, or choose another --to path.'));
@@ -313,7 +313,7 @@ export async function runBenchPublish(args: string[]): Promise<void> {
       success: false,
       failure_reason: msg,
     });
-    fail(opError('parse_error', `Error: ${msg}`, 'Pass an NDJSON file written by `gbrain eval export` (one captured row per line).'));
+    fail(opError('parse_error', `Error: ${msg}`, 'Pass an NDJSON file written by `foresights eval export` (one captured row per line).'));
   }
 
   let file: BaselineFile;

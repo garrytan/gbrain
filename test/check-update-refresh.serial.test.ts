@@ -86,7 +86,7 @@ describe('fetchLatestRelease — resolves from the VERSION file, discriminates f
 
   test('GBRA-224: stable reads the evidence record, never a bare VERSION file; alpha (and its alias latest) reads VERSION at latest-stable', async () => {
     const urls: string[] = [];
-    const record = JSON.stringify({ schema: 1, version: '0.99.0.0', commit: 'a'.repeat(40), tree: 'b'.repeat(40), soak_run: 'https://github.com/garrytan/gbrain/actions/runs/1', known_bad: ['0.98.0.0'] });
+    const record = JSON.stringify({ schema: 1, version: '0.99.0.0', commit: 'a'.repeat(40), tree: 'b'.repeat(40), soak_run: 'https://github.com/aimonk2025/gbrain/actions/runs/1', known_bad: ['0.98.0.0'] });
     globalThis.fetch = (async (url: any) => {
       urls.push(String(url));
       return new Response(String(url).endsWith('/stable-record/stable.json') ? record : '0.99.9.0\n', { status: 200 });
@@ -101,11 +101,11 @@ describe('fetchLatestRelease — resolves from the VERSION file, discriminates f
     process.env.GBRAIN_RELEASE_CHANNEL = 'stable';
     expect(await fetchLatestRelease()).toMatchObject({ ok: true, tag: '0.99.0.0' });
     expect(urls).toEqual([
-      'https://raw.githubusercontent.com/garrytan/gbrain/stable-record/stable.json',
-      'https://raw.githubusercontent.com/garrytan/gbrain/latest-stable/VERSION',
-      'https://raw.githubusercontent.com/garrytan/gbrain/stable-record/stable.json',
-      'https://raw.githubusercontent.com/garrytan/gbrain/latest-stable/VERSION',
-      'https://raw.githubusercontent.com/garrytan/gbrain/stable-record/stable.json',
+      'https://raw.githubusercontent.com/aimonk2025/gbrain/stable-record/stable.json',
+      'https://raw.githubusercontent.com/aimonk2025/gbrain/latest-stable/VERSION',
+      'https://raw.githubusercontent.com/aimonk2025/gbrain/stable-record/stable.json',
+      'https://raw.githubusercontent.com/aimonk2025/gbrain/latest-stable/VERSION',
+      'https://raw.githubusercontent.com/aimonk2025/gbrain/stable-record/stable.json',
     ]);
     expect(urls.some(u => u.includes('/stable/VERSION'))).toBe(false);
   });
@@ -123,7 +123,7 @@ describe('parseVersionFileBody — shape gate over the raw fetch body', () => {
     expect(parseVersionFileBody('')).toBeNull();
     expect(parseVersionFileBody('not a version')).toBeNull();
     expect(parseVersionFileBody('$(rm -rf /)')).toBeNull();
-    expect(parseVersionFileBody('1.2')).toBeNull(); // 2-segment: not a gbrain version
+    expect(parseVersionFileBody('1.2')).toBeNull(); // 2-segment: not a foresights version
     expect(parseVersionFileBody('9'.repeat(10_000_000))).toBeNull(); // bounded, no blowup
   });
 });

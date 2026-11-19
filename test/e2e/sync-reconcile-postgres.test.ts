@@ -48,7 +48,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   if (skip) return;
-  // The failure ledger lives under the gbrain home — isolate it per test so
+  // The failure ledger lives under the foresights home — isolate it per test so
   // a sentinel planted here never touches the operator's real ledger.
   tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-3583-pg-home-'));
   process.env.GBRAIN_HOME = tmpHome;

@@ -2,7 +2,7 @@
  * #7338: a managed PGLite brain whose database directory sits inside an unrelated Git checkout registered that directory
  * as a managed root and wrote its Git marker into the enclosing repository's metadata. That marked the whole checkout
  * managed, so every later write anywhere in it (another brain's sync, an ordinary file write) was refused
- * `writer_coordinator_required`. The nightly freshness gate's classic cell, built inside the gbrain checkout after the
+ * `writer_coordinator_required`. The nightly freshness gate's classic cell, built inside the foresights checkout after the
  * managed PGLite cell, never synced. The datastore stays registered (a write inside it is still refused), but its
  * enclosing repository is not marked.
  */

@@ -1,5 +1,5 @@
 /**
- * GST-2519 item 1: `gbrain git commit-push --untrack`.
+ * GST-2519 item 1: `foresights git commit-push --untrack`.
  * Protects:
  *   - #7753 (ported unchanged from the wave 2 door): in an ordinary checkout `--untrack` removes exactly the named paths
  *     from the index and Git, keeps the files on disk, and leaves through the same commit lock and publish as an ordinary
@@ -233,7 +233,7 @@ describe('GST-2519: a removal staged by hand (git rm --cached)', () => {
     git(root, 'rm', '-q', '--cached', 'arch/a.md');
     const refused = refusalOf(() => commitAndPush({ repo: root, cwd: root, paths: ['arch/a.md'], message: 'm' })) as { code?: string; suggestion?: string; docs?: string };
     expect(refused.code).toBe('commit_paths_skipped');
-    expect(refused.suggestion).toContain('gbrain git commit-push --untrack -m <msg> -- arch/a.md');
+    expect(refused.suggestion).toContain('foresights git commit-push --untrack -m <msg> -- arch/a.md');
     expect(refused.docs).toBe('docs/guides/shared-checkout-git.md#untrack');
     expect(commitAndPush({ repo: root, cwd: root, paths: ['arch/a.md'], message: 'untrack arch', untrack: true }).outcome).toBe('pushed');
     expect(changed(bare!, 'main')).toEqual(['D', 'arch/a.md']);

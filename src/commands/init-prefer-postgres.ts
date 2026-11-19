@@ -1,7 +1,7 @@
 /**
- * `gbrain init --prefer-postgres` — the Postgres-first install ladder for
+ * `foresights init --prefer-postgres` — the Postgres-first install ladder for
  * agent-harness installs (db-availability loop, 5a). The zero-config
- * `gbrain init` default stays PGLite; THIS flag is how the Codex/Claude Code
+ * `foresights init` default stays PGLite; THIS flag is how the Codex/Claude Code
  * plugin lane prefers Postgres "if at all possible".
  *
  * Ladder (first usable rung wins; every reachable-but-unusable rung prints a
@@ -16,12 +16,12 @@
  *                        peer-auth dev installs just burns a timeout.
  *                        Detection-only: CREATE DATABASE needs
  *                        --allow-create-db)
- *   4. docker           (--allow-docker only; gbrain's own pgvector
+ *   4. docker           (--allow-docker only; foresights's own pgvector
  *                        container — idempotent reuse recovers the REAL
  *                        credentials via docker inspect)
  *   5. PGLite           (zero-config floor, with the upgrade-later note)
  *
- * Consent bars: headless mutation of a server gbrain doesn't own is never
+ * Consent bars: headless mutation of a server foresights doesn't own is never
  * implicit (rung 3's CREATE DATABASE and rung 4's container are both behind
  * explicit flags). Token hygiene: SUPABASE_ACCESS_TOKEN is never persisted,
  * logged, or echoed.
@@ -73,7 +73,7 @@ function noteErr(e: unknown): string {
  * In --json mode the ladder's final envelope must be the ONLY stdout content
  * — but the inner init cores (called with jsonOutput:false) print their
  * human progress to stdout. Reroute stdout to stderr for the duration so
- * `gbrain init --prefer-postgres --json | jq` always parses.
+ * `foresights init --prefer-postgres --json | jq` always parses.
  *
  * BOTH seams are patched: Bun's console.log writes to fd 1 directly and
  * bypasses a process.stdout.write override (verified by repro), so
@@ -105,7 +105,7 @@ async function probeUrl(url: string): Promise<string | null> {
 
 /**
  * What already lives in a reachable candidate database?
- *   'gbrain'  — an existing gbrain brain (pages table present): safe to adopt.
+ *   'gbrain'  — an existing foresights brain (pages table present): safe to adopt.
  *   'empty'   — no user tables in public: safe to initialize.
  *   'foreign' — someone else's tables: NEVER mutate implicitly.
  *   'unknown' — the check itself failed: treat as foreign (fail-closed).
@@ -168,10 +168,10 @@ export async function runPreferPostgresLadder(o: PreferPostgresOpts): Promise<vo
   if (existing && (existing.engine || existing.database_url || existing.database_path || isThinClient(existing))) {
     console.error(
       '[prefer-postgres] a brain is already configured — refusing to re-run the ladder over it.\n' +
-      '  Inspect:            gbrain engine status --probe\n' +
-      '  Access broken?      gbrain db-repair\n' +
-      '  Move PGLite → PG:   gbrain migrate --to postgres --url-env GBRAIN_TARGET_URL --plan  (the postgres-adopt skill walks it)\n' +
-      '  Really start over:  gbrain init --url <conn>  (explicit target, no ladder)',
+      '  Inspect:            foresights engine status --probe\n' +
+      '  Access broken?      foresights db-repair\n' +
+      '  Move PGLite → PG:   foresights migrate --to postgres --url-env GBRAIN_TARGET_URL --plan  (the postgres-adopt skill walks it)\n' +
+      '  Really start over:  foresights init --url <conn>  (explicit target, no ladder)',
     );
     process.exit(1);
   }
@@ -185,8 +185,8 @@ export async function runPreferPostgresLadder(o: PreferPostgresOpts): Promise<vo
   // Rung 1 — env URL. GBRAIN_DATABASE_URL is gbrain-specific and adopted as
   // stated intent. A bare DATABASE_URL is NOT (deploy platforms export it
   // pointing at the APP's database) — initSchema would mutate a server
-  // gbrain doesn't own, so it is adopted only when the target is already a
-  // gbrain brain or holds no tables at all (fail-closed on 'foreign').
+  // foresights doesn't own, so it is adopted only when the target is already a
+  // foresights brain or holds no tables at all (fail-closed on 'foreign').
   const envUrl = effectiveEnvDatabaseUrl();
   if (envUrl) {
     const bare = !process.env.GBRAIN_DATABASE_URL;
@@ -279,7 +279,7 @@ export async function runPreferPostgresLadder(o: PreferPostgresOpts): Promise<vo
         } else {
           if (!checks.hasDb) {
             await dbRepairDeps.withEngine({ engine: 'postgres', database_url: maint }, async (engine) => {
-              await engine.executeRaw('CREATE DATABASE gbrain');
+              await engine.executeRaw('CREATE DATABASE foresights');
             });
             note('rung 3 (local postgres): created database `gbrain` (--allow-create-db)');
           }
@@ -294,7 +294,7 @@ export async function runPreferPostgresLadder(o: PreferPostgresOpts): Promise<vo
     note('rung 3 (local postgres): no PG* env vars and no --local-postgres — skipped (a blind localhost probe just burns a timeout)');
   }
 
-  // Rung 4 — gbrain's own docker container (explicit opt-in only).
+  // Rung 4 — foresights's own docker container (explicit opt-in only).
   if (!rung && o.allowDocker) {
     if (!dockerAvailable()) {
       note('rung 4 (docker): docker is not available — next');
@@ -316,7 +316,7 @@ export async function runPreferPostgresLadder(o: PreferPostgresOpts): Promise<vo
           // mapping — recover both from docker inspect.
           const creds = inspectCredentials();
           if (!creds) {
-            note('rung 4 (docker): the gbrain-postgres container exists but its credentials are unrecoverable via docker inspect — gbrain never destroys a container it cannot prove it owns. Remove it yourself (docker rm -f gbrain-postgres) and re-run, or use another rung. Next.');
+            note('rung 4 (docker): the gbrain-postgres container exists but its credentials are unrecoverable via docker inspect — foresights never destroys a container it cannot prove it owns. Remove it yourself (docker rm -f gbrain-postgres) and re-run, or use another rung. Next.');
           } else {
             if (state === 'stopped' && !startContainer()) {
               note('rung 4 (docker): docker start failed — next');
@@ -371,7 +371,7 @@ export async function runPreferPostgresLadder(o: PreferPostgresOpts): Promise<vo
                 'initialize over them. Next.',
               );
             } else {
-              note('rung 4 (docker): container ready. gbrain starts/reuses this container but never stops or removes it.');
+              note('rung 4 (docker): container ready. foresights starts/reuses this container but never stops or removes it.');
               rung = await initPostgresRung(o, url, 'docker');
               if (rung) urlSource = 'docker';
             }
@@ -387,7 +387,7 @@ export async function runPreferPostgresLadder(o: PreferPostgresOpts): Promise<vo
 
   // Rung 5 — PGLite, the zero-config floor. Terminal; no silent anything.
   if (!rung) {
-    note('falling back to PGLite. Upgrade later: gbrain migrate --to postgres --plan (docs/guides/move-to-postgres.md; the postgres-adopt skill walks it).');
+    note('falling back to PGLite. Upgrade later: foresights migrate --to postgres --plan (docs/guides/move-to-postgres.md; the postgres-adopt skill walks it).');
     await withStdoutToStderr(o.jsonOutput, () => initPGLite({
       jsonOutput: false,
       apiKey: o.apiKey ?? undefined,

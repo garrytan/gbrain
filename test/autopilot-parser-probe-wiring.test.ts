@@ -26,7 +26,7 @@ describe('autopilot wiring: conversation-parser probe', () => {
     expect(SOURCE).toContain(`audit-parser-probe`);
   });
 
-  test('flag reads dual-plane: DB row (gbrain config set) wins, file plane fallback', () => {
+  test('flag reads dual-plane: DB row (foresights config set) wins, file plane fallback', () => {
     expect(SOURCE).toContain(`getConfig('autopilot.conversation_parser_probe.enabled')`);
     expect(SOURCE).toContain(`cfg?.autopilot?.conversation_parser_probe?.enabled === true`);
   });

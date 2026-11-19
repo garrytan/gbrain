@@ -147,8 +147,8 @@ function truncateErrorSummary(msg: string, max = 200): string {
 
 /**
  * Read recent graph-signals fail-open events. Consumed by
- * `gbrain doctor`'s graph_signals_coverage check and by
- * `gbrain search stats`'s error-rate rollup.
+ * `foresights doctor`'s graph_signals_coverage check and by
+ * `foresights search stats`'s error-rate rollup.
  */
 export function readRecentGraphSignalsFailures(
   days = 7,

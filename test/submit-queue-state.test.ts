@@ -67,7 +67,7 @@ describe('probeQueueState — dead/degraded lane signals', () => {
       expect(state.worker_alive).toBe(false);
       expect(state.oldest_waiting_age_seconds).toBeGreaterThanOrEqual(7000);
       expect(state.warning).toContain("no live worker detected for queue 'default'");
-      expect(state.warning).toContain('gbrain jobs work --queue default');
+      expect(state.warning).toContain('foresights jobs work --queue default');
     });
   });
 
@@ -97,12 +97,12 @@ describe('probeQueueState — dead/degraded lane signals', () => {
 
   it('pause marker: paused true + the migration warning (amendment 25)', async () => {
     await withEnv({ GBRAIN_HOME: emptyHome() }, async () => {
-      // Seed the marker the way `gbrain migrate` does (see
+      // Seed the marker the way `foresights migrate` does (see
       // test/autopilot-pause-marker.test.ts) — path resolves under the
       // scratch GBRAIN_HOME at call time.
       const marker = autopilotPausedMarkerPath();
       mkdirSync(dirname(marker), { recursive: true });
-      writeFileSync(marker, `paused by gbrain migrate (pid ${process.pid})\n`);
+      writeFileSync(marker, `paused by foresights migrate (pid ${process.pid})\n`);
 
       const state = await probeQueueState(engine, 'default', ['embed']);
       expect(state.paused).toBe(true);
@@ -212,7 +212,7 @@ describe('submit_job wiring — probe never blocks a successful enqueue', () => 
     await withEnv({ GBRAIN_HOME: emptyHome() }, async () => {
       const marker = autopilotPausedMarkerPath();
       mkdirSync(dirname(marker), { recursive: true });
-      writeFileSync(marker, `paused by gbrain migrate (pid ${process.pid})\n`);
+      writeFileSync(marker, `paused by foresights migrate (pid ${process.pid})\n`);
 
       const result = (await submit_job.handler(makeCtx(engine), { name: 'embed' })) as any;
       expect(result.id).toBeGreaterThan(0);

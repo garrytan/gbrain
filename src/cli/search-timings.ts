@@ -1,5 +1,5 @@
 /**
- * `gbrain search|query --timings` (#7158): where one CLI call's time and
+ * `foresights search|query --timings` (#7158): where one CLI call's time and
  * model-call money went. The op's stage timings (`SearchTimings`, the same
  * `_meta.retrieval.timings` MCP callers read) plus the CLI's own phases, and
  * the request's `cost` (search/search-cost.ts).

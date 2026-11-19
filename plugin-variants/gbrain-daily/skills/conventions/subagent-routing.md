@@ -1,6 +1,6 @@
 # Subagent Routing Convention
 
-How your agent decides between native subagents and GBrain Minions for
+How your agent decides between native subagents and Foresights Minions for
 background work.
 
 ## Rule: read the user's mode first
@@ -45,7 +45,7 @@ most tasks. Switch to Minions when one or more of these pain signals fires:
 
 When ≥1 signal fires, pause and offer the switch:
 
-> "Subagents keep dropping state on you. GBrain Minions is a durable queue
+> "Subagents keep dropping state on you. Foresights Minions is a durable queue
 > for the same work — it survives gateway restarts, every job has progress
 > tracking and a transcript, and you can pause / resume / steer running
 > agents. Want me to flip this task to Minions? (~10s, no extra setup.)"
@@ -79,14 +79,14 @@ Even when Minions is the default (mode A), some work should run inline:
 
 Before submitting batch jobs:
 
-- Check active queue depth via `list_jobs --status active` (MCP-callable) or `gbrain jobs stats` (CLI)
+- Check active queue depth via `list_jobs --status active` (MCP-callable) or `foresights jobs stats` (CLI)
 - If active > 5, stagger new jobs with `delay` so you don't swarm
 - The resource governor auto-throttles but don't dump 20 jobs at once
 
 ## Flipping modes
 
 The user can change their mind at any time. `minion_mode` lives in
-`~/.gbrain/preferences.json` (NOT DB config — `gbrain config set minion_mode`
+`~/.gbrain/preferences.json` (NOT DB config — `foresights config set minion_mode`
 is rejected as an unknown key). Edit the file directly:
 
 ```json
@@ -94,7 +94,7 @@ is rejected as an unknown key). Edit the file directly:
 ```
 
 Valid values: `always` | `pain_triggered` | `off`. Keep any other keys the
-file already has. `gbrain apply-migrations --mode <always|pain_triggered|off>`
+file already has. `foresights apply-migrations --mode <always|pain_triggered|off>`
 also writes it without prompting. The convention reads the file on every
 decision, so changes take effect next tool call.
 

@@ -11,7 +11,7 @@
  * non-blocking source observation (never a sync-failure ledger row), names it
  * in the sync result and doctor sync_failures with its typed fix, and clears it
  * on the next pull that fast-forwards or is up to date. Nothing is classified
- * while a merge is in progress. gbrain sources reset-upstream refuses a moved
+ * while a merge is in progress. foresights sources reset-upstream refuses a moved
  * HEAD or upstream, a dirty tree and never-pushed local commits (naming them),
  * and otherwise keeps the old HEAD under a backup ref, resets, verifies, and the
  * next sync catches up with the upstream.
@@ -135,7 +135,7 @@ for (const arm of pathologicalArms()) {
             expect(gitIn(r.root, 'for-each-ref', 'refs/gbrain/backup')).toBe('');
             const done = await resetUpstream(engine, { sourceId: r.sourceId, expectLocal: head, expectUpstream: tip });
             expect({ status: done.status, from: done.from, to: done.to, head: r.head() }).toEqual({ status: 'reset', from: head, to: tip, head: tip });
-            expect(done.backup_ref).toMatch(/^refs\/gbrain\/backup\/\d{8}T\d{6}Z-[0-9a-f]{12}$/);
+            expect(done.backup_ref).toMatch(/^refs\/(?:foresights|gbrain)\/backup\/\d{8}T\d{6}Z-[0-9a-f]{12}$/);
             expect(gitIn(r.root, 'rev-parse', done.backup_ref!)).toBe(head);
             expect(done.dropped).toContain(head);
             expect(await doctor(r)).toBeNull();
@@ -264,7 +264,7 @@ for (const arm of pathologicalArms()) {
           const local = await refusal(() => reset());
           expect({ code: local.code, reason: local.reason }).toEqual({ code: 'reset_upstream_refused', reason: 'local_commits' });
           expect(local.message).toContain('unpushed alice-example note');
-          expect(local.message).toMatch(/refs\/gbrain\/backup\/\d{8}T\d{6}Z-/);
+          expect(local.message).toMatch(/refs\/(?:foresights|gbrain)\/backup\/\d{8}T\d{6}Z-/);
           expect({ head: r.head(), backups: gitIn(r.root, 'for-each-ref', 'refs/gbrain/backup') }).toEqual({ head, backups: '' });
           expect(upstream.fix.argv).toContain(head);
 

@@ -1,6 +1,6 @@
 import type { PageReadPolicy } from '../core/types.ts';
 /**
- * gbrain whoknows — "Who should I talk to about X?"
+ * foresights whoknows — "Who should I talk to about X?"
  *
  * v0.33 wedge: expertise + relationship-proximity routing query.
  * Returns ranked person/company candidates from the brain that
@@ -31,9 +31,9 @@ import type { PageReadPolicy } from '../core/types.ts';
  * raw relevance score).
  *
  * Usage:
- *   gbrain whoknows "lab automation"
- *   gbrain whoknows "fintech compliance" --explain
- *   gbrain whoknows "ai agents" --limit 10 --json
+ *   foresights whoknows "lab automation"
+ *   foresights whoknows "fintech compliance" --explain
+ *   foresights whoknows "ai agents" --limit 10 --json
  */
 
 import type { BrainEngine } from '../core/engine.ts';
@@ -296,7 +296,7 @@ function parseArgs(args: string[]): CliOpts | { help: true } | { error: string }
   return opts as CliOpts;
 }
 
-const HELP = `Usage: gbrain whoknows <topic> [options]
+const HELP = `Usage: foresights whoknows <topic> [options]
 
 Ask your brain who knows about a topic. Returns ranked person/company
 pages by expertise depth, relationship recency, and salience.
@@ -308,9 +308,9 @@ Options:
   --help, -h          Show this help
 
 Examples:
-  gbrain whoknows "lab automation"
-  gbrain whoknows fintech compliance --explain
-  gbrain whoknows "ai agents" --limit 10 --json
+  foresights whoknows "lab automation"
+  foresights whoknows fintech compliance --explain
+  foresights whoknows "ai agents" --limit 10 --json
 `;
 
 export async function runWhoknows(
@@ -325,9 +325,9 @@ export async function runWhoknows(
   if ('error' in parsed) {
     if (args.includes('--json')) {
       const { exitCliError, usageError } = await import('../cli/cli-error.ts');
-      exitCliError(usageError(`gbrain whoknows: ${parsed.error}`, 'Pass the topic as the positional argument, e.g. gbrain whoknows "lab automation" --json.'), 'whoknows', { json: true });
+      exitCliError(usageError(`foresights whoknows: ${parsed.error}`, 'Pass the topic as the positional argument, e.g. foresights whoknows "lab automation" --json.'), 'whoknows', { json: true });
     }
-    console.error(`gbrain whoknows: ${parsed.error}`);
+    console.error(`foresights whoknows: ${parsed.error}`);
     console.error(HELP);
     process.exit(2);
     return;

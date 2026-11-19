@@ -1,5 +1,5 @@
 /**
- * Every gbrain function that pins a search_path ends it with pg_temp (#7632).
+ * Every foresights function that pins a search_path ends it with pg_temp (#7632).
  *
  * A pinned `pg_catalog, public` (or `pg_catalog`) does not name pg_temp, and PostgreSQL then searches the calling
  * session's temporary schema first for tables and views. Any role that may create temporary tables (PUBLIC may, by
@@ -8,7 +8,7 @@
  * through: for the owner as much as for any other writer. Named last, pg_temp comes after every other schema for
  * relations, and PostgreSQL never searches it for functions or operators.
  *
- * Every definition gbrain owns now pins `pg_catalog, public, pg_temp` itself (#7785; scripts/check-search-path.sh keeps
+ * Every definition foresights owns now pins `pg_catalog, public, pg_temp` itself (#7785; scripts/check-search-path.sh keeps
  * it so), so a schema replay keeps pg_temp. Historical migration bodies still pin the legacy settings, and so does a
  * brain created before the change, which is what the hardening below completes: ALTER FUNCTION only, no body rewritten,
  * so every guard keeps master's body, SECURITY INVOKER and BEFORE ROW timing.
@@ -20,14 +20,14 @@ import { migrationStatementTimeoutMs } from './migration-timeout.ts';
 import { isLockTimeoutError } from './retry-matcher.ts';
 import { resolveSchemaLockTimeoutMs, schemaLockBlockedError } from './postgres-engine/schema-lock-timeout.ts';
 
-/** The search_path settings gbrain functions pinned before #7632, which the hardening completes with pg_temp. */
+/** The search_path settings foresights functions pinned before #7632, which the hardening completes with pg_temp. */
 export const LEGACY_SEARCH_PATH_SETTINGS = ['search_path=pg_catalog, public', 'search_path=pg_catalog'] as const;
 
 /** The pinned path in a pg_proc.proconfig entry `c.setting` (`search_path=<path>`). */
 export const PINNED_PATH_SQL = `substr(c.setting, ${'search_path='.length + 1})`;
 
 /**
- * Every function gbrain installs in public with a pinned search_path, on either engine. The hardening and the doctor
+ * Every function foresights installs in public with a pinned search_path, on either engine. The hardening and the doctor
  * check touch only these, so another application's function in a shared database keeps its own search_path. A new
  * pinned function joins this list; scripts/check-search-path.sh (bun run check:search-path) names one that does not,
  * and the fresh-install tests (test/function-search-path-pglite.test.ts, and case 3 of
@@ -51,11 +51,11 @@ export const PINNED_FUNCTION_NAMES = [
 ] as const;
 
 /**
- * Appends pg_temp to the pinned search_path of every gbrain function (PINNED_FUNCTION_NAMES) in public the current
+ * Appends pg_temp to the pinned search_path of every foresights function (PINNED_FUNCTION_NAMES) in public the current
  * role may alter that still pins `pg_catalog, public` or `pg_catalog`. A function the role does not own is
- * left as it was, and so is a procedure (ALTER FUNCTION refuses one, and gbrain installs none). Shared by the schema blob (its last
+ * left as it was, and so is a procedure (ALTER FUNCTION refuses one, and foresights installs none). Shared by the schema blob (its last
  * statement, so a replay's CREATE OR REPLACE never leaves a function without it), hardenFunctionSearchPaths below
- * (migration v277 and the end of every migration run) and `gbrain reindex-search-vector`, which rewrites the
+ * (migration v277 and the end of every migration run) and `foresights reindex-search-vector`, which rewrites the
  * search_vector trigger functions.
  */
 export const FUNCTION_SEARCH_PATH_HARDENING_SQL = `DO $harden$
@@ -72,7 +72,7 @@ BEGIN
   END LOOP;
 END $harden$;`;
 
-/** The gbrain functions (regprocedure text) whose pinned search_path is still a legacy setting. */
+/** The foresights functions (regprocedure text) whose pinned search_path is still a legacy setting. */
 export async function legacySearchPathFunctions(engine: BrainEngine): Promise<string[]> {
   return (await engine.executeRaw<{ sig: string }>(
     `SELECT p.oid::regprocedure::text AS sig FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace

@@ -42,7 +42,7 @@ export const JOURNAL_CONFIG_KEYS: readonly string[] = [
 export function parseJournalConfigValue(key:string,value:string):number {
   if(!/^(0|[1-9]\d*)$/.test(value) || !Number.isSafeInteger(Number(value))) {
     throw opError('invalid_params',`Invalid ${key}: expected a nonnegative integer.`,
-      `Set ${key} to a whole number of 0 or more with gbrain config set ${key} followed by the number, or unset it to use the default.`);
+      `Set ${key} to a whole number of 0 or more with foresights config set ${key} followed by the number, or unset it to use the default.`);
   }
   return Number(value);
 }
@@ -199,7 +199,7 @@ export function stagedQuotaExhausted(resource: string, setting: keyof UploadLimi
   const usage = used === null ? `limit ${limit}` : `${used} used of ${limit}`;
   return opError('write_quota_exhausted', `Upload capacity exhausted: ${resource} (${usage}, this upload needs ${need}).`,
     `Commit or abort your open uploads (abort_page_upload), or let them expire, then begin again with the same request_id. `
-    + `The brain host can raise the cap: gbrain config set ${key} ${value} (undo with gbrain config unset ${key}).`,
+    + `The brain host can raise the cap: foresights config set ${key} ${value} (undo with foresights config unset ${key}).`,
     { reason, detail: key.slice('persistence.limits.'.length), docs: 'docs/guides/write-refusals.md#write_quota_exhausted',
       fix: { argv: ['gbrain', 'config', 'set', key, String(value)], consent: [], actor: 'host_admin', requires_exclusive: false,
         why: 'Open upload sessions hold their declared bytes until they commit, abort or expire; a larger cap admits more at once and is reversible.' } });

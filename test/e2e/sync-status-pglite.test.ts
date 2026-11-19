@@ -154,7 +154,7 @@ afterAll(async () => {
 
 describe('buildSyncStatusReport against real PGLite (IRON RULE regression for Blocker 1)', () => {
   test('correct SQL: content_chunks JOIN pages ON page_id (NOT chunks/page_slug)', async () => {
-    // Caller-side source list mirrors what `gbrain sources status` (the
+    // Caller-side source list mirrors what `foresights sources status` (the
     // CLI route in sources.ts) would supply: `WHERE local_path IS NOT NULL
     // AND archived IS NOT TRUE`.
     const sources = await engine.executeRaw<{

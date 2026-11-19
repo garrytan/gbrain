@@ -1,6 +1,6 @@
 /**
- * #4618 seat identity on session capture: `gbrain hook session-end`,
- * `gbrain hook compact` and the OpenClaw context-engine compact record a
+ * #4618 seat identity on session capture: `foresights hook session-end`,
+ * `foresights hook compact` and the OpenClaw context-engine compact record a
  * `<sessionId>.seat.json` sidecar beside the dream corpus, before any corpus
  * file of the session is renamed into place, and the hook GC reaps it with
  * the session's last corpus file.
@@ -124,7 +124,7 @@ describe('seat sidecar on session capture (#4618)', () => {
     expect(hb?.event).toBe('session-end');
     expect(hb?.outcome).toBe('degraded');
     expect(hb?.reason).toBe('seat_label_invalid');
-    expect(hb?.hint).toContain('gbrain bootstrap hooks --seat');
+    expect(hb?.hint).toContain('foresights bootstrap hooks --seat');
   });
 
   test('GBRAIN_SEAT=off is the opt-out: the corpus is captured with no seat sidecar', async () => {
@@ -252,6 +252,6 @@ describe('seat sidecar on session capture (#4618)', () => {
     const { lane: hb, checkpoint } = await openclawHeartbeats();
     expect(hb).toMatchObject({ event: 'compact', outcome: 'degraded', reason: 'seat_label_invalid' });
     expect(checkpoint).toMatchObject({ event: 'openclaw-compact', segment: 'banked' });
-    expect(hb?.hint).toContain('gbrain bootstrap hooks --seat');
+    expect(hb?.hint).toContain('foresights bootstrap hooks --seat');
   });
 });

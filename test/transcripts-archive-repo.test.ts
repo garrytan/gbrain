@@ -1,6 +1,6 @@
 /**
  * GST-2768 PR 2: on a personal brain whose archive source is a git checkout, the archive writes the redacted day
- * pages as files, commits only those paths through `gbrain git commit-push` (a real child CLI, real bare remote),
+ * pages as files, commits only those paths through `foresights git commit-push` (a real child CLI, real bare remote),
  * then syncs the checkout so the database converges on git. A second run on the same input changes nothing.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';

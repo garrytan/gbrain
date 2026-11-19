@@ -53,7 +53,7 @@ export async function writeWriterAdminLock(tx: SqlEngine, locked: boolean): Prom
       WHERE w.state='draining' AND w.manifest IS NOT NULL ORDER BY w.id LIMIT 1`);
     if (pending.length) throw new OperationError('writer_transfer_conflict',
       `A writer transfer is prepared and not yet accepted (worktree ${pending[0].id}); the lock was not set.`,
-      'Finish the prepared transfer with gbrain sources writer transfer accept, inspect gbrain sources writer status --json, then lock.');
+      'Finish the prepared transfer with foresights sources writer transfer accept, inspect foresights sources writer status --json, then lock.');
   }
   const [now] = await tx.executeRaw<{ at: string }>(`SELECT to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS at`);
   const next: WriterAdminLock = { locked, set_at: now.at, host_id: hostIdFor(tx), generation: current.generation + 1 };

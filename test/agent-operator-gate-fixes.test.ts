@@ -40,7 +40,7 @@ describe('remediation plan steps carry an Action with their effects', () => {
   });
 
   test('a repair step is destructive (and paid when it embeds) with a read-only preview', () => {
-    const fix = repairStepFix({ kind: 'timeline', command: 'gbrain repair timeline --apply', paid: true, est_usd_cost: 0.01, affected: 3, checks: ['timeline_history'] });
+    const fix = repairStepFix({ kind: 'timeline', command: 'foresights repair timeline --apply', paid: true, est_usd_cost: 0.01, affected: 3, checks: ['timeline_history'] });
     expect(fix.verify?.argv).toEqual(['gbrain', 'doctor', '--only', 'timeline_history', '--json']);
     expect(fix.consent).toEqual(['destructive', 'paid']);
     expect(fix.argv).toEqual(['gbrain', 'repair', 'timeline', '--apply']);

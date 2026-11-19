@@ -37,7 +37,7 @@ const writerListFix = readFix('Lists the local writer registrations and their id
 const LIST_EXAMPLES: Record<string, string> = { source_ids: 'default,notes', scopes: 'read,write', allowed_operations: 'search,get_page', slug_prefixes: 'people/,companies/' };
 const cliFlag = (key: string) => `--${key.replaceAll('_', '-')}`;
 export function source(value: unknown): string {
-  if (typeof value !== 'string' || !isValidSourceId(value)) throw invalid('An explicit active source ID is required.', 'Name the source explicitly with its id; gbrain sources list --json shows the active sources.',
+  if (typeof value !== 'string' || !isValidSourceId(value)) throw invalid('An explicit active source ID is required.', 'Name the source explicitly with its id; foresights sources list --json shows the active sources.',
     sourcesListFix('Lists the active source ids, read-only.'));
   return value;
 }
@@ -62,7 +62,7 @@ export function bool(params: Record<string, unknown>, key: string): void {
 export function keys(params: Record<string, unknown>, allowed: string[]) {
   const unknown = Object.keys(params).filter(key => !allowed.includes(key));
   if (unknown.length) throw invalid(`Unsupported administration parameters: ${unknown.join(', ')}.`,
-    `Remove ${unknown.join(', ')}; this operation accepts ${allowed.length ? allowed.join(', ') : 'no parameters'}. A caller on another gbrain release sends the parameters of its own release: run one release on both sides.`);
+    `Remove ${unknown.join(', ')}; this operation accepts ${allowed.length ? allowed.join(', ') : 'no parameters'}. A caller on another foresights release sends the parameters of its own release: run one release on both sides.`);
   bool(params, 'dry_run');
 }
 
@@ -100,9 +100,9 @@ async function registrationGrant(engine: BrainEngine, params: Record<string, unk
 }
 
 /** Shown by `writer claim` (and its dry run) while persistence is not activated. */
-export const CLAIM_BEFORE_ACTIVATION_NOTICE = 'Persistence is not activated. After this claim, gbrain sync refuses this source with '
+export const CLAIM_BEFORE_ACTIVATION_NOTICE = 'Persistence is not activated. After this claim, foresights sync refuses this source with '
   + 'writer_coordinator_required until activation, and legacy file writers in its checkout (sources push, lint --fix and other '
-  + 'file-writing maintenance) refuse while the checkout is managed. Stop older writers, review gbrain sources writer status, '
+  + 'file-writing maintenance) refuse while the checkout is managed. Stop older writers, review foresights sources writer status, '
   + 'then activate deliberately.';
 
 /** #6650: `sources writer failures` options, validated with the usage each one takes. */
@@ -162,7 +162,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     if (!writer || writer.remote || writer.principal.kind !== 'local_cli') throw trustedCliRequired('Company source administration requires an authenticated local CLI registration.');
     keys(params, ['brain_id', 'source_id', 'path', 'plan', 'request_id']);
     if (typeof params.brain_id !== 'string' || !params.brain_id.trim()) throw invalid('An explicit brain_id is required.',
-      'Name the destination brain with --brain on gbrain sources connect (host, or a mounted brain id); gbrain mounts list --json shows the mounted brains.');
+      'Name the destination brain with --brain on foresights sources connect (host, or a mounted brain id); foresights mounts list --json shows the mounted brains.');
     const destination = { brainId: params.brain_id, sourceId: source(params.source_id), remote: false };
     const runtime = await import('../company-brain/runtime.ts');
     if (operation === 'company_brain_resume') return { ...await runtime.resumeCompanyBrain(engine, destination) };
@@ -187,7 +187,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     if (!writer || writer.remote || writer.principal.kind !== 'local_cli') throw trustedCliRequired('Worktree refresh requires a trusted CLI registration.');
     const ms = (value: unknown, name: string) => {
       if (value === undefined) return undefined;
-      if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) throw invalid(`${name} must be a non-negative number of milliseconds.`, 'Pass `--wait-drain <seconds>` or `--fetch-timeout-ms <ms>` to `gbrain sources refresh <source-id>` with a non-negative number, or leave the flag out for its default.');
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) throw invalid(`${name} must be a non-negative number of milliseconds.`, 'Pass `--wait-drain <seconds>` or `--fetch-timeout-ms <ms>` to `foresights sources refresh <source-id>` with a non-negative number, or leave the flag out for its default.');
       return value;
     };
     const waitDrainMs = ms(params.wait_drain_ms, 'wait_drain_ms');
@@ -222,17 +222,17 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
       if (typeof params.parked_code !== 'string' || !/^[a-z][a-z0-9_]*$/.test(params.parked_code) || params.parked_pushes !== undefined || params.request_id !== undefined
         || params.admin_intent !== undefined || params.expected_state !== undefined) throw invalid(
         '--parked-code retries every Git effect of the source parked on one error code; it takes no --request-id, --parked-pushes or admin intent.',
-        'Run gbrain sources writer retry-effects <source> --parked-code <code> [--dry-run]; doctor parked_effects lists each parked code with its command.');
+        'Run foresights sources writer retry-effects <source> --parked-code <code> [--dry-run]; doctor parked_effects lists each parked code with its command.');
       return (await import('./git-durability-administration.ts')).retrySourceParkedCode(engine, source(params.source_id), params.parked_code, params.dry_run === true);
     }
     if (params.parked_pushes === true) {
       if (params.request_id !== undefined || params.admin_intent !== undefined || params.expected_state !== undefined) throw invalid(
         '--parked-pushes retries every parked push of the source; it takes no --request-id or admin intent.',
-        'Run gbrain sources writer retry-effects <source> --parked-pushes [--dry-run], or name one request with --request-id instead.');
+        'Run foresights sources writer retry-effects <source> --parked-pushes [--dry-run], or name one request with --request-id instead.');
       return (await import('./git-durability-administration.ts')).retrySourceParkedPushes(engine, source(params.source_id), params.dry_run === true);
     }
     if (!isWriteRequestId(params.request_id)) throw invalid('A valid original write request UUID is required.',
-      'Pass --request-id with the original write\'s request id (a UUID); gbrain sources writer status for that source lists blocked effects with their request ids.',
+      'Pass --request-id with the original write\'s request id (a UUID); foresights sources writer status for that source lists blocked effects with their request ids.',
       typeof params.source_id === 'string' && isValidSourceId(params.source_id)
         ? readFix(`Lists source ${params.source_id}'s blocked effects with their request ids, read-only.`, { argv: ['gbrain', 'sources', 'writer', 'status', params.source_id, '--json'] })
         : undefined);
@@ -252,7 +252,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
       'Pass --expect exactly as the plan_hash the settle-effects preview printed (ph_ followed by 24 hex digits).');
     const sourceId = source(params.source_id);
     const requestId = params.request_id === undefined ? undefined : uuid(params.request_id, 'A valid original write request UUID is required.',
-      'Pass --request-id with the request id doctor parked_effects or gbrain sources writer status lists for the effect.');
+      'Pass --request-id with the request id doctor parked_effects or foresights sources writer status lists for the effect.');
     return (await import('./effect-settle.ts')).settleEffects(engine, { sourceId, requestId, parkedCode: params.parked_code as string | undefined,
       unsettle: params.unsettle === true, retire: params.retire === true, apply: params.apply === true, expect: params.expect as string | undefined });
   }
@@ -267,12 +267,12 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     if (params.legacy_hardening !== undefined) throw new OperationError('writer_coordinator_required',
       'Source creation cannot install legacy Git hardening on a managed worktree.', 'Create the source without --pat-file.');
     if (!params.options || typeof params.options !== 'object' || Array.isArray(params.options)) throw invalid('Source add requires typed options.',
-      'Add the source with gbrain sources add, which builds the typed options; a resident-proxy caller sends params.options as a JSON object.');
+      'Add the source with foresights sources add, which builds the typed options; a resident-proxy caller sends params.options as a JSON object.');
     const { managedSourceAddInput } = await import('./managed-sources.ts');
     const { runManagedSourceLifecycle } = await import('./source-lifecycle.ts');
     const options = await (await import('../source-default-search.ts')).withDefaultSearchChoice(engine, params.options as import('../sources-ops.ts').AddSourceOpts);
     if (options.requestId !== params.request_id || !isWriteRequestId(params.request_id)) throw invalid('Source add request identity must match its options.',
-      'Send one UUID as both params.request_id and options.requestId; gbrain sources add sets both from one request id, so run the add through it.');
+      'Send one UUID as both params.request_id and options.requestId; foresights sources add sets both from one request id, so run the add through it.');
     return runManagedSourceLifecycle(engine, { ...managedSourceAddInput(options), dryRun: params.dry_run === true });
   }
   if(operation==='source_lifecycle') {
@@ -358,7 +358,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     keys(params, ['confirm_quiesced', 'dry_run', 'shared_skills', 'admin_intent', 'expected_state', 'cleanup_dead_local_locks']);
     bool(params, 'cleanup_dead_local_locks');
     if (params.confirm_quiesced !== true) throw invalid('Activation requires --confirm-quiesced after upgrading and stopping older writers on every host.',
-      'Upgrade and stop older writers on every host, review gbrain sources writer status --json, then run gbrain sources writer activate --confirm-quiesced with --admin-intent writer_activate and --expected-state set to the admin_state that status printed.',
+      'Upgrade and stop older writers on every host, review foresights sources writer status --json, then run foresights sources writer activate --confirm-quiesced with --admin-intent writer_activate and --expected-state set to the admin_state that status printed.',
       readFix('Shows writer topology, blocking effects and the admin_state activation must name, read-only.', { argv: ['gbrain', 'sources', 'writer', 'status', '--json'] }));
     bool(params, 'shared_skills');
     const expectedState = await requireWriterAdminIntent(engine, operation, params);
@@ -374,7 +374,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
   }
   if (operation === 'writer_deactivate') {
     if (params.source_id !== undefined) throw invalid('Deactivate is brain-wide: it converts every source of this brain back to classic mode. Omit the <source> argument.',
-      'Run gbrain sources writer deactivate with no source; --dry-run first lists every source it converts and each blocker.',
+      'Run foresights sources writer deactivate with no source; --dry-run first lists every source it converts and each blocker.',
       readFix('Previews the brain-wide deactivation and its blockers; changes nothing.', { argv: ['gbrain', 'sources', 'writer', 'deactivate', '--dry-run', '--json'] }));
     keys(params, ['dry_run', 'admin_intent', 'expected_state', 'request_id']);
     const { deactivatePersistence } = await import('./deactivation.ts');
@@ -385,26 +385,26 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
       const report = await deactivatePersistence(engine, { dryRun: true });
       const unchanged = state === await writerAdminState(engine);
       return { ...report, action: operation, ...((report.mode === 'managed' || report.pre_activation_claims?.length) && report.blockers.length === 0 && unchanged
-        ? { apply_command: `gbrain sources writer deactivate --admin-intent writer_deactivate --expected-state ${state}` } : {}) };
+        ? { apply_command: `foresights sources writer deactivate --admin-intent writer_deactivate --expected-state ${state}` } : {}) };
     }
     let expectedState: string | undefined;
     try { expectedState = await requireWriterAdminIntent(engine, operation, params); }
     catch (error) {
       if (!(error instanceof OperationError) || error.code !== 'writer_admin_state_changed') throw error;
-      error.suggestion = `The current admin_state is ${await writerAdminState(engine)}. Review gbrain sources writer status --json, then rerun with --expected-state <that admin_state>.`;
+      error.suggestion = `The current admin_state is ${await writerAdminState(engine)}. Review foresights sources writer status --json, then rerun with --expected-state <that admin_state>.`;
       throw error;
     }
     return { ...await deactivatePersistence(engine, { expectedState, requestId: params.request_id === undefined ? undefined
-      : uuid(params.request_id, 'A valid deactivation request UUID is required.', 'Pass --request-id as a UUID, or omit it and gbrain generates one.') }) };
+      : uuid(params.request_id, 'A valid deactivation request UUID is required.', 'Pass --request-id as a UUID, or omit it and foresights generates one.') }) };
   }
   if (operation === 'writer_transfer_prepare' || operation === 'writer_transfer_accept' || operation === 'writer_transfer_cancel') return (await import('./transfer-administration.ts')).runWriterTransferAdministration(engine, operation, params);
   if (operation === 'local_writer_list') {
     keys(params, ['limit', 'before']);
     const limit = params.limit ?? 100;
     if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > 1000) throw invalid('limit must be an integer from 1 to 1000.',
-      'Pass --limit as an integer from 1 to 1000, e.g. gbrain auth local-writer list --limit 100.');
+      'Pass --limit as an integer from 1 to 1000, e.g. foresights auth local-writer list --limit 100.');
     const before = params.before === undefined ? null : uuid(params.before, 'A valid local writer UUID is required.',
-      'Pass --before with the next value the previous gbrain auth local-writer list page printed (a writer UUID).', writerListFix);
+      'Pass --before with the next value the previous foresights auth local-writer list page printed (a writer UUID).', writerListFix);
     const rows = await engine.executeRaw<{ id: string }>(`SELECT id,lane,grant_ceiling,revoked_at,created_at FROM persistence_local_writers
       WHERE ($1::uuid IS NULL OR id<$1::uuid) ORDER BY id DESC LIMIT $2`, [before, limit + 1]);
     return { writers: rows.slice(0, limit), next: rows.length > limit ? rows[limit - 1].id : null };
@@ -412,7 +412,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
   if (operation === 'local_writer_register') {
     keys(params, ['lane', 'source_ids', 'scopes', 'allowed_operations', 'slug_prefixes', 'replace', 'dry_run']);
     if (params.lane !== 'cli' && params.lane !== 'stdio') throw invalid('lane must be cli or stdio.',
-      'Name the lane right after register: gbrain auth local-writer register cli (trusted administration) or gbrain auth local-writer register stdio (MCP over stdio).');
+      'Name the lane right after register: foresights auth local-writer register cli (trusted administration) or foresights auth local-writer register stdio (MCP over stdio).');
     bool(params, 'replace');
     const grant = await registrationGrant(engine, params);
     // Register is idempotent. Changing an existing ceiling is an explicit replacement.
@@ -435,10 +435,10 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     return { registered: true, id: local.id, lane: local.lane, grant, replaced: params.replace === true };
   }
   if (operation !== 'local_writer_revoke') throw invalid('Unknown local administration operation.',
-    `This brain host does not know ${operation}: upgrade the caller and the host to one release (gbrain --version on both).`);
+    `This brain host does not know ${operation}: upgrade the caller and the host to one release (foresights --version on both).`);
   keys(params, ['id', 'dry_run']);
   const id = uuid(params.id, 'A valid local writer UUID is required.',
-    'Pass the id of the writer to revoke exactly as gbrain auth local-writer list --json prints it (a UUID).', writerListFix);
+    'Pass the id of the writer to revoke exactly as foresights auth local-writer list --json prints it (a UUID).', writerListFix);
   if (params.dry_run) return { dry_run: true, action: 'local_writer_revoke', id };
   return { id, revoked: await revokeLocalWriter(engine, id) };
 }

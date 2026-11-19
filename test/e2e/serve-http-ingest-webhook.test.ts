@@ -1,6 +1,6 @@
 /**
  * v0.38 — E2E HTTP contract tests for POST /ingest, the webhook ingestion
- * source registered inside `gbrain serve --http` per the plan-eng-review E1
+ * source registered inside `foresights serve --http` per the plan-eng-review E1
  * decision (webhook source lives IN serve --http, NOT in the ingestion
  * daemon; uses Minion queue as the cross-process sync primitive).
  *
@@ -9,7 +9,7 @@
  * in-process simulation; what it explicitly does NOT cover is "the real
  * HTTP route with real OAuth." This file fills that gap.
  *
- * Spawns a real `gbrain serve --http` against real Postgres, mints OAuth
+ * Spawns a real `foresights serve --http` against real Postgres, mints OAuth
  * tokens with various scopes, and exercises every documented
  * status-code branch of the route:
  *
@@ -669,7 +669,7 @@ describeE2E('serve-http POST /ingest webhook (v0.38)', () => {
         "POST /ingest is unavailable: this brain's oauth_clients projection is missing bound_slug_prefixes",
       );
       expect(body.message).toContain('client write bindings cannot be evaluated');
-      expect(body.message).toContain('Run `gbrain apply-migrations --yes` on the brain host.');
+      expect(body.message).toContain('Run `foresights apply-migrations --yes` on the brain host.');
       // Fail-closed means no job was enqueued for this request.
       expect(body.job_id).toBeUndefined();
     } finally {

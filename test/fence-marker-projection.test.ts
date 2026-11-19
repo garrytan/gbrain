@@ -99,7 +99,7 @@ test('every way of quoting a real fence in code is refused instead of dropping i
   const wraps = [
     (f: string) => `Intro\n\n~~~~\n${f}~~~~\n`,
     (f: string) => `Intro\n\n\`\`\`\`markdown\n~~~\n${f}~~~\n\`\`\`\`\n`,
-    (f: string) => `Intro\n\n${f.replace(/<!--- gbrain:(takes|facts):begin -->/g, m => `\`${m}\``)}`,
+    (f: string) => `Intro\n\n${f.replace(/<!--- (?:foresights|gbrain):(takes|facts):begin -->/g, m => `\`${m}\``)}`,
     (f: string) => `Intro\r\n\r\n\`\`\`\r\n${f.replace(/\n/g, '\r\n')}\`\`\`\r\n`,
   ];
   for (const [i, wrap] of wraps.entries()) {

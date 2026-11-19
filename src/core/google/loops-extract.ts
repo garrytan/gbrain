@@ -547,7 +547,7 @@ export async function runLoopsExtract(
     // Counterparty page: high-confidence resolutions only, own source first
     // and then across sources by identity (#5504; google/counterparty.ts).
     // The facts layer's slugify holding fallback is fine for facts, but a
-    // phantom slug on the loop row would group `gbrain waiting` under a
+    // phantom slug on the loop row would group `foresights waiting` under a
     // person that doesn't exist and miss every entity-card lookup.
     let counterparty: ResolvedCounterparty | null = null;
     if (counterpartyRef) {

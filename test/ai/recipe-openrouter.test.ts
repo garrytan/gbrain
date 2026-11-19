@@ -147,7 +147,7 @@ describe('recipe: openrouter', () => {
     expect(() => defaultResolveAuth(r, {}, 'embedding')).toThrow(AIConfigError);
   });
 
-  test('9. resolveDefaultHeaders with no env returns gbrain defaults', () => {
+  test('9. resolveDefaultHeaders with no env returns foresights defaults', () => {
     const r = getRecipe('openrouter')!;
     expect(r.resolveDefaultHeaders).toBeDefined();
     const h = r.resolveDefaultHeaders!({});
@@ -584,7 +584,7 @@ describe('recipe: openrouter', () => {
   });
 });
 
-// gbrain#4727: Z.ai's GLM-4.5+/5.x think by default and OpenRouter bills
+// foresights#4727: Z.ai's GLM-4.5+/5.x think by default and OpenRouter bills
 // reasoning as completion tokens (same basis as the deepseek/ route, #4758),
 // so the OR recipe grants the same headroom the zhipu recipe does.
 describe('recipe: openrouter thinking-by-default — z-ai GLM (#4727)', () => {

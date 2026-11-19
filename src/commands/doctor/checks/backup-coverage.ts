@@ -45,7 +45,7 @@ const LISTED_ASSET_CAP = 5;
 function hostBackupCheck(): Action {
   return { argv: ['gbrain', 'backup', 'status'], consent: [], actor: 'host_admin', requires_exclusive: false,
     why: 'Lists each knowledge asset without verified recovery and its fix command; only the brain host can read it.',
-    user_message: 'Please run `gbrain backup status` on the machine that hosts your brain to see which parts are not backed up.' };
+    user_message: 'Please run `foresights backup status` on the machine that hosts your brain to see which parts are not backed up.' };
 }
 
 /**
@@ -66,7 +66,7 @@ function assetCoverageWording(s: BackupStatus): string {
 
 /**
  * The first blocking asset's fix as an Action. `not_a_git_repo` sources (for
- * example gbrain's own content directory) have no git remote to add, so their
+ * example foresights's own content directory) have no git remote to add, so their
  * fix is an export to a directory the user picks; db_only/db_content assets use
  * their own fix argv. `bootstrap repo` and pushes carry {credentials, egress}.
  */
@@ -82,7 +82,7 @@ function backupAssetFix(s: BackupStatus): Action | undefined {
       why: egress
         ? 'Creates a private GitHub repository for the brain and pushes to it (needs the user\'s GitHub credentials; content leaves this machine).'
         : argv[2] === 'writer'
-          ? `'${a.id}' is a managed canonical worktree: the persistence coordinator commits and pushes it as Git effects, and \`gbrain sources push\` refuses there by design. The read-only probe lists effects, blocking_effects and recent_failures; a parked push is retried with \`gbrain sources writer retry-effects <source> --request-id <id>\`.`
+          ? `'${a.id}' is a managed canonical worktree: the persistence coordinator commits and pushes it as Git effects, and \`foresights sources push\` refuses there by design. The read-only probe lists effects, blocking_effects and recent_failures; a parked push is retried with \`foresights sources writer retry-effects <source> --request-id <id>\`.`
           : `Writes a Markdown copy of '${a.id}' (pages and facts) to a directory outside the brain so it survives losing the database.`,
       ...(filled.some((x) => x.includes('<BACKUP_DIR>')) ? { inputs: [{ name: 'BACKUP_DIR', how: 'Ask the user where backups should live (a directory outside the brain, ideally synced or on another disk).' }] } : {}),
       verify: doctorVerify('backup_coverage'), docs: 'docs/operations/backup-check.md',
@@ -108,7 +108,7 @@ function toCheck(s: BackupStatus, now?: number): Check {
     const fix = backupAssetFix(s);
     const message =
       `${warnLead(assetClause, verdictCaveats(s, now))} ${assetCoverageWording(s)} ` +
-      'Run `gbrain backup status` for each asset\'s fix command.';
+      'Run `foresights backup status` for each asset\'s fix command.';
     if (!backupCoachingDue(s, now)) {
       const m = s.maturity!;
       return infoCheck('backup_coverage',
@@ -152,7 +152,7 @@ export async function checkBackupCoverage(
       return {
         name: 'backup_coverage',
         status: 'warn',
-        message: 'not checked from this surface — run `gbrain backup check` on the brain host',
+        message: 'not checked from this surface — run `foresights backup check` on the brain host',
         fix: hostBackupCheck(),
       };
     }
@@ -185,7 +185,7 @@ export async function checkBackupCoverage(
           status: 'warn',
           message:
             `${warnLead(assetClause, verdictCaveats(cached, opts.now?.getTime()))} Current recovery is not verified for all repositories — ` +
-            'run `gbrain backup status` on the brain host for the per-asset detail and fix commands.',
+            'run `foresights backup status` on the brain host for the per-asset detail and fix commands.',
           details,
         }
       : {

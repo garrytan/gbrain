@@ -76,7 +76,7 @@ test('the guard catches implicit and explicit process.env inheritance and accept
 
 /**
  * #7793: Git exports a global pathspec switch (`--literal-pathspecs` and friends, or GIT_LITERAL_PATHSPECS and friends in a
- * spawn's env) to every hook, textconv and filter helper the command starts, so a pathspec gbrain builds is made literal
+ * spawn's env) to every hook, textconv and filter helper the command starts, so a pathspec foresights builds is made literal
  * per path with `literalPathspecs` instead. `git-env.ts` names the switches to strip them from the environment, and a step may
  * pin one off (`GIT_GLOB_PATHSPECS: '0'`).
  */

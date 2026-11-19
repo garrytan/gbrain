@@ -41,7 +41,7 @@ async function sharedAgentVerdict(ctx: DoctorContext): Promise<Check> {
         + 'A harness using one can name any enabled member as its audience and read what that member reads. List the people it serves instead.',
       fix: first
         ? agentFix(['gbrain', 'access', 'check', first.kind === 'token' ? '--token' : '--client', first.kind === 'token' ? first.name : first.id, '--json'],
-          'Read-only: shows the credential\'s grant and may_act_for. Ask the user which members, groups or guest it serves before narrowing it with gbrain auth rescope ... --may-act-for <list>.', name, { ask_user: true })
+          'Read-only: shows the credential\'s grant and may_act_for. Ask the user which members, groups or guest it serves before narrowing it with foresights auth rescope ... --may-act-for <list>.', name, { ask_user: true })
         : agentFix(['gbrain', 'config', 'get', STDIO_MAY_ACT_FOR_KEY], `Read-only: shows ${STDIO_MAY_ACT_FOR_KEY}. Ask the user whom the stdio server serves before replacing * with that list.`, name, { ask_user: true }) };
   } catch (error) {
     return checkError(name, `run ${name}`, error);

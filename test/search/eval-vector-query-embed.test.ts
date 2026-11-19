@@ -1,5 +1,5 @@
 /**
- * Read-path audit #9: `gbrain eval --strategy vector` embedded queries with
+ * Read-path audit #9: `foresights eval --strategy vector` embedded queries with
  * the DOCUMENT-side `embed()`; hybrid uses `embedQuery` (input_type=query on
  * asymmetric providers), so the vector baseline was handicapped. The vector
  * strategy must send the query-side input type.

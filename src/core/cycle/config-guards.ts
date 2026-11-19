@@ -28,7 +28,7 @@ export function assertCycleConfigValue(key: string, value: string): void {
   }
   if (key !== PATTERNS_LAST_RUN_KEY) return;
   throw opError('invalid_params', `${PATTERNS_LAST_RUN_KEY} is recorded by the patterns phase and cannot be set.`,
-    `To forget the recorded run cost, unset it: gbrain config unset ${PATTERNS_LAST_RUN_KEY}`, {
+    `To forget the recorded run cost, unset it: foresights config unset ${PATTERNS_LAST_RUN_KEY}`, {
       why: 'The phase sizes in-cycle runs from the cost of the last child it ran; a hand-written value would mis-size them. Nothing was written.',
       fix: { argv: ['gbrain', 'config', 'unset', PATTERNS_LAST_RUN_KEY], consent: [], actor: 'agent', requires_exclusive: false,
         why: 'Unsetting resets the record; the next in-cycle run submits a conservative first batch.',

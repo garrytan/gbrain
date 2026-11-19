@@ -30,11 +30,11 @@ import { v024 } from '../../src/core/schema-migrations/v024-rls-backfill-missing
 const skip = !hasDatabase();
 const describeE2E = skip ? describe.skip : describe;
 
-// HOME isolation. Several tests in this file shell out to `gbrain init` and
-// `gbrain import` via Bun.spawnSync. `gbrain init` calls saveConfig() which
-// writes to $HOME/.gbrain/config.json, and `gbrain import` writes a sync
+// HOME isolation. Several tests in this file shell out to `foresights init` and
+// `foresights import` via Bun.spawnSync. `foresights init` calls saveConfig() which
+// writes to $HOME/.gbrain/config.json, and `foresights import` writes a sync
 // bookmark to the same directory. Without isolating $HOME, these tests
-// clobber the user's real production gbrain config every time `bun run
+// clobber the user's real production foresights config every time `bun run
 // test:e2e` is executed. Sibling test/e2e/migration-flow.test.ts solved
 // this with a module-level temp HOME; mirror that pattern here so the
 // E2E suite stops mutating user state.
@@ -54,7 +54,7 @@ afterAll(() => {
 });
 
 /**
- * #5227 (W14 P1.6): spawn `gbrain init` with a budget. When the child is still
+ * #5227 (W14 P1.6): spawn `foresights init` with a budget. When the child is still
  * running at half the budget, dump pg_stat_activity (pid, state, wait event,
  * transaction age, application; never query text) to stderr, so a hang behind
  * a lock shows its blocker instead of a bare exit 143. Returns the spawnSync
@@ -92,7 +92,7 @@ function makeCtx(
     },
     logger: { info: () => {}, warn: () => {}, error: () => {} },
     dryRun: false,
-    // Default: trusted local invocation (matches `gbrain call` semantics).
+    // Default: trusted local invocation (matches `foresights call` semantics).
     remote: opts.remote ?? false,
     sourceId: 'default',
   };
@@ -874,7 +874,7 @@ describeE2E('E2E: Setup Journey', () => {
   const cliCwd = join(import.meta.dir, '../..');
   const cliEnv = () => ({ ...process.env, DATABASE_URL: process.env.DATABASE_URL! });
 
-  test('gbrain init --non-interactive connects and initializes', async () => {
+  test('foresights init --non-interactive connects and initializes', async () => {
     // v0.37.10.0: pass --embedding-model explicitly. Tier-1 CI runs without
     // any embedding-provider env var, and the v0.37 fail-loud-no-key gate
     // (D3) would otherwise exit 1 here. The provider is offline-resolved
@@ -894,7 +894,7 @@ describeE2E('E2E: Setup Journey', () => {
     expect(stdout).toContain('Brain ready');
   }, 30_000);
 
-  test('gbrain import imports fixtures via CLI', () => {
+  test('foresights import imports fixtures via CLI', () => {
     const result = Bun.spawnSync({
       cmd: ['bun', 'run', 'src/cli.ts', 'import', '--no-embed', FIXTURES_PATH],
       cwd: cliCwd,
@@ -906,7 +906,7 @@ describeE2E('E2E: Setup Journey', () => {
     expect(stdout).toContain('imported');
   }, 60_000);
 
-  test('gbrain search returns results via CLI', () => {
+  test('foresights search returns results via CLI', () => {
     const result = Bun.spawnSync({
       cmd: ['bun', 'run', 'src/cli.ts', 'search', 'NovaMind'],
       cwd: cliCwd,
@@ -918,7 +918,7 @@ describeE2E('E2E: Setup Journey', () => {
     expect(stdout.length).toBeGreaterThan(0);
   }, 30_000);
 
-  test('gbrain stats shows page count via CLI', () => {
+  test('foresights stats shows page count via CLI', () => {
     const result = Bun.spawnSync({
       cmd: ['bun', 'run', 'src/cli.ts', 'stats'],
       cwd: cliCwd,
@@ -928,7 +928,7 @@ describeE2E('E2E: Setup Journey', () => {
     expect(result.exitCode).toBe(0);
   }, 30_000);
 
-  test('gbrain health runs via CLI', () => {
+  test('foresights health runs via CLI', () => {
     const result = Bun.spawnSync({
       cmd: ['bun', 'run', 'src/cli.ts', 'health'],
       cwd: cliCwd,
@@ -1142,7 +1142,7 @@ describeE2E('E2E: RLS Verification', () => {
     try { return await fn(); } finally { if (!existed) await conn.unsafe(`DROP ROLE IF EXISTS anon`); }
   }
 
-  test('gbrain doctor warns, not fails, on a missing-RLS table when nothing exposes the public schema (#4939)', async () => {
+  test('foresights doctor warns, not fails, on a missing-RLS table when nothing exposes the public schema (#4939)', async () => {
     const conn = getConn();
     const tbl = `gbrain_rls_plain_pg_${suffix}`;
     try {
@@ -1167,7 +1167,7 @@ describeE2E('E2E: RLS Verification', () => {
     }
   }, 60_000);
 
-  test('gbrain doctor fails with exit 1 when a public table is missing RLS', () => withPostgrestRole(async () => {
+  test('foresights doctor fails with exit 1 when a public table is missing RLS', () => withPostgrestRole(async () => {
     const conn = getConn();
     const tbl = `gbrain_rls_regression_${suffix}`;
     try {
@@ -1308,12 +1308,12 @@ describeE2E('E2E: RLS Verification', () => {
     const conn = getConn();
     try {
       // Simulate an operator who dropped the budget_* tables for any reason
-      // (cleanup, migration from an older gbrain, etc).
+      // (cleanup, migration from an older foresights, etc).
       await conn.unsafe(`DROP TABLE IF EXISTS public.budget_ledger CASCADE`);
       await conn.unsafe(`DROP TABLE IF EXISTS public.budget_reservations CASCADE`);
 
       // #5227 (W14 P1.6): call the migration handler directly instead of
-      // spawning `gbrain init`. The spawn replayed schema.sql plus every
+      // spawning `foresights init`. The spawn replayed schema.sql plus every
       // pending migration on a 30 s budget and timed out whenever another
       // test's open transaction held a table lock, which is the bug the
       // lock_timeout work fixes; it also proved nothing about v24 that the
@@ -1374,7 +1374,7 @@ describeE2E('E2E: RLS Verification', () => {
 // ─────────────────────────────────────────────────────────────────
 
 describeE2E('E2E: Doctor Command', () => {
-  // Scope GBRAIN_HOME to a hermetic tmpdir so `gbrain doctor` doesn't read
+  // Scope GBRAIN_HOME to a hermetic tmpdir so `foresights doctor` doesn't read
   // the developer's local ~/.gbrain/migrations/completed.jsonl. Stale partial
   // entries from in-flight workspaces (e.g. v0.31.x santiago) would make the
   // minions_migration check fail and exit 1, masking real DB-health failures.
@@ -1414,7 +1414,7 @@ describeE2E('E2E: Doctor Command', () => {
     GBRAIN_HOME: gbrainHome,
   });
 
-  test('gbrain doctor exits 0 on healthy DB', async () => {
+  test('foresights doctor exits 0 on healthy DB', async () => {
     // Init first so config exists for CLI. Pin --embedding-model explicitly
     // so the spawned doctor doesn't pick a different default (e.g. Voyage-1024d
     // when VOYAGE_API_KEY is in env) that mismatches the fixture's
@@ -1445,7 +1445,7 @@ describeE2E('E2E: Doctor Command', () => {
     expect(result.exitCode).toBe(0);
   }, 60_000);
 
-  test('gbrain doctor --json produces valid JSON', () => {
+  test('foresights doctor --json produces valid JSON', () => {
     const result = Bun.spawnSync({
       cmd: ['bun', 'run', 'src/cli.ts', 'doctor', '--json'],
       cwd: cliCwd,

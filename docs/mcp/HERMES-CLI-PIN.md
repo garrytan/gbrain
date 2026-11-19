@@ -76,7 +76,7 @@ populate `<tmp>/{SOUL.md,cron,logs,...}`, and do NOT touch `~/.hermes`. Belt-and
   the entry is saved with `enabled: false`.
 - Add performs a REAL MCP handshake + tool discovery at add time. Against
   `--command bun --args run <abs>/src/cli.ts serve` with `--env GBRAIN_HOME=<tmp>`:
-  connected, discovered **110 gbrain tools**.
+  connected, discovered **110 foresights tools**.
 - On success it prompts `Enable all N tools? [Y/n/select]:` — **non-interactive: pipe
   `printf 'Y\n'`**. Piping Y saves: `✓ Saved 'gbrain' to <HERMES_HOME>/config.yaml (110/110
   tools enabled)`. EOF on the prompt = `Cancelled.`, nothing saved.
@@ -102,8 +102,8 @@ mcp_servers:
 (The generated file also contains commented template blocks — security, fallback_model.)
 
 ## Probes
-- `hermes mcp list` → table `Name / Transport / Tools / Status`, row shows `gbrain ... ✓ enabled`.
-- `hermes mcp test gbrain` → exit 0 + prints the tool list. THE targeted probe for Test 1b.
+- `hermes mcp list` → table `Name / Transport / Tools / Status`, row shows `foresights ... ✓ enabled`.
+- `hermes mcp test foresights` → exit 0 + prints the tool list. THE targeted probe for Test 1b.
 - `hermes doctor` exists (global health; not a per-server assertion).
 
 ## Cron

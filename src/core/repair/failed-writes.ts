@@ -1,5 +1,5 @@
 /**
- * `gbrain repair failed-writes` (#5983): resubmits caller writes that the
+ * `foresights repair failed-writes` (#5983): resubmits caller writes that the
  * managed writer guard refused while it misread page children's source
  * (`writer_coordinator_required`, stored before #5982 as `storage_error`
  * "Publication failed (P0001)"), and (#6429) caller writes that ended
@@ -113,7 +113,7 @@ interface ApprovedWrite extends FailedWrite { revision: string | null; selection
 interface FailedWriteItem extends RepairItem { failed: ApprovedWrite; hash: string; last: boolean }
 
 function previewCommand(scope: RepairScope): string {
-  return `gbrain repair failed-writes${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
+  return `foresights repair failed-writes${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
 }
 
 /**
@@ -129,7 +129,7 @@ function previewCommand(scope: RepairScope): string {
 async function factsRecovery(engine: BrainEngine, write: FailedWrite, extractions: Map<string, ExtractionRequest[]>): Promise<string> {
   const origin = (write.intent.origin as { slug?: string } | null | undefined)?.slug;
   const job = typeof write.intent.originalRequestId === 'string' ? write.intent.originalRequestId : null;
-  const extractAgain = `re-extract: gbrain call extract_facts again on the current text of ${origin ?? 'the source turn'} with a new request_id (one model call)`;
+  const extractAgain = `re-extract: foresights call extract_facts again on the current text of ${origin ?? 'the source turn'} with a new request_id (one model call)`;
   if (!job || write.state !== 'conflict') return extractAgain;
   const [page] = await engine.executeRaw<{ id: string }>('SELECT id::text FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [write.source_id, write.slug]);
   if (!page && write.page_id !== null) return `not recoverable: entity page ${write.slug} was deleted after these facts were admitted`;
@@ -144,12 +144,12 @@ async function factsRecovery(engine: BrainEngine, write: FailedWrite, extraction
   if (new Set(open.filter(row => row.slug === write.slug).map(row => row.batch_key)).size > MAX_FILE_REFUSAL_RETRIES) {
     return `${extractAgain}; its follow-up batches were refused as well, so a job retry replays the refusal`;
   }
-  if (run?.status !== 'dead') return `${extractAgain}; its facts-absorb job ${run ? `is ${run.status}` : 'is gone'}, so gbrain facts retry-dead has no dead job to reset`;
+  if (run?.status !== 'dead') return `${extractAgain}; its facts-absorb job ${run ? `is ${run.status}` : 'is gone'}, so foresights facts retry-dead has no dead job to reset`;
   const source = await readFactsBackstopJobPage(engine, run.data);
   if ('skipped' in source) {
     return source.skipped === 'superseded' || source.skipped === 'page_missing'
       ? `${extractAgain}; ${origin ?? 'the source page'} changed after the page write its facts-absorb job extracts, so a job retry skips it`
-      : `${extractAgain}; a job retry would skip the page write (${source.skipped}), so gbrain facts retry-dead cannot recover it`;
+      : `${extractAgain}; a job retry would skip the page write (${source.skipped}), so foresights facts retry-dead cannot recover it`;
   }
   return `recover: ${factsRetryDeadCommand('--reset', key)} (the next facts_drain pass retries the page's facts-absorb job, which re-admits the retained facts without a model call${write.error_code === 'source_changed' ? ' once the file check passes' : ''})`;
 }
@@ -157,17 +157,17 @@ async function factsRecovery(engine: BrainEngine, write: FailedWrite, extraction
 /** The command that produces an owner-internal write again, from current content. */
 function producerCommand(producer: string, sourceId: string): string {
   const parts = producer.split(':');
-  if (parts.some(part => part.startsWith('managed_sync') || part === 'managed_file_import')) return `gbrain sync --source ${sourceId} --no-pull --json`;
-  if (parts.includes('canonical_reconcile')) return `gbrain sources reconcile ${sourceId} --audit`;
-  if (parts.includes('managed_file_repair')) return `gbrain repair frontmatter --source ${sourceId} (a frontmatter repair) or gbrain repair fences --source ${sourceId} (a fence repair)`;
-  if (parts.includes('relink_facts')) return `gbrain facts relink --source ${sourceId} --dry-run`;
-  if (parts.includes('managed_maintenance_expire_captured_facts')) return `gbrain repair captured-facts --source ${sourceId}`;
-  if (parts.includes('managed_maintenance_agent_session_facts')) return `gbrain repair agent-session-facts --source ${sourceId}`;
-  if (parts.includes('managed_maintenance_restore_extractor_facts')) return `gbrain repair extractor-facts --source ${sourceId}`;
-  if (parts.includes('managed_maintenance_restore_unwithdrawn_facts')) return `gbrain repair unwithdrawn-facts --source ${sourceId}`;
-  if (parts.includes('managed_maintenance_restore_redacted_facts')) return `gbrain repair redacted-facts --source ${sourceId}`;
-  if (parts.includes('managed_maintenance_conversation_facts')) return `gbrain extract-conversation-facts --source-id ${sourceId} --dry-run`;
-  return 'the next `gbrain dream` cycle (or autopilot) produces it again';
+  if (parts.some(part => part.startsWith('managed_sync') || part === 'managed_file_import')) return `foresights sync --source ${sourceId} --no-pull --json`;
+  if (parts.includes('canonical_reconcile')) return `foresights sources reconcile ${sourceId} --audit`;
+  if (parts.includes('managed_file_repair')) return `foresights repair frontmatter --source ${sourceId} (a frontmatter repair) or foresights repair fences --source ${sourceId} (a fence repair)`;
+  if (parts.includes('relink_facts')) return `foresights facts relink --source ${sourceId} --dry-run`;
+  if (parts.includes('managed_maintenance_expire_captured_facts')) return `foresights repair captured-facts --source ${sourceId}`;
+  if (parts.includes('managed_maintenance_agent_session_facts')) return `foresights repair agent-session-facts --source ${sourceId}`;
+  if (parts.includes('managed_maintenance_restore_extractor_facts')) return `foresights repair extractor-facts --source ${sourceId}`;
+  if (parts.includes('managed_maintenance_restore_unwithdrawn_facts')) return `foresights repair unwithdrawn-facts --source ${sourceId}`;
+  if (parts.includes('managed_maintenance_restore_redacted_facts')) return `foresights repair redacted-facts --source ${sourceId}`;
+  if (parts.includes('managed_maintenance_conversation_facts')) return `foresights extract-conversation-facts --source-id ${sourceId} --dry-run`;
+  return 'the next `foresights dream` cycle (or autopilot) produces it again';
 }
 
 /** `facts` (the preview only) adds refused fact requests, without the ones a later request of the same extraction recovered. */
@@ -342,7 +342,7 @@ async function replayWalks(engine: BrainEngine, failedIds: string[]): Promise<Ma
 
 /** W4.11: the reconcile step for a page whose file and database differ. */
 function driftDetail(sourceId: string, slug: string): string {
-  return `the page's file and database differ, so the replay was refused (source_changed); reconcile first: gbrain sources reconcile ${sourceId} ${slug} --preview, then run gbrain repair failed-writes again`;
+  return `the page's file and database differ, so the replay was refused (source_changed); reconcile first: foresights sources reconcile ${sourceId} ${slug} --preview, then run foresights repair failed-writes again`;
 }
 
 /**
@@ -402,7 +402,7 @@ async function dispositions(engine: BrainEngine, writes: FailedWrite[]): Promise
   const open: FailedWrite[] = [];
   for (const write of writes) {
     const walk = walks.get(write.id)!;
-    if (walk.committed) { verdicts.set(write.id, { class: 'already_written', detail: 'replayed by gbrain repair failed-writes' }); continue; }
+    if (walk.committed) { verdicts.set(write.id, { class: 'already_written', detail: 'replayed by foresights repair failed-writes' }); continue; }
     const drifted = walk.lastFailed;
     if (drifted?.error_code === 'source_changed') {
       const [written] = await engine.executeRaw<{ later: boolean }>(
@@ -457,7 +457,7 @@ async function previewTimeoutRefusal(engine: BrainEngine, error: unknown, scope:
     .filter(index => index.state !== 'valid').map(index => `${index.name} (${index.state})`);
   const refusal = new OperationError('repair_preview_timeout',
     'The failed-writes preview stopped: a read of the write journal ran past the database statement timeout. Nothing was saved and no page changed.',
-    unbuilt.length ? `Build the request indexes the preview reads (${unbuilt.join(', ')}) with gbrain repair request-indexes --apply, then run ${command} again.`
+    unbuilt.length ? `Build the request indexes the preview reads (${unbuilt.join(', ')}) with foresights repair request-indexes --apply, then run ${command} again.`
       : `Run ${command} again; if it stops again, raise the statement timeout for that one command on the brain host.`,
     'docs/guides/troubleshooting.md#repair-preview-timeout');
   refusal.retryable = false;
@@ -493,13 +493,13 @@ export const failedWritesRepair: RepairHandler = {
           if (write.producer) {
             residuals[`producer_owned:${write.producer}`] = (residuals[`producer_owned:${write.producer}`] ?? 0) + 1;
             const facts = write.operation === 'extract_facts';
-            // GST-2517: only a caller submits a forget, so no gbrain process produces it again.
+            // GST-2517: only a caller submits a forget, so no foresights process produces it again.
             const forget = write.operation === 'forget' || write.operation === 'forget_fact';
             const run = facts ? await factsRecovery(engine, write, extractions)
               : forget ? `a caller made this ${write.operation} and nothing produces it again; read the fact, then submit the ${write.operation} again with a new request_id if it is still wanted`
                 : producerCommand(write.producer, write.source_id);
-            producers.set(`${write.producer} in ${write.source_id}`, facts ? 'produced by gbrain itself, not replayed here; each listed request names the command that recovers its facts'
-              : `${forget ? 'made by a caller' : 'produced by gbrain itself'}, not replayed here; ${run}`);
+            producers.set(`${write.producer} in ${write.source_id}`, facts ? 'produced by foresights itself, not replayed here; each listed request names the command that recovers its facts'
+              : `${forget ? 'made by a caller' : 'produced by foresights itself'}, not replayed here; ${run}`);
             listing.push({ item: label, class: 'producer_owned', detail: facts ? run : `${forget ? 'resubmit' : 're-run'}: ${run}` });
             continue;
           }
@@ -521,7 +521,7 @@ export const failedWritesRepair: RepairHandler = {
       }
     }
     if (!opts.expect) {
-      throw new OperationError('invalid_params', 'gbrain repair failed-writes --apply replays only the set a preview printed.',
+      throw new OperationError('invalid_params', 'foresights repair failed-writes --apply replays only the set a preview printed.',
         `Preview first: ${command} — show the user the listing, then run the apply command it prints: ${command} --apply --expect <preview-hash>`,
         'docs/guides/repair.md#failed-writes');
     }
@@ -641,7 +641,7 @@ export interface ImportReplayReport {
   replayed: number;
   /** Their page still differs from its file (not imported yet, or still held): kept for a later sync. */
   waiting: number;
-  /** Not replayed: written or superseded since, unpinned, or the replay was refused (authority, conflict); `gbrain repair failed-writes` lists each. */
+  /** Not replayed: written or superseded since, unpinned, or the replay was refused (authority, conflict); `foresights repair failed-writes` lists each. */
   skipped: number;
   /** Left for the next sync by the per-run limit or time budget. */
   remaining: number;
@@ -651,7 +651,7 @@ export interface ImportReplayReport {
  * #6693 (D7): after a managed sync, replay once each caller `remember` that was
  * refused because its page's file held a committed change sync had not imported
  * (`pending_import`) or was held by sync (`sync_held`), now that the page matches
- * its file again. Same path as `gbrain repair failed-writes --apply`: the
+ * its file again. Same path as `foresights repair failed-writes --apply`: the
  * disposition rules, the original trust lane, a live authority re-check and a
  * request id derived from the refused request, so two passes (or a pass and a
  * manual apply) admit one request. A page still drifted is skipped before any

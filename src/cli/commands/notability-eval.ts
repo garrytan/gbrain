@@ -1,5 +1,5 @@
 /**
- * `gbrain notability-eval`: post-connect dispatch, run by handleCliOnly with the
+ * `foresights notability-eval`: post-connect dispatch, run by handleCliOnly with the
  * engine connectEngine() opened. Moved verbatim from the src/cli.ts
  * handleCliOnly switch (refactor wave 1, W4 cli); the record lives in
  * src/cli/command-table.ts.
@@ -8,8 +8,8 @@ import type { BrainEngine } from '../../core/engine.ts';
 
 export async function run(engine: BrainEngine, args: string[]): Promise<void> {
   // v0.31.2: notability gate eval suite. Two subcommands:
-  //   gbrain notability-eval mine    — sample paragraphs, write candidates
-  //   gbrain notability-eval review  — TTY hand-confirm tiers
+  //   foresights notability-eval mine    — sample paragraphs, write candidates
+  //   foresights notability-eval review  — TTY hand-confirm tiers
   const { runNotabilityEval } = await import('../../commands/notability-eval.ts');
   const subcmd = args[0] || 'help';
   const flags: Record<string, string | boolean> = {};

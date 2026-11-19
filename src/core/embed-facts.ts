@@ -69,7 +69,7 @@ export async function embedStaleFacts(engine: BrainEngine, opts: EmbedFactsOpts,
   if (verified && (verified.remote || verified.principal.kind !== 'local_cli' || verified.grant.slugPrefixes !== null
     || !verified.grant.sourceIds.includes('*') && !verified.grant.sourceIds.includes(opts.sourceId))) {
     throw opError('permission_denied', 'Fact backfill requires a trusted source-wide CLI grant',
-      `The registered CLI writer cannot repair every fact of source ${opts.sourceId}: fact repair needs the local CLI lane with no slug prefixes and a grant covering that source. Show the grant to the user; widening it (gbrain auth local-writer register cli --replace) is their decision.`,
+      `The registered CLI writer cannot repair every fact of source ${opts.sourceId}: fact repair needs the local CLI lane with no slug prefixes and a grant covering that source. Show the grant to the user; widening it (foresights auth local-writer register cli --replace) is their decision.`,
       { fix: readFix('Shows the local writer registrations and their grants, read-only.', { argv: ['gbrain', 'auth', 'local-writer', 'list', '--json'] }) });
   }
   const [source] = await engine.executeRaw<{ incarnation: string }>(

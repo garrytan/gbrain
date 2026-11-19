@@ -3,7 +3,7 @@ import { authorizeAsOwner, pgliteOAuthTransaction, TEST_PKCE_VERIFIER, TEST_PKCE
  * v0.37.7.0 #1166 — OAuth confidential clients regression test.
  *
  * The MCP SDK's clientAuth middleware does `client.client_secret !==
- * presented_secret` plaintext compare. gbrain stores SHA-256 hashes,
+ * presented_secret` plaintext compare. foresights stores SHA-256 hashes,
  * so the SDK's compare always failed for confidential authorization_code
  * and refresh_token grants. v0.34.1.0 fixed PUBLIC PKCE clients
  * (client_secret = undefined); confidential clients regressed.

@@ -6,7 +6,7 @@
  * 'default') — the same `null` as a missing endpoint, so multi-source graphs
  * went sparse with dead_links stuck at 0 and nothing in the summary. A
  * maintainer repro on current master (hermetic PGLite driving real
- * `gbrain extract links --source db`) re-severitied the issue p3 → P1.
+ * `foresights extract links --source db`) re-severitied the issue p3 → P1.
  *
  * Post-fix contract, pinned here:
  *  - cross-source-only targets return the distinguishable

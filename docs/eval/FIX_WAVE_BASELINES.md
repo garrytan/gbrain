@@ -17,15 +17,15 @@ bun run test > /tmp/suite.txt 2>&1; echo $? # wall-clock from the run banner
 ```
 
 Retrieval-quality canary (MANDATORY before W1, and after W1/W3/W9): run
-`gbrain eval gate` against a NON-PRODUCTION brain (the production PGLite brain
-is single-writer and usually held by a live `gbrain serve`; eval runs never
+`foresights eval gate` against a NON-PRODUCTION brain (the production PGLite brain
+is single-writer and usually held by a live `foresights serve`; eval runs never
 touch `~/.gbrain` per the eval discipline — results land in
 `<repo>/.gbrain-evals/eval-results.jsonl`). Record the gate verdict + headline
 metrics here per run.
 
 ## Grounding gate: repeated consolidation (2026-09-29, v0.59.18.0)
 
-Hermetic experiment for gbrain 10x plan amendment 7. Three real dream cycles
+Hermetic experiment for foresights 10x plan amendment 7. Three real dream cycles
 (`runCycle` with `synthesize`, `extract`, `extract_facts`) on a fixed PGLite
 brain; each cycle adds one fixed transcript between two named speakers. The
 only stub is the gateway chat transport: a scripted triage verdict and a
@@ -81,7 +81,7 @@ off. Question set: the committed `halfA430` split in
 `evals/longmemeval/splits-seed42.json` (215 scored questions).
 
 ```bash
-gbrain eval longmemeval longmemeval_s_cleaned.json --retrieval-only --top-k 5 \
+foresights eval longmemeval longmemeval_s_cleaned.json --retrieval-only --top-k 5 \
   --by-type --no-trajectory --mode balanced --reranker off --autocut off \
   --question-ids halfA430.txt --embed-cache embed.sqlite --output armX.ndjson
 ```
@@ -112,7 +112,7 @@ gbrain eval longmemeval longmemeval_s_cleaned.json --retrieval-only --top-k 5 \
 ## Ranker wave (2026-09-06, branch stuttgart, v0.48.4.0)
 
 The read-path wave whose receipt producer is the in-repo harness
-(`gbrain eval longmemeval`: strict `recall_all@5` plus the new judged
+(`foresights eval longmemeval`: strict `recall_all@5` plus the new judged
 `qa_accuracy` lane) and the R1 reranker A/B. Rows fill in as the receipts
 land; "pending" means the run is queued or in flight, not skipped. Every paid
 command runs through `scripts/eval-spend-guard.sh 75 <estimate> -- …`
@@ -144,7 +144,7 @@ command runs through `scripts/eval-spend-guard.sh 75 <estimate> -- …`
   21/39 and 27/39, core unchanged. Balanced reranker stays ON.
 - **Cat 13 conceptual recall (sibling repo, Voyage space, 20 tuning / 10
   held-out concepts, seed 42):** E0 reproduced the gap — held-out nDCG@5 bare
-  vector 60.5 vs gbrain 53.0 (off/off) and 55.8 (shipped default). E2
+  vector 60.5 vs foresights 53.0 (off/off) and 55.8 (shipped default). E2
   (`search.keyword_arm_confidence_floor`, calibrated 0.6121 on the tuning
   split): held-out 53.0 → 53.0, rule FAILED, knob ships off; the calibration
   showed 83% of the losing probes had an EMPTY keyword arm. E1 localized the
@@ -231,7 +231,7 @@ for B in 2.0 1.0 0.5 0.25; do $G 1 -- bun run src/cli.ts eval longmemeval $DS $C
 bun run scripts/replay-autocut-floor.ts ~/gbrain-lme-receipts/A4.ndjson \
   --floors off,0.10,0.20,0.35,0.50,0.65,0.80 --validate-live 0.35 --split-half seed42
 
-# Cat 13 E0: re-pin gbrain-evals to the PR head (cd gbrain && bun link && cd ../gbrain-evals && bun link gbrain),
+# Cat 13 E0: re-pin gbrain-evals to the PR head (cd foresights && bun link && cd ../gbrain-evals && bun link foresights),
 # then run its Cat 13 runner with search.reranker.enabled / search.autocut pinned per arm.
 
 # Judged QA: 25-question dry run, then the full run; re-judge with --judge --resume-from until judge_errors and skipped_budget are 0.
@@ -245,7 +245,7 @@ $G 3 -- bun run src/cli.ts eval longmemeval $DS --top-k 5 --by-type --no-traject
 The first wave whose receipt is the WRITE path (gbrain-evals Cat 35), bracketed
 by two paid runs at the sonnet judge:
 
-- **Pre-wave baseline (Phase 0, REQUIRED before any code change):** gbrain
+- **Pre-wave baseline (Phase 0, REQUIRED before any code change):** foresights
   master @ aa820c7f re-pinned into gbrain-evals — dream salient recall
   **70.2%** (the published 61.5% was 62 commits stale; +8.7pp had already
   landed via #4152 + oneshot), quote fidelity **54.2%** (130/240),

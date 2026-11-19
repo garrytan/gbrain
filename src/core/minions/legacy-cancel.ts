@@ -1,5 +1,5 @@
 /**
- * `gbrain jobs cancel --select <filter>` (DX-T2, ENG-O5): bulk cancellation
+ * `foresights jobs cancel --select <filter>` (DX-T2, ENG-O5): bulk cancellation
  * of the live rows the claim gate blocks on (SQL NULL or unsupported
  * authority), preview-bound like `authorize-legacy --select`.
  *
@@ -51,7 +51,7 @@ async function cancelClosure(engine: BrainEngine, selection: LegacyJobSelection)
     const named = outside.slice(0, 10).map(row => Number(row.id));
     throw catalogueError('legacy_job_selection_invalid',
       `Cancelling the selection would also cancel ${outside.length} descendant job(s) outside it: ${named.join(', ')}${outside.length > 10 ? ' …' : ''}.`,
-      `Cancel them on purpose first (${named.map(id => `gbrain jobs cancel ${id}`).join('; ')}) or widen the filter to select them, then re-run ${previewCommand}.`);
+      `Cancel them on purpose first (${named.map(id => `foresights jobs cancel ${id}`).join('; ')}) or widen the filter to select them, then re-run ${previewCommand}.`);
   }
   const parents = [...new Set(rows.map(row => row.parent_job_id).filter((id): id is number => id != null && !ids.includes(Number(id))))];
   const transitions = parents.length ? await engine.executeRaw<{ id: number }>(

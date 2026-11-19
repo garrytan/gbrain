@@ -4,9 +4,9 @@ This upgrade adds owner approval for OAuth authorization-code connections and du
 for queued work. It requires a coordinated worker cutover. Back up the database
 and source repositories before applying migrations.
 
-**Say to your agent:** *"Plan my GBrain upgrade, preserve my connections, and
+**Say to your agent:** *"Plan my Foresights upgrade, preserve my connections, and
 show me which queued jobs need review before services restart."* Your agent
-uses `gbrain jobs authorize-legacy` to preview selected work for review.
+uses `foresights jobs authorize-legacy` to preview selected work for review.
 
 ## Runtime and outbound requests
 
@@ -16,7 +16,7 @@ Compiled distributions include their Bun runtime.
 URL reachability checks, HTTP integration checks, and remote image loading use
 direct connections to validated destinations. If they return
 `PROXY_NOT_SUPPORTED`, remove `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and their
-lowercase variants from the service environment, then restart GBrain. A
+lowercase variants from the service environment, then restart Foresights. A
 `NO_PROXY` exception does not enable these requests. This requirement concerns
 these guarded URL operations; configure provider connections separately.
 
@@ -71,9 +71,9 @@ Generic background submission requires a durable authenticated principal.
 Stdio agents should use the local CLI or a dedicated authorized operation.
 Local application maintenance retains its existing job and budget restrictions.
 
-`gbrain remote ping` submits an `autopilot-cycle` job, which the host refuses
+`foresights remote ping` submits an `autopilot-cycle` job, which the host refuses
 with the generic-job denial. Run maintenance on the brain host, or use dedicated authorized operations such as `sync_brain` and
-`connector_sync`. `gbrain remote doctor` remains available with its required
+`connector_sync`. `foresights remote doctor` remains available with its required
 scope.
 
 Execution rechecks the original authorization against current principal and
@@ -96,32 +96,32 @@ no tools; only an absent trusted-local binding uses the default registry.
    Keep services stopped throughout review and migration.
 2. Install the same new application version everywhere without running
    post-upgrade helpers or package lifecycle scripts. For a **published binary**
-   installation, use `gbrain upgrade --swap-only`. For a **Bun package**
+   installation, use `foresights upgrade --swap-only`. For a **Bun package**
    installation, replace `vX.Y.Z.W` below with the exact release being installed:
 
    ```sh
-   bun remove --global gbrain
-   bun install --global --ignore-scripts github:garrytan/gbrain#vX.Y.Z.W
+   bun remove --global foresights
+   bun install --global --ignore-scripts github:aimonk2025/gbrain#vX.Y.Z.W
    ```
 
    Remove first. Installing a different tag over an existing global install
    fails with `DependencyLoop` on Bun 1.3, and on Bun 1.4 it exits 0 without
    swapping the code while it corrupts the global `package.json` and
    `bun.lock` (#5034). If the install step fails after the removal, run it
-   again before restarting anything; `gbrain --version` must print the new
+   again before restarting anything; `foresights --version` must print the new
    release.
 
    For a linked source checkout, update that checkout to the chosen release
    through its normal Git workflow, then run `bun install --ignore-scripts`.
-   Do not use `gbrain upgrade --swap-only` for this source/package cutover. Plain `gbrain upgrade`,
-   `gbrain post-upgrade`, and `gbrain apply-migrations --yes` can run pending
+   Do not use `foresights upgrade --swap-only` for this source/package cutover. Plain `foresights upgrade`,
+   `foresights post-upgrade`, and `foresights apply-migrations --yes` can run pending
    setup phases that start autopilot or perform other maintenance.
 
    Verify the installed version, then apply only schema migrations:
 
    ```sh
-   gbrain --version
-   gbrain apply-migrations --force-schema --yes
+   foresights --version
+   foresights apply-migrations --force-schema --yes
    ```
 
    `--force-schema` runs pending schema migrations and returns before setup
@@ -136,7 +136,7 @@ no tools; only an absent trusted-local binding uses the default registry.
    selected legacy rows whose `submission_authority` is **SQL NULL**:
 
    ```sh
-   gbrain jobs authorize-legacy --ids 101,102 --json
+   foresights jobs authorize-legacy --ids 101,102 --json
    ```
 
    Review the payloads, schedules, attempts, and transitive dependency effects. The command
@@ -147,7 +147,7 @@ no tools; only an absent trusted-local binding uses the default registry.
 4. Apply exactly the reviewed snapshot digest:
 
    ```sh
-   gbrain jobs authorize-legacy --ids 101,102 --expect <snapshot_digest> --yes --json
+   foresights jobs authorize-legacy --ids 101,102 --expect <snapshot_digest> --yes --json
    ```
 
    A changed snapshot or dependency graph refuses approval; preview and review
@@ -160,16 +160,16 @@ no tools; only an absent trusted-local binding uses the default registry.
    the apply authorizes exactly the previewed set:
 
    ```sh
-   gbrain jobs authorize-legacy --select "status=waiting|paused,name=synthesize"
-   gbrain jobs authorize-legacy --select "status=waiting|paused,name=synthesize" --expect <hash> --yes
+   foresights jobs authorize-legacy --select "status=waiting|paused,name=synthesize"
+   foresights jobs authorize-legacy --select "status=waiting|paused,name=synthesize" --expect <hash> --yes
    ```
 
    Live rows you do not want to run (including unsupported non-NULL ones)
-   cancel the same way with `gbrain jobs cancel --select "<filter>"` and its
+   cancel the same way with `foresights jobs cancel --select "<filter>"` and its
    printed `--expect <hash> --yes`; a selection that would also cancel a job
    outside it refuses and names that job. Active jobs are cancelled one at a
-   time with `gbrain jobs cancel <id>` before either preview runs.
-   `gbrain doctor` (`legacy_job_authority`) prints these commands filled in
+   time with `foresights jobs cancel <id>` before either preview runs.
+   `foresights doctor` (`legacy_job_authority`) prints these commands filled in
    for your brain.
 5. Explicitly authorize or cancel every nonterminal legacy job before restarting
    services. Worker startup refuses unresolved work. Historical terminal rows

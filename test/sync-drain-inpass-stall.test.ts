@@ -16,7 +16,7 @@ import { drainNext, formatDrainSummary, runDrain, type DrainClaim, type StallPro
 import { enterClaimPhase, startClaimPhase } from '../src/core/persistence/claim-phase.ts';
 import type { SyncResult } from '../src/commands/sync.ts';
 
-const RESUME = 'gbrain sync --source s --no-pull';
+const RESUME = 'foresights sync --source s --no-pull';
 const done: SyncResult = { status: 'synced', fromCommit: 'a', toCommit: 'b', added: 0, modified: 0, deleted: 0, renamed: 0, chunksCreated: 0, embedded: 0, pagesAffected: [] };
 const publishing = (ageMs: number): DrainClaim => ({ phase: 'publishing', step: 'group_commit', waiting_on: 'publication', step_age_ms: ageMs, claim_age_ms: ageMs, lapsed: false,
   owner_pid: 4242, owner_kind: 'serve', owner_nonce: 'n1', last_sql: { label: 'UPDATE persistence_requests', age_ms: ageMs }, allowance_ms: 150_000, ceiling_ms: 600_000 });
@@ -36,8 +36,8 @@ describe('in-pass governor: a publish that never returns', () => {
       expect(result.drain!.stall!.last_sql?.label).toBe('UPDATE persistence_requests');
       expect(passSignal?.aborted).toBe(true);
       const next = drainNext(result, RESUME, 's')!;
-      expect(next).toMatchObject({ command: 'gbrain sources writer status --source s --json', safe_to_loop: false, code: 'drain_stalled', cause: 'publication_overdue' });
-      expect(next.why).toContain('restart the gbrain serve process (pid 4242)');
+      expect(next).toMatchObject({ command: 'foresights sources writer status --source s --json', safe_to_loop: false, code: 'drain_stalled', cause: 'publication_overdue' });
+      expect(next.why).toContain('restart the foresights serve process (pid 4242)');
       expect(next.why).toContain('not reclaimed for you');
       expect(formatDrainSummary(result, RESUME, 's').join('\n')).toContain('cause=publication_overdue');
     });

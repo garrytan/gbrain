@@ -414,7 +414,7 @@ describe('journaled memory publication, both engines', () => {
         slug, pageId: snapshot.page.id, callerIntent: p, intent: p, authority, requestId: randomUUID() });
       const row = (await claimNextWrite(engine, randomUUID()))!;
       const prepared = await prepareMemoryMutation(engine, row, context(engine).config);
-      // A current forget queues behind the claimed remember on its root; a gbrain before G4 sharing the brain still commits
+      // A current forget queues behind the claimed remember on its root; a foresights before G4 sharing the brain still commits
       // its withdrawal database-first, at any moment. The publication must refuse the withdrawn claim either way.
       await legacyForget(context(engine), Number(old.id));
       const result = await publishMutation(engine, row, prepared);

@@ -1,12 +1,12 @@
-/** D3 curated help for `gbrain onboard` (flags read by src/commands/onboard.ts runOnboard). */
+/** D3 curated help for `foresights onboard` (flags read by src/commands/onboard.ts runOnboard). */
 import type { CliHelpSpec } from '../command-table.ts';
 
 export const help: CliHelpSpec = {
   summary: 'Onboarding plan for the brain: what to fix to reach the target score, and optionally run it.',
   usage: [
-    'gbrain onboard [--check] [--target-score <n>] [--explain] [--json]',
-    'gbrain onboard --auto --max-usd <n|off> [--target-score <n>] [--json]',
-    'gbrain onboard --history [--json]',
+    'foresights onboard [--check] [--target-score <n>] [--explain] [--json]',
+    'foresights onboard --auto --max-usd <n|off> [--target-score <n>] [--json]',
+    'foresights onboard --history [--json]',
   ].join('\n'),
   flags: [
     { name: '--check', type: 'boolean', desc: 'Print the plan; submit nothing (the default mode).' },
@@ -18,8 +18,8 @@ export const help: CliHelpSpec = {
     { name: '--json', type: 'boolean', desc: 'Print the stable JSON envelope.' },
   ],
   examples: [
-    'gbrain onboard --json',
-    'gbrain onboard --auto --max-usd 5',
-    'gbrain onboard --history --json',
+    'foresights onboard --json',
+    'foresights onboard --auto --max-usd 5',
+    'foresights onboard --history --json',
   ],
 };

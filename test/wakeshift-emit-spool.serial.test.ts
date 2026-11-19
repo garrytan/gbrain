@@ -1,6 +1,6 @@
 /**
- * GST-2679: `gbrain wakeshift emit cron.finished` on a PGLite brain held by another gbrain process (serve, the job
- * worker) spools the run under the brain's own gbrain home, and the holder's wake drainer records it with its original
+ * GST-2679: `foresights wakeshift emit cron.finished` on a PGLite brain held by another foresights process (serve, the job
+ * worker) spools the run under the brain's own foresights home, and the holder's wake drainer records it with its original
  * finished time. Repo-less PGLite brain on disk, fake Wakeshift (test/helpers/fake-wakeshift.ts).
  *
  * Serial: every test runs under withEnv with GBRAIN_HOME at a temporary home holding config.json and the 0600 key file.
@@ -83,7 +83,7 @@ beforeEach(async () => {
   for (const table of ['wake_subscriptions', 'wake_crons', 'wake_cron_runs']) await engine.executeRaw(`DELETE FROM ${table}`);
 });
 
-describe('emit while another gbrain process holds the PGLite brain', () => {
+describe('emit while another foresights process holds the PGLite brain', () => {
   test('the real CLI exits 0 and spools the run; the holder\'s drainer records it with its own time and wakes the watcher', async () => {
     await captured(() => runWakeshift(engine, ['cron', 'add', 'nightly-example']));
     const watch = await inHome(() => dispatchToolCall(engine, 'watch_cron', { name: 'nightly-example' }, stdio as never));

@@ -3,7 +3,7 @@
  *
  * This is a PRODUCTION benchmark. The task is real work that an agent does
  * every day: pull tweets from the X API, parse them into a structured
- * brain page, commit to git, and sync to gbrain. It's deterministic —
+ * brain page, commit to git, and sync to foresights. It's deterministic —
  * same input always produces the same steps.
  *
  * What we measure: total wall-clock for the complete pipeline, not just
@@ -11,7 +11,7 @@
  * month of tweets?" — the question a user actually asks.
  *
  * Minions side: script calls X API → writes file → git commit → 
- * gbrain jobs submit. No LLM involved.
+ * foresights jobs submit. No LLM involved.
  *
  * OpenClaw side: sessions_spawn with a task prompt → model reads task →
  * model calls exec(curl) → model calls exec(python) → model calls
@@ -23,7 +23,7 @@
  *
  * Prerequisites:
  *   - X_BEARER_TOKEN (Enterprise tier for full-archive search)
- *   - DATABASE_URL (Postgres with gbrain schema)
+ *   - DATABASE_URL (Postgres with foresights schema)
  *   - ANTHROPIC_API_KEY (for OpenClaw side only)
  *   - A brain repo at BRAIN_PATH (default: /data/brain)
  *   - OpenClaw installed (for OC side; skip OC tests if not available)

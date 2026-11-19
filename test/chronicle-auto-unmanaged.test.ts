@@ -2,7 +2,7 @@
  * #5876 (E6) — the `chronicle` phase on an unmanaged brain (trusted local
  * writers, no write-time decision): it scans pages changed since the
  * activation stamp and extracts them; pages written before activation stay
- * history for `gbrain chronicle-backfill`.
+ * history for `foresights chronicle-backfill`.
  * Fails when: an unmanaged brain never extracts automatically, or the first
  * run after upgrade sweeps pre-activation history.
  * Seams: injected judge; in-memory PGLite.

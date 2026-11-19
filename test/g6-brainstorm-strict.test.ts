@@ -1,5 +1,5 @@
 /**
- * G6 (git-canonical memory): `gbrain brainstorm --save` and `gbrain lsd --save` on a strict (canonical: git) managed
+ * G6 (git-canonical memory): `foresights brainstorm --save` and `foresights lsd --save` on a strict (canonical: git) managed
  * source are door-only.
  *
  * Both save through persistSavedIdea (commands/brainstorm.ts), with the page content the CLI builds after the run

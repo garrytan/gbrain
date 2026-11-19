@@ -1,6 +1,6 @@
 /**
  * Status-only serve entry (agent operator contract v1, F4): cli.ts hands over
- * a `gbrain serve` (stdio or `--http`) whose brain cannot be opened (lock held
+ * a `foresights serve` (stdio or `--http`) whose brain cannot be opened (lock held
  * by a live holder, no brain, a missing or repair-failed brain, unreadable
  * config). `runStatusModeServe` is the one entry point for both transports and
  * `reprobe` (src/mcp/status-mode.ts) the one re-probe: stdio answers the MCP

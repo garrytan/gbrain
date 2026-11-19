@@ -1,6 +1,6 @@
 /**
  * #7108: the migration statement budget, and the last schema migration that
- * used it up, kept in config so `gbrain apply-migrations` and `gbrain doctor`
+ * used it up, kept in config so `foresights apply-migrations` and `foresights doctor`
  * can name it and the next step that helps (migration-timeout-advice.ts).
  * Before this, both said "terminate blockers, rerun apply-migrations --yes",
  * which repeats the failure when the migration's own work outlasts the budget.
@@ -23,7 +23,7 @@ export function migrationStatementTimeoutMs(): number {
   return statementTimeoutMs;
 }
 
-/** `gbrain apply-migrations --statement-timeout` (operator only, restored after the run; 0 removes the limit) and tests; null restores the default. */
+/** `foresights apply-migrations --statement-timeout` (operator only, restored after the run; 0 removes the limit) and tests; null restores the default. */
 export function setMigrationStatementTimeoutMs(ms: number | null): void {
   statementTimeoutMs = ms ?? MIGRATION_STATEMENT_TIMEOUT_MS;
 }

@@ -1,5 +1,5 @@
 /**
- * `gbrain sources set-pull-strategy <id> <rebase|merge>` (#5429): persist
+ * `foresights sources set-pull-strategy <id> <rebase|merge>` (#5429): persist
  * `sources.config.pull_strategy`, how every divergence-safe pull of the source
  * (`sources pull <id>`, `sources push <id>`, `sources harden <id>`) reconciles
  * local commits with origin. Unset means `rebase`, the behaviour every brain
@@ -18,7 +18,7 @@ import { parseSourceConfig } from '../core/sources-load.ts';
 export async function runSetPullStrategy(engine: BrainEngine, args: string[]): Promise<void> {
   const [id, strategy] = args;
   if (!id || id.startsWith('-') || !strategy) {
-    console.error(`Usage: gbrain sources set-pull-strategy <id> <${PULL_STRATEGIES.join('|')}>`);
+    console.error(`Usage: foresights sources set-pull-strategy <id> <${PULL_STRATEGIES.join('|')}>`);
     process.exit(2);
   }
   if (!isPullStrategy(strategy)) {
@@ -27,7 +27,7 @@ export async function runSetPullStrategy(engine: BrainEngine, args: string[]): P
   }
   const [src] = await engine.executeRaw<{ config: unknown; local_path: string | null }>('SELECT config, local_path FROM sources WHERE id=$1', [id]);
   if (!src) {
-    console.error(`Source "${id}" not found. List sources with: gbrain sources list`);
+    console.error(`Source "${id}" not found. List sources with: foresights sources list`);
     process.exit(4);
   }
   const config = parseSourceConfig(src.config);

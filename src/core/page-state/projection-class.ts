@@ -10,9 +10,9 @@
  * - `sealable`: an image the importer attested safe (at or after the safe-chunk
  *   fence, one `image_asset` chunk at index 0 that still holds the page's text)
  *   whose only change since was v153 removing the seal marker
- *   (`gbrain projections drain` restores it: page-state/image-seal.ts).
+ *   (`foresights projections drain` restores it: page-state/image-seal.ts).
  * - `reimport`: every other live image; only the importer (fresh OCR, fresh
- *   pixels) can seal it: `gbrain embed --stale --images`.
+ *   pixels) can seal it: `foresights embed --stale --images`.
  */
 import { SAFE_FENCE_CHUNKER_VERSION, chunkGenerationFilter, protectedBodyFilter, safeChunksFilter } from '../search/safe-chunks.ts';
 import { boundedBodyPrefixSql } from '../page-window/bounded-lead.ts';

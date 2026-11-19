@@ -1,9 +1,9 @@
 /**
  * #6803 (D1, D3): the extraction backlog as doctor's `links_extraction_lag`, the end-of-sync nudge and
- * `gbrain extract --stale` all report it. One statement reads the live page count, the actionable stale count
+ * `foresights extract --stale` all report it. One statement reads the live page count, the actionable stale count
  * (attendance-blocked pages excluded: extraction cannot clear them) and the attendance-blocked count under a short
  * statement deadline; the mention-due read runs only when the mention pass is enabled. One verdict decides whether
- * doctor warns and the nudge prints, and one builder renders the default fix (plain `gbrain extract --stale`, the
+ * doctor warns and the nudge prints, and one builder renders the default fix (plain `foresights extract --stale`, the
  * cron default) plus the decision between both routes, with an estimate stated at its basis.
  */
 import type { BrainEngine } from './engine.ts';
@@ -19,13 +19,14 @@ import { isMissingSchemaObject } from './utils.ts';
 import { managedPersistenceEnabled } from './persistence/ownership.ts';
 import { resolveIncludeFrontmatter } from './extract-frontmatter.ts';
 import { LINK_HOLD_THRESHOLD_RUNS, linkExtractionRetryFix } from './persistence/links-extraction-holds.ts';
+import { commandText } from './brand.ts';
 
 /** Warn threshold (percent of live pages actionable-stale); `GBRAIN_EXTRACTION_LAG_WARN_PCT` overrides it. */
 export const EXTRACTION_LAG_WARN_PCT_DEFAULT = 20;
 /** Below this many live pages a brain-wide (unscoped) read is too small to grade. */
 export const EXTRACTION_LAG_MIN_PAGES = 100;
 /**
- * Wall-clock budget of one plain `gbrain extract --stale` run (default 30 min); `--catch-up` removes it.
+ * Wall-clock budget of one plain `foresights extract --stale` run (default 30 min); `--catch-up` removes it.
  * The deferred-sweep submitters derive their job timeout from it.
  */
 export const STALE_TIME_BUDGET_MS = Math.max(1000, Number(process.env.GBRAIN_EXTRACT_TIME_BUDGET_MS) || 30 * 60 * 1000);
@@ -87,7 +88,7 @@ async function readLagRow(engine: BrainEngine, opts: { sourceId?: string; timeou
 /**
  * GBRA-130 A-1: doctor's note for pages whose managed link extraction is held (failed
  * `LINK_HOLD_THRESHOLD_RUNS` runs in a row), naming the first five with their codes, and the fix that retries them
- * (`gbrain extract --stale [--source-id <id>] --retry-held`). Empty note and no fix when nothing is held.
+ * (`foresights extract --stale [--source-id <id>] --retry-held`). Empty note and no fix when nothing is held.
  */
 export async function heldExtractionReport(engine: BrainEngine, held: number, sourceId?: string): Promise<{ note: string; fix?: Action }> {
   if (!held) return { note: '' };
@@ -96,7 +97,7 @@ export async function heldExtractionReport(engine: BrainEngine, held: number, so
     .map(row => `${row.source_id}:${row.slug} (${row.code})`);
   const fix = linkExtractionRetryFix(sourceId, true);
   return { fix, note: `. ${held} page(s) failed link extraction ${LINK_HOLD_THRESHOLD_RUNS} runs in a row and are held (${sample.join(', ')}${held > sample.length ? ', ...' : ''}); `
-    + `fix the cause the code names, then run ${fix.argv!.join(' ')}` };
+    + `fix the cause the code names, then run ${commandText(fix.argv!)}` };
 }
 
 export interface ExtractionLagVerdict { status: 'ok' | 'warn' | 'fail'; skipped: boolean; pct: number; warn_pct: number; fail_pct: number | null }
@@ -110,7 +111,7 @@ export function extractionLagVerdict(lag: Pick<ExtractionLag, 'total' | 'actiona
   if (failRaw !== undefined && failRaw !== '') {
     const n = Number(failRaw);
     if (Number.isFinite(n) && n > 0) failPct = n;
-    else warnOnceForEnv('GBRAIN_EXTRACTION_LAG_FAIL_PCT', `[gbrain] Ignoring invalid GBRAIN_EXTRACTION_LAG_FAIL_PCT=${failRaw}; hard-fail stays disabled.`);
+    else warnOnceForEnv('GBRAIN_EXTRACTION_LAG_FAIL_PCT', `[foresights] Ignoring invalid GBRAIN_EXTRACTION_LAG_FAIL_PCT=${failRaw}; hard-fail stays disabled.`);
   }
   const skipped = lag.total === 0 || (lag.total < EXTRACTION_LAG_MIN_PAGES && !sourceId);
   const pct = lag.total ? (lag.actionable / lag.total) * 100 : 0;
@@ -127,7 +128,7 @@ function duration(seconds: number): string {
 export interface ExtractionRoute { id: 'plain' | 'catch_up'; argv: string[]; label: string; estimate_seconds: number; runs: number }
 
 /**
- * The default fix (plain `gbrain extract --stale`: 30 minutes per run, resumes; the cron default), verified by the
+ * The default fix (plain `foresights extract --stale`: 30 minutes per run, resumes; the cron default), verified by the
  * scoped dry run, and one decision between both routes. A fix expected to outlast an agent tool call
  * (`AGENT_TOOL_LIMIT_MS`) is the user's (`host_admin` on a remote brain): `tell_user_to_run`. Option argv are pinned to
  * the selected brain (the CLI's routing unless given; none on a remote brain); a brain-wide run never gets a source
@@ -152,13 +153,13 @@ export function extractionRoutes(lag: Pick<ExtractionLag, 'actionable'>, opts: {
   const fix: Action = {
     argv: plainArgv, consent: [], actor: long ? (opts.remote ? 'host_admin' : 'user') : 'agent', requires_exclusive: false,
     why: `Derives links and timeline entries for ${lag.actionable} stale page(s); each run stops after ${runMinutes} minutes and the next resumes where it stopped; it changes no page content.`,
-    ...(long ? { user_message: `Run on the brain host, in a terminal rather than an agent tool call: ${routes[0]!.argv.join(' ')} (${routes[0]!.label}), or ${routes[1]!.argv.join(' ')} (${routes[1]!.label}).` } : {}),
+    ...(long ? { user_message: `Run on the brain host, in a terminal rather than an agent tool call: ${commandText(routes[0]!.argv)} (${routes[0]!.label}), or ${commandText(routes[1]!.argv)} (${routes[1]!.label}).` } : {}),
     verify: { argv: ['gbrain', 'extract', '--stale', '--dry-run', '--json', ...scope] },
     docs: 'docs/guides/troubleshooting.md#symptom-table',
   };
   const decision: Decision = {
     id: 'extraction_route', question: 'How should the link-extraction backlog finish?',
-    options: routes.map(route => ({ id: route.id, label: `${route.argv.join(' ')}: ${route.label}`, argv: route.argv })),
+    options: routes.map(route => ({ id: route.id, label: `${commandText(route.argv)}: ${route.label}`, argv: route.argv })),
     default: 'plain', default_reason: `Bounded runs fit cron and never hold the brain longer than ${runMinutes} minutes; the catch-up run finishes in one go.`,
   };
   return { fix, decision, routes };
@@ -171,7 +172,7 @@ export function extractionNudgeLines(lag: ExtractionLag, opts: { sourceId?: stri
   const mentions = lag.mention_due ? `; ${lag.mention_due} page(s) await the mention pass` : '';
   const where = fix.actor === 'agent' ? '' : ' Run it on the brain host, not inside an agent tool call.';
   return [`[sync] ${lag.actionable} page(s) have un-extracted edges (doctor: links_extraction_lag${blocked}${mentions}). Two ways to finish:${where}`,
-    ...routes.map(route => `[sync]   ${route.argv.join(' ')} — ${route.label}`)];
+    ...routes.map(route => `[sync]   ${commandText(route.argv)} — ${route.label}`)];
 }
 
 export interface StaleExtractionCounts { actionable: number; attendance_blocked: number; held: number; mention_due: number | null; complete: boolean }
@@ -187,7 +188,7 @@ export async function staleExtractionCounts(engine: BrainEngine, sourceId?: stri
 export function formatStaleCounts(c: StaleExtractionCounts): string {
   return `Actionable: ${c.actionable} page(s) still need link/timeline extraction` +
     (c.attendance_blocked ? `; ${c.attendance_blocked} attendance-blocked page(s) wait on unresolved attendees (extraction cannot clear them)` : '') +
-    (c.held ? `; ${c.held} held page(s) failed extraction ${LINK_HOLD_THRESHOLD_RUNS} runs in a row (gbrain extract --stale --retry-held retries them)` : '') +
+    (c.held ? `; ${c.held} held page(s) failed extraction ${LINK_HOLD_THRESHOLD_RUNS} runs in a row (foresights extract --stale --retry-held retries them)` : '') +
     (c.mention_due === null ? '' : `; ${c.mention_due} page(s) due for the mention pass`) +
     (c.complete ? '. Extraction is complete (raw stale totals are not a completion signal).' : '. Raw stale totals include blocked pages; done when actionable is 0' + (c.mention_due === null ? '.' : ' and mention-due is 0.'));
 }

@@ -1,7 +1,7 @@
 /**
  * Unit tests for the shared supervisor PID-file reader (issue #1815, Q4).
  * One regression point now backs `jobs supervisor status`, `jobs stats`, and
- * `gbrain doctor`.
+ * `foresights doctor`.
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';

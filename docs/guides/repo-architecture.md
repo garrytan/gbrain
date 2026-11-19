@@ -69,7 +69,7 @@ agent-repo/
 ### Brain Repo (world knowledge)
 
 What you know. People, companies, deals, meetings, ideas, media.
-This is the repo GBrain indexes.
+This is the repo Foresights indexes.
 
 ```
 brain/
@@ -110,7 +110,7 @@ The brain is the permanent record. The agent repo is replaceable.
 ### Why Two Repos
 
 **Independence.** You can switch AI agents (OpenClaw -> Hermes -> custom) without
-losing your knowledge. You can switch knowledge tools (GBrain -> something else)
+losing your knowledge. You can switch knowledge tools (Foresights -> something else)
 without losing your agent setup.
 
 **Scale.** The brain grows large (10,000+ files). The agent repo stays small
@@ -119,7 +119,7 @@ without losing your agent setup.
 **Privacy.** The brain contains sensitive information (people, deals, personal
 notes). The agent repo contains operational config. Different access controls.
 
-**GBrain indexes the brain repo.** Run `gbrain sync --repo ~/brain/` to keep
+**Foresights indexes the brain repo.** Run `foresights sync --repo ~/brain/` to keep
 the search index current. The agent repo is not indexed by default.
 
 **Multi-source nuance.** With multi-source brains
@@ -142,12 +142,12 @@ agent config.
    belongs in the brain. Agent configs, skills, cron jobs, and operational
    state are replaceable. People, companies, ideas, and meetings are not.
 
-3. **Don't casually index the agent repo.** Running `gbrain sync` against
+3. **Don't casually index the agent repo.** Running `foresights sync` against
    the agent repo pollutes search results with operational config instead
    of world knowledge. (Registering it deliberately as an isolated source
    is different — see the multi-source nuance above. Pin the working
    directory to the right source with a `.gbrain-source` dotfile via
-   `gbrain sources attach <id>`.)
+   `foresights sources attach <id>`.)
 
 ## How to Verify
 
@@ -161,10 +161,10 @@ agent config.
    switched to a different person?" If the answers don't match the file's
    location, it's in the wrong repo.
 
-3. **Verify GBrain only indexes brain.** Run `gbrain stats` and check the
+3. **Verify Foresights only indexes brain.** Run `foresights stats` and check the
    indexed paths. None should point to the agent repo directory. If agent
    config files appear in search results, the sync target is misconfigured.
 
 ---
 
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md).*
+*Part of the [Foresights Skillpack](../GBRAIN_SKILLPACK.md).*

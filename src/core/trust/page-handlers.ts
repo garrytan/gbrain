@@ -26,7 +26,7 @@
  * - #7891 provenance restore (`restorePageProvenance`, local CLI only): put back
  *   the provenance stamps a remote write rewrote and the lowering marker it
  *   removed (trust/provenance-drift.ts decides), lower the page to match, and
- *   file a `lower_page` proposal so the owner sees it in `gbrain trust review`.
+ *   file a `lower_page` proposal so the owner sees it in `foresights trust review`.
  *
  * Every function here runs after the caller established the owner's
  * confirmation (trust/confirm.ts); each re-checks the page revision it was
@@ -224,7 +224,7 @@ async function closeProposal(tx: BrainEngine, proposal: PageActionInput['proposa
   const after = accepted ? { ...proposal.after, accepted_revision: accepted.revision } : proposal.after;
   if (!(await transitionTrustProposal(tx, proposal.id, proposal.from ?? 'pending', proposal.to, { after, decidedBy: by ?? null }))) {
     throw opError('preview_changed', `Trust proposal tp${proposal.id} was decided by someone else meanwhile; nothing was changed.`,
-      'Run gbrain trust review to see its current state.');
+      'Run foresights trust review to see its current state.');
   }
 }
 
@@ -232,7 +232,7 @@ async function closeProposal(tx: BrainEngine, proposal: PageActionInput['proposa
 export async function confirmPage(engine: BrainEngine, input: PageActionInput): Promise<PageActionResult> {
   const ref = pageRef(input.sourceId, input.slug);
   const state = await readPageTrustState(engine, input.sourceId, input.slug);
-  if (!state) throw opError('page_not_found', `No live page ${ref}.`, 'Check the ref; gbrain trust review lists pages waiting for you.');
+  if (!state) throw opError('page_not_found', `No live page ${ref}.`, 'Check the ref; foresights trust review lists pages waiting for you.');
   if (state.revision !== input.expectedRevision) throw changedSincePreview(ref, 'its confirmation');
   if (input.labels) {
     await publishOwnerPage(engine, input, { mode: 'confirm', expected_revision: input.expectedRevision, via: input.confirmation.via, proposal: input.proposal, labels: input.labels },
@@ -274,7 +274,7 @@ const LABEL_KEYS = ['visibility', 'access', 'confidentiality', 'readable_by'];
 export async function writePageLabels(engine: BrainEngine, input: PageActionInput & { tier: TrustTier }): Promise<PageActionResult> {
   const ref = pageRef(input.sourceId, input.slug);
   const state = await readPageTrustState(engine, input.sourceId, input.slug);
-  if (!state) throw opError('page_not_found', `No live page ${ref}.`, 'Check the ref; gbrain trust review lists pages waiting for you.');
+  if (!state) throw opError('page_not_found', `No live page ${ref}.`, 'Check the ref; foresights trust review lists pages waiting for you.');
   if (state.revision !== input.expectedRevision) throw changedSincePreview(ref, ACTION_NAMES.write_labels);
   const tier = minTrust(input.tier, state.tier);
   await publishOwnerPage(engine, input, { mode: 'write_labels', expected_revision: input.expectedRevision, via: input.confirmation.via, proposal: input.proposal,
@@ -288,7 +288,7 @@ const LOCAL_ONLY_MODES: ReadonlyArray<OwnerPageIntent['mode']> = ['repair_marker
 export async function repairPageMarker(engine: BrainEngine, input: PageActionInput): Promise<PageActionResult & { marker: TrustTier | null }> {
   const ref = pageRef(input.sourceId, input.slug);
   const state = await readPageTrustState(engine, input.sourceId, input.slug);
-  if (!state) throw opError('page_not_found', `No live page ${ref}.`, 'Run gbrain trust backfill --repair-unknown-markers again to see the current candidates.');
+  if (!state) throw opError('page_not_found', `No live page ${ref}.`, 'Run foresights trust backfill --repair-unknown-markers again to see the current candidates.');
   if (state.revision !== input.expectedRevision) throw changedSincePreview(ref, ACTION_NAMES.repair_marker);
   const marker = repairedMarker(state.tier);
   await publishOwnerPage(engine, input, { mode: 'repair_marker', expected_revision: input.expectedRevision, via: input.confirmation.via },
@@ -302,7 +302,7 @@ async function plannedProvenanceRestore(engine: BrainEngine, state: PageTrustSta
   const restore = item?.verdict.restore;
   if (!item || !restore || item.verdict.class === 'restamp' || plannedDigest(item) !== intent.planned) throw changedSincePreview(pageRef(state.sourceId, state.slug), ACTION_NAMES.restore_provenance);
   const { page } = state.snapshot;
-  assertInlineBody(page, 'gbrain repair provenance');
+  assertInlineBody(page, 'foresights repair provenance');
   return { content: serializeMarkdown(restore.frontmatter, page.compiled_truth ?? '', page.timeline ?? '', {
     type: (page.type as PageType) ?? 'note', title: page.title ?? '', tags: state.snapshot.tags }), tier: minTrust(state.tier, restore.tier) };
 }
@@ -311,7 +311,7 @@ async function plannedProvenanceRestore(engine: BrainEngine, state: PageTrustSta
 export async function restorePageProvenance(engine: BrainEngine, input: PageActionInput & { planned: string; includeAmbiguous?: boolean }): Promise<PageActionResult> {
   const ref = pageRef(input.sourceId, input.slug);
   const state = await readPageTrustState(engine, input.sourceId, input.slug);
-  if (!state) throw opError('page_not_found', `No live page ${ref}.`, 'Preview gbrain repair provenance again to see the current candidates.');
+  if (!state) throw opError('page_not_found', `No live page ${ref}.`, 'Preview foresights repair provenance again to see the current candidates.');
   if (state.revision !== input.expectedRevision) throw changedSincePreview(ref, ACTION_NAMES.restore_provenance);
   const intent: OwnerPageIntent = { mode: 'restore_provenance', expected_revision: input.expectedRevision, via: input.confirmation.via,
     planned: input.planned, include_ambiguous: input.includeAmbiguous === true };
@@ -327,10 +327,10 @@ export const versionTier = (version: { trust_tier?: string | null }): TrustTier 
 export async function revertPageToVersion(engine: BrainEngine, input: PageActionInput & { versionId: number }): Promise<PageActionResult> {
   const ref = pageRef(input.sourceId, input.slug);
   const state = await readPageTrustState(engine, input.sourceId, input.slug);
-  if (!state) throw opError('page_not_found', `No live page ${ref}.`, `Check the ref; gbrain history ${input.slug} lists its versions.`);
+  if (!state) throw opError('page_not_found', `No live page ${ref}.`, `Check the ref; foresights history ${input.slug} lists its versions.`);
   if (state.revision !== input.expectedRevision) throw changedSincePreview(ref, 'the revert');
   const version = await readPageVersion(engine, state.pageId, input.versionId);
-  if (!version) throw opError('not_found', `Version ${input.versionId} is not in the history of ${ref}.`, `List the page's versions with gbrain history ${input.slug} and pass one of their ids to --version.`);
+  if (!version) throw opError('not_found', `Version ${input.versionId} is not in the history of ${ref}.`, `List the page's versions with foresights history ${input.slug} and pass one of their ids to --version.`);
   const tier = versionTier(version);
   await publishOwnerPage(engine, input, { mode: 'revert', expected_revision: input.expectedRevision, version_id: input.versionId, via: input.confirmation.via, proposal: input.proposal },
     versionMarkdown(state.snapshot, version), tier);
@@ -356,7 +356,7 @@ async function publishOwnerPage(engine: BrainEngine, input: PageActionInput, int
   if (file && !file.ok) {
     if (file.reason === 'file_database_drift') throw changedSincePreview(pageRef(input.sourceId, input.slug), ACTION_NAMES[intent.mode]);
     throw opError('unavailable', `The page file of ${pageRef(input.sourceId, input.slug)} cannot be written (${file.reason}); nothing was changed.`,
-      'Fix the checkout (gbrain sources status), then preview the repair again.');
+      'Fix the checkout (foresights sources status), then preview the repair again.');
   }
   const writeThrough = file?.ok && file.target ? await import('../write-through.ts') : null;
   // #7960: the file is written (and on a hardened checkout committed) inside the transaction, Git first; when the
@@ -377,7 +377,7 @@ async function publishOwnerPage(engine: BrainEngine, input: PageActionInput, int
           if (written.skipped === 'file_changed') throw changedSincePreview(pageRef(input.sourceId, input.slug), ACTION_NAMES[intent.mode]);
           if (!written.written) {
             throw opError('unavailable', `The page file of ${pageRef(input.sourceId, input.slug)} could not be written (${written.skipped ?? written.error}); nothing was changed.`,
-              'Fix the checkout (gbrain sources status), then preview the repair again.');
+              'Fix the checkout (foresights sources status), then preview the repair again.');
           }
           rendered = written;
         }
@@ -425,7 +425,7 @@ const DATABASE_ONLY_TARGETS = ['no_repo_configured', 'disabled_by_config', 'not_
  * The checkout file an owner repair mode on an unmanaged brain renders the page to: `target: null` when the page has
  * none on purpose (DATABASE_ONLY_TARGETS), the bytes the write must still find, or why the page cannot be repaired:
  * `file_database_drift` when the file holds an edit the database lacks (a hand edit sync has not imported), else the
- * unresolvable target (a missing checkout, a path outside the source root), `mirror_read_only` or `url_clone` (a mirror or a clone gbrain pulls, whose
+ * unresolvable target (a missing checkout, a path outside the source root), `mirror_read_only` or `url_clone` (a mirror or a clone foresights pulls, whose
  * next pull would undo a database-only repair). Read-only.
  */
 export async function ownerRepairFile(engine: BrainEngine, sourceId: string, slug: string):
@@ -480,7 +480,7 @@ export async function prepareTrustOwnerPageMutation(engine: BrainEngine, row: Wr
     || (intent.mode === 'write_labels' && (!intent.labels || !isTrustTier(intent.tier)))
     || (row.authority.remote && (LOCAL_ONLY_MODES.includes(intent.mode) || !(row.authority.scopes ?? []).includes(MEMORY_CONFIRM_SCOPE)))) {
     throw opError('confirmation_required', 'This owner page action is not confirmed by the owner; nothing was changed.',
-      'Run the gbrain trust command on the brain host in an interactive terminal.');
+      'Run the foresights trust command on the brain host in an interactive terminal.');
   }
   const ref = pageRef(row.source_id, row.slug);
   const state = await readPageTrustState(engine, row.source_id, row.slug);
@@ -490,7 +490,7 @@ export async function prepareTrustOwnerPageMutation(engine: BrainEngine, row: Wr
   let tier: TrustTier = 'user_confirmed';
   if (intent.mode === 'revert') {
     const version = Number.isSafeInteger(intent.version_id) ? await readPageVersion(engine, state.pageId, intent.version_id!) : null;
-    if (!version) throw opError('not_found', `Version ${String(intent.version_id)} is not in the history of ${ref}.`, `List versions with gbrain history ${row.slug}.`);
+    if (!version) throw opError('not_found', `Version ${String(intent.version_id)} is not in the history of ${ref}.`, `List versions with foresights history ${row.slug}.`);
     content = versionMarkdown(state.snapshot, version);
     tags = version.tags ?? undefined;
     tier = versionTier(version);

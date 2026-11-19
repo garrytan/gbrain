@@ -70,7 +70,7 @@ for (const kind of testBackends()) describe(`portable jsonb guard (${kind})`, ()
     try {
       expect((await repairJsonb({ dryRun: true, engineConfig })).total_repaired).toBe(0);
       await engine.executeRaw('DROP FUNCTION gbrain_try_jsonb(text)');
-      await expect(repairJsonb({ dryRun: true, engineConfig })).rejects.toThrow(/gbrain_try_jsonb[\s\S]*gbrain apply-migrations/);
+      await expect(repairJsonb({ dryRun: true, engineConfig })).rejects.toThrow(/gbrain_try_jsonb[\s\S]*(?:foresights|gbrain) apply-migrations/);
     } finally {
       await db.disconnect();
     }

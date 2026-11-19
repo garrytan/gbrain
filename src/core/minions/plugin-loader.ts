@@ -2,7 +2,7 @@
  * GBRAIN_PLUGIN_PATH loader for host-repo subagent definitions (v0.15).
  *
  * Your OpenClaw (and future downstream agents) ship custom subagent defs
- * from their own repos. gbrain discovers them at worker startup via
+ * from their own repos. foresights discovers them at worker startup via
  * GBRAIN_PLUGIN_PATH = colon-separated absolute paths (like $PATH). Each
  * path must contain a gbrain.plugin.json manifest describing the plugin
  * and a subagents/ subdirectory holding `*.md` definition files.
@@ -27,7 +27,7 @@
  *
  * Manifest version (`plugin_version`) locks the contract shape. Unknown
  * versions are rejected so the authoritative definition is whatever this
- * version of gbrain understands.
+ * version of foresights understands.
  */
 
 import * as fs from 'node:fs';
@@ -174,7 +174,7 @@ export function loadSinglePlugin(
   }
   if (manifest.plugin_version !== SUPPORTED_PLUGIN_VERSION) {
     return {
-      error: `unsupported plugin_version "${manifest.plugin_version}" (gbrain supports "${SUPPORTED_PLUGIN_VERSION}")`,
+      error: `unsupported plugin_version "${manifest.plugin_version}" (foresights supports "${SUPPORTED_PLUGIN_VERSION}")`,
     };
   }
 

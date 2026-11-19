@@ -2,7 +2,7 @@
  * GBRA-218 (PR A2): the git store of folder rules. On a git-backed source the
  * desired rules are `<source root>/.gbrain/access.yml` and the approved baseline is
  * `<source root>/.gbrain/access.approved` (the approved rulebook in the same grammar),
- * both committed through the one door (`gbrain git commit-push`, the checkout's
+ * both committed through the one door (`foresights git commit-push`, the checkout's
  * commit lock). Sync reads both explicitly from the synced commit (it skips dot
  * paths otherwise) and hands the desired rulebook to the shared lifecycle in
  * policy.ts, which applies narrowing at once and holds widening. The serve
@@ -34,8 +34,8 @@ export const POLICY_DIR = '.gbrain';
 export const POLICY_FILE = '.gbrain/access.yml';
 export const APPROVED_FILE = '.gbrain/access.approved';
 const REBUILD_MARK = 'rebuild';
-const POLICY_HEADER = 'Folder read rules for this source (gbrain access rule add|rm). Narrowing changes apply at the next sync;\nwidening changes wait for gbrain access apply --source <id> on the brain host.';
-const APPROVED_HEADER = 'The folder rules an operator approved with gbrain access apply. Written by gbrain; do not edit.';
+const POLICY_HEADER = 'Folder read rules for this source (foresights access rule add|rm). Narrowing changes apply at the next sync;\nwidening changes wait for foresights access apply --source <id> on the brain host.';
+const APPROVED_HEADER = 'The folder rules an operator approved with foresights access apply. Written by foresights; do not edit.';
 
 /** The filesystem root of a source (its local path, or sync.repo_path for the default source), or null. */
 export async function sourcePolicyRoot(engine: BrainEngine, sourceId: string): Promise<string | null> {
@@ -102,7 +102,7 @@ export interface GitPolicySyncResult {
   proposal?: ProposalResult;
   problems?: PolicyProblem[];
   commit?: string | null;
-  /** access.approved differs from the database's approved revision and was ignored (approve with gbrain access apply). */
+  /** access.approved differs from the database's approved revision and was ignored (approve with foresights access apply). */
   approved_file?: 'matches' | 'absent' | 'untrusted' | 'invalid' | 'loaded';
 }
 
@@ -248,7 +248,7 @@ export async function commitPolicyFile(root: string, relPath: string, edit: (cur
           ...(r.outcome === 'committed_local' ? { note: 'Committed locally; this checkout has no remote or is managed, so nothing was pushed.' } : {}) };
       } catch (e) {
         if (e instanceof OperationError && (e.code === 'push_unconfirmed' || (e as { canonical?: string }).canonical === 'push_unconfirmed') && e.detail) {
-          return { outcome: 'committed_not_pushed', commit: String(e.detail), path: relPath, note: 'Committed locally; the push is unconfirmed. Rerun gbrain git commit-push --push-only --scan-secrets to publish it.' };
+          return { outcome: 'committed_not_pushed', commit: String(e.detail), path: relPath, note: 'Committed locally; the push is unconfirmed. Rerun foresights git commit-push --push-only --scan-secrets to publish it.' };
         }
         if (e instanceof OperationError && (e.code === 'publish_secret_found' || e.code === 'publish_scan_unreadable') && gitShow(root, 'HEAD', relPath) === next) {
           const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', env: gitChildEnv() }).stdout.trim();
@@ -280,7 +280,7 @@ export function workingTreeRules(root: string, sourceId: string): FolderRule[] {
   const parsed = parsePolicyYaml(readFileSync(file, 'utf8'));
   if (parsed.ok) return parsed.rules;
   throw opError('access_policy_invalid', `${POLICY_FILE} of source ${sourceId} does not validate: ${parsed.problems.map(p => `${p.line ? `line ${p.line}: ` : ''}${p.message}`).join('; ')}.`,
-    `Fix the file (gbrain access rule list --source ${sourceId} shows each problem and line) and commit it with gbrain git commit-push, then retry.`);
+    `Fix the file (foresights access rule list --source ${sourceId} shows each problem and line) and commit it with foresights git commit-push, then retry.`);
 }
 
 /**
@@ -317,12 +317,12 @@ export async function syncAccessPolicyAt(engine: BrainEngine, sourceId: string, 
   const result = await syncGitPolicy(engine, sourceId, root, { rev });
   if (result.state === 'skipped') return result;
   if (result.state === 'invalid') {
-    log?.(`[access] ${POLICY_FILE} of source ${sourceId} does not validate (access_policy_invalid); the last applied rules stay and the prefixes it names read as nobody. Run gbrain access rule list --source ${sourceId}.`);
+    log?.(`[access] ${POLICY_FILE} of source ${sourceId} does not validate (access_policy_invalid); the last applied rules stay and the prefixes it names read as nobody. Run foresights access rule list --source ${sourceId}.`);
   } else if (result.proposal?.held.length) {
-    log?.(`[access] ${result.proposal.held.length} widening change(s) to source ${sourceId}'s folder rules are held (access_policy_widening_held). Preview with gbrain access apply --source ${sourceId}.`);
+    log?.(`[access] ${result.proposal.held.length} widening change(s) to source ${sourceId}'s folder rules are held (access_policy_widening_held). Preview with foresights access apply --source ${sourceId}.`);
   }
   if (result.approved_file === 'untrusted') {
-    log?.(`[access] ${APPROVED_FILE} of source ${sourceId} does not match the approved revision in the database and was ignored; approve changes with gbrain access apply.`);
+    log?.(`[access] ${APPROVED_FILE} of source ${sourceId} does not match the approved revision in the database and was ignored; approve changes with foresights access apply.`);
   }
   return result;
 }

@@ -136,7 +136,7 @@ export async function resolveCliCodeScope(
         class: 'UsageError',
         code: 'unknown_source',
         message: `Source "${sourceId}" not found or is archived.`,
-        hint: 'run `gbrain sources list` to see registered sources',
+        hint: 'run `foresights sources list` to see registered sources',
       }).envelope, `Source "${sourceId}" not found or is archived.`);
     }
   }

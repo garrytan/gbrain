@@ -1,5 +1,5 @@
 /**
- * #5455/#5628: `gbrain sources writer deactivate` converts a managed brain back
+ * #5455/#5628: `foresights sources writer deactivate` converts a managed brain back
  * to classic mode. Markers come from a real claim and activation. Each blocker
  * refuses with its exit; success retires worktrees (receipts keep their
  * foreign keys), bumps mode_epoch and records a committed writer_deactivate
@@ -59,7 +59,7 @@ for (const databaseUrl of process.env.DATABASE_URL ? [undefined, process.env.DAT
     expect(dry.dry_run).toBe(true);
     expect(dry.blockers.map((b: { kind: string }) => b.kind)).toEqual(['writer_admin_lock', 'effect']);
     expect(dry.blockers.find((b: { kind: string }) => b.kind === 'effect').exit)
-      .toBe('wait for the owner to drain it, then rerun deactivate; one still queued after an hour is re-queued by gbrain repair embedding-effects --source default');
+      .toBe('wait for the owner to drain it, then rerun deactivate; one still queued after an hour is re-queued by foresights repair embedding-effects --source default');
     expect(dry.retired_worktrees.length).toBe(1);
     expect(dry.kept).toMatchObject({ skill_bundles_enabled: true, writer_protocol_floor: 2 });
     expect(await writerAdminState(engine)).toBe(before);
@@ -68,11 +68,11 @@ for (const databaseUrl of process.env.DATABASE_URL ? [undefined, process.env.DAT
     await expect(deactivate(engine)).rejects.toMatchObject({ code: 'writer_admin_locked' });
     await admin(engine, 'writer_unlock');
     await expect(deactivate(engine)).rejects.toMatchObject({ code: 'writer_not_quiesced',
-      suggestion: expect.stringContaining('gbrain repair embedding-effects --source default') });
+      suggestion: expect.stringContaining('foresights repair embedding-effects --source default') });
     await protocol(engine, "UPDATE persistence_effects SET state='committed' WHERE request_id=$1::uuid", [request.id]);
     await protocol(engine, "UPDATE persistence_requests SET state='queued' WHERE id=$1::uuid", [request.id]);
     await expect(deactivate(engine)).rejects.toMatchObject({ code: 'writer_not_quiesced',
-      suggestion: expect.stringContaining(`gbrain cancel-write-request ${request.request_id}`) });
+      suggestion: expect.stringContaining(`foresights cancel-write-request ${request.request_id}`) });
     await protocol(engine, "UPDATE persistence_requests SET state='committed' WHERE id=$1::uuid", [request.id]);
 
     const current = await writerAdminState(engine);

@@ -53,7 +53,7 @@ export interface DriftReport {
 
 const SHELL_FENCES = new Set(['', 'bash', 'sh', 'shell', 'zsh', 'console']);
 const IGNORE_MARKER = '<!-- skill-drift-ok';
-const INVOCATION_AT = /(?:^|[|&;(]|\$\()\s*(?:[A-Z_][A-Z0-9_]*=\S*\s+)*(?:(?:nohup|exec|time)\s+)?gbrain\s+/g;
+const INVOCATION_AT = /(?:^|[|&;(]|\$\()\s*(?:[A-Z_][A-Z0-9_]*=\S*\s+)*(?:(?:nohup|exec|time)\s+)?(?:foresights|gbrain)\s+/g;
 const HOST_TOOLS = new Set(['web_fetch', 'web_search']);
 
 function splitShell(text: string): { words: string[]; rest: string } {
@@ -98,11 +98,11 @@ function invocationsIn(text: string, line: number, out: Invocation[]): void {
     const start = m.index! + m[0].length;
     const { words } = splitShell(text.slice(start));
     if (!words.length || isPlaceholder(words[0]!)) continue;
-    out.push({ line, argv: words, snippet: `gbrain ${words.join(' ')}`.trim() });
+    out.push({ line, argv: words, snippet: `foresights ${words.join(' ')}`.trim() });
   }
 }
 
-/** Every `gbrain ...` invocation in shell fences and inline code spans, with its 1-based line. */
+/** Every `foresights ...` invocation in shell fences and inline code spans, with its 1-based line. */
 export function extractInvocations(markdown: string): Invocation[] {
   const lines = markdown.replace(/\r\n?/g, '\n').split('\n');
   const out: Invocation[] = [];
@@ -222,7 +222,7 @@ export function analyzeSkillDrift(file: string, markdown: string, surface: CliSu
     const suggestion = nearest(name, surface.operationNames());
     findings.push({
       code: 'SKILL_DRIFT_UNKNOWN_TOOL', file, line, token: tool, snippet: `tools: ${tool}`, suggestion,
-      remedy: `'${name}' is not a gbrain operation${suggestion ? `; did you mean ${suggestion}` : ''}. Declare a real operation or a host tool (shell, web_search, ...)`,
+      remedy: `'${name}' is not a foresights operation${suggestion ? `; did you mean ${suggestion}` : ''}. Declare a real operation or a host tool (shell, web_search, ...)`,
     });
   }
   return { findings, invocations, subcommandUnverified, undeclaredCommands: [...undeclared].sort() };

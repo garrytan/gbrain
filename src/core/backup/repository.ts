@@ -145,7 +145,7 @@ export async function assessBackupRepository(
       asset.configured_remote = false;
       asset.state = 'no_remote';
       asset.fix_argv = null;
-      asset.detail = `${failedPush ? 'the last recorded push failed because there is no origin remote; ' : ''}fix: git remote add origin <url> && git push -u origin <branch>, then gbrain sources harden <id>`;
+      asset.detail = `${failedPush ? 'the last recorded push failed because there is no origin remote; ' : ''}fix: git remote add origin <url> && git push -u origin <branch>, then foresights sources harden <id>`;
       try { if (readManifest(root).state === 'initialized') asset.fix_argv = ['gbrain', 'bootstrap', 'repo']; } catch {}
       return asset;
     }
@@ -176,7 +176,7 @@ export async function assessBackupRepository(
       }
       if (ahead === undefined && !dirty && !failedPush) {
         asset.state = 'no_remote';
-        asset.detail = 'remote configured but nothing pushed is recorded locally — run: git push -u origin <branch>; verify with gbrain backup check';
+        asset.detail = 'remote configured but nothing pushed is recorded locally — run: git push -u origin <branch>; verify with foresights backup check';
       }
       return asset;
     }

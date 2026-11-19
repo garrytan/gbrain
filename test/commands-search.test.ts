@@ -1,5 +1,5 @@
 /**
- * v0.32.3 — `gbrain search modes/stats/tune` CLI tests.
+ * v0.32.3 — `foresights search modes/stats/tune` CLI tests.
  *
  * Covers dispatch + JSON output shape + idempotent --reset + recommendation
  * generation. Pure unit-level: bypasses the cli.ts entrypoint and calls
@@ -52,7 +52,7 @@ const makeMeta = (overrides: Partial<HybridSearchMeta> = {}): HybridSearchMeta =
   ...overrides,
 });
 
-describe('gbrain search modes (read-only dashboard)', () => {
+describe('foresights search modes (read-only dashboard)', () => {
   test('--json emits structured report with all 3 bundles and active mode', async () => {
     await engine.setConfig('search.mode', 'tokenmax');
     const out = await captureRun(() => runSearch(engine, ['modes', '--json']));
@@ -116,7 +116,7 @@ describe('gbrain search modes (read-only dashboard)', () => {
   });
 });
 
-describe('gbrain search modes --reset', () => {
+describe('foresights search modes --reset', () => {
   test('--source <mode> is a dry-run (no writes)', async () => {
     await engine.setConfig('search.cache.enabled', 'false');
     await engine.setConfig('search.tokenBudget', '4000');
@@ -157,7 +157,7 @@ describe('gbrain search modes --reset', () => {
   });
 });
 
-describe('gbrain search stats', () => {
+describe('foresights search stats', () => {
   test('empty table → total_calls 0, message about no data', async () => {
     const out = await captureRun(() => runSearch(engine, ['stats']));
     expect(out).toContain('Total searches:');
@@ -223,7 +223,7 @@ describe('gbrain search stats', () => {
   test('--json coverage.reason names all three long-lived process kinds + the residual-loss cases', async () => {
     const out = await captureRun(() => runSearch(engine, ['stats', '--json']));
     const reason: string = JSON.parse(out).coverage.reason;
-    expect(reason).toMatch(/gbrain serve/i);
+    expect(reason).toMatch(/(?:foresights|gbrain) serve/i);
     expect(reason).toMatch(/mcp/i);
     expect(reason).toMatch(/jobs work/i);
     expect(reason).toMatch(/short-lived CLI/i);
@@ -267,7 +267,7 @@ describe('gbrain search stats', () => {
   });
 });
 
-describe('gbrain search tune (recommendations)', () => {
+describe('foresights search tune (recommendations)', () => {
   test('insufficient data → no_recommendations status', async () => {
     const out = await captureRun(() => runSearch(engine, ['tune', '--json']));
     const r = JSON.parse(out);
@@ -288,11 +288,11 @@ describe('gbrain search tune (recommendations)', () => {
   test('insufficient data → human output notes the exact coverage caveat', async () => {
     const out = await captureRun(() => runSearch(engine, ['tune']));
     expect(out).toContain(TELEMETRY_COVERAGE_CAVEAT);
-    // The old copy told the user to "run a few `gbrain query` calls" to fix
+    // The old copy told the user to "run a few `foresights query` calls" to fix
     // a zero count — that's misleading advice given the caveat (a single
     // CLI call is exactly what tends NOT to be recorded). Pin the corrected
     // suggestion instead.
-    expect(out).toMatch(/gbrain serve.*or an MCP session/i);
+    expect(out).toMatch(/(?:foresights|gbrain) serve.*or an MCP session/i);
   });
 
   test('conservative + high budget drop rate → recommends balanced', async () => {
@@ -367,7 +367,7 @@ describe('gbrain search tune (recommendations)', () => {
   });
 });
 
-describe('gbrain search dispatch', () => {
+describe('foresights search dispatch', () => {
   test('--help shows usage', async () => {
     const out = await captureRun(() => runSearch(engine, ['--help']));
     expect(out).toContain('Usage:');

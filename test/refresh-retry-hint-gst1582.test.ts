@@ -1,5 +1,5 @@
 /**
- * GST-1582: a write refused because `gbrain sources refresh` holds its checkout (`worktree_refreshing`, the barrier off or
+ * GST-1582: a write refused because `foresights sources refresh` holds its checkout (`worktree_refreshing`, the barrier off or
  * a consumer without it) is told when to retry from the refresh's actual state, never a fixed 1 s, and the CLI says on
  * one line that nothing was saved and when to retry.
  *

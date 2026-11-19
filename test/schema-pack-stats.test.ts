@@ -232,7 +232,7 @@ describe('runStatsCore — JSON envelope shape', () => {
 });
 
 describe('runStatsCore — #2466 catch-narrowing (real count + error surfacing)', () => {
-  // #2466: `gbrain schema stats` reported "Total pages: 0" on a populated
+  // #2466: `foresights schema stats` reported "Total pages: 0" on a populated
   // PGLite brain. The bug was a bare `catch {}` in fetchCountRows (and a
   // sibling in detectDeadPrefixes) that converted ANY engine error into 0
   // rows. The COUNT query itself is valid on PGLite (proven below), so the

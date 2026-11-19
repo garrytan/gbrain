@@ -1,8 +1,8 @@
-# Test audit — lane `seams` (gbrain @ 2ede415, v0.59.11.0)
+# Test audit — lane `seams` (foresights @ 2ede415, v0.59.11.0)
 
 Read-only discovery. Every probe edit was reverted with `git checkout -- .`; `git status --short` is empty at the end. Nothing was committed or pushed.
 
-Method: openclaw `test-audit` skill (evidence fields per candidate), gbrain `AGENTS.md`/`CLAUDE.md`, and `docs/TESTING.md` "Coverage responsibilities before consolidation". Cost comes from `scripts/ubicloud/weights.json` (ms per file per lane). Scratch artifacts sit next to this report: `seam-callers.tsv`, `test-only-exports.tsv`, `unreachable.tsv`, `dead-modules.txt`, `dead-tests.txt`, `bundled-src.txt`, plus the scripts `dead-exports.ts`, `reach.ts` and `modtable.py`.
+Method: openclaw `test-audit` skill (evidence fields per candidate), foresights `AGENTS.md`/`CLAUDE.md`, and `docs/TESTING.md` "Coverage responsibilities before consolidation". Cost comes from `scripts/ubicloud/weights.json` (ms per file per lane). Scratch artifacts sit next to this report: `seam-callers.tsv`, `test-only-exports.tsv`, `unreachable.tsv`, `dead-modules.txt`, `dead-tests.txt`, `bundled-src.txt`, plus the scripts `dead-exports.ts`, `reach.ts` and `modtable.py`.
 
 ## TL;DR
 
@@ -72,7 +72,7 @@ Totals:
 ### 2.3 Wire-or-delete decisions (do not delete silently)
 
 - **`core/minions/budget-tracker.ts` / `self-fix.ts` / `lease-cap-controller.ts` / `batch-projection.ts`.** Their headers claim runtime `--budget-usd` enforcement, subagent self-fix and an adaptive lease cap. The live `--budget-usd` path uses a *different* module, `src/core/budget/budget-tracker.ts` (17 live src files). The minions twin is superseded. `self_fix_max_depth` and the lease-cap controller have no live references at all. Recommendation: delete, after the parent confirms these features aren't meant to be wired.
-- **`core/upgrade-checkpoint.ts`.** Its header promises `gbrain upgrade --resume`. That flag doesn't exist (`rg -- "--resume" src/commands/upgrade.ts` finds nothing, and no docs mention it). The 18 serial tests and E2E Lane E protect a feature users can't reach.
+- **`core/upgrade-checkpoint.ts`.** Its header promises `foresights upgrade --resume`. That flag doesn't exist (`rg -- "--resume" src/commands/upgrade.ts` finds nothing, and no docs mention it). The 18 serial tests and E2E Lane E protect a feature users can't reach.
 - **`core/calibration/nudge.ts`.** Migration `take_nudge_log_v0_36` (migrate.ts:3588) creates a table whose only writer is this dead module. Keep the migration (migration contract) even if nudge.ts goes.
 - **`core/source-config-redact.ts`: HOLD, route to the security lane.** `scripts/check-source-config-leak.sh` (a CI guard, passes today) names `redactSourceConfig()` as the required remediation and whitelists this file, but no serializer calls it. Deleting the module orphans the guard's advice. Wiring it may be the right fix. Either way the unit test is not what protects secrets today.
 

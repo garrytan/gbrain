@@ -1,6 +1,6 @@
 /**
- * The Wave A oversized-page backfill (`gbrain reindex --oversized`, and a
- * time-boxed pass in `gbrain post-upgrade`).
+ * The Wave A oversized-page backfill (`foresights reindex --oversized`, and a
+ * time-boxed pass in `foresights post-upgrade`).
  *
  * Before the 24 MiB page ceiling, the import gate stored any page over
  * `content_sanity.bytes_block` (500 KB) with a gate-written
@@ -9,7 +9,7 @@
  * help: import returns early on an unchanged content hash, so the page would
  * stay chunkless. This backfill rewrites each such page through the normal
  * write path (the canonical owner on a managed brain, exactly like
- * `gbrain quarantine clear`) with the marker and its `content_flag: oversized`
+ * `foresights quarantine clear`) with the marker and its `content_flag: oversized`
  * removed and a forced re-chunk. That is CPU-only and runs with embeddings
  * disabled: chunks land with NULL vectors and become keyword-searchable at
  * once; the embedding sweep fills vectors later.
@@ -20,7 +20,7 @@
  * (`reason: oversized`) is touched. A chunkless one is still re-chunked with
  * the marker kept (#6722), so every page up to the ceiling is keyword-searchable. A large page (over `pages.inline_max_bytes`) is held in
  * `page_embedding_budget` before its rewrite, so no paid embedding starts
- * until the user approves the previewed cost (`gbrain embed --held --source S --max-usd N`).
+ * until the user approves the previewed cost (`foresights embed --held --source S --max-usd N`).
  *
  * Idempotent and resumable: the work list is recomputed from the markers on
  * every run, so a page done is never redone and an interrupted run continues.
@@ -43,6 +43,7 @@ import { currentEmbeddingSignature } from './embedding.ts';
 import { budgetLimitedReport } from './held-embedding.ts';
 import type { PageType } from './types.ts';
 import { materializedSnapshot } from './persistence/segmented-apply.ts';
+import { commandText } from './brand.ts';
 
 /** The `page_embedding_budget.reason` a backfilled large page waits under. */
 export const BACKFILL_HOLD_REASON = 'upgrade_backfill';
@@ -204,7 +205,7 @@ export async function runOversizedBackfill(engine: BrainEngine, opts: {
   return receipt;
 }
 
-/** Human lines for a receipt (stdout of `gbrain reindex --oversized` and post-upgrade). */
+/** Human lines for a receipt (stdout of `foresights reindex --oversized` and post-upgrade). */
 export function formatOversizedBackfillReceipt(r: OversizedBackfillReceipt): string[] {
   const lines = [`[reindex --oversized] ${r.dry_run ? 'Would re-index' : 'Re-indexed'} ${r.dry_run ? r.candidates : r.reindexed} size-skipped page(s)`
     + `${r.dry_run ? '' : `; ${r.chunks_pending_embedding} chunk(s) are keyword-searchable now and wait for embedding`}.`];
@@ -215,7 +216,7 @@ export function formatOversizedBackfillReceipt(r: OversizedBackfillReceipt): str
   if (!r.embedding_enabled) lines.push('  Embeddings are off on this brain, so keyword search is the whole result; nothing is spent.');
   else if (r.held_for_approval) {
     lines.push(`  ${r.held_for_approval} large page(s) wait for approval before embedding (about $${(r.estimated_usd ?? 0).toFixed(2)} in total). `
-      + `Preview: ${r.commands.preview.join(' ')}${r.approvals.length ? `; with the user's agreement, approve one source at a time: ${r.approvals.join('; ')}` : ''}`);
+      + `Preview: ${commandText(r.commands.preview)}${r.approvals.length ? `; with the user's agreement, approve one source at a time: ${r.approvals.join('; ')}` : ''}`);
   } else if (r.estimated_usd !== null && r.chunks_pending_embedding) {
     lines.push(`  The embedding sweep embeds them under the existing caps (about $${r.estimated_usd.toFixed(2)}).`);
   }
@@ -223,7 +224,7 @@ export function formatOversizedBackfillReceipt(r: OversizedBackfillReceipt): str
 }
 
 /**
- * `gbrain post-upgrade`: a two-minute backfill pass, then the receipt. When
+ * `foresights post-upgrade`: a two-minute backfill pass, then the receipt. When
  * large pages wait for paid embedding, an [AGENT] block asks the user with the
  * previewed cost before anything is spent. Best-effort: never blocks upgrade.
  */
@@ -237,21 +238,21 @@ export async function printOversizedBackfillUpgradeNotice(engine: BrainEngine): 
       const { agentBlock } = await import('./agent-markers.ts');
       lines.push(...agentBlock({
         ask: `Embed the ${receipt.held_for_approval} large page(s) that are searchable by keyword now?`,
-        why: 'Pages an older gbrain skipped for size are re-indexed and keyword-searchable. Embedding them adds semantic search and calls the paid embedding provider.',
+        why: 'Pages an older foresights skipped for size are re-indexed and keyword-searchable. Embedding them adds semantic search and calls the paid embedding provider.',
         risk: `About $${(receipt.estimated_usd ?? 0).toFixed(2)} in total; each page is capped by embed.max_usd_per_page and the run by --max-usd (the lowest cap wins).`,
         consent: 'paid, egress',
         actor: 'user',
         next: 'ask_user',
-        if_yes: `Preview: ${receipt.commands.preview.join(' ')}. Then, one source at a time, run ${receipt.approvals.join('; ') || 'the approve command the preview prints'}.`,
+        if_yes: `Preview: ${commandText(receipt.commands.preview)}. Then, one source at a time, run ${receipt.approvals.join('; ') || 'the approve command the preview prints'}.`,
         if_no: 'Nothing to do: the pages stay keyword-searchable and doctor lists them under partial_embedding.',
-        verify: 'gbrain doctor --only partial_embedding --json',
+        verify: 'foresights doctor --only partial_embedding --json',
       }, {
-        showUser: `${receipt.held_for_approval} large page(s) that older gbrain skipped are searchable by keyword now. `
+        showUser: `${receipt.held_for_approval} large page(s) that older foresights skipped are searchable by keyword now. `
           + `Embedding them for semantic search costs about $${(receipt.estimated_usd ?? 0).toFixed(2)}. Embed them?`,
       }).trimEnd().split('\n'));
     }
     for (const line of lines) console.log(line);
   } catch (error) {
-    console.error(`[gbrain] The oversized-page backfill did not finish (${error instanceof Error ? error.message.split('\n')[0] : String(error)}); run gbrain reindex --oversized.`);
+    console.error(`[foresights] The oversized-page backfill did not finish (${error instanceof Error ? error.message.split('\n')[0] : String(error)}); run foresights reindex --oversized.`);
   }
 }

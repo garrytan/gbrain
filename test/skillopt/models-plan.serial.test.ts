@@ -256,18 +256,18 @@ describe('strict mode', () => {
       const verdict = strictVerdict(plan, { on: true });
       expect(verdict.ok).toBe(false);
       const fixes = Object.fromEntries(verdict.violations.map((v) => [v.touchpoint, v.fix]));
-      expect(fixes.optimizer).toBe(`gbrain config set models.tier.deep ${SONNET}`);
-      expect(fixes.target).toBe(`gbrain config set models.tier.subagent ${SONNET}`);
-      expect(fixes.judge).toBe(`gbrain config set models.tier.reasoning ${SONNET}`);
-      expect(fixes.expansion).toBe(`gbrain config set models.tier.utility ${SONNET}`);
-      expect(fixes.chat).toBe(`gbrain config set models.chat ${SONNET}`);
+      expect(fixes.optimizer).toBe(`foresights config set models.tier.deep ${SONNET}`);
+      expect(fixes.target).toBe(`foresights config set models.tier.subagent ${SONNET}`);
+      expect(fixes.judge).toBe(`foresights config set models.tier.reasoning ${SONNET}`);
+      expect(fixes.expansion).toBe(`foresights config set models.tier.utility ${SONNET}`);
+      expect(fixes.chat).toBe(`foresights config set models.chat ${SONNET}`);
       expect(fixes.embedding).toContain('~/.gbrain/config.json or export GBRAIN_EMBEDDING_MODEL=');
       expect(fixes.embedding).not.toContain('config set embedding_model');
 
       const err = modelsStrictError(verdict) as StructuredAgentError;
       expect(err.envelope.code).toBe('models_strict_violation');
       expect(err.envelope.message).toContain('  expansion  anthropic:claude-sonnet-4-6  (models.default)');
-      expect(err.envelope.message).toContain(`    gbrain config set models.tier.utility ${SONNET}`);
+      expect(err.envelope.message).toContain(`    foresights config set models.tier.utility ${SONNET}`);
     });
   });
 
@@ -277,7 +277,7 @@ describe('strict mode', () => {
       const m = await resolveSkillOptModels(engine);
       const plan = await buildModelsPlan(engine, m);
       expect(strictVerdict(plan.filter((e) => e.touchpoint === 'target'), { on: true }).violations[0]!.fix)
-        .toBe(`gbrain config set models.tier.subagent ${TIER_DEFAULTS.subagent}`);
+        .toBe(`foresights config set models.tier.subagent ${TIER_DEFAULTS.subagent}`);
       expect(formatModelsBanner(plan)).toContain('(models.tier.subagent -> substituted: unknown_provider; configured bogus-provider:some-model) *');
 
       const legacy = unknownProvenanceModels({ optimizerModel: OPUS, targetModel: SONNET, judgeModel: SONNET }, 'legacy job data');

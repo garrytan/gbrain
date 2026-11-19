@@ -187,7 +187,7 @@ export interface PrincipalGrant {
   shape: 'unified' | 'legacy_permissions';
   /**
    * Unified rows only: axes whose `permissions` mirror disagrees with the
-   * columns (an older gbrain edited the JSONB). Each listed axis is already
+   * columns (an older foresights edited the JSONB). Each listed axis is already
    * deny-all in this grant until `auth rescope --adopt-permissions` or
    * `--adopt-columns` resolves it.
    */
@@ -201,7 +201,7 @@ export interface PrincipalGrant {
 }
 
 /**
- * Tokens keep a `permissions` JSONB mirror of their grant columns so gbrain
+ * Tokens keep a `permissions` JSONB mirror of their grant columns so foresights
  * binaries older than the unified grant shape enforce the same grant. Until
  * this date (30 days after the release that converted every legacy grant in
  * bulk) the mirror is written on every grant write and drift between it and

@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { CAPS, classify, collectHealth, firstAttempt, parseWindow, renderHealth, shardRatio, topFailingFiles, type Annotation, type Job, type Run } from '../../scripts/ci-health-report.ts';
 
-const repo = { full_name: 'garrytan/gbrain' };
+const repo = { full_name: 'aimonk2025/gbrain' };
 const run = (id: number, conclusion: string, attempt = 1, fork = false): Run => ({
   id, event: 'pull_request', status: 'completed', conclusion, run_attempt: attempt, created_at: '2026-10-01T00:00:00Z',
   repository: repo, head_repository: fork ? { full_name: 'someone/gbrain' } : repo,

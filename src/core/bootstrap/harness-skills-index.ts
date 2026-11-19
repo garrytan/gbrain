@@ -1,5 +1,5 @@
 /**
- * `gbrain bootstrap harness` lane of the spring-loaded skills index
+ * `foresights bootstrap harness` lane of the spring-loaded skills index
  * (src/core/setup/skills-block.ts), beside the brain-first block that
  * harness-brain-first.ts writes for each confirmed host. Selected like
  * setup's: --skill-loading, GBRAIN_SKILL_LOADING, the recorded choice, off.
@@ -11,7 +11,7 @@ import { brainFirstTargetAt, codexInstructionFile, readBrainFirstLedger } from '
 import { describeSkillsBlockOutcome, installerSkillsBlock, removeSkillsBlocksBy, skillsOutcomeShown, type SkillLoading, type SkillsBlockOutcome } from '../setup/skills-block.ts';
 import type { BrainFirstHost, HarnessInstructionPaths } from './harness-brain-first.ts';
 
-const WRITER = 'gbrain bootstrap harness';
+const WRITER = 'gbrain bootstrap harness'; // stored in the brain-first ledger: legacy spelling kept
 
 export function writeHarnessSkillsIndex(opts: { hosts: readonly BrainFirstHost[]; launcher: string; optOut: boolean; skillLoading?: SkillLoading; paths: HarnessInstructionPaths; settingsPath: string; log: (line: string) => void }): SkillsBlockOutcome[] {
   const { paths } = opts;

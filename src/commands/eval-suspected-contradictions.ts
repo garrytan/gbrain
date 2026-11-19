@@ -10,7 +10,7 @@
  * confirmation; primitive's stage-report subsumes it in v0.41.14.0+.
  * Filed in TODOS.md.
  *
- * `gbrain eval suspected-contradictions` — v0.32.6 contradiction probe CLI.
+ * `foresights eval suspected-contradictions` — v0.32.6 contradiction probe CLI.
  *
  * Three sub-subcommands:
  *   - run (default): execute one probe pass; --queries-file / --query /
@@ -163,7 +163,7 @@ export function parseFlags(args: string[]): ParsedFlags {
 
 function printHelp(): void {
   console.error(`Usage:
-  gbrain eval suspected-contradictions [run]
+  foresights eval suspected-contradictions [run]
     [--queries-file FILE.jsonl | --query "..." | --from-capture]
     [--top-k N=5] [--judge MODEL]   (default routes via resolveModel →
                                      models.eval.contradictions_judge →
@@ -172,9 +172,9 @@ function printHelp(): void {
     [--max-pair-chars N=1500] [--sampling deterministic|score-first]
     [--no-cache] [--refresh-cache] [--json] [--yes]
 
-  gbrain eval suspected-contradictions trend [--days N=30] [--json]
+  foresights eval suspected-contradictions trend [--days N=30] [--json]
 
-  gbrain eval suspected-contradictions review
+  foresights eval suspected-contradictions review
     [--severity info|low|medium|high] [--since YYYY-MM-DD]
 
 The probe samples top-K retrieval pairs and asks an LLM judge to classify
@@ -225,7 +225,7 @@ async function loadFromCapture(engine: BrainEngine, limit?: number): Promise<str
       `--from-capture: no rows in eval_candidates. Captures are off by default in v0.25.0+.\n` +
         `Enable with:\n` +
         `  export GBRAIN_CONTRIBUTOR_MODE=1\n` +
-        `or set 'eval.capture: true' in your gbrain config. Re-run queries to populate, then try again.`,
+        `or set 'eval.capture: true' in your foresights config. Re-run queries to populate, then try again.`,
     );
     process.exit(2);
   }

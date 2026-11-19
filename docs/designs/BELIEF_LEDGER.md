@@ -559,7 +559,7 @@ say which belief's trust changed. A count alone cannot.
 
 **Policy.** Withdrawal (`forget`) is a recorded event and erases nothing; it
 removes a fact from active memory. Purge removes the content from the live
-stores gbrain manages and refuses its return. Neither promises physical
+stores foresights manages and refuses its return. Neither promises physical
 erasure: #6396 and AGENTS.md say history, source material and private backups
 may remain, and the ledger keeps that promise unchanged. Purge's receipt
 separates what it removed from what it reports (`purge-verify.ts:391-395`);
@@ -758,7 +758,7 @@ The contract W1 adds for the ledger:
    is flagged** (section 8). The replay source is the ledger's own purge
    events, which carry fingerprints, scope and request ids but no text.
 
-`gbrain pages purge-deleted` hard-deletes old tombstones with no purge
+`foresights pages purge-deleted` hard-deletes old tombstones with no purge
 tombstone (`engine-sql/pages.ts:286-318`). It removes body text but not
 claims. It appends **`page.expired`**, a separate event type, and does not
 redact earlier events, because nothing was asked to be forgotten. Retention
@@ -806,7 +806,7 @@ latest watermark among the sources a read touches.
 
 **Coverage is a set of intervals, not one start.** Turning the flag off
 appends `coverage.stopped`; turning it on again runs a new baseline.
-`gbrain backup restore` appends `coverage.restored` naming the archive's
+`foresights backup restore` appends `coverage.restored` naming the archive's
 creation time, because the restored ledger does not know what happened
 between the backup and the restore: W2 refuses inside that gap.
 
@@ -866,11 +866,11 @@ is `run`; enabling the flag on a source is `ask_user`.
 
 | Path | Contract | Change in W1 |
 |---|---|---|
-| Graduation, `gbrain migrate --to postgres` (the default PGLite→Postgres route) | Copies every classified table verbatim with primary keys and sequence positions, triggers bypassed (`graduation-copy.ts:13-27`, `:255-282`); an unclassified table aborts the copy (`graduation-inventory.ts:222-254`) | `carry('belief_events')`. Event keys contain no ids, and the local `id` and its sequence are preserved, so the copied ledger is byte-identical. W1's probe asserts equal `event_key` sets and an identical replay. |
+| Graduation, `foresights migrate --to postgres` (the default PGLite→Postgres route) | Copies every classified table verbatim with primary keys and sequence positions, triggers bypassed (`graduation-copy.ts:13-27`, `:255-282`); an unclassified table aborts the copy (`graduation-inventory.ts:222-254`) | `carry('belief_events')`. Event keys contain no ids, and the local `id` and its sequence are preserved, so the copied ledger is byte-identical. W1's probe asserts equal `event_key` sets and an identical replay. |
 | Legacy copier, `migrate-engine` (to PGLite, or with graduation off) | Re-creates pages through `putPage` with new ids, copies no versions and no takes; already refuses any brain with rows in `persistence_requests`, `fact_withdrawals` or `persistence_worktrees` (`src/core/persistence/maintenance.ts:73-90`) | Add `belief_events` to that refusal list. A brain with a ledger always has journal rows, so in practice it is already refused; the explicit entry makes the refusal name the ledger. |
-| `gbrain backup create` / `restore` (PGLite) | Physical cluster tar under the writer lock; restore requires the same schema version and an absent target root, and quarantines execution in one transaction (`src/core/backup/snapshot.ts:129-200`, `:225-342`) | Restore appends one `coverage.restored` event naming the archive's time, and **replays newer purges** (below) in the same transaction. The ledger is in the cluster, so apart from those two a restore reproduces it byte for byte; W1's probe asserts it. |
+| `foresights backup create` / `restore` (PGLite) | Physical cluster tar under the writer lock; restore requires the same schema version and an absent target root, and quarantines execution in one transaction (`src/core/backup/snapshot.ts:129-200`, `:225-342`) | Restore appends one `coverage.restored` event naming the archive's time, and **replays newer purges** (below) in the same transaction. The ledger is in the cluster, so apart from those two a restore reproduces it byte for byte; W1's probe asserts it. |
 | Postgres | Operator-managed backups (`docs/ENGINES.md:345`) | `docs/ENGINES.md` and the system-of-record DR section name the ledger as state a Markdown rebuild cannot recover, and tell the operator to run the purge replay after a restore. |
-| `gbrain export` | Markdown snapshot, explicitly not a database backup (`commands/export.ts:28-31`); applies current tombstones (`export-snapshot.ts:15-19`) | None; the docs say the ledger is not exported. An export made before a purge stays out of reach (section 6.5). |
+| `foresights export` | Markdown snapshot, explicitly not a database backup (`commands/export.ts:28-31`); applies current tombstones (`export-snapshot.ts:15-19`) | None; the docs say the ledger is not exported. An export made before a purge stays out of reach (section 6.5). |
 | Fresh import / `reinit-pglite` + sync | Rebuilds file-backed state only | Starts a new ledger with a new watermark. The DR recipe in `system-of-record.md` says to restore the database backup first if recorded history matters. |
 
 **Restore replays newer purges, or flags that it could not.** A backup
@@ -922,7 +922,7 @@ id, recorded time), so reading them leaks nothing.
    purges made after the archive's time were not replayed and names the
    replay command to run when the original brain is available.
 
-Postgres restores happen outside gbrain, so the same replay is a CLI step
+Postgres restores happen outside foresights, so the same replay is a CLI step
 pointed at the pre-restore database, and the docs name it.
 
 The PLAN text called for an explicit `belief_events` and `page_versions` copy
@@ -1100,7 +1100,7 @@ machine, median of 2 runs, after section 13 item 16:
 
 | Run | PGLite off → on | Postgres off → on |
 |---|---|---|
-| legacy `gbrain import` | 5.7 → 7.1 s (+1.4 ms/page) | 7.1 → 9.6 s (+2.6 ms/page) |
+| legacy `foresights import` | 5.7 → 7.1 s (+1.4 ms/page) | 7.1 → 9.6 s (+2.6 ms/page) |
 | re-import, every page edited | 6.3 → 7.6 s (+1.4 ms/page) | 7.4 → 9.4 s (+2.0 ms/page) |
 | managed sync, create | 24.8 → 27.6 s (+11%) | 15.1 → 18.7 s (+24%) |
 | managed sync, every page edited | 29.2 → 32.7 s (+12%) | within noise |
@@ -1155,7 +1155,7 @@ edit ≤10% and managed-sync create ≤10% of the write's time, ledger on
 against off. After this pass W1 meets none of them on Postgres (typical
 8.6–8.7%, large 10.4–11.3%, create +12.7%) and only the large-edit one on
 PGLite (typical 6.4–6.6%, large 6.7–6.8%, create +10.8%), so recording stays
-opt-in per source (`gbrain beliefs enable`).
+opt-in per source (`foresights beliefs enable`).
 
 **Storage** (section 12, question 7, decided). A second free bench inserted
 the creation events of 2,000 typical pages into a PGLite table with the full
@@ -1354,7 +1354,7 @@ reconstructed state, not counts**, on PGLite and Postgres:
 `n1-knowledge-update-gen@1`, 897 tasks) ran against the lane C overlay
 `b3db5af98` (CLI 0.60.253.0, harness pin `77cf8e11`), three PGLite and three
 Postgres cells per arm. The ledger-on arm (`EVAL_BELIEF_LEDGER=1`) runs
-`gbrain beliefs enable --source vault` before the cell writes any page, so the
+`foresights beliefs enable --source vault` before the cell writes any page, so the
 ledger records every write. Both arms, on both engines: current value 388/388
 with 0 stale served, history retained 385/385, negative controls 124/124, 0
 private value leaks, 0 acknowledged writes lost, 0 system errors. Receipts and
@@ -1487,7 +1487,7 @@ Garry accepted those answers. Questions 5, 6, 7 and 8 are decided.
    ordinal is not fixed at first sight.
 6. **`belief_page_lifetimes.page_id` is a hint:** it ends a lifetime whose page
    an untracked writer replaced.
-7. **The ledger is off per source** until `gbrain beliefs enable` baselines it;
+7. **The ledger is off per source** until `foresights beliefs enable` baselines it;
    a publication on a source without coverage pays one source read.
 8. **Segmented pages (#6787):** a page over 1 MiB takes the per-subject
    creation path; segmented pages project no fence facts, takes or links, so
@@ -1683,7 +1683,7 @@ Garry accepted those answers. Questions 5, 6, 7 and 8 are decided.
 
 1. **Surface.** One reader, two doors. `delta {beliefs: true}` (full surface
    only, so the served starter schema is unchanged) adds `beliefs` for the
-   same window as the rest of the wake, and `gbrain beliefs changes
+   same window as the rest of the wake, and `foresights beliefs changes
    [<entity>...] [--since 7d]` prints it from the CLI. Both call
    `beliefChanges` (`src/core/belief/changes.ts`). On a thin client the CLI
    calls the host's `delta`, so it lists what a remote caller may see.
@@ -1761,7 +1761,7 @@ Garry accepted those answers. Questions 5, 6, 7 and 8 are decided.
    (`withoutOverriddenInferredEnds`), so a late correction from the page is
    the end the reader sees.
 3. **Correction to the plan: page versions are not copied between engines.**
-   `gbrain migrate --to <engine>` on a source brain that holds page versions and
+   `foresights migrate --to <engine>` on a source brain that holds page versions and
    no journal tables refuses `writer_coordinator_required` (reason
    `page_history`, "Engine migration would discard N page versions.")
    instead of copying them. The legacy copier re-creates pages with new ids,

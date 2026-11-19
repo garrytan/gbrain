@@ -1,5 +1,5 @@
 /**
- * Tests for the `gbrain skillpack status` core logic.
+ * Tests for the `foresights skillpack status` core logic.
  *
  * cmdStatus itself calls process.exit + console.log (hard to intercept
  * cleanly), so this pins the two pure pieces it reports:
@@ -29,7 +29,7 @@ afterEach(() => {
 });
 
 /**
- * A scratch gbrain bundle with two skills:
+ * A scratch foresights bundle with two skills:
  *   - alpha — declares `requires: [source]`
  *   - beta  — no preconditions
  */

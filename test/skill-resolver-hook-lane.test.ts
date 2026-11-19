@@ -1,7 +1,7 @@
 /**
  * GBRA-377 PR B: the skill-resolver hook lane (`GBRAIN_HOOK_LANE=skill-resolver`,
  * src/core/skills/resolver/hook-lane.ts) as the harness runs it: each test
- * wires the lane with `gbrain setup <claude-code|codex> --skill-loading
+ * wires the lane with `foresights setup <claude-code|codex> --skill-loading
  * resolve` against a temp HOME, then runs the exact command setup wrote.
  *
  * Protects: the block names each skill with the harness's own load line

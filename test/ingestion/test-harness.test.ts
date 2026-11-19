@@ -3,7 +3,7 @@
  * exported at gbrain/ingestion/test-harness.
  *
  * The harness IS the publisher contract. These tests pin its behavior so
- * skillpack authors can rely on it across gbrain minor versions.
+ * skillpack authors can rely on it across foresights minor versions.
  */
 
 import { describe, expect, test } from 'bun:test';

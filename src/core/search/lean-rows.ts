@@ -28,7 +28,7 @@
  *   - `evidence_omitted` on a keyword-mode row whose text did not fit;
  *   - `keyword_fill` on a row the keyless any-word fill appended (it holds
  *     only some of the query's words).
- * `fields: "full"`, the `mcp.result_rows: full` host config and gbrain's own
+ * `fields: "full"`, the `mcp.result_rows: full` host config and foresights's own
  * thin client get every field; trusted local callers always do.
  */
 

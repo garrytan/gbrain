@@ -72,7 +72,7 @@ function captureLog<T>(fn: () => Promise<T>): Promise<{ result: T; output: strin
   });
 }
 
-describeE2E('E2E: gbrain dream CLI against real Postgres', () => {
+describeE2E('E2E: foresights dream CLI against real Postgres', () => {
   let repo: string;
 
   // The gateway below carries no Anthropic key, but the e2e runner keeps the

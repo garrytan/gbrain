@@ -1,5 +1,5 @@
 /**
- * Pinned questions behind the questions_* operations and `gbrain questions`.
+ * Pinned questions behind the questions_* operations and `foresights questions`.
  *
  * Version 1 is owner-private: every operation requires an owner-capable
  * caller (access below), question pages are private, and answers are read
@@ -278,6 +278,6 @@ export async function pinnedAnswersForPack(ctx: OperationContext, entities: Arra
   }
   return {
     ...(pinned.length ? { pinned_questions: pinned } : {}),
-    ...(withheld > 0 ? { withheld: { stale_sentences: withheld, question_ids: withheldIds, refresh_command: `gbrain questions refresh ${withheldIds[0]}` } } : {}),
+    ...(withheld > 0 ? { withheld: { stale_sentences: withheld, question_ids: withheldIds, refresh_command: `foresights questions refresh ${withheldIds[0]}` } } : {}),
   };
 }

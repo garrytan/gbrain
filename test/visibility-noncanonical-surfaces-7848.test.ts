@@ -2,7 +2,7 @@
  * Value: protects=file-ingestion surfaces name a noncanonical private request as visibility_noncanonical; fails_when=a surface drops holdNoncanonicalPrivate or its fix case.
  * Value: why_new=visibility-noncanonical-hold-7848 drives sync, import and doctor, not validate --importable, the hold fix, the unindexed scan or the streamed import; seam=none; no_claim=sync (covered there).
  *
- * #7848 surfaces beside sync and import: `gbrain frontmatter validate --importable` (what a pre-commit hook sees), the hold's
+ * #7848 surfaces beside sync and import: `foresights frontmatter validate --importable` (what a pre-commit hook sees), the hold's
  * next step and fault class, the unindexed-files scan that finds committed files an older release never held, and the
  * streamed (segmented-body) import, including a local page write that streams without an upload session.
  * PGLite only; the sync and import paths live in test/visibility-noncanonical-hold-7848.test.ts.
@@ -53,7 +53,7 @@ describe('#7848 surfaces beside sync and import', () => {
     const fix = gitHoldFix({ source_id: 'source-a', path: 'notes/upper.md', slug: 'notes/upper', code: 'visibility_noncanonical', meta: {} } as Parameters<typeof gitHoldFix>[0]);
     expect(fix).toMatchObject({ actor: 'user', consent: [] });
     expect(fix.user_message).toContain('visibility: private');
-    expect(fix.user_message).toContain('gbrain sync --source source-a --no-pull');
+    expect(fix.user_message).toContain('foresights sync --source source-a --no-pull');
     expect(classifySyncFault({ code: 'visibility_noncanonical' })).toMatchObject({ class: 'page', needs_human: true, safe_actions: ['none'] });
   });
 

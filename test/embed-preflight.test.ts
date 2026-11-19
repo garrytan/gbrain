@@ -58,7 +58,7 @@ describe('formatEmbeddingCredsError — user_provided_dims_unset (#1292/D6)', ()
     expect(msg).toMatch(/dimension/i);
     // Points at the ACCEPTED remediation, not the hard-rejected `config set`
     // (config.ts refuses to write embedding_dimensions — a schema-sizing field).
-    expect(msg).toMatch(/gbrain init --embedding-dimensions/);
+    expect(msg).toMatch(/(?:foresights|gbrain) init --embedding-dimensions/);
     expect(msg).not.toMatch(/config set embedding_dimensions/);
   });
 });

@@ -1,7 +1,7 @@
 import { parseSubmissionAuthority, type SubmissionAuthority } from './submission-authority.ts';
 import { parseSpendAuthorization, type JobSpendContext, type SpendAuthorization } from './spend-record.ts';
 /**
- * Minions — BullMQ-inspired Postgres-native job queue for GBrain.
+ * Minions — BullMQ-inspired Postgres-native job queue for Foresights.
  *
  * Usage:
  *   const queue = new MinionQueue(engine);
@@ -239,7 +239,7 @@ export interface MinionWorkerOpts {
   rssCheckInterval?: number;
   /** Self-health-check interval in ms. 0 = disabled. Default: 60000 (1 minute).
    *  Automatically disabled when running under a supervisor (GBRAIN_SUPERVISED=1).
-   *  Provides DB liveness probes and stall detection for bare `gbrain jobs work`
+   *  Provides DB liveness probes and stall detection for bare `foresights jobs work`
    *  deployments managed by external process managers (systemd, Docker, cron). */
   healthCheckInterval?: number;
   /** Stall detection: ms of continuous idle (waiting>0, inFlight=0, no completions)
@@ -260,7 +260,7 @@ export interface MinionWorkerOpts {
    *  process (blast radius = 1 job). Default 'inline' (today's behavior).
    *  Requires childCliInvocation; the CLI layer resolves + validates it. */
   jobIsolation?: 'inline' | 'process';
-  /** How to invoke the gbrain CLI for job children (resolved fail-fast at
+  /** How to invoke the foresights CLI for job children (resolved fail-fast at
    *  worker startup by the CLI layer; structurally ChildCliInvocation from
    *  job-isolation.ts — kept inline here to avoid an import cycle). */
   childCliInvocation?: { cmd: string; argsPrefix: string[] } | null;
@@ -561,7 +561,7 @@ export interface SubagentHandlerData {
    *
    * CURRENT BEHAVIOR: stamped onto every tool-call's `OperationContext.
    * brainId` but NOT yet used to select an engine at dispatch time.
-   * `gbrain agent run` does not yet accept a `--brain` flag that would
+   * `foresights agent run` does not yet accept a `--brain` flag that would
    * populate this field — all subagent jobs submitted by the CLI today
    * default to the host engine. The field + handler acceptance exist so
    * PR 1 can add the registry lookup + CLI flag in a single commit.
@@ -600,7 +600,7 @@ export interface SubagentHandlerData {
    * (UnrecoverableError → dead, idempotency key released) instead of
    * reporting `completed` with zero pages. Set by the dream
    * synthesize + patterns fan-outs (jobs whose entire purpose is writing
-   * pages). Left unset for open-ended `gbrain agent run` jobs, where one
+   * pages). Left unset for open-ended `foresights agent run` jobs, where one
    * rejected write plus a useful read-only answer is a legitimate
    * completion — those still get truthful pages_* counts on the result.
    * Same trust story as `allowed_slug_prefixes` (PROTECTED_JOB_NAMES).

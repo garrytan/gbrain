@@ -18,7 +18,7 @@ import {
 } from '../src/core/agent-output.ts';
 import { opError, OperationError, verbError } from '../src/core/ops/contract.ts';
 import { FACT_WITHDRAWN_MESSAGE, FACT_WITHDRAWN_SUGGESTION } from '../src/core/facts/withdrawal.ts';
-import '../src/core/operations.ts'; // registers shared-op CLI names for the A1 routing pin, as every gbrain process does
+import '../src/core/operations.ts'; // registers shared-op CLI names for the A1 routing pin, as every foresights process does
 import { confirmationPayload } from '../src/core/consent.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -128,7 +128,7 @@ describe('agent contract v1 goldens', () => {
   });
 
   test('nested legacy error keeps nesting and gains sibling code/fix', () => {
-    const legacy = { error: { class: 'UsageError', code: 'code_def_requires_symbol', message: 'code-def requires a symbol name', hint: 'gbrain code-def <symbol> [--json]' } };
+    const legacy = { error: { class: 'UsageError', code: 'code_def_requires_symbol', message: 'code-def requires a symbol name', hint: 'foresights code-def <symbol> [--json]' } };
     golden('nested-legacy-error.json', withAgentSiblings(legacy, {
       code: 'code_def_requires_symbol',
       fix: { argv: ['gbrain', 'code-def', '--help'], consent: [], actor: 'agent', why: 'Shows the required symbol argument.', requires_exclusive: false },

@@ -75,18 +75,18 @@ export function decodeFenceCell(cell: string): string {
  * front of `#58;` (`&#58;` is the HTML entity for `:`; GFM renders it as a
  * colon, and no marker regex matches it):
  *
- *   gbrain:facts:begin          → gbrain&#58;facts:begin
- *   gbrain&#58;facts:begin      → gbrain&amp;#58;facts:begin
- *   gbrain&amp;#58;facts:begin  → gbrain&amp;amp;#58;facts:begin
+ *   gbrain:facts:begin          → foresights&#58;facts:begin
+ *   foresights&#58;facts:begin      → foresights&amp;#58;facts:begin
+ *   foresights&amp;#58;facts:begin  → foresights&amp;amp;#58;facts:begin
  *
  * Decoding removes exactly one level, so the codec is injective: a claim
- * that literally held `gbrain&#58;facts:begin` reads back as that literal,
+ * that literally held `foresights&#58;facts:begin` reads back as that literal,
  * never as a live marker. A `&#58;` not followed by `(facts|takes):(begin|end)`
  * is left alone in both directions, and the transcript renderer's
- * `gbrain\:facts:begin` form contains no bare marker and passes through.
+ * `foresights\:facts:begin` form contains no bare marker and passes through.
  */
-const BARE_OR_ENCODED_MARKER_RE = /gbrain(:|&(?:amp;)*#58;)(facts|takes):(begin|end)/g;
-const ENCODED_MARKER_RE = /gbrain&((?:amp;)*)#58;(facts|takes):(begin|end)/g;
+const BARE_OR_ENCODED_MARKER_RE = /(?:foresights|gbrain)(:|&(?:amp;)*#58;)(facts|takes):(begin|end)/g;
+const ENCODED_MARKER_RE = /(?:foresights|gbrain)&((?:amp;)*)#58;(facts|takes):(begin|end)/g;
 
 function encodeFenceMarkers(s: string): string {
   return s.replace(BARE_OR_ENCODED_MARKER_RE, (_m, mid: string, kind: string, edge: string) =>

@@ -1,5 +1,5 @@
 /**
- * #7166: `gbrain recall --entity <x>` matches the recall op's `entity`
+ * #7166: `foresights recall --entity <x>` matches the recall op's `entity`
  * parameter (the bare positional's meaning). PGLite only, synthetic names.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';

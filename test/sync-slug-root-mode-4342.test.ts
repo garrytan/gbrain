@@ -3,7 +3,7 @@
  *
  * A source whose local_path is a SUBDIRECTORY of a bigger git repo used to
  * get git-root-PREFIXED slugs implicitly (`notes/foo` instead of `foo`),
- * diverging from `gbrain import <dir>` naming. The mode is now decided once
+ * diverging from `foresights import <dir>` naming. The mode is now decided once
  * and pinned per source:
  *
  *   1. fresh subdir source (no --src-subpath, no prefixed pages) →

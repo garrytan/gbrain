@@ -1,17 +1,17 @@
 /**
- * gbrain graph-query — relationship traversal with type and direction filters.
+ * foresights graph-query — relationship traversal with type and direction filters.
  *
  * Wraps engine.traversePaths(). Returns an indented tree of edges. Maps to the
  * `traverse_graph` MCP operation when called with link_type or direction params
  * (otherwise traverse_graph still returns the legacy GraphNode[] shape).
  *
  * Usage:
- *   gbrain graph-query <slug> [--type T] [--depth N] [--direction in|out|both]
+ *   foresights graph-query <slug> [--type T] [--depth N] [--direction in|out|both]
  *
  * Examples:
- *   gbrain graph-query people/alice --type attended --depth 2
- *   gbrain graph-query companies/acme --type works_at --direction in
- *   gbrain graph-query people/bob --depth 1
+ *   foresights graph-query people/alice --type attended --depth 2
+ *   foresights graph-query companies/acme --type works_at --direction in
+ *   foresights graph-query people/bob --depth 1
  */
 
 import type { BrainEngine } from '../core/engine.ts';
@@ -61,7 +61,7 @@ function parseArgs(args: string[]): Args {
 }
 
 function printHelp() {
-  console.log(`Usage: gbrain graph-query <slug> [options]
+  console.log(`Usage: foresights graph-query <slug> [options]
 
 Traverse the link graph from a page. Returns an indented tree of edges.
 Per-edge type filter: traversal only follows matching links.
@@ -95,15 +95,15 @@ Options:
   -h, --help             Show this message.
 
 Examples:
-  gbrain graph-query people/alice --type attended --depth 2
+  foresights graph-query people/alice --type attended --depth 2
     -> who attended meetings with Alice (multi-hop)
-  gbrain graph-query companies/acme --type works_at --direction in
+  foresights graph-query companies/acme --type works_at --direction in
     -> who works at Acme
-  gbrain graph-query people/bob --depth 1
+  foresights graph-query people/bob --depth 1
     -> Bob's direct connections
-  gbrain graph-query people/bob --include-foreign
+  foresights graph-query people/bob --include-foreign
     -> include edges to pages in other sources
-  gbrain graph-query people/alice --hop invested_in:object --hop founded:subject
+  foresights graph-query people/alice --hop invested_in:object --hop founded:subject
     -> founders of the companies Alice invested in, with evidence
 `);
 }
@@ -202,7 +202,7 @@ export async function runGraphQuery(engine: BrainEngine, argv: string[]) {
     // already bounds the walk) — say so instead of pretending it applied.
     const cannotForwardScope = 'the remote op has no source_id parameter; the server scopes the walk to your grant';
     if (args.source !== undefined) {
-      console.error(`gbrain graph-query does not accept --source on a thin-client install (${cannotForwardScope}).`);
+      console.error(`foresights graph-query does not accept --source on a thin-client install (${cannotForwardScope}).`);
       process.exit(1);
     }
     // An ambient scope (GBRAIN_SOURCE / .gbrain-source) is just as
@@ -332,14 +332,14 @@ async function runChainQuery(engine: BrainEngine, args: Args, cfg: ReturnType<ty
   let res: ChainResponse;
   if (isThinClient(cfg)) {
     if (args.source !== undefined || args.includeForeign) {
-      console.error('gbrain graph-query does not accept --source or --include-foreign on a thin-client install (the server scopes the chain to your grant).');
+      console.error('foresights graph-query does not accept --source or --include-foreign on a thin-client install (the server scopes the chain to your grant).');
       process.exit(1);
     }
     const raw = await callRemoteTool(cfg!, 'traverse_graph', { slug: args.slug, hops: rawHops }, { timeoutMs: 30_000 });
     const body = unpackToolResult<unknown>(raw);
     const isChain = !!body && typeof body === 'object' && !Array.isArray(body) && Array.isArray((body as ChainResponse).answers);
     if (ignoredRemoteParams(raw).includes('hops') || !isChain) {
-      console.error('The brain host runs an older gbrain without typed chains (traverse_graph ignored "hops"). Upgrade it (`gbrain upgrade` on the host) to use --hop.');
+      console.error('The brain host runs an older foresights without typed chains (traverse_graph ignored "hops"). Upgrade it (`foresights upgrade` on the host) to use --hop.');
       process.exit(1);
     }
     res = body as ChainResponse;
@@ -362,12 +362,12 @@ async function runChainQuery(engine: BrainEngine, args: Args, cfg: ReturnType<ty
 function printChain(res: ChainResponse, hops: string[]) {
   const status = res.diagnostics.status;
   if (status === 'anchor_not_found') {
-    console.log(`No page "${res.anchor}" in the searched sources. Find its exact slug with: gbrain search "${res.anchor}"`);
+    console.log(`No page "${res.anchor}" in the searched sources. Find its exact slug with: foresights search "${res.anchor}"`);
     return;
   }
   if (res.answers.length === 0) {
     const hop = res.diagnostics.empty_hop ?? 1;
-    console.log(`No answers: hop ${hop} (${hops[hop - 1]}) found no typed edges. The relationship may only be written as plain mentions; inspect with: gbrain graph-query ${res.anchor} --depth 1`);
+    console.log(`No answers: hop ${hop} (${hops[hop - 1]}) found no typed edges. The relationship may only be written as plain mentions; inspect with: foresights graph-query ${res.anchor} --depth 1`);
     return;
   }
   console.log(`${res.answers.length} answer${res.answers.length === 1 ? '' : 's'} for ${res.anchor} ${hops.map(h => `--hop ${h}`).join(' ')}:`);

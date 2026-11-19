@@ -1,12 +1,12 @@
 /**
- * gbrain's OWN docker Postgres container — the shared seam between the init
- * ladder's docker rung (`gbrain init --prefer-postgres --allow-docker`) and
+ * foresights's OWN docker Postgres container — the shared seam between the init
+ * ladder's docker rung (`foresights init --prefer-postgres --allow-docker`) and
  * db-repair's `conn_refused` auto arm (`docker start` a stopped container).
  *
  * The container name lives HERE and only here (DRY: the init rung and the
  * repair arm must never carry two string literals that can drift).
  *
- * Ownership contract: gbrain starts and reuses this container; it NEVER
+ * Ownership contract: foresights starts and reuses this container; it NEVER
  * stops or removes it, and never touches a container whose credentials it
  * cannot recover via `docker inspect` (a container we can't prove we own is
  * not ours to recreate).
@@ -36,7 +36,7 @@ function docker(
 }
 
 /**
- * Does this URL point at gbrain's own docker container? Used by db-repair's
+ * Does this URL point at foresights's own docker container? Used by db-repair's
  * `conn_refused` arm to decide whether the `docker start` auto fix applies —
  * matching on the loopback host + our dedicated port, never on error text.
  */

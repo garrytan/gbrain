@@ -68,11 +68,11 @@ describe('automaticSyncPull', () => {
     expect(env.message).toBe('Automatic sync requires exactly one known boolean persistence state.');
     expect(env.why).toContain('rather than risk a Git pull');
     expect(env.fix).toMatchObject({
-      next: 'run', command: 'gbrain sources writer status --probe --json', consent: [], actor: 'agent',
+      next: 'run', command: 'foresights sources writer status --probe --json', consent: [], actor: 'agent',
       verify: { argv: ['gbrain', 'doctor', '--json'] },
     });
     expect(renderCliError(error, { json: false, command: 'autopilot', tty: false }).stderr)
-      .toContain('Fix: gbrain sources writer status --probe --json');
+      .toContain('Fix: foresights sources writer status --probe --json');
   });
 });
 

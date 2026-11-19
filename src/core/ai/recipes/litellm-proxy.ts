@@ -3,7 +3,7 @@ import type { Recipe } from '../types.ts';
 /**
  * LiteLLM proxy template. Users run LiteLLM in front of any provider
  * (Bedrock, Vertex, Azure, Fireworks, Together, DeepSeek, etc.) and point
- * gbrain at it via `LITELLM_BASE_URL`. The proxy normalizes to
+ * foresights at it via `LITELLM_BASE_URL`. The proxy normalizes to
  * OpenAI-compatible API.
  *
  * See docs/integrations/embedding-providers.md for the setup recipe.

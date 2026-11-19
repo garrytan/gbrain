@@ -26,7 +26,7 @@ import type { ConnectorClient } from './client.ts';
 /** Providers with a live connector in v1. Perplexity stays manual-only (no adapter). */
 export type ConnectorProviderName = 'chatgpt' | 'claude';
 
-/** API-token providers that back a source kind (`meetings`, `slack`), captured with `gbrain connectors auth <p> --token -`. */
+/** API-token providers that back a source kind (`meetings`, `slack`), captured with `foresights connectors auth <p> --token -`. */
 export type TokenProviderName = 'fireflies' | 'slack';
 export const TOKEN_PROVIDER_NAMES: readonly TokenProviderName[] = ['fireflies', 'slack'];
 export function isTokenProviderName(name: string): name is TokenProviderName { return (TOKEN_PROVIDER_NAMES as readonly string[]).includes(name); }
@@ -103,7 +103,7 @@ export interface ChatHistoryProvider {
   spoolFormat: TranscriptFormat;
   /** Ordered; first workable wins. First entry is the default lane. */
   strategies: AuthStrategyKind[];
-  /** Dated, provisional — these are host formats gbrain does not control. */
+  /** Dated, provisional — these are host formats foresights does not control. */
   specTarget: HostSpecTarget;
   /** OAuth config, present iff `strategies` includes 'oauth-pkce'. */
   oauth?: OAuthPkceConfig;

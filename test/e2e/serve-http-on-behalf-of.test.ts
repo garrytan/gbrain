@@ -1,5 +1,5 @@
 /**
- * GBRA-231 shared agents over the real `gbrain serve --http` (serve-http-mcp.ts): one bot token whose
+ * GBRA-231 shared agents over the real `foresights serve --http` (serve-http-mcp.ts): one bot token whose
  * may_act_for lists two members reads, per call, only what the asserted audience may read, from the
  * X-Gbrain-On-Behalf-Of header or request-level _meta.on_behalf_of, and every response names that view in
  * _meta.access.
@@ -130,7 +130,7 @@ describeE2E('/mcp shared agent on_behalf_of over serve --http', () => {
   test('an audience outside may_act_for reads nothing and names the operator command', async () => {
     const out = await call(PAGES.alice.slug, { header: 'alice-example, eve-example' });
     expect(out.text).toContain('on_behalf_of_not_permitted');
-    expect(out.text).toContain('gbrain auth rescope --token obo-e2e-bot');
+    expect(out.text).toContain('foresights auth rescope --token obo-e2e-bot');
     expect(out.text).not.toContain(PAGES.alice.canary);
   }, 30_000);
 });

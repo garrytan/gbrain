@@ -23,7 +23,7 @@ import { validateFenceRepair } from '../src/core/fence-repair/validate.ts';
 import type { FenceCtx, FencePage } from '../src/core/fence-repair/types.ts';
 
 const MARKERS: Record<string, string> = { FACTS_FENCE_BEGIN, FACTS_FENCE_END, TAKES_FENCE_BEGIN, TAKES_FENCE_END };
-const FENCE_TEXT = /gbrain:(facts|takes):/;
+const FENCE_TEXT = /(?:foresights|gbrain):(facts|takes):/;
 
 function evaluate(node: ts.Node): string | null {
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;

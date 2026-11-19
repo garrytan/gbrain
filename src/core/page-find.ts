@@ -1,5 +1,5 @@
 /**
- * #7191: `gbrain find` / `find_pages`: find pages by name or path, the
+ * #7191: `foresights find` / `find_pages`: find pages by name or path, the
  * lookups agents otherwise do with `ls` and `find`.
  *
  * One pattern, three forms, decided by its shape:
@@ -43,7 +43,7 @@ export interface FindPattern {
  * The ranked-search hard-exclude prefixes (`resolveHardExcludes`: `test/`,
  * `attachments/`, `.raw/` and GBRAIN_SEARCH_EXCLUDE) that a find hides. A
  * pattern whose literal lead is inside one of them asks for it, so that
- * prefix stays visible (`gbrain find 'attachments/*'`).
+ * prefix stays visible (`foresights find 'attachments/*'`).
  */
 export function hiddenPrefixesFor(pattern: FindPattern, excluded: readonly string[]): string[] {
   const lead = pattern.lead.toLowerCase();

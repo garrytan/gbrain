@@ -1,5 +1,5 @@
 /**
- * #6907 (GBRA-133): `gbrain backup check` on a large or slow repository.
+ * #6907 (GBRA-133): `foresights backup check` on a large or slow repository.
  *  - A dirty tree whose `git status --porcelain` passed 1 MiB overflowed the
  *    probe's buffer (ENOBUFS) and read `unknown / probe_failed` instead of
  *    `dirty`; the whole listing was read before anything was decided.

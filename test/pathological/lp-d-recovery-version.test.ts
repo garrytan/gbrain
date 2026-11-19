@@ -1,10 +1,10 @@
 /**
- * LPH (d) part 1: a recovery record of a version this gbrain does not know is refused, never misread.
+ * LPH (d) part 1: a recovery record of a version this foresights does not know is refused, never misread.
  *
  * 1. Protects: a withdrawal-mirror effect recovery record (persistence_effects.recovery) or a write request recovery
  *    record (persistence_requests.recovery) whose `version` this binary does not know (a synthetic effect version 3 or
  *    request version 4, as a future release could write) is refused `recovery_version_unsupported` with fix.next `tell_user_to_run`
- *    `gbrain upgrade`, before anything reads it: the record stays byte for byte, its streamed stage stays on disk with
+ *    `foresights upgrade`, before anything reads it: the record stays byte for byte, its streamed stage stays on disk with
  *    its bytes, the canonical file keeps its bytes, nothing is cleared and the effect keeps retrying (never parks). The
  *    head blocker names it as needing intervention with the same upgrade fix.
  * 2. Fails when: recovery reads a version 3 record as version 1 (it embeds `after`, so the old reading removes the
@@ -138,7 +138,7 @@ for (const kind of testBackends()) {
         expect(json((await brain.engine.executeRaw<{ recovery: unknown }>('SELECT recovery FROM persistence_effects WHERE id=$1', [effect!.id]))[0]!.recovery)).toEqual(written);
 
         // The head blocker's exit for it is the same upgrade, told to the user.
-        const action = headBlockerAction({ predicate: 'effect_recovery', ids: [effect!.id], state: 'recovery_version_unsupported', owner: null, intervention: true }, brain.sourceId, `gbrain sync --source ${brain.sourceId}`);
+        const action = headBlockerAction({ predicate: 'effect_recovery', ids: [effect!.id], state: 'recovery_version_unsupported', owner: null, intervention: true }, brain.sourceId, `foresights sync --source ${brain.sourceId}`);
         expect(action.argv).toEqual(['gbrain', 'upgrade']);
         expect(renderAction(action, cliRenderContext()).next).toBe('tell_user_to_run');
       } finally { installFaultHook(undefined); }
@@ -150,7 +150,7 @@ for (const kind of testBackends()) {
       // No staging: a version 1 reader's upgradeRecoveryStaging would allocate a restoration stage from `before` and rewrite the record.
       const record = { version: 4, path: fileOf(brain, SEGMENTED), root: brain.root, before: Buffer.from('prior bytes').toString('base64'), beforeHash: sha(Buffer.from('prior bytes')),
         afterHash: sha(readFileSync(fileOf(brain, SEGMENTED))), mode: null, ownerEpoch: '1', attempt: randomUUID(), next: { layout: 'future' } };
-      // The request protocol trigger admits only the record shapes this schema knows; a newer gbrain's would come with its
+      // The request protocol trigger admits only the record shapes this schema knows; a newer foresights's would come with its
       // own schema, so the trigger is set aside for this one write (replica role) to model that brain.
       const unguarded = (sql: string, params: unknown[]) => brain.engine.transaction(async tx => {
         await tx.executeRaw("SET LOCAL session_replication_role = 'replica'");

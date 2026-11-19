@@ -1,5 +1,5 @@
 /**
- * GBRA-437 PR 1: the thin client's `gbrain think --model` shows why the brain host ignored the model.
+ * GBRA-437 PR 1: the thin client's `foresights think --model` shows why the brain host ignored the model.
  *
  * 1. Protects: a thin-client think whose model the remote brain does not allow prints the
  *    model_override_ignored notice (in --json, under `notices`), with the host model's answer.

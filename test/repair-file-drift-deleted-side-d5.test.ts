@@ -1,5 +1,5 @@
 /**
- * PR A item 5: the deleted side of `gbrain repair file-drift --held --side deleted --state <state> [--provenance <p>] --prefer file|database`.
+ * PR A item 5: the deleted side of `foresights repair file-drift --held --side deleted --state <state> [--provenance <p>] --prefer file|database`.
  *   - a live page whose file a commit removed, held by sync as `file_gone` (provenance `deleted_by_commit`), previews
  *     --prefer database as `recreate_file` ("recreate the file"), and its --apply --expect <hash> writes the file back from
  *     the page: the file parses back to the page and the page stays live with the same content; the apply leaves the

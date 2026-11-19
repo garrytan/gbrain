@@ -1,6 +1,6 @@
 /**
  * Postgres scale gate for claim-keyed withdrawal discovery. Ported from
- * garrytan/gbrain#5469 by @tarush1989: rare, stopword and common-anchor claims
+ * aimonk2025/gbrain#5469 by @tarush1989: rare, stopword and common-anchor claims
  * each withdraw exactly one page of a 2,500-page source inside a 5-second
  * statement budget, leaving unrelated pages untouched.
  */

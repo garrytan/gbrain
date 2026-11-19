@@ -1,5 +1,5 @@
 /**
- * v0.40.2.0 — E2E test for `gbrain think` trajectory injection.
+ * v0.40.2.0 — E2E test for `foresights think` trajectory injection.
  *
  * Walks the full pipeline against PGLite in-memory (no DATABASE_URL,
  * no API keys; uses stub `ThinkLLMClient`):

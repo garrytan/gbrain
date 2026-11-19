@@ -2,7 +2,7 @@
  * Pre-enqueue validator for `shell` job params (v0.36.5.0).
  *
  * Called from BOTH submit surfaces BEFORE `MinionQueue.add()`:
- *   - `src/commands/jobs.ts` — `gbrain jobs submit shell` CLI handler
+ *   - `src/commands/jobs.ts` — `foresights jobs submit shell` CLI handler
  *   - `src/core/operations.ts` — `submit_job` op handler for name='shell'
  *
  * Correctness property: a rejected payload NEVER lands in `minion_jobs.data`.
@@ -47,7 +47,7 @@ export interface ValidatedShellJobParams {
 
 export interface ValidateShellJobOpts {
   /**
-   * Loaded gbrain config used to verify every `inherit` name resolves to a
+   * Loaded foresights config used to verify every `inherit` name resolves to a
    * value. Pass `null` to fail-fast on any inherit request. Defaults to
    * calling `loadConfig()` when undefined — the typical CLI / op-handler path.
    *
@@ -155,7 +155,7 @@ export function validateShellJobParams(
       if (value === undefined) {
         throw new UnrecoverableError(
           `shell: inherit requested "${name}" but worker has no ${name} configured. ` +
-          `Fix: \`gbrain config set ${name} <value>\` or set the value in the worker's config file. ` +
+          `Fix: \`foresights config set ${name} <value>\` or set the value in the worker's config file. ` +
           '(see: docs/guides/minions-shell-jobs.md#secrets)',
         );
       }

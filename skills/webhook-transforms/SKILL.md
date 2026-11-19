@@ -39,10 +39,10 @@ This skill guarantees:
 3. **On event received:**
    - Parse payload
    - Run transform function
-   - Write brain page via `gbrain put`
+   - Write brain page via `foresights put`
    - Extract entities, run enrichment
    - Add timeline entries to mentioned entities
-   - Sync: `gbrain sync`
+   - Sync: `foresights sync`
 
 4. **Error handling:**
    - If transform throws: log raw payload to `_dead-letter/{timestamp}.md`
@@ -77,7 +77,7 @@ Event transformed and written to brain. Report: "Webhook: {event_type} from {sou
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - A transformed write returns `write_pending` (exit 10): the event is accepted; record the request id and poll it, never replay the event under a new id.
 - `source_binding_required` / `insufficient_scope`: the webhook's token cannot write that source; tell the user which grant the brain host's operator must add.

@@ -1,8 +1,8 @@
 /**
- * D-N1 (fix wave 9) — `gbrain eval <sub> --help` must print that
- * subcommand's own usage, not the generic `gbrain eval --qrels` block.
+ * D-N1 (fix wave 9) — `foresights eval <sub> --help` must print that
+ * subcommand's own usage, not the generic `foresights eval --qrels` block.
  *
- * The subcommand list is read from `gbrain eval --help` itself, so a new
+ * The subcommand list is read from `foresights eval --help` itself, so a new
  * subcommand added to the eval usage block is covered without editing this
  * file. Hermetic no-brain env: help must work before a brain exists.
  */
@@ -12,7 +12,7 @@ import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 
 const CLI_ENTRY = join(process.cwd(), 'src/cli.ts');
-const GENERIC_EVAL_USAGE = 'gbrain eval — measure and compare retrieval quality';
+const GENERIC_EVAL_USAGE = 'foresights eval — measure and compare retrieval quality';
 
 function runCli(args: string[]): { out: string; status: number } {
   const env: Record<string, string | undefined> = {

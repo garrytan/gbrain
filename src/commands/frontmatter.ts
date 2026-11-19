@@ -1,18 +1,18 @@
 import { assertManagedFilesystemWrite, managedFilesystemRootFor } from '../core/persistence/filesystem-guard.ts';
 /**
- * gbrain frontmatter — Frontmatter validation, audit, and auto-repair.
+ * foresights frontmatter — Frontmatter validation, audit, and auto-repair.
  *
  * Subcommands:
- *   gbrain frontmatter validate <path> [--json] [--importable] [--fix [--include-ambiguous]] [--dry-run]
- *   gbrain frontmatter validate --stdin|- [--path <source-relative path>] [--importable] [--json]
- *   gbrain frontmatter validate --staged [<path>...] [--importable] [--json]
+ *   foresights frontmatter validate <path> [--json] [--importable] [--fix [--include-ambiguous]] [--dry-run]
+ *   foresights frontmatter validate --stdin|- [--path <source-relative path>] [--importable] [--json]
+ *   foresights frontmatter validate --staged [<path>...] [--importable] [--json]
  *     Validate one file, a directory, piped content, or staged git blobs.
  *     Strict producer rule by default (any error fails); --importable is the
  *     ingestion hold view. --fix writes centralized backups under
  *     ~/.gbrain/backups/frontmatter/... then rewrites in place and
  *     re-validates. --dry-run previews without writing.
  *
- *   gbrain frontmatter audit [--source <id>] [--json]
+ *   foresights frontmatter audit [--source <id>] [--json]
  *     Read-only scan across all registered sources (or one with --source).
  *     Returns AuditReport-shaped JSON with --json.
  *
@@ -91,7 +91,7 @@ export async function runFrontmatter(args: string[], io: FrontmatterIo = {}): Pr
 async function connectEngineForAudit(): Promise<BrainEngine> {
   const config = loadConfig();
   if (!config) {
-    throw new Error('No brain configured. Run: gbrain init');
+    throw new Error('No brain configured. Run: foresights init');
   }
   const engineConfig = toEngineConfig(config);
   const engine = await createEngine(engineConfig);
@@ -100,15 +100,15 @@ async function connectEngineForAudit(): Promise<BrainEngine> {
 }
 
 function printHelp() {
-  console.log(`gbrain frontmatter — frontmatter validation, audit, auto-repair, and generation
+  console.log(`foresights frontmatter — frontmatter validation, audit, auto-repair, and generation
 
 Usage:
-  gbrain frontmatter validate <path> [--json] [--importable] [--fix [--include-ambiguous]] [--dry-run]
-  gbrain frontmatter validate --stdin [--path <source-relative path>] [--importable] [--json]
-  gbrain frontmatter validate --staged [<path>...] [--importable] [--json]
-  gbrain frontmatter generate <path> [--fix] [--dry-run] [--json] [--include-catch-all]
-  gbrain frontmatter audit [--source <id>] [--json]
-  gbrain frontmatter install-hook [--source <id>] [--force] [--uninstall]
+  foresights frontmatter validate <path> [--json] [--importable] [--fix [--include-ambiguous]] [--dry-run]
+  foresights frontmatter validate --stdin [--path <source-relative path>] [--importable] [--json]
+  foresights frontmatter validate --staged [<path>...] [--importable] [--json]
+  foresights frontmatter generate <path> [--fix] [--dry-run] [--json] [--include-catch-all]
+  foresights frontmatter audit [--source <id>] [--json]
+  foresights frontmatter install-hook [--source <id>] [--force] [--uninstall]
 
 validate
   Validate one .md file or recursively a directory. Each file is parsed via
@@ -116,7 +116,7 @@ validate
     MISSING_OPEN, MISSING_CLOSE, YAML_PARSE, SLUG_MISMATCH,
     NULL_BYTES, NESTED_QUOTES, EMPTY_FRONTMATTER
   Producer rule (default): exits 1 on any error, including YAML_PARSE that
-  gbrain could still import by quoting a value. Use it before committing
+  foresights could still import by quoting a value. Use it before committing
   generated files.
 
   --importable   Ingestion view instead: exit 1 only for what import/sync
@@ -130,12 +130,12 @@ validate
                  .md/.mdx file, or of the named paths, in one process. This
                  is what the pre-commit hook runs.
   --fix          Auto-repair: NULL_BYTES, MISSING_CLOSE, NESTED_QUOTES,
-                 SLUG_MISMATCH, and YAML gbrain reads by quoting (only the
+                 SLUG_MISMATCH, and YAML foresights reads by quoting (only the
                  recovered lines change; line endings and BOM kept). Writes a
                  backup under ~/.gbrain/backups/frontmatter/... first, then
                  re-validates: exit 1 when errors remain. In a git repo,
                  restage the fixed files afterwards (git add). On a managed
-                 brain use gbrain repair frontmatter --source <id> instead.
+                 brain use foresights repair frontmatter --source <id> instead.
   --include-ambiguous
                  With --fix: also apply interpretations (fold unquoted
                  continuation lines into the value, keep the later of a
@@ -151,7 +151,7 @@ generate
 
   Without --fix: dry-run preview showing what would be generated.
   With --fix: writes frontmatter to files with centralized safety backups.
-  Unknown/catch-all files are skipped by default so GBrain does not stamp
+  Unknown/catch-all files are skipped by default so Foresights does not stamp
   meaningless "type: note" metadata onto arbitrary workspace documents. Pass
   --include-catch-all to opt into the legacy catch-all note behavior.
 
@@ -159,9 +159,9 @@ generate
   Add new directory conventions by adding rules to the table.
 
   Examples:
-    gbrain frontmatter generate /path/to/brain              # preview all
-    gbrain frontmatter generate /path/to/brain --fix        # write all
-    gbrain frontmatter generate /path/to/brain/people/ --fix # just people/
+    foresights frontmatter generate /path/to/brain              # preview all
+    foresights frontmatter generate /path/to/brain --fix        # write all
+    foresights frontmatter generate /path/to/brain/people/ --fix # just people/
 
   --fix      Write generated frontmatter to files with centralized backups.
   --dry-run  Preview without writing (default when --fix is omitted).
@@ -211,7 +211,7 @@ interface FileValidation {
   warnings?: Array<{ code: ParseWarningCode; message: string; key: string; line: number; original?: string; replacement?: string }>;
   /** --importable: the hold ingestion would record; null when the file imports. */
   hold?: ContentRefusal | null;
-  /** The strict check fails only on YAML gbrain reads by quoting. */
+  /** The strict check fails only on YAML foresights reads by quoting. */
   importable_but_not_canonical?: boolean;
   fixesApplied?: AuditFix[];
   backupPath?: string;
@@ -325,7 +325,7 @@ function managedFixRefusal(file: string, error: OperationError): OperationError 
   const sourceId = managedFilesystemRootFor(file)?.sourceId;
   return opError('writer_coordinator_required',
     `${file} is in a managed brain${sourceId ? ` (source ${sourceId})` : ''}, so frontmatter validate --fix cannot rewrite it in place.`,
-    `Preview the repair with gbrain repair frontmatter${sourceId ? ` --source ${sourceId}` : ''}; it writes through the persistence coordinator, and only after the preview hash is approved.`,
+    `Preview the repair with foresights repair frontmatter${sourceId ? ` --source ${sourceId}` : ''}; it writes through the persistence coordinator, and only after the preview hash is approved.`,
     {
       why: 'Files in a managed canonical worktree change only through the persistence coordinator, so the page and its file stay in step.',
       ...(error.detail !== undefined ? { detail: error.detail } : {}),
@@ -364,7 +364,7 @@ async function runValidate(rest: string[], io: FrontmatterIo): Promise<void> {
     return;
   }
   if (flags.fix && (flags.stdin || flags.staged)) {
-    usage(`--fix rewrites working-tree files, not ${flags.stdin ? 'stdin' : 'staged blobs'}. Run: gbrain frontmatter validate <file> --fix${flags.staged ? ', then git add <file>' : ''}`);
+    usage(`--fix rewrites working-tree files, not ${flags.stdin ? 'stdin' : 'staged blobs'}. Run: foresights frontmatter validate <file> --fix${flags.staged ? ', then git add <file>' : ''}`);
     return;
   }
   if (flags.stdin && flags.staged) {
@@ -381,7 +381,7 @@ async function runValidate(rest: string[], io: FrontmatterIo): Promise<void> {
   if (flags.stdin) {
     const read = await readStdinBounded({ maxBytes: 2 * MAX_FILE_SIZE, ...(io.stdin ? { stream: io.stdin } : {}) });
     if (read.kind !== 'data' && read.kind !== 'empty') {
-      usage(`could not read stdin (${read.kind === 'error' ? read.error.message : read.kind}). Pipe the content in: cat <file> | gbrain frontmatter validate --stdin --path <source-relative path>`);
+      usage(`could not read stdin (${read.kind === 'error' ? read.error.message : read.kind}). Pipe the content in: cat <file> | foresights frontmatter validate --stdin --path <source-relative path>`);
       return;
     }
     const content = read.kind === 'data' ? read.text : '';
@@ -395,7 +395,7 @@ async function runValidate(rest: string[], io: FrontmatterIo): Promise<void> {
     try {
       staged = readStagedBlobs(targets, io.cwd);
     } catch (error) {
-      usage(`--staged reads the git index, which failed here (${error instanceof Error ? error.message.split('\n')[0] : String(error)}). Run it inside the repository: cd <repo> && gbrain frontmatter validate --staged`);
+      usage(`--staged reads the git index, which failed here (${error instanceof Error ? error.message.split('\n')[0] : String(error)}). Run it inside the repository: cd <repo> && foresights frontmatter validate --staged`);
       return;
     }
     targetLabel = staged.root;
@@ -418,7 +418,7 @@ async function runValidate(rest: string[], io: FrontmatterIo): Promise<void> {
   } else {
     const target = targets[targets.length - 1];
     if (!target) {
-      usage('gbrain frontmatter validate requires a <path> argument (or --stdin, or --staged)');
+      usage('foresights frontmatter validate requires a <path> argument (or --stdin, or --staged)');
       return;
     }
     const resolved = resolve(target);
@@ -537,7 +537,7 @@ function printValidateReport(results: FileValidation[], ctx: {
     if (r.note) console.log(`  ${r.note}`);
     for (const e of r.errors) {
       const lineHint = e.line !== undefined ? `:${e.line}` : '';
-      console.log(`  [${e.code}]${lineHint} ${e.message}${e.recoverable ? ' (gbrain reads it by quoting; still not valid YAML)' : ''}`);
+      console.log(`  [${e.code}]${lineHint} ${e.message}${e.recoverable ? ' (foresights reads it by quoting; still not valid YAML)' : ''}`);
     }
     for (const w of r.warnings ?? []) {
       console.log(`  [${w.code}]:${w.line} ${w.message}`);
@@ -547,12 +547,12 @@ function printValidateReport(results: FileValidation[], ctx: {
       }
     }
     if (flags.importable) {
-      if (!r.hold) console.log('  importable: gbrain imports this file as it is');
+      if (!r.hold) console.log('  importable: foresights imports this file as it is');
       else {
         console.log(`  held on import: ${r.hold.code}${r.hold.reason ? ` (${r.hold.reason})` : ''}${r.hold.line !== undefined ? ` at line ${r.hold.line}` : ''}`);
         console.log(`    ${r.hold.message}`);
         if (r.hold.reason === 'needs_interpretation' && !flags.stdin && !flags.staged) {
-          console.log(`    Preview gbrain's interpretation: gbrain frontmatter validate ${r.path} --fix --include-ambiguous --dry-run`);
+          console.log(`    Preview foresights's interpretation: foresights frontmatter validate ${r.path} --fix --include-ambiguous --dry-run`);
         }
       }
     }
@@ -563,16 +563,16 @@ function printValidateReport(results: FileValidation[], ctx: {
     if (r.remaining_errors && r.failed) {
       for (const e of r.remaining_errors) console.log(`  still failing: [${e.code}]${e.line !== undefined ? `:${e.line}` : ''} ${e.message}`);
       if (r.remaining_errors.some(e => e.code === 'YAML_PARSE') && !flags.includeAmbiguous) {
-        console.log(`  Fix that line by hand (one line per key, the whole value quoted), or preview gbrain's interpretation: gbrain frontmatter validate ${r.path} --fix --include-ambiguous --dry-run`);
+        console.log(`  Fix that line by hand (one line per key, the whole value quoted), or preview foresights's interpretation: foresights frontmatter validate ${r.path} --fix --include-ambiguous --dry-run`);
       }
     }
     if (r.importable_but_not_canonical && !r.fixesApplied) {
-      console.log(`  importable but not canonical; run gbrain frontmatter validate ${flags.stdin ? (flags.path ?? '<file>') : r.path} --fix (quoting only)`);
+      console.log(`  importable but not canonical; run foresights frontmatter validate ${flags.stdin ? (flags.path ?? '<file>') : r.path} --fix (quoting only)`);
     }
     if (flags.staged && r.failed && !r.note) {
       console.log(r.working_copy_ok
         ? `  the staged version of ${r.path} is broken; the working copy passes. Review it and git add ${r.path}`
-        : `  the staged version of ${r.path} is broken; fix the file (gbrain frontmatter validate ${r.path} --fix), then git add ${r.path}`);
+        : `  the staged version of ${r.path} is broken; fix the file (foresights frontmatter validate ${r.path} --fix), then git add ${r.path}`);
     }
   }
   if (flags.fix && !flags.dryRun && ctx.filesFixed > 0) {
@@ -593,7 +593,7 @@ function printValidateReport(results: FileValidation[], ctx: {
  * .git, .obsidian, etc. That was the second instance of the v0.38.2.0 hang
  * class (the first being brain-writer.ts:walkDir). Codex outside-voice
  * caught it during plan-eng-review — fixing only walkDir would have left
- * `gbrain frontmatter validate` (doctor's own remediation hint) hanging
+ * `foresights frontmatter validate` (doctor's own remediation hint) hanging
  * users in the same way.
  *
  * Optional `visitDir(dir)` is the test-observability hook: fired once per
@@ -682,7 +682,7 @@ async function runAudit(engine: BrainEngine, rest: string[]): Promise<void> {
 
 function printAuditHumanReport(report: AuditReport): void {
   if (report.per_source.length === 0) {
-    console.log('No registered sources to audit. Run `gbrain sources list` to inspect.');
+    console.log('No registered sources to audit. Run `foresights sources list` to inspect.');
     return;
   }
   console.log(`Frontmatter audit — ${report.total} malformed issue(s) across ${report.per_source.length} source(s) (scanned at ${report.scanned_at})`);
@@ -692,7 +692,7 @@ function printAuditHumanReport(report: AuditReport): void {
   for (const src of report.per_source) {
     console.log(`\n[${src.source_id}] ${src.source_path}`);
     if (src.status === 'missing') {
-      console.log('  NOT SCANNED: the directory is missing (restore it, or gbrain sources set-path <id> <path>)');
+      console.log('  NOT SCANNED: the directory is missing (restore it, or foresights sources set-path <id> <path>)');
       continue;
     }
     if (src.total === 0) {
@@ -713,7 +713,7 @@ function printAuditHumanReport(report: AuditReport): void {
     }
   }
   if (report.total > 0) {
-    console.log(`\nFix with: gbrain frontmatter validate <source-path> --fix (on a managed brain: gbrain repair frontmatter --source <id>)`);
+    console.log(`\nFix with: foresights frontmatter validate <source-path> --fix (on a managed brain: foresights repair frontmatter --source <id>)`);
   }
 }
 
@@ -729,8 +729,8 @@ async function runGenerate(args: string[]): Promise<void> {
   const includeCatchAll = args.includes('--include-catch-all') || args.includes('--allow-catch-all');
 
   if (!targetPath) {
-    console.error('error: gbrain frontmatter generate requires a <path> argument');
-    console.error('usage: gbrain frontmatter generate <path> [--fix] [--dry-run] [--json]');
+    console.error('error: foresights frontmatter generate requires a <path> argument');
+    console.error('usage: foresights frontmatter generate <path> [--fix] [--dry-run] [--json]');
     setCliExitVerdict(1);
     return;
   }
@@ -791,7 +791,7 @@ async function runGenerate(args: string[]): Promise<void> {
 
     let content: string;
     // #4798: strip a UTF-8 BOM so heading-title inference (and --fix's
-    // written body) match what `gbrain sync` / `import` produce.
+    // written body) match what `foresights sync` / `import` produce.
     try { content = readFileSync(absPath, 'utf-8').replace(/^\uFEFF/, ''); } catch { return; }
 
     const inferred = inferFrontmatter(relPath, content);
@@ -884,7 +884,7 @@ async function runGenerate(args: string[]): Promise<void> {
       console.log(`    ... and ${results.length - 10} more`);
     }
     if (!doFix) {
-      console.log(`\n  To write: gbrain frontmatter generate ${targetPath} --fix`);
+      console.log(`\n  To write: foresights frontmatter generate ${targetPath} --fix`);
     }
   }
 }

@@ -2,7 +2,7 @@
  * eval-contradictions/trends — M5 time-series helpers.
  *
  * Thin orchestration over engine.writeContradictionsRun + loadContradictionsTrend.
- * Render helpers produce the plain-text chart for `gbrain eval
+ * Render helpers produce the plain-text chart for `foresights eval
  * suspected-contradictions trend`. Pure data structures — no LLM or filesystem.
  */
 
@@ -77,7 +77,7 @@ export async function loadTrend(engine: BrainEngine, days: number): Promise<Tren
  */
 export function renderTrendChart(rows: readonly TrendRow[]): string {
   if (rows.length === 0) {
-    return 'No contradiction-probe runs in this window. Run `gbrain eval suspected-contradictions` to populate.';
+    return 'No contradiction-probe runs in this window. Run `foresights eval suspected-contradictions` to populate.';
   }
   const max = Math.max(1, ...rows.map((r) => r.total_contradictions_flagged));
   const barWidth = 30;

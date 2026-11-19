@@ -130,7 +130,7 @@ for (const kind of testBackends()) describe(`inexact Git rename identity (#6729,
       const { new_slug: carryOnto } = finding!.details.samples[0]!;
       const carryPreview = ['gbrain', 'repair', 'rename-identity', '--source', s.id, '--slug', carryOnto];
       expect(structuredClone(finding!.fix)).toMatchObject({ argv: [...carryPreview, '--apply', '--expect', finding!.fix!.plan_hash, '--yes'], preview_argv: carryPreview, consent: ['destructive'], ask_user: true });
-      expect(finding!.fix!.why).not.toContain('gbrain restore');
+      expect(finding!.fix!.why).not.toContain('foresights restore');
       expect(finding!.details.restore_unavailable_sources).toContain(s.id);
       await age(); await purgeStaleCheckpoints(engine);
       expect((await purgeDeletedPagesCoordinated(engine, 0)).slugs.filter(slug => slug.endsWith('-x-com'))).toEqual([]);
@@ -146,10 +146,10 @@ for (const kind of testBackends()) describe(`inexact Git rename identity (#6729,
     const preview = ['gbrain', 'repair', 'rename-identity', '--source', s.id, '--slug', newSlug];
     expect(structuredClone(finding!.fix)).toMatchObject({ argv: [...preview, '--apply', '--expect', finding!.fix!.plan_hash, '--yes'], preview_argv: preview, consent: ['destructive'], actor: 'agent', ask_user: true,
       user_message: expect.stringContaining(slug), verify: { argv: ['gbrain', 'doctor', '--only', 'rename_identity_downgrades', '--json'] } });
-    expect(finding!.fix!.why).toContain(`gbrain restore ${slug} --source-id ${s.id} --force`);
+    expect(finding!.fix!.why).toContain(`foresights restore ${slug} --source-id ${s.id} --force`);
     const { deriveNext } = await import('../src/core/agent-output.ts');
     expect(deriveNext(finding!.fix as never, { transport: 'cli', isCallable: () => false, preapproved: () => true })).toBe('ask_user');
-    // Run the alternative (gbrain restore <slug> --source-id <id> --force) through its operation, then the verify.
+    // Run the alternative (foresights restore <slug> --source-id <id> --force) through its operation, then the verify.
     const { operationsByName } = await import('../src/core/operations.ts');
     await operationsByName.restore_page!.handler({ ...repairCtx(engine), sourceId } as never, { slug, source_id: sourceId, force: true });
     expect((await pageRow(s.id, slug!))).toMatchObject({ id: restored.id, deleted_at: null });

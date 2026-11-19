@@ -8,7 +8,7 @@
  * upgrade): the page is recorded durably with its revision and error code, its
  * chunks stay withheld, every other page is re-chunked, the phase completes
  * with \`held: N\` in its detail, doctor text_projection_readiness lists the held
- * page with \`gbrain repair safe-chunks --source <id> --apply\`, that command
+ * page with \`foresights repair safe-chunks --source <id> --apply\`, that command
  * retries and seals it, and the record clears when the page changes. A
  * run-scoped failure still fails the phase, and so does a systemic run
  * (\`item_failures_systemic\`), recording nothing.
@@ -88,16 +88,16 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       expect(result.phases[0]!.detail).toContain('invalid_data');
       const holds = await readCredentialResealHolds(engine);
       expect(holds.length).toBe(1);
-      expectItemFailure({ key: holds[0]!.source_id + ':' + holds[0]!.slug, code: holds[0]!.code, fix: holds[0]!.fix }, { key: SOURCE + ':' + POISON, code: 'invalid_data', fix: /"gbrain","repair","safe-chunks","--source","default","--apply"/ });
+      expectItemFailure({ key: holds[0]!.source_id + ':' + holds[0]!.slug, code: holds[0]!.code, fix: holds[0]!.fix }, { key: SOURCE + ':' + POISON, code: 'invalid_data', fix: /"(?:foresights|gbrain)","repair","safe-chunks","--source","default","--apply"/ });
       expectOthersUnchanged(before, await snapshotItems(engine, SOURCE), { expectProgress: SLUGS.filter(s => s !== POISON), progressFields: ['chunks'] });
       const check = await checkProjectionReadiness(engine);
       expect(check.status).toBe('warn');
       expect(check.details).toMatchObject({ credential_reseal_held: 1, held_pages: [{ source_id: SOURCE, slug: POISON, code: 'invalid_data' }] });
-      expect(check.message).toContain('gbrain repair safe-chunks --source default --apply');
+      expect(check.message).toContain('foresights repair safe-chunks --source default --apply');
       expect(check.fix?.argv).toEqual(['gbrain', 'repair', 'safe-chunks', '--source', SOURCE, '--apply']);
       const pending = await credentialProjectionPendingCheck(engine, [SOURCE]);
       expect(pending.details).toMatchObject({ pages_pending: 1, held_pages: 1 });
-      expect(pending.message).toContain('gbrain repair safe-chunks --source default --apply');
+      expect(pending.message).toContain('foresights repair safe-chunks --source default --apply');
       const remote = await checkProjectionReadiness(engine, {}, { remote: true });
       expect(JSON.stringify(remote)).not.toContain(POISON);
     });

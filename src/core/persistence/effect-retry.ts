@@ -26,7 +26,7 @@ const previewFix = (sourceId: string, requestId: string): Action => readFix(
 const receiptFix = (requestId: string): Action => readFix(`Reads request ${requestId}'s receipt: its source, state and effect outcomes, read-only.`,
   { argv: ['gbrain', 'write-request', '--', requestId] });
 const unregisteredHost = (sourceId: string, requestId: string) => opError('permission_denied', 'Retry requires the registered local CLI host.',
-  `This machine has no registered gbrain host identity, so it cannot authorize another attempt for request ${requestId} in source ${sourceId}; nothing was queued. Run retry-effects on the brain host that owns ${sourceId}; the owner status names it.`,
+  `This machine has no registered foresights host identity, so it cannot authorize another attempt for request ${requestId} in source ${sourceId}; nothing was queued. Run retry-effects on the brain host that owns ${sourceId}; the owner status names it.`,
   { fix: ownerStatusFix(sourceId) });
 
 async function mountedEmbeddingSignature(engine: BrainEngine): Promise<string> {
@@ -193,7 +193,7 @@ export async function retryParkedEffects(engine: BrainEngine, sourceId: string, 
       ...(denied ? { authority: { ok: false, code: refusal!.code, message: refusal!.message } } : {}),
       ...(revoked ? { action: 'owner_revoked', refusal: refusalEnvelope(denied!), fix: denied!.fix } : {}),
       next_action: revoked && !queued ? denied!.suggestion
-        : settled ? `This request's parked effects are settled; gbrain sources writer settle-effects ${sourceId} --request-id ${request.request_id} --unsettle --dry-run previews reversing it.`
+        : settled ? `This request's parked effects are settled; foresights sources writer settle-effects ${sourceId} --request-id ${request.request_id} --unsettle --dry-run previews reversing it.`
           : dryRun ? 'Fix the recorded cause, then run the same command without --dry-run to authorize one more attempt per parked target or failed effect.'
             : queued ? 'The resident owner makes one more attempt per parked target or failed effect. Rerun this command with --dry-run to read the terminal state; a target that fails again parks again.'
               : 'No parked target remains for this request.' };
@@ -290,7 +290,7 @@ export async function retryEmbeddingEffect(engine: BrainEngine, sourceId: string
     if (!scanComplete && (!snapshot || !scanning &&
       (snapshot.page.deleted_at || snapshot.revision !== effect.revision || snapshot.page.id !== effect.data.page_id))) {
       throw opError('revision_conflict', 'The original embedding obligation is superseded; inspect the current page instead.',
-        `Page ${request.slug} changed or was deleted after request ${requestId}, so its old embedding obligation is moot and nothing was queued; the newer write carries its own. Read the page as it is now; if its embeddings are missing, preview gbrain repair embedding-effects --source ${sourceId}.`,
+        `Page ${request.slug} changed or was deleted after request ${requestId}, so its old embedding obligation is moot and nothing was queued; the newer write carries its own. Read the page as it is now; if its embeddings are missing, preview foresights repair embedding-effects --source ${sourceId}.`,
         { fix: readFix(`Shows page ${request.slug} in source ${sourceId} as it is now, with its revision.`,
           { argv: ['gbrain', 'get', '--source', sourceId, '--', request.slug] }) });
     }
@@ -324,7 +324,7 @@ export async function retryEmbeddingEffect(engine: BrainEngine, sourceId: string
           next_action: 'Embedding remains disabled; explicitly configure it before retrying.' };
       }
       if (effect.data.embedding_retry_base !== undefined) return { ...receipt, state: 'failed', action: 'blocked', reason: 'embedding_retry_exhausted',
-        next_action: `The explicit retry allowance is already consumed. Inspect the provider, then preview one new bounded retry cycle with gbrain repair embedding-effects --source ${sourceId} and apply it with --apply.` };
+        next_action: `The explicit retry allowance is already consumed. Inspect the provider, then preview one new bounded retry cycle with foresights repair embedding-effects --source ${sourceId} and apply it with --apply.` };
     }
     if (dryRun) return { ...receipt, state: 'failed', action: complete ? 'would_reconcile' : 'would_retry',
       pending_chunks: pending.length, next_action: 'Run the same command without --dry-run to approve this bounded action.' };

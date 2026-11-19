@@ -185,7 +185,7 @@ describe('engine: listFactsSince composes sessionId in SQL', () => {
   });
 });
 
-describe('gbrain recall CLI (local path) composes the same way', () => {
+describe('foresights recall CLI (local path) composes the same way', () => {
   test('<entity> --since excludes older facts', async () => {
     const facts = await recallCli(['ent-window', '--since', '48 hours ago']);
     expect(facts).toContain('window-entity-recent');
@@ -199,7 +199,7 @@ describe('gbrain recall CLI (local path) composes the same way', () => {
   });
 });
 
-describe('gbrain recall CLI entity-text fallback honors the window', () => {
+describe('foresights recall CLI entity-text fallback honors the window', () => {
   test('unknown positional + --since matches by text but only inside the event-time window', async () => {
     // Sanity: without a window the fallback returns the term's full history.
     expect((await recallCli(['zebrule'])).sort()).toEqual(['textfb-zebrule old', 'textfb-zebrule recent']);

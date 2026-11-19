@@ -490,7 +490,7 @@ export function originFields(origin: WriteGateOrigin | null | undefined): Array<
     .map(v => ['origin', v] as const);
 }
 
-// Gate-owned and bookkeeping keys the gate itself or gbrain writes; never attacker text worth scanning.
+// Gate-owned and bookkeeping keys the gate itself or foresights writes; never attacker text worth scanning.
 const UNSCANNED_FRONTMATTER_KEYS: ReadonlySet<string> = new Set(['quarantine', 'content_flag', 'embed_skip', 'atoms_scan_hash', 'quarantine_override', 'title']);
 
 /** Frontmatter string leaves (bounded depth and count) joined one per line. */

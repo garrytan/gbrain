@@ -1,14 +1,14 @@
 # Spend controls
 
-GBrain's embedding-spend gates in one place: every gate, its config key, default,
+Foresights's embedding-spend gates in one place: every gate, its config key, default,
 whether it blocks or just informs, how to widen or disable it, and how the
 `spend.posture` switch governs all of them.
 
-The orienting idea: **GBrain itself is rounding error; the spend that matters is
+The orienting idea: **Foresights itself is rounding error; the spend that matters is
 downstream embedding.** These gates exist so a routine sync or enrich can't run up
 an unexpected embedding bill, while never wedging an unattended cron.
 
-**Keyless mode:** if you run with zero provider keys (`gbrain init --no-embedding`,
+**Keyless mode:** if you run with zero provider keys (`foresights init --no-embedding`,
 the keyless bootstrap posture — see `docs/guides/bootstrap.md` and
 `docs/operations/headless-install.md`), nothing here can spend and none of these
 gates ever fire. This doc applies once you add a key.
@@ -16,8 +16,8 @@ gates ever fire. This doc applies once you add a key.
 ## `spend.posture` — one switch for "cost is not my constraint"
 
 ```bash
-gbrain config set spend.posture tokenmax   # all cost gates become informational
-gbrain config set spend.posture gated      # default — gates enforce
+foresights config set spend.posture tokenmax   # all cost gates become informational
+foresights config set spend.posture gated      # default — gates enforce
 ```
 
 | Value | Effect |
@@ -63,14 +63,14 @@ What authorizes paid work, and the cap it runs under:
   and the exact resume command (`--max-usd <n>`); doctor's `agent_contract`
   check then suggests the preapproval command. Raise the cap only with the
   user's agreement.
-- **Unpriced models** (a model gbrain has no per-token rate for, for example
+- **Unpriced models** (a model foresights has no per-token rate for, for example
   a newly released one): under a derived or default cap the run
   **warns and proceeds** (`BUDGET_TRACKER_NO_PRICING` on stderr; the cap
   cannot meter it). Under a cap the user set (`--max-usd`, a configured cap
   or a preapproval) it **blocks** with `no_pricing` and nothing is spent: the
   refusal's `fix` has `inputs` telling the agent to look up the model's
   per-token rates (for example by web search on the provider's pricing page)
-  and register them with `gbrain pricing set` (see
+  and register them with `foresights pricing set` (see
   [Registering a model price](#registering-a-model-price)), then retry the
   same command.
 
@@ -95,12 +95,12 @@ reaches the cap the job dies with `derived_cap_exhausted` or
 `cost_cap_exceeded`, the group amounts and the rerun command. `--max-usd off`
 (or `spend.posture=tokenmax` on `enrich`) stores an uncapped approval: nothing
 is reserved and spend is still ledgered. Group controls:
-`gbrain jobs list --group <id> --json`, `gbrain jobs cancel --group <id>`.
+`foresights jobs list --group <id> --json`, `foresights jobs cancel --group <id>`.
 
 Spend-authorized jobs need upgraded workers: an older worker cannot claim
 them (and stops claiming at the first one in its queue order), so restart
 every worker after upgrading. Rolling the binary back leaves those queued rows
-unclaimable; cancel them first (`gbrain jobs cancel --group <id>`).
+unclaimable; cancel them first (`foresights jobs cancel --group <id>`).
 
 ## Off switches (`off` / `unlimited` / `none`)
 
@@ -152,10 +152,10 @@ line naming the cap, its source and how to remove it, e.g.
 | `onboard --auto` | `--max-usd` (per-call) | — | refuses without `--max-usd` (exit 2); manual-only steps (pack upgrade, takes bootstrap) never run, their commands are printed | `--max-usd off` | runs uncapped (still ledgered) |
 | Image-OCR per-run ceiling | `embedding_image_ocr_max_images` / `embedding_image_ocr_max_usd` | `200` images / `$1.00` (estimated) | skips OCR over-cap (import continues; skips counted in `ocr_skipped_budget`, surfaced by doctor `ocr_health`) | `0` disables that cap | **not** bypassed (per-run cap, not a tracker gate) |
 | Dream `extract_atoms` phase budget | `cycle.extract_atoms.budget_usd` | `0.30` | caps the phase's budget tracker (one tracker per drain attempt, across all its batches) | — | **not** consulted (phase budget enforces regardless) |
-| Atom auto-drain daily cap | `autopilot.auto_drain.max_usd_per_day` | `2.00` | daily cap on drain **attempts** (`floor(max / 0.30)` = 6), not a dollar ledger | `gbrain config set autopilot.auto_drain.enabled false` | **not** consulted |
+| Atom auto-drain daily cap | `autopilot.auto_drain.max_usd_per_day` | `2.00` | daily cap on drain **attempts** (`floor(max / 0.30)` = 6), not a dollar ledger | `foresights config set autopilot.auto_drain.enabled false` | **not** consulted |
 | Connector email/meeting atoms | `cycle.extract_atoms.connector_pages` | on (unset) | Gmail/Calendar `email`/`meeting` pages are extracted like other pages, under the auto-drain cap | `false` | **not** consulted |
-| Life Chronicle event extraction | `chronicle.job_budget_usd` (per page) / `chronicle.auto_daily_limit` (calls per rolling 24 h) | `0.25` / `200` | caps one extraction call; past the daily limit pending pages wait for a free slot | `gbrain config set auto_chronicle false` | **not** consulted |
-| [Fence model repair (Tier 3)](#fence-model-repair-tier-3) | `fences.repair.max_usd_per_page` / `fences.repair.max_usd_per_day` | `0.30` / `1.00` | refuses the call: a page whose estimate is over the per-page cap or over today's remainder in the durable USD ledger (`llm_repair`/`fences`, per UTC day across every process) waits as `budget_exhausted`, and `gbrain repair fences --apply` stops there with exit 1. `--max-usd <n>` lowers a run's cap, never raises it | `gbrain config set fences.repair.llm false` (`0` on a cap = no model spend) | **not** consulted |
+| Life Chronicle event extraction | `chronicle.job_budget_usd` (per page) / `chronicle.auto_daily_limit` (calls per rolling 24 h) | `0.25` / `200` | caps one extraction call; past the daily limit pending pages wait for a free slot | `foresights config set auto_chronicle false` | **not** consulted |
+| [Fence model repair (Tier 3)](#fence-model-repair-tier-3) | `fences.repair.max_usd_per_page` / `fences.repair.max_usd_per_day` | `0.30` / `1.00` | refuses the call: a page whose estimate is over the per-page cap or over today's remainder in the durable USD ledger (`llm_repair`/`fences`, per UTC day across every process) waits as `budget_exhausted`, and `foresights repair fences --apply` stops there with exit 1. `--max-usd <n>` lowers a run's cap, never raises it | `foresights config set fences.repair.llm false` (`0` on a cap = no model spend) | **not** consulted |
 | Dream `synthesize` per-run budget | `dream.synthesize.budget_usd` | `5` | defers the transcript and the rest of the run before submission (estimate: prompt size + child output cap, x `max_turns` in agentic mode) | `unlimited` (`0` = submit nothing) | **not** consulted |
 | Dream `synthesize` daily submission cap | `dream.synthesize.max_submissions_per_source_per_day` | `0` (off) | skips whole files; a failed count query submits nothing that run | `0` | **not** consulted |
 | Dream `BudgetMeter` phases (drift, propose/grade takes, calibration) | `dream.drift.budget`, `cycle.<phase>.budget_usd` | per phase | refuses the next submit past the cap | `unlimited` (`0` = spend nothing) | **not** consulted |
@@ -177,7 +177,7 @@ no API spend).
 **Say to your agent:** *"How much did fence repair spend today?"* or *"Stop
 paying a model to repair my facts tables."*
 
-The maintenance run's `fence_repair` phase and `gbrain repair fences --apply`
+The maintenance run's `fence_repair` phase and `foresights repair fences --apply`
 send a malformed facts or takes fence that only a rewrite can realign to the
 repair model. Only the fence header and the rows it must realign leave the
 machine, never valid rows or the rest of the page. Every other fence repair
@@ -185,7 +185,7 @@ is free. The same caps and the same daily ledger govern the rest of the
 content-repair lane (#6377): the tail classifier (an unclosed fence whose
 trailing lines hold a pipe; the fence region and those lines leave the
 machine) and the slug-conflict judgment (`content_repair` phase,
-`gbrain repair slug-conflicts`; both pages' frontmatter, headings, first 60
+`foresights repair slug-conflicts`; both pages' frontmatter, headings, first 60
 lines and the lines mentioning the other slug leave the machine). The model
 chooses among coded answers and writes no text. `models.content_repair`
 overrides the slug-conflict model; unset, it follows `models.fence_repair`,
@@ -216,29 +216,29 @@ then the content-repair eval's measured list (`anthropic:claude-opus-5-5`,
   page in the eval (`anthropic:claude-fable-5-1`, two fences, $0.27); measured
   spend per model repair was about $0.003 (`openai:gpt-6.1-sol`), $0.008
   (`anthropic:claude-opus-5-5`) and $0.02 (`anthropic:claude-fable-5-1`). A page over either cap waits as
-  `budget_exhausted`; `gbrain repair fences --apply` stops with exit 1,
+  `budget_exhausted`; `foresights repair fences --apply` stops with exit 1,
   naming the spend, the cap, the reset time (next 00:00 UTC) and the pages
   waiting. Raising a cap is the user's call.
-- **`--max-usd <n>`** on `gbrain repair fences` lowers the cap for that run
+- **`--max-usd <n>`** on `foresights repair fences` lowers the cap for that run
   below today's remainder and never raises it; `--no-llm` keeps a run to the
-  free tiers. `gbrain doctor --remediate --max-usd <n>` passes what is left of
+  free tiers. `foresights doctor --remediate --max-usd <n>` passes what is left of
   its allowance to the fences step.
-- **Off switches.** `gbrain config set fences.repair.llm false` stops model
+- **Off switches.** `foresights config set fences.repair.llm false` stops model
   repair everywhere; those fences wait as `llm_disabled` while the free
-  tiers keep running. `gbrain config set fences.repair.enabled false` pauses
-  the maintenance phase (an explicit `gbrain repair fences --apply` still
+  tiers keep running. `foresights config set fences.repair.enabled false` pauses
+  the maintenance phase (an explicit `foresights repair fences --apply` still
   runs).
 - **`spend.posture` is not consulted.** `tokenmax` neither lifts these caps
   nor skips the ledger.
-- **Unpriced models.** Under the default caps, a repair model gbrain has no
+- **Unpriced models.** Under the default caps, a repair model foresights has no
   price for still runs: each call is metered at an estimated ceiling, the
   highest chat rate in the canonical price table, and the run carries a
-  notice naming `gbrain pricing set` to make the metering exact. When the user
+  notice naming `foresights pricing set` to make the metering exact. When the user
   set either cap, it is refused with `no_pricing` and the pricing guidance
   instead ([registering a model price](#registering-a-model-price)), and
   nothing is sent.
 
-`gbrain doctor --only fence_integrity` shows both caps and today's spend.
+`foresights doctor --only fence_integrity` shows both caps and today's spend.
 
 ### Sync inline-embed cost gate
 
@@ -261,7 +261,7 @@ Behavior above the floor:
   worker-backed surface exists; otherwise the result reports
   `manual_drain_required` (`reason: no_worker_surface` on PGLite/no-worker setups, or
   `auto_submit_disabled`) with the paste-ready drain command. The backlog drains via
-  the jobs worker or `gbrain embed --stale`. Pass `--yes` to embed inline instead.
+  the jobs worker or `foresights embed --stale`. Pass `--yes` to embed inline instead.
 
 Output format splits on the explicit `--json` flag: `--json` emits a structured
 envelope; otherwise human text. Every gate message carries paste-ready knobs.
@@ -299,19 +299,19 @@ When you set `cycle.extract_atoms.budget_usd` yourself, an unpriced model
 instead stops the run before any model call: the phase reports `warn` with
 `details.no_pricing` (model, provider, kind, units, `register_command`), the
 stop counts as an expected limit rather than a halt in `extract_health`, and
-`gbrain doctor` names the command until you register the price with
-`gbrain pricing set` (see [registering a model price](#registering-a-model-price)).
+`foresights doctor` names the command until you register the price with
+`foresights pricing set` (see [registering a model price](#registering-a-model-price)).
 
 Connector pages are extracted by default. Gmail threads (`email`) and
 Calendar events (`meeting`) from a Google or GitHub connector source go
 through atom discovery, the backlog count, the routine cycle,
-`gbrain dream --drain` and the auto-drain like any other page, under the caps
+`foresights dream --drain` and the auto-drain like any other page, under the caps
 above. To keep them out:
 
 ```bash
-gbrain config set cycle.extract_atoms.connector_pages false   # opt out
-gbrain config unset cycle.extract_atoms.connector_pages       # back to the default (on)
-gbrain config set autopilot.auto_drain.enabled false          # stop all automatic atom drains
+foresights config set cycle.extract_atoms.connector_pages false   # opt out
+foresights config unset cycle.extract_atoms.connector_pages       # back to the default (on)
+foresights config set autopilot.auto_drain.enabled false          # stop all automatic atom drains
 ```
 
 What leaves the machine while it is on: the page text of each extracted email
@@ -338,19 +338,19 @@ is the product, $50 a day at the defaults, for a priced model. With a model the
 tracker cannot price, the default cap is not enforced: extraction warns and
 runs, bounded only by the call count. When you set `chronicle.job_budget_usd`
 yourself, an unpriced model refuses with `no_pricing` until you register its
-price with `gbrain pricing set`. `gbrain chronicle-backfill` (history, on
+price with `foresights pricing set`. `foresights chronicle-backfill` (history, on
 request) is exempt from the daily limit and bounded by its `--limit`;
 `--max-usd` adds a hard spend bound that counts retries (an unpriced model then
 refuses with `no_pricing`; see the
 [chronicle guide](../guides/life-chronicle.md#bound-the-spend-with---max-usd)).
 
 ```bash
-gbrain config set auto_chronicle false              # opt out
-gbrain config set chronicle.auto_daily_limit 50     # fewer automatic calls per day
-gbrain config set chronicle.job_budget_usd 0.10     # lower per-page cap
+foresights config set auto_chronicle false              # opt out
+foresights config set chronicle.auto_daily_limit 50     # fewer automatic calls per day
+foresights config set chronicle.job_budget_usd 0.10     # lower per-page cap
 ```
 
-`gbrain doctor` (`auto_chronicle`) reports 24 h use of the limit, the largest
+`foresights doctor` (`auto_chronicle`) reports 24 h use of the limit, the largest
 writer's share and 7-day spend. Details: [Life Chronicle](../guides/life-chronicle.md).
 
 ## Notes & limits
@@ -358,7 +358,7 @@ writer's share and 7-day spend. Details: [Life Chronicle](../guides/life-chronic
 - **Pre-pull window:** the gate fetches before estimating, so it prices what the run
   will pull. If a fetch fails (offline), it estimates against local HEAD and labels the
   result; the bounded residual is priced on the next run.
-- **Single-source `gbrain sync`** carries the same gate as `sync --all`.
+- **Single-source `foresights sync`** carries the same gate as `sync --all`.
 - **Recovery under parallel:** `--skip-failed` / `--retry-failed` work under parallel
   sync (the failure ledger is per-source and lock-serialized), so recovery never
   requires dropping to `--serial` (which would arm the inline gate).
@@ -377,15 +377,15 @@ they submit. Without a limit, an input that keeps failing would be paid for
 again on every cycle. The breaker stops that: once one dream key has died 3
 times within 24 hours, dream refuses to submit it again until you reset it. The refusal shows up
 in the cycle summary and the autopilot log with the exact reset command, and
-`gbrain doctor` reports it as `dream_paid_loop`.
+`foresights doctor` reports it as `dream_paid_loop`.
 
 **Say to your agent:** *"Is dream re-billing the same transcripts?"* or
 *"Reset the dream key that keeps failing once you've fixed it."*
 
 ```bash
-gbrain dream reset-key --list                    # tripped keys, counts, reset commands
-gbrain dream reset-key 'dream:synth-v2:...'      # re-enable one key (persists across restarts)
-gbrain config set dream.breaker.max_dead_submissions 5   # raise the limit; 0 disables
+foresights dream reset-key --list                    # tripped keys, counts, reset commands
+foresights dream reset-key 'dream:synth-v2:...'      # re-enable one key (persists across restarts)
+foresights config set dream.breaker.max_dead_submissions 5   # raise the limit; 0 disables
 ```
 
 - A submission is one run of a key: the chunks of one transcript in one run count
@@ -400,11 +400,11 @@ gbrain config set dream.breaker.max_dead_submissions 5   # raise the limit; 0 di
   patterns child cancelled at its timeout after paid work counts as a death; one
   cancelled before any work does not. A completed run resets the count, so only
   deaths in a row trip it; reset a tripped source with
-  `gbrain dream reset-key 'dream:patterns:source:<source id>'`.
+  `foresights dream reset-key 'dream:patterns:source:<source id>'`.
 - A transcript that keeps growing gets a new content-hashed key each cycle, so
   synthesize deaths also count per transcript under
   `dream:synth-v2:@file:<source id>:<file>` once they span two content keys; the same
-  limit applies. `gbrain dream reset-key --list` prints it, and reset it the same way.
+  limit applies. `foresights dream reset-key --list` prints it, and reset it the same way.
 - Not covered: patterns runs outside maintenance carry no key.
 - If the count query fails, the breaker is skipped for that run with a warning, the
   same posture as the synthesize daily cap.
@@ -413,7 +413,7 @@ gbrain config set dream.breaker.max_dead_submissions 5   # raise the limit; 0 di
 
 Under a cost cap you set (`--max-cost`, `--max-usd`, `--max-cost-usd`, or an
 explicit cap in config), a model with no shipped pricing row stops the run
-with `no_pricing` rather than pretend the call is free. A cap gbrain applied by
+with `no_pricing` rather than pretend the call is free. A cap foresights applied by
 default does not: an unpriced model warns and runs, so a newly released model
 always works. Proxy routes hit the explicit-cap refusal by design: a LiteLLM
 endpoint can front a paid provider, so `litellm:*` models are deliberately
@@ -426,11 +426,11 @@ checks count the unpriced model at Sonnet rates so an oversized run still
 stops. With `--max-usd N` a run that would call an unpriced chat, judge or
 embedding model is refused before any work (skillopt: before any spend, in the
 preflight). The skillopt preflight never invents a rate: an unpriced model
-shows `Est. cost: unpriced (...)`. `brainstorm_health` in `gbrain doctor`
+shows `Est. cost: unpriced (...)`. `brainstorm_health` in `foresights doctor`
 names an unpriced brainstorm chat or judge model.
 
 Shipped rates are list rates. DeepSeek bills half its peak rate off-peak;
-gbrain's DeepSeek rows are the peak rate so caps bound the worst case, and
+foresights's DeepSeek rows are the peak rate so caps bound the worst case, and
 estimates that use them say `(DeepSeek at peak rates, an upper bound)`.
 
 Every model a recipe lists is either priced or declared in the recipe's
@@ -446,18 +446,18 @@ page), register it, and retry. The refusal text and its JSON fields
 
 ```bash
 # Chat models: USD per 1M input tokens and per 1M output tokens.
-gbrain pricing set litellm:gpt-4o --input 2.5 --output 10 \
+foresights pricing set litellm:gpt-4o --input 2.5 --output 10 \
   --source https://example.com/pricing
 
 # Embedding and reranker models: one USD-per-1M-token rate.
-gbrain pricing set litellm:text-embedding-3-large --rate 0.13
+foresights pricing set litellm:text-embedding-3-large --rate 0.13
 
-gbrain pricing list            # what is registered, with source and date
-gbrain pricing unset litellm:gpt-4o
+foresights pricing list            # what is registered, with source and date
+foresights pricing unset litellm:gpt-4o
 ```
 
 - `pricing set` and `pricing unset` change one entry and keep every other
-  entry in `pricing.overrides`. (`gbrain config set pricing.overrides '<json>'`
+  entry in `pricing.overrides`. (`foresights config set pricing.overrides '<json>'`
   still works, but it replaces the whole value.)
 - Rates must be non-negative finite numbers; anything else is refused and
   nothing is written. An unreadable stored value is left unchanged and the
@@ -467,7 +467,7 @@ gbrain pricing unset litellm:gpt-4o
 - **$0 is allowed, with a warning.** The operator decides; $0 is right for a
   local or flat-rate route. Every call to that model then counts as free
   against every cost cap.
-- **Registration is trusted-local only.** `gbrain pricing` is a CLI-only
+- **Registration is trusted-local only.** `foresights pricing` is a CLI-only
   command on the brain host, never an MCP operation, and a thin client
   refuses it. Otherwise a remote agent could register $0 and void the cap.
   An agent connected over MCP that meets `no_pricing` looks the price up and
@@ -477,11 +477,11 @@ The raw config shape, for reference:
 
 ```bash
 # Scalar = one USD-per-1M-token rate for input AND output (natural for embeddings):
-gbrain config set pricing.overrides '{"litellm:text-embedding-3-large": 0.13}'
+foresights config set pricing.overrides '{"litellm:text-embedding-3-large": 0.13}'
 
 # Object form for chat models with distinct input/output rates
 # (pricing set also writes source and set_at beside them):
-gbrain config set pricing.overrides \
+foresights config set pricing.overrides \
   '{"litellm:gpt-4o": {"input": 2.5, "output": 10}, "litellm:text-embedding-3-large": 0.13}'
 ```
 
@@ -491,11 +491,11 @@ Semantics:
   override keyed by a model alias also prices the id the provider serves for it.
 - **Provider wildcard (subscription providers only).** `<provider>:*` prices
   every model of a provider whose recipe bills by subscription, today only
-  `claude-cli`: `gbrain pricing set 'claude-cli:*' --rate 0`. Precedence is
+  `claude-cli`: `foresights pricing set 'claude-cli:*' --rate 0`. Precedence is
   exact model entry, then the wildcard, then the shipped tables. This is a
   cap bypass by design: at $0 every claude-cli call counts as free against
-  every cap, including models gbrain ships a rate for. It is an operator
-  assumption, labelled as such by `gbrain pricing list`, which also names the
+  every cap, including models foresights ships a rate for. It is an operator
+  assumption, labelled as such by `foresights pricing list`, which also names the
   models the wildcard prices. A bare `*` and a wildcard on a per-token API
   provider (`openai:*`) are refused by `pricing set` and ignored if written
   into the config directly.
@@ -508,7 +508,7 @@ Semantics:
   through it. The key is registered in `KNOWN_CONFIG_KEYS`, and it is loaded
   automatically by enrich and the cycle's `enrich_thin` phase, the
   `embed-backfill` job handler, and every conversation-facts entry point
-  (`gbrain extract-conversation-facts`, the cycle's
+  (`foresights extract-conversation-facts`, the cycle's
   `conversation_facts_backfill` phase, transcript facts ingest) — an override
   declared once in config reaches the queued/background lanes too, not just
   interactive enrich.
@@ -520,10 +520,10 @@ nobody chose. When the configured embedding model has no shipped pricing row
 and no `pricing.overrides` entry (the `isModelPriceable` contract), enforcing
 that implicit cap would fail-close every job for a model that may well be
 free or self-hosted. So the handler drops the DEFAULT cap and runs uncapped,
-with a stderr warning naming both fixes (register its price with `gbrain pricing set`, or
+with a stderr warning naming both fixes (register its price with `foresights pricing set`, or
 set `embed.backfill_max_usd` to an explicit number). An EXPLICIT cap is a
 different contract: you chose a ceiling, so an unpriced model stays
-fail-closed (`no_pricing`) — register the model's rate with `gbrain pricing set`
+fail-closed (`no_pricing`) — register the model's rate with `foresights pricing set`
 to proceed. Spend is ledgered by the tracker either way; only the ceiling
 changes.
 
@@ -538,19 +538,19 @@ ceiling). A typo must not silently degrade to uncapped spend.
 
 ```bash
 # Never gate this brain on cost:
-gbrain config set spend.posture tokenmax
+foresights config set spend.posture tokenmax
 
 # Widen the sync inline floor to $5:
-gbrain config set sync.cost_gate_min_usd 5
+foresights config set sync.cost_gate_min_usd 5
 
 # Disable the sync inline floor entirely:
-gbrain config set sync.cost_gate_min_usd off
+foresights config set sync.cost_gate_min_usd off
 
 # Lift the backfill 24h spend cap:
-gbrain config set embed.backfill_max_usd_per_source_24h off
+foresights config set embed.backfill_max_usd_per_source_24h off
 
 # Run enrich uncapped non-interactively:
-gbrain enrich --max-usd off        # or: gbrain config set spend.posture tokenmax
+foresights enrich --max-usd off        # or: foresights config set spend.posture tokenmax
 ```
 
 ## CRAG knobs (both default OFF)

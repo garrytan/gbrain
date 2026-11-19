@@ -127,7 +127,7 @@ test('a deadline stop with progress queues one continuation on a worker-backed b
       expect((out.next as { command: string }).command).toContain(`sync --source ${f.id}`);
     } else {
       expect(typeof followId).toBe('number');
-      expect(out.next).toMatchObject({ command: `gbrain sources status ${f.id} --json`, safe_to_loop: true, retry_after_ms: 30_000 });
+      expect(out.next).toMatchObject({ command: `foresights sources status ${f.id} --json`, safe_to_loop: true, retry_after_ms: 30_000 });
       expect((out.next as Record<string, unknown>).fix).toBeUndefined();
       const [follow] = await engine.executeRaw<{ data: Record<string, unknown> | string; priority: number; timeout_ms: number; status: string }>('SELECT data, priority, timeout_ms, status FROM minion_jobs WHERE id=$1', [followId]);
       expect(typeof follow!.data === 'string' ? JSON.parse(follow!.data) : follow!.data).toMatchObject({ sourceId: f.id, continuation_of: parentId });
@@ -163,7 +163,7 @@ test('a job for a source another live sync job is draining completes as a skip',
   try {
     const result = await makeSyncHandler(engine)(job(mine, data));
     expect(result).toMatchObject({ skipped: true, reason: 'sync_in_progress', source_id: f.id, running_job_id: running,
-      next: { command: `gbrain jobs get ${running} --json`, safe_to_loop: true } });
+      next: { command: `foresights jobs get ${running} --json`, safe_to_loop: true } });
     expect(await pageCount(engine, f.id)).toBe(0);
   } finally { await engine.executeRaw('DELETE FROM minion_jobs WHERE id = ANY($1::bigint[])', [[running, mine]]); }
 }), 120_000);

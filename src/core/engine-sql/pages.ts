@@ -946,7 +946,7 @@ export async function markPagesAttendanceBlocked(
  * #6454: live pages whose stored frontmatter still carries one of the parser's
  * reserved top-level keys (`type`, `title`, `tags`, `slug`; older imports kept
  * them). Not drift since `comparableFrontmatter` (markdown.ts), but hygiene
- * `gbrain repair frontmatter-keys` sweeps on consent. Counts per source for
+ * `foresights repair frontmatter-keys` sweeps on consent. Counts per source for
  * the doctor check; the listing pages by id for the preview-bound sweep.
  */
 export const RESERVED_FRONTMATTER_KEYS_SQL = ['type', 'title', 'tags', 'slug'];

@@ -78,7 +78,7 @@ describe('#4960 sync_freshness: a source with no successful sync', () => {
     const result = await checkSyncFreshness(engine);
     expect(result.status).toBe('warn');
     expect(result.message).toContain("Source 'wiki': first sync running (pid 4242 on testhost), no successful sync yet");
-    expect(result.message).not.toContain('Run `gbrain sync --source <id>`');
+    expect(result.message).not.toContain('Run `foresights sync --source <id>`');
     expect(result.details?.code).toBe('sync_first_run_in_progress');
     expect(result.details?.stale_count).toBe(1);
     expect(result.details?.synced_recently_count).toBe(0);
@@ -99,7 +99,7 @@ describe('#4960 sync_freshness: a source with no successful sync', () => {
     await addSource('wiki', null);
     const result = await checkSyncFreshness(engine);
     expect(result.status).toBe('fail');
-    expect(result.message).toBe("Source 'wiki': no successful sync recorded; no attempt recorded; run `gbrain sync --source wiki`");
+    expect(result.message).toBe("Source 'wiki': no successful sync recorded; no attempt recorded; run `foresights sync --source wiki`");
     expect(result.message).not.toContain('never been synced');
     expect(result.details?.code).toBe('sync_no_successful_sync');
     const [entry] = result.details?.no_successful_sync as Array<Record<string, unknown>>;
@@ -113,7 +113,7 @@ describe('#4960 sync_freshness: a source with no successful sync', () => {
     const jobId = await addSyncJob('wiki', 'completed', { status: 'partial', failedFiles: 3 });
     const result = await checkSyncFreshness(engine);
     expect(result.status).toBe('fail');
-    expect(result.message).toMatch(/^Source 'wiki': no successful sync recorded; last attempt \d{4}-\d\d-\d\dT[\d:.]+Z, result completed \(partial\), 3 held; run `gbrain sync --source wiki`$/);
+    expect(result.message).toMatch(/^Source 'wiki': no successful sync recorded; last attempt \d{4}-\d\d-\d\dT[\d:.]+Z, result completed \(partial\), 3 held; run `(?:foresights|gbrain) sync --source wiki`$/);
     const [entry] = result.details?.no_successful_sync as Array<Record<string, unknown>>;
     expect(entry).toMatchObject({ reason: 'last_attempt_unsuccessful', result: 'completed (partial)', held: 3, job_id: jobId });
     const fix = result.fix as Action;

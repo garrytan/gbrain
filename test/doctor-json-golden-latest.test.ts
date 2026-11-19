@@ -19,8 +19,8 @@ function run(message: string): GbrainRun {
 describe('doctor golden <latest> placeholder', () => {
   test('normalizes only the registry maximum in schema_version messages', () => {
     expect(normalizeDoctorText(`Version ${LATEST} (latest: ${LATEST})`, {})).toBe('Version <latest> (latest: <latest>)');
-    expect(normalizeDoctorText(`Version ${LATEST - 1}, latest is ${LATEST}. Fix: gbrain apply-migrations --yes`, {}))
-      .toBe(`Version ${LATEST - 1}, latest is <latest>. Fix: gbrain apply-migrations --yes`);
+    expect(normalizeDoctorText(`Version ${LATEST - 1}, latest is ${LATEST}. Fix: foresights apply-migrations --yes`, {}))
+      .toBe(`Version ${LATEST - 1}, latest is <latest>. Fix: foresights apply-migrations --yes`);
     expect(normalizeDoctorText(`Version ${LATEST + 1} (latest: ${LATEST + 1})`, {})).toBe(`Version ${LATEST + 1} (latest: ${LATEST + 1})`);
     expect(normalizeDoctorText(`daily_limit ${LATEST}`, {})).toBe(`daily_limit ${LATEST}`);
   });

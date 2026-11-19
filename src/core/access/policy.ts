@@ -5,7 +5,7 @@
  * append-only access_policy_revisions log of desired rulebooks, and the
  * applied rulebook in access_rules, which page writes stamp folder_rule_ids
  * from (migration v283). The store (`sources.config.access_store`, git or
- * database) only decides where desired revisions come from: `gbrain access rule`
+ * database) only decides where desired revisions come from: `foresights access rule`
  * on a database store, the committed `.gbrain/access.yml` on a git store
  * (policy-git.ts). From there the lifecycle is the same:
  *
@@ -15,7 +15,7 @@
  *    pass under the source lock restamps anything written meanwhile, and only
  *    then does the pending coverage go and the revision count as applied.
  *  - the widening part is held: the applied rules stay until
- *    applyApproved (`gbrain access apply --yes --expect <plan_hash>`) installs a
+ *    applyApproved (`foresights access apply --yes --expect <plan_hash>`) installs a
  *    previewed revision; a plan hash over the desired and applied digests
  *    refuses `preview_changed` when either moved.
  *  - resume finishes an interrupted narrowing; it is idempotent and only ever
@@ -59,7 +59,7 @@ export interface ProposalResult {
   source_id: string;
   operation_id: string | null;
   revision: number | null;
-  /** applied: everything in force; recorded: the narrowing part is in force and a widening waits for gbrain access apply; pending: a narrowing is still being stamped (gbrain access resume finishes it); unchanged: the desired rulebook already matched. */
+  /** applied: everything in force; recorded: the narrowing part is in force and a widening waits for foresights access apply; pending: a narrowing is still being stamped (foresights access resume finishes it); unchanged: the desired rulebook already matched. */
   state: ProposalState;
   change_kind: Classification['kind'];
   changes: RuleChange[];
@@ -90,11 +90,11 @@ function toRevision(row: Record<string, unknown>): RevisionRow {
 /** The persisted store of a source, or null when it has never had a rule. Refuses an unknown source. */
 export async function readAccessStore(engine: Exec, sourceId: string): Promise<AccessStore | null> {
   const [row] = await engine.executeRaw<{ store: string | null }>(`SELECT config->>'access_store' AS store FROM sources WHERE id = $1`, [sourceId]);
-  if (!row) throw opError('unknown_source', `No source "${sourceId}".`, 'List sources with gbrain sources list.');
+  if (!row) throw opError('unknown_source', `No source "${sourceId}".`, 'List sources with foresights sources list.');
   return row.store === 'git' || row.store === 'database' ? row.store : null;
 }
 
-/** Persists the store (set with the first rule, changed only by gbrain access rule migrate). */
+/** Persists the store (set with the first rule, changed only by foresights access rule migrate). */
 export async function writeAccessStore(engine: Exec, sourceId: string, store: AccessStore): Promise<void> {
   await engine.executeRaw(`UPDATE sources SET config = jsonb_set(COALESCE(config, '{}'::jsonb), '{access_store}', to_jsonb($2::text)) WHERE id = $1`, [sourceId, store]);
 }
@@ -249,7 +249,7 @@ export async function proposeRevision(engine: BrainEngine, sourceId: string, des
     const latest = await getRevision(tx as BrainEngine, sourceId);
     if (meta.expectDesired !== undefined && (latest?.revision ?? 0) !== meta.expectDesired) {
       throw opError('preview_changed', `Source ${sourceId}'s folder rules changed since the preview (previewed revision ${meta.expectDesired}, now ${latest?.revision ?? 0}); nothing was written.`,
-        `Preview again (gbrain access rule list --source ${sourceId}) and rerun with the new --expect value.`);
+        `Preview again (foresights access rule list --source ${sourceId}) and rerun with the new --expect value.`);
     }
     const current = await appliedRules(tx, sourceId);
     const cls = meta.approved ? { ...classifyRulebook(current, rules), target: rules, held: [] } : classifyRulebook(current, rules);
@@ -326,13 +326,13 @@ function planHash(sourceId: string, revision: number, desiredDigest: string, app
   return createHash('sha256').update(JSON.stringify({ sourceId, revision, desiredDigest, appliedDigest })).digest('hex').slice(0, 16);
 }
 
-/** What `gbrain access apply` would install: each held widening with the pages and members gaining access, and the plan hash binding it. */
+/** What `foresights access apply` would install: each held widening with the pages and members gaining access, and the plan hash binding it. */
 export async function previewApply(engine: BrainEngine, sourceId: string, revision?: number): Promise<ApplyPreview> {
   const store = await readAccessStore(engine, sourceId);
   const current = await appliedRules(engine, sourceId);
   const appliedDigest = rulebookDigest(current);
   const desired = await getRevision(engine, sourceId, revision);
-  if (revision !== undefined && !desired) throw opError('not_found', `Source ${sourceId} has no folder-rule revision ${revision}.`, `List revisions with gbrain access rule history --source ${sourceId}.`);
+  if (revision !== undefined && !desired) throw opError('not_found', `Source ${sourceId} has no folder-rule revision ${revision}.`, `List revisions with foresights access rule history --source ${sourceId}.`);
   const proposals = (await listRevisions(engine, sourceId, 200)).filter(r => !r.approved_at).reverse()
     .map(r => ({ revision: r.revision, change_kind: r.change_kind, proposed_by: r.proposed_by, created_at: r.created_at }));
   const base = { source_id: sourceId, store, applied_digest: appliedDigest, proposals };
@@ -380,7 +380,7 @@ export async function applyApproved(engine: BrainEngine, sourceId: string, opts:
     const hash = desired ? planHash(sourceId, desired.revision, desired.digest, rulebookDigest(current)) : null;
     if (!desired || hash !== opts.expect) {
       throw opError('preview_changed', `Source ${sourceId}'s folder rules changed since the preview (approved plan ${opts.expect}, current plan ${hash ?? 'none'}); nothing was applied.`,
-        `Preview again with gbrain access apply --source ${sourceId}${opts.revision ? ` --revision ${opts.revision}` : ''} and approve the new plan_hash.`);
+        `Preview again with foresights access apply --source ${sourceId}${opts.revision ? ` --revision ${opts.revision}` : ''} and approve the new plan_hash.`);
     }
     const cls = classifyRulebook(current, desired.rules);
     const needs = await installRulebook(tx, sourceId, desired.rules, desired.revision, actor);
@@ -437,7 +437,7 @@ export async function policyStatus(engine: BrainEngine, sourceId: string, operat
   return status;
 }
 
-/** A new idempotency key for one rule edit (printed so a lost reply can be reconciled with gbrain access rule status --operation). */
+/** A new idempotency key for one rule edit (printed so a lost reply can be reconciled with foresights access rule status --operation). */
 export function newOperationId(): string {
   return `acc_${randomUUID()}`;
 }

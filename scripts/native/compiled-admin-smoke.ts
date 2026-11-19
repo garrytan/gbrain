@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * The admin UI of a compiled gbrain binary (v0.60.554.0: /admin was blank on installed builds because index.html
+ * The admin UI of a compiled foresights binary (v0.60.554.0: /admin was blank on installed builds because index.html
  * loaded a bundle the embedded manifest did not carry).
  *
  * Runs `serve --http` from the binary in an empty directory, so only the embedded manifest can answer, then fetches
@@ -14,7 +14,7 @@ import { createServer } from 'node:net';
 import { randomBytes } from 'node:crypto';
 
 const arg = process.argv.indexOf('--binary');
-if (arg < 0 || !process.argv[arg + 1]) { console.error('usage: compiled-admin-smoke.ts --binary <compiled gbrain>'); process.exit(2); }
+if (arg < 0 || !process.argv[arg + 1]) { console.error('usage: compiled-admin-smoke.ts --binary <compiled foresights>'); process.exit(2); }
 const binary = resolve(process.argv[arg + 1]!);
 
 const port = await new Promise<number>((done, fail) => {

@@ -24,7 +24,7 @@ export function isFilingMode(value: unknown): value is FilingMode {
   return typeof value === 'string' && (FILING_MODES as readonly string[]).includes(value);
 }
 
-/** One line per mode, for help and `gbrain filing show`. */
+/** One line per mode, for help and `foresights filing show`. */
 export const FILING_MODE_DESCRIPTIONS: Record<FilingMode, string> = {
   generic: 'by page type, in the folder the schema pack gives it (people/, companies/, concepts/ ...)',
   para: 'by actionability: projects/, areas/, resources/, archives/',

@@ -6,9 +6,9 @@
 
 **Say to your agent:** *"Extract events from my older meeting notes."*
 
-When you save a meeting, conversation or calendar page, gbrain turns it into
+When you save a meeting, conversation or calendar page, foresights turns it into
 timeline events (`life/events/` pages plus a day-by-day projection) so
-`gbrain day <date>`, `gbrain since <date>` and `gbrain on-this-day` can answer
+`foresights day <date>`, `foresights since <date>` and `foresights on-this-day` can answer
 "what happened". This runs automatically and is **on by default**. Each
 eligible page costs one paid chat call, except an ended calendar invite, which
 is projected without a model call (see [Calendar invites](#calendar-invites)).
@@ -16,7 +16,7 @@ is projected without a model call (see [Calendar invites](#calendar-invites)).
 To turn it off:
 
 ```bash
-gbrain config set auto_chronicle false
+foresights config set auto_chronicle false
 ```
 
 Unsetting the key restores the default, which is on. Use `set ... false` to
@@ -114,7 +114,7 @@ correcting one event moves only that event.
 
 | Setting | Default | What it does |
 |---|---|---|
-| `auto_chronicle` | on (unset) | `gbrain config set auto_chronicle false` turns automatic extraction off. |
+| `auto_chronicle` | on (unset) | `foresights config set auto_chronicle false` turns automatic extraction off. |
 | `chronicle.job_budget_usd` | `0.25` | Cap for one page's extraction call. This is a per-call cap, not a daily budget. |
 | `chronicle.auto_daily_limit` | `200` | Automatic extraction calls per rolling 24 hours, across every writer. Retries count. |
 | `chronicle.auto_recent_days` | `30` | How old a page's own date may be for automatic extraction. |
@@ -122,16 +122,16 @@ correcting one event moves only that event.
 | `chronicle.judge_max_tokens` | `4000` | Output-token cap for one extraction call. |
 | `chronicle.max_events_per_page` | `25` | Events published from one page extraction; later proposals are dropped as `over_cap` (1 to 1000). |
 
-`gbrain config set` refuses values outside each range and names the range. A
+`foresights config set` refuses values outside each range and names the range. A
 value already stored out of range falls back to its default, and doctor warns
 (`chronicle_config_invalid`).
 
 The worst case per day is `auto_daily_limit` x `job_budget_usd`, so $50 at the
-defaults for a priced model. Typical pages cost far less. If gbrain has no price
+defaults for a priced model. Typical pages cost far less. If foresights has no price
 for your chat model, the default cap cannot apply: extraction warns and runs,
 still limited by the daily call count. If you set `chronicle.job_budget_usd`
 yourself, an unpriced model refuses with `no_pricing`; register its price with
-`gbrain pricing set` (see [spend controls](../operations/spend-controls.md)).
+`foresights pricing set` (see [spend controls](../operations/spend-controls.md)).
 
 Page text is sent to the configured chat provider. Events derived from a private
 page stay private to remote callers, including after the page is renamed or
@@ -145,15 +145,15 @@ purged.
    (codes below). Ordinary notes have no `chronicle_backstop` field.
 2. Wait for the next autopilot cycle, or run the phase now (paid):
    ```bash
-   gbrain dream --phase chronicle
+   foresights dream --phase chronicle
    ```
    On PGLite this is how pending pages run when autopilot is not running.
 3. Read the day back:
    ```bash
-   gbrain day 2026-04-03
+   foresights day 2026-04-03
    ```
 
-`gbrain doctor` reports the `auto_chronicle` check: whether it is on, 24 h use
+`foresights doctor` reports the `auto_chronicle` check: whether it is on, 24 h use
 of the daily limit and the largest writer's share, 7-day outcomes and spend
 (priced dollars, unpriced calls and calls without a cost record are listed
 apart), pending pages and the command that runs them. `chronicle_duplicate_events`
@@ -169,8 +169,8 @@ you answer, and the advisor shows the same finding with `ask_user: true`. The ag
 your answer:
 
 ```bash
-gbrain config set auto_chronicle true    # keep it
-gbrain config set auto_chronicle false   # opt out
+foresights config set auto_chronicle true    # keep it
+foresights config set auto_chronicle false   # opt out
 ```
 
 A brain that already had `auto_chronicle true` sees the notice too, because
@@ -189,8 +189,8 @@ Older pages are extracted only when you ask. Backfill is paid, so preview it
 first and agree to the cost:
 
 ```bash
-gbrain chronicle-backfill --since 2026-09-01 --limit 50 --dry-run
-gbrain chronicle-backfill --since 2026-09-01 --limit 50 --yes
+foresights chronicle-backfill --since 2026-09-01 --limit 50 --dry-run
+foresights chronicle-backfill --since 2026-09-01 --limit 50 --yes
 ```
 
 `--since` filters on the page's last update, not its own date. Re-running is
@@ -214,8 +214,8 @@ conservative: real spend is usually near `estimated_usd`, far below
 `worst_case_usd`.
 
 ```bash
-gbrain chronicle-backfill --since 2026-09-01 --max-usd 20 --dry-run --json
-gbrain chronicle-backfill --since 2026-09-01 --max-usd 20 --yes
+foresights chronicle-backfill --since 2026-09-01 --max-usd 20 --dry-run --json
+foresights chronicle-backfill --since 2026-09-01 --max-usd 20 --yes
 ```
 
 `--json` adds these fields; before this release none of them existed. An
@@ -225,7 +225,7 @@ example with a Sonnet-class model at the default $0.25 per-page cap:
 { "queued": 8, "estimated_usd": 0.13, "max_usd": 20, "worst_case_usd": 17.9098,
   "per_page_worst_case_usd": 2.2387, "max_attempts": 5, "fits_under_cap": 8,
   "cap_reached": true, "campaign_id": "3f0c…", "spent_usd": 0,
-  "next_command": "gbrain dream --phase chronicle" }
+  "next_command": "foresights dream --phase chronicle" }
 ```
 
 `cap_reached: true` means eligible pages were left out. A larger bound is a new
@@ -233,9 +233,9 @@ paid run, so ask the user, then preview it with `--dry-run`. When no page fits,
 nothing is queued, `ask_user` is true and `next_command` is that preview.
 `spent_usd` is the campaign's recorded spend, summed across attempts.
 
-With `--max-usd`, a chat model gbrain has no price for is refused with
+With `--max-usd`, a chat model foresights has no price for is refused with
 `no_pricing` before anything is queued; the error's `fix` is the
-`gbrain pricing set` registration (look up the rate first). Without
+`foresights pricing set` registration (look up the rate first). Without
 `--max-usd`, an unpriced model still warns and runs, and the message points at
 price registration and `--max-usd`.
 
@@ -248,29 +248,29 @@ brackets are filled in with real values on each surface.
 <!-- chronicle-reasons:begin -->
 | Code | Stage | Meaning | Fix | Who acts | Consent |
 |---|---|---|---|---|---|
-| `auto_chronicle_off` | decision | Automatic event extraction is off on this brain by choice (`gbrain config set auto_chronicle false`). | — | — | — |
-| `auto_chronicle_invalid` | decision | auto_chronicle holds a value that is neither true nor false, so it reads as off. | `gbrain config set auto_chronicle true` | agent | paid |
-| `slug_bound_client` | decision | The writer is confined (slug-bound, delegated or namespace-restricted), so its writes never trigger extraction into life/events/. | `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --yes` (preview: `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --dry-run`) | host_admin | paid |
-| `operation_bound_client` | decision | The writer's grant lists operations without extract_facts, the permission that covers derived extraction. | `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --yes` (preview: `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --dry-run`) | host_admin | paid |
-| `no_extract` | decision | The sync ran with extraction turned off (--no-extract, or a remote sync, which never extracts). | `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --yes` (preview: `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --dry-run`) | agent | paid |
-| `history` | decision | The page's own date is more than 30 days old (chronicle.auto_recent_days); history is extracted only on request. | `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --yes` (preview: `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --dry-run`) | agent | paid |
+| `auto_chronicle_off` | decision | Automatic event extraction is off on this brain by choice (`foresights config set auto_chronicle false`). | — | — | — |
+| `auto_chronicle_invalid` | decision | auto_chronicle holds a value that is neither true nor false, so it reads as off. | `foresights config set auto_chronicle true` | agent | paid |
+| `slug_bound_client` | decision | The writer is confined (slug-bound, delegated or namespace-restricted), so its writes never trigger extraction into life/events/. | `foresights chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --yes` (preview: `foresights chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --dry-run`) | host_admin | paid |
+| `operation_bound_client` | decision | The writer's grant lists operations without extract_facts, the permission that covers derived extraction. | `foresights chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --yes` (preview: `foresights chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --dry-run`) | host_admin | paid |
+| `no_extract` | decision | The sync ran with extraction turned off (--no-extract, or a remote sync, which never extracts). | `foresights chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --yes` (preview: `foresights chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --dry-run`) | agent | paid |
+| `history` | decision | The page's own date is more than 30 days old (chronicle.auto_recent_days); history is extracted only on request. | `foresights chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --yes` (preview: `foresights chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --dry-run`) | agent | paid |
 | `not_yet_happened` | decision | The calendar event has not ended yet; it is picked up automatically after its end time, with no edit needed. | — | — | — |
 | `too_short` | decision | The page body is under 80 characters, too short to hold events. | — | — | — |
 | `dream_generated` | decision | Dream-generated pages are never mined for events. | — | — | — |
 | `page_body_segmented` | decision | An earlier release skipped this page: its body is over the 24 MiB single-string ceiling and is stored in segments. This release reads segmented pages, so the next revision or a backfill extracts it. | — | — | — |
-| `no_write_decision` | discovery | This revision has no recorded write decision (written by an older binary or before this release activated), so only a trusted backfill extracts it. | `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --yes` (preview: `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --dry-run`) | agent | paid |
+| `no_write_decision` | discovery | This revision has no recorded write decision (written by an older binary or before this release activated), so only a trusted backfill extracts it. | `foresights chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --yes` (preview: `foresights chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --dry-run`) | agent | paid |
 | `not_chronicle_shaped` | decision | The page is no longer a meeting, conversation or calendar page, so the events extracted from it were retired. | — | — | — |
 | `already_extracted` | decision | This exact content was already extracted; its events are current, so no new call is made. | — | — | — |
 | `judge_input_unchanged` | execution | Nothing the extraction reads changed since the page was last extracted (for example only text past a long page's first 12,000 characters changed), so the earlier events are current and no new call is made. | — | — | — |
-| `judge_input_failed` | execution | Earlier revisions of the page already spent every extraction attempt on exactly this text without publishing events (the judge's answer was cut off, unreadable, malformed or over the per-page spend cap), so it is not paid for again until the text extraction reads changes. | `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --yes` (preview: `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --dry-run`) | agent | paid |
+| `judge_input_failed` | execution | Earlier revisions of the page already spent every extraction attempt on exactly this text without publishing events (the judge's answer was cut off, unreadable, malformed or over the per-page spend cap), so it is not paid for again until the text extraction reads changes. | `foresights chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --yes` (preview: `foresights chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --dry-run`) | agent | paid |
 | `superseded` | execution | A newer revision replaced this content before extraction ran; the newer revision carries its own decision. | — | — | — |
-| `daily_limit` | execution | The automatic daily limit (chronicle.auto_daily_limit = 200 calls per rolling 24 hours) is used up; pending pages wait for a free slot. | `gbrain config set chronicle.auto_daily_limit 400` | agent | paid |
+| `daily_limit` | execution | The automatic daily limit (chronicle.auto_daily_limit = 200 calls per rolling 24 hours) is used up; pending pages wait for a free slot. | `foresights config set chronicle.auto_daily_limit 400` | agent | paid |
 | `judge_llm_unavailable` | execution | No chat provider is configured on the brain host, so extraction cannot run. | — | user | credentials |
-| `no_pricing` | execution | chronicle.job_budget_usd was set explicitly, and gbrain has no price for <provider:model>, so the cap cannot be enforced. | `gbrain pricing set <provider:model> --input <usd-per-1M-input-tokens> --output <usd-per-1M-output-tokens> --source <pricing-page-url>` | agent | — |
-| `budget_exhausted` | execution | The extraction call cost more than chronicle.job_budget_usd allows for one page. | `gbrain config set chronicle.job_budget_usd 0.50` | agent | paid |
-| `campaign_exhausted` | execution | The page used every attempt its capped backfill (chronicle-backfill --max-usd) authorized without finishing, so it stops before spending more. | `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --dry-run` | agent | — |
+| `no_pricing` | execution | chronicle.job_budget_usd was set explicitly, and foresights has no price for <provider:model>, so the cap cannot be enforced. | `foresights pricing set <provider:model> --input <usd-per-1M-input-tokens> --output <usd-per-1M-output-tokens> --source <pricing-page-url>` | agent | — |
+| `budget_exhausted` | execution | The extraction call cost more than chronicle.job_budget_usd allows for one page. | `foresights config set chronicle.job_budget_usd 0.50` | agent | paid |
+| `campaign_exhausted` | execution | The page used every attempt its capped backfill (chronicle-backfill --max-usd) authorized without finishing, so it stops before spending more. | `foresights chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --dry-run` | agent | — |
 | `judge_chat_error` | execution | The chat provider returned an error; the page retries with backoff. | — | provider | — |
-| `judge_truncated` | execution | The extraction output hit chronicle.judge_max_tokens and was cut off, so nothing was written. | `gbrain config set chronicle.judge_max_tokens 8000` | agent | paid |
+| `judge_truncated` | execution | The extraction output hit chronicle.judge_max_tokens and was cut off, so nothing was written. | `foresights config set chronicle.judge_max_tokens 8000` | agent | paid |
 | `judge_parse_failed` | execution | The extraction output had no parseable JSON array, so nothing was written; the page retries on a later run. | — | — | — |
 | `malformed_proposal` | execution | A proposed event failed validation, so the whole batch was rejected and nothing was written; the page retries on a later run. | — | — | — |
 | `publish_error` | execution | Publishing the events failed; nothing from this attempt replaced the previous events, and the page retries on a later run. | — | — | — |

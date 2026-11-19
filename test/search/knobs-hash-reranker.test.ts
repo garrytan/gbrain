@@ -152,7 +152,7 @@ describe('Each reranker field flips the hash (cache-row separation)', () => {
 describe('mid-deploy invariant (CDX2-F12)', () => {
   test('tokenmax-with-reranker vs tokenmax-without-reranker → distinct hashes', () => {
     // tokenmax mode bundle has reranker on. An operator who flips it off
-    // via `gbrain config set search.reranker.enabled false` produces a
+    // via `foresights config set search.reranker.enabled false` produces a
     // different cache row, not a shared one.
     const tokenmaxOn = knobsHash(resolveSearchMode({ mode: 'tokenmax' }));
     const tokenmaxOff = knobsHash(resolveSearchMode({

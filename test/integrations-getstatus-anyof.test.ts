@@ -5,7 +5,7 @@
  * recipe lists CLAWVISOR_URL, CLAWVISOR_AGENT_TOKEN, GOOGLE_CLIENT_ID and
  * GOOGLE_CLIENT_SECRET, but the user only needs ONE path (Option A ClawVisor OR
  * Option B Google). The old all-secrets-required check reported a correctly
- * configured single-path user as "available", contradicting `gbrain features`,
+ * configured single-path user as "available", contradicting `foresights features`,
  * which already treats these as any-of. getStatus now honors the recipe's own
  * any_of health check.
  *

@@ -51,10 +51,10 @@ that tuple lights up the `pack_upgrade_available` onboard check.
 ┌────────────────────────────────────────────────────────────────┐
 │  USER DECIDES                                                  │
 │                                                                │
-│  gbrain onboard --check shows finding                          │
-│  gbrain onboard --check --explain shows per-cluster narrative  │
+│  foresights onboard --check shows finding                          │
+│  foresights onboard --check --explain shows per-cluster narrative  │
 │  User reviews; if OK, runs:                                    │
-│    gbrain jobs submit unify-types \                            │
+│    foresights jobs submit unify-types \                            │
 │      --params '{"target_pack":"gbrain-base-v2","apply":true}'  │
 │  (omit "apply":true for a dry-run; that is the default)        │
 │  (Autopilot never auto-fires this; manual_only)                │
@@ -95,7 +95,7 @@ that tuple lights up the `pack_upgrade_available` onboard check.
 │  • links table has new partner_of / relates_to rows            │
 │  • Source pages soft-deleted (72h TTL for restore)             │
 │  • Active pack flipped to target_pack                          │
-│  • Next gbrain onboard --check shows ok                        │
+│  • Next foresights onboard --check shows ok                        │
 └────────────────────────────────────────────────────────────────┘
 ```
 
@@ -146,9 +146,9 @@ true` + `job: 'unify-types'`. `isManualOnlyStep` in
 `src/core/remediation/manual-only.ts` decides manual-only by job name
 (`unify-types` and `extract-takes-from-pages`), even for a step without
 `protected: true`. `toOnboardRecommendation` labels with it, and
-`runRemediation` (behind `gbrain onboard --auto`, `doctor --remediate`
+`runRemediation` (behind `foresights onboard --auto`, `doctor --remediate`
 and MCP `run_onboard`) never submits such a step: it returns it in
-`manual_only_skipped` with the user's own `gbrain jobs submit <job>
+`manual_only_skipped` with the user's own `foresights jobs submit <job>
 --params <json> --follow` command. Autopilot's targeted dispatch
 filters it too.
 
@@ -205,8 +205,8 @@ mapping_rules:
 ```
 
 Drop at `~/.gbrain/schema-packs/gbrain-academic-v1/pack.yaml`.
-Discoverable via `gbrain schema list`. Activatable via
-`gbrain schema use gbrain-academic-v1`. Once active, the
+Discoverable via `foresights schema list`. Activatable via
+`foresights schema use gbrain-academic-v1`. Once active, the
 `pack_upgrade_available` check fires for any brain on
 `gbrain-base-v2@1.x` and surfaces a `unify-types` RemediationStep
 targeting your pack.
@@ -215,7 +215,7 @@ targeting your pack.
 
 `gbrain-unify` is a dedicated `gbrain_cycle_locks` row name (60min
 TTL). The handler acquires it before any apply phase + releases in
-`finally`. Two simultaneous `gbrain jobs submit unify-types`
+`finally`. Two simultaneous `foresights jobs submit unify-types`
 invocations: second one fails fast at lock acquisition with a clear
 error. Same pattern as the `gbrain-sync` lock.
 
@@ -234,9 +234,9 @@ a `GBRAIN_AUDIT_FULL=1` escape hatch has been proposed but is not yet wired.
 - Per-source pack-upgrade (the handler accepts `sourceId` but
   `findPackSuccessors` doesn't yet pass it through)
 - Cross-brain federated mounts that disagree on canonical packs
-- Automatic rollback (today: manual SQL or `gbrain restore`)
+- Automatic rollback (today: manual SQL or `foresights restore`)
 - LLM-assisted mapping_rules codegen from production data (a proposed
-  `gbrain schema detect-mappings`)
+  `foresights schema detect-mappings`)
 
 ## Reference
 

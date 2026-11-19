@@ -28,7 +28,7 @@ export interface AgentContractEvent {
   outcome?: string;
   /** Internal normaliser fault class (never a message). */
   fault?: string;
-  /** #6629, #6758: the gbrain release that wrote the event (stamped on every event; absent on lines older builds wrote). */
+  /** #6629, #6758: the foresights release that wrote the event (stamped on every event; absent on lines older builds wrote). */
   version?: string;
   /** #6629: the `--json` guard mode the event concerns. */
   guard?: 'document' | 'ndjson';

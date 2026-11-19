@@ -124,7 +124,7 @@ export async function executeRawJsonb<R = Record<string, unknown>>(
   // JSONB via the explicit `::jsonb` cast in the caller's SQL string. A
   // top-level ARRAY is rejected: postgres.js can bind a bare JS array as a
   // Postgres ARRAY literal rather than jsonb, which silently re-enters the
-  // "malformed array literal" class gbrain#1861 exists to escape. Wrap arrays
+  // "malformed array literal" class foresights#1861 exists to escape. Wrap arrays
   // in an object, e.g. `[{ rows: [...] }]` selected via
   // `jsonb_to_recordset(($N::jsonb)->'rows')`. This enforces at the call layer
   // the invariant the batch-insert methods rely on (codex #1861 P2a).
@@ -148,7 +148,7 @@ export async function executeRawJsonb<R = Record<string, unknown>>(
  * in `src/commands/files.ts`, the MCP `file_upload` op in `src/core/ops/files.ts`).
  * jsonb `||` merges only object||object — any other left operand is
  * ARRAY-WRAPPED, so a bare `files.metadata || EXCLUDED.metadata` would turn a
- * #2339-era string-scalar row (`"{}"`, the shape `gbrain repair-jsonb` heals
+ * #2339-era string-scalar row (`"{}"`, the shape `foresights repair-jsonb` heals
  * via `jsonb_typeof = 'string'`) into `["{}", {...}]`: invisible to
  * repair-jsonb and unreadable by every `.storage` reader. Reset anything that
  * isn't already an object to `{}` before merging.

@@ -58,7 +58,7 @@ export const PROBE_TIMEOUT_MISSES = 3;
 
 let ownConsumerForced: string | null = null;
 /**
- * B1d: the process-level escape hatch (`gbrain sync --no-delegate`, or the skew fallback when an older `serve` cannot take a
+ * B1d: the process-level escape hatch (`foresights sync --no-delegate`, or the skew fallback when an older `serve` cannot take a
  * hand-off): every consumer this process starts from now on is full, and a waiter-only consumer already made promotes.
  */
 export function forceOwnConsumer(reason: string): void { ownConsumerForced = reason; }
@@ -88,7 +88,7 @@ const ownerOf = (row: ListedConsumer): ElectedOwner => ({ kind: row.kind, pid: r
   renewed_age_ms: row.renewed_age_ms, restart_required: row.restart_required, root_barrier_age_ms: row.root_barrier_age_ms, mode: row.mode });
 
 export interface WaiterOnlyConsumerOpts {
-  /** The gbrain command this process runs (`claimOwnerKind()`); resident kinds only reach this class. */
+  /** The foresights command this process runs (`claimOwnerKind()`); resident kinds only reach this class. */
   kind: string;
   hostId: string;
   pollMs?: number;
@@ -159,7 +159,7 @@ export class WaiterOnlyConsumer implements PersistenceConsumerLike {
   private backoff(): void { this.delayMs = Math.min(Math.max(this.delayMs, this.opts.pollMs ?? 250) * 2, Math.max(this.opts.pollMs ?? 250, this.opts.idleMaxMs ?? 5000)); }
   private log(line: string): void {
     if (this.opts.log) { this.opts.log(line); return; }
-    process.stderr.write(`[persistence] ${line}; fix: gbrain sources writer status --json; docs: docs/guides/live-sync.md#one-consumer-per-host\n`);
+    process.stderr.write(`[persistence] ${line}; fix: foresights sources writer status --json; docs: docs/guides/live-sync.md#one-consumer-per-host\n`);
   }
   private async doTick(): Promise<void> {
     if (this.stopping || this._mode === 'full') return;

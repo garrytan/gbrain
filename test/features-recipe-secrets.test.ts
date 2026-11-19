@@ -60,7 +60,7 @@ describe('RECIPE_META integrity', () => {
         if (!declared.has(secret)) drift.push(`${entry.id} -> ${secret}`);
       }
     }
-    // A drifted name makes `gbrain features` nag about a configured recipe forever.
+    // A drifted name makes `foresights features` nag about a configured recipe forever.
     // Membership is against the frontmatter `secrets:` list, NOT a substring match
     // over the whole file — a name mentioned only in prose must not pass.
     expect(drift).toEqual([]);

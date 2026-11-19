@@ -111,7 +111,7 @@ export interface GraduationDeps {
   /** Target schema bootstrap, sized from the source's embedding layout. */
   initTargetSchema(target: BrainEngine, source: BrainEngine): Promise<void>;
   claimAutopilotPause(): Promise<(() => void) | null>;
-  /** Failing check names of `gbrain doctor --no-migrate --json` against the fenced target. */
+  /** Failing check names of `foresights doctor --no-migrate --json` against the fenced target. */
   runTargetDoctor(runId: string, mainUrl: string, sourcePersistenceEnabled: boolean): Promise<{ failing: readonly string[]; exempted: readonly string[] }>;
   /** Failing source checks, measured with the source open under the run's lock. */
   runSourceDoctor(source: BrainEngine): Promise<readonly string[]>;
@@ -206,7 +206,7 @@ function mapTargetConnectError(error: unknown, routes: Routes): unknown {
   }
   if (/unsupported startup parameter/i.test(e?.message ?? '')) {
     return targetUnsupportedError({ requirement: 'pooler_startup_parameters', host: routes.main,
-      detail: 'the connection pooler refuses the statement_timeout and idle_in_transaction_session_timeout startup parameters gbrain sends; add both to ignore_startup_parameters in pgbouncer.ini, or point --url-env (and GBRAIN_DIRECT_DATABASE_URL) at a direct or session-mode connection',
+      detail: 'the connection pooler refuses the statement_timeout and idle_in_transaction_session_timeout startup parameters foresights sends; add both to ignore_startup_parameters in pgbouncer.ini, or point --url-env (and GBRAIN_DIRECT_DATABASE_URL) at a direct or session-mode connection',
       ...(routes.urlEnv ? { spelling: { urlEnv: routes.urlEnv } } : {}) });
   }
   return error;
@@ -398,7 +398,7 @@ interface PlanInputs {
 function sourceConfig(opts: RunOptions): GBrainConfig {
   const config = opts.config ?? loadConfigFileOnly();
   if (!config) {
-    throw opError('no_brain', 'No brain is configured on this machine.', 'Run `gbrain init --pglite --no-embedding` first.',
+    throw opError('no_brain', 'No brain is configured on this machine.', 'Run `foresights init --pglite --no-embedding` first.',
       { fix: { argv: ['gbrain', 'init', '--pglite', '--no-embedding'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Creates a local PGLite brain.' } });
   }
   return config;
@@ -407,7 +407,7 @@ function sourceConfig(opts: RunOptions): GBrainConfig {
 function sourceDataDir(config: GBrainConfig): string {
   if (config.engine !== 'pglite' || !config.database_path) {
     throw opError('invalid_params', 'Engine graduation moves a PGLite brain; this brain is not configured as PGLite.',
-      'Run graduation only from a PGLite brain (`gbrain engine status --json` shows the configured engine).',
+      'Run graduation only from a PGLite brain (`foresights engine status --json` shows the configured engine).',
       { why: 'Graduation copies a PGLite datastore into Postgres; other directions use the legacy copier.',
         fix: { argv: ['gbrain', 'engine', 'status', '--json'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Shows the configured engine and datastore.' } });
   }
@@ -1110,7 +1110,7 @@ function loadRun(opts: RunOptions): Run {
   const m = readGraduationManifest(path);
   if (!m) {
     throw opError('not_found', 'No graduation run is recorded on this machine.',
-      'Start one with the plan command: `gbrain migrate --to postgres --url-env GBRAIN_TARGET_URL --plan --json`.',
+      'Start one with the plan command: `foresights migrate --to postgres --url-env GBRAIN_TARGET_URL --plan --json`.',
       { why: 'Resume, rollback and reconcile act on the run recorded in the graduation manifest.',
         fix: { argv: ['gbrain', 'migrate', '--to', 'postgres', '--url-env', 'GBRAIN_TARGET_URL', '--plan', '--json'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Shows the read-only graduation plan.' } });
   }
@@ -1393,7 +1393,7 @@ async function detectRollbackLosses(run: Run): Promise<RollbackLoss[]> {
 // ── status ─────────────────────────────────────────────────────────────────
 
 /**
- * `gbrain migrate --status`: never reconciles, migrates, repairs fences,
+ * `foresights migrate --status`: never reconciles, migrates, repairs fences,
  * rewrites routing or touches graduation markers. It reads the manifest, the
  * marker and tombstone, and the target row through a read-only session; for
  * split brain it also opens both datastores read-only for their row counts.

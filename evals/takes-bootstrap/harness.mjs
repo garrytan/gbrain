@@ -87,7 +87,7 @@ const { canonicalLookup } = await import('../../src/core/model-pricing.ts');
 const price = canonicalLookup(model);
 if (!price) {
   console.error(`takes-bootstrap harness: ${model} has no canonical price, so the $${maxUsd} cap cannot be enforced.`);
-  console.error(`Look up its rate and register it (gbrain pricing set ${model} --input <usd/1M> --output <usd/1M> --source <url>), or pick a priced --model.`);
+  console.error(`Look up its rate and register it (foresights pricing set ${model} --input <usd/1M> --output <usd/1M> --source <url>), or pick a priced --model.`);
   process.exit(2);
 }
 const inputTokens = corpus.reduce((n, c) => n + Math.ceil((1100 + c.page.body.length) / 4) + 50, 0);

@@ -1,5 +1,5 @@
 /**
- * `gbrain repair receipt-compaction` (#6696 A9): compact terminal write
+ * `foresights repair receipt-compaction` (#6696 A9): compact terminal write
  * receipts now instead of waiting for the idle maintenance tick, so a brain
  * at its receipt-bytes cap gets its reservations back. Thin over the same
  * per-receipt compaction the consumer runs (`compactReceipt`, journal.ts):
@@ -36,7 +36,7 @@ export function parseOlderThanHours(raw: string): number | null {
 }
 
 function command(opts: RepairPlanOptions): string {
-  return ['gbrain repair receipt-compaction', ...(opts.olderThan ? ['--older-than', opts.olderThan] : []),
+  return ['foresights repair receipt-compaction', ...(opts.olderThan ? ['--older-than', opts.olderThan] : []),
     ...(opts.includeFailures ? ['--include-failures'] : []), ...(opts.force ? ['--force'] : [])].join(' ');
 }
 
@@ -44,10 +44,10 @@ async function selection(engine: BrainEngine, opts: RepairPlanOptions): Promise<
   const retentionDays = await readReceiptRetentionDays(engine);
   const hours = opts.olderThan === undefined ? retentionDays * 24 : parseOlderThanHours(opts.olderThan);
   if (hours === null) throw new OperationError('invalid_params', `--older-than takes hours (72 or 72h) or days (30d) (got "${opts.olderThan}").`,
-    `Pass the age in days, e.g. --older-than ${retentionDays}d; preview: gbrain repair receipt-compaction --older-than ${retentionDays}d --json`);
+    `Pass the age in days, e.g. --older-than ${retentionDays}d; preview: foresights repair receipt-compaction --older-than ${retentionDays}d --json`);
   if (hours < retentionDays * 24 && !opts.force) {
     throw Object.assign(new OperationError('invalid_params', `--older-than ${opts.olderThan} is inside the receipt retention window (${retentionDays} days, ${RECEIPT_RETENTION_KEY}), so nothing was compacted.`,
-      `A retained receipt is how a caller replays a request id and reads its outcome in full. Preview the window's edge: gbrain repair receipt-compaction --older-than ${retentionDays}d --json. `
+      `A retained receipt is how a caller replays a request id and reads its outcome in full. Preview the window's edge: foresights repair receipt-compaction --older-than ${retentionDays}d --json. `
       + 'Compacting younger receipts drops their intent early; only with the user\'s agreement add --force.'), {
       fix: { argv: ['gbrain', 'repair', 'receipt-compaction', '--older-than', `${retentionDays}d`, '--json'], consent: [], actor: 'agent', requires_exclusive: false,
         why: 'Previews compaction at the configured retention; it writes nothing.' } });
@@ -83,7 +83,7 @@ export const receiptCompactionRepair: RepairHandler = {
   async plan(engine, scope, after, opts = { apply: false }): Promise<RepairPlan> {
     const preview = command(opts);
     if (opts.apply) {
-      if (!opts.expect) throw new OperationError('invalid_params', 'gbrain repair receipt-compaction --apply needs the preview hash.',
+      if (!opts.expect) throw new OperationError('invalid_params', 'foresights repair receipt-compaction --apply needs the preview hash.',
         `Preview first: ${preview} — then run the apply command it prints: ${preview} --apply --expect <preview-hash> --yes`, 'docs/guides/repair.md#receipt-compaction');
       const [sel] = (await loadApprovedSet<Selection>(engine, { command: 'receipt-compaction', hash: opts.expect, previewCommand: preview })).items;
       const items = (await candidates(engine, sel!)).map(toItem(sel!)).filter(item => afterCursor(item.cursor, after));

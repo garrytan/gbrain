@@ -147,7 +147,7 @@ describeE2E('apply-migrations exit when the schema stays behind (#6089, Postgres
     expect(r.doc.fix.next).toBe('report');
   }, 120_000);
 
-  test('gbrain post-upgrade (in-process apply-migrations --yes) stops on a schema that stays behind', async () => {
+  test('foresights post-upgrade (in-process apply-migrations --yes) stops on a schema that stays behind', async () => {
     await setVersion(LATEST_VERSION - 1);
     const r = await run(['reconcile'], [], { failSchemaMigrations: true, entry: 'post-upgrade' });
     expect(r.code, r.out).toBe(1);

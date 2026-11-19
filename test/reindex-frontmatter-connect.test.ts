@@ -1,7 +1,7 @@
 /**
  * v0.37.7.0 #1225 regression test.
  *
- * `gbrain reindex-frontmatter` was instantiating the engine via
+ * `foresights reindex-frontmatter` was instantiating the engine via
  * `createEngine()` (which only constructs) but never calling `connect()`
  * before its first `executeRaw` in `countAffected`. The dry-run path
  * crashed with "PGLite not connected. Call connect() first."

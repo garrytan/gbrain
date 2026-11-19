@@ -4,7 +4,7 @@
  * `metadata_boost_gate` knob plane (bundle, config parse, resolution chain,
  * knobs hash `mbg=`, registry, dashboard).
  *
- * The measured defect (E1 localization, tuning split): gbrain's own vector arm
+ * The measured defect (E1 localization, tuning split): foresights's own vector arm
  * nDCG@5 60.3 vs live hybrid 50.6 — post-fusion metadata boosts (backlink,
  * graph adjacency, recency) promote hub pages over gold concept pages when the
  * vector arm is the only voter (73/105 gaps had both lexical arms empty). The

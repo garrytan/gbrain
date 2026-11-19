@@ -1,7 +1,7 @@
 /**
- * `gbrain pages ghosts [--source <id>] [--json]` (#6696 B5): read-only list of
+ * `foresights pages ghosts [--source <id>] [--json]` (#6696 B5): read-only list of
  * a source's ghost pages, live pages whose canonical file is missing on the
- * owner host. Same classifier as doctor `ghost_pages` and `gbrain repair
+ * owner host. Same classifier as doctor `ghost_pages` and `foresights repair
  * ghost-pages` (`src/core/ghost-pages.ts`); refuses off the owner host
  * (`not_owner_host`) and on an unreadable checkout (`ghost_storage_unknown`).
  */
@@ -12,7 +12,7 @@ import { resolveSourceId } from '../core/source-resolver.ts';
 import { scanGhostSource } from '../core/ghost-pages.ts';
 import { GHOST_CONSEQUENCES, GHOST_REPAIR_LIMIT, SKILL_PATH_NOTE, UNRESOLVABLE_NOTE, ghostPreviewCommand, ghostScanRefusal, skillPathRestore, unresolvableDetail } from '../core/repair/ghost-pages.ts';
 
-export const PAGES_GHOSTS_USAGE = 'Usage: gbrain pages ghosts [--source <id>] [--json]';
+export const PAGES_GHOSTS_USAGE = 'Usage: foresights pages ghosts [--source <id>] [--json]';
 
 export async function runPagesGhosts(engine: BrainEngine, args: string[]): Promise<void> {
   let explicit: string | undefined;
@@ -23,7 +23,7 @@ export async function runPagesGhosts(engine: BrainEngine, args: string[]): Promi
     else if (token === '--source' && args[i + 1] && !args[i + 1]!.startsWith('-')) explicit = args[++i];
     else if (token.startsWith('--source=') && token.length > '--source='.length) explicit = token.slice('--source='.length);
     else {
-      throw opError('invalid_params', `Unexpected argument ${token} for gbrain pages ghosts.`, `${PAGES_GHOSTS_USAGE} (read-only).`,
+      throw opError('invalid_params', `Unexpected argument ${token} for foresights pages ghosts.`, `${PAGES_GHOSTS_USAGE} (read-only).`,
         { fix: readFix('Lists the ghost pages of the default source; writes nothing.', { argv: ['gbrain', 'pages', 'ghosts', '--json'] }) });
     }
   }

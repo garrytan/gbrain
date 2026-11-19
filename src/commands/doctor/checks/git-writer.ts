@@ -7,7 +7,7 @@
  *                               oldest commit it lacks is over an hour old (a
  *                               dirty file blocking the fast-forward, or no
  *                               writer has pulled); the fix is the locked pull.
- *   dirty_age                   write-through files gbrain wrote but could not
+ *   dirty_age                   write-through files foresights wrote but could not
  *                               commit (the pending ledger) older than 30
  *                               minutes, and staged-but-uncommitted files that
  *                               old: a commit without paths by any writer
@@ -77,7 +77,7 @@ function lagging(found: Checkout[], now: number): Omit<Check, 'name'> {
   if (!behind.length) return { status: 'ok', details, message: `${found.length} Git checkout(s) are not behind their last fetched upstream by more than ${CHECKOUT_LAG_WARN_MS / 60_000} minutes.` };
   const first = behind[0]!;
   return { status: 'warn', details,
-    message: `Git checkouts are behind their upstream: ${behind.map(b => `${b.root}: ${b.behind} commit(s), the oldest from ${b.oldest_missing_at}`).join(' | ')}. Writers there edit files older than the remote's, and a commit made around gbrain can revert the newer remote work. The locked pull fast-forwards (or merges in memory) and never moves a file with a local edit; it names any file that blocks it. This compares with the last fetch.`,
+    message: `Git checkouts are behind their upstream: ${behind.map(b => `${b.root}: ${b.behind} commit(s), the oldest from ${b.oldest_missing_at}`).join(' | ')}. Writers there edit files older than the remote's, and a commit made around foresights can revert the newer remote work. The locked pull fast-forwards (or merges in memory) and never moves a file with a local edit; it names any file that blocks it. This compares with the last fetch.`,
     fix: { argv: ['gbrain', 'git', 'commit-push', '--pull', '--path', first.root], consent: [], actor: 'agent', requires_exclusive: false,
       why: `${first.root} lacks ${first.behind} upstream commit(s); the pull takes the checkout's commit lock and never rebases, stashes or overwrites a local edit.${behind.length > 1 ? ` ${behind.length - 1} other checkout(s) need the same, see details.checkouts.` : ''}`,
       verify: doctorVerify('checkout_lagging') } };
@@ -97,9 +97,9 @@ function dirtyAge(found: Checkout[], now: number): Omit<Check, 'name'> {
   const pending = reports.find(r => r.pending_count);
   if (pending) {
     return { status: 'warn', details,
-      message: `Files have waited more than ${DIRTY_AGE_WARN_MS / 60_000} minutes for a commit: ${lines.join(' | ')}. A write-through file waits when another writer held the checkout's commit lock past gbrain's short wait, or git refused the commit; it is not on the remote until committed, and a staged file rides along with the next commit made without paths by any writer.`,
+      message: `Files have waited more than ${DIRTY_AGE_WARN_MS / 60_000} minutes for a commit: ${lines.join(' | ')}. A write-through file waits when another writer held the checkout's commit lock past foresights's short wait, or git refused the commit; it is not on the remote until committed, and a staged file rides along with the next commit made without paths by any writer.`,
       fix: { argv: ['gbrain', 'git', 'commit-push', '--pending', '--path', pending.root], consent: [], actor: 'agent', requires_exclusive: false,
-        why: 'Commits and pushes only the files gbrain itself wrote and could not commit, under the commit lock; another writer\'s files are never staged.',
+        why: 'Commits and pushes only the files foresights itself wrote and could not commit, under the commit lock; another writer\'s files are never staged.',
         verify: doctorVerify('dirty_age') } };
   }
   const first = reports[0]!;
@@ -107,7 +107,7 @@ function dirtyAge(found: Checkout[], now: number): Omit<Check, 'name'> {
     message: `Files have sat staged but uncommitted for more than ${DIRTY_AGE_WARN_MS / 60_000} minutes: ${lines.join(' | ')}. The next commit made without paths by any writer (a cron's git add plus git commit) publishes them, stale or not.`,
     fix: { ask_user: true, argv: ['git', '-C', first.root, 'restore', '--staged', '--', ...first.staged], consent: [], actor: 'user', requires_exclusive: false,
       why: 'Another writer staged these files and never committed them; unstaging keeps their bytes on disk, committing them publishes that writer\'s work.',
-      user_message: `${first.staged_count} file(s) in ${first.root} have been staged but not committed for a while (${list(first.staged)}). Commit them by name with gbrain git commit-push, or unstage them (their bytes stay on disk)?`,
+      user_message: `${first.staged_count} file(s) in ${first.root} have been staged but not committed for a while (${list(first.staged)}). Commit them by name with foresights git commit-push, or unstage them (their bytes stay on disk)?`,
       verify: doctorVerify('dirty_age') } };
 }
 
@@ -123,7 +123,7 @@ function outsideRoots(found: Checkout[]): Omit<Check, 'name'> {
   const first = reports[0]!;
   const shas = first.commits.map(c => c.sha.slice(0, 12));
   return { status: 'warn', details,
-    message: `Unpushed commits change files outside the brain's source root: ${reports.map(r => `${r.root} (roots ${r.roots.join(', ')}): ${r.commits.map(c => `${c.sha.slice(0, 12)} ${list(c.paths)}`).join('; ')}`).join(' | ')}. A commit made without gbrain git commit-push can carry files other writers had staged, and publishing it can overwrite newer work on the remote.${reports.some(r => !r.configured) ? ' The checkout has no gbrain.sourceRoot set, so gbrain git commit-push would still publish them; gbrain sources harden <source> records the root.' : ' gbrain git commit-push refuses to publish them until the user agrees.'}`,
+    message: `Unpushed commits change files outside the brain's source root: ${reports.map(r => `${r.root} (roots ${r.roots.join(', ')}): ${r.commits.map(c => `${c.sha.slice(0, 12)} ${list(c.paths)}`).join('; ')}`).join(' | ')}. A commit made without foresights git commit-push can carry files other writers had staged, and publishing it can overwrite newer work on the remote.${reports.some(r => !r.configured) ? ' The checkout has no gbrain.sourceRoot set, so foresights git commit-push would still publish them; foresights sources harden <source> records the root.' : ' foresights git commit-push refuses to publish them until the user agrees.'}`,
     fix: { ask_user: true, argv: ['gbrain', 'git', 'commit-push', '--push-only', '--allow-outside-source-root', '--path', first.root], consent: [], actor: 'user', requires_exclusive: false,
       why: 'Only the user can say whether these files belong on the remote; show them git show --stat <sha> for each commit first.',
       user_message: `Unpushed commit(s) ${shas.join(', ')} in ${first.root} change files outside the brain's folder. Publish them as they are, or should they be reviewed first?`,
@@ -140,7 +140,7 @@ function quarantined(found: Checkout[]): Omit<Check, 'name'> {
   const first = reports[0]!;
   const entry = first.entries[0]!;
   return { status: 'warn', details,
-    message: `Local changes were quarantined instead of merged: ${reports.map(r => `${r.root}: ${r.entries.map(e => `${e.ref} (${list(e.paths)})`).join('; ')}`).join(' | ')}. Both this machine and the remote changed these files; the remote's version was published and this machine's version is kept under the ref. Compare with git diff ${entry.remote.slice(0, 12)} ${entry.ref} -- <path>, bring back what should stay with a normal commit (gbrain git commit-push -m "<msg>" -- <path>), then delete the ref.`,
+    message: `Local changes were quarantined instead of merged: ${reports.map(r => `${r.root}: ${r.entries.map(e => `${e.ref} (${list(e.paths)})`).join('; ')}`).join(' | ')}. Both this machine and the remote changed these files; the remote's version was published and this machine's version is kept under the ref. Compare with git diff ${entry.remote.slice(0, 12)} ${entry.ref} -- <path>, bring back what should stay with a normal commit (foresights git commit-push -m "<msg>" -- <path>), then delete the ref.`,
     fix: { ask_user: true, argv: ['git', '-C', first.root, 'update-ref', '-d', entry.ref], consent: [], actor: 'user', requires_exclusive: false,
       why: 'Deleting the ref says the parked version was reviewed; until then it is the only named copy of this machine\'s side of the conflict.',
       user_message: `This machine's version of ${list(entry.paths)} in ${first.root} was parked under ${entry.ref} because the remote changed the same file(s). Review it and keep what you need, then may I delete the ref?`,

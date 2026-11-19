@@ -2,8 +2,8 @@
  * Shared supervisor PID-file read + liveness check (issue #1815, Q4).
  *
  * The `existsSync → readFileSync → parseInt → process.kill(pid,0)` block was
- * copy-pasted across `gbrain jobs supervisor status` and `gbrain doctor`; the
- * #1815 niceness work would have added a third copy in `gbrain jobs stats`.
+ * copy-pasted across `foresights jobs supervisor status` and `foresights doctor`; the
+ * #1815 niceness work would have added a third copy in `foresights jobs stats`.
  * Extracted here so all three share one regression point.
  */
 
@@ -56,7 +56,7 @@ export function readSupervisorPid(pidFile: string): SupervisorPidStatus {
  * hostname label change from a second supervisor. Every reader takes the first
  * line; `jobs supervisor stop` reads line 2 (non-numeric = unknown); doctor
  * reads line 3 (missing = an older supervisor). An unknown start time leaves
- * line 2 empty so the hostname stays on line 3. #7245: line 4 is the gbrain
+ * line 2 empty so the hostname stays on line 3. #7245: line 4 is the foresights
  * version the supervisor runs and line 5 the package root it loaded from
  * (empty in a compiled binary); `readSupervisorBuild` reads them.
  */

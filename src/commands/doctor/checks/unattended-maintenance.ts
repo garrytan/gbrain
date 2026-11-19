@@ -1,7 +1,7 @@
 /**
  * unattended_maintenance doctor check (GBRA-438): reads `maintenance.last_run`
  * (or autopilot's freshness when an autopilot owns upkeep) through the same
- * view as `gbrain maintain --status`. Off and autopilot-owned read as ok; a
+ * view as `foresights maintain --status`. Off and autopilot-owned read as ok; a
  * brain younger than 48 hours with no run is information; a run older than
  * 48 hours, a step failing three runs in a row, or an item the serve parked, warns with the command
  * that runs free upkeep now.

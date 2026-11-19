@@ -1,5 +1,5 @@
 /**
- * skillpack/safe-update.ts — `gbrain skillpack reference <name>|--all --update-untouched`.
+ * skillpack/safe-update.ts — `foresights skillpack reference <name>|--all --update-untouched`.
  *
  * Takes upstream on installed skills the user never edited, one whole skill
  * at a time. A skill's closure is every file under its bundle dir plus any
@@ -8,11 +8,11 @@
  *
  * Classification, per file (the install's recorded base always wins):
  *   unchanged    already equals the bundle
- *   absent       missing and gbrain never recorded it (a new file)
+ *   absent       missing and foresights never recorded it (a new file)
  *   untouched    equals its recorded base
  *   local_edits  differs from its recorded base (even when it equals a past
  *                release), or has no base and matches no released version,
- *                or was deleted after gbrain recorded it
+ *                or was deleted after foresights recorded it
  *   historical   no base, equals a released version (needs --accept-historical)
  *   no_history   no base, and the released-version history has no entry
  * A skill is updatable only when it is not pinned, the history verified,
@@ -160,7 +160,7 @@ export function classifySkill(ctx: ClassifyContext, slug: string): SkillOutcome 
   let unsafe: string | null = null;
   for (const entry of enumerateScaffoldEntries({ gbrainRoot: ctx.gbrainRoot, skillSlug: slug, manifest: ctx.manifest })) {
     if (entry.pairedSource) {
-      notes.push(`paired source ${entry.relWorkspaceTarget} lives outside the skills root and is never written here; compare it with gbrain skillpack reference ${slug}`);
+      notes.push(`paired source ${entry.relWorkspaceTarget} lives outside the skills root and is never written here; compare it with foresights skillpack reference ${slug}`);
       continue;
     }
     const rel = entry.relWorkspaceTarget.replace(/^skills\//, '');
@@ -360,7 +360,7 @@ export async function runSkillpackUpdate(opts: UpdateOptions): Promise<UpdateRes
   if (pending.length && !opts.dryRun) {
     throw new OperationError('skillpack_update_incomplete',
       `An earlier skillpack update of ${opts.skillsRoot} did not finish (backup ${pending[0]}); nothing was changed now.`,
-      `Put the interrupted skills back with gbrain skillpack restore ${pending[0]} (it refuses files you changed since; name them with --skip), then run the update again.`);
+      `Put the interrupted skills back with foresights skillpack restore ${pending[0]} (it refuses files you changed since; name them with --skip), then run the update again.`);
   }
   const ctx: ClassifyContext = {
     gbrainRoot: opts.gbrainRoot, skillsRoot: opts.skillsRoot, manifest, history,
@@ -425,7 +425,7 @@ export async function runSkillpackUpdate(opts: UpdateOptions): Promise<UpdateRes
   writeJournal(journal, backups);
   pruneJournals(backups);
   const failed = results.some(r => r.result === 'failed');
-  return { ...base, journal: journal.id, summary: summarize(results), skills: results, restore_command: failed ? `gbrain skillpack restore ${journal.id}` : null };
+  return { ...base, journal: journal.id, summary: summarize(results), skills: results, restore_command: failed ? `foresights skillpack restore ${journal.id}` : null };
 }
 
 export interface RestoreResult {
@@ -443,14 +443,14 @@ export async function runSkillpackRestore(opts: { id: string; skip?: string[]; s
   if (conflicts.length) {
     throw new OperationError('skillpack_restore_conflict',
       `Refusing to restore ${opts.id}: ${conflicts.length} file(s) changed after the update: ${conflicts.join(', ')}. Nothing was restored.`,
-      `Keep your later edits and restore the rest with gbrain skillpack restore ${opts.id} ${conflicts.map(c => `--skip ${c}`).join(' ')}.`);
+      `Keep your later edits and restore the rest with foresights skillpack restore ${opts.id} ${conflicts.map(c => `--skip ${c}`).join(' ')}.`);
   }
   const byRel = new Map(journal.skills.flatMap(s => s.files.map(f => [f.rel, f] as const)));
   for (const item of plan) {
     if (item.action !== 'restore' && item.action !== 'remove') continue;
     if (!undoFile(journal.id, journal.skills_root, byRel.get(item.rel)!, backups)) {
       throw new OperationError('skillpack_restore_conflict', `${item.rel} changed while it was being restored.`,
-        `Run gbrain skillpack restore ${opts.id} again, adding --skip ${item.rel} to keep the newer edit.`);
+        `Run foresights skillpack restore ${opts.id} again, adding --skip ${item.rel} to keep the newer edit.`);
     }
   }
   const putBack = new Set(plan.filter(f => f.action !== 'skipped').map(f => `${f.slug}\u0000${f.rel}`));
@@ -503,7 +503,7 @@ export interface ScaffoldedFile {
 /**
  * Record the install's base for each skill file a scaffold wrote, or found
  * byte-identical to the bundle. Shared dependencies, paired sources and
- * pre-existing files that differ are not recorded (they are not gbrain's
+ * pre-existing files that differ are not recorded (they are not foresights's
  * install). Without a `source` (the harness bridge's rendered files), the
  * written bytes on disk are the base. The files are already written, so a
  * state file that cannot be read or locked is a warning on stderr, not a

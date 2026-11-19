@@ -2,7 +2,7 @@
  * Wave B PR 2 lane 2r-maint: whole-brain maintenance commands over a
  * segmented page (compiled_truth and timeline NULL, body in segments).
  *
- * 1. Protects: `gbrain integrity check` (sequential and the Postgres batch
+ * 1. Protects: `foresights integrity check` (sequential and the Postgres batch
  *    path) and `integrity auto` read a segmented page block by block and give
  *    the hits the same text stored inline gives (line numbers, fenced lines
  *    skipped); `reconcile-links` finds the same code refs; `reindex --aliases`
@@ -15,7 +15,7 @@
  *    a command skips a segmented page without saying so.
  * 3. Why existing coverage misses it: these commands' tests write inline
  *    pages only.
- * Seams: none; the CLI arm runs the real `gbrain integrity auto` in a child.
+ * Seams: none; the CLI arm runs the real `foresights integrity auto` in a child.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';

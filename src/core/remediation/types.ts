@@ -5,7 +5,7 @@
 //
 // Three consumers wrap this library today:
 //   - src/commands/doctor.ts (runRemediationPlan + runRemediate)
-//   - src/commands/onboard.ts (gbrain onboard --check / --auto)
+//   - src/commands/onboard.ts (foresights onboard --check / --auto)
 //   - src/core/operations.ts (MCP op run_onboard, admin scope)
 
 import type { RemediationStep } from '../remediation-step.ts';
@@ -31,7 +31,7 @@ export interface RemediationPlanOpts {
    */
   extraRemediations?: RemediationStep[];
   /**
-   * Doctor CLI only: preview every registered `gbrain repair` kind and list
+   * Doctor CLI only: preview every registered `foresights repair` kind and list
    * the ones with pending items as PROTECTED repair steps, independent of the
    * score target. Omitted by onboard and MCP callers.
    */
@@ -40,7 +40,7 @@ export interface RemediationPlanOpts {
 
 /**
  * Read-only plan output. Stable JSON envelope — downstream agents
- * (gbrain onboard, MCP run_onboard) bind to this shape.
+ * (foresights onboard, MCP run_onboard) bind to this shape.
  */
 export interface RemediationPlan {
   schema_version: 2;

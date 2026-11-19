@@ -1,5 +1,5 @@
 /**
- * #2928 — `gbrain sources unfederate <id>` (config.federated = false) must
+ * #2928 — `foresights sources unfederate <id>` (config.federated = false) must
  * keep the isolated source out of UNQUALIFIED reads.
  *
  * The leak: tier 5.5 (#1434) anchors an unqualified call on the sole

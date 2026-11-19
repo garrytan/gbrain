@@ -1,5 +1,5 @@
 /**
- * HTTP transport for `gbrain serve --http` (legacy bearer-auth path).
+ * HTTP transport for `foresights serve --http` (legacy bearer-auth path).
  *
  * Engine-aware via SqlQuery (works on both Postgres and PGLite as of the
  * v0.31 wave). The access_tokens and mcp_request_log tables exist on both
@@ -8,7 +8,7 @@
  * Security model:
  *   - Every request must include `Authorization: Bearer <token>` (except /health)
  *   - Tokens are validated against SHA-256 hashes in the access_tokens table
- *   - Create/manage tokens with auth.ts (gbrain auth create/list/revoke)
+ *   - Create/manage tokens with auth.ts (foresights auth create/list/revoke)
  *   - No open OAuth, no client_credentials, no self-service tokens
  *
  * Hardening:
@@ -70,7 +70,7 @@ const DEFAULT_BODY_CAP = 1024 * 1024; // 1 MiB
 
 /** #6007: what an agent does after a 413: nothing was processed; a batch goes smaller, a big page goes by file. */
 function oversizeSuggestion(bodyCap: number): string {
-  return `Nothing was processed: this transport reads at most ${bodyCap} bytes per request (GBRAIN_HTTP_MAX_BODY_BYTES on the brain host). Send put_pages as smaller batches, a new request_id per call. Do not split a page: one page over this limit goes by file instead, so ask the user to write it into the brain repository and run gbrain sync, or to run gbrain import <file> or gbrain put <slug> < file on the brain host.`;
+  return `Nothing was processed: this transport reads at most ${bodyCap} bytes per request (GBRAIN_HTTP_MAX_BODY_BYTES on the brain host). Send put_pages as smaller batches, a new request_id per call. Do not split a page: one page over this limit goes by file instead, so ask the user to write it into the brain repository and run foresights sync, or to run foresights import <file> or foresights put <slug> < file on the brain host.`;
 }
 
 function hashToken(token: string): string {
@@ -119,7 +119,7 @@ interface AuthResult {
    * v0.34.1 (#861, D13): source-isolation scope for the auth'd request.
    * Legacy bearer tokens here default to 'default' to match the v0.33
    * effective behavior (the now-removed serve-http.ts fallback chain).
-   * Operators migrate to the full OAuth transport (gbrain serve --http)
+   * Operators migrate to the full OAuth transport (foresights serve --http)
    * for narrower scoping.
    */
   sourceId?: string;
@@ -193,8 +193,8 @@ function resolveClientIp(req: Request, server: { requestIP: (r: Request) => { ad
 /** The 401 body for a refused bearer token; GBRA-218 names a member binding that cannot read. */
 function authFailureBody(code: AuthResult['code']): Record<string, string> {
   return code === 'access_member_disabled'
-    ? { error: 'invalid_token', code, message: 'This token is bound to a member who is disabled, removed or missing. Ask the brain operator to enable the member or rebind the token (gbrain auth rescope --token <name> --member <id>|none).' }
-    : { error: 'invalid_token', message: 'Bearer token required. Create one: gbrain auth create <name>' };
+    ? { error: 'invalid_token', code, message: 'This token is bound to a member who is disabled, removed or missing. Ask the brain operator to enable the member or rebind the token (foresights auth rescope --token <name> --member <id>|none).' }
+    : { error: 'invalid_token', message: 'Bearer token required. Create one: foresights auth create <name>' };
 }
 
 /**
@@ -498,7 +498,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           auth: auth.auth!, sourceId: auth.sourceId ?? 'default', allowedOps: surfaceAllowedOps, surface, config: operationConfig }));
         try {
           const result = method === 'resources/list'
-            ? { resources: [{ uri: CAPABILITIES_URI, name: 'GBrain capabilities', mimeType: 'application/json' }, ...await resources.list()] }
+            ? { resources: [{ uri: CAPABILITIES_URI, name: 'Foresights capabilities', mimeType: 'application/json' }, ...await resources.list()] }
             : params?.uri === CAPABILITIES_URI
               ? { contents: [{ uri: CAPABILITIES_URI, mimeType: 'application/json', text: JSON.stringify(await resolveAuthCapabilities(auth.auth!, engine, fileConfig ?? { engine: engine.kind })) }] }
               : await resources.read(params?.uri);
@@ -515,7 +515,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         // WP1/E5 truthful catalog on THIS transport too: publish-gated ops
         // (`Operation.publishGateKey`) are hidden while their gate resolves
         // off. Read per request (dual-plane, DB > file > false) so a
-        // `gbrain config set mcp.publish_skills true` takes effect on the
+        // `foresights config set mcp.publish_skills true` takes effect on the
         // next list with no restart — matching the OAuth transport. The
         // resolver never throws (read failure = hidden, the fail-closed
         // consent posture); the in-handler gates stay as the call-time
@@ -603,10 +603,10 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
     },
   });
 
-  console.error(`GBrain HTTP MCP server running on port ${port}`);
+  console.error(`Foresights HTTP MCP server running on port ${port}`);
   console.error(`  Health: http://localhost:${port}/health`);
   console.error(`  MCP:    http://localhost:${port}/mcp`);
-  console.error(`  Auth:   Bearer token required (create with: gbrain auth create <name>)`);
+  console.error(`  Auth:   Bearer token required (create with: foresights auth create <name>)`);
   if (!corsAllowlist) {
     console.error('  CORS:   default-deny. Set GBRAIN_HTTP_CORS_ORIGIN=https://your.app to allow browser clients.');
   } else {
@@ -614,7 +614,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
   }
   console.error('');
   console.error('⚠️  Do NOT use open OAuth registration for remote MCP access.');
-  console.error('   Tokens are managed via: gbrain auth create/list/revoke');
+  console.error('   Tokens are managed via: foresights auth create/list/revoke');
 
   return server;
 }

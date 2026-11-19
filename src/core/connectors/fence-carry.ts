@@ -1,4 +1,4 @@
-/** Carrying gbrain's own fences into a connector re-render (shared by the unmanaged Google and meetings sweeps). */
+/** Carrying foresights's own fences into a connector re-render (shared by the unmanaged Google and meetings sweeps). */
 import { FACTS_FENCE_BEGIN } from '../facts-fence.ts';
 import { TAKES_FENCE_BEGIN } from '../takes-fence.ts';
 import { conceptPreservationHold, preserveCanonicalFences } from '../cycle/concept-publication.ts';

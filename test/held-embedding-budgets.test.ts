@@ -5,7 +5,7 @@
  * Protects: one count of the large pages that wait for embedding approval
  * (held or at their per-page cap) against the active vector column, with no
  * row cap, and one phrase for it; `sizeStateLines` names a command that exists
- * (`gbrain embed --held --dry-run --source <id>`, never `gbrain reindex
+ * (`foresights embed --held --dry-run --source <id>`, never `foresights reindex
  * --held`); doctor `partial_embedding` is its own registry entry, so a slow
  * full `pages` scan in the content-sanity entry no longer turns it unknown;
  * its fix is a per-source approve with a concrete N; the embed-backfill job
@@ -109,13 +109,13 @@ for (const backend of testBackends()) {
       expect('argv' in run && run.argv.filter(a => a.startsWith('archive/day-'))).toHaveLength(1001);
     }, 60_000);
 
-    test('sizeStateLines names the source-scoped preview that exists, not gbrain reindex --held', async () => {
+    test('sizeStateLines names the source-scoped preview that exists, not foresights reindex --held', async () => {
       await holdPageEmbedding(engine, await largePage('chats/receipt', 'alpha', 2), 'upgrade_backfill');
       const states = await readPageSizeStates(engine, 'alpha', ['chats/receipt']);
       expect(states).toEqual([expect.objectContaining({ slug: 'chats/receipt', embedding: 'held', reason: 'upgrade_backfill', source_id: 'alpha' })]);
       const text = sizeStateLines(states.reduce<ReturnType<typeof addSizeState> | undefined>((t, s) => addSizeState(t, s), undefined)).join('\n');
       expect(text).not.toContain('reindex --held');
-      expect(text).toContain('`gbrain embed --held --dry-run --source alpha` previews the cost');
+      expect(text).toContain('`foresights embed --held --dry-run --source alpha` previews the cost');
     }, 60_000);
 
     test('#6847: the per-page ledger prices a free local recipe at $0, so a local model never hits its cap', async () => {
@@ -178,7 +178,7 @@ for (const backend of testBackends()) {
         expect(fix.consent).toEqual(['paid', 'egress']);
         const bySource = check.details!.by_source as Array<{ source_id: string; fix: { command: string; next: string } }>;
         expect(bySource.map(s => s.source_id)).toEqual(['default', 'alpha']);
-        expect(bySource[1]!.fix.command).toMatch(/^gbrain embed --held --source alpha --max-usd \d+\.\d\d/);
+        expect(bySource[1]!.fix.command).toMatch(/^(?:foresights|gbrain) embed --held --source alpha --max-usd \d+\.\d\d/);
         expect(bySource[1]!.fix.next).toBe('ask_user');
       } finally {
         await engine.unsetConfig('doctor.entry_budget_ms');
@@ -201,7 +201,7 @@ for (const backend of testBackends()) {
       expect(result.status).toBe('success');
       expect(result.budget_limited).toMatchObject({ held: 1, capped: 0, held_reasons: { upgrade_backfill: 1 }, pending_chunks: 3 });
       expect(result.budget_limited!.by_source.map(s => s.source_id)).toEqual(['default']);
-      expect(result.budget_limited!.by_source[0]!.fix.command).toMatch(/^gbrain embed --held --source default --max-usd \d+\.\d\d/);
+      expect(result.budget_limited!.by_source[0]!.fix.command).toMatch(/^(?:foresights|gbrain) embed --held --source default --max-usd \d+\.\d\d/);
       expect(await budgetLimitedField(engine, 'alpha', null)).toMatchObject({ budget_limited: { held: 1 } });
     }, 60_000);
 
@@ -213,7 +213,7 @@ for (const backend of testBackends()) {
         shutdownSignal: controller.signal, updateProgress: async () => {}, updateTokens: async () => {}, log: async () => {}, isActive: async () => true, readInbox: async () => [] } as unknown as MinionJobContext;
       const handler = makeEmbedBackfillHandler(engine, { runStale: async () => ({ embedded: 0, chunksProcessed: 0, pagesProcessed: 0, invalidated: 0, lastCursor: null, done: true, aborted: false,
         remaining: 2, blocked: 1, complete: false }) });
-      await expect(handler(job)).rejects.toThrow('embed-backfill: incomplete; 5 chunks remain (3 of them on 1 large page(s) held for approval or at their spend cap; gbrain embed --held --dry-run --source default lists them) and 1 projections are blocked.');
+      await expect(handler(job)).rejects.toThrow('embed-backfill: incomplete; 5 chunks remain (3 of them on 1 large page(s) held for approval or at their spend cap; foresights embed --held --dry-run --source default lists them) and 1 projections are blocked.');
     }, 60_000);
   });
 }

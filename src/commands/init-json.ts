@@ -1,5 +1,5 @@
 /**
- * `gbrain init --json` result writer (agent contract v1 D2). init has several
+ * `foresights init --json` result writer (agent contract v1 D2). init has several
  * branches (PGLite, Postgres, thin client, migrate-only, the
  * `--prefer-postgres` ladder) and the ladder wraps an inner init, so the
  * success document is accumulated here and written ONCE through

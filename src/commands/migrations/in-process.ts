@@ -2,7 +2,7 @@
  * In-process migration helpers (v0.41.37.0 #1605).
  *
  * Why this exists: migration schema phases used to shell out to a child
- * `gbrain init --migrate-only` via `execSync`. On Windows + bun + Supabase
+ * `foresights init --migrate-only` via `execSync`. On Windows + bun + Supabase
  * pooler, the spawned CHILD process dies with `getaddrinfo ENOTFOUND` before it
  * can connect — even though the PARENT connects fine and `env: process.env` is
  * passed. It is a bun-on-Windows child-process DNS-resolution failure, not an
@@ -11,7 +11,7 @@
  * pattern; this generalizes it to every engine + every schema phase.
  *
  * `runMigrateOnlyCore` is the single source of truth for "bring schema to head"
- * — `init.ts:initMigrateOnly` (the `gbrain init --migrate-only` CLI path) and
+ * — `init.ts:initMigrateOnly` (the `foresights init --migrate-only` CLI path) and
  * the migration orchestrators both call it, so the configureGateway-before-
  * initSchema fix can't drift between them.
  *
@@ -29,7 +29,7 @@ import { buildGatewayConfig } from '../../core/ai/build-gateway-config.ts';
 import { connectMigrationEngine } from './run-engine.ts';
 
 /** Default wall-clock guard for in-process initSchema. Matches the 600s cap
- *  the old `execSync('gbrain init --migrate-only', { timeout: 600_000 })` used,
+ *  the old `execSync('foresights init --migrate-only', { timeout: 600_000 })` used,
  *  so a hung schema bring-up surfaces as a phase failure instead of wedging
  *  the whole cascade. */
 export const MIGRATE_ONLY_TIMEOUT_MS = 600_000;
@@ -53,7 +53,7 @@ export class MigrateOnlyError extends Error {
 
 /**
  * Bring the configured brain's schema to head, in-process. Mirrors what
- * `gbrain init --migrate-only` did via subprocess: configureGateway →
+ * `foresights init --migrate-only` did via subprocess: configureGateway →
  * createEngine → connect → initSchema → disconnect. Idempotent (initSchema is
  * a no-op when already at head). Throws `MigrateOnlyError` on no-config or
  * timeout so callers report a failed phase rather than hanging.
@@ -62,7 +62,7 @@ export async function runMigrateOnlyCore(opts?: { timeoutMs?: number }): Promise
   const config = loadConfig();
   if (!config) {
     throw new MigrateOnlyError(
-      'No brain configured. Run `gbrain init` (interactive) or `gbrain init --pglite` / `gbrain init --supabase` first.',
+      'No brain configured. Run `foresights init` (interactive) or `foresights init --pglite` / `foresights init --supabase` first.',
     );
   }
 
@@ -111,17 +111,17 @@ export function gbrainChildCommand(
     ? (s: string) => `"${s}"`
     : (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
   const prefix = [inv.cmd, ...inv.argsPrefix].map(quote).join(' ');
-  return cmd.replace(/(^|\|\||&&|;)(\s*)gbrain(?=\s|$)/g, (_m, sep: string, space: string) => `${sep}${space}${prefix}`);
+  return cmd.replace(/(^|\|\||&&|;)(\s*)(?:foresights|gbrain)(?=\s|$)/g, (_m, sep: string, space: string) => `${sep}${space}${prefix}`);
 }
 
 /**
- * Run a `gbrain ...` subcommand as a subprocess, capturing child stderr so a
+ * Run a `foresights ...` subcommand as a subprocess, capturing child stderr so a
  * failure surfaces the real reason. Used for the non-schema backfill phases
  * (extract/repair/stats) that aren't yet in-process. On Windows these may still
  * fail with `getaddrinfo ENOTFOUND`, but the operator now sees WHY instead of a
  * bare `Command failed`. Returns captured stdout (utf-8) on success.
  *
- * Note: stderr is piped (captured), so gbrain progress lines (which go to
+ * Note: stderr is piped (captured), so foresights progress lines (which go to
  * stderr) are not shown live during these phases — acceptable for a one-shot
  * `apply-migrations` run; the failure reason matters more than live progress.
  */

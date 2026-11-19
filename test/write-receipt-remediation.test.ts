@@ -47,7 +47,7 @@ describe('replayed receipts (B4)', () => {
     });
     const cli = envelope(e, 'cli');
     expect(cli.fix).toMatchObject({ argv: ['gbrain', 'get', '--source', 'notes', '--', 'people/alice-example'], next: 'run' });
-    expect(cli.suggestion).toContain('gbrain get --source notes -- people/alice-example');
+    expect(cli.suggestion).toContain('foresights get --source notes -- people/alice-example');
   });
 
   test('a replaced page keeps code page_identity_changed', () => {
@@ -57,7 +57,7 @@ describe('replayed receipts (B4)', () => {
 
   test('revision_conflict fills the same read from receipt fields', () => {
     const e = replay(oldStyleRow({ state: 'conflict', error_code: 'revision_conflict', error_message: 'The page changed during preparation.' }));
-    expect(envelope(e, 'cli').fix?.command).toBe('gbrain get --include-content --source notes -- people/alice-example');
+    expect(envelope(e, 'cli').fix?.command).toBe('foresights get --include-content --source notes -- people/alice-example');
   });
 
   test('an unsafe slug drops the template; the fix falls back to the receipt read', () => {
@@ -71,7 +71,7 @@ describe('replayed receipts (B4)', () => {
 describe('principal-aware receipt recovery (A1)', () => {
   const storage = (over: Partial<WriteRequest>) => replay(oldStyleRow({ error_code: 'storage_error', error_message: 'disk full', ...over }));
 
-  test('CLI principal on the CLI: gbrain write-request', () => {
+  test('CLI principal on the CLI: foresights write-request', () => {
     expect(envelope(storage({ principal_kind: 'local_cli' }), 'cli').fix).toMatchObject({ argv: ['gbrain', 'write-request', '--', REQUEST_ID], actor: 'agent', next: 'run' });
   });
 

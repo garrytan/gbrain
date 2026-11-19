@@ -1,12 +1,12 @@
 /**
- * #4412 — `gbrain sync --break-lock` / `--force-break-lock` must resolve the
+ * #4412 — `foresights sync --break-lock` / `--force-break-lock` must resolve the
  * target source through the SAME tiers as the sync path (flag → GBRAIN_SOURCE
  * env → dotfile → local_path → ...), not a bare `--source argv ?? 'default'`
  * fallback.
  *
  * Pre-fix, a crashed env/dotfile-resolved sync (e.g. the serve-delegated sync
  * holding gbrain-sync:workspace in sync-delegation-under-serve Pin 3/4) told
- * the operator to re-run `gbrain sync --break-lock`; the break-lock branch
+ * the operator to re-run `foresights sync --break-lock`; the break-lock branch
  * then "successfully" broke the absent gbrain-sync:default while the real
  * lock stayed dead-held through the 60s takeover grace, so the follow-up
  * sync still refused with exit 1.

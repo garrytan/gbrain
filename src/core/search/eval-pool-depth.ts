@@ -1,7 +1,7 @@
 /**
  * Eval-only candidate pool depth (System One recall experiment). Production
  * caps every retrieval arm at MAX_SEARCH_LIMIT (100) and derives the per-arm
- * pool from the request limit. `gbrain eval longmemeval --eval-pool-depth N`
+ * pool from the request limit. `foresights eval longmemeval --eval-pool-depth N`
  * sets a process-wide depth for that run only: every arm fetches at least N
  * candidates and the cap rises to N, so a fused pool of N (at most
  * EVAL_POOL_DEPTH_MAX) is reachable and can be reranked with top_n_in N.

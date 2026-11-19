@@ -164,7 +164,7 @@ describe('#4168 sibling — child budgets clamp to the remaining job deadline', 
     }
   }, 30_000);
 
-  test('no deadlineAtMs (gbrain dream CLI) keeps the configured defaults untouched', async () => {
+  test('no deadlineAtMs (foresights dream CLI) keeps the configured defaults untouched', async () => {
     const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-synth-nodl-brain-'));
     const corpusDir = mkdtempSync(join(tmpdir(), 'gbrain-synth-nodl-corpus-'));
     try {

@@ -4,7 +4,7 @@ import { installFixtureChunks } from './helpers/page-projection.ts';
  *
  * ChatGPT's deep-research mode requires an MCP server to expose a
  * `search`/`fetch` PAIR: search results carry an `id`, and `fetch(id)`
- * returns OpenAI's `{ id, title, text, url, metadata }` shape. gbrain had
+ * returns OpenAI's `{ id, title, text, url, metadata }` shape. foresights had
  * `search` but no `fetch` (and results carried no `id`), so the connector
  * worked in normal chat and failed in deep research. Pins:
  *   - the `fetch` op exists, is remote-allowed read scope, returns the shape

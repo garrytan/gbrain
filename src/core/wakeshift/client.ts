@@ -1,5 +1,5 @@
 /**
- * Wakeshift HTTP API client (plan D1): the endpoints gbrain uses, with no
+ * Wakeshift HTTP API client (plan D1): the endpoints foresights uses, with no
  * SDK. A key is an Ed25519 seed (`wst_` + 50 base58 characters whose last 4
  * bytes are the seed's CRC32); each request carries a fresh compact JWS signed
  * with it (EdDSA, typ app+jwt, 2 minutes, unique jti), so the key itself never
@@ -48,7 +48,7 @@ const b64u = (buf: Uint8Array | string) => Buffer.from(buf).toString('base64url'
 export function parseWakeshiftKey(raw: string): WakeshiftKey {
   const body = raw.trim().replace(/^wst_/, '');
   if (/^(test|live)_/.test(body)) {
-    throw new WakeshiftKeyError('legacy', 'This is an older Wakeshift key format (test_ or live_), which gbrain does not accept. Create a new key in the Wakeshift console; current keys start with wst_.');
+    throw new WakeshiftKeyError('legacy', 'This is an older Wakeshift key format (test_ or live_), which foresights does not accept. Create a new key in the Wakeshift console; current keys start with wst_.');
   }
   if (body.length !== 50 || body.includes('_')) throw new WakeshiftKeyError('format', 'A Wakeshift key is wst_ followed by 50 base58 characters.');
   let n = 0n;
@@ -66,7 +66,7 @@ export function parseWakeshiftKey(raw: string): WakeshiftKey {
   return { privateKey, kid: b64u(createHash('sha256').update(spki.subarray(spki.length - 32)).digest().subarray(0, 16)) };
 }
 
-/** Encode a 32-byte seed as a current-format key (tests and fixtures; gbrain never mints keys for anyone). */
+/** Encode a 32-byte seed as a current-format key (tests and fixtures; foresights never mints keys for anyone). */
 export function encodeWakeshiftKey(seed: Uint8Array): string {
   const crc = Buffer.alloc(4);
   crc.writeUInt32BE(crc32(seed));

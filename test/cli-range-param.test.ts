@@ -1,5 +1,5 @@
 /**
- * `gbrain get --lines 100-140` (and `--lines 100`, `--bytes 0-999`) take the
+ * `foresights get --lines 100-140` (and `--lines 100`, `--bytes 0-999`) take the
  * range form an agent tries first. Before, the generic parser JSON-parsed the
  * object param and refused with "--lines requires a JSON object".
  */

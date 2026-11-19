@@ -1,5 +1,5 @@
 /**
- * `gbrain repair missing-tables` (#6911): recreate, empty, a rebuildable cache table that the applied migrations
+ * `foresights repair missing-tables` (#6911): recreate, empty, a rebuildable cache table that the applied migrations
  * created but the brain no longer has (`doctor` check schema_missing_tables). The schema version already covers its
  * creating migration, so `apply-migrations` never runs it again, and a later migration that touches the cache fails
  * with 42P01. Only tables the graduation inventory classifies `rebuild` and that have a recreate step qualify; any
@@ -20,12 +20,12 @@ import { readMissingTables, recreateStep } from '../schema-missing-tables.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairPlan } from './core.ts';
 import { classifyOriginUniqueViolation } from '../persistence/origin-guard.ts';
 
-const PREVIEW = 'gbrain repair missing-tables';
+const PREVIEW = 'foresights repair missing-tables';
 const DOCS = 'docs/guides/repair.md#missing-tables';
 type TableItem = RepairItem & { hash?: string; last?: boolean };
 const toItem = (table: string, position: number, hash?: string, last?: boolean): TableItem => ({ cursor: { phase: 0, id: position + 1 }, source_id: '(brain)',
   slug: table, chars: 0, action: 'recreate_empty', ...(hash ? { hash, last } : {}) });
-const CLIENT_BEHIND = (version: number) => `The brain schema is at v${version}, newer than this gbrain client (v${LATEST_VERSION}); upgrade gbrain, then preview again.`;
+const CLIENT_BEHIND = (version: number) => `The brain schema is at v${version}, newer than this foresights client (v${LATEST_VERSION}); upgrade foresights, then preview again.`;
 
 export const missingTablesRepair: RepairHandler = {
   kind: 'missing-tables',
@@ -34,9 +34,9 @@ export const missingTablesRepair: RepairHandler = {
   async plan(engine, scope, after, opts = { apply: false }): Promise<RepairPlan> {
     const report = await readMissingTables(engine);
     if (opts.apply) {
-      if (!opts.expect) throw new OperationError('invalid_params', 'gbrain repair missing-tables --apply needs the preview hash.',
+      if (!opts.expect) throw new OperationError('invalid_params', 'foresights repair missing-tables --apply needs the preview hash.',
         `Preview first: ${PREVIEW} — then run the apply command it prints: ${PREVIEW} --apply --expect <preview-hash>`, DOCS);
-      if (report.status === 'skipped') throw new OperationError('invalid_params', CLIENT_BEHIND(report.version), `Upgrade gbrain, then run ${PREVIEW} again.`, DOCS);
+      if (report.status === 'skipped') throw new OperationError('invalid_params', CLIENT_BEHIND(report.version), `Upgrade foresights, then run ${PREVIEW} again.`, DOCS);
       const { items: tables } = await loadApprovedSet<string>(engine, { command: 'missing-tables', hash: opts.expect, previewCommand: PREVIEW });
       const items = tables.map((table, index) => toItem(table, index, opts.expect, index === tables.length - 1)).filter(item => afterCursor(item.cursor, after));
       if (!items.length) await clearApprovedSet(engine, { command: 'missing-tables', hash: opts.expect });
@@ -80,7 +80,7 @@ export const missingTablesRepair: RepairHandler = {
       }
       if (!await relationExists(ctx.engine, item.slug)) {
         throw new OperationError('storage_error', `Recreating ${item.slug} ran, but the table still does not exist.`,
-          'Run gbrain doctor --json and report the schema_missing_tables entry.');
+          'Run foresights doctor --json and report the schema_missing_tables entry.');
       }
       return { applied: true, outcome: 'recreated' };
     })();
@@ -93,7 +93,7 @@ export const missingTablesRepair: RepairHandler = {
       `  ${d.checked ?? 0} expected table(s) checked`,
       ...(d.recreate ?? []).map(t => `  recreate empty: ${t} (rebuildable cache; it refills on use)`),
       ...(d.user_data_tables ?? []).map(t => `  not recreated: ${t} holds user data; restore its rows from a backup before any upgrade or migrate run (${DOCS})`),
-      ...(d.other_tables ?? []).map(t => `  not recreated: ${t} holds no user data; gbrain init --migrate-only recreates it if the base schema defines it`),
+      ...(d.other_tables ?? []).map(t => `  not recreated: ${t} holds no user data; foresights init --migrate-only recreates it if the base schema defines it`),
     ];
   },
 };

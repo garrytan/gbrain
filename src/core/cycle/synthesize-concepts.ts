@@ -74,7 +74,7 @@ function budgetWarnings(configWarning: string | undefined, capped: number, budge
   const warnings = configWarning ? [configWarning] : [];
   if (capped > 0) {
     warnings.push(`${capped} LLM-eligible concept(s) got no model narrative because the $${budgetUsd.toFixed(2)} phase budget was reached; they retry next run. ` +
-      `Raise the cap: gbrain config set ${SYNTHESIZE_CONCEPTS_BUDGET_KEY} <usd>. Verify: gbrain config get ${SYNTHESIZE_CONCEPTS_BUDGET_KEY}`);
+      `Raise the cap: foresights config set ${SYNTHESIZE_CONCEPTS_BUDGET_KEY} <usd>. Verify: foresights config get ${SYNTHESIZE_CONCEPTS_BUDGET_KEY}`);
   }
   for (const warning of warnings) console.error(`[synthesize_concepts] ${warning}`);
   return warnings;

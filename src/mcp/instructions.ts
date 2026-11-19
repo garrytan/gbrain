@@ -93,9 +93,9 @@ function contractClauses(c: CallablePredicate, writeback?: AmbientWritebackOpts 
   const any = (...names: string[]) => names.some(c);
   if (any('search', 'query')) {
     const verbs = c('search') && c('query') ? '`search` or `query`' : c('search') ? '`search`' : '`query`';
-    out.push(`Treat gbrain as the user's shared knowledge and skills brain. Use ${verbs} before external lookup${c('get_page') ? ', and use get_page when canonical page content matters' : ''}. Preserve the current agent's identity and unrelated instructions.`);
+    out.push(`Treat foresights as the user's shared knowledge and skills brain. Use ${verbs} before external lookup${c('get_page') ? ', and use get_page when canonical page content matters' : ''}. Preserve the current agent's identity and unrelated instructions.`);
   } else {
-    out.push(`Treat gbrain as the user's shared memory.${c('recall') ? ' Use `recall` before external lookup.' : ''} Preserve the current agent's identity and unrelated instructions.`);
+    out.push(`Treat foresights as the user's shared memory.${c('recall') ? ' Use `recall` before external lookup.' : ''} Preserve the current agent's identity and unrelated instructions.`);
   }
   const loop: string[] = [];
   if (c('context_pack')) loop.push('call `context_pack` at session start for the people, companies and projects in play');
@@ -148,7 +148,7 @@ function contractClauses(c: CallablePredicate, writeback?: AmbientWritebackOpts 
   // GBRA-219: after the governing rule, so it never pushes that rule past the 2,048 characters capped harnesses read; the tool's description carries the trigger phrases too.
   if (c('memory_conversation_mode')) out.push('If the user asks to save everything from here, or to stop saving, call `memory_conversation_mode` and follow its rule.');
   out.push(`When you need this connection's effective permissions or setup readiness, read gbrain://capabilities${c('whoami') ? ' (or `whoami`)' : ''}. A full tool surface does not imply administrative or delegation authority. Missing capabilities require an explicit host grant.`);
-  out.push('MCP admin scope does not authorize the owner dashboard or client management. For an admin login link, client registration, setup instructions, permission edits, token invalidation, revocation, or deletion, use the mcp-access skill when available, or https://github.com/garrytan/gbrain/blob/master/docs/mcp/ADMIN.md directly. Ask the server-hosting harness or a separately authorized administrator to use gbrain mcp admin with the configured server URL and its protected owner credential. Native OAuth clients initiate their own PKCE connection; preserve oauth_request when requesting a login link, and never fetch a generated single-use login link before delivering it to the owner.');
+  out.push('MCP admin scope does not authorize the owner dashboard or client management. For an admin login link, client registration, setup instructions, permission edits, token invalidation, revocation, or deletion, use the mcp-access skill when available, or https://github.com/aimonk2025/gbrain/blob/master/docs/mcp/ADMIN.md directly. Ask the server-hosting harness or a separately authorized administrator to use foresights mcp admin with the configured server URL and its protected owner credential. Native OAuth clients initiate their own PKCE connection; preserve oauth_request when requesting a login link, and never fetch a generated single-use login link before delivering it to the owner.');
   if (c('join_brain') && c('sync_brain_skills')) {
     out.push('If this installation has an owner-approved shared-skills follow policy and join_brain permission, enroll once, retain the returned installation identity and epoch, and use sync_brain_skills before choosing a shared skill. Follow authorized updates in the parent as well as child harnesses; do not reuse an old local copy silently. A fetched or installed file is not proof of native activation. Report required native enablement or restart steps and never claim an advisory router enforces freshness.');
   }
@@ -156,7 +156,7 @@ function contractClauses(c: CallablePredicate, writeback?: AmbientWritebackOpts 
     out.push('Shared-skill editing requires separate skill_editor authority. Read the current revision, then use put_skill or delete_skill with a fresh request_id and expected_revision; retry an accepted request only with the same ID and intent. Never use put_page or file uploads to bypass shared-skill publication. Publishing scripts or broader requirements needs separate owner approval; downloading a skill does not authorize executing scripts, installing packages, spending money, or acquiring new permissions.');
   }
   // Wakeshift (D9): last, so it renumbers nothing and stays past the 2,048 characters capped harnesses read.
-  if (content?.reportBack && c('watch_job')) out.push('After you submit a long job (submit_job, submit_agent), offer to call `watch_job` with its id: gbrain then wakes this conversation when it finishes, so you need not poll.');
+  if (content?.reportBack && c('watch_job')) out.push('After you submit a long job (submit_job, submit_agent), offer to call `watch_job` with its id: foresights then wakes this conversation when it finishes, so you need not poll.');
   return out;
 }
 
@@ -185,7 +185,7 @@ export function buildMcpInstructions(opts?: { writeback?: AmbientWritebackOpts |
   const hidden = tools?.hiddenCallable && tools.callable('request_tools')
     ? `The tool list shows the everyday tools; ${tools.hiddenCallable} more are callable. Call request_tools with no arguments to list them, or with tools: [names] for their schemas, then call them directly.\n`
     : '';
-  let text = `GBrain agent operating contract (apply on every cold start):\n${hidden}${clauses.map((c, i) => `${i + 1}. ${c}`).join('\n')}`;
+  let text = `Foresights agent operating contract (apply on every cold start):\n${hidden}${clauses.map((c, i) => `${i + 1}. ${c}`).join('\n')}`;
   if (tools?.statusLine) text += `\n${tools.statusLine}`;
   if (opts?.writeback) text += `\n\n${buildAmbientWritebackSection(opts.writeback)}`;
   const tail = tools?.readiness ? readinessTail(tools.readiness, tools.callable) : null;

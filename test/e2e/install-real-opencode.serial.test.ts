@@ -1,11 +1,11 @@
 /**
  * install-real-opencode door e2e — drives the REAL `opencode` binary (SST,
- * opencode.ai) against THIS checkout's gbrain over stdio MCP.
+ * opencode.ai) against THIS checkout's foresights over stdio MCP.
  *
- * WHAT THIS PROVES: gbrain WIRED INTO opencode via the DOCUMENTED command
- * shape (`opencode mcp add gbrain --env … -- gbrain serve --surface verbs`,
+ * WHAT THIS PROVES: foresights WIRED INTO opencode via the DOCUMENTED command
+ * shape (`opencode mcp add foresights --env … -- foresights serve --surface verbs`,
  * bare command resolved via a PATH-staged bin dir), the direct-JSONC-writer
- * parity lane (gbrain's own opencode-json.ts output handshakes through the
+ * parity lane (foresights's own opencode-json.ts output handshakes through the
  * real binary), and recall through MCP. Every asserted shape was observed
  * against v1.18.18 — see docs/mcp/OPENCODE-CLI-PIN.md; update that file, the
  * heavy-tests opencode-door pins, and these assertions together.
@@ -228,8 +228,8 @@ function runOpencode(
   paid = false,
 ): { code: number | null; stdout: string; stderr: string } {
   // `--pure` must land on OPENCODE's argv, never inside a `--`-delimited
-  // server command (a trailing append after `mcp add … -- gbrain serve`
-  // registers `--pure` as a gbrain flag — caught live).
+  // server command (a trailing append after `mcp add … -- foresights serve`
+  // registers `--pure` as a foresights flag — caught live).
   const sep = argv.indexOf('--');
   const withPure = sep === -1 ? [...argv, '--pure'] : [...argv.slice(0, sep), '--pure', ...argv.slice(sep)];
   const res = spawnSync(OPENCODE_BIN!, withPure, {
@@ -316,7 +316,7 @@ describe.skipIf(!CAN_RUN_KEYLESS)('install real-opencode door — keyless tier (
 
     const binDir = join(home, 'staged-bin');
     const staged = stageGbrainBinDir(REPO_ROOT, binDir);
-    console.warn(`[install-real-opencode] staged gbrain kind=${staged.kind}`);
+    console.warn(`[install-real-opencode] staged foresights kind=${staged.kind}`);
 
     const add = registerGbrainIntoOpencode(home, ws, binDir, home, 'default');
     // Add is LAZY (observed): exit 0 proves only that the config was
@@ -336,8 +336,8 @@ describe.skipIf(!CAN_RUN_KEYLESS)('install real-opencode door — keyless tier (
 
     const probe = listProbe(home, ws, binDir);
     expect(probe.code).toBe(0);
-    expect(probe.text).toMatch(/✓\s+gbrain\s+connected/);
-    expect(probe.text).not.toMatch(/✗\s+gbrain/);
+    expect(probe.text).toMatch(/✓\s+(?:foresights|gbrain)\s+connected/);
+    expect(probe.text).not.toMatch(/✗\s+(?:foresights|gbrain)/);
   }, 300_000);
 
   test('T2b spawn-gate canary: a PROJECT-config local server is spawn-attempted with NO trust prompt (the scope-inversion fact)', () => {
@@ -348,7 +348,7 @@ describe.skipIf(!CAN_RUN_KEYLESS)('install real-opencode door — keyless tier (
     // Project-scope decoy with a nonexistent command: if opencode still has
     // no trust gate (observed 1.18.18), `mcp list` ATTEMPTS the spawn and
     // reports ✗ failed. If this ever flips to a gated/untrusted state,
-    // gbrain's user-global-default rationale changed — re-observe and
+    // foresights's user-global-default rationale changed — re-observe and
     // revisit the bootstrap scope default (OPENCODE-CLI-PIN.md §Probes).
     writeFileSync(
       join(ws, 'opencode.json'),
@@ -360,7 +360,7 @@ describe.skipIf(!CAN_RUN_KEYLESS)('install real-opencode door — keyless tier (
     expect(probe.text).toMatch(/✗\s+gb-door-decoy\s+failed/);
   }, 180_000);
 
-  test('T3 writer parity: gbrain\'s direct JSONC writer output handshakes through the real binary; cross-tool preservation both ways', () => {
+  test('T3 writer parity: foresights\'s direct JSONC writer output handshakes through the real binary; cross-tool preservation both ways', () => {
     const home = trackHome('writer');
     seedOpencodeConfig(home);
     const ws = join(home, 'ws');
@@ -385,7 +385,7 @@ describe.skipIf(!CAN_RUN_KEYLESS)('install real-opencode door — keyless tier (
     expect(w.replacedPrior).toBe(false);
 
     const probe = listProbe(home, ws, binDir);
-    expect(probe.text).toMatch(/✓\s+gbrain\s+connected/);
+    expect(probe.text).toMatch(/✓\s+(?:foresights|gbrain)\s+connected/);
 
     // Cross-tool preservation: a subsequent CLI `mcp add` of another server
     // must not clobber the writer's entry or the autoupdate seed…
@@ -406,7 +406,7 @@ describe.skipIf(!CAN_RUN_KEYLESS)('install real-opencode door — keyless tier (
     expect((cfg2.mcp as Record<string, unknown>)['door-second']).toBeDefined();
   }, 300_000);
 
-  test.skipIf(!FREE_TIER_REQUESTED)('T4 SMOKE (keyless free tier): per-run nonce recalled via a STRUCTURAL gbrain tool_use event', async () => {
+  test.skipIf(!FREE_TIER_REQUESTED)('T4 SMOKE (keyless free tier): per-run nonce recalled via a STRUCTURAL foresights tool_use event', async () => {
     const home = trackHome('smoke');
     seedOpencodeConfig(home);
     const ws = join(home, 'ws');
@@ -431,12 +431,12 @@ describe.skipIf(!CAN_RUN_KEYLESS)('install real-opencode door — keyless tier (
     // list preflight gates the turn — never burn a model turn (even a free
     // one) on a broken registration.
     const pre = listProbe(home, ws, binDir);
-    expect(pre.text).toMatch(/✓\s+gbrain\s+connected/);
+    expect(pre.text).toMatch(/✓\s+(?:foresights|gbrain)\s+connected/);
 
     const prompt =
-      'You have gbrain memory tools available over MCP. Use them to find the secret door ' +
+      'You have foresights memory tools available over MCP. Use them to find the secret door ' +
       'codeword (search or recall: door codeword). Reply with ONLY the codeword string. ' +
-      'If you have no gbrain tools at all, reply exactly: NO-GBRAIN-TOOL';
+      'If you have no foresights tools at all, reply exactly: NO-GBRAIN-TOOL';
 
     // Two attempts with backoff: the free tier rides opencode's gateway and
     // a transient 5xx must not red the door; asserts NEVER soften.
@@ -468,7 +468,7 @@ describe.skipIf(!CAN_RUN_KEYLESS)('install real-opencode door — keyless tier (
     if (!finalText.includes(nonce) && errors.length) throw new Error(`opencode turn ended with provider error(s): ${errors.join('; ')}`);
     expect(finalText).toContain(nonce);
     expect(finalText).not.toContain('NO-GBRAIN-TOOL');
-    // Structural tool-mediation proof: at least one gbrain MCP tool fired
+    // Structural tool-mediation proof: at least one foresights MCP tool fired
     // (MCP tool naming `<server>_<tool>` observed — e.g. gbrain_recall).
     expect(toolCalls.some((t) => t.startsWith('gbrain_'))).toBe(true);
   }, 600_000);
@@ -504,12 +504,12 @@ describe.skipIf(!CAN_RUN_PAID)('install real-opencode door — paid tier (anthro
     const binDir = join(home, 'staged-bin');
     stageGbrainBinDir(REPO_ROOT, binDir);
     expect(registerGbrainIntoOpencode(home, ws, binDir, home, 'default').code).toBe(0);
-    expect(listProbe(home, ws, binDir).text).toMatch(/✓\s+gbrain\s+connected/);
+    expect(listProbe(home, ws, binDir).text).toMatch(/✓\s+(?:foresights|gbrain)\s+connected/);
 
     const turn = await opencodeOneShotTurn({
       prompt:
-        'Use your gbrain memory tools to find the paid-lane door codeword. Reply with ONLY the ' +
-        'codeword string. If you have no gbrain tools at all, reply exactly: NO-GBRAIN-TOOL',
+        'Use your foresights memory tools to find the paid-lane door codeword. Reply with ONLY the ' +
+        'codeword string. If you have no foresights tools at all, reply exactly: NO-GBRAIN-TOOL',
       cwd: ws,
       home,
       timeoutMs: 240_000,
@@ -526,7 +526,7 @@ describe.skipIf(!CAN_RUN_PAID)('install real-opencode door — paid tier (anthro
     expect(parsed.finalText).toContain(nonce);
     expect(parsed.finalText).not.toContain('NO-GBRAIN-TOOL');
     // opencode also has fs/shell tools, so the nonce alone does not prove the
-    // MCP door: at least one gbrain MCP tool must have fired (as in T4).
+    // MCP door: at least one foresights MCP tool must have fired (as in T4).
     expect(parsed.toolCalls.some((t) => t.startsWith('gbrain_'))).toBe(true);
   }, 600_000);
 });

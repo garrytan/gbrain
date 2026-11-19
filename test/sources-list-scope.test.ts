@@ -137,7 +137,7 @@ describe('sources_list / sources_status — description discloses scope filterin
   // listing as the full registry.
   test('sources_list description names the caller source scope', () => {
     expect(op.description).toMatch(/source scope/i);
-    expect(op.description).toMatch(/gbrain sources list/);
+    expect(op.description).toMatch(/(?:foresights|gbrain) sources list/);
   });
 
   test('sources_status description names the scope + not_found posture', () => {

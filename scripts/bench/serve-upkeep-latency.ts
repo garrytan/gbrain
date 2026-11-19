@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * GBRA-438 PR 2: how much tool-call latency idle upkeep adds inside a stdio `gbrain serve` on a keyless, repo-less
+ * GBRA-438 PR 2: how much tool-call latency idle upkeep adds inside a stdio `foresights serve` on a keyless, repo-less
  * PGLite brain (the default install).
  *
  * Builds a brain of --pages pages, each linking to --links others and carrying one timeline line, imported with
@@ -46,7 +46,7 @@ function keylessEnv(home: string, extra: Record<string, string> = {}): Record<st
 async function gbrain(home: string, args: string[]): Promise<string> {
   const p = Bun.spawn([process.execPath, '--no-env-file', CLI, ...args], { cwd: home, env: keylessEnv(home), stdout: 'pipe', stderr: 'pipe' });
   const [code, out, err] = await Promise.all([p.exited, new Response(p.stdout).text(), new Response(p.stderr).text()]);
-  if (code !== 0) throw new Error(`gbrain ${args.join(' ')} exited ${code}: ${err.slice(-2000)}`);
+  if (code !== 0) throw new Error(`foresights ${args.join(' ')} exited ${code}: ${err.slice(-2000)}`);
   return out;
 }
 

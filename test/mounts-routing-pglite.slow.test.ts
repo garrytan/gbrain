@@ -147,7 +147,7 @@ describe('mounts routing journey (e2e, PGLite, real CLI spawns)', () => {
     neutralDir = join(root, 'neutral');
     for (const d of [home, mountDir, neutralDir]) mkdirSync(d, { recursive: true });
 
-    // 1. Host brain: real `gbrain init` (PGLite at <home>/.gbrain/brain.pglite).
+    // 1. Host brain: real `foresights init` (PGLite at <home>/.gbrain/brain.pglite).
     const init = await gbrain(['init', '--pglite', '--no-embedding', '--non-interactive']);
     if (init.exitCode !== 0) throw new Error(`host init failed: ${init.stderr || init.stdout}`);
 

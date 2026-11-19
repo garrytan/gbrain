@@ -22,7 +22,7 @@ import type { MatrixReceipt, MatrixRunRow } from '../../scripts/stable-matrix.ts
 import { parseStableRecord } from '../../src/core/stable-channel.ts';
 
 const ROOT = join(import.meta.dir, '..', '..');
-const REPO = 'garrytan/gbrain';
+const REPO = 'aimonk2025/gbrain';
 const NOW = new Date('2026-11-10T13:17:00Z');
 const sha = (n: number) => String(n).padStart(40, 'c');
 const tree = (n: number) => String(n).padStart(40, 'e');
@@ -56,7 +56,7 @@ interface World {
 }
 
 const stableMessage = (version: string, promotedAt: string, rollback = false) =>
-  `gbrain stable channel: v${version}\n\nversion: ${version}\npromoted_at: ${promotedAt}\nrollback: ${rollback}\nreason: ${rollback ? 'sync regression' : '-'}\n`;
+  `foresights stable channel: v${version}\n\nversion: ${version}\npromoted_at: ${promotedAt}\nrollback: ${rollback}\nreason: ${rollback ? 'sync regression' : '-'}\n`;
 
 function world(w: World) {
   const posts: Array<{ path: string; body: unknown }> = [];

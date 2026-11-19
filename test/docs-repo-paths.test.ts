@@ -55,31 +55,31 @@ const ALLOWLIST: Record<string, Record<string, string>> = {
     'scripts/quiet-hours-gate.sh': 'gate script the guide has the operator create in their own workspace',
   },
   'docs/guides/multi-source-brains.md': {
-    'scripts/brain-commit-push.sh': 'installed into the brain repo by `gbrain sources harden`',
+    'scripts/brain-commit-push.sh': 'installed into the brain repo by `foresights sources harden`',
   },
   'AGENTS.md': {
-    'scripts/brain-commit-push.sh': 'installed into the brain repo by `gbrain sources harden`',
+    'scripts/brain-commit-push.sh': 'installed into the brain repo by `foresights sources harden`',
   },
   'INSTALL_FOR_AGENTS.md': {
-    'scripts/brain-commit-push.sh': 'installed into the brain repo by `gbrain sources harden`',
+    'scripts/brain-commit-push.sh': 'installed into the brain repo by `foresights sources harden`',
   },
   'docs/GBRAIN_RECOMMENDED_SCHEMA.md': {
-    'scripts/brain-commit-push.sh': 'installed into the brain repo by `gbrain sources harden`',
+    'scripts/brain-commit-push.sh': 'installed into the brain repo by `foresights sources harden`',
   },
   'docs/guides/diligence-ingestion.md': {
-    'scripts/brain-commit-push.sh': 'installed into the brain repo by `gbrain sources harden`',
+    'scripts/brain-commit-push.sh': 'installed into the brain repo by `foresights sources harden`',
   },
   'docs/guides/live-sync.md': {
-    'scripts/brain-commit-push.sh': 'installed into the brain repo by `gbrain sources harden`',
+    'scripts/brain-commit-push.sh': 'installed into the brain repo by `foresights sources harden`',
   },
   'docs/guides/shared-checkout-git.md': {
-    'scripts/brain-commit-push.sh': 'installed into the brain repo by `gbrain sources harden`',
+    'scripts/brain-commit-push.sh': 'installed into the brain repo by `foresights sources harden`',
   },
   'docs/architecture/key-files/files-and-sync-1.md': {
-    'scripts/brain-commit-push.sh': 'installed into the brain repo by `gbrain sources harden`',
+    'scripts/brain-commit-push.sh': 'installed into the brain repo by `foresights sources harden`',
   },
   'docs/architecture/key-files/workspace-push-and-backup.md': {
-    'scripts/brain-commit-push.sh': 'installed into the brain repo by `gbrain sources harden`',
+    'scripts/brain-commit-push.sh': 'installed into the brain repo by `foresights sources harden`',
   },
   'docs/UPGRADING_DOWNSTREAM_AGENTS.md': {
     'scripts/validate-frontmatter.mjs': 'downstream agent repo script the upgrade guide tells agents to replace',
@@ -88,7 +88,7 @@ const ALLOWLIST: Record<string, Record<string, string>> = {
     'scripts/install.sh': 'the Hermes agent repository installer',
   },
   'docs/architecture/key-files/skills.md': {
-    'test/example.test.ts': 'file inside a pack scaffolded by `gbrain skillpack init`',
+    'test/example.test.ts': 'file inside a pack scaffolded by `foresights skillpack init`',
   },
 };
 

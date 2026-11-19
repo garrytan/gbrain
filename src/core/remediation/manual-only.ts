@@ -33,7 +33,7 @@ export function manualOnlyFix(step: Pick<RemediationStep, 'job' | 'params' | 'es
     consent: paid ? ['paid'] : [],
     actor: 'user',
     why: `${step.job} is manual-only: automatic runs never submit it, so it runs only when the user submits it${paid ? `; it calls the model provider and costs money${cost}` : ''}.`,
-    user_message: `The ${step.job} step was not run automatically. Review it (gbrain onboard --check), then run the command yourself if you want it.`,
+    user_message: `The ${step.job} step was not run automatically. Review it (foresights onboard --check), then run the command yourself if you want it.`,
     verify: { argv: ['gbrain', 'doctor', '--only', 'brain_score', '--json'] },
     requires_exclusive: false,
   };

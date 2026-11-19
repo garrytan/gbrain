@@ -2,7 +2,7 @@
  * E2E: gstack /setup-gbrain Path 4 unblock — register a remote source over
  * HTTP MCP, sync it, recover from clone deletion.
  *
- * Spawns a real `gbrain serve --http` against real Postgres with a fake-git
+ * Spawns a real `foresights serve --http` against real Postgres with a fake-git
  * binary in PATH (so `git clone` is exercised end-to-end without network),
  * registers a sources_admin-scoped OAuth client, mints a token, calls
  * sources_add via /mcp, asserts the source row + clone exist, then rm-rfs
@@ -385,7 +385,7 @@ describeE2E('sources-remote-mcp E2E (gstack /setup-gbrain Path 4)', () => {
    * HTTP every client carries a write source (registration default
    * 'default'), and a client's own row FK-RESTRICTs the removal of that very
    * source, so hard-removing a source is an operator action on the host CLI
-   * (`gbrain sources remove`) — mirrored here.
+   * (`foresights sources remove`) — mirrored here.
    */
   async function widenGrantTo(...sourceIds: string[]): Promise<void> {
     const { execFileSync } = await import('child_process');
@@ -403,7 +403,7 @@ describeE2E('sources-remote-mcp E2E (gstack /setup-gbrain Path 4)', () => {
     });
   }
 
-  /** The trusted local path: `gbrain sources remove <id> --confirm-destructive` on the host. */
+  /** The trusted local path: `foresights sources remove <id> --confirm-destructive` on the host. */
   async function operatorRemovesSource(id: string): Promise<string> {
     const { execFileSync } = await import('child_process');
     return execFileSync('bun', ['run', 'src/cli.ts', 'sources', 'remove', id, '--confirm-destructive'], {

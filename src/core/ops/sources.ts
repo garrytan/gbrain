@@ -87,7 +87,7 @@ const whoami: Operation = {
         'whoami called over a remote transport that did not thread ctx.auth. ' +
           'This is a transport bug — every remote call site must populate ctx.auth ' +
           'or set ctx.remote === false.',
-        'This is a gbrain server bug, not a caller mistake: tell the user, and have `gbrain doctor --json` run on the brain host.',
+        'This is a foresights server bug, not a caller mistake: tell the user, and have `foresights doctor --json` run on the brain host.',
       );
     }
     // Legacy access_tokens reuse `name` as both clientId and clientName, so the
@@ -160,7 +160,7 @@ const sources_add: Operation = {
     // HTTP MCP must not be able to plant content at arbitrary host paths.
     //
     // - `path` lets a remote caller register `/etc/` (or any host dir) as a
-    //   "source"; later `gbrain sync --all` walks every sources.local_path,
+    //   "source"; later `foresights sync --all` walks every sources.local_path,
     //   which exfiltrates host content into the brain.
     // - `clone_dir` lets a remote caller name the destination directly;
     //   addSource's renameSync places the cloned tree there with no
@@ -168,7 +168,7 @@ const sources_add: Operation = {
     //   does rm -rf on src.local_path, so the same primitive doubles as
     //   arbitrary-delete.
     //
-    // Both fields are CLI-only (the operator runs `gbrain sources add --path
+    // Both fields are CLI-only (the operator runs `foresights sources add --path
     // /home/me/notes`). For HTTP MCP, ignore overrides — clone_dir defaults
     // to $GBRAIN_HOME/clones/<id>/ and path is rejected. Local CLI callers
     // (ctx.remote === false, per F7b fail-closed contract) keep the override.
@@ -179,7 +179,7 @@ const sources_add: Operation = {
       throw opError(
         'invalid_params',
         'sources_add: path is not honored over MCP (security confinement). ' +
-          'Register with `url` instead, or run `gbrain sources add <id> --path <dir>` on the host CLI.',
+          'Register with `url` instead, or run `foresights sources add <id> --path <dir>` on the host CLI.',
         `Pass ${paramUse(ctx, 'url', 'https://github.com/owner/repo')} to register a remote Git source, or have the host run the command in fix to register this local directory.`,
         { fix: hostFix(ctx, ['gbrain', 'sources', 'add', ...sourceIdArg(p.id), '--path', String(p.path)],
           'Local directories can only be registered by the trusted CLI on the brain host (MCP callers cannot plant host paths).') },
@@ -198,7 +198,7 @@ const sources_add: Operation = {
     }).catch((err: unknown) => {
       // git's own error names the far end and how it answered; a remote caller gets a fixed message, the host log keeps it.
       if (isLocal || !(err instanceof SourceOpError) || err.code !== 'clone_failed') throw err;
-      console.error(`[gbrain] sources_add ${String(p.id)}: ${err.message}`);
+      console.error(`[foresights] sources_add ${String(p.id)}: ${err.message}`);
       throw new SourceOpError('clone_failed', 'git clone failed for this URL. The brain host\'s log has the reason.', err);
     });
     const { redactSourceConfig } = await import('../source-config-redact.ts');
@@ -219,7 +219,7 @@ const sources_list: Operation = {
     'managed by clone+pull rather than user-supplied path. Results are ' +
     "confined to the caller's resolved source scope (federated read grant > " +
     'bound source) and carry no marker when rows were withheld, so a ' +
-    'listing may be incomplete. Only the trusted local CLI (`gbrain sources ' +
+    'listing may be incomplete. Only the trusted local CLI (`foresights sources ' +
     'list`) sees the full registry.',
   params: {
     include_archived: { type: 'boolean', description: 'Include soft-deleted sources.' },
@@ -258,12 +258,12 @@ const sources_remove: Operation = {
     'Hard-remove a source (cascades pages/chunks/embeddings). Refuses to ' +
     'delete the auto-managed clone dir unless its resolved path is confined ' +
     'under $GBRAIN_HOME/clones/ (realpath+lstat — symlink-safe). For most ' +
-    'workflows prefer the soft-delete path (`gbrain sources archive`). ' +
+    'workflows prefer the soft-delete path (`foresights sources archive`). ' +
     "Confined to the caller's WRITE authority, not its read scope: an untrusted " +
     'caller may remove only its own write source (a federated read grant naming ' +
     'a source does not make it removable); any other id answers not_found, ' +
     'indistinguishable from a nonexistent source. Only the trusted local CLI ' +
-    '(`gbrain sources remove`) can remove any source.',
+    '(`foresights sources remove`) can remove any source.',
   params: {
     id: { type: 'string', required: true, description: "Source id to remove, as listed by sources_list (e.g. 'wiki'). A source id, not a page slug." },
     confirm_destructive: {
@@ -367,7 +367,7 @@ const sources_resolve_path: Operation = {
   idempotent: true,
   outputRedaction: 'no_stored_text',
   description:
-    'Read-only: what gbrain did with each file path of a source, by its own rules. Per path: the slug sync gives it, whether ' +
+    'Read-only: what foresights did with each file path of a source, by its own rules. Per path: the slug sync gives it, whether ' +
     'sync skips it (metafile, excluded, pruned) and why, its sync hold, its page with chunk and embedding counts, whether ' +
     'search finds it now, and the command that moves it on. A deleted path is checked by the page that records it as its ' +
     'origin, never by slug. Use it in landing checks instead of re-implementing slugging. Confined to the caller\'s source scope.',

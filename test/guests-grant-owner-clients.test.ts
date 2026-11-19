@@ -1,5 +1,5 @@
 /**
- * gbrain guests grant-owner-clients (GBRA-504 slice 4, F10).
+ * foresights guests grant-owner-clients (GBRA-504 slice 4, F10).
  *
  * Protects: the preview lists every credential bound to the brain owner that cannot read the guest source, with its
  * read list before and after, and writes nothing; --yes adds the guest source to each one's read list with a
@@ -60,7 +60,7 @@ async function brain() {
   return { narrow, reading, member, token: token.id, before };
 }
 
-describe('gbrain guests grant-owner-clients', () => {
+describe('foresights guests grant-owner-clients', () => {
   beforeEach(async () => {
     await resetPgliteState(engine);
     spies = [spyOn(console, 'log').mockImplementation((...a: unknown[]) => { out.push(a.join(' ')); })];

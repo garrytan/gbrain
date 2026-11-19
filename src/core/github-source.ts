@@ -19,9 +19,9 @@ import { slugifyPath } from './sync.ts';
  * the brain's existing machinery does the rest.
  *
  * Freshness model (three layers, cheapest to fastest):
- *  1. `gbrain sync --source <id>` — delta sweep via the `since` filter.
+ *  1. `foresights sync --source <id>` — delta sweep via the `since` filter.
  *     Picks up everything changed since the last sweep. Zero standing infra.
- *  2. `gbrain sync --source <id> --full` — full reconcile: re-enumerates
+ *  2. `foresights sync --source <id> --full` — full reconcile: re-enumerates
  *     every item, refreshes stale pages, deletes pages for vanished items.
  *     Run nightly via cron or autopilot.
  *  3. Webhook (`POST /webhooks/github`) — instant targeted refresh of the
@@ -973,8 +973,8 @@ async function materializePage(deps: GitHubSyncDeps, filePath: string, content: 
   if (databaseOnly) return { ...await importPage(deps, filePath, activePack, rel, content), created: !existing };
   const guard = await replaceableFile(deps.engine, deps.sourceId, slug, filePath);
   const drift = () => new OperationError('file_database_drift',
-    `${slug}: the checkout file has an edit not retained in the database, or changed during import. The file was not replaced. If the file is newer, run gbrain sync --source ${deps.sourceId}; if the database is newer, re-save its page with write-through on; if both changed, ask the user which version to keep before retrying.`,
-    'Import the newer file with gbrain sync, or ask the user which version to keep; the item is held until then.');
+    `${slug}: the checkout file has an edit not retained in the database, or changed during import. The file was not replaced. If the file is newer, run foresights sync --source ${deps.sourceId}; if the database is newer, re-save its page with write-through on; if both changed, ask the user which version to keep before retrying.`,
+    'Import the newer file with foresights sync, or ask the user which version to keep; the item is held until then.');
   if (!guard.ok) throw drift();
   const created = guard.expectedFileBytes === null;
   mkdirSync(dirname(filePath), { recursive: true });
@@ -1446,7 +1446,7 @@ async function runExtractAndEmbed(
       const linksResult = await extractLinksForSlugs(deps.engine, deps.cfg.dir, pagesAffected, extractOpts);
       const timelineResult = await extractTimelineForSlugs(deps.engine, deps.cfg.dir, pagesAffected, extractOpts);
       // Stamp only the slugs both hooks actually read from disk; a page the
-      // extractor skipped stays stale for 'gbrain extract --stale'.
+      // extractor skipped stays stale for 'foresights extract --stale'.
       await stampExtracted(
         deps.engine,
         slugsSafeToStamp(linksResult, timelineResult)
@@ -1454,7 +1454,7 @@ async function runExtractAndEmbed(
       );
     } catch { /* extraction is best-effort */ }
   } else if (totalChanges > 100 && !deps.opts.noExtract) {
-    process.stderr.write(`[github] large sync (${totalChanges} pages); extraction deferred to 'gbrain extract --stale --source-id ${deps.sourceId}'\n`);
+    process.stderr.write(`[github] large sync (${totalChanges} pages); extraction deferred to 'foresights extract --stale --source-id ${deps.sourceId}'\n`);
   }
 
   if (!deps.opts.noEmbed && totalChanges <= 100 && pagesAffected.length > 0) {
@@ -1468,7 +1468,7 @@ async function runExtractAndEmbed(
     // mirrored pages don't sit unembedded until someone notices recall is
     // keyword-only. Mirrors performSync's auto-defer chaser.
     // #3697: embed's source filter is `--source` (embed.ts parses no --source-id).
-    const drainHint = `run 'gbrain embed --stale --source ${deps.sourceId}' to drain now`;
+    const drainHint = `run 'foresights embed --stale --source ${deps.sourceId}' to drain now`;
     try {
       const { submitEmbedBackfill } = await import('./embed-backfill-submit.ts');
       const sub = await submitEmbedBackfill(deps.engine, deps.sourceId, { reason: 'github_sync_defer' });

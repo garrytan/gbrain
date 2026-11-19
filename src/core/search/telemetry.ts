@@ -21,7 +21,7 @@
  *
  * Schema math per [CDX-17]: rows are sums + counts only, NEVER averages.
  * Read-time derives averages. ON CONFLICT DO UPDATE adds raw values so two
- * gbrain processes flushing the same (date, mode, intent) tuple accumulate
+ * foresights processes flushing the same (date, mode, intent) tuple accumulate
  * correctly.
  *
  * The bucket map is keyed by `${date}::${mode}::${intent}`. Date is the
@@ -30,7 +30,7 @@
  *
  * Per-process bucketing means stdio MCP, HTTP MCP, and CLI processes each
  * maintain their own buffers. Stats are directional, not exact — acceptable
- * because the consumer is the operator (or an agent running `gbrain search
+ * because the consumer is the operator (or an agent running `foresights search
  * tune`), not a financial ledger. Loss still happens on hard kills, on drains
  * that exceed their bound, and at engine disconnect (buffered-but-not-flushed
  * rows are dropped there by design). Weigh that when reading counts from a
@@ -370,11 +370,11 @@ class TelemetryWriter {
     // The earlier implementation installed `process.on('beforeExit', drainOnExit)`
     // with an inner `Promise.race([flush(), setTimeout(2000)])`. That enqueued
     // new async work AFTER the event loop had emptied, which kept the process
-    // alive past beforeExit — short-lived CLI invocations (`gbrain query "the"`
+    // alive past beforeExit — short-lived CLI invocations (`foresights query "the"`
     // exiting after 100ms of work) ended up waiting on the DB write to settle.
     // On a slow or busy PGLite, the write never settled and the CLI hung
     // forever. That deadlock surfaced as the `test/claw-test.slow.test.ts`
-    // hang (the harness spawns short-lived gbrain queries that should exit
+    // hang (the harness spawns short-lived foresights queries that should exit
     // in <1s but never did).
     //
     // Resolution per [CDX-19]: the periodic flush timer (unref'd) handles
@@ -724,24 +724,24 @@ export async function readSearchStats(
 }
 
 /**
- * Coverage disclosure for `readSearchStats()` consumers (`gbrain search
- * stats` / `gbrain search tune`). This documents the buffering behavior
+ * Coverage disclosure for `readSearchStats()` consumers (`foresights search
+ * stats` / `foresights search tune`). This documents the buffering behavior
  * from the module header above — it changes NO behavior, it only gives
  * display layers a single source of truth for the caveat text instead of
  * each caller re-describing (and risking drift on) the flush mechanics.
  *
- * Short-lived CLI invocations (a single `gbrain query "..."` call) don't
+ * Short-lived CLI invocations (a single `foresights query "..."` call) don't
  * reach the 60s timer or the 100-call threshold, but since #4143 the CLI's
  * bounded teardown drain flushes their buffer in 'exit' mode before the
  * engine disconnects, so a clean exit IS recorded. What still drops: hard
  * kills (SIGKILL, crash), a drain that exceeds its bound, and anything
  * buffered when an engine disconnects outside the CLI teardown path.
- * Long-lived processes (`gbrain serve`, stdio/HTTP MCP, `gbrain jobs work`)
+ * Long-lived processes (`foresights serve`, stdio/HTTP MCP, `foresights jobs work`)
  * are additionally covered by the periodic flush.
  */
 export const TELEMETRY_COVERAGE_NOTE =
-  'Counts are most complete for long-lived processes (gbrain serve, MCP stdio/HTTP, ' +
-  'gbrain jobs work). Short-lived CLI invocations flush their buffer during the ' +
+  'Counts are most complete for long-lived processes (foresights serve, MCP stdio/HTTP, ' +
+  'foresights jobs work). Short-lived CLI invocations flush their buffer during the ' +
   'bounded CLI teardown drain (#4143), so a clean exit is recorded; a hard kill, a ' +
   'drain that exceeds its bound, or an engine disconnect mid-buffer still drops the ' +
   'remainder — see search/telemetry.ts for the buffering design.';
@@ -749,12 +749,12 @@ export const TELEMETRY_COVERAGE_NOTE =
 /**
  * Short, single-line form of {@link TELEMETRY_COVERAGE_NOTE} for human CLI
  * output (the long form is better suited to `--json`'s `reason` field).
- * Every human-facing caveat in `gbrain search stats`/`gbrain search tune`
+ * Every human-facing caveat in `foresights search stats`/`foresights search tune`
  * reuses this literal string instead of paraphrasing it, so the wording
  * cannot drift between call sites.
  */
 export const TELEMETRY_COVERAGE_CAVEAT =
-  'Coverage favors long-lived processes (gbrain serve, MCP, jobs work); CLI search ' +
+  'Coverage favors long-lived processes (foresights serve, MCP, jobs work); CLI search ' +
   'calls are flushed on clean exit, but hard kills and over-bound drains still drop.';
 
 export interface TelemetryCoverage {

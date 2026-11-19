@@ -38,10 +38,10 @@ import { usageCostUsd } from './budget/reservation-cost.ts';
 import type { EmbeddingMigrationPlan } from './embedding-migration.ts';
 import type { MigrationWorstCase } from './embedding-migration-budget.ts';
 
-export const MIGRATION_PROBE_TEXT = 'gbrain embedding migration probe';
+export const MIGRATION_PROBE_TEXT = 'foresights embedding migration probe';
 export const RERANKER_PROBE = {
-  query: 'gbrain reranker migration probe',
-  documents: ['gbrain reranker migration probe document a', 'gbrain reranker migration probe document b'],
+  query: 'foresights reranker migration probe',
+  documents: ['foresights reranker migration probe document a', 'foresights reranker migration probe document b'],
 } as const;
 /** The drain's projection-readiness probe and its signature-drift probe. */
 const DRAIN_PROBES = 2;

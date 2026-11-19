@@ -17,7 +17,7 @@ import { withEnv } from './with-env.ts';
 export const PROBE_VERSION = LATEST_VERSION + 1;
 
 export type Runner = (engine: BrainEngine) => Promise<unknown>;
-/** What `gbrain apply-migrations` runs under its orchestration lease. */
+/** What `foresights apply-migrations` runs under its orchestration lease. */
 export const explicitRun: Runner = engine => runMigrations(engine);
 /** What every process start runs on connect. */
 export const processStart: Runner = engine => engine.initSchema();

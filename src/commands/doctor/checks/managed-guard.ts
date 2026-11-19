@@ -5,7 +5,7 @@ import { GUARDED_TABLES, PAGE_CHILD_TABLES } from '../../../core/persistence/wri
 const RUNBOOK = 'docs/guides/write-refusals.md#managed-guard-page-children';
 
 /**
- * Every column gbrain's own schema creates on a managed-writer-guarded table.
+ * Every column foresights's own schema creates on a managed-writer-guarded table.
  * test/doctor-managed-guard.test.ts pins this list to the union of the
  * committed catalog goldens: a migration that adds a column to one of these
  * tables regenerates the goldens and then updates this list.
@@ -41,14 +41,14 @@ export const GUARDED_TABLE_COLUMNS: Readonly<Record<string, readonly string[]>> 
 };
 
 /**
- * #5983/#5974: a column gbrain never creates on a guarded table means another
+ * #5983/#5974: a column foresights never creates on a guarded table means another
  * tool or a manual migration changed the schema the managed-writer guard reads.
  * #7145: each extra column is named as table.column and classified by what it
- * does to gbrain: `blocks_inserts` (NOT NULL with no default, so every gbrain
+ * does to gbrain: `blocks_inserts` (NOT NULL with no default, so every foresights
  * INSERT into that table fails: fail), `guard_source_column` (a `source_id` on
  * tags, timeline_entries or takes: builds before v0.60.38.0 resolved the row's
  * source from it, so a process still running one refuses every coordinated
- * write there: warn) or `harmless` (nullable or defaulted, and gbrain neither
+ * write there: warn) or `harmless` (nullable or defaulted, and foresights neither
  * reads nor writes it: ok, information). The worst class decides the status.
  */
 export async function checkManagedGuardSchemaDrift(engine: BrainEngine): Promise<Check> {
@@ -61,29 +61,29 @@ export async function checkManagedGuardSchemaDrift(engine: BrainEngine): Promise
       const column = `${row.table_name}.${row.column_name}`;
       if (row.is_nullable === 'NO' && row.column_default === null && row.is_identity !== 'YES' && (row.is_generated ?? 'NEVER') === 'NEVER') {
         return { column, class: 'blocks_inserts' as const,
-          why: 'NOT NULL with no default: every row gbrain inserts into this table leaves it empty, so the insert fails.',
+          why: 'NOT NULL with no default: every row foresights inserts into this table leaves it empty, so the insert fails.',
           next: `ask the user, then give it a default (ALTER TABLE ${row.table_name} ALTER COLUMN ${row.column_name} SET DEFAULT <value>) or allow NULL (ALTER TABLE ${row.table_name} ALTER COLUMN ${row.column_name} DROP NOT NULL).` };
       }
       if (row.column_name === 'source_id' && PAGE_CHILD_TABLES.includes(row.table_name)) {
         return { column, class: 'guard_source_column' as const,
-          why: 'Builds before v0.60.38.0 resolve the row\'s source from it, so a gbrain process still running one refuses every coordinated tag, timeline or take write with writer_coordinator_required; this build resolves the row through its page.',
-          next: 'upgrade or restart every process running gbrain on this brain (gbrain sources writer status --json names their versions).' };
+          why: 'Builds before v0.60.38.0 resolve the row\'s source from it, so a foresights process still running one refuses every coordinated tag, timeline or take write with writer_coordinator_required; this build resolves the row through its page.',
+          next: 'upgrade or restart every process running foresights on this brain (foresights sources writer status --json names their versions).' };
       }
-      return { column, class: 'harmless' as const, why: 'Nullable or defaulted, and gbrain neither reads nor writes it.', next: 'nothing for gbrain.' };
+      return { column, class: 'harmless' as const, why: 'Nullable or defaulted, and foresights neither reads nor writes it.', next: 'nothing for foresights.' };
     });
     const extra = columns.map(c => c.column);
     const pageChildSource = columns.filter(c => c.class === 'guard_source_column').map(c => c.column);
     const blocking = columns.filter(c => c.class === 'blocks_inserts');
     const details = { extra_columns: extra, columns, page_child_source_columns: pageChildSource, runbook: RUNBOOK };
-    if (!extra.length) return { name, status: 'ok', message: 'Guarded tables carry only the columns gbrain creates.', details };
+    if (!extra.length) return { name, status: 'ok', message: 'Guarded tables carry only the columns foresights creates.', details };
     const lead = `${extra.length} column(s) on managed-writer-guarded tables were not created by gbrain: ${columns.map(c => `${c.column} (${c.class})`).join(', ')}.`;
     if (!blocking.length && !pageChildSource.length) {
       return { name, status: 'ok', severity: 'info', details,
-        message: `${lead} Each is nullable or defaulted and gbrain neither reads nor writes it, so no gbrain write is affected. Another tool or a manual migration added it; keep it unless the user decides otherwise.` };
+        message: `${lead} Each is nullable or defaulted and foresights neither reads nor writes it, so no foresights write is affected. Another tool or a manual migration added it; keep it unless the user decides otherwise.` };
     }
     return { name, status: blocking.length ? 'fail' : 'warn', details, fix_unavailable_reason: 'operator_judgement',
       message: `${lead} `
-        + (blocking.length ? `${blocking.map(c => c.column).join(', ')}: NOT NULL with no default, so every gbrain insert into ${blocking.length === 1 ? 'that table' : 'those tables'} fails; ${blocking[0]!.next} ` : '')
+        + (blocking.length ? `${blocking.map(c => c.column).join(', ')}: NOT NULL with no default, so every foresights insert into ${blocking.length === 1 ? 'that table' : 'those tables'} fails; ${blocking[0]!.next} ` : '')
         + (pageChildSource.length ? `${pageChildSource.join(', ')} made every coordinated tag, timeline or take write fail with writer_coordinator_required before v0.60.38.0; `
           + 'this release ignores it and resolves those rows through their page, but a process still on an older build does not: upgrade or restart it. ' : '')
         + 'Another tool or a manual migration changed this schema. Find out what added the columns before anything else writes there; '
@@ -108,8 +108,8 @@ export async function checkPublicationRefusals(engine: BrainEngine): Promise<Che
     if (!total) return { name, status: 'ok', message: 'No write was refused by a database guard in the last 7 days.', details };
     return { name, status: 'warn', details, message: `${total} write(s) in the last 7 days were refused by the database and not committed `
       + `(${row.guard} by the managed-writer guard, ${row.trigger} by another trigger, ${row.opaque} recorded before refusals were classified). `
-      + 'This is a gbrain defect, a schema change by another tool, or a version mismatch between gbrain processes, not a content conflict. '
-      + 'Run gbrain sources writer status --probe --json and read recent_failures[].error_detail (table, operation, guard branch, executing build), '
+      + 'This is a foresights defect, a schema change by another tool, or a version mismatch between foresights processes, not a content conflict. '
+      + 'Run foresights sources writer status --probe --json and read recent_failures[].error_detail (table, operation, guard branch, executing build), '
       + `check managed_guard_schema_drift above, then follow ${RUNBOOK}. Retry each refused write with a new request ID after the cause is fixed.` };
   } catch (error) {
     return { name, status: 'warn', message: `Publication refusals could not be read: ${error instanceof Error ? error.message : String(error)}. Health is unknown.`,

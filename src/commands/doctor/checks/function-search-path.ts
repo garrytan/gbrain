@@ -1,5 +1,5 @@
 /**
- * function_search_path doctor check (#7632): every gbrain function (PINNED_FUNCTION_NAMES) ends its pinned search_path
+ * function_search_path doctor check (#7632): every foresights function (PINNED_FUNCTION_NAMES) ends its pinned search_path
  * with pg_temp.
  *
  * Without it, a session's temp table or view named like a ledger (fact_purges, page_purges, take_purges,
@@ -16,10 +16,11 @@ import { connectedEngine, type DoctorContext, type DoctorEntry } from '../contex
 import { agentFix, checkError } from '../check-fix.ts';
 import { PINNED_FUNCTION_NAMES, PINNED_PATH_SQL } from '../../../core/function-search-path.ts';
 import { v277 } from '../../../core/schema-migrations/v277-function-search-path-pg-temp.ts';
+import { commandText } from '../../../core/brand.ts';
 
 const DOCS = 'docs/guides/troubleshooting.md#function-search-path';
 
-/** The gbrain functions whose pinned search_path does not end in pg_temp, and the schema-qualified ALTER that fixes each. */
+/** The foresights functions whose pinned search_path does not end in pg_temp, and the schema-qualified ALTER that fixes each. */
 export async function functionSearchPathProblems(engine: BrainEngine): Promise<{ functions: string[]; fix: string[] }> {
   const rows = await engine.executeRaw<{ sig: string; qualified: string; path: string }>(
     `SELECT p.oid::regprocedure::text AS sig,
@@ -56,7 +57,7 @@ async function runFunctionSearchPath(ctx: DoctorContext): Promise<Check[]> {
     } else {
       checks.push({
         name: 'function_search_path', status: 'fail',
-        message: `${risk} Fix: run this SQL on the database host, connected to this brain's database as the role that owns each function (migration v${v277.version} and every migration run already did the ones the migrating role owns): ${fix.join(' ')} See ${DOCS}.`,
+        message: `${risk} Fix: run this SQL on the database host, connected to this brain's database as the role that owns each function (migration v${v277.version} and every migration run already did the ones the migrating role owns): ${commandText(fix)} See ${DOCS}.`,
         fix_unavailable_reason: 'no_safe_automatic_fix',
         details: { functions, sql: fix, docs: DOCS },
       });

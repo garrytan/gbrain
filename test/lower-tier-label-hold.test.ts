@@ -306,7 +306,7 @@ for (const backend of testBackends()) describe('[' + backend + '] a lower-tier l
     const edited = await put(b, neutral, file(neutral, ['visibility: private', READERS], 'canaryneutral', 'Edited.'));
     expect(edited.privacy_labels_kept).toBeUndefined();
     expect((await proposalsOf(b, neutral))[0]!.after_state.labels).toBeUndefined();
-    // The brain host's readers setter (gbrain repair visibility --readers) widens a page's readers without a hold.
+    // The brain host's readers setter (foresights repair visibility --readers) widens a page's readers without a hold.
     const host = 'notes/host-example';
     await seedOwnerPage(b.engine, SRC, host, file(host, [READERS], 'canaryhost'));
     const out = async (argv: string[]) => { const log = console.log; let printed = ''; console.log = (...p: unknown[]) => { printed += p.join(' ') + NL; };

@@ -7,7 +7,7 @@
  *
  * Three states, kept apart on purpose:
  *   - `detected`: the project config defines the server; nothing proves it works → `partial`;
- *   - `adopted`:  `gbrain bootstrap wire --adopt --harness codex` recorded it after a
+ *   - `adopted`:  `foresights bootstrap wire --adopt --harness codex` recorded it after a
  *                 passing `bootstrap verify`, with a redacted fingerprint → `done`;
  *   - `drifted`:  the recorded fingerprint no longer matches the effective config
  *                 (URL, header names, or the table is gone) → `partial`, re-adopt.
@@ -65,7 +65,7 @@ const canonical = (v: unknown): unknown => Array.isArray(v) ? v.map(canonical)
   : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v as object).sort().map(k => [k, canonical((v as Record<string, unknown>)[k])])) : v;
 /**
  * THE harness-entry fingerprint: sha256 hex over the canonical JSON (keys
- * sorted recursively) of exactly the value given. `gbrain setup` stores one
+ * sorted recursively) of exactly the value given. `foresights setup` stores one
  * per owned entry (an MCP table or JSON entry, a hook entry or group, a Codex
  * trust table) in its connection receipt and compare-and-swaps on it; this
  * sidecar hashes a redacted projection of an adopted server through it.

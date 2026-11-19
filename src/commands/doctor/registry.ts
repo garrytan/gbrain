@@ -1,7 +1,7 @@
 /**
  * The doctor check registry (refactor wave 1, W4 doctor): every entry
- * `gbrain doctor` runs, in run order. The order is the output order of
- * `gbrain doctor --json` and is pinned by the W0 registry golden
+ * `foresights doctor` runs, in run order. The order is the output order of
+ * `foresights doctor --json` and is pinned by the W0 registry golden
  * (test/doctor-registry-golden.test.ts); categories come only from
  * src/core/doctor-categories.ts (test/doctor-registry.test.ts fails on an
  * uncategorized entry name or emitted check).

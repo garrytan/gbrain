@@ -1,5 +1,5 @@
 /**
- * #6649: `gbrain backup create` on PGLite refuses a brain its archive format
+ * #6649: `foresights backup create` on PGLite refuses a brain its archive format
  * cannot hold before it takes the writer lock or opens the database:
  *
  * - a flat config home or a data dir reached through a symlink is
@@ -63,7 +63,7 @@ describe('layout preflight', () => {
     expect(error.code).toBe('unmanaged_database_path');
     expect(error.message).toContain('symlink');
     expect(error.fix?.ask_user).toBe(true);
-    expect(error.fix?.user_message).toContain('stop every gbrain writer');
+    expect(error.fix?.user_message).toContain('stop every foresights writer');
     expect(error.fix?.docs).toContain('quiesced-physical-copy');
     expect(error.fix?.verify?.argv).toEqual(['gbrain', 'doctor', '--json']);
     expect(existsSync(output)).toBe(false);
@@ -81,7 +81,7 @@ describe('layout preflight', () => {
     expect(error.message).toContain(elsewhere);
   });
 
-  test('both refusals are registered codes with a runbook fix, so `gbrain errors` and the contract cover them', () => {
+  test('both refusals are registered codes with a runbook fix, so `foresights errors` and the contract cover them', () => {
     for (const code of ['unmanaged_database_path', 'backup_too_large']) {
       const entry = codeEntry(code);
       expect(entry?.class).toBe('host_only');

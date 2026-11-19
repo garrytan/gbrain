@@ -35,7 +35,7 @@ export const settle = (brain: TwinBrain, kind: 'pglite' | 'postgres', beforePass
   return false;
 }, { timeoutMs: 120_000, intervalMs: 100, label: 'the mirror and Git effects settled' }).catch(() => undefined);
 
-/** The page's export, streamed as `gbrain export` streams a segmented page (export.ts), concatenated here only to compare. */
+/** The page's export, streamed as `foresights export` streams a segmented page (export.ts), concatenated here only to compare. */
 export const exported = (brain: TwinBrain, slug: string) => brain.engine.transaction(async tx => {
   const [key] = await tx.executeRaw<{ id: string; source_id: string; slug: string }>(
     'SELECT id::text AS id, source_id, slug FROM pages WHERE source_id=$1 AND slug=$2', [brain.sourceId, slug]);

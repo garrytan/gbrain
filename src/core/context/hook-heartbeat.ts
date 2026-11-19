@@ -4,7 +4,7 @@
  * events WITHOUT importing the command module. ENGINE-FREE, pure fs.
  *
  * Contract [S3#7, B3] (unchanged from the hook.ts original): append-JSONL at
- * `<gbrain home>/integrations/hooks/heartbeat.jsonl` — counters, durations,
+ * `<foresights home>/integrations/hooks/heartbeat.jsonl` — counters, durations,
  * and error/status CODES only, NEVER prompt/fact/slug text. Dir 0700, file
  * capped at HEARTBEAT_MAX_LINES (tail-rewrite). `readHeartbeatTail` is the
  * doctor/status read surface. Fields are copied EXPLICITLY — the schema
@@ -94,7 +94,7 @@ export function relayRefusalHeartbeat(hit: { pattern: string; fingerprint: strin
   };
 }
 
-/** Gbrain home resolver: the S3#10 choke point (create-or-resolve, fail-open). */
+/** Foresights home resolver: the S3#10 choke point (create-or-resolve, fail-open). */
 async function resolveHome(): Promise<string> {
   try {
     return ensureGbrainHome();
@@ -274,13 +274,13 @@ export async function sessionReceiptsPath(): Promise<string> {
  *
  * The relay is spawned detached with stdio ignored, which is deliberate — a
  * session-end hook must never block on, or fail because of, an external tool.
- * But the consequence was that gbrain only ever verified the binary EXISTS. A
+ * But the consequence was that foresights only ever verified the binary EXISTS. A
  * `memorable record` that exited non-zero — refused consent, failed
  * extraction, API down, malformed receipt — was indistinguishable from
- * success, so `gbrain doctor` could report a healthy relay indefinitely while
+ * success, so `foresights doctor` could report a healthy relay indefinitely while
  * nothing had been recorded for weeks.
  *
- * The child writes its own outcome here instead. gbrain reads the PREVIOUS
+ * The child writes its own outcome here instead. foresights reads the PREVIOUS
  * run's line at the next session end, so nothing is ever waited on and the
  * fire-and-forget contract is untouched — a failure simply becomes visible one
  * session later rather than never.
@@ -325,7 +325,7 @@ export function clampRelayCause(reason: unknown): string {
  * in this module (`lastReceiptMatches`, `lastRelayResult`,
  * `readSessionReceiptsTail`). Receipts carry tool_calls_json and the files are
  * allowed to reach tens of MB; a full readFileSync on every session end (or
- * every `gbrain doctor` run) is exactly the cost the byte ceilings exist to
+ * every `foresights doctor` run) is exactly the cost the byte ceilings exist to
  * avoid. A tail read can slice its first line in half; that fragment is
  * dropped here rather than trusted. Never throws — missing/unreadable = [].
  */
@@ -556,7 +556,7 @@ export async function readSessionReceiptsTail(n: number): Promise<SessionReceipt
 // Scope-binding: the stamp records WHICH disclosure text was accepted (hash)
 // and WHICH capture lanes existed at acceptance. A release that widens the
 // egress surface (a new harness lane) changes MEMORABLE_CAPTURE_HARNESSES,
-// the stamp stops validating, the relay turns off, and `gbrain doctor` names
+// the stamp stops validating, the relay turns off, and `foresights doctor` names
 // the re-disclosure command — consent never silently stretches over egress
 // the user was never shown.
 
@@ -566,30 +566,30 @@ export async function readSessionReceiptsTail(n: number): Promise<SessionReceipt
 export const MEMORABLE_CAPTURE_HARNESSES: readonly string[] = ['claude-code', 'openclaw', 'codex'];
 
 /** Canonical enable-time disclosure — the one text the user consents to.
- * Rendered by `gbrain config set integrations.memorable.enabled true` and
+ * Rendered by `foresights config set integrations.memorable.enabled true` and
  * hashed into the consent stamp; editing it invalidates existing stamps. */
 export const MEMORABLE_DISCLOSURE_TEXT = `═══════════════════════════════════════════════════════════════
-[gbrain] Enable the Memorable session-end relay?
-[gbrain]
-[gbrain] What this does, mechanically:
-[gbrain]  - At the end of a captured session (${MEMORABLE_CAPTURE_HARNESSES.join(', ')}),
-[gbrain]    gbrain writes a local receipt and spawns the locally-installed
-[gbrain]    third-party \`memorable\` CLI (closed source, published on npm by
-[gbrain]    Memorable — not by gbrain, not auditable by gbrain).
-[gbrain]  - That CLI sends the session's REDACTED tool calls (commands, file
-[gbrain]    paths, URLs, queries + success/failure booleans) and a <=200-char
-[gbrain]    task line to Memorable's extraction API. Redaction runs first
-[gbrain]    (vendor-key + high-entropy secret scan), but redaction is
-[gbrain]    best-effort, not a guarantee.
-[gbrain]  - In gbrain-backend mode the CLI has FULL access to your brain
-[gbrain]    database (it stores procedures via direct DB access). Prefer its
-[gbrain]    standalone mode for sensitive brains.
-[gbrain]  - Memorable's own consent (\`memorable enable\`) is separate and also
-[gbrain]    required; that CLI can flip gbrain's enable flag, but it can never
-[gbrain]    write this consent stamp — only this command can.
-[gbrain]
-[gbrain] Off switches: gbrain config set integrations.memorable.enabled false
-[gbrain]               GBRAIN_MEMORABLE=0 (env kill switch)
+[foresights] Enable the Memorable session-end relay?
+[foresights]
+[foresights] What this does, mechanically:
+[foresights]  - At the end of a captured session (${MEMORABLE_CAPTURE_HARNESSES.join(', ')}),
+[foresights]    foresights writes a local receipt and spawns the locally-installed
+[foresights]    third-party \`memorable\` CLI (closed source, published on npm by
+[foresights]    Memorable — not by foresights, not auditable by foresights).
+[foresights]  - That CLI sends the session's REDACTED tool calls (commands, file
+[foresights]    paths, URLs, queries + success/failure booleans) and a <=200-char
+[foresights]    task line to Memorable's extraction API. Redaction runs first
+[foresights]    (vendor-key + high-entropy secret scan), but redaction is
+[foresights]    best-effort, not a guarantee.
+[foresights]  - In gbrain-backend mode the CLI has FULL access to your brain
+[foresights]    database (it stores procedures via direct DB access). Prefer its
+[foresights]    standalone mode for sensitive brains.
+[foresights]  - Memorable's own consent (\`memorable enable\`) is separate and also
+[foresights]    required; that CLI can flip foresights's enable flag, but it can never
+[foresights]    write this consent stamp — only this command can.
+[foresights]
+[foresights] Off switches: foresights config set integrations.memorable.enabled false
+[foresights]               GBRAIN_MEMORABLE=0 (env kill switch)
 ═══════════════════════════════════════════════════════════════`;
 
 export function memorableDisclosureSha256(): string {
@@ -655,14 +655,14 @@ export interface MemorableGate {
  * ONE gate for the whole Memorable integration, checked before any of it does
  * anything: the receipt is not written, tool calls are not collected, and
  * nothing is spawned unless the operator has explicitly opted in. Off (the
- * default) means gbrain behaves exactly as it does today. Any of 0/false/off/no
+ * default) means foresights behaves exactly as it does today. Any of 0/false/off/no
  * in GBRAIN_MEMORABLE kills the relay; the env can only ever DISABLE — there is
  * no env value that bypasses the config gate or the consent stamp.
  *
  * `disclosure_missing`: the config boolean is on but the gbrain-authored
  * consent stamp is absent or stale — the state `memorable enable`'s
  * out-of-band config write produces. The relay stays off until the user runs
- * `gbrain config set integrations.memorable.enabled true` and accepts the
+ * `foresights config set integrations.memorable.enabled true` and accepts the
  * disclosure (surfaced as a doctor FAIL with exactly that command).
  *
  * Structural param (not GBrainConfig) so this module never imports config.ts —
@@ -687,7 +687,7 @@ export async function memorableGateAllowed(cfg?: { integrations?: { memorable?: 
 // reads: `backend` ('local' | 'gbrain') and, for the local backend, `consent`
 // ('read-write' | 'read-only' | 'deny'; absent = unset = deny). In gbrain-
 // backend mode the CLI stores consent on the brain's source row (unreadable
-// from this engine-free lane) and mirrors enable/disable into gbrain's config
+// from this engine-free lane) and mirrors enable/disable into foresights's config
 // gate — so there the gbrain-authored consent stamp above is the required
 // evidence instead. Unknown shape = no evidence = skip the spawn, fail-closed
 // and doctor-visible (never a guessed yes).
@@ -786,7 +786,7 @@ export async function recordAndRelayReceipt(
     if (opts.trimRelayFile) await maybeTrimRelayResults();
     const recorded = await appendSessionReceipt(entry, { skipCompaction: opts.skipReceiptsCompaction });
     if (!recorded) return { recorded: false, degradeReasons };
-    // gbrain verified the binary existed, never that it WORKED — surface the
+    // foresights verified the binary existed, never that it WORKED — surface the
     // PREVIOUS run's self-reported outcome (see relayResultsPath). Collected
     // here, appended LAST: a stale prior-run failure must never mask a
     // current-session reason under the heartbeat's first-degrade-wins rule.
@@ -826,7 +826,7 @@ export async function recordAndRelayReceipt(
  * after this hook has already written its heartbeat and exited — so an
  * enabled-but-not-installed integration looks exactly like a working one that
  * had nothing to do. Checking first is what makes that state visible in
- * `gbrain doctor` (heartbeat reason `memorable_cli_missing`) instead of
+ * `foresights doctor` (heartbeat reason `memorable_cli_missing`) instead of
  * silently doing nothing. Honors MEMORABLE_BIN for installs outside PATH.
  */
 export function resolveMemorableBin(): string | null {

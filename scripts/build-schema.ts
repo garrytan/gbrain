@@ -576,7 +576,7 @@ export function renderPgliteTemplateSql(schemaSql: string): string {
       'a rule whose statement changed or disappeared would silently stop applying.',
       'update or delete the rule in scripts/build-schema.ts to match the new schema.sql text.');
   }
-  return `\n-- GBrain PGLite schema (local embedded Postgres), generated from ${SCHEMA_SQL_PATH}\n-- and the TS schema fragments by scripts/build-schema.ts.\n${out.join('')}\n`;
+  return `\n-- Foresights PGLite schema (local embedded Postgres), generated from ${SCHEMA_SQL_PATH}\n-- and the TS schema fragments by scripts/build-schema.ts.\n${out.join('')}\n`;
 }
 
 export function renderPgliteModule(schemaSql: string): string {

@@ -14,6 +14,7 @@ import { STALE_TIME_BUDGET_MS, formatStaleCounts, staleExtractionCounts, type St
 import { ItemRun, type ItemFailure } from '../item-failure.ts';
 import type { OperationError } from '../ops/contract.ts';
 import { clearLinkExtractionHolds, linkExtractionRetryFix, recordLinkExtractionFailures, type LinkExtractionFailure } from './links-extraction-holds.ts';
+import { commandText } from '../brand.ts';
 export type { LinkExtractionFailure };
 
 export interface ManagedLinkExtraction { pages: number; created: number; removed: number; timeline: number; skipped: number; remaining: number;
@@ -21,7 +22,7 @@ export interface ManagedLinkExtraction { pages: number; created: number; removed
   attendance_skipped?: number;
   /** The mention pass (absent when the caller ran links only, as sync does). */
   mentions?: MentionPassResult; mention_due?: number; mention_last_pass_at?: string | null;
-  /** #6803 (D3): the terminal counts (`gbrain extract --stale` only; sync's tail does not read them). */
+  /** #6803 (D3): the terminal counts (`foresights extract --stale` only; sync's tail does not read them). */
   counts?: StaleExtractionCounts;
   /** GBRA-130 A-1 (present when a page failed): pages whose derivation failed this run; the first `LINK_FAILURE_REPORT_LIMIT` are listed. */
   failed?: number; failures?: LinkExtractionFailure[];
@@ -34,7 +35,7 @@ export interface LinkExtractionSystemic { source_id: string; code: string; reaso
 export const LINK_FAILURE_REPORT_LIMIT = 50;
 
 /**
- * `gbrain extract --stale` on a managed brain, locally or inside the PGLite owner: a plain run stops at the
+ * `foresights extract --stale` on a managed brain, locally or inside the PGLite owner: a plain run stops at the
  * `STALE_TIME_BUDGET_MS` budget and the next resumes, `catchUp` runs until nothing is stale (#6803 D2).
  */
 export async function runManagedStaleExtraction(engine: BrainEngine,
@@ -80,7 +81,7 @@ const changedSkips = (result: ManagedLinkExtraction) => result.skipped - (result
 
 /** The failure lines of a run: each listed page with its code and state, then each source the breaker stopped, each with its fix. */
 function formatLinkFailures(result: ManagedLinkExtraction): string {
-  const lines = (result.failures ?? []).map(f => `\n  ${f.source_id}:${f.slug}: ${f.code} (${f.held ? 'held; fix the page, then run' : f.class === 'content' ? `failed ${f.attempts} run(s); retried by` : 'transient; retried by'} ${f.fix.argv!.join(' ')}): ${f.message}`);
+  const lines = (result.failures ?? []).map(f => `\n  ${f.source_id}:${f.slug}: ${f.code} (${f.held ? 'held; fix the page, then run' : f.class === 'content' ? `failed ${f.attempts} run(s); retried by` : 'transient; retried by'} ${commandText(f.fix.argv!)}): ${f.message}`);
   const head = result.failed ? `\n${result.failed} page(s) failed link extraction and stay stale${result.failed > lines.length ? ` (first ${lines.length} listed)` : ''}; the other pages were derived:` : '';
   const systemic = (result.systemic ?? []).map(s => `\nSource ${s.source_id} stopped (${s.code}, most often ${s.reason}): ${s.message}`);
   return head + lines.join('') + systemic.join('');

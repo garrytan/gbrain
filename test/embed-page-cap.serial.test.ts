@@ -1,6 +1,6 @@
 /**
  * Large pages (Wave A, T3/T16): the CLI embed paths meter a large page under
- * `embed.max_usd_per_page`. `gbrain embed --all` and `--stale` send the
+ * `embed.max_usd_per_page`. `foresights embed --all` and `--stale` send the
  * provider only the newest chunks that fit the page's remaining budget and
  * leave the page unstamped (partially embedded, keyword-searchable); a held
  * page sends nothing until `--slugs <slug> --max-usd N` approves it. The

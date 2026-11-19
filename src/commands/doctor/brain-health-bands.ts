@@ -2,7 +2,7 @@
  * #6696 B2 (Garry decision d2b): what a remote agent without admin scope may
  * see of brain health — bands, never exact counters, slugs, paths, request ids
  * or principal identities. Served by the read-scope operation
- * `get_brain_health` and the thin client's `gbrain doctor --only
+ * `get_brain_health` and the thin client's `foresights doctor --only
  * persistence_capacity` when its token lacks admin.
  *
  * Capacity is brain-wide host state (one band for the brain and every

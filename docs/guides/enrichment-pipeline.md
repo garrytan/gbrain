@@ -8,7 +8,7 @@ Without this: brain pages are thin shells with only what the user manually typed
 
 ## Implementation
 
-gbrain ships both halves of this: `gbrain enrich` is the batch enrichment
+foresights ships both halves of this: `foresights enrich` is the batch enrichment
 primitive (finds thin pages and enriches at scale), and the `enrich` skill
 (`skills/enrich/`) is the agent-driven page-at-a-time workflow. The pipeline
 below is the pattern they implement — use it to customize or extend.
@@ -23,9 +23,9 @@ on enrich(entity, trigger):
 
     # Step 2: Check brain state -- UPDATE or CREATE path?
     for entity in entities:
-        existing = gbrain search "{entity.name}"
+        existing = foresights search "{entity.name}"
         if existing:
-            page = gbrain get <entity_slug>
+            page = foresights get <entity_slug>
             path = "UPDATE"
         else:
             path = "CREATE"
@@ -41,7 +41,7 @@ on enrich(entity, trigger):
 
     # Step 4: Run external lookups (priority order, stop when enough signal)
     data = {}
-    data["brain"] = gbrain search "{entity.name}"          # Always first (free)
+    data["brain"] = foresights search "{entity.name}"          # Always first (free)
     if tier <= 2:
         data["web"] = brave_search("{entity.name}")        # Background, press, talks
     if tier <= 2:
@@ -54,23 +54,23 @@ on enrich(entity, trigger):
         data["contacts"] = google_contacts(entity.email)   # Contact data
 
     # Step 5: Store raw data (auditable, re-processable)
-    gbrain call put_raw_data \
+    foresights call put_raw_data \
         '{"slug": "<entity_slug>", "data": {"sources": {"crustdata": {"fetched_at": "...", "data": {...}}, ...}}}'
     # Overwrite on re-enrichment, don't append
 
     # Step 6: Write to brain page
     if path == "CREATE":
-        gbrain put <entity_slug> --content "<compiled_truth_from_all_sources>"
-        gbrain timeline-add <entity_slug> {date} "Page created via enrichment"
+        foresights put <entity_slug> --content "<compiled_truth_from_all_sources>"
+        foresights timeline-add <entity_slug> {date} "Page created via enrichment"
     elif path == "UPDATE":
         # Append timeline, update compiled truth ONLY if materially new
-        gbrain timeline-add <entity_slug> {date} "Enriched: {new_signal}"
+        foresights timeline-add <entity_slug> {date} "Enriched: {new_signal}"
         # Flag contradictions -- don't silently resolve them
 
     # Step 7: Cross-reference the graph
-    gbrain link <person_slug> <company_slug>       # person -> company
-    gbrain link <company_slug> <person_slug>       # company -> person
-    gbrain link <person_slug> <deal_slug>          # person -> deal
+    foresights link <person_slug> <company_slug>       # person -> company
+    foresights link <company_slug> <person_slug>       # company -> person
+    foresights link <person_slug> <deal_slug>          # person -> deal
     # Every entity page links to every other entity page that references it
 
 # People page sections: use the person-page structure from compiled-truth.md
@@ -99,11 +99,11 @@ on enrich(entity, trigger):
 
 ## How to Verify
 
-1. Enrich a Tier 1 person. Run `gbrain get <slug>` and confirm the page has Executive Summary, State, What They Believe, Contact, and Timeline sections populated from multiple sources.
-2. Run `gbrain call get_raw_data '{"slug": "<slug>"}'`. Confirm raw API responses are stored with `sources.{provider}.fetched_at` timestamps.
-3. Run `gbrain call get_links '{"slug": "<slug>"}'`. Confirm cross-reference links exist to the person's company page, deal pages, and related entities.
+1. Enrich a Tier 1 person. Run `foresights get <slug>` and confirm the page has Executive Summary, State, What They Believe, Contact, and Timeline sections populated from multiple sources.
+2. Run `foresights call get_raw_data '{"slug": "<slug>"}'`. Confirm raw API responses are stored with `sources.{provider}.fetched_at` timestamps.
+3. Run `foresights call get_links '{"slug": "<slug>"}'`. Confirm cross-reference links exist to the person's company page, deal pages, and related entities.
 4. Check a page that was enriched AND has a user-written Assessment. Confirm the Assessment section was preserved, not overwritten by API data.
 5. Try to re-enrich the same person. Confirm the system checks the `fetched_at` timestamp and skips if less than a week old.
 
 ---
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md). See also: [Compiled Truth](compiled-truth.md) for the person-page section taxonomy, [Spend Controls](../operations/spend-controls.md) for gbrain's own embedding/LLM spend gates.*
+*Part of the [Foresights Skillpack](../GBRAIN_SKILLPACK.md). See also: [Compiled Truth](compiled-truth.md) for the person-page section taxonomy, [Spend Controls](../operations/spend-controls.md) for foresights's own embedding/LLM spend gates.*

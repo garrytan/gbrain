@@ -1,4 +1,4 @@
-# Connect GBrain to Claude Desktop
+# Connect Foresights to Claude Desktop
 
 This page covers connecting Claude Desktop to a **remote** brain. For a brain
 on the same machine as Claude Desktop, a local stdio entry in
@@ -16,7 +16,7 @@ scope does not grant that authority.
 Remote HTTP servers must be added through the GUI.
 
 **Say to your agent:** *"connect claude desktop to my brain"* — on the brain
-host, the `remote-mcp` skill publishes with `gbrain mcp expose` when needed,
+host, the `remote-mcp` skill publishes with `foresights mcp expose` when needed,
 then [MCP administration](ADMIN.md) supplies the URL and setup for your chosen
 authentication method. You finish in the Claude Desktop GUI below.
 
@@ -26,7 +26,7 @@ Claude Desktop runs on your own device, so the tailnet-only default is enough
 — nothing is exposed to the public internet:
 
 ```bash
-gbrain mcp expose   # prints https://your-machine.your-tailnet.ts.net/mcp
+foresights mcp expose   # prints https://your-machine.your-tailnet.ts.net/mcp
 ```
 
 If the brain already has an HTTPS endpoint, use it instead. Register a native
@@ -38,12 +38,12 @@ installed client's settings. The expose-managed owner credential is at
 **Say to your agent:** *"put my brain on tailscale"* — *"connect claude desktop
 to my brain"*.
 
-> **Legacy bearer settings on PGLite:** `gbrain auth create "claude-desktop"
+> **Legacy bearer settings on PGLite:** `foresights auth create "claude-desktop"
 > --scopes read,write` opens the database, which fails with
 > `live_serve` while the expose-managed service holds it. Mint the token
-> **before** the service runs (ahead of `gbrain mcp expose`, or while the service
+> **before** the service runs (ahead of `foresights mcp expose`, or while the service
 > is stopped briefly), or provision through the running server instead —
-> `gbrain mcp grant … --admin-token-file ~/.gbrain/serve/admin-token` or the
+> `foresights mcp grant … --admin-token-file ~/.gbrain/serve/admin-token` or the
 > `/admin` dashboard. Postgres brains mint fine while the server runs.
 
 The device running Claude Desktop must be on the same tailnet (Tailscale
@@ -60,7 +60,7 @@ installed and signed in). Full walkthrough and troubleshooting:
    ```
    https://your-machine.your-tailnet.ts.net/mcp
    ```
-   Use your MagicDNS name as printed by `gbrain mcp expose`, or the existing
+   Use your MagicDNS name as printed by `foresights mcp expose`, or the existing
    HTTPS endpoint (ngrok alternative: `https://YOUR-DOMAIN.ngrok.app/mcp`).
 5. Choose the authentication method that the settings support. For native OAuth,
    use the owner-issued client metadata and the [native connection
@@ -77,7 +77,7 @@ Start a new conversation and try:
 Search my brain for [any topic]
 ```
 
-Observe the actual GBrain tool call and result. A saved configuration alone does
+Observe the actual Foresights tool call and result. A saved configuration alone does
 not establish that this Claude Desktop session loaded or connected the server.
 
 ## Common Mistakes
@@ -91,5 +91,5 @@ or just the base domain).
 
 **Name does not resolve on this device** — the device is not on the tailnet,
 or MagicDNS is off for it. Sign in to Tailscale on the device and enable "Use
-Tailscale DNS settings"; `gbrain mcp expose --status` on the host confirms
+Tailscale DNS settings"; `foresights mcp expose --status` on the host confirms
 the server side. See the [troubleshooting table](../guides/remote-mcp.md#troubleshooting).

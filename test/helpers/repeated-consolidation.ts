@@ -1,5 +1,5 @@
 /**
- * Hermetic repeated-consolidation experiment (gbrain 10x plan, amendment 7).
+ * Hermetic repeated-consolidation experiment (foresights 10x plan, amendment 7).
  *
  * Runs the real dream cycle (`synthesize` → `extract` → `extract_facts`
  * through `runCycle`) three times on a fixed PGLite brain. Each cycle adds

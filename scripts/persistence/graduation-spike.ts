@@ -12,7 +12,7 @@
  *   graduation-spike.ts verify <dir> <url>                          counts + per-table sha256, source vs target
  *   graduation-spike.ts triggers <dir> <url>                        copy with user triggers enabled, per table
  *
- * route-a needs `@electric-sql/pglite-tools@0.3.3` (not a gbrain dependency: install it locally without
+ * route-a needs `@electric-sql/pglite-tools@0.3.3` (not a foresights dependency: install it locally without
  * saving) and `psql` on PATH. SPIKE_NO_PREPARE=1 disables prepared statements for a transaction-mode pooler.
  *
  * `<dir>` holds `brain/` (PGLite data dir), `home/` (isolated GBRAIN_HOME)

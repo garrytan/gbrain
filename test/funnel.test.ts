@@ -151,7 +151,7 @@ describe('counts per stage', () => {
   });
 });
 
-describe('gbrain status --funnel', () => {
+describe('foresights status --funnel', () => {
   const run = (args: string[]) => {
     let out = '', err = '';
     const { exitCode } = runStatusFunnel(['--funnel', ...args], { stdout: s => { out += s; }, stderr: s => { err += s; } });
@@ -164,7 +164,7 @@ describe('gbrain status --funnel', () => {
     expect(JSON.parse(r.out)).toEqual(readFunnelReport());
     expect(JSON.parse(r.out).enabled).toBe(false);
     expect(existsSync(dir)).toBe(false);
-    expect(run([]).out).toContain('gbrain status --funnel --enable');
+    expect(run([]).out).toContain('foresights status --funnel --enable');
   });
 
   test('--enable, view, --delete', () => {

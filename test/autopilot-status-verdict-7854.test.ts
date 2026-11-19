@@ -1,5 +1,5 @@
 /**
- * #7854: `gbrain autopilot --status` reads the global-maintenance verdict file the daemon writes on a full-cycle
+ * #7854: `foresights autopilot --status` reads the global-maintenance verdict file the daemon writes on a full-cycle
  * tick. A clean pass that stamps `autopilot.last_global_at` must refresh that file, or --status keeps reporting
  * `stalled` (exit 1) until the next full-cycle tick, which on a healthy brain can be hours away.
  */

@@ -592,7 +592,7 @@ is a module plus one registration line, and changes ${code('test/fixtures/golden
 ${code('hybridSearch')} and ${code('hybridSearchCached')} run as named stages under
 ${code('src/core/search/hybrid/')} (request, arms, rank, cache stages, keyword-only, degraded). Apply the
 fix in the stage that owns the code. The deterministic output is pinned exactly:
-${code('bun test --timeout=60000 test/hybrid-golden.test.ts')}. A retrieval change also needs ${code('gbrain eval replay')}.
+${code('bun test --timeout=60000 test/hybrid-golden.test.ts')}. A retrieval change also needs ${code('foresights eval replay')}.
 
 ### Generated-file conflicts: regenerate, never hand-merge
 

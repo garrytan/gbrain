@@ -280,7 +280,7 @@ describe('review fixes (#7970 /ship)', () => {
     await expect(runMeetingsSync(engine, id, cfg, options, { provider: stuck, now: () => NOW })).rejects.toThrow(/listing_unbounded/);
   });
 
-  test('gbrain sync reaches a repo-less meetings source instead of asking for a local_path', async () => {
+  test('foresights sync reaches a repo-less meetings source instead of asking for a local_path', async () => {
     const { id } = await meetingsSource();
     await withEnv({ GBRAIN_HOME: join(home, 'cli-home'), GBRAIN_CONNECTOR_FIREFLIES_TOKEN: undefined }, async () => {
       await expect(performSync(engine, { sourceId: id, noPull: true, noEmbed: true, noExtract: true } as never)).rejects.toMatchObject({ code: 'connector_auth_required' });

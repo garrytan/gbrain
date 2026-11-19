@@ -1,5 +1,5 @@
 /**
- * decide.* config keys: the registry `gbrain config set` validates against,
+ * decide.* config keys: the registry `foresights config set` validates against,
  * and the typed reader every decide surface uses. All keys are DB-plane.
  *
  * Key-aware defaults (owner decision 2026-10-01): with no TypeSafe key every
@@ -50,7 +50,7 @@ const calibrationRef: Validator = (v) => /^(local:\d+|ref:[a-z0-9._:-]+)$/i.test
  * publish (#5980: `typesafe:oc/jev-1.13-free`): one or more of
  * `[a-z0-9._@/-]`, starting alphanumeric, no whitespace and no second colon.
  * An id with no shipped tariff is admitted here and refused at call time
- * (`unpriced_model`) until `gbrain pricing set` registers its price.
+ * (`unpriced_model`) until `foresights pricing set` registers its price.
  */
 export function isValidProvider(v: string): boolean {
   return v === 'none' || /^typesafe:[a-z0-9][a-z0-9._@/-]*$/i.test(v) || /^llm:[a-z0-9-]+:.+$/i.test(v);
@@ -109,7 +109,7 @@ export function validateDecideConfigValue(key: string, value: string): string | 
     const err = SLOT_KEY_VALIDATORS[m[2]!]!(value);
     return err ? `${key} ${err} (got '${value}')` : null;
   }
-  return `${key} is not a decide key. Known slots: ${DECIDE_SLOTS.join(', ')}; see gbrain decide status`;
+  return `${key} is not a decide key. Known slots: ${DECIDE_SLOTS.join(', ')}; see foresights decide status`;
 }
 
 export interface DecideSlotConfig {
@@ -150,7 +150,7 @@ export interface DecideConfig {
   slots: Record<DecideSlot, DecideSlotConfig>;
   /** GBRAIN_DECIDE_SLOTS eval override, honored only when the caller opts in. */
   evalOverride?: string;
-  /** Operator prices (`pricing.overrides`, written by `gbrain pricing set`): the only way an id without a shipped tariff runs. */
+  /** Operator prices (`pricing.overrides`, written by `foresights pricing set`): the only way an id without a shipped tariff runs. */
   pricingOverrides?: PricingOverrides;
 }
 

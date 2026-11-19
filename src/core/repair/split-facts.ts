@@ -1,5 +1,5 @@
 /**
- * `gbrain repair split-facts` (#6686, D8): merge the two `## Facts` fences of a
+ * `foresights repair split-facts` (#6686, D8): merge the two `## Facts` fences of a
  * page whose fence lived below the timeline sentinel and to which a managed
  * writer before this release added a second fence above it. The merged fence
  * stays where the original one is (the timeline section), holding every row of
@@ -72,7 +72,7 @@ interface ApprovedPage { source_id: string; slug: string; id: number; revision: 
 interface SplitItem extends RepairItem { approved: ApprovedPage; hash: string; last: boolean }
 
 function previewCommand(scope: RepairScope): string {
-  return `gbrain repair split-facts${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
+  return `foresights repair split-facts${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
 }
 
 async function sourcesOf(engine: BrainEngine, scope: RepairScope) {
@@ -91,7 +91,7 @@ export const splitFactsRepair: RepairHandler = {
   async plan(engine, scope, after, opts): Promise<RepairPlan> {
     const command = previewCommand(scope);
     if (opts?.apply) {
-      if (!opts.expect) throw new OperationError('invalid_params', 'gbrain repair split-facts --apply merges only the set a preview printed.',
+      if (!opts.expect) throw new OperationError('invalid_params', 'foresights repair split-facts --apply merges only the set a preview printed.',
         `Preview first: ${command} — show the user the listing, then run the apply command it prints: ${command} --apply --expect <preview-hash>`, 'docs/guides/repair.md#split-facts');
       const approved = await loadApprovedSet<ApprovedPage>(engine, { command: 'split-facts', hash: opts.expect, previewCommand: command,
         emptyHash: () => hashOf(engine, scope, []) });
@@ -128,7 +128,7 @@ export const splitFactsRepair: RepairHandler = {
         residuals[verdict.residual] = (residuals[verdict.residual] ?? 0) + 1;
         listing.push({ item: label, class: verdict.residual, detail: verdict.residual === 'row_collision'
           ? `rows ${verdict.rows!.join(', ')} are numbered in both fences; edit the page so each number appears once, then preview again`
-          : verdict.residual === 'unparsed' ? 'a fence does not parse cleanly; gbrain repair fences previews its repair' : 'the merged page would not read back exactly; merge the fences by hand' });
+          : verdict.residual === 'unparsed' ? 'a fence does not parse cleanly; foresights repair fences previews its repair' : 'the merged page would not read back exactly; merge the fences by hand' });
         continue;
       }
       merge.push({ source_id: page.source_id, slug: page.slug, id: page.id, revision: snapshot.revision });

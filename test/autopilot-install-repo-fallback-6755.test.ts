@@ -1,5 +1,5 @@
 /**
- * #6755: `gbrain autopilot --install` with neither --repo nor sync.repo_path
+ * #6755: `foresights autopilot --install` with neither --repo nor sync.repo_path
  * falls back to the default source's local_path (a managed source keeps its
  * repo there), then refuses as before when that is unset too. Runs the
  * installer in-process on the ephemeral-container target against a stub

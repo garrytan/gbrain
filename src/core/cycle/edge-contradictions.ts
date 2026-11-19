@@ -6,7 +6,7 @@
  * never supplies dates.
  *
  * Modes (`dream.edge_contradictions.mode`):
- *   propose  record a proposal; `gbrain edge-proposals accept <id>` applies it
+ *   propose  record a proposal; `foresights edge-proposals accept <id>` applies it
  *   apply    apply automatically (default only for certified models)
  *   off      do nothing
  * Applying writes one timeline line on the subject page through the
@@ -266,7 +266,7 @@ export async function runPhaseEdgeContradictions(engine: BrainEngine, opts: Edge
   if (!opts.judge && !opts.assumeChatAvailable) {
     const { isAvailable } = await import('../ai/gateway.ts');
     if (!isAvailable('chat', model)) {
-      return done(declared.handled.size ? 'complete' : 'skipped', `no chat model available (${model}); configure one (gbrain models) to have relationship contradictions proposed${declaredDetail}`, withDeclared({ subjects: allGroups.length, reverted }));
+      return done(declared.handled.size ? 'complete' : 'skipped', `no chat model available (${model}); configure one (foresights models) to have relationship contradictions proposed${declaredDetail}`, withDeclared({ subjects: allGroups.length, reverted }));
     }
   }
 
@@ -322,7 +322,7 @@ export async function runPhaseEdgeContradictions(engine: BrainEngine, opts: Edge
       if (!verdict) {
         const attempt = (priorAttempts.get(`${a.to_page_id}:${b.to_page_id}`) ?? 0) + 1;
         const detail = attempt >= JUDGE_MAX_ATTEMPTS
-          ? `held after ${attempt} attempts; ${failure}; reset: gbrain edge-proposals retry --all-held`
+          ? `held after ${attempt} attempts; ${failure}; reset: foresights edge-proposals retry --all-held`
           : `attempt ${attempt}/${JUDGE_MAX_ATTEMPTS}; ${failure}`;
         await recordProposal(engine, g, a, b, hash, { status: 'error', model, detail });
         totals.errors++;
@@ -358,7 +358,7 @@ export async function runPhaseEdgeContradictions(engine: BrainEngine, opts: Edge
   }
 
   const detail = `judged ${totals.judged}/${groups.length} subject(s): ${totals.proposed} proposal(s)` +
-    (config.mode === 'apply' ? `, ${totals.applied} applied` : ' (mode propose: review with gbrain edge-proposals list)') +
+    (config.mode === 'apply' ? `, ${totals.applied} applied` : ' (mode propose: review with foresights edge-proposals list)') +
     `, ${totals.compatible} compatible, ${totals.undated_unresolved} undated, ${totals.ambiguous_same_date} same-date` +
     (totals.errors ? `, ${totals.errors} judge error(s)` : '') + (budgetExhausted ? ' (budget exhausted)' : '') +
     `. Cost: $${meter.totalSpent.toFixed(4)} / $${config.budgetUsd.toFixed(2)} with ${model}${declaredDetail}`;
@@ -523,7 +523,7 @@ export async function applyEdgeProposal(engine: BrainEngine, id: number): Promis
   await rederivePage(engine, p.source_id, p.subject_slug);
   const landed = await closureLanded(engine, p);
   await engine.executeRaw(`UPDATE link_edge_proposals SET status = $2, updated_at = now() WHERE id = $1`, [id, landed ? 'applied' : 'proposed']);
-  return landed ? { status: 'applied' } : { status: 'refused', reason: 'the closure line was written but did not re-derive; run gbrain extract --stale and re-check' };
+  return landed ? { status: 'applied' } : { status: 'refused', reason: 'the closure line was written but did not re-derive; run foresights extract --stale and re-check' };
 }
 
 /** Reject a proposal (it will not be applied; a later evidence change re-judges the pair). */

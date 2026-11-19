@@ -1,11 +1,11 @@
-// v0.39 T15 — gbrain schema CLI event audit.
+// v0.39 T15 — foresights schema CLI event audit.
 //
 // JSONL at ~/.gbrain/audit/schema-events-YYYY-Www.jsonl. ISO-week rotation
 // per existing audit-pattern (mirrors audit-slug-fallback.ts, shell-audit.ts,
 // rerank-audit.ts, etc.). Best-effort writes — stderr warn on disk failure,
 // NEVER throws.
 //
-// Feeds T23's `gbrain schema usage --since 30d` for the experimental-tier
+// Feeds T23's `foresights schema usage --since 30d` for the experimental-tier
 // telemetry gate. v0.40+ retro reads this data to decide which cathedral
 // commands are demand-proven vs candidates for deprecation per D14 hybrid.
 //
@@ -50,7 +50,7 @@ export function logSchemaEvent(record: Omit<SchemaEventRecord, 'ts'>): void {
 
 /**
  * Read recent schema events from the last N days. Used by T23
- * `gbrain schema usage --since 30d`. Walks recent ISO-week files
+ * `foresights schema usage --since 30d`. Walks recent ISO-week files
  * (forward + backward 4 weeks to safely cover a 30-day window).
  */
 export function readRecentSchemaEvents(days: number): SchemaEventRecord[] {

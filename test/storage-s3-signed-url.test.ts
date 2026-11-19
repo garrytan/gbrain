@@ -1,7 +1,7 @@
 /**
  * #8793: S3/MinIO file URLs are presigned, as the help promises ("Generate signed URL (1-hour)").
  *
- * 1. Protects: file_url and gbrain files signed-url hand back a SigV4 presigned GET that expires after one hour, so a
+ * 1. Protects: file_url and foresights files signed-url hand back a SigV4 presigned GET that expires after one hour, so a
  *    remote client can open a file in a private bucket, the way the Supabase backend's signed URL works.
  * 2. Fails when: getUrl returns a plain <endpoint>/<bucket>/<key> URL with no signature (403 on a private bucket), the
  *    expiry is unbounded, or the secret key appears in the URL.

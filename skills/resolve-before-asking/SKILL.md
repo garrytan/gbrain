@@ -78,7 +78,7 @@ whenever ANY of these are true —
 ### Step 1: `think` — cross-brain synthesis (solves most cases)
 
 ```bash
-gbrain think "Who is {entity}? What is their relationship to the user? What role do they play? Use all available context — meetings, timeline, imported archives, facts."
+foresights think "Who is {entity}? What is their relationship to the user? What role do they play? Use all available context — meetings, timeline, imported archives, facts."
 ```
 
 `think` synthesizes across ALL brain data. If the entity has a page with
@@ -92,8 +92,8 @@ answer when the card isn't enough.
 ### Step 2: `search` + full page read
 
 ```bash
-gbrain search "{entity}" --limit 5
-gbrain get {entity-slug}
+foresights search "{entity}" --limit 5
+foresights get {entity-slug}
 ```
 
 What to look for:
@@ -112,9 +112,9 @@ Do not ask the user.**
 Don't hardcode channels. Check what the brain holds, then query it:
 
 ```bash
-gbrain sources list
-gbrain query "emails with {entity}" --limit 10
-gbrain query "meetings with {entity}" --limit 5
+foresights sources list
+foresights query "emails with {entity}" --limit 10
+foresights query "meetings with {entity}" --limit 5
 ```
 
 Whatever is mounted — an email archive, calendar imports, chat transcripts,
@@ -128,9 +128,9 @@ the relationship:
 ### Step 4: Timeline + graph walk
 
 ```bash
-gbrain timeline {entity-slug} --limit 20
-gbrain backlinks {entity-slug}
-gbrain graph {entity-slug} --depth 2
+foresights timeline {entity-slug} --limit 20
+foresights backlinks {entity-slug}
+foresights graph {entity-slug} --depth 2
 ```
 
 Dated events, who references this entity, and what it connects to. A person
@@ -258,7 +258,7 @@ After emitting the gate, stop the turn (see ask-user).
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - Every lookup comes back empty with a degraded notice: keyword-only search can miss the entity. Say so in the confirmable question instead of asking "who is X?" cold.
 - `get_page` returns `page_not_found` for a guessed slug: try title and alias search before concluding the entity is unknown.

@@ -1,5 +1,5 @@
 /**
- * v0.32.7 CJK wave — `gbrain reindex --markdown` sweep.
+ * v0.32.7 CJK wave — `foresights reindex --markdown` sweep.
  *
  * Walks markdown pages whose `chunker_version` is below
  * MARKDOWN_CHUNKER_VERSION and re-imports each through the standard
@@ -7,8 +7,8 @@
  * success so re-runs are idempotent and a partial sweep can resume.
  *
  * Driven by:
- *   - `gbrain upgrade` post-upgrade hook (after the cost-estimate prompt).
- *   - Operators running `gbrain reindex --markdown` directly.
+ *   - `foresights upgrade` post-upgrade hook (after the cost-estimate prompt).
+ *   - Operators running `foresights reindex --markdown` directly.
  *
  * Performance: batched 100 at a time so a 50K-page brain reindex doesn't
  * hold a single transaction open. `--limit` caps total work for triage
@@ -51,7 +51,7 @@ interface ReindexOpts {
   repoPath?: string;
   /**
    * Skip the embedding call during re-chunk. New chunks land with NULL
-   * embedding and the next `gbrain embed --stale` pass fills them in.
+   * embedding and the next `foresights embed --stale` pass fills them in.
    * Useful for offline / no-API-key brains and for tests.
    */
   noEmbed?: boolean;
@@ -79,26 +79,26 @@ export interface ReindexResult {
   workers?: number;
 }
 
-// #3686: real usage, reachable via `gbrain reindex --help` (the generic
+// #3686: real usage, reachable via `foresights reindex --help` (the generic
 // one-line CLI_ONLY stub used to shadow every target flag). The --multimodal
 // flags are parsed by the cli.ts dispatcher (reindex-multimodal routing) but
 // documented here so the whole surface lives in one block.
-const REINDEX_HELP = `gbrain reindex — re-chunk / re-embed existing pages after a pipeline upgrade
+const REINDEX_HELP = `foresights reindex — re-chunk / re-embed existing pages after a pipeline upgrade
 
 USAGE
-  gbrain reindex --markdown   [--type PAGE_TYPE] [--limit N] [--workers N] [--dry-run] [--no-embed] [--yes] [--max-usd USD] [--json] [--repo PATH]
-  gbrain reindex --multimodal [--limit N] [--workers N] [--dry-run] [--cost-estimate] [--no-embed] [--yes] [--json]
-  gbrain reindex --aliases    [--limit N] [--dry-run] [--json] [--source <id>]
-  gbrain reindex --vectors    [--dry-run] [--json]
-  gbrain reindex --oversized  [--limit N] [--dry-run] [--json] [--source <id>]
-  gbrain reindex --segmented  [--source <id>] [--slug <slug>] [--apply] [--json]
-  gbrain reindex --synopsis   [--source <id>] [--limit N] [--yes] [--max-usd USD] [--json]
+  foresights reindex --markdown   [--type PAGE_TYPE] [--limit N] [--workers N] [--dry-run] [--no-embed] [--yes] [--max-usd USD] [--json] [--repo PATH]
+  foresights reindex --multimodal [--limit N] [--workers N] [--dry-run] [--cost-estimate] [--no-embed] [--yes] [--json]
+  foresights reindex --aliases    [--limit N] [--dry-run] [--json] [--source <id>]
+  foresights reindex --vectors    [--dry-run] [--json]
+  foresights reindex --oversized  [--limit N] [--dry-run] [--json] [--source <id>]
+  foresights reindex --segmented  [--source <id>] [--slug <slug>] [--apply] [--json]
+  foresights reindex --synopsis   [--source <id>] [--limit N] [--yes] [--max-usd USD] [--json]
 
 TARGETS (exactly one required)
   --markdown        Re-chunk markdown pages whose chunker_version lags the
                     current chunker (or whose contextual-retrieval state is
                     unset when embedding is on). On a managed brain it
-                    runs gbrain repair safe-chunks (and contextual-mode
+                    runs foresights repair safe-chunks (and contextual-mode
                     unless --no-embed) instead: no page writes; --type is
                     refused there.
   --multimodal      Re-embed image/PDF chunks through the multimodal
@@ -107,21 +107,21 @@ TARGETS (exactly one required)
                     pages whose frontmatter aliases predate the projection.
   --vectors         Rebuild every HNSW vector index from the stored vectors
                     (no re-embedding, no cost). Run after a PGLite WAL repair.
-  --oversized       Re-chunk pages an older gbrain stored without chunks
+  --oversized       Re-chunk pages an older foresights stored without chunks
                     because they were over 500 KB (embed_skip: oversized).
                     Under content_sanity.bytes_block (default: the 24 MiB
                     page ceiling) the marker is removed; over it the marker
                     stays and the page gets no vectors. CPU only and free: it works
                     with embeddings off and makes them keyword-searchable
                     now. Pages over 1 MiB wait for approval before any paid
-                    embedding (gbrain embed --held). Resumable.
+                    embedding (foresights embed --held). Resumable.
   --segmented       Re-chunk pages over 1 MiB (segmented storage) whose chunks
                     an older segmented chunker made: long passages now cut at
                     sentence or line ends. Previews by default (pages, chunk
                     counts, new chunk texts; writes nothing). --apply re-chunks
                     only the segments that change, keeps the vectors of
                     unchanged chunk texts and leaves new texts to the embed
-                    sweep (gbrain embed --stale). Never runs on upgrade.
+                    sweep (foresights embed --stale). Never runs on upgrade.
   --synopsis        Put pages whose configured contextual-retrieval tier is
                     per_chunk_synopsis (search.mode tokenmax) on that tier:
                     import and sync embed them at the title tier and nothing
@@ -157,8 +157,8 @@ OPTIONS
   --json            Machine-readable output
   --help, -h        Show this help
 
-Related: \`gbrain reindex-code --help\`, \`gbrain reindex-frontmatter --help\`,
-\`gbrain reindex-search-vector --help\`.
+Related: \`foresights reindex-code --help\`, \`foresights reindex-frontmatter --help\`,
+\`foresights reindex-search-vector --help\`.
 `;
 
 export function printReindexHelp(): void {
@@ -387,9 +387,9 @@ export async function runReindex(engine: BrainEngine, args: string[], runOpts: R
   // own routing here.
   if (!args.includes('--markdown')) {
     if (opts.json) {
-      process.stdout.write(JSON.stringify({ error: 'gbrain reindex requires a target flag, e.g. --markdown' }) + '\n');
+      process.stdout.write(JSON.stringify({ error: 'foresights reindex requires a target flag, e.g. --markdown' }) + '\n');
     } else {
-      process.stderr.write('Usage: gbrain reindex --markdown [--type PAGE_TYPE] [--limit N] [--dry-run] [--json] [--repo PATH]\n');
+      process.stderr.write('Usage: foresights reindex --markdown [--type PAGE_TYPE] [--limit N] [--dry-run] [--json] [--repo PATH]\n');
     }
     setCliExitVerdict(2);
     return { pending: 0, pendingAfter: 0, reindexed: 0, skipped: 0, failed: 0, dryRun: !!opts.dryRun, chunkerVersion: MARKDOWN_CHUNKER_VERSION, type };
@@ -589,7 +589,7 @@ async function reportBudgetStop(engine: BrainEngine, e: BudgetExhausted, r: { pe
   if (r.reindexed > 0) await refreshProjectionStatistics(engine, r.reindexed);
   const pendingAfter = await countPending(engine, r.type, false);
   setCliExitVerdict(1);
-  const message = `stopped at the $${e.cap.toFixed(2)} cost cap after spending $${e.spent.toFixed(4)} (${e.message}). ${pendingAfter} page(s) still pending, and pages re-chunked after the cap wait for gbrain embed --stale; ask the user before running again with a higher --max-usd.`;
+  const message = `stopped at the $${e.cap.toFixed(2)} cost cap after spending $${e.spent.toFixed(4)} (${e.message}). ${pendingAfter} page(s) still pending, and pages re-chunked after the cap wait for foresights embed --stale; ask the user before running again with a higher --max-usd.`;
   if (r.json) {
     process.stdout.write(JSON.stringify({ pending: r.pending, pending_after: pendingAfter, reindexed: r.reindexed, skipped: r.skipped, failed: r.failed,
       chunker_version: MARKDOWN_CHUNKER_VERSION, type: r.type, budget_exhausted: { cap_usd: e.cap, spent_usd: e.spent, reason: e.reason } }) + '\n');
@@ -612,7 +612,7 @@ async function reportBudgetStop(engine: BrainEngine, e: BudgetExhausted, r: { pe
 async function reindexManaged(engine: BrainEngine, opts: ReindexOpts, type: string | null, pending: number): Promise<ReindexResult> {
   const base = { pending, dryRun: false, chunkerVersion: MARKDOWN_CHUNKER_VERSION, type };
   const repairs = opts.noEmbed ? ['safe-chunks'] : ['safe-chunks', 'contextual-mode'];
-  const redirect = repairs.map(kind => `gbrain repair ${kind} --apply${opts.noEmbed ? ' --no-embed' : ''}`).join(' && ');
+  const redirect = repairs.map(kind => `foresights repair ${kind} --apply${opts.noEmbed ? ' --no-embed' : ''}`).join(' && ');
   if (type) {
     const error = `--type cannot narrow a managed reindex; re-chunk every drifted page with: ${redirect}`;
     if (opts.json) process.stdout.write(JSON.stringify({ error, delegated_to: repairs }) + '\n');
@@ -646,17 +646,17 @@ async function reindexManaged(engine: BrainEngine, opts: ReindexOpts, type: stri
     process.stdout.write(JSON.stringify({ pending, pending_after: pendingAfter, reindexed, skipped: 0, failed, chunker_version: MARKDOWN_CHUNKER_VERSION, type,
       delegated_to: repairs, ...(unsupported ? { unsupported_pages: unsupported } : {}), ...(stopped.length ? { stopped } : {}), ...(failed ? { failures } : {}) }) + '\n');
   } else {
-    process.stderr.write(`[reindex] Managed brain: re-chunked through ${repairs.map(kind => `gbrain repair ${kind}`).join(' and ')} (no page writes). `
+    process.stderr.write(`[reindex] Managed brain: re-chunked through ${repairs.map(kind => `foresights repair ${kind}`).join(' and ')} (no page writes). `
       + `reindexed=${reindexed} pending_before=${pending} pending_after=${pendingAfter}\n`);
     if (unsupported) process.stderr.write(`[reindex] ${unsupported} page(s) the projection repairs cannot rebuild (code without a source path, or another page kind) are left for their importer.\n`);
     for (const message of stopped) process.stderr.write(`[reindex] ${message}\n`);
-    for (const failure of failures) process.stderr.write(`[reindex] not re-chunked, its chunks stay withheld: ${failure}. Retry with: gbrain repair safe-chunks --apply\n`);
+    for (const failure of failures) process.stderr.write(`[reindex] not re-chunked, its chunks stay withheld: ${failure}. Retry with: foresights repair safe-chunks --apply\n`);
   }
   return { ...base, pendingAfter, reindexed, skipped: 0, failed };
 }
 
 /**
- * `gbrain reindex --segmented`: preview (default) or `--apply` the re-chunk of sealed segmented pages an older
+ * `foresights reindex --segmented`: preview (default) or `--apply` the re-chunk of sealed segmented pages an older
  * segmented chunker made (core/page-body/rechunk.ts). Nothing on upgrade or migration runs it.
  */
 export async function runReindexSegmented(engine: BrainEngine, args: string[]): Promise<SegmentedRechunkReceipt | null> {

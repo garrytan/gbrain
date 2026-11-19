@@ -1,5 +1,5 @@
 /**
- * GST-2118: gbrain's own write-through commit (`commitPathsLocked`) and `gbrain git commit-push --pending` read
+ * GST-2118: foresights's own write-through commit (`commitPathsLocked`) and `foresights git commit-push --pending` read
  * "is this file still uncommitted?" from `git status`, which is blind to an entry flagged assume-unchanged. A
  * write-through file with that flag was not committed, yet the pending ledger dropped it (so doctor `dirty_age`
  * never saw it and nothing retried it), and `--pending` answered nothing_to_commit with exit 0. A flagged file whose
@@ -41,7 +41,7 @@ function fixture(name: string, remote = false): string {
   if (remote) git(brain, 'push', '-q', '-u', 'origin', 'main');
   return brain;
 }
-/** gbrain writes the page, but the entry is flagged assume-unchanged (an editor or indexer left it), so git add skips it. */
+/** foresights writes the page, but the entry is flagged assume-unchanged (an editor or indexer left it), so git add skips it. */
 const writeFlagged = (brain: string, path: string) => {
   git(brain, 'update-index', '--assume-unchanged', '--', path);
   writeFileSync(join(brain, path), page('Hidden', 'A write-through edit git add does not see.'));

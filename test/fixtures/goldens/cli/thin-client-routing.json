@@ -5,8 +5,8 @@
       "exitCode": 1,
       "stderr": [
         "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
-        "Fix: gbrain remote doctor",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
+        "Fix: foresights remote doctor",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
       "stdout": []
     },
@@ -14,10 +14,10 @@
       "argv": "takes extract",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain takes` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain takes extract",
+        "Error [requires_local_engine]: `foresights takes` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights takes extract",
         "Why: takes list/search/scorecard/calibration + add/update/resolve/supersede route to the brain host automatically (takes_* MCP ops). This subcommand (extract/revisit) is host-bound: run it on the host machine.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -26,7 +26,7 @@
       "exitCode": 1,
       "stderr": [
         "Error [invalid_params]: Missing --claim.",
-        "Fix: takes add needs --claim \"...\" --kind fact|take|bet|hunch --who HOLDER: gbrain takes add alice-example --claim \"...\" --kind fact|take|bet|hunch --who HOLDER."
+        "Fix: takes add needs --claim \"...\" --kind fact|take|bet|hunch --who HOLDER: foresights takes add alice-example --claim \"...\" --kind fact|take|bet|hunch --who HOLDER."
       ],
       "stdout": []
     },
@@ -35,8 +35,8 @@
       "exitCode": 1,
       "stderr": [
         "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
-        "Fix: gbrain remote doctor",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
+        "Fix: foresights remote doctor",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
       "stdout": []
     },
@@ -44,10 +44,10 @@
       "argv": "cache clear",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain cache` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain cache clear",
+        "Error [requires_local_engine]: `foresights cache` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights cache clear",
         "Why: `cache stats` routes to the brain host automatically (cache_stats MCP op). clear/prune mutate the host cache — run those on the host.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -56,8 +56,8 @@
       "exitCode": 1,
       "stderr": [
         "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
-        "Fix: gbrain remote doctor",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
+        "Fix: foresights remote doctor",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
       "stdout": []
     },
@@ -65,10 +65,10 @@
       "argv": "quarantine scan",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain quarantine` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain quarantine scan",
+        "Error [requires_local_engine]: `foresights quarantine` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights quarantine scan",
         "Why: `quarantine list` routes to the brain host automatically (quarantine_list MCP op). scan/clear are host-bound (bulk re-import; the clear trust decision) — run those on the host.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -77,8 +77,8 @@
       "exitCode": 1,
       "stderr": [
         "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
-        "Fix: gbrain remote doctor",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
+        "Fix: foresights remote doctor",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
       "stdout": []
     },
@@ -87,8 +87,8 @@
       "exitCode": 1,
       "stderr": [
         "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
-        "Fix: gbrain remote doctor",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
+        "Fix: foresights remote doctor",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
       "stdout": []
     },
@@ -97,8 +97,8 @@
       "exitCode": 1,
       "stderr": [
         "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
-        "Fix: gbrain remote doctor",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
+        "Fix: foresights remote doctor",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
       "stdout": []
     },
@@ -106,10 +106,10 @@
       "argv": "jobs work",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain jobs` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain jobs work",
+        "Error [requires_local_engine]: `foresights jobs` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights jobs work",
         "Why: `jobs list`, `jobs get <id>`, and `jobs stats` are thin-client routable; this subcommand runs against the host queue. Use the submit_job / list_jobs / get_job / get_job_stats MCP tools from your agent, or run on the host with GBRAIN_HOME set.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -118,8 +118,8 @@
       "exitCode": 1,
       "stderr": [
         "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
-        "Fix: gbrain remote doctor",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
+        "Fix: foresights remote doctor",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
       "stdout": []
     },
@@ -127,10 +127,10 @@
       "argv": "search diagnose q",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain search` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain search diagnose",
+        "Error [requires_local_engine]: `foresights search` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights search diagnose",
         "Why: `search modes|stats|tune` route to the brain host automatically (search_modes / search_stats / search_tune MCP ops). The modes reset form, modes with the source flag (the reset dry-run), and tune apply mutate or preview host config, and `diagnose` runs live retrieval — run those on the host.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -138,10 +138,10 @@
       "argv": "sources list",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain sources` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain sources list",
+        "Error [requires_local_engine]: `foresights sources` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights sources list",
         "Why: sources commands manage local DB + config rows. Per-subcommand thin-client routing lands in v0.31.x. For now: use `sources_list` / `sources_status` MCP tools, or run on the host.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -149,10 +149,10 @@
       "argv": "sources add alice-example",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain sources` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain sources add",
+        "Error [requires_local_engine]: `foresights sources` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights sources add",
         "Why: sources commands manage local DB + config rows. Per-subcommand thin-client routing lands in v0.31.x. For now: use `sources_list` / `sources_status` MCP tools, or run on the host.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -170,7 +170,7 @@
       "argv": "forget fact-1",
       "exitCode": 1,
       "stderr": [
-        "Usage: gbrain forget <fact-id> [--reason <text>] [--source <id>] [--request-id <uuid>] [--json]"
+        "Usage: foresights forget <fact-id> [--reason <text>] [--source <id>] [--request-id <uuid>] [--json]"
       ],
       "stdout": []
     },
@@ -178,10 +178,10 @@
       "argv": "call get_page",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain call` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain call",
-        "Why: `call` dispatches against a local engine. Use the named CLI command or an authorized MCP tool through your agent, or run `gbrain call` on the host.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights call` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights call",
+        "Why: `call` dispatches against a local engine. Use the named CLI command or an authorized MCP tool through your agent, or run `foresights call` on the host.",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -189,7 +189,7 @@
       "argv": "agent register alice-example",
       "exitCode": 1,
       "stderr": [
-        "Error: `gbrain agent register` mints credentials into the HOST brain — run it on the brain host (the machine that runs `gbrain serve --http`), then wire this machine with the printed `gbrain init --mcp-only …` block."
+        "Error: `foresights agent register` mints credentials into the HOST brain — run it on the brain host (the machine that runs `foresights serve --http`), then wire this machine with the printed `foresights init --mcp-only …` block."
       ],
       "stdout": []
     },
@@ -197,10 +197,10 @@
       "argv": "eval whoknows",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain eval` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain eval whoknows",
-        "Why: `eval` export/prune/replay touch the local engine and have no MCP equivalents. Run `gbrain eval` on the host.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Error [requires_local_engine]: `foresights eval` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights eval whoknows",
+        "Why: `eval` export/prune/replay touch the local engine and have no MCP equivalents. Run `foresights eval` on the host.",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -208,7 +208,7 @@
       "argv": "doctor",
       "exitCode": 1,
       "stderr": [
-        "[gbrain] reading doctor checks; large brains can take minutes. Progress prints here every 10 s; the result prints on stdout when it is ready."
+        "[foresights] reading doctor checks; large brains can take minutes. Progress prints here every 10 s; the result prints on stdout when it is ready."
       ],
       "stdout": [
         "",
@@ -225,8 +225,8 @@
         "",
         "Connectivity check FAILED — see error above.",
         "Common fixes:",
-        "  - Confirm the host is reachable + `gbrain serve --http` is running.",
-        "  - Confirm OAuth credentials are valid (have the host operator re-mint via `gbrain auth register-client`).",
+        "  - Confirm the host is reachable + `foresights serve --http` is running.",
+        "  - Confirm OAuth credentials are valid (have the host operator re-mint via `foresights auth register-client`).",
         "  - Confirm `mcp_url` matches the path the host serves /mcp on (default: <issuer_url>/mcp)."
       ]
     },
@@ -235,8 +235,8 @@
       "exitCode": 1,
       "stderr": [
         "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
-        "Fix: gbrain remote doctor",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
+        "Fix: foresights remote doctor",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
       "stdout": []
     },
@@ -245,8 +245,8 @@
       "exitCode": 1,
       "stderr": [
         "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
-        "Fix: gbrain remote doctor",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
+        "Fix: foresights remote doctor",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
       "stdout": []
     },
@@ -254,7 +254,7 @@
       "argv": "query q",
       "exitCode": 1,
       "stderr": [
-        "Cannot reach http://127.0.0.1:1/mcp. Run `gbrain remote doctor` for details."
+        "Cannot reach http://127.0.0.1:1/mcp. Run `foresights remote doctor` for details."
       ],
       "stdout": []
     },
@@ -262,7 +262,7 @@
       "argv": "get alice-example",
       "exitCode": 1,
       "stderr": [
-        "Cannot reach http://127.0.0.1:1/mcp. Run `gbrain remote doctor` for details."
+        "Cannot reach http://127.0.0.1:1/mcp. Run `foresights remote doctor` for details."
       ],
       "stdout": []
     },
@@ -271,8 +271,8 @@
       "exitCode": 1,
       "stderr": [
         "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
-        "Fix: gbrain remote doctor",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
+        "Fix: foresights remote doctor",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
       "stdout": []
     },
@@ -280,10 +280,10 @@
       "argv": "wakeshift status",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain wakeshift` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain wakeshift status",
+        "Error [requires_local_engine]: `foresights wakeshift` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: foresights wakeshift status",
         "Why: `wakeshift watch job|write|cron` and `wakeshift accept-terms` route to the brain host automatically (watch_job / watch_write_request / watch_cron / accept_wakeshift_terms MCP tools). enable, disable, status and test read or change the brain host's Wakeshift key and settings: run those on the brain host.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -292,9 +292,9 @@
       "exitCode": 1,
       "stderr": [
         "Error [requires_local_engine]: `gbrain serve --http` is not routable (thin-client of http://127.0.0.1:1/mcp): it serves a brain over HTTP, so it runs on the brain host.",
-        "Fix: gbrain serve --http",
+        "Fix: foresights serve --http",
         "Why: HTTP serving hosts the brain database, which lives on the brain host; a thin client has none to serve.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -303,9 +303,9 @@
       "exitCode": 1,
       "stderr": [
         "Error [requires_local_engine]: `gbrain serve --http --port 3131` is not routable (thin-client of http://127.0.0.1:1/mcp): it serves a brain over HTTP, so it runs on the brain host.",
-        "Fix: gbrain serve --http --port 3131",
+        "Fix: foresights serve --http --port 3131",
         "Why: HTTP serving hosts the brain database, which lives on the brain host; a thin client has none to serve.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -314,9 +314,9 @@
       "exitCode": 1,
       "stderr": [
         "Error [requires_local_engine]: `gbrain serve --access read-only` is not routable (thin-client of http://127.0.0.1:1/mcp): it asks this bridge to enforce a restriction, and a thin client cannot enforce one locally.",
-        "Fix: gbrain auth register-client '<name>' --grant-types client_credentials --scopes read",
+        "Fix: foresights auth register-client '<name>' --grant-types client_credentials --scopes read",
         "Why: The brain host enforces what each client may do; a filter in this process would be advice, not a boundary.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -326,7 +326,7 @@
       "stderr": [
         "Error [invalid_params]: --surface must be one of verbs|starter|full; got 'Starter'.",
         "Fix: Pass one of verbs|starter|full, e.g. --surface verbs.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#invalid_params"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#invalid_params"
       ],
       "stdout": []
     },
@@ -336,7 +336,7 @@
       "stderr": [
         "Error [invalid_params]: --advertise must be one of verbs|starter|full; got 'bogus'.",
         "Fix: Pass one of verbs|starter|full, e.g. --advertise verbs.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#invalid_params"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#invalid_params"
       ],
       "stdout": []
     }

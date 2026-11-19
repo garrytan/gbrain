@@ -2,7 +2,7 @@
 // relationships that are true today (history on request), and the
 // edge_contradictions dream phase proposes closures for live relationships
 // that cannot both hold (paid chat calls; applied automatically for models
-// certified in held-out runs, proposals for every other model). Printed by `gbrain post-upgrade` once.
+// certified in held-out runs, proposals for every other model). Printed by `foresights post-upgrade` once.
 import type { BrainEngine } from './engine.ts';
 import { agentBlock } from './agent-markers.ts';
 
@@ -26,9 +26,9 @@ export async function temporalEdgesUpgradeNotice(engine: BrainEngine): Promise<s
   return [
     '',
     '═══════════════════════════════════════════════════════════════',
-    '[gbrain] Relationships now have dates. Graph reads (get_links, get_backlinks,',
-    '[gbrain] traverse_graph, the relational search arm) return what is true today;',
-    '[gbrain] former relationships stay queryable with status "all", as_of or during.',
+    '[foresights] Relationships now have dates. Graph reads (get_links, get_backlinks,',
+    '[foresights] traverse_graph, the relational search arm) return what is true today;',
+    '[foresights] former relationships stay queryable with status "all", as_of or during.',
     '═══════════════════════════════════════════════════════════════',
     ...agentBlock({
       ask: 'Keep live-by-default graph reads and the nightly relationship check?',
@@ -37,16 +37,16 @@ export async function temporalEdgesUpgradeNotice(engine: BrainEngine): Promise<s
         `The dream cycle's relationship check (mode: ${mode}) sends a subject's competing relationships and their context lines to ` +
         `${model ?? 'the configured chat model'} once per changed subject (cap $${config.budgetUsd.toFixed(2)} per cycle). ` +
         (mode === 'apply'
-          ? `${model} is certified for apply mode (0 wrong closures in held-out runs), so each closure is written as an "(inferred) Ended <relation> [[target]]" timeline line; gbrain edge-proposals undo <id> (or --all-applied) removes them.`
-          : 'In propose mode it writes nothing to pages until the user accepts a proposal (gbrain edge-proposals list).'),
+          ? `${model} is certified for apply mode (0 wrong closures in held-out runs), so each closure is written as an "(inferred) Ended <relation> [[target]]" timeline line; foresights edge-proposals undo <id> (or --all-applied) removes them.`
+          : 'In propose mode it writes nothing to pages until the user accepts a proposal (foresights edge-proposals list).'),
       consent: 'paid, egress',
       actor: 'user',
       next: 'ask_user',
-      if_yes: 'Nothing to run; the defaults stay. Review what the check did with gbrain edge-proposals list --status all.',
-      if_no: 'Run gbrain config set graph.edge_validity off (every edge, as before), gbrain config set dream.edge_contradictions.mode propose (review before anything is written) or gbrain config set dream.edge_contradictions.mode off.',
-      verify: 'gbrain doctor --only edge_validity --json',
+      if_yes: 'Nothing to run; the defaults stay. Review what the check did with foresights edge-proposals list --status all.',
+      if_no: 'Run foresights config set graph.edge_validity off (every edge, as before), foresights config set dream.edge_contradictions.mode propose (review before anything is written) or foresights config set dream.edge_contradictions.mode off.',
+      verify: 'foresights doctor --only edge_validity --json',
     }, {
-      showUser: 'GBrain now tracks when relationships started and ended, so it stops treating old jobs as current. A nightly check can also ' +
+      showUser: 'Foresights now tracks when relationships started and ended, so it stops treating old jobs as current. A nightly check can also ' +
         'suggest which of two conflicting relationships ended, using your chat model (a small paid call per changed person or company). Keep both on?',
     }).trimEnd().split('\n'),
     '',

@@ -28,20 +28,20 @@ export function openclawTurnPluginDir(): string {
   return join(openclawStateDir(), 'gbrain', OPENCLAW_TURN_PLUGIN_ID);
 }
 
-const DESCRIPTION = 'Puts the GBrain brain-first rule next to every user turn (managed by gbrain setup openclaw).';
+const DESCRIPTION = 'Puts the Foresights brain-first rule next to every user turn (managed by foresights setup openclaw).';
 
 export function openclawTurnPluginFiles(access: BrainFirstAccess): Record<string, string> {
   const rule = renderBrainFirstTurnRule(access, 'openclaw');
   return {
     'package.json': `${JSON.stringify({ name: OPENCLAW_TURN_PLUGIN_ID, version: '1.0.0', private: true, type: 'module', openclaw: { extensions: ['./index.js'] }, gbrain: { access } }, null, 2)}\n`,
-    'openclaw.plugin.json': `${JSON.stringify({ id: OPENCLAW_TURN_PLUGIN_ID, name: 'GBrain turn rule', description: DESCRIPTION, configSchema: { type: 'object', additionalProperties: false } }, null, 2)}\n`,
+    'openclaw.plugin.json': `${JSON.stringify({ id: OPENCLAW_TURN_PLUGIN_ID, name: 'Foresights turn rule', description: DESCRIPTION, configSchema: { type: 'object', additionalProperties: false } }, null, 2)}\n`,
     'index.js': [
-      '// Managed by gbrain setup openclaw; a re-run rewrites this file. Remove: gbrain setup openclaw --remove',
+      '// Managed by foresights setup openclaw; a re-run rewrites this file. Remove: foresights setup openclaw --remove',
       `const RULE = ${JSON.stringify(rule)};`,
       `const INTERNAL_RULE = ${JSON.stringify(renderBrainFirstTurnRule(access, 'openclaw', { reply: false }))};`,
       'export default {',
       `  id: ${JSON.stringify(OPENCLAW_TURN_PLUGIN_ID)},`,
-      "  name: 'GBrain turn rule',",
+      "  name: 'Foresights turn rule',",
       `  description: ${JSON.stringify(DESCRIPTION)},`,
       '  register(api) {',
       "    api.on('before_prompt_build', (_event, ctx) => ({ prependContext: ctx?.inputProvenance?.kind === 'internal_system' ? INTERNAL_RULE : RULE }));",
@@ -72,7 +72,7 @@ const installArgv = (bin: string, dir: string): string[][] => [
 const shown = (argv: string[]) => argv.map((a) => (/^[\w./:=@-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`)).join(' ');
 
 /**
- * What an installed plugin was written for: the access its package.json records, else (an older gbrain recorded
+ * What an installed plugin was written for: the access its package.json records, else (an older foresights recorded
  * none) the server or launcher its RULE literal names. undefined with no plugin, null when neither can be read.
  */
 function installedAccess(dir: string): { access: BrainFirstAccess; recorded: boolean } | null | undefined {
@@ -102,7 +102,7 @@ export function syncOpenclawTurnPlugin(opts: { access: BrainFirstAccess; dryRun:
     ? renderBrainFirstTurnRule(installed.access, 'openclaw') === renderBrainFirstTurnRule(opts.access, 'openclaw')
     : named(installed.access) === named(opts.access));
   if (installed !== undefined && !same) {
-    return { action: 'print', path: dir, detail: `${dir} left as it is: every agent on this OpenClaw gateway gets its rule, which ${installed ? `names ${named(installed.access)}` : 'gbrain cannot read'}, so a --workspace run does not rewrite it. To change it for every agent, run this, then this setup again`, commands: [`gbrain setup openclaw --remove --workspace ${opts.workspace}`] };
+    return { action: 'print', path: dir, detail: `${dir} left as it is: every agent on this OpenClaw gateway gets its rule, which ${installed ? `names ${named(installed.access)}` : 'foresights cannot read'}, so a --workspace run does not rewrite it. To change it for every agent, run this, then this setup again`, commands: [`foresights setup openclaw --remove --workspace ${opts.workspace}`] };
   }
   const files = openclawTurnPluginFiles(opts.access);
   const bin = opts.openclawBin !== undefined ? opts.openclawBin : findOpenclaw();
@@ -136,7 +136,7 @@ export function syncOpenclawTurnPlugin(opts: { access: BrainFirstAccess; dryRun:
 export function removeOpenclawTurnPlugin(opts: { dryRun: boolean; workspace?: string; openclawBin?: string | null; run?: Run }): OpenclawTurnPluginOutcome {
   const dir = openclawTurnPluginDir();
   if (!existsSync(dir)) return { action: 'skip', path: dir, detail: `no per-turn rule plugin at ${dir}` };
-  if (opts.workspace) return { action: 'skip', path: dir, detail: `${dir} left in place: every agent on this OpenClaw gateway gets its rule, so opting out one workspace does not remove it. Remove it for every agent with gbrain setup openclaw --remove --workspace ${opts.workspace}` };
+  if (opts.workspace) return { action: 'skip', path: dir, detail: `${dir} left in place: every agent on this OpenClaw gateway gets its rule, so opting out one workspace does not remove it. Remove it for every agent with foresights setup openclaw --remove --workspace ${opts.workspace}` };
   if (opts.dryRun) return { action: 'remove', path: dir, detail: `per-turn rule plugin ${OPENCLAW_TURN_PLUGIN_ID} at ${dir}` };
   const bin = opts.openclawBin !== undefined ? opts.openclawBin : findOpenclaw();
   const uninstall = [bin ?? 'openclaw', 'plugins', 'uninstall', OPENCLAW_TURN_PLUGIN_ID, '--force'];

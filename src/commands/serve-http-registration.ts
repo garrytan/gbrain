@@ -39,7 +39,7 @@ export function mountAdminRegistration(app: Express, requireAdmin: RequestHandle
       try {
         if (req.body.harness !== undefined && typeof req.body.harness !== 'string') throw new Error('harness must be a registered adapter ID');
         harness = harnessAdapter(req.body.harness ?? 'generic').id;
-      } catch { throw new GrantError('invalid_grant', 'Unknown harness; list supported adapters with gbrain mcp adapters'); }
+      } catch { throw new GrantError('invalid_grant', 'Unknown harness; list supported adapters with foresights mcp adapters'); }
       const rawScopes = (req.body as Record<string, unknown>).scopes ?? (req.body as Record<string, unknown>).scope;
       if (typeof name !== 'string' || !name.trim()) { res.status(400).json({ error: 'Name required' }); return; }
       let scopeString: string;
@@ -130,7 +130,7 @@ export function mountAdminRegistration(app: Express, requireAdmin: RequestHandle
           if (!row) {
             res.status(400).json({
               error: 'unknown_source',
-              message: `source "${id}" does not exist — create it first (gbrain sources add ${id})`,
+              message: `source "${id}" does not exist — create it first (foresights sources add ${id})`,
             });
             return;
           }
@@ -181,7 +181,7 @@ export function mountAdminRegistration(app: Express, requireAdmin: RequestHandle
       if (!columns.has('source_id') || !columns.has('federated_read')) {
         res.status(400).json({
           error: 'brain_too_old',
-          message: 'this brain predates scoped OAuth clients (source_id/federated_read columns) — run `gbrain apply-migrations --yes` first.',
+          message: 'this brain predates scoped OAuth clients (source_id/federated_read columns) — run `foresights apply-migrations --yes` first.',
         });
         return;
       }

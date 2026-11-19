@@ -28,7 +28,7 @@ export async function checkSchemaPackActive(engine: BrainEngine): Promise<Check>
     const { loadConfigFileOnly } = await import('../../core/config.ts');
     // #3792: thread the DB-plane schema_pack (tier 4) so doctor resolves the
     // SAME pack as the engine/onboard checks on brains whose active pack was
-    // flipped via `gbrain config set schema_pack` / unify-types — without it,
+    // flipped via `foresights config set schema_pack` / unify-types — without it,
     // doctor reported the home-config pack while every query ran the DB one.
     // File-only config preserves tier-6 without merging transient env/db
     // state (matches onboard/checks.ts's checkPackUpgradeAvailable).
@@ -55,7 +55,7 @@ export async function checkSchemaPackActive(engine: BrainEngine): Promise<Check>
     return {
       name: 'schema_pack_active',
       status: 'warn',
-      message: `Active pack failed to resolve: ${(e as Error).message}. Run \`gbrain schema active\` to debug.`,
+      message: `Active pack failed to resolve: ${(e as Error).message}. Run \`foresights schema active\` to debug.`,
     };
   }
 }
@@ -104,7 +104,7 @@ interface SourceConformance {
  * #5879: pages match the active pack only when their stored type is a
  * declared page type or an alias of one (`storedTypeMissesPack`, the same
  * classification as `schema lint --with-db`). Each source is graded against
- * its own resolved pack. Any undeclared type warns, except on pages gbrain's
+ * its own resolved pack. Any undeclared type warns, except on pages foresights's
  * own writers wrote (`WRITER_OWNED_PAGE_SQL`, #8815); untyped pages warn at
  * >= 10% of a source.
  */
@@ -124,7 +124,7 @@ export async function checkSchemaPackConsistency(
       scoped ? [opts.sourceIds] : [],
     );
   } catch (e) {
-    return { name: 'schema_pack_consistency', ...notVerified(e, 'gbrain schema review-orphans') };
+    return { name: 'schema_pack_consistency', ...notVerified(e, 'foresights schema review-orphans') };
   }
   if (rows.length === 0) {
     return { name: 'schema_pack_consistency', status: 'ok', message: 'No pages in any source — schema consistency N/A.' };
@@ -157,16 +157,16 @@ export async function checkSchemaPackConsistency(
   const problems: string[] = [];
   for (const g of graded.filter((x) => x.undeclared > 0)) {
     const sample = g.undeclared_types.slice(0, 5).map((t) => `'${sanitizeTypeForDisplay(t.type)}' (${t.count})`).join(', ');
-    problems.push(`Source \`${g.source_id}\`: ${g.undeclared} page(s) use ${g.undeclared_types.length} type(s) pack \`${g.pack}\` neither declares nor aliases: ${sample}. List them with \`gbrain schema review-orphans --source ${g.source_id}\`, then declare the type (\`gbrain schema add-type <type>\`, which takes its primitive and prefix) or retype the pages to a declared type.`);
+    problems.push(`Source \`${g.source_id}\`: ${g.undeclared} page(s) use ${g.undeclared_types.length} type(s) pack \`${g.pack}\` neither declares nor aliases: ${sample}. List them with \`foresights schema review-orphans --source ${g.source_id}\`, then declare the type (\`foresights schema add-type <type>\`, which takes its primitive and prefix) or retype the pages to a declared type.`);
   }
   const worst = graded.reduce<SourceConformance | null>((w, g) =>
     g.total > 0 && (!w || g.untyped / g.total > w.untyped / w.total) ? g : w, null);
   const worstPct = worst ? worst.untyped / worst.total : 0;
   if (worst && worstPct >= 0.1) {
-    problems.push(`Source \`${worst.source_id}\`: ${worst.untyped} of ${worst.total} pages (${(worstPct * 100).toFixed(1)}%) have no type matching the active pack. Run \`gbrain schema detect --source ${worst.source_id}\` to propose a pack matching your content shape.`);
+    problems.push(`Source \`${worst.source_id}\`: ${worst.untyped} of ${worst.total} pages (${(worstPct * 100).toFixed(1)}%) have no type matching the active pack. Run \`foresights schema detect --source ${worst.source_id}\` to propose a pack matching your content shape.`);
   }
   if (unresolved.length > 0) {
-    problems.push(`Not verified for ${unresolved.length} source(s) (${unresolved.join(', ')}): the active pack did not resolve. Run \`gbrain schema active\` to debug.`);
+    problems.push(`Not verified for ${unresolved.length} source(s) (${unresolved.join(', ')}): the active pack did not resolve. Run \`foresights schema active\` to debug.`);
   }
   if (problems.length > 0) {
     const code = graded.some((x) => x.undeclared > 0) ? 'page_type_undeclared' : unresolved.length > 0 ? 'not_verified' : 'pages_untyped';
@@ -207,18 +207,18 @@ export async function checkSchemaPackSourceDrift(engine: BrainEngine, opts: { so
     return {
       name: 'schema_pack_source_drift',
       status: 'warn',
-      message: `Per-source pack divergence detected: ${distinctPacks.size} distinct packs across ${rows.length} sources. Run \`gbrain sources list\` then \`gbrain schema active --source <id>\` per source to audit.`,
+      message: `Per-source pack divergence detected: ${distinctPacks.size} distinct packs across ${rows.length} sources. Run \`foresights sources list\` then \`foresights schema active --source <id>\` per source to audit.`,
     };
   } catch (e) {
-    return { name: 'schema_pack_source_drift', ...notVerified(e, 'gbrain doctor') };
+    return { name: 'schema_pack_source_drift', ...notVerified(e, 'foresights doctor') };
   }
 }
 
 /**
  * #1123 — multi_source_drift remediation advice. Exported so the regression
  * test can pin that it only references CLI surfaces that actually exist
- * (the pre-fix text pointed at 'gbrain sources rehome', which was never
- * built, and at 'gbrain delete <slug>' without explaining that delete
+ * (the pre-fix text pointed at 'foresights sources rehome', which was never
+ * built, and at 'foresights delete <slug>' without explaining that delete
  * targets the ACTIVE source — following it literally on a multi-source
  * brain deletes the correctly-routed row).
  */
@@ -235,14 +235,14 @@ export function multiSourceDriftAdvice(count: number, sampleStr: string, managed
     `(2) the intended source never completed initial sync and the default page is unrelated; ` +
     `(3) the file behind the slug is not git-tracked in the source repo — the sync walker ` +
     `reads through git objects, so a re-sync imports nothing for it. ` +
-    `Verify with 'gbrain sources status', then re-sync with ` +
-    `'gbrain sync --source <id>${managed ? ' --no-pull' : ''} --full' (reconciles drift without deleting data); ` +
+    `Verify with 'foresights sources status', then re-sync with ` +
+    `'foresights sync --source <id>${managed ? ' --no-pull' : ''} --full' (reconciles drift without deleting data); ` +
     (managed
       ? `for cause (3), commit the file (managed sync imports only committed files). `
-      : `for cause (3), commit the file or use 'gbrain sync --source <id> --include-gitignored' ` +
+      : `for cause (3), commit the file or use 'foresights sync --source <id> --include-gitignored' ` +
         `(full filesystem walk that also picks up ignored/untracked syncable files). `) +
     `Only if a misrouted default-source row remains after that, remove it with ` +
-    `'GBRAIN_SOURCE=default gbrain delete <slug> --force' — delete targets the active source, ` +
+    `'GBRAIN_SOURCE=default foresights delete <slug> --force' — delete targets the active source, ` +
     `so pin it to 'default' explicitly (--force: page writes are revisioned, and a delete ` +
     `naming neither --force nor --expected-revision is refused with revision_conflict).`
   );
@@ -290,7 +290,7 @@ export function multiSourceDriftCheck(
   const unreadableNote = unreadable.length > 0
     ? ` Not verified for ${unreadable.length} source(s) whose local_path could not be read: ` +
       unreadable.map((u) => `${u.source_id} (${u.reason === 'root_unreadable' ? 'root unreadable' : `${u.dirs} unreadable dir(s)`})`).join(', ') +
-      `. Fix the path or permissions (\`gbrain sources status\`), then re-run \`gbrain doctor\`.`
+      `. Fix the path or permissions (\`foresights sources status\`), then re-run \`foresights doctor\`.`
     : '';
   if (result.walk_truncated) {
     // #7145: a walk stopped at its bound did not compare every file, so drift is unknown, not detected and not clear;
@@ -308,7 +308,7 @@ export function multiSourceDriftCheck(
       message:
         `Multi-source drift unknown: the FS walk stopped at ${which}` + (host === 'remote' ? ' on the brain server' : '') +
         ` before comparing every file, so health is unknown, not clear (bounds: ${result.limit} files / ${result.timeout_ms} ms).${found}` +
-        ` Re-run with a larger bound: \`GBRAIN_DRIFT_LIMIT=<files> GBRAIN_DRIFT_TIMEOUT_MS=<ms> gbrain doctor --only multi_source_drift\`.` +
+        ` Re-run with a larger bound: \`GBRAIN_DRIFT_LIMIT=<files> GBRAIN_DRIFT_TIMEOUT_MS=<ms> foresights doctor --only multi_source_drift\`.` +
         unreadableNote,
       details: { ...details, ...boundUnknownDetails(bound), code: 'not_verified', verified: false, drift_found_so_far: result.count },
     };
@@ -319,7 +319,7 @@ export function multiSourceDriftCheck(
       ? multiSourceDriftAdvice(result.count, sampleStr, managed)
       : `${result.count} page slug(s) appear at 'default' but NOT at the intended source ` +
         `(e.g., ${sampleStr}). Likely pre-v0.30.3 misroutes OR an incomplete initial sync. ` +
-        `Verify on the brain host: \`gbrain sources status\` then \`gbrain sync --source <id>${managed ? ' --no-pull' : ''} --full\`.`;
+        `Verify on the brain host: \`foresights sources status\` then \`foresights sync --source <id>${managed ? ' --no-pull' : ''} --full\`.`;
     return { name: 'multi_source_drift', status: 'warn', message: advice + skipNote + unreadableNote, details: { ...details, code: 'drift_detected' } };
   }
   if (unreadable.length > 0) {
@@ -343,5 +343,5 @@ export function multiSourceDriftCheck(
 
 /** #5432: the drift check itself failed (e.g. the sources query); report it instead of dropping the check. */
 export function multiSourceDriftNotVerified(err: unknown): Check {
-  return { name: 'multi_source_drift', ...notVerified(err, 'gbrain doctor', DRIFT_DOCS) };
+  return { name: 'multi_source_drift', ...notVerified(err, 'foresights doctor', DRIFT_DOCS) };
 }

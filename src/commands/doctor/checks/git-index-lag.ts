@@ -62,7 +62,7 @@ async function runGitIndexLag(ctx: DoctorContext): Promise<Check[]> {
         verify: doctorVerify('git_index_lag') } });
   } catch (error) {
     checks.push({ name: 'git_index_lag', status: 'warn', details: { health: 'unknown', docs: DOCS },
-      message: `Could not read the index lag of strict sources (${error instanceof Error ? error.message : String(error)}); gbrain sources status --json shows each source's watermark.` });
+      message: `Could not read the index lag of strict sources (${error instanceof Error ? error.message : String(error)}); foresights sources status --json shows each source's watermark.` });
   }
   return checks;
 }

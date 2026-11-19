@@ -30,7 +30,7 @@ describe('#7108 migration timeout advice', () => {
     expect(message).toContain('4242');
     expect(message).toContain('may hold locks');
     expect(fix.ask_user).toBe(true);
-    expect(fix.user_message).toContain('gbrain doctor --locks');
+    expect(fix.user_message).toContain('foresights doctor --locks');
     expect(fix.argv).toEqual(['gbrain', 'apply-migrations', '--yes']);
   });
 

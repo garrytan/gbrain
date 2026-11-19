@@ -1,17 +1,17 @@
 /**
- * #6712 PR 4b (GBRA-108, S-47 follow-up): a page whose stored bytes are a YAML alias bomb that an older, validating gbrain
+ * #6712 PR 4b (GBRA-108, S-47 follow-up): a page whose stored bytes are a YAML alias bomb that an older, validating foresights
  * imported is held alone when it is re-screened, never treated as a parser regression. #7018 bounds alias expansion on
  * purpose, so this release refusing those bytes is intended: the refusal carries a structured marker (`intended:
  * 'yaml_alias_limit'`, set where `YamlAliasBoundError` becomes the `invalid_frontmatter` refusal), and the provenance
  * check holds that page under `frontmatter_alias_limit` while the rest of the source syncs.
  *
  * Protects:
- * - an alias bomb whose provenance says a validating older gbrain imported those exact bytes, re-screened on a full
+ * - an alias bomb whose provenance says a validating older foresights imported those exact bytes, re-screened on a full
  *   listing: held `frontmatter_alias_limit` alone, the other files import, the run is not stopped, nothing is expanded;
  * - the alias hold takes precedence over the parser-regression policy: held the same way under the default and under
  *   `GBRAIN_SYNC_PARSER_REGRESSION=stop`;
  * - regression guard: an ordinary `invalid_frontmatter` refusal (no marker, still refused when screened without a schema
- *   pack) under a provenance from a different gbrain version still stops the run with `sync_parser_regression` under
+ *   pack) under a provenance from a different foresights version still stops the run with `sync_parser_regression` under
  *   `GBRAIN_SYNC_PARSER_REGRESSION=stop`, and (GBRA-108 default flip) is held `parser_regression` alone with nothing set,
  *   while the rest syncs.
  *
@@ -46,7 +46,7 @@ const setup = ({ root }: { root: string }) => {
   commit(root, 'notes');
 };
 
-/** The page's import provenance now claims an older, validating gbrain imported `content` exactly. */
+/** The page's import provenance now claims an older, validating foresights imported `content` exactly. */
 async function provenanceClaims(engine: BrainEngine, slug: string, content: string): Promise<void> {
   const page = (await engine.getPage(slug, { sourceId: 'default' }))!;
   const updated = await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(jsonb_set(completed_keys,'{0,raw_sha256}',to_jsonb($3::text)),'{0,gbrain_version}','"0.60.100.0"'::jsonb)
@@ -62,7 +62,7 @@ for (const backend of testBackends()) {
   const brain = (run: Parameters<typeof managedBrain>[0]) => managedBrain(run, { ...(databaseUrl ? { databaseUrl } : {}), setup });
 
   describe(`#6712 PR 4b alias-limit refusals of validated bytes (${backend})`, () => {
-    for (const policy of [undefined, 'stop'] as const) test(`a stored alias bomb a validating older gbrain imported is held frontmatter_alias_limit alone on a full re-screen; the rest syncs${policy ? ` (GBRAIN_SYNC_PARSER_REGRESSION=${policy})` : ''}`, () => brain(async ({ engine, root }) => withEnv({ GBRAIN_SYNC_PARSER_REGRESSION: policy }, async () => {
+    for (const policy of [undefined, 'stop'] as const) test(`a stored alias bomb a validating older foresights imported is held frontmatter_alias_limit alone on a full re-screen; the rest syncs${policy ? ` (GBRAIN_SYNC_PARSER_REGRESSION=${policy})` : ''}`, () => brain(async ({ engine, root }) => withEnv({ GBRAIN_SYNC_PARSER_REGRESSION: policy }, async () => {
       expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
       writeFileSync(join(root, 'notes/target.md'), BOMB_6); writeFileSync(join(root, 'notes/new.md'), note('New')); commit(root, 'bomb and new');
       await provenanceClaims(engine, 'notes/target', BOMB_6);

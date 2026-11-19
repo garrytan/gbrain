@@ -1,6 +1,6 @@
 import { HARNESS_ADAPTERS } from '../core/harness/registry.ts';
 /**
- * gbrain agent register — mint a scoped OAuth client + access token and print
+ * foresights agent register — mint a scoped OAuth client + access token and print
  * the exact MCP wiring for a harness (cathedral-6, spec PR-6 "shared brain").
  *
  * CLI-ONLY, never an MCP op. Composes existing parts — registerScopedClient
@@ -93,7 +93,7 @@ export function registerClientNameLockKey(name: string): string {
 /** The thin-client refusal, shared verbatim by the cli.ts pre-connect guard
  * and the in-handler belt-and-braces re-check. */
 export const THIN_CLIENT_REGISTER_MESSAGE =
-  '`gbrain agent register` mints credentials into the HOST brain — run it on the brain host (the machine that runs `gbrain serve --http`), then wire this machine with the printed `gbrain init --mcp-only …` block.';
+  '`foresights agent register` mints credentials into the HOST brain — run it on the brain host (the machine that runs `foresights serve --http`), then wire this machine with the printed `foresights init --mcp-only …` block.';
 
 export type RegisterFailReason =
   | 'invalid_argument'
@@ -141,11 +141,11 @@ export interface AgentRegisterArgs {
 }
 
 const REGISTER_USAGE =
-  'Usage: gbrain agent register <name> --harness claude-code|codex|opencode|openclaw ' +
+  'Usage: foresights agent register <name> --harness claude-code|codex|opencode|openclaw ' +
   '[--preset daily-driver|coding-agent] [--source ID] [--federated-read S1,S2] ' +
   '[--scopes "read write"] (--url URL | --port N) [--token-ttl SECONDS] ' +
   '[--surface verbs|starter|full] [--allow-old-serve] [--show-token] [--json]\n' +
-  '       gbrain agent register --reissue <client-id> --harness H (--url URL | --port N) [--show-token] [--json]';
+  '       foresights agent register --reissue <client-id> --harness H (--url URL | --port N) [--show-token] [--json]';
 
 export function parseAgentRegisterArgs(args: string[]): AgentRegisterArgs {
   const out: AgentRegisterArgs = { showToken: false, json: false, allowOldServe: false };
@@ -216,7 +216,7 @@ export function parseAgentRegisterArgs(args: string[]): AgentRegisterArgs {
         }
         for (const t of tokens) {
           if (SCOPE_BLOCKLIST.has(t)) {
-            throw new Error(`scope "${t}" is not grantable to an agent client — use \`gbrain auth register-client\` for operator-grade scopes`);
+            throw new Error(`scope "${t}" is not grantable to an agent client — use \`foresights auth register-client\` for operator-grade scopes`);
           }
         }
         assertAllowedScopes(tokens);
@@ -258,7 +258,7 @@ export function parseAgentRegisterArgs(args: string[]): AgentRegisterArgs {
   if (out.reissueClientId !== undefined) {
     if (out.name !== undefined) throw new Error('--reissue takes a client-id, not a name');
     if (out.preset || out.source || out.federatedRead || out.scopes || out.surface || out.tokenTtlSeconds !== undefined) {
-      throw new Error('--reissue only rotates the secret and reprints the block — scope flags are not allowed (use `gbrain auth rescope-client` to change scope)');
+      throw new Error('--reissue only rotates the secret and reprints the block — scope flags are not allowed (use `foresights auth rescope-client` to change scope)');
     }
   } else {
     if (!out.name) throw new Error(`agent register requires a <name>.\n${REGISTER_USAGE}`);
@@ -391,7 +391,7 @@ function fail(json: boolean, reason: RegisterFailReason, message: string, exitCo
   } else {
     console.error(`Error: ${message}`);
     if (clientId) {
-      console.error(`The OAuth client was created before the failure. Revoke with: gbrain auth revoke-client "${clientId}"`);
+      console.error(`The OAuth client was created before the failure. Revoke with: foresights auth revoke-client "${clientId}"`);
     }
   }
   process.exit(exitCode);
@@ -459,7 +459,7 @@ export async function runAgentRegister(engine: BrainEngine | null, args: string[
         const row = found.get(id);
         if (!row) {
           fail(flags.json, 'unknown_source',
-            `source "${id}" does not exist — create it first (gbrain sources add ${id}) or check the spelling with \`gbrain sources list\`. Only the derived <name>-workspace is auto-created.`, 1);
+            `source "${id}" does not exist — create it first (foresights sources add ${id}) or check the spelling with \`foresights sources list\`. Only the derived <name>-workspace is auto-created.`, 1);
         }
         if (row.archived) {
           fail(flags.json, 'archived_source',
@@ -508,15 +508,15 @@ export async function runAgentRegister(engine: BrainEngine | null, args: string[
     // 25P02 inside our transaction.
     if (!columns.has('source_id') || !columns.has('federated_read')) {
       fail(flags.json, 'brain_too_old',
-        'this brain predates scoped OAuth clients (source_id/federated_read columns) — run `gbrain apply-migrations --yes` first.', 1);
+        'this brain predates scoped OAuth clients (source_id/federated_read columns) — run `foresights apply-migrations --yes` first.', 1);
     }
     const ttl = flags.tokenTtlSeconds ?? REGISTER_DEFAULT_TOKEN_TTL_SECONDS;
     const preflightNotes: string[] = [];
     if (!columns.has('token_ttl')) {
-      preflightNotes.push('this brain predates the token_ttl column; run `gbrain apply-migrations --yes` — the server default (1 hour) applies until then.');
+      preflightNotes.push('this brain predates the token_ttl column; run `foresights apply-migrations --yes` — the server default (1 hour) applies until then.');
     }
     if (preset.surface !== undefined && !columns.has('surface')) {
-      preflightNotes.push('this brain predates the surface column; run `gbrain apply-migrations --yes` — no per-client surface tier was set.');
+      preflightNotes.push('this brain predates the surface column; run `foresights apply-migrations --yes` — no per-client surface tier was set.');
     }
     for (const note of preflightNotes) console.error(`Note: ${note}`);
 
@@ -550,7 +550,7 @@ export async function runAgentRegister(engine: BrainEngine | null, args: string[
         : await txSql`SELECT client_id FROM oauth_clients WHERE client_name = ${name}`;
       if (dupRows.length > 0) {
         throw new RegisterError('duplicate_name',
-          `an OAuth client named "${name}" already exists (${String(dupRows[0].client_id)}). Revoke it first (gbrain auth revoke-client "${String(dupRows[0].client_id)}") or rotate its secret with --reissue.`);
+          `an OAuth client named "${name}" already exists (${String(dupRows[0].client_id)}). Revoke it first (foresights auth revoke-client "${String(dupRows[0].client_id)}") or rotate its secret with --reissue.`);
       }
 
       if (preset.workspaceDerived) {
@@ -626,7 +626,7 @@ export async function ensureWorkspaceSource(
   if (existing.length > 0) {
     if (existing[0].archived === true) {
       throw new RegisterError('archived_source',
-        `workspace source "${id}" exists but is archived — unarchive it (gbrain sources restore ${id}) or pick another name.`);
+        `workspace source "${id}" exists but is archived — unarchive it (foresights sources restore ${id}) or pick another name.`);
     }
     const localPath = existing[0].local_path;
     const pages = await txSql`SELECT count(*) AS n FROM pages WHERE source_id = ${id}`;
@@ -761,7 +761,7 @@ async function runReissue(
     [clientId],
   );
   if (rows.length === 0) {
-    throw new RegisterError('reissue_invalid_target', `no OAuth client with id "${clientId}" — list clients with \`gbrain auth clients\`.`);
+    throw new RegisterError('reissue_invalid_target', `no OAuth client with id "${clientId}" — list clients with \`foresights auth clients\`.`);
   }
   const row = rows[0] as Record<string, unknown>;
   if (row.deleted_at != null) {
@@ -840,7 +840,7 @@ function buildHarnessBlock(
   // the reissue lane's re-run genuinely works, so it keeps the simple hint.
   const hintText = p.isReissue
     ? '(credentials redacted — re-run with --show-token for a paste-ready block)'
-    : `(credentials redacted — reissue a paste-ready block with: gbrain agent register --reissue ${p.clientId} --harness ${harness} --url ${p.url} --show-token)`;
+    : `(credentials redacted — reissue a paste-ready block with: foresights agent register --reissue ${p.clientId} --harness ${harness} --url ${p.url} --show-token)`;
   const redactionHint = p.showToken ? [] : [hintText];
   switch (harness) {
     case 'claude-code': {
@@ -931,14 +931,14 @@ function printOutput(flags: AgentRegisterArgs, out: RegisterOutput): void {
   console.log(`  Federated reads:     ${out.presetResolved.federated_read.join(', ')}`);
   if (out.presetResolved.surface) {
     console.log(out.presetResolved.listed
-      ? `  Surface tier:        ${out.presetResolved.surface}, listing the memory verbs and request_tools (list everything: gbrain auth rescope-client "${r.clientId}" --surface full)`
-      : `  Surface tier:        ${out.presetResolved.surface} (widen: gbrain auth rescope-client "${r.clientId}" --surface full)`);
+      ? `  Surface tier:        ${out.presetResolved.surface}, listing the memory verbs and request_tools (list everything: foresights auth rescope-client "${r.clientId}" --surface full)`
+      : `  Surface tier:        ${out.presetResolved.surface} (widen: foresights auth rescope-client "${r.clientId}" --surface full)`);
   }
   if (out.presetResolved.token_ttl) {
     console.log(`  Token TTL:           ${out.presetResolved.token_ttl}s`);
   }
   if (expiry) {
-    console.log(`  Token expires:       ${expiry} — reissue with: gbrain agent register --reissue ${r.clientId} --harness ${flags.harness} --url ${out.url}`);
+    console.log(`  Token expires:       ${expiry} — reissue with: foresights agent register --reissue ${r.clientId} --harness ${flags.harness} --url ${out.url}`);
   }
   console.log('');
   console.log(out.block);
@@ -948,13 +948,13 @@ function printOutput(flags: AgentRegisterArgs, out: RegisterOutput): void {
   console.log(floorLine);
   console.log('');
   console.log(OAUTH_SECRET_NOTE);
-  console.log(`Revoke with: gbrain auth revoke-client "${r.clientId}"`);
+  console.log(`Revoke with: foresights auth revoke-client "${r.clientId}"`);
 }
 
 // ── help ──────────────────────────────────────────────────────────────────
 
 export function printRegisterHelp(): void {
-  console.log(`gbrain agent register — mint a scoped OAuth client + token and print the harness wiring
+  console.log(`foresights agent register — mint a scoped OAuth client + token and print the harness wiring
 
 ${REGISTER_USAGE}
 
@@ -963,7 +963,7 @@ PRESETS
                  SNAPSHOT of all current non-archived sources EXCLUDING other
                  agents' *-workspace sources (agent scratch — share one via an
                  explicit --federated-read). New sources need a re-grant via
-                 \`gbrain auth rescope-client\`. Surface: full.
+                 \`foresights auth rescope-client\`. Surface: full.
   coding-agent   write-isolated: writes land in <name>${WORKSPACE_SUFFIX} (auto-created,
                  DB-only). Requires --federated-read (the project sources it may
                  read). Surface: full.

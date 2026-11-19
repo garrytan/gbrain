@@ -1,7 +1,7 @@
 /**
  * Thin-client installs (remote_mcp set, no database_url) must never fall
  * through to the local engine (#5102). A command that does died with
- * "No database URL ... Fix: Run gbrain init --supabase", and following that
+ * "No database URL ... Fix: Run foresights init --supabase", and following that
  * hint replaces the remote config; a PGLite-keyed thin client instead opened
  * an empty in-memory brain and answered from it.
  *
@@ -112,7 +112,7 @@ describe('self-routing handlers reach their MCP op without opening an engine', (
 describe('commands with no engine-free path refuse with a pinpoint hint', () => {
   const refused: Array<[string[], string]> = [
     [['advisor'], '`advisor` MCP tool'],
-    [['export'], 'Run `gbrain export` on the host'],
+    [['export'], 'Run `foresights export` on the host'],
     [['recall', '--query', 'example'], '--budget-policy facts_first'],
     [['schema', 'stats'], 'schema_stats'],
   ];

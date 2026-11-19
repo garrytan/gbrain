@@ -8,8 +8,8 @@
  *
  * Servers (all production code, real HTTP on an ephemeral loopback port, an
  * in-memory keyless PGLite brain):
- *   - shared dispatch (`dispatchToolCall`, the stdio and `gbrain call` path);
- *   - `gbrain serve --http` (`buildServeHttpApp`): unknown-op, insufficient
+ *   - shared dispatch (`dispatchToolCall`, the stdio and `foresights call` path);
+ *   - `foresights serve --http` (`buildServeHttpApp`): unknown-op, insufficient
  *     scope, the dispatch-throw catch, and handler errors;
  *   - the legacy bearer transport (`startHttpTransport`): scope, unknown tool
  *     and handler errors.
@@ -175,7 +175,7 @@ describe('shared dispatch (stdio path)', () => {
   }));
 });
 
-describe('gbrain serve --http (serve-http-mcp)', () => {
+describe('foresights serve --http (serve-http-mcp)', () => {
   test('unknown op keeps the frozen pair (error unknown_operation, code unknown_tool): one block', inHome(async () => {
     const r = await callTool(serve.base, readToken, 'no_such_tool_x');
     const env = assertSingleBlock(r);

@@ -8,7 +8,7 @@ remain private.
 - **Ignored:** credentials, local databases, caches, hook state, transcripts,
   machine-specific harness wiring (`.mcp.json`, `.claude/settings.local.json`), and
   anything matching the deny list in `.gitignore`.
-- **How it syncs:** `gbrain sources push` — a secret-scan-gated commit + push that
+- **How it syncs:** `foresights sources push` — a secret-scan-gated commit + push that
   refuses public remotes. On Claude Code it runs automatically per turn
   (debounced) and at session end via hooks; on Codex or opencode (no wired hook
   system) run it at natural stopping points (the AGENTS.md gate reminds you). If background
@@ -20,6 +20,6 @@ remain private.
 - **Honest forget semantics:** git history is append-only. Deleting a line from a
   file does not delete it from history; truly removing something requires a history
   rewrite (documented in docs/guides/bootstrap.md). Write accordingly.
-- **Recovery:** clone this repo on any machine and run `gbrain bootstrap attach` —
+- **Recovery:** clone this repo on any machine and run `foresights bootstrap attach` —
   the body travels; the brain database is rebuilt from `brain/` + re-ingestion.
 - Never let valuable work exist only on one machine.

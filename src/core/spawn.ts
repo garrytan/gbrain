@@ -8,7 +8,7 @@
  * On Windows a `detached: true` child has no console (Bun starts it with
  * DETACHED_PROCESS). Every console program such a process launches without
  * `windowsHide` gets a new, visible console window that takes keyboard focus:
- * git, PowerShell, or the CLI re-executing itself. Any gbrain command can run
+ * git, PowerShell, or the CLI re-executing itself. Any foresights command can run
  * that way (the Stop-hook push, the backup check, the job supervisor, its
  * worker and every job child), so each wrapper here defaults
  * `windowsHide: true`. An explicit `windowsHide: false` is kept, for a launcher
@@ -23,7 +23,7 @@
  * Trade-off (Windows only): with every stdio stream piped or ignored, libuv
  * turns `windowsHide` into CREATE_NO_WINDOW and the child gets a windowless
  * console of its own, so a program that prompts on the console directly
- * prompts invisibly. gbrain's networked git calls set GIT_TERMINAL_PROMPT=0
+ * prompts invisibly. foresights's networked git calls set GIT_TERMINAL_PROMPT=0
  * (and git-remote.ts SSH_ASKPASS_REQUIRE=never); launches with inherited
  * stdio still attach to the terminal.
  */

@@ -43,7 +43,7 @@ export async function installSharedSkillsConnection(credentials: HarnessCredenti
         let data: any;
         try { data = JSON.parse(text); } catch {
           throw new OperationError('shared_skills_unsupported', 'The server does not expose the shared-skills protocol.',
-            `The gbrain server at ${credentials.mcp_url} answered ${name} without the shared-skills protocol; it probably runs an older gbrain. Ask its operator to run gbrain upgrade; memory keeps working meanwhile.`);
+            `The foresights server at ${credentials.mcp_url} answered ${name} without the shared-skills protocol; it probably runs an older foresights. Ask its operator to run foresights upgrade; memory keeps working meanwhile.`);
         }
         if (result.isError || data.error) {
           throw new OperationError(typeof data.error === 'string' ? data.error : 'shared_skills_unavailable', 'The shared-skills operation was refused. Memory remains independently available.',

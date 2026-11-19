@@ -1,5 +1,5 @@
 /**
- * `gbrain repair request-indexes` (#5762, #6511, #7649): create a missing
+ * `foresights repair request-indexes` (#5762, #6511, #7649): create a missing
  * online-built request index (the managed sync checkpoint pair, the purge slug
  * index, the request-id index, the write claims' foreground-commit index), or
  * drop an INVALID one (an interrupted concurrent build) and rebuild it, on a

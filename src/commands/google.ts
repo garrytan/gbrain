@@ -1,5 +1,5 @@
 /**
- * gbrain google — connect/status/calendars/disconnect (+ setup, wired after
+ * foresights google — connect/status/calendars/disconnect (+ setup, wired after
  * the source kind lands) for the Google connector.
  *
  * Agent-first contract (docs/guides/google-connect.md):
@@ -94,7 +94,7 @@ function emit(json: boolean, envelope: JsonEnvelope, humanLines: string[]): void
   }
 }
 
-/** Funnel events (local-only) — same JSONL shape gbrain integrations reads. */
+/** Funnel events (local-only) — same JSONL shape foresights integrations reads. */
 export function appendGoogleHeartbeat(
   event: string,
   status: 'ok' | 'error',
@@ -120,7 +120,7 @@ export function appendGoogleHeartbeat(
 export function gcpChecklistBlock(): string {
   return [
     '[SHOW USER]',
-    'Connect Google to gbrain — one-time setup (about 7 minutes, all in your browser).',
+    'Connect Google to foresights — one-time setup (about 7 minutes, all in your browser).',
     '',
     'First, which kind of account is this?',
     '  - Google Workspace (your own domain) → in step 3 choose user type "Internal".',
@@ -146,8 +146,8 @@ export function gcpChecklistBlock(): string {
     'That is YOUR app — click Advanced → Continue.',
     '[/SHOW USER]',
     '',
-    'Then run:  gbrain google connect --client-json <path-to-downloaded-json>',
-    '(or paste the JSON contents via stdin:  gbrain google connect --client-json -)',
+    'Then run:  foresights google connect --client-json <path-to-downloaded-json>',
+    '(or paste the JSON contents via stdin:  foresights google connect --client-json -)',
   ].join('\n');
 }
 
@@ -468,7 +468,7 @@ export async function runGoogleConnect(args: string[]): Promise<void> {
           ok: false,
           status: 'needs_client_credentials',
           next_action: {
-            command: 'gbrain google connect --client-json <path>',
+            command: 'foresights google connect --client-json <path>',
             user_message: checklist,
           },
         },
@@ -488,7 +488,7 @@ export async function runGoogleConnect(args: string[]): Promise<void> {
         process.stderr.write(
           `[google] warning: replacing the stored OAuth client (${priorClient.client_id.slice(0, 12)}…) ` +
             `with a different one. Refresh tokens are client-bound — if refresh starts failing for the ` +
-            `${accounts.length} already-connected account(s), run \`gbrain google connect --reauth <email>\`.\n`,
+            `${accounts.length} already-connected account(s), run \`foresights google connect --reauth <email>\`.\n`,
         );
       }
     }
@@ -555,11 +555,11 @@ export async function runGoogleConnect(args: string[]): Promise<void> {
           ok: false,
           status: 'awaiting_consent',
           next_action: {
-            command: 'gbrain google connect --code "<pasted-redirect-url>"',
+            command: 'foresights google connect --code "<pasted-redirect-url>"',
             user_message: block,
           },
         },
-        [block, '', 'Then run:  gbrain google connect --code "<pasted-redirect-url>"'],
+        [block, '', 'Then run:  foresights google connect --code "<pasted-redirect-url>"'],
       );
       setCliExitVerdict(2);
       return;
@@ -602,7 +602,7 @@ export async function runGoogleConnect(args: string[]): Promise<void> {
 function printConnected(json: boolean, entry: CredentialEntry): void {
   const email = entry.meta.account ?? entry.id;
   const suggestedId = deriveSourceId(email);
-  const nextCmd = `gbrain sources add ${suggestedId} --kind google --account ${email}`;
+  const nextCmd = `foresights sources add ${suggestedId} --kind google --account ${email}`;
   emit(
     json,
     {
@@ -621,7 +621,7 @@ function printConnected(json: boolean, entry: CredentialEntry): void {
       '',
       `Next: register it as a source and sync:`,
       `  ${nextCmd}`,
-      `  gbrain sync --source ${suggestedId}`,
+      `  foresights sync --source ${suggestedId}`,
     ],
   );
 }
@@ -758,7 +758,7 @@ export async function runGoogleStatus(args: string[]): Promise<void> {
   }
   if (accounts.length === 0) {
     process.stdout.write(
-      'No Google accounts connected. Run `gbrain google connect` to start.\n',
+      'No Google accounts connected. Run `foresights google connect` to start.\n',
     );
     setCliExitVerdict(1);
     return;
@@ -791,7 +791,7 @@ export async function runGoogleStatus(args: string[]): Promise<void> {
         + `    List readable calendars: ${cal.fix!.list_command}\n    Change the source's calendar: ${cal.fix!.set_command}\n`);
     }
   } else {
-    process.stdout.write('Linked sources: none yet — `gbrain sources add <id> --kind google --account <email>`\n');
+    process.stdout.write('Linked sources: none yet — `foresights sources add <id> --kind google --account <email>`\n');
   }
 }
 
@@ -802,7 +802,7 @@ export async function runGoogleDisconnect(args: string[]): Promise<void> {
   const purgeClient = args.includes('--purge-client');
   const email = args.find((a) => !a.startsWith('--'))?.toLowerCase();
   if (!email) {
-    console.error('Usage: gbrain google disconnect <email> [--purge-client] [--json]');
+    console.error('Usage: foresights google disconnect <email> [--purge-client] [--json]');
     process.exit(2);
   }
   const vault = openVault();
@@ -815,7 +815,7 @@ export async function runGoogleDisconnect(args: string[]): Promise<void> {
       status: deleted ? 'disconnected' : 'not_found',
       next_action: {
         user_message: deleted
-          ? `Disconnected ${email}. To also revoke gbrain's access on Google's side: https://myaccount.google.com/permissions`
+          ? `Disconnected ${email}. To also revoke foresights's access on Google's side: https://myaccount.google.com/permissions`
           : `No connection found for ${email}.`,
       },
     },
@@ -830,7 +830,7 @@ export async function runGoogleDisconnect(args: string[]): Promise<void> {
 
 // ── entry ────────────────────────────────────────────────────────────────────
 
-const HELP = `gbrain google — connect Google (Gmail, Calendar, Contacts) to your brain
+const HELP = `foresights google — connect Google (Gmail, Calendar, Contacts) to your brain
 
 Subcommands:
   connect      Connect a Google account (guided; BYO OAuth client)
@@ -865,7 +865,7 @@ Subcommands:
 Docs: docs/guides/google-connect.md`;
 
 /**
- * `gbrain google calendars [--account <email>] [--json]`
+ * `foresights google calendars [--account <email>] [--json]`
  * Lists every calendar the connected account can read, so a secondary
  * calendar's id can be handed to `sources add --calendar-id`. Read-only.
  * `--json` emits the shared envelope (`ok`, `status`, `next_action.command`
@@ -883,7 +883,7 @@ export async function runGoogleCalendars(args: string[]): Promise<void> {
     const ids = await vault.list();
     const g = ids.filter((e) => e.provider === GOOGLE_PROVIDER);
     if (g.length === 0) {
-      console.error('No connected Google account — run: gbrain google connect');
+      console.error('No connected Google account — run: foresights google connect');
       process.exit(2);
     }
     if (g.length > 1) {
@@ -898,13 +898,13 @@ export async function runGoogleCalendars(args: string[]): Promise<void> {
   }
   const entry = await vault.get(credentialId(GOOGLE_PROVIDER, account));
   if (!entry) {
-    throw new CredentialError('not_connected', ` for ${account} — run: gbrain google connect --account ${account}`);
+    throw new CredentialError('not_connected', ` for ${account} — run: foresights google connect --account ${account}`);
   }
   const tokens = new GoogleTokenProvider(vault, entry.id, fetch);
   const { CalendarClient } = await import('../core/google/google-clients.ts');
   const client = new CalendarClient(tokens, fetch, () => {}, entry.meta.client_id);
   const cals = await client.listCalendars();
-  const addCommand = `gbrain sources add <id> --kind google --account ${account} --services calendar --calendar-id "<id>"`;
+  const addCommand = `foresights sources add <id> --kind google --account ${account} --services calendar --calendar-id "<id>"`;
   emit(
     json,
     { ok: true, status: 'ok', account, calendars: cals, next_action: { command: addCommand } },

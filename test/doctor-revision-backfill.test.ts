@@ -3,7 +3,7 @@
  * the page revision backfill.
  *
  * Protects: doctor reports ok once `pages.knowledge_revision` is NOT NULL;
- * warns with the pending count and `gbrain apply-migrations --force-schema`
+ * warns with the pending count and `foresights apply-migrations --force-schema`
  * while pages still wait for their revision; names failed rows by page id,
  * source:slug, attempt and error, and points at the torn-page preview when
  * only rows with spent attempts remain. The backfill completes on a managed
@@ -82,7 +82,7 @@ for (const backend of testBackends()) {
         const result = await check(engine);
         expect(result.status).toBe('warn');
         expect(result.message).toContain('3 page(s) still have no revision');
-        expect(result.message).toContain('gbrain apply-migrations --force-schema');
+        expect(result.message).toContain('foresights apply-migrations --force-schema');
         expect(result.fix).toMatchObject({ argv: ['gbrain', 'apply-migrations', '--force-schema'], actor: 'agent',
           verify: { argv: ['gbrain', 'doctor', '--only', 'revision_backfill', '--json'] } });
         expect(result.details).toMatchObject({ column: 'nullable', pending: 3, resumable: 3, failed: [] });
@@ -112,7 +112,7 @@ for (const backend of testBackends()) {
         const spent = await check(engine);
         expect(spent.status).toBe('warn');
         expect(spent.message).not.toContain('apply-migrations');
-        expect(spent.message).toContain('gbrain repair orphan-children');
+        expect(spent.message).toContain('foresights repair orphan-children');
         expect(spent.fix).toMatchObject({ argv: ['gbrain', 'repair', 'orphan-children'] });
         expect(spent.details).toMatchObject({ pending: 1, resumable: 0, failed: [expect.objectContaining({ slug: 'notes/rev-b', attempts: 3 })] });
       });

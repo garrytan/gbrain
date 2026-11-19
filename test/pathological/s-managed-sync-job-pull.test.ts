@@ -1,6 +1,6 @@
 /**
  * Latency finding 6.8 (GBRA-133): a `sync` job submitted without pull options
- * (`gbrain jobs submit sync --params '{"sourceId":"default"}'`, an MCP
+ * (`foresights jobs submit sync --params '{"sourceId":"default"}'`, an MCP
  * submit_job) defaulted to pulling. On a managed brain the managed sync refuses
  * a pull, so the job failed permanently ("Managed sync requires skipping the
  * Git pull") on every submission, while the CLI implies --no-pull there

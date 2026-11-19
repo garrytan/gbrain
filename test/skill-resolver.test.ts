@@ -925,7 +925,7 @@ describe('freshness and errors', () => {
     expect((await resolveSkills({ message: 'deploy' }, { home })).output.meta.index_stale).toBe(true);
   });
 
-  test('a gbrain upgrade marks the index stale; a newer receipt schema or a corrupt index refuses with the rebuild command', async () => {
+  test('a foresights upgrade marks the index stale; a newer receipt schema or a corrupt index refuses with the rebuild command', async () => {
     const home = tmp();
     const f = join(tmp(), 'cat.json');
     writeFileSync(f, JSON.stringify(BASIC));
@@ -937,7 +937,7 @@ describe('freshness and errors', () => {
     writeFileSync(rp, JSON.stringify({ ...receipt, schema_version: 2 }));
     try { await resolveSkills({ message: 'deploy' }, { home }); throw new Error('expected a refusal'); } catch (e) {
       expect((e as ResolverError).code).toBe('skill_index_incompatible');
-      expect((e as ResolverError).toJSON().fix.command).toBe(`gbrain skills index build --catalog c --from-json ${f}`);
+      expect((e as ResolverError).toJSON().fix.command).toBe(`foresights skills index build --catalog c --from-json ${f}`);
     }
     writeFileSync(rp, JSON.stringify(receipt));
     const ip = catalogFile(home, 'c', 'index.bin');
@@ -970,7 +970,7 @@ describe('freshness and errors', () => {
     const home = tmp();
     const r = await resolveSkills({ message: 'deploy' }, { home, failOpen: true, catalogs: ['nope'] });
     expect([r.output.error!.code, r.output.block, r.output.no_skill, r.failOpen]).toEqual(['skill_index_missing', '', false, true]);
-    expect(r.output.error!.fix.suggestion).toContain('gbrain skills index build');
+    expect(r.output.error!.fix.suggestion).toContain('foresights skills index build');
     expect(await codeOf(resolveSkills({ message: 'deploy' }, { home, catalogs: ['nope'] }))).toBe('skill_index_missing');
     expect(await codeOf(resolveSkills({ message: 'x', top_k: 99 }, { home, failOpen: true }))).toBe('skill_resolve_invalid_input');
   });

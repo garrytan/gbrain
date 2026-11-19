@@ -1,7 +1,7 @@
-# CEO Review, primary voice: GBrain structural refactor (W1-W5, one PR)
+# CEO Review, primary voice: Foresights structural refactor (W1-W5, one PR)
 
 - Plan under review: `~/.gstack/projects/garrytan-gbrain/autoplan-ceo-KudV1P/ceo-implementation.md`
-- Repo / base: `garrytan/gbrain` at `608a174dc` (v0.60.10.0), clean tree
+- Repo / base: `aimonk2025/gbrain` at `608a174dc` (v0.60.10.0), clean tree
 - Mode: **SELECTIVE EXPANSION** (autoplan override; auto-decided with the 6 principles, CEO tiebreak P1+P2)
 - Depth: implementation-ready
 - Status: read-only review. Nothing in the repo was modified. Measurements used a scratch TypeScript install under `~/.capy/work/refactor/scratch/` (the repo has no `node_modules`).
@@ -376,7 +376,7 @@ Interaction edge cases (CLI/HTTP surfaces are the "UI" here):
 
 | Interaction | Edge case | Handled? | How |
 |---|---|---|---|
-| `gbrain <cmd>` via table | unknown command, alias, `--help` placement | Must be | golden help/usage + exit codes (A16b) |
+| `foresights <cmd>` via table | unknown command, alias, `--help` placement | Must be | golden help/usage + exit codes (A16b) |
 | thin-client mode | CLI-only command against remote brain | Must be | refusal matrix golden |
 | doctor | check throws, `--json`, `--source`, `--scope=brain` | Must be | normalized golden on seeded brain for each flag combo used in tests |
 | HTTP routes | duplicate registration, 404 fallthrough to SPA `/admin/{*path}` | Must be | route snapshot includes SPA fallthrough order |
@@ -436,7 +436,7 @@ Assertion checks tied to requirements:
 - **WARNING prepared statements (A4):** direct-Postgres users (prepare=true) lose named prepared statements on every converted query unless the adapter passes `{prepare: true}` mirroring `db.resolvePrepare(url)`. Unprepared parameterized queries also take a Describe round trip (`connection.js:244`). On a 30-80 ms RTT to hosted Postgres this is a visible regression on search and write hot paths. Obligation: bench `searchVector`, `searchKeyword`, `_upsertChunksOnce`, `getPage` before/after on direct Postgres and PgBouncer; no regression beyond noise.
 - **OK N+1:** SQL text is preserved; no new loops. Guard against a store helper calling `exec.query` per row where the engine used `unnest` (review item).
 - **OK memory / indexes:** no new data structures or queries.
-- **Cold start:** 170 statically imported migration modules. Compiled binary bundles them (negligible); `bun src/cli.ts` dev path pays module resolution. Measure `gbrain --version` and `gbrain doctor --fast` cold start before/after; budget <= +20 ms.
+- **Cold start:** 170 statically imported migration modules. Compiled binary bundles them (negligible); `bun src/cli.ts` dev path pays module resolution. Measure `foresights --version` and `foresights doctor --fast` cold start before/after; budget <= +20 ms.
 - **CI time:** `check-function-size.ts` parses 1,473 files (~2-3 s measured with the scratch script over all of `src/`); fine inside the parallel verify.
 - **Connection pool:** `runUnsafe` with a signal reserves a connection (`postgres-engine.ts:5340+`); routing every store call through it with a signal changes reservation behavior vs tagged templates. Keep signal forwarding only where the engine passes a signal today.
 
@@ -653,7 +653,7 @@ Lake score: N/A (no coverage-scored user questions were asked; all decisions aut
 16. **A14 Freshness guard.** Model on `check-tool-catalog-fresh.sh` / `check-skills-manifest-fresh.sh`; wire into `run-verify-parallel.sh` and `guards-manifest.tsv` with fixtures. Verify: guard self-test.
 17. **A15 Jobs handlers.** One module per handler under `src/core/minions/handlers/`; 24 registrations in the same order; `registerBuiltinHandlers` still exported from `src/commands/jobs.ts`. Verify: name/order test + supervisor probe test.
 18. **A16 serve-http.** Route snapshot records method, path, and ordered middleware identities per route, plus global `app.use` order; E9 invariant on admin routes. Verify: mutation test (drop `requireAdmin` on one route -> fail).
-19. **A16b CLI goldens.** `gbrain --help`, `--tools-json`, unknown-command exit code/text, thin-client refusal matrix for all 62 former cases. Verify: golden tests.
+19. **A16b CLI goldens.** `foresights --help`, `--tools-json`, unknown-command exit code/text, thin-client refusal matrix for all 62 former cases. Verify: golden tests.
 20. **A17 SyncRun.** Mutable fields accessed only as `run.<field>`; no destructuring of mutable fields (source guard over `src/commands/sync/`); controlled-order tests for phase-await vs watchdog and phase-await vs timeout in both orders. Also re-point `test/sync.test.ts` #132 and `test/redos-hardening.test.ts` per A10.
 21. **A18 Function-size guard.** Counts function declarations, methods, accessors, arrow functions and function expressions (incl. object-literal and class-property forms); baseline TSV seeded with all 77 current >300-line functions at current length; actionable failure text; `guards-manifest.tsv` row with bad/good fixtures. Verify: guard self-test.
 22. **A19 Order and timing.** Commit order per Section 9; land right after a release; PATCH bump via `/ship`; `build:llms` after doc edits.
@@ -663,7 +663,7 @@ Lake score: N/A (no coverage-scored user questions were asked; all decisions aut
 26. **E4** Catalog-level schema parity (see A7).
 27. **E5** Executor binding-matrix contract test on both engines, green on master before any W1 conversion.
 28. **E9** Admin-route auth invariant (see A16).
-29. Observability: logger/progress/error string literals in moved code unchanged; pool gauge labels unchanged; cold-start budget `gbrain --version` <= +20 ms.
+29. Observability: logger/progress/error string literals in moved code unchanged; pool gauge labels unchanged; cold-start budget `foresights --version` <= +20 ms.
 30. Docs: update `docs/architecture/key-files/engines-*.md`, `commands-2.md` (doctor), `commands-6.md` (sync), `core-search-*.md` (hybrid), `core-minions-*.md`, tooling entry for the new guard; ASCII diagram of store -> executor -> adapter; fix `doctor-categories.ts` path references; remove the stale `pglite-schema.ts` DRIFT WARNING with the file. Privacy: generic placeholders only in all public artifacts.
 
 ## Completion Summary
@@ -710,4 +710,4 @@ Lake score: N/A (no coverage-scored user questions were asked; all decisions aut
 
 Unresolved decisions for the final gate: UC1 (W1 breadth), T1 (schema.sql fragments), T2 (serve-http layout), T3 (phase-named sync errors).
 
-No durable learnings logged by this voice (read-only phase). Candidate learning for the driver: "GBrain peels stall on source-text tests; plan the loader re-point up front" and "postgres.js `unsafe()` defaults to `prepare:false` (vendor/postgres/src/index.js:122)".
+No durable learnings logged by this voice (read-only phase). Candidate learning for the driver: "Foresights peels stall on source-text tests; plan the loader re-point up front" and "postgres.js `unsafe()` defaults to `prepare:false` (vendor/postgres/src/index.js:122)".

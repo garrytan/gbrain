@@ -1,5 +1,5 @@
 /**
- * #4730/#4731 — `gbrain dream --drain` surfaces the bounded per-item failure
+ * #4730/#4731 — `foresights dream --drain` surfaces the bounded per-item failure
  * records: the `--json` payload carries `failures` + `omitted_failure_count`
  * verbatim, and the human stderr summary names the record cap whenever
  * failures were omitted beyond it ("N beyond the record cap") — so a capped
@@ -172,7 +172,7 @@ describe('dream --drain wiring and exit codes (#1678)', () => {
   test('a held cycle lock reports cycle_already_running and exits 11', async () => {
     nextResult = new LockUnavailableError('gbrain-cycle');
     const r = await runDrainCaptured(['--json']);
-    expect(JSON.parse(r.stdout.join('\n'))).toEqual({ phase: 'extract_atoms', status: 'skipped', reason: 'cycle_already_running', resume_command: 'gbrain dream --drain --window 300' });
+    expect(JSON.parse(r.stdout.join('\n'))).toEqual({ phase: 'extract_atoms', status: 'skipped', reason: 'cycle_already_running', resume_command: 'foresights dream --drain --window 300' });
     expect(r.exitCode).toBe(11);
   });
 
@@ -206,16 +206,16 @@ describe('dream --drain stop contract (#5809)', () => {
   ])('a $stopped stop prints the JSON, exits 11 and names the rerun command', async ({ stopped, remaining }) => {
     nextResult = baseResult({ stopped, remaining, extracted: 4, batches: 2 });
     const r = await runDrainCaptured(['--json', '--window', '90']);
-    expect(JSON.parse(r.stdout.join('\n'))).toMatchObject({ stopped, remaining, extracted: 4, batches: 2, resume_command: 'gbrain dream --drain --window 90' });
+    expect(JSON.parse(r.stdout.join('\n'))).toMatchObject({ stopped, remaining, extracted: 4, batches: 2, resume_command: 'foresights dream --drain --window 90' });
     expect(r.exitCode).toBe(11);
-    expect(r.stderr).toContain(`[drain] stopped: ${stopped}; ${remaining} page(s) remaining. Rerun: gbrain dream --drain --window 90`);
+    expect(r.stderr).toContain(`[drain] stopped: ${stopped}; ${remaining} page(s) remaining. Rerun: foresights dream --drain --window 90`);
   });
 
   test('a provider_failure stop with an empty final recount still exits 11 (only drained exits 0)', async () => {
     nextResult = baseResult({ status: 'provider_failure', stopped: 'provider_failure', remaining: 0 });
     const r = await runDrainCaptured([]);
     expect(r.exitCode).toBe(11);
-    expect(r.stderr).toContain('Rerun: gbrain dream --drain --window 300');
+    expect(r.stderr).toContain('Rerun: foresights dream --drain --window 300');
   });
 
   test('a drained run prints no rerun hint and exits 0', async () => {
@@ -244,10 +244,10 @@ describe('dream --drain budget stop (#6425)', () => {
     const human = await runDrainCaptured([]);
     expect(human.exitCode).toBe(11);
     expect(human.stderr).toContain('[drain] stopped: budget; spent $0.0151 of the $0.03 per-run cap (cycle.extract_atoms.budget_usd); 2 page(s) remaining. '
-      + 'Rerun: gbrain dream --drain --window 300, or raise the cap: gbrain config set cycle.extract_atoms.budget_usd <usd>');
+      + 'Rerun: foresights dream --drain --window 300, or raise the cap: foresights config set cycle.extract_atoms.budget_usd <usd>');
     const json = await runDrainCaptured(['--json']);
     const payload = JSON.parse(json.stdout.find(l => l.trim().startsWith('{'))!);
-    expect(payload).toMatchObject({ stopped: 'budget', spent_usd: 0.0151, budget_usd: 0.03, resume_command: 'gbrain dream --drain --window 300' });
+    expect(payload).toMatchObject({ stopped: 'budget', spent_usd: 0.0151, budget_usd: 0.03, resume_command: 'foresights dream --drain --window 300' });
     expect(payload.notices).toEqual([expect.objectContaining({ code: 'atom_drain_budget', kind: 'info', contract_version: 1,
       fix: expect.objectContaining({ argv: ['gbrain', 'config', 'set', 'cycle.extract_atoms.budget_usd', '<USD>'], consent: ['paid'], next: 'ask_user',
         verify: { argv: ['gbrain', 'config', 'get', 'cycle.extract_atoms.budget_usd'] } }) })]);
@@ -270,7 +270,7 @@ describe('dream --drain exit mapping (#6817)', () => {
     const human = await runDrainCaptured([]);
     expect(human.exitCode).toBe(1);
     expect(human.stderr).toContain('[drain] stopped: provider_failure (auth); 9 page(s) remaining. Fix: ');
-    expect(human.stderr).toContain('Read-only check: gbrain models --json');
+    expect(human.stderr).toContain('Read-only check: foresights models --json');
     expect(human.stderr).not.toContain('Rerun:');
   });
 
@@ -280,7 +280,7 @@ describe('dream --drain exit mapping (#6817)', () => {
       const json = await runDrainCaptured(['--json']);
       expect(json.exitCode, cls).toBe(11);
       expect(JSON.parse(json.stdout.join('\n'))).toMatchObject({ status: 'provider_failure', retryable: true, code: 'atom_drain_provider_failure', reason: cls,
-        resume_command: 'gbrain dream --drain --window 300' });
+        resume_command: 'foresights dream --drain --window 300' });
     }
   });
 
@@ -293,7 +293,7 @@ describe('dream --drain exit mapping (#6817)', () => {
     expect(payload.resume_command).toBeUndefined();
     const human = await runDrainCaptured([]);
     expect(human.exitCode).toBe(1);
-    expect(human.stderr).toContain('[drain] stopped: no_progress; 7 page(s) remaining. Fix: Do not rerun this drain unchanged. Run gbrain doctor --json on the brain host');
+    expect(human.stderr).toContain('[drain] stopped: no_progress; 7 page(s) remaining. Fix: Do not rerun this drain unchanged. Run foresights doctor --json on the brain host');
     expect(human.stderr).toContain('earlier successful batches remain committed');
   });
 

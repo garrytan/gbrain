@@ -19,7 +19,7 @@ const migrate_embeddings: Operation = {
   name: 'migrate_embeddings',
   idempotent: false,
   outputRedaction: 'no_stored_text',
-  description: 'Re-embed the brain onto a different embedding provider/model: schema dimension transition, NULL-signature invalidation, query-cache purge, resumable re-embed. Without yes=true returns the plan + cost estimate only. Local-only admin op; the primary surface is `gbrain migrate embeddings`.',
+  description: 'Re-embed the brain onto a different embedding provider/model: schema dimension transition, NULL-signature invalidation, query-cache purge, resumable re-embed. Without yes=true returns the plan + cost estimate only. Local-only admin op; the primary surface is `foresights migrate embeddings`.',
   params: {
     to: { type: 'string', required: true, description: 'Target provider:model (e.g. openai:text-embedding-3-small).' },
     dim: { type: 'number', description: "Target dimensions. Defaults to the provider recipe's declared width; required when the recipe declares none." },
@@ -40,7 +40,7 @@ const migrate_embeddings: Operation = {
     if (ctx.remote !== false) {
       const to = typeof p.to === 'string' && /^[a-z0-9_-]+:[A-Za-z0-9._/-]+$/.test(p.to) ? ['--to', p.to] : [];
       const brain = ctx.brainId && ctx.brainId !== 'host' && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(ctx.brainId) ? ['--brain', ctx.brainId] : [];
-      throw hostOnlyError(ctx, 'permission_denied', 'migrate_embeddings is local-only. Run `gbrain migrate embeddings` on the host.',
+      throw hostOnlyError(ctx, 'permission_denied', 'migrate_embeddings is local-only. Run `foresights migrate embeddings` on the host.',
         ['gbrain', ...brain, 'migrate', 'embeddings', ...to, '--dry-run'],
         'Re-embedding rebuilds the vector schema and spends provider money, so only the trusted CLI on the brain host runs it; the dry run prints the plan and cost first.',
         { consent: [] });

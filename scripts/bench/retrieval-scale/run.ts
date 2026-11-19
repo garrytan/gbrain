@@ -14,19 +14,19 @@
  * --toxiproxy adds --rtt-ms of round-trip latency to its `pooler` proxy (vm-setup.sh
  * creates it on 127.0.0.1:6544 in front of PgBouncer); point --url at 6544 to use it.
  *
- * --url is what gbrain connects to (point it at a transaction-mode PgBouncer
+ * --url is what foresights connects to (point it at a transaction-mode PgBouncer
  * to measure the pooled path); --direct-url (default --url) samples queries.
  * Embedding and rerank go to mock-providers.ts in this process, answering
- * after --embed-ms / --rerank-ms, so the numbers are gbrain's own cost plus a
+ * after --embed-ms / --rerank-ms, so the numbers are foresights's own cost plus a
  * fixed provider round trip.
  *
  *   cold  one fresh CLI process per sample, the cost a shell-out agent pays.
  *         With --trace each sample records GBRAIN_SQL_TRACE and splits wall
  *         time into startup (spawn -> first statement), db (first statement
  *         -> last reply) and tail (last reply -> exit), plus round trips.
- *   warm  one long-lived gbrain serve stdio MCP process; per-stage search
+ *   warm  one long-lived foresights serve stdio MCP process; per-stage search
  *         timings come from _meta.retrieval.timings.
- *   socket  one long-lived `gbrain serve --cli-socket` and a CLI process per
+ *   socket  one long-lived `foresights serve --cli-socket` and a CLI process per
  *         sample that answers through the warm socket (GBRAIN_CLI_SOCKET=1),
  *         the path a shell-out agent pays once a serve is running.
  *

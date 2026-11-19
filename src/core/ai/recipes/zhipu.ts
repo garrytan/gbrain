@@ -18,7 +18,7 @@ import type { Recipe } from '../types.ts';
 
 /**
  * GLM-4.5+ and the GLM-5.x series reason by default and bill that reasoning
- * as output tokens (gbrain#4727). Shared with the ollama / openrouter recipes,
+ * as output tokens (foresights#4727). Shared with the ollama / openrouter recipes,
  * which host the same models under their own prefixes, so the version cutoff
  * lives in exactly one place. Pre-4.5 ids (glm-4, glm-4-plus, glm-3-turbo)
  * do not match and keep the conservative output caps.
@@ -31,7 +31,7 @@ export const zhipu: Recipe = {
   tier: 'openai-compat',
   implementation: 'openai-compatible',
   // No shipped rate for these yet: they warn and run under a default cap; a
-  // user cap refuses them until `gbrain pricing set` registers one (X1 guard).
+  // user cap refuses them until `foresights pricing set` registers one (X1 guard).
   unpriced_models: [
     'glm-5.3',
     'glm-5.3-flash',

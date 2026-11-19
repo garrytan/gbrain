@@ -59,7 +59,7 @@ afterAll(() => { provider.stop(true); rmSync(work, { recursive: true, force: tru
 
 /** Async, so the provider stand-in in this process can answer while the CLI runs. */
 async function run(argv: string[]): Promise<{ out: string; status: number | null }> {
-  const cmd = argv[0] === 'gbrain' ? [process.execPath, '--no-env-file', join(REPO, 'src', 'cli.ts'), ...argv.slice(1)] : argv;
+  const cmd = (argv[0] === 'gbrain' || argv[0] === 'foresights') ? [process.execPath, '--no-env-file', join(REPO, 'src', 'cli.ts'), ...argv.slice(1)] : argv;
   const proc = Bun.spawn(cmd, { cwd: REPO, env, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
   const killer = setTimeout(() => proc.kill('SIGKILL'), 120_000);
   try {
@@ -83,7 +83,7 @@ const commit = async (message: string) => { await ok(['git', '-C', checkout, 'ad
 function normalize(text: string): string {
   return text.split(checkout).join('~/brain/notes')
     .replace(/\b[0-9a-f]{64}\b/g, '<hash>')
-    .replace(/\b[0-9a-f]{7,40}\b(?= gbrain:)/g, '<commit>')
+    .replace(/\b[0-9a-f]{7,40}\b(?= (?:foresights|gbrain):)/g, '<commit>')
     .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, '<id>')
     .replace(/\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?Z?)?/g, '<time>')
     .replace(/\b\d+ h old\b/g, '<n> h old');
@@ -121,7 +121,7 @@ test('docs/guides/repair.md "Fences": every command runs and prints every line t
   const steps = walkthrough();
   expect(steps.length).toBeGreaterThanOrEqual(6);
 
-  // A source synced once by the older gbrain.
+  // A source synced once by the older foresights.
   mkdirSync(checkout, { recursive: true });
   await ok(['git', 'init', '-q', checkout]);
   await ok(['git', '-C', checkout, 'config', 'user.name', 'Example']);
@@ -152,7 +152,7 @@ test('docs/guides/repair.md "Fences": every command runs and prints every line t
   for (const step of steps) {
     const argv = tokens(step.command).map(token => token === '<hash>' ? lastHash ?? '<no preview hash yet>' : token.replace('~/brain/notes', checkout));
     const out = await ok(argv);
-    if (argv[0] === 'gbrain' && argv[1] !== 'post-upgrade' && !synced) { counts.toGreen++; synced = argv[1] === 'sync'; }
+    if ((argv[0] === 'gbrain' || argv[0] === 'foresights') && argv[1] !== 'post-upgrade' && !synced) { counts.toGreen++; synced = argv[1] === 'sync'; }
     if (argv[1] === 'repair' && argv[2] === 'fences') counts.toRepaired++;
     lastHash = [...out.matchAll(/--expect ([0-9a-f]{64})/g)].at(-1)?.[1] ?? lastHash;
     const shown = normalize(out);

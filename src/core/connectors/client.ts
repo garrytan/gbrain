@@ -75,7 +75,7 @@ export class ConnectorCredentialFormatError extends Error {
   constructor(header: string) {
     super(
       `connector: the ${header} credential holds a character an HTTP header cannot carry (a line break, control or ` +
-        'non-ASCII character); copy it again and re-run `gbrain connectors auth`',
+        'non-ASCII character); copy it again and re-run `foresights connectors auth`',
     );
     this.name = 'ConnectorCredentialFormatError';
   }
@@ -146,7 +146,7 @@ export interface ConnectorClientOpts {
   deadlineAt?: number;
   /** Polite spacing between requests, ms. Default 700. */
   minDelayMs?: number;
-  /** User-Agent header. Default: a desktop browser (chat providers); official APIs pass an honest gbrain agent. */
+  /** User-Agent header. Default: a desktop browser (chat providers); official APIs pass an honest foresights agent. */
   userAgent?: string;
   /** Per-request budget covering headers and body, ms; a stalled request fails `network` (timeout). Default: none. */
   requestTimeoutMs?: number;

@@ -45,7 +45,7 @@ For `review`, return the grouped active-task list instead of a single task_id. W
 
 ## Tool Interface
 
-Use ONLY the declared tools. `get_page("ops/tasks")` to read, `put_page("ops/tasks", …)` to write, `add_timeline_entry` for the audit trail, `search` for cross-referencing. Do not shell out to `gbrain` CLI verbs from this skill; the tools are the interface. (When the user runs this manually outside an agent, the CLI equivalents are `gbrain get ops/tasks` / `gbrain put ops/tasks` — equivalents only, not the skill's interface.)
+Use ONLY the declared tools. `get_page("ops/tasks")` to read, `put_page("ops/tasks", …)` to write, `add_timeline_entry` for the audit trail, `search` for cross-referencing. Do not shell out to `gbrain` CLI verbs from this skill; the tools are the interface. (When the user runs this manually outside an agent, the CLI equivalents are `foresights get ops/tasks` / `foresights put ops/tasks` — equivalents only, not the skill's interface.)
 
 ## Action Routing
 
@@ -112,10 +112,10 @@ After a mutation: one concise line — action, task ID, priority/status, relevan
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - The tasks page update returns `revision_conflict`: re-read `ops/tasks`, re-apply the one task change, and save; never overwrite the whole list from an old read.
-- `write_pending` (exit 10): report `saved: false` with the pending receipt and poll `gbrain write-request <request_id>`; do not tell the user the task is recorded yet.
+- `write_pending` (exit 10): report `saved: false` with the pending receipt and poll `foresights write-request <request_id>`; do not tell the user the task is recorded yet.
 - Ambiguous or missing task id: return `ambiguous` / `not_found` and ask which task; never mutate the closest match.
 
 ## Anti-Patterns

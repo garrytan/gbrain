@@ -11,8 +11,8 @@ export const CAPTURE_EVENT_PARAMS: Record<string, ParamDef> = {
 /**
  * #6524: the provenance the trusted local CLI stamps on its own captures
  * (`capture-cli`, `stdin` / `cli-positional`; a `--file` capture sends
- * `local_file` and the owner resolves its origin). `gbrain capture` has sent
- * these since #5622, and a running `gbrain serve` (IPC owner) or a thin client
+ * `local_file` and the owner resolves its origin). `foresights capture` has sent
+ * these since #5622, and a running `foresights serve` (IPC owner) or a thin client
  * reaches the op through dispatch, whose unknown-parameter check (#5970)
  * rejects every undeclared key on a write. Declared so dispatch admits them;
  * page-mutations.ts still replaces a remote caller's values with the

@@ -69,9 +69,9 @@ export async function checkSourceRoutingHealth(engine: BrainEngine): Promise<Che
         status: 'warn',
         message:
           `${emptySources.length} non-default source(s) have zero pages: ${emptySources.join(', ')}. ` +
-          `If you've recently run \`gbrain import --source-id <id>\` against these, the writes may have ` +
+          `If you've recently run \`foresights import --source-id <id>\` against these, the writes may have ` +
           `silently fallen to the default source pre-v0.37.7.0. Re-run with --source-id; verify via ` +
-          `\`gbrain sources current --json\`.`,
+          `\`foresights sources current --json\`.`,
       };
     }
     return {
@@ -128,11 +128,11 @@ export async function checkFederationHealth(engine: BrainEngine, opts: { sourceI
     const fails: string[] = [];
     for (const m of metrics) {
       const embedRemedy = embedBackfillWorkerSurface(engine).status === 'no_worker_surface'
-        ? `gbrain embed --stale --source ${m.source_id}`
-        : `gbrain jobs submit embed-backfill --params '{"sourceId":"${m.source_id}"}'`;
+        ? `foresights embed --stale --source ${m.source_id}`
+        : `foresights jobs submit embed-backfill --params '{"sourceId":"${m.source_id}"}'`;
       // Fail thresholds first (most severe)
       if (m.lag_seconds !== null && m.lag_seconds > 24 * 3600) {
-        fails.push(`${m.source_id}: stale ${Math.floor(m.lag_seconds / 3600)}h — run \`gbrain sync trigger --source ${m.source_id}\``);
+        fails.push(`${m.source_id}: stale ${Math.floor(m.lag_seconds / 3600)}h — run \`foresights sync trigger --source ${m.source_id}\``);
         continue;
       }
       if (m.embed_coverage_pct < 50 && m.total_chunks > 1000) {
@@ -141,13 +141,13 @@ export async function checkFederationHealth(engine: BrainEngine, opts: { sourceI
       }
       // Warns
       if (m.federated && m.lag_seconds !== null && m.lag_seconds > 3600) {
-        warns.push(`${m.source_id}: federated source ${Math.floor(m.lag_seconds / 3600)}h+ stale — run \`gbrain sync trigger --source ${m.source_id}\``);
+        warns.push(`${m.source_id}: federated source ${Math.floor(m.lag_seconds / 3600)}h+ stale — run \`foresights sync trigger --source ${m.source_id}\``);
       }
       if (m.embed_coverage_pct < 95 && m.total_chunks > 100) {
         warns.push(`${m.source_id}: ${m.embed_coverage_pct.toFixed(1)}% embed coverage — run \`${embedRemedy}\``);
       }
       if (m.failed_jobs_24h >= 3) {
-        warns.push(`${m.source_id}: ${m.failed_jobs_24h} failures in 24h — check \`gbrain jobs list --status failed\``);
+        warns.push(`${m.source_id}: ${m.failed_jobs_24h} failures in 24h — check \`foresights jobs list --status failed\``);
       }
     }
 
@@ -207,7 +207,7 @@ export async function checkOauthConfidentialHealth(engine: BrainEngine): Promise
         message:
           `${broken.length} confidential OAuth client(s) have NULL/empty secret hash: ${broken.map(b => b.client_id).slice(0, 5).join(', ')}` +
           (broken.length > 5 ? ` (+${broken.length - 5} more)` : '') +
-          `. Fix: \`gbrain auth revoke-client <id> && gbrain auth register-client …\` for each, OR \`gbrain upgrade\` if pre-v0.37.7.0.`,
+          `. Fix: \`foresights auth revoke-client <id> && foresights auth register-client …\` for each, OR \`foresights upgrade\` if pre-v0.37.7.0.`,
       };
     }
     return {
@@ -240,7 +240,7 @@ export async function checkOauthConfidentialHealth(engine: BrainEngine): Promise
  *      '<name>-workspace' source (DB-only: no local_path, zero pages, ZERO
  *      FACTS, not archived) that no live client references by write source
  *      or read grant. This is the post-failure / post-revoke residue
- *      heuristic for `gbrain agent register` derived workspaces. A
+ *      heuristic for `foresights agent register` derived workspaces. A
  *      non-default source WITH pages is normal on every local brain and is
  *      never flagged; a zero-page source WITH facts is a revoked agent's
  *      memory (the primary agent write lane) and is never flagged either —
@@ -265,7 +265,7 @@ export async function checkOauthClientScopeHealth(engine: BrainEngine): Promise<
     );
     // A revoked agent's workspace can hold FACTS with zero pages (facts are
     // the primary agent write lane) — such a source is NOT empty and the
-    // `gbrain sources remove` recommendation would cascade the facts away.
+    // `foresights sources remove` recommendation would cascade the facts away.
     const orphanSql = (withFactsExclusion: boolean) =>
       `SELECT s.id
          FROM sources s
@@ -322,7 +322,7 @@ export async function checkOauthClientScopeHealth(engine: BrainEngine): Promise<
       );
     } catch (e) {
       if (!(isMissingSchemaObject(e, 'table', 'oauth_grant_audit') || isMissingSchemaObject(e, 'column', 'grant_revision'))) throw e;
-      privilegedDcrNote = 'self-registered-client scope audit skipped: grant audit schema not present (run `gbrain apply-migrations --yes`), so privileged self-registered clients are unknown';
+      privilegedDcrNote = 'self-registered-client scope audit skipped: grant audit schema not present (run `foresights apply-migrations --yes`), so privileged self-registered clients are unknown';
     }
     const problems: string[] = [];
     if (privilegedDcr.length > 0) {
@@ -332,8 +332,8 @@ export async function checkOauthClientScopeHealth(engine: BrainEngine): Promise<
         `${privilegedDcr.length} active OAuth client(s) hold a scope beyond the self-registration ceiling (${dcrCeiling.join('/')}) ` +
         `and look self-registered (no operator grant record): ${shown.join('; ')}` +
         (privilegedDcr.length > 5 ? ` (+${privilegedDcr.length - 5} more)` : '') +
-        `. If you did not register these yourself, narrow with \`gbrain auth rescope-client <client_id> --scopes ${dcrCeiling.join(',')}\` ` +
-        `or remove with \`gbrain auth revoke-client <client_id>\`.`,
+        `. If you did not register these yourself, narrow with \`foresights auth rescope-client <client_id> --scopes ${dcrCeiling.join(',')}\` ` +
+        `or remove with \`foresights auth revoke-client <client_id>\`.`,
       );
     }
     if (dangling.length > 0) {
@@ -348,7 +348,7 @@ export async function checkOauthClientScopeHealth(engine: BrainEngine): Promise<
       problems.push(
         `${dangling.length} federated read grant(s) point at missing sources: ${shown.join('; ')}` +
         (byClient.size > 5 ? ` (+${byClient.size - 5} more clients)` : '') +
-        `. Fix each with \`gbrain auth rescope-client <client_id>\` (set a federated read list naming only existing sources), or recreate the source.`,
+        `. Fix each with \`foresights auth rescope-client <client_id>\` (set a federated read list naming only existing sources), or recreate the source.`,
       );
     }
     if (orphaned.length > 0) {
@@ -356,7 +356,7 @@ export async function checkOauthClientScopeHealth(engine: BrainEngine): Promise<
       problems.push(
         `${orphaned.length} empty auto-created workspace source(s) with no live client: ${shown.join(', ')}` +
         (orphaned.length > 5 ? ` (+${orphaned.length - 5} more)` : '') +
-        `. May be residue from a revoked or failed \`gbrain agent register\`; verify before removing with \`gbrain sources remove <id>\`.`,
+        `. May be residue from a revoked or failed \`foresights agent register\`; verify before removing with \`foresights sources remove <id>\`.`,
       );
     }
     if (problems.length > 0) {
@@ -452,10 +452,10 @@ export async function checkStaleLocks(
   try {
     const { listStaleLocks, reapDeadHolderLocks } = await import('../../../core/db-lock.ts');
 
-    // #1972: under `gbrain doctor --fix`, reap dead-holder sync/cycle locks
+    // #1972: under `foresights doctor --fix`, reap dead-holder sync/cycle locks
     // using the SAME namespace-scoped, host-scoped, snapshot-matched reaper the
     // cycle runs at start. This is the self-heal path for no-autopilot brains: a
-    // brain that never runs `gbrain dream` never hits the cycle-start sweep, so
+    // brain that never runs `foresights dream` never hits the cycle-start sweep, so
     // doctor --fix is how its crashed-sync locks get cleared. DB-only, so it's
     // orthogonal to (and unaffected by) the skills-dir --fix safety gate above.
     // Best-effort: a reap failure falls through to the warn path below.
@@ -481,20 +481,20 @@ export async function checkStaleLocks(
     }
     const lines = stale.slice(0, 10).map(s => {
       const ageH = Math.floor(s.age_ms / 3600_000);
-      // Every hint here must be a REAL command: `gbrain dream --break-lock`
+      // Every hint here must be a REAL command: `foresights dream --break-lock`
       // was advertised for years but dream never implemented the flag —
       // pasting the hint ran a full (paid) dream cycle instead of breaking a
       // lock. Cycle locks: dead-holder rows on THIS host are reaped by
-      // `gbrain doctor --fix` (checkStaleLocks above) and swept automatically
+      // `foresights doctor --fix` (checkStaleLocks above) and swept automatically
       // at the next dream-cycle start; cross-host or live-holder locks have
-      // no safe break command by design. The old fallback 'gbrain doctor' was
+      // no safe break command by design. The old fallback 'foresights doctor' was
       // circular (this line IS doctor output) and plain doctor reaps nothing.
       let breakHint =
         'expired lock is swept at the next acquire; if it persists, inspect the gbrain_cycle_locks row';
       if (s.id.startsWith('gbrain-sync:')) {
-        breakHint = `gbrain sync --break-lock --source ${s.id.slice('gbrain-sync:'.length)}`;
+        breakHint = `foresights sync --break-lock --source ${s.id.slice('gbrain-sync:'.length)}`;
       } else if (s.id.startsWith('gbrain-cycle:') || s.id === 'gbrain-cycle') {
-        breakHint = 'gbrain doctor --fix (reaps dead holders on this host; also swept at next dream start)';
+        breakHint = 'foresights doctor --fix (reaps dead holders on this host; also swept at next dream start)';
       }
       return `  ${s.id} (pid ${s.holder_pid} on ${s.holder_host}, age ${ageH}h) → ${breakHint}`;
     });

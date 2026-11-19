@@ -1,5 +1,5 @@
 /**
- * #4198 — `gbrain eval synthesize-concepts` routing regression.
+ * #4198 — `foresights eval synthesize-concepts` routing regression.
  *
  * Pre-fix there was NO dispatch branch for the subcommand: it fell through
  * to the generic qrels eval and died with "Error: --qrels <path|json> is

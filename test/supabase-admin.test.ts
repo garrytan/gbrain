@@ -144,7 +144,7 @@ describe('discoverPoolerUrl', () => {
     expect(thrown).toBeInstanceOf(Error);
     const msg = (thrown as Error).message;
     expect(msg).toContain('did not return a connection string');
-    expect(msg).toContain('gbrain init --url');
+    expect(msg).toContain('foresights init --url');
     expect(msg).not.toContain('aws-0');
   });
 

@@ -146,7 +146,7 @@ const volunteer_context: Operation = {
   cliHints: { name: 'volunteer-context', stdin: 'window' },
 };
 
-// v0.33: expertise + relationship-proximity routing. CLI: gbrain whoknows.
+// v0.33: expertise + relationship-proximity routing. CLI: foresights whoknows.
 const find_experts: Operation = {
   name: 'find_experts',
   mutating: false,
@@ -258,7 +258,7 @@ const find_contradictions: Operation = {
       : null;
     const rows = await ctx.engine.loadContradictionsTrend(30);
     if (rows.length === 0) {
-      return { contradictions: [], note: 'No probe runs in the last 30 days; run `gbrain eval suspected-contradictions` first.' };
+      return { contradictions: [], note: 'No probe runs in the last 30 days; run `foresights eval suspected-contradictions` first.' };
     }
     const latest = rows[0];
     const report = latest.report_json as Partial<ProbeReport> | null;

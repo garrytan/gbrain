@@ -1,6 +1,6 @@
 /**
- * GST-1850 PR 2: `gbrain setup hermes --skill-loading resolve`. The lane's
- * `pre_llm_call` entry shares gbrain's one marked `hooks:` block in
+ * GST-1850 PR 2: `foresights setup hermes --skill-loading resolve`. The lane's
+ * `pre_llm_call` entry shares foresights's one marked `hooks:` block in
  * $HERMES_HOME/config.yaml with the brain-first turn rule, each entry with its
  * own approval in shell-hooks-allowlist.json.
  *

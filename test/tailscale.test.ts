@@ -1,7 +1,7 @@
 /**
  * Pure-function contracts of src/core/tailscale.ts: status/serve-status
  * parsing, binary discovery, install plans, argv builders and the stderr
- * classifier that `gbrain mcp expose` turns into operator fixes. No tailscale
+ * classifier that `foresights mcp expose` turns into operator fixes. No tailscale
  * binary, no subprocess, no network.
  */
 import { describe, expect, test } from 'bun:test';

@@ -15,7 +15,7 @@
  *     completion (chunks the write did not re-embed) is not a sample either.
  * Latencies are clamped at 0 (a committer clock ahead of the database clock). The read uses the partial index
  * `persistence_requests_sync_watermark` (its predicate is repeated verbatim) and stops after one probe when the window
- * is empty. Nothing is written. Readers: `gbrain sync status` (the `freshness` block), `gbrain status`, and doctor
+ * is empty. Nothing is written. Readers: `foresights sync status` (the `freshness` block), `foresights status`, and doctor
  * `managed_sync_latency` (src/commands/doctor/checks/managed-sync-latency.ts).
  */
 import type { BrainEngine } from '../engine.ts';

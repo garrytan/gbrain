@@ -119,8 +119,8 @@ async function runMinionsMigration(ctx: DoctorContext): Promise<Check[]> {
   // If completed.jsonl has any status:"partial" entry with no later
   // status:"complete" for the same version, the install is mid-migration.
   // Typical cause: v0.11.0 stopgap wrote a partial record but nobody ran
-  // `gbrain apply-migrations --yes` afterward. This check fires on every
-  // `gbrain doctor` invocation so your OpenClaw's health skill catches it.
+  // `foresights apply-migrations --yes` afterward. This check fires on every
+  // `foresights doctor` invocation so your OpenClaw's health skill catches it.
   //
   // Forward-progress override: a partial entry for vX.Y.Z is treated as
   // stale (not stuck) if there is a `complete` entry for any vA.B.C >= vX.Y.Z
@@ -168,7 +168,7 @@ async function runMinionsMigration(ctx: DoctorContext): Promise<Check[]> {
     // wedge condition). The `stuck` filter above already excludes
     // forward-progress-superseded versions, so we only count actual unresolved
     // partials per version. A version with >=3 trailing partials needs
-    // `gbrain apply-migrations --force-retry <v>` once before plain --yes
+    // `foresights apply-migrations --force-retry <v>` once before plain --yes
     // will succeed (the 3-consecutive-partials guard in apply-migrations.ts
     // is still active). Without this hint, operators wedged on v0.29.1 (and
     // any future migration that hits the same guard) get "run --yes" advice
@@ -189,7 +189,7 @@ async function runMinionsMigration(ctx: DoctorContext): Promise<Check[]> {
       (engine || !(v in MIGRATION_OPT_OUT_KEYS))
       && ((newestRun !== null && compareVersions(v, newestRun) < 0) || history.get(v)?.at(-1)?.status === 'retry'));
     // GBRA-541 4a: connected to the brain, doctor also reports the upgrade migrations connect's notice names (versions
-    // not reached yet), so an owner whose brain runs only `gbrain serve` sees them here.
+    // not reached yet), so an owner whose brain runs only `foresights serve` sees them here.
     const notReached = engine && upgradeLedgerApplies(engine) ? migrationLedgerSummary(VERSION, declined).pending : [];
 
     if (declined.size > 0) {
@@ -197,7 +197,7 @@ async function runMinionsMigration(ctx: DoctorContext): Promise<Check[]> {
       checks.push({
         name: 'minions_migration',
         status: 'ok',
-        message: `Declined by config: ${[...declined].join(', ')} (${keys.join(', ')}); apply-migrations skips it on every machine using this brain. Turn one back on: gbrain config set <key> true`,
+        message: `Declined by config: ${[...declined].join(', ')} (${keys.join(', ')}); apply-migrations skips it on every machine using this brain. Turn one back on: foresights config set <key> true`,
         details: { declined: [...declined] },
       });
     }
@@ -206,7 +206,7 @@ async function runMinionsMigration(ctx: DoctorContext): Promise<Check[]> {
       // version is also stuck. Surface the force-retry hint instead of the
       // generic --yes hint; chained with `&&` when multiple versions are
       // wedged so the operator can copy-paste a single line.
-      const cmd = wedged.map(v => `gbrain apply-migrations --force-retry ${v}`).join(' && ');
+      const cmd = wedged.map(v => `foresights apply-migrations --force-retry ${v}`).join(' && ');
       checks.push({
         name: 'minions_migration',
         status: 'fail',
@@ -216,20 +216,20 @@ async function runMinionsMigration(ctx: DoctorContext): Promise<Check[]> {
       checks.push({
         name: 'minions_migration',
         status: 'fail',
-        message: `MINIONS HALF-INSTALLED (partial migration: ${stuck.join(', ')}). Run: gbrain apply-migrations --yes`,
+        message: `MINIONS HALF-INSTALLED (partial migration: ${stuck.join(', ')}). Run: foresights apply-migrations --yes`,
       });
     } else if (pending.length > 0) {
       checks.push({
         name: 'minions_migration',
         status: 'warn',
-        message: `${pending.length} host migration(s) not run yet: ${pending.join(', ')}. Run: gbrain apply-migrations --yes`,
+        message: `${pending.length} host migration(s) not run yet: ${pending.join(', ')}. Run: foresights apply-migrations --yes`,
         details: { pending },
       });
     } else if (notReached.length > 0) {
       checks.push({
         name: 'minions_migration',
         status: 'warn',
-        message: `${notReached.length} upgrade migration(s) have not run on this brain yet: ${notReached.join(', ')}. Run: gbrain apply-migrations --yes --no-autopilot-install`,
+        message: `${notReached.length} upgrade migration(s) have not run on this brain yet: ${notReached.join(', ')}. Run: foresights apply-migrations --yes --no-autopilot-install`,
         details: { pending: notReached },
       });
     } else {
@@ -255,12 +255,12 @@ async function runMinionsMigration(ctx: DoctorContext): Promise<Check[]> {
 
   // 3b-ter. Self-upgrade health (#3747). Pure local-file check (config +
   // upgrade cache + audit trail; no DB) that was only ever pushed by the
-  // REMOTE report (doctor/report-remote.ts) — the local `gbrain doctor`,
+  // REMOTE report (doctor/report-remote.ts) — the local `foresights doctor`,
   // the surface an operator actually runs on the host, never emitted it,
   // so a wedged auto-upgrade loop was invisible exactly where it would be
   // diagnosed. Sits beside the upgrade_errors trail it complements.
-  // #8776: with the plan the next `gbrain upgrade` makes, so a restart it would
-  // refuse (an autopilot started outside gbrain's service) shows before it fails.
+  // #8776: with the plan the next `foresights upgrade` makes, so a restart it would
+  // refuse (an autopilot started outside foresights's service) shows before it fails.
   const restart = await import('../../upgrade-restart.ts').then((m) => m.upgradeRestartReadiness()).catch(() => null);
   checks.push(checkSelfUpgradeHealth(restart));
   checks.push(checkBunRuntime());

@@ -181,7 +181,7 @@ describe('search_exact remote visibility', () => {
   });
 });
 
-describe('gbrain search --exact routing', () => {
+describe('foresights search --exact routing', () => {
   test('--exact routes search to search-exact and is dropped; after a bare -- it is a positional', () => {
     expect(routeCommand('search', ['--exact', 'board pack', '--limit', '5'])).toEqual({ command: 'search-exact', subArgs: ['board pack', '--limit', '5'] });
     expect(routeCommand('search', ['board pack', '--exact'])).toEqual({ command: 'search-exact', subArgs: ['board pack'] });

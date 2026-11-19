@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# CI guard (GBRA-194): a `bun build --compile` binary serves gbrain's bundled
-# skills byte-identical to skills/. `gbrain bundled-skill` and the spring-loaded
+# CI guard (GBRA-194): a `bun build --compile` binary serves foresights's bundled
+# skills byte-identical to skills/. `foresights bundled-skill` and the spring-loaded
 # skills index read them from src/core/skills/bundled-skills.generated.ts, so a
 # compiled binary must carry every file as text: no host skills/ dir exists
 # beside a release binary. Fails when compile fails, a file is missing or not

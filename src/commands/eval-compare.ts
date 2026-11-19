@@ -1,13 +1,13 @@
 /**
- * v0.32.3 — `gbrain eval compare` — render the per-mode comparison.
+ * v0.32.3 — `foresights eval compare` — render the per-mode comparison.
  *
  * Reads `<repo>/.gbrain-evals/eval-results.jsonl` (the audit trail from
- * `gbrain eval run-all` plus any manually-logged completions), groups by
+ * `foresights eval run-all` plus any manually-logged completions), groups by
  * (suite, mode), and produces a side-by-side table.
  *
  * Statistics are computed only from per-query rows. A run record that
  * points at its per-question output (`params.output`, written by
- * `gbrain eval longmemeval --record --output`) contributes rows; pairs of
+ * `foresights eval longmemeval --record --output`) contributes rows; pairs of
  * runs are joined on question_id and compared with a paired cluster
  * bootstrap (95% CI), a two-sided sign-flip randomization p-value, and Holm
  * correction across every comparison in the report
@@ -89,7 +89,7 @@ function parseCompareArgs(args: string[]): CompareOpts {
 
 function printHelp(): void {
   process.stderr.write(
-    `gbrain eval compare [flags]\n\n` +
+    `foresights eval compare [flags]\n\n` +
     `Render a per-mode comparison from <repo>/.gbrain-evals/eval-results.jsonl\n\n` +
     `Flags:\n` +
     `  --runs id1,id2,id3      Pick specific run_ids (default: all).\n` +
@@ -435,7 +435,7 @@ export async function runEvalCompare(args: string[]): Promise<void> {
 
   if (records.length === 0) {
     process.stdout.write(`_No eval-results.jsonl found at <repo>/.gbrain-evals/eval-results.jsonl._\n`);
-    process.stdout.write(`_Run, once per mode (conservative, balanced, tokenmax): gbrain eval longmemeval <dataset.jsonl> --mode <mode> --record_\n`);
+    process.stdout.write(`_Run, once per mode (conservative, balanced, tokenmax): foresights eval longmemeval <dataset.jsonl> --mode <mode> --record_\n`);
     return;
   }
 

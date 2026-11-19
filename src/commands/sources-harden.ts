@@ -1,10 +1,10 @@
 /**
- * gbrain sources harden / pull / unharden — brain-repo git durability (v0.42.44).
+ * foresights sources harden / pull / unharden — brain-repo git durability (v0.42.44).
  *
- *   gbrain sources harden   <id|--all> [--pat-file <p>] [--branch <b>]
+ *   foresights sources harden   <id|--all> [--pat-file <p>] [--branch <b>]
  *                                      [--no-cron] [--no-verify] [--dry-run] [--json]
- *   gbrain sources pull     <id> | --path <dir> [--branch <b>]
- *   gbrain sources unharden <id>
+ *   foresights sources pull     <id> | --path <dir> [--branch <b>]
+ *   foresights sources unharden <id>
  *
  * `harden`/`unharden` write executables, an OS cron, and a credential helper on
  * the host → CLI-only (never MCP). `pull --path` is DB-free (the cron's entry):
@@ -44,12 +44,12 @@ function configHost(config: unknown): string | null {
   return null;
 }
 
-const HARDEN_USAGE = 'gbrain sources harden <id|--all> [--pat-file <p>] [--branch <b>] [--no-cron] [--no-verify] [--dry-run] [--json]';
+const HARDEN_USAGE = 'foresights sources harden <id|--all> [--pat-file <p>] [--branch <b>] [--no-cron] [--no-verify] [--dry-run] [--json]';
 
 /** A3/D4: a missing source id is a caller mistake (exit 2): the usage, an example, and where the ids come from. */
 function hardenUsageError(): OperationError {
-  return opError('invalid_params', 'gbrain sources harden needs a source id or --all.',
-    `Usage: ${HARDEN_USAGE}. Example: gbrain sources harden wiki --pat-file ~/.config/gbrain/pat --dry-run (\`gbrain sources list\` shows the ids).`);
+  return opError('invalid_params', 'foresights sources harden needs a source id or --all.',
+    `Usage: ${HARDEN_USAGE}. Example: foresights sources harden wiki --pat-file ~/.config/gbrain/pat --dry-run (\`foresights sources list\` shows the ids).`);
 }
 
 async function loadSourceRows(engine: BrainEngine, id: string | undefined, all: boolean): Promise<SourceRow[]> {
@@ -84,7 +84,7 @@ export async function runHarden(engine: BrainEngine, args: string[]): Promise<vo
   const patFile = flagVal(args, '--pat-file');
 
   const pat = acceptPat({ patFile });
-  for (const w of pat?.warnings ?? []) console.error(`[gbrain] ${w}`);
+  for (const w of pat?.warnings ?? []) console.error(`[foresights] ${w}`);
 
   const rows = await loadSourceRows(engine, id, all);
   if (rows.length === 0) {
@@ -96,7 +96,7 @@ export async function runHarden(engine: BrainEngine, args: string[]): Promise<vo
   if (all && pat) {
     const hosts = new Set(rows.map(r => configHost(r.config)).filter(Boolean));
     if (hosts.size > 1) {
-      console.error(`[gbrain] Refusing --all with one PAT across multiple hosts (${[...hosts].join(', ')}). Harden each source with its own --pat-file.`);
+      console.error(`[foresights] Refusing --all with one PAT across multiple hosts (${[...hosts].join(', ')}). Harden each source with its own --pat-file.`);
       process.exit(2);
     }
   }
@@ -157,7 +157,7 @@ export async function runPull(engine: BrainEngine | null, args: string[]): Promi
   } else {
     const id = args.find(a => !a.startsWith('--') && a !== branchFlag);
     if (!engine || !id) {
-      console.error('Usage: gbrain sources pull <id> | --path <dir> [--branch <b>]');
+      console.error('Usage: foresights sources pull <id> | --path <dir> [--branch <b>]');
       process.exit(2);
     }
     const rows = await engine.executeRaw<SourceRow>(`SELECT id, local_path, config FROM sources WHERE id = $1`, [id]);
@@ -170,7 +170,7 @@ export async function runPull(engine: BrainEngine | null, args: string[]): Promi
   }
 
   if (!isInsideGitRepo(repoPath)) {
-    console.error(`[gbrain] not a git repo: ${repoPath}`);
+    console.error(`[foresights] not a git repo: ${repoPath}`);
     process.exit(1);
   }
   const branch = branchFlag || detectDefaultBranch(repoPath);
@@ -181,7 +181,7 @@ export async function runPull(engine: BrainEngine | null, args: string[]): Promi
     case 'skipped_dirty': console.log(`skipped — working tree dirty (${branch})`); break;
     case 'skipped_busy': console.log(`skipped — another writer holds the commit lock (${branch})`); break;
     case 'conflict_aborted':
-      console.error(`[gbrain] ${outcome.detail}`);
+      console.error(`[foresights] ${outcome.detail}`);
       process.exit(FAILED_EXIT_CODE);
   }
 }
@@ -191,7 +191,7 @@ export async function runPull(engine: BrainEngine | null, args: string[]): Promi
 export async function runUnharden(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args.find(a => !a.startsWith('--'));
   if (!id) {
-    console.error('Usage: gbrain sources unharden <id>');
+    console.error('Usage: foresights sources unharden <id>');
     process.exit(2);
   }
   const rows = await engine.executeRaw<SourceRow>(`SELECT id, local_path, config FROM sources WHERE id = $1`, [id]);

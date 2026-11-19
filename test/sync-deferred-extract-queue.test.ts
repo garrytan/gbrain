@@ -8,7 +8,7 @@
  * cycle's extract phase is slug-scoped (runExtractCore({slugs:
  * syncPagesAffected})), so the NEXT cycle's up_to_date sync hands it an empty
  * slug list and it processes 0 pages — the staleness is permanent until an
- * operator runs `gbrain extract --stale` by hand.
+ * operator runs `foresights extract --stale` by hand.
  *
  * Post-fix, the deferral branch submits a source-scoped `extract` minion job
  * with { stale: true }, bound to the consumed commit via idempotency key, and

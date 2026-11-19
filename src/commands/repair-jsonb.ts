@@ -1,5 +1,5 @@
 /**
- * `gbrain repair-jsonb` — repair JSONB columns that were stored as string
+ * `foresights repair-jsonb` — repair JSONB columns that were stored as string
  * literals due to the v0.12.0-and-earlier double-encode bug.
  *
  * Background: postgres-engine.ts wrote frontmatter and other JSONB columns
@@ -112,7 +112,7 @@ export async function repairJsonb(opts: RepairOpts = { dryRun: false }): Promise
   if (!engineCfg) {
     const config = loadConfig();
     if (!config) {
-      throw new Error('No brain configured. Run: gbrain init');
+      throw new Error('No brain configured. Run: foresights init');
     }
     engineCfg = toEngineConfig(config);
   }
@@ -137,7 +137,7 @@ export async function repairJsonb(opts: RepairOpts = { dryRun: false }): Promise
   // migrations, and the per-target catch below would turn its absence into "0 rows" while damaged rows stay.
   const [helper] = await sql.unsafe(`SELECT to_regprocedure('gbrain_try_jsonb(text)') IS NOT NULL AS installed`) as Array<{ installed: boolean }>;
   if (!helper?.installed) {
-    throw new Error('repair-jsonb needs the gbrain_try_jsonb function from schema migration v263, which this database does not have yet. Run gbrain apply-migrations first, then repair-jsonb again.');
+    throw new Error('repair-jsonb needs the gbrain_try_jsonb function from schema migration v263, which this database does not have yet. Run foresights apply-migrations first, then repair-jsonb again.');
   }
 
   // Progress on stderr only. Stdout is reserved for the JSON summary that

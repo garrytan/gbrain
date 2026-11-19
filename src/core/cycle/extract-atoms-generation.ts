@@ -50,7 +50,7 @@ export function atomGenerationOrigin(sourceId: string, item: ExtractAtomsItem): 
 }
 
 export const heldLine = (originLabel: string, key: GenerationKey, reason: string) =>
-  `[extract_atoms] ${originLabel}: result held (${reason}); the previous atoms stay live. Preview: gbrain repair generations --kind ${ATOM_KIND} --mode release-held --key ${key.ownerKey} --source ${key.sourceId}`;
+  `[extract_atoms] ${originLabel}: result held (${reason}); the previous atoms stay live. Preview: foresights repair generations --kind ${ATOM_KIND} --mode release-held --key ${key.ownerKey} --source ${key.sourceId}`;
 
 /** GBRA-161 PR 1b: the corpus root a discovered transcript lies under, with the label its key carries. */
 export function transcriptRoot(filePath: string, corpusDir: string, meetingDir: string | undefined): { path: string; label: string } {

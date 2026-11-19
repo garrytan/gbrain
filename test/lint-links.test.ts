@@ -1,5 +1,5 @@
 /**
- * gbrain lint link checks (core/lint/link-check.ts): dead-link and ambiguous-link,
+ * foresights lint link checks (core/lint/link-check.ts): dead-link and ambiguous-link,
  * plus the CLI's --json, --strict and --no-links.
  *
  * Every case builds a throwaway brain directory. A link is reported only when no

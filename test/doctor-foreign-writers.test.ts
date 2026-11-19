@@ -134,7 +134,7 @@ test('seven commit kinds: only plain, amend, the guard bypass and plumbing are f
   write(work, 'notes/bypass.md', 'bypass\n');
   git(work, ['add', 'notes/bypass.md']);
   const before = head(work);
-  expect(() => git(work, ['commit', '-q', '--no-verify', '-m', 'refused'])).toThrow(/gbrain commit guard/);
+  expect(() => git(work, ['commit', '-q', '--no-verify', '-m', 'refused'])).toThrow(/(?:foresights|gbrain) commit guard/);
   expect(head(work)).toBe(before);
   await new Promise(r => setTimeout(r, 1100));
   git(work, ['-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', 'hooks off']);
@@ -154,7 +154,7 @@ test('seven commit kinds: only plain, amend, the guard bypass and plumbing are f
   expect(bySha[bypass]).toMatchObject({ kind: 'plain', guard_bypassed: true });
   expect(bySha[plumbing]!.kind).toBe('plumbing');
   for (const sha of [door!, pushed!, effectSha]) expect(bySha[sha]).toBeUndefined();
-  expect(check.message).toContain('was not made by gbrain; route that writer through gbrain git commit-push or a page write');
+  expect(check.message).toContain('was not made by foresights; route that writer through foresights git commit-push or a page write');
   expect(check.message).toContain('plain (guard bypassed)');
   expect(check.fix).toMatchObject({ ask_user: true });
   expect((check.details!.window as Array<{ uncovered: number }>)[0]!.uncovered).toBeGreaterThan(0);
@@ -184,14 +184,14 @@ test('bootstrap and sync auto-init commits are ledgered, not foreign', async () 
 test('commits before the ledger starts are uncovered, never foreign', async () => {
   const { work } = checkout();
   write(work, 'notes/early.md', 'early\n');
-  git(work, ['add', '-A']); git(work, ['commit', '-q', '-m', 'before gbrain']);
+  git(work, ['add', '-A']); git(work, ['commit', '-q', '-m', 'before foresights']);
   await register('early', join(work, 'notes'));
   let check = await run();
   expect(check.status).toBe('ok');
   expect(check.message).toContain('has no ledger');
   await new Promise(r => setTimeout(r, 1100));
   write(work, 'notes/later.md', 'later\n');
-  commitPathsLocked(work, ['notes/later.md'], 'gbrain starts the ledger', { lockWaitMs: 1000 });
+  commitPathsLocked(work, ['notes/later.md'], 'foresights starts the ledger', { lockWaitMs: 1000 });
   check = await run();
   expect(check.status).toBe('ok');
   expect((check.details!.window as Array<{ uncovered: number; from: string | null }>)[0]!.uncovered).toBeGreaterThan(0);
@@ -329,7 +329,7 @@ test('the scan reads git without optional locks: a stat-dirty index is left as i
 });
 
 
-test('GST-1623: a foreign commit carrying a gbrain- trailer is named as possibly an older gbrain without the commit ledger, and still fails', async () => {
+test('GST-1623: a foreign commit carrying a gbrain- trailer is named as possibly an older foresights without the commit ledger, and still fails', async () => {
   const { work } = checkout();
   await register('older', join(work, 'notes'));
   write(work, 'notes/a.md', 'a\n');
@@ -344,7 +344,7 @@ test('GST-1623: a foreign commit carrying a gbrain- trailer is named as possibly
   const bySha = Object.fromEntries((check.details!.foreign as ForeignCommit[]).map(c => [c.sha, c]));
   expect(bySha[trailed]).toMatchObject({ gbrain_trailer: true });
   expect(bySha[head(work)]).toMatchObject({ gbrain_trailer: false });
-  expect(check.message).toContain('an older gbrain without the commit ledger');
+  expect(check.message).toContain('an older foresights without the commit ledger');
 }, 60_000);
 
 test('GST-1623: a root whose git probe fails, and a scan where every root fails, warn as partial instead of not_applicable', async () => {

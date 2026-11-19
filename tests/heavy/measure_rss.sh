@@ -7,7 +7,7 @@
 # peak RSS exceeds the baseline by more than RSS_THRESHOLD_PCT (default 25%).
 #
 # Baseline refresh is GATED to Linux. macOS measurement runs use a VmRSS
-# fallback path that gbrain explicitly avoids in production; committing a
+# fallback path that foresights explicitly avoids in production; committing a
 # macOS-derived baseline would lock in a wrong metric. See _measure_rss_workload.ts.
 #
 # Usage:

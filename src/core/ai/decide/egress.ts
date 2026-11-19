@@ -3,7 +3,7 @@
  *
  * A third-party provider receives a data class (query, candidates, facts,
  * conversation) only with consent for that provider (decide.egress.typesafe.
- * <class>, written by `gbrain decide enable`; for S1 `on`, the reranker
+ * <class>, written by `foresights decide enable`; for S1 `on`, the reranker
  * selection is the consent for query and candidate text). Denied sources are
  * refused on every provider. Private content never leaves without
  * decide.egress.private=allow: page candidates are checked by ONE batched

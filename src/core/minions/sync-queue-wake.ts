@@ -1,5 +1,5 @@
 /**
- * GBRA-133 PR 2a.4: wake an idle `gbrain jobs work` claim loop as soon as a `sync` job is queued, instead of after the
+ * GBRA-133 PR 2a.4: wake an idle `foresights jobs work` claim loop as soon as a `sync` job is queued, instead of after the
  * worker's 5 s idle poll.
  *
  * Two modes, chosen once at worker boot:
@@ -90,22 +90,22 @@ export async function startSyncQueueWake(engine: BrainEngine, waiter: Pick<IdleW
       });
       await engine.executeRaw('SELECT pg_notify($1, $2)', [SYNC_WAKE_CHANNEL, probe]);
       if (await arrived) {
-        log(`[gbrain jobs] sync-queue wake: listen (${choice.reason})`);
+        log(`[foresights jobs] sync-queue wake: listen (${choice.reason})`);
         return { ...choice, pollMs, stop: async () => { stopped = true; await listener.unlisten().catch(() => {}); } };
       }
       await listener.unlisten().catch(() => {});
     } catch (error) {
-      log(`[gbrain jobs] sync-queue wake: LISTEN failed (${error instanceof Error ? error.message : String(error)})`);
+      log(`[foresights jobs] sync-queue wake: LISTEN failed (${error instanceof Error ? error.message : String(error)})`);
     }
     choice = { mode: 'poll', reason: 'listen_unverified' };
   }
 
   if (choice.mode === 'off') {
-    if (choice.reason === 'disabled') log('[gbrain jobs] sync-queue wake: off (GBRAIN_WORKER_SYNC_WAKE=0)');
+    if (choice.reason === 'disabled') log('[foresights jobs] sync-queue wake: off (GBRAIN_WORKER_SYNC_WAKE=0)');
     return { ...choice, pollMs, stop: async () => { stopped = true; } };
   }
 
-  log(`[gbrain jobs] sync-queue wake: poll every ${pollMs} ms (${choice.reason})`);
+  log(`[foresights jobs] sync-queue wake: poll every ${pollMs} ms (${choice.reason})`);
   let inflight: Promise<void> | null = null;
   const timer = setInterval(() => {
     if (stopped || inflight || !waiter.idle) return;

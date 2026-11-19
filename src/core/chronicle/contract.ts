@@ -15,13 +15,14 @@
  *      content is still live, takes a rolling daily reservation, runs the
  *      judge under a BudgetTracker scope, publishes events, reconciles the
  *      previous generation and records the outcome on the row.
- *   3. `gbrain chronicle-backfill` records `pending` rows with
+ *   3. `foresights chronicle-backfill` records `pending` rows with
  *      trigger='backfill' (exempt from the daily limit and recency rule);
  *      the same phase executes them.
  */
 import { CHRONICLE_RUN_NOW_ARGV, type ChronicleReasonCode } from './reasons.ts';
 import type { Action } from '../agent-output.ts';
 import type { ChronicleDropCounts } from './extract-events.ts';
+import { commandText } from '../brand.ts';
 
 /**
  * The ledger key includes it, so a bump makes already-extracted content new again: the phase's
@@ -108,7 +109,7 @@ export const CHRONICLE_DEFAULTS = {
 } as const;
 
 /** The run-now command line, rendered from the one argv in reasons.ts. */
-export const RUN_NOW_COMMAND = CHRONICLE_RUN_NOW_ARGV.join(' ');
+export const RUN_NOW_COMMAND = commandText(CHRONICLE_RUN_NOW_ARGV);
 
 /** `chronicle` cycle-phase result details. */
 export interface ChronicleRunDetails {

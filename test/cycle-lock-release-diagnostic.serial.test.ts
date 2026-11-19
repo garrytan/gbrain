@@ -2,7 +2,7 @@
  * #1470 — runCycle swallowed lock.release() errors with empty catches. When
  * the release SQL throws (e.g. CONNECTION_ENDED after the pool was ended out
  * from under the cycle), the row in gbrain_cycle_locks persists with zero
- * operator-visible signal; the next `gbrain dream` within the TTL then skips
+ * operator-visible signal; the next `foresights dream` within the TTL then skips
  * with a phantom `cycle_already_running`.
  *
  * Behavioral pin: a cycle whose DB-lock release throws still completes

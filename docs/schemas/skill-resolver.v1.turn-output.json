@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "skill-resolver.v1.turn-output.json",
-  "title": "gbrain skill resolver: turn output (schema_version 1)",
-  "description": "The result of one turn (`gbrain skills resolve --json`, resolveSkills().output). Everything outside `meta` is byte-identical for the same index, input and session state. Within v1, changes are additive only.",
+  "title": "foresights skill resolver: turn output (schema_version 1)",
+  "description": "The result of one turn (`foresights skills resolve --json`, resolveSkills().output). Everything outside `meta` is byte-identical for the same index, input and session state. Within v1, changes are additive only.",
   "type": "object",
   "additionalProperties": false,
   "required": [

@@ -1,15 +1,15 @@
 ---
 type: project
-title: GBrain
+title: Foresights
 tags:
   - active
   - infrastructure
 ---
 
-# GBrain
+# Foresights
 
 Personal knowledge brain built on Postgres with pgvector. A managed Supabase instance
-provides the database layer. GBrain stores, searches, and retrieves personal knowledge
+provides the database layer. Foresights stores, searches, and retrieves personal knowledge
 using a hybrid RAG architecture.
 
 ## Architecture
@@ -43,7 +43,7 @@ plugin. Active development continues on search quality improvements and new skil
 
 ## Retrieval-Augmented Generation
 
-GBrain uses RAG as its core query mechanism. The compiled truth pattern is a deliberate
+Foresights uses RAG as its core query mechanism. The compiled truth pattern is a deliberate
 alternative to standard RAG's fragment-retrieval approach: by maintaining pre-synthesized
 pages, retrieved context is higher quality and more coherent than raw chunks.
 

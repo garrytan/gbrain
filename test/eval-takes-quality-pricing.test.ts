@@ -34,13 +34,13 @@ describe('getPricing — canonical table', () => {
     expect(getPricing('openai:gpt-4o', overrides)).toEqual({ input_per_1m: 0.5, output_per_1m: 0.5 });
   });
 
-  test('opus 4.7 priced at $5/$25 (regression: was a stale $15/$75) — gbrain#1819', () => {
+  test('opus 4.7 priced at $5/$25 (regression: was a stale $15/$75) — foresights#1819', () => {
     const p = getPricing('anthropic:claude-opus-4-7')!;
     expect(p.input_per_1m).toBeCloseTo(5.0, 5);
     expect(p.output_per_1m).toBeCloseTo(25.0, 5);
   });
 
-  test('opus 4.8 is supported and priced $5/$25 — gbrain#1819', () => {
+  test('opus 4.8 is supported and priced $5/$25 — foresights#1819', () => {
     const p = getPricing('anthropic:claude-opus-4-8')!;
     expect(p.input_per_1m).toBeCloseTo(5.0, 5);
     expect(p.output_per_1m).toBeCloseTo(25.0, 5);
@@ -54,7 +54,7 @@ describe('getPricing — canonical table', () => {
 });
 
 describe('unpriced models', () => {
-  test('under a user cap: no_pricing refusal whose fix registers the rate with gbrain pricing set', () => {
+  test('under a user cap: no_pricing refusal whose fix registers the rate with foresights pricing set', () => {
     const e = unpricedUnderCapError('foo:bar', 2);
     expect(e.code).toBe('no_pricing');
     expect(e.message).toContain('foo:bar');
@@ -69,7 +69,7 @@ describe('unpriced models', () => {
   });
 
   test('without a cap: the warning names the registration command', () => {
-    expect(unpricedWarning('foo:bar')).toContain('gbrain pricing set foo:bar --input');
+    expect(unpricedWarning('foo:bar')).toContain('foresights pricing set foo:bar --input');
   });
 });
 

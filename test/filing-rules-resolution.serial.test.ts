@@ -115,7 +115,7 @@ describe('per-source filing-rules resolution', () => {
     expect(agents).toContain('`articles/`');
     expect(agents).toContain('`atoms/`');
     expect(agents).not.toContain('`people/`');
-    expect(agents).toContain('gbrain sources writer git-durability source-a --enable');
+    expect(agents).toContain('foresights sources writer git-durability source-a --enable');
   });
 
   test('#7629: folder names that could add text to the block are left out, and a rerun keeps one block', () => {

@@ -25,8 +25,8 @@ describe('grounding folds markdown inline markup (#6258)', () => {
   });
 
   test('quote of a source with inline code and bold grounds', () => {
-    const src = groundSource('/t/chat.md', 'user: You should run `gbrain doctor` to check the **sync** step.');
-    const body = 'He said "run gbrain doctor to check the sync step" before shipping.';
+    const src = groundSource('/t/chat.md', 'user: You should run `foresights doctor` to check the **sync** step.');
+    const body = 'He said "run foresights doctor to check the sync step" before shipping.';
     const r = verifyBody(body, [src]);
     expect(r.failures.quote_not_in_source).toBe(0);
     expect(r.quarantined).toHaveLength(0);
@@ -42,8 +42,8 @@ describe('grounding folds markdown inline markup (#6258)', () => {
   });
 
   test('a fabricated quote wrapped in markup still flags', () => {
-    const src = groundSource('/t/chat.md', 'user: You should run `gbrain doctor` to check the **sync** step.');
-    const r = verifyBody('He said "run **gbrain repair** to delete the `sync` step"', [src]);
+    const src = groundSource('/t/chat.md', 'user: You should run `foresights doctor` to check the **sync** step.');
+    const r = verifyBody('He said "run **foresights repair** to delete the `sync` step"', [src]);
     expect(r.failures.quote_not_in_source).toBe(1);
   });
 
@@ -53,13 +53,13 @@ describe('grounding folds markdown inline markup (#6258)', () => {
   });
 
   test('the offset map points every kept non-space code unit at its original index', () => {
-    const s = 'run `gbrain doctor` **now**';
+    const s = 'run `foresights doctor` **now**';
     const { norm, map } = normalizeForGrounding(s);
-    expect(norm).toBe('run gbrain doctor now');
+    expect(norm).toBe('run foresights doctor now');
     expect(map.length).toBe(norm.length);
     for (let i = 0; i < norm.length; i++) if (norm[i] !== ' ') expect(s[map[i]!]!.toLowerCase()).toBe(norm[i]!);
-    const at = norm.indexOf('gbrain doctor now');
-    expect(s.slice(map[at], map[at + 'gbrain doctor now'.length - 1]! + 1)).toBe('gbrain doctor` **now');
+    const at = norm.indexOf('foresights doctor now');
+    expect(s.slice(map[at], map[at + 'foresights doctor now'.length - 1]! + 1)).toBe('foresights doctor` **now');
   });
 
   test('tolerant sources fold markup alongside link syntax', () => {

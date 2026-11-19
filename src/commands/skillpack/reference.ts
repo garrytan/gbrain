@@ -1,5 +1,5 @@
 /**
- * `gbrain skillpack reference` — read-only diff lens + --apply-clean-hunks.
+ * `foresights skillpack reference` — read-only diff lens + --apply-clean-hunks.
  *
  * Peeled from src/commands/skillpack.ts (module-size ratchet). Behavior is
  * unchanged from the façade version. Flag-registry note: this file is scanned
@@ -18,28 +18,28 @@ import { strictArgsRefusal } from '../../cli/strict-args.ts';
 import { exitCliError } from '../../cli/cli-error.ts';
 
 const REFERENCE_HELP =
-  'gbrain skillpack reference <name> [--workspace PATH] [--apply-clean-hunks [--dry-run]] [--json]\n' +
-  'gbrain skillpack reference --all [--workspace PATH] [--since <version>] [--json]\n' +
-  'gbrain skillpack reference <name>|--all --update-untouched [--dry-run] ...   (see --update-untouched --help)\n\n' +
-  '  <name>              Read-only diff of gbrain\'s bundle against your local copy.\n' +
-  '  --update-untouched  Replace whole skills you never edited with gbrain\'s version,\n' +
-  '                      journaled and restorable (gbrain skillpack restore <id>).\n' +
+  'foresights skillpack reference <name> [--workspace PATH] [--apply-clean-hunks [--dry-run]] [--json]\n' +
+  'foresights skillpack reference --all [--workspace PATH] [--since <version>] [--json]\n' +
+  'foresights skillpack reference <name>|--all --update-untouched [--dry-run] ...   (see --update-untouched --help)\n\n' +
+  '  <name>              Read-only diff of foresights\'s bundle against your local copy.\n' +
+  '  --update-untouched  Replace whole skills you never edited with foresights\'s version,\n' +
+  '                      journaled and restorable (foresights skillpack restore <id>).\n' +
   '  --apply-clean-hunks Two-way merge: align non-conflicting hunks of ONE skill to\n' +
-  '                      gbrain. Local edits in those hunks are overwritten; pass the\n' +
+  '                      foresights. Local edits in those hunks are overwritten; pass the\n' +
   '                      exact --dry-run flag to preview without writing.\n' +
   '  --all               Sweep over every bundled skill (read-only; never applies).\n' +
   '  --since <version>   With --all, restrict the sweep to skills whose source\n' +
-  '                      changed in gbrain between <version> and HEAD. Useful\n' +
-  '                      after `gbrain upgrade` to see only what moved.\n\n' +
+  '                      changed in foresights between <version> and HEAD. Useful\n' +
+  '                      after `foresights upgrade` to see only what moved.\n\n' +
   'Any other token, or a flag in a form this command does not read (`--dry-run=true`),\n' +
   'refuses with invalid_params before anything is touched.';
 
 const ALL_APPLY_REFUSAL =
   'Error: --apply-clean-hunks is intentionally NOT supported with --all (a two-way merge over every\n' +
   'skill at once has no safe preview). Update path, one skill at a time:\n' +
-  '  1. gbrain skillpack reference --all                  (which skills drifted)\n' +
-  '  2. gbrain skillpack reference <name>                 (read the diff; keep intentional edits)\n' +
-  '  3. gbrain skillpack reference <name> --apply-clean-hunks   (add --dry-run to preview first)';
+  '  1. foresights skillpack reference --all                  (which skills drifted)\n' +
+  '  2. foresights skillpack reference <name>                 (read the diff; keep intentional edits)\n' +
+  '  3. foresights skillpack reference <name> --apply-clean-hunks   (add --dry-run to preview first)';
 
 export async function cmdReference(args: string[]): Promise<void> {
   // Safe whole-skill update of untouched installs (its own help, flags and exit codes).
@@ -108,10 +108,10 @@ export async function cmdReference(args: string[]): Promise<void> {
       // output's `framing` field already, and the docstring on the
       // command-help covers it.
       const twoWayWarning =
-        'WARNING: --apply-clean-hunks is a two-way diff against gbrain\'s CURRENT bundle.\n' +
-        '         gbrain does NOT have access to the version you originally scaffolded.\n' +
-        '         Hunks where your LOCAL edits differ from gbrain WILL be aligned to gbrain.\n' +
-        '         If you have intentional local edits, run `gbrain skillpack reference ' + name + '`\n' +
+        'WARNING: --apply-clean-hunks is a two-way diff against foresights\'s CURRENT bundle.\n' +
+        '         foresights does NOT have access to the version you originally scaffolded.\n' +
+        '         Hunks where your LOCAL edits differ from foresights WILL be aligned to foresights.\n' +
+        '         If you have intentional local edits, run `foresights skillpack reference ' + name + '`\n' +
         '         (read-only) first to inspect, OR pass --dry-run on this command.';
       if (!dryRun && !json) console.error(twoWayWarning);
 
@@ -129,7 +129,7 @@ export async function cmdReference(args: string[]): Promise<void> {
         }
         if (result.summary.totalHunksConflicted > 0) {
           console.log(
-            '\nConflicts left in place. Run `gbrain skillpack reference ' + name + '` to inspect\nthe unified diffs and patch by hand. The conflict_missing / conflict_ambiguous\nlabels above indicate WHY the hunk could not be applied automatically.',
+            '\nConflicts left in place. Run `foresights skillpack reference ' + name + '` to inspect\nthe unified diffs and patch by hand. The conflict_missing / conflict_ambiguous\nlabels above indicate WHY the hunk could not be applied automatically.',
           );
         }
       }
@@ -138,7 +138,7 @@ export async function cmdReference(args: string[]): Promise<void> {
 
     if (all) {
       const result = runReferenceAll({ gbrainRoot, targetWorkspace });
-      // --since filter: keep only skills whose source changed in gbrain
+      // --since filter: keep only skills whose source changed in foresights
       // since the given version. Falls back loudly when git can't resolve
       // the ref (tarball install, missing tag, etc).
       let sinceFilter: Set<string> | null = null;
@@ -192,12 +192,12 @@ export async function cmdReference(args: string[]): Promise<void> {
         console.log('\nAgent decision policy per file:');
         if (result.summary.missing > 0) {
           console.log(
-            '  missing → gbrain has a file you don\'t. Usually safe to `gbrain skillpack scaffold ' + name + '` again to land it.',
+            '  missing → foresights has a file you don\'t. Usually safe to `foresights skillpack scaffold ' + name + '` again to land it.',
           );
         }
         if (result.summary.differs > 0) {
           console.log(
-            '  differs → was your local edit intentional? Keep it (gbrain is reference, not law).\n            Accidental drift? Patch by hand, or `gbrain skillpack reference ' + name + ' --apply-clean-hunks`\n            (READ the two-way merge warning in that command\'s output first).',
+            '  differs → was your local edit intentional? Keep it (foresights is reference, not law).\n            Accidental drift? Patch by hand, or `foresights skillpack reference ' + name + ' --apply-clean-hunks`\n            (READ the two-way merge warning in that command\'s output first).',
           );
         }
       }

@@ -4,7 +4,7 @@
  * PgBouncer transaction-mode poolers can silently swallow ALTER TABLE
  * statements: the SQL doesn't error, but the column never gets created.
  * The migration system increments the schema version counter anyway, so
- * gbrain thinks it's on v29 but the actual table is missing columns.
+ * foresights thinks it's on v29 but the actual table is missing columns.
  *
  * This module parses the canonical CREATE TABLE definitions in
  * schema-embedded.ts and diffs them against information_schema.columns.
@@ -27,7 +27,7 @@ export interface ExpectedColumn {
 /**
  * Parse CREATE TABLE statements from SCHEMA_SQL to extract expected columns.
  *
- * This is a best-effort parser that handles the gbrain schema conventions:
+ * This is a best-effort parser that handles the foresights schema conventions:
  * - Standard column definitions with types and constraints
  * - Skips CONSTRAINT lines, CHECK lines, and UNIQUE lines
  * - Handles multi-line definitions
@@ -200,7 +200,7 @@ export interface DetectResult {
  * that only need to detect drift (e.g. a doctor health check) should use
  * this instead of verifySchema(), which mutates the database.
  *
- * Extracted from verifySchema() (gbrain#4421) so `gbrain doctor` can report
+ * Extracted from verifySchema() (foresights#4421) so `foresights doctor` can report
  * this same ledger-vs-live-schema drift without a plain diagnostic run
  * silently issuing DDL.
  */
@@ -299,7 +299,7 @@ export async function verifySchema(engine: BrainEngine): Promise<VerifyResult> {
     throw new Error(
       `Schema verification failed: ${result.failed.length} column(s) could not be added:\n  ${failList}\n` +
       'This usually means PgBouncer transaction-mode silently dropped ALTER TABLE statements.\n' +
-      'Fix: connect directly to Postgres (not through PgBouncer) and run: gbrain apply-migrations --yes'
+      'Fix: connect directly to Postgres (not through PgBouncer) and run: foresights apply-migrations --yes'
     );
   }
 

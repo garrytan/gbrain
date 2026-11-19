@@ -39,7 +39,7 @@ beforeEach(async () => {
   await engine.unsetConfig('brain.audience');
 });
 
-/** The realistic post-CLI state: `gbrain config set memory.*` dual-writes
+/** The realistic post-CLI state: `foresights config set memory.*` dual-writes
  * DB + file mirror. Tests that set the DB plane directly must mirror it, or
  * the check's plane-drift compare (correctly) warns. */
 function writeFileMirror(home: string, memory: Record<string, string>): void {
@@ -70,7 +70,7 @@ describe('memory_writeback doctor check', () => {
       const c = await buildMemoryWritebackCheck(engine);
       expect(c.status).toBe('ok');
       expect(c.message).toContain('off (default)');
-      expect(c.message).toContain('gbrain config set memory.auto_writeback salient');
+      expect(c.message).toContain('foresights config set memory.auto_writeback salient');
       expect(c.details).toMatchObject({
         mode: 'off', mode_valid: true, instruction_visibility: 'world', backstop_visibility: 'private',
       });
@@ -115,7 +115,7 @@ describe('memory_writeback doctor check', () => {
       expect(off.status).toBe('warn');
       expect(off.message).toContain('facts.default_visibility is private but this brain is read remotely');
       expect(off.message).toContain('bootstrap harness (HTTP MCP at http://127.0.0.1:19999)');
-      expect(off.message).toContain('gbrain config set facts.default_visibility world');
+      expect(off.message).toContain('foresights config set facts.default_visibility world');
       expect(off.details?.private_default_remote_readers).toEqual(['bootstrap harness (HTTP MCP at http://127.0.0.1:19999)']);
 
       await engine.setConfig('memory.auto_writeback', 'salient');
@@ -200,7 +200,7 @@ describe('memory_writeback doctor check', () => {
       const c = await buildMemoryWritebackCheck(engine);
       expect(c.status).toBe('warn');
       expect(c.message).toContain('file mirror');
-      expect(c.message).toContain('gbrain config set memory.auto_writeback salient');
+      expect(c.message).toContain('foresights config set memory.auto_writeback salient');
       expect(c.details?.file_mirror_mode).toBe('(unset)');
     });
   });
@@ -224,7 +224,7 @@ describe('memory_writeback doctor check', () => {
       source_id: 'default',
       token: { name: 'test-token', minted: false },
       targets: [
-        { host: 'codex', kind: 'instructions', state: 'failed', scope: 'user', path: agents, mechanism: 'managed-block', error: 'smoke failed and the instruction block could not be removed — run `gbrain bootstrap harness --remove` to converge' },
+        { host: 'codex', kind: 'instructions', state: 'failed', scope: 'user', path: agents, mechanism: 'managed-block', error: 'smoke failed and the instruction block could not be removed — run `foresights bootstrap harness --remove` to converge' },
       ],
     }) + '\n');
     installAmbientWritebackBlockAt(agents, renderAmbientInstructionBlock({
@@ -297,7 +297,7 @@ describe('memory_writeback doctor check', () => {
         if (c.warn) {
           expect(check.status).toBe('warn');
           expect(check.message).toContain(c.warn);
-          expect(check.message).toContain('gbrain sweep --once');
+          expect(check.message).toContain('foresights sweep --once');
         } else {
           expect(check.status).toBe('ok');
         }
@@ -315,7 +315,7 @@ describe('memory_writeback doctor check: capture-lane notices (#6268, #6316)', (
       const off = await buildMemoryWritebackCheck(engine);
       expect(off.status).toBe('warn');
       expect(off.details?.corpus_source_holds).toEqual({ legacy_unstamped: 0, unresolved: 1, sessions: 1 });
-      expect(off.message).toContain('gbrain sweep --assign-corpus <source>');
+      expect(off.message).toContain('foresights sweep --assign-corpus <source>');
       expect(off.message).toContain('--apply');
       await engine.setConfig('memory.auto_writeback', 'off');
       writeFileMirror(tmp, { auto_writeback: 'off' });

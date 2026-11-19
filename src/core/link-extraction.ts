@@ -2,7 +2,7 @@
  * Shared link/timeline extraction utilities.
  *
  * Used by:
- *   - src/commands/extract.ts             (batch DB + FS extraction — `gbrain extract links|timeline|all`)
+ *   - src/commands/extract.ts             (batch DB + FS extraction — `foresights extract links|timeline|all`)
  *   - src/commands/backlinks.ts           (filesystem walk, legacy)
  *   - src/core/operations.ts put_page     (auto-link post-hook)
  *
@@ -53,7 +53,7 @@ export { parseInlineCitationTimelineEntries, type InlineCitationTimelineCandidat
  * shape of `extractPageLinks` / `inferLinkType` / `parseTimelineEntries` changes
  * meaningfully, so the extraction freshness watermark (`pages.links_extracted_at`)
  * treats every previously-stamped page as stale and re-extracts it on the next
- * `gbrain extract --stale` sweep. Same role CHUNKER_VERSION plays for chunking.
+ * `foresights extract --stale` sweep. Same role CHUNKER_VERSION plays for chunking.
  *
  * Consumed by `countStalePagesForExtraction` / `listStalePagesForExtraction`
  * (both engines) and the `links_extraction_lag` doctor check: a page is stale
@@ -172,7 +172,7 @@ export interface EntityRef {
  * Issue #972: edge type stamped on graph rows produced by the
  * global-basename wikilink resolution path. Distinct from the verb-
  * inferred types (`mentions`, `works_at`, etc.) so users can audit or
- * prune via `gbrain graph-query <slug> --type wikilink_basename`.
+ * prune via `foresights graph-query <slug> --type wikilink_basename`.
  *
  * All edges from this path also carry `linkSource: 'wikilink-resolved'`
  * (the link-source provenance is the why; this edge type is the what).
@@ -321,7 +321,7 @@ export interface CodeRef {
 
 // v0.19.0 E1 — markdown guides that cite 'src/core/sync.ts:42' create an
 // edge to the code page that imported that file. Regex is anchored against
-// the common gbrain repo layout directories so arbitrary prose like
+// the common foresights repo layout directories so arbitrary prose like
 // "in foo/bar.js" doesn't generate false positives.
 //
 // The extension list is aligned with detectCodeLanguage in chunkers/code.ts.
@@ -1762,7 +1762,7 @@ export function queryBasenameIndex(idx: Map<string, string[]>, name: string): st
 /**
  * Create a resolver scoped to a single extract run or single put_page call.
  *
- * mode: 'batch' (migration / gbrain extract) — pg_trgm only, NO search
+ * mode: 'batch' (migration / foresights extract) — pg_trgm only, NO search
  * fallback. On a 46K-page brain this avoids N-thousand OpenAI embedding
  * calls + Anthropic Haiku expansion calls (see operations-query-hidden-haiku
  * learning) and keeps the backfill deterministic + under a wall-clock budget.
@@ -2296,7 +2296,7 @@ export function parseTimelineEntries(content: string): TimelineCandidate[] {
   }
 
   // Format 3: inline citation — [Source: <source>, YYYY-MM-DD]. The citation
-  // convention gbrain's own quality rules require on every brain write;
+  // convention foresights's own quality rules require on every brain write;
   // until now this parser (the db-source extract + ingest path) could not
   // see it, so a page whose dates all live in citations scored zero
   // timeline coverage. Kept in sync with extractTimelineFromContent's

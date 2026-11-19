@@ -67,7 +67,7 @@ describe('decide_health', () => {
     const c = await run();
     expect(c.status).toBe('ok');
     expect(c.message).toContain('triage=on (default: Jev key present), conflict=on (default: Jev key present)');
-    expect(c.message).toContain('gbrain decide disable triage && gbrain decide disable conflict');
+    expect(c.message).toContain('foresights decide disable triage && foresights decide disable conflict');
   });
 
   test('explicit off on both default slots reports System One off with a key', async () => {
@@ -81,7 +81,7 @@ describe('decide_health', () => {
     const c = await run();
     expect(c.status).toBe('warn');
     expect(c.message).toContain('evidence: requested: on / effective: off / cause: no_calibration');
-    expect(c.message).toContain('gbrain decide calibrate --slot evidence');
+    expect(c.message).toContain('foresights decide calibrate --slot evidence');
   });
 
   test('missing key, force_on and alias are named', async () => {

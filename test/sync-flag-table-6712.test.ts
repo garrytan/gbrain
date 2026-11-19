@@ -1,5 +1,5 @@
 /**
- * #6712 PR 2 (L3): every `gbrain sync` flag is classified once, in `SYNC_FLAGS` (src/core/sync-flags.ts). The serve
+ * #6712 PR 2 (L3): every `foresights sync` flag is classified once, in `SYNC_FLAGS` (src/core/sync-flags.ts). The serve
  * ladder, its wire validator and the PGLite owner lane derive their allowlists from it.
  *
  * Protects:

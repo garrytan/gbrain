@@ -1,7 +1,7 @@
 import type { PageReadScope } from '../core/types.ts';
 import { pageReadFilter } from '../core/search/read-policy-sql.ts';
 /**
- * gbrain orphans — Surface disconnected pages.
+ * foresights orphans — Surface disconnected pages.
  *
  * Deterministic: zero LLM calls. #4524: the DEFAULT definition is
  * 'islanded' — no live inbound AND no live outbound link — matching
@@ -11,13 +11,13 @@ import { pageReadFilter } from '../core/search/read-policy-sql.ts';
  * pages and pseudo-pages where being disconnected is expected.
  *
  * Usage:
- *   gbrain orphans                  # list islanded pages grouped by domain
- *   gbrain orphans --mode inbound   # legacy: pages with no inbound links
- *   gbrain orphans --json           # JSON: totals first, then the first 100 orphans
- *   gbrain orphans --cursor <c>     # the next page (next_cursor / next_command)
- *   gbrain orphans --all            # every orphan (no page limit)
- *   gbrain orphans --count          # just the number
- *   gbrain orphans --include-pseudo # include auto-generated/pseudo pages
+ *   foresights orphans                  # list islanded pages grouped by domain
+ *   foresights orphans --mode inbound   # legacy: pages with no inbound links
+ *   foresights orphans --json           # JSON: totals first, then the first 100 orphans
+ *   foresights orphans --cursor <c>     # the next page (next_cursor / next_command)
+ *   foresights orphans --all            # every orphan (no page limit)
+ *   foresights orphans --count          # just the number
+ *   foresights orphans --include-pseudo # include auto-generated/pseudo pages
  */
 
 import type { BrainEngine } from '../core/engine.ts';
@@ -120,7 +120,7 @@ export async function queryOrphanPages(
  * `getOrphansData` for the doctor `orphan_ratio` check and any other
  * consumer that needs the same exclusion logic (AUTO_SUFFIX_PATTERNS,
  * PSEUDO_SLUGS, RAW_SEGMENT, DENY_PREFIXES, FIRST_SEGMENT_EXCLUSIONS).
- * Two consumers sharing one definition = doctor and `gbrain orphans`
+ * Two consumers sharing one definition = doctor and `foresights orphans`
  * cannot disagree on the orphan count. #4524 extended that guarantee to
  * get_health.orphan_pages: `findOrphanPages` now DEFAULTS to health's
  * 'islanded' definition (no live inbound AND no live outbound), so all
@@ -218,7 +218,7 @@ export async function findOrphans(
 
 /**
  * v0.42.0.0 D1: canonical name for the pure data fn consumed by both
- * `gbrain orphans` CLI AND doctor's `orphan_ratio` check. Aliased to
+ * `foresights orphans` CLI AND doctor's `orphan_ratio` check. Aliased to
  * `findOrphans` so the existing CLI behavior + the test surface stay
  * byte-identical; new consumers should import `getOrphansData` to make
  * the data-only intent explicit at the call site.
@@ -305,7 +305,7 @@ export async function runOrphans(engine: BrainEngine, args: string[]) {
   // v0.41.29.0: explicit `--source <id>` scopes the orphan scan to one
   // source. Omitted → brain-wide (unchanged). Raw explicit-flag parse on
   // purpose — NOT resolveSourceWithTier, which would pick a default source
-  // when the flag is absent and silently scope a bare `gbrain orphans`.
+  // when the flag is absent and silently scope a bare `foresights orphans`.
   let sourceId: string | undefined;
   // #4524: --mode inbound|islanded picks the orphan definition. Default
   // 'islanded' (health's definition) so doctor / get_health / orphans agree.
@@ -325,7 +325,7 @@ export async function runOrphans(engine: BrainEngine, args: string[]) {
   }
 
   if (args.includes('--help') || args.includes('-h')) {
-    console.log(`Usage: gbrain orphans [options]
+    console.log(`Usage: foresights orphans [options]
 
 Find disconnected pages. Default definition is 'islanded' (no live inbound
 AND no live outbound link) — the same definition get_health.orphan_pages
@@ -351,7 +351,7 @@ Pages: the totals always count every orphan; one page of rows follows, and
     return;
   }
 
-  const { request, rest } = parseListingFlags(args, 'gbrain orphans');
+  const { request, rest } = parseListingFlags(args, 'foresights orphans');
   const result = await findOrphans(engine, { includePseudo, sourceId, mode });
 
   if (count) {

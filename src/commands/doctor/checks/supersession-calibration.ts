@@ -37,7 +37,7 @@ function calibrationFix(model: string, dims: number, key: string, overrides: Rec
       argv: ['gbrain', 'config', 'set', 'facts.supersession_thresholds', register],
       consent: [],
       actor: 'agent',
-      why: 'Registers the measured threshold for this model; the next fact write uses it. Remove it with gbrain config unset facts.supersession_thresholds.',
+      why: 'Registers the measured threshold for this model; the next fact write uses it. Remove it with foresights config unset facts.supersession_thresholds.',
       inputs: [{ name: 'THRESHOLD', how: 'threshold_pick.guarded from the calibrate output. When it is null no threshold is safe for this model: skip this step and leave supersession off.' }],
       verify: doctorVerify('supersession_calibration'),
       requires_exclusive: false,

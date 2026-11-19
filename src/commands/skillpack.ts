@@ -1,5 +1,5 @@
 /**
- * gbrain skillpack <list|scaffold|reference|migrate-fence|scrub-legacy-fence-rows|harvest|diff|check>
+ * foresights skillpack <list|scaffold|reference|migrate-fence|scrub-legacy-fence-rows|harvest|diff|check>
  *
  * v0.33 contract change: dropped `install` and `uninstall` (managed-block
  * model). Replaced by:
@@ -8,7 +8,7 @@
  *                                Add `--apply-clean-hunks` to two-way auto-apply
  *   - `migrate-fence`          — one-shot strip of the legacy fence
  *   - `scrub-legacy-fence-rows` — opt-in cleanup of legacy rows post-migrate
- *   - `harvest`                — inverse: lift host skill into gbrain
+ *   - `harvest`                — inverse: lift host skill into foresights
  *
  * `install` and `uninstall` now exit non-zero with a hint pointing at the
  * replacement command. Clean break, no deprecated alias (D10-amended).
@@ -35,7 +35,7 @@ import { cmdScaffold } from './skillpack/scaffold.ts';
 import { cmdReference } from './skillpack/reference.ts';
 import { recordScaffoldBases, type ScaffoldedFile } from '../core/skillpack/safe-update.ts';
 
-const HELP_TOP = `gbrain skillpack <subcommand> [options]
+const HELP_TOP = `foresights skillpack <subcommand> [options]
 
 Subcommands:
   list                       Print every skill bundled in openclaw.plugin.json.
@@ -44,13 +44,13 @@ Subcommands:
                              into your agent repo. Additive; refuses to
                              overwrite. Third-party sources: owner/repo,
                              https://...git, ./local-dir, ./local.tgz.
-  scaffold --all             Scaffold every bundled skill (gbrain only).
+  scaffold --all             Scaffold every bundled skill (foresights only).
   scaffold --harness <h>     Install a persona-curated set into a harness's
                              native skills dir (claude-code | openclaw |
                              codex | opencode). --persona/--skill curate;
                              --stub installs cold-pull pointers (gated).
 
-  reference <name>           Read-only: diff gbrain's bundle vs your local copy.
+  reference <name>           Read-only: diff foresights's bundle vs your local copy.
   reference --all            Sweep over every bundled skill.
   reference <n> --apply-clean-hunks
                              Two-way diff, auto-apply non-conflicting hunks.
@@ -58,7 +58,7 @@ Subcommands:
                              local_edit vs upstream_drift).
   reference <n>|--all --update-untouched
                              Replace whole skills you never edited with
-                             gbrain's version (journaled; --dry-run previews).
+                             foresights's version (journaled; --dry-run previews).
   pin <name> / unpin <name>  Keep a skill out of --update-untouched.
   restore <id> | --list      Undo an --update-untouched run.
 
@@ -71,7 +71,7 @@ Subcommands:
                              Never overwrites your files. --dry-run to preview.
   setup [<slug>]             Print declared preconditions + static hints for a
                              skill (or all that declare them). Verify live with
-                             \`gbrain doctor\`.
+                             \`foresights doctor\`.
 
   migrate-fence              One-shot conversion from the old managed-block
                              model. Strips fence comments, preserves rows.
@@ -81,7 +81,7 @@ Subcommands:
 
   harvest <slug> --from <host-repo-root>
                              Lift a proven skill from a host agent repo
-                             back into gbrain.
+                             back into foresights.
 
   diff <name>                (Informational) per-file status; exit 0 always.
 
@@ -89,7 +89,7 @@ Subcommands:
                              on any drift (for CI gating).
   health [<skill>]           Read-only skill health: size against budget,
                              growth since the last diet, triggers, and
-                             commands or flags this gbrain doesn't have.
+                             commands or flags this foresights doesn't have.
 
   search [<query>]           Search the third-party registry catalog.
   info <name>                Show full metadata for a registry entry.
@@ -108,7 +108,7 @@ Subcommands:
   endorse <name>             (Operator-only) Set the tier for a pack in
                              endorsements.json inside a registry repo clone.
 
-Run \`gbrain skillpack <subcommand> --help\` for per-subcommand options.
+Run \`foresights skillpack <subcommand> --help\` for per-subcommand options.
 
 Removed in v0.33 (use migrate-fence to upgrade, then \`scaffold\`):
   install       — replaced by \`scaffold\`. Run \`migrate-fence\` once.
@@ -204,14 +204,14 @@ export async function runSkillpack(args: string[]): Promise<void> {
     }
     case 'install':
       console.error(
-        "Error: 'gbrain skillpack install' was removed in v0.33. Use 'gbrain skillpack scaffold <name>' instead.\n" +
-          "If you're upgrading from an older release, run 'gbrain skillpack migrate-fence' once to strip the legacy managed block, then scaffold any new skills.",
+        "Error: 'foresights skillpack install' was removed in v0.33. Use 'foresights skillpack scaffold <name>' instead.\n" +
+          "If you're upgrading from an older release, run 'foresights skillpack migrate-fence' once to strip the legacy managed block, then scaffold any new skills.",
       );
       process.exit(2);
       return;
     case 'uninstall':
       console.error(
-        "Error: 'gbrain skillpack uninstall' was removed in v0.33. The new scaffold model lets you own scaffolded files outright — to remove a skill, delete its directory (rm -rf skills/<slug>/) and any paired source files declared in its frontmatter.",
+        "Error: 'foresights skillpack uninstall' was removed in v0.33. The new scaffold model lets you own scaffolded files outright — to remove a skill, delete its directory (rm -rf skills/<slug>/) and any paired source files declared in its frontmatter.",
       );
       process.exit(2);
       return;
@@ -228,7 +228,7 @@ export async function runSkillpack(args: string[]): Promise<void> {
 
 async function cmdList(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('gbrain skillpack list [--json]\n\nPrint every skill bundled in openclaw.plugin.json.');
+    console.log('foresights skillpack list [--json]\n\nPrint every skill bundled in openclaw.plugin.json.');
     process.exit(0);
   }
   const json = args.includes('--json');
@@ -270,7 +270,7 @@ async function cmdList(args: string[]): Promise<void> {
 /**
  * Read every bundled skill's SKILL.md frontmatter and collect the slugs that
  * declare a non-empty `requires:` list, paired with the raw tokens. Engine-
- * free (frontmatter only); live checks are `gbrain doctor`'s job.
+ * free (frontmatter only); live checks are `foresights doctor`'s job.
  */
 function collectDeclaredPreconditions(gbrainRoot: string): Array<{ slug: string; requires: string[] }> {
   const manifest = loadBundleManifest(gbrainRoot);
@@ -290,22 +290,22 @@ function collectDeclaredPreconditions(gbrainRoot: string): Array<{ slug: string;
 /**
  * Static (engine-free) remediation hint per precondition kind, phrased to
  * mirror preconditions.ts's live `checkOne` remediation strings. The live
- * check needs an engine (`gbrain doctor` owns that); this is the paste-ready
+ * check needs an engine (`foresights doctor` owns that); this is the paste-ready
  * "what must be true" line for setup planning.
  */
 function staticPreconditionHint(pre: Precondition): string {
   switch (pre.kind) {
     case 'source':
       return pre.arg
-        ? `add or ingest source '${pre.arg}' first (gbrain sources add ${pre.arg} / gbrain sync --source ${pre.arg}), then re-run`
-        : 'ingest a corpus first (gbrain sync / gbrain import), then re-run';
+        ? `add or ingest source '${pre.arg}' first (foresights sources add ${pre.arg} / foresights sync --source ${pre.arg}), then re-run`
+        : 'ingest a corpus first (foresights sync / foresights import), then re-run';
     case 'dir':
       return pre.arg
         ? `populate ${pre.arg} (>=1 page), then re-run`
         : 'specify a directory: dir:<path> — see skillpack/preconditions.ts vocabulary';
     case 'config':
       return pre.arg
-        ? `set it: gbrain config set ${pre.arg} <value>`
+        ? `set it: foresights config set ${pre.arg} <value>`
         : 'specify a config key: config:<key> — see skillpack/preconditions.ts vocabulary';
     case 'pages':
       return pre.arg
@@ -320,10 +320,10 @@ function staticPreconditionHint(pre: Precondition): string {
 async function cmdStatus(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(
-      'gbrain skillpack status [--workspace PATH] [--json]\n\n' +
+      'foresights skillpack status [--workspace PATH] [--json]\n\n' +
         'Report install currency (new / drifted / current) for every bundled\n' +
         'skill, plus which installed skills declare machine-checkable\n' +
-        'preconditions. Read-only. Verify preconditions live with `gbrain doctor`.',
+        'preconditions. Read-only. Verify preconditions live with `foresights doctor`.',
     );
     process.exit(0);
   }
@@ -359,15 +359,15 @@ async function cmdStatus(args: string[]): Promise<void> {
     const driftedSlugs = currency.skills.filter(s => s.status === 'drifted').map(s => s.slug);
 
     if (newSlugs.length) {
-      console.log('\nNew skills available (run `gbrain skillpack sync`):');
+      console.log('\nNew skills available (run `foresights skillpack sync`):');
       for (const slug of newSlugs) console.log(`  ${slug}`);
     }
     if (driftedSlugs.length) {
-      console.log('\nDrifted from bundle (run `gbrain skillpack reference <slug>`):');
+      console.log('\nDrifted from bundle (run `foresights skillpack reference <slug>`):');
       for (const slug of driftedSlugs) console.log(`  ${slug}`);
     }
     if (preconditions.length) {
-      console.log('\nSkills with declared preconditions (verify with `gbrain doctor`):');
+      console.log('\nSkills with declared preconditions (verify with `foresights doctor`):');
       for (const p of preconditions) console.log(`  ${p.slug}: ${p.requires.join(', ')}`);
     }
     printBridgesStatus(gbrainRoot);
@@ -388,10 +388,10 @@ async function cmdStatus(args: string[]): Promise<void> {
 async function cmdSync(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(
-      'gbrain skillpack sync [--workspace PATH] [--dry-run] [--json]\n\n' +
+      'foresights skillpack sync [--workspace PATH] [--dry-run] [--json]\n\n' +
         'Bring the install up to date by scaffolding NEW bundled skills only.\n' +
         'Drifted skills are reported, never overwritten — you own those files\n' +
-        '(run `gbrain skillpack reference <slug>` to review). --dry-run lists\n' +
+        '(run `foresights skillpack reference <slug>` to review). --dry-run lists\n' +
         'what would be scaffolded without writing.',
     );
     process.exit(0);
@@ -443,7 +443,7 @@ async function cmdSync(args: string[]): Promise<void> {
     if (registered.length) console.log(`Registered ${registered.length} of them in skills/manifest.json.`);
     if (driftedSlugs.length) {
       console.log(
-        `${driftedSlugs.length} skill(s) drifted from the bundle — run \`gbrain skillpack reference <slug>\` to review (not overwritten).`,
+        `${driftedSlugs.length} skill(s) drifted from the bundle — run \`foresights skillpack reference <slug>\` to review (not overwritten).`,
       );
     }
     process.exit(0);
@@ -463,10 +463,10 @@ async function cmdSync(args: string[]): Promise<void> {
 async function cmdSetup(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(
-      'gbrain skillpack setup [<slug>] [--json]\n\n' +
+      'foresights skillpack setup [<slug>] [--json]\n\n' +
         'Print the declared preconditions + static remediation hints for a skill\n' +
         '(or, with no slug, every bundled skill that declares preconditions).\n' +
-        "Static/engine-free — live verification is `gbrain doctor`'s job.",
+        "Static/engine-free — live verification is `foresights doctor`'s job.",
     );
     process.exit(0);
   }
@@ -515,7 +515,7 @@ async function cmdSetup(args: string[]): Promise<void> {
 
 async function cmdMigrateFence(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('gbrain skillpack migrate-fence [--workspace PATH] [--dry-run] [--json]');
+    console.log('foresights skillpack migrate-fence [--workspace PATH] [--dry-run] [--json]');
     process.exit(0);
   }
   const json = args.includes('--json');
@@ -546,7 +546,7 @@ async function cmdMigrateFence(args: string[]): Promise<void> {
     // Next-action hint for the agent on a successful strip.
     if (result.status === 'fence_stripped' && !dryRun) {
       console.log(
-        '\nNext: your routing model just changed. The managed-block fence is gone.\nYour agent should walk `skills/*/SKILL.md` frontmatter `triggers:` for routing.\nPreserved table rows are a transitional bridge — once frontmatter walking is\nconfirmed working, run `gbrain skillpack scrub-legacy-fence-rows` to clean up.\nFresh install? Read `skills/_AGENT_README.md` for the full agent contract.',
+        '\nNext: your routing model just changed. The managed-block fence is gone.\nYour agent should walk `skills/*/SKILL.md` frontmatter `triggers:` for routing.\nPreserved table rows are a transitional bridge — once frontmatter walking is\nconfirmed working, run `foresights skillpack scrub-legacy-fence-rows` to clean up.\nFresh install? Read `skills/_AGENT_README.md` for the full agent contract.',
       );
     }
   }
@@ -560,7 +560,7 @@ async function cmdMigrateFence(args: string[]): Promise<void> {
 async function cmdScrubLegacy(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(
-      'gbrain skillpack scrub-legacy-fence-rows [--workspace PATH] [--dry-run] [--json]',
+      'foresights skillpack scrub-legacy-fence-rows [--workspace PATH] [--dry-run] [--json]',
     );
     process.exit(0);
   }
@@ -596,7 +596,7 @@ async function cmdScrubLegacy(args: string[]): Promise<void> {
 async function cmdSearch(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(
-      'gbrain skillpack search [<query>] [--tier endorsed|community|experimental|dead] [--json] [--refresh] [--url URL]',
+      'foresights skillpack search [<query>] [--tier endorsed|community|experimental|dead] [--json] [--refresh] [--url URL]',
     );
     process.exit(0);
   }
@@ -667,7 +667,7 @@ async function cmdSearch(args: string[]): Promise<void> {
 
 async function cmdInfo(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('gbrain skillpack info <name> [--json] [--refresh] [--url URL]');
+    console.log('foresights skillpack info <name> [--json] [--refresh] [--url URL]');
     process.exit(0);
   }
   const json = args.includes('--json');
@@ -729,20 +729,20 @@ async function cmdInfo(args: string[]): Promise<void> {
   console.log(`  Source:        ${found.entry.source.url}`);
   console.log(`  Pinned commit: ${found.entry.source.pinned_commit}`);
   console.log(`  Tarball SHA:   sha256:${found.entry.tarball_sha256}`);
-  console.log(`  gbrain min:    ${found.entry.gbrain_min_version}`);
+  console.log(`  foresights min:    ${found.entry.gbrain_min_version}`);
   console.log(`  Validated:     ${found.entry.validated_at} (run ${found.entry.validation_run_id})`);
   console.log(`  Tags:          ${found.entry.tags.join(', ')}`);
   console.log(`  Skills (${found.entry.skills_count}):`);
   for (const s of found.entry.skills) console.log(`    - ${s}`);
   console.log('\nTo scaffold:');
-  console.log(`  gbrain skillpack scaffold ${found.entry.name}`);
+  console.log(`  foresights skillpack scaffold ${found.entry.name}`);
   process.exit(0);
 }
 
 async function cmdRegistry(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(
-      'gbrain skillpack registry [--url URL] [--refresh] [--json]\n' +
+      'foresights skillpack registry [--url URL] [--refresh] [--json]\n' +
         '\n' +
         '  --url URL    Set the registry URL (writes to ~/.gbrain/config.json)\n' +
         '  --refresh    Force a fresh fetch from the current registry URL\n' +
@@ -826,7 +826,7 @@ async function cmdRegistry(args: string[]): Promise<void> {
 async function cmdDoctor(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(
-      'gbrain skillpack doctor <pack-dir> [--quick|--full] [--fix] [--yes] [--json]\n\n' +
+      'foresights skillpack doctor <pack-dir> [--quick|--full] [--fix] [--yes] [--json]\n\n' +
         '  <pack-dir>   Path to the skillpack root (where skillpack.json lives)\n' +
         '  --quick      Structural rubric (~5s, no sandbox/LLM/DB) — default\n' +
         '  --full       Add publish-gate suite execution (lands in a follow-up wave)\n' +
@@ -874,7 +874,7 @@ async function cmdDoctor(args: string[]): Promise<void> {
 async function cmdInit(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(
-      'gbrain skillpack init <name> [--target PATH] [--minimal] [--author NAME] [--license SPDX] [--homepage URL] [--dry-run] [--json]\n\n' +
+      'foresights skillpack init <name> [--target PATH] [--minimal] [--author NAME] [--license SPDX] [--homepage URL] [--dry-run] [--json]\n\n' +
         '  <name>       Pack name (lowercase kebab; becomes manifest.name + dir leaf)\n' +
         '  --target     Target dir (default: ./<name>)\n' +
         '  --minimal    Skip test/, e2e/, evals/ (advanced; doctor will score lower)\n' +
@@ -952,7 +952,7 @@ async function cmdInit(args: string[]): Promise<void> {
       }
       if (!dryRun) {
         console.log(
-          `\nNext:\n  cd ${result.targetDir}\n  gbrain skillpack doctor . --quick\n  # iterate, then:\n  gbrain skillpack pack`,
+          `\nNext:\n  cd ${result.targetDir}\n  foresights skillpack doctor . --quick\n  # iterate, then:\n  foresights skillpack pack`,
         );
       }
     }
@@ -973,7 +973,7 @@ async function cmdInit(args: string[]): Promise<void> {
 async function cmdInitBrainPack(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(
-      'gbrain skillpack init-brain-pack <name> [--target PATH] [--schema-pack NAME] [--author NAME] [--license SPDX] [--homepage URL] [--dry-run] [--json]\n\n' +
+      'foresights skillpack init-brain-pack <name> [--target PATH] [--schema-pack NAME] [--author NAME] [--license SPDX] [--homepage URL] [--dry-run] [--json]\n\n' +
         '  <name>         Pack name (lowercase kebab; becomes manifest.name)\n' +
         '  --target       Brain/source repo root (default: .)\n' +
         '  --schema-pack  Schema pack these skills assume (default: gbrain-base)\n' +
@@ -1070,7 +1070,7 @@ async function cmdInitBrainPack(args: string[]): Promise<void> {
 async function cmdPack(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(
-      'gbrain skillpack pack [<pack-dir>] [--out PATH] [--dry-run] [--skip-doctor] [--json]\n\n' +
+      'foresights skillpack pack [<pack-dir>] [--out PATH] [--dry-run] [--skip-doctor] [--json]\n\n' +
         '  <pack-dir>    Pack root (default: .)\n' +
         '  --out PATH    Output dir for the tarball (default: <pack-dir>)\n' +
         '  --dry-run     Validate only, no tarball\n' +
@@ -1111,7 +1111,7 @@ async function cmdPack(args: string[]): Promise<void> {
         const blocked = result.doctor.dimensions.filter((d) => !d.passed && d.category === 'core');
         for (const d of blocked) console.error(`  ✗ ${d.name}: ${d.detail}`);
       }
-      console.error('\nRun `gbrain skillpack doctor . --fix --yes` to auto-scaffold what you can, then re-run.');
+      console.error('\nRun `foresights skillpack doctor . --fix --yes` to auto-scaffold what you can, then re-run.');
       process.exit(2);
     } else if (result.tarball) {
       console.log(`pack: ${result.pack_name}@${result.pack_version} -> ${result.tarball.outPath}`);
@@ -1139,7 +1139,7 @@ async function cmdPack(args: string[]): Promise<void> {
 async function cmdEndorse(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(
-      'gbrain skillpack endorse <name> [--tier endorsed|community|experimental|dead] [--repo PATH] [--note TEXT] [--push] [--dry-run] [--json]\n\n' +
+      'foresights skillpack endorse <name> [--tier endorsed|community|experimental|dead] [--repo PATH] [--note TEXT] [--push] [--dry-run] [--json]\n\n' +
         '  <name>     Pack name as it appears in registry.json\n' +
         '  --tier     Target tier (default: endorsed)\n' +
         '  --repo     Path to a clone of the registry repo (default: .)\n' +
@@ -1220,7 +1220,7 @@ async function cmdEndorse(args: string[]): Promise<void> {
 async function cmdHarvest(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(
-      'gbrain skillpack harvest <slug> --from <host-repo-root> [--no-lint] [--dry-run] [--overwrite-local] [--json]',
+      'foresights skillpack harvest <slug> --from <host-repo-root> [--no-lint] [--dry-run] [--overwrite-local] [--json]',
     );
     process.exit(0);
   }
@@ -1294,7 +1294,7 @@ async function cmdDiff(args: string[]): Promise<void> {
   // then this path keeps the existing semantics.
   const { diffSkill } = await import('../core/skillpack/installer.ts');
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('gbrain skillpack diff <name> [--workspace PATH] [--json]');
+    console.log('foresights skillpack diff <name> [--workspace PATH] [--json]');
     process.exit(0);
   }
   const json = args.includes('--json');
@@ -1338,7 +1338,7 @@ async function cmdDiff(args: string[]): Promise<void> {
         else tag = 'differs  ';
         console.log(`  ${tag}  ${d.target}  (src ${d.sourceBytes}B / tgt ${d.targetBytes}B)`);
       }
-      console.log(clean ? '\n✓ all files match the bundle.' : '\n(Run `gbrain skillpack reference ' + name + '` for a unified diff.)');
+      console.log(clean ? '\n✓ all files match the bundle.' : '\n(Run `foresights skillpack reference ' + name + '` for a unified diff.)');
     }
     // v0.33: diff is informational; exit 0 always.
     process.exit(0);

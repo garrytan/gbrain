@@ -1,5 +1,5 @@
 /**
- * #4508 — `gbrain think "<q>" --source <id>` used to leak the flag into the
+ * #4508 — `foresights think "<q>" --source <id>` used to leak the flag into the
  * question.
  *
  * runThinkCli's flag-strip list lacked `--source` (and `--calibration-holder`),
@@ -138,7 +138,7 @@ describe('#4508 think --source CLI surface', () => {
 
   // #4652: without --source, think used to hand runThink no scope at all, so
   // the gather spanned every source (including `--no-federated` ones) while
-  // `gbrain search` on the same brain honored the resolved default + its
+  // `foresights search` on the same brain honored the resolved default + its
   // federated set. The CLI now resolves the same scope search does.
   test('omitting --source resolves the default source and its federated set (#4652)', async () => {
     const r = await runCli(['plain', 'question']);

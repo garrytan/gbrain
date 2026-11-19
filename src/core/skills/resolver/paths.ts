@@ -1,6 +1,6 @@
 /**
  * Where the skill resolver keeps its files: `<home>/skill-index/`, where
- * home is the gbrain config directory (GBRAIN_HOME/.gbrain, else
+ * home is the foresights config directory (GBRAIN_HOME/.gbrain, else
  * ~/.gbrain; the same rule as configDir() in src/core/config.ts, repeated
  * here so the resolver stays a leaf). Every path is derived from a validated
  * catalog name and asserted to sit under the skill-index root.
@@ -25,7 +25,7 @@ export const CATALOG_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 export const CLAUDE_PLUGINS_CATALOG = 'claude-code-plugins';
 const RESERVED = new Set(['sessions', 'logs']);
 
-/** The gbrain config directory (configDir() in src/core/config.ts). */
+/** The foresights config directory (configDir() in src/core/config.ts). */
 export function resolverHome(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.GBRAIN_HOME;
   if (override && override.trim()) {

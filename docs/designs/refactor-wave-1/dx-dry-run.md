@@ -10,7 +10,7 @@ was committed. Target: 30 minutes or less per change kind.
 | Storage method | `countPagesBySourceType` on both engines | 2.2 | engine files at their size ceilings (row said "Registry: none"); worked example showed a stale executor idiom | ~1.2 |
 | Schema migration | an index on `pages (updated_at DESC)` | 1.5 | none (no guard warned about a duplicate index) | 0 |
 | Doctor check | `dryrun_page_count` | 4.3 | `run` must name a top-level function; `emits` AST walk needs direct `checks.push`; last check pinned by a golden test | ~1.5 |
-| CLI-only command | `gbrain dryrun-hello` | 2.4 | `printHelp` line trips the `cli.ts` ceiling; `phase` / `thinClient` / `selfHelp` unexplained | ~1.5 |
+| CLI-only command | `foresights dryrun-hello` | 2.4 | `printHelp` line trips the `cli.ts` ceiling; `phase` / `thinClient` / `selfHelp` unexplained | ~1.5 |
 | HTTP route | `GET /admin/api/dryrun-ping` | ~1 (clock drift) | smallest test was structural only; mount-time ctx fields undocumented | ~1.5 |
 | Sync phase | `renamesApplied` in the sync summary | 4.0 | `SyncResult` in `sync.ts` at its ceiling; value flow to finalize/report undocumented | ~1 |
 

@@ -1,5 +1,5 @@
 /**
- * #8117: a refresh's fenced ff-merge and `gbrain git commit-push` used different locks, so a door commit holding
+ * #8117: a refresh's fenced ff-merge and `foresights git commit-push` used different locks, so a door commit holding
  * .git/index.lock made the merge fail as refresh_dirty (caller-class) for a transient collision. The HEAD check through
  * the merge now runs under the checkout's commit lock; a lockless git holding the index lock is retried briefly and then
  * refused as retryable git_index_locked; a commit lock held past its wait is commit_lock_busy. Each refusal aborts the

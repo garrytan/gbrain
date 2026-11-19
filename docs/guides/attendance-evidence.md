@@ -3,7 +3,7 @@
 Only a link's target can become its attendee. Names or slugs inside the link's
 display label are not additional attendees.
 
-When a schema pack does not override attendance, GBrain records a confirmed
+When a schema pack does not override attendance, Foresights records a confirmed
 person's attendance as `person --attended--> meeting`. It requires an explicit
 attendance list, not a person mentioned somewhere in the meeting note.
 
@@ -53,7 +53,7 @@ can resolve to a person; missing or ambiguous names remain incomplete.
 The existing query surface can read the resulting relationship:
 
 ```bash
-gbrain call query '{"query":"Who attended meetings/planning?","expand":false,"relational":true}'
+foresights call query '{"query":"Who attended meetings/planning?","expand":false,"relational":true}'
 ```
 
 The meeting owns the derived claim. Re-extracting the person does not delete
@@ -91,7 +91,7 @@ connector-sourced calendar page, does not satisfy it. This is policy, not a
 missing search step: to make such a page converge, create the person page (or
 an alias-carrying one) in the meeting's source.
 
-Stale extraction (`gbrain extract --stale`, managed or not) marks a page it
+Stale extraction (`foresights extract --stale`, managed or not) marks a page it
 skips for unresolved attendance as attendance-blocked at the page revision it
 read. The `links_extraction_lag` doctor check leaves those pages out of its lag
 count and reports them in their own count (`details.attendance_blocked`), so
@@ -119,12 +119,12 @@ attendance itself; its body links keep that pack's outgoing semantics and
 historical repair reports them as `pack_semantics_preserved`.
 
 Links extracted before this rule (stored meeting -> person, or typed attended
-from a notes mention) re-derive on the next `gbrain extract --stale` sweep,
+from a notes mention) re-derive on the next `foresights extract --stale` sweep,
 because the extractor version changed. Frontmatter edges re-derive only when
 frontmatter is included, so run this once per source:
 
 ```bash
-gbrain extract links --source db --include-frontmatter --source-id <id>
+foresights extract links --source db --include-frontmatter --source-id <id>
 ```
 
 It replaces each page's own derived links (markdown, wikilink and frontmatter
@@ -148,7 +148,7 @@ indicator on the selected source or `default` refuses preview and apply.
 ```bash
 umask 077
 mkdir -m 700 attendance-review
-gbrain extract links --source db --repair-attendance --source-id notes --json \
+foresights extract links --source db --repair-attendance --source-id notes --json \
   > attendance-review/preview.json
 ```
 
@@ -218,7 +218,7 @@ database backup and its recovery procedure, and obtain separate operator
 approval. Copy the exact receipt's `digest` into the following command:
 
 ```bash
-gbrain extract links --source db --repair-attendance --source-id notes \
+foresights extract links --source db --repair-attendance --source-id notes \
   --apply-preview attendance-review/preview.json --confirm APPROVED_DIGEST \
   --yes --backup-verified --checkpoint attendance-review/cursor.json
 ```

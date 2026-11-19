@@ -71,7 +71,7 @@ function hasFrontmatterTriggerSkill(dir: string): boolean {
  *                                      workspace root; skills in subdir)
  *   - `openclaw_workspace_home`      — ~/.openclaw/workspace/skills
  *   - `openclaw_workspace_home_root` — ~/.openclaw/workspace (root AGENTS.md)
- *   - `repo_root`                    — walked up from cwd, found gbrain repo
+ *   - `repo_root`                    — walked up from cwd, found foresights repo
  *   - `cwd_skills`                   — ./skills fallback
  *   - `install_path`                 — walked up from this module's install
  *                                      path; READ-ONLY callers only (v0.31.7)
@@ -132,7 +132,7 @@ function resolveWorkspaceSkillsDir(
  *   0. $GBRAIN_SKILLS_DIR explicit operator override (any caller)
  *   1. $OPENCLAW_WORKSPACE when explicitly set (env > repo-root walk)
  *   2. ~/.openclaw/workspace/ (user's default OpenClaw deployment)
- *   3. findRepoRoot() walk from cwd (gbrain's own repo)
+ *   3. findRepoRoot() walk from cwd (foresights's own repo)
  *   4. ./skills fallback (dev scratch, fixtures)
  *
  * Tier 0 ($GBRAIN_SKILLS_DIR) is safe for both read and write paths because
@@ -141,15 +141,15 @@ function resolveWorkspaceSkillsDir(
  * about implicit fallback to install-path when no explicit signal is set.
  *
  * The prior order put `findRepoRoot` first, which meant
- * `export OPENCLAW_WORKSPACE=...; gbrain check-resolvable` run from
- * inside the gbrain repo silently shadowed the env var by walking up
- * to gbrain's own skills/. Explicit env should win. Unset env → behavior
+ * `export OPENCLAW_WORKSPACE=...; foresights check-resolvable` run from
+ * inside the foresights repo silently shadowed the env var by walking up
+ * to foresights's own skills/. Explicit env should win. Unset env → behavior
  * is unchanged from before.
  *
  * Write-path callers (skillpack install, skillify scaffold,
  * post-install-advisory) MUST use this function, not the read-only variant —
- * a write-path install-path fallback would let `gbrain skillpack install`
- * from `~` silently target the bundled gbrain repo's skills/ instead of the
+ * a write-path install-path fallback would let `foresights skillpack install`
+ * from `~` silently target the bundled foresights repo's skills/ instead of the
  * user's workspace.
  *
  * `startDir` + `env` params keep tests hermetic.
@@ -193,7 +193,7 @@ export function autoDetectSkillsDir(
   //     subdirectory. Comes after $OPENCLAW_WORKSPACE so R5
   //     (precedence regression) holds: explicit env still wins. Comes
   //     before ~/.openclaw/workspace so that `cd ~/git/your-agent-repo
-  //     && gbrain skillpack scaffold X` finds the agent repo, not an
+  //     && foresights skillpack scaffold X` finds the agent repo, not an
   //     implicit fallback to OpenClaw's default install.
   {
     let dir = startDir;
@@ -224,7 +224,7 @@ export function autoDetectSkillsDir(
     if (resolved) return resolved;
   }
 
-  // 3. gbrain repo walk from cwd.
+  // 3. foresights repo walk from cwd.
   const repoRoot = findRepoRoot(startDir);
   if (repoRoot && isGbrainRepoRoot(repoRoot)) {
     const skillsDir = join(repoRoot, 'skills');
@@ -257,22 +257,22 @@ function isGbrainRepoRoot(dir: string): boolean {
 /**
  * Read-only skills-dir detection (v0.31.7). Wraps `autoDetectSkillsDir` and
  * adds an install-path fallback when the primary detection returns null —
- * walks up from this module's install location to find a gbrain repo root,
+ * walks up from this module's install location to find a foresights repo root,
  * gated by `isGbrainRepoRoot` to avoid false-positive on unrelated repos.
  *
- * Use this from READ-ONLY callers only: `gbrain doctor`,
- * `gbrain check-resolvable`, `gbrain routing-eval`. Never from write paths.
+ * Use this from READ-ONLY callers only: `foresights doctor`,
+ * `foresights check-resolvable`, `foresights routing-eval`. Never from write paths.
  *
  * Why a separate function? `autoDetectSkillsDir` is shared with write paths
  * (`skillpack install`, `skillify scaffold`, `post-install-advisory`).
  * Adding the install-path fallback to the shared function would let
- * `gbrain skillpack install` from `~` silently target the bundled gbrain
+ * `foresights skillpack install` from `~` silently target the bundled foresights
  * repo's skills/ instead of the user's actual workspace — a quiet data-flow
  * regression. Read-only callers don't write anything to the resolved path,
  * so the install-path fallback is safe for them.
  *
  * Closes the install-path footgun for hosted-CLI installs (`bun install -g
- * github:garrytan/gbrain && cd ~ && gbrain doctor`) without expanding the
+ * github:aimonk2025/gbrain && cd ~ && foresights doctor`) without expanding the
  * blast radius to write-path callers.
  */
 export function autoDetectSkillsDirReadOnly(
@@ -297,7 +297,7 @@ export function autoDetectSkillsDirReadOnly(
   // Tier-5 install-path fallback: walk up from this module's install
   // location. Gate with isGbrainRepoRoot so we don't false-positive when
   // the install path lives inside an unrelated repo (e.g., a monorepo
-  // that vendored gbrain in a subdir).
+  // that vendored foresights in a subdir).
   try {
     const moduleDir = fileURLToPath(import.meta.url);
     const installRoot = findRepoRoot(moduleDir);
@@ -333,10 +333,10 @@ export const AUTO_DETECT_HINT = [
 
 /**
  * Read-only auto-detect hint. Includes the install-path fallback that
- * `autoDetectSkillsDirReadOnly` adds for `gbrain doctor` /
- * `gbrain check-resolvable` / `gbrain routing-eval`.
+ * `autoDetectSkillsDirReadOnly` adds for `foresights doctor` /
+ * `foresights check-resolvable` / `foresights routing-eval`.
  */
 export const AUTO_DETECT_HINT_READ_ONLY = [
   AUTO_DETECT_HINT,
-  `  7. (read-only) walk up from gbrain's install path`,
+  `  7. (read-only) walk up from foresights's install path`,
 ].join('\n');

@@ -13,7 +13,7 @@
  *     rows. With --embed-cache both arms also see byte-identical QUERY vectors
  *     (the OFF arm fills the cache, the ON arm hits it), so the paired delta is
  *     the reranker and nothing else — the receipt says whether that held.
- *   - Arms are applied through `engine.setConfig` — the plane `gbrain config
+ *   - Arms are applied through `engine.setConfig` — the plane `foresights config
  *     set` writes — so bare `hybridSearch` resolves them exactly as a production
  *     balanced brain would (mode resolution lives in bare hybridSearch, which
  *     never touches the semantic query cache). Autocut is pinned OFF in both
@@ -101,7 +101,7 @@ export const R1_ON_RERANKER_MODEL = 'voyage:rerank-2.5';
 export type ArmId = 'off' | 'on';
 
 /**
- * Config pins per arm, written with `engine.setConfig` (the `gbrain config set`
+ * Config pins per arm, written with `engine.setConfig` (the `foresights config set`
  * plane). Run OFF first, then ON: the ON pins are a superset, so the brain ends
  * the run in the shipped balanced default.
  */
@@ -170,7 +170,7 @@ export interface ArmRun {
  * Run one arm: every question through bare `hybridSearch` at the brain's
  * CURRENT config (the caller applied the pins), capturing results + meta, then
  * score with the same `runRetrievalQuality` the CI gate and
- * `gbrain eval retrieval-quality` use — no local re-implementation of hit@k.
+ * `foresights eval retrieval-quality` use — no local re-implementation of hit@k.
  */
 export async function runArm(
   engine: BrainEngine,
@@ -481,7 +481,7 @@ export function renderMarkdown(p: R1Payload): string {
 interface Args {
   /** --autocut on|off — overlays search.autocut on BOTH arms (default off = the pinned ARM_PINS). */
   autocut?: 'on' | 'off';
-  /** --relational-pin N|off — overlays search.relational_rerank_pin on BOTH arms (default: gbrain's bundle default). */
+  /** --relational-pin N|off — overlays search.relational_rerank_pin on BOTH arms (default: foresights's bundle default). */
   relationalPin?: string;
   /** --search-pin KEY=VALUE (repeatable) — arbitrary search.* overlay on BOTH arms; `search.reranker.*` refused (see SEARCH_PIN_RESERVED). */
   searchPins?: Record<string, string>;

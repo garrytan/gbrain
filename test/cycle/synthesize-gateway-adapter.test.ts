@@ -204,7 +204,7 @@ describe('JudgeClient.create — gateway routing + shape adapter', () => {
 
   test('A3b: DeepSeek verdict judge disables thinking for its own call only', async () => {
     // DeepSeek v4 models think by default and bill reasoning as OUTPUT tokens
-    // against max_tokens (recipe thinking_by_default, gbrain#4172). The triage
+    // against max_tokens (recipe thinking_by_default, foresights#4172). The triage
     // judge wants the plain JSON verdict, so it turns thinking off per call
     // (ChatOpts.thinking 'off', #5331), which reaches the SDK as DeepSeek's knob.
     // No DEEPSEEK_API_KEY needed: non-anthropic construction skips the key

@@ -1,6 +1,6 @@
 /**
  * #6948: duplicate-origin twins. `decideOriginTwins` (the one rule discovery, the sync-time heal and
- * `gbrain repair origin-twins` share) over every pathological group shape, and the merge primitive
+ * `foresights repair origin-twins` share) over every pathological group shape, and the merge primitive
  * (`mergeTwinInto`, `twinMergeConflicts`) on a real database: what moves to the survivor, what is deduplicated, and
  * the distinct evidence that refuses the merge before any write. PGLite and, with DATABASE_URL, Postgres.
  * Synthetic content only.

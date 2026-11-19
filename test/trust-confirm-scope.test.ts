@@ -68,7 +68,7 @@ describe('memory_confirm scope (CEO-6)', () => {
     for (const grants of [['authorization_code'], ['client_credentials']]) {
       const violation = dcrScopeViolation(['read', 'memory_confirm'], grants);
       expect(violation).toContain('memory_confirm');
-      expect(violation).toContain('gbrain auth create');
+      expect(violation).toContain('foresights auth create');
     }
   });
 

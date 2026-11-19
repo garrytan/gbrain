@@ -8,7 +8,7 @@
  *
  * Authoring gate: (1) protects "a derived effect that keeps failing reaches a
  * terminal state with its code": after five counted failures a links effect
- * completes as skipped (the edge is derived; `gbrain extract --stale` recovers it)
+ * completes as skipped (the edge is derived; `foresights extract --stale` recovers it)
  * and a facts-backstop effect fails with the code, deactivate no longer lists them,
  * retry-effects re-authorizes the failed one, a run-scoped failure is never counted,
  * and a pass where most effects fail counts nothing. (2) Reverting the count in

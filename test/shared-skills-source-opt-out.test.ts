@@ -58,7 +58,7 @@ test('on/off/status write and clear config.shared_skills and the migration polic
     const off = await setSourceSharedSkills({ engine, remote: false }, 'default', false);
     expect({ name, changed: off.changed, configured: off.configured, mode: off.mode, code: off.reason_code })
       .toEqual({ name, changed: true, configured: false, mode: 'preserve_files', code: 'source_shared_skills_disabled' });
-    expect(off.reason).toContain('gbrain sources shared-skills default on');
+    expect(off.reason).toContain('foresights sources shared-skills default on');
     expect(off.reason).toContain('docs/guides/shared-brain-skills.md#choose-which-sources-adopt-shared-skills');
     const [stored] = await engine.executeRaw<{ kind: string; value: string }>("SELECT jsonb_typeof(config->'shared_skills') AS kind, config->>'shared_skills' AS value FROM sources WHERE id='default'");
     expect({ name, ...stored }).toEqual({ name, kind: 'boolean', value: 'false' });
@@ -92,7 +92,7 @@ test('a connector or external source with shared skills on explains why it keeps
       const view = await setSourceSharedSkills({ engine, remote: false }, 'default', true);
       expect({ name, mode: view.mode, code: view.reason_code, configured: view.configured }).toEqual({ name, mode, code: 'source_skill_adoption_required', configured: null });
       expect(view.explanation).toContain('turning shared skills on cannot change that');
-      expect(view.reason).toContain('gbrain sources shared-skills default status');
+      expect(view.reason).toContain('foresights sources shared-skills default status');
       const [kept] = await engine.executeRaw<{ kind: string | null; remote: string | null }>("SELECT config->>'kind' AS kind, config->>'remote_url' AS remote FROM sources WHERE id='default'");
       expect({ name, ...kept }).toEqual({ name, kind: 'kind' in config ? config.kind : null, remote: 'remote_url' in config ? config.remote_url : null });
     }
@@ -111,8 +111,8 @@ test('an oversized pack parks once, is not retried, and resumes after the bound 
     expect(report.status).not.toBe('conflict');
     const parked = report.sources.find(row => row.source_id === 'default')!;
     expect({ name, status: parked.status, limit: parked.parked?.limit }).toEqual({ name, status: 'action_required', limit: 'shared_skills.inventory.max_file_bytes' });
-    expect(parked.stages[0]!.reason).toContain('gbrain apply-migrations --migration 0.53.0 --yes');
-    expect(parked.stages[0]!.reason).toContain('gbrain sources shared-skills default off');
+    expect(parked.stages[0]!.reason).toContain('foresights apply-migrations --migration 0.53.0 --yes');
+    expect(parked.stages[0]!.reason).toContain('foresights sources shared-skills default off');
     const view = await readSharedSkillsSourceView(engine, 'default');
     expect(view.parked?.parked_at).toBe(parked.parked!.parked_at);
     const doctor = await checkSharedSkillsSources(engine);

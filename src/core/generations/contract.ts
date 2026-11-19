@@ -13,7 +13,7 @@ export interface GenerationKey { kind: string; sourceId: string; ownerKey: strin
 export const HELD_REASONS = ['shrunk', 'oversize', 'valve', 'no_proof', 'fence_absent', 'attempts_exhausted', 'segmented_unsupported', 'tie'] as const;
 export type HeldReason = typeof HELD_REASONS[number];
 
-/** A held result the operator may publish once with `gbrain repair generations --mode release-held`. */
+/** A held result the operator may publish once with `foresights repair generations --mode release-held`. */
 export const RELEASABLE_HELD_REASONS: ReadonlySet<HeldReason> = new Set(['shrunk', 'valve', 'attempts_exhausted', 'oversize']);
 
 /** One item of a proposed generation: its key, the content the adapter writes, and its identity hash. */

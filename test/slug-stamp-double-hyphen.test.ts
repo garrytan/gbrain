@@ -84,7 +84,7 @@ for (const kind of backends) describe(`repair frontmatter stamps a legacy unstam
     git(root, 'config', 'user.name', 'Example'); git(root, 'config', 'user.email', 'example@example.invalid');
     writeFileSync(join(root, '.git', 'hooks', 'post-commit'), '#!/bin/sh\n# gbrain brain-durability post-commit hook (v0.42.44+)\n'); chmodSync(join(root, '.git', 'hooks', 'post-commit'), 0o755);
     writeFileSync(join(root, 'notes', 'ok.md'), '---\ntitle: Ok\n---\nFine.\n');
-    // #7305: put_page refuses a NEW notes/a--b, so the page an earlier gbrain wrote is imported from its stamped file.
+    // #7305: put_page refuses a NEW notes/a--b, so the page an earlier foresights wrote is imported from its stamped file.
     writeFileSync(join(root, 'notes', 'a--b.md'), '---\ntitle: Double\nslug: notes/a--b\n---\nTwo hyphens.\n');
     git(root, 'add', '-A'); git(root, 'commit', '-qm', 'fixture');
     await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
@@ -97,13 +97,13 @@ for (const kind of backends) describe(`repair frontmatter stamps a legacy unstam
       await submitPageMutation(localCtx(engine, id), { operation: 'put_page', params: { slug: 'notes/a--b', source_id: id, content: '---\ntitle: Double\n---\nTwo hyphens, updated.\n', expected_revision: imported.revision } });
       const written = readFileSync(join(root, 'notes', 'a--b.md'), 'utf8');
       expect(written).toContain('slug: notes/a--b');
-      // A file an earlier gbrain rendered without the stamp.
+      // A file an earlier foresights rendered without the stamp.
       const legacy = written.split('\n').filter(line => line !== 'slug: notes/a--b').join('\n');
       writeFileSync(join(root, 'notes', 'a--b.md'), legacy);
       git(root, 'add', '-A'); git(root, 'commit', '-qm', 'legacy unstamped render');
 
       // Before the stamp, a reconcile preview of the page names the repair instead of 'cannot be parsed losslessly'.
-      await expect(readReconcileState(engine, id, 'notes/a--b')).rejects.toMatchObject({ code: 'source_changed', detail: 'slug_rule_mismatch', suggestion: expect.stringContaining(`gbrain repair frontmatter --source ${id} --only notes/a--b.md`) });
+      await expect(readReconcileState(engine, id, 'notes/a--b')).rejects.toMatchObject({ code: 'source_changed', detail: 'slug_rule_mismatch', suggestion: expect.stringContaining(`foresights repair frontmatter --source ${id} --only notes/a--b.md`) });
       const runner = await repairRunner(engine, { apply: false, noEmbed: true, logger: quiet });
       const preview = await runner.run('frontmatter', await resolveRepairScope(engine, id), { explicit: true, sourceFlag: id });
       expect(preview).toMatchObject({ mode: 'dry_run', affected: 1 });

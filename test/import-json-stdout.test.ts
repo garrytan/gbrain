@@ -1,5 +1,5 @@
 /**
- * #3637 regression test: `gbrain import <dir> --json` must leave exactly one
+ * #3637 regression test: `foresights import <dir> --json` must leave exactly one
  * JSON document on stdout.
  *
  * Pre-fix, runImport's informational lines in src/commands/import.ts ("Found N
@@ -8,7 +8,7 @@
  * unconditionally, so stdout under --json read
  * `Found 1 markdown files\n{"status":"success",...}` and JSON.parse failed at
  * character 0. The reported consumer (gstack's memory-ingest, which runs
- * `gbrain import <dir> --no-embed --json` and parses stdout) took the parse
+ * `foresights import <dir> --no-embed --json` and parses stdout) took the parse
  * failure as "0 imported" while still recording every file as ingested, so the
  * next run skipped them permanently — success reported, nothing imported, no
  * retry.

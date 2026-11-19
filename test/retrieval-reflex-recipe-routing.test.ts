@@ -8,7 +8,7 @@
  * skills claim the same phrase, host routing becomes ambiguous and
  * queries misroute silently.
  *
- * Also pins the install pointer honesty half of #4292: `gbrain
+ * Also pins the install pointer honesty half of #4292: `foresights
  * integrations install` prints "next steps: see
  * recipes/<id>/install/post-install-hint.md" — that pointer must be
  * gated on the file actually existing (and retrieval-reflex now ships

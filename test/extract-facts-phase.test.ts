@@ -1620,7 +1620,7 @@ describe('runExtractFacts — v0.46 (#3014) supersession transport + heal', () =
     expect(row1.expired_at).toBeNull();
   });
 
-  // Existing data: the full walk that `gbrain dream --phase extract_facts` runs clears it without a page edit.
+  // Existing data: the full walk that `foresights dream --phase extract_facts` runs clears it without a page edit.
   test('#9069: a live row stored with a wrong link by an older build is cleared by a full reconcile, page unchanged', async () => {
     await putPage('people/deal', LIVE_NOTE_FENCE);
     await runExtractFacts(engine, { slugs: ['people/deal'] });

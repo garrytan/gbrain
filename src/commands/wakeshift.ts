@@ -1,5 +1,5 @@
 /**
- * `gbrain wakeshift enable | disable | status | test | cron | emit` (plan D2,
+ * `foresights wakeshift enable | disable | status | test | cron | emit` (plan D2,
  * D4, D5): the trusted local switch for reporting back through Wakeshift.
  * Only this command writes the `wakeshift.*` keys (host file plane), so no
  * MCP or HTTP caller can turn it on. `enable` asks consent (egress,
@@ -27,14 +27,14 @@ import { WAKESHIFT_CONNECTOR_TERMS_URL, WAKESHIFT_PRIVACY_URL, httpsUrl, operato
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { shellQuote } from '../core/agent-output.ts';
 
-const HELP = `gbrain wakeshift <command> — report back to agent conversations when jobs, writes and crons finish (off by default)
+const HELP = `foresights wakeshift <command> — report back to agent conversations when jobs, writes and crons finish (off by default)
 
 Commands:
   status [--json]            on/off, where the key comes from (its kid fingerprint only), watch counts,
                              and whether the published manifest is older than this build
   enable [--key-stdin] [--url <https url>] [--terms-url <https url> --privacy-url <https url>] [--yes]
                              turn reporting back on: asks consent, checks the key with Wakeshift and
-                             publishes gbrain's events; --key-stdin saves the key from stdin to
+                             publishes foresights's events; --key-stdin saves the key from stdin to
                              ~/.gbrain/wakeshift.key (0600). A brain with access members needs your
                              terms and privacy links; each member accepts them before a first watch
   disable [--json]           turn it off: the watch tools disappear at once and open watches end
@@ -46,20 +46,20 @@ Commands:
                              watchers. Never calls Wakeshift itself, and exits 0 when reporting back is off
   watch job <id> | write <request_id> | cron <name>
                              from a thin client or agent shell: wake this conversation when it finishes
-                             (gbrain wakeshift watch --help)
+                             (foresights wakeshift watch --help)
   accept-terms <terms_version>
                              from a thin client or agent shell: record the user's agreement to a shared
                              brain's agreement step (accept_wakeshift_terms), then run the watch again
 
 The key is read from WAKESHIFT_API_KEY (e.g. in ~/.gbrain/.env) or ~/.gbrain/wakeshift.key.
-gbrain never creates a Wakeshift account or key. Guide: docs/guides/wakeshift.md`;
+foresights never creates a Wakeshift account or key. Guide: docs/guides/wakeshift.md`;
 
 function flagValue(args: string[], flag: string): string | undefined {
   const i = args.indexOf(flag);
   return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
 }
 
-const KEY_HINT = 'Create a key in your Wakeshift console and put it in ~/.gbrain/wakeshift.key (chmod 600) or WAKESHIFT_API_KEY in ~/.gbrain/.env, then run gbrain wakeshift enable again.';
+const KEY_HINT = 'Create a key in your Wakeshift console and put it in ~/.gbrain/wakeshift.key (chmod 600) or WAKESHIFT_API_KEY in ~/.gbrain/.env, then run foresights wakeshift enable again.';
 
 function keyError(reason: string, message: string, suggestion: string): Error {
   return opError('wakeshift_key_invalid', message, suggestion, { reason });
@@ -69,7 +69,7 @@ function keyError(reason: string, message: string, suggestion: string): Error {
 function loadKey(): { key: WakeshiftKey; source: 'env' | 'file' } {
   const read = readWakeshiftKey();
   if (read.source === 'file_too_open') {
-    throw keyError('file_too_open', `${wakeshiftKeyFile()} is readable by other users (mode ${read.mode}).`, `Run chmod 600 ${wakeshiftKeyFile()}, then run gbrain wakeshift enable again.`);
+    throw keyError('file_too_open', `${wakeshiftKeyFile()} is readable by other users (mode ${read.mode}).`, `Run chmod 600 ${wakeshiftKeyFile()}, then run foresights wakeshift enable again.`);
   }
   if (read.source === 'none') throw keyError('missing', 'No Wakeshift key: set WAKESHIFT_API_KEY (in ~/.gbrain/.env) or write ~/.gbrain/wakeshift.key.', KEY_HINT);
   try {
@@ -133,7 +133,7 @@ async function status(engine: BrainEngine, json: boolean): Promise<void> {
     `  watches: ${Object.entries(counts).map(([k, v]) => `${k} ${v}`).join(', ') || 'none'}`,
     ...(terms ? [`  terms:   ${terms.terms_url} and ${terms.privacy_url} (version ${terms.version})`] : []),
     ...(on || file.enabled !== true ? [] : ['  The watch tools stay hidden until the key problem above is fixed.']),
-    ...(manifestStale ? ['  The published event manifest is older than this build: run gbrain wakeshift enable to publish the new events.'] : []),
+    ...(manifestStale ? ['  The published event manifest is older than this build: run foresights wakeshift enable to publish the new events.'] : []),
   ]);
 }
 
@@ -142,8 +142,8 @@ async function enable(engine: BrainEngine, args: string[]): Promise<void> {
   let loaded: { key: WakeshiftKey; source: 'env' | 'file' | 'stdin' };
   if (stdinKey !== null) {
     if (readWakeshiftKey().source === 'env') {
-      throw keyError('env_overrides', 'WAKESHIFT_API_KEY is set (in the environment or ~/.gbrain/.env) and takes precedence over a saved key, so --key-stdin would save a key gbrain never uses. Nothing was saved.',
-        'Remove WAKESHIFT_API_KEY, then run gbrain wakeshift enable --key-stdin again; or run gbrain wakeshift enable without --key-stdin to use it.');
+      throw keyError('env_overrides', 'WAKESHIFT_API_KEY is set (in the environment or ~/.gbrain/.env) and takes precedence over a saved key, so --key-stdin would save a key foresights never uses. Nothing was saved.',
+        'Remove WAKESHIFT_API_KEY, then run foresights wakeshift enable --key-stdin again; or run foresights wakeshift enable without --key-stdin to use it.');
     }
     try { loaded = { key: parseWakeshiftKey(stdinKey), source: 'stdin' }; } catch (e) { if (e instanceof WakeshiftKeyError) throw keyError(e.reason, e.message, KEY_HINT); throw e; }
   } else {
@@ -163,7 +163,7 @@ async function enable(engine: BrainEngine, args: string[]): Promise<void> {
   const members = await liveAccessMembers(engine);
   if (members > 0 && !terms) {
     throw opError('wakeshift_shared_brain', `This brain has ${members} live access member(s), and Wakeshift's terms make you, the operator, show each of them your own terms and privacy policy before any wake. Nothing was turned on.`,
-      'Run gbrain wakeshift enable --terms-url <https url> --privacy-url <https url> with your published terms and privacy policy (they must refer members to Wakeshift\'s Connector Terms and Privacy Policy); each member then accepts them once before a first watch.');
+      'Run foresights wakeshift enable --terms-url <https url> --privacy-url <https url> with your published terms and privacy policy (they must refer members to Wakeshift\'s Connector Terms and Privacy Policy); each member then accepts them once before a first watch.');
   }
   const url = normalizeWakeshiftUrl(flagValue(args, '--url') ?? saved.url);
   const operatorDuty = members > 0
@@ -172,9 +172,9 @@ async function enable(engine: BrainEngine, args: string[]): Promise<void> {
   await requireConsent({
     command: 'wakeshift enable', effects: ['egress', 'credentials'], actor: 'user',
     what: `Turn on reporting back through Wakeshift (${url}) with the key kid ${key.kid}.`,
-    why: 'Agents can then ask gbrain to wake their conversation when a job, a pending write or a scheduled cron finishes, instead of polling.',
+    why: 'Agents can then ask foresights to wake their conversation when a job, a pending write or a scheduled cron finishes, instead of polling.',
     risk: `Each watched job, write request or cron sends Wakeshift a pointer: its id or cron name, kind, status, times, a hashed user id, the MCP client name, user agent and request _meta. Never page text, titles or slugs. Members of your Wakeshift organization can read sent wakes.${operatorDuty}`,
-    user_message: `Turn on gbrain reporting back through Wakeshift? It sends ids and status (never page text) to Wakeshift when a watched job, write or cron finishes.${members > 0 ? ' This brain has members, so your terms and privacy policy must refer them to Wakeshift\'s Connector Terms and Privacy Policy.' : ''}`,
+    user_message: `Turn on foresights reporting back through Wakeshift? It sends ids and status (never page text) to Wakeshift when a watched job, write or cron finishes.${members > 0 ? ' This brain has members, so your terms and privacy policy must refer them to Wakeshift\'s Connector Terms and Privacy Policy.' : ''}`,
     argv: ['gbrain', 'wakeshift', 'enable'], args,
   });
   const api = wakeshiftClient(key, { url });
@@ -185,7 +185,7 @@ async function enable(engine: BrainEngine, args: string[]): Promise<void> {
   } catch (e) {
     throw opError(e instanceof WakeshiftError && (e.status === 0 || e.status === 429 || e.status >= 500) ? 'wakeshift_unavailable' : 'wakeshift_refused',
       `Wakeshift did not accept the key or the manifest: ${describeWakeshiftError(e)}. Nothing was turned on.`,
-      'Check the key belongs to your Wakeshift app (gbrain wakeshift test) and retry.', { reason: e instanceof WakeshiftError ? e.code : 'error' });
+      'Check the key belongs to your Wakeshift app (foresights wakeshift test) and retry.', { reason: e instanceof WakeshiftError ? e.code : 'error' });
   }
   if (stdinKey !== null) {
     const tmp = `${wakeshiftKeyFile()}.${process.pid}.tmp`;
@@ -201,9 +201,9 @@ async function enable(engine: BrainEngine, args: string[]): Promise<void> {
   });
   say(args.includes('--json'), { enabled: true, url, app: { id: app?.id, name: app?.name }, key: { source, kid: key.kid }, ...(terms ? { terms_version: terms.version } : {}) }, [
     `Wakeshift reporting back is on (app ${app?.name ?? '?'}, key kid ${key.kid}, from ${source}).`,
-    'Agents now see watch_job, watch_write_request, watch_cron, list_watches and unwatch; gbrain serve and the job worker deliver wakes.',
+    'Agents now see watch_job, watch_write_request, watch_cron, list_watches and unwatch; foresights serve and the job worker deliver wakes.',
     ...(members > 0 ? [`Members see your terms (version ${terms!.version}) on their first watch and accept them with accept_wakeshift_terms; changing a link asks again.`] : []),
-    'Turn it off with: gbrain wakeshift disable',
+    'Turn it off with: foresights wakeshift disable',
   ]);
 }
 
@@ -248,19 +248,19 @@ async function cron(engine: BrainEngine, args: string[], json: boolean): Promise
       `SELECT c.name, c.created_at, r.status AS last_status, r.finished_at AS last_finished_at FROM wake_crons c
         LEFT JOIN LATERAL (SELECT status, finished_at FROM wake_cron_runs WHERE name = c.name ORDER BY finished_at DESC, id DESC LIMIT 1) r ON true
         ORDER BY c.name`);
-    say(json, { crons: rows }, rows.length ? rows.map(r => `${r.name}${r.last_status ? `  last run: ${r.last_status} at ${new Date(r.last_finished_at!).toISOString()}` : '  no run reported yet'}`) : ['No crons registered (gbrain wakeshift cron add <name>).']);
+    say(json, { crons: rows }, rows.length ? rows.map(r => `${r.name}${r.last_status ? `  last run: ${r.last_status} at ${new Date(r.last_finished_at!).toISOString()}` : '  no run reported yet'}`) : ['No crons registered (foresights wakeshift cron add <name>).']);
     return;
   }
   const name = cronName(raw);
   if ((verb !== 'add' && verb !== 'remove') || !name) {
-    console.error('Usage: gbrain wakeshift cron add <name> | remove <name> | list [--json]');
+    console.error('Usage: foresights wakeshift cron add <name> | remove <name> | list [--json]');
     setCliExitVerdict(2);
     return;
   }
   const renamed = name !== raw ? ` (stored as ${name})` : '';
   if (verb === 'add') {
     await engine.executeRaw('INSERT INTO wake_crons (name) VALUES ($1) ON CONFLICT (name) DO NOTHING', [name]);
-    say(json, { name, registered: true }, [`Registered cron ${name}${renamed}. End its script with: gbrain wakeshift emit cron.finished --name ${name} --status ok (or failed).`]);
+    say(json, { name, registered: true }, [`Registered cron ${name}${renamed}. End its script with: foresights wakeshift emit cron.finished --name ${name} --status ok (or failed).`]);
     return;
   }
   await engine.executeRaw('DELETE FROM wake_crons WHERE name = $1', [name]);
@@ -281,7 +281,7 @@ function emitArgs(args: string[]): { name: string; status: 'ok' | 'failed' } | n
   const name = cronName(flagValue(args, '--name'));
   const status = flagValue(args, '--status');
   if (args[0] === 'cron.finished' && name && (status === 'ok' || status === 'failed')) return { name, status };
-  console.error('Usage: gbrain wakeshift emit cron.finished --name <name> --status ok|failed');
+  console.error('Usage: foresights wakeshift emit cron.finished --name <name> --status ok|failed');
   setCliExitVerdict(2);
   return null;
 }
@@ -297,7 +297,7 @@ async function pgliteDatastore(brainId: string | undefined): Promise<string | nu
 }
 
 /**
- * The brain could not be opened for `emit`. On a PGLite brain held by `gbrain serve` or `gbrain jobs work`, the run
+ * The brain could not be opened for `emit`. On a PGLite brain held by `foresights serve` or `foresights jobs work`, the run
  * goes to the brain's spool (spool.ts) for that process's wake drainer to record; otherwise (Postgres, reporting back
  * off, a full spool) it is not recorded. Either way one stderr line, and the cron script keeps its own exit status.
  */
@@ -310,10 +310,10 @@ export async function reportEmitConnectFailure(args: string[], error: unknown, b
     if (datastore && wakeshiftPublished()) {
       const spooled = spoolCronRun(datastore, parsed);
       if (spooled !== 'full') {
-        console.error(`[wakeshift] the brain could not be opened (${reason}), so the ${parsed.name} run was spooled: the wake drainer of gbrain serve or gbrain jobs work records it within seconds.`);
+        console.error(`[wakeshift] the brain could not be opened (${reason}), so the ${parsed.name} run was spooled: the wake drainer of foresights serve or foresights jobs work records it within seconds.`);
         return null;
       }
-      console.error(`[wakeshift] could not record the ${parsed.name} run: ${SPOOL_MAX_FILES} runs already wait in the spool, which only gbrain serve or gbrain jobs work drains.`);
+      console.error(`[wakeshift] could not record the ${parsed.name} run: ${SPOOL_MAX_FILES} runs already wait in the spool, which only foresights serve or foresights jobs work drains.`);
       return null;
     }
   } catch (e) {
@@ -329,7 +329,7 @@ async function emit(engine: BrainEngine, args: string[]): Promise<void> {
   if (!parsed) return;
   const { name, status } = parsed;
   if (!wakeshiftPublished()) {
-    console.error(`[wakeshift] reporting back is off, so the ${name} run was not recorded (gbrain wakeshift status).`);
+    console.error(`[wakeshift] reporting back is off, so the ${name} run was not recorded (foresights wakeshift status).`);
     return;
   }
   try {
@@ -341,10 +341,10 @@ async function emit(engine: BrainEngine, args: string[]): Promise<void> {
   }
 }
 
-/** `gbrain config get mcp.publish_wakeshift`: the runtime gate, which never reads the DB plane. */
+/** `foresights config get mcp.publish_wakeshift`: the runtime gate, which never reads the DB plane. */
 export function printWakeshiftGate(): void {
   console.log(String(wakeshiftPublished()));
-  console.error('[config] source: wakeshift.enabled in the host file plane plus a usable Wakeshift key; the DB plane is never read for this gate (gbrain wakeshift status)');
+  console.error('[config] source: wakeshift.enabled in the host file plane plus a usable Wakeshift key; the DB plane is never read for this gate (foresights wakeshift status)');
 }
 
 export async function runWakeshift(engine: BrainEngine, args: string[]): Promise<void> {

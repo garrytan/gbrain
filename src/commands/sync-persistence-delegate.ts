@@ -23,7 +23,7 @@ import { resolveStallAbortSeconds, resolveSyncHardDeadline, syncDeadlineStallNot
 import { noteCommittedProgress } from '../core/forward-progress.ts';
 
 const invalid=(message:string,suggestion:string)=>opError('invalid_params',message,suggestion,
-  {fix:readFix('Prints the gbrain sync flags.',{argv:['gbrain','sync','--help']})});
+  {fix:readFix('Prints the foresights sync flags.',{argv:['gbrain','sync','--help']})});
 
 export async function parsePersistenceSyncArgs(args:string[],cwd=process.cwd()) {
   const options:Record<string,unknown>={};
@@ -45,7 +45,7 @@ export async function parsePersistenceSyncArgs(args:string[],cwd=process.cwd()) 
   }
   const source=resolveSourceIdEngineFree(typeof options.sourceId==='string'?options.sourceId:null,cwd);
   if(source==='__all__')throw opError('invalid_params','Owner-delegated sync requires one explicit source.',
-    'Name one source with --source while the running serve holds the brain (repeat the command per source); gbrain sources list --json lists them.',
+    'Name one source with --source while the running serve holds the brain (repeat the command per source); foresights sources list --json lists them.',
     {fix:readFix('Lists the source ids to sync one at a time, read-only.',{argv:['gbrain','sources','list','--json']})});
   if(source)options.sourceId=source;
   const softTimeout=parseDurationSeconds(args.find((_,i)=>args[i-1]==='--timeout'),'--timeout');
@@ -56,7 +56,7 @@ export async function parsePersistenceSyncArgs(args:string[],cwd=process.cwd()) 
 
 /**
  * The delegated sync's progress window: the default and env deadlines extend
- * while the owner keeps committing pages, exactly as a local `gbrain sync`
+ * while the owner keeps committing pages, exactly as a local `foresights sync`
  * does; `--timeout` and `--hard-deadline` stay strict wall-clock caps.
  */
 export function delegatedProgressWindowMs(args:string[],env:Record<string,string|undefined>=process.env,isTty=Boolean(process.stdout.isTTY)):number|undefined {

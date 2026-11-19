@@ -1,10 +1,10 @@
 /**
- * #5237: a resident `gbrain serve` started in a `.gbrain-mount` project opens the
+ * #5237: a resident `foresights serve` started in a `.gbrain-mount` project opens the
  * mounted brain, so its persistence owner socket must follow that brain. A CLI
  * write from the same project then reaches the owner and commits instead of
  * failing `owner_unavailable`; a serve on the host brain is unchanged.
  *
- * Serial: real `gbrain serve` and CLI subprocesses on PGLite under a sandboxed
+ * Serial: real `foresights serve` and CLI subprocesses on PGLite under a sandboxed
  * HOME/GBRAIN_HOME; every serve child is stopped in afterEach.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';

@@ -1,15 +1,15 @@
 /**
- * Top-level `gbrain` / `gbrain --help` usage text. Engine-free and import-light
+ * Top-level `gbrain` / `foresights --help` usage text. Engine-free and import-light
  * so src/cli.ts can answer it on the fast path without loading the dispatcher
  * (src/cli/main.ts), which prints the same text on its own `--help` route.
  */
 import { VERSION } from '../version.ts';
 
 export function printHelp() {
-  console.log(`gbrain ${VERSION} -- personal knowledge brain
+  console.log(`foresights ${VERSION} -- personal knowledge brain
 
 USAGE
-  gbrain <command> [options]
+  foresights <command> [options]
 
 SETUP
   mcp grant <name> --help           Grant hosted access; private credential handoff
@@ -107,7 +107,7 @@ TOOLS
   extract links --source db --repair-attendance --source-id ID
         [--limit 250] [--after-slug SLUG] [--json]
         Apply: --apply-preview FILE --confirm DIGEST --yes --backup-verified --checkpoint FILE
-  extract --explain <kind> [--json] Full details: gbrain extract --help
+  extract --explain <kind> [--json] Full details: foresights extract --help
   publish <page.md> [--password]     Shareable HTML (strips private data, optional AES-256)
   check-backlinks <check|fix> [dir]  Find/fix missing back-links across brain
   lint <dir|file> [--fix]            Catch LLM artifacts, placeholder dates, bad frontmatter
@@ -116,7 +116,7 @@ TOOLS
   beliefs <enable|status|...>        Belief ledger coverage: enable, disable, status, reconcile, backfill
   salience [--days N] [--kind P]     v0.29: pages ranked by emotional + activity salience
   anomalies [--since D] [--sigma N]  v0.29: cohort-based statistical anomalies (tag, type)
-  feedback <status|reset>            retrieval feedback: learned page weights; rate answers with gbrain rate
+  feedback <status|reset>            retrieval feedback: learned page weights; rate answers with foresights rate
   transcripts <ingest|status|recent> v0.46: import agent session logs + chat exports (local-only)
   dream [--dry-run] [--json]         Run the overnight maintenance cycle once (cron-friendly).
                                      See also: autopilot --install (continuous daemon).
@@ -147,7 +147,7 @@ BRAIN (capture / ideate / explore — v0.37/v0.38)
   lsd <question> [--json]            Lateral Synaptic Drift: inverted-judge brainstorm
         [--save|--no-save] [--limit N]    rewarding far-from-obvious + axiomatic inversions
   think "<question>" [--anchor <s>]  Multi-hop cited synthesis across pages + takes + graph
-        [--save] [--source <id>]          Full flags: gbrain think --help
+        [--save] [--source <id>]          Full flags: foresights think --help
 
 SOURCES (multi-repo / multi-brain)
   sources list                       Show registered sources
@@ -220,7 +220,7 @@ ADMIN
     --enable-dcr                     Enable Dynamic Client Registration (DCR clients default to authorization_code)
     --enable-dcr-insecure            Also allow the consent-bypassing client_credentials grant on DCR (implies --enable-dcr)
     --public-url URL                 Public issuer URL (required behind proxy/tunnel)
-  connect <mcp-url> --token <t>      Wire Claude Code to a remote gbrain (bearer token)
+  connect <mcp-url> --token <t>      Wire Claude Code to a remote foresights (bearer token)
         [--install] [--json]         Print the paste-ready command, or --install to run it
   auth <create|list|revoke|...>      Manage legacy tokens + OAuth 2.1 clients
   auth --help                        Full subcommand list (register-client,
@@ -231,6 +231,6 @@ ADMIN
   version                            Version info
   --tools-json                       Tool discovery (JSON)
 
-Run gbrain <command> --help for command-specific help.
+Run foresights <command> --help for command-specific help.
 `);
 }

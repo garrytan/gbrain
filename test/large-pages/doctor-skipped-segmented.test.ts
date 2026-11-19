@@ -6,7 +6,7 @@
  *    in segments) reports the segmented pages it passed by:
  *    'skipped_segmented: N' on the check object (doctor --json) and a message
  *    ending in 'skipped (segmented): N' (the text line is 'name: message').
- *    'gbrain repair frontmatter' reports the same count in its preview and
+ *    'foresights repair frontmatter' reports the same count in its preview and
  *    apply (residual 'skipped_segmented', warning 'skipped (segmented): N').
  *    A brain without segmented pages gets neither, so its output is unchanged.
  * 2. Fails when: a check drops the count (its segmented page is silently

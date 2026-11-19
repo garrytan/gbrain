@@ -57,7 +57,7 @@ async function filePreview(engine: BrainEngine, opts: { held?: true; slug?: stri
 const listing = (plan: Awaited<ReturnType<typeof filePreview>>) => (plan as { listing?: Array<{ item: string; class: string; detail?: string }> }).listing?.map(row => `${row.item} ${row.class} ${row.detail ?? ''}`.trim());
 
 /**
- * The pages as an older gbrain left them: no import record, and the stored frontmatter keeps a copy of the title (older imports
+ * The pages as an older foresights left them: no import record, and the stored frontmatter keeps a copy of the title (older imports
  * kept reserved keys), so the stored row and a fresh import of the same file differ only in a key the parser never carries.
  */
 async function legacyRows(engine: BrainEngine, slugs: string[]): Promise<void> {

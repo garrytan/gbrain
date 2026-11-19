@@ -76,7 +76,7 @@ describe('pendingUpgradeMigrationsNotice', () => {
     }
   });
 
-  test('gbrain serve gets the notice, since a brain used only over MCP runs no other command', async () => {
+  test('foresights serve gets the notice, since a brain used only over MCP runs no other command', async () => {
     const notice = await inHome(async () => {
       appendCompletedMigration({ version: MIGRATION_VERSIONS[0]!, status: 'complete' } as never);
       return pendingUpgradeMigrationsNotice(engine, 'serve', latest);

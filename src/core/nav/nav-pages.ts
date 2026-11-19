@@ -1,7 +1,7 @@
 /**
  * The brain's navigation files: index.md (every page by folder, one line each),
  * log.md (recent operations, newest first) and hot.md (a short "what is new"
- * page for the start of a session). `gbrain nav` writes them at a source's root,
+ * page for the start of a session). `foresights nav` writes them at a source's root,
  * where sync skips them (SYNC_SKIP_FILES / SYNC_ROOT_SKIP_FILES), so they never
  * become searchable pages themselves.
  *
@@ -10,7 +10,7 @@
  * is never overwritten. Pure: rendering and merging only, no I/O.
  */
 
-export const NAV_BEGIN = '<!-- gbrain:nav:begin. Rebuilt by `gbrain nav`; write your own notes above or below this block. -->';
+export const NAV_BEGIN = '<!-- gbrain:nav:begin. Rebuilt by `foresights nav`; write your own notes above or below this block. -->';
 export const NAV_END = '<!-- gbrain:nav:end -->';
 const BEGIN_PREFIX = '<!-- gbrain:nav:begin';
 
@@ -102,7 +102,7 @@ export function renderHot(recent: NavPage[], log: NavLogEntry[], listed: Readonl
     out.push(`- ${day(p.updated_at)} ${link(p)}${s ? ` - ${s}` : ''}`);
   }
   out.push('', '## Recent activity', '', renderLog(log.slice(0, 8), listed));
-  if (inboxWaiting > 0) out.push('', `## Waiting`, '', `${inboxWaiting} file(s) in the inbox; capture them with \`gbrain inbox run --once\`.`);
+  if (inboxWaiting > 0) out.push('', `## Waiting`, '', `${inboxWaiting} file(s) in the inbox; capture them with \`foresights inbox run --once\`.`);
   const words = out.join('\n').split(/(\s+)/);
   let count = 0;
   let cut = words.length;

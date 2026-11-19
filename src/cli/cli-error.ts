@@ -138,8 +138,8 @@ export function unknownFlagError(command: string, flag: string, message: string,
   const bare = flag.split('=')[0];
   const nearest = suggestNearest(bare, candidates.filter(c => c !== bare));
   const suggestion = nearest
-    ? `Did you mean ${nearest}? Run \`gbrain ${command} --help\` for the accepted flags.`
-    : `Run \`gbrain ${command} --help\` for the accepted flags.`;
+    ? `Did you mean ${nearest}? Run \`foresights ${command} --help\` for the accepted flags.`
+    : `Run \`foresights ${command} --help\` for the accepted flags.`;
   return usageError(nearest ? `${message} (did you mean ${nearest}?)` : message, suggestion, {
     code: 'unknown_flag',
     fix: { argv: ['gbrain', command, '--help'], consent: [], actor: 'agent', why: 'The help lists every flag this command accepts.', requires_exclusive: false },
@@ -154,7 +154,7 @@ export function unknownFlagError(command: string, flag: string, message: string,
  * MCP failure is never a database access error: Bun 1.4.3's fetch says
  * `ECONNREFUSED: Unable to connect…` where 1.4.2 said `Unable to connect…`,
  * which the database classifier would otherwise read as a refused Postgres
- * connection and send the user to `gbrain db-repair` (#6586).
+ * connection and send the user to `foresights db-repair` (#6586).
  */
 export function writeFatalCliError(e: unknown, opts: { argv?: readonly string[]; dbUrl?: string | null; brainId?: string } = {}): number {
   const argv = opts.argv ?? process.argv.slice(2);
@@ -173,7 +173,7 @@ export function writeFatalCliError(e: unknown, opts: { argv?: readonly string[];
     const fix = owner ? exclusiveFix({ argv: ['gbrain', ...argv], consent: [], actor: 'agent', requires_exclusive: true,
       why: 'Re-runs this command once it has the brain to itself.' }, owner) : undefined;
     const suggestion = fix
-      ? 'A live gbrain serve owns this brain, so waiting does not end. Ask the user to stop it (fix), then re-run this command (fix.then). Do not remove a live lock.'
+      ? 'A live foresights serve owns this brain, so waiting does not end. Ask the user to stop it (fix), then re-run this command (fix.then). Do not remove a live lock.'
       : next;
     const err = opError('pglite_busy', String(busy.message ?? 'The brain is busy.'), suggestion, {
       ...(typeof busy.reason === 'string' ? { reason: busy.reason } : {}),
@@ -188,7 +188,7 @@ export function writeFatalCliError(e: unknown, opts: { argv?: readonly string[];
         if (shouldEmitDbAccessMarker()) process.stderr.write(`${formatDbAccessMarker(d)}\n`);
         const raw = (e instanceof Error && e.message) || String(e);
         const safe = redactConnectionInfo(redactUrlsInText(raw));
-        process.stderr.write(`Error [database_error]: ${safe}\n${d.remediation} Run: gbrain db-repair\n`);
+        process.stderr.write(`Error [database_error]: ${safe}\n${d.remediation} Run: foresights db-repair\n`);
         return 1;
       }
     } catch { /* classifier failure: the generic renderer below still reports it */ }
@@ -207,6 +207,6 @@ export function reportInBandFailure(result: unknown, command: string): void {
   const status = (result as { status?: unknown }).status;
   if (status !== 'error' && !(status === 'partial' && command === 'extraction-review')) return;
   const detail = (result as { error?: unknown }).error;
-  console.error(`gbrain ${command}: operation reported status '${status}'` + (typeof detail === 'string' && detail ? ` — ${detail}` : '') + '.');
+  console.error(`foresights ${command}: operation reported status '${status}'` + (typeof detail === 'string' && detail ? ` — ${detail}` : '') + '.');
   setCliExitVerdict(1);
 }

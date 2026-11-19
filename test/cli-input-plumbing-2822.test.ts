@@ -5,9 +5,9 @@
  *   1. Empty/whitespace non-TTY stdin landed '' in the stdin param
  *      (covered in test/cli-stdin-hang.test.ts — param now stays unset).
  *   2. A flag silently overwriting an already-set positional (e.g.
- *      `gbrain put notes.md --slug real-slug`) discarded a value with no
+ *      `foresights put notes.md --slug real-slug`) discarded a value with no
  *      trace; when the discarded value names an existing file the user
- *      almost certainly wanted `gbrain capture --file`.
+ *      almost certainly wanted `foresights capture --file`.
  *   3. A "successful" put with 0 chunks left the page unsearchable with no
  *      explanation — the response now carries chunk_skip_reason.
  */
@@ -65,7 +65,7 @@ describe('#2822 — parseOpArgs warns when a flag overwrites a set positional', 
       const err = captureStderr(() => {
         parseOpArgs(putOp, [file, '--slug', 'real-slug']);
       });
-      expect(err).toContain('gbrain capture --file');
+      expect(err).toContain('foresights capture --file');
       expect(err).toContain(file);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

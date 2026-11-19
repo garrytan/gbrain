@@ -127,9 +127,9 @@ export function unsupportedPathHoldFix(record: Pick<GitHoldRecord, 'source_id' |
     ? `The file ${displayBytePath(raw)} (item ${bytePathItemId(raw)}) ${what}, so sync cannot use it as a page path and held it; the rest of source ${source} keeps syncing. `
       + `Rename it to a valid UTF-8 name without control characters, from the directory the path is relative to (the source's checkout), for example: `
       + `${bytePathRenameCommand(raw, suggestedBytePathName(raw))} (the old name is spelled with printf escapes). `
-    : `A file in source ${source} ${what}, so sync held it; gbrain sources status ${source} --json names it. Rename it to a valid UTF-8 name without control characters. `;
+    : `A file in source ${source} ${what}, so sync held it; foresights sources status ${source} --json names it. Rename it to a valid UTF-8 name without control characters. `;
   return { argv: verify.argv, consent: [], actor: 'user', requires_exclusive: false, docs: reason === 'control_character' ? 'docs/guides/write-refusals.md#unsupported_path-control_character' : 'docs/guides/write-refusals.md#unsupported_path-not_utf8',
-    user_message: rename + `Then commit the rename and run gbrain sync --source ${source} --no-pull, which imports the file under its new name and clears the hold.`,
+    user_message: rename + `Then commit the rename and run foresights sync --source ${source} --no-pull, which imports the file under its new name and clears the hold.`,
     why: 'A page path is text and this name is bytes no text names exactly, so importing it would store a different path than the file has. Renaming the file changes the repository, so the user decides; '
       + 'the hold re-screens on every sync and clears once the old name leaves the tree.',
     then: { argv: ['gbrain', 'sync', '--source', source, '--no-pull'], consent: [], actor: 'agent', requires_exclusive: false, verify,

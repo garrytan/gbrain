@@ -3,7 +3,7 @@
  * `models.eval.cross_modal.slot_{a,b,c}` are registered config keys whose
  * value is the slot's effective route.
  *
- * Protects: `gbrain config set` accepts each key without --force (no
+ * Protects: `foresights config set` accepts each key without --force (no
  * unknown-key refusal), `config get` reads it back, the probe's route
  * resolver returns the set value (alias-expanded) as that slot's model, and
  * `config unset` returns the slot to the panel default.

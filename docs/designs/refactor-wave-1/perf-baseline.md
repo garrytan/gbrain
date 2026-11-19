@@ -23,7 +23,7 @@ and brings it under `bun run typecheck` (tsconfig includes only `src/` and
 | `hybridSearchCached` cold | Fresh `bun` process per sample: connect to the seeded brain, time the first call, then 5 more warm calls of the same query. 1 discarded + 10 samples. |
 | SQL round trips | Separate count pass (latency passes never count). Postgres/PgBouncer: a second, instance-owned pool connects through a loopback TCP proxy that parses the frontend protocol; one round trip = one Sync (`S`) or simple Query (`Q`), and Parse (`P`) messages are counted separately (lost prepared statements show up as parses). PGLite: the raw PGlite instance's `execProtocolRawSync` is wrapped; one round trip = one protocol exchange with the WASM backend. 1 first call + 3 warmup + 10 counted calls per op. |
 | Provider calls | Deterministic stub embedder and reranker installed through the gateway's `__setEmbedTransportForTests` / `__setRerankTransportForTests` seams, counting calls and embedded texts. `globalThis.fetch` is replaced by a guard that counts and fails any network attempt (must stay 0). |
-| `gbrain --version` cold start | `bun --no-env-file src/cli.ts --version` and the compiled `bin/gbrain --version` (`bun run build`), process wall time, 1 discarded + N samples. |
+| `foresights --version` cold start | `bun --no-env-file src/cli.ts --version` and the compiled `bin/gbrain --version` (`bun run build`), process wall time, 1 discarded + N samples. |
 | PGLite connect + initSchema cold start | Fresh process, in-memory PGLite, `connect({})` + `initSchema()`, snapshot ON (`GBRAIN_PGLITE_SNAPSHOT` = `test/fixtures/pglite-snapshot-default.tar`, built by `bun run build:pglite-snapshot --profile default`; the bench asserts `_snapshotLoaded === true`) and OFF (`GBRAIN_NO_SNAPSHOT=1`, full migration replay; asserts `false`). |
 | Engine-connect cold start (non-compiled) | Fresh process mirroring the CLI connect path: gateway configured, `import('src/core/engine-factory.ts')`, `createEngine` + `connect`, then `import('src/core/migrate.ts')` + `tryRunPendingMigrations` (the pending-migration probe that loads the registry). Process wall time plus in-process phases. PGLite connects to the seeded file-backed brain; Postgres to the seeded bench database. |
 
@@ -228,7 +228,7 @@ Latency bands (median of three run medians, candidate vs baseline):
 | hybridSearchCached cold first call | <= max(baseline x 1.10, baseline + 25 ms) | same | range 3-7% (<= 27 ms) |
 | PGLite connect + initSchema, snapshot ON (in-process and wall) | <= baseline + 20 ms (EO14) | n/a | 30-sample range 6-13 ms |
 | PGLite connect + initSchema, snapshot OFF | <= max(baseline x 1.05, baseline + 50 ms) | n/a | range 1-3% (25-73 ms) |
-| `gbrain --version` (source and compiled) | <= baseline + 20 ms (plan (f)) | same | 30-sample range 6-8 ms; VM 2-5 ms |
+| `foresights --version` (source and compiled) | <= baseline + 20 ms (plan (f)) | same | 30-sample range 6-8 ms; VM 2-5 ms |
 | engine connect cold (non-compiled, process wall) | <= baseline + 20 ms (EO14) | <= baseline + 20 ms | see note |
 
 p95 and max are recorded for diagnosis and not gated; flag a p95 above
@@ -258,7 +258,7 @@ rounds, and require the median of the three per-round differences
 
 ## Limitations
 
-- `gbrain doctor --fast` cold start (CEO section 7) is not measured; the
+- `foresights doctor --fast` cold start (CEO section 7) is not measured; the
   engine-connect series covers the connect + migrate-probe path it shares.
 - Supersede-probe and private-visibility caches are not observable without a
   src seam, so they are named but not probed.

@@ -1,7 +1,7 @@
 /**
  * #7174 / #7184 / #7185: a size-skipped page whose backfill rewrite fails.
  *
- * The shape seen on a large brain: an older gbrain stored a large page with the
+ * The shape seen on a large brain: an older foresights stored a large page with the
  * gate's `embed_skip: oversized` marker and no chunks; `reindex --oversized`
  * held it for embedding approval and then failed to rewrite it (in the field, a
  * repeated facts fence the managed owner refuses; here, an uncoordinated local
@@ -53,7 +53,7 @@ function body(bytes: number): string {
   return `${half}The secret word is ${NEEDLE}.\n${half}`;
 }
 
-/** An older gbrain's size skip: the gate's markers and no chunk rows; the body repeats a facts fence, so a rewrite today is refused. */
+/** An older foresights's size skip: the gate's markers and no chunk rows; the body repeats a facts fence, so a rewrite today is refused. */
 async function seedFencedSizeSkipped(slug: string, bytes: number): Promise<number> {
   await engine.putPage(slug, { type: 'note', title: 'Long conversation', compiled_truth: `${facts(1)}\n\n${facts(2)}\n\n${body(bytes)}`, timeline: '',
     frontmatter: { [EMBED_SKIP_KEY]: buildEmbedSkipMarker(bytes), content_flag: { reason: 'oversized' } } });

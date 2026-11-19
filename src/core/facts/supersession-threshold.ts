@@ -15,7 +15,7 @@
  * cosine and are unaffected.
  *
  * Operators register a measured value without a release:
- *   gbrain config set facts.supersession_thresholds '{"openai:text-embedding-3-large@1536": 0.97}'
+ *   foresights config set facts.supersession_thresholds '{"openai:text-embedding-3-large@1536": 0.97}'
  * A value of "off" disables cosine supersession for a calibrated model.
  */
 export const SUPERSESSION_THRESHOLDS_KEY = 'facts.supersession_thresholds';

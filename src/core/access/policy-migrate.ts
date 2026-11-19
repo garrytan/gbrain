@@ -1,5 +1,5 @@
 /**
- * GBRA-218 (PR A2): `gbrain access rule migrate`, moving a source's folder rules
+ * GBRA-218 (PR A2): `foresights access rule migrate`, moving a source's folder rules
  * between the database store and the git store without a moment where a rule
  * is missing. The applied rulebook in the database stays in force throughout;
  * only the store (`sources.config.access_store`) changes, last.
@@ -56,14 +56,14 @@ export async function previewMigrate(engine: BrainEngine, sourceId: string, requ
   const to: AccessStore = pending ? (pending.direction === 'to_git' ? 'git' : 'database') : requested ?? (from === 'git' ? 'database' : 'git');
   if (pending && requested && requested !== to) {
     throw opError('invalid_params', `Source ${sourceId} has an unfinished migration ${pending.id} to the ${to} store, so it cannot move to the ${requested} store now; nothing was written.`,
-      `Finish it first with gbrain access rule migrate --source ${sourceId} --yes, then run gbrain access rule migrate --to ${requested} --source ${sourceId}.`);
+      `Finish it first with foresights access rule migrate --source ${sourceId} --yes, then run foresights access rule migrate --to ${requested} --source ${sourceId}.`);
   }
   if (!pending && requested && requested === from) {
-    throw opError('invalid_params', `Source ${sourceId} already keeps its folder rules in the ${from} store; nothing was written.`, `gbrain access rule status --source ${sourceId} shows the store and its rules.`);
+    throw opError('invalid_params', `Source ${sourceId} already keeps its folder rules in the ${from} store; nothing was written.`, `foresights access rule status --source ${sourceId} shows the store and its rules.`);
   }
   if (to === 'git' && !gitRoot) {
     throw opError('invalid_params', `Source ${sourceId} has no git work tree at its root (${root ?? 'no local path'}), so its folder rules stay in the database store.`,
-      'Initialize or clone the repository at the source root first, then run gbrain access rule migrate again.');
+      'Initialize or clone the repository at the source root first, then run foresights access rule migrate again.');
   }
   const applied = await appliedRules(engine, sourceId);
   const desired = (await getRevision(engine, sourceId))?.rules ?? applied;
@@ -87,11 +87,11 @@ export async function migrateAccessStore(engine: BrainEngine, sourceId: string, 
   };
   if (p.to === 'git') {
     if (job.phase === 'started') {
-      receipts.approved = await commitPolicyFile(p.root!, APPROVED_FILE, () => serializePolicyYaml(p.approved, 'The folder rules an operator approved with gbrain access apply. Written by gbrain; do not edit.'), `access: move folder rules of ${sourceId} to git (approved)`);
+      receipts.approved = await commitPolicyFile(p.root!, APPROVED_FILE, () => serializePolicyYaml(p.approved, 'The folder rules an operator approved with foresights access apply. Written by foresights; do not edit.'), `access: move folder rules of ${sourceId} to git (approved)`);
       await record('exported');
     }
     if (job.phase === 'exported') {
-      receipts.desired = await commitPolicyFile(p.root!, POLICY_FILE, () => serializePolicyYaml(p.desired, 'Folder read rules for this source (gbrain access rule add|rm). Narrowing changes apply at the next sync;\nwidening changes wait for gbrain access apply --source <id> on the brain host.'), `access: move folder rules of ${sourceId} to git`);
+      receipts.desired = await commitPolicyFile(p.root!, POLICY_FILE, () => serializePolicyYaml(p.desired, 'Folder read rules for this source (foresights access rule add|rm). Narrowing changes apply at the next sync;\nwidening changes wait for foresights access apply --source <id> on the brain host.'), `access: move folder rules of ${sourceId} to git`);
       await record('committed');
     }
   } else if (job.phase === 'started') {

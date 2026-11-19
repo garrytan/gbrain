@@ -29,7 +29,7 @@
  *     from the response body (Codex R2-#5).
  *   - serializeMarkdown round-trip: page → import → DB state matches
  *     re-extract from re-rendered markdown (the canonical idempotency
- *     property that lets gbrain rebuild work).
+ *     property that lets foresights rebuild work).
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';

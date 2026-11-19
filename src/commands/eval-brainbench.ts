@@ -1,5 +1,5 @@
 /**
- * `gbrain eval brainbench` — the cross-harness memory conformance suite
+ * `foresights eval brainbench` — the cross-harness memory conformance suite
  * (Cathedral 2; docs/eval/BRAINBENCH.md).
  *
  * Brings its own in-memory PGLite (longmemeval pattern) — the cli.ts
@@ -66,7 +66,7 @@ const DEFAULT_LLM_BUDGET_USD = 5;
 
 function usage(): void {
   process.stderr.write(
-    `Usage: gbrain eval brainbench [options]\n\n` +
+    `Usage: foresights eval brainbench [options]\n\n` +
       `Cross-harness memory conformance suite. Hermetic by default: in-memory\n` +
       `PGLite, no API keys, no LLM calls. See docs/eval/BRAINBENCH.md.\n\n` +
       `Options:\n` +
@@ -279,7 +279,7 @@ export async function runEvalBrainBench(argv: string[]): Promise<never> {
   const args = parsed;
   let decideRun: DecideEvalRun | null;
   try {
-    decideRun = prepareDecideEval(args.decide, { command: 'gbrain eval brainbench', throwaway: true });
+    decideRun = prepareDecideEval(args.decide, { command: 'foresights eval brainbench', throwaway: true });
   } catch (err) {
     process.stderr.write(`eval brainbench: ${(err as Error).message}\n`);
     return exitWith(err instanceof DecideEvalRefusal ? 1 : 2);
@@ -309,7 +309,7 @@ export async function runEvalBrainBench(argv: string[]): Promise<never> {
   // --llm needs a configured chat touchpoint BEFORE we spend a run on it.
   if (args.llm && !isAvailable('chat')) {
     process.stderr.write(
-      'eval brainbench: --llm requires a configured chat model (set ANTHROPIC_API_KEY or run `gbrain models`). ' +
+      'eval brainbench: --llm requires a configured chat model (set ANTHROPIC_API_KEY or run `foresights models`). ' +
         'Drop --llm for the deterministic hermetic mode.\n',
     );
     return exitWith(2);
@@ -439,7 +439,7 @@ export async function runEvalBrainBench(argv: string[]): Promise<never> {
 }
 
 /**
- * In-process entry for `gbrain eval run-all` (decision 16): full hermetic run
+ * In-process entry for `foresights eval run-all` (decision 16): full hermetic run
  * over the default corpus, NO process.exit, returns the per-cell metrics for
  * the EvalRunRecord. BrainBench is search-mode-independent, so run-all calls
  * this once per sweep and records it under mode 'n/a'.

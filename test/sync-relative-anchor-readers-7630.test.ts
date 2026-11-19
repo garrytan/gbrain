@@ -208,11 +208,11 @@ describe7630('no other reader resolves it', (t, backend) => {
     expect(run?.files).toBe('none');
   }, 120_000);
 
-  // Value: protects=gbrain maintain cycles a stale source with a relative local_path without a brain directory (database phases only);
+  // Value: protects=foresights maintain cycles a stale source with a relative local_path without a brain directory (database phases only);
   //   fails_when=maintain passes "." as brainDir, so the lint phase (fixes on by default) and other filesystem phases run in the cwd;
   //   why_new=the dream/autopilot/phase handlers above are separate readers; seam=runCycle spied to record its options and run orphans only;
   //   no_claim=what each filesystem phase would have written (none runs)
-  test('gbrain maintain cycles a stale relative-path source with no brain directory', async () => {
+  test('foresights maintain cycles a stale relative-path source with no brain directory', async () => {
     const { engine } = t;
     const cycle = await import('../src/core/cycle.ts');
     const stale = new Date(Date.now() - 48 * 3_600_000).toISOString();
@@ -261,7 +261,7 @@ describe7630('no other reader resolves it', (t, backend) => {
     }
   }, 120_000);
 
-  test('gbrain import of the cwd into a source whose local_path is "." does not stamp it fresh', async () => {
+  test('foresights import of the cwd into a source whose local_path is "." does not stamp it fresh', async () => {
     const { engine, folder } = t;
     await engine.executeRaw("INSERT INTO sources (id, name, local_path) VALUES ('notes-a', 'notes-a', '.')");
     const { runImport } = await import('../src/commands/import.ts');
@@ -283,7 +283,7 @@ describe('#7630: a stalled write\'s diagnosis matches its operation', () => {
       expect(verdict.action.argv).toEqual(['gbrain', 'sources', 'writer', 'status', '--source', 'default', '--json']);
       expect(verdict.action.why).toContain('new request_id');
       const rendered = renderAction(verdict.action, mcp);
-      expect(rendered.command).not.toContain('gbrain sync');
+      expect(rendered.command).not.toContain('foresights sync');
     });
   }
 
@@ -292,7 +292,7 @@ describe('#7630: a stalled write\'s diagnosis matches its operation', () => {
       const verdict = receipt(operation);
       expect(verdict.action.argv).toEqual(['gbrain', 'sources', 'writer', 'status', '--source', 'default', '--json']);
       expect(verdict.action.why).not.toContain('request_id');
-      expect(renderAction(verdict.action, mcp).command).not.toContain('gbrain sync');
+      expect(renderAction(verdict.action, mcp).command).not.toContain('foresights sync');
     });
   }
 
@@ -305,7 +305,7 @@ describe('#7630: a stalled write\'s diagnosis matches its operation', () => {
     const verdict = classifyTerminal({ request_id: '11111111-2222-4333-8444-555555555555', source_id: 'default', slug: 'notes/example', operation: 'put_page',
       state: 'failed', error_code: 'preparation_stalled', error_detail: null, recovery: null, blocked_reason: null, compacted: false, intent_kind: 'canonical_reconcile' })!;
     expect(verdict.action.argv?.slice(0, 2)).toEqual(['gbrain', 'sync']);
-    expect(verdict.action.why).toContain('gbrain sources reconcile');
+    expect(verdict.action.why).toContain('foresights sources reconcile');
     expect(verdict.action.why).not.toContain('new request_id');
   });
 });

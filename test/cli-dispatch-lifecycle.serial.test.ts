@@ -80,7 +80,7 @@ const THIN = {
   remote_mcp: { issuer_url: 'http://127.0.0.1:1', mcp_url: 'http://127.0.0.1:1/mcp', oauth_client_id: 'cid', oauth_client_secret: 'csecret' },
 };
 
-/** Run `gbrain <argv>` in-process; returns the recorded events plus how it ended. */
+/** Run `foresights <argv>` in-process; returns the recorded events plus how it ended. */
 async function run(argv: string[]): Promise<string[]> {
   events.length = 0;
   const savedArgv = process.argv;

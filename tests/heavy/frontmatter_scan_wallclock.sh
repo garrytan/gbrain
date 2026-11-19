@@ -10,7 +10,7 @@
 # 30s budget.
 #
 # Asserts post-v0.38.2.0:
-#   1. `gbrain doctor` exits 0 OR 1 (some warns OK), NOT killed by timeout.
+#   1. `foresights doctor` exits 0 OR 1 (some warns OK), NOT killed by timeout.
 #   2. frontmatter_integrity status is `ok` (clean prefix, no partial), NOT `warn`.
 #   3. Total wall-clock under WALLCLOCK_BUDGET_S (default 15s).
 #
@@ -94,7 +94,7 @@ timeout 120s bun run src/cli.ts init --pglite --non-interactive --no-embedding >
   exit 1
 }
 
-# Register the brain dir as a source. Use raw SQL since `gbrain sources add`
+# Register the brain dir as a source. Use raw SQL since `foresights sources add`
 # might not exist in this version-window; the schema is what doctor reads.
 # NOTE: must be `bun -e`, not `bun run -e` — `bun run` treats -e as an
 # unknown script name and dumps its usage/script listing with exit 0, so the
@@ -121,7 +121,7 @@ await e.disconnect();
 console.log('source registered');
 " 2>&1 | tee -a "$LOG"
 
-# Step 3: run gbrain doctor; capture wall-clock + exit + frontmatter_integrity status.
+# Step 3: run foresights doctor; capture wall-clock + exit + frontmatter_integrity status.
 echo "[fm_wallclock] running gbrain doctor (budget ${WALLCLOCK_BUDGET_S}s)..." | tee -a "$LOG"
 DOCTOR_START_NS=$(date +%s%N)
 set +e

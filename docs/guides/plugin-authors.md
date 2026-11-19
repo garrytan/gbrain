@@ -50,8 +50,8 @@ a 3-sentence summary.
 
 ```bash
 export GBRAIN_PLUGIN_PATH="/path/to/my-plugin"
-gbrain jobs work           # worker startup prints the plugin load line
-gbrain agent run --subagent-def my-summarizer "summarize meetings/2026-04-20"
+foresights jobs work           # worker startup prints the plugin load line
+foresights agent run --subagent-def my-summarizer "summarize meetings/2026-04-20"
 ```
 
 Multiple plugins: colon-separated, just like `$PATH`.
@@ -118,7 +118,7 @@ Unknown frontmatter fields are preserved but ignored by the handler.
    reloads would break crash-resumable replay.
 
 2. **`~/.gbrain/audit/subagent-jobs-*.jsonl` is local only.** If your
-   worker runs on a different host than the `gbrain agent logs` caller,
+   worker runs on a different host than the `foresights agent logs` caller,
    the CLI won't see heartbeats from that worker. Assume worker + CLI
    share a filesystem.
 
@@ -163,5 +163,5 @@ Environment:
 export GBRAIN_PLUGIN_PATH="$HOME/your-openclaw/gbrain-plugin"
 ```
 
-Then your OpenClaw calls `gbrain agent run --subagent-def meeting-ingestion
+Then your OpenClaw calls `foresights agent run --subagent-def meeting-ingestion
 --fanout-by transcript ...` and its definitions load automatically.

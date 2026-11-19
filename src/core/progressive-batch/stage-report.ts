@@ -46,7 +46,7 @@ export function formatStageLine(r: StageReport): string {
  */
 export function defaultStageReport(r: StageReport): void {
   // We want this on stderr so stdout JSON envelopes from the caller
-  // (e.g. `gbrain reindex --json`) stay clean.
+  // (e.g. `foresights reindex --json`) stay clean.
   process.stderr.write(formatStageLine(r) + '\n');
 }
 

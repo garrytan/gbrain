@@ -41,7 +41,7 @@ import { projectSegment } from './segment-projection.ts';
  * cap used to split now sits whole in one chunk; and a timeline segment with bullet lines breaks only at bullet starts
  * chosen by the bullet itself (chunkers/bullet-chunks.ts), so an entry added at the top changes only the passage it joins.
  * Pages sealed at 4 keep serving their chunks until
- * `gbrain reindex --segmented --apply` re-chunks them (page-body/rechunk.ts). A change to the cuts or the stored
+ * `foresights reindex --segmented --apply` re-chunks them (page-body/rechunk.ts). A change to the cuts or the stored
  * per-segment metadata bumps SEGMENTER_VERSION instead.
  */
 export const SEGMENTED_CHUNKER_VERSION = 5;

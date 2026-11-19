@@ -5,9 +5,9 @@
  * branch switch and back, a later commit that re-adds it, with the same or edited bytes), the next sync brings the page
  * back (same page row) instead of settling it as deleted, so search, get and recall see it again and sync status never
  * says synced while the page is missing. A brain an older version left in that state heals on its next plain sync. The
- * retention purge (the cycle purge phase, the purge job and the consented `gbrain pages purge-deleted`) never removes a
+ * retention purge (the cycle purge phase, the purge job and the consented `foresights pages purge-deleted`) never removes a
  * file that is committed at the source's last commit or at HEAD: a sync-made tombstone whose file is back waits for the
- * sync that restores it; a person's delete undone in Git, and a tombstone gbrain can no longer tell was sync-made, are
+ * sync that restores it; a person's delete undone in Git, and a tombstone foresights can no longer tell was sync-made, are
  * purged database-only with the file left alone; a person's delete whose file stays gone purges as before.
  *
  * PGLite always; Postgres with DATABASE_URL (test/postgres-unit-arms.txt).

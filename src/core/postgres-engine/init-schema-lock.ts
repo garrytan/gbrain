@@ -135,7 +135,7 @@ async function waitForSchemaLock(
       throw new Error(
         `initSchema: timed out after ${Math.round(elapsed / 1000)}s waiting for the schema advisory lock ` +
         `(pg_advisory_lock(${INIT_SCHEMA_LOCK_KEY})). ${holderNote} ` +
-        `Another gbrain process may be mid-migration — retry once it finishes. ` +
+        `Another foresights process may be mid-migration — retry once it finishes. ` +
         `If the holder is a LEAKED session (transaction-mode poolers like PgBouncer/Supabase ` +
         `strip session advisory-lock state across checkouts, so a backend can hold the lock for a ` +
         `client that is long gone), terminate it and retry:\n` +
@@ -170,8 +170,8 @@ async function assertSchemaLockHeld(query: Query): Promise<void> {
        AND pid = pg_backend_pid() AND granted) AS held`,
   ).catch(() => []);
   if (rows[0]?.held === true) return;
-  throw new Error('The schema migration lock was lost (the connection holding it closed), so another gbrain process may now run '
-    + 'schema migrations; stopped before the next migration. Run `gbrain apply-migrations --yes` again: it resumes where this run stopped.');
+  throw new Error('The schema migration lock was lost (the connection holding it closed), so another foresights process may now run '
+    + 'schema migrations; stopped before the next migration. Run `foresights apply-migrations --yes` again: it resumes where this run stopped.');
 }
 
 /**
@@ -221,7 +221,7 @@ export async function holdSchemaMigrationTransactionLock<T>(
  * its work on that connection, so nothing can hold a transaction open beside it. This keeps the pre-GBRA-467
  * guarantee and no more: the lock holds on a real session, not through a transaction-mode pooler, so there is no
  * held-lock check (through such a pooler it would read another server connection). Both forms use key 42, so they
- * exclude each other and an older gbrain's session lock.
+ * exclude each other and an older foresights's session lock.
  */
 // engine-sql-ok: Postgres session advisory-lock unlock; no storage-domain SQL
 export async function holdSchemaMigrationSessionLock<T>(

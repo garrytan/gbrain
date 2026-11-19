@@ -1,7 +1,7 @@
 // src/core/remediation/context.ts
 // v0.41.18.0 (A1, codex finding #2). Extracted verbatim from
 // src/commands/doctor.ts:loadRecommendationContext so both the doctor
-// CLI shell AND the new gbrain onboard / MCP run_onboard surfaces
+// CLI shell AND the new foresights onboard / MCP run_onboard surfaces
 // build the same context object.
 //
 // Pure read; no side effects.
@@ -29,7 +29,7 @@ export async function staleExtractionBlocked(engine: BrainEngine, sourceId?: str
   for (const id of sourceIds) {
     if (await loadActivePackForLocalEngine(engine, { sourceId: id })) continue;
     if (!sourceId && !await engine.countStalePagesForExtraction({ sourceId: id, versionTs: watermark })) continue;
-    return `active schema pack is unavailable for source ${id}; extract --stale cannot run until \`gbrain doctor\` schema-pack checks pass`;
+    return `active schema pack is unavailable for source ${id}; extract --stale cannot run until \`foresights doctor\` schema-pack checks pass`;
   }
   return undefined;
 }

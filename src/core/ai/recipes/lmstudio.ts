@@ -8,8 +8,8 @@ import { probeOpenAICompat } from '../probes.ts';
  *
  * The env mapping (`LMSTUDIO_BASE_URL` in build-gateway-config.ts) and the
  * probe (probes.ts `probeLMStudio`, surfaced under `local_probes` by
- * `gbrain providers explain --json`) already existed; without a recipe,
- * `lmstudio:` model strings never resolved, so `gbrain providers list` had no
+ * `foresights providers explain --json`) already existed; without a recipe,
+ * `lmstudio:` model strings never resolved, so `foresights providers list` had no
  * row to select and the mapped base URL reached nothing. types.ts's probe
  * contract already named this recipe as future work.
  *
@@ -28,7 +28,7 @@ import { probeOpenAICompat } from '../probes.ts';
  * touchpoint is a reasonable follow-up but is not needed to make the
  * embedding path work.
  *
- * Operational note for users, not a gbrain defect: a loaded LM Studio
+ * Operational note for users, not a foresights defect: a loaded LM Studio
  * instance can degrade into a state where embedding latency rises by orders
  * of magnitude while the endpoint still answers — so it passes the
  * reachability probe above but misses the query-embed deadline

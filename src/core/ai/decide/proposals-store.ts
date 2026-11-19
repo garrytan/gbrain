@@ -107,7 +107,7 @@ export async function conflictNeighbours(engine: BrainEngine, factId: number, so
 
 // ---------------------------------------------------------------------------
 // Deferred retries (transient skips: no_embedding, provider failure) and
-// relinked facts handed over by `gbrain facts relink`
+// relinked facts handed over by `foresights facts relink`
 // ---------------------------------------------------------------------------
 
 /** Due retries, oldest due first (fact id breaks ties), so a large relinked backlog never starves a transient retry. */

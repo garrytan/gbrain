@@ -44,7 +44,7 @@ export const collectBackupCoverage: AdvisorCollector = {
         title: (blocked > 0
           ? `${blocked} of ${s.totals.assets} knowledge assets lack verified recovery (${reasons})`
           : 'The cached backup verdict is not current') +
-          '. Run `gbrain backup status` on the brain host for fix commands.',
+          '. Run `foresights backup status` on the brain host for fix commands.',
         fix: { command_argv: null },
         collector: 'backup-coverage',
         ask_user: true,
@@ -111,7 +111,7 @@ export const collectBackupCoverage: AdvisorCollector = {
         id: 'backup_recovery_unverified',
         severity: 'warn',
         title: `${otherBlocked.length} knowledge asset(s) lack verified recovery: ${otherBlocked.map((a) => `${a.id} (${a.reason})`).join(', ')}.`,
-        detail: 'run gbrain backup status for the per-asset detail and fix commands',
+        detail: 'run foresights backup status for the per-asset detail and fix commands',
         fix: { command_argv: null },
         collector: 'backup-coverage',
         ask_user: true,
@@ -133,8 +133,8 @@ export const collectBackupCoverage: AdvisorCollector = {
       findings.push({
         id: 'backup_db_only_caveat',
         severity: 'info',
-        title: 'db_only pages are not covered by any git remote — dump them with gbrain export.',
-        detail: 'run gbrain doctor (undeclared_db_only_pages) for the page-level audit',
+        title: 'db_only pages are not covered by any git remote — dump them with foresights export.',
+        detail: 'run foresights doctor (undeclared_db_only_pages) for the page-level audit',
         fix: { command_argv: null },
         collector: 'backup-coverage',
         ask_user: true,

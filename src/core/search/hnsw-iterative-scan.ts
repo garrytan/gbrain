@@ -53,7 +53,7 @@ export function resolveHnswIterativeScan(engine: object, cfg: Pick<GBrainConfig,
   resolved.set(key, setting.mode);
   if (setting.via && setting.mode !== HNSW_ITERATIVE_SCAN_DEFAULT && !logged.has(setting.mode)) {
     logged.add(setting.mode);
-    console.error(`[gbrain] vector search uses hnsw.iterative_scan=${setting.mode} (${setting.via === 'env' ? HNSW_ITERATIVE_SCAN_ENV : HNSW_ITERATIVE_SCAN_KEY}); the default is ${HNSW_ITERATIVE_SCAN_DEFAULT}.`);
+    console.error(`[foresights] vector search uses hnsw.iterative_scan=${setting.mode} (${setting.via === 'env' ? HNSW_ITERATIVE_SCAN_ENV : HNSW_ITERATIVE_SCAN_KEY}); the default is ${HNSW_ITERATIVE_SCAN_DEFAULT}.`);
   }
   return setting.mode;
 }

@@ -1,5 +1,5 @@
 /**
- * Page enumeration for `gbrain extract-conversation-facts` (#6500).
+ * Page enumeration for `foresights extract-conversation-facts` (#6500).
  *
  * The extractor used to page a source's conversation pages with OFFSET over
  * `updated_desc`, which is not a total order: a bulk import stamps one

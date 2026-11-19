@@ -326,7 +326,7 @@ async function tryAliasExact(engine: BrainEngine, source_id: string, raw: string
   } catch (err) {
     if (!isMissingSchemaObject(err, 'table', 'page_aliases') && !aliasExactWarned) {
       aliasExactWarned = true;
-      console.error(`[gbrain] alias-exact resolution degraded (falling through to fuzzy): ${err instanceof Error ? err.message : String(err)}`);
+      console.error(`[foresights] alias-exact resolution degraded (falling through to fuzzy): ${err instanceof Error ? err.message : String(err)}`);
     }
     return null;
   }

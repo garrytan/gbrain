@@ -1,5 +1,5 @@
 /**
- * `gbrain wakeshift`: post-connect dispatch (record in src/cli/command-table.ts); the command lives in
+ * `foresights wakeshift`: post-connect dispatch (record in src/cli/command-table.ts); the command lives in
  * src/commands/wakeshift.ts.
  */
 import type { BrainEngine } from '../../core/engine.ts';

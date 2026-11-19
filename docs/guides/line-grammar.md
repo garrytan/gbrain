@@ -8,7 +8,7 @@ page?" hint when a write creates a page.
 ## Typed relation lines
 
 Off by default; turn the line grammar on with
-`gbrain config set line_grammar.enabled true`. While it is off, these lines are
+`foresights config set line_grammar.enabled true`. While it is off, these lines are
 ordinary list text and their links keep their inferred types. It stays off
 because natural notes still produce false reads. In the first held-out junk
 audit, the grammar read 18 of 696,295 list lines in public notes and
@@ -32,7 +32,7 @@ states that link's type:
 ```
 
 The stated type wins over inference for the link on that line, on every
-extraction path (local writes, sync, `gbrain extract`, the serve sweep). The
+extraction path (local writes, sync, `foresights extract`, the serve sweep). The
 page is the subject. A line with words after the link is a sentence and keeps
 the inferred type. Types must be verbs the active schema pack declares, the
 same rule `add_link` follows; set `line_grammar.allow_undeclared_types true`
@@ -54,15 +54,15 @@ The full convention for agents is
 
 ### Turning it on or off
 
-`gbrain config set line_grammar.enabled true|false` (and `config unset`)
+`foresights config set line_grammar.enabled true|false` (and `config unset`)
 saves the setting and the time it changed together. Every page whose links
 were extracted before that time re-extracts once, with zero model calls:
 managed link extraction (the dream cycle, managed sync, a running
-`gbrain serve`) finishes it in the background, and `gbrain extract --stale`
+`foresights serve`) finishes it in the background, and `foresights extract --stale`
 finishes it now. The command prints how many pages are queued;
-`gbrain doctor --json` reports `links_extraction_lag` 0 when they are done.
+`foresights doctor --json` reports `links_extraction_lag` 0 when they are done.
 Turning the grammar off therefore restores inferred types on every page.
-Setting the same effective value again changes nothing. A gbrain process
+Setting the same effective value again changes nothing. A foresights process
 started before the change keeps the old setting until it restarts.
 
 ## Lines the grammar does not read
@@ -91,8 +91,8 @@ read; the finding gives the bare form.
 ## Fact lines
 
 `- [category] claim #tag (context)` lines are read, linted and counted:
-`put_page` reports them, `gbrain lint` explains near-misses, and
-`gbrain schema detect --fields` lists the categories each page type uses.
+`put_page` reports them, `foresights lint` explains near-misses, and
+`foresights schema detect --fields` lists the categories each page type uses.
 They stay searchable page text; recall's facts come from `remember` and the
 `## Facts` table.
 
@@ -107,7 +107,7 @@ start and end evidence, the same evidence a dated timeline line gives
 makes the works_at edge live from 2021-03-01 and ended on 2024-06-01, so
 default graph reads hide it and `as_of` reads find it. A range on a type that
 is not a dated relationship, or on a link the page does not store with that
-type, is reported and stores nothing. `gbrain config set line_grammar.effective_ranges false` turns
+type, is reported and stores nothing. `foresights config set line_grammar.effective_ranges false` turns
 range storage off; the next extraction of each page drops its stored ranges.
 Ranges are stored only while the line grammar is on.
 
@@ -131,10 +131,10 @@ Ranges are stored only while the line grammar is on.
 by the serve sweep), and `auto_link_disabled` when `auto_link` is off. Line
 numbers count from the start of the page body. At most five findings come back;
 `more` names the call that lists all of them: `get_page` with
-`grammar_diagnostics: true` (CLI: `gbrain get <slug> --grammar-diagnostics`),
-which reads the brain's settings and the source's schema pack. `gbrain lint`
+`grammar_diagnostics: true` (CLI: `foresights get <slug> --grammar-diagnostics`),
+which reads the brain's settings and the source's schema pack. `foresights lint`
 checks files syntax-only. If the settings or pack cannot be read, the block is
-`{ "state": "diagnostics_failed", ... }` with a `gbrain doctor` step, never an
+`{ "state": "diagnostics_failed", ... }` with a `foresights doctor` step, never an
 ungated reading. Undeclared types get a "did you mean" only for a likely typo.
 
 ## Wanted pages
@@ -143,7 +143,7 @@ A link whose target page does not exist is recorded instead of dropped. The
 moment the target page is created (or restored, or renamed into place), the
 linking page is due for re-extraction and the next sweep creates the edge.
 `put_page` lists the missing targets in `auto_links.wanted`, and the
-`wanted_pages` tool (`gbrain wanted`) lists every missing target with how many
+`wanted_pages` tool (`foresights wanted`) lists every missing target with how many
 pages link to it, most-referenced first. A bare-name link like
 `[[Dave Example]]` whose name matches an existing page in another directory
 shows that page in `existing_matches`, so the link can be rewritten by slug.
@@ -152,11 +152,11 @@ mention targets too (`wanted_pages.remote`, on by default).
 
 **Say to your agent:** *"Which people and companies do my notes link to that don't have pages yet?"*
 
-Off switch: `gbrain config set wanted_pages.enabled false`.
+Off switch: `foresights config set wanted_pages.enabled false`.
 
 ## Similar-page hints
 
-Off by default; turn it on with `gbrain config set put_page.similar_pages true`.
+Off by default; turn it on with `foresights config set put_page.similar_pages true`.
 In the held-out agent test, the hint cut duplicate pages from 3.06% to 2.22%,
 but the 95% interval of that change ([−2.8, +1.1] points) includes zero, and
 wrong merges rose from 2.50% to 3.75%, past the one-point limit. Claude Sonnet
@@ -175,11 +175,11 @@ not. Semantic (embedding) duplicate detection is not part of this check
 
 **Say to your agent:** *"Before you file this, check whether we already have a page for this company."*
 
-Turn off again: `gbrain config set put_page.similar_pages false`.
+Turn off again: `foresights config set put_page.similar_pages false`.
 
 ## Field usage
 
-`gbrain schema detect --fields [--json]` reports, per page type, the
+`foresights schema detect --fields [--json]` reports, per page type, the
 frontmatter keys, fact categories and relation types the pages use. A field on
 every sampled page is listed as required, one on at least a quarter of them as
 optional.

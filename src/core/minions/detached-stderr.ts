@@ -1,5 +1,5 @@
 /**
- * #4418 — durable stderr sink + spawn helper for `gbrain jobs supervisor
+ * #4418 — durable stderr sink + spawn helper for `foresights jobs supervisor
  * start --detach`.
  *
  * The detach path used to re-exec the supervisor with

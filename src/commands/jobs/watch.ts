@@ -1,4 +1,4 @@
-/** `gbrain jobs watch` (dispatched by runJobs in src/commands/jobs.ts). */
+/** `foresights jobs watch` (dispatched by runJobs in src/commands/jobs.ts). */
 import { hasFlag, parseFlag, type JobsCommandContext } from './shared.ts';
 
 /** `--refresh-ms <n>` or `--refresh-ms=<n>` (#7624); 1000 when absent. */

@@ -118,7 +118,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       const result = await expectUnitNotAborted(() => pass(failingResidue(b.engine, contentError, new Set([Number(bad!.id)])), b.brainDir));
       expect(result.redirected).toBe(1);
       expect(result.failures.length).toBe(1);
-      expectItemFailure(result.failures[0], { key: 'bbb-bad', code: 'invalid_data', fix: /gbrain dream --phase extract_facts --source default/ });
+      expectItemFailure(result.failures[0], { key: 'bbb-bad', code: 'invalid_data', fix: /(?:foresights|gbrain) dream --phase extract_facts --source default/ });
       expect(await live(b.engine, 'bbb-bad')).toBe(true);
       expectOthersUnchanged(before, await snapshotItems(b.engine, SOURCE), { expectProgress: ['zed', 'people/zed-example'], progressFields: ['deleted_at', 'content_hash'] });
     }), 120_000);

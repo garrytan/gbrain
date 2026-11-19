@@ -1,5 +1,5 @@
 /**
- * GBRA-133 PR 2a.4: a `gbrain jobs work` worker found a queued sync job only on its next idle poll (5 s,
+ * GBRA-133 PR 2a.4: a `foresights jobs work` worker found a queued sync job only on its next idle poll (5 s,
  * worker.ts), so Phase 1 measured a Postgres single-file commit taking 5.3 to 5.5 s to reach search through a submitted
  * sync job even though the sync itself took about 0.3 s.
  *
@@ -68,7 +68,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
           const ended = worker.idleWaiter.history.filter(w => w.ended === 'wake').map(w => w.reason);
           expect(ended).toContain(backend === 'pglite' ? 'test' : pooled ? 'sync_queue_poll' : 'sync_queue_notify');
           expect(worker.idleWaiter.history.every(w => w.ms === IDLE_POLL_MS)).toBe(true);
-          if (wake.mode !== 'off') expect(lines).toEqual(['[gbrain jobs] sync-queue wake: ' + (wake.mode === 'listen' ? 'listen (direct_session)' : 'poll every 1000 ms (transaction_pooler)')]);
+          if (wake.mode !== 'off') expect(lines).toEqual(['[foresights jobs] sync-queue wake: ' + (wake.mode === 'listen' ? 'listen (direct_session)' : 'poll every 1000 ms (transaction_pooler)')]);
         } finally { await wake.stop(); }
       });
     }, 120_000);

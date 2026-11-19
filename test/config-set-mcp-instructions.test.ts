@@ -1,5 +1,5 @@
 /**
- * #4748 ship-review fix — `gbrain config set mcp.instructions …` must be
+ * #4748 ship-review fix — `foresights config set mcp.instructions …` must be
  * observable by resolveMcpInstructions.
  *
  * The `mcp.` prefix let `config set mcp.instructions` through the unknown-key

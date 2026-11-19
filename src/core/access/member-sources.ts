@@ -25,10 +25,10 @@ function toBinding(row: Record<string, unknown>): MemberSource {
 
 async function liveSource(engine: BrainEngine, raw: unknown): Promise<string> {
   if (!isValidSourceId(raw)) {
-    throw opError('invalid_params', `"${String(raw ?? '')}" is not a valid source id.`, 'Pass a source id from gbrain sources list.');
+    throw opError('invalid_params', `"${String(raw ?? '')}" is not a valid source id.`, 'Pass a source id from foresights sources list.');
   }
   const [row] = await engine.executeRaw<{ ok: number }>('SELECT 1 AS ok FROM sources WHERE id = $1 AND archived IS NOT TRUE', [raw]);
-  if (!row) throw opError('unknown_source', `No live source "${raw}" exists on this brain.`, 'Pick an id from gbrain sources list.');
+  if (!row) throw opError('unknown_source', `No live source "${raw}" exists on this brain.`, 'Pick an id from foresights sources list.');
   return raw;
 }
 
@@ -55,10 +55,10 @@ export async function bindMemberSource(engine: BrainEngine, rawMember: unknown, 
  */
 export async function unbindMemberSource(engine: BrainEngine, rawMember: unknown, rawSource: unknown, opts: { apply?: boolean } = {}): Promise<{ binding: MemberSource; applied: boolean; owners: string[]; still_personal: boolean }> {
   const member = await existingMember(engine, rawMember, 'unbound from a source');
-  if (!isValidSourceId(rawSource)) throw opError('invalid_params', `"${String(rawSource ?? '')}" is not a valid source id.`, 'Pass a source id from gbrain access member source list.');
+  if (!isValidSourceId(rawSource)) throw opError('invalid_params', `"${String(rawSource ?? '')}" is not a valid source id.`, 'Pass a source id from foresights access member source list.');
   const [row] = await engine.executeRaw<Record<string, unknown>>('SELECT member_id, source_id, created_at FROM access_member_sources WHERE member_id = $1 AND source_id = $2', [member.id, rawSource]);
   if (!row) {
-    throw opError('invalid_params', `Source "${rawSource}" is not bound to member "${member.id}".`, `List the bindings with gbrain access member source list ${member.id}.`, { reason: 'unknown_binding' });
+    throw opError('invalid_params', `Source "${rawSource}" is not bound to member "${member.id}".`, `List the bindings with foresights access member source list ${member.id}.`, { reason: 'unknown_binding' });
   }
   if (opts.apply) await engine.executeRaw('DELETE FROM access_member_sources WHERE member_id = $1 AND source_id = $2', [member.id, rawSource]);
   const owners = (await sourceOwners(engine, rawSource)).filter(o => o !== member.id);

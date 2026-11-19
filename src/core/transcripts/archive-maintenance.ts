@@ -1,19 +1,19 @@
 /**
  * archive-maintenance.ts — the conversation archive's step in the maintenance pass (GST-2768 PR 3).
  *
- * Unattended upkeep (the serve's idle tick, gbrain maintain --unattended and its schedule) and the autopilot tick
+ * Unattended upkeep (the serve's idle tick, foresights maintain --unattended and its schedule) and the autopilot tick
  * call runArchiveMaintenance. A brain archived while personal that has become shared is re-scoped to its owner first,
  * even though the unset switch now resolves off. Otherwise it does nothing unless the archive resolves on
  * (archive-default.ts), runs at most once
  * per transcripts.archive.maintenance_floor_min, and holds the gbrain-transcript-archive lock so two runners never
- * archive at once (a repository write still takes the checkout's writer lock through gbrain git commit-push). One
+ * archive at once (a repository write still takes the checkout's writer lock through foresights git commit-push). One
  * pass archives the forward window (archive run) and then one bounded backfill run over older days
  * (transcripts.archive.backfill_days_per_run, newest first, embedding held as archive_backfill) until backfill has
  * nothing left. One pass is bounded by a count (the run window, transcripts.archive.run_window_days, and
  * backfill_days_per_run) and by time (ARCHIVE_MAINTENANCE_BUDGET_MS: no further reader or conversation starts after
  * it once one conversation has been written, so a slow reader still moves forward every pass).
  * On a managed brain each day page is a put_page write request through the write coordinator (submitPageMutation),
- * under the same local_cli identity as gbrain transcripts archive run; the wait for it counts against the budget, and a
+ * under the same local_cli identity as foresights transcripts archive run; the wait for it counts against the budget, and a
  * write the coordinator accepted but has not published yet is submitted again by later runs until it is published, and
  * keeps the backfill open, as a held day does.
  *

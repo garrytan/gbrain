@@ -6,7 +6,7 @@
  * transaction), recorded in `backfill.<name>.skipped` and the `skipped` result
  * field with a typed code and the command that retries it, and the checkpoint
  * moves past it while its siblings land. A content failure is held after 3
- * runs at the same row revision and gbrain version; a transient one is retried
+ * runs at the same row revision and foresights version; a transient one is retried
  * on every run and never held. A run-scoped failure, a failed ROLLBACK, a lost
  * COMMIT acknowledgment or a systemic run stops the backfill, records nothing
  * and never moves the checkpoint past the batch.
@@ -107,7 +107,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       const result = await expectUnitNotAborted(() => runBackfill(engine, spec, { batchSize: 100 }));
       expect(result.updated).toBe(7);
       expect(result.skipped.map(s => s.id)).toEqual([poison.id]);
-      expectItemFailure(result.skipped[0], { key: String(poison.id), code: 'invalid_data', fix: new RegExp(`^gbrain backfill ${spec.name}$`) });
+      expectItemFailure(result.skipped[0], { key: String(poison.id), code: 'invalid_data', fix: new RegExp(`^foresights backfill ${spec.name}$`) });
       expect(result.skipped[0]).toMatchObject({ class: 'content', state: 'failing', attempts: 1 });
       expect(await checkpoint(engine, spec.name)).toBe(String(rows.at(-1)!.id));
       expect(Object.keys((await skipLedger(engine, spec.name))!.items)).toEqual([String(poison.id)]);
@@ -126,13 +126,13 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       const result = await expectUnitNotAborted(() => runBackfill(engine, spec, { batchSize: 100 }));
       expect(result.updated).toBe(7);
       expect(result.skipped.length).toBe(1);
-      expectItemFailure(result.skipped[0], { key: String(poison.id), code: 'invalid_data', fix: /^gbrain backfill / });
+      expectItemFailure(result.skipped[0], { key: String(poison.id), code: 'invalid_data', fix: /^(?:foresights|gbrain) backfill / });
       expect(computed.length).toBeLessThan(2 * rows.length);
       expect(await checkpoint(engine, spec.name)).toBe(String(rows.at(-1)!.id));
       expectOthersUnchanged(before, await snapshotItems(engine, sourceId), { expectProgress: rows.filter(r => r !== poison).map(r => r.slug), progressFields: ['updated_at'] });
     });
 
-    test('hold: a content failure is held after 3 runs at the same revision and gbrain version, then not retried', async () => {
+    test('hold: a content failure is held after 3 runs at the same revision and foresights version, then not retried', async () => {
       const { sourceId, rows } = await seed(engine, titles([2]));
       const computed: ProbeRow[][] = [];
       const spec = probeSpec(sourceId, { computed });
@@ -143,7 +143,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       computed.length = 0;
       const fourth = await expectUnitNotAborted(() => runBackfill(engine, spec, { batchSize: 100 }));
       expect(computed.flat().map(r => Number(r.id))).toEqual([]);
-      expectItemFailure(fourth.skipped[0], { key: String(poison.id), code: 'invalid_data', fix: new RegExp(`^gbrain backfill ${spec.name} --fresh$`) });
+      expectItemFailure(fourth.skipped[0], { key: String(poison.id), code: 'invalid_data', fix: new RegExp(`^foresights backfill ${spec.name} --fresh$`) });
       expect(fourth.skipped[0]).toMatchObject({ state: 'held', attempts: 3 });
     });
 
@@ -153,11 +153,11 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       const poison = rows[4]!;
       let last;
       for (let run = 1; run <= 4; run++) last = await expectUnitNotAborted(() => runBackfill(engine, spec, { batchSize: 100 }));
-      expectItemFailure(last!.skipped[0], { key: String(poison.id), code: 'internal', fix: /^gbrain backfill / });
+      expectItemFailure(last!.skipped[0], { key: String(poison.id), code: 'internal', fix: /^(?:foresights|gbrain) backfill / });
       expect(last!.skipped[0]).toMatchObject({ class: 'transient', state: 'failing', attempts: 4 });
     });
 
-    test('recovery: a held row is retried and lands once its content or the gbrain version changes, or on --fresh', async () => {
+    test('recovery: a held row is retried and lands once its content or the foresights version changes, or on --fresh', async () => {
       const { sourceId, rows } = await seed(engine, titles([1, 4, 7], 10));
       const spec = probeSpec(sourceId);
       for (let run = 1; run <= 3; run++) await runBackfill(engine, spec, { batchSize: 100 });
@@ -311,7 +311,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       });
       const thrown = await runBackfill(faulty, spec, { batchSize: 100 }).catch(e => e);
       expect(thrown?.name).toBe('BackfillCommitIndeterminateError');
-      expect(thrown?.fix).toBe(`gbrain backfill ${spec.name} --resume`);
+      expect(thrown?.fix).toBe(`foresights backfill ${spec.name} --resume`);
       expect(computed.length).toBe(1);
       expect(await skipLedger(engine, spec.name)).toBeNull();
       expect(await checkpoint(engine, spec.name)).toBeNull();

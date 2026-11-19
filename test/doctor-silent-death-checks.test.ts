@@ -88,7 +88,7 @@ describe('content_hash_duplicates (#2250)', () => {
     const c = await checkContentHashDuplicates(engine);
     expect(c.status).toBe('warn');
     expect(c.message).toContain('alice-example <-> people/alice-example');
-    expect(c.message).toContain('Fix: GBRAIN_SOURCE=default gbrain delete <bare-slug> --force for each pair.');
+    expect(c.message).toContain('Fix: GBRAIN_SOURCE=default foresights delete <bare-slug> --force for each pair.');
     // No hard-purge step: `purge-deleted --older-than 0` removes EVERY tombstone
     // in the brain, not just the duplicates this fix soft-deletes.
     expect(c.message).not.toContain('purge-deleted');
@@ -100,18 +100,18 @@ describe('content_hash_duplicates (#2250)', () => {
     await addPage('people/alice-example', { hash: 'same', sourceId: 'acme-wiki' });
     await addPage('alice-example', { hash: 'same', sourceId: 'acme-wiki' });
     const one = await checkContentHashDuplicates(engine);
-    expect(one.message).toContain('Fix: GBRAIN_SOURCE=acme-wiki gbrain delete <bare-slug> --force for each pair.');
+    expect(one.message).toContain('Fix: GBRAIN_SOURCE=acme-wiki foresights delete <bare-slug> --force for each pair.');
     await addPage('people/bob-example', { hash: 'other' });
     await addPage('bob-example', { hash: 'other' });
     const two = await checkContentHashDuplicates(engine);
-    expect(two.message).toContain("Fix: GBRAIN_SOURCE=<source-id> gbrain delete <bare-slug> --force for each pair (pairs span sources acme-wiki, default; run it once per pair with that pair's source).");
+    expect(two.message).toContain("Fix: GBRAIN_SOURCE=<source-id> foresights delete <bare-slug> --force for each pair (pairs span sources acme-wiki, default; run it once per pair with that pair's source).");
   });
 
   // IRON-RULE regression: the remediation must name a verb that DISPATCHES.
-  // Pre-fix it read `gbrain pages delete <bare-slug>`, but `pages` is a
+  // Pre-fix it read `foresights pages delete <bare-slug>`, but `pages` is a
   // CLI_ONLY command with exactly one subcommand (`purge-deleted`), so the
   // fix exited 2 with `Unknown subcommand: delete` and the warn survived. The
-  // canonical soft-delete verb is `gbrain delete` (delete_page's cliHints
+  // canonical soft-delete verb is `foresights delete` (delete_page's cliHints
   // name). Behavioral on the
   // rendered message, not on source text, so the explanatory comment in
   // extraction-sync.ts naming the stale form cannot trip it. Same shape as the
@@ -120,13 +120,13 @@ describe('content_hash_duplicates (#2250)', () => {
     await addPage('people/alice-example', { hash: 'same' });
     await addPage('alice-example', { hash: 'same' });
     const c = await checkContentHashDuplicates(engine);
-    expect(c.message).toContain('gbrain delete <bare-slug> --force');
-    expect(String(c.message)).not.toMatch(/gbrain pages delete/);
+    expect(c.message).toContain('foresights delete <bare-slug> --force');
+    expect(String(c.message)).not.toMatch(/(?:foresights|gbrain) pages delete/);
     // Page writes are revisioned (v0.51): delete_page refuses a caller that
     // names neither expected_revision nor force (revision_conflict). Every
-    // `gbrain delete` the message names must carry one of the two, or the
+    // `foresights delete` the message names must carry one of the two, or the
     // operator hits the same dead end one step later.
-    const deletes = [...String(c.message).matchAll(/gbrain delete <bare-slug>((?: --[a-z-]+)*)/g)].map(m => m[1]);
+    const deletes = [...String(c.message).matchAll(/(?:foresights|gbrain) delete <bare-slug>((?: --[a-z-]+)*)/g)].map(m => m[1]);
     expect(deletes.length).toBeGreaterThan(0);
     for (const flags of deletes) expect(/--force|--expected-revision/.test(flags)).toBe(true);
   });
@@ -151,7 +151,7 @@ describe('content_hash_duplicates (#2250)', () => {
     const c = await checkContentHashDuplicates(engine);
     expect(c.status).toBe('warn');
     expect(c.message).toContain('people/alice-example == archive/people/alice-example');
-    expect(c.message).not.toContain('gbrain delete');
+    expect(c.message).not.toContain('foresights delete');
     expect((c.details as any).pair_count).toBe(0);
     expect((c.details as any).distinct_slug_group_count).toBe(1);
   });
@@ -162,7 +162,7 @@ describe('content_hash_duplicates (#2250)', () => {
     const c = await checkContentHashDuplicates(engine);
     expect(c.status).toBe('warn');
     expect(c.message).toContain('alice-copy == alice-example');
-    expect(c.message).not.toContain('gbrain delete');
+    expect(c.message).not.toContain('foresights delete');
     expect((c.details as any).pair_count).toBe(0);
     expect((c.details as any).distinct_slug_group_count).toBe(1);
   });
@@ -175,7 +175,7 @@ describe('content_hash_duplicates (#2250)', () => {
     const c = await checkContentHashDuplicates(engine);
     expect(c.status).toBe('warn');
     expect(c.message).toContain('alice-example <-> people/alice-example');
-    expect(c.message).toContain('gbrain delete <bare-slug> --force');
+    expect(c.message).toContain('foresights delete <bare-slug> --force');
     expect(c.message).toContain('notes/dup-a == archive/dup-a');
     expect((c.details as any).pair_count).toBe(1);
     expect((c.details as any).distinct_slug_group_count).toBe(1);

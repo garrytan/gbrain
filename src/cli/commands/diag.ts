@@ -1,4 +1,4 @@
-/** `gbrain diag`: post-connect dispatch (record in src/cli/command-table.ts, logic in src/commands/diag.ts). */
+/** `foresights diag`: post-connect dispatch (record in src/cli/command-table.ts, logic in src/commands/diag.ts). */
 import type { BrainEngine } from '../../core/engine.ts';
 import type { CliDispatchContext } from '../command-table.ts';
 

@@ -1,5 +1,5 @@
 /**
- * gbrain waiting / gbrain loops CLI (src/commands/loops.ts) on a real PGLite
+ * foresights waiting / foresights loops CLI (src/commands/loops.ts) on a real PGLite
  * engine with a seeded google source + loops.
  *
  * SCOPING: runWaiting/runLoops pass `sourceId: '__all__'` to handleToolCall,
@@ -81,7 +81,7 @@ async function makeStale(): Promise<void> {
 interface Captured {
   out: string;
   err: string;
-  /** gbrain's owned exit verdict after the run (0 when none was set). */
+  /** foresights's owned exit verdict after the run (0 when none was set). */
   verdict: number;
   /** Set only when the command hard-called process.exit(code). */
   exitCalled: number | undefined;
@@ -131,7 +131,7 @@ async function captured(fn: () => Promise<void>): Promise<Captured> {
   return { out: outChunks.join(''), err: errChunks.join(''), verdict, exitCalled };
 }
 
-// ── gbrain waiting ───────────────────────────────────────────────────────────
+// ── foresights waiting ───────────────────────────────────────────────────────────
 
 describe('runWaiting', () => {
   test('stale google source → refusal on stderr with the exact sync fix, verdict 1', async () => {
@@ -139,7 +139,7 @@ describe('runWaiting', () => {
     await makeStale();
     const r = await captured(() => runWaiting(engine, []));
     expect(r.err).toContain('Refusing to answer from stale data');
-    expect(r.err).toContain('gbrain sync --source default'); // the exact fix
+    expect(r.err).toContain('foresights sync --source default'); // the exact fix
     expect(r.err).toContain('--stale-ok');
     // The digest is withheld: no loop content leaks past the refusal.
     expect(r.out).toBe('');
@@ -163,7 +163,7 @@ describe('runWaiting', () => {
     expect(env.sources).toHaveLength(1);
     expect(env.sources[0].id).toBe('default');
     expect(env.sources[0].stale).toBe(true);
-    expect(env.next_action.command).toBe('gbrain sync --source default');
+    expect(env.next_action.command).toBe('foresights sync --source default');
     expect(r.verdict).toBe(1);
   });
 
@@ -183,14 +183,14 @@ describe('runWaiting', () => {
     expect(r.out).toContain('1 person is waiting on you');
     expect(r.out).toContain('bob@example.com');
     expect(r.out).toContain('Can you review the plan?');
-    expect(r.out).toContain('gbrain loops done <id>'); // the management hint
+    expect(r.out).toContain('foresights loops done <id>'); // the management hint
     expect(r.verdict).toBe(0);
   });
 
   test('fresh source, zero loops → "You are clean", no management hint', async () => {
     const r = await captured(() => runWaiting(engine, []));
     expect(r.out).toContain('You are clean');
-    expect(r.out).not.toContain('gbrain loops done');
+    expect(r.out).not.toContain('foresights loops done');
     expect(r.verdict).toBe(0);
   });
 
@@ -201,7 +201,7 @@ describe('runWaiting', () => {
     const r = await captured(() => runWaiting(engine, []));
     expect(r.out).toContain('## No counterparty (1 open: decision_pending 1)');
     expect(r.out).not.toContain('You are clean');
-    expect(r.out).toContain('gbrain loops done <id>');
+    expect(r.out).toContain('foresights loops done <id>');
     const j = await captured(() => runWaiting(engine, ['--json']));
     expect(JSON.parse(j.out)).toMatchObject({ ok: true, groups: [], no_counterparty: { loop_count: 1, loops_omitted: 0 } });
   });
@@ -266,7 +266,7 @@ describe('runWaiting', () => {
     const r = await captured(() => runWaiting(engine, []));
     expect(r.out).toContain('No google source is connected');
     expect(r.out).not.toContain('You are clean');
-    expect(r.out).toContain('gbrain google setup'); // the connect fix rides along
+    expect(r.out).toContain('foresights google setup'); // the connect fix rides along
     expect(r.verdict).toBe(0); // an unconnected brain is not an error state
 
     const j = await captured(() => runWaiting(engine, ['--json']));
@@ -308,7 +308,7 @@ describe('runWaiting', () => {
   });
 });
 
-// ── gbrain loops ─────────────────────────────────────────────────────────────
+// ── foresights loops ─────────────────────────────────────────────────────────────
 
 describe('runLoops', () => {
   test('list prints one line per loop; --json envelope carries ok/status/count', async () => {
@@ -409,7 +409,7 @@ describe('runLoops', () => {
     expect(r.out).toContain('Muted sender Bob@Example.com');
     // #5012: a mute now closes the sender's open reply-owed loops and prints the count and the undo.
     expect(r.out).toContain('closed 0 open reply-owed loop(s)');
-    expect(r.out).toContain('Undo: gbrain loops unmute sender bob@example.com --source default');
+    expect(r.out).toContain('Undo: foresights loops unmute sender bob@example.com --source default');
     expect(r.verdict).toBe(0);
     const set = await loadSuppressions(engine, 'default');
     expect(set.senders.has('bob@example.com')).toBe(true);
@@ -529,10 +529,10 @@ describe('runLoops', () => {
 
   test('--help paths answer without touching loops', async () => {
     const w = await captured(() => runWaiting(engine, ['--help']));
-    expect(w.out).toContain('gbrain waiting');
+    expect(w.out).toContain('foresights waiting');
     expect(w.out).toContain('--stale-ok');
     const l = await captured(() => runLoops(engine, ['--help']));
-    expect(l.out).toContain('gbrain loops');
+    expect(l.out).toContain('foresights loops');
     expect(l.out).toContain('mute');
     expect(l.out).toContain('unmute');
     expect(w.verdict).toBe(0);
@@ -540,7 +540,7 @@ describe('runLoops', () => {
   });
 });
 
-// ── gbrain loops show <id> looks the id up directly (#5870) ─────────────────
+// ── foresights loops show <id> looks the id up directly (#5870) ─────────────────
 
 describe('loops show by id', () => {
   /**
@@ -631,7 +631,7 @@ describe('loops show by id', () => {
     await seedShowFixture();
     const r = await captured(() => runLoops(engine, ['show', '424242']));
     expect(r.err).toContain('Error [not_found]: No loop 424242 in the sources this command reads.');
-    expect(r.err).toContain('Fix: gbrain loops list');
+    expect(r.err).toContain('Fix: foresights loops list');
     expect(r.err).not.toContain('closed loops need --status');
     expect(r.out).toBe('');
     expect(r.verdict).toBe(1);
@@ -646,8 +646,8 @@ describe('loops show by id', () => {
   ])('%s is a usage error: exit 2, invalid_params, nothing on stdout', async (_label, args) => {
     const r = await captured(() => runLoops(engine, args));
     expect(r.exitCalled).toBe(2);
-    expect(r.err).toContain('Error [invalid_params]: gbrain loops show needs a loop id of 1 or more.');
-    expect(r.err).toContain('Usage: gbrain loops show <id> [--json]');
+    expect(r.err).toContain('Error [invalid_params]: foresights loops show needs a loop id of 1 or more.');
+    expect(r.err).toContain('Usage: foresights loops show <id> [--json]');
     expect(r.out).toBe('');
   });
 });

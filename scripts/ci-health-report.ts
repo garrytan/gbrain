@@ -418,7 +418,7 @@ export function parseWindow(args: { days?: string; since?: string; until?: strin
 
 if (import.meta.main) {
   const flag = (name: string) => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : undefined; };
-  const repo = flag('--repo') ?? process.env.GITHUB_REPOSITORY ?? 'garrytan/gbrain';
+  const repo = flag('--repo') ?? process.env.GITHUB_REPOSITORY ?? 'aimonk2025/gbrain';
   const dryRun = process.argv.includes('--dry-run');
   const parsed = parseWindow({ days: flag('--days'), since: flag('--since') || undefined, until: flag('--until') || undefined });
   if ('error' in parsed) {

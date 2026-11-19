@@ -157,7 +157,7 @@ describe('C-9: a dead put_page facts-absorb job is re-submitted once its cause c
     const [check] = await factsExtractionEntry.run({ engine, progress: { heartbeat() {} } } as unknown as DoctorContext) as Check[];
     expect(check!.status).toBe('warn');
     expect(check!.message).toContain('1 exhausted after 2 re-submit(s)');
-    expect(check!.message).toContain(`gbrain facts retry-dead --reset '${key}'`);
+    expect(check!.message).toContain(`foresights facts retry-dead --reset '${key}'`);
     expect(check!.details).toMatchObject({ facts_absorb_retry: { pending: 0, exhausted: [expect.objectContaining({ key })] } });
 
     expect(await updateDeadFactsAbsorbKeys(engine, 'reset', [key], now)).toEqual([key]);

@@ -6,7 +6,7 @@
  * and is reported with its state; (2) a tombstone that fails five times is
  * parked, every attempt having taken its own request id (never reused, so a
  * terminal failed receipt is never replayed); (3) the park rearms once the
- * writer is active again; (4) `gbrain pages purge-deleted --retry-parked`
+ * writer is active again; (4) `foresights pages purge-deleted --retry-parked`
  * gives a parked page one more attempt through the consent gate, and doctor
  * `purge_parked_pages` names it with a fix that clears it; (5) a background
  * producer (the transcript stale-part delete included) is refused before any

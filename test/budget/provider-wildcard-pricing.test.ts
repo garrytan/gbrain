@@ -4,7 +4,7 @@
  * `"claude-cli:*": 0` lets a subscription operator price every claude-cli
  * model at once. It is accepted only for providers whose recipe declares
  * `billing: 'subscription'`; a bare `*` and a wildcard on a per-token API
- * provider are dropped at parse, and `gbrain pricing set` refuses them.
+ * provider are dropped at parse, and `foresights pricing set` refuses them.
  * Precedence: exact model override > provider wildcard > shipped tables.
  *
  * #5847: `deepseek:deepseek-flash` is priced, so the dream BudgetMeter meters
@@ -65,7 +65,7 @@ describe('provider wildcard keys', () => {
     expect(() => t.reserve({ modelId: 'claude-cli:claude-next-unreleased', kind: 'chat', estimatedInputTokens: 1000, maxOutputTokens: 1000 })).not.toThrow();
   });
 
-  test('gbrain pricing list names the recipe models a wildcard prices', () => {
+  test('foresights pricing list names the recipe models a wildcard prices', () => {
     const models = wildcardMatches('claude-cli:*');
     expect(models).toContain('claude-cli:claude-opus-5-5');
     expect(models.every((m) => m.startsWith('claude-cli:'))).toBe(true);

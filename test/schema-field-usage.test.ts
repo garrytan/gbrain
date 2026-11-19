@@ -1,5 +1,5 @@
 /**
- * `gbrain schema detect --fields`: per page type, the frontmatter keys, fact
+ * `foresights schema detect --fields`: per page type, the frontmatter keys, fact
  * categories and relation types in use, with 100% -> required and >=25% ->
  * optional. Hermetic PGLite.
  */

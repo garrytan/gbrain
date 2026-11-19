@@ -3,7 +3,7 @@
  *
  * PITCH-ONLY. There is NO schema or data migration: the five frozen memory
  * verbs (recall/remember/entity/synthesize/forget) ride the existing facts,
- * pages, and typed-graph tables. This entry exists solely so `gbrain
+ * pages, and typed-graph tables. This entry exists solely so `foresights
  * post-upgrade` / the self-upgrade NOTIFY channel actively tells an existing
  * install that the verbs landed and how to switch a harness onto them — the
  * propagation path the verbs otherwise lacked (the default surface stays
@@ -28,7 +28,7 @@ export const v0_43_0: Migration = {
     headline:
       'Five memory verbs — recall, remember, entity, synthesize, forget — are now the agent-facing memory protocol (MEMORY_VERBS v1).',
     description:
-      'Point any MCP harness at `gbrain serve --surface verbs` to expose exactly these five self-describing tools instead of the full op wall: remember(fact, provenance) writes durable facts; recall(query|entity, budget_tokens) returns budget-packed memory; entity(name) is a zero-LLM card; synthesize(question) is the explicitly-expensive cross-page answer; forget(id) expires a fact. Existing `gbrain serve` (full surface) keeps working and now also lists the verbs, but `--surface verbs` is the clean agent surface. Set a default with `gbrain config set mcp_surface verbs`. Verify any endpoint with `gbrain protocol conformance`; see usage with `gbrain protocol stats`. Full contract: docs/protocol/MEMORY_VERBS_v1.md.',
+      'Point any MCP harness at `foresights serve --surface verbs` to expose exactly these five self-describing tools instead of the full op wall: remember(fact, provenance) writes durable facts; recall(query|entity, budget_tokens) returns budget-packed memory; entity(name) is a zero-LLM card; synthesize(question) is the explicitly-expensive cross-page answer; forget(id) expires a fact. Existing `foresights serve` (full surface) keeps working and now also lists the verbs, but `--surface verbs` is the clean agent surface. Set a default with `foresights config set mcp_surface verbs`. Verify any endpoint with `foresights protocol conformance`; see usage with `foresights protocol stats`. Full contract: docs/protocol/MEMORY_VERBS_v1.md.',
   },
   orchestrator,
 };

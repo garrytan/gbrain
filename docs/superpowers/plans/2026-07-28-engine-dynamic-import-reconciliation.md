@@ -22,7 +22,7 @@
 - Capture complete test/check output to workspace-local `.context/*.txt` files before inspecting it; never pipe a test command directly through `head` or `tail`.
 - Use `git log -G`, not `git log -S`, for any additional dynamic-to-static import history work.
 - Keep every implementation and verification commit local. Do not push, create a PR, comment upstream, or otherwise publish without explicit user approval after local completion.
-- Before editing any affected function, run GBrain `code_blast` and `code_callers` for that symbol and inspect any disambiguation candidates.
+- Before editing any affected function, run Foresights `code_blast` and `code_callers` for that symbol and inspect any disambiguation candidates.
 
 ---
 
@@ -60,7 +60,7 @@
 
 - [ ] **Step 1: Record call-graph blast radius before touching functions**
 
-First call `sources_list` and select the source whose registered path is this gbrain checkout. Then run `code_blast` and `code_callers` for these qualified symbols with that exact `source_id`, following `did_you_mean`/`candidates` when a method name is ambiguous:
+First call `sources_list` and select the source whose registered path is this foresights checkout. Then run `code_blast` and `code_callers` for these qualified symbols with that exact `source_id`, following `did_you_mean`/`candidates` when a method name is ambiguous:
 
 ```text
 src/core/pglite-engine.ts::PGLiteEngine.initSchema
@@ -674,7 +674,7 @@ Expected: branch `claude/kind-meitner-330c90` with a clean working tree. No push
 
 - [ ] **Step 10: Capture the completed milestone to memory**
 
-Before writing, search MemPalace wing `gbrain` for this exact reconciliation to avoid duplication. Add a verbatim drawer recording exact base/head commits, the 13 hoists, four gateway opt-outs and rationale, guard/test/docs files, every verification command with exit code, and any environment-owned failures. Add a GBrain project timeline entry only if there is an existing relevant gbrain project page; do not create duplicate release metadata.
+Before writing, search MemPalace wing `gbrain` for this exact reconciliation to avoid duplication. Add a verbatim drawer recording exact base/head commits, the 13 hoists, four gateway opt-outs and rationale, guard/test/docs files, every verification command with exit code, and any environment-owned failures. Add a Foresights project timeline entry only if there is an existing relevant foresights project page; do not create duplicate release metadata.
 
 - [ ] **Step 11: Report the local result and ask separately before publication**
 

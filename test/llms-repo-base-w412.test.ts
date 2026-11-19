@@ -28,7 +28,7 @@ describe('W4.12: LLMS_REPO_BASE must be a plain https URL', () => {
       try {
         await withEnv({ LLMS_REPO_BASE: value }, () => {
           const url = docsUrl('docs/guides/error-codes.md#x');
-          expect(url.startsWith('https://github.com/garrytan/gbrain/blob/')).toBe(true);
+          expect(url.startsWith('https://github.com/aimonk2025/gbrain/blob/')).toBe(true);
           expect(url).not.toContain(value.replace(/\/+$/, ''));
         });
       } finally { process.stderr.write = write; }
@@ -44,6 +44,6 @@ describe('W4.12: LLMS_REPO_BASE must be a plain https URL', () => {
   test('unset or blank falls back to the default', () => {
     expect(parseRepoBase(undefined)).toBeNull();
     expect(parseRepoBase('  ')).toBeNull();
-    expect(repoBlobBase({})).toBe('https://github.com/garrytan/gbrain/blob/master');
+    expect(repoBlobBase({})).toBe('https://github.com/aimonk2025/gbrain/blob/master');
   });
 });

@@ -2,7 +2,7 @@
  * Report-back watches over Wakeshift (plan D2, D5, D6, D7): `watch_job`,
  * `watch_write_request`, `watch_cron`, `accept_wakeshift_terms`,
  * `list_watches`, `unwatch`. Listed only while the owner has run
- * `gbrain wakeshift enable` and a usable key is on the host (publish gate
+ * `foresights wakeshift enable` and a usable key is on the host (publish gate
  * `mcp.publish_wakeshift`, file plane plus key presence; no DB plane, so no
  * remote caller can flip it). Each watch runs its target's own read check
  * first: the get_job owner fence, the get_write_request receipt path, or a
@@ -51,7 +51,7 @@ function receiptFix(requestId: string): Fix {
 
 function notEnabled(): OperationError {
   return opError('wakeshift_not_enabled', 'Reporting back through Wakeshift is off on this brain.',
-    'Use wait_job or get_write_request instead, or ask the brain owner to run gbrain wakeshift enable on the brain host.');
+    'Use wait_job or get_write_request instead, or ask the brain owner to run foresights wakeshift enable on the brain host.');
 }
 
 function needsConversation(tool: string, suggestion: string, fix?: Fix): OperationError {
@@ -60,7 +60,7 @@ function needsConversation(tool: string, suggestion: string, fix?: Fix): Operati
 
 function termsUnset(): OperationError {
   return opError('wakeshift_shared_brain', 'This brain has access members and its operator has not set the terms and privacy links Wakeshift requires, so nothing was watched.',
-    'Ask the brain owner to run gbrain wakeshift enable --terms-url <https url> --privacy-url <https url> on the brain host; meanwhile use wait_job or get_write_request.');
+    'Ask the brain owner to run foresights wakeshift enable --terms-url <https url> --privacy-url <https url> on the brain host; meanwhile use wait_job or get_write_request.');
 }
 
 export interface WatchPrincipal { kind: 'oauth_client' | 'legacy_token' | 'local_stdio'; id: string; member: string | null }
@@ -103,7 +103,7 @@ function wakeshiftFailure(e: WakeshiftError, tool: string, fallback: string, fix
       `Retry ${tool} in a minute, or ${fallback} to wait without it.`, { reason: e.code, fix });
   }
   return opError('wakeshift_refused', `Wakeshift refused the watch (${e.code}): ${e.message}`,
-    `${fallback[0]!.toUpperCase()}${fallback.slice(1)} to wait without Wakeshift; the brain owner can check the setup with gbrain wakeshift test.`, { reason: e.code, fix });
+    `${fallback[0]!.toUpperCase()}${fallback.slice(1)} to wait without Wakeshift; the brain owner can check the setup with foresights wakeshift test.`, { reason: e.code, fix });
 }
 
 /**
@@ -196,7 +196,7 @@ const watch_job: Operation = {
   idempotent: true,
   writeInference: 'non_content',
   outputRedaction: REDACTION,
-  description: 'This tool notifies you: it has gbrain wake this conversation through Wakeshift when job id finishes '
+  description: 'This tool notifies you: it has foresights wake this conversation through Wakeshift when job id finishes '
     + '(completed, failed, dead or cancelled), so you can stop polling. Call it right after submitting a long job, then end your turn '
     + 'or keep working. The wake names the job and says to call get_job for the result; it carries no page text. '
     + 'Agent-scoped tokens watch only jobs they own. If no wake arrives, call wait_job.',
@@ -213,7 +213,7 @@ const watch_job: Operation = {
     if (!Number.isSafeInteger(id) || id <= 0) {
       throw opError('invalid_params', `watch_job: id must be a positive job id (got ${JSON.stringify(p.id)}).`, 'Pass the id submit_job or list_jobs returned.');
     }
-    const { runtime, principal } = await watchContext(ctx, 'watch_job', `Run gbrain jobs wait ${id} to block until the job finishes.`, waitFix(id));
+    const { runtime, principal } = await watchContext(ctx, 'watch_job', `Run foresights jobs wait ${id} to block until the job finishes.`, waitFix(id));
     const step = await termsStep(ctx, runtime, principal, 'watch_job');
     if (step) return step;
     const owner = agentOwnerFence(ctx, 'watch_job');
@@ -223,14 +223,14 @@ const watch_job: Operation = {
     if (ctx.dryRun) return { dry_run: true, action: 'watch_job', job: id };
     const finished = TERMINAL.has(job.status);
     const { rowId, recognized } = await openWatch(ctx, runtime, principal, p, {
-      tool: 'watch_job', event: JOB_FINISHED, target: String(id), args: { job: id }, reason: `Watching gbrain job ${id}`,
+      tool: 'watch_job', event: JOB_FINISHED, target: String(id), args: { job: id }, reason: `Watching foresights job ${id}`,
       settledNow: finished, fallback: `call wait_job ${id}`, fix: waitFix(id),
     });
     return {
       watching: true, watch: rowId, job: id, event: JOB_FINISHED, status: job.status, already_finished: finished,
       expires_in: WATCH_TTL,
       ...(recognized ? {} : unrecognized('watch_job')),
-      fallback: `If no wake arrives, call wait_job ${id} (or run gbrain jobs wait ${id}).`,
+      fallback: `If no wake arrives, call wait_job ${id} (or run foresights jobs wait ${id}).`,
     };
   },
 };
@@ -241,7 +241,7 @@ const watch_write_request: Operation = {
   idempotent: true,
   writeInference: 'non_content',
   outputRedaction: REDACTION,
-  description: 'This tool notifies you: it has gbrain wake this conversation through Wakeshift when your write request settles '
+  description: 'This tool notifies you: it has foresights wake this conversation through Wakeshift when your write request settles '
     + '(committed, failed, conflict or cancelled), so you can stop polling get_write_request after write_pending. The wake names the '
     + 'request and says to call get_write_request; it carries no slug or page text. You can watch only your own receipts. If no wake arrives, call get_write_request.',
   params: {
@@ -255,7 +255,7 @@ const watch_write_request: Operation = {
   handler: async (ctx, p) => {
     const requestId = parseWriteRequestId(p.request_id);
     if (!requestId) throw opError('invalid_params', 'request_id is required.', 'Pass the request_id you sent with the write, or the one its receipt shows; list_write_requests shows recent ones.');
-    const { runtime, principal } = await watchContext(ctx, 'watch_write_request', `Run gbrain write-request -- ${requestId} to read the receipt.`, receiptFix(requestId));
+    const { runtime, principal } = await watchContext(ctx, 'watch_write_request', `Run foresights write-request -- ${requestId} to read the receipt.`, receiptFix(requestId));
     const step = await termsStep(ctx, runtime, principal, 'watch_write_request');
     if (step) return step;
     const { principal: writer } = await receiptAccess(ctx, 'get_write_request');
@@ -266,14 +266,14 @@ const watch_write_request: Operation = {
     const settled = ['failed', 'conflict', 'cancelled'].includes(row.state) || (row.state === 'committed' && row.recovery == null);
     const { rowId, recognized } = await openWatch(ctx, runtime, principal, p, {
       tool: 'watch_write_request', event: WRITE_SETTLED, target: row.request_id, targetRef: row.id, args: { request_id: row.request_id },
-      reason: `Watching gbrain write request ${row.request_id}`, settledNow: settled,
+      reason: `Watching foresights write request ${row.request_id}`, settledNow: settled,
       fallback: `call get_write_request ${row.request_id}`, fix: receiptFix(row.request_id),
     });
     return {
       watching: true, watch: rowId, request_id: row.request_id, event: WRITE_SETTLED, state: row.state, already_settled: settled,
       expires_in: WATCH_TTL,
       ...(recognized ? {} : unrecognized('watch_write_request')),
-      fallback: `If no wake arrives, call get_write_request ${row.request_id} (or run gbrain write-request -- ${row.request_id}).`,
+      fallback: `If no wake arrives, call get_write_request ${row.request_id} (or run foresights write-request -- ${row.request_id}).`,
     };
   },
 };
@@ -284,9 +284,9 @@ const watch_cron: Operation = {
   idempotent: true,
   writeInference: 'non_content',
   outputRedaction: REDACTION,
-  description: 'This tool notifies you: it has gbrain wake this conversation through Wakeshift the next time the named cron reports its run '
-    + '(ok or failed) with gbrain wakeshift emit. One wake per watch; call it again for the run after. The wake names the cron and the status; '
-    + 'read the output where the cron writes it. Only crons the brain owner registered with gbrain wakeshift cron add can be watched.',
+  description: 'This tool notifies you: it has foresights wake this conversation through Wakeshift the next time the named cron reports its run '
+    + '(ok or failed) with foresights wakeshift emit. One wake per watch; call it again for the run after. The wake names the cron and the status; '
+    + 'read the output where the cron writes it. Only crons the brain owner registered with foresights wakeshift cron add can be watched.',
   params: {
     name: { type: 'string', required: true, description: 'The cron name the owner registered (letters, digits, dot, underscore and dash).' },
     ...CALLER_PARAMS,
@@ -296,19 +296,19 @@ const watch_cron: Operation = {
   cliHints: { hidden: true },
   handler: async (ctx, p) => {
     const name = cronName(p.name);
-    if (!name) throw opError('invalid_params', 'watch_cron: name is required.', 'Pass the cron name the brain owner registered (gbrain wakeshift cron list shows them).');
+    if (!name) throw opError('invalid_params', 'watch_cron: name is required.', 'Pass the cron name the brain owner registered (foresights wakeshift cron list shows them).');
     const { runtime, principal } = await watchContext(ctx, 'watch_cron', 'Check the cron output where it writes it.');
     const step = await termsStep(ctx, runtime, principal, 'watch_cron');
     if (step) return step;
     const registered = await ctx.engine.executeRaw('SELECT 1 FROM wake_crons WHERE name = $1', [name]);
     if (registered.length === 0) {
       throw opError('not_found', 'No registered cron has that name.',
-        `Check the name with the brain owner: gbrain wakeshift cron list shows the registered crons, and gbrain wakeshift cron add ${name} registers this one.`);
+        `Check the name with the brain owner: foresights wakeshift cron list shows the registered crons, and foresights wakeshift cron add ${name} registers this one.`);
     }
     if (ctx.dryRun) return { dry_run: true, action: 'watch_cron', cron: name };
     const fix = readFix('Lists the watches this connection holds and their state.', { mcp: { tool: 'list_watches', arguments: {} } });
     const { rowId, recognized } = await openWatch(ctx, runtime, principal, p, {
-      tool: 'watch_cron', event: CRON_FINISHED, target: name, args: { name }, reason: `Watching gbrain cron ${name}`,
+      tool: 'watch_cron', event: CRON_FINISHED, target: name, args: { name }, reason: `Watching foresights cron ${name}`,
       settledNow: false, fallback: 'check the cron output where it writes it', fix,
     });
     return {

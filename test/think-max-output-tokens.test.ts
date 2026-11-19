@@ -2,12 +2,12 @@
  * Pins `maxOutputTokensFor` — the per-model output-token budget `runThink`
  * passes to `client.create`. Thinking-by-default Claude 5 models
  * (`anthropic:claude-*-5`), OpenAI reasoning models (gpt-5 onward,
- * o-series, behind any provider prefix — gbrain#7421), and the Anthropic
- * Claude 4.x deep-tier family (gbrain#4375 —
+ * o-series, behind any provider prefix — foresights#7421), and the Anthropic
+ * Claude 4.x deep-tier family (foresights#4375 —
  * the default `deep` alias is anthropic:claude-opus-4-7, whose JSON envelope
  * truncated at 4000) get 16000; everything else stays 4000.
  *
- * Also pins the gbrain#4375 truncation labeling: a max_tokens-cut envelope
+ * Also pins the foresights#4375 truncation labeling: a max_tokens-cut envelope
  * is 'output_truncated' / LLM_OUTPUT_TRUNCATED, never the generic not_json.
  */
 import { afterAll, beforeAll, describe, test, expect } from 'bun:test';
@@ -35,7 +35,7 @@ describe('maxOutputTokensFor — thinking-default headroom', () => {
     expect(maxOutputTokensFor('openai/gpt-5.2')).toBe(16000); // slash form
   });
 
-  test('gbrain#4375 — Anthropic Claude 4.x family gets 16000 (deep-tier truncation headroom)', () => {
+  test('foresights#4375 — Anthropic Claude 4.x family gets 16000 (deep-tier truncation headroom)', () => {
     // The default deep tier (model-config.ts) is anthropic:claude-opus-4-7:
     // at 4000 the synthesis JSON envelope truncated mid-stream and was
     // mislabeled not_json. Anthropic-scoped only, so provider hard caps
@@ -72,7 +72,7 @@ describe('maxOutputTokensFor — thinking-default headroom', () => {
     expect(maxOutputTokensFor('gpt-5.2')).toBe(4000);
   });
 
-  test('gbrain#7421 — OpenAI reasoning ids from gpt-5 on get 16000 behind any provider prefix (LiteLLM, OpenRouter)', () => {
+  test('foresights#7421 — OpenAI reasoning ids from gpt-5 on get 16000 behind any provider prefix (LiteLLM, OpenRouter)', () => {
     // A reasoning model reached through a proxy bills reasoning against
     // max_tokens exactly as it does on openai:, so the route must not decide
     // the budget; gpt-6 is the current reasoning generation.
@@ -96,7 +96,7 @@ describe('maxOutputTokensFor — thinking-default headroom', () => {
     expect(maxOutputTokensFor('litellm:llama-3.3-70b')).toBe(4000);
   });
 
-  test('gbrain#4172 — recipe-declared thinking-by-default models (DeepSeek v4) get 16000 via the capability layer', () => {
+  test('foresights#4172 — recipe-declared thinking-by-default models (DeepSeek v4) get 16000 via the capability layer', () => {
     // DeepSeek v4 thinks by default and bills reasoning against max_tokens:
     // at 4000 the whole budget is spent reasoning and think returns
     // truncated/empty JSON. Keyed on thinking_by_default (capability), not a
@@ -117,7 +117,7 @@ describe('maxOutputTokensFor — thinking-default headroom', () => {
     expect(maxOutputTokensFor('voyage:voyage-4')).toBe(4000); // chat-less recipe
   });
 
-  test('gbrain#4727 — Zhipu GLM-4.5+/5.x get 16000 via the capability layer; older GLM ids keep 4000', () => {
+  test('foresights#4727 — Zhipu GLM-4.5+/5.x get 16000 via the capability layer; older GLM ids keep 4000', () => {
     // GLM-4.5+ and the GLM-5.x series reason by default and bill reasoning
     // against max_tokens, same as DeepSeek v4: at 4000 the whole budget is
     // spent reasoning and think returns truncated/empty JSON.
@@ -132,7 +132,7 @@ describe('maxOutputTokensFor — thinking-default headroom', () => {
     expect(maxOutputTokensFor('zhipu:glm-3-turbo')).toBe(4000);
   });
 
-  test('gbrain#4727 — GLM-4.5+/5.x behind the ollama and openrouter recipes get the same headroom', () => {
+  test('foresights#4727 — GLM-4.5+/5.x behind the ollama and openrouter recipes get the same headroom', () => {
     // The issue body names other prefixes exposing GLM; a reporter hit the
     // 4000 cap on GLM-5.3-flash via Ollama cloud. Same predicate, same cap.
     expect(maxOutputTokensFor('ollama:glm-5.3-flash:cloud')).toBe(16000);
@@ -142,7 +142,7 @@ describe('maxOutputTokensFor — thinking-default headroom', () => {
   });
 });
 
-describe('runThink — max_tokens truncation labeling (gbrain#4375)', () => {
+describe('runThink — max_tokens truncation labeling (foresights#4375)', () => {
   let engine: PGLiteEngine;
 
   beforeAll(async () => {

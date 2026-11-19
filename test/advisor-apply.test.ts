@@ -44,7 +44,7 @@ describe('resolveApplyTarget', () => {
     expect(resolveApplyTarget(r, 'evil').ok).toBe(false);
   });
 
-  test('rejects a fix that does not invoke gbrain', () => {
+  test('rejects a fix that does not invoke foresights', () => {
     const r = report([f({ id: 'x', fix: { command_argv: ['rm', '-rf', '/'], dispatch_id: 'x' } })]);
     expect(resolveApplyTarget(r, 'x').ok).toBe(false);
   });

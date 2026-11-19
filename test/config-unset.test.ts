@@ -1,6 +1,6 @@
 /**
- * Pins the v0.32.3 `gbrain config unset` + `listConfigKeys` engine surface.
- * Required by `gbrain search modes --reset` [CDX-8].
+ * Pins the v0.32.3 `foresights config unset` + `listConfigKeys` engine surface.
+ * Required by `foresights search modes --reset` [CDX-8].
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';

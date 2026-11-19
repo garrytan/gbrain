@@ -71,7 +71,7 @@ describe('target-local configuration installation', () => {
     const text = readFileSync(configPath, 'utf8');
     expect(text).toContain('model = "example-model"');
     expect(text).toContain('http_headers = { Authorization = "Bearer fixture-access-private-value" }');
-    expect((text.match(/\[mcp_servers.gbrain\]/g) ?? []).length).toBe(1);
+    expect((text.match(/\[mcp_servers.(?:foresights|gbrain)\]/g) ?? []).length).toBe(1);
     expect(statSync(configPath).mode & 0o777).toBe(0o600);
     await installHarnessConnection(creds(), { harness: 'codex', configPath, remove: true });
     expect(readFileSync(configPath, 'utf8')).toContain('model = "example-model"');

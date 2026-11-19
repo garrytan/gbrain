@@ -56,7 +56,7 @@ export async function endPoolBounded(
 /**
  * Default pool size for Postgres connections. Users on the Supabase transaction
  * pooler (port 6543) or any multi-tenant pooler can lower this to avoid
- * MaxClients errors when `gbrain upgrade` spawns subprocesses that each open
+ * MaxClients errors when `foresights upgrade` spawns subprocesses that each open
  * their own pool. Set `GBRAIN_POOL_SIZE=2` (or similar) before the command.
  */
 const DEFAULT_POOL_SIZE_FALLBACK = 10;
@@ -229,7 +229,7 @@ export async function checkPoolAndLoadSharedTypes(pool: ReturnType<typeof postgr
  * does (after the first `?`, before any `#`), so userinfo and host text are
  * never consulted. Accepted: whole seconds, surrounding blanks allowed, capped
  * at MAX_CONNECT_TIMEOUT_S. Everything else, including `0` (no timer at all in
- * postgres.js), keeps the fallback so no gbrain connect waits unbounded.
+ * postgres.js), keeps the fallback so no foresights connect waits unbounded.
  */
 export function resolveUrlConnectTimeout(url: string): number {
   const [beforeFragment = ''] = url.split('#', 1);
@@ -294,7 +294,7 @@ export function resolveMaxLifetimeSeconds(
     if (!warnedBadMaxLifetime) {
       warnedBadMaxLifetime = true;
       process.stderr.write(
-        `[gbrain] Ignoring invalid GBRAIN_POOL_MAX_LIFETIME_S=${JSON.stringify(raw)} (want a non-negative integer of seconds; 0 disables); using the jittered 30-60min default\n`,
+        `[foresights] Ignoring invalid GBRAIN_POOL_MAX_LIFETIME_S=${JSON.stringify(raw)} (want a non-negative integer of seconds; 0 disables); using the jittered 30-60min default\n`,
       );
     }
   }
@@ -347,15 +347,15 @@ const DEFAULT_STATEMENT_TIMEOUT = '5min';
 const DEFAULT_IDLE_TX_TIMEOUT = '5min';
 
 /**
- * #6317 (C1): the `application_name` every gbrain pool starts its connections
- * with, `gbrain <kind>:<pid>:<nonce8>`, so `writer status` can find the owner
+ * #6317 (C1): the `application_name` every foresights pool starts its connections
+ * with, `foresights <kind>:<pid>:<nonce8>`, so `writer status` can find the owner
  * process's backends in `pg_stat_activity` (and a ClientRead wedge is visible
  * in one command). Through a transaction-mode pooler the server connection is
  * shared, so the mapping is partial; readers say `backend_visibility: pooled`.
  */
 export function gbrainApplicationName(): string {
   const owner = claimOwner();
-  return `gbrain ${owner.kind}:${owner.pid}:${(owner.nonce ?? '').slice(0, 8)}`.slice(0, 63);
+  return `foresights ${owner.kind}:${owner.pid}:${(owner.nonce ?? '').slice(0, 8)}`.slice(0, 63);
 }
 
 /**
@@ -479,7 +479,7 @@ export function getConnection(): ReturnType<typeof postgres> {
     throw new GBrainError(
       'No database connection',
       'connect() has not been called',
-      'Run gbrain init --supabase or gbrain init --url <connection_string>',
+      'Run foresights init --supabase or foresights init --url <connection_string>',
     );
   }
   return sql;
@@ -503,7 +503,7 @@ export async function connect(config: EngineConfig, hooks: PoolHealthHooks = {})
   if (sql) {
     // Warn if a different URL is passed — the old connection is still in use
     if (config.database_url && connectedUrl && config.database_url !== connectedUrl) {
-      console.warn('[gbrain] connect() called with a different database_url but a connection already exists. Using existing connection.');
+      console.warn('[foresights] connect() called with a different database_url but a connection already exists. Using existing connection.');
     }
     return false; // joined an existing singleton — caller is a borrower
   }
@@ -513,7 +513,7 @@ export async function connect(config: EngineConfig, hooks: PoolHealthHooks = {})
     throw new GBrainError(
       'No database URL',
       'database_url is missing from config',
-      'Run gbrain init --supabase or gbrain init --url <connection_string>',
+      'Run foresights init --supabase or foresights init --url <connection_string>',
     );
   }
 
@@ -533,7 +533,7 @@ export async function connect(config: EngineConfig, hooks: PoolHealthHooks = {})
       // Silence postgres NOTICE-level messages by default ("relation already
       // exists, skipping" floods stdout under idempotent CREATE statements
       // during migrations + initSchema, and breaks stdout-parsing callers like
-      // `gbrain jobs submit --json | ...`). Opt back in with GBRAIN_PG_NOTICES=1.
+      // `foresights jobs submit --json | ...`). Opt back in with GBRAIN_PG_NOTICES=1.
       onnotice: process.env.GBRAIN_PG_NOTICES === '1' ? undefined : () => {},
       ...poolHealthOptions(hooks, timeouts.statement_timeout),
       shared_types: resolveSharedTypes(url),
@@ -566,7 +566,7 @@ export async function connect(config: EngineConfig, hooks: PoolHealthHooks = {})
     throw new GBrainError(
       'Cannot connect to database',
       msg,
-      'Check the database URL; `gbrain engine status --probe` names where it comes from (environment variable or the config file under GBRAIN_HOME)',
+      'Check the database URL; `foresights engine status --probe` names where it comes from (environment variable or the config file under GBRAIN_HOME)',
     );
   }
 }

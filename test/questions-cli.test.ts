@@ -1,5 +1,5 @@
 /**
- * `gbrain questions` CLI: the human and --json renderings of the pinned-question
+ * `foresights questions` CLI: the human and --json renderings of the pinned-question
  * receipts, the exit verdict (1 when the answer is blocked), and engine-free
  * --help. Protects the CLI contract the docs and agents rely on (verbs, flags,
  * the next-step line). Keyless, so a pin answers awaiting_refresh /
@@ -32,14 +32,14 @@ async function cli(args: string[]): Promise<{ out: string; exit: number }> {
   return { out: chunks.join(''), exit: currentExitCode() };
 }
 
-describe('gbrain questions', () => {
+describe('foresights questions', () => {
   test('pin on a keyless brain keeps the pin, prints the key next step and exits 1', async () => {
     const r = await cli(['pin', 'Who leads acme-example?', '--entity', 'companies/acme-example']);
     expect(r.exit).toBe(1);
     expect(r.out).toContain('Pinned: default:questions/who-leads-acme-example-');
     expect(r.out).toContain('[awaiting_refresh]');
     expect(r.out).toContain('blocked: no_model_key');
-    expect(r.out).toContain('next: gbrain providers list');
+    expect(r.out).toContain('next: foresights providers list');
   });
 
   test('--json carries the receipt; list counts it; pin again is idempotent; unpin archives', async () => {

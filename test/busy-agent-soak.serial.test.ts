@@ -11,7 +11,7 @@
  *       a write that reaches the checkout while a refresh holds it is answered pending and commits after the refresh,
  *       or ends revision_conflict when the refresh changed its file;
  *   (i) plain-git committers and uncommitted-file writers beside gbrain: doctor foreign_writers names every commit
- *       gbrain did not make and none it made;
+ *       foresights did not make and none it made;
  *   (j) legacy rows with no import record in every direction: `sources git-gap` classifies each by content evidence;
  *   (k) a strict conversion with live door writers and a refresh between adopt groups;
  *   (l) a segmented page whose staging expires between staging and publication: the write refuses
@@ -73,7 +73,7 @@ const PROFILE_SHAPE = {
   fence_writes_per_tick: '(h) foreground puts of unchanged notes while the tick holds the fence',
   fence_conflicts_per_tick: '(h) foreground puts of notes the tick changes, while it holds the fence',
   background_write_interval_ms: '(h) cadence of the agent puts that run across every tick',
-  plain_git_committers: '(i) plain-git committers beside gbrain',
+  plain_git_committers: '(i) plain-git committers beside foresights',
   plain_git_commits_each: '(i) commits per plain-git committer',
   uncommitted_files: '(i) page files an uncommitted-file writer leaves behind',
   legacy_rows_per_direction: '(j) legacy rows per evidence direction',
@@ -102,7 +102,7 @@ const PROFILE = readProfile(readFileSync(PROFILE_PATH, 'utf8'), PROFILE_PATH);
 
 const MODES = {
   h: { title: 'scheduled sources refresh ticks with foreground writes inside the fence', skip: null },
-  i: { title: 'plain-git committers and uncommitted-file writers beside gbrain', skip: null },
+  i: { title: 'plain-git committers and uncommitted-file writers beside foresights', skip: null },
   j: { title: 'legacy rows with no import record in every direction', skip: null },
   k: { title: 'a strict conversion with live door writers and a refresh between adopt groups', skip: null },
   l: { title: 'a segmented page whose staging expires between staging and publication', skip: null },
@@ -172,7 +172,7 @@ function writeInto(root: string, slug: string, content: string): void {
 }
 /**
  * A busy agent's checkout is Git-durable: the owner commits every page write through its Git effect. The harness records
- * the setting the way `gbrain sources writer git-durability --enable` does, without its push probe (a checkout with no
+ * the setting the way `foresights sources writer git-durability --enable` does, without its push probe (a checkout with no
  * remote commits locally). Each scenario's database holds this one checkout's binding.
  */
 async function durable(b: Brain): Promise<void> {
@@ -306,7 +306,7 @@ scenario('h', 'writes that reach a refreshing checkout wait for the refresh and 
 
 // ---------------------------------------------------------------- (i) plain-git and uncommitted-file writers
 
-scenario('i', 'doctor foreign_writers names every commit made beside gbrain, none gbrain made, and every stale uncommitted page', () => {
+scenario('i', 'doctor foreign_writers names every commit made beside foresights, none foresights made, and every stale uncommitted page', () => {
   const b = new Brain('foreign-writers', ['i']);
   const plain: Array<{ sha: string; slug: string }> = [];
   const dropped: string[] = [];
@@ -318,8 +318,8 @@ scenario('i', 'doctor foreign_writers names every commit made beside gbrain, non
     const fixtureHead = b.git('rev-parse', 'HEAD');
     const serve = new StdioServe(b);
     await serve.start();
-    // The agent writes the first half of the notes through gbrain (its door commits start the commit ledger); the
-    // plain-git committers write the second half, so no plain commit races a gbrain write of the same file.
+    // The agent writes the first half of the notes through foresights (its door commits start the commit ledger); the
+    // plain-git committers write the second half, so no plain commit races a foresights write of the same file.
     const half = Math.floor(PROFILE.notes / 2);
     const agentPut = async (k: number) => {
       const slug = noteSlug(k % half), marker = `Agent put ${k} of ${slug} (${randomUUID().slice(0, 8)})`, start = performance.now();
@@ -331,7 +331,7 @@ scenario('i', 'doctor foreign_writers names every commit made beside gbrain, non
       else if (r.code === 10) b.pending.push({ write: { kind: 'put', slug, marker, touches: ['db', 'file'], start }, requestId });
       return r.code;
     };
-    if (await agentPut(0) !== 0) throw new Error(`the first agent put did not commit, so gbrain's commit ledger may not exist\n${b.context()}`);
+    if (await agentPut(0) !== 0) throw new Error(`the first agent put did not commit, so foresights's commit ledger may not exist\n${b.context()}`);
     await until(() => b.git('rev-list', '--count', `${fixtureHead}..HEAD`) !== '0', 'the first door commit', 120_000);
     let done = false;
     const agent = (async () => { for (let k = 1; !done; k++) { await agentPut(k); await Bun.sleep(PROFILE.background_write_interval_ms); } })();
@@ -366,7 +366,7 @@ scenario('i', 'doctor foreign_writers names every commit made beside gbrain, non
     b.keepLog('doctor-foreign-writers.json', `exit ${r.code}\n${r.out}\n${r.err}`);
     check = ((lastJson(r.out)?.checks ?? []) as Array<typeof check & { name: string }>).find(c => c?.name === 'foreign_writers');
     gbrainShas = b.git('rev-list', `${fixtureHead}..HEAD`).split('\n').filter(sha => sha && !plain.some(p => p.sha === sha));
-    b.note(`${plain.length} plain commit(s), ${gbrainShas.length} gbrain commit(s), ${dropped.length} uncommitted file(s); foreign_writers ${check?.status}`);
+    b.note(`${plain.length} plain commit(s), ${gbrainShas.length} foresights commit(s), ${dropped.length} uncommitted file(s); foreign_writers ${check?.status}`);
     await serve.stop();
     await b.recover();
     await b.settlePending(async requestId => (await receipt(b, requestId))?.state);
@@ -381,9 +381,9 @@ scenario('i', 'doctor foreign_writers names every commit made beside gbrain, non
       ...plain.filter(p => !named.has(p.sha)).map(p => `plain commit ${p.sha.slice(0, 12)} (${p.slug}) not named`),
     ]);
   });
-  test('foreign_writers names no commit gbrain made', () => {
+  test('foreign_writers names no commit foresights made', () => {
     const gbrain = new Set(gbrainShas);
-    b.verdict((check?.details?.foreign ?? []).filter(c => gbrain.has(c.sha)).map(c => `gbrain commit ${c.sha.slice(0, 12)} named as foreign`));
+    b.verdict((check?.details?.foreign ?? []).filter(c => gbrain.has(c.sha)).map(c => `foresights commit ${c.sha.slice(0, 12)} named as foreign`));
   });
   test('every stale uncommitted page file is listed past the warn window', () => {
     const listed = new Map((check?.details?.dirty ?? []).map(d => [d.path.replace(/\.md$/, ''), d.age_ms]));

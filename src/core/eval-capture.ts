@@ -9,7 +9,7 @@
  * have been invisible. Moving the hook to the op layer covers every caller.
  *
  * Best-effort, not await'd by the caller. Every failure is routed through
- * `engine.logEvalCaptureFailure(reason)` so `gbrain doctor` can see drops
+ * `engine.logEvalCaptureFailure(reason)` so `foresights doctor` can see drops
  * cross-process (in-process counters would be invisible from doctor's
  * separate process).
  *

@@ -1,12 +1,12 @@
 /**
- * skillpack/copy.ts — shared file-copy primitive for scaffold (gbrain→host)
- * and harvest (host→gbrain).
+ * skillpack/copy.ts — shared file-copy primitive for scaffold (foresights→host)
+ * and harvest (host→foresights).
  *
  * Inverse directions, identical mechanics: walk a source dir, mirror it
  * under a destination, refuse to overwrite existing files. Optional
  * safety gates for the harvest path (symlink rejection, canonical-path
  * containment) keep user-controlled `--from` inputs from leaking
- * secrets into gbrain's tree or escaping the intended skill dir.
+ * secrets into foresights's tree or escaping the intended skill dir.
  *
  * Atomic-refusal contract (mirrors the old uninstall.ts D11 guard):
  * the helper validates every item BEFORE any write. If any item

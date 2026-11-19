@@ -12,14 +12,14 @@ switch modes at any time.
 | `zettelkasten` | Flat in `zettel/`, each note named by a time id (`202611170905-spaced-repetition`) that never changes | Permanent notes whose links must never break |
 
 ```bash
-gbrain filing                                   # this source's mode, and the four choices
-gbrain filing set para                          # file new pages by PARA from now on
-gbrain filing route note "Launch checklist" --project "Q1 launch"
-gbrain filing route concept "Flywheel effect" --source notes --json
+foresights filing                                   # this source's mode, and the four choices
+foresights filing set para                          # file new pages by PARA from now on
+foresights filing route note "Launch checklist" --project "Q1 launch"
+foresights filing route concept "Flywheel effect" --source notes --json
 ```
 
-**Say to your agent:** *"File my new notes the PARA way."* (your agent runs `gbrain filing set para`)
-**Say to your agent:** *"Where should a new note about the pricing test go?"* (your agent runs `gbrain filing route`)
+**Say to your agent:** *"File my new notes the PARA way."* (your agent runs `foresights filing set para`)
+**Say to your agent:** *"Where should a new note about the pricing test go?"* (your agent runs `foresights filing route`)
 
 ## What `route` gives back
 
@@ -47,4 +47,4 @@ in UTC.
 In the source's own settings (`sources.config.filing_mode`). Each source has its
 own; a source with no mode set files the generic way. `--source` picks the
 source; without it the command uses the current source, the same way other
-commands do (`gbrain sources current`).
+commands do (`foresights sources current`).

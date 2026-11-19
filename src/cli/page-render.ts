@@ -1,10 +1,10 @@
 /**
- * Large pages (Wave A): how `gbrain get` renders get_page, locally and over
+ * Large pages (Wave A): how `foresights get` renders get_page, locally and over
  * the thin client.
  *
  * A whole page prints as its markdown, as it always has. A partial response
  * (body none / outline / window, a section, grep blocks) prints only what it carries, and says on
- * stderr that it is partial and how to read on, so `gbrain get > file` never
+ * stderr that it is partial and how to read on, so `foresights get > file` never
  * writes part of a page as if it were all of it.
  *
  * The thin client asks for the whole page. A host that cannot send it in one
@@ -15,7 +15,7 @@
  * a page of any size prints with one window in memory.
  *
  * A segmented page (Wave B) is never returned whole by get_page. Locally the
- * refusal is page_body_segmented and `gbrain get` streams the page instead:
+ * refusal is page_body_segmented and `foresights get` streams the page instead:
  * the frontmatter head, the truth segments, TIMELINE_SEPARATOR and the
  * timeline segments, one segment at a time. `--json` puts the page in one
  * string, so above PAGE_MAX_BYTES it refuses, locally and over the thin
@@ -47,10 +47,10 @@ function partialNote(r: GetPageResult): string {
   const size = r.size ?? {};
   const total = typeof size.total_bytes === 'number' ? `${size.total_bytes} bytes` : 'unknown size';
   if (r.window && typeof r.window.byte_start === 'number') {
-    const next = r.next_cursor ? ` Read on: gbrain get ${r.slug} --cursor ${r.next_cursor}` : '';
-    return `[gbrain] partial page: bytes ${r.window.byte_start}-${r.window.byte_end} of ${total} (lines ${r.window.line_start}-${r.window.line_end}).${next}`;
+    const next = r.next_cursor ? ` Read on: foresights get ${r.slug} --cursor ${r.next_cursor}` : '';
+    return `[foresights] partial page: bytes ${r.window.byte_start}-${r.window.byte_end} of ${total} (lines ${r.window.line_start}-${r.window.line_end}).${next}`;
   }
-  return `[gbrain] partial page (${r.body}, ${total}): no page body was printed. Whole page: gbrain get ${r.slug} --body full`;
+  return `[foresights] partial page (${r.body}, ${total}): no page body was printed. Whole page: foresights get ${r.slug} --body full`;
 }
 
 function renderOutline(r: GetPageResult): string {
@@ -70,23 +70,23 @@ function renderSlice(r: GetPageResult): string {
   const more = r.truncated ? ' Truncated: some of it was not printed.' : '';
   if (r.section) {
     const s = r.section;
-    const next = r.next?.arguments?.lines ? ` Read on: gbrain get ${r.slug} --lines '${JSON.stringify(r.next.arguments.lines)}'` : '';
-    process.stderr.write(`[gbrain] section ${(s.heading_path ?? [s.heading]).join(' > ')}: lines ${s.line_start}-${s.line_end}, ${r.chars} chars.${more}${next}\n`);
+    const next = r.next?.arguments?.lines ? ` Read on: foresights get ${r.slug} --lines '${JSON.stringify(r.next.arguments.lines)}'` : '';
+    process.stderr.write(`[foresights] section ${(s.heading_path ?? [s.heading]).join(' > ')}: lines ${s.line_start}-${s.line_end}, ${r.chars} chars.${more}${next}\n`);
     return s.text.endsWith('\n') ? s.text : `${s.text}\n`;
   }
   const g = r.grep;
-  process.stderr.write(`[gbrain] grep ${JSON.stringify(g.term)}: ${g.total_matches} matching paragraph${g.total_matches === 1 ? '' : 's'}${g.omitted_matches ? `, ${g.returned_matches} printed` : ''}, ${r.chars} chars.${more}\n`);
+  process.stderr.write(`[foresights] grep ${JSON.stringify(g.term)}: ${g.total_matches} matching paragraph${g.total_matches === 1 ? '' : 's'}${g.omitted_matches ? `, ${g.returned_matches} printed` : ''}, ${r.chars} chars.${more}\n`);
   return g.blocks.map((b: GetPageResult) => `-- lines ${b.line_start}-${b.line_end} (match at ${b.match_starts.join(', ')})\n${b.text}\n`).join('');
 }
 
 /** The stderr line for a result's valid_time: an as_of answer's status, edition, history and doubt, or a plain read's status today. */
 export function validTimeLine(vt: GetPageResult): string {
   if (vt.history === undefined) {
-    return `[gbrain] valid_time: ${vt.status} as of ${vt.as_of} (valid_from ${vt.valid_from ?? '-'}, valid_until ${vt.valid_until ?? '-'}).`;
+    return `[foresights] valid_time: ${vt.status} as of ${vt.as_of} (valid_from ${vt.valid_from ?? '-'}, valid_until ${vt.valid_until ?? '-'}).`;
   }
   const edition = vt.chosen_is_current ? 'current page' : vt.chosen_version_id != null ? `version ${vt.chosen_version_id}` : 'none in force';
   const date = vt.valid_from ?? vt.earliest_known_valid_from ?? '-';
-  return `[gbrain] valid_time as_of ${vt.as_of}: ${vt.status}; edition ${edition} (valid_from ${date}${vt.valid_until ? `, valid_until ${vt.valid_until}` : ''}); history ${vt.history}${vt.uncertain ? `; uncertain: ${vt.why}` : ''}.`;
+  return `[foresights] valid_time as_of ${vt.as_of}: ${vt.status}; edition ${edition} (valid_from ${date}${vt.valid_until ? `, valid_until ${vt.valid_until}` : ''}); history ${vt.history}${vt.uncertain ? `; uncertain: ${vt.why}` : ''}.`;
 }
 
 /** True for an as_of answer with no edition in force: stdout gets the status and why, never a document. */
@@ -95,7 +95,7 @@ export function asOfNotInForce(r: GetPageResult | null | undefined): boolean {
 }
 
 /**
- * `gbrain get --as-of` (GBRA-217): an edition read in windows prints whole, each window fetched with the previous
+ * `foresights get --as-of` (GBRA-217): an edition read in windows prints whole, each window fetched with the previous
  * window's `next` (slug, source, date and the pinned edition); stderr carries the valid_time header once. False when the
  * result is not a windowed as_of answer (formatGetPage renders it).
  */
@@ -111,7 +111,7 @@ export async function printAsOfWindows(call: PagedCall, first: GetPageResult, pa
 }
 
 /**
- * After a `gbrain get --as-of` call, locally or over the thin client (`versions` set): a host reply that does not echo
+ * After a `foresights get --as-of` call, locally or over the thin client (`versions` set): a host reply that does not echo
  * `valid_time.as_of` fails closed (`host_upgrade_required`, on every window too), the exit status is set, and a windowed
  * edition is paged. True when the edition was printed here.
  */
@@ -145,7 +145,7 @@ export function formatGetPage(r: GetPageResult): string {
     return `Ambiguous slug. Did you mean:\n${r.candidates.map((c: string) => `  ${c}`).join('\n')}\n`;
   }
   if (typeof r.body !== 'string') {
-    if (typeof r.content === 'string' && r.revision) process.stderr.write(`[gbrain] revision ${r.revision}: put or delete this page with --expected-revision ${r.revision}.\n`);
+    if (typeof r.content === 'string' && r.revision) process.stderr.write(`[foresights] revision ${r.revision}: put or delete this page with --expected-revision ${r.revision}.\n`);
     return serializeMarkdown(r.frontmatter || {}, r.compiled_truth || '', r.timeline || '', { type: r.type, title: r.title, tags: r.tags || [] });
   }
   if (r.section || r.grep) return renderSlice(r);
@@ -257,7 +257,7 @@ async function spoolWholePage(call: PagedCall, params: Record<string, unknown>, 
 /** `--json` holds the whole page in one string: refused above PAGE_MAX_BYTES, with a fix that streams it instead. */
 function jsonTooLargeError(slug: string, sourceId: string | undefined, bytes: number) {
   return opError('page_too_large_for_inline', `Page ${slug} is ${bytes} bytes, over the ${PAGE_MAX_BYTES}-byte limit of one --json document.`,
-    'Run gbrain get without --json: it prints the page whole, window by window or segment by segment.',
+    'Run foresights get without --json: it prints the page whole, window by window or segment by segment.',
     { fix: readFix('Prints the page whole without holding it as one string.', { argv: ['gbrain', 'get', ...(sourceId ? ['--source', sourceId] : []), '--', slug] }) });
 }
 
@@ -296,7 +296,7 @@ export async function printPagedPage(call: PagedCall, params: Record<string, unk
 export const SEGMENTED_STREAMED = Symbol('segmented page streamed');
 
 /**
- * Local `gbrain get` of a segmented page, after get_page refused it whole (page_body_segmented, whose fix names the
+ * Local `foresights get` of a segmented page, after get_page refused it whole (page_body_segmented, whose fix names the
  * resolved slug and source): stream the trusted markdown view to `write`, one segment at a time, as the inline
  * page would print. False when `error` is not that refusal of a whole-page read.
  */

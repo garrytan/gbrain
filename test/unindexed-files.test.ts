@@ -1,5 +1,5 @@
 /**
- * #6865: files an older gbrain refused before refusals became holds are on disk, committed and unchanged, with no page and
+ * #6865: files an older foresights refused before refusals became holds are on disk, committed and unchanged, with no page and
  * no hold, so incremental discovery never visits them. The detector finds them (in source-path space, both slug modes),
  * `sources retry-held --unindexed` schedules them, the next plain sync imports or holds each one, and doctor
  * `unindexed_files` walks argv -> then -> verify to ok. A bounded scan that stops early is never reported clean.
@@ -50,7 +50,7 @@ afterAll(async () => {
   await closePostgres?.(); rmSync(home, { recursive: true, force: true });
 });
 
-/** Fixture writes the managed writer guard would refuse (the state an older gbrain left), made with persistence briefly off. */
+/** Fixture writes the managed writer guard would refuse (the state an older foresights left), made with persistence briefly off. */
 async function unmanaged<T>(engine: BrainEngine, run: () => Promise<T>): Promise<T> {
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
   try { return await run(); } finally { await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1'); }
@@ -67,7 +67,7 @@ async function source(engine: BrainEngine, files: Record<string, string>, opts: 
   await claimWorktree(engine, id, root);
   await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
   const sync = (extra: Partial<SyncOpts> = {}) => performManagedSync(engine, { sourceId: id, noPull: true, noEmbed: true, noExtract: true, ...extra });
-  /** An older gbrain refused these files without recording a hold: committed, and the source's cursor moved past them. */
+  /** An older foresights refused these files without recording a hold: committed, and the source's cursor moved past them. */
   const legacy = async (added: Record<string, string>) => {
     for (const [path, content] of Object.entries(added)) write(path, content);
     await unmanaged(engine, () => engine.executeRaw('UPDATE sources SET last_commit=$2 WHERE id=$1', [id, commit(repo)]));

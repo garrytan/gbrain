@@ -1,7 +1,7 @@
 /**
  * Levenshtein edit distance + nearest-match suggestion.
  *
- * Used by `gbrain config set` (D6) to suggest the canonical key when a user
+ * Used by `foresights config set` (D6) to suggest the canonical key when a user
  * writes an unknown one (`embedding.provider` → "did you mean `embedding_model`?"),
  * and by init's env detection (D13) to flag near-miss env var names
  * (`OPENAPI_API_KEY` → "did you mean `OPENAI_API_KEY`?").

@@ -1,5 +1,5 @@
 /**
- * `gbrain repair orphan-bindings` (#5732): delete persistence source bindings
+ * `foresights repair orphan-bindings` (#5732): delete persistence source bindings
  * whose source or source incarnation no longer exists, so a source re-added
  * under the same id can be claimed and synced again. Brain-wide: bindings of
  * removed sources are outside any active-source scope. Bookkeeping only; no

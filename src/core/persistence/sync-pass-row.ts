@@ -95,7 +95,7 @@ export interface ManagedSyncPassValue {
      * #6694 on the pass: the slug-root mode a subdirectory source's pass admitted pages under before a stamp published it. Later
      * passes read under it, so a pin changed meanwhile is refused `slug_root_mode_mismatch` at the stamp instead of importing the
      * same files again under the other mode's slugs. A configured stamp clears it; keeping the new pin retires it
-     * (`gbrain repair managed-sync-orphans`, `slug_mode_refused`).
+     * (`foresights repair managed-sync-orphans`, `slug_mode_refused`).
      */
     slug_mode?: 'git-root' | 'source-root';
     /** #6712 PR 4b: the page requests (row ids) passes left open when they stopped; the next pass reports each that commits as its import (sync-pass-carried.ts). */

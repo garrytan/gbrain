@@ -1,10 +1,10 @@
 /**
- * Baseline file format for `gbrain bench publish` + `gbrain eval gate --baseline`.
+ * Baseline file format for `foresights bench publish` + `foresights eval gate --baseline`.
  *
  * Wire shape: NDJSON. First line is metadata (`_kind: 'baseline_metadata'`).
  * Subsequent lines are raw captured rows mirroring `EvalCandidateInput`.
  *
- * The `_kind` discriminator lets `gbrain eval replay` skip the metadata line
+ * The `_kind` discriminator lets `foresights eval replay` skip the metadata line
  * cleanly (codex round-1 #3 — without the discriminator the header counts as
  * a fake data row and pollutes counts).
  *
@@ -125,7 +125,7 @@ export function parseBaselineFile(content: string): BaselineFile {
       }
       if (meta.schema_version !== BASELINE_FILE_SCHEMA_VERSION) {
         throw new BaselineParseError(
-          `Unsupported schema_version ${meta.schema_version} (this gbrain build expects ${BASELINE_FILE_SCHEMA_VERSION})`,
+          `Unsupported schema_version ${meta.schema_version} (this foresights build expects ${BASELINE_FILE_SCHEMA_VERSION})`,
           i + 1,
         );
       }
@@ -155,7 +155,7 @@ export function parseBaselineFile(content: string): BaselineFile {
         throw new BaselineParseError(`Row on line ${i + 1} missing query`, i + 1);
       }
       if (typeof row.query_hash !== 'string') {
-        throw new BaselineParseError(`Row on line ${i + 1} missing query_hash (was it written by gbrain bench publish?)`, i + 1);
+        throw new BaselineParseError(`Row on line ${i + 1} missing query_hash (was it written by foresights bench publish?)`, i + 1);
       }
       if (!Array.isArray(row.retrieved_slugs) || !Array.isArray(row.source_ids)) {
         throw new BaselineParseError(`Row on line ${i + 1} missing retrieved_slugs or source_ids`, i + 1);
@@ -175,7 +175,7 @@ export function parseBaselineFile(content: string): BaselineFile {
  * the same input: rows sort by (tool_name, query_hash) before write.
  *
  * Each body row is stamped with `schema_version: 1` (same envelope as
- * `gbrain eval export`) so the existing `eval replay` parser accepts the
+ * `foresights eval export`) so the existing `eval replay` parser accepts the
  * row unchanged. Without this stamp, replay's "Line N missing schema_version"
  * validator would reject every baseline body row.
  */

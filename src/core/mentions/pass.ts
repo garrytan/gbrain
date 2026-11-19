@@ -1,6 +1,6 @@
 /**
  * The mention pass: keeps entity pages' derived aliases and every page's
- * `link_source='mentions'` links current, incrementally, from `gbrain extract
+ * `link_source='mentions'` links current, incrementally, from `foresights extract
  * --stale` and the managed stale path (sync's inline extraction stays
  * link-only).
  *

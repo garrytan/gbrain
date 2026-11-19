@@ -37,7 +37,7 @@ function stubEngine(
   } as unknown as BrainEngine;
 }
 
-/** Temp gbrain home with a config; returns the parent for GBRAIN_HOME. */
+/** Temp foresights home with a config; returns the parent for GBRAIN_HOME. */
 function tmpHome(engine: 'pglite' | 'postgres'): string {
   const parent = mkdtempSync(join(tmpdir(), 'dvc-home-'));
   const dir = join(parent, '.gbrain');
@@ -178,7 +178,7 @@ describe('checkVolunteerChannels', () => {
   test('wiring pins: the check runs on BOTH doctor paths and serve registers the delivery callback (source greps)', () => {
     const doctorSrc = doctorSource();
     // Local path (buildChecks) AND remote path both push the check — the docs
-    // point local operators at `gbrain doctor`, so remote-only is a doc lie.
+    // point local operators at `foresights doctor`, so remote-only is a doc lie.
     const pushes = doctorSrc.match(/checks\.push\(await checkVolunteerChannels\(engine/g) ?? [];
     expect(pushes.length).toBeGreaterThanOrEqual(2);
     // Serve wires the feedback-loop callback — deleting the registration

@@ -1,5 +1,5 @@
 /**
- * Shared helpers for the peeled `gbrain skillpack` subcommand modules.
+ * Shared helpers for the peeled `foresights skillpack` subcommand modules.
  *
  * Peeled from src/commands/skillpack.ts (module-size ratchet): the façade
  * keeps dispatch + HELP_TOP + the v0.33 install/uninstall removal errors;
@@ -26,7 +26,7 @@ export function resolveAbs(p: string): string {
 export function findGbrainOrDie(): string {
   const root = findGbrainRoot();
   if (!root) {
-    console.error('Error: could not find gbrain repo root.');
+    console.error('Error: could not find foresights repo root.');
     process.exit(2);
   }
   return root;

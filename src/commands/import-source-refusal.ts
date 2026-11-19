@@ -1,5 +1,5 @@
 /**
- * The sources an ordinary `gbrain import` refuses before it reads a file: a guest source (GBRA-504: only its listed
+ * The sources an ordinary `foresights import` refuses before it reads a file: a guest source (GBRA-504: only its listed
  * writers save pages there, through put_page) and a company-brain source outside its approved sync. runImport throws
  * ImportAbortError with the returned reason; the CLI prints nothing more, so the reason and next step print here.
  */

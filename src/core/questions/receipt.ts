@@ -84,7 +84,7 @@ export function fixFor(pin: PinRow, blocked: BlockedReason | null, freshness: Fr
         why: pin.inactive_reason?.startsWith('migrated_')
           ? 'This pin was imported from dream.auto_think, which never ran in the dream cycle, so it stays inactive until the owner turns it on. Activating it allows paid model refreshes under cycle.standing_questions.budget_usd.'
           : 'A pin created over MCP stays inactive until the owner activates paid refresh on the brain host (or has set consent.preapprove.paid.max_usd_per_run). Activating it allows paid model refreshes under cycle.standing_questions.budget_usd.',
-        user_message: `The pinned question "${pin.question.slice(0, 120)}" needs a paid model call to answer and to keep its answer current. Activate it with: gbrain questions pin --id ${id}`,
+        user_message: `The pinned question "${pin.question.slice(0, 120)}" needs a paid model call to answer and to keep its answer current. Activate it with: foresights questions pin --id ${id}`,
         verify: verifyStep(id), requires_exclusive: false,
       };
     case 'no_model_key':
@@ -109,7 +109,7 @@ export function fixFor(pin: PinRow, blocked: BlockedReason | null, freshness: Fr
       if (answerTooLongCap(pin.last_error) !== null) return refreshAction(id, `The last refresh hit the old output cap; ${MAX_OUTPUT_TOKENS_KEY} has been raised since, so the next scheduled run retries it, or refresh it now.`);
       return refreshAction(id, `The last refresh failed (${pin.last_error}); the previous answer is kept with its stale flags. A full refresh recomputes it from current evidence.`, true);
     case 'no_worker':
-      return refreshAction(id, 'Nothing runs scheduled refreshes on this brain (no standing_questions cycle phase in the last 2 days and no autopilot), so the answer stays as it is until something refreshes it. Refresh it now; a recurring cycle needs the owner to install autopilot (gbrain autopilot --install), which a pin never does.');
+      return refreshAction(id, 'Nothing runs scheduled refreshes on this brain (no standing_questions cycle phase in the last 2 days and no autopilot), so the answer stays as it is until something refreshes it. Refresh it now; a recurring cycle needs the owner to install autopilot (foresights autopilot --install), which a pin never does.');
     default:
       if (freshness === 'stale' || freshness === 'awaiting_refresh') {
         return refreshAction(id, 'The answer needs a refresh; the next standing_questions cycle phase does it, or refresh it now.');

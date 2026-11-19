@@ -1,8 +1,8 @@
 /**
  * #7270: relink never attaches what the assistant (or a named third party)
  * said to an entity page. The SessionEnd corpus sweep saves the assistant's
- * own report about a pinned core page as attributed facts; `gbrain facts
- * relink` and `gbrain facts relink --conversation` used to link every one
+ * own report about a pinned core page as attributed facts; `foresights facts
+ * relink` and `foresights facts relink --conversation` used to link every one
  * that named the page, so the core page filled up with the agent's
  * commentary on every run. Such a row now stays where it was saved, is
  * counted as not_user_attributed, and doctor unlinked_facts does not count it.

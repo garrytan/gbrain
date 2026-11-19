@@ -139,7 +139,7 @@ function checkSettings(settings: EngineSettings): void {
 export async function openEngine(settings: EngineSettings): Promise<BrainEngine> {
   if (settings?.embedded_core !== true) {
     throw opError('embedded_core_required', 'openEngine requires embedded_core: true.',
-      'Opening an engine from settings is an experimental embedding surface and is off by default, so nothing was opened. Pass embedded_core: true in the settings to opt in; the CLI, gbrain serve and mounts open brains through their own connect path.');
+      'Opening an engine from settings is an experimental embedding surface and is off by default, so nothing was opened. Pass embedded_core: true in the settings to opt in; the CLI, foresights serve and mounts open brains through their own connect path.');
   }
   checkSettings(settings);
   const held: EngineSettings = {

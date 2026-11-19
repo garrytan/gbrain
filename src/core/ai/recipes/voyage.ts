@@ -24,7 +24,7 @@ export const voyage: Recipe = {
   tier: 'openai-compat',
   implementation: 'openai-compatible',
   // No shipped rate for these yet: they warn and run under a default cap; a
-  // user cap refuses them until `gbrain pricing set` registers one (X1 guard).
+  // user cap refuses them until `foresights pricing set` registers one (X1 guard).
   unpriced_models: [
     'voyage-4-nano',
   ],
@@ -48,7 +48,7 @@ export const voyage: Recipe = {
       // NEW_INSTALL_DEFAULT_EMBEDDING_MODEL in ai/defaults.ts.
       default_model: 'voyage-4',
       default_dims: 1024,
-      // Display hint for `gbrain providers` only (billing math goes through
+      // Display hint for `foresights providers` only (billing math goes through
       // src/core/embedding-pricing.ts). Rate for the default voyage-4-large.
       cost_per_1m_tokens_usd: 0.12,
       price_last_verified: '2026-07-28',
@@ -77,7 +77,7 @@ export const voyage: Recipe = {
       // rerank-3-lite is the default since gbrain-evals #148 (v0.10.93): 60%
       // cheaper than rerank-2.5 at 50 candidates x 1,400 tokens, quality
       // within noise. A brain with an explicit `search.reranker.model` keeps
-      // it; roll back with `gbrain config set search.reranker.model voyage:rerank-2.5`.
+      // it; roll back with `foresights config set search.reranker.model voyage:rerank-2.5`.
       models: ['rerank-2.5', 'rerank-2.5-lite', 'rerank-3', 'rerank-3-lite'],
       default_model: 'rerank-3-lite',
       path: '/rerank',

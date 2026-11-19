@@ -1,13 +1,13 @@
 /**
  * #8896: the managed writer's Git effects scan what they publish. A script's plain `git commit` in a managed checkout
  * never passed the write path's scan; the Git effect's push used to publish it with the next page write, even after
- * `gbrain sources refresh` refused it with `publish_secret_found`.
+ * `foresights sources refresh` refused it with `publish_secret_found`.
  * Protects: a checkout only ahead of its upstream whose unpublished commits add a value that looks like a secret is
  * refused `publish_secret_found` by `pushGitRoot` and nothing is pushed; a diverged checkout (the remote moved) is
  * refused by the keep-checkout publish its child runs, and nothing is pushed; a remote rewound past a commit holding
  * one (the tracking ref still names it) is not re-published; a remote without the branch refuses
  * instead of scanning nothing; a clean ahead checkout still pushes. Through the effect worker, the page write's Git
- * effect holds on `publish_secret_found` (the remote keeps its tip), `gbrain sync status` names the user's fix, and an
+ * effect holds on `publish_secret_found` (the remote keeps its tip), `foresights sync status` names the user's fix, and an
  * allowlisted false positive releases it; commits the scan cannot read in full hold it as `publish_scan_unreadable`.
  * Seams: real repositories and a bare remote; the keep-checkout publish runs this checkout's own CLI
  * (GBRAIN_JOB_CHILD_CLI points at src/cli.ts); PGLite for the effect worker.
@@ -61,7 +61,7 @@ function checkout(): Checkout {
   return { home, root, remote, other, cli };
 }
 
-/** A script's plain `git commit`: never through gbrain's write path, so never scanned there. */
+/** A script's plain `git commit`: never through foresights's write path, so never scanned there. */
 function scriptCommit(root: string, path: string, content: string): string {
   mkdirSync(dirname(join(root, path)), { recursive: true });
   writeFileSync(join(root, path), content);
@@ -162,7 +162,7 @@ describe('#8896 pushGitRoot scans the commits it publishes', () => {
     chmodSync(join(c.remote, 'hooks', 'pre-receive'), 0o755);
     const error = await withEnv(childEnv(c), () => refusal(pushGitRoot(c.root)));
     expect(error.code).toBe('push_unconfirmed');
-    expect(`${error.message} ${error.suggestion ?? ''}`).toContain('gbrain git commit-push --push-only --keep-checkout --scan-secrets');
+    expect(`${error.message} ${error.suggestion ?? ''}`).toContain('foresights git commit-push --push-only --keep-checkout --scan-secrets');
     expect(remoteTip(c)).toBe(theirs);
   }, 120_000);
 
@@ -442,7 +442,7 @@ describe('#8896 through the effect worker', () => {
     }));
   }, 180_000);
 
-  test('a source-scan walk commits a page whose body holds a credential-shaped value as gbrain\'s own, so it still backs up', async () => {
+  test('a source-scan walk commits a page whose body holds a credential-shaped value as foresights\'s own, so it still backs up', async () => {
     const c = checkout();
     await managedWrite(c, () => {}, async w => {
       const snapshot = (await w.engine.readPageSnapshot('notes/acme-example', { sourceId: w.sourceId }))!;

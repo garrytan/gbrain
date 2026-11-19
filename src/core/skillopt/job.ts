@@ -1,5 +1,5 @@
 /**
- * SkillOpt background job (`gbrain skillopt --background`, Minion handler
+ * SkillOpt background job (`foresights skillopt --background`, Minion handler
  * `skillopt`): job-data shape and the handler body.
  *
  * The job records the CLI's model FLAGS (not just the models they resolved

@@ -1,7 +1,7 @@
 /**
  * v0.40.2.0 — Shared candidate-entity extraction for trajectory routing.
  *
- * Consumed by both `gbrain think` (Commit 2) and the LongMemEval harness
+ * Consumed by both `foresights think` (Commit 2) and the LongMemEval harness
  * (Commit 4). Both surfaces need to derive entity candidates from a
  * question + the slugs that came back from retrieval — extracting twice
  * was a Codex DRY concern, so this is the single implementation.

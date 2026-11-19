@@ -1,7 +1,7 @@
 /**
  * Explicit-only repair kinds (fix wave 5, ENG-O1(a) / DX-O4 / ENG-O13):
  * `stale-atoms` and `extractor-facts` are registered with `explicit_only`.
- * They run only when named; `gbrain repair --all`, the no-kind preview, the
+ * They run only when named; `foresights repair --all`, the no-kind preview, the
  * remediation plan and the post-upgrade banner list them with their preview
  * command instead, and the runner refuses one that reaches it unnamed, so a
  * supplied remediation step cannot run it.
@@ -26,7 +26,7 @@ import { withEnv } from './helpers/with-env.ts';
 
 const EXPLICIT: RepairKind[] = ['accepted-takes', 'google-file-modes', 'stale-atoms', 'atoms-restore', 'atom-fence-rows', 'extractor-facts', 'unwithdrawn-facts', 'purged-page-facts', 'conversation-labels', 'captured-facts', 'agent-session-facts', 'redacted-facts', 'loop-facts', 'ontology-facts', 'facts-rehome', 'consolidate-ties', 'duplicate-facts', 'orphan-children', 'failed-writes', 'split-facts', 'frontmatter', 'timeline-comments', 'timeline-order', 'contact-rows', 'managed-sync-orphans', 'content-receipt-root', 'frontmatter-keys', 'file-drift', 'stuck-recovery', 'ghost-pages', 'origin-twins', 'moved-pages', 'receipt-compaction', 'aliases', 'rename-identity', 'overwritten-edits', 'legacy-twins', 'missing-tables', 'url-clone-fences', 'segmented-mirror', 'segmented-tiling', 'uncommitted-deletions', 'generations', 'lost-fence-rows', 'fact-claim-dates', 'provenance', 'secret-spans', 'rows-behind', 'facts-home', 'private-labels'];
 // GBRA-161: the generations preview carries its ledger kind and the restore window, so the printed command runs as is.
-const PREVIEW = (kind: RepairKind): string => kind === 'generations' ? 'gbrain repair generations --kind atom --since 30d' : `gbrain repair ${kind}`;
+const PREVIEW = (kind: RepairKind): string => kind === 'generations' ? 'foresights repair generations --kind atom --since 30d' : `foresights repair ${kind}`;
 let engine: PGLiteEngine;
 const home = mkdtempSync(join(tmpdir(), 'gbrain-repair-explicit-'));
 
@@ -77,7 +77,7 @@ describe('execution-time enforcement', () => {
     const scope = await resolveRepairScope(engine);
     const ctx = { engine, config: { engine: 'pglite' }, logger: { info() {}, warn() {}, error() {} }, dryRun: true, remote: false } as unknown as OperationContext;
     const unnamed = await refusal(() => runRepair(ctx, staleAtomsRepair, scope, { apply: false }));
-    expect(unnamed.toJSON()).toMatchObject({ error: 'explicit_kind_required', suggestion: 'Preview it on the brain host: gbrain repair stale-atoms',
+    expect(unnamed.toJSON()).toMatchObject({ error: 'explicit_kind_required', suggestion: 'Preview it on the brain host: foresights repair stale-atoms',
       docs: 'docs/guides/repair.md#explicit-only-repair-kinds' });
     const named = await runRepair(ctx, staleAtomsRepair, scope, { apply: false, explicit: true });
     expect(named).toMatchObject({ kind: 'stale-atoms', mode: 'dry_run', affected: 0 });
@@ -90,7 +90,7 @@ describe('execution-time enforcement', () => {
   });
 
   test('a supplied remediation step naming an explicit-only kind refuses the whole run before any step starts', async () => {
-    const step = (kind: RepairPlanStep['kind'], n: number): RepairPlanStep => ({ step: n, id: `repair:${kind}`, kind, affected: 1, command: `gbrain repair ${kind} --apply`,
+    const step = (kind: RepairPlanStep['kind'], n: number): RepairPlanStep => ({ step: n, id: `repair:${kind}`, kind, affected: 1, command: `foresights repair ${kind} --apply`,
       requires_user_agreement: true, protected: true, paid: false, embeds: 'none', est_usd_cost: 0, lifetime_ids: 0, checks: [], rationale: 'supplied' });
     const started: string[] = [];
     for (const kind of EXPLICIT) {
@@ -104,17 +104,17 @@ describe('execution-time enforcement', () => {
 });
 
 describe('surfaces that list instead of run', () => {
-  test('gbrain repair --all and the no-kind preview never run explicit kinds and list their preview commands', async () => {
+  test('foresights repair --all and the no-kind preview never run explicit kinds and list their preview commands', async () => {
     for (const args of [['--all', '--json'], ['--json']]) {
       const out = JSON.parse(await captured(args)) as { results: Array<{ kind: string }>; explicit_kinds: Array<{ kind: string; code: string; preview_command: string }> };
       expect(out.results.map(r => r.kind)).toEqual(AUTO_REPAIR_REGISTRY.map(spec => spec.kind));
       expect(out.explicit_kinds).toEqual(EXPLICIT.map(kind => ({ kind, code: 'explicit_kind_required', preview_command: PREVIEW(kind),
         docs: 'docs/guides/repair.md#explicit-only-repair-kinds' })));
     }
-    expect(await captured(['--all'])).toContain('Explicit-only kinds (not run without their name; preview each): gbrain repair accepted-takes; gbrain repair google-file-modes; gbrain repair stale-atoms; gbrain repair atoms-restore; gbrain repair atom-fence-rows; gbrain repair extractor-facts; gbrain repair unwithdrawn-facts; gbrain repair purged-page-facts; gbrain repair conversation-labels; gbrain repair captured-facts; gbrain repair agent-session-facts; gbrain repair redacted-facts; gbrain repair loop-facts');
+    expect(await captured(['--all'])).toContain('Explicit-only kinds (not run without their name; preview each): foresights repair accepted-takes; foresights repair google-file-modes; foresights repair stale-atoms; foresights repair atoms-restore; foresights repair atom-fence-rows; foresights repair extractor-facts; foresights repair unwithdrawn-facts; foresights repair purged-page-facts; foresights repair conversation-labels; foresights repair captured-facts; foresights repair agent-session-facts; foresights repair redacted-facts; foresights repair loop-facts');
   });
 
-  test('gbrain repair --all --apply exits 0 when explicit kinds are the only ones left', async () => {
+  test('foresights repair --all --apply exits 0 when explicit kinds are the only ones left', async () => {
     _resetCliExitVerdictForTests();
     const out = JSON.parse(await captured(['--all', '--apply', '--json'])) as { results: Array<{ kind: string; stopped?: unknown }> };
     expect(out.results.some(r => EXPLICIT.includes(r.kind as RepairKind))).toBe(false);
@@ -129,7 +129,7 @@ describe('surfaces that list instead of run', () => {
   });
 
   test('help marks explicit kinds with their preview and keeps them out of the --all list; --expect is accepted only for them', () => {
-    expect(REPAIR_HELP).toContain('[explicit-only; preview: gbrain repair stale-atoms]');
+    expect(REPAIR_HELP).toContain('[explicit-only; preview: foresights repair stale-atoms]');
     const allLine = REPAIR_HELP.split('\n').find(line => line.trimStart().startsWith('--all'))!;
     for (const kind of EXPLICIT) expect(allLine).not.toContain(kind);
     expect(parseRepairArgs(['stale-atoms', '--apply', '--expect', 'abc'])).toMatchObject({ kind: 'stale-atoms', apply: true, expect: 'abc' });
@@ -151,16 +151,16 @@ describe('surfaces that list instead of run', () => {
     expect(plan.explicit_repairs!.map(n => [n.kind, n.code, n.preview_command])).toEqual(EXPLICIT.map(kind => [kind, 'explicit_kind_required', PREVIEW(kind)]));
     const text = renderRemediationPlanLines(plan, 90).join('\n');
     expect(text).toContain('Explicit-only repairs');
-    expect(text).toContain('  stale-atoms: gbrain repair stale-atoms');
-    expect(text).not.toContain('gbrain repair stale-atoms --apply');
+    expect(text).toContain('  stale-atoms: foresights repair stale-atoms');
+    expect(text).not.toContain('foresights repair stale-atoms --apply');
   });
 
   test('the banner and the remediation classification report explicit_kind_required with the preview, never an apply', () => withExplicitCheck(spec => {
     const finding: WaveFinding = { spec, check: { name: spec.id, status: 'warn', message: 'stale atoms', details: { count: 3 } }, state: 'finding' };
     const line = bannerFindingLine(finding);
-    expect(line).toBe('[AGENT]   fixture_stale_atoms: 3 (explicit_kind_required; preview with: gbrain repair stale-atoms)');
+    expect(line).toBe('[AGENT]   fixture_stale_atoms: 3 (explicit_kind_required; preview with: foresights repair stale-atoms)');
     expect(line).not.toContain('--apply');
     expect(classifyWaveFindings([finding], [finding], {})).toEqual([{ check_id: spec.id, message: 'stale atoms', class: 'explicit_kind_required',
-      repair_kind: 'stale-atoms', command: 'gbrain repair stale-atoms' }]);
+      repair_kind: 'stale-atoms', command: 'foresights repair stale-atoms' }]);
   }));
 });

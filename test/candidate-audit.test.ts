@@ -1,7 +1,7 @@
 // v0.38 candidate-audit gap-fill (T1 from gap audit).
 //
 // Pins the privacy contract + file I/O behavior for the schema-candidate
-// audit trail used by `gbrain schema review-candidates` (v0.39).
+// audit trail used by `foresights schema review-candidates` (v0.39).
 //
 // Why this matters: candidate-audit is the only on-disk surface for
 // lenient-mode put_page events. The privacy contract (sha8-by-default,

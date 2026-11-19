@@ -29,7 +29,7 @@ const line = (i: number) => '- ' + String(i).padStart(8, '0') + ' acme-example j
 const body = (bytes: number) => Array.from({ length: Math.ceil(bytes / line(0).length) }, (_, i) => line(i)).join('');
 /** A person page of about \`bytes\` body bytes with one timeline entry; twins share title and body. */
 export const twinPage = (bytes: number) => '---\ntype: person\ntitle: Twin Example\n---\n\n# Twin Example\n\n' + body(bytes) + '\n<!-- timeline -->\n- **2026-10-01** | manual — first entry\n';
-/** The file gbrain itself renders for twinPage(bytes), so a write that re-renders it changes only what the write changes. */
+/** The file foresights itself renders for twinPage(bytes), so a write that re-renders it changes only what the write changes. */
 const canonical = (slug: string, bytes: number) => { const parsed = parseMarkdown(twinPage(bytes), slug + '.md'); return serializePageToMarkdown(parsed as never, parsed.tags); };
 const usage = { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 };
 

@@ -1,9 +1,9 @@
 /**
- * Autopilot's reconcile: each daemon tick runs `gbrain sources git-reconcile` over the sources whose sync is on, in this
+ * Autopilot's reconcile: each daemon tick runs `foresights sources git-reconcile` over the sources whose sync is on, in this
  * process, so it works on every engine (a PGLite daemon holds the data directory, and a child could not open it). It
  * never blocks the daemon's event loop, its lease renewals or its heartbeat: Git reads and fetches are bounded async
- * children, and every pull and publish (synchronous Git work) runs in a bounded `gbrain git commit-push` child, a managed
- * checkout's through `gbrain sources refresh`. A failure is logged and the tick goes on; the next tick retries.
+ * children, and every pull and publish (synchronous Git work) runs in a bounded `foresights git commit-push` child, a managed
+ * checkout's through `foresights sources refresh`. A failure is logged and the tick goes on; the next tick retries.
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { reconcileSources } from './sources-git-reconcile.ts';

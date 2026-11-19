@@ -292,7 +292,7 @@ export function parseStrictParamsMode(v: unknown): StrictParamsMode | null {
  * to the file plane — a transient config outage on a reject-mode server must
  * not silently re-open the warn-mode grace period. Validation posture never
  * takes a tool call down. Resolved once per dispatch (amendment 12);
- * serve-http's tools/list also reads it per request so `gbrain config set
+ * serve-http's tools/list also reads it per request so `foresights config set
  * mcp.strict_params reject` flips the advertised schema without a restart
  * (stdio + the legacy bearer transport resolve once at startup — restart to
  * flip there, deliberate).

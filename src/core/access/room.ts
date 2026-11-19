@@ -213,7 +213,7 @@ class RoomUnavailable extends Error {
 }
 
 const OWNER_SET_FIX: Action = { ask_user: true, argv: ['gbrain', 'access', 'owner', 'set', '<MEMBER>'], consent: [], actor: 'user', requires_exclusive: false,
-  inputs: [{ name: 'MEMBER', how: 'Ask the user which enabled member is the brain owner (gbrain access member list), or pass --as <member> to mark that member\'s view instead.' }],
+  inputs: [{ name: 'MEMBER', how: 'Ask the user which enabled member is the brain owner (foresights access member list), or pass --as <member> to mark that member\'s view instead.' }],
   why: 'Names the brain owner, whose view the CLI compares with the room. Choosing the owner is the user\'s decision.' };
 
 async function roomAccessFor(engine: BrainEngine, caller: RoomCaller, principals: AudiencePrincipal[]): Promise<Partial<CallerAccess>> {

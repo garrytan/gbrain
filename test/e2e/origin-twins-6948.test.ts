@@ -3,7 +3,7 @@
  * (`performSync`): only the twin file is held `origin_conflict`, the rest of the source syncs, and the sync-time heal
  * merges verified duplicates into the page the path names (links moved, slug kept as an alias, the twin soft-deleted
  * without touching the file, an `origin_twin_resolved` receipt with the restore command). Anything else stays a per-file
- * hold a person decides (`gbrain repair origin-twins` lists it; `--slug` only detaches). The kill switch, three
+ * hold a person decides (`foresights repair origin-twins` lists it; `--slug` only detaches). The kill switch, three
  * claimants, a tombstone beside a live claimant, deletion and dry runs, the merged twin's restore and purge, and the
  * `pages_live_origin_key` migration with and without twins. Master threw `page_identity_changed` for the whole source.
  *
@@ -134,7 +134,7 @@ for (const backend of testBackends()) describe(`[${backend}] #6948 duplicate-ori
     expect(next.status).not.toBe('blocked_by_failures');
     expect((await row(f.id, 'alpha'))!.compiled_truth).toContain('version two');
     expect((await holds(f.id)).filter(h => h.code === 'origin_conflict')).toEqual([]);
-    // gbrain get alpha-copy resolves to the survivor through the alias.
+    // foresights get alpha-copy resolves to the survivor through the alias.
     const resolved = await engine.executeRaw<{ canonical_slug: string }>('SELECT canonical_slug FROM slug_aliases WHERE source_id=$1 AND alias_slug=$2', [f.id, 'alpha-copy']);
     expect(resolved).toEqual([{ canonical_slug: 'alpha' }]);
   }, 180_000);
@@ -247,7 +247,7 @@ for (const backend of testBackends()) describe(`[${backend}] #6948 duplicate-ori
     expect(pending).toMatchObject({ name: 'origin_twins', status: 'warn' });
     expect(pending.message).toContain('Index pending');
     expect(pending.message).toContain(`source ${f.id} has 1 file(s) recorded by several live pages`);
-    expect(pending.message).toContain('Preview the fix with gbrain repair origin-twins --source ');
+    expect(pending.message).toContain('Preview the fix with foresights repair origin-twins --source ');
     // Resolve every source's twins with the repair (earlier tests left groups only where a person decides; resolve them by keeping alpha).
     const sources = await engine.executeRaw<{ source_id: string }>(`SELECT DISTINCT source_id FROM pages WHERE deleted_at IS NULL AND source_path IS NOT NULL
       GROUP BY source_id, source_path HAVING count(*) > 1`);

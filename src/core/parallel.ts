@@ -5,7 +5,7 @@
  * Returns a `PromiseSettledResult` per input item, in input order, so callers
  * can distinguish fulfilled-with-result from rejected-with-error per item.
  *
- * Used by `gbrain sync --all` (v0.40 Federated Sync v2) to fan out per-source
+ * Used by `foresights sync --all` (v0.40 Federated Sync v2) to fan out per-source
  * syncs without overwhelming the embedding API or local disk.
  *
  * Why a semaphore + `Promise.allSettled` instead of a library:

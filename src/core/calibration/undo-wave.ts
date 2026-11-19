@@ -100,7 +100,7 @@ export async function undoWave(
   // Step 1: count + reverse takes resolutions written by this wave.
   // Identify wave-applied takes via take_grade_cache.applied=true AND
   // wave_version match. Cross-check resolved_by to ensure we're not
-  // un-resolving a take a manual `gbrain takes resolve` operation
+  // un-resolving a take a manual `foresights takes resolve` operation
   // overrode after grade_takes wrote it.
   const targetTakeRows = await engine.executeRaw<{ take_id: number }>(
     `SELECT DISTINCT take_id FROM take_grade_cache

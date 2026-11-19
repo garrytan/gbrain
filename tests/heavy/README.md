@@ -1,6 +1,6 @@
 # tests/heavy/
 
-Heavy ops-shape tests. Shell scripts that exercise gbrain end-to-end against
+Heavy ops-shape tests. Shell scripts that exercise foresights end-to-end against
 real infrastructure (Postgres, large fixtures, concurrent processes). Cost
 minutes per run; NOT in default `bun test`.
 

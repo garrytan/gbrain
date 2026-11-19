@@ -7,7 +7,7 @@
  * Pre-fix the check evaluated models.default BEFORE models.tier.subagent
  * (the pre-#3873 ordering), so on any brain setting both keys it reported a
  * degraded:no_caching warning naming the wrong model — and its own suggested
- * fix (`gbrain config set models.tier.subagent anthropic:...`) was the key
+ * fix (`foresights config set models.tier.subagent anthropic:...`) was the key
  * the check read last, so following doctor's advice could never clear
  * doctor's finding.
  *

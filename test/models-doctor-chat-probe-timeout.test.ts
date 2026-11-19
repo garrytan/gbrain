@@ -1,5 +1,5 @@
 /**
- * `gbrain models doctor` chat/expansion probe timeout — defect fix.
+ * `foresights models doctor` chat/expansion probe timeout — defect fix.
  *
  * Pre-fix, `probeModel()` hardcoded a flat 5000ms abort for every provider.
  * `claude-cli:` dispatches through a `claude --print` subprocess (CLI cold

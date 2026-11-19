@@ -2,10 +2,10 @@
 // reap, leftover line, watchdog and quota preflight against the in-process mock
 // Ubicloud API (VMs show as running) and a fake ssh on PATH. No network, no VM.
 // Ported from gstack's test/ubicloud-runner.test.ts (synced at gstack 5532345a)
-// onto gbrain's mock API.
+// onto foresights's mock API.
 //
 // Protects: up, run and verify refuse without UBI_OWNER before any API call;
-// gbrain's up reaps nothing unless UBI_REAP=1 and says so in one line; reap
+// foresights's up reaps nothing unless UBI_REAP=1 and says so in one line; reap
 // destroys only the caller's own expired TTL VMs and TTL-less
 // ubirun-<owner>-* VMs past UBI_LEGACY_HOURS, and counts other owners' expired ones; run ends with the UBICLOUD:
 // left= line (also in UBI_LEFT_FILE), and a VM it cannot confirm gone fails a
@@ -130,14 +130,14 @@ describe("owner and reap", () => {
     expect((await run(["down", "vm-a"], { UBI_OWNER: "" })).code).toBe(0);
   }, 60_000);
 
-  // GBRA-108: gbrain still holds TTL-less VMs older than gstack's 4 h legacy
-  // bound, so gbrain's up reaps nothing until UBI_REAP=1, and says so.
-  it("gbrain's up reaps nothing by default and says so in one line; UBI_REAP=1 reaps this owner's expired VMs first and leaves other owners'", async () => {
+  // GBRA-108: foresights still holds TTL-less VMs older than gstack's 4 h legacy
+  // bound, so foresights's up reaps nothing until UBI_REAP=1, and says so.
+  it("foresights's up reaps nothing by default and says so in one line; UBI_REAP=1 reaps this owner's expired VMs first and leaves other owners'", async () => {
     const seed = [{ name: "ubirun-other-1000000000-bbbb-t1" }, { name: "ubirun-t1-1000000000-aaaa" }, { name: "ubirun-t1-1000000000-iiii-t1" }, { name: `ubirun-peer-${NOW}-cccc-t3` }];
     serve({ rejectCreates: true, seed });
     const def = await run(["up"]);
     expect(def.code).toBe(1);
-    expect(def.stderr.match(/reap skipped: gbrain defaults UBI_REAP=0 until its TTL-less VMs older than 4h are gone \(UBI_REAP=1 reaps; reap-expired\.ts still destroys expired TTL VMs\)/g)).toHaveLength(1);
+    expect(def.stderr.match(/reap skipped: (?:foresights|gbrain) defaults UBI_REAP=0 until its TTL-less VMs older than 4h are gone \(UBI_REAP=1 reaps; reap-expired\.ts still destroys expired TTL VMs\)/g)).toHaveLength(1);
     expect(def.stderr).not.toContain("reaping");
     expect(destroyed()).toEqual([]);
     const off = await run(["up"], { UBI_REAP: "0" });

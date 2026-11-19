@@ -115,7 +115,7 @@ export function makeSyncHandler(engine: BrainEngine): MinionHandler {
         if (githubItem) throw githubItemBusy(sourceId ?? 'default', githubItem);
         console.error(`[sync] skipped: sync job #${live.id} is already draining ${sourceId ?? 'default'}.`);
         return { skipped: true, reason: 'sync_in_progress', source_id: sourceId ?? 'default', running_job_id: Number(live.id),
-          next: { command: `gbrain jobs get ${live.id} --json`, safe_to_loop: true, retry_after_ms: 30_000, why: `Sync job #${live.id} is draining source ${sourceId ?? 'default'}; it resumes the cursor, so nothing else needs to run.` } };
+          next: { command: `foresights jobs get ${live.id} --json`, safe_to_loop: true, retry_after_ms: 30_000, why: `Sync job #${live.id} is draining source ${sourceId ?? 'default'}; it resumes the cursor, so nothing else needs to run.` } };
       }
     }
     // GBRA-133 PR 2a: the wanted markers this run can satisfy, read before it starts; after the run each is cleared
@@ -154,7 +154,7 @@ export function makeSyncHandler(engine: BrainEngine): MinionHandler {
         await recordBusyMarker(engine, id, { pull: !noPull });
         // A job result is readable by remote callers (get_job), so it carries the public holder: kind and times only.
         return { skipped: true, reason: 'sync_in_progress', source_id: id, ...(holder ? { holder: publicDrainHolder(holder) } : {}),
-          ...(runningJob !== null ? { running_job_id: runningJob, next: { command: `gbrain jobs get ${runningJob} --json`, safe_to_loop: true, retry_after_ms: 30_000,
+          ...(runningJob !== null ? { running_job_id: runningJob, next: { command: `foresights jobs get ${runningJob} --json`, safe_to_loop: true, retry_after_ms: 30_000,
             why: `Sync job #${runningJob} is draining source ${id}; it resumes the cursor, so nothing else needs to run.` } } : {}) };
       }
       // P4.2 (supersedes #6465): a job an older daemon queued for a gbrain-owned content directory completes as a

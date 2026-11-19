@@ -1,5 +1,5 @@
 /**
- * `gbrain jobs smoke` must not leave a job it created on the private `smoke`
+ * `foresights jobs smoke` must not leave a job it created on the private `smoke`
  * queue. Production workers never serve that queue, so a leftover job waits
  * forever and trips oldest-waiting-job health checks. Each case also seeds
  * jobs the run did not create and pins that they survive: cleanup owns
@@ -67,7 +67,7 @@ async function runSmoke(args: string[], opts: { timeoutMs?: number } = {}): Prom
   }
 }
 
-describe('gbrain jobs smoke cleanup', () => {
+describe('foresights jobs smoke cleanup', () => {
   test('timeout: a probe no worker claims is cancelled and removed before exit 1', async () => {
     const unrelated = await seedUnrelated();
     const startSpy = spyOn(MinionWorker.prototype, 'start').mockImplementation(async () => {});

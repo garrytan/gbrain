@@ -1,5 +1,5 @@
 /**
- * `gbrain recall --question` (W1): the value is the question, never an
+ * `foresights recall --question` (W1): the value is the question, never an
  * entity (the parser used to skip the unknown flag and take its value as the
  * positional entity). Local in-process with question only and with question
  * plus query; `--question=` form; the human render; the thin-client route
@@ -44,7 +44,7 @@ beforeEach(() => {
   }) as typeof process.stdout.write;
 });
 
-describe('gbrain recall --question', () => {
+describe('foresights recall --question', () => {
   test('the value is the question, not an entity: facts come back ranked, no page search', async () => {
     const out = JSON.parse(await recall(['--question', QUESTION, '--json']));
     expect(out.facts_order).toBe('relevance');
@@ -84,7 +84,7 @@ describe('gbrain recall --question', () => {
   });
 });
 
-describe('gbrain recall --question on a thin client', () => {
+describe('foresights recall --question on a thin client', () => {
   async function thinCall(args: string[], reply: Record<string, unknown>) {
     const calls: Array<{ name?: string; arguments?: Record<string, unknown> }> = [];
     const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request): Promise<Response> {

@@ -292,7 +292,7 @@ describe('engine copy (test 14)', () => {
   }, 120_000);
   afterAll(async () => { await target.disconnect(); });
 
-  test('gbrain migrate --to copies fact attribution verbatim', async () => {
+  test('foresights migrate --to copies fact attribution verbatim', async () => {
     const sourceId = await newSource('attr-copy');
     const requestId = randomUUID();
     await engine.executeRaw(`INSERT INTO facts(source_id, entity_slug, fact, visibility, source, write_request_id, write_principal_kind, write_principal_id,

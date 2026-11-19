@@ -1,17 +1,17 @@
 # Homebrew for Personal AI Infrastructure
 
-The 10-star vision for GBrain's integration system. Ship Approach B (v0.7.0),
+The 10-star vision for Foresights's integration system. Ship Approach B (v0.7.0),
 build toward this over subsequent releases.
 
 ## The Vision
 
-GBrain becomes a personal infrastructure operating system where every signal in
+Foresights becomes a personal infrastructure operating system where every signal in
 your life flows through the brain automatically. Integrations are **senses**
 (data inputs) and **reflexes** (automated responses to patterns). Users subscribe
 to the creator's actual operating system, then customize it.
 
 ```
-$ gbrain integrations
+$ foresights integrations
 
   SENSES (data inputs)                          STATUS
   -------------------------------------------------------
@@ -34,7 +34,7 @@ $ gbrain integrations
   This week: 1,247 signals ingested. Top: email (47%), voice (23%), X (18%).
   34 new entity pages created. 7 calls transcribed.
 
-  Run 'gbrain integrations show <id>' for setup details.
+  Run 'foresights integrations show <id>' for setup details.
 ```
 
 The user feels: "My brain is alive. It's watching everything I care about, and
@@ -50,7 +50,7 @@ when the agent asked."
 id: voice-to-brain
 name: Voice-to-Brain
 version: 0.7.0
-description: Phone calls create brain pages via Twilio + OpenAI Realtime + GBrain MCP
+description: Phone calls create brain pages via Twilio + OpenAI Realtime + Foresights MCP
 category: sense
 requires: [credential-gateway]
 secrets:
@@ -86,9 +86,9 @@ x-to-brain (standalone, uses X API directly)
 
 ### Health Dashboard
 
-`gbrain integrations doctor` runs health_checks from every configured recipe:
+`foresights integrations doctor` runs health_checks from every configured recipe:
 ```
-$ gbrain integrations doctor
+$ foresights integrations doctor
   voice-to-brain:   ✓ Twilio reachable  ✓ OpenAI key valid  ✓ ngrok tunnel up
   email-to-brain:   ✓ Gmail auth valid   ✗ No emails in 48h (check cron)
   OVERALL: 1 warning
@@ -96,9 +96,9 @@ $ gbrain integrations doctor
 
 ### Sense Analytics
 
-`gbrain integrations stats` aggregates heartbeat data:
+`foresights integrations stats` aggregates heartbeat data:
 ```
-$ gbrain integrations stats
+$ foresights integrations stats
   This week: 1,247 signals ingested
   Top sources: email (47%), voice (23%), X (18%), calendar (12%)
   34 new entity pages created
@@ -137,9 +137,9 @@ alert the user with context from the brain.
 
 ## Key Design Decisions
 
-1. **GBrain is deterministic infrastructure.** Cross-sense correlation, pattern
+1. **Foresights is deterministic infrastructure.** Cross-sense correlation, pattern
    detection, and intelligent responses are the agent's job (OpenClaw/Hermes).
-   GBrain provides the plumbing.
+   Foresights provides the plumbing.
 
 2. **Agents ARE the runtime.** No npm packages, Docker images, or deterministic
    scripts. The recipe markdown IS the installer. The agent reads it and does

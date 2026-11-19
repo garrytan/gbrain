@@ -533,7 +533,7 @@ export async function updateTake(
       RETURNING 1
     `)).rows;
     if (result.length === 0) {
-      throw new GBrainError('TAKE_ROW_NOT_FOUND', `take not found at page_id=${pageId} row=${rowNum}`, 'list takes for this page with `gbrain takes <slug>` to see valid row numbers');
+      throw new GBrainError('TAKE_ROW_NOT_FOUND', `take not found at page_id=${pageId} row=${rowNum}`, 'list takes for this page with `foresights takes <slug>` to see valid row numbers');
     }
   }
 
@@ -547,7 +547,7 @@ export async function supersedeTake(
       const [existing] = (await tx.run(sqlFragment`
         SELECT resolved_at FROM takes WHERE page_id = ${pageId} AND row_num = ${oldRow}
       `)).rows;
-      if (!existing) throw new GBrainError('TAKE_ROW_NOT_FOUND', `take not found at page_id=${pageId} row=${oldRow}`, 'list takes with `gbrain takes <slug>`');
+      if (!existing) throw new GBrainError('TAKE_ROW_NOT_FOUND', `take not found at page_id=${pageId} row=${oldRow}`, 'list takes with `foresights takes <slug>`');
       if ((existing as { resolved_at?: unknown }).resolved_at) {
         throw new GBrainError('TAKE_RESOLVED_IMMUTABLE', `take ${pageId}#${oldRow} is resolved`, 'resolved bets are immutable; add a new take instead');
       }
@@ -570,7 +570,7 @@ export async function supersedeTake(
 
 export async function resolveTake(exec: SqlExecutor, pageId: number, rowNum: number, resolution: TakeResolution): Promise<void> {
     const [existing] = (await exec.run(sqlFragment`SELECT resolved_at FROM takes WHERE page_id = ${pageId} AND row_num = ${rowNum}`)).rows;
-    if (!existing) throw new GBrainError('TAKE_ROW_NOT_FOUND', `take not found at page_id=${pageId} row=${rowNum}`, 'list takes for this page with `gbrain takes <slug>` to see valid row numbers');
+    if (!existing) throw new GBrainError('TAKE_ROW_NOT_FOUND', `take not found at page_id=${pageId} row=${rowNum}`, 'list takes for this page with `foresights takes <slug>` to see valid row numbers');
     if ((existing as { resolved_at?: unknown }).resolved_at) {
       throw new GBrainError('TAKE_ALREADY_RESOLVED', `take ${pageId}#${rowNum} already resolved`, 'resolution is immutable; add a new take to record a new outcome');
     }

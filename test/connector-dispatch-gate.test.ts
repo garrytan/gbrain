@@ -41,7 +41,7 @@ test('a never-attempted connector is idle in the freshness loop and the fan-out,
     await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
     const first = await freshnessTick(engine);
     expect(first.synced).not.toContain(f.id);
-    expect(first.lines.filter(line => line.includes(`gbrain sync --source ${f.id}`))).toHaveLength(1);
+    expect(first.lines.filter(line => line.includes(`foresights sync --source ${f.id}`))).toHaveLength(1);
     const second = await freshnessTick(engine);
     expect(second.synced).not.toContain(f.id);
     expect(second.lines.some(line => line.includes(f.id))).toBe(false);

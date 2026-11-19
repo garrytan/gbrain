@@ -62,7 +62,7 @@ describe('checkSelfUpgradeHealth', () => {
       const c = checkSelfUpgradeHealth();
       expect(c.status).toBe('warn');
       expect(c.message).toContain('self-upgrade failure');
-      expect(c.message).toContain('gbrain self-upgrade');
+      expect(c.message).toContain('foresights self-upgrade');
     });
   });
 
@@ -74,24 +74,24 @@ describe('checkSelfUpgradeHealth', () => {
       logSelfUpgrade({ channel: 'autopilot', action: unmet.action, current: '0.42.0', latest: '0.99.0', outcome: 'skipped', reason: unmet.reason });
       const c = checkSelfUpgradeHealth();
       expect(c.status).toBe('warn');
-      expect(c.message).toContain('Auto-upgrade to 0.99.0 held: gbrain 0.99.0 requires Bun >=9.0.0; bun on PATH is 1.4.2. Fix: bun upgrade, then gbrain upgrade. Docs: docs/guides/upgrades-auto-update.md#bun-floor');
+      expect(c.message).toContain('Auto-upgrade to 0.99.0 held: foresights 0.99.0 requires Bun >=9.0.0; bun on PATH is 1.4.2. Fix: bun upgrade, then foresights upgrade. Docs: docs/guides/upgrades-auto-update.md#bun-floor');
 
       logSelfUpgrade({ channel: 'autopilot', action: 'apply', current: '0.42.0', latest: '0.99.0', reason: 'auto-upgrading 0.42.0 -> 0.99.0' });
       expect(checkSelfUpgradeHealth().message).not.toContain('held');
 
-      logSelfUpgrade({ channel: 'autopilot', action: 'unsupported_runtime', current: '0.42.0', latest: VERSION, outcome: 'skipped', reason: `gbrain ${VERSION} requires Bun >=9.0.0` });
+      logSelfUpgrade({ channel: 'autopilot', action: 'unsupported_runtime', current: '0.42.0', latest: VERSION, outcome: 'skipped', reason: `foresights ${VERSION} requires Bun >=9.0.0` });
       expect(checkSelfUpgradeHealth().message).not.toContain('held');
     });
   });
 
   test('#5855: a hold on an unreadable floor names the failed read', async () => {
     const apply = decideSelfUpgrade({ mode: 'auto', channel: 'autopilot', currentVersion: '0.42.0', latestVersion: '0.99.0', failedVersions: [], idle: true, inQuietHours: true, canSelfUpdate: true });
-    const unreadable = gateOnTargetRuntime(apply, { ok: false, failedRead: 'GET https://raw.githubusercontent.com/garrytan/gbrain/HEAD/package.json returned HTTP 503' }, { label: 'bun on PATH', path: '/opt/bun', version: '1.4.2' });
+    const unreadable = gateOnTargetRuntime(apply, { ok: false, failedRead: 'GET https://raw.githubusercontent.com/aimonk2025/gbrain/HEAD/package.json returned HTTP 503' }, { label: 'bun on PATH', path: '/opt/bun', version: '1.4.2' });
     await withHome(() => {
       logSelfUpgrade({ channel: 'autopilot', action: unreadable.action, current: '0.42.0', latest: '0.99.0', outcome: 'skipped', reason: unreadable.reason });
       const c = checkSelfUpgradeHealth();
       expect(c.status).toBe('warn');
-      expect(c.message).toContain('Auto-upgrade to 0.99.0 held: Could not read the Bun floor of gbrain 0.99.0: GET https://raw.githubusercontent.com/garrytan/gbrain/HEAD/package.json returned HTTP 503.');
+      expect(c.message).toContain('Auto-upgrade to 0.99.0 held: Could not read the Bun floor of foresights 0.99.0: GET https://raw.githubusercontent.com/aimonk2025/gbrain/HEAD/package.json returned HTTP 503.');
       expect(c.message).toContain('The next quiet-hours tick retries.');
     });
   });
@@ -102,7 +102,7 @@ describe('checkSelfUpgradeHealth', () => {
     try {
       await withHome(() => {
         logSelfUpgrade({ ts: '2026-09-27T23:00:00.000Z', channel: 'autopilot', action: 'apply', current: '0.42.0', latest: '0.43.0', reason: 'auto-upgrading 0.42.0 -> 0.43.0' });
-        logSelfUpgrade({ channel: 'autopilot', action: 'unsupported_runtime', current: '0.43.0', latest: '0.99.0', outcome: 'skipped', reason: 'gbrain 0.99.0 requires Bun >=9.0.0' });
+        logSelfUpgrade({ channel: 'autopilot', action: 'unsupported_runtime', current: '0.43.0', latest: '0.99.0', outcome: 'skipped', reason: 'foresights 0.99.0 requires Bun >=9.0.0' });
         expect(checkSelfUpgradeHealth().message).toContain('Auto-upgrade to 0.99.0 held');
       });
       await withHome(() => {
@@ -134,7 +134,7 @@ describe('checkSelfUpgradeHealth', () => {
 
 describe('#3747: LOCAL doctor emits self_upgrade_health', () => {
   // Pre-fix, only the remote report (doctor/report-remote.ts) pushed this
-  // check — `gbrain doctor` on the host machine, the surface an operator
+  // check — `foresights doctor` on the host machine, the surface an operator
   // actually diagnoses upgrade problems from, never showed it.
   test('buildChecks includes self_upgrade_health (engine-free, --fast)', async () => {
     await withHome(async () => {

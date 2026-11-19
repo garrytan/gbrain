@@ -627,7 +627,7 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
       });
     }, 120_000);
 
-    test('#37: gbrain beliefs resolves the source through the ambient chain, and a bare --source is refused', async () => {
+    test('#37: foresights beliefs resolves the source through the ambient chain, and a bare --source is refused', async () => {
       await brain(async b => {
         await withEnv({ GBRAIN_SOURCE: b.sourceId }, () => runBeliefs(b.engine, ['enable']));
         expect((await latestCoverage(b.engine, b.sourceId))?.type).toBe('coverage.complete');

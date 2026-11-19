@@ -1,5 +1,5 @@
 /**
- * #5157 Taste T3: `gbrain jobs authorize-legacy --select <filter>` previews
+ * #5157 Taste T3: `foresights jobs authorize-legacy --select <filter>` previews
  * every matching SQL NULL row with a hash, and `--expect <hash> --yes`
  * authorizes exactly that set through the shared preview-approval helper.
  * Also pins the coded refusals that replaced the module's plain Errors
@@ -71,7 +71,7 @@ describe('--select grammar', () => {
       expect(error.code, String(raw)).toBe('legacy_job_selection_invalid');
       expect(error.message).toContain('status and name');
       expect(error.message).toContain('waiting|delayed|waiting-children|paused|completed|failed');
-      expect(error.suggestion).toBe('gbrain jobs authorize-legacy --select "status=waiting|paused,name=synthesize|ingest_capture"');
+      expect(error.suggestion).toBe('foresights jobs authorize-legacy --select "status=waiting|paused,name=synthesize|ingest_capture"');
       expect(error.docs).toBe('docs/guides/repair.md#legacy-job-selection-invalid');
     }
   });
@@ -89,7 +89,7 @@ describe('authorize-legacy --select preview and apply', () => {
     expect(preview.summary).toEqual({ total: 2, by_name: { synthesize: { waiting: 1, paused: 1 } }, first_ids: [a, b] });
     expect(preview.unsupported_ids).toEqual([unsupported]);
     expect(preview.preview_hash).toMatch(/^[a-f0-9]{64}$/);
-    expect(preview.apply_command).toBe(`gbrain jobs authorize-legacy --select "status=waiting|paused,name=synthesize" --expect ${preview.preview_hash} --yes`);
+    expect(preview.apply_command).toBe(`foresights jobs authorize-legacy --select "status=waiting|paused,name=synthesize" --expect ${preview.preview_hash} --yes`);
     expect(await authorities()).toEqual(before);
     expect(c).toBeGreaterThan(0);
   });
@@ -116,10 +116,10 @@ describe('authorize-legacy --select preview and apply', () => {
     const stale = await refusal(() => applyLegacySelection(engine, selection, preview.preview_hash!, true));
     expect(stale.code).toBe('preview_changed');
     expect(stale.message).toContain(preview.preview_hash!);
-    expect(stale.suggestion).toBe('Re-run the preview: gbrain jobs authorize-legacy --select "status=waiting"');
+    expect(stale.suggestion).toBe('Re-run the preview: foresights jobs authorize-legacy --select "status=waiting"');
     expect(stale.docs).toBe('docs/guides/repair.md#preview-changed');
     const unknown = await refusal(() => applyLegacySelection(engine, selection, 'b'.repeat(64), true));
-    expect(unknown.message).toBe(`The preview changed since ${'b'.repeat(64)}; re-run gbrain jobs authorize-legacy --select "status=waiting" and use the new hash.`);
+    expect(unknown.message).toBe(`The preview changed since ${'b'.repeat(64)}; re-run foresights jobs authorize-legacy --select "status=waiting" and use the new hash.`);
     // A hash previewed for another filter does not apply under this one.
     const other = parseLegacyJobSelection('status=waiting,name=synthesize', 'authorize-legacy');
     const otherPreview = await previewLegacySelection(engine, other);
@@ -149,10 +149,10 @@ describe('authorize-legacy --select preview and apply', () => {
     const error = await refusal(() => previewLegacySelection(engine, parseLegacyJobSelection('status=waiting', 'authorize-legacy')));
     expect(error.code).toBe('legacy_jobs_active');
     expect(error.message).toContain('11 job(s) are active');
-    expect(error.suggestion).toContain('Stop producers (gbrain serve, gbrain autopilot) and workers');
-    for (const id of active.slice(0, 10)) expect(error.suggestion).toMatch(new RegExp(`gbrain jobs cancel ${id}\\b`));
-    expect(error.suggestion).not.toMatch(new RegExp(`gbrain jobs cancel ${active[10]}\\b`));
-    expect(error.suggestion).toContain('gbrain jobs list --status active');
+    expect(error.suggestion).toContain('Stop producers (foresights serve, foresights autopilot) and workers');
+    for (const id of active.slice(0, 10)) expect(error.suggestion).toMatch(new RegExp(`foresights jobs cancel ${id}\\b`));
+    expect(error.suggestion).not.toMatch(new RegExp(`foresights jobs cancel ${active[10]}\\b`));
+    expect(error.suggestion).toContain('foresights jobs list --status active');
     expect(error.docs).toBe('docs/guides/repair.md#legacy-jobs-active');
   });
 
@@ -177,18 +177,18 @@ describe('coded refusals on the --ids path (DX-O2)', () => {
   test('missing ids, non-SQL-NULL rows and a stale digest carry codes, hints and anchors', async () => {
     const missing = await refusal(() => parseLegacyJobIds(undefined));
     expect(missing.code).toBe('legacy_job_selection_invalid');
-    expect(missing.suggestion).toContain('gbrain jobs authorize-legacy --ids 12,34');
+    expect(missing.suggestion).toContain('foresights jobs authorize-legacy --ids 12,34');
     const future = await legacy('synthesize', 'waiting', '{"version":2,"kind":"application"}');
     const unsupported = await refusal(() => authorizeLegacyJobs(engine, [future]));
     expect(unsupported.message).toContain('SQL NULL');
-    expect(unsupported.suggestion).toContain(`gbrain jobs cancel ${future}`);
+    expect(unsupported.suggestion).toContain(`foresights jobs cancel ${future}`);
     const id = await legacy('synthesize');
     const stale = await refusal(() => authorizeLegacyJobs(engine, [id], 'a'.repeat(64), true));
     expect(stale.code).toBe('preview_changed');
     expect(stale.message).toContain('snapshot changed');
-    expect(stale.suggestion).toBe(`Re-run the preview: gbrain jobs authorize-legacy --ids ${id}`);
+    expect(stale.suggestion).toBe(`Re-run the preview: foresights jobs authorize-legacy --ids ${id}`);
     const flags = await refusal(() => authorizeLegacyJobs(engine, [id], 'a'.repeat(64), false));
-    expect(flags.suggestion).toBe(`gbrain jobs authorize-legacy --ids ${id} --expect ${'a'.repeat(64)} --yes`);
+    expect(flags.suggestion).toBe(`foresights jobs authorize-legacy --ids ${id} --expect ${'a'.repeat(64)} --yes`);
   });
 });
 
@@ -204,7 +204,7 @@ describe('CLI transport (ENG-O12) and CLI-only pin (ENG-O13)', () => {
     expect(human.out).toContain('  ingest_capture: paused 1  [may make paid provider calls]');
     expect(human.out).toContain('  lint: paused 1');
     expect(human.out).not.toContain('lint: paused 1  [may');
-    expect(human.out).toMatch(/Apply exactly this set: gbrain jobs authorize-legacy --select "status=waiting\|paused" --expect [a-f0-9]{64} --yes/);
+    expect(human.out).toMatch(/Apply exactly this set: (?:foresights|gbrain) jobs authorize-legacy --select "status=waiting\|paused" --expect [a-f0-9]{64} --yes/);
     const json = JSON.parse((await cli(['authorize-legacy', '--select', 'status=waiting|paused', '--json'])).out);
     expect(json.snapshot.jobs.map((job: { id: number }) => job.id)).toContain(a);
     expect(json.paid_job_names).toEqual(['ingest_capture', 'synthesize']);
@@ -225,7 +225,7 @@ describe('CLI transport (ENG-O12) and CLI-only pin (ENG-O13)', () => {
     const child = await queue.add('busy', {}, { parent_job_id: parent });
     await engine.executeRaw(`UPDATE minion_jobs SET status = 'active', lock_token = 't', lock_until = now() + interval '1 hour', claim_generation = claim_generation + 1 WHERE id = $1`, [child.id]);
     const gate = await refusal(() => assertNoUnreviewedJobs(engine));
-    const preview = /preview with (gbrain jobs authorize-legacy --select "[^"]+")/.exec(gate.suggestion!)![1]!;
+    const preview = /preview with ((?:foresights|gbrain) jobs authorize-legacy --select "[^"]+")/.exec(gate.suggestion!)![1]!;
     await queue.cancelJob(child.id);
     expect((await queue.getJob(parent))?.status).toBe('waiting');
     const printed = await cli(argv(preview).slice(2));
@@ -237,7 +237,7 @@ describe('CLI transport (ENG-O12) and CLI-only pin (ENG-O13)', () => {
     expect(result.exit).toBe(1);
     expect(JSON.parse(result.out)).toMatchObject({
       error: 'legacy_job_selection_invalid',
-      suggestion: 'gbrain jobs authorize-legacy --select "status=waiting|paused,name=synthesize|ingest_capture"',
+      suggestion: 'foresights jobs authorize-legacy --select "status=waiting|paused,name=synthesize|ingest_capture"',
       docs: 'docs/guides/repair.md#legacy-job-selection-invalid',
     });
     expect(result.err).toContain('Error [legacy_job_selection_invalid]: Unknown --select key "state"');

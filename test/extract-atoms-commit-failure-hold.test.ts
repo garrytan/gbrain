@@ -117,7 +117,7 @@ test('a repeated commit failure is held after MAX_DETERMINISTIC_FAILURES strikes
     expect(items[0].locator).toBe('notes/2026-01-01-example');
     expect(items[0].attempts).toBe(MAX_DETERMINISTIC_FAILURES);
     expect(items[0].failure).toContain('revision_conflict');
-    expect(items[0].receipt_command).toBe(`gbrain write-request -- ${items[0].request_id}`);
+    expect(items[0].receipt_command).toBe(`foresights write-request -- ${items[0].request_id}`);
     expect(items[0].retry_command).toContain(items[0].request_id);
     for (let window = 0; window < 2; window++) {
       const held = await drain();

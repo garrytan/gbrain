@@ -1,6 +1,6 @@
 # Post-install hint
 
-When `gbrain integrations install agent-voice --target <repo>` completes, print this to stdout (or to the install agent's conversation surface) so the operator knows what to do next.
+When `foresights integrations install agent-voice --target <repo>` completes, print this to stdout (or to the install agent's conversation surface) so the operator knows what to do next.
 
 ---
 
@@ -67,10 +67,10 @@ bun run start    # or `npm start`
 
 Open `http://localhost:8765/call` in a browser, click Connect, grant mic permission. You should be talking to Venus (or Mars if you set `DEFAULT_PERSONA=mars`).
 
-### 6. (Optional) Run the WebRTC roundtrip E2E — from the gbrain checkout
+### 6. (Optional) Run the WebRTC roundtrip E2E — from the foresights checkout
 
 The install copies **unit tests only**. The E2E and eval suites stay gbrain-side
-(under `recipes/agent-voice/tests/`), so run them from your gbrain checkout,
+(under `recipes/agent-voice/tests/`), so run them from your foresights checkout,
 not from `<target-repo>`:
 
 ```bash
@@ -84,11 +84,11 @@ Or the full openclaw-wrapped flow (requires `OPENCLAW_BIN`, `ANTHROPIC_API_KEY`)
 
 ```bash
 export AGENT_VOICE_FULL_E2E=1
-gbrain claw-test --scenario voice-agent-install --live --agent openclaw
+foresights claw-test --scenario voice-agent-install --live --agent openclaw
 # → ~$1-2/run; friction-discovery test, NOT a ship gate
 ```
 
-### 7. (Optional) Run the LLM-judge persona evals — from the gbrain checkout
+### 7. (Optional) Run the LLM-judge persona evals — from the foresights checkout
 
 ```bash
 cd <gbrain-checkout>/recipes/agent-voice
@@ -100,10 +100,10 @@ Live receipts you generate go to `tests/evals/baseline-runs/` (gitignored — th
 
 ### 8. Update later
 
-When gbrain ships a new agent-voice reference, refresh your local copy:
+When foresights ships a new agent-voice reference, refresh your local copy:
 
 ```bash
-gbrain integrations install agent-voice --target <target-repo> --refresh
+foresights integrations install agent-voice --target <target-repo> --refresh
 ```
 
 Refresh classifies each file (six states — identical / stale / locally-modified / host-deleted / source-deleted / new-in-manifest) and applies a deterministic decision per state: local edits are preserved by default; pass `--auto take-theirs` to take upstream everywhere, or `--dry-run` to preview. The full contract lives gbrain-side at `recipes/agent-voice/install/refresh-algorithm.md` (not copied to the host repo).

@@ -66,7 +66,7 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  // Wave A inline behaviour: pin segmented storage off (segmented reads of get_page and gbrain get are lane 2a's).
+  // Wave A inline behaviour: pin segmented storage off (segmented reads of get_page and foresights get are lane 2a's).
   await engine.setConfig('pages.segmented_storage', 'off');
   await put('notes/small', 'A small page about acme-example.');
   await put('logs/big', conversation(9000));
@@ -107,7 +107,7 @@ describe('mode resolution', () => {
     expect(only.compiled_truth).toBeUndefined();
   });
 
-  test("gbrain's thin client naming no mode gets the whole page", async () => {
+  test("foresights's thin client naming no mode gets the whole page", async () => {
     const r = await get(ctx({ thinClient: true, transport: 'http' }), { slug: 'logs/big' });
     expect(typeof r.compiled_truth).toBe('string');
   });

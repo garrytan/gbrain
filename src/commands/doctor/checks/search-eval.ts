@@ -17,7 +17,7 @@ import { PASS_FLOOR_THRESHOLD, PASS_MEAN_THRESHOLD } from '../../../core/cross-m
  *
  * Original contract: status stays `ok` (never warns; never docks health
  * score); the hint lives in `message`, including a paste-ready
- * `gbrain search modes --reset` consolidation command whenever per-key
+ * `foresights search modes --reset` consolidation command whenever per-key
  * overrides exist.
  *
  */
@@ -34,7 +34,7 @@ export async function checkSearchMode(engine: BrainEngine): Promise<Check> {
     const loaded = await loadSearchModeConfig(engine);
     const resetReranker = resolveSearchMode({ mode: loaded.mode }).reranker_model;
     const context = !mode
-      ? 'search.mode is unset (using balanced fallback). Run `gbrain search modes` to see what is running and pick a mode explicitly.'
+      ? 'search.mode is unset (using balanced fallback). Run `foresights search modes` to see what is running and pick a mode explicitly.'
       : overrideKeys.length === 0
         ? `Mode: ${mode} (no per-key overrides — mode bundle is canonical).`
         : `Mode: ${mode} with ${overrideKeys.length} per-key override(s) (${overrideKeys.join(', ')}).`;
@@ -59,14 +59,14 @@ export async function checkSearchMode(engine: BrainEngine): Promise<Check> {
         status: 'ok',
         message:
           `${context} The override equals the mode bundle's own default, so it is redundant: ` +
-          `gbrain config unset ${redundant.join(' ')}`,
+          `foresights config unset ${redundant.join(' ')}`,
       };
     }
 
     return {
       name: 'search_mode',
       status: 'ok',
-      message: `${context} To consolidate to the pure mode bundle: gbrain search modes --reset`,
+      message: `${context} To consolidate to the pure mode bundle: foresights search modes --reset`,
     };
   } catch (e) {
     return {
@@ -88,7 +88,7 @@ export async function checkSearchMode(engine: BrainEngine): Promise<Check> {
 export async function checkEvalDrift(engine: BrainEngine): Promise<Check> {
   try {
     const { watchedFilesDrifted, resolveGbrainSourceRoot } = await import('../../../core/eval/drift-watch.ts');
-    // Working tree vs HEAD (uncommitted retrieval changes) in gbrain's OWN
+    // Working tree vs HEAD (uncommitted retrieval changes) in foresights's OWN
     // source checkout — never process.cwd(), which is whatever repo the
     // operator (or the serving process) happens to stand in. The fuller
     // version (vs the commit of the last published eval) is wired when
@@ -98,7 +98,7 @@ export async function checkEvalDrift(engine: BrainEngine): Promise<Check> {
       return {
         name: 'eval_drift',
         status: 'ok',
-        message: 'Not applicable — gbrain is running as an installed package, not a source checkout; retrieval code changes arrive as version bumps (gbrain --version), not as a git diff.',
+        message: 'Not applicable — foresights is running as an installed package, not a source checkout; retrieval code changes arrive as version bumps (foresights --version), not as a git diff.',
       };
     }
     const drifted = watchedFilesDrifted(repoRoot);
@@ -108,7 +108,7 @@ export async function checkEvalDrift(engine: BrainEngine): Promise<Check> {
         status: 'ok',
         // No path here: this check is remote-reachable (run_doctor) and the
         // server's absolute source root is not the caller's business.
-        message: 'Could not probe retrieval drift (git unavailable or the gbrain source root is not a git work tree).',
+        message: 'Could not probe retrieval drift (git unavailable or the foresights source root is not a git work tree).',
       };
     }
     if (drifted.length === 0) {
@@ -122,7 +122,7 @@ export async function checkEvalDrift(engine: BrainEngine): Promise<Check> {
     return {
       name: 'eval_drift',
       status: 'ok',
-      message: `${drifted.length} retrieval-affecting file(s) changed since HEAD: ${summary}. Re-run \`gbrain eval run-all\` after committing these changes.`,
+      message: `${drifted.length} retrieval-affecting file(s) changed since HEAD: ${summary}. Re-run \`foresights eval run-all\` after committing these changes.`,
     };
   } catch (e) {
     return {
@@ -179,7 +179,7 @@ export async function checkEmbeddingEnvOverride(engine: BrainEngine): Promise<Ch
       name: 'embedding_env_override',
       status: 'ok',
       message: envSet
-        ? 'env vars agree with DB config today — note they override the file plane at runtime; prefer the file plane (or keep env in sync everywhere gbrain runs)'
+        ? 'env vars agree with DB config today — note they override the file plane at runtime; prefer the file plane (or keep env in sync everywhere foresights runs)'
         : 'env vars agree with DB config',
     };
   }
@@ -208,7 +208,7 @@ export async function checkEmbeddingMigrationState(engine: BrainEngine, opts: { 
       return {
         name: 'embedding_migration_state',
         status: 'warn',
-        message: 'embedding-migration state marker is corrupt. Inspect: gbrain migrate embeddings --status; re-running the migration rewrites it.',
+        message: 'embedding-migration state marker is corrupt. Inspect: foresights migrate embeddings --status; re-running the migration rewrites it.',
       };
     }
     if (!marker.state) {
@@ -233,7 +233,7 @@ export async function checkEmbeddingMigrationState(engine: BrainEngine, opts: { 
       message:
         `an embedding migration to ${s.to_model} (${s.to_dims}d) started ${s.started_at} is in flight or was interrupted${staleNote}. ` +
         `Resume: ${renderResumeCommand(s)}. ` +
-        `Status: gbrain migrate embeddings --status`,
+        `Status: foresights migrate embeddings --status`,
       details: { to_model: s.to_model, to_dims: s.to_dims, started_at: s.started_at },
     };
   } catch (err) {
@@ -263,7 +263,7 @@ export async function checkSubagentCapability(engine: BrainEngine): Promise<Chec
             (source === 'models.subagent'
               ? `jobs are refused at dispatch. `
               : `runtime will fall back to claude-sonnet-4-6. `) +
-            `Fix: \`gbrain config set ${source} <provider>:<model-with-tools>\` (e.g. anthropic:claude-sonnet-4-6 or openai:gpt-5.2).`,
+            `Fix: \`foresights config set ${source} <provider>:<model-with-tools>\` (e.g. anthropic:claude-sonnet-4-6 or openai:gpt-5.2).`,
         };
       }
       if (verdict === 'unknown') {
@@ -273,7 +273,7 @@ export async function checkSubagentCapability(engine: BrainEngine): Promise<Chec
           message:
             `${source} is "${resolved}" which references an unknown provider. ` +
             `Use a recipe-declared provider. ` +
-            `Fix: \`gbrain config set ${source} anthropic:claude-sonnet-4-6\` or pick another known provider.`,
+            `Fix: \`foresights config set ${source} anthropic:claude-sonnet-4-6\` or pick another known provider.`,
         };
       }
       if (verdict === 'unusable:no_subagent_loop') {
@@ -287,7 +287,7 @@ export async function checkSubagentCapability(engine: BrainEngine): Promise<Chec
             (source === 'models.subagent'
               ? `jobs are refused at dispatch. `
               : `runtime will fall back to claude-sonnet-4-6. `) +
-            `Fix: \`gbrain config set ${source} <provider>:<model>\` with a provider whose recipe declares ` +
+            `Fix: \`foresights config set ${source} <provider>:<model>\` with a provider whose recipe declares ` +
             `supports_subagent_loop: true (e.g. anthropic:claude-sonnet-4-6).`,
         };
       }
@@ -299,7 +299,7 @@ export async function checkSubagentCapability(engine: BrainEngine): Promise<Chec
             `${source} is "${resolved}" — provider does not support prompt caching. ` +
             `The subagent loop runs hot (cost scales linearly with conversation length). ` +
             `For lower cost on long loops, use an Anthropic model: ` +
-            `\`gbrain config set models.tier.subagent anthropic:claude-sonnet-4-6\`.`,
+            `\`foresights config set models.tier.subagent anthropic:claude-sonnet-4-6\`.`,
         };
       }
       return null;
@@ -326,8 +326,8 @@ export async function checkSubagentCapability(engine: BrainEngine): Promise<Chec
     // v0.37 (T10 / D7) + v0.38 (D7 capability rename): warn when the configured
     // chat_model is non-Anthropic AND ANTHROPIC_API_KEY isn't set. With
     // agent.use_gateway_loop=false (the v0.38 default), subagent jobs still
-    // require Anthropic at runtime; without the key, gbrain dream / gbrain
-    // agent run / gbrain autopilot will all fail at job submission. Catches
+    // require Anthropic at runtime; without the key, foresights dream / foresights
+    // agent run / foresights autopilot will all fail at job submission. Catches
     // the post-init drift case the init-time caveat would have shown if init
     // had been re-run.
     try {
@@ -344,9 +344,9 @@ export async function checkSubagentCapability(engine: BrainEngine): Promise<Chec
           status: 'warn',
           message:
             `chat_model is "${chatModel}" (non-Anthropic) and ANTHROPIC_API_KEY is not set. ` +
-            `Subagent features (gbrain dream, gbrain agent run, gbrain autopilot) will fail at job submission ` +
-            `unless agent.use_gateway_loop=true. Chat alone (gbrain think) still works. ` +
-            `Either set ANTHROPIC_API_KEY or enable: \`gbrain config set agent.use_gateway_loop true\`.`,
+            `Subagent features (foresights dream, foresights agent run, foresights autopilot) will fail at job submission ` +
+            `unless agent.use_gateway_loop=true. Chat alone (foresights think) still works. ` +
+            `Either set ANTHROPIC_API_KEY or enable: \`foresights config set agent.use_gateway_loop true\`.`,
         };
       }
     } catch { /* loadConfig may throw; fall through */ }
@@ -394,7 +394,7 @@ export function computeConversationParserProbeHealthCheck(
       status: 'ok',
       message:
         'disabled (opt-in; default-on only for search.mode=tokenmax). Enable with: ' +
-        '`gbrain config set autopilot.conversation_parser_probe.enabled true`',
+        '`foresights config set autopilot.conversation_parser_probe.enabled true`',
     };
   }
   if (events.length === 0) {
@@ -471,7 +471,7 @@ function judgePanelNote(event: ProbeJudgePanelFields): string {
       panel +
       ` ${[...new Set(shared)].join(' and ')} holds more than one slot, so its votes count more than once. ` +
       `Next step: set models.eval.cross_modal.slot_a, slot_b and slot_c to three different models ` +
-      `(gbrain config set models.eval.cross_modal.slot_a <model>; one provider is enough, ` +
+      `(foresights config set models.eval.cross_modal.slot_a <model>; one provider is enough, ` +
       `for example three claude-cli models).`
     );
   }
@@ -543,7 +543,7 @@ export function computeNightlyQualityProbeHealthCheck(
     return {
       name,
       status: 'ok',
-      message: `disabled (opt-in). Enable with: gbrain config set autopilot.nightly_quality_probe.enabled true`,
+      message: `disabled (opt-in). Enable with: foresights config set autopilot.nightly_quality_probe.enabled true`,
     };
   }
   if (events.length === 0) {
@@ -617,7 +617,7 @@ export async function computeConversationFactsBacklogCheck(
         name,
         status: 'ok',
         message:
-          'disabled (opt-in). Enable with: gbrain config set cycle.conversation_facts_backfill.enabled true',
+          'disabled (opt-in). Enable with: foresights config set cycle.conversation_facts_backfill.enabled true',
       };
     }
 
@@ -758,7 +758,7 @@ export async function computeConversationFactsBacklogCheck(
 
     if (backlog > 10) {
       const fixHint =
-        'gbrain extract-conversation-facts --background --max-cost-usd 5';
+        'foresights extract-conversation-facts --background --max-cost-usd 5';
       return {
         name,
         status: 'warn',

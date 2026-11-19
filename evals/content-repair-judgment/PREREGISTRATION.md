@@ -4,12 +4,12 @@ Frozen on October 9, 2026, before any scored run, with the fixtures in the same 
 
 ## The question
 
-gbrain holds a file instead of importing it when its frontmatter `slug:` names a different page than its path does (`frontmatter_slug_conflict`). Until [#6377](https://github.com/garrytan/gbrain/issues/6377) the only proposed repair was to delete the `slug:` line. On one brain that proposal was wrong for one of three such holds: the held file was a duplicate page for a person, the `slug:` line pointed at that person's canonical page, and deleting it would have minted a second page for the same person. The other two were stray lines left by a template.
+foresights holds a file instead of importing it when its frontmatter `slug:` names a different page than its path does (`frontmatter_slug_conflict`). Until [#6377](https://github.com/garrytan/gbrain/issues/6377) the only proposed repair was to delete the `slug:` line. On one brain that proposal was wrong for one of three such holds: the held file was a duplicate page for a person, the `slug:` line pointed at that person's canonical page, and deleting it would have minted a second page for the same person. The other two were stray lines left by a template.
 
 The content-repair lane (plan `docs/plans/2026-10-09-001-fix-content-repair-lane-6377-plan.md`, section B) removes the line itself when the named page does not exist, or is of another type and shares no title token with the held file. Every other conflict goes to a chat model, which sees both files' frontmatter, headings, first 60 body lines and every later line that mentions the other page's slug, and answers exactly one of:
 
 - `remove_slug`: the line is a stray; the file is its own page.
-- `merge_into` with a `canonical` slug: both describe the same thing; the canonical keeps the slug. In this release gbrain writes the recommendation on the hold for a person; it does not merge or delete.
+- `merge_into` with a `canonical` slug: both describe the same thing; the canonical keeps the slug. In this release foresights writes the recommendation on the hold for a person; it does not merge or delete.
 - `needs_human`: the model cannot tell.
 
 The damage is asymmetric. A `remove_slug` on a true duplicate splits one person across two pages for good. A `merge_into` on two different people, once a person acts on it, loses one of them. A `needs_human` costs a repair, never correctness. So this experiment asks:
@@ -20,7 +20,7 @@ The damage is asymmetric. A `remove_slug` on a true duplicate splits one person 
 
 ## The fixtures
 
-`evals/content-repair-judgment/fixtures.jsonl` in gbrain, 48 synthetic pairs with placeholder names only (`alice-example`, `acme-example`, `fund-a`; no real person, company or fund). Every pair reaches the model in production: the named page exists and is of the same type, or of another type sharing a title token. Written by the agent running the experiment before any run; no person reviewed them.
+`evals/content-repair-judgment/fixtures.jsonl` in foresights, 48 synthetic pairs with placeholder names only (`alice-example`, `acme-example`, `fund-a`; no real person, company or fund). Every pair reaches the model in production: the named page exists and is of the same type, or of another type sharing a title token. Written by the agent running the experiment before any run; no person reviewed them.
 
 | Set | Count | Shape | Correct answer | Acceptable | Hard failure |
 |---|---|---|---|---|---|
@@ -34,7 +34,7 @@ The $0 check (`bun evals/content-repair-judgment/harness.ts --check`, also the k
 
 ## The arms
 
-Per the gbrain project rule on eval models (2026-10-07): the newest frontier model of each family, no Fable in counted runs, no gpt-5.4-mini, no older generation. No earlier judgment result exists, so no link model is needed.
+Per the foresights project rule on eval models (2026-10-07): the newest frontier model of each family, no Fable in counted runs, no gpt-5.4-mini, no older generation. No earlier judgment result exists, so no link model is needed.
 
 | Model | Why it runs |
 |---|---|
@@ -51,7 +51,7 @@ Three runs per model: 3 × 3 × 48 = 432 pair runs. Expected spend is under $5; 
 1. Each fixture becomes the judgment input the lane builds (`judgmentParticipant` in `src/core/content-repair/judgment.ts`: frontmatter with the `slug:` line, headings, first 60 non-blank body lines, up to 40 later lines mentioning the other page) and the production prompt (`buildJudgmentPrompt`, its prompt version recorded in the run's `.meta.json`).
 2. One gateway `chat` call per pair with the production options: thinking off where the model allows it (`thinking: 'off'`), the production output ceiling, no fallback model, the production timeout. The eval calls the model the way the lane does; it does not re-implement the prompt or the parser.
 3. The answer goes through the production parser (`parseJudgmentAnswer`): a verdict, or a failure class (`llm_malformed`, `llm_truncated`, `llm_refused`, `llm_empty`, `llm_unavailable`). `llm_unavailable` (a provider error production retries on the next run) is retried up to twice after a pause; every other outcome stands.
-4. Each row records the verdict, its grade, input and output tokens, the USD gbrain's own price table gives the call, wall time and the answer text.
+4. Each row records the verdict, its grade, input and output tokens, the USD foresights's own price table gives the call, wall time and the answer text.
 
 ## Measurements
 

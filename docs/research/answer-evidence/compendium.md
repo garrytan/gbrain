@@ -10,10 +10,10 @@ status: research synthesis; matched reading follow-up completed
 **The field has found useful methods, but our excerpt experiment did not help.**
 The original recommendation was to replicate evidence-notes-before-answering,
 keeping the original evidence intact. That recommendation was a hypothesis,
-not evidence of a GBrain improvement.
+not evidence of a Foresights improvement.
 
 **Follow-up, 2026-09-24:** the separately frozen
-[GBrain reading comparison](../../eval/READING_NOTES_RESULTS.md) now shows a
+[Foresights reading comparison](../../eval/READING_NOTES_RESULTS.md) now shows a
 positive automated result, 324/361 versus 308/361, with source-verified
 improvements and explicit grading/cutoff caveats. The full paper replication
 also improved from 424/500 to 463/500; notes helped in both formats, while
@@ -54,7 +54,7 @@ every case and the original scores. Its confidence interval covers question
 sampling, not model or grader variability.
 
 **This was not a test of learned compression, evidence-note prompting, new
-retrieval, or a new memory architecture.** None of those has earned a GBrain win
+retrieval, or a new memory architecture.** None of those has earned a Foresights win
 from this experiment. The inspected holdout is no longer available for tuning
 followed by an allegedly fresh confirmation.
 
@@ -187,7 +187,7 @@ indexing memories before a query is not cutting already-retrieved turns.
 [15](sources/15-simplemem.md)
 
 These three are preprints in the archived revisions, not independently verified
-GBrain results. Borrow a mechanism with a matched component test, not an entire
+Foresights results. Borrow a mechanism with a matched component test, not an entire
 architecture on the strength of its headline score. Different datasets,
 question subsets, answer models, judges and cost accounting prevent a fair
 cross-paper leaderboard.
@@ -217,11 +217,11 @@ Start with LongMemEval section 5.5, Figure 6 and the reading prompts in Figure 1
 Reproduce its two-by-two comparison: natural-language versus JSON presentation,
 each with direct answering versus evidence notes. Keep source text, order and
 output budget fixed across cells. Test the paper's oracle condition separately
-from a GBrain transfer test with frozen retrieved sessions. Pin dataset, prompts,
+from a Foresights transfer test with frozen retrieved sessions. Pin dataset, prompts,
 reader and judge; disclose an unavailable historical model snapshot instead of
 calling a modern-model substitution an exact numerical replication.
 
-For the GBrain transfer test, retain the untrusted-data boundary and abstention
+For the Foresights transfer test, retain the untrusted-data boundary and abstention
 policy. The current reader asks for a concise answer, without evidence notes;
 see [`reader.ts`](../../../src/eval/longmemeval/reader.ts). Start with its existing
 512-token output ceiling applied equally to compared arms. Record truncations
@@ -267,12 +267,12 @@ omitted text was unnecessary.
 ## 4. The decision
 
 Do not invest further in the failed lexical excerpt selector or replace
-GBrain's memory architecture on this evidence. The strongest nearby research
+Foresights's memory architecture on this evidence. The strongest nearby research
 lead is an intact-evidence reading replication. Change that priority if a
 failure audit shows the needed facts were never retrieved: work on retrieval
 first in that case. Either way, require a fresh matched improvement before
 changing the default.
 
 For the evidence behind each mechanism, use the [source index](index.md).
-For what we measured in GBrain, use the
+For what we measured in Foresights, use the
 [negative experiment report](../../eval/ANSWER_PACKET_RESULTS.md).

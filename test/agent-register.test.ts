@@ -1,5 +1,5 @@
 /**
- * gbrain agent register (cathedral-6) — parser, presets, guards, and the
+ * foresights agent register (cathedral-6) — parser, presets, guards, and the
  * PGLite end-to-end integration (pre-flight → one tx → post-commit audit →
  * exchange → verify round-trip).
  *

@@ -33,7 +33,7 @@ BANNED_NAMES=(
   'Diana'           # Diana Hu, named in CLAUDE.md privacy example
   'Wintermute'      # private OpenClaw fork name (CLAUDE.md rule)
   # 'Hermes' removed (hermes-harness wave): here it names NousResearch/hermes-agent,
-  # a PUBLIC platform gbrain documents (README hero, INSTALL_FOR_AGENTS.md) and now
+  # a PUBLIC platform foresights documents (README hero, INSTALL_FOR_AGENTS.md) and now
   # tests against (claw-test hermes runner, install door e2e).
   # The original scrub targeted conflating the public agent with PRIVATE deployment names — those
   # (Wintermute, and any future private fork names) remain banned above/below.

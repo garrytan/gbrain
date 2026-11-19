@@ -1,13 +1,13 @@
 /**
- * The events gbrain offers Wakeshift (plan D2, D3): `gbrain.job.finished`, a
+ * The events foresights offers Wakeshift (plan D2, D3): `gbrain.job.finished`, a
  * minion job reaching completed, failed, dead or cancelled;
  * `gbrain.write.settled`, a write request reaching committed, failed,
  * conflict or cancelled; `gbrain.cron.finished`, a registered cron's run
- * reported by `gbrain wakeshift emit`. Every event is personal (only the
+ * reported by `foresights wakeshift emit`. Every event is personal (only the
  * named subscription gets an occurrence) and deleted on delivery. The payload is a pointer: ids, status,
  * kind, times and the exact next call. Never page text, titles or slugs, so a
  * wake cannot widen readable_by, folder rules or private pages; the agent's
- * follow-up read goes through gbrain's own access checks.
+ * follow-up read goes through foresights's own access checks.
  */
 import { createHash } from 'node:crypto';
 
@@ -59,7 +59,7 @@ const CRON_PAYLOAD = {
   additionalProperties: false,
 } as const;
 
-/** The manifest `gbrain wakeshift enable` merges (POST /manifest/merge); topic as the SDK would build it. */
+/** The manifest `foresights wakeshift enable` merges (POST /manifest/merge); topic as the SDK would build it. */
 export function wakeshiftManifest(): { events: Record<string, unknown>[] } {
   const event = (name: string, description: string, arg: string, argSchema: Record<string, unknown>, payload: unknown) => ({
     name, description,
@@ -68,11 +68,11 @@ export function wakeshiftManifest(): { events: Record<string, unknown>[] } {
   });
   return {
     events: [
-      event(JOB_FINISHED, 'A gbrain background job you are watching reached completed, failed, dead or cancelled. The payload is a pointer: call get_job with the id for the result.',
+      event(JOB_FINISHED, 'A foresights background job you are watching reached completed, failed, dead or cancelled. The payload is a pointer: call get_job with the id for the result.',
         'job', { type: 'integer', minimum: 1 }, JOB_PAYLOAD),
-      event(WRITE_SETTLED, 'A gbrain write request you are watching reached committed, failed, conflict or cancelled. The payload is a pointer: call get_write_request with the id for the receipt.',
+      event(WRITE_SETTLED, 'A foresights write request you are watching reached committed, failed, conflict or cancelled. The payload is a pointer: call get_write_request with the id for the receipt.',
         'request_id', { type: 'string', pattern: '^[0-9a-f-]{36}$' }, WRITE_PAYLOAD),
-      event(CRON_FINISHED, 'A scheduled gbrain cron you are watching reported its run as ok or failed. The payload names the cron and the status; read its output where the cron writes it.',
+      event(CRON_FINISHED, 'A scheduled foresights cron you are watching reported its run as ok or failed. The payload names the cron and the status; read its output where the cron writes it.',
         'name', { type: 'string', pattern: '^[a-z0-9._-]{1,64}$' }, CRON_PAYLOAD),
     ],
   };
@@ -83,7 +83,7 @@ export function wakeshiftManifestHash(): string {
   return createHash('sha256').update(JSON.stringify(wakeshiftManifest())).digest('hex').slice(0, 16);
 }
 
-/** A cron name as gbrain stores it: lowercased, any run of other characters folded to '-', at most 64 characters; null when nothing is left. */
+/** A cron name as foresights stores it: lowercased, any run of other characters folded to '-', at most 64 characters; null when nothing is left. */
 export function cronName(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
   const name = raw.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);

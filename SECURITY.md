@@ -2,8 +2,8 @@
 
 ## Reporting Vulnerabilities
 
-If you discover a security issue in GBrain, please report it privately by opening
-a [private security advisory](https://github.com/garrytan/gbrain/security/advisories/new)
+If you discover a security issue in Foresights, please report it privately by opening
+a [private security advisory](https://github.com/aimonk2025/gbrain/security/advisories/new)
 on GitHub.
 
 Do not open a public issue for security vulnerabilities.
@@ -28,8 +28,8 @@ CI runs three automated security checks alongside secret scanning (Gitleaks):
   Verify a downloaded release binary manually with:
 
   ```bash
-  gh attestation verify ./gbrain-darwin-arm64 -R garrytan/gbrain
-  gh attestation verify ./gbrain-linux-x64 -R garrytan/gbrain
+  gh attestation verify ./gbrain-darwin-arm64 -R aimonk2025/gbrain
+  gh attestation verify ./gbrain-linux-x64 -R aimonk2025/gbrain
   ```
 
 All security workflows use SHA-pinned actions and least-privilege permissions,
@@ -37,7 +37,7 @@ enforced structurally by actionlint on every workflow change.
 
 ### Install-path trust model
 
-- **Compiled-binary self-update (`gbrain upgrade` on `darwin-arm64` /
+- **Compiled-binary self-update (`foresights upgrade` on `darwin-arm64` /
   `linux-x64`)** verifies integrity automatically before it installs: it
   computes the downloaded binary's SHA-256 and checks it against the build
   provenance attestation fetched from the GitHub REST API — a different origin
@@ -51,7 +51,7 @@ enforced structurally by actionlint on every workflow change.
   fetched over TLS; it does NOT independently verify the attestation's Sigstore
   signature (the Fulcio certificate chain or Rekor inclusion).
 - **From-source and pinned-tag installs remain trust-on-first-use.**
-  `bun install -g github:garrytan/gbrain#stable` follows a force-moved
+  `bun install -g github:aimonk2025/gbrain#stable` follows a force-moved
   tag, and the `codex-plugin` branch / template repo are force-published; these
   paths trust TLS + GitHub without an independent integrity check. From-source
   installs also serve the committed `admin/dist` bundle (devDeps for a fresh
@@ -61,53 +61,53 @@ enforced structurally by actionlint on every workflow change.
 
 ## Environment variables and cwd `.env` files
 
-gbrain is usually a globally installed CLI (or a compiled binary) that runs
+foresights is usually a globally installed CLI (or a compiled binary) that runs
 with an arbitrary working directory — the repo you happen to be in, the
 workspace an agent hook fires from. Bun auto-loads `.env`, `.env.local` and
 the `.env.<NODE_ENV>[.local]` variants from that working directory into the
-process environment before any gbrain code runs, for `bun run` and for
+process environment before any foresights code runs, for `bun run` and for
 compiled binaries alike, and it expands `${VAR}` references inside those
 files. A `.env` committed into a cloned repository is therefore **untrusted
 input** — it was written by whoever authored the repo, not by you.
 Compiled `gbrain` binaries are built with `--no-compile-autoload-bunfig`, so a
 `bunfig.toml` in the working directory is inert — it cannot preload code into
-the binary before gbrain starts (a CI guard keeps every build invocation
+the binary before foresights starts (a CI guard keeps every build invocation
 flagged). The development runtime `bun src/cli.ts` stays bun-native; a
 contributor's own working directory is trusted. Script-mode installs
-(`bun install -g github:garrytan/gbrain`, `git clone` + `bun link`) run
+(`bun install -g github:aimonk2025/gbrain`, `git clone` + `bun link`) run
 `src/cli.ts` as an ordinary Bun script, and Bun applies the current
-directory's `bunfig.toml` before any gbrain code runs — gbrain prints a
+directory's `bunfig.toml` before any foresights code runs — foresights prints a
 one-line warning when it finds a top-level `preload` there, but it cannot
 undo it. Only the compiled binary ignores a cwd `bunfig.toml`; run script-mode
-gbrain from directories you control, or use the release binary in untrusted
+foresights from directories you control, or use the release binary in untrusted
 checkouts.
 
-Hooks are the exception gbrain closes itself, because a harness runs them in
+Hooks are the exception foresights closes itself, because a harness runs them in
 the session's directory with nothing for you to approve. Every hook that
-`gbrain setup claude-code|codex` writes (the read-context and capture hooks,
-and the per-turn rule hook that `--instructions-only`, `gbrain connect
---install` and `gbrain bootstrap harness` add) starts gbrain through
-`<gbrain config dir>/hook-launcher/gbrain-hook`. That launcher is a small
+`foresights setup claude-code|codex` writes (the read-context and capture hooks,
+and the per-turn rule hook that `--instructions-only`, `foresights connect
+--install` and `foresights bootstrap harness` add) starts foresights through
+`<foresights config dir>/hook-launcher/gbrain-hook`. That launcher is a small
 POSIX `sh` script: it records the session directory in `GBRAIN_HOOK_CWD`,
-changes into its own directory and starts gbrain there, so Bun never reads the
+changes into its own directory and starts foresights there, so Bun never reads the
 session directory's `bunfig.toml` or `.env`. Its directory holds only the
-launcher; if anything else appears there, the launcher refuses to start gbrain
-and prints one line to stderr. `gbrain post-upgrade` moves hooks written
-before the launcher onto it (for `gbrain setup codex`'s hooks it prints the
-setup command instead, since that rewrite re-trusts them), `gbrain setup`
+launcher; if anything else appears there, the launcher refuses to start foresights
+and prints one line to stderr. `foresights post-upgrade` moves hooks written
+before the launcher onto it (for `foresights setup codex`'s hooks it prints the
+setup command instead, since that rewrite re-trusts them), `foresights setup`
 rewrites them on its next run, and
-`gbrain doctor` (`harness_wiring`, code `hook_session_cwd`) flags any that are
+`foresights doctor` (`harness_wiring`, code `hook_session_cwd`) flags any that are
 left. The stdio MCP server gets the same treatment, since the harness starts
-it in the session's directory too (#8426): `gbrain setup` and `gbrain
-bootstrap hooks` register `command: <hook launcher>`, `args: [<gbrain>, serve,
-…]`, and `gbrain serve` reads `.gbrain-source` and the upload root from
+it in the session's directory too (#8426): `foresights setup` and `foresights
+bootstrap hooks` register `command: <hook launcher>`, `args: [<foresights>, serve,
+…]`, and `foresights serve` reads `.gbrain-source` and the upload root from
 `GBRAIN_HOOK_CWD` without changing its own directory. So do the hooks from
-`gbrain bootstrap hooks`, `gbrain bootstrap harness` and its Codex
-`SessionEnd` capture, and the gbrain plugins' per-turn hook, whose
+`foresights bootstrap hooks`, `foresights bootstrap harness` and its Codex
+`SessionEnd` capture, and the foresights plugins' per-turn hook, whose
 `.agents/gbrain-launcher` changes into the plugin directory first (#8428).
-`gbrain post-upgrade` rewrites only a user-scope `gbrain setup claude-code`
+`foresights post-upgrade` rewrites only a user-scope `foresights setup claude-code`
 MCP entry setup still owns, under setup's lock; every Codex entry and every
-`gbrain bootstrap` entry is named with the command that rewrites it, because
+`foresights bootstrap` entry is named with the command that rewrites it, because
 those writers re-trust Codex hooks or run from the workspace. A project-scope
 `.mcp.json` and committed `.claude/settings.json` hooks belong to the
 repository and stay PATH-resolved.
@@ -121,7 +121,7 @@ runs.
 **The trust boundary.** Security-relevant variables are honored from your
 shell environment, from a service `EnvironmentFile`, and from
 `~/.gbrain/.env` (the operator-owned secrets file). They are **never** honored
-from a `.env` file in the current directory. At startup every gbrain process
+from a `.env` file in the current directory. At startup every foresights process
 checks the working directory's `.env` family and, for each protected variable
 that one of those files *assigns* (whatever the value — an expanded
 `${PWD}/…` looks like an ordinary absolute path by the time it reaches the
@@ -133,14 +133,14 @@ process), drops the variable and prints one line to stderr:
 
 When a `.env` file in the current directory assigns any protected variable
 (`GBRAIN_GUARDRAILS_MODULE` is the one exception — it refuses to run instead,
-see below), gbrain drops it, prints one `[env] Ignoring …` line, and then re-runs itself
+see below), foresights drops it, prints one `[env] Ignoring …` line, and then re-runs itself
 once from an empty temporary directory with the sanitized environment, switches
 back to your directory, and exits with that run's status. The re-run's
 environment simply lacks the dropped variables (they are never carried as empty
 strings, which git and the dynamic loader would treat as set), so every program
-gbrain spawns — git, the claude CLI, workers — inherits the clean view. The
+foresights spawns — git, the claude CLI, workers — inherits the clean view. The
 internal variable `GBRAIN_CWD_ENV_QUARANTINED` marks the re-run — it is not a
-setting, and gbrain honours it only when it provably started in the empty
+setting, and foresights honours it only when it provably started in the empty
 directory the marker names. A signal-killed re-run maps to exit 128+signal;
 the wrapper's exit status is always the re-run's (it relays the child and
 nothing else), and the re-run dies with its wrapper: if the wrapper is
@@ -153,7 +153,7 @@ wrapper alone is forwarded once so the re-run is not orphaned; SIGTERM/SIGHUP
 sent to the wrapper are always forwarded. When the dropped variable was a
 planted `HOME`, the re-run receives your real home directory (derived from the
 startup environment, never from the file) so git identity and `~/`-relative
-paths keep working. gbrain processes that gbrain itself starts from
+paths keep working. foresights processes that foresights itself starts from
 that directory (a supervised worker, a background push) repeat the step once
 for their own subtree. This costs nothing when the working directory has no
 `.env`, or when nothing protected is assigned there.
@@ -175,7 +175,7 @@ for their own subtree. This costs nothing when the working directory has no
   `GBRAIN_NO_SANITY`, `GBRAIN_REMOTE_PRIVATE_PAGES`, and the stdio MCP tool
   surface `GBRAIN_SURFACE`.
 - The variable families through which a checkout could hijack the programs
-  gbrain spawns rather than gbrain itself (`CWD_DOTENV_PROTECTED_PREFIXES`,
+  foresights spawns rather than foresights itself (`CWD_DOTENV_PROTECTED_PREFIXES`,
   `CWD_DOTENV_PROTECTED_TOOLCHAIN_KEYS`): the `LD_*`/`DYLD_*` dynamic-loader
   family, git configuration/hook/exec injection (`GIT_*`), Bun and npm runtime
   configuration (`BUN_*`, `NPM_CONFIG_*`/`npm_config_*`), Node preload and
@@ -191,13 +191,13 @@ for their own subtree. This costs nothing when the working directory has no
   `USERPROFILE` (inert while exported, but where `HOME` is unset a planted
   value would relocate `~/.gitconfig`, `~/.ssh` and `~/.gbrain` into the
   checkout), the shell-startup and interpreter-home family the
-  non-interactive shells gbrain's children start would read (`BASH_ENV`,
+  non-interactive shells foresights's children start would read (`BASH_ENV`,
   `SHELLOPTS`/`PS4`, `BASHOPTS`, `PROMPT_COMMAND`, `ZDOTDIR`, `PYTHONHOME`,
   `PERLLIB`, `GCONV_PATH`, and exported functions under the `BASH_FUNC_*`
   prefix), `EDITOR`/`VISUAL`/`PAGER`, ssh askpass
   programs, interpreter preload for Python/Perl/Ruby helpers, HTTP(S)/ALL proxy
   variables in both spellings, and every AI-provider endpoint or credential
-  variable gbrain's gateway reads from the environment (`CLAUDE_CONFIG_DIR`,
+  variable foresights's gateway reads from the environment (`CLAUDE_CONFIG_DIR`,
   `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_BASE_URL`,
   `OPENROUTER_BASE_URL`, `LITELLM_BASE_URL`, `OLLAMA_BASE_URL`,
   `LMSTUDIO_BASE_URL`, `LLAMA_SERVER_BASE_URL`, `LLAMA_SERVER_RERANKER_BASE_URL`).
@@ -210,17 +210,17 @@ for their own subtree. This costs nothing when the working directory has no
 `~/` path: cwd-relative specs and bare package names are refused (a package
 name would resolve from the current directory's `node_modules`). It is also
 the one key that fails closed at the cwd boundary: when a cwd `.env` assigns
-it and a non-empty value was dropped, gbrain does not re-run without it — it
+it and a non-empty value was dropped, foresights does not re-run without it — it
 refuses to start (exit 1, `guardrails: GBRAIN_GUARDRAILS_MODULE is assigned by
 a .env file in the current directory; refusing to run without the operator's
-firewall …`), because Bun merges the file before gbrain starts and a value you
+firewall …`), because Bun merges the file before foresights starts and a value you
 exported cannot be told apart from the file's. A benign repository never
 assigns this gbrain-specific key; your own setting belongs in your shell or in
 `~/.gbrain/.env`.
 
 **Semantics worth knowing.**
 
-- *Per process, then inherited.* Every gbrain process re-applies the check at
+- *Per process, then inherited.* Every foresights process re-applies the check at
   startup; the one-time sanitized re-run above is what makes the result reach
   git, the agent CLI and workers. The supervisor passes the shell-job opt-in to
   workers — and workers to per-job child processes — as the
@@ -237,7 +237,7 @@ assigns this gbrain-specific key; your own setting belongs in your shell or in
   `GBRAIN_DATABASE_URL` *assigned by a cwd `.env`* is dropped like any other
   protected key — a project directory never gets to choose which brain you
   write to. Move it to your shell or `~/.gbrain/.env`.
-- *Your own config directory.* Running gbrain from inside `~/.gbrain` (or
+- *Your own config directory.* Running foresights from inside `~/.gbrain` (or
   `$GBRAIN_HOME/.gbrain`) makes its `.env` the "cwd `.env`". That file is
   yours, so it is honored without a warning — unless a cwd `.env` assigns
   any key the config directory is derived from (`GBRAIN_HOME`, `HOME`,
@@ -245,7 +245,7 @@ assigns this gbrain-specific key; your own setting belongs in your shell or in
 - *Server deployments.* `GBRAIN_ADMIN_BOOTSTRAP_TOKEN`, `GBRAIN_HTTP_CORS_ORIGIN`
   and `GBRAIN_HTTP_TRUST_PROXY` are deliberately not on the list so documented
   container deployments that co-locate them keep working — launch
-  `gbrain serve --http` from a directory you control.
+  `foresights serve --http` from a directory you control.
 - *Compiled binaries included.* The check and the sanitized re-run behave
   identically in `bun run src/cli.ts` and in the compiled `gbrain` binary.
 
@@ -257,7 +257,7 @@ shell export) or export it from your shell profile.
 
 ### Keep dynamic client registration disabled unless explicitly needed
 
-GBrain disables Dynamic Client Registration (DCR) by default. Keep that
+Foresights disables Dynamic Client Registration (DCR) by default. Keep that
 default for internet-reachable deployments and pre-register trusted clients
 with operator-approved scopes and source access. Enabling DCR lets network
 callers create OAuth client records, so use it only when the deployment's
@@ -268,8 +268,8 @@ connection; DCR by itself never yields a token.
 When DCR is on, a self-registered client passes three gates. At registration
 it may request at most `read write`; a request for any privileged scope is
 rejected with HTTP 400 `invalid_client_metadata` (never silently narrowed) and
-the error text points at the operator path (`gbrain auth register-client`, the
-admin API, or a later `gbrain auth rescope-client <client_id> --scopes ...`).
+the error text points at the operator path (`foresights auth register-client`, the
+admin API, or a later `foresights auth rescope-client <client_id> --scopes ...`).
 Every authorization-code connection then stops at the admin dashboard for the
 owner's approval before a code is minted — approval never widens the
 registered scope. Finally, codes and tokens are re-intersected with the
@@ -281,21 +281,21 @@ reserved for deployments that intentionally allow self-registered
 machine-to-machine (`client_credentials`) clients, which are issued tokens
 without owner approval; such clients are capped at **read-only** scope.
 
-### Recommended: `gbrain serve --http` published with `gbrain mcp expose`
+### Recommended: `foresights serve --http` published with `foresights mcp expose`
 
-GBrain ships a built-in HTTP transport (OAuth 2.1 plus the existing
+Foresights ships a built-in HTTP transport (OAuth 2.1 plus the existing
 `access_tokens` bearer table). The recommended way to publish it from your own
-computer is `gbrain mcp expose`:
+computer is `foresights mcp expose`:
 
 ```bash
 # Publish on your Tailscale tailnet (HTTPS, tailnet-only, user service keeps it running)
-gbrain mcp expose
+foresights mcp expose
 
 # Public HTTPS on the same name — only for agents that run in a vendor's cloud
-gbrain mcp expose --funnel
+foresights mcp expose --funnel
 
 # Provision each client with a least-privilege grant through the running server
-gbrain mcp grant agent-example --harness codex --profile memory-writer --source default \
+foresights mcp grant agent-example --harness codex --profile memory-writer --source default \
   --url https://your-machine.your-tailnet.ts.net/mcp \
   --admin-token-file ~/.gbrain/serve/admin-token --credentials-out /private/agent-example.json
 ```
@@ -307,17 +307,17 @@ Tailscale or a service.
 Why this shape: the server keeps its loopback bind and Tailscale terminates
 TLS, so nothing listens on a LAN or public interface; tailnet-only reach means
 only your own devices, under your Tailscale ACLs, can even see the name; Funnel
-is an explicit opt-in and every request still needs a gbrain token; the admin
+is an explicit opt-in and every request still needs a foresights token; the admin
 bootstrap token lives in a 0600 file the service reads at run time and is
 never printed or stored in the service definition; `--remove` undoes only
-gbrain's own handler and service. Self-service registration stays off unless
+foresights's own handler and service. Self-service registration stays off unless
 you pass `--enable-dcr`. Details and the troubleshooting table:
 [docs/guides/remote-mcp.md](docs/guides/remote-mcp.md).
 
 Running the server yourself behind ngrok or on a cloud host works the same way
-(`gbrain serve --http --public-url https://…`; [docs/mcp/DEPLOY.md](docs/mcp/DEPLOY.md)).
-Bearer tokens are managed via `gbrain auth create/list/revoke`; OAuth clients
-via `gbrain auth register-client` / `gbrain mcp grant` and the admin dashboard.
+(`foresights serve --http --public-url https://…`; [docs/mcp/DEPLOY.md](docs/mcp/DEPLOY.md)).
+Bearer tokens are managed via `foresights auth create/list/revoke`; OAuth clients
+via `foresights auth register-client` / `foresights mcp grant` and the admin dashboard.
 
 ### If you must use a custom HTTP wrapper
 
@@ -331,14 +331,14 @@ via `gbrain auth register-client` / `gbrain mcp grant` and the admin dashboard.
 
 ### Pre-registering claude.ai / ChatGPT clients without DCR (v0.41.3+)
 
-The recommended hardening posture above is: ship `gbrain serve --http`
+The recommended hardening posture above is: ship `foresights serve --http`
 **without** `--enable-dcr` and pre-register every client manually. As of
-v0.41.3, `gbrain auth register-client` accepts the OAuth fields
+v0.41.3, `foresights auth register-client` accepts the OAuth fields
 browser-based clients need:
 
 ```bash
 # Pre-register claude.ai (confidential client; two redirect URIs)
-gbrain auth register-client claude-ai \
+foresights auth register-client claude-ai \
   --scopes "read write" \
   --redirect-uri https://claude.ai/api/mcp/auth_callback \
   --redirect-uri https://claude.com/api/mcp/auth_callback
@@ -346,7 +346,7 @@ gbrain auth register-client claude-ai \
 # --redirect-uri is passed; pass --grant-types explicitly to override.
 
 # Pre-register ChatGPT (public PKCE client; no client_secret minted)
-gbrain auth register-client chatgpt \
+foresights auth register-client chatgpt \
   --scopes "read write" \
   --redirect-uri https://chatgpt.com/connector/oauth/<HASH> \
   --token-endpoint-auth-method none
@@ -382,7 +382,7 @@ grant is allowed. Pre-registering clients via the CLI / admin API is unchanged
 and accepts every scope; discovery without DCR lists every scope such a client
 may hold.
 
-`gbrain doctor` (`oauth_client_scope_health`) warns about active clients that
+`foresights doctor` (`oauth_client_scope_health`) warns about active clients that
 hold a scope beyond the self-registration ceiling but carry no operator grant
 record, with the exact `rescope-client` / `revoke-client` remedy. Remote
 `sources_remove` callers may remove only their own write source (a federated
@@ -428,16 +428,16 @@ before migrating an existing queue. That guide also covers the Bun 1.4.4
 minimum and guarded outbound connections.
 
 ```bash
-gbrain auth create "claude-desktop"   # Create a new token
-gbrain auth list                       # List all tokens
-gbrain auth revoke "claude-desktop"    # Revoke a token
-gbrain auth test <url> --token <tok>   # Smoke-test a remote server
+foresights auth create "claude-desktop"   # Create a new token
+foresights auth list                       # List all tokens
+foresights auth revoke "claude-desktop"    # Revoke a token
+foresights auth test <url> --token <tok>   # Smoke-test a remote server
 ```
 
 Tokens are stored as SHA-256 hashes in the `access_tokens` table. The
 plaintext token is shown once at creation and never stored.
 
-## `gbrain serve --http` hardening (v0.22.7+)
+## `foresights serve --http` hardening (v0.22.7+)
 
 The built-in HTTP transport ships with several layers of hardening on by
 default. All env vars below are optional; the defaults are intentionally
@@ -445,7 +445,7 @@ conservative.
 
 ### Bind address (v0.34: loopback by default)
 
-`gbrain serve --http` listens on `127.0.0.1` by default. Personal-laptop
+`foresights serve --http` listens on `127.0.0.1` by default. Personal-laptop
 installs cannot accidentally publish the brain to the LAN. Self-hosted
 deployments that need remote access pass `--bind 0.0.0.0` (all
 interfaces) or `--bind <interface-ip>` (specific NIC). A stderr WARN
@@ -455,15 +455,15 @@ to me but the agent can't reach the upstream" misconfigurations.
 
 ### PGLite and Postgres
 
-`gbrain serve --http` runs on both engines (both schemas carry
+`foresights serve --http` runs on both engines (both schemas carry
 `access_tokens` and the OAuth tables). PGLite is single-writer: while the
 HTTP server holds the brain, administer it through the running server
-(`gbrain mcp grant … --admin-token-file`, the admin dashboard) rather than a
+(`foresights mcp grant … --admin-token-file`, the admin dashboard) rather than a
 second process that opens the database — such a process fails fast with
-`live_serve`; `gbrain sync` and `gbrain sweep --once` delegate into the live
-serve. Mint bearer tokens (`gbrain auth create`) before the service runs, or
+`live_serve`; `foresights sync` and `foresights sweep --once` delegate into the live
+serve. Mint bearer tokens (`foresights auth create`) before the service runs, or
 grant scoped clients through the server. Local agents on the same machine can
-still use stdio (`gbrain serve`) when no HTTP server is running.
+still use stdio (`foresights serve`) when no HTTP server is running.
 
 ### Docker network isolation (self-hosted Postgres)
 
@@ -483,9 +483,9 @@ Default-deny: no `Access-Control-Allow-Origin` header is sent unless an
 allowlist is configured. To allow browser-based MCP clients:
 
 ```bash
-GBRAIN_HTTP_CORS_ORIGIN=https://claude.ai gbrain serve --http --port 8787
+GBRAIN_HTTP_CORS_ORIGIN=https://claude.ai foresights serve --http --port 8787
 # Multiple origins: comma-separated
-GBRAIN_HTTP_CORS_ORIGIN=https://claude.ai,https://your.app gbrain serve --http
+GBRAIN_HTTP_CORS_ORIGIN=https://claude.ai,https://your.app foresights serve --http
 ```
 
 When the request `Origin` matches the allowlist, the server echoes it
@@ -514,7 +514,7 @@ window):
 On exhaustion the server returns `429 Too Many Requests` with a
 `Retry-After` header.
 
-`gbrain serve --http` applies each bucket only when its env var is set
+`foresights serve --http` applies each bucket only when its env var is set
 (`GBRAIN_HTTP_RATE_LIMIT_IP=30 GBRAIN_HTTP_RATE_LIMIT_TOKEN=60` gives the
 defaults above); with neither set it does not rate-limit `/mcp`. The legacy
 bearer transport always applies the defaults.
@@ -536,17 +536,17 @@ narrow trust:
 
 ```bash
 # Trust exactly one hop — Fly.io, Render, Vercel, single-layer nginx
-GBRAIN_HTTP_TRUST_PROXY=1 gbrain serve --http --port 8787
+GBRAIN_HTTP_TRUST_PROXY=1 foresights serve --http --port 8787
 
-# Trust N hops — Cloudflare → nginx → gbrain
-GBRAIN_HTTP_TRUST_PROXY=2 gbrain serve --http --port 8787
+# Trust N hops — Cloudflare → nginx → foresights
+GBRAIN_HTTP_TRUST_PROXY=2 foresights serve --http --port 8787
 
 # Disable entirely — direct-exposure deployment with no proxy
-GBRAIN_HTTP_TRUST_PROXY=0 gbrain serve --http --port 8787
+GBRAIN_HTTP_TRUST_PROXY=0 foresights serve --http --port 8787
 
 # Named Express modes (uniquelocal, linklocal) or CIDR lists pass through
-GBRAIN_HTTP_TRUST_PROXY=uniquelocal gbrain serve --http --port 8787
-GBRAIN_HTTP_TRUST_PROXY="10.0.0.0/8,192.168.1.0/24" gbrain serve --http --port 8787
+GBRAIN_HTTP_TRUST_PROXY=uniquelocal foresights serve --http --port 8787
+GBRAIN_HTTP_TRUST_PROXY="10.0.0.0/8,192.168.1.0/24" foresights serve --http --port 8787
 ```
 
 Both transports (Express OAuth server in `src/commands/serve-http.ts` and
@@ -556,18 +556,18 @@ env var, so single source of truth.
 **Critical safety contract:** only widen past `'loopback'` when **both**
 of these are true:
 
-1. gbrain is reachable only via a trusted reverse proxy (not directly
+1. foresights is reachable only via a trusted reverse proxy (not directly
    exposed to the internet on the configured port). As of v0.34
-   `gbrain serve --http` binds `127.0.0.1` by default, so the
+   `foresights serve --http` binds `127.0.0.1` by default, so the
    reverse-proxy-only posture is the out-of-the-box shape; only
    override with `--bind 0.0.0.0` (or a specific interface IP) when
-   gbrain itself needs to accept remote connections directly.
+   foresights itself needs to accept remote connections directly.
 2. The proxy strips any client-supplied `X-Forwarded-For` and `X-Real-IP`
    headers, then sets them itself. (nginx with `proxy_set_header
    X-Forwarded-For $remote_addr` does this; Cloudflare and most cloud
    load balancers handle it automatically.)
 
-If gbrain is reachable directly AND `GBRAIN_HTTP_TRUST_PROXY=1` (or any
+If foresights is reachable directly AND `GBRAIN_HTTP_TRUST_PROXY=1` (or any
 non-loopback value) is set, clients can spoof their IP by sending
 arbitrary `X-Forwarded-For` headers, defeating the pre-auth IP rate
 limit. The `'loopback'` default protects against this by ignoring all
@@ -575,12 +575,12 @@ forwarded-for headers and using the socket peer address.
 
 ### Body size cap
 
-Default 4 MiB on `gbrain serve --http` and 1 MiB on the legacy bearer
+Default 4 MiB on `foresights serve --http` and 1 MiB on the legacy bearer
 transport, stream-counted (chunked transfers without `Content-Length` are
 still capped). `GBRAIN_HTTP_MAX_BODY_BYTES` overrides both:
 
 ```bash
-GBRAIN_HTTP_MAX_BODY_BYTES=2097152 gbrain serve --http   # 2 MiB
+GBRAIN_HTTP_MAX_BODY_BYTES=2097152 foresights serve --http   # 2 MiB
 ```
 
 Over-cap requests get `413 Payload Too Large` immediately, before any
@@ -609,7 +609,7 @@ spec) preserve for debug visibility; unknown keys are counted but never
 named so attackers can't probe key existence; byte sizes bucket to 1KB so
 content sizes can't be binary-searched. The same shape is broadcast on the
 admin SSE feed at `/admin/events`. Operators on a personal laptop who want
-raw payloads back can pass `gbrain serve --http --log-full-params` (loud
+raw payloads back can pass `foresights serve --http --log-full-params` (loud
 stderr warning at startup). Multi-tenant deployments should leave it
 on the redacted default.
 
@@ -626,7 +626,7 @@ complete. If you find a live credential in a page:
 2. **Remove the page immediately**, from the host machine:
 
    ```bash
-   gbrain delete <slug> --purge
+   foresights delete <slug> --purge
    ```
 
    `--purge` is honored only by the local CLI; remote/MCP callers keep the
@@ -635,18 +635,18 @@ complete. If you find a live credential in a page:
    the page's markdown file remains on disk: it retries the removal and, if the
    file still cannot be removed, stops with `storage_error` naming the path so
    you can fix permissions and re-run (the row stays soft-deleted until the
-   file is gone). Verify with `gbrain get <slug>` (expects not found).
+   file is gone). Verify with `foresights get <slug>` (expects not found).
 3. **Check the other copies.** The brain-repo git history, a synced working
    tree, an export directory or a compiled context file may still hold the
    value; rewrite/re-push or regenerate those as needed.
-4. Add a value's fingerprint (printed with every `gbrain sources push` finding)
+4. Add a value's fingerprint (printed with every `foresights sources push` finding)
    to `<workspace>/.gbrain-scan-allow` ONLY for values you have confirmed are
    not credentials.
 
 **Say to your agent:** *"a secret leaked into a brain page — rotate it and
 purge the page"* (your agent rotates the credential, then runs
-`gbrain delete <slug> --purge` on the host).
+`foresights delete <slug> --purge` on the host).
 
 Behavior note: connection strings with inline passwords now block
-`gbrain sources push` / bootstrap verify and are dropped from compiled-context
+`foresights sources push` / bootstrap verify and are dropped from compiled-context
 entries. The escape hatch is the same `.gbrain-scan-allow` fingerprint line.

@@ -23,7 +23,7 @@ export async function ontologyFactsCheck(engine: BrainEngine, sourceIds?: string
     return { name: 'ontology_facts_fenced', status: 'warn', details,
       message: `${details.fenced + details.retired} ontology observation(s) were moved onto an entity page's Facts table by the extract_facts fence step `
         + `(${details.retired} since retired by a page write, so ontology_get no longer returns them; ${details.fenced} still fenced under the page's provenance). `
-        + 'Preview the restore on the brain host: gbrain repair ontology-facts — then run the apply command it prints after the user agrees.' };
+        + 'Preview the restore on the brain host: foresights repair ontology-facts — then run the apply command it prints after the user agrees.' };
   } catch (error) {
     return { name: 'ontology_facts_fenced', status: 'warn',
       message: `Fenced ontology observations could not be inspected: ${error instanceof Error ? error.message : String(error)}. Health is unknown.`,

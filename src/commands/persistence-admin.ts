@@ -15,23 +15,23 @@ import { reportPersistenceCliError } from './persistence-delegate.ts';
 import { bigintToStringReplacer } from '../core/utils.ts';
 
 export const WRITER_HELP = `Usage:
-  gbrain sources writer status [<source>] [--probe] [--json]
-  gbrain sources writer failures <source> [--state all] [--group-by category] [--since 7d] [--limit 20] [--before <cursor>]
+  foresights sources writer status [<source>] [--probe] [--json]
+  foresights sources writer failures <source> [--state all] [--group-by category] [--since 7d] [--limit 20] [--before <cursor>]
     [--category <c>] [--code <c>] [--origin <o>|none] [--operation <op>] [--json]
-  gbrain sources writer movement [<source>] [--wait <dur>] [--warn-only] [--json]
-  gbrain sources writer retry-effects <source> --request-id <uuid> [--admin-intent writer_retry_effects --expected-state <admin_state>] [--dry-run] [--json]
-  gbrain sources writer retry-effects <source> --parked-pushes [--dry-run] [--json]
-  gbrain sources writer retry-effects <source> --parked-code <code> [--dry-run] [--json]
-  gbrain sources writer settle-effects <source> --request-id <uuid>|--parked-code <code> [--unsettle | --retire] [--dry-run | --apply --expect <plan_hash>] [--json]
-  gbrain sources writer git-durability <source> --enable|--disable [--pat-file <path>] [administration options] [--dry-run] [--json]
-  gbrain sources writer claim <source> --path <directory> [administration options] [--dry-run] [--json]
-  gbrain sources writer activate --confirm-quiesced [--cleanup-dead-local-locks] [--shared-skills] [administration options] [--dry-run] [--json]
-  gbrain sources writer deactivate [--admin-intent writer_deactivate --expected-state <admin_state>] [--dry-run] [--json]
-  gbrain sources writer transfer prepare <source> [--self-transfer [--confirm-relocated-root]] [administration options] [--dry-run] [--json]
-  gbrain sources writer transfer accept <source> --path <worktree-root> --expected-epoch <n> --manifest <sha256> [--self-transfer [--confirm-relocated-root]] [administration options] [--dry-run] [--json]
-  gbrain sources writer transfer cancel <source> --expected-epoch <n> [administration options] [--dry-run] [--json]
-  gbrain sources writer lock [--json]
-  gbrain sources writer unlock [--json]
+  foresights sources writer movement [<source>] [--wait <dur>] [--warn-only] [--json]
+  foresights sources writer retry-effects <source> --request-id <uuid> [--admin-intent writer_retry_effects --expected-state <admin_state>] [--dry-run] [--json]
+  foresights sources writer retry-effects <source> --parked-pushes [--dry-run] [--json]
+  foresights sources writer retry-effects <source> --parked-code <code> [--dry-run] [--json]
+  foresights sources writer settle-effects <source> --request-id <uuid>|--parked-code <code> [--unsettle | --retire] [--dry-run | --apply --expect <plan_hash>] [--json]
+  foresights sources writer git-durability <source> --enable|--disable [--pat-file <path>] [administration options] [--dry-run] [--json]
+  foresights sources writer claim <source> --path <directory> [administration options] [--dry-run] [--json]
+  foresights sources writer activate --confirm-quiesced [--cleanup-dead-local-locks] [--shared-skills] [administration options] [--dry-run] [--json]
+  foresights sources writer deactivate [--admin-intent writer_deactivate --expected-state <admin_state>] [--dry-run] [--json]
+  foresights sources writer transfer prepare <source> [--self-transfer [--confirm-relocated-root]] [administration options] [--dry-run] [--json]
+  foresights sources writer transfer accept <source> --path <worktree-root> --expected-epoch <n> --manifest <sha256> [--self-transfer [--confirm-relocated-root]] [administration options] [--dry-run] [--json]
+  foresights sources writer transfer cancel <source> --expected-epoch <n> [administration options] [--dry-run] [--json]
+  foresights sources writer lock [--json]
+  foresights sources writer unlock [--json]
 
 failures (read-only) lists the source's write receipts that ended without committing
 (failed, conflict, cancelled) plus any still holding a recovery record, newest first, each
@@ -75,14 +75,14 @@ deactivate converts the whole brain back to classic mode (it takes no <source>):
 --dry-run prints every blocker with its exit and what would change, and changes
 nothing. It refuses while the writer admin lock is set or any request, effect,
 recovery or connector/maintenance lease is pending, naming each blocker's exit
-(gbrain cancel-write-request <request_id>, gbrain sync --source <id> --no-pull,
-gbrain repair embedding-effects --source <id>, gbrain sources
-writer retry-effects <source> --request-id <id> --dry-run, gbrain sources writer
+(foresights cancel-write-request <request_id>, foresights sync --source <id> --no-pull,
+foresights repair embedding-effects --source <id>, foresights sources
+writer retry-effects <source> --request-id <id> --dry-run, foresights sources writer
 unlock). It retires every worktree, removes source and host bindings, and keeps
 canonical files and database pages. Its output and status report the database
 mode (classic) separately from this host's local_markers (cleared, or pending
 with each path). Older binaries honor local markers: run a command from this
-release (for example gbrain sources writer status) once on every other host
+release (for example foresights sources writer status) once on every other host
 before an older binary writes there. Runbook: docs/architecture/topologies.md.
 retry-effects handles parked Git/withdrawal effects and failed embedding effects.
 A Git or withdrawal target parks after five consecutive failures; the command
@@ -100,7 +100,7 @@ on their own are listed in parked_pushes.refused, the result is status partial, 
 retry-effects <source> --parked-pushes does the same without a credential change: one more
 attempt per Git effect of the source's worktree parked on a push (git_push_unavailable,
 push_unconfirmed, integrate_conflict, publish_secret_found); a push the remote rejected because it moved publishes
-over the remote without moving the checkout (gbrain sources refresh brings remote files in).
+over the remote without moving the checkout (foresights sources refresh brings remote files in).
 retry-effects <source> --parked-code <code> gives one more attempt to every Git effect of the
 source's worktree with a target parked on that code; doctor parked_effects and writer status list
 each parked code with its command. A target a .gitignore rule excludes parks at once as
@@ -113,7 +113,7 @@ retries skip settled effects. Preview first; --apply needs the preview's --expec
 --unsettle (previewed and plan-bound the same way) reverses a settlement; both stay in history.
 --retire settles an effect of a former binding that nothing current owes: its source was replaced,
 or each target's page is gone, deleted or past the revision the effect owed; a page still at that
-revision is refused (write it through gbrain, then preview again). Ask the user first.
+revision is refused (write it through foresights, then preview again). Ask the user first.
 lock sets an opt-in, brain-level writer admin lock (config key persistence.writer_admin_lock)
 and unlock clears it; both are local-only, idempotent and print the resulting state.
 While locked, writer claim, activate and transfer (prepare, accept and cancel) are refused with
@@ -125,10 +125,10 @@ Binaries older than this release do not consult the lock. status shows admin_loc
 local_host_id, blocking effects and the latest admitter/consumer versions per host.`;
 
 export const LOCAL_WRITER_HELP = `Usage:
-  gbrain auth local-writer list [--limit <1-1000>] [--before <uuid>] [--json]
-  gbrain auth local-writer register <cli|stdio> [--source-ids <csv>] [--scopes read,write]
+  foresights auth local-writer list [--limit <1-1000>] [--before <uuid>] [--json]
+  foresights auth local-writer register <cli|stdio> [--source-ids <csv>] [--scopes read,write]
     [--allowed-operations <csv>] [--slug-prefixes <csv>] [--replace] [--dry-run] [--json]
-  gbrain auth local-writer revoke <uuid> [--dry-run] [--json]
+  foresights auth local-writer revoke <uuid> [--dry-run] [--json]
 
 Use --brain <id> to select a database. Registrations default to all sources and
 read/write operations. Existing grants never widen silently: --replace requires
@@ -143,11 +143,11 @@ explicitly register --replace locally to authorize a new principal.`;
  * administration authority).
  */
 export function adminHostConfig<T extends GBrainConfig>(config: T | null | undefined, brainId: string, what: string, command: string): T {
-  if (!config) throw opError('invalid_params', 'No brain is configured. Run gbrain init first.',
-    `No brain ${brainId} is configured under this GBRAIN_HOME. Run the command on the brain host with its GBRAIN_HOME; creating a brain here with gbrain init is the user's decision.`,
+  if (!config) throw opError('invalid_params', 'No brain is configured. Run foresights init first.',
+    `No brain ${brainId} is configured under this GBRAIN_HOME. Run the command on the brain host with its GBRAIN_HOME; creating a brain here with foresights init is the user's decision.`,
     { fix: readFix('Reports which config and brain this machine resolves, read-only.', { argv: ['gbrain', 'doctor', '--json'] }) });
   if (isThinClient(config)) throw opError('permission_denied', `${what} runs locally on the selected brain host; an ordinary remote token is not administration authority.`,
-    `This install reaches brain ${brainId} through a remote token. Ask the user to run the same gbrain ${command} command in a terminal on the machine that hosts the brain.`,
+    `This install reaches brain ${brainId} through a remote token. Ask the user to run the same foresights ${command} command in a terminal on the machine that hosts the brain.`,
     { fix: { argv: ['gbrain', 'whoami', '--json'], consent: [], actor: 'agent', why: 'Shows which remote brain and principal this install uses, read-only.', requires_exclusive: false,
       user_message: `${what} has to run on the machine that hosts this brain. Please run the same command in a terminal there.` } });
   return config;
@@ -216,10 +216,10 @@ export function parsePersistenceAdminArgs(group: Group, args: string[]): {
     else if (verb === 'transfer') {
       const phase = positional.shift();
       if (phase !== 'prepare' && phase !== 'accept' && phase !== 'cancel') throw invalid(group, 'Transfer requires prepare or accept (or cancel, which ends a prepared transfer).',
-        'Run gbrain sources writer transfer prepare on the current owner host first, then gbrain sources writer transfer accept on the successor with the epoch and manifest prepare printed; gbrain sources writer transfer cancel <source> --expected-epoch <n> on the owner host ends a transfer nobody will accept.');
+        'Run foresights sources writer transfer prepare on the current owner host first, then foresights sources writer transfer accept on the successor with the epoch and manifest prepare printed; foresights sources writer transfer cancel <source> --expected-epoch <n> on the owner host ends a transfer nobody will accept.');
       operation = phase === 'prepare' ? 'writer_transfer_prepare' : phase === 'accept' ? 'writer_transfer_accept' : 'writer_transfer_cancel';
     } else throw invalid(group, 'Writer administration requires status, failures, movement, retry-effects, settle-effects, git-durability, claim, activate, deactivate, transfer, lock, or unlock.',
-      `Name the action after gbrain sources writer${verb ? ` instead of ${verb}` : ''}; start with gbrain sources writer status --json, which changes nothing.`);
+      `Name the action after foresights sources writer${verb ? ` instead of ${verb}` : ''}; start with foresights sources writer status --json, which changes nothing.`);
     const source = positional.shift();
     if (source !== undefined) {
       if (params.source_id !== undefined) throw invalid(group, 'Specify the source once.',
@@ -232,7 +232,7 @@ export function parsePersistenceAdminArgs(group: Group, args: string[]): {
     else if (verb === 'register') { operation = 'local_writer_register'; params.lane = positional.shift(); }
     else if (verb === 'revoke') { operation = 'local_writer_revoke'; params.id = positional.shift(); }
     else throw invalid(group, 'Local writer administration requires list, register, or revoke.',
-      `Name the action after gbrain auth local-writer${verb ? ` instead of ${verb}` : ''}: list (read-only), register cli|stdio, or revoke followed by a writer id from list.`);
+      `Name the action after foresights auth local-writer${verb ? ` instead of ${verb}` : ''}: list (read-only), register cli|stdio, or revoke followed by a writer id from list.`);
   }
   if (positional.length) throw invalid(group, `Unexpected argument: ${positional[0]}.`,
     `Remove ${positional[0]}; this action takes at most one positional argument, and every other value goes after its flag.`);

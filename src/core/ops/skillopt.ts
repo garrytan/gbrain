@@ -14,7 +14,7 @@ import { hostFix, invalidParam, paramUse } from './op-fix.ts';
 import { hookSessionCwd } from '../session-cwd.ts';
 
 // v0.41.18.0 (A7 + T16, codex finding #5): MCP op for federated / thin-client
-// brain installs to drive `gbrain onboard --auto` over MCP. Admin scope
+// brain installs to drive `foresights onboard --auto` over MCP. Admin scope
 // (NOT localOnly) so remote agents authenticated via OAuth can probe
 // brain health + submit auto-eligible remediation handlers.
 //
@@ -222,7 +222,7 @@ const run_skillopt: Operation = {
       : autoDetectSkillsDirReadOnly(hookSessionCwd()).dir;
     if (!skillsDir) {
       throw opError('config_error', 'run_skillopt: skills directory not found',
-        'The brain host has no skills directory to optimize. Run `gbrain doctor --json` on the host; it reports where gbrain looks for skills.');
+        'The brain host has no skills directory to optimize. Run `foresights doctor --json` on the host; it reports where foresights looks for skills.');
     }
     const models = await resolveSkillOptModels(ctx.engine);
     const skillName = p.skill_name as string;

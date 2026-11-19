@@ -13,7 +13,7 @@ export async function refuseInvalidPreparationValue(engine: BrainEngine, key: st
   const getFix = { fix: { argv: ['gbrain', 'config', 'get', key], consent: [], actor: 'agent' as const, why: 'Shows the value in effect; nothing was written.', requires_exclusive: false } };
   // #6650: the terminal-failure thresholds (persistence/terminal-failures.ts) share this persistence.* refusal.
   const terminal = validateTerminalConfigValue(key, value);
-  if (terminal) exitCliError(usageError(terminal, `Set ${key} to a value in that range, e.g. gbrain config set ${key} ${key.endsWith('window_days') ? 14 : key.endsWith('spike_factor') ? 3 : 25}.`, getFix), 'config');
+  if (terminal) exitCliError(usageError(terminal, `Set ${key} to a value in that range, e.g. foresights config set ${key} ${key.endsWith('window_days') ? 14 : key.endsWith('spike_factor') ? 3 : 25}.`, getFix), 'config');
   if (!PREPARATION_BUDGET_CONFIG_KEYS.includes(key)) return;
   const refusal = validatePreparationConfigValue(key, value, await readPreparationConfigValues(engine));
   if (!refusal) return;

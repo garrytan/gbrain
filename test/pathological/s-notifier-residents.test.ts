@@ -1,5 +1,5 @@
 /**
- * GBRA-133 PR 2a.1 / 2a.4: residents. Every resident (serve, serve --http, gbrain jobs work, the autopilot daemon)
+ * GBRA-133 PR 2a.1 / 2a.4: residents. Every resident (serve, serve --http, foresights jobs work, the autopilot daemon)
  * starts the notifier the same way; one of them owns the host's notifier through the lease (Postgres), and a resident
  * start never waits on git or a catch-up.
  *

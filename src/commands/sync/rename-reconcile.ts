@@ -496,14 +496,14 @@ function fallbackSlugsForFile(
  * reconcile. A sentinel is orphaned when NO active row carries the rename's
  * OLD source_path (read back out of the sentinel's own error text) anymore:
  * the duplicate it guarded against is gone — hard-deleted, or soft-deleted
- * by the operator's `gbrain delete` — so keeping the row open only ages
+ * by the operator's `foresights delete` — so keeping the row open only ages
  * doctor toward a permanent FAIL.
  *
  * Fail-closed on every uncertain branch: a sentinel that failed again THIS
  * run (in `excludePaths`), one whose error text doesn't parse, or a probe
  * that throws leaves the row open — only a positive "no active row has the
  * old path" clears. ANY surviving active row keeps its sentinel: the
- * duplicate is real, and the operator remedy (`gbrain delete <stale-slug>`)
+ * duplicate is real, and the operator remedy (`foresights delete <stale-slug>`)
  * or a converging retry is the way out, not silent bookkeeping cleanup.
  */
 async function orphanedRenameSentinels(

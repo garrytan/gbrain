@@ -2,7 +2,7 @@
  * #6761: doctor facts_extraction_health reports its 24 h `facts:absorb`
  * incident count as history (a rolling window, with the time it ages out)
  * apart from current state: the facts-absorb jobs still dead, each with the
- * `gbrain jobs retry <id>` fix. Status thresholds are unchanged.
+ * `foresights jobs retry <id>` fix. Status thresholds are unchanged.
  *
  * 1. Protects: ten incidents with no dead job say there is nothing to retry and
  *    when the count ages out, without "tune the gate" advice; a dead job is
@@ -74,7 +74,7 @@ describe('facts_extraction_health separates history from jobs still dead (#6761)
     expect(result.message).toContain('0 jobs still dead');
     expect(result.message).toContain('No facts-absorb job is unresolved');
     expect(result.message).not.toContain('tune the gate');
-    expect(result.message).not.toContain('gbrain jobs retry');
+    expect(result.message).not.toContain('foresights jobs retry');
     expect(result.fix).toBeUndefined();
     const facts = (result.details as Record<string, any>).facts_absorb;
     expect(facts).toMatchObject({ incidents_24h: 10, jobs_still_dead: 0, dead_jobs: [] });
@@ -89,12 +89,12 @@ describe('facts_extraction_health separates history from jobs still dead (#6761)
     expect(result.status).toBe('warn');
     expect(result.message).toContain('10 incidents in 24 h (rolling, ages out at ');
     expect(result.message).toContain('1 job still dead');
-    expect(result.message).toContain(`gbrain jobs retry ${id}`);
+    expect(result.message).toContain(`foresights jobs retry ${id}`);
     expect((result.details as Record<string, any>).facts_absorb).toMatchObject({ jobs_still_dead: 1,
       dead_jobs: [{ id, slug: 'notes/page-7', source_id: 'default', status: 'dead' }] });
     expect(result.fix).toMatchObject({ argv: ['gbrain', 'jobs', 'retry', String(id)], consent: ['paid'], actor: 'agent',
       mcp: { tool: 'retry_job', arguments: { id } }, verify: { argv: ['gbrain', 'doctor', '--only', 'facts_extraction_health', '--json'] } });
-    expect(finalizeCheckFixes([result], cliRenderContext())[0].fix).toMatchObject({ next: 'ask_user', command: `gbrain jobs retry ${id}` });
+    expect(finalizeCheckFixes([result], cliRenderContext())[0].fix).toMatchObject({ next: 'ask_user', command: `foresights jobs retry ${id}` });
     const callable = finalizeCheckFixes([result], { transport: 'stdio', isCallable: op => op === 'retry_job', preapproved: () => false })[0];
     expect(callable.fix).toMatchObject({ next: 'ask_user', mcp: { tool: 'retry_job', arguments: { id } } });
     const notCallable = finalizeCheckFixes([result], { transport: 'stdio', isCallable: () => false, preapproved: () => false })[0];

@@ -18,10 +18,10 @@ import { finishCliTeardown, setCliExitVerdict, writeStdoutFinal } from '../core/
 import { withHumanLogsToStderr } from '../core/console-prefix.ts';
 
 export const COMPANY_BRAIN_CONNECT_HELP = `Connect a reviewed company repository to an initialized local brain:
-  gbrain sources connect <path> --brain <id> --source <id>
+  foresights sources connect <path> --brain <id> --source <id>
                          [--profile company-brain] [--include <glob>] [--exclude <glob>]
                          [--yes] [--json] [--request-id <uuid>]
-  gbrain sources connect --plan <file> --brain <id> --source <id> [--yes] [--json]
+  foresights sources connect --plan <file> --brain <id> --source <id> [--yes] [--json]
 
 Both destination flags are required. A saved plan and a repository path are mutually exclusive.
 Connect previews the destination and asks before registering/indexing a new source.
@@ -29,7 +29,7 @@ Non-interactive use needs the user's approval (--yes); without it the command ex
 --yes never bypasses validation or access checks.
 No embeddings, Git pull/push, source edits, grants, skills, or schedules are enabled.
 Use sources inspect to create a private review plan before connecting.
-Resume incomplete work with: gbrain sync --brain <id> --source <id> --no-embed --no-pull
+Resume incomplete work with: foresights sync --brain <id> --source <id> --no-embed --no-pull
 `;
 
 export interface CompanyBrainConnectArgs {
@@ -68,7 +68,7 @@ export function parseCompanyBrainConnectArgs(args: string[], explicitBrain: stri
     const flag = equal < 0 ? arg : arg.slice(0, equal);
     if (!['--source', '--profile', '--include', '--exclude', '--plan', '--request-id'].includes(flag)) {
       throw opError('invalid_params', `Unknown connect option ${JSON.stringify(flag)}.`,
-        `Connect accepts ${CONNECT_OPTIONS}; gbrain sources connect --help lists them.`);
+        `Connect accepts ${CONNECT_OPTIONS}; foresights sources connect --help lists them.`);
     }
     const value = equal < 0 ? args[++i] : arg.slice(equal + 1);
     if (!value || value.startsWith('--')) {
@@ -97,11 +97,11 @@ export function parseCompanyBrainConnectArgs(args: string[], explicitBrain: stri
   }
   if (Boolean(options.path) === Boolean(options.planFile)) {
     throw opError('invalid_params', 'Provide one repository path or --plan file, not both.',
-      'Pass exactly one of: the repository path, or --plan with the file gbrain sources inspect --json --out wrote.');
+      'Pass exactly one of: the repository path, or --plan with the file foresights sources inspect --json --out wrote.');
   }
   if (options.planFile && (options.include.length || options.exclude.length)) {
     throw opError('invalid_params', 'A saved plan fixes its selection. Inspect again to change include/exclude rules.',
-      `Drop --include/--exclude to connect ${options.planFile} as reviewed, or run gbrain sources inspect again with the new rules and --out to write a new plan.`);
+      `Drop --include/--exclude to connect ${options.planFile} as reviewed, or run foresights sources inspect again with the new rules and --out to write a new plan.`);
   }
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(options.requestId)) {
     throw opError('invalid_params', '--request-id must be a UUID.',
@@ -123,7 +123,7 @@ async function connectionPlan(options: CompanyBrainConnectArgs): Promise<Company
     saved = JSON.parse(text);
   } catch {
     throw opError('invalid_params', 'The plan must be a readable, bounded regular JSON file. Inspect the repository again.',
-      `${options.planFile} must be a regular JSON file (not a symlink) under ${COMPANY_BRAIN_MAX_METADATA_BYTES} bytes, as written by gbrain sources inspect --profile company-brain --json --out. Inspect the repository again to write a fresh plan file.`);
+      `${options.planFile} must be a regular JSON file (not a symlink) under ${COMPANY_BRAIN_MAX_METADATA_BYTES} bytes, as written by foresights sources inspect --profile company-brain --json --out. Inspect the repository again to write a fresh plan file.`);
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
@@ -131,7 +131,7 @@ async function connectionPlan(options: CompanyBrainConnectArgs): Promise<Company
   const path = (saved as Partial<CompanyBrainPlan> | null)?.revision?.root;
   if (typeof path !== 'string') {
     throw opError('plan_stale', 'The saved plan has no valid repository identity. Inspect again.',
-      `${options.planFile} has no repository identity. Inspect the repository again with gbrain sources inspect --profile company-brain --json --out and connect the new plan file.`);
+      `${options.planFile} has no repository identity. Inspect the repository again with foresights sources inspect --profile company-brain --json --out and connect the new plan file.`);
   }
   const validated = await validateCompanyBrainPlan(saved, { path, profile: options.profile, mode: 'apply' });
   if (!validated.valid || !validated.plan) {
@@ -158,7 +158,7 @@ export async function runCompanyBrainConnect(args: string[], connectEngine: () =
     }
     if (isThinClient(config)) {
       throw opError('permission_denied', 'Connect runs on the company brain host; an ordinary remote token is not administration authority.',
-        `Brain ${options.brainId} is reached through a remote token here. Ask the user to run gbrain sources inspect and gbrain sources connect on the machine that hosts it, against a checkout on that machine.`);
+        `Brain ${options.brainId} is reached through a remote token here. Ask the user to run foresights sources inspect and foresights sources connect on the machine that hosts it, against a checkout on that machine.`);
     }
     const plan = await connectionPlan(options);
     if (!plan.ready || !plan.revision) {
@@ -207,7 +207,7 @@ export async function runCompanyBrainConnect(args: string[], connectEngine: () =
       result = { ...(json ? await withHumanLogsToStderr(connect) : await connect()) };
     }
     const status = result.ok === true ? 'complete' : 'incomplete';
-    const nextAction = `gbrain sync --brain ${options.brainId} --source ${options.sourceId} --no-embed --no-pull`;
+    const nextAction = `foresights sync --brain ${options.brainId} --source ${options.sourceId} --no-embed --no-pull`;
     if (json) await emit({ schema_version: 1, status, ...result, brain_id: options.brainId, source_id: options.sourceId, request_id: options.requestId, next_action: nextAction });
     else await writeStdoutFinal(`Company source ${status}: ${options.brainId}/${options.sourceId}\n${JSON.stringify(result, (_key, item) => typeof item === 'bigint' ? item.toString() : item, 2)}\n${status === 'incomplete' ? 'Resume' : 'Next sync'}: ${nextAction}\n`);
     if (result.ok !== true) setCliExitVerdict(1);

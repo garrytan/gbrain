@@ -1,7 +1,7 @@
 /**
  * Manual-only remediation steps are never submitted by an automatic run (#6248).
  *
- * Protects: `runRemediation` (behind `gbrain onboard --auto`, `doctor
+ * Protects: `runRemediation` (behind `foresights onboard --auto`, `doctor
  * --remediate` and MCP `run_onboard`) skips every manual-only step
  * (`unify-types`, `extract-takes-from-pages`, decided by job name) and returns
  * it as `manual_only_skipped` with the user's own command, keeps its cost out
@@ -118,7 +118,7 @@ describe('runRemediation never submits a manual-only step', () => {
       code: 'manual_only_skipped', job: 'extract-takes-from-pages', est_usd_cost: 5,
       fix: { argv: ['gbrain', 'jobs', 'submit', 'extract-takes-from-pages', '--follow'], consent: ['paid'], actor: 'user', next: 'tell_user_to_run' },
     });
-    expect(takes!.fix.command).toBe('gbrain jobs submit extract-takes-from-pages --follow');
+    expect(takes!.fix.command).toBe('foresights jobs submit extract-takes-from-pages --follow');
     expect(pack!.queued_jobs).toBeUndefined();
     expect(await jobNames()).toEqual([]);
   });
@@ -130,7 +130,7 @@ describe('runRemediation never submits a manual-only step', () => {
     const [pack] = result.manual_only_skipped!;
     expect(pack!.queued_jobs).toEqual([{ id: queued.id, status: 'waiting' }]);
     expect(pack!.why).toContain(`#${queued.id} waiting`);
-    expect(pack!.why).toContain('gbrain jobs cancel <id>');
+    expect(pack!.why).toContain('foresights jobs cancel <id>');
     const rows = await engine.executeRaw<{ id: number; status: string }>('SELECT id, status FROM minion_jobs');
     expect(rows.map((r) => [Number(r.id), r.status])).toEqual([[queued.id, 'waiting']]);
   });
@@ -178,7 +178,7 @@ async function onboardStdout(args: string[]): Promise<string> {
   return out;
 }
 
-describe('gbrain onboard --auto', () => {
+describe('foresights onboard --auto', () => {
   test('--json: the document lists the skipped pack upgrade and takes bootstrap and nothing else lands on stdout', async () => {
     const doc = JSON.parse(await onboardStdout(['--auto', '--max-usd', '10', '--target-score', '0', '--json'])) as {
       submitted: unknown[]; manual_only_skipped?: Array<{ job: string; fix: { next: string; command: string } }>;
@@ -192,8 +192,8 @@ describe('gbrain onboard --auto', () => {
   test('human output names each skipped step with its command', async () => {
     const out = await onboardStdout(['--auto', '--max-usd', '10', '--target-score', '0']);
     expect(out).toContain('Not run: 2 manual-only step(s).');
-    expect(out).toContain('  - extract-takes-from-pages (~$5.00): gbrain jobs submit extract-takes-from-pages --follow');
-    expect(out).toMatch(/  - unify-types: gbrain jobs submit unify-types --params '\{"target_pack":"[^"]+","apply":true\}' --follow/);
+    expect(out).toContain('  - extract-takes-from-pages (~$5.00): foresights jobs submit extract-takes-from-pages --follow');
+    expect(out).toMatch(/  - unify-types: (?:foresights|gbrain) jobs submit unify-types --params '\{"target_pack":"[^"]+","apply":true\}' --follow/);
     expect(await jobNames()).toEqual([]);
   });
 });

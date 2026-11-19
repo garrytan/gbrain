@@ -4,7 +4,7 @@ import { stableJson } from '../persistence/digest.ts';
 import type { BrainEngine } from '../engine.ts';
 
 /**
- * gbrain#4148: consecutive same-content failures of a content-deterministic
+ * foresights#4148: consecutive same-content failures of a content-deterministic
  * class (malformed model output or provider content block) before the page is tombstoned so the
  * backlog floor can clear. A content edit resets the streak. #6325: a managed
  * page or transcript settles held_failed at the same bound.

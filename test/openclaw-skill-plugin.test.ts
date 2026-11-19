@@ -1,7 +1,7 @@
 /**
- * GBRA-435 PR 1: gbrain setup openclaw --skill-loading resolve|shadow|off and
+ * GBRA-435 PR 1: foresights setup openclaw --skill-loading resolve|shadow|off and
  * the generated gbrain-skill-resolver plugin (src/core/setup/openclaw-skill-plugin.ts,
- * openclaw-skill-plugin-code.ts), plus gbrain skills pin (skill-pins.ts).
+ * openclaw-skill-plugin-code.ts), plus foresights skills pin (skill-pins.ts).
  *
  * Protects: a failed or partial OpenClaw install never exits 0
  * (skill_resolver_plugin_not_installed, exit 3, with the commands still to
@@ -126,7 +126,7 @@ function logLines(b: Box): any[] {
   return readdirSync(dir).filter((f) => f.startsWith('openclaw-')).flatMap((f) => readFileSync(join(dir, f), 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)));
 }
 
-describe.skipIf(!NODE)('gbrain setup openclaw --skill-loading', () => {
+describe.skipIf(!NODE)('foresights setup openclaw --skill-loading', () => {
   test('shadow installs once; a flip to live runs no OpenClaw command and keeps the plugin files', async () => {
     const b = box();
     const first = await setup(b, ['--skill-loading', 'shadow']);
@@ -288,7 +288,7 @@ describe.skipIf(!NODE)('the OpenClaw eligibility filter', () => {
   });
 });
 
-describe.skipIf(!NODE)('gbrain skills pin', () => {
+describe.skipIf(!NODE)('foresights skills pin', () => {
   test('validates against the catalog, updates the plugin state hot, and survives --skill-loading off', async () => {
     const b = box();
     await setup(b, ['--skill-loading', 'resolve']);
@@ -438,7 +438,7 @@ describe.skipIf(!NODE)('the gbrain-skill-resolver plugin under Node', () => {
     const b = box();
     await setup(b, ['--skill-loading', 'resolve']);
     const rec = join(b.root, 'gbrain-calls.log');
-    writeFileSync(b.bin, '#!/bin/sh\necho "skill_loading=[$GBRAIN_SKILL_LOADING] $*" >> \'' + rec + '\'\n[ "$1" = "--version" ] && echo "gbrain 99.0.0"\nexit 0\n');
+    writeFileSync(b.bin, '#!/bin/sh\necho "skill_loading=[$GBRAIN_SKILL_LOADING] $*" >> \'' + rec + '\'\n[ "$1" = "--version" ] && echo "foresights 99.0.0"\nexit 0\n');
     drive(b, [['turn', { text: 'triage the email inbox', id: 'm1' }], ['sleep', { ms: 1500 }]], undefined, { GBRAIN_SKILL_LOADING: 'spring' });
     const lines = readFileSync(rec, 'utf8').trim().split('\n');
     expect(lines).toContain('skill_loading=[] setup openclaw --skills-index-only');

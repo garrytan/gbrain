@@ -11,7 +11,7 @@
  *   event/validity    when the claim was true in the world (`facts.valid_from`;
  *     time            later, edge validity). May differ from observation time:
  *                     a 2026-03 note says "we closed the round in 2024".
- *   recording time    when GBrain stored it (`created_at`). Never used to
+ *   recording time    when Foresights stored it (`created_at`). Never used to
  *                     interpret text.
  *
  * WHY. "User went to Lisbon last week" is useless months later; the extractor

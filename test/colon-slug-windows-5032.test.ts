@@ -1,7 +1,7 @@
 /**
  * #5032 — colon slugs (`calendar:abc`) are writable again (PR #5044's grammar,
  * pinned in test/file-upload-security.test.ts), and on Windows, where `:` in a
- * file name names an alternate data stream, gbrain refuses rather than mangles:
+ * file name names an alternate data stream, foresights refuses rather than mangles:
  *
  *   - a put_page whose canonical file name would contain `:` refuses before
  *     admission with `colon_slug_windows_write_through`, naming the slug;
@@ -196,7 +196,7 @@ describe('#5032 managed sync of committed colon files on Windows', () => {
       expect(result.fileRefusals).toEqual([{
         path: 'notes/calendar:abc.md', code: 'colon_slug_windows_write_through',
         message: "notes/calendar:abc.md has a ':' in its name, which Windows cannot store; sync skipped it.",
-        suggestion: `Rename it without ':' on a macOS or Linux checkout and commit, then run gbrain sync --source ${sourceId} --no-pull.`,
+        suggestion: `Rename it without ':' on a macOS or Linux checkout and commit, then run foresights sync --source ${sourceId} --no-pull.`,
         docs: 'docs/guides/write-refusals.md#colon_slug_windows_write_through',
       }]);
       expect(await engine.getPage('notes/plain', { sourceId })).not.toBeNull();

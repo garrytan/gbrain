@@ -1,4 +1,4 @@
-// Regression coverage for the `gbrain doctor --remediation-plan` verdict
+// Regression coverage for the `foresights doctor --remediation-plan` verdict
 // contradiction: when the brain was below target AND the target was
 // unreachable, the human renderer printed "Target unreachable: max with
 // autonomous remediation is N/100" followed immediately by "No
@@ -110,6 +110,6 @@ describe('renderRemediationPlanLines', () => {
         rationale: '3 stale pages', status: 'remediable', depends_on: [], idempotency_key: 'k' } as Plan['plan'][number]],
     });
     const text = renderRemediationPlanLines(plan, 90).join('\n');
-    expect(text).toContain('gbrain doctor --remediate --yes --max-usd 0 --target-score 70');
+    expect(text).toContain('foresights doctor --remediate --yes --max-usd 0 --target-score 70');
   });
 });

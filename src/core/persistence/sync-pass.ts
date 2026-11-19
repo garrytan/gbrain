@@ -1,8 +1,8 @@
 /**
  * #6712 PR 4a (design v3.2 §2.1-§2.2, §11 step 2): the read-only shadow of the level-triggered managed-sync pass.
  * It reads the level of one managed source and classifies every path of its domain with sync-classify.ts, and writes
- * and admits nothing: no hold, marker, record, pass row, cursor or request. `gbrain sync --dry-run --json` and
- * `gbrain sync status --detail --json` report the result as `convergence` (sync-convergence.ts); PR 4b turns the same
+ * and admits nothing: no hold, marker, record, pass row, cursor or request. `foresights sync --dry-run --json` and
+ * `foresights sync status --detail --json` report the result as `convergence` (sync-convergence.ts); PR 4b turns the same
  * reads into the pass.
  *
  * Reads (each timed in `timings_ms`, with `context`, `setup` and the rest of the round): `T` (`ls-tree -r -z` at HEAD,
@@ -1324,7 +1324,7 @@ export async function passIdleProbe(engine: Pick<BrainEngine, 'executeRaw'>, inp
 }
 
 /**
- * `gbrain sync --dry-run --json`'s `convergence` for one source: the receipt with the read-only screen, undefined
+ * `foresights sync --dry-run --json`'s `convergence` for one source: the receipt with the read-only screen, undefined
  * on a brain that is not managed or for a company-brain source; a read that cannot run reports why instead of failing
  * the dry run.
  */

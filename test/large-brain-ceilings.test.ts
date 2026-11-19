@@ -3,10 +3,10 @@
  * 52,028-document brain hit them.
  *
  * Protects:
- *   - `gbrain sync` under a non-TTY caller: the default and env deadlines no
+ *   - `foresights sync` under a non-TTY caller: the default and env deadlines no
  *     longer kill a run that is still importing. A sync whose work outlasts
  *     its deadline window completes and imports every file.
- *   - `gbrain sources add` registers a checkout far above the ~8k-file point
+ *   - `foresights sources add` registers a checkout far above the ~8k-file point
  *     where the old per-file manifest crossed its 1 MiB metadata bound.
  * Fails when: the sync watchdog goes back to a plain wall-clock kill (the
  * child exits 143 after the 1 s deadline with files missing), or the managed

@@ -1,5 +1,5 @@
 /**
- * #6374: `gbrain reindex-search-vector` rebuilds PAGE keyword vectors.
+ * #6374: `foresights reindex-search-vector` rebuilds PAGE keyword vectors.
  *
  * Protects: after a language change every existing page is retokenized in the
  * new language, through the seal's own expression over the sanitized timeline,

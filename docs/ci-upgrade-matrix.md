@@ -1,7 +1,7 @@
 # Upgrade matrix
 
 [.github/workflows/upgrade-matrix.yml](../.github/workflows/upgrade-matrix.yml)
-installs published gbrain releases exactly as a user does, builds a small brain
+installs published foresights releases exactly as a user does, builds a small brain
 on each, upgrades it through that release's own updater to one candidate, and
 checks the candidate on the upgraded brain. The driver is
 [scripts/upgrade-matrix.ts](../scripts/upgrade-matrix.ts) with its modules in
@@ -29,46 +29,46 @@ skipped with its reason. Pull requests run N-1 and N-50 only.
 **Cells.** Every from-version runs on PGLite and Postgres, keyless and keyed,
 repo-less and repo brain (32 to 40 cells; one job per from-version, engine and
 key mode runs both brain shapes). Pull requests run PGLite and Postgres,
-keyless, repo-less only. Keyed cells set a Voyage key (gbrain's default
+keyless, repo-less only. Keyed cells set a Voyage key (foresights's default
 embedding provider) and the fixture forwards `api.voyageai.com` to the local
 fake provider in `scripts/bench/retrieval-scale/mock-providers.ts`, so the
 brain keeps the provider's real URL and nothing is billed. Repo cells run
-`gbrain init --git`; repo-less cells keep the default content directory
+`foresights init --git`; repo-less cells keep the default content directory
 without Git.
 
 **Each cell**, in its own HOME, GBRAIN_HOME, BUN_INSTALL and global git config:
 
 1. Installs the old release with the README command,
-   `bun install -g github:garrytan/gbrain`, while the fixture's default branch
-   and `latest-stable` point at that release, and checks `gbrain --version`.
-2. Runs `gbrain init` for the cell's shape and seeds pages, a page with a facts
+   `bun install -g github:aimonk2025/gbrain`, while the fixture's default branch
+   and `latest-stable` point at that release, and checks `foresights --version`.
+2. Runs `foresights init` for the cell's shape and seeds pages, a page with a facts
    fence, a remembered fact, a soft-deleted page, embeddings (keyed) and one
-   `gbrain dream` pass (recorded, not judged: the old release ran it). It
+   `foresights dream` pass (recorded, not judged: the old release ran it). It
    snapshots the canonical content and keeps a copy of the old install.
-3. Starts `gbrain serve` as an agent harness does (stdio, stdin held open) and
+3. Starts `foresights serve` as an agent harness does (stdio, stdin held open) and
    checks it answers MCP as the old version; on Postgres it also starts
-   `gbrain jobs supervisor start --detach`.
-4. Moves every fixture ref to the candidate and runs `gbrain upgrade` (the old
+   `foresights jobs supervisor start --detach`.
+4. Moves every fixture ref to the candidate and runs `foresights upgrade` (the old
    release's code). When it refuses with `restart_refused` for the MCP server
    it reruns with `--stop-mcp`, the documented fix.
-5. Checks the install is the candidate: `gbrain --version`, the commit Bun
+5. Checks the install is the candidate: `foresights --version`, the commit Bun
    pinned in its lockfile, and every installed file against the candidate's
    git tree. The fixture log must show the candidate tarball and no other
    commit after the switch.
 6. One build: an old serve still running is restarted with the candidate's
-   `gbrain upgrade --restart-only --stop-mcp` (old releases have no restart
+   `foresights upgrade --restart-only --stop-mcp` (old releases have no restart
    step); the restarted serve must report the candidate version over MCP and
    find a seeded page through the `search` tool. On Postgres doctor's
    `runtime_build_skew` must be ok with serve and the supervisor running. No
    process for the brain may remain once both are stopped.
-7. `gbrain apply-migrations --yes --non-interactive` exits 0, doctor's
+7. `foresights apply-migrations --yes --non-interactive` exits 0, doctor's
    `schema_version` is at the candidate's head, and doctor reports no failing
    check outside the skill category (see the W4 switch point below).
 8. Preservation: the canonical content snapshot equals the one taken before
    the upgrade (below).
 9. A new page is written and found by keyword search; keyed cells embed it,
-   and `gbrain query` must embed the question and return the matching seed
-   page; one `gbrain dream` pass exits 0.
+   and `foresights query` must embed the question and return the matching seed
+   page; one `foresights dream` pass exits 0.
 10. Mixed versions: the old install runs `--version`, `search`,
     `doctor --json` and `serve` (MCP initialize and one search) on the
     upgraded brain; the schema catalog and canonical content must not change.
@@ -93,7 +93,7 @@ installed at that moment, never the harness's own.
 
 The old release's updater must only ever see the candidate:
 
-- **git**: `url.<per-cell bare mirror>.insteadOf https://github.com/garrytan/gbrain`
+- **git**: `url.<per-cell bare mirror>.insteadOf https://github.com/aimonk2025/gbrain`
   in the cell's global git config. The mirror borrows the harness checkout's
   objects and holds only the fixture refs (`master`, `latest-stable`,
   `stable`, the old tag and `v<candidate version>`), so `git ls-remote`
@@ -104,7 +104,7 @@ The old release's updater must only ever see the candidate:
   `stable_invalid` instead of upgrading to the candidate; older releases read
   no such variable and already follow every release.
 - **Bun's tarball fetch**: `GITHUB_API_URL` points at the fixture's loopback
-  server, which answers `/repos/garrytan/gbrain/tarball/<ref>` with
+  server, which answers `/repos/aimonk2025/gbrain/tarball/<ref>` with
   `git archive` of the ref's commit.
 - **Every other HTTPS request** (raw.githubusercontent.com for VERSION and the
   Bun-floor package.json, api.github.com, codeload, github.com): an
@@ -115,7 +115,7 @@ The old release's updater must only ever see the candidate:
 
 Every from-version installs and upgrades through these paths today, so no
 from-version is listed as un-interposable. The binary updater
-(`gbrain self-upgrade` on a compiled binary) is not exercised: the matrix
+(`foresights self-upgrade` on a compiled binary) is not exercised: the matrix
 installs through Bun as the README says.
 
 ## Verdicts
@@ -138,7 +138,7 @@ mutate the brain when started again after the upgrade belong here, linked to
 #7776 or a narrower issue; the candidate's own `client_behind` refusal is
 tested in the unit suite, since a frozen old binary cannot carry it.
 
-**W4 switch point.** Until `gbrain doctor --alert` ships, the doctor check is
+**W4 switch point.** Until `foresights doctor --alert` ships, the doctor check is
 the legacy report (`DOCTOR_ARGV` and `doctorVerdict` in
 `scripts/upgrade-matrix/verdict.ts`); a report that carries `alert.level` is
 judged by it. When W4 lands, change `DOCTOR_ARGV` there and drop the legacy

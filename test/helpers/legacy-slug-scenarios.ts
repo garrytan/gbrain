@@ -1,5 +1,5 @@
 /**
- * #6212: pages an older gbrain stored under a slug today's grammar refuses
+ * #6212: pages an older foresights stored under a slug today's grammar refuses
  * (`people/jane doe`) can be deleted, restored and purged, database-only, and
  * nothing else. PGLite runs these from test/legacy-slug-delete.test.ts; the
  * Postgres arm is test/e2e/legacy-slug-delete-postgres.test.ts.

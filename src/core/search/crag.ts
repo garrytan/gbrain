@@ -4,7 +4,7 @@
  *
  * Corrective-RAG's core move: GRADE what retrieval returned before acting on
  * it, and escalate when the evidence is weak instead of confidently handing
- * the caller noise. gbrain's grade is zero-LLM — it reads the honesty
+ * the caller noise. foresights's grade is zero-LLM — it reads the honesty
  * signals the pipeline already stamps (T4 evidence, the reranker's
  * cross-encoder score, the autocut weak-top floor):
  *

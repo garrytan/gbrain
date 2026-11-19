@@ -531,7 +531,7 @@ describe('fence markers inside a cell are encoded, never live (#5395)', () => {
     const rendered = literals.map(l => renderFactsTable([{ ...fact(l), rowNum: 1, active: true }]));
     expect(new Set(rendered).size).toBe(literals.length);
     // A `&#58;` not followed by the marker suffix is untouched.
-    const plain = 'colon &#58; entity and gbrain&#58;other:begin stay';
+    const plain = 'colon &#58; entity and foresights&#58;other:begin stay';
     expect(parseFactsFence(upsertFactRow('', fact(plain)).body).facts[0]!.claim).toBe(plain);
     expect(upsertFactRow('', fact(plain)).body).toContain(plain);
   });
@@ -547,11 +547,11 @@ describe('fence markers inside a cell are encoded, never live (#5395)', () => {
       for (let j = 0; j < n; j++) {
         const level = rnd(4);
         const mid = level === 0 ? ':' : `&${'amp;'.repeat(level - 1)}#58;`;
-        parts.push(`x${rnd(10)} gbrain${mid}${kinds[rnd(2)]}:${edges[rnd(2)]}`);
+        parts.push(`x${rnd(10)} foresights${mid}${kinds[rnd(2)]}:${edges[rnd(2)]}`);
       }
       const text = parts.join(rnd(2) ? ' ' : '');
       const encoded = escapeFenceCell(text);
-      expect(encoded).not.toMatch(/gbrain:(facts|takes):(begin|end)/);
+      expect(encoded).not.toMatch(/(?:foresights|gbrain):(facts|takes):(begin|end)/);
       expect(parseRowCells(`| ${encoded} |`)).toEqual([text]);
       // decode∘encode = id on the encoded image: a second parse of the already-decoded text is a no-op only when it holds no bare form,
       // and encode∘decode = id on any encoded cell.
@@ -566,7 +566,7 @@ describe('fence markers inside a cell are encoded, never live (#5395)', () => {
     expect(parseFactsFence(twice).facts.map(f => f.claim)).toEqual([claim, 'another']);
     const reRendered = replaceOrInsertFactsFence(twice, renderFactsTable(parseFactsFence(twice).facts));
     expect(reRendered).toBe(twice);
-    const escaped = 'see gbrain\\:facts:begin in a transcript';
+    const escaped = 'see foresights\\:facts:begin in a transcript';
     const body = upsertFactRow('', fact(escaped)).body;
     expect(parseFactsFence(body).facts[0]!.claim).toBe(escaped);
   });

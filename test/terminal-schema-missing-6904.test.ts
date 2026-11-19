@@ -5,7 +5,7 @@
  * Protects: on a real PGLite brain whose `sources.purge_epoch` column is missing (the column the issue hit), a put_page
  * fails with `storage_error` whose detail records `reason: schema_missing`, the SQLSTATE and the missing column; the
  * write-request diagnosis is `schema_missing` / `storage` with the fix for the schema state now (at head: ask the user,
- * doctor's missing-tables check; behind: `gbrain apply-migrations --yes`); `gbrain sources writer failures` groups it under
+ * doctor's missing-tables check; behind: `foresights apply-migrations --yes`); `foresights sources writer failures` groups it under
  * the same category; and a receipt an older build recorded as an owner exception with errno 42703 reads the same way.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -91,7 +91,7 @@ describe('#6904 a missing relation or column at publication is schema_missing', 
     expect(d).toMatchObject({ category: 'schema_missing', public_category: 'storage', class: 'systemic', safe_actions: ['repair'], needs_human: true });
     expect(d.human_reason).toContain('s.purge_epoch');
     expect(d.human_reason).toContain('schema_missing_tables');
-    expect(d.human_reason).toContain('gbrain repair missing-tables');
+    expect(d.human_reason).toContain('foresights repair missing-tables');
     expect(d.fix).toMatchObject({ argv: ['gbrain', 'doctor', '--json'], next: 'ask_user' });
   }), 60_000);
 
@@ -101,7 +101,7 @@ describe('#6904 a missing relation or column at publication is schema_missing', 
       const d = await diagnosis();
       expect(d).toMatchObject({ category: 'schema_missing', public_category: 'storage', safe_actions: ['migrate'], needs_human: false });
       expect(d.fix).toMatchObject({ argv: ['gbrain', 'apply-migrations', '--yes'], next: 'run', verify: { argv: ['gbrain', 'doctor', '--json'] } });
-      expect(d.fix.why).toContain('owns the gbrain tables');
+      expect(d.fix.why).toContain('owns the foresights tables');
     } finally { await engine.setConfig('version', String(LATEST_SCHEMA_VERSION)); }
   }), 60_000);
 

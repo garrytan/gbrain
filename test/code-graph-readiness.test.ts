@@ -152,7 +152,7 @@ describe('resolveCodeReadiness — source scoping', () => {
   });
 
   // #3707: pre-fix this reported `not_built` — indistinguishable from a
-  // never-synced brain — and the hint misdirected to `gbrain sync`. Code
+  // never-synced brain — and the hint misdirected to `foresights sync`. Code
   // exists brain-wide (the beforeEach import), so a scoped miss is a
   // scope/grant problem, not an indexing one. #4352 remediation: the
   // brain-wide rerun is a trusted-local-only signal (remote: false).
@@ -196,7 +196,7 @@ describe('resolveCodeReadiness — #3707 out_of_scope vs not_built', () => {
     expect(r.status).toBe('ready'); // brain-wide probe sees the code
   });
 
-  test('out_of_scope hint names the scope and does NOT recommend gbrain sync', () => {
+  test('out_of_scope hint names the scope and does NOT recommend foresights sync', () => {
     const hint = readinessHint({
       status: 'out_of_scope', ready: false, has_code: false,
       pending_edges: false, scoped_source_id: 'default',
@@ -204,7 +204,7 @@ describe('resolveCodeReadiness — #3707 out_of_scope vs not_built', () => {
     expect(hint).toContain("source 'default'");
     expect(hint).toContain('scope/grant problem');
     expect(hint).toContain('federated_read');
-    expect(hint).not.toMatch(/Run `gbrain sync`/);
+    expect(hint).not.toMatch(/Run `(?:foresights|gbrain) sync`/);
   });
 });
 

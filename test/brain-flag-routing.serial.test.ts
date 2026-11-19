@@ -2,7 +2,7 @@
  * `--brain <id>` must actually route to the named mounted brain.
  *
  * The bug: docs/architecture/brains-and-sources.md promises
- * `gbrain query "X" --brain media-team` runs against the team's DB, and
+ * `foresights query "X" --brain media-team` runs against the team's DB, and
  * src/core/brain-resolver.ts implements the full 6-tier chain — but nothing
  * ever CALLED the resolver from the CLI dispatch path. `--brain media-team`
  * was silently ignored (unknown flag) and the command ran against the HOST

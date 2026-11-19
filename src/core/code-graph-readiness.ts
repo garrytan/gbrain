@@ -101,18 +101,18 @@ export async function resolveCodeReadiness(
 export function readinessHint(r: CodeGraphReadiness): string | null {
   switch (r.status) {
     case 'not_built':
-      return 'Symbol graph not built (no current code indexed in scope). Run `gbrain doctor` locally to inspect indexing and recovery.';
+      return 'Symbol graph not built (no current code indexed in scope). Run `foresights doctor` locally to inspect indexing and recovery.';
     case 'out_of_scope':
       return `Code IS indexed in this brain, but none of it is inside your resolved source scope${
         r.scoped_source_id ? ` (source '${r.scoped_source_id}')` : ''
-      }. This is a scope/grant problem, not an indexing one — do NOT re-run \`gbrain sync\`. ` +
+      }. This is a scope/grant problem, not an indexing one — do NOT re-run \`foresights sync\`. ` +
         `Pass a source_id that holds code (or --all-sources locally); remote clients: check the client's federated_read grant.`;
     case 'no_symbols':
-      return 'Code is indexed but carries no symbol metadata. Run `gbrain reindex-code --force --no-embed` to rebuild it without provider costs.';
+      return 'Code is indexed but carries no symbol metadata. Run `foresights reindex-code --force --no-embed` to rebuild it without provider costs.';
     case 'indexing':
-      return 'Symbol graph still building (edges pending resolution). Re-run after the next `gbrain dream` cycle / autopilot tick.';
+      return 'Symbol graph still building (edges pending resolution). Re-run after the next `foresights dream` cycle / autopilot tick.';
     case 'projection_pending':
-      return 'Current code text projections are pending in the visible scope; results may be incomplete. Run `gbrain reindex-code --force --no-embed` locally to rebuild through the datastore owner, then check `gbrain doctor`. This read does not repair or embed content.';
+      return 'Current code text projections are pending in the visible scope; results may be incomplete. Run `foresights reindex-code --force --no-embed` locally to rebuild through the datastore owner, then check `foresights doctor`. This read does not repair or embed content.';
     case 'unknown':
       return 'Readiness check unavailable (DB error). Treat the results as best-effort, not proof of a complete index.';
     case 'ready':

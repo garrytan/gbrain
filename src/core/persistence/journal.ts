@@ -168,9 +168,9 @@ async function cumulativeCapacityError(tx: SqlEngine, resource: string, scope: s
 /** The `write_quota_exhausted` refusal for config key `key`; the fix is the reversible raise, verified by the capacity check. */
 export function quotaExhausted(resource: string, key: string, value: number, used: number, limit: number, reason: 'lifetime_ids' | 'terminal_bytes'): OperationError {
   return opError('write_quota_exhausted', `Write capacity exhausted: ${resource} (${used} used of ${limit}).`,
-    `Run on the brain host: gbrain config set ${key} ${value} (covers about one more year at the current admission rate; undo with gbrain config unset ${key}). ` +
+    `Run on the brain host: foresights config set ${key} ${value} (covers about one more year at the current admission rate; undo with foresights config unset ${key}). ` +
     `Keep the same request_id and retry after the change. Accepted request IDs and retained receipts are never evicted.${reason === 'terminal_bytes'
-      ? ' Then gbrain repair receipt-compaction previews the retained receipt bytes compaction would free.' : ''}`,
+      ? ' Then foresights repair receipt-compaction previews the retained receipt bytes compaction would free.' : ''}`,
     { reason, detail: key.slice('persistence.limits.'.length), docs: 'docs/guides/write-refusals.md#write_quota_exhausted',
       fix: { argv: ['gbrain', 'config', 'set', key, String(value)], consent: [], actor: 'host_admin', requires_exclusive: false,
         why: reason === 'lifetime_ids' ? 'Request ids are permanent, so only a larger cap admits more writes; the raise is reversible.'
@@ -214,7 +214,7 @@ export async function assertWriteHeadroom(engine: SqlEngine, principal: Principa
       const configKey = journalLimitKey(setting);
       const value = Math.max(Math.ceil((used + need) / share) + 1, await oneYearCapacity(engine, key, resource === 'lifetime_ids' ? 'LifetimeIds' : 'TerminalBytes', used, limit));
       throw opError('write_quota_insufficient', `This run needs ${need} more ${scope} ${label} than the ${Math.floor(limit * share) - used} left before its limit (${used} used of ${limit}${share < 1 ? `, pausing at ${Math.round(share * 100)}%` : ''}).`,
-        `Nothing was started and other writes still work. Run on the brain host: gbrain config set ${configKey} ${value} (undo with gbrain config unset ${configKey}), then rerun the same command.`,
+        `Nothing was started and other writes still work. Run on the brain host: foresights config set ${configKey} ${value} (undo with foresights config unset ${configKey}), then rerun the same command.`,
         { reason: resource, detail: configKey.slice('persistence.limits.'.length), docs: 'docs/guides/write-refusals.md#write_quota_insufficient',
           fix: { argv: ['gbrain', 'config', 'set', configKey, String(value)], consent: [], actor: 'host_admin', requires_exclusive: false,
             why: 'Covers this run and about one more year at the current rate; reversible.', verify: CAPACITY_VERIFY } });
@@ -609,7 +609,7 @@ export async function chargePreparationAttempt(engine: SqlEngine, row: WriteRequ
 }
 
 /**
- * F0: a write to a worktree under an active `gbrain sources refresh` is refused
+ * F0: a write to a worktree under an active `foresights sources refresh` is refused
  * before it is journaled. The fence insert holds the worktree row FOR UPDATE
  * and admission holds it FOR SHARE, so an admission either commits before the
  * fence (and is drained) or sees it. During `syncing` only the managed sync's
@@ -685,7 +685,7 @@ async function assertWorktreeNotRefreshing(tx: BrainEngine, input: WriteAdmissio
   if (refresh.state === 'recovery_required' && barrier && input.worktreeId && await deferralRoom(tx, input.worktreeId)) return refresh.id;
   if (refresh.state === 'recovery_required') throw catalogueError('refresh_recovery_required',
     `Refresh ${refresh.id} could not verify the checkout HEAD of source ${input.sourceId}; writes to its worktree stay fenced.`,
-    `gbrain sources writer status ${input.sourceId}, then gbrain sources refresh ${input.sourceId} --resume. Retry the same request_id afterwards.`);
+    `foresights sources writer status ${input.sourceId}, then foresights sources refresh ${input.sourceId} --resume. Retry the same request_id afterwards.`);
   // PR B: with the barrier on, the write waits behind the refresh as a deferred request instead of being refused.
   if (barrier && input.worktreeId && await deferralRoom(tx, input.worktreeId)) return refresh.id;
   // GST-1582: the retry hint comes from the refresh's own state (its phase, how long it has run, how long this worktree's
@@ -695,7 +695,7 @@ async function assertWorktreeNotRefreshing(tx: BrainEngine, input: WriteAdmissio
   const retryWith = input.requestId ? `Retry with request_id ${input.requestId}` : 'Retry the same call';
   const error = catalogueError('worktree_refreshing',
     `This write was not saved: refresh ${refresh.id} is fast-forwarding source ${input.sourceId}'s checkout (${refreshProgress(hint)}). ${retryWith} in about ${seconds(hint.retryAfterMs)} s.`,
-    `${retryWith} after retry_after_ms: ${hint.retryAfterMs}. Check progress with gbrain sources writer status ${input.sourceId}.`);
+    `${retryWith} after retry_after_ms: ${hint.retryAfterMs}. Check progress with foresights sources writer status ${input.sourceId}.`);
   error.detail = `retry_after_ms=${hint.retryAfterMs}`;
   error.retryable = true;
   if (input.requestId) error.requestId = input.requestId;
@@ -938,7 +938,7 @@ function recoveryTooLarge(bytes: number, limits: JournalLimits): OperationError 
   const worktree = journalLimitKey('worktreeRecoveryBytes'), brain = journalLimitKey('brainRecoveryBytes');
   return new OperationError('request_too_large',
     `This request needs ${bytes} bytes of recovery space, more than the recovery budget (${worktree} ${limits.worktreeRecoveryBytes}, ${brain} ${limits.brainRecoveryBytes}); nothing was changed.`,
-    `A configured budget is the user's choice: ask them before raising it with gbrain config set, or unset ${worktree} for the default, which holds the largest page stored in segments.`);
+    `A configured budget is the user's choice: ask them before raising it with foresights config set, or unset ${worktree} for the default, which holds the largest page stored in segments.`);
 }
 
 /** Called while holding the root lock; the durable record precedes any rename. */

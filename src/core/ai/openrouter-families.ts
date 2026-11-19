@@ -1,7 +1,7 @@
 /**
  * OpenRouter model families that may drive the subagent (tool) loop.
  *
- * The gateway loop keys tool-call replay on gbrain's own tool_use id, not the
+ * The gateway loop keys tool-call replay on foresights's own tool_use id, not the
  * provider's, so what matters per family is that the proxied tool-call
  * envelope survives an abort mid-loop and a resume byte-identically. Each
  * family listed here has a live abort/retry pin under test/e2e/:

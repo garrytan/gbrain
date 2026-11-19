@@ -233,7 +233,7 @@ describe('belief ledger restore (pglite archive)', () => {
       cleanup: { events: [['page', 'page.expired', false, null]], tombstones: 0, redacted: 0, mirror: false }, state: 'none', restoredRedacted: 0 }),
     () => __setBeliefEmitterFaultForTests(drafts => drafts.map(d => d.eventType === 'page.expired' ? { ...d, eventType: 'page.purged', purged: true } : d)));
   }, 300_000);
-  test('#9: gbrain backup restore --purge-mirror replays from a named copy of the mirror, and the warning names that flag', async () => {
+  test('#9: foresights backup restore --purge-mirror replays from a named copy of the mirror, and the warning names that flag', async () => {
     const r = await collect<Record<string, unknown>>(resolve => withFileBeliefBrain(SOURCE, async fb => {
       await fb.open(async b => {
         await b.put('companies/acme-example', beliefPage({ prose: 'Acme.' }));

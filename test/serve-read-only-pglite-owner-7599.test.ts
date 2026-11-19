@@ -3,7 +3,7 @@
  * engine handle, so the CLI's reads and writes go through its persistence owner socket; a read-only PGLite serve that
  * skipped them left every CLI command with "The local persistence owner is unavailable". It keeps them.
  *
- * Drives the real CLI subprocess beside a real `gbrain serve --access read-only` holding the PGLite brain.
+ * Drives the real CLI subprocess beside a real `foresights serve --access read-only` holding the PGLite brain.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';

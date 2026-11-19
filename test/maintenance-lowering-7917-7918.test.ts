@@ -3,7 +3,7 @@
  * declaration that is present but unreadable fails closed at `unknown`.
  *
  * 1. Protects: a declared maintenance write over a page the owner wrote (a patterns grounding repair outside the output
- *    prefix) lowers the page and files one pending `lower_page` proposal the owner sees in `gbrain trust review`, on a
+ *    prefix) lowers the page and files one pending `lower_page` proposal the owner sees in `foresights trust review`, on a
  *    managed repository brain (the coordinator's maintenance publication) and on a repo-less brain (the unmanaged
  *    derived transaction). A maintenance write whose declaration is present but malformed publishes at `unknown`, the
  *    committed file carries the `unknown` marker, and the marker rule stamps it; it never falls back to the request's
@@ -38,7 +38,7 @@ const UNREADABLE = { tier: 'agent_written', origin: { channel: 'derive:patterns'
 
 const tierOf = async (engine: BrainEngine, slug: string) => storedTrustTier(
   (await engine.executeRaw<{ trust_tier: string }>('SELECT trust_tier FROM pages WHERE source_id = $1 AND slug = $2', ['default', slug]))[0]?.trust_tier);
-/** The owner's confirmation of a page (the fixture stands in for gbrain trust confirm). */
+/** The owner's confirmation of a page (the fixture stands in for foresights trust confirm). */
 const confirmTier = (engine: BrainEngine, slug: string, managed: boolean) => {
   const raise = (tx: BrainEngine) => withTrustPromotion(tx, 'user_confirmed', () =>
     tx.executeRaw("UPDATE pages SET trust_tier = 'operator_curated' WHERE source_id = 'default' AND slug = $1", [slug]));

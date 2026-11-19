@@ -25,7 +25,7 @@ export async function localProbe(
   const { spawn } = await import('../../core/spawn.ts');
   const posix = process.platform !== 'win32';
   return new Promise((resolve) => {
-    // nosemgrep: javascript.lang.security.audit.spawn-shell-true.spawn-shell-true -- file and args come from doctor's own call sites (npm root -g, which -a gbrain, crontab -l, git -C <receipt workspace>); the shell is Windows-only and off for git (windowsShell: false), where npm resolves to npm.cmd, as with the execFile it replaced; trusted local CLI only
+    // nosemgrep: javascript.lang.security.audit.spawn-shell-true.spawn-shell-true -- file and args come from doctor's own call sites (npm root -g, which -a foresights, crontab -l, git -C <receipt workspace>); the shell is Windows-only and off for git (windowsShell: false), where npm resolves to npm.cmd, as with the execFile it replaced; trusted local CLI only
     const child = spawn(file, args, { shell: !posix && windowsShell, detached: posix, stdio: ['ignore', 'pipe', 'ignore'] });
     const chunks: Buffer[] = [];
     let bytes = 0;

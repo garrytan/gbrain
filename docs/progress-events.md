@@ -10,25 +10,25 @@ Most humans won't read this page. Agents parsing progress will.
 
 Any of these commands stream events when `--progress-json` is set:
 
-- `gbrain doctor` (DB checks, JSONB integrity, markdown body completeness,
+- `foresights doctor` (DB checks, JSONB integrity, markdown body completeness,
   integrity sample)
-- `gbrain orphans`
-- `gbrain embed`
-- `gbrain files sync`
-- `gbrain export`
-- `gbrain extract [links|timeline|all]` (fs or db source)
-- `gbrain import`
-- `gbrain sync`
-- `gbrain migrate --to …` (graduation reports one phase per step and ticks per
+- `foresights orphans`
+- `foresights embed`
+- `foresights files sync`
+- `foresights export`
+- `foresights extract [links|timeline|all]` (fs or db source)
+- `foresights import`
+- `foresights sync`
+- `foresights migrate --to …` (graduation reports one phase per step and ticks per
   table and batch; the legacy copier reports the `migrate.copy_*` phases below)
-- `gbrain repair-jsonb`
-- `gbrain check-backlinks`
-- `gbrain lint`
-- `gbrain integrity auto`
-- `gbrain eval`
-- `gbrain eval brainbench`
-- `gbrain apply-migrations` (the orchestrator + every child command)
-- `gbrain transcripts ingest` (per-file ticks + a per-session heartbeat over the import set)
+- `foresights repair-jsonb`
+- `foresights check-backlinks`
+- `foresights lint`
+- `foresights integrity auto`
+- `foresights eval`
+- `foresights eval brainbench`
+- `foresights apply-migrations` (the orchestrator + every child command)
+- `foresights transcripts ingest` (per-file ticks + a per-session heartbeat over the import set)
 
 Non-bulk commands (`stats`, `graph-query`, `get`, `put`, etc.) don't emit
 events — they return in under a second.
@@ -52,8 +52,8 @@ separately for progress.
 | `--progress-interval=<ms>` | Override the minimum interval between tick emits (default 1000). |
 
 Global flags: parsed by `src/core/cli-options.ts` before command dispatch,
-so `gbrain --progress-json doctor` works the same as
-`gbrain doctor --progress-json` (the latter also works — per-command
+so `foresights --progress-json doctor` works the same as
+`foresights doctor --progress-json` (the latter also works — per-command
 parsers see the flag via the shared `CliOptions` singleton).
 
 ## Event types
@@ -159,7 +159,7 @@ Stable phase names:
 - `migrate.copy_pages`, `migrate.copy_links`
 - `migrate.copy_facts` (heartbeat-only, one tick per fact row; the facts
   table re-copies fully on every run, so the tick count is the whole table)
-- `migrate.reembed` (the re-embed pass of `gbrain migrate embeddings`; total is the
+- `migrate.reembed` (the re-embed pass of `foresights migrate embeddings`; total is the
   stale-chunk backlog at the start of the pass, so it can grow slightly if a
   writer adds chunks mid-run)
 - `repair_jsonb.run`, `repair_jsonb.<table>.<column>`
@@ -195,7 +195,7 @@ Sub-phases exposed via `child()`:
 
 ## Subprocess inheritance
 
-When a parent CLI spawns `gbrain …` child processes (mostly in
+When a parent CLI spawns `foresights …` child processes (mostly in
 `src/commands/migrations/*`), global flags (`--quiet`, `--progress-json`,
 `--progress-interval`) are propagated to the child's argv via the
 `childGlobalFlags()` helper in `src/core/cli-options.ts`. Child stderr
@@ -210,16 +210,16 @@ breaking the orchestrator's `JSON.parse`. Its stdio is explicit:
 
 ## Minion jobs
 
-`gbrain jobs work` (the Minion worker daemon) keeps progress in the DB,
+`foresights jobs work` (the Minion worker daemon) keeps progress in the DB,
 not on stderr. Each Minion handler that runs a bulk core (embed, sync,
 extract, import, backlinks) calls `job.updateProgress({done, total,
 …})` per iteration. Agents read per-job progress via the
-`get_job_progress` MCP operation or `gbrain jobs get <id>`. A `sync` job
+`get_job_progress` MCP operation or `foresights jobs get <id>`. A `sync` job
 writes the phase it is in (`resolve_repo`, `git_pull`, `full_import`,
 `import` with `banked_files`, or the managed drain's `managed_sync.*`
 fields), and `autopilot-cycle` / `autopilot-global-maintenance` write
 `{phase, phase_index, phase_count, started_at}` as each cycle phase starts
-(the phase names are `gbrain dream --phase` names). These writes are
+(the phase names are `foresights dream --phase` names). These writes are
 best-effort: a failed progress write never fails the job.
 
 The `jobs work` daemon itself emits coarse one-line-per-job stderr output

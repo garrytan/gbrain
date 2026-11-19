@@ -1,5 +1,5 @@
 /**
- * GBRA-133 PR 2b (lane D's run.ts hunk): `gbrain sync --no-pull` syncs local HEAD, so its inline cost estimate prices
+ * GBRA-133 PR 2b (lane D's run.ts hunk): `foresights sync --no-pull` syncs local HEAD, so its inline cost estimate prices
  * local HEAD and runs no git fetch. The control (the same command without --no-pull) fetches, so the check is not
  * vacuous. The sync is stopped right after the cost gate, before it would pull.
  */
@@ -23,7 +23,7 @@ afterAll(async () => { resetGateway(); await engine?.disconnect(); rmSync(home, 
 const sh = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', ...args], { cwd, encoding: 'utf8' }).trim();
 const page = (name: string) => '---\ntitle: ' + name + '\n---\nA note about acme-example named ' + name + '.\n';
 
-test('gbrain sync --no-pull runs no git fetch during the cost estimate; without it the estimate fetches', async () => {
+test('foresights sync --no-pull runs no git fetch during the cost estimate; without it the estimate fetches', async () => {
   const remote = join(home, 'remote.git'), writer = join(home, 'writer'), local = join(home, 'local');
   sh(home, 'init', '-q', '--bare', '-b', 'main', remote);
   sh(home, 'clone', '-q', remote, writer);

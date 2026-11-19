@@ -1,6 +1,6 @@
 /**
- * `gbrain sources host-repo` (G7b-2, docs/designs/GIT_CANONICAL_MEMORY.md "Remote and hosted writes"): a hosted brain
- * keeps one bare repository per source, which is what a user clones and what pushes to the user's own remote. gbrain
+ * `foresights sources host-repo` (G7b-2, docs/designs/GIT_CANONICAL_MEMORY.md "Remote and hosted writes"): a hosted brain
+ * keeps one bare repository per source, which is what a user clones and what pushes to the user's own remote. foresights
  * checks it out once as a linked worktree it owns (`git worktree add`) and claims that worktree as the source's canonical
  * worktree through the ordinary claim, with every physical-root and manifest check. From then on the one door applies
  * unchanged: a door commit moves the branch the worktree shares with the bare repository; recovery, receipts, remote
@@ -54,10 +54,10 @@ const real = (path: string) => { try { return realpathSync(path); } catch { retu
 /** The hook every hosted repository carries: it refuses every push and names the way in. */
 export function hostedHookScript(sourceId: string): string {
   return ['#!/bin/sh', HOOK_BANNER,
-    '# The branches of this repository move only through the gbrain door. Door commits are local ref updates and the',
+    '# The branches of this repository move only through the foresights door. Door commits are local ref updates and the',
     '# push to the user remote is outgoing, so neither passes this hook; every incoming push is refused.',
-    `echo "gbrain: this repository holds source ${sourceId}; only the gbrain writer moves its branches, so this push was refused and nothing changed." >&2`,
-    `echo "gbrain: write pages with gbrain put --source ${sourceId} or put_page over MCP, then fetch from here." >&2`,
+    `echo "gbrain: this repository holds source ${sourceId}; only the foresights writer moves its branches, so this push was refused and nothing changed." >&2`,
+    `echo "gbrain: write pages with foresights put --source ${sourceId} or put_page over MCP, then fetch from here." >&2`,
     'exit 1', ''].join('\n');
 }
 
@@ -104,10 +104,10 @@ export async function planHostRepo(engine: BrainEngine, opts: HostRepoOptions): 
     'Pass the directory that will hold the hosted repository as an absolute path; nothing was created.');
   if (opts.pushRemote !== undefined && (!opts.pushRemote.trim() || hasPassword(opts.pushRemote))) throw opError('invalid_params',
     '--push-remote must be a repository URL without a password.',
-    `Pass the URL alone, and after hosting wire a credential with gbrain sources writer git-durability ${opts.sourceId} --pat-file and a token file; nothing was created.`);
+    `Pass the URL alone, and after hosting wire a credential with foresights sources writer git-durability ${opts.sourceId} --pat-file and a token file; nothing was created.`);
   if (!await managedPersistenceEnabled(engine)) throw opError('strict_requires_managed',
     `host-repo makes source ${opts.sourceId} git-canonical, which needs managed persistence on this brain; nothing was created.`,
-    'Ask the user whether to turn on managed persistence for this brain (gbrain sources writer activate) before hosting a repository.');
+    'Ask the user whether to turn on managed persistence for this brain (foresights sources writer activate) before hosting a repository.');
   const dir = resolve(opts.dir);
   const [source] = await engine.executeRaw<SourceRow>('SELECT incarnation::text AS incarnation, archived, local_path, config FROM sources WHERE id=$1', [opts.sourceId]);
   const config = source ? parseSourceConfig(source.config) : {};
@@ -116,10 +116,10 @@ export async function planHostRepo(engine: BrainEngine, opts: HostRepoOptions): 
   const before = typeof config.canonical === 'string' ? config.canonical : null;
 
   if (source?.archived) throw refused('source_archived', `Source ${opts.sourceId} is archived.`,
-    `Restore it first (gbrain sources restore ${opts.sourceId}) or pick a new source ID; nothing was created.`);
+    `Restore it first (foresights sources restore ${opts.sourceId}) or pick a new source ID; nothing was created.`);
   if (hosted && binding) {
     if (real(join(dir, 'repo.git')) !== real(hosted.repository)) throw refused('source_bound', `Source ${opts.sourceId} is already hosted at ${dirname(hosted.repository)}.`,
-      `Preview it at its own directory with gbrain sources host-repo ${opts.sourceId} --dir ${dirname(hosted.repository)} --dry-run; nothing was changed.`);
+      `Preview it at its own directory with foresights sources host-repo ${opts.sourceId} --dir ${dirname(hosted.repository)} --dry-run; nothing was changed.`);
     const state = hostedHookState(hosted.repository, opts.sourceId);
     const link = !existsSync(hosted.worktree) ? 'absent' : linkedWorktreeProblem(hosted.worktree) ? 'broken' : 'ok';
     const action = state === 'ok' ? 'none' : 'reinstall_hook';
@@ -132,8 +132,8 @@ export async function planHostRepo(engine: BrainEngine, opts: HostRepoOptions): 
         `Source ${opts.sourceId} is hosted at ${hosted.repository} and is git-canonical (strict).`,
         state === 'ok' ? 'The pre-receive hook that refuses every push is in place.'
           : `The pre-receive hook that refuses every push is ${state}; the apply reinstalls it.`,
-        link === 'ok' ? 'The worktree gbrain commits through is linked to the repository.'
-          : `The worktree gbrain commits through is ${link === 'absent' ? 'missing' : 'no longer linked to the repository'}; writes to this source cannot commit until it is restored (git worktree repair, or git worktree add).`,
+        link === 'ok' ? 'The worktree foresights commits through is linked to the repository.'
+          : `The worktree foresights commits through is ${link === 'absent' ? 'missing' : 'no longer linked to the repository'}; writes to this source cannot commit until it is restored (git worktree repair, or git worktree add).`,
       ], next: [], plan_hash } };
   }
   if (binding || hosted) throw refused('source_bound', `Source ${opts.sourceId} already has a canonical worktree.`,
@@ -172,7 +172,7 @@ export async function planHostRepo(engine: BrainEngine, opts: HostRepoOptions): 
     summary: [
       `Source ${opts.sourceId} becomes git-canonical (strict, canonical: git${before ? `, was ${before}` : ''}): every page write commits to Git through the door before the database indexes it, and the database is derived from the commits.`,
       `${source ? 'The source' : `A new source ${opts.sourceId}`} gets a bare repository at ${repository} on branch ${HOSTED_BRANCH} with one commit (an empty .gitignore); users clone it and fetch from it.`,
-      `gbrain checks it out at ${worktree} as a linked worktree and claims it as the source's canonical worktree on this host.`,
+      `foresights checks it out at ${worktree} as a linked worktree and claims it as the source's canonical worktree on this host.`,
       'A pre-receive hook refuses every push into the repository, so only the door moves its branch.',
       opts.pushRemote ? `Commits are pushed to ${opts.pushRemote} by the push effect once Git durability is enabled (the next step).` : 'No push remote: commits stay in the hosted repository.',
     ], next: opts.pushRemote ? [['gbrain', 'sources', 'writer', 'git-durability', opts.sourceId, '--enable', '--dry-run']] : [], plan_hash } };

@@ -1,6 +1,6 @@
 /**
- * #7145: managed_guard_schema_drift names every column gbrain did not create as table.column, classifies what
- * each does to gbrain (blocks_inserts: NOT NULL with no default; guard_source_column: a page-child source_id;
+ * #7145: managed_guard_schema_drift names every column foresights did not create as table.column, classifies what
+ * each does to foresights (blocks_inserts: NOT NULL with no default; guard_source_column: a page-child source_id;
  * harmless: nullable or defaulted and never read or written) and grades on the worst class: fail, warn, or ok
  * as information. PGLite in-memory, and an isolated Postgres database when DATABASE_URL is set
  * (test/postgres-unit-arms.txt).
@@ -40,7 +40,7 @@ for (const kind of testBackends()) describe(`managed_guard_schema_drift classifi
       });
   });
 
-  test('a NOT NULL column with no default blocks gbrain inserts: fail, with the SQL next step', async () => {
+  test('a NOT NULL column with no default blocks foresights inserts: fail, with the SQL next step', async () => {
     await withColumns(['ALTER TABLE tags ADD COLUMN external_owner text', "UPDATE tags SET external_owner = 'x'", 'ALTER TABLE tags ALTER COLUMN external_owner SET NOT NULL',
       'ALTER TABLE facts ADD COLUMN external_note text'],
     ['ALTER TABLE tags DROP COLUMN external_owner', 'ALTER TABLE facts DROP COLUMN external_note'], async () => {

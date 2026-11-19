@@ -1,7 +1,7 @@
 /**
- * GST-2568: `gbrain repair file-drift` with a selection and no `--prefer`: a read-only comparison of each selected page
- * with its file that needs no winner. Per page it reports what differs (frontmatter, body, both, or nothing once gbrain's
- * own normalisation is read: `none`), which side is newer by the evidence gbrain has (the file's last commit time at HEAD,
+ * GST-2568: `foresights repair file-drift` with a selection and no `--prefer`: a read-only comparison of each selected page
+ * with its file that needs no winner. Per page it reports what differs (frontmatter, body, both, or nothing once foresights's
+ * own normalisation is read: `none`), which side is newer by the evidence foresights has (the file's last commit time at HEAD,
  * the page's `updated_at`), and what a repair would do. It writes nothing: no artifact, no approved set, no hold change.
  *
  * Git is the parent, so a newer file is the side a repair takes (`--prefer file`). A page that changed after its file's
@@ -75,8 +75,8 @@ export async function readDriftEvidence(engine: BrainEngine, sourceId: string, s
 export function newerPageParagraph(sourceId: string, slug: string, evidence: DriftEvidence): string {
   const what = evidence.differs === 'both' ? 'body and frontmatter' : evidence.differs === 'body' ? 'body' : `frontmatter (${evidence.keys.join(', ')})`;
   return `page ${slug} changed after its file was last committed (page updated ${evidence.page_updated_at}, ${evidence.path} committed ${evidence.file_committed_at}) and its ${what} differs, `
-    + `so letting the file win may drop a database edit; it stays held for a person. updated_at also moves on gbrain's own writes (a retype), so read both sides first. `
-    + `To keep the file, preview gbrain repair file-drift --source ${sourceId} --slug ${slug} --prefer file. To keep the page, preview it with --prefer database instead (its apply would rewrite the file from the page and needs the user's consent), or carry the edit into the file, commit it and run gbrain sync --source ${sourceId}.`;
+    + `so letting the file win may drop a database edit; it stays held for a person. updated_at also moves on foresights's own writes (a retype), so read both sides first. `
+    + `To keep the file, preview foresights repair file-drift --source ${sourceId} --slug ${slug} --prefer file. To keep the page, preview it with --prefer database instead (its apply would rewrite the file from the page and needs the user's consent), or carry the edit into the file, commit it and run foresights sync --source ${sourceId}.`;
 }
 
 /** One selected page, compared: a held page by its hold, any other by its slug. Never writes. */
@@ -97,14 +97,14 @@ export async function comparePage(engine: BrainEngine, sourceId: string, target:
     if (live.reason === 'agrees') {
       const due = hold ? holdRescreenDue(hold, false) : false;
       return { item, slug, ...held, ...(live.path ? { path: live.path } : {}), would: hold ? 'release_hold' : 'no_drift',
-        why: !hold ? 'the page and its file agree' : due ? 'the page and its file agree once gbrain\'s own normalisation is read; the next sync releases the hold with no write'
-          : `the page and its file agree; gbrain repair file-drift --source ${sourceId} --slug ${slug} --prefer file previews the release` };
+        why: !hold ? 'the page and its file agree' : due ? 'the page and its file agree once foresights\'s own normalisation is read; the next sync releases the hold with no write'
+          : `the page and its file agree; foresights repair file-drift --source ${sourceId} --slug ${slug} --prefer file previews the release` };
     }
     if (live.still_present !== true) return { item, slug, ...held, would: live.still_present === false ? 'no_drift' : 'unknown', why: live.reason };
     const { path, ...evidence } = await readDriftEvidence(engine, sourceId, slug, assessmentAt);
     const base = { item, slug, ...held, path, evidence };
-    if (evidence.differs === 'none') return { ...base, would: hold ? 'release_hold' : 'no_drift', why: 'nothing differs once gbrain\'s own normalisation is read' };
-    if (evidence.newer === 'file') return { ...base, would: 'prefer_file', why: `${path} was committed after the page last changed, so the file wins (Git is the parent): gbrain repair file-drift --source ${sourceId} --slug ${slug} --prefer file` };
+    if (evidence.differs === 'none') return { ...base, would: hold ? 'release_hold' : 'no_drift', why: 'nothing differs once foresights\'s own normalisation is read' };
+    if (evidence.newer === 'file') return { ...base, would: 'prefer_file', why: `${path} was committed after the page last changed, so the file wins (Git is the parent): foresights repair file-drift --source ${sourceId} --slug ${slug} --prefer file` };
     if (evidence.newer === 'database') return { ...base, would: 'needs_human', why: newerPageParagraph(sourceId, slug, { path, ...evidence }) };
     return { ...base, would: 'needs_human', why: evidence.file_uncommitted ? `${path} has uncommitted bytes, so which side is newer is unknown; commit or restore the file, then compare again`
       : `which side is newer is unknown (${evidence.file_committed_at ? 'the page has no update time' : `no commit holds ${path}`}); a person decides` };

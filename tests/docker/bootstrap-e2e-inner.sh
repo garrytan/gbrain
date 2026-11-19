@@ -126,7 +126,7 @@ esac
 exit 0
 EOF
 chmod +x "$SCRATCH/bin/codex"
-# Absolute gbrain binary for the registration argv (never executed — the codex
+# Absolute foresights binary for the registration argv (never executed — the codex
 # path writes no hooks and the MCP add is faked).
 FAKE_GBRAIN="$SCRATCH/bin/gbrain-bin"
 printf '#!/bin/sh\nexit 0\n' > "$FAKE_GBRAIN"
@@ -253,7 +253,7 @@ printf '%s\n' "$codex_out" | grep -Fq "verified targeting this workspace" \
   || fail "codex MCP registration was not verified as targeting this workspace"
 [ -f "$WS/.claude/settings.local.json" ] && fail "codex path must not write Claude hooks"
 grep -Fq "GBRAIN_SOURCE=" "$GB_CODEX_STATE" || fail "codex registration did not bind GBRAIN_SOURCE"
-# Every stdio registration gbrain writes pins REGISTRATION_SURFACE
+# Every stdio registration foresights writes pins REGISTRATION_SURFACE
 # (src/core/mcp-registration.ts); test/check-bootstrap-guards.test.ts keeps
 # this literal equal to it so a surface change fails on the PR, not nightly.
 EXPECTED_SURFACE=starter

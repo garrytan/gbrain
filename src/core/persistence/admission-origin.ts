@@ -1,13 +1,13 @@
 /**
  * #6696 (A5): who a write is for. `interactive` writes are the user's own
  * (`remember`, `put_page`, `edit_page` from the CLI or an MCP client, an
- * operator's `gbrain sync`, an approved `gbrain repair`); everything else is
+ * operator's `foresights sync`, an approved `foresights repair`); everything else is
  * `background` (maintenance, conversation facts, autopilot cycle phases,
  * autopilot catch-up syncs, minion jobs). Trusted host-side callers set the
  * origin explicitly: `OperationContext.admissionOrigin` at the CLI and MCP
  * entry points and the persistence owner's verified IPC dispatch, or a
- * `withAdmissionOrigin` scope around a command (`gbrain sync`, its delegated
- * run on the owner, `gbrain repair`; `runCycle` scopes itself background).
+ * `withAdmissionOrigin` scope around a command (`foresights sync`, its delegated
+ * run on the owner, `foresights repair`; `runCycle` scopes itself background).
  * A caller that sets nothing is background. It is never inferred from
  * `ctx.remote`: an autopilot phase writes with `remote: true` too.
  *
@@ -85,12 +85,12 @@ export function backgroundPauseShare(raw: string | undefined): number {
  */
 export function backgroundPaused(scopeKey: string, resource: 'lifetime_ids' | 'terminal_bytes', used: number, limit: number, share: number,
   configKey: string, value: number, context: { what?: string; alternative?: string } = {}): OperationError {
-  const raise = `gbrain config set ${configKey} ${value}`;
+  const raise = `foresights config set ${configKey} ${value}`;
   return opError('write_capacity_backpressure',
     `${context.what ?? 'Background writes are paused'}: ${scopeKey} ${resource} is at ${used} of ${limit}, past the ${Math.round(share * 100)}% pause line (${BACKGROUND_PAUSE_KEY}).`,
     `Nothing was submitted; interactive writes keep the rest of ${configKey}. ${context.alternative ? `${context.alternative} ` : ''}${resource === 'lifetime_ids'
-      ? `Request ids are never freed, so background work resumes only after the brain host runs ${raise} (covers about one more year; undo with gbrain config unset ${configKey}).`
-      : `Background work resumes as retained receipts compact, or at once after the brain host runs ${raise} (covers about one more year; undo with gbrain config unset ${configKey}).`}`,
+      ? `Request ids are never freed, so background work resumes only after the brain host runs ${raise} (covers about one more year; undo with foresights config unset ${configKey}).`
+      : `Background work resumes as retained receipts compact, or at once after the brain host runs ${raise} (covers about one more year; undo with foresights config unset ${configKey}).`}`,
     { reason: resource, detail: configKey.slice('persistence.limits.'.length), docs: 'docs/guides/write-refusals.md#write_capacity_backpressure',
       fix: { argv: ['gbrain', 'config', 'set', configKey, String(value)], consent: [], actor: 'host_admin', requires_exclusive: false,
         why: resource === 'lifetime_ids' ? 'Request ids are permanent, so only a larger cap moves the pause line; the raise is reversible.'

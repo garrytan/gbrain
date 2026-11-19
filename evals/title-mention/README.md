@@ -18,11 +18,11 @@ No test runner or CI job reads this directory. The boost itself is owned by
 Run it against a scratch brain:
 
 ```bash
-gbrain import evals/title-mention/corpus
-gbrain eval retrieval-quality evals/title-mention/queries.jsonl --json
+foresights import evals/title-mention/corpus
+foresights eval retrieval-quality evals/title-mention/queries.jsonl --json
 ```
 
-`gbrain eval retrieval-quality` reports every family, but its default gate
+`foresights eval retrieval-quality` reports every family, but its default gate
 (`DEFAULT_GATE` in `src/eval/retrieval-quality/harness.ts`) floors only
 `title-substring` among these (Hit@1 >= 0.95); the other three families are
 reported, not gated.

@@ -27,7 +27,7 @@ export function recoveryStagingFile(path: string, bytes: string | Uint8Array): R
 }
 function blocked(): OperationError {
   return opError('unexpected_staging_bytes', 'Recovery staging has unexpected bytes or identity; the root and its recovery capacity remain reserved.',
-    'A recovery staging file changed outside gbrain. Inspect the pending recovery in writer status and tell the user; never delete or edit staging files by hand.',
+    'A recovery staging file changed outside foresights. Inspect the pending recovery in writer status and tell the user; never delete or edit staging files by hand.',
     { fix: { argv: ['gbrain', 'sources', 'writer', 'status', '--json'], consent: [], actor: 'agent', why: 'Shows pending recovery records and the capacity they hold, read-only.', requires_exclusive: false } });
 }
 function stages(record: StagedRecovery): RecoveryStagingFile[] {

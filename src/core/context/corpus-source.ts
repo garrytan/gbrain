@@ -363,7 +363,7 @@ export function listCorpusSourceHolds(corpusDir: string, soleSource: boolean, op
 }
 
 /**
- * Operator mapping (`gbrain sweep --assign-corpus`): freeze every held
+ * Operator mapping (`foresights sweep --assign-corpus`): freeze every held
  * session (or one) to `sourceId`. Frozen records are never changed.
  * Returns the sessions that now name `sourceId` because of this call.
  */

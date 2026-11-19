@@ -1,5 +1,5 @@
 /**
- * #8617: a `gbrain sources refresh` tick refused `refresh_source_changed` because HEAD moved (a writer committing) or work
+ * #8617: a `foresights sources refresh` tick refused `refresh_source_changed` because HEAD moved (a writer committing) or work
  * reached the worktree after the drain check gets exactly one retry in the same tick, from a fresh precheck.
  *
  * Protects: the first attempt aborts its row and the retry fast-forwards to the upstream, so the tick is not lost; a second

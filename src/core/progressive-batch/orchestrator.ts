@@ -1,7 +1,7 @@
 /**
  * v0.41.16.0 — Progressive-batch primitive orchestrator.
  *
- * The single seam every batch-style gbrain operation routes through.
+ * The single seam every batch-style foresights operation routes through.
  * Replaces 12+ ad-hoc cost-prompt / TTY-grace / ramp-up patterns
  * scattered across reindex, reindex-multimodal, book-mirror,
  * brainstorm, eval-suspected-contradictions, post-upgrade-reembed,
@@ -169,7 +169,7 @@ function trackerHeadroom(tracker: BudgetTracker): number | null {
  * SIGINT was received (caller should abort). Resolves to `false`
  * if the timeout elapsed without interrupt.
  *
- * Defensively removes its listener on exit so other gbrain handlers
+ * Defensively removes its listener on exit so other foresights handlers
  * don't see double-delivery.
  *
  * Exported for unit tests (call with ms=0 to short-circuit).

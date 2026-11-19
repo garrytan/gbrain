@@ -27,30 +27,30 @@ export type DocSection = {
 };
 
 export const PROJECT = {
-  name: "GBrain",
+  name: "Foresights",
   summary:
-    "GBrain is a personal knowledge brain and GStack mod for agent platforms. Pluggable engines (PGLite default, Postgres+pgvector for scale), contract-first operations, fat-markdown skills, and one agent operator contract for every error and recommendation. Teaches agents brain ops, ingestion, enrichment, scheduling, identity, and access control.",
-  repoUrl: "https://github.com/garrytan/gbrain",
-  rawBaseUrl: repoBaseOrThrow(process.env.LLMS_REPO_BASE, "https://raw.githubusercontent.com/garrytan/gbrain/master"),
+    "Foresights is a personal knowledge brain and GStack mod for agent platforms. Pluggable engines (PGLite default, Postgres+pgvector for scale), contract-first operations, fat-markdown skills, and one agent operator contract for every error and recommendation. Teaches agents brain ops, ingestion, enrichment, scheduling, identity, and access control.",
+  repoUrl: "https://github.com/aimonk2025/gbrain",
+  rawBaseUrl: repoBaseOrThrow(process.env.LLMS_REPO_BASE, "https://raw.githubusercontent.com/aimonk2025/gbrain/master"),
 };
 
 export const SECTIONS: DocSection[] = [
   {
     heading: "Choose your agent setup",
     entries: [
-      { title: "Use your brain from anywhere over MCP", path: "docs/guides/remote-mcp.md", description: "`gbrain mcp expose`: publish serve --http on your Tailscale tailnet (Funnel explicit for cloud agents), user service, admin token file, grant/connect/verify hand-off, --status/--remove, troubleshooting, security posture, ngrok and cloud-host alternatives." },
+      { title: "Use your brain from anywhere over MCP", path: "docs/guides/remote-mcp.md", description: "`foresights mcp expose`: publish serve --http on your Tailscale tailnet (Funnel explicit for cloud agents), user service, admin token file, grant/connect/verify hand-off, --status/--remove, troubleshooting, security posture, ngrok and cloud-host alternatives." },
       // Linked, not inlined: these three guides only apply inside Grok Bot, Muse or another
       // hosted agent, and AGENTS.md (inlined) routes those agents to them. Dropping them from the
       // bundle freed about 48 KB of FULL_SIZE_BUDGET.
-      { title: "Grok Bot", path: "docs/guides/grok-bot.md", description: "Recommended: keep the brain on your computer, publish it with `gbrain mcp expose --funnel`, grant the Bot a client and install the thin CLI; local in-Bot memory as the no-host alternative. Native skill activation, shared-computer trust and dated evidence.", includeInFull: false },
-      { title: "Muse personal agent", path: "docs/guides/muse.md", description: "Verify durable storage first; connect Muse to your published brain (`gbrain mcp expose --funnel` + thin CLI) or add local explicit memory with provenance alongside Muse's native memory; distinguish Muse Code and unverified native MCP.", includeInFull: false },
+      { title: "Grok Bot", path: "docs/guides/grok-bot.md", description: "Recommended: keep the brain on your computer, publish it with `foresights mcp expose --funnel`, grant the Bot a client and install the thin CLI; local in-Bot memory as the no-host alternative. Native skill activation, shared-computer trust and dated evidence.", includeInFull: false },
+      { title: "Muse personal agent", path: "docs/guides/muse.md", description: "Verify durable storage first; connect Muse to your published brain (`foresights mcp expose --funnel` + thin CLI) or add local explicit memory with provenance alongside Muse's native memory; distinguish Muse Code and unverified native MCP.", includeInFull: false },
       { title: "Inside an existing agent", path: "docs/guides/in-agent-setup.md", description: "Isolated setup, absolute launcher, receipts, keyless maintenance, complete private backup and safe restoration.", includeInFull: false },
       { title: "Owner turns in a shared room", path: "docs/guides/rooms.md", description: "Declare the group chat an answer goes into (X-Gbrain-Room, _meta.room, a room argument): the owner's read is unchanged and every page and fact is marked room_access with whether the room could have read it; reasons, notices, who may ask, and keeping raw results out of the group transcript.", includeInFull: false },
-      { title: "Guest notes", path: "docs/guides/guest-notes.md", description: "Keep what outside guests in a group chat say apart from your own pages: a database-only guest source (`gbrain guests init`), the writer list, how the broker saves a note with its sender and group, the warning every read shows, `gbrain guests promote`, `gbrain guests grant-owner-clients` and the guest_source doctor check.", includeInFull: false },
-      { title: "Memory boundaries", path: "docs/guides/memory-boundaries.md", description: "Durable shared preferences versus harness state; remote graph maintenance, provider text disclosure, authorization and full-backup limits; large pages (segmented storage up to 256 MiB on Postgres, append_page / gbrain append, upload sessions, windowed reads, limits per entry point).", includeInFull: false },
+      { title: "Guest notes", path: "docs/guides/guest-notes.md", description: "Keep what outside guests in a group chat say apart from your own pages: a database-only guest source (`foresights guests init`), the writer list, how the broker saves a note with its sender and group, the warning every read shows, `foresights guests promote`, `foresights guests grant-owner-clients` and the guest_source doctor check.", includeInFull: false },
+      { title: "Memory boundaries", path: "docs/guides/memory-boundaries.md", description: "Durable shared preferences versus harness state; remote graph maintenance, provider text disclosure, authorization and full-backup limits; large pages (segmented storage up to 256 MiB on Postgres, append_page / foresights append, upload sessions, windowed reads, limits per entry point).", includeInFull: false },
       { title: "Page history", path: "docs/guides/page-history.md", description: "Why a page changed: an optional reason on page writes, replaced_because in get_versions, the gbrain-reason commit trailer, remote visibility and repo-less brains.", includeInFull: false },
       { title: "Brain versus session memory", path: "docs/guides/brain-vs-memory.md", description: "Route durable facts and preferences to shared memory, configuration to the harness, and temporary work to session state.", includeInFull: false },
-      { title: "Connect a hosted brain", path: "docs/guides/hosted-harness-access.md", description: "Getting the HTTPS endpoint (`gbrain mcp expose`, admin token file), host-side grants, private credential handoff, harness installation, profile repair, delegation limits and honest verification." },
+      { title: "Connect a hosted brain", path: "docs/guides/hosted-harness-access.md", description: "Getting the HTTPS endpoint (`foresights mcp expose`, admin token file), host-side grants, private credential handoff, harness installation, profile repair, delegation limits and honest verification." },
       { title: "Harness adapter reference", path: "docs/guides/harness-adapters.md", description: "Registry-generated transport, authentication lifetime and configuration facts.", includeInFull: false },
       { title: "Harness validation evidence", path: "docs/guides/harness-validation.md", description: "Local lifecycle and HTTP/worker proof, reproducible tests, and the remaining actual-harness acceptance checks.", includeInFull: false },
     ],
@@ -104,7 +104,7 @@ export const SECTIONS: DocSection[] = [
       {
         title: "docs/protocol/AGENT_OPERATOR_v1.md",
         description:
-          "The agent operator contract: read `code`, follow `fix.next` (run / ask_user / tell_user_to_run / wait / report), run `fix.verify`. Error envelope, notices and mute, effects/actor/next table, consent and preapproval, exit codes, marker grammar, compatibility policy, first run, and how to make gbrain work better for your user.",
+          "The agent operator contract: read `code`, follow `fix.next` (run / ask_user / tell_user_to_run / wait / report), run `fix.verify`. Error envelope, notices and mute, effects/actor/next table, consent and preapproval, exit codes, marker grammar, compatibility policy, first run, and how to make foresights work better for your user.",
         path: "docs/protocol/AGENT_OPERATOR_v1.md",
       },
       {
@@ -150,7 +150,7 @@ export const SECTIONS: DocSection[] = [
       {
         title: "docs/guides/page-anatomy.md",
         description:
-          "Anatomy of a page on one annotated example: frontmatter keys gbrain reads and stamps, compiled truth, the `<!-- timeline -->` sentinel and `- **YYYY-MM-DD** | Source — Summary` rows, the facts and takes fences, and schema-pack types; links to the four reference docs.",
+          "Anatomy of a page on one annotated example: frontmatter keys foresights reads and stamps, compiled truth, the `<!-- timeline -->` sentinel and `- **YYYY-MM-DD** | Source — Summary` rows, the facts and takes fences, and schema-pack types; links to the four reference docs.",
         path: "docs/guides/page-anatomy.md",
         includeInFull: false,
       },
@@ -183,7 +183,7 @@ export const SECTIONS: DocSection[] = [
       {
         title: "docs/schema-author-tutorial.md",
         description:
-          "5-minute walkthrough: fork the bundled pack, add a custom `researcher` type, backfill existing pages via `gbrain schema sync --apply`, prove the T1.5 wiring via `gbrain whoknows`.",
+          "5-minute walkthrough: fork the bundled pack, add a custom `researcher` type, backfill existing pages via `foresights schema sync --apply`, prove the T1.5 wiring via `foresights whoknows`.",
         path: "docs/schema-author-tutorial.md",
         // GBRA-199: an optional walkthrough; dropped from the single-fetch
         // bundle so the memory-verb listing docs fit FULL_SIZE_BUDGET.
@@ -193,21 +193,21 @@ export const SECTIONS: DocSection[] = [
       {
         title: "docs/guides/system-one.md",
         description:
-          "System One decision support (TypeSafe Jev or an llm: provider): every slot off or on, executed quickstart (`gbrain decide probe`, `probe --query`, `enable --recommended`, `status`), each slot in plain words, calibration and qualification, fail directions, egress rules, reading status/doctor, receipts, troubleshooting by refusal reason.",
+          "System One decision support (TypeSafe Jev or an llm: provider): every slot off or on, executed quickstart (`foresights decide probe`, `probe --query`, `enable --recommended`, `status`), each slot in plain words, calibration and qualification, fail directions, egress rules, reading status/doctor, receipts, troubleshooting by refusal reason.",
         path: "docs/guides/system-one.md",
         includeInFull: false,
       },
       {
         title: "docs/guides/retrieval-feedback.md",
         description:
-          "Use-attributed retrieval feedback: answer ids, `rate_answer` / `gbrain rate` (whole answer or single pages), how ratings move page weights and ranking (bounded ±λ), citation learning, revision handling, who may teach the brain, `gbrain feedback status|reset`, config keys and every refusal code.",
+          "Use-attributed retrieval feedback: answer ids, `rate_answer` / `foresights rate` (whole answer or single pages), how ratings move page weights and ranking (bounded ±λ), citation learning, revision handling, who may teach the brain, `foresights feedback status|reset`, config keys and every refusal code.",
         path: "docs/guides/retrieval-feedback.md",
         includeInFull: false,
       },
       {
         title: "docs/guides/pinned-questions.md",
         description:
-          "Pinned questions: cited answers kept current from your notes (`gbrain questions pin|list|status|refresh|unpin`, `questions_*` MCP tools), read-time staleness, receipts and blocked reasons, owner-private visibility, consent for paid refresh, the standing_questions phase and the dream.auto_think migration.",
+          "Pinned questions: cited answers kept current from your notes (`foresights questions pin|list|status|refresh|unpin`, `questions_*` MCP tools), read-time staleness, receipts and blocked reasons, owner-private visibility, consent for paid refresh, the standing_questions phase and the dream.auto_think migration.",
         path: "docs/guides/pinned-questions.md",
         includeInFull: false,
       },
@@ -218,55 +218,55 @@ export const SECTIONS: DocSection[] = [
       },
       {
         title: "docs/guides/on-commit-sync.md",
-        description: "Opt-in on-commit sync in gbrain serve (sync.on_commit) and the per-source commit→searchable/embedded latency.",
+        description: "Opt-in on-commit sync in foresights serve (sync.on_commit) and the per-source commit→searchable/embedded latency.",
         path: "docs/guides/on-commit-sync.md",
         includeInFull: false,
       },
       {
         title: "docs/guides/shared-checkout-git.md",
         description:
-          "Committing and pushing when several agents share one brain checkout: `gbrain git commit-push` / `scripts/brain-commit-push.sh` (writer lock, path-scoped commit, in-memory merge, fast-forward-only advance), the outcome table, conflict resolution with --resolve, recovering a stuck rebase, the lock contract for host daemons, and the git commands never to run there.",
+          "Committing and pushing when several agents share one brain checkout: `foresights git commit-push` / `scripts/brain-commit-push.sh` (writer lock, path-scoped commit, in-memory merge, fast-forward-only advance), the outcome table, conflict resolution with --resolve, recovering a stuck rebase, the lock contract for host daemons, and the git commands never to run there.",
         path: "docs/guides/shared-checkout-git.md",
         includeInFull: false,
       },
       {
         title: "docs/guides/sync-unblock-runbook.md",
-        description: "Operator-agent loop for a managed catch-up on a live checkout: gbrain sync status --json (cursor, committed_last_10m, each hold and the last error with class / safe_actions / needs_human), gbrain sync unblock --apply, and the decision table (page / connection / systemic) behind them.",
+        description: "Operator-agent loop for a managed catch-up on a live checkout: foresights sync status --json (cursor, committed_last_10m, each hold and the last error with class / safe_actions / needs_human), foresights sync unblock --apply, and the decision table (page / connection / systemic) behind them.",
         path: "docs/guides/sync-unblock-runbook.md",
         includeInFull: false,
       },
       {
         title: "docs/guides/git-canonical.md",
         description:
-          "Git-canonical (strict) sources, opt-in per source: every write committed to Git through one door before the database row, the database derived from commits (Git wins), when to turn it on, `gbrain sources canonical <id> --to git|mixed` preview and apply, remote writes through the owner's door (write_pending), declared database-only classes, rollback, doctor git_index_lag / db_ahead_of_git, `sources git-gap` and `sources reindex --from-git`.",
+          "Git-canonical (strict) sources, opt-in per source: every write committed to Git through one door before the database row, the database derived from commits (Git wins), when to turn it on, `foresights sources canonical <id> --to git|mixed` preview and apply, remote writes through the owner's door (write_pending), declared database-only classes, rollback, doctor git_index_lag / db_ahead_of_git, `sources git-gap` and `sources reindex --from-git`.",
         path: "docs/guides/git-canonical.md",
         includeInFull: false,
       },
       {
         title: "docs/guides/multi-source-brains.md",
         description:
-          "Several repos in one brain: `gbrain sources add|list|federate`, per-request `source_ids` narrowing on search and query (never widens a grant), hosting an empty source in a bare repository (`gbrain sources host-repo`), read-only mirrors and the full `gbrain sources` verb list.",
+          "Several repos in one brain: `foresights sources add|list|federate`, per-request `source_ids` narrowing on search and query (never widens a grant), hosting an empty source in a bare repository (`foresights sources host-repo`), read-only mirrors and the full `foresights sources` verb list.",
         path: "docs/guides/multi-source-brains.md",
         includeInFull: false,
       },
       {
         title: "docs/guides/exact-search.md",
         description:
-          "`gbrain search --exact \"<phrase>\"` / MCP `search_exact`: unranked, exhaustive literal scan instead of grep, with a `complete` flag that says whether the whole scope was read; filters and limits.",
+          "`foresights search --exact \"<phrase>\"` / MCP `search_exact`: unranked, exhaustive literal scan instead of grep, with a `complete` flag that says whether the whole scope was read; filters and limits.",
         path: "docs/guides/exact-search.md",
         includeInFull: false,
       },
       {
         title: "docs/guides/cli-socket.md",
         description:
-          "Opt-in warm CLI socket on Postgres (`gbrain serve --cli-socket`): one-shot `gbrain search`, `query`, `get` and `recall` answered by the running serve, identity matching, refusals and GBRAIN_DEBUG=1 diagnostics.",
+          "Opt-in warm CLI socket on Postgres (`foresights serve --cli-socket`): one-shot `foresights search`, `query`, `get` and `recall` answered by the running serve, identity matching, refusals and GBRAIN_DEBUG=1 diagnostics.",
         path: "docs/guides/cli-socket.md",
         includeInFull: false,
       },
       {
         title: "docs/guides/upgrades-auto-update.md",
         description:
-          "`gbrain upgrade` and auto-update: the stable release channel, restarting every gbrain process onto the new build, doctor runtime_build_skew, known-bad releases and recovery.",
+          "`foresights upgrade` and auto-update: the stable release channel, restarting every foresights process onto the new build, doctor runtime_build_skew, known-bad releases and recovery.",
         path: "docs/guides/upgrades-auto-update.md",
         includeInFull: false,
       },
@@ -292,7 +292,7 @@ export const SECTIONS: DocSection[] = [
       {
         title: "docs/guides/minions-deployment.md",
         description:
-          "Deploying the gbrain jobs worker: crontab + watchdog, inline --follow, systemd/Procfile/fly.toml, upgrade checklist.",
+          "Deploying the foresights jobs worker: crontab + watchdog, inline --follow, systemd/Procfile/fly.toml, upgrade checklist.",
         path: "docs/guides/minions-deployment.md",
         // v0.41.8.0: 13KB deployment runbook. Web index entry stays;
         // single-fetch bundle drops it to keep under FULL_SIZE_BUDGET
@@ -311,7 +311,7 @@ export const SECTIONS: DocSection[] = [
       {
         title: "docs/guides/scaling-skills.md",
         description:
-          "Three-tier architecture for agents with 300+ skills: always-loaded, resolver-routed, and dormant. Per-turn token math, the compact list-format resolver, and the `gbrain doctor` safety net. 306 skills, ~21K tokens freed per turn, zero capability loss.",
+          "Three-tier architecture for agents with 300+ skills: always-loaded, resolver-routed, and dormant. Per-turn token math, the compact list-format resolver, and the `foresights doctor` safety net. 306 skills, ~21K tokens freed per turn, zero capability loss.",
         path: "docs/guides/scaling-skills.md",
         // Linked, not inlined: the operator-lessons wave (cron wrapper, managed checkout, identity) put llms-full.txt over FULL_SIZE_BUDGET.
         includeInFull: false,
@@ -319,28 +319,28 @@ export const SECTIONS: DocSection[] = [
       {
         title: "docs/guides/life-chronicle.md",
         description:
-          "Life Chronicle automatic event extraction (on by default): what qualifies, per-page cost and daily ceiling, privacy, the receipt -> `gbrain dream --phase chronicle` -> `gbrain day` check, skip/failure codes with fixes, opt-out `gbrain config set auto_chronicle false`, history backfill.",
+          "Life Chronicle automatic event extraction (on by default): what qualifies, per-page cost and daily ceiling, privacy, the receipt -> `foresights dream --phase chronicle` -> `foresights day` check, skip/failure codes with fixes, opt-out `foresights config set auto_chronicle false`, history backfill.",
         path: "docs/guides/life-chronicle.md",
         includeInFull: false,
       },
       {
         title: "docs/guides/dream-patterns.md",
         description:
-          "Dream patterns phase: settings (min_evidence, subagent timeouts), in-cycle budget sizing from the recorded `dream.patterns.last_run` (first batch, timeout halving, `insufficient_cycle_budget` skip, probe after 3 skips), reset with `gbrain config unset dream.patterns.last_run`.",
+          "Dream patterns phase: settings (min_evidence, subagent timeouts), in-cycle budget sizing from the recorded `dream.patterns.last_run` (first batch, timeout halving, `insufficient_cycle_budget` skip, probe after 3 skips), reset with `foresights config unset dream.patterns.last_run`.",
         path: "docs/guides/dream-patterns.md",
         includeInFull: false,
       },
       {
         title: "docs/guides/facts-drain.md",
         description:
-          "Automatic facts drain on PGLite (on by default): queued facts-absorb jobs run inside gbrain serve, serve --http and the facts_drain cycle phase with no command; per-run, daily and job-count caps, deferrals that never drop work, doctor facts_drain, opt-out `gbrain config set facts.extraction_enabled false`.",
+          "Automatic facts drain on PGLite (on by default): queued facts-absorb jobs run inside foresights serve, serve --http and the facts_drain cycle phase with no command; per-run, daily and job-count caps, deferrals that never drop work, doctor facts_drain, opt-out `foresights config set facts.extraction_enabled false`.",
         path: "docs/guides/facts-drain.md",
         includeInFull: false,
       },
       {
         title: "docs/guides/push-context.md",
         description:
-          "Push-based context: the brain volunteers confidence-gated pages from the rolling conversation window. Three channels (ambient reflex, volunteer_context op, gbrain watch), config knobs, and the volunteered-vs-used feedback loop.",
+          "Push-based context: the brain volunteers confidence-gated pages from the rolling conversation window. Three channels (ambient reflex, volunteer_context op, foresights watch), config knobs, and the volunteered-vs-used feedback loop.",
         path: "docs/guides/push-context.md",
         // Linked, not inlined: same budget trim as scaling-skills.md.
         includeInFull: false,
@@ -348,7 +348,7 @@ export const SECTIONS: DocSection[] = [
       {
         title: "docs/guides/time-aware-recall.md",
         description:
-          "Time-aware recall in `gbrain think`: the current date in brain.timezone (or `--reference-date`) and content dates on each page block, with the measured accuracy gain.",
+          "Time-aware recall in `foresights think`: the current date in brain.timezone (or `--reference-date`) and content dates on each page block, with the measured accuracy gain.",
         path: "docs/guides/time-aware-recall.md",
         includeInFull: false,
       },
@@ -398,7 +398,7 @@ export const SECTIONS: DocSection[] = [
       {
         title: "docs/ai-providers/llama-server-reranker.md",
         description:
-          "Local reranker via llama.cpp --reranking: Qwen3-Reranker, --alias setup, gbrain config keys, cold-start timeout, budget-cap interaction.",
+          "Local reranker via llama.cpp --reranking: Qwen3-Reranker, --alias setup, foresights config keys, cold-start timeout, budget-cap interaction.",
         path: "docs/ai-providers/llama-server-reranker.md",
         includeInFull: false,
       },
@@ -417,7 +417,7 @@ export const SECTIONS: DocSection[] = [
       {
         title: "docs/GBRAIN_VERIFY.md",
         description:
-          "Post-setup verification checks for the capabilities you enabled. When a gbrain call fails or something feels off, start with docs/protocol/AGENT_OPERATOR_v1.md, then run these checks.",
+          "Post-setup verification checks for the capabilities you enabled. When a foresights call fails or something feels off, start with docs/protocol/AGENT_OPERATOR_v1.md, then run these checks.",
         path: "docs/GBRAIN_VERIFY.md",
         // Linked, not inlined: the GBRA-224 doctor --alert guide (troubleshooting rows and the Doctor alert section, train T #8302) put llms-full.txt over FULL_SIZE_BUDGET at the v0.60.620.0 merge.
         includeInFull: false,
@@ -431,7 +431,7 @@ export const SECTIONS: DocSection[] = [
       {
         title: "docs/guides/error-codes.md",
         description:
-          "Generated: every error code with meaning, why, next step, who acts and consent, verify, exit code and retryability. Offline: `gbrain errors <code>`.",
+          "Generated: every error code with meaning, why, next step, who acts and consent, verify, exit code and retryability. Offline: `foresights errors <code>`.",
         path: "docs/guides/error-codes.md",
         includeInFull: false,
       },
@@ -451,7 +451,7 @@ export const SECTIONS: DocSection[] = [
       {
         title: "docs/guides/repair.md",
         description:
-          "`gbrain repair <kind>`: dry run vs --apply, --source/--limit/--json, resume, capacity stop, thin-client refusal, what each kind fixes and costs; held files walkthrough (sync holds a broken file, `gbrain repair frontmatter` two-pass preview and apply).",
+          "`foresights repair <kind>`: dry run vs --apply, --source/--limit/--json, resume, capacity stop, thin-client refusal, what each kind fixes and costs; held files walkthrough (sync holds a broken file, `foresights repair frontmatter` two-pass preview and apply).",
         path: "docs/guides/repair.md",
         includeInFull: false,
       },
@@ -465,7 +465,7 @@ export const SECTIONS: DocSection[] = [
       {
         title: "docs/guides/fence-format.md",
         description:
-          "Facts and takes fence format, generated from the parser: markers, columns and layouts, allowed values, holders, row-number rules, one valid example per fence, what gbrain fixes by itself and what it never guesses, and the repair gates.",
+          "Facts and takes fence format, generated from the parser: markers, columns and layouts, allowed values, holders, row-number rules, one valid example per fence, what foresights fixes by itself and what it never guesses, and the repair gates.",
         path: "docs/guides/fence-format.md",
         includeInFull: false,
       },
@@ -583,14 +583,14 @@ export const SECTIONS: DocSection[] = [
 ];
 
 export const INLINE_TIPS = [
-  "`gbrain doctor [--json] [--fast] [--fix]` - built-in health checks.",
-  "`gbrain orphans [--json]` - pages with zero inbound wikilinks.",
-  "`gbrain repair-jsonb [--dry-run]` - repair v0.12.0 double-encoded JSONB rows.",
-  "`gbrain repair [<kind>] [--apply]` - preview, then fix timeline, visibility and safe-chunk damage doctor reports.",
-  "`gbrain upgrade` runs post-upgrade + apply-migrations.",
-  "`gbrain errors <code> [--json]` - explain any error code offline; follow its `fix.next`.",
-  "`gbrain search --exact \"<phrase>\"` - every page containing a literal phrase, instead of grep.",
-  "`gbrain sources git-gap <id> [--json]` - read-only: how far a source's database is from what Git has committed.",
+  "`foresights doctor [--json] [--fast] [--fix]` - built-in health checks.",
+  "`foresights orphans [--json]` - pages with zero inbound wikilinks.",
+  "`foresights repair-jsonb [--dry-run]` - repair v0.12.0 double-encoded JSONB rows.",
+  "`foresights repair [<kind>] [--apply]` - preview, then fix timeline, visibility and safe-chunk damage doctor reports.",
+  "`foresights upgrade` runs post-upgrade + apply-migrations.",
+  "`foresights errors <code> [--json]` - explain any error code offline; follow its `fix.next`.",
+  "`foresights search --exact \"<phrase>\"` - every page containing a literal phrase, instead of grep.",
+  "`foresights sources git-gap <id> [--json]` - read-only: how far a source's database is from what Git has committed.",
 ];
 
 // Target ~800KB so llms-full.txt fits in ~200k-token contexts with room to spare.

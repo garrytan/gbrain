@@ -88,7 +88,7 @@ export interface BrainFirstAnalysis {
    * hardcoded EXEMPT_SKILLS allowlist. The doctor message appends a
    * dedicated hint for these on first detection (CMT1 from plan review:
    * replaces the dropped upgrade migration with a guided opt-in via
-   * `gbrain doctor --fix`).
+   * `foresights doctor --fix`).
    */
   formerly_hardcoded_exempt: boolean;
 }
@@ -125,13 +125,13 @@ export const EXTERNAL_LOOKUP_PATTERNS: ReadonlyArray<{ name: string; re: RegExp 
  * canonical brain-tool invocations developers actually write.
  */
 export const BRAIN_REFERENCE_PATTERNS: ReadonlyArray<RegExp> = [
-  /\bgbrain[\s_]+search\b/i,
-  /\bgbrain[\s_]+query\b/i,
-  /\bgbrain[\s_]+get[_-]?page\b/i,
-  /\bgbrain[\s_]+find[_-]?experts\b/i,
-  /\bgbrain[\s_]+get[_-]?backlinks\b/i,
-  /\bgbrain[\s_]+get[_-]?timeline\b/i,
-  /\bgbrain[\s_]+traverse[_-]?graph\b/i,
+  /\b(?:foresights|gbrain)[\s_]+search\b/i,
+  /\b(?:foresights|gbrain)[\s_]+query\b/i,
+  /\b(?:foresights|gbrain)[\s_]+get[_-]?page\b/i,
+  /\b(?:foresights|gbrain)[\s_]+find[_-]?experts\b/i,
+  /\b(?:foresights|gbrain)[\s_]+get[_-]?backlinks\b/i,
+  /\b(?:foresights|gbrain)[\s_]+get[_-]?timeline\b/i,
+  /\b(?:foresights|gbrain)[\s_]+traverse[_-]?graph\b/i,
   // Bare tool names (subagent context, OpenClaw plugin form):
   /\bsearch\s+the\s+brain\b/i,
   /\bquery\s+the\s+brain\b/i,
@@ -176,7 +176,7 @@ const FRONTMATTER_RE = /^---\n[\s\S]*?\n---\n?/;
  * preserved here ONLY for the doctor hint flow: when a skill in this
  * set newly flags after v0.36.x ships the structural-signal exemption,
  * the doctor message guides the user to either:
- *   1. `gbrain doctor --fix` to auto-add the canonical callout, OR
+ *   1. `foresights doctor --fix` to auto-add the canonical callout, OR
  *   2. add `brain_first: exempt` to frontmatter (if genuinely infra)
  *
  * The list is informational — removing it later doesn't break
@@ -389,7 +389,7 @@ export function buildBrainFirstSummaryLine(a: BrainFirstAnalysis): string {
   ];
   if (a.formerly_hardcoded_exempt) {
     parts.push(
-      `(was hardcoded-exempt in PR #1206 — opt out explicitly via 'brain_first: exempt' or run 'gbrain doctor --fix' to add the canonical callout)`,
+      `(was hardcoded-exempt in PR #1206 — opt out explicitly via 'brain_first: exempt' or run 'foresights doctor --fix' to add the canonical callout)`,
     );
   }
   if (a.typo_hint) {

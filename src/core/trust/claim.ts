@@ -1,5 +1,5 @@
 /**
- * `gbrain trust claim-sources` (#5575, legacy content): the owner claims
+ * `foresights trust claim-sources` (#5575, legacy content): the owner claims
  * their own sources once, at upgrade. Rows written before trust tiers have
  * no provenance, so they project to `unknown` and an old brain reads as
  * almost entirely "unverified origin". Claiming a source says "this is mine":
@@ -21,7 +21,7 @@
  * `write_origin.channel` is `trust_claim`; the source records when it was
  * claimed and when its lift finished). `--dry-run` is read-only.
  *
- * Doctor `trust_sources_unclaimed`, `gbrain post-upgrade` and the
+ * Doctor `trust_sources_unclaimed`, `foresights post-upgrade` and the
  * behavior-change notice ask the user while unclaimed sources hold legacy
  * rows (`readUnclaimedLegacySources`).
  */
@@ -107,10 +107,10 @@ export async function listClaimSources(engine: BrainEngine, opts: { batchSize?: 
 export async function recordSourceClaims(engine: BrainEngine, ids: readonly string[], now = new Date()): Promise<void> {
   for (const id of ids) {
     const [row] = await engine.executeRaw<{ config: unknown; archived: boolean }>('SELECT config, archived FROM sources WHERE id = $1', [id]);
-    if (!row) throw opError('unknown_source', `Source "${id}" does not exist.`, 'List sources with gbrain trust claim-sources --dry-run.');
+    if (!row) throw opError('unknown_source', `Source "${id}" does not exist.`, 'List sources with foresights trust claim-sources --dry-run.');
     const config = parseSourceConfig(row.config);
     if (isConnectorConfig(config)) throw connectorRefusal(id, String(config.kind));
-    if (row.archived) throw opError('unknown_source', `Source "${id}" is archived.`, 'Restore it first (gbrain sources restore), or leave it unclaimed.');
+    if (row.archived) throw opError('unknown_source', `Source "${id}" is archived.`, 'Restore it first (foresights sources restore), or leave it unclaimed.');
     const next: Record<string, unknown> = { ...config, trust_tier: OWNER_TIER_FLOOR, [TRUST_CLAIMED_AT_KEY]: now.toISOString() };
     delete next[TRUST_CLAIM_LIFTED_AT_KEY];
     await engine.executeRaw('UPDATE sources SET config = $1::text::jsonb WHERE id = $2', [JSON.stringify(normalizeSourceConfig(next)), id]);
@@ -232,10 +232,10 @@ async function legacyUnknownBySource(engine: Pick<BrainEngine, 'executeRaw'>, so
   return new Map(rows.map(r => [r.source_id, Number(r.n)]));
 }
 
-export const CLAIM_USER_MESSAGE = 'Your older notes were saved before gbrain tracked where memory comes from, so they read as "unverified origin" and agents connected over MCP see them quoted as source material. '
-  + 'Claiming a source tells gbrain those files are your own notes: they become "your notes", except pages that say they were captured, '
+export const CLAIM_USER_MESSAGE = 'Your older notes were saved before foresights tracked where memory comes from, so they read as "unverified origin" and agents connected over MCP see them quoted as source material. '
+  + 'Claiming a source tells foresights those files are your own notes: they become "your notes", except pages that say they were captured, '
   + 'clipped, imported or written by an agent, which keep their lower trust. Connector sources (Gmail, Calendar, GitHub) cannot be claimed. '
-  + 'To claim, run `gbrain trust claim-sources` in a terminal on the brain host; it shows each source and asks you to type its id.';
+  + 'To claim, run `foresights trust claim-sources` in a terminal on the brain host; it shows each source and asks you to type its id.';
 
 /**
  * The fix for an unclaimed brain: `actor: 'user'`, so `fix.next` is

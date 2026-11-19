@@ -37,7 +37,7 @@ async function runLandingGaps(ctx: DoctorContext): Promise<Check[]> {
     checks.push({ name: 'sync_landing_gaps', status: 'warn', details, ...(first?.fix ? { fix: first.fix } : { fix_unavailable_reason: 'operator_judgement' as const }),
       message: `Pages synced more than their freshness target ago are not fully searchable: ${lines.join('; ')}. `
         + 'pending_embedding pages are found by keyword but not by vector search; chunkless pages have no searchable body; quarantined pages are hidden; page_missing pages were removed outside sync. '
-        + `gbrain sync status --source <id> --detail --json lists each page with its fix.` });
+        + `foresights sync status --source <id> --detail --json lists each page with its fix.` });
     return checks;
   }
   const unknown = read.filter(entry => entry.gaps.status === 'unknown');

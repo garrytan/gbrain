@@ -45,7 +45,7 @@ Locator: Section 5.3 and Table 3, p. 9.
 
 ## Limits on interpretation
 
-- Figure 6 uses only evidence sessions. Reader models are GPT-4o and Llama 3.1, not this GBrain pilot's Sonnet 4.6. Numerical figure values were also visually checked on PDF page 10. Indexing experiments change retrieval and are outside a fixed-evidence presentation comparison.
+- Figure 6 uses only evidence sessions. Reader models are GPT-4o and Llama 3.1, not this Foresights pilot's Sonnet 4.6. Numerical figure values were also visually checked on PDF page 10. Indexing experiments change retrieval and are outside a fixed-evidence presentation comparison.
 
 [Summary](../summaries/01-longmemeval.md) · [Compendium](../compendium.md) ·
 [Index](../index.md)

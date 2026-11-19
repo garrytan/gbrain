@@ -27,7 +27,7 @@ if (skip) {
 const CLI = join(import.meta.dir, '..', '..', 'src', 'cli.ts');
 const DOCTOR_PROGRESS_TIMEOUT_MS = 60_000;
 
-describeE2E('gbrain doctor --progress-json (E2E)', () => {
+describeE2E('foresights doctor --progress-json (E2E)', () => {
   beforeAll(async () => {
     await setupDB();
     // Seed a handful of pages so the DB checks have something to scan.

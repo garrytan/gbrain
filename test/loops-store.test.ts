@@ -180,7 +180,7 @@ describe('upsertOpenLoop manual-close guard', () => {
 
     const rows = await listOpenLoops(engine, { sourceIds: ['g1'] });
     expect(rows).toHaveLength(1);
-    expect(rows[0].status).toBe('done'); // `gbrain loops done` was NOT reverted
+    expect(rows[0].status).toBe('done'); // `foresights loops done` was NOT reverted
     expect(rows[0].closed_by).toBe('manual');
     expect(rows[0].closed_at).not.toBeNull();
     expect(rows[0].summary).toBe(loop().summary); // no field merged either

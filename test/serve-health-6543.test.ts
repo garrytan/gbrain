@@ -135,7 +135,7 @@ describe('/health?deep=1 codes', () => {
     const result = await probeDeepHealth(fakeEngine({ oldest: 400_000 }).engine, 'postgres', '1.2.3', 100, 330_000, healthy);
     if (result.ok) throw new Error('expected 503');
     expect(result.body.code).toBe('pool_inflight_over_budget');
-    expect(result.body.fix).toContain('Restart this gbrain serve');
+    expect(result.body.fix).toContain('Restart this foresights serve');
     expect(result.body.fix).toContain('PGMAX_PIPELINE=0');
     expect(result.body.fix).toContain('transport');
   });
@@ -170,12 +170,12 @@ describe('transport block', () => {
   test('a configured timeout that reads 0: session_timeouts_not_applied with the ALTER ROLE fix, the live pool options and their reason, Supavisor named', async () => withEnv(ENV, async () => {
     const { engine } = fakeEngine({ applied: '0', prepare: false, maxPipeline: 0, appName: 'Supavisor', url: 'postgresql://u:p@db.example.invalid:6543/d' });
     expect(await readServeTransport(engine)).toEqual({ pooler_mode: 'transaction', prepare: false, max_pipeline: 0, max_pipeline_reason: 'transaction_pooler_port',
-      statement_timeout: '0', session_timeouts_not_applied: true, fix: "ALTER ROLE <gbrain role> SET statement_timeout = '5min'", application_name: 'Supavisor' });
+      statement_timeout: '0', session_timeouts_not_applied: true, fix: "ALTER ROLE <foresights role> SET statement_timeout = '5min'", application_name: 'Supavisor' });
     const lines: string[] = [];
     await recordServeTransport(engine, line => lines.push(line));
     expect(lines).toEqual([formatServeTransportLine(serveTransport(engine)!)]);
     expect(lines[0]).toContain('transport pooler_mode=transaction prepare=false max_pipeline=0 max_pipeline_reason=transaction_pooler_port statement_timeout=0 application_name=Supavisor session_timeouts_not_applied=true');
-    expect(lines[0]).toContain("ALTER ROLE <gbrain role> SET statement_timeout = '5min'");
+    expect(lines[0]).toContain("ALTER ROLE <foresights role> SET statement_timeout = '5min'");
     const result = await probeDeepHealth(engine, 'postgres', '1.2.3', 100, 330_000, healthy);
     if (!result.ok) throw new Error('expected 200');
     expect(result.body.transport).toMatchObject({ max_pipeline: 0, session_timeouts_not_applied: true });
@@ -189,7 +189,7 @@ describe('transport block', () => {
   test('a direct server that applies the timeout reports it and no flag', async () => withEnv(ENV, async () => {
     const transport = await readServeTransport(fakeEngine({ applied: '5min', url: 'postgresql://u:p@db.example.invalid:5432/d' }).engine);
     expect(transport).toEqual({ pooler_mode: 'session_or_direct', prepare: true, max_pipeline: 100, max_pipeline_reason: 'default', statement_timeout: '5min', session_timeouts_not_applied: false });
-    expect(formatServeTransportLine(transport)).toBe('[gbrain serve] transport pooler_mode=session_or_direct prepare=true max_pipeline=100 max_pipeline_reason=default statement_timeout=5min');
+    expect(formatServeTransportLine(transport)).toBe('[foresights serve] transport pooler_mode=session_or_direct prepare=true max_pipeline=100 max_pipeline_reason=default statement_timeout=5min');
   }));
 });
 

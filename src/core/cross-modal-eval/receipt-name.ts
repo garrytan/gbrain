@@ -129,10 +129,10 @@ export function describeReceiptStatus(slug: string, status: ReceiptStatus): stri
       return (
         `cross-modal eval receipt for ${slug} exists for an older SKILL.md ` +
         `(receipt sha ${status.latestSha}, current sha ${status.currentSha}). ` +
-        `Re-run \`gbrain eval cross-modal\` against the current skill output.`
+        `Re-run \`foresights eval cross-modal\` against the current skill output.`
       );
     case 'missing':
-      return `no cross-modal eval receipt for ${slug} yet — run \`gbrain eval cross-modal\` to add one`;
+      return `no cross-modal eval receipt for ${slug} yet — run \`foresights eval cross-modal\` to add one`;
   }
 }
 

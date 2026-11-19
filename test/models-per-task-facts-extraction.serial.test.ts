@@ -1,5 +1,5 @@
 /**
- * `gbrain models` reports the facts extraction route through the same
+ * `foresights models` reports the facts extraction route through the same
  * resolver extraction uses (resolveFactsExtractionModel), so the measured
  * Haiku 5.5 default shows as `measured default` and every explicit setting
  * keeps its own label. Same StubConfigEngine + runModels(['--json']) pattern
@@ -33,7 +33,7 @@ async function factsRow(engine: StubConfigEngine) {
 
 const ENV = { GBRAIN_HOME: '/nonexistent-gbrain-home-for-models-facts-tests', GBRAIN_MODEL: undefined, ANTHROPIC_API_KEY: 'sk-ant-test', OPENAI_API_KEY: undefined };
 
-describe('gbrain models: facts.extraction_model route', () => {
+describe('foresights models: facts.extraction_model route', () => {
   test('unset on an Anthropic-keyed install: claude-haiku-5-5, measured default', async () => {
     await withEnv(ENV, async () => {
       expect(await factsRow(new StubConfigEngine())).toMatchObject({ resolved: 'anthropic:claude-haiku-5-5', source: 'measured default' });

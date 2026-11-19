@@ -108,12 +108,12 @@ export class QueueQuotaExceededError extends Error {
     // The message travels to REMOTE MCP clients via submit_agent — it names
     // the quota (the caller's admission contract) but NOT the live global
     // waiting count, which would leak cross-tenant queue depth. Operators get
-    // exact counts locally from 'gbrain jobs stats'; the count stays on the
+    // exact counts locally from 'foresights jobs stats'; the count stays on the
     // error object for local consumers/tests.
     super(
       `queue admission: '${jobName}' is at its waiting quota (${quota}, all queues). ` +
-      `Drain or cancel backlog first — see 'gbrain jobs stats'. ` +
-      `Tune: gbrain config set minions.quota_max_waiting.${jobName} <n> (raise) or remove the key (disable).`,
+      `Drain or cancel backlog first — see 'foresights jobs stats'. ` +
+      `Tune: foresights config set minions.quota_max_waiting.${jobName} <n> (raise) or remove the key (disable).`,
     );
     this.name = 'QueueQuotaExceededError';
   }
@@ -181,7 +181,7 @@ function isOffValue(v: string): boolean {
 
 /**
  * Gate for embedding a job name into a COPY-PASTEABLE command hint
- * (`gbrain config set minions.…<name> …`). Display sanitization strips
+ * (`foresights config set minions.…<name> …`). Display sanitization strips
  * control bytes but keeps shell metacharacters; a name like `x$(cmd)` must
  * never ride into a hint an operator will paste into a shell. Returns the
  * name when it is a safe config-key segment, else null (caller renders a
@@ -356,7 +356,7 @@ export interface WaitingTtlTickResult {
  *   flag = 'true' (legacy / pre-grace releases) → sweep immediately
  *
  * The upgrade banner stamps the SAME key with the same ISO form, so an
- * interactive `gbrain upgrade` starts the clock too — whichever channel
+ * interactive `foresights upgrade` starts the clock too — whichever channel
  * shows the notice first, the operator gets a full grace window to set
  * `minions.ttl_waiting_hours.<name> 0` before anything is cancelled.
  */

@@ -112,7 +112,7 @@ export function strikeFenceRow(body: string, rowNum: number, strike: (fact: Pars
  * the row's `expired_at` is already non-null.
  *
  * Reason defaults to `'forgotten'` when the caller doesn't provide one
- * (matches the existing `gbrain forget` CLI which takes no reason
+ * (matches the existing `foresights forget` CLI which takes no reason
  * argument). MCP `forget_fact` op can pass a more specific reason
  * when the user provides it.
  */
@@ -328,7 +328,7 @@ export async function forgetFactInFence(
           if (!existsSync(filePath) || readFileSync(filePath, 'utf-8') !== body) return false;
           if (stored ? !await bestEffortStoredBodyMirror(tx, row.source_id, slug, stored,
             savepoint => mirrorFileBody(savepoint, row.source_id, slug, tmpBody, stored), err => {
-              mirrorWarning = `FACTS_PAGE_MIRROR_FAILED: ${slug} (source ${row.source_id}): ${err instanceof Error ? err.message : String(err)}; page cache stale until gbrain sync --source ${row.source_id}`;
+              mirrorWarning = `FACTS_PAGE_MIRROR_FAILED: ${slug} (source ${row.source_id}): ${err instanceof Error ? err.message : String(err)}; page cache stale until foresights sync --source ${row.source_id}`;
               console.warn(`[facts.forget] ${mirrorWarning}`);
             }) : await readStoredBody(tx, row.source_id, slug, true)) return false;
           if (!existsSync(filePath) || readFileSync(filePath, 'utf-8') !== body) throw new WithdrawalFileChanged();

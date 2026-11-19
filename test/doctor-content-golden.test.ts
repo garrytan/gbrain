@@ -1,5 +1,5 @@
 /**
- * `gbrain doctor` goldens on a PGLite brain with content (GBRA-68).
+ * `foresights doctor` goldens on a PGLite brain with content (GBRA-68).
  *
  * The W0 doctor goldens (test/doctor-json-golden.test.ts) run on an empty
  * brain, so the content-reading checks (frontmatter scan, timeline history
@@ -96,7 +96,7 @@ async function capture(): Promise<Captures> {
     ['extract', 'all', '--source', 'db'],
   ]) {
     const run = await runGbrain(h, args);
-    if (run.exitCode !== 0) throw new Error(`gbrain ${args.join(' ')} failed (${run.exitCode}): ${run.stderr}`);
+    if (run.exitCode !== 0) throw new Error(`foresights ${args.join(' ')} failed (${run.exitCode}): ${run.stderr}`);
   }
   writeFileSync(join(src, 'notes', 'broken-frontmatter.md'), BROKEN_PAGE);
   const json = await runGbrain(h, ['doctor', '--json', '--skills-dir', h.skillsDir]);
@@ -105,7 +105,7 @@ async function capture(): Promise<Captures> {
   return { json, human };
 }
 
-describe('gbrain doctor goldens on a brain with content (PGLite)', () => {
+describe('foresights doctor goldens on a brain with content (PGLite)', () => {
   test('doctor --json and human doctor match the master capture', async () => {
     const c = await expectNormalizerStable(capture, ALL);
     expect(c.json.json).not.toBeNull();

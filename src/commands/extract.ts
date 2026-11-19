@@ -11,7 +11,7 @@
  * primitive's audit JSONL value justifies the ceremony. No code change
  * in v0.41.13.0; cost-free extract continues as-is.
  *
- * gbrain extract — Extract links and timeline entries from brain content.
+ * foresights extract — Extract links and timeline entries from brain content.
  *
  * Two data sources:
  *   --source fs  (default): walk markdown files on disk
@@ -19,9 +19,9 @@
  *                           with no local checkout, e.g. live MCP servers)
  *
  * Subcommands:
- *   gbrain extract links    [--source fs|db] [--dir <brain>] [--dry-run] [--json] [--type T] [--since DATE]
- *   gbrain extract timeline [--source fs|db] [--dir <brain>] [--dry-run] [--json] [--type T] [--since DATE]
- *   gbrain extract all      [--source fs|db] [--dir <brain>] [--dry-run] [--json] [--type T] [--since DATE]
+ *   foresights extract links    [--source fs|db] [--dir <brain>] [--dry-run] [--json] [--type T] [--since DATE]
+ *   foresights extract timeline [--source fs|db] [--dir <brain>] [--dry-run] [--json] [--type T] [--since DATE]
+ *   foresights extract all      [--source fs|db] [--dir <brain>] [--dry-run] [--json] [--type T] [--since DATE]
  *
  * The DB-source path uses the v0.10.3 graph extractor (typed link inference,
  * within-page dedup, snapshot iteration so concurrent writes don't corrupt
@@ -172,7 +172,7 @@ export async function stampExtracted(
       process.stderr.write(
         `[extract] watermark stamped ${stamped}/${refs.length} page(s) — ` +
         `${refs.length - stamped} ref(s) matched no page (wrong source_id or not yet synced); ` +
-        `they remain visible to 'gbrain extract --stale'\n`,
+        `they remain visible to 'foresights extract --stale'\n`,
       );
     }
   } catch { /* best-effort: page stays stale, extract --stale re-sweeps it */ }
@@ -543,7 +543,7 @@ export async function extractLinksFromFile(
     // Single hit on the ancestor path → emit one edge with the inferred
     // verb type. Multiple hits (only possible when globalBasename is on
     // AND ancestor walk missed) → emit one edge per match, all tagged
-    // `wikilink_basename` so users can audit via `gbrain graph-query
+    // `wikilink_basename` so users can audit via `foresights graph-query
     // <slug> --type wikilink_basename`.
     const isBasename = resolvedSlugs.length > 1
       || (globalBasename && resolvedSlugs.length === 1
@@ -669,7 +669,7 @@ export interface ExtractOpts {
    * no per-item dry-run lines, no `created N` summary. Independent of
    * jsonMode, which also selects the stderr batch-error channel (JSON events
    * vs human text); the cycle used `jsonMode: true` as a stand-in for this
-   * and flipped that channel in a plain `gbrain dream`.
+   * and flipped that channel in a plain `foresights dream`.
    */
   quiet?: boolean;
   /**
@@ -790,7 +790,7 @@ export async function runExtractCore(engine: BrainEngine, opts: ExtractOpts): Pr
   }
 
   const lost = new LostWrites();
-  // Full walk path: CLI `gbrain extract` or first-run.
+  // Full walk path: CLI `foresights extract` or first-run.
   //
   // #3957 review (D4): snapshot the walked pages' updated_at BEFORE the walk
   // reads any content, so the post-walk stamp carries the pre-read value —
@@ -837,32 +837,32 @@ export async function runExtractCore(engine: BrainEngine, opts: ExtractOpts): Pr
   return result;
 }
 
-const EXTRACT_HELP = `Usage: gbrain extract <subcommand> [flags]
+const EXTRACT_HELP = `Usage: foresights extract <subcommand> [flags]
 
 Extraction:
-  gbrain extract links    [--source fs|db] [--source-id <id>] [--dir <brain-dir>]
+  foresights extract links    [--source fs|db] [--source-id <id>] [--dir <brain-dir>]
                           [--type T] [--since DATE] [--include-frontmatter]
                           [--workers N|--concurrency N] [--dry-run] [--json]
-  gbrain extract timeline [--source fs|db] [--source-id <id>] [--dir <brain-dir>]
+  foresights extract timeline [--source fs|db] [--source-id <id>] [--dir <brain-dir>]
                           [--type T] [--since DATE] [--include-frontmatter]
                           [--infer-dates] [--workers N|--concurrency N]
                           [--dry-run] [--json]
-  gbrain extract all      [--source fs|db] [--source-id <id>] [--dir <brain-dir>]
+  foresights extract all      [--source fs|db] [--source-id <id>] [--dir <brain-dir>]
                           [--type T] [--since DATE] [--include-frontmatter]
                           [--infer-dates] [--workers N|--concurrency N]
                           [--dry-run] [--json]
-  gbrain extract <links|timeline> --by-mention --source db
-  gbrain extract links --by-mention --rebuild --source db
+  foresights extract <links|timeline> --by-mention --source db
+  foresights extract links --by-mention --rebuild --source db
       Reconcile instead of accrete: per page, delete the stale
       link_source='mentions' rows and re-insert the current mention set in
       one transaction (typed_ner rows whose target is still derivable
       survive). Fixes drift the stale_mentions doctor check reports (#3674).
-  gbrain extract <links|timeline|all> --ner --source db
-  gbrain extract timeline --prune-orphans [--source-id <id>] [--dry-run] [--json]
+  foresights extract <links|timeline|all> --ner --source db
+  foresights extract timeline --prune-orphans [--source-id <id>] [--dry-run] [--json]
       One-time prune: delete timeline rows an earlier version of a page
       produced that its current text no longer does. Rows no version ever
       produced (enrichment, meeting fan-out) are kept (#4649).
-  gbrain extract <timeline|all> --from-meetings --source db
+  foresights extract <timeline|all> --from-meetings --source db
       Scans only meeting pages (type 'meeting', or 'note' with
       frontmatter.legacy_type 'meeting'). REPLACES the default timeline
       pass — it does not add to it.
@@ -876,10 +876,10 @@ Extraction:
 
 Incremental sweep:
 ${ATTENDANCE_REPAIR_HELP}
-  gbrain extract --stale [--source-id <id>] [--include-frontmatter]
+  foresights extract --stale [--source-id <id>] [--include-frontmatter]
                          [--catch-up] [--retry-held] [--dry-run] [--json]
       Re-extract links + timeline for stale pages, then the mention pass (entity
-      aliases and title subjects; link_source='mentions'; off: gbrain config set
+      aliases and title subjects; link_source='mentions'; off: foresights config set
       mentions.auto_link false). DB-source; safe to cron; 30 min per run, the next
       resumes; --catch-up runs until none remain. Scope with --source-id (--source
       is fs|db). Done when --dry-run --json reports actionable 0 and mention_due 0.
@@ -888,14 +888,14 @@ ${ATTENDANCE_REPAIR_HELP}
       extractor changes, or --retry-held clears the holds and retries it now.
 
 Inspection:
-  gbrain extract mentions --explain <name|slug> [--page <slug>] [--source-id <id>] [--json]
+  foresights extract mentions --explain <name|slug> [--page <slug>] [--source-id <id>] [--json]
       Why a name does or does not link (matched entry and origin, or the
       guard that dropped it); with --page, whether that page links to it.
-  gbrain extract --explain <kind> [--json]
-  gbrain extract benchmark --pack <name> --kind <type> [--json]
+  foresights extract --explain <kind> [--json]
+  foresights extract benchmark --pack <name> --kind <type> [--json]
 
 Status:
-  gbrain extract status [--source-id ID] [--kind X] [--verbose] [--json]`;
+  foresights extract status [--source-id ID] [--kind X] [--verbose] [--json]`;
 
 /**
  * `extract links|timeline|all --source db`. v0.42.7 (#1696) + S4 (P2.18): 'all' stamps the watermark for the pages both
@@ -943,9 +943,9 @@ export async function runExtract(engine: BrainEngine, args: string[], authority?
   // BEFORE the existing links/timeline/all subcommand validation so they
   // can use their own arg parsing.
   //
-  //   gbrain extract status [--source-id ID] [--kind X] [--run-id Y] [--json]
-  //   gbrain extract benchmark --pack X --kind Y [--json]
-  //   gbrain extract --explain <kind>
+  //   foresights extract status [--source-id ID] [--kind X] [--run-id Y] [--json]
+  //   foresights extract benchmark --pack X --kind Y [--json]
+  //   foresights extract --explain <kind>
   if (subcommand === 'status') {
     const { runExtractStatus } = await import('./extract-status.ts');
     return runExtractStatus(engine, args.slice(1));
@@ -959,10 +959,10 @@ export async function runExtract(engine: BrainEngine, args: string[], authority?
     return runExtractExplain(engine, args);
   }
 
-  // v0.42.7 (#1696): `gbrain extract --stale` — incremental link+timeline sweep
+  // v0.42.7 (#1696): `foresights extract --stale` — incremental link+timeline sweep
   // over pages whose links_extracted_at watermark is stale. Intercepts BEFORE
-  // the links|timeline|all subcommand validation so `gbrain extract --stale`
-  // works with no subcommand (and `gbrain extract all --stale` too). DB-source
+  // the links|timeline|all subcommand validation so `foresights extract --stale`
+  // works with no subcommand (and `foresights extract all --stale` too). DB-source
   // only — reads page content from the DB so it runs on checkout-less brains.
   if (args.includes('--stale')) {
     // #6803 (D2): --source fs|<id> was refused before connecting (extract-stale-options.ts); --source db is ambiguous only when a source is named db.
@@ -987,7 +987,7 @@ export async function runExtract(engine: BrainEngine, args: string[], authority?
   // insert-only). DB-source; never inserts; --dry-run previews.
   if (args.includes('--prune-orphans')) {
     if (subcommand !== 'timeline') {
-      console.error('--prune-orphans applies to timeline rows only: gbrain extract timeline --prune-orphans [--source-id <id>] [--dry-run] [--json]');
+      console.error('--prune-orphans applies to timeline rows only: foresights extract timeline --prune-orphans [--source-id <id>] [--dry-run] [--json]');
       process.exit(1);
     }
     const sidIdx = args.indexOf('--source-id');
@@ -1010,14 +1010,14 @@ export async function runExtract(engine: BrainEngine, args: string[], authority?
   const explicitDir = dirIdx >= 0 && dirIdx + 1 < args.length;
   // When --dir is not passed, resolve from the configured brain source
   // BEFORE falling back to '.' (the prior default). The bare `.` default was
-  // a footgun: a user who runs `gbrain extract links` from anywhere outside
+  // a footgun: a user who runs `foresights extract links` from anywhere outside
   // their brain dir (e.g., a project checkout with a node_modules tree) had
   // the recursive walker grab tens of thousands of unrelated .md files,
   // attempt to extract links between them, then write 0 rows because the
   // synthetic from_slugs don't match any pages row. The output ("created 0
   // links from 28989 pages") looks like a no-op, but it walked 28K junk files
   // first. Resolving from sources(local_path) makes the no-arg invocation
-  // match what `gbrain sync` already does, and keeps cwd-cwd usage available
+  // match what `foresights sync` already does, and keeps cwd-cwd usage available
   // via explicit `--dir .`.
   let brainDir = explicitDir ? args[dirIdx + 1] : '.';
   const sourceIdx = args.indexOf('--source');
@@ -1108,7 +1108,7 @@ export async function runExtract(engine: BrainEngine, args: string[], authority?
     console.error(
       `--by-mention requires --source db (currently --source fs). The mention scanner ` +
       `needs the engine to build the entity gazetteer. Re-run as:\n\n` +
-      `  gbrain extract ${subcommand} --by-mention --source db` +
+      `  foresights extract ${subcommand} --by-mention --source db` +
       (sourceIdFilter ? ` --source-id ${sourceIdFilter}` : '') +
       (since ? ` --since ${since}` : '') +
       (dryRun ? ' --dry-run' : '') + '\n',
@@ -1118,7 +1118,7 @@ export async function runExtract(engine: BrainEngine, args: string[], authority?
   if (byMention && subcommand === 'timeline') {
     console.error(
       `--by-mention is a links-pass only; it does not apply to timeline extraction. ` +
-      `Re-run as 'gbrain extract links --by-mention' or 'gbrain extract all --by-mention'.`,
+      `Re-run as 'foresights extract links --by-mention' or 'foresights extract all --by-mention'.`,
     );
     process.exit(2);
   }
@@ -1128,7 +1128,7 @@ export async function runExtract(engine: BrainEngine, args: string[], authority?
   if (rebuildMentions && !byMention) {
     console.error(
       `--rebuild only applies to the by-mention pass. Re-run as:\n\n` +
-      `  gbrain extract links --by-mention --rebuild --source db\n`,
+      `  foresights extract links --by-mention --rebuild --source db\n`,
     );
     process.exit(2);
   }
@@ -1137,7 +1137,7 @@ export async function runExtract(engine: BrainEngine, args: string[], authority?
     console.error(
       `--ner requires --source db (currently --source fs). NER extraction needs the engine ` +
       `to build the entity gazetteer + read schema-pack link_types. Re-run as:\n\n` +
-      `  gbrain extract ${subcommand} --ner --source db` +
+      `  foresights extract ${subcommand} --ner --source db` +
       (sourceIdFilter ? ` --source-id ${sourceIdFilter}` : '') +
       (since ? ` --since ${since}` : '') +
       (dryRun ? ' --dry-run' : '') + '\n',
@@ -1154,7 +1154,7 @@ export async function runExtract(engine: BrainEngine, args: string[], authority?
   if (fromMeetings && source === 'fs') {
     console.error(
       `--from-meetings requires --source db (currently --source fs). Re-run as:\n\n` +
-      `  gbrain extract timeline --from-meetings --source db` +
+      `  foresights extract timeline --from-meetings --source db` +
       (sourceIdFilter ? ` --source-id ${sourceIdFilter}` : '') +
       (dryRun ? ' --dry-run' : '') + '\n',
     );
@@ -1162,7 +1162,7 @@ export async function runExtract(engine: BrainEngine, args: string[], authority?
   }
   if (fromMeetings && subcommand !== 'timeline' && subcommand !== 'all') {
     console.error(
-      `--from-meetings is a timeline-pass only. Re-run as 'gbrain extract timeline --from-meetings' or 'gbrain extract all --from-meetings'.`,
+      `--from-meetings is a timeline-pass only. Re-run as 'foresights extract timeline --from-meetings' or 'foresights extract all --from-meetings'.`,
     );
     process.exit(2);
   }
@@ -1173,7 +1173,7 @@ export async function runExtract(engine: BrainEngine, args: string[], authority?
     console.error(
       `${rowFilters.map(f => f.split(' ')[0]).join(', ')} ${rowFilters.length > 1 ? 'filter synced pages, so they require' : 'filters synced pages, so it requires'} --source db ` +
       `(currently --source fs, which walks every file and would ignore ${rowFilters.length > 1 ? 'them' : 'it'}). Re-run as:\n\n` +
-      `  gbrain extract ${subcommand} --source db ${rowFilters.join(' ')}` +
+      `  foresights extract ${subcommand} --source db ${rowFilters.join(' ')}` +
       (sourceIdFilter ? ` --source-id ${sourceIdFilter}` : '') +
       (dryRun ? ' --dry-run' : '') + (jsonMode ? ' --json' : '') + '\n',
     );
@@ -1181,7 +1181,7 @@ export async function runExtract(engine: BrainEngine, args: string[], authority?
   }
 
   // FS source needs a brain dir. When --dir wasn't passed, resolve from
-  // sources(local_path) — same path `gbrain sync` uses — instead of
+  // sources(local_path) — same path `foresights sync` uses — instead of
   // silently walking cwd. See the brainDir comment above for the footgun.
   if (source === 'fs' && !explicitDir) {
     const { getDefaultSourcePath } = await import('../core/source-resolver.ts');
@@ -1192,7 +1192,7 @@ export async function runExtract(engine: BrainEngine, args: string[], authority?
       console.error(
         `No brain directory configured. Pass --dir <path> explicitly, or use --source db ` +
         `to extract from already-synced pages. To register a brain dir as the default, ` +
-        `run: gbrain sources add default --path <brain-dir>`,
+        `run: foresights sources add default --path <brain-dir>`,
       );
       process.exit(1);
     }
@@ -1994,7 +1994,7 @@ async function extractLinksFromDB(
 
     // --include-frontmatter default OFF in v0.13 (codex tension 5, back-compat).
     // Migration orchestrator explicitly enables it for the one-time backfill;
-    // user-invoked `gbrain extract links` stays outgoing-only.
+    // user-invoked `foresights extract links` stays outgoing-only.
     // Issue #972: globalBasename routes bare `[[name]]` wikilinks through
     // basename lookup; off by default for back-compat.
     const linkOpts = { skipFrontmatter: !includeFrontmatter, globalBasename, pack, lineGrammar, targetType: (targetSlug: string, targetSourceId?: string) => {
@@ -2081,7 +2081,7 @@ async function extractLinksFromDB(
       console.log(`Skipped ${skippedMissingTarget} candidate(s) whose target page doesn't exist (references to non-pages are never persisted).`);
     }
     if (skippedCrossSource > 0) {
-      console.log(`Skipped ${skippedCrossSource} cross-source candidate(s) — target exists only in another source. Enable with \`gbrain config set link_resolution.cross_source true\` — see docs/architecture/brains-and-sources.md (#2589).`);
+      console.log(`Skipped ${skippedCrossSource} cross-source candidate(s) — target exists only in another source. Enable with \`foresights config set link_resolution.cross_source true\` — see docs/architecture/brains-and-sources.md (#2589).`);
     }
     if (includeFrontmatter && unresolved.length > 0) {
       // Top-20 preview of unresolvable frontmatter names so the user can
@@ -2105,7 +2105,7 @@ async function extractLinksFromDB(
 }
 
 /**
- * v0.42.7 (#1696) — `gbrain extract --stale`: incremental link + timeline
+ * v0.42.7 (#1696) — `foresights extract --stale`: incremental link + timeline
  * extraction over pages whose `links_extracted_at` watermark is stale (NULL,
  * older than LINK_EXTRACTOR_VERSION_TS, or older than the page's updated_at).
  * DB-source (works on checkout-less Postgres/Supabase brains). Mirrors
@@ -2135,7 +2135,7 @@ export async function extractStaleFromDB(
      * Defaults to STALE_TIME_BUDGET_MS (~30 min). Embedded callers (the
      * cycle's in-line stale drain) pass a much smaller cap so one drain
      * can't consume the whole cycle — the full budget stays with the
-     * explicit `gbrain extract --stale` command. Ignored when catchUp.
+     * explicit `foresights extract --stale` command. Ignored when catchUp.
      */
     timeBudgetMs?: number;
     /** GBRA-130 A-1 (managed brains): clear held link-extraction failures first. */ retryHeld?: boolean;
@@ -2386,10 +2386,10 @@ export async function extractStaleFromDB(
       log(`Skipped ${skippedMissingTarget} candidate(s) whose target page doesn't exist (references to non-pages are never persisted).`);
     }
     if (skippedCrossSource > 0) {
-      log(`Skipped ${skippedCrossSource} cross-source candidate(s) — target exists only in another source. Enable with \`gbrain config set link_resolution.cross_source true\`, then run \`gbrain extract links --source db\` — a --stale re-run will NOT revisit these pages (their extraction watermark is already stamped) — see docs/architecture/brains-and-sources.md (#2589).`);
+      log(`Skipped ${skippedCrossSource} cross-source candidate(s) — target exists only in another source. Enable with \`foresights config set link_resolution.cross_source true\`, then run \`foresights extract links --source db\` — a --stale re-run will NOT revisit these pages (their extraction watermark is already stamped) — see docs/architecture/brains-and-sources.md (#2589).`);
     }
     if (budgetHit && staleRemaining > 0) {
-      log(`Time budget reached — ${staleRemaining} page(s) still stale. Re-run 'gbrain extract --stale' (or pass --catch-up) to continue.`);
+      log(`Time budget reached — ${staleRemaining} page(s) still stale. Re-run 'foresights extract --stale' (or pass --catch-up) to continue.`);
     }
     if (counts) log(formatStaleCounts(counts));
   } else if (!opts.quiet) {
@@ -2509,7 +2509,7 @@ async function extractMentionsFromDb(
   async function flushBatch() {
     if (batch.length === 0) return;
     try {
-      created += await engine.addLinksBatch(batch, { auditSite: 'extract.by_mention' }); // gbrain-allow-direct-insert: gbrain extract --by-mention — canonical auto-link write from body-text mention scan
+      created += await engine.addLinksBatch(batch, { auditSite: 'extract.by_mention' }); // gbrain-allow-direct-insert: foresights extract --by-mention — canonical auto-link write from body-text mention scan
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (jsonMode) {
@@ -2613,7 +2613,7 @@ async function extractMentionsFromDb(
             },
           );
           if (linkRows.length > 0) {
-            pageCreated = await tx.addLinksBatch(linkRows, { auditSite: 'extract.by_mention.rebuild' }); // gbrain-allow-direct-insert: gbrain extract --by-mention --rebuild — reconciling delete-then-insert of the mention scan's own rows
+            pageCreated = await tx.addLinksBatch(linkRows, { auditSite: 'extract.by_mention.rebuild' }); // gbrain-allow-direct-insert: foresights extract --by-mention --rebuild — reconciling delete-then-insert of the mention scan's own rows
           }
         });
         removed += pageRemoved;

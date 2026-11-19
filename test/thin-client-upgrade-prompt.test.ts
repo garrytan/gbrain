@@ -79,7 +79,7 @@ describe('safeCompare', () => {
   test('4-segment versions parse (4th segment ignored by underlying comparator)', () => {
     // Underlying compareVersions from src/commands/migrations/index.ts only
     // compares segments 0-2 — the 4th segment is intentionally ignored. This
-    // matches gbrain's actual 3-segment release practice (VERSION file).
+    // matches foresights's actual 3-segment release practice (VERSION file).
     expect(safeCompare('0.31.4.0', '0.31.4.0')).toBe(0);
     expect(safeCompare('0.31.4.1', '0.31.4.2')).toBe(0); // 4th segment ignored
     expect(safeCompare('0.31.4.0', '0.31.5.0')).toBe(-1); // segment 2 differs
@@ -164,7 +164,7 @@ describe('promptState IO', () => {
 
   test('corrupt JSON falls through to empty state', async () => {
     await withEnv({ GBRAIN_HOME: tmpHome }, async () => {
-      // Pre-create the gbrain dir + corrupt file
+      // Pre-create the foresights dir + corrupt file
       const path = join(tmpHome, '.gbrain', 'upgrade-prompt-state.json');
       const dir = join(tmpHome, '.gbrain');
       try { require('fs').mkdirSync(dir, { recursive: true }); } catch { /* ignore */ }

@@ -1,5 +1,5 @@
 /**
- * Checkout walks that race a concurrent pruner (#B1: `gbrain sources add`
+ * Checkout walks that race a concurrent pruner (#B1: `foresights sources add`
  * crashed with `internal_error: ENOENT … scandir '<repo>/.git/objects/06'`
  * when git's detached auto-gc pruned loose-object directories mid-walk).
  *

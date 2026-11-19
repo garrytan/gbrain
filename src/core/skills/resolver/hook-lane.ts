@@ -2,7 +2,7 @@
  * The skill-resolver hook lane (`GBRAIN_HOOK_LANE=skill-resolver`): its own
  * hook entry in Claude Code and its own hooks.json groups in Codex, each
  * UserPromptSubmit plus SessionStart for the compaction reset,
- * written by `gbrain setup <claude-code|codex> --skill-loading resolve`
+ * written by `foresights setup <claude-code|codex> --skill-loading resolve`
  * (src/core/setup/skill-resolver-hook.ts), and Hermes's pre_llm_call shell
  * hook (`hook user-prompt --harness hermes`). It never shares output with the
  * turn-rule, setup or plugin lanes: it prints only the <relevant_skills> block.
@@ -51,7 +51,7 @@
  * Catalogs, each searched only once its receipt exists (none: outcome
  * no_catalog, no output): <harness>-user (built by setup), for Claude Code
  * claude-code-plugins (built by setup from enabled plugins), then a project
- * catalog built out of the turn by a detached `gbrain skills index build` on
+ * catalog built out of the turn by a detached `foresights skills index build` on
  * first sight and merged at rank time (names only: scope project). Claude
  * Code's covers the project's .claude/skills, keyed by a hash of the real
  * project root; Codex's covers every existing .agents/skills from the project
@@ -152,7 +152,7 @@ export async function skillResolverOwner(harness: LaneHarness, event: 'user-prom
         try {
           const s = await readLaneSettings(resolverHome(home ? { GBRAIN_HOME: home } : {}), {});
           if (s.enabled && s.harnesses.includes(harness)) return home;
-        } catch { /* a home gbrain cannot use owns nothing */ }
+        } catch { /* a home foresights cannot use owns nothing */ }
       }
     }
   }
@@ -161,7 +161,7 @@ export async function skillResolverOwner(harness: LaneHarness, event: 'user-prom
 
 export interface LaneSettings { state: 'absent' | 'unreadable' | 'invalid' | 'ok'; enabled: boolean; harnesses: string[]; payloadChars: number; autoRebuild: boolean; section: Record<string, unknown> }
 
-/** skills.resolver from <home>/config.json, async. absent: no file; unreadable: a file gbrain cannot read or parse. */
+/** skills.resolver from <home>/config.json, async. absent: no file; unreadable: a file foresights cannot read or parse. */
 export async function readLaneSettings(home: string, env: NodeJS.ProcessEnv): Promise<LaneSettings> {
   const base: LaneSettings = { state: 'ok', enabled: false, harnesses: [], payloadChars: LANE_PAYLOAD_CHARS_DEFAULT, autoRebuild: env.GBRAIN_SKILLS_NO_AUTOREBUILD !== '1', section: {} };
   let cfg: unknown;
@@ -239,7 +239,7 @@ const LANE_IO: Record<LaneHarness, HarnessIo> = {
 
 function selfArgv(args: string[]): string[] {
   const exec = process.execPath;
-  return /[/\\]gbrain(\.exe)?$/.test(exec) ? [exec, ...args] : [exec, process.argv[1]!, ...args];
+  return /[/\\](?:foresights|gbrain)(\.exe)?$/.test(exec) ? [exec, ...args] : [exec, process.argv[1]!, ...args];
 }
 
 function spawnDetached(argv: string[]): void {

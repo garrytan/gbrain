@@ -20,7 +20,7 @@
  *             hundreds of dated entries, and a few chat-archive pages are
  *             megabytes, two of them over the 24 MB page limit. The last
  *             --backlog-days of history come after the import-base tag, with a
- *             few files gbrain must hold (unreadable frontmatter, a broken facts
+ *             few files foresights must hold (unreadable frontmatter, a broken facts
  *             fence, a frontmatter slug naming another page) and paths that a
  *             commit recreates after an earlier delete.
  *   source-b  43%, mostly static (a few bulk imports and sparse edits); 10% of

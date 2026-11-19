@@ -6,7 +6,7 @@
  * result through writeStdoutFinal / writeNdjsonLine, so undeclared commands
  * keep their current stdout. Also wires the E11 `json_document_missing`
  * record for the exit-0 bug case (document mode only), stamped with the
- * gbrain version, the guard and the exit code (#6629).
+ * foresights version, the guard and the exit code (#6629).
  */
 import { jsonRequested, setJsonDocumentMissingHook } from '../core/cli-force-exit.ts';
 import { recordAgentContractEvent } from '../core/agent-contract-log.ts';

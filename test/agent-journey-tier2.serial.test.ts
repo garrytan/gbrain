@@ -3,7 +3,7 @@
  * contract up across surfaces. Row 1's read-op sweep runs in
  * test/agent-journey-tier2-json.serial.test.ts and rows 5–8 in
  * test/agent-journey-recovery.serial.test.ts, so each serial file stays well
- * under the pool's per-file wall clock. Real CLI subprocesses, real `gbrain serve`
+ * under the pool's per-file wall clock. Real CLI subprocesses, real `foresights serve`
  * sessions (stdio and HTTP), keyless PGLite in temp homes, hard timeouts.
  *
  *   1. Every `--json` stdout parses: the journey's commands, the doctor family,
@@ -66,10 +66,10 @@ describe('H1b: --json parses, every WARN has an executable fix, every plan comma
     const ran: string[] = [];
     for (const c of notOk) {
       const fix = c.fix!;
-      expect(fix.argv![0], `${c.name}: fixes are gbrain commands or a two-step plan`).toMatch(/^(gbrain|kill)$/);
+      expect(fix.argv![0], `${c.name}: fixes are foresights commands or a two-step plan`).toMatch(/^((?:foresights|gbrain)|kill)$/);
       if (fix.argv![0] === 'gbrain') {
         const help = await gb(home, [fix.argv![1]!, '--help']);
-        expect(help.exitCode, `${c.name}: \`gbrain ${fix.argv![1]} --help\``).toBe(0);
+        expect(help.exitCode, `${c.name}: \`foresights ${fix.argv![1]} --help\``).toBe(0);
       }
       if (fix.consent.length === 0 && fix.actor === 'agent' && !fix.inputs?.length && fix.argv![0] === 'gbrain') {
         const r = await gb(home, fix.argv!.slice(1), { timeoutMs: 240_000 });
@@ -94,7 +94,7 @@ describe('H1b: --json parses, every WARN has an executable fix, every plan comma
     ];
     expect(commands.length).toBeGreaterThan(2);
     for (const command of commands) {
-      expect(command.startsWith('gbrain '), command).toBe(true);
+      expect(command.startsWith('foresights '), command).toBe(true);
       const r = await sh(home, command, bin, 240_000);
       expect(r.exitCode, `${command}: ${r.stderr.slice(-1500)}`).toBe(0);
     }

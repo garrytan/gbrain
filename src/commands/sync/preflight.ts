@@ -288,11 +288,11 @@ async function resolveSyncRepo(engine: BrainEngine, opts: SyncOpts): Promise<{ d
   const company = currentCompanyBrainSync(opts.sourceId);
   // v0.41.8.0 (D9 / #1342): phase breadcrumbs. The #1342 reporter saw
   // ZERO stderr output before their sync hang, which made the bug
-  // impossible to triage. Mirror the existing `[gbrain phase] sync.git_pull`
+  // impossible to triage. Mirror the existing `[foresights phase] sync.git_pull`
   // pattern at the major phase boundaries so the next #1342-shaped
   // report names WHICH phase spun. Doesn't fix #1342 but converts
   // "hung with no output" into actionable diagnostic data.
-  serr(`[gbrain phase] sync.resolve_repo`);
+  serr(`[foresights phase] sync.resolve_repo`);
   opts.onProgress?.({ phase: 'resolve_repo' });
   // Resolve repo path
   const rawRepoPath = opts.repoPath || await readSyncAnchor(engine, opts.sourceId, 'repo_path');
@@ -300,8 +300,8 @@ async function resolveSyncRepo(engine: BrainEngine, opts: SyncOpts): Promise<{ d
     const connector = await runConnectorSync(engine, opts, false);
     if (connector) return { done: connector };
     const hint = opts.sourceId
-      ? `Source "${opts.sourceId}" has no local_path. Run: gbrain sources add ${opts.sourceId} --path <path>`
-      : `No repo path specified. Use --repo or run gbrain init with --repo first.`;
+      ? `Source "${opts.sourceId}" has no local_path. Run: foresights sources add ${opts.sourceId} --path <path>`
+      : `No repo path specified. Use --repo or run foresights init with --repo first.`;
     throw new Error(hint);
   }
   // #3696: resolve to ABSOLUTE at entry. A caller-passed relative path
@@ -312,7 +312,7 @@ async function resolveSyncRepo(engine: BrainEngine, opts: SyncOpts): Promise<{ d
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- rawRepoPath is the local operator's --repo CLI arg or the operator-written sync anchor (sync.repo_path / sources.local_path); the sync_brain op is localOnly:true so no remote caller reaches this path, and absolutizing it here IS the #3696 fix
   const repoPath = pathResolve(rawRepoPath);
 
-  serr(`[gbrain phase] sync.load_active_pack`);
+  serr(`[foresights phase] sync.load_active_pack`);
   // v0.39 T1.5: load active pack ONCE at sync entry; pass to every per-file
   // importFile call below. Codex perf finding #7: per-file loadActivePack adds
   // disk/YAML/hash overhead × thousands of files. Best-effort: pack load
@@ -360,13 +360,13 @@ async function resolveSyncRepo(engine: BrainEngine, opts: SyncOpts): Promise<{ d
   const syncScopeRelPath = gitRelativePath(gitContextRoot, syncScopeRoot);
   const scoped = syncScopeRelPath !== '';
   // Anchor written back to sync state (sources.local_path / sync.repo_path):
-  // the SCOPE path, so a follow-up bare `gbrain sync` auto-discovers the same
+  // the SCOPE path, so a follow-up bare `foresights sync` auto-discovers the same
   // scope. Unchanged (the caller's repoPath spelling) when no --src-subpath.
   const anchorPath = opts.srcSubpath ? rawScopeRoot : repoPath;
   // #4342 — explicit + STICKY slug namespace for scoped syncs. Pre-fix the
   // namespace was implicit: a local_path that happened to sit inside a bigger
   // git repo silently produced git-root-PREFIXED slugs (`notes/foo` instead
-  // of `foo`), diverging from what `gbrain import <dir>` of the same tree
+  // of `foo`), diverging from what `foresights import <dir>` of the same tree
   // creates. The mode is decided once (resolveSlugRootMode: stored pin >
   // explicit --src-subpath > auto-pin when existing pages already carry the
   // prefix > local_path-relative) and persisted, so a live install never
@@ -398,7 +398,7 @@ async function validateSourceRepoState(engine: BrainEngine, opts: SyncOpts, repo
   // we recover from missing/no-git/not-a-dir by re-cloning, refuse on
   // url-drift or corruption with structured hints.
   if (opts.sourceId) {
-    serr(`[gbrain phase] sync.validate_repo_state`);
+    serr(`[foresights phase] sync.validate_repo_state`);
     const { validateRepoState } = await import('../../core/git-remote.ts');
     const { recloneIfMissing, isOwnedClone, unownedHint } = await import(
       '../../core/sources-ops.ts'
@@ -450,13 +450,13 @@ async function validateSourceRepoState(engine: BrainEngine, opts: SyncOpts, repo
         case 'missing':
         case 'no-git':
         case 'not-a-dir':
-          // #1881: only re-clone a clone gbrain owns. An unowned local_path
+          // #1881: only re-clone a clone foresights owns. An unowned local_path
           // (the user's working tree) is refused loudly, never deleted.
           if (!isOwnedClone(ownSrc)) {
             throw new Error(unownedHint(ownSrc, state));
           }
           serr(
-            `[gbrain] auto-recovery: re-cloning "${opts.sourceId}" (clone state: ${state}).`,
+            `[foresights] auto-recovery: re-cloning "${opts.sourceId}" (clone state: ${state}).`,
           );
           await recloneIfMissing(engine, opts.sourceId);
           break;
@@ -464,14 +464,14 @@ async function validateSourceRepoState(engine: BrainEngine, opts: SyncOpts, repo
           throw new Error(
             `Source "${opts.sourceId}" clone at ${repoPath} is corrupted ` +
               `(\`git remote get-url origin\` failed). Run: ` +
-              `gbrain sources remove ${opts.sourceId} --confirm-destructive && ` +
-              `gbrain sources add ${opts.sourceId} --url ${remoteUrl}`,
+              `foresights sources remove ${opts.sourceId} --confirm-destructive && ` +
+              `foresights sources add ${opts.sourceId} --url ${remoteUrl}`,
           );
         case 'url-drift':
           throw new Error(
             `Source "${opts.sourceId}" clone at ${repoPath} has a remote ` +
               `that differs from config.remote_url=${remoteUrl}. ` +
-              `Re-clone with: gbrain sources rebase-clone ${opts.sourceId} ` +
+              `Re-clone with: foresights sources rebase-clone ${opts.sourceId} ` +
               `(if available, else: sources remove + sources add).`,
           );
       }
@@ -492,15 +492,15 @@ async function discoverSyncGitRoot(
   //   - gitContextRoot: ALL git operations (pull, rev-parse, diff, cat-file)
   //   - syncScopeRoot:  file walking, imports, deletes, renames
   // In the common case (repoPath == git root, no subpath) they are identical.
-  serr(`[gbrain phase] sync.discover_git_root`);
+  serr(`[foresights phase] sync.discover_git_root`);
   // #2964: a legacy `sync.repo_path`-anchored default brain can reach here
   // having never been `git init`-ed — e.g. a brain-pages dir that predates
   // git-backed sync, or one rsync'd from another machine without its
-  // `.git`. gbrain owns that directory outright, so self-heal by
+  // `.git`. foresights owns that directory outright, so self-heal by
   // initializing it in place instead of failing the sync phase every
   // single run. Mirrors the recloneIfMissing self-recovery above for
   // owned remote clones. Ownership is proven by VALUE (resolved repoPath
-  // equals gbrain's persisted anchor) via `isAnchorOwnedSyncPath`, not by
+  // equals foresights's persisted anchor) via `isAnchorOwnedSyncPath`, not by
   // the mere absence of `opts.sourceId`/`opts.repoPath` — see that
   // function's docstring. `!opts.dryRun`: a preview must never write.
   let gitContextRoot: string;
@@ -550,9 +550,9 @@ async function discoverSyncGitRoot(
       // GST-2767: a brain dir inside an unreadable repository (dubious ownership, a broken .git above it) must not get
       // a nested repository of its own that shadows the outer one.
       const entry = enclosingGitEntry(repoPath)!;
-      throw new Error(`${(err as Error).message} ${entry} sits above it and git cannot open it, so gbrain will not create a repository inside it: run git -C ${dirname(entry)} status to see why git refuses it, fix or remove it, then rerun the sync.`);
+      throw new Error(`${(err as Error).message} ${entry} sits above it and git cannot open it, so foresights will not create a repository inside it: run git -C ${dirname(entry)} status to see why git refuses it, fix or remove it, then rerun the sync.`);
     } else {
-      serr(`[gbrain] auto-recovery: git-initializing brain dir ${repoPath} (no git repo found).`);
+      serr(`[foresights] auto-recovery: git-initializing brain dir ${repoPath} (no git repo found).`);
       await gitAsync(repoPath, ['init', '--quiet']);
       createSyncBaselineCommit(repoPath);
       gitContextRoot = realpathSync(await discoverGitRootAsync(repoPath));
@@ -577,7 +577,7 @@ async function pullAndResolveHead(
   gitContextRoot: string,
 ): Promise<{ done: SyncResult } | { detachedHead: boolean; lastCommit: string | null; pullFailed: boolean; headCommit: string }> {
 
-  serr(`[gbrain phase] sync.detect_head`);
+  serr(`[foresights phase] sync.detect_head`);
   // Detect detached HEAD up front so the working-tree fallback fires for both
   // the default sync and `--no-pull` callers. Only the actual git pull is
   // gated on opts.noPull or opts.dryRun.
@@ -634,7 +634,7 @@ async function pullAndResolveHead(
   let pullFailed = false;
   if (!opts.dryRun && !opts.noPull && !detachedHead && originRemotePresent) {
     const _t0 = Date.now();
-    serr(`[gbrain phase] sync.git_pull start`);
+    serr(`[foresights phase] sync.git_pull start`);
     opts.onProgress?.({ phase: 'git_pull' });
     // Two things can stop this sync while git waits on the remote: opts.signal
     // (--timeout, SIGINT, a job's timeout or cancel, lost lock) and the
@@ -650,11 +650,11 @@ async function pullAndResolveHead(
       // when no --timeout is set. Pull applies to the whole git repo
       // (gitContextRoot), not just the sync scope — git has no per-subdir pull.
       await pullRepo(gitContextRoot, { signal: composeAbortSignals(opts.signal, shutdown.signal) });
-      serr(`[gbrain phase] sync.git_pull done ${Date.now() - _t0}ms`);
+      serr(`[foresights phase] sync.git_pull done ${Date.now() - _t0}ms`);
       if (opts.sourceId) await settleUpstreamAfterPull(engine, opts.sourceId, gitContextRoot, true);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      serr(`[gbrain phase] sync.git_pull error ${Date.now() - _t0}ms (${msg.slice(0, 200)})`);
+      serr(`[foresights phase] sync.git_pull error ${Date.now() - _t0}ms (${msg.slice(0, 200)})`);
       // A stopped pull returns partial reason='pull_timeout' with the anchor
       // untouched; any other pull failure keeps the R2 warn-and-continue path.
       if (isStoppedGitPull(e)) {
@@ -711,7 +711,7 @@ async function pullAndResolveHead(
     ) {
       throw new Error(`No commits in repo ${repoPath}. Make at least one commit before syncing.`);
     }
-    serr(`[gbrain] auto-recovery: repo has no commits yet, creating baseline commit ${gitContextRoot}.`);
+    serr(`[foresights] auto-recovery: repo has no commits yet, creating baseline commit ${gitContextRoot}.`);
     createSyncBaselineCommit(gitContextRoot);
     headCommit = await gitAsync(gitContextRoot, ['rev-parse', 'HEAD']);
   }
@@ -722,7 +722,7 @@ async function pullAndResolveHead(
   // .gitignore says). db_only content is documented as DB-sourced ("bulk
   // machine-generated content... written to disk as a local cache", see
   // docs/storage-tiering.md) — it reaches the database via ingest-specific
-  // paths, never via gbrain sync's git-diff-based file collection, and
+  // paths, never via foresights sync's git-diff-based file collection, and
   // `.gitignore` management there is entirely about keeping db_only out of
   // git history, not about what sync imports. An earlier version of this
   // fix (Codex review rounds 6-7) tried to also guarantee db_only markdown
@@ -992,7 +992,7 @@ async function resolveWorkingTreeScope(
     serr(
       `[sync] ${wtSyncableTotal} uncommitted file(s) are invisible to ` +
       `commit-driven sync (${wtCounts.added} untracked/added, ${wtCounts.modified} modified, ${wtCounts.deleted} deleted). ` +
-      `Commit them, or run 'gbrain sync --working-tree' to import uncommitted state.`,
+      `Commit them, or run 'foresights sync --working-tree' to import uncommitted state.`,
     );
   }
   return {
@@ -1132,7 +1132,7 @@ async function computeFilteredDelta(
 
   // #4342 'source-root' mode: translate the (git-root-relative) manifest to
   // SOURCE-relative paths so every downstream consumer — slugs, source_path,
-  // deletes, renames, checkpoints — names pages the way `gbrain import
+  // deletes, renames, checkpoints — names pages the way `foresights import
   // <local_path>` would. Under 'git-root' (or an unscoped sync) this is a
   // no-op and the pre-#4342 behavior is byte-for-byte. The file-join base
   // below (`syncImportRoot`) moves with it so `join(base, path)` still lands
@@ -1172,7 +1172,7 @@ async function computeFilteredDelta(
     const trip = caps ? syncDeleteTrip(filtered.deleted.length, pageCount, caps) : null;
     if (trip && caps) {
       serr(`\n  WARNING: refusing to delete ${filtered.deleted.length} page(s) from a working-tree sync (${syncDeleteTripText(trip, caps)}). ` +
-        `Commit the deletions and sync again, raise the cap (gbrain config set ${trip === 'max_deletes' ? 'sync.max_deletes' : 'sync.max_delete_ratio'}.source.${sid} <value>), or re-run with GBRAIN_ALLOW_MASS_RECONCILE=1. Adds/modifies still import.\n`);
+        `Commit the deletions and sync again, raise the cap (foresights config set ${trip === 'max_deletes' ? 'sync.max_deletes' : 'sync.max_delete_ratio'}.source.${sid} <value>), or re-run with GBRAIN_ALLOW_MASS_RECONCILE=1. Adds/modifies still import.\n`);
       filtered.deleted = [];
     } else if (!detachedHead && filtered.deleted.length >= 10 && pageCount > 0 && filtered.deleted.length > pageCount * MASS_RECONCILE_RATIO) {
       serr(
@@ -1193,7 +1193,7 @@ async function computeFilteredDelta(
       .filter(p => inScope(p) && isSelectedForRun(p, syncOpts));
     if (excludeCandidates.length > 0 && excludeCandidates.every(excluded)) {
       console.warn(
-        `[gbrain sync] No files matched after applying ${opts.exclude.length} --exclude pattern(s). ` +
+        `[foresights sync] No files matched after applying ${opts.exclude.length} --exclude pattern(s). ` +
         `Check your --exclude flags. Patterns: ${JSON.stringify(opts.exclude)}`,
       );
     }

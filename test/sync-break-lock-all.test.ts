@@ -289,7 +289,7 @@ describe('BUG 5 — --force-break-lock honest no-lock diagnostic', () => {
     expect(rc).toBe(0);
     const out = logs.join('\n');
     expect(out).toContain('nothing to break');
-    expect(out).toContain('gbrain doctor');
+    expect(out).toContain('foresights doctor');
     expect(out).not.toBe(`Lock ${LOCK} is not held (nothing to break).`);
   });
 

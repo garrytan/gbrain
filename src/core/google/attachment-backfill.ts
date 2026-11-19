@@ -64,7 +64,7 @@ export async function backfillGmailAttachments(engine: BrainEngine, managed: Man
     !Number.isSafeInteger(cursor.unavailableMessages ?? 0) || (cursor.unavailableMessages ?? 0) < 0 ||
     cursor.afterPageId < 0 || cursor.throughPageId < cursor.afterPageId)) {
     throw opError('revision_conflict', 'Attachment backfill checkpoint does not match this account. No metadata was changed.',
-      `Source ${managed.sourceId}'s saved attachment-repair cursor belongs to another account than ${account} or is malformed. Show the user the source's sync state and ask how to proceed; gbrain will not reset the cursor itself.`);
+      `Source ${managed.sourceId}'s saved attachment-repair cursor belongs to another account than ${account} or is malformed. Show the user the source's sync state and ask how to proceed; foresights will not reset the cursor itself.`);
   }
   if (!cursor) {
     const [row] = await engine.executeRaw<{ id: number | null }>(

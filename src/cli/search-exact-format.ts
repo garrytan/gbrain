@@ -1,4 +1,4 @@
-/** Human rendering of `search_exact` (`gbrain search --exact`): one block per page, then the completeness line. */
+/** Human rendering of `search_exact` (`foresights search --exact`): one block per page, then the completeness line. */
 interface ExactOut {
   phrase: string;
   matches: Array<{ slug: string; source_id: string; title: string; matching_chunks: number; snippets: Array<{ text: string }> }>;
@@ -22,7 +22,7 @@ export function formatSearchExact(r: ExactOut): string {
     lines.push('Complete: scanned all ' + r.pages_scanned + ' page(s) in scope.');
   } else {
     lines.push('INCOMPLETE (' + r.incomplete_reasons.join(', ') + '): scanned ' + r.pages_scanned + ' page(s).');
-    if (r.resume_after !== null) lines.push('  Continue: gbrain search --exact ' + JSON.stringify(r.phrase) + ' --after ' + r.resume_after);
+    if (r.resume_after !== null) lines.push('  Continue: foresights search --exact ' + JSON.stringify(r.phrase) + ' --after ' + r.resume_after);
     if (r.unreadable.total) {
       const reasons = Object.entries(r.unreadable.by_reason).map(([k, v]) => k + ' ' + v).join(', ');
       lines.push('  ' + r.unreadable.total + ' page(s) have text the scan could not read (' + reasons + '):');

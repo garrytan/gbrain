@@ -1,6 +1,6 @@
 /**
  * Definition-shaped symbol types (normalized, post-`normalizeSymbolType`) —
- * the ONE list shared by `gbrain code-def`'s lookup allowlist
+ * the ONE list shared by `foresights code-def`'s lookup allowlist
  * (src/commands/code-def.ts re-exports DEF_TYPES from here) and the chunker's
  * merge guard (#4511), so the two can't drift: a symbol type code-def can
  * resolve must never have its `symbol_name` erased by small-sibling merging.
@@ -9,7 +9,7 @@
 // v0.41 D2: SQL DDL targets (table/view/index/procedure/schema/database/
 // trigger) are first-class definitions in the SQL sense. The chunker's
 // normalizeSymbolType maps create_table → 'table' etc, so adding the SQL
-// kinds here is what makes `gbrain code-def users` work against SQL.
+// kinds here is what makes `foresights code-def users` work against SQL.
 // Method-level + member definitions. normalizeSymbolType only canonicalizes
 // some node types; the rest fall through `type.replace(/_/g, ' ')`, so
 // tree-sitter's method_declaration → 'method declaration', struct_specifier →

@@ -1,7 +1,7 @@
 /**
  * A page whose takes section was dropped keeps its takes stored: on an unmanaged brain the takes reconcile keeps a
  * fenceless page's rows, and on a managed one the projection holds them `fence_absent` until the user decides. Three
- * gbrain writers used to build a brand-new takes section numbered from row 1 on such a page: `think --take`
+ * foresights writers used to build a brand-new takes section numbered from row 1 on such a page: `think --take`
  * (addTakeToPage) and unmanaged `takes extract --from-pages` (appendTakesToPageMdFirst) overwrote stored take #1 in
  * place with no record, and managed `takes extract --from-pages --include-covered` overwrote takes 1..k and deleted the
  * rest in one put. Each writer now renders the stored takes (resolutions included) into the section it creates and
@@ -126,7 +126,7 @@ for (const backend of testBackends()) {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
 
   for (const storage of ['directory', 'git'] as const) {
-    describe(`unmanaged brain (${backend}, ${storage}): a takes section re-created by gbrain keeps the stored takes`, () => {
+    describe(`unmanaged brain (${backend}, ${storage}): a takes section re-created by foresights keeps the stored takes`, () => {
       test('think --take after the section was dropped keeps the stored take and its resolution', () => unmanagedBrain(databaseUrl, storage, async ({ engine, path, sync }) => {
         await sync(PAGE(FENCE(ROW_A)));
         const [{ id }] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE source_id='default' AND slug=$1", [SLUG]);

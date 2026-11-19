@@ -15,7 +15,7 @@
  *   --embed keyless-stub                    keyless brain with OPENAI_BASE_URL pointed at the stub: any request is a failure
  *   --stub-fail-ms MS                       the stub answers 500 for MS after each commit (provider outage, then recovery)
  *   --scenario embed-drain                  a 1000-file commit per rep; times keyword-visible and every deferred embed drained
- *   --trigger serve-boot                    commit while no serve runs, then start gbrain serve (stdio): boot -> visible
+ *   --trigger serve-boot                    commit while no serve runs, then start foresights serve (stdio): boot -> visible
  *   --sources N [--source-pages 1000]       N sources in one brain (bench plus bench2..benchN of --source-pages pages each)
  *   --scenario fairness [--residents serve,jobs,autopilot]   one commit to every source at once; per-source latency and spread
  *   --scenario idle [--residents ...] [--idle-windows 10 --window-s 30 --warmup-s 60]   idle cost per window: transactions
@@ -31,8 +31,8 @@
  *                                           --brain-rev reuses a classic brain built at another revision as the input.
  *
  * Builds (once, then reuses) a synthetic git brain of N pages for the engine,
- * mode and gbrain checkout: classic import first, then for managed the real
- * "gbrain sources writer claim/activate" CLI (a managed brain of the same size
+ * mode and foresights checkout: classic import first, then for managed the real
+ * "foresights sources writer claim/activate" CLI (a managed brain of the same size
  * is cloned from the classic one). Per rep it commits a change with a fresh
  * token, fires or waits for the trigger, and polls until get_page returns the
  * new content and a keyword search returns every changed page.
@@ -145,7 +145,7 @@ async function gb(args: string[], opts: { home?: string; allowFail?: boolean; ti
   const r = { exitCode };
   let json: any = null;
   try { json = JSON.parse(stdout); } catch { const last = stdout.trim().split('\n').reverse().find(l => l.startsWith('{')); try { json = last ? JSON.parse(last) : null; } catch { json = null; } }
-  if (r.exitCode !== 0 && !opts.allowFail) throw new Error('gbrain ' + args.join(' ') + ' exited ' + r.exitCode + '\n' + stdout.slice(-1500) + '\n' + stderr.slice(-1500));
+  if (r.exitCode !== 0 && !opts.allowFail) throw new Error('foresights ' + args.join(' ') + ' exited ' + r.exitCode + '\n' + stdout.slice(-1500) + '\n' + stderr.slice(-1500));
   return { code: r.exitCode ?? -1, stdout, stderr, json };
 }
 function writeConfig(home: string, mode: string, url?: string): void {
@@ -361,7 +361,7 @@ function phaseMarks(lines: Line[], from: number, to: number): Record<string, num
   const out: Record<string, number> = {};
   for (const l of lines) {
     if (l.t < from || l.t > to) continue;
-    const gp = /\[gbrain phase\] (\S+) done (\d+)ms/.exec(l.text);
+    const gp = /\[(?:foresights|gbrain) phase\] (\S+) done (\d+)ms/.exec(l.text);
     if (gp && out['gp:' + gp[1]] === undefined) out['gp:' + gp[1]] = Number(gp[2]);
     for (const [name, re] of PHASE_RES) if (out[name] === undefined && (name !== 'first_line' || l.stream === 'err') && re.test(l.text.replace(/^\[\d\d:\d\d:\d\d\] (?=\[)/, ''))) out[name] = round1(l.t - from);
   }
@@ -480,7 +480,7 @@ async function main(): Promise<void> {
     await sleep(4000);
   } else if (TRIGGER === 'serve-boot') {
     await gb(['config', 'set', 'sync.on_commit', 'true']);
-    notes.push('serve-boot: each rep commits while no serve runs, then spawns gbrain serve (stdio); boot_to_visible_ms is spawn -> search visible (PGLite probes through that serve, so it includes MCP initialize)');
+    notes.push('serve-boot: each rep commits while no serve runs, then spawns foresights serve (stdio); boot_to_visible_ms is spawn -> search visible (PGLite probes through that serve, so it includes MCP initialize)');
   } else if (TRIGGER === 'watch') {
     resident = spawnChild([process.execPath, CLI, 'sync', '--watch', '--interval', String(INTERVAL), '--source', 'bench', '--no-pull'], { cwd: HOME, env: childEnv(), logFile });
     await waitLine(resident, /Watching for changes/, 120_000);
@@ -489,7 +489,7 @@ async function main(): Promise<void> {
     resident = spawnChild([process.execPath, CLI, 'autopilot', '--repo', ROOT, '--interval', String(INTERVAL), '--json'], { cwd: HOME, env: childEnv(), logFile });
     await waitLine(resident, /cycle|Autopilot starting/, 120_000);
   } else if (TRIGGER === 'jobs') {
-    if (ENGINE !== 'postgres') { notes.push('PGLite has no resident jobs worker ("gbrain jobs work" drains the queue and exits).'); }
+    if (ENGINE !== 'postgres') { notes.push('PGLite has no resident jobs worker ("foresights jobs work" drains the queue and exits).'); }
     else {
       resident = spawnChild([process.execPath, CLI, 'jobs', 'work'], { cwd: HOME, env: childEnv(), logFile });
       await sleep(5000);
@@ -732,7 +732,7 @@ function report(dirs: string): void {
     ? [...new Set(Object.values(r.detection_observed as Record<string, string | null>).map(v => v ?? 'unrecorded'))].join(', ') : r.params.detection + ' (requested; not recorded)';
   const ph = (r: any) => Object.entries(r.phases as Record<string, Stats>).filter(([k, v]) => v.n && v.p50 !== null && !['written', 'spawn_after_commit_ms', 'submit_cli_ms'].includes(k) && !k.startsWith('stub_') || k === 'stub_drained_ms').map(([k, v]) => k + ' ' + (v.p50! / 1000).toFixed(2)).join(', ');
   const lat = rows.filter(r => !r.kind || r.kind === 'latency' || r.kind === 'embed-drain');
-  console.log('| cell | engine | mode | pages | commit | trigger | detection | rtt | n | get_page p50/p95/max s | search p50/p95/max s | search cv | embedded p50/p95/max s | exit p50/p95/max s | phases (p50 s) | failures | gbrain |');
+  console.log('| cell | engine | mode | pages | commit | trigger | detection | rtt | n | get_page p50/p95/max s | search p50/p95/max s | search cv | embedded p50/p95/max s | exit p50/p95/max s | phases (p50 s) | failures | foresights |');
   console.log('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|');
   for (const r of lat) {
     const p = r.params;
@@ -742,7 +742,7 @@ function report(dirs: string): void {
   }
   const fair = rows.filter(r => r.kind === 'fairness');
   if (fair.length) {
-    console.log('\n| cell | engine | mode | sources | residents | detection | n | all sources visible p50/p95/max s | spread p50/p95/max s | per-source p50 s | failures | gbrain |');
+    console.log('\n| cell | engine | mode | sources | residents | detection | n | all sources visible p50/p95/max s | spread p50/p95/max s | per-source p50 s | failures | foresights |');
     console.log('|---|---|---|---|---|---|---|---|---|---|---|---|');
     for (const r of fair) console.log('| ' + [r.cell, r.params.engine, r.params.mode, r.params.sources.length, r.params.residents.join('+'), det(r), r.search.n + '/' + r.params.reps, sec(r.search), sec(r.phases.spread_ms),
       Object.entries(r.per_source as Record<string, Stats>).map(([k, v]) => k + ' ' + (v.p50 === null ? '-' : (v.p50 / 1000).toFixed(2))).join(', '), r.failures ?? 0, r.gbrain_rev].join(' | ') + ' |');
@@ -750,7 +750,7 @@ function report(dirs: string): void {
   const idle = rows.filter(r => r.kind === 'idle');
   if (idle.length) {
     const m = (x: Stats | undefined) => x && x.n ? x.p50 + ' / ' + x.max : '-';
-    console.log('\n| cell | engine | mode | sources | residents | detection | windows | tx per 30 s p50 / max | backends p50 / max | rows read per 30 s p50 | CPU s/min per resident p50 / max | gbrain |');
+    console.log('\n| cell | engine | mode | sources | residents | detection | windows | tx per 30 s p50 / max | backends p50 / max | rows read per 30 s p50 | CPU s/min per resident p50 / max | foresights |');
     console.log('|---|---|---|---|---|---|---|---|---|---|---|---|');
     for (const r of idle) console.log('| ' + [r.cell, r.params.engine, r.params.mode, r.params.sources.length, r.params.residents.join('+'), det(r), r.idle.windows.length, m(r.idle.tx_per_window),
       r.idle.backends_median.n ? r.idle.backends_median.p50 + ' / ' + r.idle.backends_max.max : '-', r.idle.rows_returned_per_window.p50 ?? '-',

@@ -1,11 +1,11 @@
 #!/bin/bash
-# smoke-test.sh — GBrain post-restart smoke tests + auto-fix
+# smoke-test.sh — Foresights post-restart smoke tests + auto-fix
 #
-# Ships with gbrain. Tests gbrain core services + OpenClaw plugin health.
+# Ships with foresights. Tests foresights core services + OpenClaw plugin health.
 # Users extend via ~/.gbrain/smoke-tests.d/*.sh (user-defined tests).
 #
 # Usage:
-#   gbrain smoke-test          # run all tests
+#   foresights smoke-test          # run all tests
 #   bash scripts/smoke-test.sh # direct invocation
 #
 # Each test: check → if broken, attempt fix → re-check → report.
@@ -67,7 +67,7 @@ echo "🧪 Running gbrain smoke tests..."
 echo ""
 
 # ── Resolve paths ───────────────────────────────────────────
-# Find gbrain — could be global install, workspace dep, or /data/gbrain
+# Find foresights — could be global install, workspace dep, or /data/gbrain
 GBRAIN_DIR=""
 for candidate in \
   "${GBRAIN_DIR_OVERRIDE:-}" \
@@ -107,7 +107,7 @@ else
   fi
 fi
 
-# ── 2. GBrain CLI loads ────────────────────────────────────
+# ── 2. Foresights CLI loads ────────────────────────────────────
 if [ -n "$GBRAIN_DIR" ] && [ -n "$BUN_PATH" ]; then
   if with_deadline 15 "$BUN_PATH" run "$GBRAIN_DIR/src/cli.ts" --help >/dev/null 2>&1; then
     pass "GBrain CLI ($GBRAIN_DIR)"
@@ -126,12 +126,12 @@ else
   [ -z "$BUN_PATH" ] && skip "GBrain CLI — bun not available"
 fi
 
-# ── 3. GBrain database ────────────────────────────────────
+# ── 3. Foresights database ────────────────────────────────────
 # db-availability loop: the old check grepped human doctor output for
 # "Health Check", which a FAILED connection also prints — it could not fail
 # on a broken DB and had no fix arm. Now: engine identity first (engine-free,
 # works with the DB down), then branch on doctor --json's connection check,
-# with `gbrain db-repair --yes` as the auto-fix arm.
+# with `foresights db-repair --yes` as the auto-fix arm.
 if [ -n "$GBRAIN_DIR" ] && [ -n "$BUN_PATH" ]; then
   ENGINE_JSON=$(DATABASE_URL="$DB_URL" GBRAIN_DATABASE_URL="$DB_URL" with_deadline 15 "$BUN_PATH" run "$GBRAIN_DIR/src/cli.ts" engine status --json 2>/dev/null)
   # #4182: BSD grep (macOS) has no -P; keep this shipped smoke test POSIX-portable.
@@ -169,7 +169,7 @@ else
   skip "GBrain database — gbrain not found"
 fi
 
-# ── 4. GBrain worker process ──────────────────────────────
+# ── 4. Foresights worker process ──────────────────────────────
 if [ -n "$GBRAIN_DIR" ] && [ -n "$BUN_PATH" ] && [ -n "$DB_URL" ]; then
   SUPERVISOR_RUNNING=0
   LEGACY_WORKER_RUNNING=0

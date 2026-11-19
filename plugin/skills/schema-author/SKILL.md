@@ -2,30 +2,30 @@
 name: schema-author
 description: Evolve your brain's schema pack. Add page types, propose new ones from corpus scans, backfill page.type on existing pages, audit pack health. Triggers when an agent notices untyped pages, custom domains needing typed entities (researcher, contract, deposition), or wants to see what types the pack declares.
 tools:
-  - gbrain schema active
-  - gbrain schema list
-  - gbrain schema stats
-  - gbrain schema review-orphans
-  - gbrain schema detect
-  - gbrain schema suggest
-  - gbrain schema lint
-  - gbrain schema graph
-  - gbrain schema explain
-  - gbrain schema fork
-  - gbrain schema use
-  - gbrain schema add-type
-  - gbrain schema remove-type
-  - gbrain schema update-type
-  - gbrain schema add-alias
-  - gbrain schema remove-alias
-  - gbrain schema add-prefix
-  - gbrain schema remove-prefix
-  - gbrain schema add-link-type
-  - gbrain schema remove-link-type
-  - gbrain schema set-extractable
-  - gbrain schema set-expert-routing
-  - gbrain schema sync
-  - gbrain schema reload
+  - foresights schema active
+  - foresights schema list
+  - foresights schema stats
+  - foresights schema review-orphans
+  - foresights schema detect
+  - foresights schema suggest
+  - foresights schema lint
+  - foresights schema graph
+  - foresights schema explain
+  - foresights schema fork
+  - foresights schema use
+  - foresights schema add-type
+  - foresights schema remove-type
+  - foresights schema update-type
+  - foresights schema add-alias
+  - foresights schema remove-alias
+  - foresights schema add-prefix
+  - foresights schema remove-prefix
+  - foresights schema add-link-type
+  - foresights schema remove-link-type
+  - foresights schema set-extractable
+  - foresights schema set-expert-routing
+  - foresights schema sync
+  - foresights schema reload
   - mcp:get_active_schema_pack
   - mcp:list_schema_packs
   - mcp:schema_stats
@@ -68,9 +68,9 @@ flags). For these adjacent jobs, route elsewhere:
   changes the rules at AUTHORING TIME ("what types and prefixes exist?").
 - **Schema-check as part of EIIRP iteration** → `skills/eiirp/SKILL.md`
   already has a schema-check phase. Don't duplicate.
-- **Just looking up a type's settings** → `gbrain schema explain <type>`
+- **Just looking up a type's settings** → `foresights schema explain <type>`
   directly. This skill is for CHANGING the pack, not READING from it.
-- **Querying who knows about X** → `gbrain whoknows <topic>` directly.
+- **Querying who knows about X** → `foresights whoknows <topic>` directly.
   schema-author makes a type expert-routable; it does not run the query.
 
 ## Convention
@@ -90,19 +90,19 @@ Invoke when the user (or a sibling skill) says any of:
 - "Sync the new types to backfill existing pages"
 
 DON'T invoke for "where does THIS note go" (use brain-taxonomist) or
-"who knows about X" (use expert-routing / `gbrain whoknows`).
+"who knows about X" (use expert-routing / `foresights whoknows`).
 
 ## Tutorial + vision
 
-- **Why this matters:** [`docs/what-schemas-unlock.md`](https://github.com/garrytan/gbrain/blob/master/docs/what-schemas-unlock.md) — 7 killer use cases (4000 invisible meetings made queryable, founder ops brain, research brain, legal brain, team brain, agent-as-co-curator) plus the structural argument for why types matter at query time. Read this before pitching schema authoring to a user — it's the doc that explains the difference between a pile of notes and a brain with structure.
-- **5-minute walkthrough:** [`docs/schema-author-tutorial.md`](https://github.com/garrytan/gbrain/blob/master/docs/schema-author-tutorial.md) — fork the bundled pack, add a researcher type, sync, prove the T1.5 wiring via `gbrain whoknows`. Use placeholder pages so it runs against any brain without affecting real content.
+- **Why this matters:** [`docs/what-schemas-unlock.md`](https://github.com/aimonk2025/gbrain/blob/master/docs/what-schemas-unlock.md) — 7 killer use cases (4000 invisible meetings made queryable, founder ops brain, research brain, legal brain, team brain, agent-as-co-curator) plus the structural argument for why types matter at query time. Read this before pitching schema authoring to a user — it's the doc that explains the difference between a pile of notes and a brain with structure.
+- **5-minute walkthrough:** [`docs/schema-author-tutorial.md`](https://github.com/aimonk2025/gbrain/blob/master/docs/schema-author-tutorial.md) — fork the bundled pack, add a researcher type, sync, prove the T1.5 wiring via `foresights whoknows`. Use placeholder pages so it runs against any brain without affecting real content.
 
 ## Workflow
 
 ### Phase 1 — Brain (know which pack is active)
 
 ```
-gbrain schema active --json
+foresights schema active --json
 ```
 
 Output gives you `pack_name`, `version`, `sha8`, `page_types_count`, `source_tier`.
@@ -112,7 +112,7 @@ mutation will need a fork first (Phase 4).
 ### Phase 2 — Assess (what does the current pack cover?)
 
 ```
-gbrain schema stats --json
+foresights schema stats --json
 ```
 
 Returns per-type page counts, untyped count, and `dead_prefixes` (pack-
@@ -120,7 +120,7 @@ declared prefixes with zero matching pages — probable mis-declarations).
 If coverage < 90%, there's untyped content worth typing.
 
 ```
-gbrain schema review-orphans --json
+foresights schema review-orphans --json
 ```
 
 Untyped pages drilldown. Look for shared path prefixes (e.g. "12 of these
@@ -129,14 +129,14 @@ are under `research/papers/`") — those are candidates for a new type.
 ### Phase 3 — Propose (what types should the pack add?)
 
 ```
-gbrain schema detect --json
+foresights schema detect --json
 ```
 
 Clusters pages by `source_path` and proposes candidate types. Heuristic
 only (no LLM call).
 
 ```
-gbrain schema suggest --json
+foresights schema suggest --json
 ```
 
 LLM-refined candidates with confidence scores. Use the top-3 hit rate as
@@ -148,14 +148,14 @@ If the active pack is bundled (`gbrain-base` or `gbrain-recommended`),
 fork it first:
 
 ```
-gbrain schema fork gbrain-base mine
-gbrain schema use mine
+foresights schema fork gbrain-base mine
+foresights schema use mine
 ```
 
 Then add the types one at a time:
 
 ```
-gbrain schema add-type researcher \
+foresights schema add-type researcher \
   --primitive entity \
   --prefix people/researchers/ \
   --extractable \
@@ -175,7 +175,7 @@ batched `schema_apply_mutations` op:
 Validate before sync:
 
 ```
-gbrain schema lint --with-db
+foresights schema lint --with-db
 ```
 
 The `--with-db` flag opts into the 4 DB-aware rules
@@ -188,14 +188,14 @@ mis-declared types you'd otherwise discover only at runtime.
 Dry-run first:
 
 ```
-gbrain schema sync --json
+foresights schema sync --json
 ```
 
 Returns per-prefix `would_apply` counts + sample slugs. If the numbers
 look right:
 
 ```
-gbrain schema sync --apply
+foresights schema sync --apply
 ```
 
 Chunked UPDATE in 1000-row batches; never wedges concurrent writers.
@@ -204,13 +204,13 @@ Idempotent on re-run (second `--apply` finds nothing to backfill).
 ### Phase 6 — Verify
 
 ```
-gbrain schema stats --json
+foresights schema stats --json
 ```
 
 Coverage should be ≥95% now. Spot-check the new type:
 
 ```
-gbrain whoknows "machine learning"
+foresights whoknows "machine learning"
 ```
 
 If `researcher` was declared `--expert`, results should include
@@ -224,7 +224,7 @@ If the pack is in source control, commit and push only the pack file:
 
 ```
 cd ~/.gbrain/schema-packs/mine
-gbrain git commit-push -m "schema: add researcher + paper types + authored link" -- pack.json
+foresights git commit-push -m "schema: add researcher + paper types + authored link" -- pack.json
 ```
 
 It takes the checkout's writer lock and merges a rejected push without
@@ -234,9 +234,9 @@ the user which version of `pack.json` wins; on `git_push_unavailable` the
 remote is unreachable (the commit is saved; rerun with `--push-only` later) or,
 when the pack repo has no remote at all, nothing was committed: commit just the
 pack locally with `git add pack.json && git commit -m "<msg>" -- pack.json`. Never fall back to
-stash, `pull --rebase` or a plain push ([outcomes](https://github.com/garrytan/gbrain/blob/master/docs/guides/shared-checkout-git.md#outcomes)).
+stash, `pull --rebase` or a plain push ([outcomes](https://github.com/aimonk2025/gbrain/blob/master/docs/guides/shared-checkout-git.md#outcomes)).
 
-If the brain daemon is running (`gbrain serve --http`), other processes
+If the brain daemon is running (`foresights serve --http`), other processes
 pick up the change within 1 second (stat-mtime TTL gate in
 loadActivePack — v0.40.6.0 closed the cross-process invalidation gap).
 
@@ -250,7 +250,7 @@ loadActivePack — v0.40.6.0 closed the cross-process invalidation gap).
 
 ## Contract
 
-- **Inputs:** a natural-language request that names a type / prefix / link verb / flag change, OR the result of `gbrain schema review-orphans` showing untyped pages that need a new type.
+- **Inputs:** a natural-language request that names a type / prefix / link verb / flag change, OR the result of `foresights schema review-orphans` showing untyped pages that need a new type.
 - **Outputs:** mutated pack file at `~/.gbrain/schema-packs/<name>/pack.{json,yaml}` + an audit row in `~/.gbrain/audit/schema-mutations-YYYY-Www.jsonl` + (if `sync --apply` ran) backfilled `pages.type` on matching rows.
 - **Side effects:** invalidates the in-process pack cache + the query cache for the source. Other processes pick up the change within 1 second (stat-mtime TTL).
 - **Idempotency:** every primitive is idempotent. `add-alias`/`add-prefix` no-op on duplicate; `sync --apply` finds nothing to update on second run.
@@ -259,15 +259,15 @@ loadActivePack — v0.40.6.0 closed the cross-process invalidation gap).
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
-- Mutation codes: `PACK_READONLY` → fork first (`gbrain schema fork gbrain-base mine`); `STILL_REFERENCED` → remove the named references first; `LOCK_BUSY` → wait about 30 seconds and retry.
+- Mutation codes: `PACK_READONLY` → fork first (`foresights schema fork gbrain-base mine`); `STILL_REFERENCED` → remove the named references first; `LOCK_BUSY` → wait about 30 seconds and retry.
 - Over MCP, a mutation returns `insufficient_scope`: schema writes need the `admin` scope, which only the brain host's operator grants; tell the user.
 - The pre-write lint gate rejects a change: read the error, fix the named prefix or alias collision, and re-run; never bypass lint.
 
 ## Anti-Patterns
 
-- **Don't mutate `gbrain-base` or `gbrain-recommended`.** Fork first (`gbrain schema fork gbrain-base mine`). These are bundled packs; edits would be lost on upgrade. The mutation primitives refuse with `PACK_READONLY`.
+- **Don't mutate `gbrain-base` or `gbrain-recommended`.** Fork first (`foresights schema fork gbrain-base mine`). These are bundled packs; edits would be lost on upgrade. The mutation primitives refuse with `PACK_READONLY`.
 - **Don't add a type for a directory you imported once for triage.** Pack types are permanent decisions; one-time imports are not. See `skills/conventions/schema-evolution.md` for the <20-pages-don't-pack-codify heuristic.
 - **Don't add `--expert` to a type with no `path_prefixes`.** The `expert_routing_without_prefix` lint warns about this — expert-routed types with no prefix never match a put_page inference, so `whoknows` silently never surfaces them.
 - **Don't promote a `schema suggest` candidate without verifying the prefix matches real content.** Run `lint --with-db` before `add-type` to catch prefix collisions pre-write.
@@ -318,4 +318,4 @@ On failure, the error envelope follows the standard `StructuredAgentError` shape
 - `LOCK_BUSY` → another process is mid-mutation. Wait 30s and retry, or
   pass `--force` if you know the holder is wedged.
 - `permission_denied` (MCP only) → your OAuth client doesn't have `admin`
-  scope. Re-register with `gbrain auth register-client --scopes admin`.
+  scope. Re-register with `foresights auth register-client --scopes admin`.

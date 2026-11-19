@@ -38,14 +38,14 @@ describe("build-llms generator", () => {
     const { llmsTxt } = buildLlmsFiles();
     const lines = llmsTxt.split("\n");
 
-    expect(lines[0], "first line must be H1").toBe("# GBrain");
+    expect(lines[0], "first line must be H1").toBe("# Foresights");
 
     // Blockquote summary on line 2 or 3 (spec allows blank line after H1).
     const hasEarlyBlockquote =
       lines.slice(1, 4).some((line) => line.startsWith("> "));
     expect(hasEarlyBlockquote, "needs > blockquote summary near top").toBe(true);
 
-    // Required H2 sections for GBrain's user need (config/debug/migration).
+    // Required H2 sections for Foresights's user need (config/debug/migration).
     expect(llmsTxt).toContain("## Core entry points");
     expect(llmsTxt).toContain("## Configuration");
     expect(llmsTxt).toContain("## Debugging");
@@ -142,6 +142,6 @@ describe("CLAUDE.md restructure content contracts", () => {
   test("llms-full.txt does NOT inline KEY_FILES.md (link-only; keeps the bundle lean)", () => {
     const { llmsFullTxt } = buildLlmsFiles();
     // This H1 appears only in KEY_FILES.md; if it were inlined the bundle would carry it.
-    expect(llmsFullTxt).not.toContain("# Key files — per-file index (gbrain repo)");
+    expect(llmsFullTxt).not.toContain("# Key files — per-file index (foresights repo)");
   });
 });

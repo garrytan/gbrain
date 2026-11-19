@@ -1,5 +1,5 @@
 /**
- * `gbrain embed --stale --images`: rebuild image pages whose index is
+ * `foresights embed --stale --images`: rebuild image pages whose index is
  * incomplete (no visual vector, missing OCR text while OCR is enabled, or an
  * unsealed/stale projection) from their source files, without `sync --full`.
  *
@@ -11,7 +11,7 @@
  * protected-OCR refusal all stay in one place.
  *
  * #6529: on a managed brain the file goes through the source's canonical owner
- * (`importManagedFile`, the same coordinated path `gbrain import` takes) instead
+ * (`importManagedFile`, the same coordinated path `foresights import` takes) instead
  * of the legacy writer, which a managed brain refuses. A page whose
  * `source_path` was never recorded is looked up by its slug (an image slug is
  * its repo-relative path) and the import records `source_path`. #6543 D3: the
@@ -49,7 +49,7 @@ export interface StaleImageSweepResult extends EmbedCostStopFields {
    * `ocr_required`: reimport pages of distrusted provenance the importer seals
    * only after a successful fresh OCR pass (with OCR off, the dry run's
    * expectation; after a run, the pages it refused); `sealable`, `protected` and
-   * `archived` are never candidates (`gbrain projections drain` seals the first,
+   * `archived` are never candidates (`foresights projections drain` seals the first,
    * the others stay unsealed by design).
    */
   reimport: number;
@@ -126,7 +126,7 @@ export async function embedStaleImages(
     }
     // The real-case path the file has on disk: the import and the recorded source_path use it.
     const { abs: file, relative: sourcePath } = located;
-    // A managed brain imports through the source's owner (the coordinated importer, as `gbrain import` does); the legacy writer refuses it.
+    // A managed brain imports through the source's owner (the coordinated importer, as `foresights import` does); the legacy writer refuses it.
     // The owner reads only files inside the source root: a subpath-scoped page found under the git root is reported, not copied in.
     if (managed && located.viaGitRoot) { fail(row, `${file} is outside source ${row.source_id}'s root ${root}; a managed brain imports only files inside the source root`); continue; }
     try {
@@ -189,10 +189,10 @@ export function foldImageSweep<T extends { failures: number; failure_samples: st
   return result;
 }
 
-/** The `gbrain embed --stale --images` CLI surface (dispatched from commands/embed.ts). */
+/** The `foresights embed --stale --images` CLI surface (dispatched from commands/embed.ts). */
 export async function runEmbedStaleImagesCli(engine: BrainEngine, args: string[], costCap: EmbedCostCap | null = null): Promise<StaleImageSweepResult> {
   if (!args.includes('--stale') || !isMultimodalEnabled()) {
-    serr('Usage: gbrain embed --stale --images [--source <id>] [--dry-run] [--json] (requires GBRAIN_EMBEDDING_MULTIMODAL=true)');
+    serr('Usage: foresights embed --stale --images [--source <id>] [--dry-run] [--json] (requires GBRAIN_EMBEDDING_MULTIMODAL=true)');
     process.exit(1);
   }
   const srcI = args.indexOf('--source');
@@ -206,7 +206,7 @@ export async function runEmbedStaleImagesCli(engine: BrainEngine, args: string[]
     console.log(`[embed] images: ${result.candidates} incomplete (${result.reimport} to reimport, ${result.incomplete_sealed} sealed but incomplete)${result.missingSourcePath ? ` (${result.missingSourcePath} with no recorded source_path, located by slug)` : ''}, ${dryRun ? '(dry run) nothing rebuilt'
       : `${result.rebuilt} rebuilt, ${result.skipped} unchanged, ${result.ocr_required} need OCR, ${result.missingFile} missing source file, ${result.failures} failed`}`);
     console.log(`[embed] images: ${result.ocr_required} ${dryRun ? 'would be refused until OCR is enabled' : 'refused for lack of a successful fresh OCR pass'} (ocr_required; GBRAIN_EMBEDDING_IMAGE_OCR=true), `
-      + `${result.sealable} sealable (not candidates: gbrain projections drain seals them keyless), ${result.protected} protected and ${result.archived} archived (not candidates, by design)`);
+      + `${result.sealable} sealable (not candidates: foresights projections drain seals them keyless), ${result.protected} protected and ${result.archived} archived (not candidates, by design)`);
   }
   if (result.missing_samples.length) serr(`[embed] first missing image file: ${result.missing_samples[0]}`);
   if (result.failures > 0) serr(`[embed] first image failure: ${result.failure_samples[0]}`);

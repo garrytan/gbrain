@@ -4,7 +4,7 @@
  * it ran into every row's valid_from cell makes those facts look as if they
  * all happened that day; the dates record when the facts were loaded, not when
  * they happened. Doctor fact_bulk_dates reports such days and
- * `gbrain repair fact-claim-dates` moves the facts whose claim states its own
+ * `foresights repair fact-claim-dates` moves the facts whose claim states its own
  * date; both detect days with findBulkFactDays, so they apply one rule.
  *
  * A bulk day of a source: a UTC calendar day of active facts' valid_from

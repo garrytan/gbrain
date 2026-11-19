@@ -23,23 +23,23 @@ on every_inbound_message(message):
     #   people, companies, deals, original ideas
 
     for entity in entities:
-        existing = gbrain search "{entity.name}"
+        existing = foresights search "{entity.name}"
         if existing:
-            gbrain timeline-add <entity_slug> {date} \
+            foresights timeline-add <entity_slug> {date} \
                 "{what_was_said}" \
                 --source "User, direct message, {timestamp}"
         # else: flag for enrichment if important enough
 
     originals = detect_original_thinking(message)
     for idea in originals:
-        gbrain put originals/{slug} --content "{user's exact phrasing}"
+        foresights put originals/{slug} --content "{user's exact phrasing}"
 
 # DISCIPLINE 2: Brain-First Lookup Before External APIs (MANDATORY)
 on information_needed(topic):
     # ALWAYS check the brain before reaching for the web
-    brain_result = gbrain search "{topic}"
+    brain_result = foresights search "{topic}"
     if brain_result:
-        page = gbrain get <slug>
+        page = foresights get <slug>
         # Use brain data first. External APIs FILL GAPS, not replace.
     else:
         # Brain has nothing -- now use external APIs
@@ -50,16 +50,16 @@ on information_needed(topic):
 
 # DISCIPLINE 3: Sync After Every Repo Write (MANDATORY)
 on brain_repo_files_changed():
-    gbrain sync
-    # `gbrain put` indexes immediately -- pages written through the CLI/MCP
+    foresights sync
+    # `foresights put` indexes immediately -- pages written through the CLI/MCP
     # are searchable the moment the command returns. No sync needed there.
     # But files written DIRECTLY to the brain repo (an editor, a script,
     # another agent committing markdown) are invisible to search until
-    # `gbrain sync` imports them. If anything touched repo files, sync.
+    # `foresights sync` imports them. If anything touched repo files, sync.
 
 # DISCIPLINE 4: Daily Heartbeat Check
 on daily_schedule("09:00"):
-    gbrain doctor
+    foresights doctor
     # Checks: database connectivity, embedding health, sync status,
     # page count, stale pages, broken links
     # If doctor reports issues, fix them before doing anything else.
@@ -68,17 +68,17 @@ on daily_schedule("09:00"):
 on nightly_schedule("02:00"):
     # The dream cycle is the most important discipline.
     # The brain COMPOUNDS overnight.
-    # gbrain ships this as a first-class command: `gbrain dream`.
+    # gbrain ships this as a first-class command: `foresights dream`.
     # The pseudocode below is the shape of the work it does.
 
     # 5a: Entity sweep -- find unlinked mentions
-    pages = gbrain list
+    pages = foresights list
     for page in pages:
         mentions = extract_entity_mentions(page.content)
-        existing_links = gbrain call get_links '{"slug": "<page.slug>"}'
+        existing_links = foresights call get_links '{"slug": "<page.slug>"}'
         for mention in mentions:
             if mention not in existing_links:
-                gbrain link <page.slug> <mention_slug>  # fix broken graph
+                foresights link <page.slug> <mention_slug>  # fix broken graph
 
     # 5b: Citation audit -- find facts without sources
     for page in pages:
@@ -88,14 +88,14 @@ on nightly_schedule("02:00"):
 
     # 5c: Memory consolidation -- update compiled truth from timeline
     for page in stale_pages(older_than="7d"):
-        timeline = gbrain timeline <page.slug>
+        timeline = foresights timeline <page.slug>
         if timeline.has_new_entries_since_last_consolidation:
             # Re-synthesize compiled truth from accumulated timeline
             updated_truth = consolidate(page.compiled_truth, timeline.new_entries)
-            gbrain put <page.slug> --content updated_truth
+            foresights put <page.slug> --content updated_truth
 
     # 5d: Sync everything
-    gbrain sync
+    foresights sync
 
 # BONUS: Durable Skills Over One-Off Work
 # If you do something twice, make it a skill + cron.
@@ -111,18 +111,18 @@ on nightly_schedule("02:00"):
 ## Tricky Spots
 
 1. **The dream cycle is the most important discipline.** Brains compound overnight. Entity sweeps fix broken graphs, citation audits catch sourceless facts, and memory consolidation keeps compiled truth current. Skip the dream cycle and the brain slowly rots.
-2. **Skipping Discipline 3 (sync after repo writes) means stale search results.** A file lands in the brain repo, then you search for it -- and get nothing back. The file exists but isn't imported. Always sync after repo-file writes. (`gbrain put` is exempt: it indexes on write.)
+2. **Skipping Discipline 3 (sync after repo writes) means stale search results.** A file lands in the brain repo, then you search for it -- and get nothing back. The file exists but isn't imported. Always sync after repo-file writes. (`foresights put` is exempt: it indexes on write.)
 3. **Signal detection must fire on EVERY message.** Not just messages that look important. The user says "I talked to Alice yesterday about the board seat" in passing -- that's a timeline entry on Alice's page, a potential update to her State section, and a signal about the board. If the agent doesn't catch it, the system is broken.
 4. **Brain-first saves money AND gives better answers.** The brain has context that external APIs don't: relationship history, meeting notes, the user's own assessment. An API lookup for "Alice Example" returns a LinkedIn profile. The brain returns the full picture including private context.
-5. **`gbrain doctor` catches silent failures.** Embedding pipelines can stall, sync can fail silently, database connections can drop. The daily heartbeat catches these before they compound into data loss.
+5. **`foresights doctor` catches silent failures.** Embedding pipelines can stall, sync can fail silently, database connections can drop. The daily heartbeat catches these before they compound into data loss.
 
 ## How to Verify
 
-1. Send a message mentioning a person with a brain page. Confirm the agent detects the entity and adds a timeline entry to their page (`gbrain timeline <slug>`).
-2. Ask the agent about someone in the brain. Confirm it runs `gbrain search` or `gbrain get` BEFORE reaching for external APIs (check the tool call order).
-3. Write a markdown file directly into the brain repo (not via `gbrain put`), run `gbrain sync`, then `gbrain search` for it. Confirm it appears in results (verifies the sync discipline). A `gbrain put` page should appear in search immediately, with no sync.
-4. Run `gbrain doctor`. Confirm it returns a health report with database status, page count, and any flagged issues.
-5. After a dream cycle runs, check a page that had unlinked entity mentions. Confirm new links were added (`gbrain call get_links '{"slug": "<slug>"}'`).
+1. Send a message mentioning a person with a brain page. Confirm the agent detects the entity and adds a timeline entry to their page (`foresights timeline <slug>`).
+2. Ask the agent about someone in the brain. Confirm it runs `foresights search` or `foresights get` BEFORE reaching for external APIs (check the tool call order).
+3. Write a markdown file directly into the brain repo (not via `foresights put`), run `foresights sync`, then `foresights search` for it. Confirm it appears in results (verifies the sync discipline). A `foresights put` page should appear in search immediately, with no sync.
+4. Run `foresights doctor`. Confirm it returns a health report with database status, page count, and any flagged issues.
+5. After a dream cycle runs, check a page that had unlinked entity mentions. Confirm new links were added (`foresights call get_links '{"slug": "<slug>"}'`).
 
 ---
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md).*
+*Part of the [Foresights Skillpack](../GBRAIN_SKILLPACK.md).*

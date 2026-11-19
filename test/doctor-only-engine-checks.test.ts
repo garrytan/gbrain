@@ -1,5 +1,5 @@
 /**
- * #6303: `gbrain doctor --only <check>` for a check that a pre-gate entry only
+ * #6303: `foresights doctor --only <check>` for a check that a pre-gate entry only
  * emits with an engine must connect the engine. `onlyNeedsEngine` used to look
  * only past the DB-checks gate, so `--only dream_paid_loop` ran engine-free and
  * reported "Could not connect" / "Not run". Pre-gate entries now declare those

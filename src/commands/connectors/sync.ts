@@ -1,5 +1,5 @@
 /**
- * commands/connectors/sync.ts — `gbrain connectors sync <provider>|--all [flags]`.
+ * commands/connectors/sync.ts — `foresights connectors sync <provider>|--all [flags]`.
  *
  * Inline by default (PGLite-safe: it's the same runConnectorSync the handler
  * wraps). `--background` submits the `connector-sync` minion job on Postgres;
@@ -74,12 +74,12 @@ function parseFlags(args: string[]): { provider: string; providerIndex: number; 
   return { provider, providerIndex, flags };
 }
 
-const SYNC_USAGE = 'gbrain connectors sync <chatgpt|claude>|--all [--full] [--dry-run] [--limit N] [--window-days N] [--max-requests N] [--deadline 30m] [--source id] [--embed] [--background] [--json]';
+const SYNC_USAGE = 'foresights connectors sync <chatgpt|claude>|--all [--full] [--dry-run] [--limit N] [--window-days N] [--max-requests N] [--deadline 30m] [--source id] [--embed] [--background] [--json]';
 
 /** Agent contract v1: usage errors are `invalid_params` (exit 2, one `--json` envelope) naming the usage and the fix. */
 function syncUsageError(message: string, fix: { argv: string[]; inputs: Array<{ name: string; how: string }> }) {
   return usageError(message, `Usage: ${SYNC_USAGE}`, {
-    why: 'gbrain connectors sync needs one provider (or --all) and a value after every value flag.',
+    why: 'foresights connectors sync needs one provider (or --all) and a value after every value flag.',
     fix: { ...fix, consent: [], actor: 'agent', why: 'A corrected command line runs the sync.', requires_exclusive: false },
   });
 }
@@ -93,7 +93,7 @@ export async function runConnectorSyncCmd(engine: BrainEngine, args: string[]): 
   if (badSource !== -1) {
     const argv = ['gbrain', 'connectors', 'sync', ...args.slice(0, badSource + 1), '<SOURCE_ID>', ...args.slice(badSource + 1)];
     throw syncUsageError(flagValueError('--source', args[badSource + 1], 'a source id', 'default').message, {
-      argv, inputs: [{ name: 'SOURCE_ID', how: 'The id of the source the imported conversations belong to (gbrain sources list), or drop --source to use the configured connector source.' }],
+      argv, inputs: [{ name: 'SOURCE_ID', how: 'The id of the source the imported conversations belong to (foresights sources list), or drop --source to use the configured connector source.' }],
     });
   }
 
@@ -105,7 +105,7 @@ export async function runConnectorSyncCmd(engine: BrainEngine, args: string[]): 
     // Only providers that have a credential (env or file) are worth syncing.
     const credentialed = connectorProviderNames().filter((p) => loadCredential(p) !== null);
     if (credentialed.length === 0) {
-      console.error('No connector credentials found. Run `gbrain connectors auth <provider>` first.');
+      console.error('No connector credentials found. Run `foresights connectors auth <provider>` first.');
       setCliExitVerdict(1);
       return;
     }
@@ -113,7 +113,7 @@ export async function runConnectorSyncCmd(engine: BrainEngine, args: string[]): 
     providers = [];
     for (const p of credentialed) {
       if (isTruthy(await engine.getConfig(autoSyncKey(p)))) providers.push(p);
-      else console.error(`Skipped ${p}: connectors.${p}.auto_sync is off (\`gbrain connectors sync ${p}\` syncs it explicitly).`);
+      else console.error(`Skipped ${p}: connectors.${p}.auto_sync is off (\`foresights connectors sync ${p}\` syncs it explicitly).`);
     }
   } else if (isConnectorProviderName(provider)) {
     providers = [provider];
@@ -121,7 +121,7 @@ export async function runConnectorSyncCmd(engine: BrainEngine, args: string[]): 
     const names = connectorProviderNames();
     throw syncUsageError(provider ? `Unknown connector provider '${provider}'; expected ${names.join(', ')} or --all.` : `Name a connector provider (${names.join(', ')}) or pass --all.`, {
       argv: ['gbrain', 'connectors', 'sync', '<PROVIDER>', ...args.filter((_, i) => i !== providerIndex)],
-      inputs: [{ name: 'PROVIDER', how: `One of ${names.join(', ')}, or --all for every provider with a credential (gbrain connectors providers lists them).` }],
+      inputs: [{ name: 'PROVIDER', how: `One of ${names.join(', ')}, or --all for every provider with a credential (foresights connectors providers lists them).` }],
     });
   }
 
@@ -183,7 +183,7 @@ async function submitBackground(
     },
     { idempotency_key: `connector-sync:${provider}:${slot}`, max_attempts: 2 },
   );
-  console.log(`Queued connector-sync for ${provider} (job ${job.id}). Track with \`gbrain jobs get ${job.id}\`.`);
+  console.log(`Queued connector-sync for ${provider} (job ${job.id}). Track with \`foresights jobs get ${job.id}\`.`);
   return true;
 }
 

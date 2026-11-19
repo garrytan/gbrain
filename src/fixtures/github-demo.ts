@@ -1,4 +1,4 @@
-// Privacy-clean demo dataset for `gbrain sources demo github`.
+// Privacy-clean demo dataset for `foresights sources demo github`.
 // Generic alice-example placeholders only (AGENTS.md privacy rule: never
 // commit real names of people, companies, or funds into public artifacts).
 // No network, no token, no brain: the demo renders these through the same
@@ -20,7 +20,7 @@ export const DEMO_REPOS: DemoRepo[] = [
     private: false,
     archived: false,
     default_branch: 'main',
-    description: 'Example web app used to demonstrate the gbrain github source',
+    description: 'Example web app used to demonstrate the foresights github source',
   },
   {
     full_name: 'alice-example/docs-site',

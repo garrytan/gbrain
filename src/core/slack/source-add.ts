@@ -54,10 +54,10 @@ export async function preflightSlackAdd(sourceId: string, opts: AddSourceSlackOp
   if (!key) {
     throw new OperationError('connector_auth_required', `No Slack app token is available, so source ${sourceId} was not added.`,
       opts.tokenEnv ? `Set ${opts.tokenEnv} to the app's Bot User OAuth Token, then run the sources add command again.`
-        : 'Ask the user for their Slack app\'s Bot User OAuth Token and save it on stdin (gbrain connectors auth slack --token -), then run the sources add command again.',
+        : 'Ask the user for their Slack app\'s Bot User OAuth Token and save it on stdin (foresights connectors auth slack --token -), then run the sources add command again.',
       'docs/guides/meeting-and-slack-sources.md#connector_auth_required');
   }
-  const api = slackApi({ token: key.token, userAgent: `gbrain/${VERSION} (+https://github.com/garrytan/gbrain)`, minDelayMs: 0, maxRequests: opts.channels.length + 5,
+  const api = slackApi({ token: key.token, userAgent: `gbrain/${VERSION} (+https://github.com/aimonk2025/gbrain)`, minDelayMs: 0, maxRequests: opts.channels.length + 5,
     ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}) });
   const fail = (error: unknown): never => {
     if (error instanceof SlackChannelUnavailableError) throw new OperationError('connector_access_denied',
@@ -66,10 +66,10 @@ export async function preflightSlackAdd(sourceId: string, opts: AddSourceSlackOp
       'docs/guides/meeting-and-slack-sources.md#connector_access_denied');
     const message = error instanceof Error ? error.message : String(error);
     if (error instanceof ConnectorAuthError) throw new OperationError('connector_auth_required', `Source ${sourceId} was not added: ${message}.`,
-      'Ask the user for a fresh Bot User OAuth Token from their Slack app and save it on stdin (gbrain connectors auth slack --token -), then run the sources add command again.',
+      'Ask the user for a fresh Bot User OAuth Token from their Slack app and save it on stdin (foresights connectors auth slack --token -), then run the sources add command again.',
       'docs/guides/meeting-and-slack-sources.md#connector_auth_required');
     throw new OperationError('connector_access_denied', `Source ${sourceId} was not added: ${message}.`,
-      'Check the token (gbrain connectors auth slack --token -) and that the app has the channels:read, channels:history, groups:read, groups:history and users:read scopes, then run the sources add command again.',
+      'Check the token (foresights connectors auth slack --token -) and that the app has the channels:read, channels:history, groups:read, groups:history and users:read scopes, then run the sources add command again.',
       'docs/guides/meeting-and-slack-sources.md#connector_access_denied');
   };
   const account = await api.authTest().catch(fail);

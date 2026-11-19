@@ -6,7 +6,7 @@
  * userinfo and `?token=` included.
  *
  * Hermetic HOME + GBRAIN_HOME; the "server" is a local `Bun.serve` stub that
- * records every request it sees. No `gbrain serve` is spawned and nothing
+ * records every request it sees. No `foresights serve` is spawned and nothing
  * leaves the machine (every URL is loopback or a closed loopback port).
  *
  * - the registered URL's credentials never appear in the message, details or
@@ -156,7 +156,7 @@ describe('harness_wiring never echoes registration credentials (#6453)', () => {
     expect(ok.hits.map(h => h.authorization)).toEqual([null]);
     expect(ok.hits[0].query).not.toContain(QUERY_PART);
 
-    const bad = stub(() => new Response('<html>not gbrain</html>', { headers: { 'content-type': 'text/html' } }));
+    const bad = stub(() => new Response('<html>not foresights</html>', { headers: { 'content-type': 'text/html' } }));
     stubs.push(bad);
     const unhealthy = box(POSTGRES);
     register(unhealthy, credentialedUrl(bad.port));
@@ -219,7 +219,7 @@ describe('harness_wiring probes the registered HTTP endpoint when there is no PG
     expect(c).not.toHaveProperty('fix');
   });
 
-  test('a gbrain server whose deep probe answers 503 → http_serve_unhealthy with the health reason', async () => {
+  test('a foresights server whose deep probe answers 503 → http_serve_unhealthy with the health reason', async () => {
     const s = stub(() => Response.json({ error: 'service_unavailable', error_description: 'Deep health probe timed out', deep: true }, { status: 503 }));
     stubs.push(s);
     const b = box(POSTGRES);

@@ -1,8 +1,8 @@
 /**
- * #5988 prevention: every gbrain frontmatter writer serializes caller strings
+ * #5988 prevention: every foresights frontmatter writer serializes caller strings
  * through a YAML-safe scalar, so a hostile value (`: `, `#`, `[x]`, quotes,
  * newlines, `---`, YAML keywords) strict-parses back to exactly the string it
- * was given. A strict parse (js-yaml with gbrain's FRONTMATTER_SCHEMA, no
+ * was given. A strict parse (js-yaml with foresights's FRONTMATTER_SCHEMA, no
  * pre-quoting, no recovery) is the bar: what an external YAML reader sees.
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';

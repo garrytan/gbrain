@@ -1,5 +1,5 @@
 /**
- * GBRA-438: `gbrain autopilot --install` refusals on PGLite and repo-less brains.
+ * GBRA-438: `foresights autopilot --install` refusals on PGLite and repo-less brains.
  *
  * 1. Protects: both refusals carry a registered code, a why, and a fix that
  *    points a PGLite or repo-less brain at free upkeep instead of a daemon.

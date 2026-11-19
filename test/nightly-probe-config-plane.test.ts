@@ -1,6 +1,6 @@
 // Regression test for the nightly-quality-probe config-plane split-brain.
 //
-// The doctor check prints a paste-ready enable hint — `gbrain config set
+// The doctor check prints a paste-ready enable hint — `foresights config set
 // autopilot.nightly_quality_probe.enabled true` — which writes the DB config
 // plane. But both the autopilot gate and the doctor check used to read ONLY
 // the file plane (~/.gbrain/config.json via loadConfig), so following the

@@ -11,7 +11,7 @@
  *     caller's connection, which MUST hold the initSchema advisory lock (key
  *     42) so concurrent bootstraps can't race on a transaction pooler.
  *
- * Before any DDL it refuses (`foreign_table`, owned-table-shapes.ts) when a table gbrain owns by name was
+ * Before any DDL it refuses (`foreign_table`, owned-table-shapes.ts) when a table foresights owns by name was
  * created by another application, so the blob never adopts and alters it (#9190).
  *
  * The blob forward-references state that older brains don't have yet (a

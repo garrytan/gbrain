@@ -1,14 +1,14 @@
 /**
  * GST-2579: a database-wins repair must not silently discard a file edit sync never imported. A reconcile result that
  * takes the database copy over the file's own value at a path (take_database, delete or set_value on what the file
- * says) overwrites the canonical file; when the file's bytes are not ones gbrain imported or wrote, that overwrite
+ * says) overwrites the canonical file; when the file's bytes are not ones foresights imported or wrote, that overwrite
  * drops an edit nobody saw: another writer's commit that sync has not imported yet, or an uncommitted edit.
  *
  * The bytes count as known only when the database itself held the version they render: the bytes the page's last
  * recorded import read or left on disk (sync's import record: raw_sha256, disk_sha256, written in the publication that
  * stored them), the blob a sync adopted into that record for the revision the page held then (blob_oid, disk_blob_oid,
  * written only while the page was at that revision), or bytes a Git effect of one of the page's own writes put in that file (expected_hash) for a revision the
- * page has held, live or in its version history. gbrain's own writer commit over a database row that never took that
+ * page has held, live or in its version history. foresights's own writer commit over a database row that never took that
  * revision (the Git commit landed and the row did not) is newer, as is anything else, including a page with no import
  * record and no write of its own: a wrong "newer" keeps a hold, a wrong "known" loses an edit. Git only describes the
  * newer bytes (the commit that holds them, or that they are uncommitted); it never decides that they are known, and
@@ -24,12 +24,12 @@ import { ABSENT_FILE_HASH, type ReconcileState } from './reconcile-state.ts';
 import { readSyncImportProvenance } from './sync-holds.ts';
 import { headBlob, lastCommitOf } from './pending-import.ts';
 
-/** A canonical file whose bytes gbrain never imported or wrote, and what Git says about them. */
+/** A canonical file whose bytes foresights never imported or wrote, and what Git says about them. */
 export interface UnimportedFile {
   path: string;
   /**
    * unimported_commit: HEAD holds the bytes and sync imported other bytes. uncommitted_edit: HEAD holds other bytes.
-   * no_import_record: sync recorded no import of the page and gbrain never wrote the file. unknown: Git could not say
+   * no_import_record: sync recorded no import of the page and foresights never wrote the file. unknown: Git could not say
    * whether the bytes are committed. unimported_delete: a commit deleted the file and its live page still holds the
    * content (a held file_gone deletion); recreating the file from the page undoes that commit.
    */
@@ -70,7 +70,7 @@ async function gbrainWroteHeldBytes(engine: BrainEngine, pins: ReconcileState['p
   return rows.length > 0;
 }
 
-/** The canonical file of a reconcile state when its bytes are not ones gbrain imported or wrote; null when they are, or when the file is absent. */
+/** The canonical file of a reconcile state when its bytes are not ones foresights imported or wrote; null when they are, or when the file is absent. */
 export async function unimportedFile(engine: BrainEngine, state: Pick<ReconcileState, 'root' | 'path' | 'raw' | 'pins'>): Promise<UnimportedFile | null> {
   const { pins } = state;
   if (pins.raw_file_hash === ABSENT_FILE_HASH) return null;
@@ -91,7 +91,7 @@ export function unimportedFileText(file: UnimportedFile): string {
   if (file.reason === 'uncommitted_edit') return `an uncommitted edit of ${file.path}`;
   if (file.reason === 'unimported_delete') return file.commit ? `the delete of ${file.path} in commit ${file.commit.sha.slice(0, 12)} by ${file.commit.author} on ${file.commit.date}, which sync has not applied to the page`
     : `the delete of ${file.path} (Git could not name the deleting commit), which sync has not applied to the page`;
-  if (file.reason === 'unknown') return `the current bytes of ${file.path}, which no import or gbrain write recorded`;
+  if (file.reason === 'unknown') return `the current bytes of ${file.path}, which no import or foresights write recorded`;
   const commit = file.commit ? `commit ${file.commit.sha.slice(0, 12)} by ${file.commit.author} on ${file.commit.date}` : 'the newest edit';
   return `${commit} to ${file.path}, which sync ${file.reason === 'no_import_record' ? 'never recorded importing' : 'has not imported'}`;
 }
@@ -103,7 +103,7 @@ export function unimportedFileText(file: UnimportedFile): string {
 export function unimportedFileRefusal(sourceId: string, slug: string, file: UnimportedFile, paths: readonly string[]) {
   return opError('source_changed', `Reconciling ${slug} would overwrite ${unimportedFileText(file)}.`,
     `Nothing was written. The resolution takes the database copy over what the file says at ${paths.join(', ')}. Decide take_file for those paths to keep the file's edit; `
-    + `if the user decides the edit should be discarded, preview gbrain repair file-drift --source ${sourceId} --slug ${slug} --prefer database, which names the edit and needs their consent before it overwrites the file.`,
+    + `if the user decides the edit should be discarded, preview foresights repair file-drift --source ${sourceId} --slug ${slug} --prefer database, which names the edit and needs their consent before it overwrites the file.`,
     { detail: 'unimported_file_edit', fix: readFix(`Previews the database-wins repair of ${slug}, read-only: it names the edit it would discard.`,
       { argv: ['gbrain', 'repair', 'file-drift', '--source', sourceId, '--slug', slug, '--prefer', 'database'] }) });
 }

@@ -1,13 +1,13 @@
 /**
  * GBRA-133 2b-d2: a resident stopped by SIGTERM hands the host's commit notifier over at once.
  *
- * Before: stdio `gbrain serve` on SIGTERM ran the generic cleanup pass and exited 143 while its own graceful shutdown
+ * Before: stdio `foresights serve` on SIGTERM ran the generic cleanup pass and exited 143 while its own graceful shutdown
  * (which stops the notifier and releases the lease) was still starting, so the Postgres lease row stayed live until it
  * expired (two heartbeats, 20 s by default) and the next resident neither owned the notifier nor synced a commit until
  * then. Now the notifier registers a cleanup that releases the lease first. A SIGKILL still waits for expiry; lease
  * TTLs are unchanged.
  *
- * Protects (real `gbrain serve` processes): after a SIGTERM the lease is released (Postgres; PGLite has no lease row,
+ * Protects (real `foresights serve` processes): after a SIGTERM the lease is released (Postgres; PGLite has no lease row,
  * its lock holder owns), and a second resident owns the notifier and syncs a new commit while the first resident's
  * lease, stretched to 120 s here, would still be live. PGLite always, Postgres when DATABASE_URL is set (e2e twin).
  */

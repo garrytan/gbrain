@@ -1,5 +1,5 @@
 /**
- * PR-A / A3: the cooperative pause marker that lets `gbrain migrate --to <engine>`
+ * PR-A / A3: the cooperative pause marker that lets `foresights migrate --to <engine>`
  * quiesce a running daemon for the duration of a cross-engine copy.
  *
  * The incident this closes: `migrate-engine.ts` contained ZERO references to
@@ -38,7 +38,7 @@ function touchLock(mtime?: Date) {
 }
 
 describe('autopilot pause marker (A3 quiesce)', () => {
-  test('resolves inside the gbrain home, not raw $HOME', async () => {
+  test('resolves inside the foresights home, not raw $HOME', async () => {
     await withEnv({ GBRAIN_HOME: emptyHome() }, () => {
       // The daemon writes its lock through gbrainHomePath(); a marker resolved
       // from raw process.env.HOME would land in a different directory under

@@ -1,5 +1,5 @@
 /**
- * `gbrain repair access` (GBRA-218): derive `pages.page_readers` for pages
+ * `foresights repair access` (GBRA-218): derive `pages.page_readers` for pages
  * written before the member-access migration whose frontmatter already names
  * readers. Until then such a page reads as nobody for every remote caller
  * (fail closed), so the backfill only restores reads for listed members; it

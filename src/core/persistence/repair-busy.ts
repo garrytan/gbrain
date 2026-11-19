@@ -1,7 +1,7 @@
 /**
  * #6278: which paths and slugs of a managed source a repair must not write
- * right now, so `gbrain repair fences` (and the managed file repair
- * admission under it and under `gbrain repair frontmatter`) runs during a
+ * right now, so `foresights repair fences` (and the managed file repair
+ * admission under it and under `foresights repair frontmatter`) runs during a
  * sync for every other candidate instead of skipping the whole source while
  * a managed sync cursor is unfinished.
  *
@@ -88,7 +88,7 @@ export function repairBusy(busy: RepairBusySet, candidate: { path?: string | nul
 /** The `sync_in_progress` message for one busy candidate: what names it and when the next run picks it up. */
 export function repairBusyMessage(busy: RepairBusySet, sourceId: string, what: string): string {
   if (busy.unknown !== null) return `${what} was not repaired: ${busy.unknown}. The next run reads it again.`;
-  return `A running sync of ${sourceId}, or a write still in flight, names ${what}; finish the sync (gbrain sync --source ${sourceId} --no-pull) and the next run repairs it.`;
+  return `A running sync of ${sourceId}, or a write still in flight, names ${what}; finish the sync (foresights sync --source ${sourceId} --no-pull) and the next run repairs it.`;
 }
 
 /** The refusal a coordinated repair admission raises when its candidate became busy after the plan read it. */

@@ -1,7 +1,7 @@
 /**
  * #6667: `cycle.consolidate.enabled=false` is the off switch for the cycle's
  * consolidate phase (facts promoted into takes without review). The phase reads
- * it itself and returns `skipped`; `gbrain dream --phase consolidate --once`
+ * it itself and returns `skipped`; `foresights dream --phase consolidate --once`
  * (onceForPhase) bypasses it for one run. Unset or truthy keeps it on.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
@@ -30,7 +30,7 @@ describe('cycle.consolidate.enabled (#6667)', () => {
     await engine.setConfig(KEY, value);
     const phase = await consolidateOf();
     expect(phase.status).toBe('skipped');
-    expect(phase.details).toMatchObject({ reason: 'disabled', enable_hint: `gbrain config set ${KEY} true` });
+    expect(phase.details).toMatchObject({ reason: 'disabled', enable_hint: `foresights config set ${KEY} true` });
   });
 
   test.each([null, 'true', '1', 'on'])('%p keeps the phase on', async (value) => {

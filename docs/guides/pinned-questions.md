@@ -1,6 +1,6 @@
 # Pinned questions
 
-A pinned question is a question gbrain keeps answered. You pin it once; gbrain
+A pinned question is a question foresights keeps answered. You pin it once; foresights
 answers it from your notes with a citation behind every sentence, checks those
 citations on every read, and refreshes the answer when its evidence changes.
 A sentence whose evidence was edited, deleted, forgotten, superseded or has
@@ -13,11 +13,11 @@ reads are free.
 ## Quick start
 
 ```bash
-gbrain questions pin "Who leads acme-example engineering now?" --entity companies/acme-example
-gbrain questions status default:questions/who-leads-acme-example-engineering-now-1a2b3c4d
-gbrain questions refresh default:questions/who-leads-acme-example-engineering-now-1a2b3c4d
-gbrain questions list
-gbrain questions unpin default:questions/who-leads-acme-example-engineering-now-1a2b3c4d
+foresights questions pin "Who leads acme-example engineering now?" --entity companies/acme-example
+foresights questions status default:questions/who-leads-acme-example-engineering-now-1a2b3c4d
+foresights questions refresh default:questions/who-leads-acme-example-engineering-now-1a2b3c4d
+foresights questions list
+foresights questions unpin default:questions/who-leads-acme-example-engineering-now-1a2b3c4d
 ```
 
 `pin` prints the first answer (it waits up to 30 seconds; `--defer` skips it)
@@ -26,7 +26,7 @@ receipt described below. The command exits 1 when the answer is blocked.
 
 The same operations exist over MCP: `questions_pin`, `questions_list`,
 `questions_status`, `questions_refresh` and `questions_unpin`. They are on the
-full tool surface, the one gbrain's MCP registrations use; a harness narrowed
+full tool surface, the one foresights's MCP registrations use; a harness narrowed
 to `starter` finds them through `request_tools`.
 
 | Tool | Scope | What it does |
@@ -70,12 +70,12 @@ Every pin, list, status and refresh returns the same fields:
 | `last_refresh_at` | The last successful refresh |
 | `blocked_reason` | Why the answer cannot be refreshed right now (below), or null |
 | `fix` | The step that fixes it: `argv`, `mcp`, `consent`, `actor`, `why` and a read-only `verify` |
-| `verify` | `gbrain questions status <id> --json` / `questions_status {id}` |
+| `verify` | `foresights questions status <id> --json` / `questions_status {id}` |
 
 | `blocked_reason` | Meaning | Next action |
 |---|---|---|
-| `awaiting_consent` | The pin was made over MCP (or imported from `dream.auto_think`) and is not active | The owner runs `gbrain questions pin --id <id>` |
-| `no_model_key` | No chat-model key is configured | The user adds an Anthropic or OpenAI key (`gbrain providers list` shows how) |
+| `awaiting_consent` | The pin was made over MCP (or imported from `dream.auto_think`) and is not active | The owner runs `foresights questions pin --id <id>` |
+| `no_model_key` | No chat-model key is configured | The user adds an Anthropic or OpenAI key (`foresights providers list` shows how) |
 | `budget_exhausted` | This run's refresh budget is spent | Raise `cycle.standing_questions.budget_usd`, or wait for the next run |
 | `answer_too_long` | The answer did not fit the refresh output cap, so the last refresh failed (a full refresh fails the same way); scheduled refreshes skip the pin until the cap is raised | The owner raises `cycle.standing_questions.max_output_tokens`, or narrows the question |
 | `refresh_failed` | The last refresh failed; the previous answer is kept with its stale flags | `questions_refresh {id, full: true}` |
@@ -88,7 +88,7 @@ response.
 
 Staleness is computed when you read, not when something writes. Each answer
 sentence records what it cites: a page revision, a fact, a timeline entry or
-a take. On every read gbrain checks those against the current brain. A
+a take. On every read foresights checks those against the current brain. A
 sentence is stale when its evidence:
 
 - was edited, renamed away or made private (the page's revision changed);
@@ -130,7 +130,7 @@ Each pin has a page, `questions/<slug>`, holding the question. Write your own
 claims on it, below the heading. Every sentence you write there is part of the
 answer as your claim (`origin: owner`). When you edit the page, your claims
 read stale until the next refresh picks up the new text. The generated answer
-is never stored in the page or its file; read it with `gbrain questions
+is never stored in the page or its file; read it with `foresights questions
 status`.
 
 ## Who can see pinned questions
@@ -150,13 +150,13 @@ Pinned questions are owner-private:
 
 A pin made on the CLI is active: it answers now and refreshes when its
 evidence changes. A pin made over MCP is created inactive and spends nothing
-until the owner activates it with `gbrain questions pin --id <id>`, unless the
-owner has set a paid preapproval (`gbrain config set
+until the owner activates it with `foresights questions pin --id <id>`, unless the
+owner has set a paid preapproval (`foresights config set
 consent.preapprove.paid.max_usd_per_run <usd>`), which also caps each MCP
 refresh. Pinning never installs a scheduler.
 
 Scheduled refreshes run in the `standing_questions` cycle phase (part of
-`gbrain dream` and autopilot). Settings:
+`foresights dream` and autopilot). Settings:
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -169,7 +169,7 @@ Scheduled refreshes run in the `standing_questions` cycle phase (part of
 | `models.standing_questions` | deep tier | The answer model |
 
 A draft-only pin (`publish_mode: draft`) is refreshed but not served by
-`context_pack`; `gbrain questions pin --id <id> --publish` publishes it.
+`context_pack`; `foresights questions pin --id <id> --publish` publishes it.
 
 ## Coming from dream.auto_think
 
@@ -177,7 +177,7 @@ The `dream.auto_think` settings became pins when this brain upgraded. Each
 saved question is a pin in the `default` source. Every migrated pin starts
 inactive, whatever `dream.auto_think.enabled` said, because auto_think never
 ran in the dream cycle and the upgrade starts no paid refresh. Turn one on
-with `gbrain questions pin --id <id>` (`gbrain questions list` shows the ids);
+with `foresights questions pin --id <id>` (`foresights questions list` shows the ids);
 from then on the dream cycle refreshes it under the migrated budget.
 
 | Old key | Now |
@@ -190,6 +190,6 @@ from then on the dream cycle refreshes it under the migrated budget.
 | `dream.auto_think.max_per_cycle` | `cycle.standing_questions.max_per_cycle` |
 | `models.auto_think` / `dream.auto_think.model` | Each pin's model |
 
-The upgrade made no model call. `gbrain config get` or `set` on an old key
-prints its replacement, and `gbrain dream --phase auto_think` points to
-`gbrain questions list`.
+The upgrade made no model call. `foresights config get` or `set` on an old key
+prints its replacement, and `foresights dream --phase auto_think` points to
+`foresights questions list`.

@@ -1,5 +1,5 @@
 /**
- * `gbrain repair [<kind>] [--apply] [--source <id>] [--limit <n>] [--no-embed] [--json]`
+ * `foresights repair [<kind>] [--apply] [--source <id>] [--limit <n>] [--no-embed] [--json]`
  *
  * Host-side repairs for residual damage the doctor reports. Every kind is a
  * dry run unless `--apply` is passed; applying publishes each item through a
@@ -11,7 +11,7 @@
  * preview-bound kinds accept `--expect <hash>` (their preview-bound apply);
  * only explicit-only kinds accept `--include-ambiguous`. `--max-usd <n>` is
  * accepted only for kinds that may call a paid chat model, and only lowers
- * their cap for this run. `gbrain repair content` is the content-repair
+ * their cap for this run. `foresights repair content` is the content-repair
  * lane (#6377, repair-content.ts): not a kind, but it takes the same
  * `--only`/`--skip`, `--no-llm`, `--max-usd`, `--expect` and `--apply` flags,
  * so it is parsed here and dispatched before the kind check.
@@ -45,17 +45,17 @@ import { readFileSync } from 'node:fs';
 
 /** The content-repair lane's command word (#6377): parsed like a kind, dispatched to repair-content.ts, never a RepairKind. */
 export const CONTENT_LANE = 'content';
-const REPAIR_CONTENT_HELP = `       gbrain repair content [--source <id>] [--only <path>]... [--skip <path>]... [--no-llm] [--max-usd <n>] [--diff]
+const REPAIR_CONTENT_HELP = `       foresights repair content [--source <id>] [--only <path>]... [--skip <path>]... [--no-llm] [--max-usd <n>] [--diff]
                              [--apply [--expect <hash>[,<hash>]]] [--json]`;
 /** #7247: the usage line of the timeline-order kind, which also takes --slug (the hash covers the selection). */
-const REPAIR_ORDER_HELP = '       gbrain repair timeline-order [--source <id>] [--slug <slug>]... [--apply --expect <preview-hash> --yes] [--json]';
+const REPAIR_ORDER_HELP = '       foresights repair timeline-order [--source <id>] [--slug <slug>]... [--apply --expect <preview-hash> --yes] [--json]';
 /** #8109: the usage line of the contact-rows kind, which also takes --slug. */
-const REPAIR_CONTACTS_HELP = '       gbrain repair contact-rows [--source <id>] [--slug <slug>]... [--apply --expect <preview-hash> --yes] [--json]';
+const REPAIR_CONTACTS_HELP = '       foresights repair contact-rows [--source <id>] [--slug <slug>]... [--apply --expect <preview-hash> --yes] [--json]';
 const REPAIR_CONTENT_SUMMARY = `  content      The content-repair lane (#6377), not a kind: runs ${CONTENT_REPAIR_KINDS.join(', then ')} over the same
                --source/--only selection, so the holds managed sync records for a file's content (invalid_fence,
                frontmatter_slug_conflict) clear in one pass. The preview plans every kind before anything is written and
                prints each kind's own hash; --apply --expect <h1>[,<h2>] applies exactly those sets (one hash per kind,
-               in that order); --apply alone applies each kind's current plan as gbrain repair <kind> --apply does.
+               in that order); --apply alone applies each kind's current plan as foresights repair <kind> --apply does.
                --max-usd is the lane's allowance for the run: what the first kind spends is gone for the next. The
                maintenance run's content_repair phase runs the same lane by itself; sync unblock --apply runs it for
                the paths it holds.`;
@@ -75,46 +75,46 @@ const explicitKinds = EXPLICIT_REPAIR_REGISTRY.map(spec => spec.kind).join(', ')
 const previewBoundKinds = PREVIEW_BOUND_REPAIR_REGISTRY.map(spec => spec.kind).join(', ');
 const llmKinds = LLM_REPAIR_REGISTRY.map(spec => spec.kind).join(', ');
 
-export const REPAIR_HELP = `Usage: gbrain repair [<kind>] [--apply] [--source <id>] [--limit <n>] [--no-embed] [--json]
-       gbrain repair --all [--apply] [--source <id>] [--json]
-       gbrain repair <explicit-only kind> [--include-ambiguous] [--apply --expect <preview-hash>] [--source <id>] [--json]
-       gbrain repair frontmatter [--source <id>] [--include-ambiguous] [--only <path>]... [--skip <path>]... [--diff]
+export const REPAIR_HELP = `Usage: foresights repair [<kind>] [--apply] [--source <id>] [--limit <n>] [--no-embed] [--json]
+       foresights repair --all [--apply] [--source <id>] [--json]
+       foresights repair <explicit-only kind> [--include-ambiguous] [--apply --expect <preview-hash>] [--source <id>] [--json]
+       foresights repair frontmatter [--source <id>] [--include-ambiguous] [--only <path>]... [--skip <path>]... [--diff]
                                  [--apply --expect <preview-hash> --yes] [--json]
-       gbrain repair fences [--source <id>] [--only <path>]... [--skip <path>]... [--slug <slug>]... [--diff]
+       foresights repair fences [--source <id>] [--only <path>]... [--skip <path>]... [--slug <slug>]... [--diff]
                             [--no-llm] [--max-usd <n>] [--apply [--expect <preview-hash>]] [--limit <n>] [--json]
-       gbrain repair receipt-compaction [--older-than <72h|30d>] [--include-failures] [--force]
+       foresights repair receipt-compaction [--older-than <72h|30d>] [--include-failures] [--force]
                                         [--apply --expect <preview-hash> --yes] [--limit <n>] [--json]
-       gbrain repair file-drift --source <id> (--slug <slug>... | --request <id>... | --all-drifted [--class <name>] [--since <ISO-8601|7d>]
+       foresights repair file-drift --source <id> (--slug <slug>... | --request <id>... | --all-drifted [--class <name>] [--since <ISO-8601|7d>]
                                 | --held [--side both|unknown|deleted [--state tombstone_edited|purged_differs|file_gone
                                          [--provenance never_committed|deleted_by_commit|deletion_uncommitted]]] [--cursor <next_cursor>])
                                 [--only <glob>]... [--skip <glob>]... [--prefer file|database [--apply --expect <preview-hash>]] [--json]
-       gbrain repair stuck-recovery [--source <id>] [--request-id <uuid>]
+       foresights repair stuck-recovery [--source <id>] [--request-id <uuid>]
                                     [--keep prior|disk|withdrawn --apply --expect <preview-hash> --yes] [--json]
-       gbrain repair ghost-pages --source <id> [--apply --expect <preview-hash> --yes] [--json]
-       gbrain repair legacy-twins --source <id> [--apply --expect <preview-hash> --yes] [--json]
-       gbrain repair uncommitted-deletions --source <id> [--after <page-id>] [--include-ambiguous] [--apply --expect <preview-hash> --yes] [--json]
-       gbrain repair rows-behind --source <id> [--include-ambiguous] [--apply --expect <preview-hash>] [--json]
-       gbrain repair facts-home --source <id> [--apply --expect <preview-hash>] [--json]
-       gbrain repair generations --kind <kind> [--mode restore|release-held] (--run <id> | --since <ISO-8601|7d> | --key <owner> | --generation <id> | --held)
+       foresights repair ghost-pages --source <id> [--apply --expect <preview-hash> --yes] [--json]
+       foresights repair legacy-twins --source <id> [--apply --expect <preview-hash> --yes] [--json]
+       foresights repair uncommitted-deletions --source <id> [--after <page-id>] [--include-ambiguous] [--apply --expect <preview-hash> --yes] [--json]
+       foresights repair rows-behind --source <id> [--include-ambiguous] [--apply --expect <preview-hash>] [--json]
+       foresights repair facts-home --source <id> [--apply --expect <preview-hash>] [--json]
+       foresights repair generations --kind <kind> [--mode restore|release-held] (--run <id> | --since <ISO-8601|7d> | --key <owner> | --generation <id> | --held)
                                  [--source <id>] [--apply --expect <preview-hash> --yes] [--json]
-       gbrain repair url-clone-fences [--source <id>] [--apply --expect <preview-hash> --yes] [--json]
-       gbrain repair agent-session-facts [--source <id>] [--cwd <prefix>]... [--session <id>]... [--principal <label>] [--include-ambiguous]
+       foresights repair url-clone-fences [--source <id>] [--apply --expect <preview-hash> --yes] [--json]
+       foresights repair agent-session-facts [--source <id>] [--cwd <prefix>]... [--session <id>]... [--principal <label>] [--include-ambiguous]
                                          [--apply --expect <preview-hash> --yes] [--json]
-       gbrain repair duplicate-facts [--source <id>] [--include-cross-entity] [--apply --expect <preview-hash> --yes] [--json]
-       gbrain repair fact-claim-dates --source <id> [--day YYYY-MM-DD] [--apply --expect <preview-hash> --yes] [--json]
-       gbrain repair provenance [--source <id>] [--slug <slug>]... [--include-ambiguous] [--apply --expect <preview-hash> --yes] [--json]
-       gbrain repair secret-spans --source <id> --slug <slug>... [--rules <rule,...>] [--no-embed] [--apply --expect <preview-hash>] [--json]
-       gbrain repair segmented-tiling --source <id> [--slug <slug>]... [--apply --expect <preview-hash>] [--json]
-       gbrain repair visibility [--source <id>] (--slug <slug>... | --slugs-file <file>) --readers <id,group:<g>,...|none>
+       foresights repair duplicate-facts [--source <id>] [--include-cross-entity] [--apply --expect <preview-hash> --yes] [--json]
+       foresights repair fact-claim-dates --source <id> [--day YYYY-MM-DD] [--apply --expect <preview-hash> --yes] [--json]
+       foresights repair provenance [--source <id>] [--slug <slug>]... [--include-ambiguous] [--apply --expect <preview-hash> --yes] [--json]
+       foresights repair secret-spans --source <id> --slug <slug>... [--rules <rule,...>] [--no-embed] [--apply --expect <preview-hash>] [--json]
+       foresights repair segmented-tiling --source <id> [--slug <slug>]... [--apply --expect <preview-hash>] [--json]
+       foresights repair visibility [--source <id>] (--slug <slug>... | --slugs-file <file>) --readers <id,group:<g>,...|none>
                                 [--allow-without-owner] [--apply --expect <preview-hash>] [--json]
-       gbrain repair visibility --propose [--source <id>] [--out <dir>] [--json]
+       foresights repair visibility --propose [--source <id>] [--out <dir>] [--json]
 ${REPAIR_ORDER_HELP}
 ${REPAIR_CONTACTS_HELP}
-       gbrain repair rename-identity --source <id> [--slug <new-slug> [--from <old-slug>] [--close]
+       foresights repair rename-identity --source <id> [--slug <new-slug> [--from <old-slug>] [--close]
                                      [--apply --expect <preview-hash> --yes]] [--json]
 ${REPAIR_CONTENT_HELP}
 
-Repair residual damage that \`gbrain doctor\` reports. Dry run unless --apply.
+Repair residual damage that \`foresights doctor\` reports. Dry run unless --apply.
 
 Kinds:
 ${REPAIR_REGISTRY.map(spec => `  ${spec.kind.length < 13 ? spec.kind.padEnd(12) : `${spec.kind}\n${' '.repeat(14)}`} ${wrap(`${spec.explicit_only
@@ -127,7 +127,7 @@ Options:
   --apply        Write the repair (no prompt). Without it, only preview.
   --source <id>  Limit to one source (default: every active source).
   --limit <n>    Repair at most n items; rerun the same command to continue.
-  --no-embed     safe-chunks, contextual-mode: no provider call; embed later with gbrain embed --stale.
+  --no-embed     safe-chunks, contextual-mode: no provider call; embed later with foresights embed --stale.
   --all          Run every kind in order (${AUTO_REPAIR_REGISTRY.map(spec => spec.kind).join(', ')}).
                  Explicit-only kinds (${explicitKinds}) never run here; name each one.
   --expect <hash>
@@ -215,8 +215,8 @@ Options:
   --json         Machine-readable output with a stable shape (frontmatter: every per-file diff).
 
 Any other option is refused. --max-usd caps only a paid-model kind's model spend; to cap
-paid embedding work, preview gbrain doctor --remediation-plan --json and, after the user agrees,
-run gbrain doctor --remediate --yes --include-repairs --max-usd <n> --expect <plan_hash>.
+paid embedding work, preview foresights doctor --remediation-plan --json and, after the user agrees,
+run foresights doctor --remediate --yes --include-repairs --max-usd <n> --expect <plan_hash>.
 With no kind, previews every kind. Run it on the brain host.
 Held files (the content lane, then the two-pass frontmatter repair): docs/guides/repair.md#held-files.
 Malformed facts/takes fences (preview, apply, undo): docs/guides/repair.md#fences.
@@ -249,7 +249,7 @@ const VALUE_EXAMPLES: Record<string, string> = { '--source': 'default', '--limit
   '--request-id': '123e4567-e89b-42d3-a456-426614174000', '--older-than': '30d', '--from': 'notes/old', '--after': '1200', '--cursor': 'NEXT_CURSOR', '--provenance': 'never_committed',
   '--kind': 'atom', '--mode': 'restore', '--run': 'RUN_ID', '--key': 'page:notes/a', '--generation': '42', '--day': '2026-01-15', '--rules': 'openai,aws_access_key',
   '--cwd': '/srv/agent-workers', '--session': 'SESSION_ID', '--principal': 'worker-a', '--readers': 'alice-example,group:team-a', '--slugs-file': 'slugs.txt', '--out': '/srv/proposals' };
-/** A usage refusal whose fix is the read-only preview (gbrain repair without --apply writes nothing). */
+/** A usage refusal whose fix is the read-only preview (foresights repair without --apply writes nothing). */
 const invalid = (message: string, suggestion: string, preview: string[] = ['gbrain', 'repair', '--json']) => opError('invalid_params', message, suggestion,
   { fix: readFix('Previews the repair; without --apply it writes nothing.', { argv: preview }) });
 
@@ -265,8 +265,8 @@ interface RepairArgs { kind?: string; apply: boolean; all: boolean; json: boolea
 function maxUsdRefusal(flag: string, cap: string | undefined, kind: string | undefined): OperationError {
   const value = cap && !cap.startsWith('-') ? cap : '<n>';
   return new OperationError('invalid_params', `${flag} applies only to a kind that may call a paid model (${llmKinds}); `
-    + `${kind ? `gbrain repair ${kind} never does` : 'name that kind'}, so the repair did not run.`,
-  `To cap paid repair work, preview gbrain doctor --remediation-plan --json, then after the user agrees run: gbrain doctor --remediate --yes --include-repairs --max-usd ${value} --expect <plan_hash> (plan_hash from the preview)`);
+    + `${kind ? `foresights repair ${kind} never does` : 'name that kind'}, so the repair did not run.`,
+  `To cap paid repair work, preview foresights doctor --remediation-plan --json, then after the user agrees run: foresights doctor --remediate --yes --include-repairs --max-usd ${value} --expect <plan_hash> (plan_hash from the preview)`);
 }
 
 /**
@@ -284,7 +284,7 @@ function fileDriftKeepRefusal(args: string[], keep: string): OperationError {
   }
   const prefer = preview.includes('--prefer') || preview.some(token => token.startsWith('--prefer=')) ? [] : ['--prefer', 'database'];
   const argv = ['gbrain', 'repair', ...preview, ...prefer, '--json'];
-  return opError('invalid_params', `--keep ${keep} does not apply to gbrain repair file-drift; it chooses the winning side with --prefer.`,
+  return opError('invalid_params', `--keep ${keep} does not apply to foresights repair file-drift; it chooses the winning side with --prefer.`,
     `Use --prefer database to keep the database copy (or --prefer file to keep the file), then preview again: ${shellQuote(argv.slice(0, -1))}`,
     { fix: readFix('Previews the file-drift resolution with the database copy winning; without --apply it writes nothing.', { argv }) });
 }
@@ -317,8 +317,8 @@ export function parseRepairArgs(args: string[]): RepairArgs {
     if (KIND_FLAGS[flag]) used.add(flag);
     if (flag === '--max-cost') {
       const cap = equal < 0 ? args[i + 1] : token.slice(equal + 1);
-      throw new OperationError('invalid_params', `${flag} is not a gbrain repair option; the repair did not run.`,
-        `A paid-model kind takes --max-usd <n>. To cap paid repair work across kinds, preview gbrain doctor --remediation-plan --json, then after the user agrees run: gbrain doctor --remediate --yes --include-repairs --max-usd ${cap && !cap.startsWith('-') ? cap : '<n>'} --expect <plan_hash> (plan_hash from the preview)`);
+      throw new OperationError('invalid_params', `${flag} is not a foresights repair option; the repair did not run.`,
+        `A paid-model kind takes --max-usd <n>. To cap paid repair work across kinds, preview foresights doctor --remediation-plan --json, then after the user agrees run: foresights doctor --remediate --yes --include-repairs --max-usd ${cap && !cap.startsWith('-') ? cap : '<n>'} --expect <plan_hash> (plan_hash from the preview)`);
     }
     if (BOOLEAN_FLAGS.has(flag)) {
       if (equal >= 0) throw invalid(`${flag} does not accept a value.`, `Write ${flag} on its own, without =value; leave it out to keep it off.`);
@@ -340,7 +340,7 @@ export function parseRepairArgs(args: string[]): RepairArgs {
       else parsed.noEmbed = true;
       continue;
     }
-    if (!VALUE_FLAGS.has(flag)) throw invalid(`Unknown option ${flag} for gbrain repair.`, `Remove ${flag}; gbrain repair accepts ${[...BOOLEAN_FLAGS, ...VALUE_FLAGS].join(', ')}.`);
+    if (!VALUE_FLAGS.has(flag)) throw invalid(`Unknown option ${flag} for foresights repair.`, `Remove ${flag}; foresights repair accepts ${[...BOOLEAN_FLAGS, ...VALUE_FLAGS].join(', ')}.`);
     const value = equal >= 0 ? token.slice(equal + 1) : args[++i];
     if (!value || value.startsWith('--')) throw invalid(`${flag} requires a value.`, `Give ${flag} its value right after it, e.g. ${flag} ${VALUE_EXAMPLES[flag]}${flag === '--expect' ? ' (the plan_hash the preview printed)' : ''}.`);
     if (flag === '--source') parsed.source = value;
@@ -415,34 +415,34 @@ export function parseRepairArgs(args: string[]): RepairArgs {
     else if (flag === '--keep') keepText = value;
     else if (flag === '--request-id') {
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) throw invalid(`--request-id must be a request UUID (got "${value}").`,
-        'Pass the request_id the stuck-recovery preview (or gbrain sources writer status --json) lists, e.g. --request-id 123e4567-e89b-42d3-a456-426614174000.', ['gbrain', 'repair', 'stuck-recovery', '--json']);
+        'Pass the request_id the stuck-recovery preview (or foresights sources writer status --json) lists, e.g. --request-id 123e4567-e89b-42d3-a456-426614174000.', ['gbrain', 'repair', 'stuck-recovery', '--json']);
       parsed.requestId = value.toLowerCase();
     }
     else parsed.limit = value;
   }
-  if (positional.length > 1) throw new OperationError('invalid_params', `Unexpected argument '${positional[1]}'; gbrain repair takes at most one kind.`,
+  if (positional.length > 1) throw new OperationError('invalid_params', `Unexpected argument '${positional[1]}'; foresights repair takes at most one kind.`,
     `Kinds: ${REPAIR_KINDS.join(', ')}.`);
   parsed.kind = positional[0];
   if (keepText !== undefined && parsed.kind === 'file-drift') throw fileDriftKeepRefusal(args, keepText);
   if (parsed.readers === undefined && (parsed.slugsFile !== undefined || parsed.allowWithoutOwner)) {
     throw invalid(`${parsed.slugsFile !== undefined ? '--slugs-file' : '--allow-without-owner'} applies only with --readers.`,
-      'Set readers on named pages: gbrain repair visibility --slugs-file <file> --readers <ids> (or --slug <slug>).', ['gbrain', 'repair', 'visibility', '--json']);
+      'Set readers on named pages: foresights repair visibility --slugs-file <file> --readers <ids> (or --slug <slug>).', ['gbrain', 'repair', 'visibility', '--json']);
   }
-  if (parsed.out !== undefined && !parsed.propose) throw invalid('--out applies only with --propose.', 'Preview proposed readers: gbrain repair visibility --propose --out <dir>.', ['gbrain', 'repair', 'visibility', '--propose', '--json']);
+  if (parsed.out !== undefined && !parsed.propose) throw invalid('--out applies only with --propose.', 'Preview proposed readers: foresights repair visibility --propose --out <dir>.', ['gbrain', 'repair', 'visibility', '--propose', '--json']);
   if (parsed.propose) {
     const extra = args.map(token => token.split('=')[0]!).find(flag => flag.startsWith('-') && !['--propose', '--source', '--out', '--json'].includes(flag));
     if (extra) throw invalid(`${extra} does not apply with --propose: it only previews, so it takes --source, --out and --json.`,
-      'Run gbrain repair visibility --propose, then preview and apply each printed --readers command on its own.', ['gbrain', 'repair', 'visibility', '--propose', ...(parsed.source ? ['--source', parsed.source] : []), '--json']);
+      'Run foresights repair visibility --propose, then preview and apply each printed --readers command on its own.', ['gbrain', 'repair', 'visibility', '--propose', ...(parsed.source ? ['--source', parsed.source] : []), '--json']);
   }
   if (parsed.slugsFile !== undefined && parsed.slugs.length) throw invalid('Pass --slug or --slugs-file, not both.', 'List every page in the slugs file, or name them with --slug.', ['gbrain', 'repair', 'visibility', '--json']);
-  if (used.has('--yes') && REPAIR_REGISTRY.find(spec => spec.kind === parsed.kind)?.consent !== 'destructive') throw invalid('`--yes` is not accepted by gbrain repair; pass --apply to write.',
-    `Preview first with gbrain repair${parsed.kind ? ` ${parsed.kind}` : ''}, then run the same command with --apply instead of --yes.`,
+  if (used.has('--yes') && REPAIR_REGISTRY.find(spec => spec.kind === parsed.kind)?.consent !== 'destructive') throw invalid('`--yes` is not accepted by foresights repair; pass --apply to write.',
+    `Preview first with foresights repair${parsed.kind ? ` ${parsed.kind}` : ''}, then run the same command with --apply instead of --yes.`,
     ['gbrain', 'repair', ...(parsed.kind ? [parsed.kind] : []), ...(parsed.source ? ['--source', parsed.source] : []), '--json']);
   const kindOnly = [...used].find(flag => flag !== '--yes' && !KIND_FLAGS[flag]!.includes(parsed.kind ?? ''));
   if (kindOnly) {
     const kinds = KIND_FLAGS[kindOnly]!;
-    throw new OperationError('invalid_params', `${kindOnly} applies only to gbrain repair ${kinds.join(' or ')}.`,
-      `Preview it by name: gbrain repair ${kinds[kinds.length - 1]}${parsed.source ? ` --source ${parsed.source}` : ''}`);
+    throw new OperationError('invalid_params', `${kindOnly} applies only to foresights repair ${kinds.join(' or ')}.`,
+      `Preview it by name: foresights repair ${kinds[kinds.length - 1]}${parsed.source ? ` --source ${parsed.source}` : ''}`);
   }
   if (keepText !== undefined) {
     if (keepText !== 'prior' && keepText !== 'disk' && keepText !== 'withdrawn') throw invalid(`--keep must be prior, disk or withdrawn (got "${keepText}").`,
@@ -460,7 +460,7 @@ export function parseRepairArgs(args: string[]): RepairArgs {
     parsed.maxUsd = cap;
   }
   if (parsed.noLlm && !llmKind) throw new OperationError('invalid_params', `--no-llm applies only to a kind that may call a paid model (${llmKinds}).`,
-    `Preview it by name: gbrain repair ${LLM_REPAIR_REGISTRY[0]?.kind ?? 'fences'}${parsed.source ? ` --source ${parsed.source}` : ''}`);
+    `Preview it by name: foresights repair ${LLM_REPAIR_REGISTRY[0]?.kind ?? 'fences'}${parsed.source ? ` --source ${parsed.source}` : ''}`);
   if (parsed.expect !== undefined && parsed.kind !== CONTENT_LANE && !PREVIEW_BOUND_REPAIR_REGISTRY.some(spec => spec.kind === parsed.kind)) {
     throw new OperationError('invalid_params', `--expect applies only to an explicit-only or preview-bound kind named on the command line (${previewBoundKinds}).`,
       `Preview one by name: ${repairPreviewCommand(PREVIEW_BOUND_REPAIR_REGISTRY[0]!.kind)}`);
@@ -558,7 +558,7 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
   if (kind && all) throw invalid('Pass either a kind or --all, not both.', `Drop --all to repair only ${kind}, or drop ${kind} to run every automatic kind.`,
     ['gbrain', 'repair', kind, ...(source ? ['--source', source] : []), '--json']);
   if (!kind && apply && !all) throw invalid('Name a kind or pass --all with --apply.',
-    'Review the preview of every automatic kind, then apply one by name (gbrain repair KIND --apply) or all of them with --all --apply.',
+    'Review the preview of every automatic kind, then apply one by name (foresights repair KIND --apply) or all of them with --all --apply.',
     ['gbrain', 'repair', ...(source ? ['--source', source] : []), '--json']);
   const kinds: RepairKind[] = kind ? [kind as RepairKind] : AUTO_REPAIR_REGISTRY.map(spec => spec.kind);
   const explicitKindsNotRun = kind ? [] : explicitRepairNotices({ source });
@@ -617,7 +617,7 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
     for (const result of results) console.log(renderRepairResult(result, { diff }));
     const embedKinds = results.filter(r => repairMayEmbed(repairSpec(r.kind), noEmbed)).map(r => r.kind);
     if (!apply && embedKinds.length) console.log(`Kinds that may queue paid embeddings: ${embedKinds.join(', ')} (pass --no-embed to skip; `
-      + 'page-write kinds are re-embedded by their publication either way; cap spend with gbrain doctor --remediate --yes --include-repairs --max-usd <n> --expect <plan_hash> from gbrain doctor --remediation-plan --json).');
+      + 'page-write kinds are re-embedded by their publication either way; cap spend with foresights doctor --remediate --yes --include-repairs --max-usd <n> --expect <plan_hash> from foresights doctor --remediation-plan --json).');
     const llmResults = results.filter(r => r.cost.llm_usd !== undefined);
     if (!apply && llmResults.length) {
       const usd = llmResults.some(r => r.cost.llm_usd === null) ? null : llmResults.reduce((sum, r) => sum + (r.cost.llm_usd ?? 0), 0);

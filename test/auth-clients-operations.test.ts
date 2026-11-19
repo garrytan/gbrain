@@ -1,5 +1,5 @@
 /**
- * `gbrain auth clients` operation-snapshot visibility (#6008). Authoring gate:
+ * `foresights auth clients` operation-snapshot visibility (#6008). Authoring gate:
  * (1) protects the four distinct operation states the listing reports (SQL
  * NULL = `all` with includes_future_operations and a re-pin fix, [] =
  * deny-all, an explicit list, `unavailable` on a schema without the column)
@@ -59,7 +59,7 @@ for (const kind of testBackends()) {
       expect(view.fix?.next).toBe('run');
       const lines = clientOperationsLines(row).join('\n');
       expect(lines).toContain('operations: all');
-      expect(lines).toContain('re-pin: gbrain auth rescope --client c-ops-all --operations');
+      expect(lines).toContain('re-pin: foresights auth rescope --client c-ops-all --operations');
     });
 
     test('an empty array is deny-all, not `all`', async () => {

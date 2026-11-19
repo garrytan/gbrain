@@ -3,7 +3,7 @@
  *
  * sync.ts has clamped its worker fan-out under the shared opt-in connection
  * budget since v0.46.1.0 (clampWorkersForConnectionBudget), but a parallel
- * `gbrain import --workers N` still fanned out N child PostgresEngine pools
+ * `foresights import --workers N` still fanned out N child PostgresEngine pools
  * unclamped — on a constrained pooler (Supabase port 6543) that saturates the
  * session budget the operator explicitly configured. This suite pins the
  * import-side clamp: requested fan-out clamps against the configured parent

@@ -3,7 +3,7 @@
  * fm_wallclock failure (run 29731426470).
  *
  * Migrations run lazily inside ANY command's first DB connect (initSchema →
- * runMigrations), including JSON-emitting commands like `gbrain doctor --json`.
+ * runMigrations), including JSON-emitting commands like `foresights doctor --json`.
  * The v123 FTS migration (#2941) printed its completion notice via
  * `console.log`, which landed as the first line of `doctor --json` stdout and
  * broke every jq consumer ("Invalid numeric literal at line 1, column 7").

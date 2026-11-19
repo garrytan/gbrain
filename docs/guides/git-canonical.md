@@ -2,12 +2,12 @@
 
 A source in git-canonical mode, also called strict mode, keeps its pages in Git
 first. Every page write is committed to the source's checkout before the
-database records it, and the database is an index that gbrain can rebuild from
+database records it, and the database is an index that foresights can rebuild from
 the commits. When Git and the database disagree, Git wins.
 
 Strict mode is chosen per source and is **off by default**. Nothing turns it on
 during an upgrade: a source becomes strict only when you convert it with
-`gbrain sources canonical` or host a new source with `gbrain sources host-repo`.
+`foresights sources canonical` or host a new source with `foresights sources host-repo`.
 The design, with the full reasoning and every edge case, is
 [GIT_CANONICAL_MEMORY.md](../designs/GIT_CANONICAL_MEMORY.md). This page is the
 operator's view.
@@ -16,12 +16,12 @@ operator's view.
 
 | | A mixed source (the default) | A strict source (`canonical: git`) |
 |---|---|---|
-| A page write | The file and the database row are published first; a background Git effect commits and pushes the file later, once Git durability is on. The write's reply says `git_state: queued`; a receipt read later (`gbrain write-request <id>`, `get_write_request`) reads the Git effect: `committed` with the commit in `persistence.git_commit`, or `superseded`, `skipped`, `failed` or `retrying` with `persistence.git_reason`. An effect recorded by a build before this one, or one whose commit landed but whose push had to be retried, reads `committed` with no commit. | The file is written and committed under the checkout's writer lock, then the row commits. The receipt names the commit (`persistence.git_commit`, `git_state: committed`). The Git effect only pushes. |
+| A page write | The file and the database row are published first; a background Git effect commits and pushes the file later, once Git durability is on. The write's reply says `git_state: queued`; a receipt read later (`foresights write-request <id>`, `get_write_request`) reads the Git effect: `committed` with the commit in `persistence.git_commit`, or `superseded`, `skipped`, `failed` or `retrying` with `persistence.git_reason`. An effect recorded by a build before this one, or one whose commit landed but whose push had to be retried, reads `committed` with no commit. | The file is written and committed under the checkout's writer lock, then the row commits. The receipt names the commit (`persistence.git_commit`, `git_state: committed`). The Git effect only pushes. |
 | A crash between the two | Recovery restores the file's previous bytes. | The committed file is kept, and the write's replay finishes the row against it. |
 | What sync reads | The working tree and the database; disagreements become holds such as `file_drift` or `worktree_dirty`. | Committed blobs at HEAD only. Each committed version is imported over what the database holds, and a committed removal deletes the page. |
 | An uncommitted edit in the checkout | Held as `worktree_dirty`. | Left on disk and not indexed until someone commits it. |
-| `gbrain sync --working-tree` | Reads the working tree. | Refused with `managed_sync_flag_refused`. |
-| A row write from an older gbrain that does not know the mode | Accepted. | Refused by the database guard (`git_protocol_required`). |
+| `foresights sync --working-tree` | Reads the working tree. | Refused with `managed_sync_flag_refused`. |
+| A row write from an older foresights that does not know the mode | Accepted. | Refused by the database guard (`git_protocol_required`). |
 
 Writes to a strict source pay for a local commit. The door commits with Git
 plumbing and updates the index only for the paths it wrote, so on a
@@ -44,7 +44,7 @@ It needs:
 - **Managed persistence on the brain.** Only the managed writer commits through
   the door. On an unmanaged brain, conversion and every direct import into a
   strict source are refused with `strict_requires_managed`. Turning managed
-  persistence on is its own step (`gbrain sources writer activate`); see
+  persistence on is its own step (`foresights sources writer activate`); see
   [local registrations and canonical ownership](concurrent-writes.md#local-registrations-and-canonical-ownership).
 - **A Git checkout for the source, on a branch.** A source with no checkout
   stays database-only as a whole and can't be strict. A strict write on a
@@ -55,7 +55,7 @@ It needs:
   production brain only with the user's yes, one source at a time.
 
 Leave a source mixed when it has no checkout, when you don't want a local
-commit on the write path, or while other writers on the host still run a gbrain
+commit on the write path, or while other writers on the host still run a foresights
 older than the one that converted it.
 
 ## Converting an existing source
@@ -63,8 +63,8 @@ older than the one that converted it.
 Look first. Both commands below are read-only:
 
 ```bash
-gbrain sources git-gap <source-id> --json          # how far the database is from HEAD, page by page
-gbrain sources canonical <source-id> --to git      # the conversion plan (--dry-run is the default)
+foresights sources git-gap <source-id> --json          # how far the database is from HEAD, page by page
+foresights sources canonical <source-id> --to git      # the conversion plan (--dry-run is the default)
 ```
 
 The plan puts every live page in one category and prints a preview hash:
@@ -81,7 +81,7 @@ The plan puts every live page in one category and prints a preview hash:
 When the plan is what you expect, apply exactly that plan:
 
 ```bash
-gbrain sources canonical <source-id> --to git --apply --expect <hash> [--no-embed] [--no-extract]
+foresights sources canonical <source-id> --to git --apply --expect <hash> [--no-embed] [--no-extract]
 ```
 
 A plan that changed since the preview refuses with `preview_changed`; preview
@@ -91,7 +91,7 @@ next preview lists only what is left), runs a full strict pass, sets
 writes that land during the conversion, end it with
 `git_conversion_incomplete`: the source stays mixed if the first pass stopped
 before the flag was set, and strict (Git wins) if it stopped after. Wait until
-`gbrain sync status --source <id> --json` shows it idle, preview again and apply
+`foresights sync status --source <id> --json` shows it idle, preview again and apply
 the new hash.
 
 ### Pages with no import record: content evidence
@@ -111,7 +111,7 @@ recorded):
 | `no_evidence` | Nothing shared within the depth (no archived version, a path with one blob, a segmented page whose export matches no blob or that has any archived version, which cannot be compared by content), or the other side's history reached the depth or lost versions to pruning (basis `history_truncated`). | discard until decided |
 
 A later `updated_at` on the database row changes nothing here. The evidence
-kind of each page is part of the preview hash, and `gbrain sources git-gap
+kind of each page is part of the preview hash, and `foresights sources git-gap
 <source-id> --json` reports the same split as `direction_evidence`.
 
 ### Review list and decisions
@@ -119,7 +119,7 @@ kind of each page is part of the preview hash, and `gbrain sources git-gap
 The undecided pages go on a review list:
 
 ```bash
-gbrain sources canonical <source-id> --to git --dry-run --list-out ~/review.json
+foresights sources canonical <source-id> --to git --dry-run --list-out ~/review.json
 ```
 
 The file lists each page with its slug, path, revision, committed blob, evidence
@@ -127,14 +127,14 @@ and `decision: null`, newest first. Fill in `decision` (`adopt` or `git_wins`)
 for the pages you decide, then preview with the file:
 
 ```bash
-gbrain sources canonical <source-id> --to git --dry-run --decisions ~/review.json
-gbrain sources canonical <source-id> --to git --apply --expect <hash> --decisions ~/review.json
+foresights sources canonical <source-id> --to git --dry-run --decisions ~/review.json
+foresights sources canonical <source-id> --to git --apply --expect <hash> --decisions ~/review.json
 ```
 
 A decision names the page at its revision, blob and evidence: once the page
 moves again it is counted `stale` and not applied, and the page waits for a new
 decision. The file is bound into the preview hash. Review lists, decision files
-and approvals hold page names, so gbrain writes them owner-only (mode 0600) and
+and approvals hold page names, so foresights writes them owner-only (mode 0600) and
 refuses any path inside a source's checkout or the Git working tree that holds
 it, including a symlink into one (`conversion_file_in_source_root`).
 
@@ -145,8 +145,8 @@ the whole apply. When the owner approves a large plan, write the approval
 instead and apply it later:
 
 ```bash
-gbrain sources canonical <source-id> --to git --dry-run [--decisions <file>] --approval-out ~/approval.json
-gbrain sources canonical <source-id> --to git --apply --approved ~/approval.json
+foresights sources canonical <source-id> --to git --dry-run [--decisions <file>] --approval-out ~/approval.json
+foresights sources canonical <source-id> --to git --apply --approved ~/approval.json
 ```
 
 The approval records the categories and each item's page, revision, blob and
@@ -164,13 +164,13 @@ push state and the writes it made. Pages that changed during the apply are held
 instead of overwritten (`changed_since_preview`), so a page written between
 the preview's recheck and the strict pass keeps its database version. Nothing is
 rewritten on the way back: a source left strict is re-derived with
-`gbrain sources reindex <source-id> --from-git` and returned with `--to mixed`;
+`foresights sources reindex <source-id> --from-git` and returned with `--to mixed`;
 the adopted pages keep the content they had, because their committed files
 hold the database's own bytes.
 
 **A new, empty source** can start strict instead:
-`gbrain sources host-repo <id> --dir <path> [--push-remote <url>]` previews a bare
-repository people clone, with a worktree gbrain owns; running the printed
+`foresights sources host-repo <id> --dir <path> [--push-remote <url>]` previews a bare
+repository people clone, with a worktree foresights owns; running the printed
 command with `--expect <plan_hash>` creates them and makes the source strict. See [hosted repositories](multi-source-brains.md#hosted-repositories).
 
 ## How writes reach a strict source
@@ -191,8 +191,8 @@ Every write goes through the same door, whoever sends it:
   path, so the row has exactly the readers the entity's page would have and is
   stored like it (in Git, or database-only under `storage.db_only` or a path
   Git ignores). A rule added later moves the held rows it covers there as part
-  of its own apply (`gbrain access rule add` previews them as
-  `held_facts_moving`; `gbrain access apply` and `gbrain access resume` move
+  of its own apply (`foresights access rule add` previews them as
+  `held_facts_moving`; `foresights access apply` and `foresights access resume` move
   them too). A rule that arrives through a sync of the policy file moves them
   as soon as that sync releases its lease (an exact page rule on an entity
   held on its folder's page moves that row into the entity's page the same
@@ -222,11 +222,11 @@ Every write goes through the same door, whoever sends it:
   checkout owner's door commits. The reply carries the revision once it is
   committed and indexed, or `write_pending` with a request id (exit 10 on the
   CLI) while the owner is busy or offline. Poll it with
-  `gbrain write-request <id>`; it is never "failed" or "not found". The owner
+  `foresights write-request <id>`; it is never "failed" or "not found". The owner
   re-checks the caller's grant before committing, so a grant revoked while the
   request waits is refused with no commit and no row.
 - **Scripts, crons and people** that write files commit them, for example with
-  `gbrain git commit-push -m "<msg>" -- <paths>`
+  `foresights git commit-push -m "<msg>" -- <paths>`
   ([shared checkout rules](shared-checkout-git.md#scripts-and-the-managed-checkout)).
   The next sync pass indexes the commit. An edit nobody commits is never
   indexed.
@@ -242,7 +242,7 @@ file is refused with [`git_home_required`](write-refusals.md#git_home_required).
 
 | Class | What happens |
 |---|---|
-| Private, alias-private and lineage-private pages | Never committed. A page turning private is published as the door commit that removes its file; turning world again writes the file back at the path it had. Commits made before it turned private still hold the old text, and gbrain never rewrites history. A write that would commit private bytes is refused with [`git_private_commit_refused`](write-refusals.md#git_private_commit_refused). |
+| Private, alias-private and lineage-private pages | Never committed. A page turning private is published as the door commit that removes its file; turning world again writes the file back at the path it had. Commits made before it turned private still hold the old text, and foresights never rewrites history. A write that would commit private bytes is refused with [`git_private_commit_refused`](write-refusals.md#git_private_commit_refused). |
 | Pages under a `storage.db_only` directory in `gbrain.yml` | The door never commits under them ([storage tiering](../storage-tiering.md)). |
 | Derive-phase pages that never had a file | Kept database-only. |
 | Paths the checkout's Git ignores | Never committed and never given a Git effect. |
@@ -262,8 +262,8 @@ receipts and other operational records.
 ## Turning it off
 
 ```bash
-gbrain sources canonical <source-id> --to mixed                          # preview
-gbrain sources canonical <source-id> --to mixed --apply --expect <hash>
+foresights sources canonical <source-id> --to mixed                          # preview
+foresights sources canonical <source-id> --to mixed --apply --expect <hash>
 ```
 
 This removes `canonical: git` and changes nothing else. Git keeps every door
@@ -283,13 +283,13 @@ the checkpoint past content the database never received.
 Index the clone as a mixed source first, then convert it:
 
 ```bash
-gbrain init --pglite --no-embedding                         # a new, empty brain
-gbrain sources add <source-id> --path <clone>               # the clean clone, as a mixed source
-gbrain sync --source <source-id> --no-pull --no-embed       # index every committed page
-gbrain sources canonical <source-id> --to git               # preview: prints the plan and its hash
-gbrain sources canonical <source-id> --to git --apply --expect <hash>
-gbrain sources reindex <source-id> --from-git               # preview the re-derive from Git
-gbrain sources reindex <source-id> --from-git --apply --expect <hash>
+foresights init --pglite --no-embedding                         # a new, empty brain
+foresights sources add <source-id> --path <clone>               # the clean clone, as a mixed source
+foresights sync --source <source-id> --no-pull --no-embed       # index every committed page
+foresights sources canonical <source-id> --to git               # preview: prints the plan and its hash
+foresights sources canonical <source-id> --to git --apply --expect <hash>
+foresights sources reindex <source-id> --from-git               # preview the re-derive from Git
+foresights sources reindex <source-id> --from-git --apply --expect <hash>
 ```
 
 Facts that were held on `memory/unattributed` or on a folder's holding page
@@ -301,15 +301,15 @@ database-only classes, the write receipts or the other operational records.
 
 | Where | What it tells you |
 |---|---|
-| `gbrain doctor` → `git_index_lag` | Per strict source, how many commits and seconds the index trails HEAD. It warns once the oldest unindexed commit is older than 900 s (`GBRAIN_DOCTOR_GIT_INDEX_LAG_WARN_SECONDS`), and its fix is `gbrain sync --source <id> --no-pull`. Until then, search and reads show the older version. A lag it cannot read is a warning with health unknown, never ok. |
-| `gbrain doctor` → `strict_facts_outside_git` | Per strict source, the facts with no Git home, the facts held on a holding page for more than 30 days, and held facts that cannot move (with the reason, or the candidate pages of a bare name). It warns when any is non-zero, and its fix is the read-only preview of [`gbrain repair facts-home`](repair.md#facts-home). Its page walk covers the same 800 most recently changed pages as `db_ahead_of_git` and names that window; a census the budget stopped or could not run, or a fenced fact on a page older than the window, is a warning with health unknown, never ok. A source that is not strict is not judged. |
-| `gbrain doctor` → `db_ahead_of_git` | The git-gap totals for every source with a checkout, strict or not, over the 800 most recently changed pages of each source, with how far back that reached (`checked the 800 most recently changed of <live> live page(s), back to <time>`); `gbrain sources git-gap <id>` reads every page. The gap is informational and never warns; a scan the budget stopped (`PARTIAL, <read> of <live> live page(s) read`) or a source that could not be compared is a warning with health unknown, never ok. Bounded by `GBRAIN_DOCTOR_GIT_GAP_TIMEOUT_MS` (10 s by default). |
-| `gbrain sources git-gap <id> [--sample n] [--json]` | Each page's state against HEAD: `equal`, `database_ahead`, `git_ahead`, declared or undeclared database-only, `worktree_only`, `unparseable`, `unsafe_path`, with a sample of paths, the source's `live_pages`, and `direction_evidence` for differing pages with no import record. Read-only. |
-| `gbrain sources reindex <id> --from-git` | A preview of every database version Git would replace, bound to HEAD by a hash; `--apply --expect <hash>` runs that pass. Use it to re-derive a strict source's index on purpose. |
-| `gbrain sync status --source <id> --json` | The sync pass that indexes commits: state, reason and the last error. |
+| `foresights doctor` → `git_index_lag` | Per strict source, how many commits and seconds the index trails HEAD. It warns once the oldest unindexed commit is older than 900 s (`GBRAIN_DOCTOR_GIT_INDEX_LAG_WARN_SECONDS`), and its fix is `foresights sync --source <id> --no-pull`. Until then, search and reads show the older version. A lag it cannot read is a warning with health unknown, never ok. |
+| `foresights doctor` → `strict_facts_outside_git` | Per strict source, the facts with no Git home, the facts held on a holding page for more than 30 days, and held facts that cannot move (with the reason, or the candidate pages of a bare name). It warns when any is non-zero, and its fix is the read-only preview of [`foresights repair facts-home`](repair.md#facts-home). Its page walk covers the same 800 most recently changed pages as `db_ahead_of_git` and names that window; a census the budget stopped or could not run, or a fenced fact on a page older than the window, is a warning with health unknown, never ok. A source that is not strict is not judged. |
+| `foresights doctor` → `db_ahead_of_git` | The git-gap totals for every source with a checkout, strict or not, over the 800 most recently changed pages of each source, with how far back that reached (`checked the 800 most recently changed of <live> live page(s), back to <time>`); `foresights sources git-gap <id>` reads every page. The gap is informational and never warns; a scan the budget stopped (`PARTIAL, <read> of <live> live page(s) read`) or a source that could not be compared is a warning with health unknown, never ok. Bounded by `GBRAIN_DOCTOR_GIT_GAP_TIMEOUT_MS` (10 s by default). |
+| `foresights sources git-gap <id> [--sample n] [--json]` | Each page's state against HEAD: `equal`, `database_ahead`, `git_ahead`, declared or undeclared database-only, `worktree_only`, `unparseable`, `unsafe_path`, with a sample of paths, the source's `live_pages`, and `direction_evidence` for differing pages with no import record. Read-only. |
+| `foresights sources reindex <id> --from-git` | A preview of every database version Git would replace, bound to HEAD by a hash; `--apply --expect <hash>` runs that pass. Use it to re-derive a strict source's index on purpose. |
+| `foresights sync status --source <id> --json` | The sync pass that indexes commits: state, reason and the last error. |
 | A write receipt | `persistence.git_commit` and `git_state: committed`. A door commit that landed before its row, on a write that then ended without committing, keeps `landed_before_row: true`: Git holds those bytes and the indexer imports them. |
 
-Explain any code offline with `gbrain errors <code>`. The ones specific to
+Explain any code offline with `foresights errors <code>`. The ones specific to
 strict sources are `strict_requires_managed`, `git_home_required`,
 `git_private_commit_refused`, `git_lfs_not_enabled`, `git_protocol_required`,
 `git_detached_head`, `git_branch_unborn`, `git_conversion_blocked`,

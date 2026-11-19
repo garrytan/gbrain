@@ -3,13 +3,13 @@
 **Status:** Accepted. CEO + Eng + 2 codex passes CLEARED (2026-04-24). 16 cross-model findings absorbed total: 7 codex pass 1 (structural prereqs) + 6 codex pass 2 (absorption errors including the CHUNKER_VERSION silent-no-op gate and inbound-edge invalidation) + 3 eng-review architectural decisions. DX review recommended post-Layer 8 (new CLI surfaces) before ship.
 **Supersedes:** Cathedral I (planned v0.18.0–v0.19.0 code indexing, shipped v0.19.0).
 **Mode:** SCOPE EXPANSION (user explicit: "I want the best code search in the world").
-**Scale:** 14 bisectable layers, ~20–25 CC hours, 3–5 human-weeks. One schema migration with split edge tables (`code_edges_chunk` + `code_edges_symbol`). Backfill via `CHUNKER_VERSION` bump (automatic on next sync) + explicit `gbrain reindex-code` command.
+**Scale:** 14 bisectable layers, ~20–25 CC hours, 3–5 human-weeks. One schema migration with split edge tables (`code_edges_chunk` + `code_edges_symbol`). Backfill via `CHUNKER_VERSION` bump (automatic on next sync) + explicit `foresights reindex-code` command.
 
 ## Why v0.20.0
 
 v0.19.0 shipped code indexing: tree-sitter chunker, 29 active languages, symbol columns, forward doc↔impl linking, incremental embed cache, BrainBench code category. Four cathedral-I items got deferred during shipping: `query --lang` filter, `sync --all` cost preview, markdown fence extraction, reverse-scan doc↔impl backfill.
 
-Cathedral II is a promise-keeping release for those four, bundled with the leap that makes gbrain *the* code search: structural edges (call graph + references + imports + inheritance), parent-scope capture, doc-comment FTS binding, and two-pass retrieval. No more grep-class retrieval on code.
+Cathedral II is a promise-keeping release for those four, bundled with the leap that makes foresights *the* code search: structural edges (call graph + references + imports + inheritance), parent-scope capture, doc-comment FTS binding, and two-pass retrieval. No more grep-class retrieval on code.
 
 ## The 10x leap
 
@@ -104,7 +104,7 @@ All auto-JSON on non-TTY. `StructuredAgentError` envelopes on failure. `code-sig
 
 **E1.** BrainBench code sub-categories: `call_graph_recall` (callers of X → expected set), `parent_scope_coverage` (nested-symbol queries return correct scope), `doc_comment_matching` (NL queries rank doc-comments above prose). Regression gates against A1/A3/A4 drift.
 
-**E2.** Backfill: schema migrates automatically (zero cost). **`CHUNKER_VERSION` bumps 3 → 4** — that constant is folded into each code page's `content_hash`, so every code page's hash changes on upgrade. Next `gbrain sync` won't short-circuit on "git HEAD unchanged"; it re-chunks every code file. New `gbrain reindex-code [--source <id>] [--dry-run] [--yes] [--force]` provides explicit full backfill with cost preview (reuses D1 infra) and `--force` bypasses content_hash skip entirely. Users control when to pay; silent no-op path closed.
+**E2.** Backfill: schema migrates automatically (zero cost). **`CHUNKER_VERSION` bumps 3 → 4** — that constant is folded into each code page's `content_hash`, so every code page's hash changes on upgrade. Next `foresights sync` won't short-circuit on "git HEAD unchanged"; it re-chunks every code file. New `foresights reindex-code [--source <id>] [--dry-run] [--yes] [--force]` provides explicit full backfill with cost preview (reuses D1 infra) and `--force` bypasses content_hash skip entirely. Users control when to pay; silent no-op path closed.
 
 **E3.** Honest CHANGELOG. Retire "Chonkie superset" framing. Run BrainBench before/after for real numbers: 150+ languages loaded (after B1), MRR on NL→code queries, P@1 call-graph precision, P@k on symbol_name queries, sync cost preview on 5K-file repo. Back every claim with a runnable command.
 
@@ -132,7 +132,7 @@ All auto-JSON on non-TTY. `StructuredAgentError` envelopes on failure. `code-sig
 - Files: ~36 new, ~25 modified
 - CC time: ~20–25 hours focused (was 14–18 pre-codex; +6h for Layer 0a/0b + qualified identity across 8 langs + nested-chunk emission + CHUNKER_VERSION bump layer)
 - Human-equivalent: 3–5 weeks
-- First-sync cost bump for upgraded v0.19.0 users: every code page re-chunks on first sync after upgrade (CHUNKER_VERSION bump forces invalidation). Users run `gbrain reindex-code --dry-run` for cost preview, then `--yes` or accept gradual backfill over time as files change.
+- First-sync cost bump for upgraded v0.19.0 users: every code page re-chunks on first sync after upgrade (CHUNKER_VERSION bump forces invalidation). Users run `foresights reindex-code --dry-run` for cost preview, then `--yes` or accept gradual backfill over time as files change.
 - Daily autopilot cost post-backfill: unchanged (edges extracted at chunk time, no per-query LLM)
 
 ## Risks and mitigations
@@ -159,4 +159,4 @@ All auto-JSON on non-TTY. `StructuredAgentError` envelopes on failure. `code-sig
 - **LSP integration** for live precision. v0.22+ cathedral.
 - **Code-tour generator** (cathedral I T1).
 - **Private-code redaction pre-embed** (cathedral I T3).
-- **`gbrain doctor --chunker-debug`** AST dump.
+- **`foresights doctor --chunker-debug`** AST dump.

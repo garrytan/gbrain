@@ -239,7 +239,7 @@ describe('performSync stop routes during the pull', () => {
     const job = await queue.add('sync', { repoPath: brain, sourceId: 'default', pull: true, auto_embed_backfill: false });
     const worker = new MinionWorker(engine, { pollInterval: 20, healthCheckInterval: 0, stalledInterval: 600_000 });
     worker.register('sync', makeSyncHandler(engine));
-    // `gbrain jobs work` owns SIGTERM, so the cleanup pass never runs and only
+    // `foresights jobs work` owns SIGTERM, so the cleanup pass never runs and only
     // the worker's shutdown signal can reach the pull.
     const dropOwner = registerSignalOwner('pull-stop-worker', () => worker.requestShutdown());
     const workerDone = worker.start();

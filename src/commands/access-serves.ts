@@ -1,8 +1,8 @@
 /**
- * GST-363 (PR 1): `gbrain access serves`, the labelling half of a brain that serves several people.
+ * GST-363 (PR 1): `foresights access serves`, the labelling half of a brain that serves several people.
  *
- *   gbrain access serves [--json] [--no-open-pages]      Read-only: one or several, why, owner, stdio member, open pages
- *   gbrain access serves several --members a,b [--members-file f] [--source id] [--labelled-only] [--yes] [--json]
+ *   foresights access serves [--json] [--no-open-pages]      Read-only: one or several, why, owner, stdio member, open pages
+ *   foresights access serves several --members a,b [--members-file f] [--source id] [--labelled-only] [--yes] [--json]
  *
  * `several` previews, then with --yes: writes config access.serves = several, adds each member (existing ones are
  * kept), adds one folder rule per member (people/<member>/ readable by that member) through the folder-rule path
@@ -11,7 +11,7 @@
  * mint, bound to that member and written to a 0600 file under <configDir>/member-keys/, never inside a git work tree.
  * A preview with any BLOCKED line writes nothing; config access.serves is written last, once members, rules and keys
  * are in place. Every step is idempotent on the member id, so a re-run after a partial failure converges; the receipt names paths,
- * never key values. `gbrain setup <harness> --serves several` runs this as a child and adds the bound-read proof.
+ * never key values. `foresights setup <harness> --serves several` runs this as a child and adds the bound-read proof.
  * GST-2670: the preview, the receipt and the read-only status also count the pages every member's key can still read
  * (core/access/open-pages.ts, best effort: a failed count never stops the run), and --labelled-only marks each member
  * of the roster labelled-only after the members step (never the owner, refused before anything is written).
@@ -106,9 +106,9 @@ async function plan(engine: BrainEngine, roster: string[], sourceId: string, lab
   for (const id of roster) {
     const m = await getMember(engine, id);
     const entry: ServesReceipt['members'][number] = !m ? { id, action: 'add' } : m.status === 'enabled' ? { id, action: 'keep' }
-      : { id, action: 'blocked', detail: m.status === 'disabled' ? `member is disabled: enable it with gbrain access member enable ${id}` : 'member id was removed and can never be reused; use a new id' };
+      : { id, action: 'blocked', detail: m.status === 'disabled' ? `member is disabled: enable it with foresights access member enable ${id}` : 'member id was removed and can never be reused; use a new id' };
     if (labelledOnly && entry.action !== 'blocked') {
-      if (id === owner) Object.assign(entry, { action: 'blocked', detail: `${id} is the brain owner, who reads the whole brain, so it is never labelled-only: leave it out of this run or name another owner first (gbrain access owner set <member>)` });
+      if (id === owner) Object.assign(entry, { action: 'blocked', detail: `${id} is the brain owner, who reads the whole brain, so it is never labelled-only: leave it out of this run or name another owner first (foresights access owner set <member>)` });
       else entry.labelled_only = m?.labelled_only ? 'keep' : 'set';
     } else if (m?.labelled_only && entry.action !== 'blocked') entry.labelled_only = 'keep';
     members.push(entry);
@@ -126,7 +126,7 @@ async function plan(engine: BrainEngine, roster: string[], sourceId: string, lab
     if (clash.prefix === r.rule.prefix && settled) return { id: clash.id, prefix: clash.prefix, readers: clash.readable_by, action: 'keep' };
     const readers = clash.readable_by.map(p => p.replace(/^member:/, '')).join(', ');
     return { id: r.rule.id, prefix: r.rule.prefix, readers: r.rule.readable_by, action: 'blocked',
-      detail: `rule "${clash.id}" on ${clash.prefix} already exists, readable by ${readers}, not by ${id} alone; change it with gbrain access rule add --id ${clash.id} --prefix ${clash.prefix} --readers ${hinted[i]} --source ${sourceId}` };
+      detail: `rule "${clash.id}" on ${clash.prefix} already exists, readable by ${readers}, not by ${id} alone; change it with foresights access rule add --id ${clash.id} --prefix ${clash.prefix} --readers ${hinted[i]} --source ${sourceId}` };
   });
   const keys: ServesReceipt['keys'] = [];
   for (const id of roster) {
@@ -136,9 +136,9 @@ async function plan(engine: BrainEngine, roster: string[], sourceId: string, lab
     if (members.find(m => m.id === id)?.action === 'blocked') keys.push({ member: id, token_name: name, path, action: 'blocked', detail: 'the member is not enabled' });
     else if (!token && existsSync(path)) keys.push({ member: id, token_name: name, path, action: 'blocked', detail: `a key file is already at ${path} but no live key is named ${name} (another brain's key, or one revoked by hand); move or delete the file, then run this again` });
     else if (!token) keys.push({ member: id, token_name: name, path, action: 'mint' });
-    else if (token.member_id !== id) keys.push({ member: id, token_name: name, path, action: 'blocked', detail: `a token named ${name} exists but is not bound to ${id}; revoke it (gbrain auth revoke ${name}) or bind it (gbrain auth rescope --token ${name} --member ${id})` });
-    else if (!existsSync(path)) keys.push({ member: id, token_name: name, path, action: 'blocked', detail: `the key ${name} exists but its file is gone and a key is shown only once; revoke it (gbrain auth revoke ${name}) and run this again to mint a new one` });
-    else if (hashToken(readFileSync(path, 'utf8').trim()) !== token.token_hash) keys.push({ member: id, token_name: name, path, action: 'blocked', detail: `the file does not hold the live key ${name} (it was revoked and made again, or another brain wrote it); revoke it (gbrain auth revoke ${name}), delete ${path} and run this again to mint a new one` });
+    else if (token.member_id !== id) keys.push({ member: id, token_name: name, path, action: 'blocked', detail: `a token named ${name} exists but is not bound to ${id}; revoke it (foresights auth revoke ${name}) or bind it (foresights auth rescope --token ${name} --member ${id})` });
+    else if (!existsSync(path)) keys.push({ member: id, token_name: name, path, action: 'blocked', detail: `the key ${name} exists but its file is gone and a key is shown only once; revoke it (foresights auth revoke ${name}) and run this again to mint a new one` });
+    else if (hashToken(readFileSync(path, 'utf8').trim()) !== token.token_hash) keys.push({ member: id, token_name: name, path, action: 'blocked', detail: `the file does not hold the live key ${name} (it was revoked and made again, or another brain wrote it); revoke it (foresights auth revoke ${name}), delete ${path} and run this again to mint a new one` });
     else keys.push({ member: id, token_name: name, path, action: 'keep' });
   }
   return { serves: 'several', source_id: sourceId, applied: false, config: { key: SERVES_KEY, value: 'several', action: explicit === 'several' ? 'keep' : 'write' },
@@ -230,8 +230,8 @@ export function receiptLines(r: ServesReceipt): string[] {
     ...r.rules.map(x => `  rule       ${x.prefix} readable by ${x.readers.map(p => p.replace(/^member:/, '')).join(', ')} (${verb(x.action)})${x.detail ? `: ${x.detail}` : ''}`),
     ...(r.rule_write ? [`             ${r.rule_write.store} store, revision ${r.rule_write.revision ?? '-'} ${r.rule_write.state}${r.rule_write.git_commit ? `, committed ${r.rule_write.git_commit.slice(0, 12)}` : ''}`] : []),
     ...r.keys.map(k => `  key        ${k.member}: ${k.path} (${verb(k.action)}${k.action === 'blocked' ? '' : ', 0600'}; token ${k.token_name})${k.detail ? `: ${k.detail}` : ''}`),
-    ...(ruleWritePending(r) ? [`  The rules are not enforced yet: finish with gbrain access resume --source ${r.source_id}`] : []),
-    ...r.unlabeled.map(u => `  unlabeled  ${u.source}:${u.prefix} (${u.pages} page(s)) has no folder rule, so every member reads it: name its readers with gbrain access rule add --prefix ${u.prefix} --readers <list> --source ${u.source}, or add the person with --members`),
+    ...(ruleWritePending(r) ? [`  The rules are not enforced yet: finish with foresights access resume --source ${r.source_id}`] : []),
+    ...r.unlabeled.map(u => `  unlabeled  ${u.source}:${u.prefix} (${u.pages} page(s)) has no folder rule, so every member reads it: name its readers with foresights access rule add --prefix ${u.prefix} --readers <list> --source ${u.source}, or add the person with --members`),
     ...openPagesLines(r, labelledOnlyCommand(r)),
     ...(r.error ? [`Stopped: ${r.error.message}`, `  Finished before it stopped: ${r.completed.join(', ') || 'nothing'}. Every step is idempotent: run the same command again to finish.`] : []),
     ...(r.applied ? [] : [blocked(r) ? 'Nothing written: fix each BLOCKED line, then run this again.' : 'Nothing written. Add --yes to apply.']),
@@ -241,7 +241,7 @@ export function receiptLines(r: ServesReceipt): string[] {
 /** The --labelled-only re-run for the members it would still change: never the owner, a BLOCKED member or one already labelled-only. */
 function labelledOnlyCommand(r: ServesReceipt): { labelledOnly?: string } {
   const ids = r.members.filter(m => m.action !== 'blocked' && !m.labelled_only && m.id !== r.open_pages?.owner).map(m => m.id);
-  return ids.length ? { labelledOnly: `gbrain access serves several --members ${ids.join(',')}${r.source_id === 'default' ? '' : ` --source ${r.source_id}`} --labelled-only --yes` } : {};
+  return ids.length ? { labelledOnly: `foresights access serves several --members ${ids.join(',')}${r.source_id === 'default' ? '' : ` --source ${r.source_id}`} --labelled-only --yes` } : {};
 }
 
 export const receiptOk = (r: ServesReceipt): boolean => !r.error && !blocked(r) && !ruleWritePending(r) && (!r.applied || r.unlabeled.length === 0);
@@ -256,9 +256,9 @@ export async function runAccessServes(engine: BrainEngine, mode: string | undefi
       ...(s.serves === 'several' && s.open_pages !== undefined ? openPagesLines({ open_pages: s.open_pages ?? null, ...(s.open_pages_error ? { open_pages_error: s.open_pages_error } : {}) }) : [])].join('\n'));
     return;
   }
-  if (mode !== 'several') throw usageError(`Unknown access serves mode: ${mode}.`, 'gbrain access serves (read-only), or gbrain access serves several --members <id,...>. A one-person brain needs no step.');
+  if (mode !== 'several') throw usageError(`Unknown access serves mode: ${mode}.`, 'foresights access serves (read-only), or foresights access serves several --members <id,...>. A one-person brain needs no step.');
   const roster = readRoster(flagValue(args, '--members'), flagValue(args, '--members-file'));
-  if (!roster.length) throw rosterEmpty('gbrain access serves several');
+  if (!roster.length) throw rosterEmpty('foresights access serves several');
   const r = await labelSeveral(engine, roster, flagValue(args, '--source') ?? 'default', args.includes('--yes'), json, { labelledOnly: args.includes('--labelled-only') });
   console.log(json ? JSON.stringify(r, null, 2) : receiptLines(r).join('\n'));
   if (!receiptOk(r)) setCliExitVerdict(1);

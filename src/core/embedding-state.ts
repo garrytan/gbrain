@@ -16,7 +16,7 @@
  *   search reads them).
  * - `pending`: a chunk the embed job selects (`staleChunkWhere`: active vector
  *   NULL, page live, no `embed_skip`) on an unquarantined page.
- *   `gbrain embed --stale` drains it. On a brain keyless by choice keyword
+ *   `foresights embed --stale` drains it. On a brain keyless by choice keyword
  *   search is the configured retrieval and reads these chunks, so they are
  *   not counted as unsearchable there.
  * - `keyword_only`: a chunk with no vector on a live `embed_skip` page. By design (#4306: never purged; its
@@ -32,11 +32,11 @@
  *   whose sealed text projection has no chunks (#8473: a body holding only
  *   a protected takes fence).
  * - `deleted_page_chunks`: chunks on a soft-deleted page. The purge lifecycle
- *   (`gbrain pages purge-deleted`, the autopilot purge phase, 72 h) removes
+ *   (`foresights pages purge-deleted`, the autopilot purge phase, 72 h) removes
  *   them; past that window they are overdue.
  * - `chunkless_healable`: a live, unquarantined page with body text, no
  *   chunk rows and no sealed projection of its current revision
- *   (`listChunklessPagesWithContent`'s predicate): `gbrain embed
+ *   (`listChunklessPagesWithContent`'s predicate): `foresights embed
  *   --stale` chunks it before embedding. An `embed_skip` page is included
  *   (#7174): writes keep its chunks (#6722), so none means keyword search
  *   cannot find it; it is chunked and still gets no vectors.
@@ -161,7 +161,7 @@ function ratio(embedded: number | undefined, pending: number): number | null {
   return total === 0 ? null : Math.round(((embedded ?? 0) / total) * 10_000) / 10_000;
 }
 
-/** #7825: chunks past the window that `gbrain pages purge-deleted` would remove, under the purge's own holds (`purgeHoldsSql`); counted as the classifier counts them. */
+/** #7825: chunks past the window that `foresights pages purge-deleted` would remove, under the purge's own holds (`purgeHoldsSql`); counted as the classifier counts them. */
 async function purgeableDeletedChunks(engine: BrainEngine, opts: { mode: 'ops' | 'full'; sourceIds?: string[] }): Promise<number> {
   const { purgeHoldsSql } = await import('./persistence/purge-deleted.ts');
   const [row] = await engine.executeRaw<{ n: string | number }>(`SELECT count(*)::bigint AS n
@@ -181,7 +181,7 @@ async function effectiveBlockThreshold(engine: BrainEngine): Promise<number> {
   }
 }
 
-/** `gbrain pages unsearchable` for one state: the read-only check every fix verifies with. */
+/** `foresights pages unsearchable` for one state: the read-only check every fix verifies with. */
 export function embeddingStateVerify(sourceId: string, state: EmbeddingState): { argv: string[] } {
   return { argv: ['gbrain', 'pages', 'unsearchable', '--source', sourceId, '--state', state, '--json'] };
 }

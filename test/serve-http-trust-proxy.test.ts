@@ -38,7 +38,7 @@ describe('resolveTrustProxy', () => {
     expect(resolveTrustProxy('true')).toBe(1);
   });
 
-  test('"2" → 2 (trust two hops — Cloudflare → nginx → gbrain)', () => {
+  test('"2" → 2 (trust two hops — Cloudflare → nginx → foresights)', () => {
     expect(resolveTrustProxy('2')).toBe(2);
   });
 

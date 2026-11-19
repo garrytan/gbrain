@@ -1,5 +1,5 @@
 /**
- * #1963 regression test: `gbrain reindex-frontmatter` (and `gbrain backfill
+ * #1963 regression test: `foresights reindex-frontmatter` (and `foresights backfill
  * <kind>`, same class) on a PGLite brain.
  *
  * Pre-fix, cli.ts's dispatch connected the primary engine (taking the PGLite
@@ -110,7 +110,7 @@ describe('reindex-frontmatter + backfill on PGLite (#1963 double-connect)', () =
       expect(reindex.exitCode).toBe(0);
       expect(reindex.stdout).toMatch(/"status":\s*"ok"/);
 
-      // `gbrain backfill <kind>` had the identical double-connect. dry-run
+      // `foresights backfill <kind>` had the identical double-connect. dry-run
       // still connects, so pre-fix it hit the same 30s timeout.
       const backfill = await runCli(['backfill', 'effective_date', '--dry-run'], env, 120_000);
       const backfillOut = backfill.stdout + backfill.stderr;

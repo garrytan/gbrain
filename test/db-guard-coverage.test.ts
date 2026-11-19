@@ -11,7 +11,7 @@
  * only: no database connection, no DATABASE_URL required.
  *
  * KNOWN BLIND SPOTS (documented, not silent): a test that only passes the
- * ambient URL into a SPAWNED subprocess (gbrain CLI) has no in-file connect
+ * ambient URL into a SPAWNED subprocess (foresights CLI) has no in-file connect
  * idiom and is invisible here — the preload guard and the spawned CLI's own
  * config path are the layers that cover it. Destructive helpers living in
  * non-test files (other than setupDB) are likewise unscanned.

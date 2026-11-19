@@ -1,5 +1,5 @@
 /**
- * `gbrain repair facts-home --source <id> [--apply --expect <hash>]` (GST-2492 PR 2): give the facts of a strict source
+ * `foresights repair facts-home --source <id> [--apply --expect <hash>]` (GST-2492 PR 2): give the facts of a strict source
  * that live in the database alone a home in Git. The preview (facts/facts-home.ts `scanFactsHome`) lists every such fact
  * by group and writes nothing: a fact with no entity, or for an entity with no page, is what the apply writes to its
  * holding page, memory/unattributed or, for an entity under a folder access rule, the holding page of its folder (a held
@@ -23,6 +23,7 @@ import { planPageFence } from '../facts/unfenced-facts.ts';
 import { ensurePageForHeldRows } from '../facts/held-fact-move.ts';
 import { UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
 import { type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
+import { commandText } from '../brand.ts';
 
 interface ApprovedFact { id: number; value: string; home: string }
 interface HomeItem extends RepairItem { facts: ApprovedFact[]; hash: string }
@@ -41,17 +42,17 @@ function previewChanged(hash: string, sourceId: string): OperationError {
 }
 
 const DETAIL: Record<FactsHomeRow['group'], (row: FactsHomeRow) => string> = {
-  entity_page_exists: row => `${row.entity_slug} has a page; the extract_facts upkeep step moves this fact there (gbrain dream --phase extract_facts runs it now)`,
+  entity_page_exists: row => `${row.entity_slug} has a page; the extract_facts upkeep step moves this fact there (foresights dream --phase extract_facts runs it now)`,
   entity_page_missing: row => `${row.entity_slug} has no page; the apply writes it to ${row.home} as a held row naming ${row.entity_slug}`,
   no_entity: row => `no entity; the apply writes it to ${row.home}`,
   cannot_render: row => `the Facts table cannot render it as it stands (${row.reason}); it stays database-only, active and searchable`,
   folder_restricted: row => row.reason === 'page_rule'
-    ? `a page rule keeps ${row.entity_slug} to its own readers, which no holding page carries; create the page (gbrain put ${row.entity_slug}) and the extract_facts upkeep step fences the fact there; it stays database-only until then`
+    ? `a page rule keeps ${row.entity_slug} to its own readers, which no holding page carries; create the page (foresights put ${row.entity_slug}) and the extract_facts upkeep step fences the fact there; it stays database-only until then`
     : `the folder access rules covering ${row.entity_slug} cannot be read now, so no holding page is chosen; it stays database-only (retry later)`,
-  entity_page_deleted: row => `${row.entity_slug} is deleted (it may be private, and its purge would not reach the holding page); restore the page (gbrain restore ${row.entity_slug}) or purge it; the fact stays database-only`,
+  entity_page_deleted: row => `${row.entity_slug} is deleted (it may be private, and its purge would not reach the holding page); restore the page (foresights restore ${row.entity_slug}) or purge it; the fact stays database-only`,
   held_fact_unmovable: row => `held for ${row.entity_slug}, whose page cannot take it (${row.reason}); edit the row, or forget the duplicate`,
   held_over_30_days: row => `held for ${row.entity_slug} since ${row.held_since} and the page still does not exist; ${row.nearest ? `the nearest existing page is ${row.nearest}` : 'no existing page resolves to it'}`,
-  fenced_page_missing: row => `a row of ${row.reason}, which was deleted; restore the page (gbrain restore ${row.reason}) or purge it`,
+  fenced_page_missing: row => `a row of ${row.reason}, which was deleted; restore the page (foresights restore ${row.reason}) or purge it`,
   ontology_observation: row => `an ontology observation (${row.reason}) of ${row.entity_slug}; it has no row on any page's Facts table, so it stays`,
 };
 
@@ -71,7 +72,7 @@ export const factsHomeRepair: RepairHandler = {
   outcomeItemsLimit: 1000,
   async plan(engine, scope, _after, opts): Promise<RepairPlan> {
     if (scope.source_ids.length !== 1) {
-      throw opError('invalid_params', 'gbrain repair facts-home needs --source <id>.', 'Name one strict source, e.g. gbrain repair facts-home --source default.',
+      throw opError('invalid_params', 'foresights repair facts-home needs --source <id>.', 'Name one strict source, e.g. foresights repair facts-home --source default.',
         { fix: readFix('Lists the registered sources.', { argv: ['gbrain', 'sources', 'list', '--json'] }), docs: FACTS_HOME_DOCS });
     }
     const sourceId = scope.source_ids[0]!;
@@ -79,7 +80,7 @@ export const factsHomeRepair: RepairHandler = {
     if (!scan.strict) {
       return { items: [], preview_hash: previewHash(hashParts(scope, scan, [])), residuals: {},
         warnings: [`Source ${sourceId} is not strict (its pages are not canonical in Git), so the database keeps its facts by design and none is a gap; nothing is listed.`],
-        details: { docs: FACTS_HOME_DOCS, strict: false, verify: gitGapArgv(sourceId).join(' ') } };
+        details: { docs: FACTS_HOME_DOCS, strict: false, verify: commandText(gitGapArgv(sourceId)) } };
     }
     const approved = await approvedFacts(engine, scan);
     const hash = previewHash(hashParts(scope, scan, approved));
@@ -88,7 +89,7 @@ export const factsHomeRepair: RepairHandler = {
         action: `hold ${facts.length} fact(s) on ${[...new Set(facts.map(fact => fact.home))].sort().join(', ')}`, facts, hash: key }] : [];
     if (opts?.apply) {
       if (!opts.expect) {
-        throw opError('invalid_params', 'gbrain repair facts-home --apply writes only the set a preview printed.',
+        throw opError('invalid_params', 'foresights repair facts-home --apply writes only the set a preview printed.',
           `Preview first: ${factsHomePreviewCommand(sourceId)}, then run the apply command it prints with --expect <preview-hash>.`,
           { fix: readFix('Previews the facts that have no Git home; writes nothing.', { argv: previewArgv(sourceId) }), docs: FACTS_HOME_DOCS });
       }
@@ -101,7 +102,7 @@ export const factsHomeRepair: RepairHandler = {
     return { items: item(approved, hash), preview_hash: hash, residuals: { ...scan.counts },
       ...(more > 0 ? { warnings: [`${more} more fact(s) can be written than one apply takes (${MAX_PER_APPLY}); apply this set, then preview again for the rest.`] } : {}),
       listing: scan.rows.map(row => ({ item: `${sourceId}:fact ${row.id}`, class: row.group, detail: DETAIL[row.group](row) })),
-      details: { docs: FACTS_HOME_DOCS, counts: scan.counts, verify: gitGapArgv(sourceId).join(' ') } };
+      details: { docs: FACTS_HOME_DOCS, counts: scan.counts, verify: commandText(gitGapArgv(sourceId)) } };
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     const { facts, hash, source_id: sourceId } = entry as HomeItem;
@@ -117,7 +118,7 @@ export const factsHomeRepair: RepairHandler = {
 };
 
 const changed = (reason: string, detail: Record<string, unknown> = {}): RepairItemOutcome =>
-  ({ applied: false, outcome: 'changed_since_preview', reason, detail: { ...detail, next: 'run gbrain repair facts-home again for a new preview' } });
+  ({ applied: false, outcome: 'changed_since_preview', reason, detail: { ...detail, next: 'run foresights repair facts-home again for a new preview' } });
 
 async function homeFacts(ctx: OperationContext, sourceId: string, approved: ApprovedFact[]): Promise<RepairItemOutcome> {
   const engine = ctx.engine;

@@ -1,6 +1,6 @@
 # Multi-language full-text search
 
-GBrain's keyword search arm uses Postgres full-text search (tsvector/tsquery).
+Foresights's keyword search arm uses Postgres full-text search (tsvector/tsquery).
 The tokenizer language is configurable via the `GBRAIN_FTS_LANGUAGE`
 environment variable. Default: `english`.
 
@@ -49,12 +49,12 @@ Use the explicit command:
 
 ```bash
 export GBRAIN_FTS_LANGUAGE=portuguese
-gbrain reindex-search-vector --dry-run    # preview: language + row counts
-gbrain reindex-search-vector --yes        # recreate triggers + backfill + rebuild the facts keyword index
+foresights reindex-search-vector --dry-run    # preview: language + row counts
+foresights reindex-search-vector --yes        # recreate triggers + backfill + rebuild the facts keyword index
 ```
 
 The stamp survives later schema work: `initSchema()` — including the replay
-behind `gbrain init --migrate-only` on every upgrade — applies the schema
+behind `foresights init --migrate-only` on every upgrade — applies the schema
 template under the configured language, so it re-creates the trigger
 functions as they already are instead of reverting them to `english`.
 
@@ -86,11 +86,11 @@ ALTER TEXT SEARCH CONFIGURATION pt_br
   WITH unaccent, portuguese_stem;
 ```
 
-Then point GBrain at it:
+Then point Foresights at it:
 
 ```bash
 export GBRAIN_FTS_LANGUAGE=pt_br
-gbrain reindex-search-vector --yes
+foresights reindex-search-vector --yes
 ```
 
 Note: custom configurations require a real Postgres instance (e.g. the
@@ -109,13 +109,13 @@ command runs, or Postgres will reject the trigger recreation with
 - Remote title matching (MCP and other safe-chunks callers) reads the title
   lexemes stored in `pages.search_vector`, so it follows the language those
   vectors were built with. After a language change, run
-  `gbrain reindex-search-vector` so remote title search tokenizes like the
+  `foresights reindex-search-vector` so remote title search tokenizes like the
   query.
 - **Interrupted reindex:** the trigger flip commits before the backfill, so a
   `reindex-search-vector` run killed mid-way (crash, full disk, SIGKILL)
   leaves new writes in the new language and un-backfilled rows in the old one
   — keyword search then matches only part of the corpus. The command records
-  an in-progress marker plus a per-batch checkpoint, `gbrain doctor` fails
+  an in-progress marker plus a per-batch checkpoint, `foresights doctor` fails
   with `fts_reindex_incomplete` until the run completes, and re-running with
   the same `GBRAIN_FTS_LANGUAGE` resumes from the checkpoint rather than
   starting over. Budget minutes, not seconds, on brains with 100K+ chunks.
@@ -137,7 +137,7 @@ command runs, or Postgres will reject the trigger recreation with
   all-terms match already fills the request. Direct keyword reads stay
   all-terms. The hybrid keyword arm also has one time budget,
   `search.cjk_keyword_deadline_ms` (integer milliseconds, default 3000,
-  range 500 to 30000; `gbrain config set search.cjk_keyword_deadline_ms
+  range 500 to 30000; `foresights config set search.cjk_keyword_deadline_ms
   5000`). On Postgres the normal scoring gets two thirds of it; if that
   times out, a capped retry scores at most 2,000 matching chunks (all-terms
   matches before partial ones) in the remaining third. On PGLite, which

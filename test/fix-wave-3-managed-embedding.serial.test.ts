@@ -5,13 +5,13 @@
  *
  * Authoring gate. (1) Protects the #4616 contract where most writes embed: one
  * degenerate vector refuses only its chunk; the page's other vectors install,
- * the page signature stays unstamped so `gbrain embed --stale` finds the
+ * the page signature stays unstamped so `foresights embed --stale` finds the
  * refused chunk, the effect ends terminally as `embedding_zero_norm` (never
  * retried), and the write receipt carries the recovery command. (2) Fails when
  * the effect throws the whole page's vectors away or records the refusal as
  * `embedding_configuration`, as it did before this integration.
  * (3) test/embedding-zero-norm-4616.serial.test.ts covers the gateway, import
- * and `gbrain embed` paths on an unmanaged brain only. (4) The provider is the
+ * and `foresights embed` paths on an unmanaged brain only. (4) The provider is the
  * gateway's process-global transport seam, so this file is serial.
  */
 import { afterAll, expect, test } from 'bun:test';
@@ -62,7 +62,7 @@ for (const backend of testBackends()) test(`${backend}: a degenerate vector in a
     const status = await op.handler(ctx, { request_id: receipt.request_id }) as { effects: Array<{ kind: string; reason?: string; suggestion?: string; docs?: string }> };
     expect(status.effects.find(e => e.kind === 'embedding')).toMatchObject({ state: 'failed', reason: 'embedding_zero_norm',
       docs: 'docs/guides/write-refusals.md#embedding_zero_norm' });
-    expect(status.effects.find(e => e.kind === 'embedding')!.suggestion).toContain(`gbrain embed ${slug}`);
+    expect(status.effects.find(e => e.kind === 'embedding')!.suggestion).toContain(`foresights embed ${slug}`);
   }, { databaseUrl: backend === 'postgres' ? process.env.DATABASE_URL : undefined });
 }, 120_000);
 

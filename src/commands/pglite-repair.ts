@@ -1,5 +1,5 @@
 /**
- * `gbrain pglite-repair` — diagnose and repair a torn-WAL PGLite data dir
+ * `foresights pglite-repair` — diagnose and repair a torn-WAL PGLite data dir
  * in place (#223 / #1670 / #2575 recovery, the manual surface for the
  * auto-repair that `PGLiteEngine.connect()` runs on `wasm-abort` failures).
  *
@@ -12,13 +12,13 @@
  *   or `--yes --expect <plan_hash>`; non-TTY otherwise exits 3) →
  *   acquireLock (refuses a reaped acquisition: a corrupt-lock reap cannot
  *   prove the holder is dead, and WAL surgery under a possibly-live writer is
- *   never correct; a live `gbrain serve` holder fast-fails via
+ *   never correct; a live `foresights serve` holder fast-fails via
  *   LiveServeLockError) → re-validate under the lock → repair → receipt.
  *
  * There is deliberately NO --force: force-removing `.gbrain-lock` while the
  * holder is alive would reopen exactly the concurrent-writer corruption hole
  * #2348 closed. For catalog corruption (the `corrupt` classifier verdict) WAL
- * repair does not help — `gbrain reinit-pglite` is the rebuild path.
+ * repair does not help — `foresights reinit-pglite` is the rebuild path.
  */
 
 import { join } from 'node:path';
@@ -133,7 +133,7 @@ function emitError(jsonOutput: boolean, code: string, message: string): void {
 const BACKUP_SUFFIX = WAL_REPAIR_BACKUP_SUFFIX;
 const REPAIR_RISK = WAL_REPAIR_RISK;
 
-/** The exact undo of a WAL reset: the reset pg_wal set aside, the backed-up pg_wal and pg_control put back (run with gbrain stopped). */
+/** The exact undo of a WAL reset: the reset pg_wal set aside, the backed-up pg_wal and pg_control put back (run with foresights stopped). */
 export function restoreCommand(dataDir: string, backupPath: string): string {
   return [
     ['mv', join(dataDir, 'pg_wal'), join(backupPath, 'pg_wal.reset-aside')],
@@ -151,7 +151,7 @@ export async function runPgliteRepair(args: string[]): Promise<number> {
   } catch (err) {
     if (err instanceof UnknownFlagError) {
       const jsonOut = args.includes('--json');
-      emitError(jsonOut, 'unknown_flag', `${err.message}. Run \`gbrain pglite-repair --help\`.`);
+      emitError(jsonOut, 'unknown_flag', `${err.message}. Run \`foresights pglite-repair --help\`.`);
       return 2;
     }
     throw err;
@@ -170,7 +170,7 @@ export async function runPgliteRepair(args: string[]): Promise<number> {
       emitError(
         opts.jsonOutput,
         'not_pglite',
-        `gbrain pglite-repair is for PGLite brains (current engine: ${cfg?.engine || 'none'}). ` +
+        `foresights pglite-repair is for PGLite brains (current engine: ${cfg?.engine || 'none'}). ` +
           'Pass --path <dir> to repair a specific data dir.',
       );
       return 1;
@@ -222,7 +222,7 @@ export async function runPgliteRepair(args: string[]): Promise<number> {
         console.log(`  The repair is the user's decision. Once they agree: ${approved}`);
       }
       if (repairFailed) {
-        console.log(`  Automatic repair failed${repairFailed.ts ? ` at ${new Date(repairFailed.ts).toISOString()}` : ''}; gbrain refuses to open this brain until a repair completes.`);
+        console.log(`  Automatic repair failed${repairFailed.ts ? ` at ${new Date(repairFailed.ts).toISOString()}` : ''}; foresights refuses to open this brain until a repair completes.`);
         console.log(`  ${HANDS_OFF_BRAIN_FILES}`);
       }
     }
@@ -237,7 +237,7 @@ export async function runPgliteRepair(args: string[]): Promise<number> {
     emitError(
       opts.jsonOutput,
       'refused_locked',
-      `another gbrain process (PID ${diagnosis.lockHolderPid}) is using this brain — stop it, then re-run.`,
+      `another foresights process (PID ${diagnosis.lockHolderPid}) is using this brain — stop it, then re-run.`,
     );
     return 1;
   }
@@ -248,8 +248,8 @@ export async function runPgliteRepair(args: string[]): Promise<number> {
       opts.jsonOutput,
       'refused_reap_quarantine',
       `a lock on this brain was reaped ${Math.round(sinceReap / 1000)}s ago from a holder whose ` +
-        'liveness could not be verified — that process may still be writing. Confirm no gbrain ' +
-        `process is running (\`pgrep -af gbrain\`), wait ${Math.ceil((REAP_QUARANTINE_MS - sinceReap) / 60000)} more minute(s), then re-run.`,
+        'liveness could not be verified — that process may still be writing. Confirm no foresights ' +
+        `process is running (\`pgrep -af foresights\`), wait ${Math.ceil((REAP_QUARANTINE_MS - sinceReap) / 60000)} more minute(s), then re-run.`,
     );
     return 1;
   }
@@ -265,7 +265,7 @@ export async function runPgliteRepair(args: string[]): Promise<number> {
     actor: 'agent',
     what: `Reset the write-ahead log of the PGLite brain at ${dataDir}`,
     why: `The brain does not open cleanly (${diagnosis.verdict}: ${diagnosis.detail}); a WAL reset (pg_resetwal semantics) lets it open with its data files intact.`,
-    risk: `${REPAIR_RISK} Undo, with gbrain stopped: ${restoreCommand(dataDir, `${dataDir}${BACKUP_SUFFIX}<timestamp>`)} (the run prints the exact backup path and restore command).`,
+    risk: `${REPAIR_RISK} Undo, with foresights stopped: ${restoreCommand(dataDir, `${dataDir}${BACKUP_SUFFIX}<timestamp>`)} (the run prints the exact backup path and restore command).`,
     user_message: `Your brain at ${dataDir} cannot open cleanly. Reset its write-ahead log now? Pages and facts on disk are kept, `
       + 'but changes from just before the crash may be lost; the old log is kept in a backup folder.',
     argv: ['gbrain', 'pglite-repair', ...(opts.customPath ? ['--path', opts.customPath] : []), ...(opts.jsonOutput ? ['--json'] : [])],
@@ -286,7 +286,7 @@ export async function runPgliteRepair(args: string[]): Promise<number> {
       emitError(
         opts.jsonOutput,
         'refused_live_serve',
-        `a live \`gbrain serve\` (MCP) process holds this brain — stop \`gbrain serve\` first, then re-run. ${String((err as Error).message)}`,
+        `a live \`foresights serve\` (MCP) process holds this brain — stop \`foresights serve\` first, then re-run. ${String((err as Error).message)}`,
       );
       return 1;
     }
@@ -295,7 +295,7 @@ export async function runPgliteRepair(args: string[]): Promise<number> {
   }
   try {
     if (!lock.acquired) {
-      emitError(opts.jsonOutput, 'refused_locked', 'could not acquire the PGLite data-dir lock — another gbrain process is using this brain.');
+      emitError(opts.jsonOutput, 'refused_locked', 'could not acquire the PGLite data-dir lock — another foresights process is using this brain.');
       return 1;
     }
     if (lock.reaped) {
@@ -306,7 +306,7 @@ export async function runPgliteRepair(args: string[]): Promise<number> {
         opts.jsonOutput,
         'refused_reaped_lock',
         'the data-dir lock was acquired by reaping a prior holder’s lock — ' +
-          'another gbrain process may still be using this brain. Confirm no gbrain ' +
+          'another foresights process may still be using this brain. Confirm no foresights ' +
           'process is running, then re-run (a cleanly-acquired lock enables repair).',
       );
       return 1;
@@ -375,7 +375,7 @@ export async function runPgliteRepair(args: string[]): Promise<number> {
         repaired_at: receipt.repairedAt,
         backups_on_disk: listRepairBackups(dataDir),
         restore_command: restoreCommand(receipt.dataDir, receipt.backupPath),
-        next_command: 'gbrain reindex --vectors',
+        next_command: 'foresights reindex --vectors',
       }));
     } else {
       console.log('WAL reset complete.');
@@ -383,8 +383,8 @@ export async function runPgliteRepair(args: string[]): Promise<number> {
       console.log(`  Backup:        ${receipt.backupPath}${receipt.reusedEpisodeBackup ? ' (reused this episode’s existing backup)' : ''}`);
       console.log(`  Reset segment: ${receipt.resetSegment} (timeline ${receipt.timelineId}, ${receipt.walSegSize / (1024 * 1024)}MB segments)`);
       console.log('  Un-checkpointed transactions may be lost, and indexes are not rebuilt.');
-      console.log(`  Undo (with gbrain stopped): ${restoreCommand(receipt.dataDir, receipt.backupPath)}`);
-      console.log('  Next: rebuild the vector indexes with `gbrain reindex --vectors` (it reopens the brain), then run `gbrain doctor`.');
+      console.log(`  Undo (with foresights stopped): ${restoreCommand(receipt.dataDir, receipt.backupPath)}`);
+      console.log('  Next: rebuild the vector indexes with `foresights reindex --vectors` (it reopens the brain), then run `foresights doctor`.');
     }
     return 0;
   } finally {

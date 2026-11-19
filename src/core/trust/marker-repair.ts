@@ -1,5 +1,5 @@
 /**
- * #6550 repair: `gbrain trust backfill --repair-unknown-markers` (local CLI only).
+ * #6550 repair: `foresights trust backfill --repair-unknown-markers` (local CLI only).
  *
  * Before v0.60.249.0 an agent edit of an unclassified legacy page stamped a
  * permanent `trust_tier: unknown` marker into its frontmatter. The backfill

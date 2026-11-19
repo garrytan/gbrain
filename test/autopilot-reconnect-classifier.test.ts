@@ -25,7 +25,7 @@ describe('classifyReconnectError (#1162)', () => {
     test('real Bun null-deref → crash, NOT unrecoverable', () => {
       // Verbatim Bun/V8 text. Lowercased it contains BOTH "database_url" and
       // "undefined", so the substring rules below used to classify it as a
-      // config verdict and exit the daemon permanently. It is a gbrain bug.
+      // config verdict and exit the daemon permanently. It is a foresights bug.
       const err = new TypeError("undefined is not an object (evaluating 'config.database_url')");
       expect(classifyReconnectError(err)).toBe('crash');
     });
@@ -44,7 +44,7 @@ describe('classifyReconnectError (#1162)', () => {
       // Guard against over-broadening: the crash rules must not swallow the
       // real "operator never set a URL" case, which SHOULD stop the daemon.
       expect(classifyReconnectError(new Error('GBRAIN_DATABASE_URL is not set'))).toBe('unrecoverable');
-      expect(classifyReconnectError(new Error('No brain configured. Run: gbrain init'))).toBe('unrecoverable');
+      expect(classifyReconnectError(new Error('No brain configured. Run: foresights init'))).toBe('unrecoverable');
     });
 
     test('a malformed URL is a config verdict even though JS throws it as a TypeError', () => {
@@ -76,7 +76,7 @@ describe('classifyReconnectError (#1162)', () => {
   });
 
   test('no brain configured → unrecoverable', () => {
-    expect(classifyReconnectError(new Error('No brain configured. Run: gbrain init'))).toBe('unrecoverable');
+    expect(classifyReconnectError(new Error('No brain configured. Run: foresights init'))).toBe('unrecoverable');
   });
 
   test('network blip → recoverable', () => {

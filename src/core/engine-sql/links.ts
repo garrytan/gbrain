@@ -502,7 +502,7 @@ export async function listLinkSources(
   exec: ScopedRead,
     opts?: { sourceId?: string; sourceIds?: string[] },
   ): Promise<{ link_source: string | null; count: number }[]> {
-      // v114 (#1941): distinct provenances + counts for `gbrain link-sources`.
+      // v114 (#1941): distinct provenances + counts for `foresights link-sources`.
       // A scoped read counts an edge only when its from page, its to page and
       // its origin page (when it has one, and it is live) are all in scope.
       // Federated {sourceIds} takes precedence over scalar {sourceId}; neither = unscoped.
@@ -552,7 +552,7 @@ export async function findOrphanPages(exec: LegacyUnscopedRead, opts?: {
           : sqlFragment``;
     // #4524: default mode 'islanded' — identical predicate to getHealth's
     // orphan_pages (no live inbound AND no live outbound; outbound counts
-    // only when its TARGET page is live, per gbrain#4153 endpoint liveness).
+    // only when its TARGET page is live, per foresights#4153 endpoint liveness).
     // mode 'inbound' preserves the legacy no-inbound-only view.
     const outboundFilter =
       (opts?.mode ?? 'islanded') === 'islanded'

@@ -1,12 +1,12 @@
 /**
- * GBRA-133 PR 2a: the commit notifier inside a resident process (serve stdio and http, `gbrain jobs work`, the
+ * GBRA-133 PR 2a: the commit notifier inside a resident process (serve stdio and http, `foresights jobs work`, the
  * autopilot daemon). Supplies the production seams of ../commit-notifier.ts:
  *  - the SQL store (store.ts) with the host lease on Postgres and none on PGLite (the lock holder owns);
  *  - the sources this host syncs: managed sources whose worktree it owns, classic sources it last synced
  *    (syncer_host_id) or that `GBRAIN_NOTIFIER_CLASSIC_SOURCES` binds here; every other source is skipped with a reason;
  *  - starts through the in-process delegated sync runner (serve-sync-runner.ts) as this host's `cli` writer, one job
  *    at a time, never pulling unless a pull request (marker) asked for it;
- *  - a per-source trace file (`<gbrain home>/notifier/<source>.jsonl`, bounded) named by sync status.
+ *  - a per-source trace file (`<foresights home>/notifier/<source>.jsonl`, bounded) named by sync status.
  * One notifier per process: `nudgeResidentNotifier` (the IPC sync_nudge handler, the serve runner) reaches it.
  */
 import { randomUUID } from 'node:crypto';
@@ -87,7 +87,7 @@ export async function listHostSources(engine: BrainEngine, hostId: string, env: 
       if (row.owner !== hostId) { skipped.push({ sourceId: row.id, reason: `its managed worktree is owned by host ${String(row.owner ?? 'none').slice(0, 8)}; that host's resident syncs it` }); continue; }
       root = row.root;
     } else if (managed) {
-      skipped.push({ sourceId: row.id, reason: 'not bound to a managed worktree (gbrain sources writer status)' });
+      skipped.push({ sourceId: row.id, reason: 'not bound to a managed worktree (foresights sources writer status)' });
       continue;
     } else {
       kind = 'classic';
@@ -96,7 +96,7 @@ export async function listHostSources(engine: BrainEngine, hostId: string, env: 
       if (!bind.has(row.id) && row.syncer !== hostId) {
         skipped.push({ sourceId: row.id, reason: row.syncer
           ? `classic source last synced on host ${row.syncer.slice(0, 8)}; its resident there watches it (or bind it here with GBRAIN_NOTIFIER_CLASSIC_SOURCES=${row.id})`
-          : `classic source with no recorded syncer host; run gbrain sync --source ${row.id} once on the host that syncs it, or set GBRAIN_NOTIFIER_CLASSIC_SOURCES=${row.id}` });
+          : `classic source with no recorded syncer host; run foresights sync --source ${row.id} once on the host that syncs it, or set GBRAIN_NOTIFIER_CLASSIC_SOURCES=${row.id}` });
         continue;
       }
     }

@@ -58,7 +58,7 @@ function filtersOf(p: Record<string, unknown>): CardFilters {
   return filters;
 }
 
-const NO_SHELF = 'This brain has no storage shelf yet: nothing has been registered. The archiving agent registers each item with gbrain storage-register after it verifies the archive.';
+const NO_SHELF = 'This brain has no storage shelf yet: nothing has been registered. The archiving agent registers each item with foresights storage-register after it verifies the archive.';
 
 /** The card and its page frontmatter, read only when the caller may read that exact revision (a page that changes between the snapshot and the visibility check is read again). */
 async function readCard(ctx: OperationContext, id: string): Promise<{ card: Card; revision: string; updated_at: string; frontmatter: Record<string, unknown> } | null> {
@@ -107,7 +107,7 @@ async function writeCard(ctx: OperationContext, card: Card, opts: { expectedRevi
 
 function cardExists(id: string, revision: string): OperationError {
   return opError('storage_card_exists', `A card with id ${id} is already on the storage shelf; nothing was written.`,
-    `Change it with gbrain storage-update ${id} --expected-revision ${revision}, or register the new item under another id.`,
+    `Change it with foresights storage-update ${id} --expected-revision ${revision}, or register the new item under another id.`,
     { fix: getFix(id), detail: revision });
 }
 
@@ -183,7 +183,7 @@ const storage_get: Operation = {
     try { parseCardInput(content); } catch (error) {
       if (!(error instanceof OperationError)) throw error;
       throw opError('storage_record_invalid', `Card ${id} on the storage shelf fails the card rules, so it is not served (${error.message})`,
-        `Correct it with gbrain storage-update ${id} --expected-revision ${found.revision} --patch '<the fields to replace, as JSON>'; the patch is validated like a new card.`,
+        `Correct it with foresights storage-update ${id} --expected-revision ${found.revision} --patch '<the fields to replace, as JSON>'; the patch is validated like a new card.`,
         { reason: 'schema', detail: found.revision });
     }
     return { card: found.card, revision: found.revision, updated_at: found.updated_at, source_id: STORAGE_SOURCE_ID, registered_by: found.card.registered_by, origin: found.card.origin };
@@ -260,7 +260,7 @@ const storage_update: Operation = {
     const expected = typeof p.expected_revision === 'string' ? p.expected_revision : '';
     if (!id || !expected) throw opError('invalid_params', 'storage_update needs id and expected_revision.', 'Read the card with storage_get and pass its id and revision.');
     const found = await readCard(ctx, id);
-    if (!found) throw opError('not_found', `No card ${id} on the storage shelf; nothing was written.`, 'Register it with gbrain storage-register, or find the right id with storage_find.');
+    if (!found) throw opError('not_found', `No card ${id} on the storage shelf; nothing was written.`, 'Register it with foresights storage-register, or find the right id with storage_find.');
     if (found.revision !== expected) {
       throw opError('storage_revision_conflict', `Card ${id} changed since revision ${expected} was read; nothing was written.`,
         `Read the card again (its current revision is ${found.revision}), apply the change to what it says now, and update once with that revision.`, { fix: getFix(id), detail: found.revision });

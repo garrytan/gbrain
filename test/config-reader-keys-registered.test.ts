@@ -1,7 +1,7 @@
 /**
- * #6780: runtime readers name config keys `gbrain config set` refuses.
+ * #6780: runtime readers name config keys `foresights config set` refuses.
  *
- * Protects: every key gbrain reads with getConfig() is either a registered
+ * Protects: every key foresights reads with getConfig() is either a registered
  * knob (KNOWN_CONFIG_KEYS / KNOWN_CONFIG_KEY_PREFIXES, so `config set`
  * accepts it without --force) or recorded as internal state with a reason.
  * Regression it catches: a new reader of a new key, or a key constant moved
@@ -28,7 +28,7 @@ import {
 
 const ROOT = join(import.meta.dir, '..');
 const REMEDY = 'Register a user-facing knob in src/core/config-runtime-keys.ts (or its home list in src/core/config.ts KNOWN_CONFIG_KEYS / KNOWN_CONFIG_KEY_PREFIXES); '
-  + 'record state gbrain writes itself in INTERNAL_CONFIG_STATE in test/helpers/config-reader-registry.ts with a reason.';
+  + 'record state foresights writes itself in INTERNAL_CONFIG_STATE in test/helpers/config-reader-registry.ts with a reason.';
 
 const isRegistered = (key: string) => KNOWN_CONFIG_KEYS.includes(key) || KNOWN_CONFIG_KEY_PREFIXES.some((p) => key.startsWith(p));
 const internalKey = (key: string) => INTERNAL_CONFIG_STATE.find((s) => (s.prefix ? key.startsWith(s.key) : key === s.key));
@@ -77,7 +77,7 @@ describe('#6780 guard: every getConfig() key under src/ is registered or recorde
     for (const r of literal) {
       if (r.target.kind !== 'keys') continue;
       for (const key of r.target.keys) {
-        if (!isRegistered(key) && !internalKey(key)) bad.push(`${where(r)} reads "${key}", which gbrain config set refuses.`);
+        if (!isRegistered(key) && !internalKey(key)) bad.push(`${where(r)} reads "${key}", which foresights config set refuses.`);
       }
     }
     expect(bad, `${bad.length} unregistered config reads:\n${bad.join('\n')}\n${REMEDY}`).toEqual([]);

@@ -1,5 +1,5 @@
 /**
- * #5994: `gbrain repair failed-writes` replays subagent and restricted-namespace
+ * #5994: `foresights repair failed-writes` replays subagent and restricted-namespace
  * writes under their stored identity and authority, while the global subagent
  * fence stays fail-closed for every live dispatch. Runs on PGLite and, through
  * test/e2e, Postgres.

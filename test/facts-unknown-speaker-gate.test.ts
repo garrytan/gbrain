@@ -28,7 +28,7 @@ describe('isUnknownSpeakerLabel — POSITIVE (anonymous-speaker tokens → nulle
   const anonymous = [
     'Speaker A',
     'Speaker B',
-    'Speaker Z9', // letter+digits diarizer id (gbrain's own parser fixture)
+    'Speaker Z9', // letter+digits diarizer id (foresights's own parser fixture)
     'Speaker 1',
     'Speaker 12',
     'SPEAKER_00',

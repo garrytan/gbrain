@@ -3,13 +3,13 @@
  * `local_path` DEMONSTRABLY breaks the write-through / sync plane.
  *
  * The `default` source is the implicit write-through target for any unscoped
- * `gbrain put` / `gbrain capture` call that doesn't name a `--source`.
+ * `foresights put` / `foresights capture` call that doesn't name a `--source`.
  * IMPORTANT: `local_path: null` on the `default` row is NOT an error by
  * itself — it is the designed fallback topology. `resolvePageWriteTarget`
  * (write-through.ts) nests default-source pages under `sync.repo_path` when
  * `default.local_path` is null, and the #2018 leak guard already refuses to
  * write into a path that is another source's own working tree. A fresh
- * `gbrain init` leaves `default.local_path` null on purpose.
+ * `foresights init` leaves `default.local_path` null on purpose.
  *
  * So this check warns ONLY when the null pointer provably breaks something:
  *
@@ -28,7 +28,7 @@
  *
  * Everything else (no pages yet, resolvable repo fallback, deliberate
  * DB-only brain) reports ok. The repair for a genuinely broken pointer is
- * the non-destructive `gbrain sources set-path default <path>`.
+ * the non-destructive `foresights sources set-path default <path>`.
  *
  * Pure assessment helper (no DB/FS access — the caller supplies the
  * gathered inputs) so it is unit-testable, in the same shape as
@@ -76,7 +76,7 @@ export function assessDefaultSourcePath(
         `default source local_path "${defaultSource.local_path}" is not an absolute path on this host (another host sharing this ` +
         'brain may have set it), so sync here refuses it (sync_anchor_relative). If that host owns the brain, sync from there and ' +
         'leave the path alone; otherwise ask the user which directory on this host holds the brain, then run ' +
-        '`gbrain sources set-path default <absolute-directory>`.',
+        '`foresights sources set-path default <absolute-directory>`.',
     };
   }
   if (defaultSource.local_path && !isHostAbsolutePath(defaultSource.local_path)) {
@@ -84,9 +84,9 @@ export function assessDefaultSourcePath(
       status: 'warn',
       message:
         `default source local_path is the relative path "${defaultSource.local_path}", which names whatever directory ` +
-        'gbrain runs from, so sync refuses it (sync_anchor_relative). Ask the user which directory holds the brain, then ' +
-        'run `gbrain sources set-path default <absolute-directory>`, or clear the pointer with ' +
-        '`gbrain sources set-path default --clear`.',
+        'foresights runs from, so sync refuses it (sync_anchor_relative). Ask the user which directory holds the brain, then ' +
+        'run `foresights sources set-path default <absolute-directory>`, or clear the pointer with ' +
+        '`foresights sources set-path default --clear`.',
     };
   }
   if (defaultSource.local_path) {
@@ -102,7 +102,7 @@ export function assessDefaultSourcePath(
         `default source has no local_path and sync.repo_path "${repoPath}" is not an absolute path on this host (another host ` +
         'sharing this brain may have set it), so default-source page writes here skip the repository and sync refuses it. If ' +
         'that host owns the brain, sync from there and leave the path alone; otherwise ask the user which directory on this ' +
-        'host holds the brain, then run `gbrain sources set-path default <absolute-directory>`.',
+        'host holds the brain, then run `foresights sources set-path default <absolute-directory>`.',
     };
   }
   if (repoPath && !isHostAbsolutePath(repoPath)) {
@@ -110,9 +110,9 @@ export function assessDefaultSourcePath(
       status: 'warn',
       message:
         `default source has no local_path and sync.repo_path is the relative path "${repoPath}", which names whatever ` +
-        'directory gbrain runs from, so default-source page writes skip the repository. Ask the user which directory holds ' +
-        'the brain, then run `gbrain sources set-path default <absolute-directory>` (or ' +
-        '`gbrain config set sync.repo_path <absolute-directory>`).',
+        'directory foresights runs from, so default-source page writes skip the repository. Ask the user which directory holds ' +
+        'the brain, then run `foresights sources set-path default <absolute-directory>` (or ' +
+        '`foresights config set sync.repo_path <absolute-directory>`).',
     };
   }
   // null local_path — the designed fallback topology. Only warn when the
@@ -132,8 +132,8 @@ export function assessDefaultSourcePath(
       message:
         `default source has local_path: null and sync.repo_path (${repoPath}) is, or lies inside, source ` +
         `"${collidingSourceId}"'s own working tree — the #2018 leak guard silently SKIPS every ` +
-        `unscoped write-through for the ${livePages} default-source page(s), so \`gbrain put\`/` +
-        '`gbrain capture` writes never reach disk. Fix with `gbrain sources set-path default <path>` ' +
+        `unscoped write-through for the ${livePages} default-source page(s), so \`foresights put\`/` +
+        '`foresights capture` writes never reach disk. Fix with `foresights sources set-path default <path>` ' +
         '(non-destructive pointer repair).' +
         (sharedPages > 0
           ? ` ${sharedPages} default-source page(s) share a file path with a live "${collidingSourceId}" page: an earlier ` +
@@ -159,7 +159,7 @@ export function assessDefaultSourcePath(
         `(${repoPath ? `set to ${repoPath}, which is not a directory on disk` : 'not set'}), ` +
         `but ${fileBackedPages} of its ${livePages} page(s) are file-backed (source_path recorded) — ` +
         'write-through, fence writes, and delete-reconcile cannot locate their files. ' +
-        'Fix with `gbrain sources set-path default <path>` (non-destructive pointer repair).',
+        'Fix with `foresights sources set-path default <path>` (non-destructive pointer repair).',
     };
   }
   return {

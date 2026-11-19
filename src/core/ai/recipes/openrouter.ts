@@ -55,7 +55,7 @@ export function openrouterRequiresExplicitPromptCache(modelId: string): boolean 
  * #4172) and OpenRouter's DeepSeek hosts serve the same models — reasoning
  * bills as OUTPUT tokens against max_tokens, so output-cap sizing must grant
  * the same headroom on the OR route (#4758). Z.ai's GLM-4.5+/5.x think by
- * default too (zhipu recipe, gbrain#4727) and OR bills their reasoning as
+ * default too (zhipu recipe, foresights#4727) and OR bills their reasoning as
  * completion tokens — same cutoff, same headroom under the `z-ai/` prefix.
  * Particle (`particle-ai/`) reasons by default as well and OR bills it as
  * completion tokens, so a thinking:'off' call needs the same headroom (GST-1977).
@@ -113,7 +113,7 @@ function withSystemCacheControl(body: unknown): unknown {
  * an HTTP 200 body: `{ error: { message, code, metadata? } }` (#5473). The
  * AI SDK validates that body against the chat-completion schema and throws
  * an `APICallError` with `statusCode: 200`, so neither the SDK's
- * status-keyed retry nor gbrain's status-keyed classification sees the real
+ * status-keyed retry nor foresights's status-keyed classification sees the real
  * condition.
  *
  * Only a 200 `application/json` body whose integer `error.code` is 429 or
@@ -225,7 +225,7 @@ export const openrouterCompatFetch = (async (
  * back-compat alias per OR docs). Defaults to `https://gbrain.ai` / `gbrain`;
  * forks override via `OPENROUTER_REFERER` / `OPENROUTER_TITLE` env vars so
  * downstream agent stacks (OpenClaw deployments, etc.) get their own
- * attribution on OR's leaderboard instead of polluting gbrain's.
+ * attribution on OR's leaderboard instead of polluting foresights's.
  *
  * Subagent loops: Anthropic (`anthropic/…`) and DeepSeek (`deepseek/…`)
  * routes declare `supports_subagent_loop` so classifyCapabilities() allows
@@ -240,7 +240,7 @@ export const openrouter: Recipe = {
   tier: 'openai-compat',
   implementation: 'openai-compatible',
   // No shipped rate for these yet: they warn and run under a default cap; a
-  // user cap refuses them until `gbrain pricing set` registers one (X1 guard).
+  // user cap refuses them until `foresights pricing set` registers one (X1 guard).
   unpriced_models: [
     'anthropic/claude-haiku-4.5',
     'google/gemini-3-flash-preview',
@@ -299,7 +299,7 @@ export const openrouter: Recipe = {
       trust_custom_dims: true,
       // text-embedding-3-small was trained at MRL breakpoints 512/1024/1536
       // (Weaviate analysis); 768 is a practical intermediate. Users opt into
-      // a smaller dim via `gbrain config set embedding_dimensions <N>`.
+      // a smaller dim via `foresights config set embedding_dimensions <N>`.
       dims_options: [512, 768, 1024, 1536],
       cost_per_1m_tokens_usd: 0.02,
       price_last_verified: '2026-05-20',

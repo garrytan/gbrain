@@ -183,7 +183,7 @@ export async function upsertChunksOnce(
     if (!resolvedModel) resolvedModel = (await modelRows)?.[0]?.value ?? null;
     resolvedModel = writeCol.embeddingModel || resolvedModel;
     if (!resolvedModel && chunks.some(chunk => chunk.embedding && !chunk.model)) {
-      throw new Error('Embedding model provenance is unknown. Supply an explicit chunk model or run gbrain migrate embeddings --status before an explicit migration.');
+      throw new Error('Embedding model provenance is unknown. Supply an explicit chunk model or run foresights migrate embeddings --status before an explicit migration.');
     }
     if (!resolvedModel) resolvedModel = 'unconfigured';
 
@@ -819,7 +819,7 @@ export async function listStaleChunks(exec: ScopedRead, column: string, opts?: {
  * as for a body holding only a protected takes fence, so a heal cannot
  * produce a chunk. Deleting a page's chunks clears its seal (deleteChunks, an
  * empty fragment replacement), so a page emptied after sealing stays healable. An embed_skip page is not excluded: every write keeps
- * its chunks for keyword search (#6722), so one with none (an older gbrain's
+ * its chunks for keyword search (#6722), so one with none (an older foresights's
  * size skip, or a backfill rewrite that never landed) is drift the safety net
  * chunks; its chunks get no vectors (#7174).
  */

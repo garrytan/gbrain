@@ -130,11 +130,11 @@ export function syncKeySetNotice(key: string): { writes: boolean; lines: string[
 /** #7630: the `config set sync.repo_path` refusal for a relative value, or null when it may be stored. */
 export function syncRepoPathRefusal(value: string): string | null {
   if (isHostAbsolutePath(value)) return null;
-  return `sync.repo_path must be an absolute directory (got '${value}'): a relative path names whatever directory gbrain runs from, and sync refuses it (sync_anchor_relative). Nothing was written.`;
+  return `sync.repo_path must be an absolute directory (got '${value}'): a relative path names whatever directory foresights runs from, and sync refuses it (sync_anchor_relative). Nothing was written.`;
 }
 
 /**
- * `gbrain config get|set` of a retired or rollback key. `get` prints the value in effect (stdout) and its origin
+ * `foresights config get|set` of a retired or rollback key. `get` prints the value in effect (stdout) and its origin
  * (stderr); `set` prints the key's notice. True when the command is done: every `get`, and the `set` of a retired key,
  * which writes nothing. A rollback key's `set` returns false so the write goes ahead; any other key returns false.
  * #6712 PR 4b: `get sync.admission` prints the value in effect (`normal` when unset) and when it was set.
@@ -146,7 +146,7 @@ export async function handleSyncKeyConfig(engine: Pick<BrainEngine, 'getConfig' 
     console.log(setting.value);
     console.error(`[config] source: ${setting.stored === null ? 'default (unset)'
       : setting.stored !== setting.value ? `brain config holds ${JSON.stringify(setting.stored.slice(0, 40))}, which is not a value; managed sync reads it as ${setting.value} (fail closed)`
-      : `brain config${setting.set_at ? `, set at ${setting.set_at}` : ' (set_at unknown)'}`}${setting.value === 'normal' ? '' : '. Restore the default with gbrain config set sync.admission normal'}.`);
+      : `brain config${setting.set_at ? `, set at ${setting.set_at}` : ' (set_at unknown)'}`}${setting.value === 'normal' ? '' : '. Restore the default with foresights config set sync.admission normal'}.`);
     return true;
   }
   if (!retiredSyncKey(key) && !rollbackSyncKey(key)) return false;

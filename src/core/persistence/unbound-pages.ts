@@ -3,7 +3,7 @@
  * #5254 collision resolution). A page written while its source had no
  * canonical owner is stored without a recorded origin: no `source_path` and no
  * `source_uri`. After the source is bound, a canonical file can appear at the
- * page's slug-derived path; `gbrain sources reconcile` then previews both sides
+ * page's slug-derived path; `foresights sources reconcile` then previews both sides
  * against that path instead of refusing for want of a recorded origin.
  *
  * `isDatabaseOnlyPage` is the one predicate reconcile consults. It requires

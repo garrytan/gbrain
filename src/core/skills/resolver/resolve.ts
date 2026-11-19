@@ -194,7 +194,7 @@ const STAT_TIER_KINDS: readonly string[] = ['dir', 'claude_plugins'];
 function defaultCatalogs(home: string): string[] {
   const all = listCatalogs(home);
   if (all.length === 1) return all;
-  if (all.length === 0) throw new ResolverError('skill_index_missing', 'No skill catalog has been built yet.', { suggestion: 'Build one: gbrain skills index build --catalog <name> --dir <skills dir> (or --bundled, or --from-json <file>).', argv: ['gbrain', 'skills', 'index', 'build', '--help'] });
+  if (all.length === 0) throw new ResolverError('skill_index_missing', 'No skill catalog has been built yet.', { suggestion: 'Build one: foresights skills index build --catalog <name> --dir <skills dir> (or --bundled, or --from-json <file>).', argv: ['gbrain', 'skills', 'index', 'build', '--help'] });
   throw new ResolverError('skill_catalog_unknown', `Several catalogs exist (${all.join(', ')}); pick one with --catalog.`, { suggestion: `Pass --catalog with one of: ${all.join(', ')}.` }, { catalogs: all.join(',') });
 }
 
@@ -202,13 +202,13 @@ function defaultCatalogs(home: string): string[] {
 export function openCatalogIndex(home: string, name: string): OpenedCatalog {
   let receipt = readReceipt(home, name);
   if (!receipt) {
-    if (existsSync(catalogFile(home, name, 'index.bin'))) throw new ResolverError('skill_index_incompatible', `The catalog "${name}" has an index but no readable receipt.`, { suggestion: 'Rebuild it with gbrain skills index build.' }, { catalog: name });
-    throw new ResolverError('skill_index_missing', `The catalog "${name}" has not been built.`, { suggestion: `Build it: gbrain skills index build --catalog ${name} --dir <skills dir> (or --bundled, or --from-json <file>).` }, { catalog: name });
+    if (existsSync(catalogFile(home, name, 'index.bin'))) throw new ResolverError('skill_index_incompatible', `The catalog "${name}" has an index but no readable receipt.`, { suggestion: 'Rebuild it with foresights skills index build.' }, { catalog: name });
+    throw new ResolverError('skill_index_missing', `The catalog "${name}" has not been built.`, { suggestion: `Build it: foresights skills index build --catalog ${name} --dir <skills dir> (or --bundled, or --from-json <file>).` }, { catalog: name });
   }
   const fix = receipt.build?.rebuild_argv ?? undefined;
   if (receipt.schema_version !== 1 || receipt.ranker?.id !== RANKER_ID || receipt.ranker?.version !== RANKER_VERSION) {
-    throw new ResolverError('skill_index_incompatible', `The catalog "${name}" was built by an incompatible gbrain (receipt schema ${receipt.schema_version}, ranker ${receipt.ranker?.id} v${receipt.ranker?.version}).`,
-      fix ? { suggestion: 'Rebuild it with the command it was built with.', argv: fix } : { suggestion: 'The adapter that owns this catalog rebuilds it by passing a new snapshot to gbrain skills index build --from-json -.' }, { catalog: name });
+    throw new ResolverError('skill_index_incompatible', `The catalog "${name}" was built by an incompatible foresights (receipt schema ${receipt.schema_version}, ranker ${receipt.ranker?.id} v${receipt.ranker?.version}).`,
+      fix ? { suggestion: 'Rebuild it with the command it was built with.', argv: fix } : { suggestion: 'The adapter that owns this catalog rebuilds it by passing a new snapshot to foresights skills index build --from-json -.' }, { catalog: name });
   }
   const ix = IndexReader.open(catalogFile(home, name, 'index.bin'), fix);
   let publishing = false;
@@ -223,9 +223,9 @@ export function openCatalogIndex(home: string, name: string): OpenedCatalog {
 }
 
 /**
- * The turn's staleness verdict for an opened catalog: publishing, a gbrain
+ * The turn's staleness verdict for an opened catalog: publishing, a foresights
  * version skew, or (directory catalogs) one slice of the stat sweep. A stale
- * catalog gbrain can rebuild gets stale.stamp once (no fsync; an existing
+ * catalog foresights can rebuild gets stale.stamp once (no fsync; an existing
  * stamp is left alone); an adapter-owned stdin catalog never does.
  */
 function turnStaleness(home: string, c: OpenedCatalog, now: number, autoRebuild: boolean): string | null {
@@ -289,7 +289,7 @@ export async function runTurn(rawInput: TurnInput | unknown, opts: ResolveOption
   try {
     return await resolveInner(input, opts, home, t0, source);
   } catch (e) {
-    const err = e instanceof ResolverError ? e : new ResolverError('skill_resolver_internal', 'The skill resolver failed unexpectedly; a scrubbed trace was written under skill-index/logs/.', { suggestion: 'Run gbrain skills index status and report the trace if it repeats.', argv: ['gbrain', 'skills', 'index', 'status', '--json'] });
+    const err = e instanceof ResolverError ? e : new ResolverError('skill_resolver_internal', 'The skill resolver failed unexpectedly; a scrubbed trace was written under skill-index/logs/.', { suggestion: 'Run foresights skills index status and report the trace if it repeats.', argv: ['gbrain', 'skills', 'index', 'status', '--json'] });
     if (!(e instanceof ResolverError)) logUnexpected(home, e);
     if (!opts.failOpen || err.usage) throw err;
     const output = errorTurnOutput(err, { shadow: input.shadow, catalog: opts.catalogs?.length === 1 ? opts.catalogs[0]! : null });
@@ -301,7 +301,7 @@ export async function runTurn(rawInput: TurnInput | unknown, opts: ResolveOption
 async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: ResolveOptions, home: string, t0: number, source: TurnSource): Promise<ResolveResult> {
   const now = (opts.now ?? Date.now)();
   const check = opts.deadlineMs === undefined ? () => {} : () => {
-    if (performance.now() - t0 > opts.deadlineMs!) throw new ResolverError('skill_resolve_timeout', `The resolver ran past its ${opts.deadlineMs} ms deadline; nothing was committed.`, { suggestion: 'The turn proceeds without a block; check the index size with gbrain skills index status.' });
+    if (performance.now() - t0 > opts.deadlineMs!) throw new ResolverError('skill_resolve_timeout', `The resolver ran past its ${opts.deadlineMs} ms deadline; nothing was committed.`, { suggestion: 'The turn proceeds without a block; check the index size with foresights skills index status.' });
   };
   const settings = source.settings(home, opts.env);
   const budget = opts.sessionTokenBudget === undefined ? settings.sessionTokenBudget : validateSessionTokenBudget(opts.sessionTokenBudget, 'sessionTokenBudget');
@@ -316,7 +316,7 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
     const variant = loaded.map(l => l.receipt.ranker.variant).join('+');
     if (input.expected_catalog_hash !== undefined && input.expected_catalog_hash !== catalogHash) {
       throw new ResolverError('skill_catalog_mismatch', `The catalog "${catalog}" was built from a different skill list than the caller expects (expected ${input.expected_catalog_hash.slice(0, 12)}, index has ${catalogHash.slice(0, 12)}).`,
-        { suggestion: 'Rebuild the catalog from the current skill list (an adapter passes its new snapshot to gbrain skills index build --from-json -), then retry.' }, { catalog, catalog_hash: catalogHash });
+        { suggestion: 'Rebuild the catalog from the current skill list (an adapter passes its new snapshot to foresights skills index build --from-json -), then retry.' }, { catalog, catalog_hash: catalogHash });
     }
     const oldest = Math.min(...loaded.map(l => Date.parse(l.receipt.build.built_at)));
     const meta = { timing_ms: 0, index_age_s: Number.isFinite(oldest) ? Math.max(0, Math.floor((now - oldest) / 1000)) : null, index_stale: loaded.some(l => l.stale !== null) };

@@ -1,7 +1,7 @@
 /**
- * The undo ledger of `gbrain repair private-labels`, kept by the CLI so the
+ * The undo ledger of `foresights repair private-labels`, kept by the CLI so the
  * repair core touches no filesystem (GBRA-248): one JSON line per cleared or
- * restored page at <gbrain home>/repair/private-labels/<brain_id>.jsonl, in a
+ * restored page at <foresights home>/repair/private-labels/<brain_id>.jsonl, in a
  * 0700 directory, the file 0600. The core reads the lines for --class restore
  * and appends through `record`.
  */

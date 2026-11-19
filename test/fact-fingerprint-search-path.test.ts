@@ -1,5 +1,5 @@
 /**
- * #5190 + C-NEW-1: gbrain functions pin search_path, and the fact fingerprint
+ * #5190 + C-NEW-1: foresights functions pin search_path, and the fact fingerprint
  * functions (which back the withdrawal index and `forget`) return the same
  * bytes after the change. Authoring gate: (1) protects the fingerprint and
  * normalize outputs (pinned from master before the change), their behavior
@@ -104,7 +104,7 @@ for (const kind of testBackends()) {
       }
     });
 
-    test('every gbrain plpgsql function pins search_path after a fresh migrate', async () => {
+    test('every foresights plpgsql function pins search_path after a fresh migrate', async () => {
       expect(await unpinned()).toEqual([]);
     });
 

@@ -1,6 +1,6 @@
 /**
  * #5988 Lane A: managed sync publication uses the shared content screen.
- * A file whose frontmatter gbrain can read by quoting (the issue's exact
+ * A file whose frontmatter foresights can read by quoting (the issue's exact
  * `author:` line) syncs instead of blocking; a file it would have to guess at
  * is refused with the typed, location-only `Invalid YAML frontmatter:`
  * message, which sync output and `get_write_request` show as is, and which

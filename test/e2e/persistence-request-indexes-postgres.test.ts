@@ -22,7 +22,7 @@ import { withEnv } from '../helpers/with-env.ts';
 
 // #5762 on Postgres: the checkpoint validation is index-served on a
 // 512k-row request table, the indexes stay out of the schema blob and are
-// built CONCURRENTLY by v179, and `gbrain repair request-indexes` rebuilds a
+// built CONCURRENTLY by v179, and `foresights repair request-indexes` rebuilds a
 // dropped or INVALID one on a current schema.
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-5762-pg-'));
@@ -110,16 +110,16 @@ test('#5762 the Postgres blob never builds the indexes; v179 builds them concurr
   expect(await states()).toEqual(['valid', 'valid', 'valid', 'valid', 'valid', 'valid', 'valid']);
 }), 120_000);
 
-test('#5762 gbrain repair request-indexes rebuilds a dropped and an INVALID index on a current schema; a second run is a no-op', async () => withEnv(env, async () => {
+test('#5762 foresights repair request-indexes rebuilds a dropped and an INVALID index on a current schema; a second run is a no-op', async () => withEnv(env, async () => {
   await engine.executeRaw('DROP INDEX persistence_requests_sync_run_open');
   await engine.executeRaw("UPDATE pg_index SET indisvalid=false WHERE indexrelid='persistence_requests_sync_run_committed'::regclass");
   expect(await readRequestIndexStates(engine)).toEqual([{ name: NAMES[0], state: 'missing' }, { name: NAMES[1], state: 'invalid' }, { name: ALL_NAMES[2], state: 'valid' }, { name: ALL_NAMES[3], state: 'valid' }, { name: ALL_NAMES[4], state: 'valid' }, { name: ALL_NAMES[5], state: 'valid' }, { name: ALL_NAMES[6], state: 'valid' }]);
   const doctor = await requestIndexesCheck(engine);
-  expect(doctor).toMatchObject({ name: 'persistence_request_indexes', status: 'warn', details: { count: 2, command: 'gbrain repair request-indexes --apply' } });
+  expect(doctor).toMatchObject({ name: 'persistence_request_indexes', status: 'warn', details: { count: 2, command: 'foresights repair request-indexes --apply' } });
   expect(doctor.message).toContain('persistence_requests_sync_run_committed is INVALID');
   const scope = await resolveRepairScope(engine);
   const preview = await runRepair(ctx(), requestIndexesRepair, scope, { apply: false });
-  expect(preview).toMatchObject({ affected: 2, cost: { lifetime_ids: 0 }, apply_command: 'gbrain repair request-indexes --apply' });
+  expect(preview).toMatchObject({ affected: 2, cost: { lifetime_ids: 0 }, apply_command: 'foresights repair request-indexes --apply' });
   expect(await states()).toEqual(['missing', 'invalid', 'valid', 'valid', 'valid', 'valid', 'valid']);
   const applied = await runRepair(ctx(), requestIndexesRepair, scope, { apply: true });
   expect(applied).toMatchObject({ applied: 2, complete: true });
@@ -172,8 +172,8 @@ test('#5762 recovery journey: a checkpoint timeout with a dropped index is fixed
   } finally { engine.transaction = transaction; }
   const suggestion = result.managedWrite!.suggestion;
   expect(result.managedWrite).toMatchObject({ write_error: 'checkpoint_validation_timeout', detail: 'index_missing' });
-  const commands = [...suggestion.matchAll(/gbrain [^—]+?(?= — |$)/g)].map(match => match[0].trim());
-  expect(commands).toEqual(['gbrain repair request-indexes --apply', `gbrain sync --source ${f.id} --no-pull --no-embed --no-extract`]);
+  const commands = [...suggestion.matchAll(/(?:foresights|gbrain) [^—]+?(?= — |$)/g)].map(match => match[0].trim());
+  expect(commands).toEqual(['foresights repair request-indexes --apply', `foresights sync --source ${f.id} --no-pull --no-embed --no-extract`]);
   // Command 1: the printed rebuild.
   expect(await runRepair(ctx(), requestIndexesRepair, await resolveRepairScope(engine), { apply: true })).toMatchObject({ applied: 1 });
   // Command 2: the printed retry.

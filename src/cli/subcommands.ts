@@ -85,7 +85,7 @@ export function subcommandHelpRequested(args: readonly string[], router?: Router
   return router.subcommands.includes(args[0] ?? '') && args[1] === 'help';
 }
 
-/** The help decision for `gbrain <command> ...args`, made once in cli.ts before any side effect. */
+/** The help decision for `foresights <command> ...args`, made once in cli.ts before any side effect. */
 export function cliHelpRequested(command: string, args: readonly string[]): boolean {
   return subcommandHelpRequested(args, ROUTERS[command]);
 }

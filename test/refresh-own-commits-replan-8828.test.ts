@@ -1,7 +1,7 @@
 /**
- * #8828: a refresh whose drain waited for gbrain's own writes saw HEAD move past the precheck's old_head (those writes' commits,
+ * #8828: a refresh whose drain waited for foresights's own writes saw HEAD move past the precheck's old_head (those writes' commits,
  * pushed upstream by the writer), refused refresh_source_changed, and its same-run retry met the next writes and refused too. When
- * every commit since old_head is gbrain's own and the upstream it pushed to holds them, the refresh now takes HEAD as its start
+ * every commit since old_head is foresights's own and the upstream it pushed to holds them, the refresh now takes HEAD as its start
  * under the fence and fast-forwards to that upstream; any other HEAD move still refuses.
  * Seams: the real refresh state machine, commit ledger and git; PGLite, and Postgres when DATABASE_URL is set.
  */
@@ -52,7 +52,7 @@ const each = (fn: (f: RefreshFixture) => Promise<void>) => withEnv({ GBRAIN_REFR
 function ownCommitPublished(f: RefreshFixture, n: number, foreign = false): { own: string; published: string } {
   let own = commitFile(f.root, `alpha/drained-${n}.md`, page(`Drained ${n}`, 'A write admitted before the fence.'), 'gbrain: persist canonical memory update');
   recordCommit(f.root, { sha: own, writer: 'effect' });
-  if (foreign) own = commitFile(f.root, `alpha/foreign-${n}.md`, page('Foreign', 'A commit gbrain did not make.'), 'foreign commit');
+  if (foreign) own = commitFile(f.root, `alpha/foreign-${n}.md`, page('Foreign', 'A commit foresights did not make.'), 'foreign commit');
   git(f.root, 'fetch', '-q', 'origin');
   const remote = git(f.root, 'rev-parse', 'origin/main');
   const tree = git(f.root, 'merge-tree', '--write-tree', own, remote);
@@ -62,7 +62,7 @@ function ownCommitPublished(f: RefreshFixture, n: number, foreign = false): { ow
   return { own, published };
 }
 
-test('#8828: a refresh whose drain landed gbrain\'s own published commits fast-forwards from them instead of refusing refresh_source_changed', () => each(async f => {
+test('#8828: a refresh whose drain landed foresights\'s own published commits fast-forwards from them instead of refusing refresh_source_changed', () => each(async f => {
   const upstream = f.push('alpha/two.md', page('Alpha two', 'An upstream observation.'));
   const landed: Array<{ own: string; published: string }> = [];
   const result = await refreshWorktree(f.engine, f.alpha, { hooks: { boundary: async point => {
@@ -79,7 +79,7 @@ test('#8828: a refresh whose drain landed gbrain\'s own published commits fast-f
   expect(await f.lastCommit(f.beta)).toBe(landed[0]!.published);
 }), 180_000);
 
-test('#8828: a HEAD move under the fence that is not all gbrain\'s own published commits still refuses refresh_source_changed', () => each(async f => {
+test('#8828: a HEAD move under the fence that is not all foresights\'s own published commits still refuses refresh_source_changed', () => each(async f => {
   f.push('alpha/two.md', page('Alpha two', 'An upstream observation.'));
   let n = 0;
   const unpublished = await refreshWorktree(f.engine, f.alpha, { hooks: { boundary: async point => {
@@ -91,14 +91,14 @@ test('#8828: a HEAD move under the fence that is not all gbrain\'s own published
   for (const row of await f.refreshRows()) expect(row.state).toBe('aborted');
 }), 180_000);
 
-test('#8828: one foreign commit among gbrain\'s own published commits still refuses refresh_source_changed and merges nothing', () => each(async f => {
+test('#8828: one foreign commit among foresights\'s own published commits still refuses refresh_source_changed and merges nothing', () => each(async f => {
   f.push('alpha/two.md', page('Alpha two', 'An upstream observation.'));
   const landed: Array<{ own: string; published: string }> = [];
   const refused = await refreshWorktree(f.engine, f.alpha, { hooks: { boundary: async point => {
     if (point === 'drained') landed.push(ownCommitPublished(f, landed.length + 1, true));
   } } }).then(() => null, thrown => thrown as { code?: string; message: string });
   expect(refused?.code).toBe('refresh_source_changed');
-  expect(refused?.message).toContain('a commit or checkout gbrain did not make');
+  expect(refused?.message).toContain('a commit or checkout foresights did not make');
   expect(landed).toHaveLength(2);
   expect(f.head()).toBe(landed[1]!.own);
   const rows = await f.refreshRows();

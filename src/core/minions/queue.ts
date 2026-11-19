@@ -207,7 +207,7 @@ export class MinionQueue {
     const current = parseInt(ver || '1', 10);
     if (current < MIGRATION_VERSION) {
       throw new Error(
-        `minion_jobs table not found (schema version ${current}, need ${MIGRATION_VERSION}). Run 'gbrain init' to apply migrations.`
+        `minion_jobs table not found (schema version ${current}, need ${MIGRATION_VERSION}). Run 'foresights init' to apply migrations.`
       );
     }
   }
@@ -2540,7 +2540,7 @@ export class MinionQueue {
 
 /**
  * issue #1801 / CLI→MCP gap-closure wave (CEO-F7) — derive the wedged-queue
- * boolean from getStats().wedge, shared by `gbrain jobs stats` and the
+ * boolean from getStats().wedge, shared by `foresights jobs stats` and the
  * get_job_stats op so the two surfaces can never disagree. A queue is wedged
  * when a worker is alive but claiming nothing while work waits:
  * zero live-lock active rows, waiting > 0, and the last completion is older
@@ -2549,7 +2549,7 @@ export class MinionQueue {
  *
  * Queue honesty (agent-first operator wave E5): when the caller knows no
  * worker is running for the queue (`workerAlive: false` — always on PGLite
- * unless a `gbrain jobs work` drain is live), waiting work is `no_worker`, not
+ * unless a `foresights jobs work` drain is live), waiting work is `no_worker`, not
  * wedged: nothing is stuck, nothing is running it. Omitted liveness keeps the
  * pre-E5 derivation (doctor's wedged_queue check).
  */

@@ -1,7 +1,7 @@
 /**
- * GST-2603: a label repair refused pages whose file differs from the database row only in frontmatter gbrain derived itself.
+ * GST-2603: a label repair refused pages whose file differs from the database row only in frontmatter foresights derived itself.
  *
- * 1. Protects: gbrain repair visibility --slug (and repair private-labels, through the same label-only write) labels a page
+ * 1. Protects: foresights repair visibility --slug (and repair private-labels, through the same label-only write) labels a page
  *    whose stored row carries a stamp its file never had: a schema-pack retype (type plus its legacy_type record, the file
  *    still naming the old type), the pre-#6454 stored type copy of a renamed gbrain-base type, the grandfather validate:false
  *    stamp, or a legacy_type record whose file already names the page's type. The file changes only on its label line. A page
@@ -9,12 +9,12 @@
  *    out of the preview hash and the approved set; at apply a page whose file changed since the preview declines alone
  *    (source_changed, or label_edit_refused when its label line can no longer be edited as a line), counts in declined,
  *    never trips item_failures_systemic, and the run exits 0. A repo-less brain and an unmanaged checkout label the same way.
- *    An exact-page access rule (gbrain access rule add --slug) is a readers list, not the private label: a named reader reads
+ *    An exact-page access rule (foresights access rule add --slug) is a readers list, not the private label: a named reader reads
  *    it, while the label repair's private page stays hidden from that reader.
  * 2. Fails when: a stamp-only page refuses or trips the breaker, a held page is listed, approved, hashed or names a stamp, a
  *    declined page stops the run or exits 1, or a page rule is offered as the same label class.
  * 3. Real seams: the managed-brain harness (claimed Git worktree, managed sync, the maintenance door, the Git effect),
- *    remote:false, the gbrain repair and gbrain access rule command entries, MCP dispatch with minted tokens; a repo-less brain
+ *    remote:false, the foresights repair and foresights access rule command entries, MCP dispatch with minted tokens; a repo-less brain
  *    and a brain without managed persistence whose source has a checkout. PGLite, and Postgres with DATABASE_URL.
  */
 import { describe, expect, spyOn, test } from 'bun:test';
@@ -51,7 +51,7 @@ const note = (title: string, lines: string[], body: string) => ['---', 'title: '
 /** The file a label repair publishes: the same bytes with \`visibility: private\` as the frontmatter's last line. */
 const withVisibility = (text: string) => text.replace(NL + '---' + NL + NL, NL + 'visibility: private' + NL + '---' + NL + NL);
 
-/** Each page's file and the database-only edit an older gbrain made to its row. */
+/** Each page's file and the database-only edit an older foresights made to its row. */
 const PAGES: Record<string, { file: string; stamp: string }> = {
   // A schema-pack retype: the column took the new type and legacy_type records the old one; the file still names the old type.
   'notes/retyped-example': { file: note('Retyped', ['type: note'], 'Retyped body.'), stamp: "type='media', frontmatter=frontmatter || '{\"legacy_type\":\"note\"}'::jsonb" },
@@ -99,11 +99,11 @@ const row = async (engine: BrainEngine, slug: string, sourceId = 'default') => (
 const stampRow = (engine: BrainEngine, sourceId: string, slug: string, set: string) => engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], () => withTrustBackfill(tx, () =>
   tx.executeRaw('UPDATE pages SET ' + set + ', knowledge_revision=gen_random_uuid() WHERE source_id=$1 AND slug=$2', [sourceId, slug])), TEST_WRITE_ATTRIBUTION));
 
-for (const backend of testBackends()) describe('[' + backend + '] label repairs over gbrain\'s own derived stamps on a managed git source', () => {
+for (const backend of testBackends()) describe('[' + backend + '] label repairs over foresights\'s own derived stamps on a managed git source', () => {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
   const setup = ({ root }: { root: string }) => { writeFileSync(join(root, '.gitignore'), 'archive/' + NL); durableGitRepo(root, ['.gitignore']); };
   const onDisk = (root: string, slug: string) => readFileSync(join(root, slug + '.md'), 'utf8');
-  /** Commits the pages' files, syncs them, then makes each stored row's database-only edit as an older gbrain did. */
+  /** Commits the pages' files, syncs them, then makes each stored row's database-only edit as an older foresights did. */
   async function seed(engine: BrainEngine, root: string, files: Record<string, string>, stamps: Record<string, string> = {}) {
     for (const [slug, text] of Object.entries(files)) { mkdirSync(join(root, slug, '..'), { recursive: true }); writeFileSync(join(root, slug + '.md'), text); }
     git(root, 'add', '-A');
@@ -164,8 +164,8 @@ for (const backend of testBackends()) describe('[' + backend + '] label repairs 
     const preview = await repair(engine, slugArgs(slugs));
     expect(listedItems(preview)).toEqual(['default:notes/grand-example', 'default:notes/retyped-example']);
     expect(preview.details.held).toEqual([
-      { item: 'default:notes/dated-example', reason: 'file_database_drift', keys: ['date'], next: 'gbrain sources reconcile default notes/dated-example --preview' },
-      { item: 'default:notes/tagged-example', reason: 'file_database_drift', keys: ['tags'], next: 'gbrain sources reconcile default notes/tagged-example --preview' },
+      { item: 'default:notes/dated-example', reason: 'file_database_drift', keys: ['date'], next: 'foresights sources reconcile default notes/dated-example --preview' },
+      { item: 'default:notes/tagged-example', reason: 'file_database_drift', keys: ['tags'], next: 'foresights sources reconcile default notes/tagged-example --preview' },
     ]);
     expect(preview.residuals).toMatchObject({ held_file_drift: 2 });
     const held = { dated: onDisk(root, 'notes/dated-example'), tagged: onDisk(root, 'notes/tagged-example') };
@@ -187,7 +187,7 @@ for (const backend of testBackends()) describe('[' + backend + '] label repairs 
     await seedPages(engine, root, slugs);
     const preview = await repair(engine, slugArgs(slugs));
     expect(listedItems(preview)).toEqual(['default:notes/grand-example']);
-    expect(preview.details.held).toEqual([{ item: 'default:notes/mixed-example', reason: 'file_database_drift', keys: ['date'], next: 'gbrain sources reconcile default notes/mixed-example --preview' }]);
+    expect(preview.details.held).toEqual([{ item: 'default:notes/mixed-example', reason: 'file_database_drift', keys: ['date'], next: 'foresights sources reconcile default notes/mixed-example --preview' }]);
     expect(preview.warnings.join(' ')).toContain('1 page(s) are held');
     expect(JSON.stringify(preview.details.held)).not.toMatch(/validate|legacy_type|"type"/);
   }, { databaseUrl, setup }), 240_000);
@@ -200,7 +200,7 @@ for (const backend of testBackends()) describe('[' + backend + '] label repairs 
     writeFileSync(join(root, 'notes/dated-example.md'), PAGES['notes/dated-example']!.file.replace('Dated body.', 'Dated body, edited again.'));
     const second = await repair(engine, slugArgs(slugs));
     expect(second.preview_hash).toBe(first.preview_hash);
-    expect(second.details.held).toEqual([{ item: 'default:notes/dated-example', reason: 'file_database_drift', keys: ['date', 'body'], next: 'gbrain sources reconcile default notes/dated-example --preview' }]);
+    expect(second.details.held).toEqual([{ item: 'default:notes/dated-example', reason: 'file_database_drift', keys: ['date', 'body'], next: 'foresights sources reconcile default notes/dated-example --preview' }]);
     const applied = await run(engine, [...slugArgs(slugs), '--apply', '--expect', first.preview_hash]);
     expect({ applied: applied.result.applied, failed: applied.result.failed, exit: applied.exit }).toEqual({ applied: 1, failed: [], exit: 0 });
     expect((await row(engine, 'notes/dated-example')).frontmatter.visibility).toBeUndefined();
@@ -256,7 +256,7 @@ for (const backend of testBackends()) describe('[' + backend + '] label repairs 
     expect(onDisk(root, 'notes/readers-1')).toBe(note('Readers 1', ['readable_by:', '  - bob-example'], 'Readers body.'));
   }, { databaseUrl, setup }), 240_000);
 
-  test('repair private-labels clears a label on a page with gbrain\'s stamps, changing only the label line', () => managedBrain(async ({ engine, root }) => {
+  test('repair private-labels clears a label on a page with foresights\'s stamps, changing only the label line', () => managedBrain(async ({ engine, root }) => {
     const slug = 'notes/labelled-example';
     await seed(engine, root, { [slug]: note('Labelled', ['type: note', 'access: private'], 'Labelled body.') },
       { [slug]: "type='media', frontmatter=frontmatter || '{\"legacy_type\":\"note\",\"validate\":false}'::jsonb" });
@@ -269,7 +269,7 @@ for (const backend of testBackends()) describe('[' + backend + '] label repairs 
   }, { databaseUrl, setup }), 240_000);
 });
 
-/** A brain with no managed persistence (the default keyless install) whose pages carry gbrain's stamps. */
+/** A brain with no managed persistence (the default keyless install) whose pages carry foresights's stamps. */
 for (const backend of testBackends()) describe('[' + backend + '] label repairs over derived stamps without managed persistence', () => {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
   async function brain(fn: (engine: BrainEngine, home: string) => Promise<void>) {
@@ -354,7 +354,7 @@ for (const backend of testBackends()) describe('[' + backend + '] label repairs 
     await twinBrain(engine);
     const argv = ['visibility', '--source', 'default', '--slug', twin];
     const open = await repair(engine, argv);
-    expect(open.details.open_twins).toEqual({ count: 1, twins: [{ source_id: 'source-b', slug: twin, twin_of: 'default:' + twin }], commands: ['gbrain repair visibility --source source-b --slug ' + twin] });
+    expect(open.details.open_twins).toEqual({ count: 1, twins: [{ source_id: 'source-b', slug: twin, twin_of: 'default:' + twin }], commands: ['foresights repair visibility --source source-b --slug ' + twin] });
     expect(open.residuals.open_twins).toBe(1);
     expect(open.warnings.join(NL)).toContain('1 live page(s) in other sources share a slug with a page this changes');
     await stampRow(engine, 'source-b', twin, "frontmatter=frontmatter || '{\"visibility\":\"private\"}'::jsonb");
@@ -368,7 +368,7 @@ for (const backend of testBackends()) describe('[' + backend + '] label repairs 
     const file = join(home, 'access.yml');
     writeFileSync(file, ['version: 1', 'rules:', '  - slug: ' + twin, '    readable_by: [alice-example]', ''].join(NL));
     const open = await rules(engine, ['import', '--file', file, '--source', 'default']);
-    expect(open.open_twins).toEqual({ count: 1, twins: [{ source_id: 'source-b', slug: twin, twin_of: 'default:' + twin }], commands: ['gbrain access rule add --slug ' + twin + ' --readers alice-example --allow-without-owner --source source-b'] });
+    expect(open.open_twins).toEqual({ count: 1, twins: [{ source_id: 'source-b', slug: twin, twin_of: 'default:' + twin }], commands: ['foresights access rule add --slug ' + twin + ' --readers alice-example --allow-without-owner --source source-b'] });
     expect((await rules(engine, ['add', '--slug', twin, '--readers', 'alice-example', '--source', 'source-b', '--yes'])).state).toBe('applied');
     expect((await rules(engine, ['import', '--file', file, '--source', 'default'])).open_twins).toEqual({ count: 0, twins: [], commands: [] });
   }), 180_000);
@@ -378,7 +378,7 @@ for (const backend of testBackends()) describe('[' + backend + '] label repairs 
     const file = join(home, 'access.yml');
     writeFileSync(file, ['version: 1', 'rules:', '  - slug: ' + twin, '    readable_by: [alice-example]', ''].join(NL));
     const open = await rules(engine, ['import', '--file', file, '--source', 'default']);
-    const command = 'gbrain access rule add --slug ' + twin + ' --readers alice-example --allow-without-owner --source source-b';
+    const command = 'foresights access rule add --slug ' + twin + ' --readers alice-example --allow-without-owner --source source-b';
     expect(open.open_twins.commands).toEqual([command]);
     const spy = spyOn(console, 'log').mockImplementation(() => {});
     try { await runAccessRules(engine, 'rule', [...command.split(' ').slice(3), '--yes', '--json'], true); } finally { spy.mockRestore(); }

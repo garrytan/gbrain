@@ -132,11 +132,11 @@ d('#5254 Postgres put_page to an unbound filesystem source', () => {
     expect(refused.payload.detail).toBe('unbound_source');
     expect(refused.payload.docs).toBe(docsUrl(DOCS)); // agent contract v1: absolute, version-pinned wire docs
     const hint = refused.payload.suggestion as string;
-    expect(hint).toContain('gbrain sources writer status default --json');
-    expect(hint).toContain('gbrain sources writer claim default --path');
+    expect(hint).toContain('foresights sources writer status default --json');
+    expect(hint).toContain('foresights sources writer claim default --path');
     expect(hint).toContain('--admin-intent writer_claim --expected-state <admin_state>');
     expect(hint).toContain('ask the operator to unlock it first');
-    expect(hint).toContain('gbrain config set persistence.unbound_write database_only');
+    expect(hint).toContain('foresights config set persistence.unbound_write database_only');
     expect(hint).toContain('stay database-only and are not materialized');
     expect(await engine.readPageSnapshot(slug, { sourceId: 'default', includeDeleted: true })).toBeNull();
     // An explicit refuse behaves exactly like the default.
@@ -150,7 +150,7 @@ d('#5254 Postgres put_page to an unbound filesystem source', () => {
     catch (caught) { error = caught as typeof error; }
     expect(error?.code).toBe('owner_unavailable');
     expect(error?.detail).toBe('unbound_source');
-    expect(error?.suggestion).toContain(`gbrain sources writer claim default --path ${root} --admin-intent writer_claim`);
+    expect(error?.suggestion).toContain(`foresights sources writer claim default --path ${root} --admin-intent writer_claim`);
   });
 
   test('config set accepts refuse and database_only and rejects anything else', async () => {
@@ -188,8 +188,8 @@ d('#5254 Postgres put_page to an unbound filesystem source', () => {
     const refused = await put('Edited seed.', 'notes/seed');
     expect(refused.payload.error).toBe('owner_unavailable');
     expect(refused.payload.detail).toBe('unbound_source');
-    expect(refused.payload.suggestion).toContain('gbrain sources writer claim default --path');
-    expect(refused.payload.suggestion).not.toContain('gbrain config set persistence.unbound_write database_only');
+    expect(refused.payload.suggestion).toContain('foresights sources writer claim default --path');
+    expect(refused.payload.suggestion).not.toContain('foresights config set persistence.unbound_write database_only');
     expect(refused.payload.suggestion).toContain('came from a canonical file');
     expect((await engine.getPage('notes/seed', { sourceId: 'default' }))?.compiled_truth).toBe('Seed file.');
   });
@@ -291,7 +291,7 @@ d('#5254 Postgres put_page to an unbound filesystem source', () => {
     const unbound = await checkUnboundSource(engine);
     expect(unbound.status).toBe('ok');
     expect(unbound.message).toContain('default: 1');
-    expect(unbound.message).toContain('gbrain sources writer claim default --path');
+    expect(unbound.message).toContain('foresights sources writer claim default --path');
     expect(unbound.details).toMatchObject({ sources: [{ source_id: 'default', pages: 1, bound: false }] });
     await claimWorktree(engine, 'default', root);
     const bound = await checkUnboundSource(engine);
@@ -336,9 +336,9 @@ d('#5254 Postgres put_page to an unbound filesystem source', () => {
     const refused = await mutateAt('add_tag', 'notes/seed', { tag: 'example' });
     expect(refused.payload.error).toBe('owner_unavailable');
     expect(refused.payload.detail).toBe('unbound_source');
-    expect(refused.payload.suggestion).toContain('gbrain sources writer claim default --path');
+    expect(refused.payload.suggestion).toContain('foresights sources writer claim default --path');
     expect(refused.payload.suggestion).toContain('came from a canonical file');
-    expect(refused.payload.suggestion).not.toContain('gbrain config set persistence.unbound_write database_only');
+    expect(refused.payload.suggestion).not.toContain('foresights config set persistence.unbound_write database_only');
   });
 
   test('#5393 revert_version is judged on the version written: a version recorded with a canonical file refuses', async () => {
@@ -372,7 +372,7 @@ d('#5254 Postgres put_page to an unbound filesystem source', () => {
       const refused = await mutateAt(name, slug, params);
       expect(refused.payload.error, name).toBe('owner_unavailable');
       expect(refused.payload.detail).toBe('unbound_source');
-      expect(refused.payload.suggestion).toContain('gbrain config set persistence.unbound_write database_only');
+      expect(refused.payload.suggestion).toContain('foresights config set persistence.unbound_write database_only');
     }
   });
 
@@ -417,7 +417,7 @@ d('#6608 Postgres remember onto a page of an unbound filesystem source', () => {
     expect(refused.payload.detail).toBe('unbound_source');
     expect(refused.payload.fix.next).toBe('ask_user');
     expect(refused.payload.suggestion).toContain('came from a canonical file');
-    expect(refused.payload.suggestion).not.toContain('gbrain config set persistence.unbound_write database_only');
+    expect(refused.payload.suggestion).not.toContain('foresights config set persistence.unbound_write database_only');
     expect((await engine.executeRaw("SELECT 1 FROM facts WHERE source_id='default' AND entity_slug=$1", [entity])).length).toBe(0);
   });
 
@@ -431,6 +431,6 @@ d('#6608 Postgres remember onto a page of an unbound filesystem source', () => {
     expect(refused.payload.retryable).toBe(false);
     expect(refused.payload.fix.next).toBe('ask_user');
     expect(refused.payload.docs).toBe(docsUrl(DOCS));
-    expect(refused.payload.suggestion).toContain('gbrain config set persistence.unbound_write database_only');
+    expect(refused.payload.suggestion).toContain('foresights config set persistence.unbound_write database_only');
   });
 });

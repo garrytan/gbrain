@@ -24,7 +24,7 @@ import type { PoolRecoveryEventKind } from './audit/pool-recovery-audit.ts';
 /** #6543 (A6): where a resident process records its pool incidents (serve: the pool-recovery audit doctor reads). */
 export type PoolIncidentAudit = (kind: Extract<PoolRecoveryEventKind, `connection_${string}`>, detail: string) => void;
 let incidentAudit: PoolIncidentAudit | null = null;
-/** Serve turns this on at startup so `gbrain doctor --only pool_reap_health` sees its stuck, desync and recovery events. */
+/** Serve turns this on at startup so `foresights doctor --only pool_reap_health` sees its stuck, desync and recovery events. */
 export function setPoolIncidentAudit(audit: PoolIncidentAudit | null): void { incidentAudit = audit; }
 function audit(kind: Parameters<PoolIncidentAudit>[0], detail: string): void {
   try { incidentAudit?.(kind, detail); } catch { /* best-effort */ }
@@ -101,7 +101,7 @@ export function formatPoisonedDiscardWarning(pool: 'read' | 'direct', status: st
   const byte = /^[A-Z]$/.test(status) ? status : '?';
   return `[gbrain] warn code=pg_connection_poisoned status=${byte} pool=${pool}` +
     ` cause="a connection came back to the pool inside a transaction; it was discarded and replaced"` +
-    ` fix="gbrain doctor --json" docs=docs/ENGINES.md#pg-connection-poisoned`;
+    ` fix="foresights doctor --json" docs=docs/ENGINES.md#pg-connection-poisoned`;
 }
 
 /**
@@ -188,7 +188,7 @@ export function formatStuckConnectionWarning(pool: 'read' | 'direct', info: Stuc
     (reason === 'age'
       ? ` cause="a statement kept receiving data past its in-flight budget (statement_timeout plus grace, or the longer statement_timeout its operation declared); the connection was retired and its queued statements failed with CONNECTION_STUCK"`
       : ` cause="a statement waited past its in-flight budget (statement_timeout plus grace, or the longer statement_timeout its operation declared) with nothing coming back from the server; the connection was retired and its queued statements failed with CONNECTION_STUCK"`) +
-    ` fix="gbrain doctor --json" docs=docs/ENGINES.md#pg-connection-stuck`;
+    ` fix="foresights doctor --json" docs=docs/ENGINES.md#pg-connection-stuck`;
 }
 
 function recoveryCause(cause: string): string {
@@ -199,14 +199,14 @@ export function formatRecoveryFailedWarning(pool: 'read' | 'direct', info: Conne
   const code = /^[A-Z0-9_]+$/.test(info.code ?? '') ? info.code : 'CONNECTION_ERROR';
   return `[gbrain] warn code=pg_connection_recovery_failed pool=${pool} connection=${Math.max(0, info.connection | 0)} cause=${recoveryCause(info.cause)} error=${code}` +
     ` cause="a connection retired after an incident could not reconnect; statements waiting for it failed and the next one retries the connect"` +
-    ` fix="gbrain doctor --only pool_reap_health --json" docs=docs/ENGINES.md#pg-connection-recovery-failed`;
+    ` fix="foresights doctor --only pool_reap_health --json" docs=docs/ENGINES.md#pg-connection-recovery-failed`;
 }
 
 export function formatDesyncWarning(pool: 'read' | 'direct', info: { message: string; connection: number; statement: string }): string {
   const message = /^[A-Za-z0-9]$/.test(info.message) ? info.message : '?';
   return `[gbrain] warn code=pg_connection_desync pool=${pool} message=${message} connection=${Math.max(0, info.connection | 0)} sql=${sqlLabel(info.statement).replaceAll(' ', '_')}` +
     ` cause="a statement answer arrived on a connection with no statement waiting for it; the connection was retired and its queued statements failed with a connection error"` +
-    ` fix="gbrain doctor --json" docs=docs/ENGINES.md#pg-connection-desync`;
+    ` fix="foresights doctor --json" docs=docs/ENGINES.md#pg-connection-desync`;
 }
 
 /**
@@ -218,5 +218,5 @@ export function formatBuildFailureWarning(pool: 'read' | 'direct', code: string,
   const param = safeCode !== 'UNDEFINED_VALUE' ? '' : Number.isInteger(parameter) && parameter! > 0 ? ` param=$${parameter}` : ' param=?';
   return `[gbrain] warn code=pg_statement_build_failed error=${safeCode} pool=${pool} sql=${sqlLabel(statement).replaceAll(' ', '_')}${param}` +
     ` cause="a statement could not be built from its parameters and was rejected before it reached the connection; on a transaction-mode pooler this usually means a value came from a row another statement was sent (a misrouted answer)"` +
-    ` fix="gbrain doctor --json" docs=docs/ENGINES.md#pg-statement-build-failed`;
+    ` fix="foresights doctor --json" docs=docs/ENGINES.md#pg-statement-build-failed`;
 }

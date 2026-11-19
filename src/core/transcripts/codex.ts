@@ -46,7 +46,7 @@ export const CODEX_SPEC_TARGET: HostSpecTarget = {
   verifiedAt: '2026-10-05',
   references: [
     'local ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl (codex CLI, live sample 2026-08-14)',
-    'codex-cli 0.154.0 and 0.159.3 rollout line shapes quoted in garrytan/gbrain#5163 (observed 2026-10-05)',
+    'codex-cli 0.154.0 and 0.159.3 rollout line shapes quoted in aimonk2025/gbrain#5163 (observed 2026-10-05)',
     'test/fixtures/transcripts/codex-rollout.jsonl',
     'test/fixtures/transcripts/codex-rollout-0154.jsonl',
   ],

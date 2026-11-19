@@ -1,5 +1,5 @@
 /**
- * `gbrain serve --source-guard` (EV1, plugin lanes) — fail-closed write
+ * `foresights serve --source-guard` (EV1, plugin lanes) — fail-closed write
  * routing for user-global serves whose cwd is meaningless (plugin snapshots).
  *
  * Three layers under test:

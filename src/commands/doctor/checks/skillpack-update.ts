@@ -1,5 +1,5 @@
 /**
- * Skillpack update journals (`gbrain skillpack reference --update-untouched`):
+ * Skillpack update journals (`foresights skillpack reference --update-untouched`):
  *   - skillpack_update_incomplete (warn): a journal a crash left `pending`,
  *     with the restore command. A pending journal whose workspace writer lock
  *     is fresh belongs to a run still going and is not reported.
@@ -44,16 +44,16 @@ export async function runSkillpackUpdateChecks(_ctx?: DoctorContext, backups?: s
       status: 'warn',
       message: `${pending.length} skillpack update(s) did not finish (a crash left the journal pending): `
         + pending.map(j => `${j.id} (${j.skills_root}; mid-apply: ${j.skills.filter(s => s.status === 'applying').map(s => s.slug).join(', ') || 'none'})`).join('; ')
-        + `. New updates of that skills root refuse until it is restored: gbrain skillpack restore ${pending[0]!.id}.`,
+        + `. New updates of that skills root refuse until it is restored: foresights skillpack restore ${pending[0]!.id}.`,
       fix: agentFix(['gbrain', 'skillpack', 'restore', '--list', '--json'],
         'Lists the pending journal and the files each skill touched; changes nothing. The restore itself refuses files changed since the update.', 'skillpack_update_incomplete'),
-      details: { pending: pending.map(j => ({ id: j.id, skills_root: j.skills_root, restore: `gbrain skillpack restore ${j.id}` })) },
+      details: { pending: pending.map(j => ({ id: j.id, skills_root: j.skills_root, restore: `foresights skillpack restore ${j.id}` })) },
     });
   }
   checks.push({
     name: 'skillpack_backups',
     status: 'ok',
-    message: `${journals.length} skillpack update backup(s) kept (oldest ${journals[journals.length - 1]!.id}); each is kept ${JOURNAL_KEEP_DAYS} days or while among the newest ${JOURNAL_KEEP_LAST}. List them with gbrain skillpack restore --list.`,
+    message: `${journals.length} skillpack update backup(s) kept (oldest ${journals[journals.length - 1]!.id}); each is kept ${JOURNAL_KEEP_DAYS} days or while among the newest ${JOURNAL_KEEP_LAST}. List them with foresights skillpack restore --list.`,
   });
   return checks;
 }

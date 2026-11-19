@@ -92,7 +92,7 @@ describe('chunkCodeText — Dart', () => {
   });
 
   test('a top-level function chunk carries its BODY, not just the signature', async () => {
-    // Dart is the only grammar gbrain ships that makes `function_body` a
+    // Dart is the only grammar foresights ships that makes `function_body` a
     // SIBLING of the signature rather than a child. Chunks are built solely
     // from semantic nodes and uncovered source is never emitted, so without
     // the absorption step this chunk would read exactly `int clampNameSlot(
@@ -142,7 +142,7 @@ describe('chunker fallback is no longer silent', () => {
       console.warn = original;
       unregisterLanguage('bash'); // restore the manifest entry + drop the poisoned cache
     }
-    const bash = seen.filter(l => l.includes('[gbrain chunker] bash'));
+    const bash = seen.filter(l => l.includes('[foresights chunker] bash'));
     expect(bash.length).toBe(1);
     expect(bash[0]).toContain('semantic parsing unavailable');
   });
@@ -166,7 +166,7 @@ describe('chunker fallback is no longer silent', () => {
     } finally {
       console.warn = original;
     }
-    expect(seen.filter(l => l.includes('[gbrain chunker] yaml'))).toEqual([]);
+    expect(seen.filter(l => l.includes('[foresights chunker] yaml'))).toEqual([]);
     // Output is the text fallback, exactly as before the short-circuit.
     for (const chunks of [file, fence]) {
       expect(chunks).toHaveLength(1);

@@ -7,7 +7,7 @@
  * sweep (purgeStaleCheckpoints) drop it.
  *
  * The automatic purges (the cycle purge phase and the `purge` job) leave such a tombstone alone unless another live
- * page of its source holds the same content (a live twin); the consented `gbrain pages purge-deleted` purges it and
+ * page of its source holds the same content (a live twin); the consented `foresights pages purge-deleted` purges it and
  * says how many of its set these are. A tombstone made before records existed is recognized by its uncompacted
  * committed `managed_sync_delete` receipt; once that receipt is compacted it is no longer recognized.
  */
@@ -56,5 +56,5 @@ export async function readUnreviewedSyncTombstones(engine: Pick<BrainEngine, 'ex
 /** The `blocked` entry of a tombstone an automatic purge keeps. */
 export const syncDeleteHeld = (row: { source_id: string; slug: string }, olderThanHours: number) => ({ source_id: row.source_id, slug: row.slug,
   code: 'sync_delete_unreviewed', reason: `A managed sync deleted this page and no live page of ${row.source_id} has its content, so the automatic purge keeps it. `
-    + `Restore it with gbrain restore ${row.slug} --source-id ${row.source_id} --force, or review the set with gbrain pages purge-deleted --older-than ${olderThanHours}h --dry-run `
+    + `Restore it with foresights restore ${row.slug} --source-id ${row.source_id} --force, or review the set with foresights pages purge-deleted --older-than ${olderThanHours}h --dry-run `
     + 'and purge it with --yes; a purged page can only come back from a backup.' });

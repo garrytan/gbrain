@@ -1,6 +1,6 @@
 /**
  * #7191: `get_stats` grouped mode (`by` / `since` / `collapse_aliases`; CLI
- * `gbrain stats --by source,type --since 30d --collapse-aliases`). Grouping
+ * `foresights stats --by source,type --since 30d --collapse-aliases`). Grouping
  * rules and the alias collapse: src/core/page-counts.ts; SQL:
  * src/core/engine-sql/page-lookup.ts. Without any of the three params
  * `get_stats` returns its unchanged counters (admin.ts).

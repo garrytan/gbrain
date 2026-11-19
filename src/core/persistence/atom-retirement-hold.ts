@@ -1,5 +1,5 @@
 /**
- * #7013: atoms a managed re-extraction retired that `gbrain repair atoms-restore` can bring back, as one SQL rule
+ * #7013: atoms a managed re-extraction retired that `foresights repair atoms-restore` can bring back, as one SQL rule
  * shared by the repair (preview, apply recheck and coordinated preparer), the `atom_retirements_restorable` doctor
  * check and the purge hold. Static strings only, so `engine-sql/pages.ts` may import it.
  *
@@ -18,7 +18,7 @@
  *
  * The purge (engine bulk delete and preview, the belief-ledger expiry, the managed selection) holds a restorable
  * atom for `ATOM_RESTORE_HOLD_DAYS` after its `deleted_at` (`atomRetirementPurgeHold`); an explicit
- * `gbrain delete --purge` is not held.
+ * `foresights delete --purge` is not held.
  */
 
 /** The stamp `prepareManagedAtomMutation` writes on a re-extraction retirement (`ATOM_RETIRED_BY_REEXTRACT`). */

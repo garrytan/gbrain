@@ -76,12 +76,12 @@ describe('generated files (pure)', () => {
 
   test('systemd: a oneshot service and a persistent 6-hour timer', () => {
     expect(renderScheduleSystemdService({ wrapperPath: '/home/u/.gbrain/maintain-run.sh', logPath: '/home/u/.gbrain/maintain.log' })).toBe(
-      '[Unit]\nDescription=GBrain free upkeep (gbrain maintain --unattended --runner schedule)\n\n'
+      '[Unit]\nDescription=Foresights free upkeep (foresights maintain --unattended --runner schedule)\n\n'
       + '[Service]\nType=oneshot\nExecStart=/home/u/.gbrain/maintain-run.sh\n'
       + 'StandardOutput=append:/home/u/.gbrain/maintain.log\nStandardError=append:/home/u/.gbrain/maintain.log\n',
     );
     expect(renderScheduleSystemdTimer({ unit: 'gbrain-maintain' })).toBe(
-      '[Unit]\nDescription=GBrain free upkeep every 6 hours\n\n'
+      '[Unit]\nDescription=Foresights free upkeep every 6 hours\n\n'
       + '[Timer]\nOnCalendar=*-*-* 00/6:17:00\nPersistent=true\nRandomizedDelaySec=600\nUnit=gbrain-maintain.service\n\n'
       + '[Install]\nWantedBy=timers.target\n',
     );
@@ -145,7 +145,7 @@ describe('gbrain maintain --schedule', () => {
     expect(currentExitCode()).toBe(exitCodeForCode('confirmation_required'));
     const doc = json();
     expect(JSON.stringify(doc)).toContain('persistent_install');
-    expect(JSON.stringify(doc)).toContain('gbrain maintain --schedule --yes');
+    expect(JSON.stringify(doc)).toContain('foresights maintain --schedule --yes');
     expect(existsSync(join(root, 'home', '.gbrain', 'maintain-run.sh'))).toBe(false);
     expect(calls.filter((c) => c[0] === 'crontab' && c[1] !== '-l')).toEqual([]);
   });
@@ -213,7 +213,7 @@ describe('gbrain maintain --schedule', () => {
     expect(currentExitCode()).toBe(exitCodeForCode('schedule_unsupported'));
     const text = [...out, ...errOut].join('\n');
     expect(text).toContain('mount');
-    expect(text).toContain('gbrain --brain work maintain --unattended');
+    expect(text).toContain('foresights --brain work maintain --unattended');
     expect(existsSync(join(root, 'home', '.gbrain', 'maintain-run.sh'))).toBe(false);
     expect(calls.filter((c) => c[0] === 'crontab')).toEqual([]);
   });
@@ -248,7 +248,7 @@ describe('gbrain maintain --schedule', () => {
     await runMaintainSchedule(['--schedule', '--yes', '--json'], env('linux', 'ephemeral-container' as ScheduleEnv['executionEnv']));
     const text = [...out, ...errOut].join('\n');
     expect(text).toContain('schedule_unsupported');
-    expect(text).toContain('gbrain serve');
+    expect(text).toContain('foresights serve');
     expect(existsSync(join(root, 'home', '.gbrain', 'maintain-run.sh'))).toBe(false);
   });
 

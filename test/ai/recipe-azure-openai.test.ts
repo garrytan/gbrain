@@ -270,7 +270,7 @@ describe('recipe: azure-openai', () => {
   test('dimsProviderOptions threads dimensions for text-embedding-3-* via openai-compat', async () => {
     // Codex finding #1: Azure (openai-compatible) was missing dim
     // passthrough for text-embedding-3-large. Without `dimensions`, Azure
-    // returns 3072d; gbrain config expects 1536d → first embed hard-fails.
+    // returns 3072d; foresights config expects 1536d → first embed hard-fails.
     const { dimsProviderOptions } = await import('../../src/core/ai/dims.ts');
     expect(dimsProviderOptions('openai-compatible', 'text-embedding-3-large', 1536))
       .toEqual({ openaiCompatible: { dimensions: 1536 } });

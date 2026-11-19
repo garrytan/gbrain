@@ -28,7 +28,7 @@ export async function memoryTraceLine(label: string, startedAt: number, state?: 
       types = Object.fromEntries(Object.entries(heapStats().objectTypeCounts).sort((a, b) => b[1] - a[1]).slice(0, TOP_TYPES));
     } catch { /* not every runtime exposes heap statistics */ }
   }
-  return `[gbrain memory] ${JSON.stringify({ label, t_s: Math.round((Date.now() - startedAt) / 1000), rss_mb: mb(m.rss), heap_used_mb: mb(m.heapUsed),
+  return `[foresights memory] ${JSON.stringify({ label, t_s: Math.round((Date.now() - startedAt) / 1000), rss_mb: mb(m.rss), heap_used_mb: mb(m.heapUsed),
     external_mb: mb(m.external), array_buffers_mb: mb(m.arrayBuffers), ...(state ? { state } : {}), ...(types ? { types } : {}) })}`;
 }
 

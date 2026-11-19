@@ -108,7 +108,7 @@ export function resolveStealGraceSeconds(ttlMinutes: number): number {
 /**
  * Liveness classification of a lock holder, from the perspective of the
  * current host. Shared by `isHolderDeadLocally` (auto-takeover in
- * `tryAcquireDbLock`) and `gbrain sync --break-lock`'s safe path so the two
+ * `tryAcquireDbLock`) and `foresights sync --break-lock`'s safe path so the two
  * never drift.
  *
  *   - `cross_host`     — holder is on a different host; `process.kill` is
@@ -173,7 +173,7 @@ export function isHolderDeadLocally(
 
 /**
  * issue #2227: is a lock-row holder live enough to count as "running" for an
- * observability surface (`gbrain jobs supervisor status`, `gbrain doctor`)?
+ * observability surface (`foresights jobs supervisor status`, `foresights doctor`)?
  *
  * PID-reuse-safe by design (`pid-liveness-alone-pid-reuse`): keys on the lock's
  * own freshness, NEVER `process.kill`. A live holder refreshes its TTL on a
@@ -260,7 +260,7 @@ export async function tryAcquireDbLock(
     // v0.41.13.0 (D-V3-4 / migration v98): write last_refreshed_at on INSERT
     // AND on takeover. last_refreshed_at = acquired_at on initial INSERT;
     // every refresh() tick bumps both ttl_expires_at AND last_refreshed_at.
-    // `gbrain sync --break-lock --max-age <s>` uses last_refreshed_at (not
+    // `foresights sync --break-lock --max-age <s>` uses last_refreshed_at (not
     // acquired_at) to identify wedged-but-alive holders without stealing
     // healthy long-running holders that are actively refreshing.
     const rows: Array<{ id: string; fence: string }> = await retryReadOnlyAutocommit(sql, (sql: any) => sql`
@@ -497,9 +497,9 @@ export async function waitForDbLockTakeover(
  * exists for `lockId`. Used by:
  *   - performSync's lock-busy error path to surface holder PID + hostname
  *     + age in the user-facing "Another sync is in progress" message.
- *   - gbrain doctor's `stale_locks` check (queries all rows where
+ *   - foresights doctor's `stale_locks` check (queries all rows where
  *     ttl_expires_at < NOW()).
- *   - gbrain sync --break-lock to verify holder state before clearing.
+ *   - foresights sync --break-lock to verify holder state before clearing.
  *
  * Pure read; no side effects, no lock acquire.
  */
@@ -644,7 +644,7 @@ export async function inspectLocks(engine: BrainEngine, lockIds: readonly string
 }
 
 /**
- * v0.41.6.0 D3: list every lock whose TTL has expired. Used by gbrain
+ * v0.41.6.0 D3: list every lock whose TTL has expired. Used by foresights
  * doctor's `stale_locks` check. The query reuses the same canonical
  * staleness signal (ttl_expires_at < NOW()) that tryAcquireDbLock's
  * UPDATE-on-conflict already trusts — no parallel heuristic.
@@ -658,7 +658,7 @@ export async function listStaleLocks(engine: BrainEngine): Promise<LockSnapshot[
  * alive by `isLockHolderLive`). This is the "is anything writing right now?"
  * probe: cycle runs, sync imports, and embed backfills all hold rows in
  * `gbrain_cycle_locks` while they work, so an empty result means the write
- * planes this table guards are drained. Used by `gbrain migrate`'s quiesce
+ * planes this table guards are drained. Used by `foresights migrate`'s quiesce
  * to wait for in-flight work instead of sleeping a blind fixed grace.
  */
 export async function listLiveLocks(
@@ -670,7 +670,7 @@ export async function listLiveLocks(
 }
 
 /**
- * v0.41.6.0 D3: atomic verify-and-delete for `gbrain sync --break-lock`.
+ * v0.41.6.0 D3: atomic verify-and-delete for `foresights sync --break-lock`.
  *
  * Runs one DELETE matching the observed (id, holder_pid, acquisition_token).
  * RETURNING shape:
@@ -716,7 +716,7 @@ export async function deleteLockRow(
 
 /**
  * v0.41.13.0 (D-V3-4 + D-V4-mech-4 + D-V4-mech-5) — atomic age-gated
- * verify-and-delete for `gbrain sync --break-lock --max-age <seconds>`.
+ * verify-and-delete for `foresights sync --break-lock --max-age <seconds>`.
  *
  * Runs:
  *   DELETE FROM gbrain_cycle_locks
@@ -815,7 +815,7 @@ export async function deleteLockRowExact(
  * (or cycle) that crashed (OOM, recycle, SIGKILL) strands its lock row until
  * something contends for it — a low-traffic source could look "syncing" for
  * hours. `tryAcquireDbLock` only reclaims on contention; this is the background
- * sweep. Intended to run at cycle start (and under `gbrain doctor --fix` for
+ * sweep. Intended to run at cycle start (and under `foresights doctor --fix` for
  * no-autopilot brains).
  *
  * Scoped to the `gbrain-sync:*` and `gbrain-cycle`/`gbrain-cycle:*` namespaces
@@ -893,8 +893,8 @@ export const SYNC_LOCK_ID = syncLockId('default');
 /**
  * #1950: is `sourceId` actively holding a live (non-TTL-expired) sync lock?
  *
- * Centralizes the live-sync signal that `gbrain doctor` already computes inline
- * so `gbrain sources status` (and future surfaces) read the SAME truth instead
+ * Centralizes the live-sync signal that `foresights doctor` already computes inline
+ * so `foresights sources status` (and future surfaces) read the SAME truth instead
  * of each re-deriving it. Returns the holder when a live lock is held, else
  * null (idle, or a stale/expired lock that's structurally available for the
  * next acquire). Inspect failures swallow to null — a status surface should
@@ -905,7 +905,7 @@ export const SYNC_LOCK_ID = syncLockId('default');
  * `last_refreshed_at` on its own timer regardless of import progress. So callers
  * report "running", NOT "healthy"; a wedged-but-alive holder still reads as
  * running here. Forward-progress stall detection lives in the sync drain loop
- * (#1950 stall-abort); stale-lock triage lives in `gbrain doctor`.
+ * (#1950 stall-abort); stale-lock triage lives in `foresights doctor`.
  */
 export async function liveSyncStatus(
   engine: BrainEngine,
@@ -1110,7 +1110,7 @@ export async function tryWithDbElection<T>(
 
 /**
  * Compose a multi-tenant-safe lock id (cherry D4). Suffixes the lock id
- * with the database name so two gbrain installs sharing a Postgres cluster
+ * with the database name so two foresights installs sharing a Postgres cluster
  * (different databases on the same Supabase project) don't contend.
  *
  * Async: queries `current_database()` on the engine. PGLite returns a

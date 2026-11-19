@@ -1,6 +1,6 @@
 /**
  * src/core/operation-manifest.generated.ts: freshness, equality with the
- * live registry, and the startup graph it exists for. `gbrain serve` and the
+ * live registry, and the startup graph it exists for. `foresights serve` and the
  * CLI dispatcher read the manifest so the ~760-module handler graph behind
  * src/core/operations.ts loads only when an op runs; a static import of
  * operations.ts on that path silently undoes the win, so it is pinned here.

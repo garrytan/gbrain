@@ -1,5 +1,5 @@
 /**
- * #7394: `gbrain extract <links|timeline|all> --type T` (and `--since`, `--infer-dates`) on the file walk.
+ * #7394: `foresights extract <links|timeline|all> --type T` (and `--since`, `--infer-dates`) on the file walk.
  *
  * 1. Protects: the default `--source fs` walk reads files, not page rows, so it cannot apply a page-row filter; it refuses
  *    with exit 2 and the paste-ready `--source db` command instead of walking every file and reporting it as a
@@ -52,7 +52,7 @@ describe('page-row filters on extract (#7394)', () => {
       const r = await runCli([sub, '--dir', dir, '--type', 'banana', '--dry-run', '--json']);
       expect(r.exit).toBe(2);
       expect(r.err).toContain('--type filters synced pages, so it requires --source db');
-      expect(r.err).toContain(`gbrain extract ${sub} --source db --type banana --dry-run --json`);
+      expect(r.err).toContain(`foresights extract ${sub} --source db --type banana --dry-run --json`);
       expect(r.out).not.toContain('pages_processed');
     });
   }
@@ -61,7 +61,7 @@ describe('page-row filters on extract (#7394)', () => {
     const r = await runCli(['timeline', '--dir', dir, '--since', '2026-01-01', '--infer-dates', '--dry-run']);
     expect(r.exit).toBe(2);
     expect(r.err).toContain('--since, --infer-dates filter synced pages, so they require --source db');
-    expect(r.err).toContain('gbrain extract timeline --source db --since 2026-01-01 --infer-dates --dry-run');
+    expect(r.err).toContain('foresights extract timeline --source db --since 2026-01-01 --infer-dates --dry-run');
   });
 
   test('the file walk without a row filter still runs', async () => {

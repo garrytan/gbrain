@@ -5,14 +5,14 @@ import { hasSourceFilesystemLock, withSourceFilesystemLock, assertSourceFilesyst
  * After a page row lands in the DB (via importFromContent / putPage), this
  * renders the row to markdown via `serializePageToMarkdown` and writes it to
  * `sync.repo_path` so the brain repo has a committable `.md` artifact that
- * round-trips cleanly through `gbrain sync`. The file is rendered FROM the DB
+ * round-trips cleanly through `foresights sync`. The file is rendered FROM the DB
  * row, so the two sinks cannot diverge.
  *
  * Extracted from the v0.38 `put_page` write-through (operations.ts) so the
- * `put_page` op AND `gbrain brainstorm/lsd --save` share one implementation
+ * `put_page` op AND `foresights brainstorm/lsd --save` share one implementation
  * instead of hand-rolling parallel (and divergent) copies. The extraction also
  * upgraded the write to be ATOMIC — the original used a bare `writeFileSync`
- * into a live git tree that `gbrain sync` / autopilot actively walk, so a crash
+ * into a live git tree that `foresights sync` / autopilot actively walk, so a crash
  * mid-write left a partial `.md` that sync would fail to parse. We now write to
  * a unique temp sibling and `rename` into place (rename is atomic on the same
  * filesystem), matching the `.tmp + rename` convention used by
@@ -54,7 +54,7 @@ export interface WriteThroughResult {
   content?: string;
   /**
    * True when the write was also committed to git (#2426). Only attempted on
-   * repos hardened via `gbrain sources harden` (durability hook installed).
+   * repos hardened via `foresights sources harden` (durability hook installed).
    * Commit-only — this says nothing about whether the commit ever reached the
    * remote. Best-effort — a false/absent value never blocks the write.
    */
@@ -103,7 +103,7 @@ export interface WriteThroughResult {
    *   - over_push_scan_cap: the rendered file is over the pre-push secret-scan
    *     cap (PUSH_SCAN_MAX_FILE_BYTES), so committing it would block every push.
    *   - mirror_read_only / url_clone: the source is a read-only mirror (#5409,
-   *     #7098) or a clone gbrain owns and pulls (#6946); its checkout is never written.
+   *     #7098) or a clone foresights owns and pulls (#6946); its checkout is never written.
    */
   skipped?: 'disabled_by_config' | 'mirror_read_only' | 'url_clone' | 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write' | 'path_escapes_source_root' | 'case_insensitive_collision' | 'file_changed' | 'over_push_scan_cap' | 'segmented_page';
   /** Caller-visible advisory when a permitted DB-only outcome is still risky. */
@@ -138,7 +138,7 @@ export function withNoRepoWriteThroughWarning<T extends { written: boolean; skip
       ...result,
       warning:
         `${operation} wrote only to the database for source '${sourceId}': its stored repo path is not an absolute directory on this host, so no durable markdown file was created. ` +
-        `Ask the operator to run gbrain sources set-path ${sourceId} <absolute-directory> before relying on the write.`,
+        `Ask the operator to run foresights sources set-path ${sourceId} <absolute-directory> before relying on the write.`,
     } as T;
   }
   if (result.written || result.skipped !== 'no_repo_configured') return result;
@@ -173,7 +173,7 @@ export function sanitizeRecordedSourcePath(raw: string | null | undefined): stri
 /**
  * Recover a page-root-relative write target from a `file://` `source_uri`.
  *
- * `gbrain capture --file` records the absolute input path as `source_uri` but
+ * `foresights capture --file` records the absolute input path as `source_uri` but
  * does NOT set `source_path` (that column is the file-scanner's). So a file the
  * user authored INSIDE the brain repo and then captured has no file of record,
  * and the slug-derived fallback would mint a twin beside the very file that was
@@ -349,7 +349,7 @@ export async function otherSourceOwning(engine: BrainEngine, sourceId: string, p
  * dropped a lowercase `steve-jobs.md` twin next to it. Two artifacts, one
  * row, and the newer content in whichever the caller didn't expect.
  *
- * It also desyncs `gbrain sync`, which keys delete-reconcile on
+ * It also desyncs `foresights sync`, which keys delete-reconcile on
  * `source_path` (see collectMissingSourcePaths): the twin is invisible to
  * reconcile, so deleting the ORIGINAL file deletes the page even though a
  * file for it is still on disk.
@@ -382,7 +382,7 @@ export async function resolvePageWriteTarget(
     `SELECT local_path FROM sources WHERE id = $1`,
     [sourceId],
   );
-  // gbrain#2955: heal an msys-style local_path (`/c/Users/x`, recorded by a
+  // foresights#2955: heal an msys-style local_path (`/c/Users/x`, recorded by a
   // Git Bash `sources add --path` on Windows) before it is joined — raw, it
   // resolves to a phantom `C:\c\Users\x` and every write silently misses the
   // real vault. Identity on POSIX and for already-native paths.
@@ -397,7 +397,7 @@ export async function resolvePageWriteTarget(
   const recordedUri = pathRows[0]?.source_uri ?? null;
 
   if (sourceLocalPath) {
-    // #7630: a relative local_path (a legacy ".") names whatever directory gbrain runs from, never the source's tree.
+    // #7630: a relative local_path (a legacy ".") names whatever directory foresights runs from, never the source's tree.
     if (!isHostAbsolutePath(sourceLocalPath) || !existsSync(sourceLocalPath) || !statSync(sourceLocalPath).isDirectory()) {
       return { ok: false, skipped: 'repo_not_found' };
     }
@@ -448,7 +448,7 @@ export async function resolvePageWriteTarget(
  * `skipped` / `error` fields. put_page calls it before its transaction commits
  * and rejects non-deliberate skips so a file failure rolls back the DB write.
  * A read-only mirror source is skipped (`mirror_read_only`, #7098), and so is a
- * clone gbrain owns on an unmanaged brain (`url_clone`, #6946).
+ * clone foresights owns on an unmanaged brain (`url_clone`, #6946).
  */
 export async function writePageThrough(
   engine: BrainEngine,
@@ -484,7 +484,7 @@ export async function writePageThrough(
     const segmented = isSegmentedPage(writtenPage);
     if (segmented && (opts.inlineOnly || opts.fileText !== undefined)) return { written: false, skipped: 'segmented_page' };
     if (segmented && opts.frontmatterOverrides) {
-      return { written: false, error: `page ${slug} is stored in segments, and its file is streamed as gbrain export writes it, without frontmatter overrides` };
+      return { written: false, error: `page ${slug} is stored in segments, and its file is streamed as foresights export writes it, without frontmatter overrides` };
     }
     const md = segmented ? null : opts.fileText ?? serializePageToMarkdown(writtenPage, await engine.getTags(slug, { sourceId }), {
       frontmatterOverrides: opts.frontmatterOverrides,
@@ -547,7 +547,7 @@ export async function writePageThrough(
       throw error;
     }
 
-    // #2426: on a durability-hardened repo (user ran `gbrain sources harden`),
+    // #2426: on a durability-hardened repo (user ran `foresights sources harden`),
     // commit the artifact so it reaches git — pre-fix, write-through content
     // stayed uncommitted forever: never pushed, `last_sync_at` frozen, and
     // silently deleted by a later `sync --full` delete-reconcile. The local
@@ -581,7 +581,7 @@ export async function writePageThrough(
 }
 
 /**
- * The file of a page stored in segments, with the bytes `gbrain export` writes for it: measured from the segments of
+ * The file of a page stored in segments, with the bytes `foresights export` writes for it: measured from the segments of
  * the generation its snapshot names (unreadPageFile), as a segmented publication prepares its file, so it is sized
  * before anything is bound or written. Null when the page is gone. Read on `engine` as given, so a caller inside a
  * transaction (an owner repair) reads the rows it just wrote.
@@ -630,7 +630,7 @@ export interface DeleteThroughResult {
    * Non-error reasons nothing was removed. Shares the target-resolution skip
    * vocabulary (kept in lockstep via the Extract), plus:
    *   - disabled_by_config: the operator opted the brain out of the disk sink.
-   *   - mirror_read_only / url_clone: the source is a read-only mirror (#7098) or a clone gbrain owns and pulls (#6946); its checkout is never written.
+   *   - mirror_read_only / url_clone: the source is a read-only mirror (#7098) or a clone foresights owns and pulls (#6946); its checkout is never written.
    *   - file_not_present: the page had no artifact on disk (DB-only page, or
    *     already removed by hand) — a clean no-op, not a failure.
    *   - file_changed: the caller passed `expectedFileBytes` and the file no
@@ -650,13 +650,13 @@ export interface DeleteThroughResult {
  * the page, and on any repo whose brain is committed on a timer (a `snapshot`
  * cron, `sources harden`'s post-commit push) the deleted page's artifact gets
  * committed back into git *after* deletion — so the page reappears on the next
- * `gbrain sync`, silently resurrecting content the user deleted.
+ * `foresights sync`, silently resurrecting content the user deleted.
  *
  * Deliberately mirrors `writePageThrough`'s contract: never throws, reports via
  * `skipped`/`error`, and resolves its target through the shared
  * `resolvePageWriteTarget` so the two planes cannot disagree about which file
  * backs a page. The DB row remains the durable sink — a failure here leaves a
- * stale file that the next `gbrain sync` reconciles, never a lost row.
+ * stale file that the next `foresights sync` reconciles, never a lost row.
  *
  * `opts.target`: resolvePageWriteTarget reads the recorded `source_path` from
  * ACTIVE rows only, so the delete_page op resolves the target BEFORE
@@ -677,7 +677,7 @@ export async function deletePageThrough(
   const sourceId = opts.sourceId ?? 'default';
   try {
     // `sync.write_through=false` means the operator opted this brain out of
-    // the disk sink entirely — never unlink files gbrain does not own.
+    // the disk sink entirely — never unlink files foresights does not own.
     if (await isWriteThroughDisabled(engine)) {
       return { removed: false, skipped: 'disabled_by_config' };
     }

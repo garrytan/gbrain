@@ -20,7 +20,7 @@
  * publishing, and one that pushes or fences anything when the merge conflicts or
  * the refresh is about to refuse a dirty overlap.
  * Seams: the `hooks.boundary` callback for the refusal after a publish, and
- * GBRAIN_JOB_CHILD_CLI naming the child gbrain that publishes; otherwise
+ * GBRAIN_JOB_CHILD_CLI naming the child foresights that publishes; otherwise
  * a real bare remote, a pushing clone and the managed checkout.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
@@ -125,10 +125,10 @@ test('setting off (false, or unset while Git durability is not on): the refresh 
   for (const value of [null, 'false']) {
     if (value !== null) await f.engine.setConfig(REFRESH_PUBLISH_DIVERGED_KEY, value);
     const error = await refusedWith(refreshWorktree(f.engine, f.alpha), 'refresh_diverged');
-    expect(error.suggestion).toContain('gbrain config set sources.refresh_publish_diverged true');
+    expect(error.suggestion).toContain('foresights config set sources.refresh_publish_diverged true');
     if (value === null) {
       expect(error.message).toContain('Git durability is not on for this worktree');
-      expect(error.suggestion).toContain(`gbrain sources writer git-durability ${f.alpha} --enable`);
+      expect(error.suggestion).toContain(`foresights sources writer git-durability ${f.alpha} --enable`);
     }
     expect(remoteHead(f)).toBe(remote);
     expect(f.head()).toBe(local);
@@ -203,7 +203,7 @@ test('setting on with gbrain.quarantine: a conflicting path is published as the 
   console.log = (line: string) => { out.push(line); };
   try { await runSourcesRefresh(f.engine, [f.alpha]); } finally { console.log = log; _resetCliExitVerdictForTests(); process.exitCode = 0; }
   const ref = git(f.root, 'for-each-ref', '--format=%(refname)', 'refs/gbrain/quarantine/').trim();
-  expect(ref).toMatch(/^refs\/gbrain\/quarantine\//);
+  expect(ref).toMatch(/^refs\/(?:foresights|gbrain)\/quarantine\//);
   expect(git(f.root, 'show', `${ref}:alpha/two.md`)).toContain('Local side.');
   expect(out.join('\n')).toContain(`this machine's version is kept under ${ref}`);
   expect(out.join('\n')).toContain('alpha/two.md');
@@ -218,7 +218,7 @@ test('setting on: a refusal after the publish says the local commits were alread
   expect(error.message).toContain(`already published the checkout's 1 local commit(s) merged with the upstream as ${remoteHead(f)}`);
 }), 120_000);
 
-test('setting on: the publish runs in a child gbrain, never in this process, so an unusable child refuses and nothing is pushed or fenced', () => each(async f => {
+test('setting on: the publish runs in a child foresights, never in this process, so an unusable child refuses and nothing is pushed or fenced', () => each(async f => {
   const local = diverge(f);
   const remote = remoteHead(f);
   await f.engine.setConfig(REFRESH_PUBLISH_DIVERGED_KEY, 'true');
@@ -234,7 +234,7 @@ test('setting on: a refresh that cannot locate its own CLI refuses git_push_unav
   const remote = remoteHead(f);
   await f.engine.setConfig(REFRESH_PUBLISH_DIVERGED_KEY, 'true');
   const error = await refusedWith(refreshWorktree(f.engine, f.alpha), 'git_push_unavailable');
-  expect(error.suggestion).toContain(`gbrain git commit-push --push-only --keep-checkout --scan-secrets --path `);
+  expect(error.suggestion).toContain(`foresights git commit-push --push-only --keep-checkout --scan-secrets --path `);
   expect(remoteHead(f)).toBe(remote);
 }, ''), 120_000);
 
@@ -266,7 +266,7 @@ for (const [label, forget] of [['', false], [' even when the first fetch to see 
     await f.engine.setConfig(REFRESH_PUBLISH_DIVERGED_KEY, 'true');
     const error = await refusedWith(refreshWorktree(f.engine, f.alpha), 'refresh_diverged');
     expect(error.message).toContain(`no longer contains ${purged}`);
-    expect(error.suggestion).not.toContain('gbrain config set');
+    expect(error.suggestion).not.toContain('foresights config set');
     expect(remoteHead(f)).toBe(rewritten);
     expect(() => git(f.root, 'cat-file', '-e', 'origin/main:alpha/purged.md')).toThrow();
     expect(f.head()).toBe(local);

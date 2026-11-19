@@ -81,7 +81,7 @@ describe('embedding enablement advice lives in readiness', () => {
   test('the detector catches the removed recipes', () => {
     expect(hitsIn('console.error(`  mv ${dbPath} ${dbPath}.bak`);')).toBe(1);
     expect(hitsIn("'  mv ~/.gbrain/brain.pglite ~/.gbrain/brain.pglite.bak'")).toBe(1);
-    expect(hitsIn("'Enable with `gbrain init --force --embedding-model voyage:voyage-4`'")).toBe(1);
+    expect(hitsIn("'Enable with `foresights init --force --embedding-model voyage:voyage-4`'")).toBe(1);
     expect(hitsIn("'Use --embedding-model provider:model.'")).toBe(0);
     expect(hitsIn(' * mv brain.pglite in a comment')).toBe(0);
   });

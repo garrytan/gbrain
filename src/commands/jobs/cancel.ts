@@ -1,4 +1,4 @@
-/** `gbrain jobs cancel` (dispatched by runJobs in src/commands/jobs.ts). */
+/** `foresights jobs cancel` (dispatched by runJobs in src/commands/jobs.ts). */
 import { paidJobNames, parseFlag, reportJobsError, selectionSummaryLines, type JobsCommandContext } from './shared.ts';
 import { applyLegacyCancel, previewLegacyCancel } from '../../core/minions/legacy-cancel.ts';
 import { parseLegacyJobSelection } from '../../core/minions/legacy-selection.ts';
@@ -67,6 +67,6 @@ async function cancelSpendGroup({ args, engine, queue }: JobsCommandContext, gro
     if (await queue.cancelJob(job.id)) cancelled.push(job.id);
   }
   if (args.includes('--json')) { console.log(JSON.stringify({ group_id: groupId, cancelled_ids: cancelled, jobs: jobs.length }, null, 2)); return; }
-  if (!jobs.length) { console.error(`No jobs in spend group ${groupId}; check the id with: gbrain jobs list --group ${groupId} --json`); process.exit(1); }
+  if (!jobs.length) { console.error(`No jobs in spend group ${groupId}; check the id with: foresights jobs list --group ${groupId} --json`); process.exit(1); }
   console.log(`Cancelled ${cancelled.length} unfinished job(s) of spend group ${groupId}${cancelled.length ? `: ${cancelled.join(', ')}` : ''}.`);
 }

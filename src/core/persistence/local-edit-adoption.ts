@@ -22,7 +22,7 @@
  * holds its worktree's queue meanwhile; a file over PAGE_MAX_BYTES (checked before it is read) or a page stored in
  * segments keeps the refusal; so do an unmerged path or a merge, cherry-pick, revert or rebase in progress, a file equal to
  * an earlier stored revision, and one missing a Facts or timeline row the last revision added (a stale editor buffer
- * saved over gbrain's write). The repo-less test walks up for `.git` (a source in a subdirectory of its repository). A
+ * saved over foresights's write). The repo-less test walks up for `.git` (a source in a subdirectory of its repository). A
  * publication that failed after the adoption's commit landed is requeued by recovery and published again (its validate
  * accepts HEAD holding the adopted blob; the commit is then named, not repeated). An adoption another task is
  * publishing is waited on, never left to commit after its caller was refused. The adoption names its caller's claim and
@@ -363,7 +363,7 @@ export async function adoptLocalEdit(engine: BrainEngine, row: WriteRequest, err
   }
   if (done.error_code === 'source_changed' && (done.error_detail as { origin?: string } | null)?.origin === 'raw_file_changed') {
     return { error: new OperationError('source_changed', done.error_message ?? 'The canonical file changed after preparation.',
-      `The canonical file of ${row.slug} in source ${row.source_id} changed again while gbrain adopted its local edit, so nothing was written. Read the file, then submit the write again with a new request_id.`) };
+      `The canonical file of ${row.slug} in source ${row.source_id} changed again while foresights adopted its local edit, so nothing was written. Read the file, then submit the write again with a new request_id.`) };
   }
   return null;
 }

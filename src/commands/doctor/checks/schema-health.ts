@@ -98,7 +98,7 @@ async function runRls(ctx: DoctorContext): Promise<Check[]> {
   // (pgbouncer_prepare moved ABOVE the connection check — URL-only, must
   // survive a dead DB.)
 
-  // 5. RLS — check ALL public tables, not just gbrain's own.
+  // 5. RLS — check ALL public tables, not just foresights's own.
   // Any table without RLS in the public schema is a security risk:
   // Supabase exposes the public schema via PostgREST, so tables without
   // RLS are readable/writable by anyone with the anon key.
@@ -112,7 +112,7 @@ async function runRls(ctx: DoctorContext): Promise<Check[]> {
   //
   // The comment lives in pg_description, survives pg_dump, is visible in
   // schema diffs, and requires raw SQL in psql to set — there is no
-  // `gbrain rls-exempt add` CLI on purpose. Doctor re-enumerates the
+  // `foresights rls-exempt add` CLI on purpose. Doctor re-enumerates the
   // exemption list on every successful run so exempt tables never go
   // invisible. See docs/guides/rls-and-you.md.
   progress.heartbeat('rls');
@@ -224,11 +224,11 @@ async function runSchemaVersion(ctx: DoctorContext): Promise<Check[]> {
       checks.push({ name: 'schema_version', ...schemaVersionHealth(schemaVersion, LATEST_VERSION) });
     }
 
-    // 6b. Schema columns — gbrain#4421/#4425. The ledger counter alone can
+    // 6b. Schema columns — foresights#4421/#4425. The ledger counter alone can
     // lie: a PgBouncer transaction-mode pooler can swallow an ALTER TABLE
     // while the migration runner still advances config.version, leaving the
     // ledger "current" over a physically narrower table. The read-only column
-    // diff below does the same live-column check `gbrain init --migrate-only`
+    // diff below does the same live-column check `foresights init --migrate-only`
     // already self-heals with — but a plain diagnostic run never issues DDL.
     if (schemaVersion > LATEST_VERSION) {
       // Forward skew (schemaVersionHealth warns AHEAD above): an ahead DB is
@@ -254,7 +254,7 @@ async function runSchemaVersion(ctx: DoctorContext): Promise<Check[]> {
             message:
               `${detected.missing.length} column(s) missing despite schema_version reporting up to date: ${cols}. ` +
               `The migration ledger advanced past a swallowed ALTER TABLE (PgBouncer transaction-mode is the ` +
-              `usual cause). Fix: gbrain init --migrate-only (runs the schema self-heal); if it persists, ` +
+              `usual cause). Fix: foresights init --migrate-only (runs the schema self-heal); if it persists, ` +
               `connect directly to Postgres (not the pooler) first.`,
           });
         }
@@ -285,7 +285,7 @@ async function runSchemaVersion(ctx: DoctorContext): Promise<Check[]> {
  */
 function missingTablesFields(report: MissingTablesReport): Omit<Check, 'name'> {
   if (report.status === 'skipped') {
-    return { status: 'ok', message: `Skipped: the brain schema is v${report.version}, newer than this client (v${report.latest}); upgrade gbrain to check it.` };
+    return { status: 'ok', message: `Skipped: the brain schema is v${report.version}, newer than this client (v${report.latest}); upgrade foresights to check it.` };
   }
   if (!report.missing.length) {
     return { status: 'ok', message: report.scope === 'all_tables' ? `All ${report.checked} table(s) the applied migrations create exist.`
@@ -296,9 +296,9 @@ function missingTablesFields(report: MissingTablesReport): Omit<Check, 'name'> {
   const other = report.missing.filter(m => !m.recreatable && m.loss_kind !== 'user_data');
   const names = (list: MissingTable[]) => list.map(m => m.table).join(', ');
   const sentences = [`${report.missing.length} table(s) the applied migrations create are missing, and apply-migrations will not recreate them from the migrations that already ran`];
-  if (caches.length) sentences.push(`Rebuildable cache(s) ${names(caches)}: preview recreating them empty with gbrain repair missing-tables, then apply the printed command after the user agrees`);
-  if (userData.length) sentences.push(`${names(userData)} hold user data: restore their rows from a backup before running gbrain init --migrate-only, gbrain upgrade or apply-migrations, which recreate a base-schema table empty and clear this check while the rows stay lost (see ${MISSING_TABLES_DOCS})`);
-  if (other.length) sentences.push(`${names(other)} hold no user data: gbrain init --migrate-only recreates the ones the base schema defines; report any it does not (see ${MISSING_TABLES_DOCS})`);
+  if (caches.length) sentences.push(`Rebuildable cache(s) ${names(caches)}: preview recreating them empty with foresights repair missing-tables, then apply the printed command after the user agrees`);
+  if (userData.length) sentences.push(`${names(userData)} hold user data: restore their rows from a backup before running foresights init --migrate-only, foresights upgrade or apply-migrations, which recreate a base-schema table empty and clear this check while the rows stay lost (see ${MISSING_TABLES_DOCS})`);
+  if (other.length) sentences.push(`${names(other)} hold no user data: foresights init --migrate-only recreates the ones the base schema defines; report any it does not (see ${MISSING_TABLES_DOCS})`);
   return { status: userData.length ? 'fail' : 'warn', message: `${sentences.join('. ')}.`,
     details: { missing: report.missing, checked: report.checked, scope: report.scope, docs: MISSING_TABLES_DOCS },
     ...(caches.length
@@ -320,7 +320,7 @@ async function runRlsEventTrigger(ctx: DoctorContext): Promise<Check[]> {
   const checks: Check[] = [];
 
   // Note: we intentionally DO NOT fail on "schema v7+ but no preferences.json".
-  // That's a valid fresh-install state after `gbrain init` — the migration
+  // That's a valid fresh-install state after `foresights init` — the migration
   // orchestrator writes preferences, but `init` alone doesn't run it. The
   // partial-completed.jsonl check in the filesystem section (step 3) is
   // the canonical half-migration signal and fires when the stopgap ran
@@ -355,7 +355,7 @@ async function runRlsEventTrigger(ctx: DoctorContext): Promise<Check[]> {
           name: 'rls_event_trigger',
           status: 'warn',
           message:
-            'Auto-RLS event trigger missing. New tables created outside gbrain may not get RLS. ' +
+            'Auto-RLS event trigger missing. New tables created outside foresights may not get RLS. ' +
             'Fix: recreate it with the SQL in docs/guides/rls-and-you.md ("What if the trigger gets dropped?").',
         });
       } else if (rows[0].evtenabled !== 'O' && rows[0].evtenabled !== 'A') {
@@ -475,10 +475,10 @@ async function runEmbeddings(ctx: DoctorContext): Promise<Check[]> {
     // The backlog's fix is the catch-up drain: a plain `embed --stale` stops
     // at its 30-minute budget, which on a large brain leaves most of the
     // backlog behind (52k documents: 51,910 chunks after one run).
-    const fix = 'gbrain embed --stale --catch-up';
+    const fix = 'foresights embed --stale --catch-up';
     const details = { code: 'embedding_backlog', ...ageDetails, fix, requires_user_approval: 'paid embedding calls',
       docs: 'docs/operations/backfill-pacing.md#large-brain-deadlines' };
-    const fixText = `Fix: ${fix} (runs until the backlog is empty; a plain gbrain embed --stale stops after its 30-minute budget). ` +
+    const fixText = `Fix: ${fix} (runs until the backlog is empty; a plain foresights embed --stale stops after its 30-minute budget). ` +
       'It makes paid embedding calls: confirm with the user unless embedding spend is already approved.';
     // Without a readable age (pre-migration schema, unstamped rows) the
     // coverage rule decides: warn below 90%.

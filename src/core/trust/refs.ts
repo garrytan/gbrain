@@ -1,5 +1,5 @@
 /**
- * Typed refs of `gbrain trust` (#5575 DX-7): `f<id>` fact, `t<id>` take,
+ * Typed refs of `foresights trust` (#5575 DX-7): `f<id>` fact, `t<id>` take,
  * `h<id>` write-gate hold, `tp<id>` trust proposal, `a<id>` allow rule, and
  * `p:<source>/<slug>` page. A bare slug names a page too: it resolves to its
  * source through `--source`, or to the only source holding it; a slug that
@@ -26,7 +26,7 @@ const PATTERNS: Array<[RegExp, TrustRef['kind']]> = [
   [new RegExp(`^a${ID}$`), 'allow_rule'],
 ];
 
-const refHelp = 'Use f<id> (fact), t<id> (take), h<id> (held write), tp<id> (trust proposal), p:<source>/<slug> or a page slug; gbrain trust review lists them.';
+const refHelp = 'Use f<id> (fact), t<id> (take), h<id> (held write), tp<id> (trust proposal), p:<source>/<slug> or a page slug; foresights trust review lists them.';
 
 /** Parses one ref. A page ref without a source keeps `sourceId: null` for `resolvePageRef`. */
 export function parseTrustRef(raw: string): TrustRef {
@@ -82,6 +82,6 @@ export async function resolvePageRef(engine: Pick<BrainEngine, 'executeRaw'>, re
     throw opError('invalid_params', `Slug "${ref.slug}" exists in ${rows.length} sources: ${rows.map(r => r.source_id).join(', ')}.`,
       `Pick one with --source ${rows[0]!.source_id} (or another listed source), or write the page as ${pageRef(rows[0]!.source_id, ref.slug)}.`);
   }
-  if (rows.length === 0) throw opError('page_not_found', `No page "${ref.slug}" in any source.`, 'Check the slug; gbrain trust review lists pages waiting for you.');
+  if (rows.length === 0) throw opError('page_not_found', `No page "${ref.slug}" in any source.`, 'Check the slug; foresights trust review lists pages waiting for you.');
   return { sourceId: rows[0]!.source_id, slug: ref.slug };
 }

@@ -55,17 +55,17 @@ Run these steps IN ORDER. Report findings to the user.
 ### Step 1: Search the brain
 
 ```bash
-gbrain search "<relevant terms>" --limit 10
+foresights search "<relevant terms>" --limit 10
 ```
 
-For concept-shaped or synonym-phrased claims, escalate to `gbrain query
+For concept-shaped or synonym-phrased claims, escalate to `foresights query
 "<question>"` (LLM expansion recovers phrasings `search` misses). To list
 every indexed page carrying the claim, use a keyword search (it pages every
 match); grep the checkout only for edits not yet synced:
 
 ```bash
-gbrain search '"<wrong claim terms>"' --match keyword
-BRAIN_DIR=$(gbrain config get sync.repo_path)
+foresights search '"<wrong claim terms>"' --match keyword
+BRAIN_DIR=$(foresights config get sync.repo_path)
 grep -ri "<wrong claim terms>" "$BRAIN_DIR/people/" "$BRAIN_DIR/companies/" "$BRAIN_DIR/concepts/" 2>/dev/null
 ```
 
@@ -95,15 +95,15 @@ grep -i "<relevant terms>" <workspace>/SOUL.md <workspace>/USER.md 2>/dev/null
 inference? SOUL.md and USER.md are in every context window — a vague or
 ambiguous line here propagates into every session.
 
-**Important:** on gbrain installs these files are RENDERED from the bootstrap
+**Important:** on foresights installs these files are RENDERED from the bootstrap
 answer bank (`state/interview.json`). Note the finding here; the fix goes
 through the answer bank in Step 6, never through a direct edit.
 
 ### Step 4: Check the facts table
 
 ```bash
-gbrain recall <entity-slug>            # facts about the subject, newest first
-gbrain recall --grep "<claim terms>"   # substring filter when the entity is unclear
+foresights recall <entity-slug>            # facts about the subject, newest first
+foresights recall --grep "<claim terms>"   # substring filter when the entity is unclear
 ```
 
 Is there a wrong fact with high confidence? Note its fact id.
@@ -115,7 +115,7 @@ Is there a wrong fact with high confidence? Note its fact id.
 | **BRAIN_ERROR** | Wrong fact exists in a brain page | Edit the page in the brain repo, commit, re-sync |
 | **MEMORY_ERROR** | Wrong fact exists in memory files | Fix the memory file |
 | **SOUL_USER_ERROR** | Misleading passage in SOUL.md or USER.md | Fix the ANSWER BANK, re-render — never the rendered file |
-| **FACTS_TABLE_ERROR** | Wrong fact in the gbrain facts table | `recall` → `forget <fact-id>` → `remember` the correction |
+| **FACTS_TABLE_ERROR** | Wrong fact in the foresights facts table | `recall` → `forget <fact-id>` → `remember` the correction |
 | **HALLUCINATION** | No source — LLM confabulated from partial signals | Name the contamination vector (what partial signals led to it), write a guard fact |
 | **STALE_DATA** | Fact was once true but is no longer | Update the source with current truth; supersede the stale fact |
 | **CROSS_CONTAMINATION** | Correct fact about person A attributed to person B | Fix attribution in the source — on BOTH entities |
@@ -124,7 +124,7 @@ Is there a wrong fact with high confidence? Note its fact id.
 
 - **BRAIN_ERROR:** Edit the page file in the brain repo. Include
   `[Source: user correction, YYYY-MM-DD]` on the corrected line. Commit, then
-  `gbrain sync` so the DB reflects the fix. (Editing the DB row without the
+  `foresights sync` so the DB reflects the fix. (Editing the DB row without the
   repo file — or vice versa — leaves the two out of agreement until the next
   sync overwrites one of them.)
 - **MEMORY_ERROR:** Edit the memory file. Add a correction note with date.
@@ -132,11 +132,11 @@ Is there a wrong fact with high confidence? Note its fact id.
   rendered files, and a hand edit is silently lost on the next render. Fix the
   underlying answer in the shared bootstrap answer bank, then re-render:
   ```bash
-  gbrain bootstrap interview --set KEY "corrected value"   # verbatim, user's words
-  gbrain bootstrap interview --show                        # read back
-  gbrain bootstrap interview --status                      # get the confirm hash
-  gbrain bootstrap interview --confirm <hash>
-  gbrain bootstrap render --only SOUL.md --force           # repeat per affected file
+  foresights bootstrap interview --set KEY "corrected value"   # verbatim, user's words
+  foresights bootstrap interview --show                        # read back
+  foresights bootstrap interview --status                      # get the confirm hash
+  foresights bootstrap interview --confirm <hash>
+  foresights bootstrap render --only SOUL.md --force           # repeat per affected file
   ```
   The full interview discipline (read-back ritual, verbatim answers, backup
   behavior) lives in `skills/soul-audit/SKILL.md` — route through it for
@@ -144,15 +144,15 @@ Is there a wrong fact with high confidence? Note its fact id.
 - **FACTS_TABLE_ERROR:** Expire the wrong row and write the correction with
   provenance:
   ```bash
-  gbrain recall <entity-slug>                                  # find the fact id
-  gbrain forget <fact-id>                                      # expire the wrong fact
-  gbrain remember "<correct fact>" \
+  foresights recall <entity-slug>                                  # find the fact id
+  foresights forget <fact-id>                                      # expire the wrong fact
+  foresights remember "<correct fact>" \
     --provenance "user correction, YYYY-MM-DD" --entity <entity-slug>
   ```
 - **HALLUCINATION:** There is no source to fix. Identify the partial signal
   that seeded the confabulation, then write a guard so it can't reseed:
   ```bash
-  gbrain remember "WRONG: <what was said>. RIGHT: <what is true>. Guard: <instruction to prevent recurrence>" \
+  foresights remember "WRONG: <what was said>. RIGHT: <what is true>. Guard: <instruction to prevent recurrence>" \
     --provenance "user correction, YYYY-MM-DD (hallucination guard)" --entity <entity-slug>
   ```
 - **STALE_DATA:** Update the source page with current truth (BRAIN_ERROR
@@ -169,7 +169,7 @@ The wrong fact may have propagated into OTHER brain pages, synthesis output,
 or memory files.
 
 ```bash
-gbrain search '"<wrong claim terms>"' --match keyword
+foresights search '"<wrong claim terms>"' --match keyword
 grep -ri "<wrong claim terms>" "$BRAIN_DIR" 2>/dev/null | grep -v ".git"   # edits not yet synced
 ```
 
@@ -213,8 +213,8 @@ contradictions probe is the PROACTIVE side of the same discipline: it finds
 intra-brain conflicts before the user does.
 
 ```bash
-gbrain eval suspected-contradictions   # run the probe
-gbrain find-contradictions             # read the latest run's findings
+foresights eval suspected-contradictions   # run the probe
+foresights find-contradictions             # read the latest run's findings
 ```
 
 If a correction reveals a class of conflict (e.g. two pages disagreeing about
@@ -229,7 +229,7 @@ This skill guarantees:
 - Source fixes land at the REAL fix surface for the error class (page edit +
   commit + re-sync; `forget`/`remember` for facts rows; answer bank + re-render
   for SOUL/USER — never a direct edit to a rendered file)
-- Propagation is checked (whole-brain grep + `gbrain search`)
+- Propagation is checked (whole-brain grep + `foresights search`)
 - The user gets a clear report of what was wrong, why, and what was fixed
 - Routing matches the canonical triggers in the frontmatter
 - Privacy contract preserved: no real names, no fork-specific filesystem path
@@ -248,8 +248,8 @@ answer bank).
   citations, doctor). This skill is REACTIVE: a specific user correction gets
   traced to its contamination source. If nobody said "that's wrong," it's
   maintain's territory.
-- The contradictions probe (`gbrain eval suspected-contradictions` /
-  `gbrain find-contradictions`) — PROACTIVE intra-brain conflict detection.
+- The contradictions probe (`foresights eval suspected-contradictions` /
+  `foresights find-contradictions`) — PROACTIVE intra-brain conflict detection.
   Complementary, not overlapping: the probe finds conflicts between two brain
   sources; this skill starts from a correction supplied by the user.
 - `skills/soul-audit/SKILL.md` — the full identity re-interview surface. This
@@ -263,11 +263,11 @@ answer bank).
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `forget <fact-id>` / `remember` returns `fact_not_found` or `fact_already_expired`: re-run `recall` to get the current fact id; never forget by guessing an id.
 - A page fix returns `revision_conflict`: re-read the page, apply the correction to the current text, and save with the new revision.
-- `write_pending` (exit 10): the correction is accepted but not committed; poll `gbrain write-request <request_id>` before telling the user it is fixed.
+- `write_pending` (exit 10): the correction is accepted but not committed; poll `foresights write-request <request_id>` before telling the user it is fixed.
 
 ## Anti-Patterns
 

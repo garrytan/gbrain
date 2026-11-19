@@ -1,19 +1,19 @@
 /**
  * Tests for `postUpgradeReferenceSweep` in src/commands/upgrade.ts —
  * the v0.36 hook that prints a one-line-per-skill summary of drift
- * after `gbrain upgrade` so an operator/agent doesn't have to manually
- * run `gbrain skillpack reference --all`.
+ * after `foresights upgrade` so an operator/agent doesn't have to manually
+ * run `foresights skillpack reference --all`.
  *
  * Pins:
  *   - GBRAIN_SKIP_REFERENCE_SWEEP=1 short-circuits silently
  *   - no detected workspace → silent no-op
- *   - workspace == gbrain repo (dev mode) → silent no-op
+ *   - workspace == foresights repo (dev mode) → silent no-op
  *   - zero drift (everything identical or never-scaffolded) → silent
  *   - drift detected → prints header + per-skill summary + footer hints
  *   - non-scaffolded skills (pure missing) suppressed from the summary
  *
  * The function is exported from upgrade.ts so we can drive it without
- * spawning a full `gbrain upgrade` subprocess. We swap the cwd via
+ * spawning a full `foresights upgrade` subprocess. We swap the cwd via
  * process.chdir() to control what autoDetectSkillsDirReadOnly returns.
  */
 
@@ -58,15 +58,15 @@ afterEach(() => {
 
 function scratchHostWithSkill(slug: string, opts: { drift?: boolean } = {}): string {
   // Set up a fixture host workspace with one scaffolded skill that either
-  // matches gbrain's bundle (identical) or diverges (drift).
+  // matches foresights's bundle (identical) or diverges (drift).
   const ws = mkdtempSync(join(tmpdir(), 'ups-host-'));
   created.push(ws);
   mkdirSync(join(ws, 'skills', slug), { recursive: true });
-  // The real gbrain bundle ships skills/<slug>/SKILL.md. Write a copy here.
+  // The real foresights bundle ships skills/<slug>/SKILL.md. Write a copy here.
   // For drift, write a different version.
   const realSkill = join(process.cwd(), 'skills', slug, 'SKILL.md');
   if (!existsSync(realSkill)) {
-    throw new Error(`fixture precondition: gbrain repo must have ${realSkill}`);
+    throw new Error(`fixture precondition: foresights repo must have ${realSkill}`);
   }
   const real = require('fs').readFileSync(realSkill, 'utf-8');
   const content = opts.drift ? real + '\n## local edit\n' : real;
@@ -85,7 +85,7 @@ function scratchEmptyHost(): string {
   return ws;
 }
 
-const GBRAIN_ROOT = process.cwd(); // tests run from gbrain repo root
+const GBRAIN_ROOT = process.cwd(); // tests run from foresights repo root
 
 describe('postUpgradeReferenceSweep', () => {
   it('GBRAIN_SKIP_REFERENCE_SWEEP=1 short-circuits silently', async () => {
@@ -128,7 +128,7 @@ describe('postUpgradeReferenceSweep', () => {
       expect(out).toContain('Skillpack sweep (post-upgrade)');
       expect(out).toContain('book-mirror');
       expect(out).toContain('differs:1'); // the one edited file
-      expect(out).toContain('gbrain skillpack reference <slug>');
+      expect(out).toContain('foresights skillpack reference <slug>');
       expect(out).toContain('_AGENT_README.md');
       expect(out).toContain('GBRAIN_SKIP_REFERENCE_SWEEP');
     });
@@ -143,13 +143,13 @@ describe('postUpgradeReferenceSweep', () => {
       const out = logs.join('\n');
       expect(out).toContain('Skillpack sweep (post-upgrade)');
       expect(out).toContain('new built-in skill');
-      expect(out).toContain('gbrain skillpack sync');
+      expect(out).toContain('foresights skillpack sync');
     });
   });
 
-  it('dev-mode guard: workspace IS gbrain → silent', async () => {
+  it('dev-mode guard: workspace IS foresights → silent', async () => {
     await withEnv({ GBRAIN_SKIP_REFERENCE_SWEEP: undefined }, async () => {
-      // Pass gbrain repo as both gbrainRoot AND targetWorkspace.
+      // Pass foresights repo as both gbrainRoot AND targetWorkspace.
       await postUpgradeReferenceSweep({
         gbrainRoot: GBRAIN_ROOT,
         targetWorkspace: GBRAIN_ROOT,

@@ -201,7 +201,7 @@ describe('stdio host (third-party MCP client)', () => {
     if (r.status !== 0) throw new Error(`${args.join(' ')} failed: ${r.stderr}`);
   };
 
-  /** One `gbrain serve` session; closed before the next CLI write (PGLite has one holder). */
+  /** One `foresights serve` session; closed before the next CLI write (PGLite has one holder). */
   async function session<T>(env: Record<string, string>, fn: (client: Client) => Promise<T>): Promise<T> {
     const transport = new StdioClientTransport({ command: 'bun', args: ['--no-env-file', 'run', 'src/cli.ts', 'serve'], cwd: process.cwd(), env });
     const client = new Client({ name: 'third-party-agent', version: '1' }, { capabilities: {} });

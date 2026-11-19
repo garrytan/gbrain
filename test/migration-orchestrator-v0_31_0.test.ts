@@ -2,11 +2,11 @@
  * v0.31.2 (B3 ship-blocker fix) — orchestrator gate test.
  *
  * The v0_31_0 orchestrator's phaseASchema is the precondition check
- * `gbrain post-upgrade` runs. It must:
+ * `foresights post-upgrade` runs. It must:
  *   - Reject brains at schema_version < 45 (facts table not yet created).
  *   - Pass brains at schema_version >= 45 with the facts table present.
  *   - Surface a useful operator-facing message that names the version
- *     and the recovery command (`gbrain apply-migrations --yes`).
+ *     and the recovery command (`foresights apply-migrations --yes`).
  *
  * Pre-fix, the gate had been demoted to `v < 40` with a misleading
  * "+ notability" claim. v40 brains passed the precondition without

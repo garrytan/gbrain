@@ -88,7 +88,7 @@ async function quietly<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-test('the documented opt-out key is a known config key, so `gbrain config set health.cache_ttl_ms 0` needs no --force', () => {
+test('the documented opt-out key is a known config key, so `foresights config set health.cache_ttl_ms 0` needs no --force', () => {
   expect(KNOWN_CONFIG_KEYS).toContain(HEALTH_CACHE_TTL_KEY);
 });
 

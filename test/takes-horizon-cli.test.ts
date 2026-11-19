@@ -1,5 +1,5 @@
 /**
- * W7: `gbrain takes horizon` (trusted local; thin clients refuse it, see
+ * W7: `foresights takes horizon` (trusted local; thin clients refuse it, see
  * test/thin-client-routing.test.ts). scan previews by default and writes only
  * with --apply; set and clear address a take by page slug and row.
  */
@@ -48,7 +48,7 @@ beforeAll(async () => {
 
 afterAll(async () => { await engine.disconnect(); });
 
-describe('gbrain takes horizon', () => {
+describe('foresights takes horizon', () => {
   test('scan previews without writing, then --apply writes', async () => {
     const preview = JSON.parse(await capture(() => runTakes(engine, ['horizon', 'scan', '--json'])));
     expect(preview).toMatchObject({ applied: false, written: 0, unparsed: 1 });
@@ -56,7 +56,7 @@ describe('gbrain takes horizon', () => {
     expect((await readTakeHorizons(engine)).size).toBe(0);
     const text = await capture(() => runTakes(engine, ['horizon', 'scan']));
     expect(text).toContain('1 stated horizon(s) to write');
-    expect(text).toContain('gbrain takes horizon scan --apply');
+    expect(text).toContain('foresights takes horizon scan --apply');
     const applied = JSON.parse(await capture(() => runTakes(engine, ['horizon', 'scan', '--apply', '--json'])));
     expect(applied).toMatchObject({ applied: true, written: 1 });
     expect((await readTakeHorizons(engine)).get(ids.acme!)).toMatchObject({ horizon_date: '2024-12-31', basis: 'stated' });
@@ -74,6 +74,6 @@ describe('gbrain takes horizon', () => {
     expect(await exitOf(() => runTakes(engine, ['horizon', 'set', 'companies/none-example', '--row', '1', '--date', '2025-06-30']))).toMatchObject({ code: 1, stderr: expect.stringContaining('No take companies/none-example#1') });
     expect(await exitOf(() => runTakes(engine, ['horizon', 'set', 'companies/cobalt-example', '--row', '1', '--date', '2025-13-01']))).toMatchObject({ code: 1, stderr: expect.stringContaining('YYYY-MM-DD') });
     expect(await exitOf(() => runTakes(engine, ['horizon', 'set', 'companies/cobalt-example', '--date', '2025-06-30']))).toMatchObject({ code: 1, stderr: expect.stringContaining('--row') });
-    expect(await exitOf(() => runTakes(engine, ['horizon', 'bogus']))).toMatchObject({ code: 1, stderr: expect.stringContaining('Usage: gbrain takes horizon') });
+    expect(await exitOf(() => runTakes(engine, ['horizon', 'bogus']))).toMatchObject({ code: 1, stderr: expect.stringContaining('Usage: foresights takes horizon') });
   });
 });

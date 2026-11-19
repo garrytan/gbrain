@@ -285,7 +285,7 @@ describe('E2E: find_contradictions MCP op on Postgres', () => {
             axis: 'MRR figure',
             confidence: 0.9,
             resolution_kind: 'dream_synthesize',
-            resolution_command: 'gbrain dream --phase synthesize --slug companies/acme-example',
+            resolution_command: 'foresights dream --phase synthesize --slug companies/acme-example',
           },
           {
             kind: 'cross_slug_chunks',
@@ -297,7 +297,7 @@ describe('E2E: find_contradictions MCP op on Postgres', () => {
             axis: 'name format',
             confidence: 0.75,
             resolution_kind: 'manual_review',
-            resolution_command: 'gbrain takes mark-debate people/alice-example --row 1',
+            resolution_command: 'foresights takes mark-debate people/alice-example --row 1',
           },
         ],
       }],

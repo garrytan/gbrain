@@ -22,7 +22,7 @@ import { withEnv } from './helpers/with-env.ts';
 import { flagRejection, gbrainInvocations, liveCliVerbs } from './helpers/cli-command-surface.ts';
 
 function expectRunnableFix(fix: string) {
-  const invocations = [...fix.matchAll(/gbrain [^,;()]+/g)].flatMap(m => gbrainInvocations(m[0].replace(/\.$/, '').trim()));
+  const invocations = [...fix.matchAll(/(?:foresights|gbrain) [^,;()]+/g)].flatMap(m => gbrainInvocations(m[0].replace(/\.$/, '').trim()));
   expect(invocations.length).toBeGreaterThan(1);
   for (const inv of invocations) {
     expect(liveCliVerbs().has(inv.verb)).toBe(true);
@@ -94,8 +94,8 @@ for (const flavor of ['pglite', ...(databaseUrl ? ['postgres'] : [])] as const) 
     expect(error).toMatchObject({ code: 'recovery_required', docs: 'docs/guides/write-refusals.md#source_checkout_missing' });
     expect(error.message).toContain(`The canonical checkout ${gone} of source 'with-pages' is missing`);
     expect(error.message).toContain('(pages: 1, other sources on the checkout: 0)');
-    expect(error.suggestion).toContain('gbrain sources writer deactivate --dry-run');
-    expect(error.suggestion).toContain('gbrain sources archive with-pages');
+    expect(error.suggestion).toContain('foresights sources writer deactivate --dry-run');
+    expect(error.suggestion).toContain('foresights sources archive with-pages');
     expectRunnableFix(error.suggestion);
     expect((await engine.executeRaw<{ archived: boolean }>('SELECT archived FROM sources WHERE id=$1', ['with-pages']))[0].archived).toBe(false);
   }), 60_000);

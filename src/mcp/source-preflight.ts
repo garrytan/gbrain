@@ -32,7 +32,7 @@ export async function assertStdioSourceBindable(
   if (!env) return;
   if (env === ALL_SOURCES) {
     process.stderr.write(
-      '[gbrain] GBRAIN_SOURCE=__all__ does not grant all-source access to stdio MCP; ' +
+      '[foresights] GBRAIN_SOURCE=__all__ does not grant all-source access to stdio MCP; ' +
       'this binding remains fail-closed and reads return no results. In the MCP server environment, ' +
       'set GBRAIN_SOURCE to a registered source id, or remove it to use normal source resolution ' +
       '(not unrestricted access), then restart the server. ' +
@@ -53,7 +53,7 @@ export async function assertStdioSourceBindable(
     // silently: an operator debugging a blind stdio lane needs to know the
     // preflight did not run.
     process.stderr.write(
-      `[gbrain] GBRAIN_SOURCE preflight skipped (could not read sources): ${e instanceof Error ? e.message : String(e)}\n`,
+      `[foresights] GBRAIN_SOURCE preflight skipped (could not read sources): ${e instanceof Error ? e.message : String(e)}\n`,
     );
     return;
   }
@@ -61,10 +61,10 @@ export async function assertStdioSourceBindable(
     throw opError('unknown_source',
       `GBRAIN_SOURCE="${env}" is not a registered active source (missing or archived); ` +
       `refusing to serve a phantom scope (reads would return nothing, writes would fail ` +
-      `on the sources foreign key). Run \`gbrain sources list\`, then set GBRAIN_SOURCE ` +
+      `on the sources foreign key). Run \`foresights sources list\`, then set GBRAIN_SOURCE ` +
       `to a listed id or unset it.`,
-      'Set GBRAIN_SOURCE to an id that `gbrain sources list` shows (or unset it) in the environment that launches this MCP server, then restart it.',
+      'Set GBRAIN_SOURCE to an id that `foresights sources list` shows (or unset it) in the environment that launches this MCP server, then restart it.',
       { fix: { ...readFix('Lists the registered sources so GBRAIN_SOURCE can name one.', { argv: ['gbrain', 'sources', 'list'] }), actor: 'user',
-        user_message: 'The MCP server is bound to a source that does not exist. Please set GBRAIN_SOURCE to one of the ids `gbrain sources list` prints, or unset it, and restart the server.' } });
+        user_message: 'The MCP server is bound to a source that does not exist. Please set GBRAIN_SOURCE to one of the ids `foresights sources list` prints, or unset it, and restart the server.' } });
   }
 }

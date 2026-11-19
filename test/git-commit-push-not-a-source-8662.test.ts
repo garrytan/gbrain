@@ -1,8 +1,8 @@
 /**
- * #8662: `gbrain git commit-push` resolves its checkout from the working directory, so a wrapper that cd'd into some other
+ * #8662: `foresights git commit-push` resolves its checkout from the working directory, so a wrapper that cd'd into some other
  * repository made it act there: a path outside that repository was refused as `commit_paths_invalid` with nothing saying
  * the checkout was the wrong one, and a path that also existed there was committed and pushed to it. On a host whose brain
- * records source checkouts, a checkout that is none of them (and carries no gbrain source marker) is now refused
+ * records source checkouts, a checkout that is none of them (and carries no foresights source marker) is now refused
  * `checkout_not_a_source`, naming the resolved path and the registered checkouts, before anything is staged.
  * Seams: none; the real CLI against temp repositories and a managed-root registry under a temp GBRAIN_HOME.
  */
@@ -70,7 +70,7 @@ test('a checkout that is not a registered source is refused checkout_not_a_sourc
   expect(JSON.parse(dry.stdout)).toMatchObject({ dry_run: true, paths: [] });
 }, 60_000);
 
-test('the registered checkout still commits, a gbrain source marker admits its checkout, and an explicit --path is not checked', async () => {
+test('the registered checkout still commits, a foresights source marker admits its checkout, and an explicit --path is not checked', async () => {
   const { home, brain } = brainHome('admitted');
   const result = await commitPush(dir, home, '--path', brain, '--', 'people/alice-example.md');
   expect(result.exitCode).toBe(0);
@@ -81,7 +81,7 @@ test('the registered checkout still commits, a gbrain source marker admits its c
   const published = await commitPush(marked, home, '--', 'notes/a.md');
   expect(published.exitCode).toBe(0);
   expect(JSON.parse(published.stdout)).toMatchObject({ outcome: 'pushed', paths: ['notes/a.md'] });
-  // A legacy source checkout hardened by gbrain (its committed helper calls commit-push from the checkout with no --path).
+  // A legacy source checkout hardened by foresights (its committed helper calls commit-push from the checkout with no --path).
   for (const [name, mark] of [['admitted-clipath', (root: string) => git(root, 'config', '--local', 'gbrain.cliPath', '/usr/local/bin/gbrain')],
     ['admitted-helper', (root: string) => { mkdirSync(join(root, 'scripts')); writeFileSync(join(root, 'scripts', 'brain-commit-push.sh'), '#!/bin/sh\n'); }]] as const) {
     const hardened = otherRepo(name);
@@ -127,7 +127,7 @@ test('GST-1623: a repository that only encloses a registered checkout is refused
   expect(JSON.parse(admitted.stdout)).toMatchObject({ outcome: 'committed_local', paths: ['notes/a.md'] });
 }, 60_000);
 
-test('GST-1623: a stale gbrain-managed.json an older gbrain left in the enclosing repository does not admit it', async () => {
+test('GST-1623: a stale gbrain-managed.json an older foresights left in the enclosing repository does not admit it', async () => {
   const outer = otherRepo('stale-marker-code');
   const home = join(dir, 'stale-marker-home'), brain = join(outer, 'brain');
   mkdirSync(join(brain, 'people'), { recursive: true });
@@ -135,7 +135,7 @@ test('GST-1623: a stale gbrain-managed.json an older gbrain left in the enclosin
   writeFileSync(join(brain, 'README.md'), 'brain\n');
   git(brain, 'add', 'README.md'); git(brain, 'commit', '-qm', 'init');
   withEnv({ GBRAIN_HOME: home }, () => { recordManagedRoots('00000000-0000-4000-8000-000000001625', [{ local_path: brain, source_id: 'source-a' }]); });
-  // The marker gbrain before #7988 wrote into an enclosing repository for a root it does not track (filesystem-guard.ts: stale).
+  // The marker foresights before #7988 wrote into an enclosing repository for a root it does not track (filesystem-guard.ts: stale).
   writeFileSync(join(outer, '.git', 'gbrain-managed.json'), JSON.stringify({ root: canonicalFilesystemPath(brain) }));
   const before = git(outer, 'rev-parse', 'HEAD');
   const refused = await commitPush(outer, home, '--', 'notes/a.md');

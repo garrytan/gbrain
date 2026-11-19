@@ -1,13 +1,13 @@
 /**
  * The one `no_pricing` refusal: what an agent needs when a cost cap the user
- * set cannot be enforced because gbrain has no price for the model.
+ * set cannot be enforced because foresights has no price for the model.
  *
  * Every surface that reports `no_pricing` (BudgetTracker.reserve, enrich,
  * conversation facts, skillopt, the embedding migration authorization, and
  * the cycle warnings that point at the same registration) builds its text and
  * structured fields here, so the guidance cannot drift between them.
  *
- * Registration (`gbrain pricing set`) is trusted-local CLI only: a remote MCP
+ * Registration (`foresights pricing set`) is trusted-local CLI only: a remote MCP
  * caller could otherwise declare a $0 rate and void the cap. The guidance
  * therefore always names the exact command and tells a remote caller to ask
  * the brain's operator to run it.
@@ -17,6 +17,7 @@ import type { Action, Transport } from '../agent-output.ts';
 import { ERROR_CATALOGUE } from '../error-catalogue.ts';
 import { splitProviderModelId } from '../model-id.ts';
 import type { BudgetKind } from './reservation-cost.ts';
+import { commandText } from '../brand.ts';
 
 export interface NoPricingGuidance {
   /** Stable wire code. */
@@ -24,7 +25,7 @@ export interface NoPricingGuidance {
   model: string;
   provider: string | null;
   kind: BudgetKind;
-  /** Rates `gbrain pricing set` needs, each in USD per 1M tokens. */
+  /** Rates `foresights pricing set` needs, each in USD per 1M tokens. */
   units: Array<'usd_per_1m_input_tokens' | 'usd_per_1m_output_tokens' | 'usd_per_1m_tokens'>;
   /** What to look up before registering. */
   lookup: string;
@@ -51,7 +52,7 @@ export function pricingSetArgv(modelId: string, kind: BudgetKind): string[] {
 
 /** The registration command for one model, in the units its kind bills. */
 export function pricingSetCommand(modelId: string, kind: BudgetKind): string {
-  return pricingSetArgv(modelId, kind).map((a, i) => (i === 3 ? shellArg(a) : a)).join(' ');
+  return commandText(pricingSetArgv(modelId, kind).map((a, i) => (i === 3 ? shellArg(a) : a)));
 }
 
 export function noPricingGuidance(modelId: string, kind: BudgetKind): NoPricingGuidance {
@@ -88,7 +89,7 @@ export function noPricingMessage(g: NoPricingGuidance, opts: { label?: string; c
   const cap = opts.capUsd !== undefined && Number.isFinite(opts.capUsd) ? `the $${opts.capUsd.toFixed(2)} cost cap` : 'the cost cap';
   const who = g.provider ? ` (provider ${g.provider})` : '';
   const prefix = opts.label ? `${opts.label}: ` : '';
-  return `${prefix}gbrain has no pricing for ${KIND_NOUN[g.kind]} model "${g.model}"${who}, so ${cap} can't be enforced. ${noPricingSteps(g)}`;
+  return `${prefix}foresights has no pricing for ${KIND_NOUN[g.kind]} model "${g.model}"${who}, so ${cap} can't be enforced. ${noPricingSteps(g)}`;
 }
 
 /**
@@ -105,7 +106,7 @@ export function noPricingFix(g: NoPricingGuidance, transport: Transport = 'cli')
     argv: pricingSetArgv(g.model, g.kind),
     consent: [],
     actor: transport === 'cli' ? 'agent' : 'host_admin',
-    why: `gbrain has no price for ${g.model}, so the cost cap the user set cannot be enforced; registering the rate lets the run retry under that cap.`,
+    why: `foresights has no price for ${g.model}, so the cost cap the user set cannot be enforced; registering the rate lets the run retry under that cap.`,
     inputs: [...rateInputs, { name: 'pricing-page-url', how: 'The provider pricing page the rates came from.' }],
     verify: { argv: ['gbrain', 'pricing', 'list'] },
     docs: g.docs,

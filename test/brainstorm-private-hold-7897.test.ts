@@ -1,5 +1,5 @@
 /**
- * #7897: on a brain without managed persistence, `gbrain brainstorm` / `gbrain lsd` --save (`persistSavedIdea`,
+ * #7897: on a brain without managed persistence, `foresights brainstorm` / `foresights lsd` --save (`persistSavedIdea`,
  * src/commands/brainstorm.ts) imported its content through `importFromContent` without the private-request hold and
  * ignored the result, so content asking for `visibility: private` in a spelling page privacy does not read was stored
  * world-readable and reported saved. A managed brain already refused it through put_page (`visibility_not_applied`).

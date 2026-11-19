@@ -17,7 +17,7 @@
  *   2024", "by Q3 2024", "by March 2025", "before 2025", "by 2026");
  * - `stated_relative`: "within N months|years", counted from since_date, so it
  *   is only as certain as since_date;
- * - `owner`: set by the owner (`gbrain takes horizon set`); a scan never
+ * - `owner`: set by the owner (`foresights takes horizon set`); a scan never
  *   overwrites it.
  */
 import { createHash } from 'node:crypto';

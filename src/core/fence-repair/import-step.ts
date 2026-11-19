@@ -111,7 +111,7 @@ export async function resolveImportFences(input: {
   const ctx = screenFenceCtx({ ...input.parsed, folder_restricted: await folderRestricted(input.engine, input.sourceId, input.slug) }, input.activePack);
   const refuse = (step: Extract<FenceStep<FencePage>, { status: 'residual' }>): ImportFences => {
     const issues = fenceIssuesWire([...step.issues, ...step.fixable]);
-    if (step.issues.some(issue => issue.reason === 'normalizer_failed')) console.warn(`[gbrain] #6188 fence normalizer failed on ${input.slug} (gbrain ${VERSION}); the fence was not rewritten.`);
+    if (step.issues.some(issue => issue.reason === 'normalizer_failed')) console.warn(`[foresights] #6188 fence normalizer failed on ${input.slug} (foresights ${VERSION}); the fence was not rewritten.`);
     return input.mode === 'coordinated' ? { refusal: { ...fenceRefusal(step.location), fence_issues: issues }, fixes: [], warnings: [] } : { fixes: [], warnings: issues };
   };
   if (!verdict.fixes.length) return { fixes: [], warnings: verdict.issues };

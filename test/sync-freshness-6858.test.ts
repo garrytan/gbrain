@@ -1,7 +1,7 @@
 /**
  * #6858 ask 6: commit→searchable and commit→embedded latency (src/core/persistence/sync-freshness.ts), doctor
  * `managed_sync_latency` (src/commands/doctor/checks/managed-sync-latency.ts) and the additive `freshness` block of
- * `gbrain sync status --json`. Fixtures: a claimed managed worktree whose commit carries a chosen committer time, and
+ * `foresights sync status --json`. Fixtures: a claimed managed worktree whose commit carries a chosen committer time, and
  * committed `managed_sync_import` receipts stamped at chosen `completed_at` values, with pages and chunks for the
  * embedded side. PGLite always; Postgres when DATABASE_URL is set (test/postgres-unit-arms.txt).
  */
@@ -294,7 +294,7 @@ describe('sync freshness (#6858 ask 6)', () => {
     }
   }), 120_000);
 
-  test('gbrain status prints one freshness line per managed source with samples, and none for a source without', () => {
+  test('foresights status prints one freshness line per managed source with samples, and none for a source without', () => {
     const sampled = { source_id: 'acme-example', window_hours: 24, commits: 2, unresolved_commits: 0, waiting_commits: null,
       commit_to_searchable: { samples: 3, p50_seconds: 8, p95_seconds: 14 }, commit_to_embedded: { samples: 3, p50_seconds: 15, p95_seconds: 31, pending: 0 } };
     const quiet = { ...sampled, source_id: 'alice-example', commits: 0, commit_to_searchable: { samples: 0, p50_seconds: null, p95_seconds: null },

@@ -1,7 +1,7 @@
 /**
  * Tests for src/core/mcp-client.ts.
  *
- * Strategy: spin up an in-process HTTP server that mimics gbrain serve --http
+ * Strategy: spin up an in-process HTTP server that mimics foresights serve --http
  * (OAuth discovery + /token + /mcp). Test callRemoteTool against it,
  * including the OAuth token cache, the 401 → refresh-once retry, and the
  * RemoteMcpError shape.
@@ -237,7 +237,7 @@ describe('callRemoteTool — happy path', () => {
 });
 
 describe('callRemoteTool — thin-client identity (C1)', () => {
-  test('every MCP request names gbrain\'s thin client so hosts keep full search rows', async () => {
+  test('every MCP request names foresights\'s thin client so hosts keep full search rows', async () => {
     await callRemoteTool(makeConfig(), 'search', { query: 'x' });
     expect(clientHeaders.length).toBeGreaterThanOrEqual(2);
     for (const h of clientHeaders) expect(h).toBe(`gbrain-remote-cli/${VERSION}`);

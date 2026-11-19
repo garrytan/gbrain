@@ -9,10 +9,10 @@
  * `doctor`'s sync checks reported "ok" (for an unrelated reason — they
  * only look at the `sources` table in a way this brain shape doesn't hit).
  *
- * gbrain owns that directory outright, so the fix self-heals by `git
+ * foresights owns that directory outright, so the fix self-heals by `git
  * init`-ing it and capturing the current on-disk state as the sync
  * baseline. Ownership is proven by VALUE — the resolved `repoPath` must
- * realpath-equal gbrain's own anchor — not by whether
+ * realpath-equal foresights's own anchor — not by whether
  * `opts.repoPath`/`opts.sourceId` happen to be set:
  *
  * - Gating on `!opts.repoPath` (round 3) would have made self-heal never
@@ -22,12 +22,12 @@
  *   practice: migration `sources_table_additive` seeds a `'default'`
  *   source row whose `local_path` mirrors `sync.repo_path` on every
  *   brain that's run it (i.e. virtually all installed brains today), so
- *   both the dream cycle and bare `gbrain sync` resolve
+ *   both the dream cycle and bare `foresights sync` resolve
  *   `sourceId: 'default'`, never `undefined`, in reality — a fresh test
  *   brain's null `local_path` masked this (Codex review round 5).
  *
  * The actual boundary implemented by `isAnchorOwnedSyncPath`: `sourceId`
- * must be `undefined` OR exactly `'default'` (gbrain's own bootstrap
+ * must be `undefined` OR exactly `'default'` (foresights's own bootstrap
  * identity — a DIFFERENT id is what an explicit `sources add <id> --path
  * <dir>` registration of a user's own external directory looks like),
  * AND the resolved `repoPath` must realpath-equal the LIVE anchor for
@@ -68,7 +68,7 @@ describe('#2964: sync auto-inits a never-git-initialized default brain dir', () 
     dir = mkdtempSync(join(tmpdir(), 'gbrain-2964-'));
     writeFileSync(join(dir, 'page1.md'), mdPage('Page 1'));
     writeFileSync(join(dir, 'page2.md'), mdPage('Page 2'));
-    // The self-heal-eligible anchor: gbrain's own persisted config, not a
+    // The self-heal-eligible anchor: foresights's own persisted config, not a
     // caller-supplied --repo / job.data.repoPath (those are proven by
     // VALUE against this anchor, not by mere absence — see file docstring).
     await engine.setConfig('sync.repo_path', dir);
@@ -91,7 +91,7 @@ describe('#2964: sync auto-inits a never-git-initialized default brain dir', () 
     expect(await engine.getPage('page2')).not.toBeNull();
   });
 
-  test('explicit repoPath matching the anchor still auto-inits (mirrors gbrain dream\'s sync phase)', async () => {
+  test('explicit repoPath matching the anchor still auto-inits (mirrors foresights dream\'s sync phase)', async () => {
     // cycle.ts's runPhaseSync (the actual dream-cycle call site this bug
     // was filed against) always passes `repoPath: brainDir` explicitly —
     // it already resolved the anchor itself upstream and threads it
@@ -126,7 +126,7 @@ describe('#2964: sync auto-inits a never-git-initialized default brain dir', () 
     // Migration sources_table_additive seeds a 'default' source row with
     // local_path copied from sync.repo_path on every brain that's run it
     // — i.e. this, not a bare no-sourceId call, is what runPhaseSync/CLI
-    // `gbrain sync` actually resolve to on a real installed brain.
+    // `foresights sync` actually resolve to on a real installed brain.
     await engine.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = 'default'`, [dir]);
     const { performSync } = await import('../src/commands/sync.ts');
     expect(existsSync(join(dir, '.git'))).toBe(false);
@@ -166,7 +166,7 @@ describe('#2964: sync auto-inits a never-git-initialized default brain dir', () 
     // Mirrors jobs.ts: submit_job({name:'sync', data:{repoPath}}) reaches
     // performSyncInner with sourceId left undefined whenever repoPath
     // doesn't match a registered source's local_path. Self-heal must not
-    // fire for a path that isn't gbrain's own anchor, even with no
+    // fire for a path that isn't foresights's own anchor, even with no
     // sourceId set — only exact anchor-value equality (the previous test)
     // is eligible.
     const other = mkdtempSync(join(tmpdir(), 'gbrain-2964-other-'));
@@ -309,7 +309,7 @@ describe('#2964: sync auto-inits a never-git-initialized default brain dir', () 
     writeFileSync(join(dir, 'private-cache', 'secret.bin'), 'binary-ish content');
     writeFileSync(join(dir, 'gbrain.yml'), 'storage:\n  db_only:\n    - private-cache\n');
     // Simulate an interrupted workflow that left this file staged in an
-    // unborn repo BEFORE gbrain's self-heal ever ran.
+    // unborn repo BEFORE foresights's self-heal ever ran.
     execSync('git init -q', { cwd: dir });
     execSync('git add private-cache/secret.bin', { cwd: dir });
 

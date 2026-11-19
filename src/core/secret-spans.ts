@@ -1,5 +1,5 @@
 /**
- * Span-level secret redaction of stored text, the pure half of `gbrain repair
+ * Span-level secret redaction of stored text, the pure half of `foresights repair
  * secret-spans` (repair/secret-spans.ts). Every field of one page is planned
  * with the secret scanner (`planRedaction`, the rules the operator selects)
  * against one shared echo dictionary, so a value the scanner claimed in one

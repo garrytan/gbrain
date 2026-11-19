@@ -40,7 +40,7 @@ function stubGit(home: string, body: string): string {
   chmodSync(join(dir, 'git'), 0o755);
   return dir;
 }
-// The hook lives in a configured core.hooksPath, as `gbrain sources harden` installs it when one is set:
+// The hook lives in a configured core.hooksPath, as `foresights sources harden` installs it when one is set:
 // a probe failure must not fall back to .git/hooks, find nothing there and read as "not hardened".
 function hardenCustomHooks(repo: Repo): void {
   harden(repo);

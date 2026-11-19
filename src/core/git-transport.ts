@@ -43,7 +43,7 @@ export const GIT_SSRF_SUBCOMMAND_FLAGS = [
 /**
  * Build the strict no-prompt git env for the current (or given) platform.
  *
- * POSIX: confine to the gbrain SSRF model — no credential helpers, no SSH
+ * POSIX: confine to the foresights SSRF model — no credential helpers, no SSH
  * askpass, no GUI prompts (`/bin/false` fails any askpass invocation fast).
  *
  * win32 (#1315): `/bin/false` does not exist, so pointing GIT_ASKPASS at it

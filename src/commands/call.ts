@@ -25,7 +25,7 @@ function writePathFailure(error: unknown): boolean {
 }
 
 /**
- * `gbrain call <tool> <json>` — trusted local op-dispatch surface.
+ * `foresights call <tool> <json>` — trusted local op-dispatch surface.
  *
  * v0.31.8 (D22): grammar accepts an optional `--source <id>` flag before the
  * tool name. The flag is the highest-priority tier in resolveSourceId()'s
@@ -40,7 +40,7 @@ export async function runCall(
   out: (payload: string) => Promise<void> = writeStdoutFinal,
 ) {
   // Parse --source <id> from anywhere in args (must come before tool/json
-  // tokens to keep the existing `gbrain call <tool> <json>` shape readable,
+  // tokens to keep the existing `foresights call <tool> <json>` shape readable,
   // but the parser is positional-tolerant for ergonomics).
   let explicitSource: string | null = null;
   const rest: string[] = [];
@@ -67,7 +67,7 @@ export async function runCall(
   const jsonStr = rest[1];
 
   if (!tool) {
-    console.error("Usage: gbrain call [--source <id>] <tool> '<json>'");
+    console.error("Usage: foresights call [--source <id>] <tool> '<json>'");
     process.exit(1);
   }
 
@@ -99,8 +99,8 @@ export async function runCall(
   // #3874: mirror cli.ts's makeContext — when the source resolved via a
   // NON-explicit tier, unqualified search-shaped reads span every
   // `config.federated = true` source (#2561 parity). Without this,
-  // `gbrain call query ...` silently saw a narrower brain than
-  // `gbrain query ...`.
+  // `foresights call query ...` silently saw a narrower brain than
+  // `foresights query ...`.
   const resolved = await resolveSourceWithTier(connected, explicitSource);
   const sourceId = resolved.source_id;
   const localFederated = await localFederatedSourceIds(connected, resolved.source_id, resolved.tier);
@@ -108,7 +108,7 @@ export async function runCall(
     sourceId, writeWaitMs: currentCliWriteWait().waitMs,
     ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),
   });
-  // `gbrain call` bypasses cli.ts's op-output normalizer entirely, so this
+  // `foresights call` bypasses cli.ts's op-output normalizer entirely, so this
   // exit needs its own bigint-safe replacer — any op returning an int8 column
   // (BIGSERIAL id) would otherwise crash plain JSON.stringify (#2450).
   // Awaited delivery (#3423): a >64KiB payload piped to a slow reader loses
@@ -121,7 +121,7 @@ export async function runCall(
 }
 
 /**
- * A3 on `gbrain call`: a caller mistake refused before any write was admitted
+ * A3 on `foresights call`: a caller mistake refused before any write was admitted
  * (no receipt) is invalid input, exit 2, even when the write lane rendered it.
  */
 function usageVerdict(error: unknown): void {
@@ -129,7 +129,7 @@ function usageVerdict(error: unknown): void {
 }
 
 /**
- * Agent contract v1 (A1): `gbrain call` is a JSON surface, so a failure is
+ * Agent contract v1 (A1): `foresights call` is a JSON surface, so a failure is
  * the same envelope an MCP caller gets, on stdout, with the registry's exit.
  */
 async function failCall(tool: string, error: unknown, out: (text: string) => Promise<void>): Promise<void> {

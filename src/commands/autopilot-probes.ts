@@ -1,5 +1,5 @@
 /**
- * The nightly probes the `gbrain autopilot` daemon runs after every tick
+ * The nightly probes the `foresights autopilot` daemon runs after every tick
  * (4.5 quality probe, 4.6 conversation-parser probe). Both own their gates and
  * never throw into the loop. Called by runAutopilotDaemon.
  */
@@ -10,7 +10,7 @@ import { logError } from './autopilot.ts';
 
 /**
  * The quality probe's model routes (#5872): refresh the daemon's gateway from
- * the brain the way queued jobs do, so a `gbrain config set models.*` made
+ * the brain the way queued jobs do, so a `foresights config set models.*` made
  * after daemon start reaches the #4636 judge substitute, then resolve the
  * reader, extractor and judge-slot routes against the same brain.
  */
@@ -36,7 +36,7 @@ export async function runNightlyQualityProbeStep(engine: BrainEngine, cfg: GBrai
       await import('../core/cycle/nightly-quality-probe.ts');
     const { resolveNightlyProbeSearchConfigSnapshot } =
       await import('../core/cycle/nightly-probe-search-config.ts');
-    // Dual-plane read: `gbrain config set` (what the doctor enable hint
+    // Dual-plane read: `foresights config set` (what the doctor enable hint
     // prints) writes the DB plane; ~/.gbrain/config.json is the fallback.
     let dbEnabled: string | null = null;
     let dbMaxUsd: string | null = null;
@@ -84,7 +84,7 @@ export async function runParserProbeStep(engine: BrainEngine, cfg: GBrainConfig 
     const { logParserProbeEvent, parserProbeRanWithin } = await import('../core/audit-parser-probe.ts');
     const { isAvailable } = await import('../core/ai/gateway.ts');
     const { NIGHTLY_PROBE_FIXTURES } = await import('../core/cycle/nightly-probe-fixtures.ts');
-    // Flag reads dual-plane: the DB row (`gbrain config set …`) wins,
+    // Flag reads dual-plane: the DB row (`foresights config set …`) wins,
     // ~/.gbrain/config.json is the fallback. search.mode lives on the
     // DB plane only (mode.ts owns it).
     let parserDbEnabled: string | null = null;

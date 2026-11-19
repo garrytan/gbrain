@@ -121,7 +121,7 @@ for (const backend of testBackends()) {
       const r = await runChronicleBackfill(engine, { yes: true, model: UNPRICED }) as unknown as Result;
       expect(r).toMatchObject({ queued: 2, worst_case_usd: 'unpriced', fits_under_cap: null, campaign_id: null });
       expect(r.message).toContain('--max-usd');
-      expect(r.message).toContain('gbrain pricing set');
+      expect(r.message).toContain('foresights pricing set');
       expect((await ledger()).every((row) => row.campaign_id === null)).toBe(true);
     });
 

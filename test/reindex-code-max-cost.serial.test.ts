@@ -1,5 +1,5 @@
 /**
- * F3: `gbrain reindex --code --max-cost N` smoke test.
+ * F3: `foresights reindex --code --max-cost N` smoke test.
  *
  * Pins the new flag's contract:
  *   1. ReindexCodeOpts.maxCostUsd?: number accepts a positive number.

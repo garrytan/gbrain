@@ -1,6 +1,6 @@
 /**
  * Tests for src/core/minions/spawn-helpers.ts — pure helpers that build the
- * (cmd, args) tuple for spawning the gbrain worker, optionally wrapped in
+ * (cmd, args) tuple for spawning the foresights worker, optionally wrapped in
  * tini for zombie reaping.
  *
  * `buildSpawnInvocation` is a pure function — directly testable without any

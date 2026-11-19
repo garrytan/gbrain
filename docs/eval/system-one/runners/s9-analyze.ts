@@ -8,7 +8,7 @@
  * (baseline_decision stored per pair).
  *
  *   bun docs/eval/system-one/runners/s9-analyze.ts --values <jsonl> --dataset <jsonl> [--eligible-only] [--dup-threshold x --floor y]
- * (--dup-threshold/--floor apply the stored `gbrain decide calibrate` row instead of re-searching.)
+ * (--dup-threshold/--floor apply the stored `foresights decide calibrate` row instead of re-searching.)
  */
 import { searchThreshold, wilsonLowerBound } from '../../../../src/core/ai/decide/calibrate.ts';
 import { reduceConflict, supersedeProbability } from '../../../../src/core/ai/decide/conflict.ts';

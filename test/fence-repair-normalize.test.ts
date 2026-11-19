@@ -443,7 +443,7 @@ describe('location-only privacy', () => {
     const r = run(facts(factsRow(1, 'Lambda three', { vis: 'everyone' })));
     const message = fenceMessage(issueLocation(r.residual[0]!));
     expect(message).toBe('Fence enum_unmapped: in the facts fence (body), row 1, column visibility, at line 7. '
-      + 'Column(s) `visibility` of row(s) 1 in the facts fence (body, line 7) hold a value gbrain cannot map. Use one of `private`, `world`.');
+      + 'Column(s) `visibility` of row(s) 1 in the facts fence (body, line 7) hold a value foresights cannot map. Use one of `private`, `world`.');
   });
 });
 

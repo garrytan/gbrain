@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * The "Which gbrain call for which lookup" table (#7233): written once in
+ * The "Which foresights call for which lookup" table (#7233): written once in
  * skills/conventions/brain-first.md and copied verbatim into the other
  * agent entry points, so every agent sees the same calls with the same flags.
  *

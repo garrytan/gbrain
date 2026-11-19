@@ -1,5 +1,5 @@
 /**
- * gbrain repair private-labels: classify the privacy labels live pages carry
+ * foresights repair private-labels: classify the privacy labels live pages carry
  * into KEEP (a real restriction) and CLEAR (an over-stamped access: private),
  * and clear the CLEAR ones through revision-bound page writes, reversibly.
  *
@@ -12,7 +12,7 @@
  *    ledger misses a line or an original value, or restore re-adds something
  *    other than the recorded value.
  * 3. Real seams: repo-less PGLite, the registered handler driven through the
- *    gbrain repair command entry (argument parse, runner, runRepair).
+ *    foresights repair command entry (argument parse, runner, runRepair).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';

@@ -1,5 +1,5 @@
 /**
- * #6803 part 2: `gbrain projections drain` restores the importer's own seal on
+ * #6803 part 2: `foresights projections drain` restores the importer's own seal on
  * `sealable` image pages (page-state/projection-class.ts). Migration v153 only
  * removed their seal marker: each chunk was written by the importer at or after
  * the safe-chunk fence with safeChunks true, and the page's revision has not
@@ -48,7 +48,7 @@ export interface ImageSealResult {
   sealed: number;
   /** Sealed pages whose chunk carries a visual vector: image search ranks them again. */
   sealed_with_visual: number;
-  /** Sealed pages with no visual vector yet (imported with --no-embed): keyword-only until `gbrain embed --stale --images`. */
+  /** Sealed pages with no visual vector yet (imported with --no-embed): keyword-only until `foresights embed --stale --images`. */
   sealed_text_only: number;
 }
 

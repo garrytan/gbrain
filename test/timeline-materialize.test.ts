@@ -200,7 +200,7 @@ describe('#5567 database-only rows are materialized as marked bullets', () => {
       await f.put(slug, page('Draft.'));
       await f.legacy(slug, { date: '2026-07-05', source: 'meeting  notes', summary: 'Spaced source' });
       for (const body of ['Edited.', 'Edited again.', 'Edited once more.']) await f.put(slug, page(body), { force: true });
-      expect((await f.body(slug)).match(/gbrain:materialized/g)?.length).toBe(1);
+      expect((await f.body(slug)).match(/(?:foresights|gbrain):materialized/g)?.length).toBe(1);
       expect(await f.timeline(slug)).toEqual([{ date: '2026-07-05', source: 'meeting  notes', summary: 'Spaced source', detail: '' }]);
     });
   });

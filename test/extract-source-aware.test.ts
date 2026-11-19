@@ -1,7 +1,7 @@
 /**
- * v0.37.7.0 #1204 — `gbrain extract --source-id <id>` scopes extraction.
+ * v0.37.7.0 #1204 — `foresights extract --source-id <id>` scopes extraction.
  *
- * Federated brain users running `gbrain extract` need to scope by
+ * Federated brain users running `foresights extract` need to scope by
  * source. Pre-fix, every run walked all sources together which
  * confused link resolution on cross-source duplicates. This test
  * pins the new `--source-id` flag: walk + extract only that source's

@@ -1,6 +1,6 @@
 /**
  * GBRA-150: one meaning of "blocked". A sync run (its drain outcome) and a sync job's `blocked` progress call a source
- * blocked only when it cannot advance without a person or an operator. `gbrain sync status` used to say
+ * blocked only when it cannot advance without a person or an operator. `foresights sync status` used to say
  * `blocked / needs_human` for one file hold that waits on a person while the run that recorded it ended `synced` and
  * the rest of the source kept syncing, so a landing check reading jobs and an agent reading status disagreed. Now a
  * person-waiting file hold reads `synced` with reason `held_needs_human`; `needs_human` and `next` still carry the

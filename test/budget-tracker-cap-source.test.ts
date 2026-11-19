@@ -54,7 +54,7 @@ describe('unpriced model × cap source', () => {
     const be = err as BudgetExhausted;
     expect(be.reason).toBe('no_pricing');
     expect(be.capSource).toBe('user');
-    expect(be.message).toContain('gbrain pricing set');
+    expect(be.message).toContain('foresights pricing set');
     expect(be.fix?.argv).toEqual(pricingSetArgv(UNPRICED, 'chat'));
     expect(be.fix?.actor).toBe('agent');
     expect(be.fix?.inputs?.map(i => i.name)).toEqual(['usd-per-1M-input-tokens', 'usd-per-1M-output-tokens', 'pricing-page-url']);

@@ -40,8 +40,8 @@ Show the user the results. Get feedback.
 - Revise the process based on what you learned.
 
 **Step 4: Codify into a Skill.**
-Write the SKILL.md (`gbrain skillify scaffold <name>` scaffolds the tree for
-you; `gbrain skillopt` optimizes an existing skill against a benchmark).
+Write the SKILL.md (`foresights skillify scaffold <name>` scaffolds the tree for
+you; `foresights skillopt` optimizes an existing skill against a benchmark).
 Either:
 - **New skill** -- genuinely new capability
 - **Add to existing skill** -- variation of something that exists (parameterize it)
@@ -131,4 +131,4 @@ A skill is ready when:
 
 ---
 
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md).*
+*Part of the [Foresights Skillpack](../GBRAIN_SKILLPACK.md).*

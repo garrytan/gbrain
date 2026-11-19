@@ -65,7 +65,7 @@ describe('serve with the vector prewarm off', () => {
   test('serve_vector_prewarm in the published merge runs it after the boot (the control: the probe sees it)', async () => {
     const on = await boot('on');
     expect(on.modules).toHaveLength(1);
-    expect(on.logs).toContain('[gbrain serve] vector prewarm: skipped (Postgres only; this brain is PGLite)');
+    expect(on.logs).toContain('[foresights serve] vector prewarm: skipped (Postgres only; this brain is PGLite)');
     expect(on.calls).not.toContain('getConfig(serve.vector_prewarm)');
   }, 60_000);
 });

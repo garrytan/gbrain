@@ -14,8 +14,8 @@ This guide covers who gets what, the parameters, and the four refusals.
 
 | Caller | `get_page` with no body mode | Large page (over 256 KB) |
 | --- | --- | --- |
-| Trusted local CLI (`gbrain get`) | Whole page | Whole page, any size |
-| gbrain's thin client (`X-Gbrain-Client` header) | Whole page | Whole page while it fits the connection; otherwise the CLI pages the round-trip markdown to its end and checks its sha256, or fails without printing |
+| Trusted local CLI (`foresights get`) | Whole page | Whole page, any size |
+| foresights's thin client (`X-Gbrain-Client` header) | Whole page | Whole page while it fits the connection; otherwise the CLI pages the round-trip markdown to its end and checks its sha256, or fails without printing |
 | Any other MCP client | `auto` | Outline plus a first window; never `compiled_truth`, `timeline` or `content` |
 
 The inline size is `mcp.inline_body_bytes` (default 256 KB). Hosts advertise the
@@ -117,13 +117,13 @@ escaping included. Defaults: 4 MiB on stdio (`mcp.max_result_bytes_stdio`),
 
 ## page_too_large_for_inline
 
-`get_page` with `body: "full"` (or `include_content`, or gbrain's thin client
+`get_page` with `body: "full"` (or `include_content`, or foresights's thin client
 naming no mode) asked for a page whose encoded result is over the connection's
-cap. gbrain's thin client also gets it for a page stored in segments, its
+cap. foresights's thin client also gets it for a page stored in segments, its
 signal to page the round-trip markdown; any other caller gets
 `page_body_segmented` for such a page. Nothing was returned or cut. Read `body: "outline"`, then windows; edit with
-`edit_page` using the revision from `body: "none"`. An older gbrain CLI gets this
-refusal instead of a partial page: upgrade it (`gbrain upgrade`).
+`edit_page` using the revision from `body: "none"`. An older foresights CLI gets this
+refusal instead of a partial page: upgrade it (`foresights upgrade`).
 
 ## page_body_segmented
 
@@ -132,9 +132,9 @@ The page's body is stored in segments (a page over 1 MiB written while
 [segmented page storage](memory-boundaries.md#segmented-page-storage)), and the command or tool that hit it reads or
 writes the whole body as one string. It stopped before reading or changing
 anything, so the page is intact, and retrying refuses the same way. Read the
-page in pieces: `get_page` `body: "auto"` (`gbrain get --body auto <slug>`)
+page in pieces: `get_page` `body: "auto"` (`foresights get --body auto <slug>`)
 returns its outline and first window, then `body: "window"` reads on;
-`gbrain get <slug>` with no `--body` prints it whole, streamed. Queue work (fact reconcile, the facts backstop, link and mention
+`foresights get <slug>` with no `--body` prints it whole, streamed. Queue work (fact reconcile, the facts backstop, link and mention
 passes, effect scans) skips a segmented page with this code as its logged
 reason instead of stopping. Life Chronicle extraction, `edit_page` and the
 derived-link passes (a trusted page write's links, the managed stale-links
@@ -158,8 +158,8 @@ Semantic writes work on such a page. `add_tag` and `remove_tag` change the
 tag at any size without rewriting the body: the tag rows, `content_hash` and
 a version change, and a page backed by a file gets the new frontmatter in that
 file with its body bytes unchanged. `add_timeline_entry`, the `takes_*`
-writes, the facts fence write of `extract_facts`, `gbrain core add` /
-`remove` / `diff` and `gbrain sources reconcile` read a page up to 24 MiB
+writes, the facts fence write of `extract_facts`, `foresights core add` /
+`remove` / `diff` and `foresights sources reconcile` read a page up to 24 MiB
 back whole and write it as a normal put, with the result an inline page with
 the same body gets; over 24 MiB they refuse with this code, and the message
 names the 24 MiB limit.
@@ -171,15 +171,15 @@ stored body: they must run from byte 0 to the page's `body_bytes` (a retained
 version's own `body_bytes` for an older generation) without a gap. The usual
 cause is a database role that can read the page row but not its segment rows
 (a row-level security policy or grant on `pages` only); a damaged database is
-the other. gbrain returns nothing rather than an empty or truncated page, and
+the other. foresights returns nothing rather than an empty or truncated page, and
 every reader that produces the body checks it: `get_page`, `fetch`, export,
 backup and restore file writes, body digests, fence rewrites and purges, and
 timeline extraction. An export with such a page fails instead of writing a
 short file. The brain host's operator gives the reading role the same
 access to `page_body_manifest` and `page_segment_texts` it has to `pages`;
-`gbrain doctor --json` checks the segment tables. A page whose rows are
+`foresights doctor --json` checks the segment tables. A page whose rows are
 missing (an older write could publish a body without them) is listed by
-doctor `segmented_tiling`; [`gbrain repair segmented-tiling`](repair.md#segmented-tiling)
+doctor `segmented_tiling`; [`foresights repair segmented-tiling`](repair.md#segmented-tiling)
 republishes it from its file in Git.
 
 ## page_projection_stale
@@ -189,9 +189,9 @@ A read of a segmented page reached a segment whose stored projection metadata
 it was written by another segmenter version or the text does not match its
 hash, and the parser state carried with the segment is missing or of another
 version. A trusted body read also refuses when a facts fence block crosses a
-forced segment cut while the source has withdrawals. gbrain returns nothing for
+forced segment cut while the source has withdrawals. foresights returns nothing for
 that segment rather than text it cannot sanitize. Rewrite the page body (import
-or sync its file again), which segments it with this gbrain version, then read
+or sync its file again), which segments it with this foresights version, then read
 it again; other windows and the outline still work.
 
 ## page_shrink_refused

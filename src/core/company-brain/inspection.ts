@@ -38,13 +38,13 @@ function canonical(value: unknown, maxBytes = COMPANY_BRAIN_MAX_METADATA_BYTES):
       bytes += Buffer.byteLength(item);
       if (bytes > maxBytes) {
         throw opError('request_too_large', 'Metadata exceeds its byte limit.',
-          `Metadata text passed its ${maxBytes}-byte limit. Narrow the selection with --include or --exclude on gbrain sources inspect, or split the repository.`);
+          `Metadata text passed its ${maxBytes}-byte limit. Narrow the selection with --include or --exclude on foresights sources inspect, or split the repository.`);
       }
       return item;
     }
     if (item instanceof Date) return item.toISOString();
     if (typeof item !== 'object' || item === null || seen.has(item)) throw opError('invalid_params', 'Metadata must be finite, acyclic JSON data.',
-      'Use plain JSON data with no NaN, Infinity, functions, or cycles; pass a plan exactly as gbrain sources inspect --json wrote it.');
+      'Use plain JSON data with no NaN, Infinity, functions, or cycles; pass a plan exactly as foresights sources inspect --json wrote it.');
     seen.add(item);
     let result: unknown;
     if (Array.isArray(item)) result = item.map(value => visit(value, depth + 1));
@@ -64,7 +64,7 @@ function canonical(value: unknown, maxBytes = COMPANY_BRAIN_MAX_METADATA_BYTES):
   const encoded = JSON.stringify(visit(value, 0));
   if (Buffer.byteLength(encoded) > maxBytes) {
     throw opError('request_too_large', 'Metadata exceeds its byte limit; narrow selection.',
-      `The encoded metadata passed its ${maxBytes}-byte limit. Narrow the selection with --include or --exclude on gbrain sources inspect, or split the repository.`);
+      `The encoded metadata passed its ${maxBytes}-byte limit. Narrow the selection with --include or --exclude on foresights sources inspect, or split the repository.`);
   }
   return encoded;
 }
@@ -347,7 +347,7 @@ export async function inspectCompanyBrain(options: InspectCompanyBrainOptions): 
     if (companyBrainDigest(after) !== companyBrainDigest(plan.revision)) finding(plan, 'error', 'plan_stale', 'The checkout identity or revision changed during inspection; inspect again.');
   } catch (error) {
     finding(plan, 'error', error instanceof OperationError ? error.code : 'invalid_source',
-      error instanceof OperationError && error.code === 'request_too_large' ? 'Inspection exceeds the bounded entry or metadata limit; partition the repository or narrow selection.' : notGitRepository(options.path) ? 'This folder is not a Git repository, and sources inspect reviews a committed company-brain checkout. To add a plain folder of notes, run gbrain sources add <id> --path <folder>. No input was changed.' : 'Inspect a committed local Git directory with a stable, safe root. No input was changed.');
+      error instanceof OperationError && error.code === 'request_too_large' ? 'Inspection exceeds the bounded entry or metadata limit; partition the repository or narrow selection.' : notGitRepository(options.path) ? 'This folder is not a Git repository, and sources inspect reviews a committed company-brain checkout. To add a plain folder of notes, run foresights sources add <id> --path <folder>. No input was changed.' : 'Inspect a committed local Git directory with a stable, safe root. No input was changed.');
   }
   for (const entry of plan.manifest) { plan.counts.tracked++; plan.counts[entry.disposition]++; }
   plan.counts.dirty_eligible = plan.uncommitted.filter(item => item.eligible).length;

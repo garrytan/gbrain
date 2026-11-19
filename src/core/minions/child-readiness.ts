@@ -64,11 +64,11 @@ export function jobChildBuildVerdict(raw: string | undefined, workerPid: number)
   const builds = `job child v${VERSION} ${protocolMismatch || missing.length ? 'refused to run' : 'ran'} under worker pid ${workerPid} v${parent.version}`;
   if (!protocolMismatch && !missing.length) {
     return { worker_version: parent.version, refused: false,
-      note: `${JOB_BUILD_SKEW_PREFIX} ${builds}; the readiness protocol and every feature the worker needs match, so the job ran on the child's build. Restart the worker to run one build (gbrain doctor --only runtime_build_skew).` };
+      note: `${JOB_BUILD_SKEW_PREFIX} ${builds}; the readiness protocol and every feature the worker needs match, so the job ran on the child's build. Restart the worker to run one build (foresights doctor --only runtime_build_skew).` };
   }
   const why = protocolMismatch ? `the worker speaks readiness protocol ${String(parent.protocol_version)} and this child ${CHILD_READINESS_PROTOCOL_VERSION}` : `this child lacks ${missing.join(', ')}`;
   return { worker_version: parent.version, refused: true,
-    note: `${JOB_BUILD_SKEW_PREFIX} ${builds}: ${why}. The job is released without counting an attempt and the worker stops on a configuration block until it restarts on one build (gbrain doctor --only runtime_build_skew).` };
+    note: `${JOB_BUILD_SKEW_PREFIX} ${builds}: ${why}. The job is released without counting an attempt and the worker stops on a configuration block until it restarts on one build (foresights doctor --only runtime_build_skew).` };
 }
 
 export interface ChildReadinessOptions {

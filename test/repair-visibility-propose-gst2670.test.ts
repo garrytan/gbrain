@@ -1,5 +1,5 @@
 /**
- * GST-2670 phase 2 (GBRA-502, decision B1): gbrain repair visibility --propose.
+ * GST-2670 phase 2 (GBRA-502, decision B1): foresights repair visibility --propose.
  *
  * 1. Protects: on a brain that serves several people, --propose reads the open pages' participants, attendees, to,
  *    from and cc addresses, matches each to an enabled member by declared email (exact, case-folded), groups pages by
@@ -10,7 +10,7 @@
  * 2. Fails when: a guess or a disabled member's email makes a proposal, the owner is missing or not first, a slugs
  *    file holds other slugs or is readable by others, a write lands in pages, rules, config or members, a printed
  *    command does not parse with the real flag tables, or a one-person brain runs a pages query.
- * 3. Real seams: the gbrain repair CLI module (parse and dispatch), the access rule CLI module, PGLite repo-less
+ * 3. Real seams: the foresights repair CLI module (parse and dispatch), the access rule CLI module, PGLite repo-less
  *    (Postgres when DATABASE_URL is set); the printed command previewed and applied for real.
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
@@ -193,7 +193,7 @@ for (const kind of testBackends()) {
         expect(() => parseRepairArgs(['visibility', '--propose', ...extra])).toThrow(/does not apply with --propose/);
       }
       expect(() => parseRepairArgs(['visibility', '--out', '/srv/x'])).toThrow(/--out applies only with --propose/);
-      expect(() => parseRepairArgs(['frontmatter', '--propose'])).toThrow(/--propose applies only to gbrain repair visibility/);
+      expect(() => parseRepairArgs(['frontmatter', '--propose'])).toThrow(/--propose applies only to (?:foresights|gbrain) repair visibility/);
       expect(CLI_FLAG_REGISTRY.repair).toEqual(expect.arrayContaining(['--propose', '--out']));
     });
 

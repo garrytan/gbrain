@@ -32,7 +32,7 @@
  * endpoints are in scope, so a granted-to-ungranted edge never leaks the far
  * side through a degree or rescues a page from orphan-hood. Page-scoped
  * counts exclude soft-deleted pages (#1305); chunk and link counts stay raw,
- * matching getStats. Endpoint liveness (gbrain#4153): an inbound link counts
+ * matching getStats. Endpoint liveness (foresights#4153): an inbound link counts
  * only when its source page is live, an outbound link only when its target
  * is. Quarantined pages (#4280) leave the entity denominators and the
  * linkable scope; machine leaf types leave the linkable scope through the
@@ -247,7 +247,7 @@ export async function getHealth(
   const timelineCoverageScore = pageCount === 0 ? 15 : Math.round(timelineDensity * 15);
   const noOrphansScore = pageCount === 0 ? 15 : Math.round(noOrphans * 15);
   const noDeadLinksScore = pageCount === 0 ? 10 : Math.round(noDeadLinks * 10);
-  // gbrain#4147: below the small-N floor the entity ratios report null.
+  // foresights#4147: below the small-N floor the entity ratios report null.
   const coverageGraded = h.entity_page_count >= MIN_ENTITY_PAGES_FOR_COVERAGE;
 
   return {

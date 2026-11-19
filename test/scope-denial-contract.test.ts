@@ -1,7 +1,7 @@
 /**
  * B5 contract: every scope deny path builds one envelope (code
  * insufficient_scope, the caller's frozen `error`, client id + current scopes
- * in `why`, the exact `gbrain auth` command, actor host_admin on http), and a
+ * in `why`, the exact `foresights auth` command, actor host_admin on http), and a
  * 429 on the thin client's /token mint renders as rate_limited with a
  * provider-side wait.
  */
@@ -24,12 +24,12 @@ describe('scope denials (B5)', () => {
       class: 'host_only', retryable: false,
       fix: {
         argv: ['gbrain', 'auth', 'rescope', '--client', 'gbrain_cl_abc', '--scopes', 'read,write'],
-        command: 'gbrain auth rescope --client gbrain_cl_abc --scopes read,write',
+        command: 'foresights auth rescope --client gbrain_cl_abc --scopes read,write',
         consent: ['credentials'], actor: 'host_admin', next: 'tell_user_to_run',
       },
     });
-    expect(env.fix?.user_message).toContain('whoever runs this gbrain server');
-    expect(env.suggestion).toContain('gbrain auth rescope --client gbrain_cl_abc --scopes read,write');
+    expect(env.fix?.user_message).toContain('whoever runs this foresights server');
+    expect(env.suggestion).toContain('foresights auth rescope --client gbrain_cl_abc --scopes read,write');
   });
 
   test('legacy bearer token: error stays permission_denied; rescope-token by id', () => {
@@ -73,7 +73,7 @@ describe('thin-client /token 429 (#5949, B5)', () => {
     const env = toAgentError(err, { transport: 'cli', command: 'search', render: { transport: 'cli', isCallable: () => false, preapproved: () => false } });
     expect(env).toMatchObject({
       error: 'rate_limited', code: 'rate_limited', retryable: true, class: 'retryable',
-      fix: { actor: 'provider', next: 'wait', command: 'gbrain remote doctor --json' },
+      fix: { actor: 'provider', next: 'wait', command: 'foresights remote doctor --json' },
     });
     expect(env.why).toContain('900s');
   });

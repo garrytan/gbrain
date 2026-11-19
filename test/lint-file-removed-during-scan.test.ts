@@ -30,7 +30,7 @@ for (const fix of [false, true]) {
     expect(byFile.get('b-vanishing.md')).toEqual([{
       file: 'b-vanishing.md', line: 1, rule: 'file-removed-during-scan', fixable: false, code: 'file_removed_during_scan',
       message: 'b-vanishing.md was removed after lint listed it and before lint read it, so it was not linted. Re-run lint to check the files that exist now.',
-      fix: expect.objectContaining({ argv: ['gbrain', 'lint', dir], command: `gbrain lint ${dir}`, next: 'run' }),
+      fix: expect.objectContaining({ argv: ['gbrain', 'lint', dir], command: `foresights lint ${dir}`, next: 'run' }),
       docs: expect.stringContaining('docs/guides/repair.md#file-removed-during-scan'),
     }]);
     expect(byFile.has('c-last.md')).toBe(true);
@@ -51,7 +51,7 @@ test('the lint CLI prints the vanished file with its fix command and guide', asy
   try { await runLint([dir]); } finally { console.log = orig; }
   const out = logged.join('\n');
   expect(out).toContain('\nb-vanishing.md:\n  L1 file-removed-during-scan: b-vanishing.md was removed after lint listed it and before lint read it, so it was not linted. Re-run lint to check the files that exist now.\n'
-    + `    Fix: gbrain lint ${dir}\n    Docs: `);
+    + `    Fix: foresights lint ${dir}\n    Docs: `);
   expect(out).toContain('docs/guides/repair.md#file-removed-during-scan');
   expect(out).toContain('3 pages scanned.');
 });

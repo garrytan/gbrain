@@ -15,8 +15,8 @@
 import { createHash } from 'node:crypto';
 import { sanitizeForJsonb } from './batch-rows.ts';
 
-const MARKER_LINE = /^[ \t]*<!-- gbrain:materialized v1 ([0-9a-f]{12}) -->[ \t]*$/;
-const MARKER_LINES = /^[ \t]*<!-- gbrain:materialized v1 [0-9a-f]{12} -->[ \t]*(?:\r?\n|$)/gm;
+const MARKER_LINE = /^[ \t]*<!-- (?:foresights|gbrain):materialized v1 ([0-9a-f]{12}) -->[ \t]*$/;
+const MARKER_LINES = /^[ \t]*<!-- (?:foresights|gbrain):materialized v1 [0-9a-f]{12} -->[ \t]*(?:\r?\n|$)/gm;
 
 export interface TimelineTuple { date: string; source?: string | null; summary: string }
 
@@ -50,7 +50,7 @@ export function isMaterializedMarkerLine(line: string): boolean {
 
 /** Offset of the first marker line in `text`, or -1. */
 export function firstMaterializedMarkerIndex(text: string): number {
-  return text.search(/^[ \t]*<!-- gbrain:materialized v1 [0-9a-f]{12} -->[ \t]*$/m);
+  return text.search(/^[ \t]*<!-- (?:foresights|gbrain):materialized v1 [0-9a-f]{12} -->[ \t]*$/m);
 }
 
 /** Remove whole marker lines so they never reach summaries, details or chunk text. */

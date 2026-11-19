@@ -1,5 +1,5 @@
 /**
- * #1475 — `gbrain config set eval.capture true` must actually turn capture on.
+ * #1475 — `foresights config set eval.capture true` must actually turn capture on.
  *
  * The reported symptom is that the write persists and `config get` reads it
  * back as `true` (printing `source: db plane`), yet capture stays off unless

@@ -1,6 +1,6 @@
 /**
  * #4419 — natively imported conversations reach Dream. A Hermes `state.db`
- * ingested with `gbrain transcripts ingest` lands as `type: conversation`
+ * ingested with `foresights transcripts ingest` lands as `type: conversation`
  * pages; the synthesize phase now discovers those pages from the database
  * (source-scoped, date-filtered, keyed by body hash) instead of only walking
  * `dream.synthesize.session_corpus_dir`. When synthesis is not configured
@@ -84,7 +84,7 @@ describe('#4419 Dream discovers imported conversation pages', () => {
     const result = await runPhaseSynthesize(engine, { brainDir: tmp('brain'), dryRun: true });
     expect(result.status).toBe('warn');
     expect(result.details).toMatchObject({ code: 'conversation_pages_not_consumed', source_id: 'default' });
-    expect(result.summary).toContain('gbrain config set dream.synthesize.conversation_pages true');
+    expect(result.summary).toContain('foresights config set dream.synthesize.conversation_pages true');
 
     await engine.setConfig('dream.synthesize.conversation_pages', 'false');
     const silenced = await runPhaseSynthesize(engine, { brainDir: tmp('brain'), dryRun: true });

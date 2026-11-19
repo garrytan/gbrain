@@ -91,12 +91,12 @@ async function prepareByOperation(e: BrainEngine, row: WriteRequest, cfg: GBrain
   enterClaimStep(clock, 'dispatch');
   const registered = preparers.get(row.operation);
   if (registered) {
-    if (registered.target !== (row.target_kind ?? 'page')) throw new OperationError('unsupported_mutation_protocol', 'The registered preparer does not support this mutation target.', `Request ${row.request_id} (${row.operation}) was accepted by a gbrain version whose preparer this one lacks, so it has not run. Run gbrain upgrade on every host that serves this brain; the request stays journaled and resumes after the upgrade.`);
+    if (registered.target !== (row.target_kind ?? 'page')) throw new OperationError('unsupported_mutation_protocol', 'The registered preparer does not support this mutation target.', `Request ${row.request_id} (${row.operation}) was accepted by a foresights version whose preparer this one lacks, so it has not run. Run foresights upgrade on every host that serves this brain; the request stays journaled and resumes after the upgrade.`);
     return registered.prepare(e, row, cfg, signal, clock);
   }
   if (row.target_kind === 'skill_bundle') {
     if (['put_skill', 'delete_skill'].includes(row.operation)) return (await import('../shared-skills/publication.ts')).prepareSharedSkillMutation(e, row, cfg);
-    throw new OperationError('unsupported_mutation_protocol', 'No compatible skill mutation preparer is registered.', `Request ${row.request_id} (${row.operation}) was accepted by a gbrain version whose preparer this one lacks, so it has not run. Run gbrain upgrade on every host that serves this brain; the request stays journaled and resumes after the upgrade.`);
+    throw new OperationError('unsupported_mutation_protocol', 'No compatible skill mutation preparer is registered.', `Request ${row.request_id} (${row.operation}) was accepted by a foresights version whose preparer this one lacks, so it has not run. Run foresights upgrade on every host that serves this brain; the request stays journaled and resumes after the upgrade.`);
   }
   if (row.operation === 'submit_job' && String(row.intent?.kind).startsWith('managed_atom_')) return (await import('./atom-maintenance.ts')).prepareManagedAtomMutation(e, row, cfg);
   if (row.operation === 'submit_job' && row.intent?.kind === 'managed_generation_activate') return (await import('../generations/managed.ts')).prepareGenerationActivation(e, row);
@@ -125,7 +125,7 @@ async function prepareByOperation(e: BrainEngine, row: WriteRequest, cfg: GBrain
   if (row.operation === 'append_page') return (await import('./page-upload.ts')).withStagedBodyIf(e, row, async () => (await import('./page-append.ts')).prepareAppendMutation(e, row, cfg, signal, clock));
   if (['put_page','capture','delete_page','restore_page','revert_version','edit_page'].includes(row.operation)) return withValidTimeAdvisory(row, withChangeReason(row, await withSupersedes(row, await preparePageMutation(e, row, cfg, undefined, signal,
     { coordinated: await writeSwitchOn(e, 'single_write_group').catch(() => true), clock, boundedChunkWrites: true }))));
-  throw new OperationError('unsupported_mutation_protocol', 'No compatible mutation preparer is registered for this operation.', `Request ${row.request_id} (${row.operation}) was accepted by a gbrain version whose preparer this one lacks, so it has not run. Run gbrain upgrade on every host that serves this brain; the request stays journaled and resumes after the upgrade.`);
+  throw new OperationError('unsupported_mutation_protocol', 'No compatible mutation preparer is registered for this operation.', `Request ${row.request_id} (${row.operation}) was accepted by a foresights version whose preparer this one lacks, so it has not run. Run foresights upgrade on every host that serves this brain; the request stays journaled and resumes after the upgrade.`);
 }
 /**
  * #6317 (B1): starts this process's consumer, synchronously. A `serve` and every short-lived foreground command (`put`,
@@ -344,7 +344,7 @@ export async function awaitWrite(engine: BrainEngine, row: WriteRequest, config:
     if (owner) observedOwners.set(row, owner);
   }
   const cause = BLOCKED_WRITE_REASONS.find(reason => reason === row.blocked_reason);
-  if (cause) return { kind: 'blocked', row, request_id: row.request_id, cause, command: `gbrain sources writer status ${row.source_id} --json` };
+  if (cause) return { kind: 'blocked', row, request_id: row.request_id, cause, command: `foresights sources writer status ${row.source_id} --json` };
   return { kind: 'pending', row };
 }
 /** At most four progress reads per engine; concurrent waiters on one request share a read. */
@@ -438,7 +438,7 @@ export function writeResponse(row: WriteRequest, hints: { retryAfterMs?: number 
   const checkout = isTerminal(row) ? storedCheckoutRefusal((row.error_detail as { origin?: unknown } | null | undefined)?.origin, row.source_id, row.slug || null) : undefined;
   if (checkout) Object.assign(error, { suggestion: checkout.suggestion, fix: checkout.fix, detail: checkout.detail, docs: checkout.docs });
   // GST-2462 (D2): a page whose file left git can still be narrowed: name the page rule, not only the ghost-page repair (which deletes it).
-  if (isTerminal(row) && reason === 'source_changed' && (row.error_detail as { origin?: unknown } | null | undefined)?.origin === 'canonical_file_missing') error.suggestion = `${error.suggestion} The page's file is gone, so a visibility edit cannot publish; to narrow who reads it without restoring the file, add a page rule on the brain host: gbrain access rule add --slug ${row.slug} --readers <member> --source ${row.source_id} (it previews; --yes applies, and removing the rule undoes it). See docs/guides/write-refusals.md#canonical_file_missing.`;
+  if (isTerminal(row) && reason === 'source_changed' && (row.error_detail as { origin?: unknown } | null | undefined)?.origin === 'canonical_file_missing') error.suggestion = `${error.suggestion} The page's file is gone, so a visibility edit cannot publish; to narrow who reads it without restoring the file, add a page rule on the brain host: foresights access rule add --slug ${row.slug} --readers <member> --source ${row.source_id} (it previews; --yes applies, and removing the rule undoes it). See docs/guides/write-refusals.md#canonical_file_missing.`;
   // #6317 (B1b): a waiter-only process names the owner that publishes for it, so the caller is told who holds the write instead of polling blind.
   if (!isTerminal(row) && hints.waiterOnlyOwner) {
     const owner = hints.waiterOnlyOwner;

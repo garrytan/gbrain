@@ -195,7 +195,7 @@ function shapeFilters(opts: SearchOpts | undefined, params: unknown[]): string {
   let extraFilter = '';
   // #4480: the CJK arm must honor the SAME shape filters as the main
   // keyword arm. type/types/exclude_slugs were silently dropped here, so a
-  // typed query (`gbrain whoknows` → types:['person','company']) or an
+  // typed query (`foresights whoknows` → types:['person','company']) or an
   // exclude-scoped query returned out-of-contract rows for CJK text while
   // ASCII text filtered correctly.
   if (opts?.type) {

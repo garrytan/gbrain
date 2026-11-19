@@ -1,6 +1,6 @@
 /**
  * bootstrap/plugin-lanes.ts — plugin-lane detection: a Codex or Claude Code
- * plugin that provides the gbrain MCP server (moved out of harness.ts, which
+ * plugin that provides the foresights MCP server (moved out of harness.ts, which
  * re-exports these names). `enabledPluginLanes` is the one list both doctor
  * checks read (`plugin_lane_collision`, `harness_wiring`), so they cannot
  * disagree about whether a harness is covered.
@@ -20,14 +20,14 @@ import { CLAUDE_HOOK_SUBCOMMAND, claudeUserSettingsPath, codexConfigPath, codexH
 // Plugin-provided MCP servers never appear in `codex mcp list` or in
 // `[mcp_servers.*]` — the only cheap CONFIG signal is the plugin-enable
 // entry in the harness's own config. Config is not health (an enabled
-// plugin whose launcher can't find the gbrain binary still matches), so
+// plugin whose launcher can't find the foresights binary still matches), so
 // every consumer pairs the detection with an override path
 // (`--mcp-even-if-plugin`) and copy that says "enabled, not necessarily
 // healthy". All three detectors below share the read/normalize posture of
 // codexBlockOwnsName: fail-open (null/false) on any read or parse error.
 
 /**
- * The gbrain plugin and its persona variants (plugin-variants/), which all
+ * The foresights plugin and its persona variants (plugin-variants/), which all
  * serve the `gbrain` MCP server, in fixed per-turn hook precedence: when
  * several are enabled, only the first one's hook runs (pluginHookYields).
  */
@@ -188,8 +188,8 @@ export function claudeAnyRegistrationExists(
 /**
  * Plugin-lane defer: the plugin's own hook (GBRAIN_HOOK_LANE=plugin) yields
  * when the harness's setup receipt records that the user wants no hooks
- * (one consent for both lanes), or when another gbrain install lane
- * (`gbrain setup`, `gbrain bootstrap harness`, a workspace bootstrap) already
+ * (one consent for both lanes), or when another foresights install lane
+ * (`foresights setup`, `foresights bootstrap harness`, a workspace bootstrap) already
  * wires this hook subcommand for the harness, so the event fires once. Claude Code: any gbrain-marked or
  * harness-lane entry in the user settings or the cwd's .claude settings;
  * Codex: a setup or bootstrap group in CODEX_HOME/hooks.json that Codex runs

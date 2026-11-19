@@ -25,7 +25,7 @@ the integrator runs the full gate.
 ## Ownership and teardown
 
 `scripts/ubicloud/ubi-runner.sh` is gstack's runner, vendored (synced at gstack
-5532345a); its header lists gbrain's additions, which a sync keeps. Every VM
+5532345a); its header lists foresights's additions, which a sync keeps. Every VM
 the runner names is `ubirun-<owner>-<epoch>-<suffix>-t<H>`, gstack's runner
 grammar: its TTL ends H hours (1 to 999) after the creation epoch. The owner
 is `UBI_OWNER` (lowercased, letters and digits only, at most 12 characters,
@@ -36,7 +36,7 @@ to your thread code (`UBI_OWNER=gbra41 bun run ci:ubicloud`). Ubicloud names
 allow 63 characters of `[a-z0-9-]`, so a full name stays under 50.
 
 Ubicloud has no VM tags, so the TTL lives in the name, and gstack's
-`ubi-runner.sh reap` reads the TTL of every name gbrain generates the same way. `ci:ubicloud` gives every gate VM a
+`ubi-runner.sh reap` reads the TTL of every name foresights generates the same way. `ci:ubicloud` gives every gate VM a
 two-hour TTL (`--ttl-hours N` changes it, up to 999). `ubi-runner.sh up` and
 `run` take the same `--ttl-hours H`; without it their VMs get `UBI_TTL_HOURS`
 (gstack's default, 3 hours), so give a long dev, benchmark or eval VM
@@ -46,10 +46,10 @@ two-hour TTL (`--ttl-hours N` changes it, up to 999). `ubi-runner.sh up` and
 VMs whose TTL ended over ten minutes ago, and its TTL-less ones once they are
 `UBI_LEGACY_HOURS` (4) old. Another owner's expired VM, including one this machine
 created under a different tag (which `list --mine` and `gc` do cover), is only counted in reap's
-log; `reap-expired.ts` is the operator reaper that destroys expired VMs of every owner. gstack's `up` runs that reap first; gbrain's copy
+log; `reap-expired.ts` is the operator reaper that destroys expired VMs of every owner. gstack's `up` runs that reap first; foresights's copy
 does only with `UBI_REAP=1` (or `true`, `yes`, `on`; `0`, `false`, `no` and `off`
 turn it off, and any other value is refused), and logs one `reap skipped` line otherwise, until
-gbrain's TTL-less VMs older than four hours are gone. `run`, `verify` and
+foresights's TTL-less VMs older than four hours are gone. `run`, `verify` and
 `ci:ubicloud` end with gstack's leftover line, `UBICLOUD: left=<n> owner=<owner> ...`
 (also appended to `UBI_LEFT_FILE`), counting their own VMs still in the
 project's list after teardown; anything but `left=0` fails a run that would

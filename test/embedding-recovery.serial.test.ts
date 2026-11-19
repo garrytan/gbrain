@@ -129,7 +129,7 @@ for (const kind of backends) {
           const result = await flow();
           expect(result.status).toBe('apply_failed');
           expect(JSON.stringify(result)).toContain('retained_vectors_blocked');
-          expect(JSON.stringify(result)).toContain('gbrain sources restore');
+          expect(JSON.stringify(result)).toContain('foresights sources restore');
           expect(calls).toBe(0);
           expect(await snapshot()).toEqual(before);
           expect(await engine.executeRaw('SELECT to_jsonb(p) AS page FROM pages p ORDER BY id')).toEqual(pages);
@@ -442,7 +442,7 @@ for (const kind of backends) {
               const result = await runEmbedCore(engine, { ...target, ...(scoped && { sourceId }), quiet: true });
               expect(result.failures).toBe(1);
               expect(result.failure_samples.join(' ')).toContain('archived');
-              expect(result.failure_samples.join(' ')).toContain('gbrain sources restore');
+              expect(result.failure_samples.join(' ')).toContain('foresights sources restore');
               expect(result.failure_samples.join(' ')).not.toContain('Synthetic archived eligibility payload.');
               const live = !scoped && route !== 'slug';
               expect(result.embedded).toBe(live ? 1 : 0);
@@ -591,7 +591,7 @@ for (const kind of backends) {
           expect(result.failures).toBe(1);
           expect(result.failure_samples).toHaveLength(1);
           expect(result.failure_samples[0]).toStartWith(`${slug}: [page_projection_conflict] The search projection of ${slug} (source default) changed during preparation (chunk_digest)`);
-          expect(result.failure_samples[0]).toContain('Re-run gbrain embed; it re-reads the current projection.');
+          expect(result.failure_samples[0]).toContain('Re-run foresights embed; it re-reads the current projection.');
         } finally { restore(); }
       });
     });
@@ -1522,7 +1522,7 @@ test('explicit archived admission: actual CLI refuses all three routes without l
         // An explicit backfill is paid work: authorized here so the archived-source refusal is what the run hits.
         const result = await run([...args, '--yes']);
         expect({ code: result.code, diagnostic: result.code === 1 ? '' : result.stderr }).toEqual({ code: 1, diagnostic: '' });
-        expect(result.stderr).toContain('gbrain sources restore');
+        expect(result.stderr).toContain('foresights sources restore');
         expect(result.stdout + result.stderr).not.toContain(privateBody);
         expect(result.stdout + result.stderr).not.toContain(credential);
         const inputs: string[][] = readFileSync(calls, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line));

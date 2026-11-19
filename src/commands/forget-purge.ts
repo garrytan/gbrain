@@ -1,11 +1,11 @@
 /**
- * `gbrain forget <id> --purge` (#5575 C1, DX-11, DX-12): the CLI front of the
+ * `foresights forget <id> --purge` (#5575 C1, DX-11, DX-12): the CLI front of the
  * owner-only `purge_fact` operation.
  *
- *   gbrain forget <id> --purge [--dry-run] [--yes --request-id <uuid>] [--reason <text>]
+ *   foresights forget <id> --purge [--dry-run] [--yes --request-id <uuid>] [--reason <text>]
  *                              [--all-subjects] [--vacuum] [--reason-scan-limit <n>] [--source <id>] [--json]
- *   gbrain forget --purge --match "<text>"            # list candidate ids; never purges
- *   gbrain forget --purge --status --request-id <uuid> [--continue] # completion of an earlier purge; --continue resumes its derivation sweep
+ *   foresights forget --purge --match "<text>"            # list candidate ids; never purges
+ *   foresights forget --purge --status --request-id <uuid> [--continue] # completion of an earlier purge; --continue resumes its derivation sweep
  *
  * It always runs the dry run first. On a terminal it prints that receipt
  * (residuals first) and asks the user to type the fact's 8-character token;
@@ -25,19 +25,19 @@ import { CONFIRMATION_REQUIRED_EXIT_CODE } from '../core/exit-codes.ts';
 import { resolveSourceId } from '../core/source-resolver.ts';
 
 export const PURGE_FAMILY_HELP = `Purge family (remove content from live stores; never physical erasure):
-  gbrain forget <id> --purge            purge one fact's claim (dry-run receipt, then a typed token)
-  gbrain delete <slug> --purge          purge a page and its derived rows, with a page tombstone
-  gbrain pages purge-deleted            hard-delete pages soft-deleted more than 72h ago
-  gbrain sources purge <id>             remove a whole source
-  gbrain pages purges list              list page purge tombstones
-  gbrain pages unpurge <slug>           clear a page tombstone so the content can be imported again
+  foresights forget <id> --purge            purge one fact's claim (dry-run receipt, then a typed token)
+  foresights delete <slug> --purge          purge a page and its derived rows, with a page tombstone
+  foresights pages purge-deleted            hard-delete pages soft-deleted more than 72h ago
+  foresights sources purge <id>             remove a whole source
+  foresights pages purges list              list page purge tombstones
+  foresights pages unpurge <slug>           clear a page tombstone so the content can be imported again
 `;
 
-const USAGE = `Usage: gbrain forget <fact-id> [--reason <text>] [--source <id>] [--request-id <uuid>] [--json]
+const USAGE = `Usage: foresights forget <fact-id> [--reason <text>] [--source <id>] [--request-id <uuid>] [--json]
        (withdraws the fact: it expires and cannot be re-saved; the text stays in history and backups)
-       gbrain forget <fact-id> --purge [--dry-run] [--yes --request-id <uuid>] [--reason <text>] [--all-subjects] [--vacuum] [--reason-scan-limit <n>] [--source <id>] [--json]
-       gbrain forget --purge --match "<text>"
-       gbrain forget --purge --status --request-id <uuid> [--continue]
+       foresights forget <fact-id> --purge [--dry-run] [--yes --request-id <uuid>] [--reason <text>] [--all-subjects] [--vacuum] [--reason-scan-limit <n>] [--source <id>] [--json]
+       foresights forget --purge --match "<text>"
+       foresights forget --purge --status --request-id <uuid> [--continue]
 
 ${PURGE_FAMILY_HELP}`;
 
@@ -91,7 +91,7 @@ export function renderPurgeReceipt(r: Record<string, unknown>): string {
 /** Test seam: the terminal probe and the typed-token reader (defaults: isInteractive and a stderr prompt). */
 export interface PurgeCliIo { interactive?: () => boolean; readToken?: (prompt: string) => Promise<string | null> }
 
-/** `gbrain forget` argv this module handles: a purge, its help, and a --dry-run (which a plain forget refuses here, since it has none). */
+/** `foresights forget` argv this module handles: a purge, its help, and a --dry-run (which a plain forget refuses here, since it has none). */
 export function routesToForgetPurge(args: readonly string[]): boolean {
   return args.includes('--purge') || args.includes('--dry-run') || args.includes('--help') || args.includes('-h');
 }
@@ -107,7 +107,7 @@ export async function runForgetPurge(engine: BrainEngine | (() => Promise<BrainE
     const idArg = args.find(a => /^\d+$/.test(a));
     if (!args.includes('--purge')) {
       throw opError('invalid_params', '--dry-run previews a purge only; a plain forget has no dry run, so nothing was forgotten.',
-        idArg ? `Run gbrain forget ${idArg} --purge --dry-run to preview a purge, or gbrain forget ${idArg} to forget the fact.` : 'Run gbrain forget --help for the forget and purge forms.');
+        idArg ? `Run foresights forget ${idArg} --purge --dry-run to preview a purge, or foresights forget ${idArg} to forget the fact.` : 'Run foresights forget --help for the forget and purge forms.');
     }
     const cfg = loadConfig();
     if (isThinClient(cfg)) throw purgeHostOnly(idArg);
@@ -124,7 +124,7 @@ export async function runForgetPurge(engine: BrainEngine | (() => Promise<BrainE
     if (match !== undefined) {
       const found = await invoke({ match });
       const rows = (found.candidates as Array<{ id: number; entity_slug: string | null; visibility: string; expired: boolean; fact: string }>) ?? [];
-      out(found, rows.length ? `${rows.map(c => `  #${c.id} ${c.entity_slug ?? '(no entity)'} [${c.visibility}${c.expired ? ', expired' : ''}] ${c.fact}`).join('\n')}\nPick one id: gbrain forget <id> --purge\n` : 'No fact in this source contains that text.\n');
+      out(found, rows.length ? `${rows.map(c => `  #${c.id} ${c.entity_slug ?? '(no entity)'} [${c.visibility}${c.expired ? ', expired' : ''}] ${c.fact}`).join('\n')}\nPick one id: foresights forget <id> --purge\n` : 'No fact in this source contains that text.\n');
       return;
     }
     if (!idArg) { process.stderr.write(USAGE); setCliExitVerdict(1); return; }
@@ -146,7 +146,7 @@ export async function runForgetPurge(engine: BrainEngine | (() => Promise<BrainE
       }
     } else if (!args.includes('--yes') || !requestId) {
       throw opError('confirmation_required', 'A purge without a terminal needs --yes and --request-id.',
-        `Show the user the dry run (gbrain forget ${idArg} --purge --dry-run), then, with their agreement, run gbrain forget ${idArg} --purge --yes --request-id <new uuid>. Reuse that request id to retry.`,
+        `Show the user the dry run (foresights forget ${idArg} --purge --dry-run), then, with their agreement, run foresights forget ${idArg} --purge --yes --request-id <new uuid>. Reuse that request id to retry.`,
         { fix: { argv: ['gbrain', 'forget', idArg, '--purge', '--dry-run', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
           why: 'Prints what the purge would remove, residuals first, without changing anything.' } });
     }

@@ -2,7 +2,7 @@
  * #6529: managed sync's image branch. With `GBRAIN_EMBEDDING_MULTIMODAL=true`
  * (`isMultimodalEnabled`, the predicate `embed --stale --images` and the import walker use), a frozen
  * image entry is imported through the coordinated image importer
- * (`importImageFile` with `prepare`, as `gbrain import` does in
+ * (`importImageFile` with `prepare`, as `foresights import` does in
  * import-prepare.ts) instead of being held as `managed_image_sync_unsupported`.
  * The frozen content is the image's bytes as base64 (never a UTF-8 decode);
  * `rawHash` stays the sha256 of the file bytes, so the publication's
@@ -60,7 +60,7 @@ export interface ManagedSyncImageContext {
  * Prepares one frozen image import: the coordinated importer decides a hash
  * no-op (the same bytes, a complete index) before any provider call, OCRs and
  * embeds otherwise, and hands back the guarded apply. The text embedding of
- * the image's caption chunk is deferred to `embed --stale`, as `gbrain import`
+ * the image's caption chunk is deferred to `embed --stale`, as `foresights import`
  * defers it. A renamed image publishes as a new page at the new slug and
  * soft-deletes the old one (its single chunk and file row are rebuilt from the
  * same bytes; an image page has no history worth carrying across the move).

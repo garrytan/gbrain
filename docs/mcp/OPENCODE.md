@@ -1,4 +1,4 @@
-# Connect GBrain to opencode
+# Connect Foresights to opencode
 
 > This page is the MCP-registration reference for **opencode** — the SST
 > terminal coding agent (opencode.ai, npm `opencode-ai`; not OpenClaw, and not
@@ -6,28 +6,28 @@
 > For the full brain install — CLI, engine, skills, dream cycle — follow
 > [INSTALL_FOR_AGENTS.md](../../INSTALL_FOR_AGENTS.md) first; this page wires
 > the finished brain into opencode over stdio MCP. opencode is a
-> **bootstrap-supported harness**: `gbrain bootstrap hooks --harness opencode`
-> registers the brain for you (and `gbrain connect --agent opencode` handles
+> **bootstrap-supported harness**: `foresights bootstrap hooks --harness opencode`
+> registers the brain for you (and `foresights connect --agent opencode` handles
 > remote brains — see below) — the commands on this page are the standalone
 > manual recipe. Bootstrap's own registration additionally pins the workspace
 > source (`GBRAIN_SOURCE`) and the full op surface, so the two are not
 > byte-identical.
 
-opencode spawns `gbrain serve` as a local stdio subprocess. No server, no
+opencode spawns `foresights serve` as a local stdio subprocess. No server, no
 tunnel, no token needed. Works with both PGLite and Supabase engines — and
-because opencode natively reads `AGENTS.md`, a gbrain workspace's rendered
+because opencode natively reads `AGENTS.md`, a foresights workspace's rendered
 brain contract loads with zero extra configuration.
 
 ## Register (recommended)
 
 ```bash
-opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- "$(command -v gbrain)" serve --surface starter --advertise verbs
+opencode mcp add foresights --env GBRAIN_HOME=$HOME -- "$(command -v foresights)" serve --surface starter --advertise verbs
 ```
 
 `--surface starter` lists the daily-driver tools: the seven memory verbs
 ([MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md)), `search`, `query`,
 `get_page`, `put_page`, `capture`, graph reads and skills. It is the surface every
-new registration gbrain writes pins. A parameter it leaves out is still accepted,
+new registration foresights writes pins. A parameter it leaves out is still accepted,
 and `request_tools` returns full schemas or widens the session to a left-out tool. `--surface full` lists every
 operation (`put_pages`, admin and tuning ops) and is the opt-in; `--surface verbs`
 lists only the seven verbs.
@@ -50,7 +50,7 @@ Registering the MCP server only makes the tools available. Agents seldom call a
 brain nobody told them about, so finish the install with:
 
 ```bash
-gbrain setup opencode --instructions-only
+foresights setup opencode --instructions-only
 ```
 
 It writes one short marked block into `~/.config/opencode/AGENTS.md` (opencode's global rules): search the brain before reading
@@ -58,8 +58,8 @@ sources one by one, read the best hit, fill gaps with other tools, apply your ow
 access rules, then finish the task. Text outside the markers is never touched, a
 re-run upgrades the block in place, `--dry-run` previews it,
 `--no-instructions` opts out (and is remembered) and `--remove` takes it out.
-`gbrain connect --agent opencode --install` writes it for you.
-`gbrain doctor` warns when the block is missing or out of date.
+`foresights connect --agent opencode --install` writes it for you.
+`foresights doctor` warns when the block is missing or out of date.
 
 ## Direct config (equally supported)
 
@@ -81,15 +81,15 @@ the repo root — opencode's lookup traverses up to the git root):
 ```
 
 Comments are fine — opencode parses JSONC in both `.json` and `.jsonc` files,
-and both filenames are read (merged) when both exist. To remove gbrain,
+and both filenames are read (merged) when both exist. To remove foresights,
 delete the entry, or set `"enabled": false` to disable without losing it.
 
 **Sharing warning for project config:** opencode spawns project-defined local
 MCP servers with **no trust prompt** — a committed `opencode.json` carrying a
-gbrain entry executes on every collaborator's machine. Teammates without
-gbrain get a failing spawn each session; teammates WITH gbrain attach their
+foresights entry executes on every collaborator's machine. Teammates without
+foresights get a failing spawn each session; teammates WITH foresights attach their
 own `host` brain to your repo's context. Prefer the user-global config (the
-gbrain bootstrap default); if you do commit a project entry, use the
+foresights bootstrap default); if you do commit a project entry, use the
 PATH-resolved `"gbrain"` command form (never an absolute path) and tell
 collaborators `"enabled": false` is the opt-out.
 
@@ -100,11 +100,11 @@ opencode mcp list        # the real probe: SPAWNS the server
 ```
 
 `opencode mcp list` performs the actual spawn + handshake for every
-configured server — expect `✓ gbrain connected`. A broken registration shows
-`✗ gbrain failed` with the reason (e.g. `Executable not found in $PATH`).
+configured server — expect `✓ foresights connected`. A broken registration shows
+`✗ foresights failed` with the reason (e.g. `Executable not found in $PATH`).
 Because it spawns everything — including any project `opencode.json` entries
 in your cwd, with no trust prompt — run it from a directory you trust
-(gbrain's own bootstrap verification probe runs from an empty temp directory
+(foresights's own bootstrap verification probe runs from an empty temp directory
 for exactly this reason, and skips the live probe entirely for project-scoped
 registrations).
 Two caveats: the exit code is 0 even when servers fail (read the output, not
@@ -112,18 +112,18 @@ Two caveats: the exit code is 0 even when servers fail (read the output, not
 handshake probe for local servers. Then one real round-trip:
 
 ```bash
-opencode run "use the gbrain recall tool to answer: what did I import most recently?"
+opencode run "use the foresights recall tool to answer: what did I import most recently?"
 ```
 
 `opencode run` (headless one-shot) prints the final answer alone on stdout
 (UI goes to stderr). MCP tools work in run mode without any permission flags.
 
-## Remote brains (`gbrain connect`)
+## Remote brains (`foresights connect`)
 
 For a brain served over HTTP on another machine:
 
 ```bash
-gbrain connect https://your-host/mcp --token gbrain_xxx --agent opencode [--install]
+foresights connect https://your-host/mcp --token gbrain_xxx --agent opencode [--install]
 ```
 
 Without `--install` it prints the config block to add; with `--install` it
@@ -133,9 +133,9 @@ Either way the config stores only the `{env:GBRAIN_REMOTE_TOKEN}`
 interpolation — opencode resolves the env var at read time, so the token
 never lands in the file. Export `GBRAIN_REMOTE_TOKEN` in your shell profile.
 `--force` replaces a gbrain-managed entry whose endpoint moved (a rotated
-serve); an entry gbrain didn't write is never replaced — pick another
+serve); an entry foresights didn't write is never replaced — pick another
 `--name`. (Framework-spawned opencode inherits no shell profile;
-`gbrain bootstrap harness --harness opencode` covers that case with an
+`foresights bootstrap harness --harness opencode` covers that case with an
 inline-bearer entry written 0600.)
 
 ## Auth + model pin
@@ -158,7 +158,7 @@ scheduler:
 
 ```bash
 # crontab: brain maintenance every 4 hours
-0 */4 * * * opencode run "Run gbrain sync and report anything unusual"
+0 */4 * * * opencode run "Run foresights sync and report anything unusual"
 ```
 
 See [docs/guides/cron-schedule.md](../guides/cron-schedule.md) for the full
@@ -172,9 +172,9 @@ brain maintenance protocol (sync, embed, dream cycle).
   + `opencode debug paths` subcommands. Install it via
   `npm install -g opencode-ai` or `curl -fsSL https://opencode.ai/install | bash`.
 - **opencode ≠ OpenClaw** — opencode (opencode.ai / SST) is the terminal
-  agent this page covers; OpenClaw is the agent platform with its own gbrain
+  agent this page covers; OpenClaw is the agent platform with its own foresights
   runner and docs ([OPENCLAW.md](OPENCLAW.md)).
-- **`✗ gbrain failed — Executable not found in $PATH`** — the registered
+- **`✗ foresights failed — Executable not found in $PATH`** — the registered
   command was the bare `"gbrain"` name and opencode's PATH doesn't carry it.
   Use the absolute binary path in the user-global config, or fix PATH.
 - **Registered but nothing changed mid-session** — opencode reads config at
@@ -184,7 +184,7 @@ brain maintenance protocol (sync, embed, dream cycle).
 - **Which config won?** — `opencode debug config` prints the resolved merge;
   `opencode debug paths` prints every directory opencode uses.
 - **Rules files** — opencode loads the project `AGENTS.md` (a sibling
-  `CLAUDE.md` is NOT double-loaded; AGENTS.md wins). gbrain's rendered
+  `CLAUDE.md` is NOT double-loaded; AGENTS.md wins). foresights's rendered
   workspace contract rides this natively.
 
 ---

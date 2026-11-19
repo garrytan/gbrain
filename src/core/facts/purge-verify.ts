@@ -204,7 +204,7 @@ type ProbeResult = { count: number } | { unverified: string };
 
 /** #6911: a rebuildable cache table that does not exist holds nothing to verify. */
 const missingCache = (store: string): StoreReport => ({ store, status: 'not_present', removed: 0, reason: 'table_missing',
-  detail: `The ${store} table does not exist on this brain; it is a rebuildable cache, so there was nothing to clear. gbrain doctor reports it under schema_missing_tables.` });
+  detail: `The ${store} table does not exist on this brain; it is a rebuildable cache, so there was nothing to clear. foresights doctor reports it under schema_missing_tables.` });
 
 /** One bounded probe: `sql` selects matching rows (no LIMIT); the adapter caps rows and the statement time. */
 async function boundedCount(engine: BrainEngine, sql: string, params: unknown[], deadline: number): Promise<ProbeResult> {
@@ -564,7 +564,7 @@ export async function verifyFactPurge(engine: BrainEngine, input: { target: Purg
   if (files.root && files.paths.length) residuals.push(await gitResidualCommits(files.root, files.paths, claim));
   for (const r of OUT_OF_REACH_RESIDUALS) {
     if (r.store === 'git_history' && residuals.length) continue;
-    const detail = r.store === 'database_physical' ? `${r.detail}${engine.kind === 'pglite' ? (vacuumed === 'ran' ? ' VACUUM ran on the touched tables; filesystem blocks and snapshots may still hold old pages.' : vacuumed ? ` VACUUM of the touched tables ${vacuumed}; rerun with --vacuum.` : ' PGLite has no autovacuum; rerun with --vacuum to compact the touched tables.') : ' On Postgres the operator runs VACUUM; WAL archives, replicas and PITR windows are outside gbrain.'}` : r.detail;
+    const detail = r.store === 'database_physical' ? `${r.detail}${engine.kind === 'pglite' ? (vacuumed === 'ran' ? ' VACUUM ran on the touched tables; filesystem blocks and snapshots may still hold old pages.' : vacuumed ? ` VACUUM of the touched tables ${vacuumed}; rerun with --vacuum.` : ' PGLite has no autovacuum; rerun with --vacuum to compact the touched tables.') : ' On Postgres the operator runs VACUUM; WAL archives, replicas and PITR windows are outside foresights.'}` : r.detail;
     residuals.push({ store: r.store, status: 'out_of_reach', detail });
   }
   if (input.reasonCommits?.tombstoned || input.reasonCommits?.limited) residuals.push({ store: 'git_commit_messages', status: 'out_of_reach', remaining: input.reasonCommits.tombstoned,
@@ -576,15 +576,15 @@ export async function verifyFactPurge(engine: BrainEngine, input: { target: Purg
     detail: `${other.n} fact row(s) state the same claim about another entity or at another visibility; rerun with --all-subjects to purge every entity's copy.` });
   residuals.push(...stores.filter(s => s.reason === 'source_prose' || s.reason === 'probed_reported' || s.store === 'canonical_markdown' && s.status === 'out_of_scope'));
   const next = dryRun
-    ? ['Review the residuals with the user, then confirm with the token printed above (gbrain forget <id> --purge asks for it on a terminal).']
-    : ['Poll completion with gbrain forget --purge --status --request-id <request_id> until it reports complete.'];
+    ? ['Review the residuals with the user, then confirm with the token printed above (foresights forget <id> --purge asks for it on a terminal).']
+    : ['Poll completion with foresights forget --purge --status --request-id <request_id> until it reports complete.'];
   return {
     summary: dryRun ? 'Dry run: nothing was removed. Counts are what the purge would remove from live stores.'
       : 'Removed from live stores. Residuals below are copies purge cannot reach; this is not physical erasure.',
     fact_id: target.id, fact_hash: target.fact_hash, hash8: target.fact_hash.slice(0, 8), source_id: src, subject: plan.subject, visibility: target.visibility,
     residuals, stores, vector_probe: await vectorProbe(engine, target), next,
     ...(engine.kind === 'postgres' && !dryRun ? { tell_user_to_run: { argv: ['psql', '-c', 'VACUUM (VERBOSE) facts, takes, pages, content_chunks, page_versions, persistence_requests'],
-      why: 'Deleted rows stay in Postgres table pages and WAL until VACUUM and WAL recycling; the operator runs it (gbrain does not on Postgres).' } } : {}),
+      why: 'Deleted rows stay in Postgres table pages and WAL until VACUUM and WAL recycling; the operator runs it (foresights does not on Postgres).' } } : {}),
   };
 }
 
@@ -592,7 +592,7 @@ export async function verifyFactPurge(engine: BrainEngine, input: { target: Purg
 export interface PagePurgeContext { needles: string[]; reasons?: string[]; factIds: number[]; pageId: number; paths: string[]; segmentShas: string[]; segmentClaims?: string[]; ledgerClaims?: string[]; ledger?: LedgerPurgeReport | null }
 
 const outOfReach = (engine: BrainEngine): StoreReport[] => OUT_OF_REACH_RESIDUALS.map(r => ({ store: r.store, status: 'out_of_reach' as const,
-  detail: r.store === 'database_physical' ? `${r.detail}${engine.kind === 'pglite' ? ' PGLite has no autovacuum.' : ' On Postgres the operator runs VACUUM; WAL archives, replicas and PITR windows are outside gbrain.'}` : r.detail }));
+  detail: r.store === 'database_physical' ? `${r.detail}${engine.kind === 'pglite' ? ' PGLite has no autovacuum.' : ' On Postgres the operator runs VACUUM; WAL archives, replicas and PITR windows are outside foresights.'}` : r.detail }));
 
 /**
  * CEO-4 / C4: the page purge receipt, store by store like the fact receipt. Page-keyed stores are checked by
@@ -726,9 +726,9 @@ export async function verifyPagePurge(engine: BrainEngine, input: { sourceId: st
   return { summary: 'Removed from live stores. Residuals below are copies purge cannot reach; this is not physical erasure.',
     residuals, stores, page_tombstones: Number(tombstones?.n ?? 0),
     ...(row ? await purgeCompletion(engine, row, { stores }) : {}),
-    next: ['Other pages listed under source_prose still state the purged claims; edit or purge them. gbrain pages purges list shows the tombstones.'],
+    next: ['Other pages listed under source_prose still state the purged claims; edit or purge them. foresights pages purges list shows the tombstones.'],
     ...(engine.kind === 'postgres' ? { tell_user_to_run: { argv: ['psql', '-c', 'VACUUM (VERBOSE) pages, content_chunks, page_versions, facts, takes, persistence_requests'],
-      why: 'Deleted rows stay in Postgres table pages and WAL until VACUUM and WAL recycling; the operator runs it (gbrain does not on Postgres).' } } : {}) };
+      why: 'Deleted rows stay in Postgres table pages and WAL until VACUUM and WAL recycling; the operator runs it (foresights does not on Postgres).' } } : {}) };
 }
 
 /**
@@ -760,10 +760,10 @@ export async function purgeCompletion(engine: BrainEngine, row: Pick<WriteReques
   return { completion, effects: effects.map(({ kind, state, error_code }) => ({ kind, state, error_code })),
     exit_code: completion === 'complete' ? 0 : completion === 'committed' ? 10 : 75, ...(fingerprint ? { fingerprint_probe: fingerprint } : {}),
     ...(sweep ? { derivation_sweep: sweep.state, ...(sweep.reason ? { derivation_sweep_reason: sweep.reason } : {}), next: [sweep.reason === 'scope_lock_busy'
-      ? `The sweep of stored derivation results has walked to its end, but a write in the source that brings stored results into its scope (an import, sync or page edit) is still open and held the source's scope lock past the sweep's wait (derivation_sweep: pending, scope_lock_busy). Let that write finish, then continue the sweep with gbrain forget --purge --status --request-id ${row.request_id} --continue.`
+      ? `The sweep of stored derivation results has walked to its end, but a write in the source that brings stored results into its scope (an import, sync or page edit) is still open and held the source's scope lock past the sweep's wait (derivation_sweep: pending, scope_lock_busy). Let that write finish, then continue the sweep with foresights forget --purge --status --request-id ${row.request_id} --continue.`
       : sweep.state === 'pending'
-      ? `Stored derivation results are still being swept for the claim (derivation_sweep: pending). Continue the sweep with gbrain forget --purge --status --request-id ${row.request_id} --continue until completion is complete.`
+      ? `Stored derivation results are still being swept for the claim (derivation_sweep: pending). Continue the sweep with foresights forget --purge --status --request-id ${row.request_id} --continue until completion is complete.`
       : sweep.reason === 'paid_row_unreadable'
-        ? `The sweep of stored derivation results stopped on a paid result (synopsis or conversation facts) it could not read within its statement budget (derivation_sweep: stalled, paid_row_unreadable); paid results are never deleted unread, and other sweeps go on. Retry it with gbrain forget --purge --status --request-id ${row.request_id} --continue; if it stalls again, report it with the output of gbrain doctor --json.`
-        : `The sweep of stored derivation results stopped on a result it could not read or delete within its statement budget (derivation_sweep: stalled); other sweeps go on. Retry it with gbrain forget --purge --status --request-id ${row.request_id} --continue; if it stalls again, report it with the output of gbrain doctor --json.`] } : {}) };
+        ? `The sweep of stored derivation results stopped on a paid result (synopsis or conversation facts) it could not read within its statement budget (derivation_sweep: stalled, paid_row_unreadable); paid results are never deleted unread, and other sweeps go on. Retry it with foresights forget --purge --status --request-id ${row.request_id} --continue; if it stalls again, report it with the output of foresights doctor --json.`
+        : `The sweep of stored derivation results stopped on a result it could not read or delete within its statement budget (derivation_sweep: stalled); other sweeps go on. Retry it with foresights forget --purge --status --request-id ${row.request_id} --continue; if it stalls again, report it with the output of foresights doctor --json.`] } : {}) };
 }

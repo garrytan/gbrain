@@ -41,7 +41,7 @@ describe('parseRegisterClientArgs', () => {
     expect(out.scopes).toBe('read write');
   });
 
-  // init.ts's own `gbrain auth register-client` hint (line ~730) recommends
+  // init.ts's own `foresights auth register-client` hint (line ~730) recommends
   // `--scopes read,write,admin`, but the parser previously only split on
   // whitespace, so the comma-joined string fell through as a single
   // unrecognized token and registerClientManual's assertAllowedScopes

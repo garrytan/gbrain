@@ -2,7 +2,7 @@
  * Per-job process isolation protocol (issue #5).
  *
  * The worker (parent) keeps claim / lock-renewal / completeJob / failJob;
- * `gbrain jobs run-child` (child) owns handler execution with its own small
+ * `foresights jobs run-child` (child) owns handler execution with its own small
  * engine pool. This module is the protocol between them:
  *
  *   payload in   — job id via argv (`jobs run-child --job-id N`, ps-visible
@@ -20,7 +20,7 @@
  *                  process group) because SIGKILL on the tini pid alone kills
  *                  tini, NOT the handler grandchild (tini cannot forward
  *                  SIGKILL). Bun rejects negative pids in process.kill()
- *                  (oven-sh/bun#15791) and gbrain ships as a Bun-compiled
+ *                  (oven-sh/bun#15791) and foresights ships as a Bun-compiled
  *                  binary, so the group signal falls back to POSIX
  *                  /bin/kill when needed.
  *
@@ -87,9 +87,9 @@ export function isChildConfigurationReason(value: unknown): value is typeof CHIL
 
 export function childConfigurationError(reason: typeof CHILD_CONFIGURATION_REASONS[number]): LocalConfigurationError {
   const messages = {
-    postgres_cancellation_unavailable: 'The PostgreSQL driver lacks required cancellation support. Reinstall a known-good GBrain release or run bun install in the checkout to repair the shipped driver.',
-    child_executable_invalid: 'The selected job child executable is missing or not executable. Fix GBRAIN_JOB_CHILD_CLI or repair the current GBrain executable path.',
-    child_protocol_incompatible: 'The selected job child uses an incompatible readiness or outcome protocol. Reinstall the selected child with a compatible GBrain release.',
+    postgres_cancellation_unavailable: 'The PostgreSQL driver lacks required cancellation support. Reinstall a known-good Foresights release or run bun install in the checkout to repair the shipped driver.',
+    child_executable_invalid: 'The selected job child executable is missing or not executable. Fix GBRAIN_JOB_CHILD_CLI or repair the current Foresights executable path.',
+    child_protocol_incompatible: 'The selected job child uses an incompatible readiness or outcome protocol. Reinstall the selected child with a compatible Foresights release.',
   };
   return new LocalConfigurationError(reason, `${messages[reason]} Verify worker and child readiness, then restart. See docs/guides/minions-fix.md#configuration-blocked.`);
 }
@@ -297,7 +297,7 @@ export async function decodeChildOutcomeFileAsync(
 
 /**
  * argv for the child invocation (appended after the resolved CLI). The shell
- * opt-in travels as a FLAG as well as env: the child is a fresh gbrain process
+ * opt-in travels as a FLAG as well as env: the child is a fresh foresights process
  * that re-runs the startup cwd-.env quarantine (core/env-trust.ts) in the
  * worker's cwd and would drop GBRAIN_ALLOW_SHELL_JOBS again whenever a .env
  * there assigns it; `jobs run-child` re-asserts the env var from the flag.
@@ -411,7 +411,7 @@ export function confirmChildCleanup(snapshot: ChildCleanupSnapshot): boolean {
 }
 
 /**
- * Resolve how to invoke the gbrain CLI for a child process. Pure — all
+ * Resolve how to invoke the foresights CLI for a child process. Pure — all
  * inputs injected:
  *
  *   1. GBRAIN_JOB_CHILD_CLI env override (ops/test escape hatch)

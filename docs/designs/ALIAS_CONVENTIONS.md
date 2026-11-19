@@ -174,7 +174,7 @@ as written, as a whole token: "Call with JOF" links, "jof" does not.
 - `mentions.multiword_aliases` (default on) limits captures to one token.
 - The grammar change bumps `ALIAS_DERIVATION_VERSION` and
   `MENTION_EXTRACTOR_VERSION`, so every brain re-derives once on its next
-  `gbrain extract --stale`.
+  `foresights extract --stale`.
 
 ## Out of scope
 

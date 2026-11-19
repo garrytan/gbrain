@@ -1,7 +1,7 @@
 /**
  * E2E tests for serve-http.ts OAuth 2.1 fixes (v0.26.1).
  *
- * Spins up a real `gbrain serve --http` against real Postgres, registers an
+ * Spins up a real `foresights serve --http` against real Postgres, registers an
  * OAuth client, mints tokens, and exercises the full MCP JSON-RPC pipeline
  * end-to-end. Catches the three bugs fixed in v0.26.1:
  *
@@ -413,7 +413,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
 
   // Setting resourceServerUrl moves the SDK's document to the path-inserted
   // location only. Clients that probe the bare root (the pre-RFC-9728
-  // convention, and what gbrain advertised before this fix) must keep
+  // convention, and what foresights advertised before this fix) must keep
   // discovering us instead of getting a 404 mid-flight.
   test('legacy root protected-resource path serves the same resource value', async () => {
     const res = await fetch(`${BASE}/.well-known/oauth-protected-resource`);
@@ -619,14 +619,14 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   test('admin dashboard serves SPA index.html (not Express error)', async () => {
     const res = await fetch(`${BASE}/admin/`);
     const html = await res.text();
-    expect(html).toContain('GBrain Admin');
+    expect(html).toContain('Foresights Admin');
     expect(html).not.toContain('<pre>Cannot GET');
   });
 
   test('admin sub-routes serve SPA fallback', async () => {
     const res = await fetch(`${BASE}/admin/agents`);
     const html = await res.text();
-    expect(html).toContain('GBrain Admin');
+    expect(html).toContain('Foresights Admin');
   });
 
   test('admin source access APIs enumerate sources and rescope an OAuth client', async () => {
@@ -1470,7 +1470,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   // operations.ts:1391's protected-job-name guard (`if (ctx.remote && ...)`)
   // saw a falsy undefined and skipped. An HTTP MCP caller with a write-scoped
   // token could then submit `{name: "shell", params: {cmd: "id"}}` over /mcp
-  // and execute arbitrary commands on the gbrain host.
+  // and execute arbitrary commands on the foresights host.
   //
   // The fix is two-layered:
   //   1) F7  — serve-http.ts sets `remote: true` explicitly.

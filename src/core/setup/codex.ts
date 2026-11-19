@@ -1,5 +1,5 @@
 /**
- * Codex wiring for `gbrain setup codex`: the stdio MCP table
+ * Codex wiring for `foresights setup codex`: the stdio MCP table
  * `[mcp_servers.<name>]` in `$CODEX_HOME/config.toml`, setup's hook groups in
  * `$CODEX_HOME/hooks.json` (SessionStart + UserPromptSubmit read context;
  * SessionEnd capture only when accepted) and, for each group, the
@@ -11,7 +11,7 @@
  * group, each trust table) is fingerprinted with `ownedEntryFingerprint`
  * (sha256 over canonical JSON of the exact parsed entry) and recorded per
  * entry in the connection receipt `.gbrain-connection-codex-<name>.json`
- * beside config.toml (the name `gbrain connect --install` uses; a receipt
+ * beside config.toml (the name `foresights connect --install` uses; a receipt
  * carrying `client_id` is a hosted one and is never adopted). Setup replaces
  * or removes an entry only when its current fingerprint is one the receipt
  * recorded (compare-and-swap); an edited entry is preserved and reported.
@@ -113,7 +113,7 @@ export interface CodexInspection {
   hostedReceipt: { mcp_url?: string } | null;
   /** stdioMember: the --stdio-member of an entry setup owns (current or owned), which a rewrite carries forward. */
   mcp: { state: 'absent' | 'current' | 'owned' | 'remote' | 'unowned'; url?: string; stdioMember?: string };
-  /** Events already wired by gbrain's bootstrap Codex lane (token-owned). */
+  /** Events already wired by foresights's bootstrap Codex lane (token-owned). */
   otherLaneEvents: string[];
   /** Owned events whose group the user edited: preserved, never rewritten. */
   edited: Hashes;
@@ -135,7 +135,7 @@ export function readCodexSetupReceipt(receiptPath: string): { setup: CodexSetupR
   } catch { throw new Error(`the connection receipt ${receiptPath} is unreadable; move it aside only if you know which install wrote it, then run setup again.`); }
   if (raw.client_id) return { setup: null, hosted: { mcp_url: typeof raw.mcp_url === 'string' ? raw.mcp_url : undefined } };
   if (raw.harness === 'codex' && raw.connection === 'local-stdio' && raw.setup_receipt_version === CODEX_SETUP_RECEIPT_VERSION) return { setup: raw as unknown as CodexSetupReceipt, hosted: null };
-  throw new Error(`the connection receipt ${receiptPath} was not written by gbrain setup; it is left untouched. Choose another --name.`);
+  throw new Error(`the connection receipt ${receiptPath} was not written by foresights setup; it is left untouched. Choose another --name.`);
 }
 
 const writeReceipt = (path: string, receipt: CodexSetupReceipt) => atomicWriteTextFile(path, `${JSON.stringify(receipt, null, 2)}\n`, { forceMode: 0o600 });
@@ -251,7 +251,7 @@ export interface CodexApplyResult { steps: CodexSetupStep[]; receipt: CodexSetup
 
 /**
  * Apply the plan under the Codex config-dir lock, in the write order above.
- * `pluginOwner` skips the MCP table (the gbrain Codex plugin serves the name);
+ * `pluginOwner` skips the MCP table (the foresights Codex plugin serves the name);
  * `beforeMcp` runs after the receipt is prepared (the brain init step);
  * `abortAfter` is the crash-injection test seam.
  */
@@ -280,7 +280,7 @@ export async function applyCodexSetup(
   const lock = await acquireBootstrapLock(dirname(paths.configPath));
   const originals = readOriginals([paths.configPath, paths.hooksPath]);
   try {
-    // The MCP table and every hook command start gbrain through the launcher, so it goes down before anything names it (#8424, #8426).
+    // The MCP table and every hook command start foresights through the launcher, so it goes down before anything names it (#8424, #8426).
     ensureHookLauncher(hookLauncherPath(plan.brainHome));
     const found = inspectCodexSetup(plan);
     const prior = found.prior;

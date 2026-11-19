@@ -151,12 +151,12 @@ describe.skipIf(SKIP_SUBPROCESS)('autopilot launchd lifecycle — shimmed (all p
     // launchctl argv recorder — exit 0 so install's execSync succeeds.
     writeFileSync(join(tmpbin, 'launchctl'), `#!/bin/sh\necho "launchctl $*" >> '${recordFile}'\nexit 0\n`, { mode: 0o755 });
     // crontab no-op — detectInstalledTarget falls through to the REAL
-    // `crontab -l` on non-darwin; a dev's real gbrain cron entry would flip
+    // `crontab -l` on non-darwin; a dev's real foresights cron entry would flip
     // the verdict to linux-cron.
     writeFileSync(join(tmpbin, 'crontab'), `#!/bin/sh\nexit 0\n`, { mode: 0o755 });
-    // gbrain breadcrumb — `which gbrain` at install time bakes THIS into the
+    // foresights breadcrumb — `which foresights` at install time bakes THIS into the
     // wrapper's exec line. Records context, exits 0. NOTE: asserts "a process
-    // execed gbrain from PATH", not "the daemon started" — assert on context.
+    // execed foresights from PATH", not "the daemon started" — assert on context.
     writeFileSync(join(tmpbin, 'gbrain'), `#!/bin/sh\necho "gbrain $*" >> '${breadcrumbFile}'\nexit 0\n`, { mode: 0o755 });
     for (const f of ['launchctl', 'crontab', 'gbrain']) chmodSync(join(tmpbin, f), 0o755);
 
@@ -310,7 +310,7 @@ describe.skipIf(SKIP_SUBPROCESS || !LAUNCHD_OK)('autopilot launchd lifecycle —
     mkdirSync(repoDir, { recursive: true });
     breadcrumbFile = join(tmpbin, 'execed.log');
 
-    // gbrain breadcrumb only — NO launchctl shim here: install must reach the
+    // foresights breadcrumb only — NO launchctl shim here: install must reach the
     // real launchd. Breadcrumb path baked ABSOLUTE: launchd will not pass our
     // test env to the wrapper it spawns.
     writeFileSync(join(tmpbin, 'gbrain'), `#!/bin/sh\necho "gbrain $*" >> '${breadcrumbFile}'\nexit 0\n`, { mode: 0o755 });

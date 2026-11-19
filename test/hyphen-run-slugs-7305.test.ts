@@ -70,7 +70,7 @@ for (const backend of testBackends()) describe(`[${backend}] #7305 hyphen-run sl
     "SELECT id, compiled_truth FROM pages WHERE source_id='default' AND slug=$1", [slug]))[0] ?? null;
   const fixture = (slug: string, body: string) => engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () =>
     tx.putPage(slug, { type: 'note', title: 'Example', compiled_truth: body, timeline: '' }, { sourceId: 'default' }), TEST_WRITE_ATTRIBUTION));
-  /** A page an earlier gbrain wrote under a hyphen-run slug, with its stamped file. */
+  /** A page an earlier foresights wrote under a hyphen-run slug, with its stamped file. */
   async function legacyPage(slug: string, body: string) {
     await fixture(slug, body);
     const file = path.join(brainDir, `${slug}.md`);
@@ -87,7 +87,7 @@ for (const backend of testBackends()) describe(`[${backend}] #7305 hyphen-run sl
       expect(error).toBeInstanceOf(OperationError);
       expect(error.code).toBe('invalid_params');
       expect(error.detail).toBe('slug_hyphen_run');
-      expect(error.suggestion).toBe(`Write the page as ${folded}: gbrain put ${folded}`);
+      expect(error.suggestion).toBe(`Write the page as ${folded}: foresights put ${folded}`);
       expect(error.fix).toMatchObject({ argv: ['gbrain', 'get', folded], verify: { argv: ['gbrain', 'get', folded] } });
     }
     expect(await requests()).toBe(before);
@@ -114,7 +114,7 @@ for (const backend of testBackends()) describe(`[${backend}] #7305 hyphen-run sl
     const cli = await refusalOf(run('capture', ctx(), { slug: 'notes/c-1900---2000-ab', content: 'captured example text' }));
     expect(cli.code).toBe('invalid_params');
     expect(cli.detail).toBe('slug_hyphen_run');
-    expect(cli.suggestion).toBe(`Write the page as ${'notes/c-1900-2000-ab'}: gbrain capture --slug ${'notes/c-1900-2000-ab'}`);
+    expect(cli.suggestion).toBe(`Write the page as ${'notes/c-1900-2000-ab'}: foresights capture --slug ${'notes/c-1900-2000-ab'}`);
     const remote = await refusalOf(run('capture', ctx({ remote: true }), { slug: 'notes/c-1900---2000-ab', content: 'captured example text' }));
     expect(remote.detail).toBe('slug_hyphen_run');
     expect(remote.suggestion).toBe(`Call capture again with slug "${'notes/c-1900-2000-ab'}" and the same content.`);

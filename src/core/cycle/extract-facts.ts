@@ -47,7 +47,7 @@
  * `warn` naming each failed page. Rows with no backing page or checkout
  * (slugify-floor / stub-guard-blocked slugs from the inline writer) are
  * structurally unfenceable and never gate, and neither are the rows of a
- * clone gbrain owns (#6946), which stay database-only and out of
+ * clone foresights owns (#6946), which stay database-only and out of
  * reconciliation.
  */
 
@@ -279,7 +279,7 @@ async function refuseDestructiveReconcileOnStaleCache(
   if (state !== 'stale') return false;
   warnings.push(
     `${slug}: FACTS_PAGE_CACHE_STALE: canonical Markdown differs from the pages cache; ` +
-    'refusing destructive fact reconciliation until gbrain sync refreshes the page index.',
+    'refusing destructive fact reconciliation until foresights sync refreshes the page index.',
   );
   return true;
 }
@@ -426,7 +426,7 @@ async function planFenceReconcile(db: BrainEngine, page: PageFenceInput, slug: s
     // #6686: a fence in each section (a writer added one above the sentinel) is merged by an explicit repair.
     if (view.sections.body) {
       warnings.push(`${slug}: FACTS_FENCE_BELOW_SENTINEL: the page holds a ## Facts fence above the <!-- timeline --> sentinel and another below it `
-        + `(a split fence), so extract_facts leaves its indexed facts as they are. Preview merging them into one with gbrain repair split-facts --source ${sourceId}, `
+        + `(a split fence), so extract_facts leaves its indexed facts as they are. Preview merging them into one with foresights repair split-facts --source ${sourceId}, `
         + 'then apply the hash it prints.');
       return null;
     }
@@ -527,7 +527,7 @@ async function writeFenceReconcile(tx: BrainEngine, sourceId: string, slug: stri
     retire: (await factPreimages(tx, sourceId, retiring)).map(factRetireItem), writer: 'extract_facts' });
   if (generation.state === 'held') {
     return { inserted: 0, updated: 0, deleted: 0, held: true, warnings: [`${slug}: FACTS_FENCE_HELD: ${generation.reason}: the page's facts fence is ${plan.read.state}, so its `
-      + `${retiring.length} fact row(s) were kept, not retired; gbrain doctor --only generation_held names the user's choice (restore the fence or write an empty one)`] };
+      + `${retiring.length} fact row(s) were kept, not retired; foresights doctor --only generation_held names the user's choice (restore the fence or write an empty one)`] };
   }
   const tally = emptyGateTally();
   // #5575 I2: the fence rows restate the page (no model), so every write here is at the page's tier, capped at operator_curated.
@@ -704,7 +704,7 @@ export interface ExtractFactsOpts {
    * v0.35.5 (codex #10): brain directory for the phantom-redirect pre-pass.
    * The phantom handler needs disk access to append migrated fence rows
    * to canonical pages and to unlink phantom `.md` files. When omitted,
-   * the phantom-redirect pass is skipped (callers like `gbrain dream`
+   * the phantom-redirect pass is skipped (callers like `foresights dream`
    * that don't have a brainDir, e.g. headless eval runs, still get the
    * standard fence-reconcile loop).
    */
@@ -889,7 +889,7 @@ export async function runExtractFacts(
   // the destructive reconciliation pass; the other pages reconcile.
   // #6610: rows the unbound-source policy keeps unfenced on database-only pages stay held out of reconciliation
   // but never gate the run; doctor fence_integrity names the opt-in that fences them.
-  // #6946, #7098: so do the database-only rows of a clone gbrain owns or a read-only mirror, which is never fenced.
+  // #6946, #7098: so do the database-only rows of a clone foresights owns or a read-only mirror, which is never fenced.
   const pending = await pendingLegacyRows(engine, sourceId);
   const legacySlugs = new Set(pending.keys());
   const gating = await readOnlyCheckout(engine, sourceId) ? [] : [...pending].filter(([slug]) => !unboundRefused.has(slug));
@@ -1231,7 +1231,7 @@ async function expireDeletedPagesManaged(engine: BrainEngine, sourceId: string,
         continue;
       }
       const failure = run.fail(slug, error);
-      warnings.push(`FACTS_EXPIRE_FAILED: ${slug}: ${failure.code}: ${failure.message.slice(0, 200)} (retried by the next extract_facts run${failure.requestId ? `; gbrain write-request -- ${failure.requestId} names the refusal` : ''})`);
+      warnings.push(`FACTS_EXPIRE_FAILED: ${slug}: ${failure.code}: ${failure.message.slice(0, 200)} (retried by the next extract_facts run${failure.requestId ? `; foresights write-request -- ${failure.requestId} names the refusal` : ''})`);
     }
   }
   return expired;

@@ -1,5 +1,5 @@
 /**
- * `gbrain eval longmemeval --via-operation query|search`: each question runs
+ * `foresights eval longmemeval --via-operation query|search`: each question runs
  * through the real operation with an agent's stdio MCP context, keyless (fixture
  * embed and expansion transports; no provider is called).
  *
@@ -117,7 +117,7 @@ describe('eval longmemeval --via-operation', () => {
     expect(direct.rows.every(r => !('via_operation' in r))).toBe(true);
   }, 120_000);
 
-  test('search with the reranker on: rows record reranked from the operation\'s rerank call, and the summary names gbrain\'s own tree from any cwd', async () => {
+  test('search with the reranker on: rows record reranked from the operation\'s rerank call, and the summary names foresights\'s own tree from any cwd', async () => {
     let rerankCalls = 0;
     __setRerankTransportForTests((async (_url: string, init: RequestInit) => {
       rerankCalls++;

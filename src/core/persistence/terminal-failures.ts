@@ -43,7 +43,7 @@ export const TERMINAL_ACQUIRE_MS = 2_000;
 
 export interface TerminalThresholds { windowDays: number; spikeFactor: number; spikeMin: number; retentionDays: number; clamped: boolean }
 
-/** `gbrain config set` validation for the three keys: a positive number (whole days for the window). */
+/** `foresights config set` validation for the three keys: a positive number (whole days for the window). */
 export function validateTerminalConfigValue(key: string, value: string): string | null {
   if (!(TERMINAL_CONFIG_KEYS as readonly string[]).includes(key)) return null;
   const n = Number(value);

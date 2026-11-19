@@ -108,7 +108,7 @@ describe('coverage after a version bump on an unchanged brain', () => {
     expect(backlinks.notices.join('\n')).toContain('[gbrain notice mention_index');
     const notice = (await mentionIndexUpgradeNotice(engine))?.join('\n') ?? '';
     expect(notice).toContain('[AGENT]');
-    expect(notice).toContain('gbrain extract --stale --catch-up');
+    expect(notice).toContain('foresights extract --stale --catch-up');
     expect(notice).toContain('6 page(s)');
 
     await sweep(engine);

@@ -1,6 +1,6 @@
 /**
  * Paired cluster statistics (src/core/eval/paired-bootstrap.ts): the port of
- * the gbrain-evals situation-recall comparator used by `gbrain eval compare`.
+ * the gbrain-evals situation-recall comparator used by `foresights eval compare`.
  */
 import { describe, expect, test } from 'bun:test';
 import { holmAdjusted, pairedClusterStatistics } from '../src/core/eval/paired-bootstrap.ts';

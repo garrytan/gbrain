@@ -46,7 +46,7 @@ describe('hasAnthropicKey', () => {
     );
   });
 
-  test('gbrain config anthropic_api_key set (no env) → true', async () => {
+  test('foresights config anthropic_api_key set (no env) → true', async () => {
     const home = freshHome({ anthropic_api_key: 'sk-from-config' });
     await withEnv(
       { ANTHROPIC_API_KEY: undefined, GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined },

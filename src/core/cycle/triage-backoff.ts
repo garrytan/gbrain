@@ -95,7 +95,7 @@ export async function recordUnreliableTriage(
   const attempt = markerAttempt(opts.existing, opts.model, opts.triageVersion) + 1;
   let outcome = opts.keepExisting
     ? 'kept the existing verdict'
-    : `backoff attempt ${attempt}: not re-judged for ${triageBackoffMs(attempt) / HOUR_MS}h (gbrain dream retriage --force re-judges now)`;
+    : `backoff attempt ${attempt}: not re-judged for ${triageBackoffMs(attempt) / HOUR_MS}h (foresights dream retriage --force re-judges now)`;
   if (!opts.keepExisting && !opts.aborted) {
     try {
       await engine.putDreamVerdict(t.filePath, t.contentHash, backoffMarker(kind, attempt, opts.model, opts.triageVersion));

@@ -290,7 +290,7 @@ describe('already-affected rows: listed by doctor, previewed by the repair, chan
       expect(check.details).toMatchObject({ alias_pages_without_visibility: 1, looser_events: 1, world_facts_from_private_sources: 1,
         world_facts_remotely_readable: 1, remotely_readable_fact_ids: [String(fact!.id)] });
       expect(check.message).not.toContain(meeting);
-      expect(check.message).toContain('Remote page reads hide them (to show them: gbrain config set visibility.honor_aliases false).');
+      expect(check.message).toContain('Remote page reads hide them (to show them: foresights config set visibility.honor_aliases false).');
 
       const home = mkdtempSync(join(tmpdir(), 'gbrain-visibility-repair-'));
       try {

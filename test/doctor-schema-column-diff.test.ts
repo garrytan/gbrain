@@ -7,7 +7,7 @@
  * it. Doctor now runs a READ-ONLY column diff (`detectMissingColumns`, the
  * detection half of verifySchema with no self-heal) and downgrades
  * schema_version to warn naming the missing columns + the
- * `gbrain init --migrate-only` hint.
+ * `foresights init --migrate-only` hint.
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
@@ -57,7 +57,7 @@ describe('doctor schema_version wires the column diff (#4421)', () => {
     const src = doctorFileSource('doctor/checks/schema-health.ts');
     const diffIdx = src.indexOf('detectMissingColumns');
     expect(diffIdx).toBeGreaterThan(-1);
-    expect(src).toContain('gbrain init --migrate-only');
+    expect(src).toContain('foresights init --migrate-only');
     // The diff arm lives inside the schema_version ledger-current branch.
     const anchor = src.indexOf('schemaVersion >= LATEST_VERSION');
     expect(anchor).toBeGreaterThan(-1);

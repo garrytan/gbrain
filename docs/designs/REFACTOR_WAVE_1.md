@@ -1,4 +1,4 @@
-# GBrain Refactor Wave 1
+# Foresights Refactor Wave 1
 
 Reviewed with gstack /autoplan (CEO, DX and Eng phases; each with an independent Claude reviewer and a Codex outside voice) and approved by the owner on 2026-09-30 with all 12 storage domains in scope.
 
@@ -7,7 +7,7 @@ fix waves and multi-part cleanups). Baseline: master @ f8d1e3936 (v0.60.11.0); m
 
 ### Problem (measured; corrected by CEO review)
 
-GBrain is 451,218 lines of TypeScript across 1,473 files in `src/`. Literal copy-paste is low (jscpd 0.55%). The problem
+Foresights is 451,218 lines of TypeScript across 1,473 files in `src/`. Literal copy-paste is low (jscpd 0.55%). The problem
 is **parallel implementations**, **three copies of schema text**, and **god functions**:
 
 | Hotspot | Measured size | Churn | Why it farms bugs |
@@ -44,7 +44,7 @@ Behavior-preserving structural refactor: no CLI/MCP contract, schema, or retriev
   sync hangs/partials, doctor, and serve-http auth, by cause. Record it in the PR. Re-measure at +3 months.
 - (f) Performance budgets set before implementation and checked after: import/write throughput, `searchVector`,
   `searchKeyword`, `_upsertChunksOnce`, `getPage`, hybrid search latency (warm and cold cache), SQL round trips per op,
-  provider call counts, and `gbrain --version` cold start (<= +20 ms). Measured on PGLite, direct Postgres, and PgBouncer.
+  provider call counts, and `foresights --version` cold start (<= +20 ms). Measured on PGLite, direct Postgres, and PgBouncer.
 
 ### Workstreams (all in ONE PR, in this commit order)
 

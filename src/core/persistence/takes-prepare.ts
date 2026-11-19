@@ -87,9 +87,9 @@ async function takeRemovalRequiresOwner(engine: BrainEngine, row: WriteRequest, 
     table: 'takes', proposer: 'takes_remove', writer, rows: [{ id: take.id, tier: take.tier, change: 'removed' }] }),
   (tx, run) => withWriteAttribution(tx, { ...requestAttribution(row), trust: requestChannelTrust(row) ?? undefined }, run));
   const error = opError('forget_requires_owner', `Take row #${take.rowNum} on ${row.slug} is ${take.tier}; this write cannot remove it. Proposal ${ref} asks the owner.`,
-    `Do not retry. Tell the user take row #${take.rowNum} on ${row.slug} needs their decision: they can remove it with gbrain trust confirm ${ref} on the brain host.`);
+    `Do not retry. Tell the user take row #${take.rowNum} on ${row.slug} needs their decision: they can remove it with foresights trust confirm ${ref} on the brain host.`);
   error.fix = tierRaiseFix(['gbrain', 'trust', 'confirm', ref!], 'Removing a take the owner confirmed or curated is their decision; the confirm prompt applies the removal.',
-    `Run on the brain host, in a terminal: gbrain trust confirm ${ref}`);
+    `Run on the brain host, in a terminal: foresights trust confirm ${ref}`);
   return error;
 }
 
@@ -182,8 +182,8 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
       if (citing) throw takesRefusal('invalid_params',`Row #${number} replaces row #${citing.rowNum}.`,row,
         `Row #${citing.rowNum} on ${row.slug} cites row #${number} as "superseded by #${number}"; remove row #${citing.rowNum} first, or keep both.`);
       const [stored]=await engine.executeRaw<{id:number;claim:string;trust_tier:string}>('SELECT id,claim,trust_tier FROM takes WHERE page_id=$1 AND row_num=$2',[snapshot.page.id,number]);
-      if (stored && stored.claim!==target.claim) throw takesRefusal('invalid_params',`Row #${number}'s database copy disagrees with the page's takes fence; run gbrain takes rebuild ${row.slug} --source-id ${row.source_id} first.`,row,
-        `Rebuild the page's takes index from its fence first with gbrain takes rebuild ${row.slug} --source-id ${row.source_id}, check the row, then remove it again.`);
+      if (stored && stored.claim!==target.claim) throw takesRefusal('invalid_params',`Row #${number}'s database copy disagrees with the page's takes fence; run foresights takes rebuild ${row.slug} --source-id ${row.source_id} first.`,row,
+        `Rebuild the page's takes index from its fence first with foresights takes rebuild ${row.slug} --source-id ${row.source_id}, check the row, then remove it again.`);
       // W1 #6783 §12 (a): a lower-tier writer never removes a more trusted take; a `forget` proposal asks the owner.
       acceptedRemoval=stored ? await ownerAcceptedRemoval(engine,row,Number(stored.id)) : null;
       if (stored && acceptedRemoval===null && supersessionGuarded(trust.tier,stored.trust_tier)) throw await takeRemovalRequiresOwner(engine,row,

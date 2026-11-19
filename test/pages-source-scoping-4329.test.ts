@@ -225,7 +225,7 @@ describe('#4329 — delete_page source_id', () => {
 });
 
 describe('delete_page purge — immediate removal for the trusted local CLI only', () => {
-  test('contract: purge is a boolean param (so the generated CLI accepts `gbrain delete <slug> --purge`)', () => {
+  test('contract: purge is a boolean param (so the generated CLI accepts `foresights delete <slug> --purge`)', () => {
     expect(delete_page.params.purge?.type).toBe('boolean');
   });
 
@@ -265,7 +265,7 @@ describe('delete_page purge — immediate removal for the trusted local CLI only
     // a well-formed request the caller is not allowed to make is
     // permission_denied, not invalid_params (that code is for shape errors).
     await expect(delete_page.handler(ctxOf(), { slug: 'shared/doc', purge: true }))
-      .rejects.toMatchObject({ code: 'permission_denied', suggestion: expect.stringContaining('gbrain delete shared/doc --purge') });
+      .rejects.toMatchObject({ code: 'permission_denied', suggestion: expect.stringContaining('foresights delete shared/doc --purge') });
     await expect(delete_page.handler(ctxOf({ remote: undefined as unknown as boolean }), { slug: 'shared/doc', purge: true }))
       .rejects.toMatchObject({ code: 'permission_denied' });
     const authed = ctxOf({ auth: authOf({ sourceId: 'default', allowedSources: ['default'], scopes: ['read', 'write', 'admin'] }) as any });
@@ -291,7 +291,7 @@ describe('delete_page purge — immediate removal for the trusted local CLI only
   test('purge: false behaves as a plain soft delete, and the hint names the purge path', async () => {
     const res = await delete_page.handler(ctxOf({ remote: false }), { slug: 'shared/doc', purge: false, expected_revision: await revision() }) as Record<string, unknown>;
     expect(res.status).toBe('soft_deleted');
-    expect(String(res.recoverable_until)).toContain('gbrain delete <slug> --purge');
+    expect(String(res.recoverable_until)).toContain('foresights delete <slug> --purge');
     expect((await deletedAtBySource('shared/doc')).default).not.toBeNull();
   });
 

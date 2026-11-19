@@ -5,7 +5,7 @@
  * WHY. Cat 13 conceptual recall (a user paraphrases an IDEA; the gold concept
  * page shares no tokens with the query). E1 localization receipt
  * (`~/gbrain-lme-receipts/cat13/E1-localize`, tuning split, offline
- * re-simulation validated 359/359 vs the live order): gbrain's own vector arm
+ * re-simulation validated 359/359 vs the live order): foresights's own vector arm
  * ranks the gold page at nDCG@5 60.3 while the live hybrid scores 50.6 — the
  * whole gap is created AFTER the vector arm. Of 105 gap probes, 78 were
  * post-fusion metadata-boost reorders: hub pages (companies/*, people/*,

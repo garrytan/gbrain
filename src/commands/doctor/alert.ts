@@ -12,7 +12,7 @@
  *   - none: every page-class check ran fresh and none pages.
  * act dominates unknown, which dominates none; both item lists are kept.
  *
- * gbrain doctor --alert runs the page class alone (the alert tier: every
+ * foresights doctor --alert runs the page class alone (the alert tier: every
  * page-class entry, fresh, under ALERT_BUDGET_MS_DEFAULT), so a healthy brain
  * reaches none on every run. It keeps a consecutive-unknown counter per brain
  * on the file plane (doctor-alert-state.json under GBRAIN_HOME) so a cron can
@@ -172,7 +172,7 @@ function unknownItem(name: string, reason: AlertUnknownReason, c: Check | null, 
   return {
     code: 'doctor_alert_unknown', check: name, reason, budget_ms: budgetMs,
     message: `${name} ${UNKNOWN_WHY[reason]}${budget}, so its health is unknown, not clear. Measure it with ${step}, `
-      + 'run the full tier (gbrain doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).',
+      + 'run the full tier (foresights doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).',
     fix,
   };
 }
@@ -226,7 +226,7 @@ export function alertExitCode(level: AlertLevel): number {
   return level === 'act' ? DOCTOR_ALERT_ACT_EXIT_CODE : level === 'unknown' ? DOCTOR_ALERT_UNKNOWN_EXIT_CODE : 0;
 }
 
-/** `gbrain doctor --alert`: print the verdict (with this brain's consecutive-unknown count) and return the exit code. */
+/** `foresights doctor --alert`: print the verdict (with this brain's consecutive-unknown count) and return the exit code. */
 export function printAlertReport(report: DoctorReport, json: boolean): number {
   const alert = recordAlertStreak(report.alert!);
   if (json) {

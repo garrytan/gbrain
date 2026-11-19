@@ -68,7 +68,7 @@ describe('brainstorm_health', () => {
       const check = await checkBrainstormHealth(engine);
       expect(check.status).toBe('warn');
       expect(check.message).toContain('search.track_retrieval is explicitly off');
-      expect(check.message).toContain('gbrain config set search.track_retrieval true');
+      expect(check.message).toContain('foresights config set search.track_retrieval true');
     },
   );
 
@@ -84,7 +84,7 @@ describe('brainstorm_health', () => {
     const check = await checkBrainstormHealth(engine);
     expect(check.status).toBe('ok');
     expect(check.message).toContain('Calibration cold-start (no active_bias_tags)');
-    expect(check.message).toContain('gbrain calibration --regenerate');
+    expect(check.message).toContain('foresights calibration --regenerate');
   });
 
   test('latest calibration row wins; tags -> ok naming the tag count', async () => {

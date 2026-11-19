@@ -2,7 +2,7 @@
  * The Bun floor of an upgrade target (#5855). A source or package install
  * runs the new release on the host's Bun, and a release whose `engines.bun`
  * floor that Bun does not meet refuses every command but `--version` once it
- * is swapped in. `gbrain upgrade` (and `gbrain self-upgrade`) refuse such a
+ * is swapped in. `foresights upgrade` (and `foresights self-upgrade`) refuse such a
  * swap and the autopilot channel holds it; this module reads the target's
  * floor per install method and the host's Bun, and words the refusal.
  *
@@ -10,7 +10,7 @@
  * fetched (the SHA the swap then fast-forwards to, so the checked commit is
  * the installed one); a global package reads `package.json` at the ref its
  * `github:` spec names on raw.githubusercontent.com (the default branch when
- * unpinned, which `bun update gbrain` installs). Only the `>=X.Y.Z` shape the
+ * unpinned, which `bun update foresights` installs). Only the `>=X.Y.Z` shape the
  * release pins is accepted; any other shape is unreadable, and an unreadable
  * floor holds (autopilot) or refuses (manual) rather than guessing.
  *
@@ -27,10 +27,10 @@ import { VERSION } from '../version.ts';
 import { BUN_VERSION_RE, bunVersionMeets, compareBunVersions } from './runtime-version.ts';
 import { gitChildEnv } from './git-env.ts';
 
-/** Exit code of a `gbrain upgrade` refused for the Bun floor (sysexits EX_CONFIG). */
+/** Exit code of a `foresights upgrade` refused for the Bun floor (sysexits EX_CONFIG). */
 export const BUN_FLOOR_EXIT_CODE = 78;
 export const BUN_FLOOR_DOCS = 'docs/guides/upgrades-auto-update.md#bun-floor';
-export const BUN_FLOOR_FIX = `Fix: bun upgrade, then gbrain upgrade. Docs: ${BUN_FLOOR_DOCS}`;
+export const BUN_FLOOR_FIX = `Fix: bun upgrade, then foresights upgrade. Docs: ${BUN_FLOOR_DOCS}`;
 
 const PACKAGE_BODY_LIMIT = 256 * 1024;
 const FLOOR_RE = /^>= ?(\d{1,4}\.\d{1,4}\.\d{1,4})$/;
@@ -122,8 +122,8 @@ export function rawPackageUrlForSpec(spec: string): string | null {
  * canonical repository's default branch.
  */
 export async function readPackageTarget(spec: string | null): Promise<TargetFloor> {
-  const url = rawPackageUrlForSpec(spec ?? 'github:garrytan/gbrain');
-  if (!url) return { ok: false, failedRead: `the global install's gbrain spec (${spec}) is not a GitHub spec` };
+  const url = rawPackageUrlForSpec(spec ?? 'github:aimonk2025/gbrain');
+  if (!url) return { ok: false, failedRead: `the global install's foresights spec (${spec}) is not a GitHub spec` };
   const read = `GET ${url}`;
   try {
     const res = await fetch(url, { headers: { 'User-Agent': `gbrain/${VERSION}` }, signal: AbortSignal.timeout(5_000) });
@@ -178,7 +178,7 @@ export type BunFloorVerdict =
  */
 export function evaluateBunFloor(target: TargetFloor, host: HostBun | null, targetVersion?: string | null): BunFloorVerdict {
   const version = target.version ?? targetVersion;
-  const name = version ? `gbrain ${version}` : 'the target release';
+  const name = version ? `foresights ${version}` : 'the target release';
   if (!target.ok) {
     const text = `Could not read the Bun floor of ${name}: ${target.failedRead}. Docs: ${BUN_FLOOR_DOCS}`;
     return { ok: false, kind: 'unreadable', message: text, auditReason: text };

@@ -185,7 +185,7 @@ export async function stageStreamedContent(engine: BrainEngine, path: string, co
       fsyncSync(fd);
     } finally { closeSync(fd); }
     if (existsAt(stage.path)) throw opError('unexpected_staging_bytes', 'A file already holds the reserved stage name.',
-      'A recovery staging file changed outside gbrain. Inspect the pending recovery in writer status and tell the user; never delete or edit staging files by hand.');
+      'A recovery staging file changed outside foresights. Inspect the pending recovery in writer status and tell the user; never delete or edit staging files by hand.');
     renameSync(streaming, stage.path);
     staged = true;
   } finally {
@@ -221,7 +221,7 @@ export async function stageBeforeCopy(path: string, stage: RecoveryStagingFile, 
     } finally { closeSync(fd); }
     await boundary?.('stage_flushed');
     if (existsAt(stage.path)) throw opError('unexpected_staging_bytes', 'A file already holds the reserved before stage name.',
-      'A recovery staging file changed outside gbrain. Inspect the pending recovery in writer status and tell the user; never delete or edit staging files by hand.');
+      'A recovery staging file changed outside foresights. Inspect the pending recovery in writer status and tell the user; never delete or edit staging files by hand.');
     renameSync(copying, stage.path);
     staged = true;
   } finally {

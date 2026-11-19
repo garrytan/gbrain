@@ -1,5 +1,5 @@
 /**
- * `gbrain repair contextual-mode` (#5621): stamp `contextual_retrieval_mode`
+ * `foresights repair contextual-mode` (#5621): stamp `contextual_retrieval_mode`
  * and `corpus_generation` on live markdown pages imported before every import
  * recorded them (`--no-embed` imports left them NULL, so every later embed
  * pass embedded those pages raw, forever). Each page gets exactly the
@@ -11,7 +11,7 @@
  * the stamped convention accepts (the #5553 rule): a page whose embedding
  * input is unchanged by the stamp queues no re-embed, and a page whose input
  * changes has only those vectors cleared and is re-embedded once, unless
- * --no-embed is passed (then `gbrain embed --stale` does it). `embed_skip`
+ * --no-embed is passed (then `foresights embed --stale` does it). `embed_skip`
  * pages are left alone and counted.
  */
 import type { BrainEngine } from '../engine.ts';
@@ -50,7 +50,7 @@ export const contextualModeRepair: RepairHandler = {
     if (cleared > 0 && opts?.embed) {
       const embedded = await embedStalePages(ctx.engine, [item.slug], item.source_id);
       if (embedded.pagesProcessed === 0) ctx.logger.warn(`[repair contextual-mode] ${item.source_id}:${item.slug} stamped, but its re-embed did not finish. `
-        + `Run: gbrain embed --stale --source ${item.source_id}`);
+        + `Run: foresights embed --stale --source ${item.source_id}`);
     }
     return true;
   },

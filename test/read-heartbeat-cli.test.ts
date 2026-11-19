@@ -43,15 +43,15 @@ describe('slow read heartbeat and interrupt note', () => {
   test('the start line prints at once and a progress line on every interval, before any result', async () => {
     const r = await harness({ json: true, signal: 'SIGTERM', env: { READ_EVERY_MS: '200' }, waitFor: 'still reading' });
     const lines = r.stderr.split('\n');
-    expect(lines[0]).toContain('[gbrain] reading sync status for source alpha-example; large brains can take minutes.');
-    expect(lines.some(l => /\[gbrain\] still reading sync status for source alpha-example \(\d+ s so far\); no result yet\./.test(l))).toBe(true);
+    expect(lines[0]).toContain('[foresights] reading sync status for source alpha-example; large brains can take minutes.');
+    expect(lines.some(l => /\[(?:foresights|gbrain)\] still reading sync status for source alpha-example \(\d+ s so far\); no result yet\./.test(l))).toBe(true);
   }, 30_000);
 
   for (const [signal, exit] of [['SIGTERM', 143], ['SIGINT', 130], ['SIGHUP', 129]] as const) {
     test(`${signal} mid-read: one stderr line and one interrupted document, never an empty result`, async () => {
       const r = await harness({ json: true, signal });
       expect(r.code).toBe(exit);
-      expect(r.stderr).toMatch(new RegExp(`\\[gbrain\\] Interrupted by ${signal} after \\d+ s while reading sync status for source alpha-example, before the result was ready\\. Nothing was read, so this is not an empty result\\.`));
+      expect(r.stderr).toMatch(new RegExp(`\\[foresights\\] Interrupted by ${signal} after \\d+ s while reading sync status for source alpha-example, before the result was ready\\. Nothing was read, so this is not an empty result\\.`));
       const doc = JSON.parse(r.stdout);
       expect(doc).toMatchObject({ error: 'interrupted', code: 'interrupted', signal, read: 'sync status for source alpha-example', complete: false, contract_version: 1 });
       expect(typeof doc.elapsed_ms).toBe('number');
@@ -76,7 +76,7 @@ describe('slow read heartbeat and interrupt note', () => {
     const r = await harness({ json: true, signal: 'SIGTERM', env: { NO_READ: '1' } });
     expect(r.code).toBe(143);
     expect(JSON.parse(r.stdout)).toMatchObject({ error: 'interrupted', code: 'interrupted', exit_code: 143 });
-    expect(r.stderr).not.toContain('[gbrain] reading');
+    expect(r.stderr).not.toContain('[foresights] reading');
   }, 30_000);
 });
 
@@ -88,7 +88,7 @@ describe('real CLI: doctor --json', () => {
       delete env.DATABASE_URL; delete env.GBRAIN_DATABASE_URL; delete env.OPENAI_API_KEY;
       expect(Bun.spawnSync([process.execPath, CLI, 'init', '--pglite', '--no-embedding'], { env, stdout: 'ignore', stderr: 'ignore' }).exitCode).toBe(0);
       const r = Bun.spawnSync([process.execPath, CLI, 'doctor', '--json', '--only', 'connection'], { env, stdout: 'pipe', stderr: 'pipe' });
-      expect(r.stderr.toString().split('\n')[0]).toContain('[gbrain] reading doctor checks; large brains can take minutes.');
+      expect(r.stderr.toString().split('\n')[0]).toContain('[foresights] reading doctor checks; large brains can take minutes.');
       const doc = JSON.parse(r.stdout.toString());
       expect(typeof doc.elapsed_ms).toBe('number');
       expect(doc.complete).toBe(true);

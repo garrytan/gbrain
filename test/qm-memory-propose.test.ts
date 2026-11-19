@@ -13,7 +13,7 @@
  *    or the journal's state lists change.
  * 3. Existing coverage: test/qm-memory-tools.test.ts (memory_write), test/access-qm-actor.test.ts (F9 deferred ops).
  * 4. Real seams: OAuth client-credentials tokens verified by the provider and dispatched through MCP dispatch on a
- *    repo-less brain; owner actions through the library and the gbrain memory-proposals command module; publication
+ *    repo-less brain; owner actions through the library and the foresights memory-proposals command module; publication
  *    through the persistence consumer.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -516,13 +516,13 @@ for (const kind of testBackends()) {
       const { runMemoryProposalsDoctor } = await import('../src/commands/doctor/checks/memory-proposals.ts');
       const [check] = await runMemoryProposalsDoctor({ engine } as never);
       expect(check).toMatchObject({ name: 'memory_proposals_pending', status: 'warn' });
-      expect(String(check!.message)).toContain('gbrain memory-proposals list');
+      expect(String(check!.message)).toContain('foresights memory-proposals list');
       const { runStatus } = await import('../src/commands/status.ts');
       let human = '';
       const status = await runStatus(engine, [], { stdout: (s) => { human += s; }, stderr: () => {} });
       expect(status.report!.memory_proposals).toMatchObject({ pending: summary.pending });
       expect(human).toContain(`Memory proposals: ${summary.pending} awaiting the owner`);
-      expect(human).toContain('review: gbrain memory-proposals list');
+      expect(human).toContain('review: foresights memory-proposals list');
       expect(human).not.toContain('canaryneverout');
       await call(bob, 'cancel_write_request', { request_id: id });
       let after = '';

@@ -9,8 +9,8 @@
  * (private folder names, one-off fixture slugs) belong in the brain's own
  * config, not here:
  *
- *   gbrain config set orphans.exclude_prefixes "my-private-folder/,archive/"
- *   gbrain config set orphans.exclude_slugs "some-one-off-page"
+ *   foresights config set orphans.exclude_prefixes "my-private-folder/,archive/"
+ *   foresights config set orphans.exclude_slugs "some-one-off-page"
  *
  * One policy, two renderers: `shouldExcludeFromOrphanReporting` (TypeScript,
  * one slug at a time) and `orphanExclusionSql` (a SQL predicate for set-wise
@@ -111,7 +111,7 @@ function parseList(value: string | null): string[] {
 
 /**
  * Load per-brain orphan exclusions from the brain config table. Callers with
- * an engine in hand (getHealth, `gbrain orphans`) pass the result as the
+ * an engine in hand (getHealth, `foresights orphans`) pass the result as the
  * second argument to shouldExcludeFromOrphanReporting.
  */
 export async function loadOrphanPolicyOverrides(

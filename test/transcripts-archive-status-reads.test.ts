@@ -1,5 +1,5 @@
 /**
- * gbrain transcripts archive status (and the doctor check built on it) reads the archive's own records only: the
+ * foresights transcripts archive status (and the doctor check built on it) reads the archive's own records only: the
  * ledger, the config and what the last run recorded about each reader. It never runs a reader, so a slow Gateway or a
  * large session folder cannot slow it down. PGLite, synthetic sessions only.
  */

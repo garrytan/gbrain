@@ -213,7 +213,7 @@ describe('doctor links_link_source_check (#4613)', () => {
     const check = await linkSourceCheckConstraintCheck(engine);
     expect(check.status).toBe('fail');
     expect(check.message).toContain('atom-provenance');
-    expect(check.message).toContain('gbrain apply-migrations --yes');
+    expect(check.message).toContain('foresights apply-migrations --yes');
   });
 
   test('warn (not fail) when the constraint is absent — writes still succeed', async () => {

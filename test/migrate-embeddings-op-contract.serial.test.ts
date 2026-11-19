@@ -277,7 +277,7 @@ describe('migrate_embeddings op envelope contract', () => {
       expect(probe.status).toBe('failed');
       expect(probe.reason).toContain('Preflight embed');
       expect(probe.recovery).toBe(EMBEDDING_MIGRATION_RECOVERY);
-      expect(probe.recovery?.docs).toBe('https://github.com/garrytan/gbrain/blob/master/docs/guides/embedding-migration.md#recovery');
+      expect(probe.recovery?.docs).toBe('https://github.com/aimonk2025/gbrain/blob/master/docs/guides/embedding-migration.md#recovery');
       expect(JSON.stringify(probe)).not.toContain('synthetic-private-provider-detail');
       await engine.setConfig('embedding_disabled', 'true');
       const applied = await runOp({ to: TO_MODEL, dim: TO_DIMS, yes: true, max_cost_usd: 1, reranker: 'off' });

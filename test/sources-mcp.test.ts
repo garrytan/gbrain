@@ -270,7 +270,7 @@ describe('sources_* handlers — happy path', () => {
       // target (a federated read grant naming it does not count — see the
       // fence test below). A freshly added source is outside the caller's
       // authority until the operator rescopes the client's write source
-      // onto it (`gbrain auth rescope-client <id> --source mcp-remove-test`).
+      // onto it (`foresights auth rescope-client <id> --source mcp-remove-test`).
       const result = (await removeOp.handler({ ...ctxRemote(['sources_admin']), sourceId: 'mcp-remove-test' }, {
         id: 'mcp-remove-test',
         confirm_destructive: true,

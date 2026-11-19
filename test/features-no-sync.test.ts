@@ -1,9 +1,9 @@
 /**
- * #4767 — `gbrain features`' "Configure Sync" recommendation must key on the
+ * #4767 — `foresights features`' "Configure Sync" recommendation must key on the
  * sources table (modern sync anchors on `sources.local_path`), not only on the
  * legacy global `sync.repo_path` key, which non-default sources never set. A
  * multi-source brain with N healthy syncing sources was told it is "not
- * syncing from git" and pointed at `gbrain sync --repo <path>`.
+ * syncing from git" and pointed at `foresights sync --repo <path>`.
  */
 import { describe, expect, test } from 'bun:test';
 import { scanFeatures } from '../src/commands/features.ts';

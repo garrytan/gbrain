@@ -131,7 +131,7 @@ function loadBindingSync(): NativeBinding {
     return binding;
   } catch (cause) {
     if (cause instanceof NativeLockUnavailableError) throw cause;
-    throw new NativeLockUnavailableError('Cannot load the native writer lock addon; reinstall this GBrain version', cause);
+    throw new NativeLockUnavailableError('Cannot load the native writer lock addon; reinstall this Foresights version', cause);
   }
 }
 

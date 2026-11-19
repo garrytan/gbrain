@@ -90,7 +90,7 @@ describe('postgres-engine / search path timeout isolation', () => {
   test('connect() with poolSize honors resolvePrepare (PgBouncer regression guard)', () => {
     // Regression: worker-instance pools were NOT honoring the prepare decision
     // before v0.15.4. Module singleton connect() in db.ts was fixed by #284 but
-    // PostgresEngine.connect({poolSize}) (the branch used by `gbrain jobs work`)
+    // PostgresEngine.connect({poolSize}) (the branch used by `foresights jobs work`)
     // silently ignored it — agents running background work against Supabase
     // pooler URLs still hit `prepared statement "..." does not exist` under
     // load. Source-level grep is enough: runtime mocking of postgres.js's

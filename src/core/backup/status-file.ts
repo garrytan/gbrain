@@ -3,13 +3,13 @@
  * check: the cached verdict file, the notice renderer, and the bounded nag
  * gate shared by every render channel.
  *
- * ENGINE-FREE BY CONSTRUCTION: this module is imported by `gbrain hook`
+ * ENGINE-FREE BY CONSTRUCTION: this module is imported by `foresights hook`
  * (which must never touch the engine — serve holds the PGLite single-writer
  * lock) and by cli.ts's startup rail. Imports are fs/path, config file-plane
  * helpers, and the PURE policy functions from skillpack/nag-state.ts only.
  * Compute lives in backup/coverage.ts (engine-side).
  *
- * Two machine-owned files under the gbrain home (atomic tmp+rename, 0600,
+ * Two machine-owned files under the foresights home (atomic tmp+rename, 0600,
  * fail-open on corrupt — a broken state file must never break a session):
  *
  *   backup-status.json    the cached BackupStatus verdict. Written ONLY by a
@@ -272,7 +272,7 @@ export function backupCheckDisabled(): boolean {
 /**
  * Automatic-compute window in ms. env GBRAIN_BACKUP_CHECK_DAYS > config >
  * default 30. Clamped to ≥1 day (a leftover DAYS=0 must not re-probe up to
- * 500 git roots on every dispatch) — forcing a recompute is `gbrain backup
+ * 500 git roots on every dispatch) — forcing a recompute is `foresights backup
  * check` or the test seam, never DAYS=0.
  */
 export function backupIntervalMs(): number {
@@ -311,7 +311,7 @@ export function loadBackupStatus(): BackupStatus | null {
     if (typeof raw.checked_at !== 'string' || !Array.isArray(raw.assets)) return null;
     if (raw.overall !== 'ok' && raw.overall !== 'warn') return null;
     // Renderers dereference totals un-guarded — a truncated-but-schema-valid
-    // cache must read as absent, not crash `gbrain backup status`.
+    // cache must read as absent, not crash `foresights backup status`.
     const t = raw.totals;
     if (
       !t ||
@@ -383,12 +383,12 @@ export function backupNoticeText(s: BackupStatus, surface: 'human' | 'aggregate'
   const n = s.totals.no_remote;
   const total = s.totals.assets;
   if (n === 0) {
-    return "Current backup recovery is not verified for all knowledge assets. Run 'gbrain backup check' on the brain host; git does not cover the full database.";
+    return "Current backup recovery is not verified for all knowledge assets. Run 'foresights backup check' on the brain host; git does not cover the full database.";
   }
   if (surface === 'aggregate') {
     return (
-      `gbrain monthly backup check: ${n} of ${total} knowledge assets have no git remote ` +
-      `(local-only). A disk loss loses them. Run 'gbrain backup status' on the brain host for fix commands.`
+      `foresights monthly backup check: ${n} of ${total} knowledge assets have no git remote ` +
+      `(local-only). A disk loss loses them. Run 'foresights backup status' on the brain host for fix commands.`
     );
   }
   const names = s.assets
@@ -398,7 +398,7 @@ export function backupNoticeText(s: BackupStatus, surface: 'human' | 'aggregate'
   const which = names.length > 0 ? ` (${names.join(', ')}${n > names.length ? ', …' : ''})` : '';
   const text =
     `${n} of your ${total} knowledge assets aren't on any git remote${which}. ` +
-    `A disk loss loses them. Run: gbrain backup status`;
+    `A disk loss loses them. Run: foresights backup status`;
   return text.length > BACKUP_BANNER_MAX_CHARS ? `${text.slice(0, BACKUP_BANNER_MAX_CHARS - 1)}…` : text;
 }
 
@@ -573,7 +573,7 @@ export function backupNagReadOnlyConsult(s: BackupStatus, now: number = Date.now
 
 // ── Session-end spawn debounce (folded into the nag file — no sidecar) ──────
 
-/** True when a detached `gbrain backup check --quiet` may be spawned. */
+/** True when a detached `foresights backup check --quiet` may be spawned. */
 export function backupSpawnDue(now: number = Date.now()): boolean {
   try {
     return !withinDampener(loadBackupNagState().last_spawn_at, now);
@@ -632,7 +632,7 @@ export function maybeEmitBackupNag(
     if (!process.stderr.isTTY) {
       write(`BACKUP_LOCAL_ONLY ${s.totals.no_remote}\n`);
     }
-    write(`gbrain backup check: ${text}\n`);
+    write(`foresights backup check: ${text}\n`);
     gate.record();
   } catch {
     // Never break a CLI invocation over a notice.

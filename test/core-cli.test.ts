@@ -1,6 +1,6 @@
 /**
  * Always-loaded core memory surfaces over the real write path: the
- * `gbrain core` CLI (add/remove/status/diff/ack), notices and the delivery
+ * `foresights core` CLI (add/remove/status/diff/ack), notices and the delivery
  * sensitivity policy in the rendered block, the core_memory doctor check,
  * and `remember` with items[]. PGLite in-memory ($0).
  */
@@ -78,7 +78,7 @@ async function cli(args: string[]): Promise<{ out: string; err: string }> {
   return { out: out.join('\n'), err: err.join('\n') };
 }
 
-describe('gbrain core CLI', () => {
+describe('foresights core CLI', () => {
   test('add, list, status, remove round-trip through put_page as the owner', async () => {
     await put('notes/prefs', page('Working preferences', 'Prefers short answers.'), false);
     expect((await cli(['add', 'notes/prefs', '--priority', '5'])).out).toContain('Now in core: default:notes/prefs');
@@ -98,8 +98,8 @@ describe('gbrain core CLI', () => {
     await put('notes/prefs', page('Working preferences', 'Prefers short answers.'), false);
     const added = (await cli(['add', 'notes/prefs'])).out;
     expect(added).toContain('Now in core: default:notes/prefs');
-    expect(added).toContain('gbrain config set memory.core.enabled true');
-    expect((await cli(['init'])).out).toContain('gbrain config set memory.core.enabled true');
+    expect(added).toContain('foresights config set memory.core.enabled true');
+    expect((await cli(['init'])).out).toContain('foresights config set memory.core.enabled true');
     expect(JSON.parse((await cli(['status', '--json'])).out)).toMatchObject({ enabled: false, pages: 2 });
   });
 

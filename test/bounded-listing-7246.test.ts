@@ -49,13 +49,13 @@ describe('bounded listing helper (#7246)', () => {
   });
 
   test('parseListingFlags defaults to 100, keeps --limit for the next page and refuses --all with a limit', () => {
-    expect(parseListingFlags(['--json'], 'gbrain x')).toEqual({ request: { limit: 100 }, rest: ['--json'] });
-    const parsed = parseListingFlags(['--limit=5', '--cursor', 'abc', '--json'], 'gbrain x');
+    expect(parseListingFlags(['--json'], 'foresights x')).toEqual({ request: { limit: 100 }, rest: ['--json'] });
+    const parsed = parseListingFlags(['--limit=5', '--cursor', 'abc', '--json'], 'foresights x');
     expect(parsed).toEqual({ request: { limit: 5, cursor: 'abc' }, rest: ['--limit=5', '--json'] });
     expect(nextListingCommand(['gbrain', 'x', ...parsed.rest], { next_cursor: 'def' })).toEqual(['gbrain', 'x', '--limit=5', '--json', '--cursor', 'def']);
-    expect(parseListingFlags(['--all'], 'gbrain x').request).toEqual({ limit: null });
-    expect(() => parseListingFlags(['--all', '--limit', '3'], 'gbrain x')).toThrow('--all lists every row');
-    expect(() => parseListingFlags(['--limit', '0'], 'gbrain x')).toThrow('--limit must be a positive integer');
-    expect(() => parseListingFlags(['--cursor'], 'gbrain x')).toThrow('--cursor needs a value');
+    expect(parseListingFlags(['--all'], 'foresights x').request).toEqual({ limit: null });
+    expect(() => parseListingFlags(['--all', '--limit', '3'], 'foresights x')).toThrow('--all lists every row');
+    expect(() => parseListingFlags(['--limit', '0'], 'foresights x')).toThrow('--limit must be a positive integer');
+    expect(() => parseListingFlags(['--cursor'], 'foresights x')).toThrow('--cursor needs a value');
   });
 });

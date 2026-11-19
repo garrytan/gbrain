@@ -25,7 +25,7 @@ writes_to:
 
 > **Convention:** see [conventions/brain-first.md](../conventions/brain-first.md)
 > — before concluding a conversation is missing (or re-fetching everything),
-> check what the brain already has (`gbrain search`/`query`/`get`); sync is
+> check what the brain already has (`foresights search`/`query`/`get`); sync is
 > incremental and idempotent precisely so it never re-does settled work.
 >
 > **Convention:** see [_brain-filing-rules.md](../_brain-filing-rules.md) —
@@ -45,7 +45,7 @@ The LIVE half of the conversation archive. Where
 [conversation-archive](../conversation-archive/SKILL.md) imports a downloaded
 export FILE, this skill connects the account and pulls new conversations on an
 ongoing basis — incrementally, and on a schedule if the user opts in. It reuses
-the same ingest pipeline (`gbrain transcripts ingest` under the hood), so
+the same ingest pipeline (`foresights transcripts ingest` under the hood), so
 redaction, slugging, part-splitting, and idempotency are identical; only the
 fetch is new.
 
@@ -60,21 +60,21 @@ provider's own host.
 
 ```bash
 # ChatGPT: copy the Cookie request header from DevTools (Network tab), then:
-gbrain connectors auth chatgpt --cookie -      # paste, Ctrl-D  (keeps it out of argv)
+foresights connectors auth chatgpt --cookie -      # paste, Ctrl-D  (keeps it out of argv)
 
 # Claude: copy the sessionKey cookie value from DevTools (Application → Cookies):
-gbrain connectors auth claude --cookie -       # paste `sessionKey=<value>`, Ctrl-D
+foresights connectors auth claude --cookie -       # paste `sessionKey=<value>`, Ctrl-D
 ```
 
 Every auth run ends with a probe + a one-line verdict. Nothing is saved on a
-failed probe unless you pass `--force`. `gbrain connectors auth chatgpt
+failed probe unless you pass `--force`. `foresights connectors auth chatgpt
 --try-oauth` attempts OAuth PKCE first (best-effort/forward-compat; ChatGPT
 tokens are usually codex-scoped, so it falls back to the cookie lane); add
 `--no-browser` to print the sign-in URL instead of opening a browser. OAuth
 waits for a local browser redirect, so it only runs with a person at the
 terminal.
 
-**When you (the agent) run it without a terminal:** `gbrain connectors auth
+**When you (the agent) run it without a terminal:** `foresights connectors auth
 <provider>` with no credential does not wait for a paste. It prints an
 `[AGENT]` block with the cookie checklist fenced in `[SHOW USER]`, saves
 nothing and exits 1. The cookie is the user's credential, so:
@@ -83,11 +83,11 @@ nothing and exits 1. The cookie is the user's credential, so:
    cookie from a browser where they are logged in. Never reuse, guess or
    search for a cookie yourself.
 2. Ask the user to hand it over without pasting it into the chat when
-   possible (for example, they run `pbpaste | gbrain connectors auth chatgpt
+   possible (for example, they run `pbpaste | foresights connectors auth chatgpt
    --cookie -` themselves). If they give it to you, pass it only on stdin:
-   `printf '%s' "$COOKIE" | gbrain connectors auth <provider> --cookie -`.
+   `printf '%s' "$COOKIE" | foresights connectors auth <provider> --cookie -`.
 3. If the user would rather not share a session cookie, use the official
-   export instead (`gbrain transcripts ingest <export-file>`).
+   export instead (`foresights transcripts ingest <export-file>`).
 
 A stdin that stays open without data ends after 30 seconds with "stdin was
 open but silent" (set `GBRAIN_STDIN_TIMEOUT_MS` to wait longer); nothing is
@@ -95,16 +95,16 @@ saved.
 
 **If the probe is blocked** by a Cloudflare/bot challenge (`forbidden`): the
 provider is refusing server-side fetch from this machine. Use the official
-export instead — Settings → Export data → `gbrain transcripts ingest
+export instead — Settings → Export data → `foresights transcripts ingest
 conversations.json` (the conversation-archive lane).
 
 ## First Sync
 
 ```bash
-gbrain connectors sync chatgpt --dry-run       # preview: how many conversations
-gbrain connectors sync chatgpt --limit 5       # import a small sample first
-gbrain conversation-parser scan conversations/chatgpt/<slug>   # validate one page
-gbrain connectors sync chatgpt --full          # import everything
+foresights connectors sync chatgpt --dry-run       # preview: how many conversations
+foresights connectors sync chatgpt --limit 5       # import a small sample first
+foresights conversation-parser scan conversations/chatgpt/<slug>   # validate one page
+foresights connectors sync chatgpt --full          # import everything
 ```
 
 Sync is incremental: a per-provider watermark (`connectors.<provider>.watermark_iso`
@@ -120,28 +120,28 @@ account on a cadence — that is your account making automated requests, so it i
 off by default and daily when on.
 
 ```bash
-gbrain config set connectors.chatgpt.auto_sync true    # opt in (per provider)
-gbrain autopilot --install                             # harness-agnostic scheduler
+foresights config set connectors.chatgpt.auto_sync true    # opt in (per provider)
+foresights autopilot --install                             # harness-agnostic scheduler
 ```
 
-`gbrain autopilot --install` picks launchd / systemd / crontab / a container
+`foresights autopilot --install` picks launchd / systemd / crontab / a container
 start-script for you and runs the tick that dispatches the sync (credential-gated
-+ auto_sync-gated; a dead cookie stops it and surfaces in `gbrain doctor`).
++ auto_sync-gated; a dead cookie stops it and surfaces in `foresights doctor`).
 
 **Daemonless hosts** (no autopilot): a host cron line works too —
-`0 6 * * * gbrain connectors sync --all` (daily). Tune the floor with
-`gbrain config set connectors.sync_floor_min <minutes>` (default 1440).
+`0 6 * * * foresights connectors sync --all` (daily). Tune the floor with
+`foresights config set connectors.sync_floor_min <minutes>` (default 1440).
 
 ## Credential Care
 
 - Credentials live at `~/.gbrain/connectors/<provider>.json` (0600), never in the
   DB, `sources.config`, or any MCP payload. `GBRAIN_CONNECTOR_<PROVIDER>_COOKIE`
   overrides the file (incident escape hatch).
-- `gbrain connectors status` shows provenance + expiry (never the value).
-- `gbrain connectors logout <provider>` deletes a credential.
+- `foresights connectors status` shows provenance + expiry (never the value).
+- `foresights connectors logout <provider>` deletes a credential.
 - Cookies expire (days to weeks). When one dies, sync stamps `auth_error_at`,
-  the scheduler stops burning slots, and `gbrain doctor` says "re-auth needed" —
-  re-run `gbrain connectors auth`.
+  the scheduler stops burning slots, and `foresights doctor` says "re-auth needed" —
+  re-run `foresights connectors auth`.
 
 ## Troubleshooting
 
@@ -184,16 +184,16 @@ This skill guarantees:
   who has not enabled it.
 - A Cloudflare/bot block is reported honestly as `forbidden` with a fallback to
   the export-file lane — never a silent failure or a retry loop.
-- Health (re-auth-needed / stalled / drift) surfaces in `gbrain doctor`.
+- Health (re-auth-needed / stalled / drift) surfaces in `foresights doctor`.
 - No real names in examples or reports; the imported transcript is the user's
   private content and stays exact.
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
-- `forbidden` (a Cloudflare/bot challenge): the provider refuses server-side fetch from this machine. Tell the user and switch to the export-file lane (`gbrain transcripts ingest`); never loop retries.
-- An auth error (expired cookie or token): ask the user to re-run `gbrain connectors auth` for that provider themselves; the credential belongs to them and stays on their machine.
+- `forbidden` (a Cloudflare/bot challenge): the provider refuses server-side fetch from this machine. Tell the user and switch to the export-file lane (`foresights transcripts ingest`); never loop retries.
+- An auth error (expired cookie or token): ask the user to re-run `foresights connectors auth` for that provider themselves; the credential belongs to them and stays on their machine.
 - `partial`: some conversations failed and the watermark did not advance. Re-run the sync later; report the count still missing, not "synced".
 
 ## Anti-Patterns
@@ -222,7 +222,7 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
   does not re-implement them.
 - **[minion-orchestrator](../minion-orchestrator/SKILL.md)** — generic background
   job submission/observability. The `connector-sync` job rides that lane; use it
-  for `gbrain jobs get`/`list`.
+  for `foresights jobs get`/`list`.
 - **setup** (host-side brain provisioning) — this skill assumes a brain already
   exists.
 

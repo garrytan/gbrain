@@ -17,11 +17,11 @@ const NON_OPERATION_SEARCH = new Set(['modes', 'stats', 'tune', 'diagnose']);
 /** --as only previews operation reads on a local brain; any other command would ignore it, and a thin client reads as its own credential. */
 export function refuseAsOutsideOperations(command: string, subArgs: string[], isOperation: boolean): void {
   if (!isOperation || (command === 'search' && NON_OPERATION_SEARCH.has(subArgs[0] ?? ''))) {
-    exitCliError(usageError(`--as previews member reads for operation commands only; 'gbrain ${command}' does not take it.`,
-      'Use --as with an operation such as search, query, get or list, or check a credential with gbrain access check --token <name>.'), command);
+    exitCliError(usageError(`--as previews member reads for operation commands only; 'foresights ${command}' does not take it.`,
+      'Use --as with an operation such as search, query, get or list, or check a credential with foresights access check --token <name>.'), command);
   }
   if (isThinClient(loadConfig())) {
-    exitCliError(usageError('--as previews member reads on a local brain; a thin client reads as its own credential.', 'Run the command on the brain host, or check the credential with gbrain access check there.'), command);
+    exitCliError(usageError('--as previews member reads on a local brain; a thin client reads as its own credential.', 'Run the command on the brain host, or check the credential with foresights access check there.'), command);
   }
 }
 

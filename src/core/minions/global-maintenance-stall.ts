@@ -9,10 +9,10 @@
  * stamp is older than STALL_FAIL_MINUTES (or twice the warn age, if longer). A
  * pass that stamps past a phase that keeps failing, or past a triage deferral
  * that stopped shrinking (#7307), also warns; a deferral streak names
- * `gbrain dream retriage` as its fix. Doctor's
+ * `foresights dream retriage` as its fix. Doctor's
  * `global_maintenance_stalled` check reports it, and the autopilot daemon writes
  * the verdict to a file each full-cycle tick so the engine-free
- * `gbrain autopilot --status` exits 1 on it.
+ * `foresights autopilot --status` exits 1 on it.
  */
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -87,8 +87,8 @@ export async function assessGlobalMaintenanceStall(engine: BrainEngine, nowMs = 
   const next = deferral
     ? `Triage stops at its dream.triage.max_ms window each pass; judge the backlog in one run without that window: preview with ${DEFERRED_TRIAGE_FIX} --dry-run, then ${DEFERRED_TRIAGE_FIX} (paid; it asks before spending more than a few dollars).`
     : top
-      ? `Run it in the foreground to see the error: gbrain dream --phase ${top.phase}; after fixing the cause, retry it now with: ${phaseRetryCommand(top.phase)}.`
-      : lastJob ? `Inspect the failed job: gbrain jobs get ${lastJob.id}.` : '';
+      ? `Run it in the foreground to see the error: foresights dream --phase ${top.phase}; after fixing the cause, retry it now with: ${phaseRetryCommand(top.phase)}.`
+      : lastJob ? `Inspect the failed job: foresights jobs get ${lastJob.id}.` : '';
   const message = status === 'ok'
     ? last ? `Brain-wide maintenance completed a pass at ${last}.` : 'Brain-wide maintenance has not run yet.'
     : reason === 'stalled'

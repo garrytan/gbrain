@@ -102,8 +102,8 @@ async function stepTimeoutMs(session: GitSession): Promise<number> {
 
 const staleLockFix = (root: string, lock: string, why: string): Action => ({
   ask_user: true, actor: 'user', consent: [], requires_exclusive: false,
-  why: `gbrain did not remove the lock because it could not prove the lock is abandoned: ${why}.`,
-  user_message: `A Git index lock (${lock}) has blocked the canonical checkout ${root} for over 10 minutes, so Git backups of new page writes are parked. gbrain did not remove it because ${why}. Please check that no git command is running in that checkout; if none is, remove ${lock}, then run the retry command that gbrain sources writer status lists for each parked effect.`,
+  why: `foresights did not remove the lock because it could not prove the lock is abandoned: ${why}.`,
+  user_message: `A Git index lock (${lock}) has blocked the canonical checkout ${root} for over 10 minutes, so Git backups of new page writes are parked. foresights did not remove it because ${why}. Please check that no git command is running in that checkout; if none is, remove ${lock}, then run the retry command that foresights sources writer status lists for each parked effect.`,
   verify: { argv: ['gbrain', 'sources', 'writer', 'status', '--json'] },
 });
 
@@ -146,7 +146,7 @@ async function indexLockError(session: GitSession, stderr: string, mayReclaim: b
     return new OperationError('git_index_locked', 'Another Git process holds the canonical checkout index lock.', 'The effect is retried shortly.');
   }
   return opError('git_index_stale', `A Git index lock older than 10 minutes blocks the canonical checkout: ${lock}.`,
-    `gbrain did not remove it because ${why}. If no git command is running in that checkout, remove ${lock}, then retry the effect with gbrain sources writer retry-effects <source> --request-id <id>.`,
+    `foresights did not remove it because ${why}. If no git command is running in that checkout, remove ${lock}, then retry the effect with foresights sources writer retry-effects <source> --request-id <id>.`,
     { detail: lock, fix: staleLockFix(session.root, lock, why) });
 }
 
@@ -236,7 +236,7 @@ async function ignoreRule(session: GitSession, relativePath: string): Promise<st
 /** The refusal of a target a .gitignore `rule` (`source:line: pattern`) excludes; `detail` names the rule. */
 export function ignoredTargetError(relativePath: string, rule: string): OperationError {
   const error = new OperationError('git_target_ignored', `Git ignores ${relativePath} (${rule}), so its Git effect cannot commit it.`,
-    `Either remove or narrow the rule (${rule}) and commit that change, then retry the parked effects with gbrain sources writer retry-effects and --parked-code git_target_ignored for the source this checkout backs (gbrain sources writer status names it); or keep the file out of Git and leave the effect parked. The page itself is committed in the database.`);
+    `Either remove or narrow the rule (${rule}) and commit that change, then retry the parked effects with foresights sources writer retry-effects and --parked-code git_target_ignored for the source this checkout backs (foresights sources writer status names it); or keep the file out of Git and leave the effect parked. The page itself is committed in the database.`);
   error.detail = rule;
   return error;
 }
@@ -498,7 +498,7 @@ export function stripspace(paragraph: string): string {
 }
 
 /**
- * #8896: a Git effect's commit, made by plumbing so its sha is gbrain's own before any ref names it. The index entries
+ * #8896: a Git effect's commit, made by plumbing so its sha is foresights's own before any ref names it. The index entries
  * `git add` just staged for `paths` are laid over HEAD's tree in a scratch index, `commit-tree` writes the commit, the
  * ledger records its sha, and `update-ref HEAD <new> <old>` moves the branch only if HEAD is still the commit it was
  * built on; a moved HEAD is read again and the commit rebuilt once. Null when git fails or HEAD moved twice. The
@@ -641,7 +641,7 @@ const OWNER_SCAN_BUDGET_MS = 10_000;
  * Push the current branch to its tracking remote. A plain push is tried first (idempotent, cannot import remote
  * content). #7010: when the remote moved (a non-fast-forward rejection), the push goes through the shared-checkout
  * publish (`commitAndPush` with `keepCheckout`), which merges the remote commits in memory and pushes the merge
- * without moving the checkout, so `gbrain sources refresh` stays the only importer of remote files. That publish
+ * without moving the checkout, so `foresights sources refresh` stays the only importer of remote files. That publish
  * runs synchronously; it starts only after the remote answered this push. Both sides changing one file holds the
  * effect with `integrate_conflict` and the user's choice as its fix.
  * #8896: a script's plain `git commit` in the checkout never passed the write path's scan, so both paths scan what
@@ -667,7 +667,7 @@ export async function pushGitRoot(root: string, signal?: AbortSignal, scanBudget
     if (head.code !== 0) throw gitFailure('Cannot read the canonical checkout\'s HEAD.', 'git rev-parse HEAD failed, so nothing was scanned or pushed.');
     const sha = head.stdout.trim(), short = merge.stdout.trim().replace(/^refs\/heads\//, ''), ref = `refs/heads/${short}`;
     const unavailable = () => opError('git_push_unavailable', 'The canonical commit is durable locally; its push will retry.',
-      `git push to ${remote.stdout.trim()} failed (network, credentials or a remote that refused it). Nothing is lost locally and the worker pushes again on a later pass; gbrain never pulls or rebases the checkout. If it keeps failing, check the remote and its credentials with git push on the brain host.`,
+      `git push to ${remote.stdout.trim()} failed (network, credentials or a remote that refused it). Nothing is lost locally and the worker pushes again on a later pass; foresights never pulls or rebases the checkout. If it keeps failing, check the remote and its credentials with git push on the brain host.`,
       { fix: effectStatusFix });
     const listed = await git(session, ['ls-remote', '--', remote.stdout.trim(), ref]);
     if (listed.code !== 0) throw unavailable();
@@ -683,7 +683,7 @@ export async function pushGitRoot(root: string, signal?: AbortSignal, scanBudget
         if (!NON_FAST_FORWARD.test(push.stderr) && !STALE_LEASE.test(push.stderr)) throw unavailable();
       } else if (!tip) throw heldSecret(root, opError('publish_scan_unreadable',
         `${remote.stdout.trim()} has no branch ${short}, and the secret scan of the whole history a first push would create it with ran past its in-process budget. Nothing was pushed.`,
-        `Check that the checkout's upstream (branch.${branch.stdout.trim()}.merge) names a branch the remote should have (git ls-remote --heads ${remote.stdout.trim()}). If the branch was deleted or renamed on purpose, point the upstream at the right branch, or review the history and push the branch yourself; gbrain never creates a remote branch from history it has not scanned.`,
+        `Check that the checkout's upstream (branch.${branch.stdout.trim()}.merge) names a branch the remote should have (git ls-remote --heads ${remote.stdout.trim()}). If the branch was deleted or renamed on purpose, point the upstream at the right branch, or review the history and push the branch yourself; foresights never creates a remote branch from history it has not scanned.`,
         { detail: JSON.stringify({ unreadable: scan.unreadable }), fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
           argv: ['git', '-C', root, 'ls-remote', '--heads', '--', remote.stdout.trim()],
           why: 'Read-only: lists the branches the remote has, to check the checkout\'s upstream.',
@@ -699,7 +699,7 @@ export async function pushGitRoot(root: string, signal?: AbortSignal, scanBudget
 const KEEP_CHECKOUT_PUBLISH_TIMEOUT_MS = 600_000;
 
 /**
- * #7010: run the shared publish in a child `gbrain git commit-push --push-only --keep-checkout`. The shared publish is
+ * #7010: run the shared publish in a child `foresights git commit-push --push-only --keep-checkout`. The shared publish is
  * synchronous (fetches and pushes block for up to minutes), so it never runs on the owner's event loop, where it
  * would stall lease renewals. The child is this process's own executable, never a `gbrain` found on PATH (an older
  * install would not know the flag); a busy publish lock fails at once and the effect retries.
@@ -708,7 +708,7 @@ async function publishKeepingCheckout(root: string, signal?: AbortSignal): Promi
   const { CHILD_ENV, resolveChildCliInvocation } = await import('../minions/job-isolation.ts');
   const cli = resolveChildCliInvocation(process.env, process.execPath, process.argv[1], () => null);
   if (!cli) throw opError('git_push_unavailable', 'The canonical commit is durable locally; its push will retry.',
-    `The remote branch moved, and publishing over it runs gbrain git commit-push --push-only --keep-checkout, but this process could not locate its own gbrain executable (set ${CHILD_ENV.childCliOverride} to it). Nothing is lost locally.`,
+    `The remote branch moved, and publishing over it runs foresights git commit-push --push-only --keep-checkout, but this process could not locate its own foresights executable (set ${CHILD_ENV.childCliOverride} to it). Nothing is lost locally.`,
     { fix: effectStatusFix });
   const child = await execFileBounded(cli.cmd, [...cli.argsPrefix, 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets', '--path', root, '--json'], {
     timeout: KEEP_CHECKOUT_PUBLISH_TIMEOUT_MS, termGraceMs: GIT_TERM_GRACE_MS, maxBuffer: 1024 * 1024, signal,
@@ -736,7 +736,7 @@ async function publishKeepingCheckout(root: string, signal?: AbortSignal): Promi
 function heldConflict(root: string, error: OperationError): OperationError {
   const fix = error.fix as Action | undefined;
   const held = opError('integrate_conflict', `Git backups of canonical page writes are held: ${error.message}`,
-    `${error.suggestion ?? ''} The page writes themselves are committed in the database and in local commits; nothing is lost, and nothing is pushed from ${root} until the conflict is resolved. After the choice is pushed, gbrain sources writer retry-effects with --parked-pushes for the source this checkout backs (gbrain sources writer status names it) retries the Git effects that parked meanwhile, and gbrain sources refresh for that source brings the merged remote files into the checkout.`,
+    `${error.suggestion ?? ''} The page writes themselves are committed in the database and in local commits; nothing is lost, and nothing is pushed from ${root} until the conflict is resolved. After the choice is pushed, foresights sources writer retry-effects with --parked-pushes for the source this checkout backs (foresights sources writer status names it) retries the Git effects that parked meanwhile, and foresights sources refresh for that source brings the merged remote files into the checkout.`,
     { ...(error.detail ? { detail: error.detail } : {}), fix: { ...(fix ?? { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
       why: 'Choosing which version of a file wins discards the other side; ask the user before resolving.' }),
     user_message: `${fix?.user_message ?? 'This machine and the remote changed the same file.'} Until you choose, Git backups of new page writes from ${root} are held (nothing is lost; the database has every write).`,
@@ -752,7 +752,7 @@ function heldConflict(root: string, error: OperationError): OperationError {
 function heldSecret(root: string, error: OperationError): OperationError {
   const fix = error.fix as Action | undefined;
   return opError(error.code as 'publish_secret_found' | 'publish_scan_unreadable', `Git backups of canonical page writes are held: ${error.message}`,
-    `${error.suggestion ?? ''} The page writes themselves are committed in the database and in local commits; nothing is lost, and nothing is pushed from ${root} until the scan passes. Afterwards, gbrain sources writer retry-effects with --parked-pushes for the source this checkout backs (gbrain sources writer status names it) retries the Git effects that parked meanwhile.`,
+    `${error.suggestion ?? ''} The page writes themselves are committed in the database and in local commits; nothing is lost, and nothing is pushed from ${root} until the scan passes. Afterwards, foresights sources writer retry-effects with --parked-pushes for the source this checkout backs (foresights sources writer status names it) retries the Git effects that parked meanwhile.`,
     { ...(error.detail ? { detail: error.detail } : {}), fix: { ...(fix ?? { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
       why: 'Rewriting unpublished commits, allowlisting a value or repairing the checkout is the user\'s call.' }),
     user_message: `${fix?.user_message ?? `The secret scan refused the unpublished commits in ${root}.`} Until then, Git backups of new page writes from ${root} are held (nothing is lost; the database has every write).`,

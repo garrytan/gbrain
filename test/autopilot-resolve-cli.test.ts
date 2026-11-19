@@ -22,7 +22,7 @@ describe('resolveGbrainCliPath', () => {
     try {
       path = resolveGbrainCliPath();
     } catch (e) {
-      // Machine without gbrain on PATH and no compiled binary: throw is
+      // Machine without foresights on PATH and no compiled binary: throw is
       // expected. The error message must point the user at the install step.
       expect((e as Error).message).toMatch(/PATH|resolve/i);
       return;
@@ -52,14 +52,14 @@ describe('resolveGbrainCliPath', () => {
   });
 
   test('shim on PATH wins over argv[1]=cli.ts', () => {
-    // If `which gbrain` resolves (most dev machines), the resolver should
+    // If `which foresights` resolves (most dev machines), the resolver should
     // return that shim path, not argv[1]=cli.ts. This is the canonical
     // install shape.
     const origArg1 = process.argv[1];
     process.argv[1] = '/some/project/src/cli.ts';
     try {
       const path = resolveGbrainCliPath();
-      // On a machine where `which gbrain` resolves, path ends in /gbrain.
+      // On a machine where `which foresights` resolves, path ends in /gbrain.
       // On a machine without, we throw. Both outcomes prove the resolver
       // did not short-circuit on the .ts suffix.
       expect(path.endsWith('/cli.ts')).toBe(false);
@@ -77,7 +77,7 @@ describe('resolveGbrainCliPath', () => {
     process.argv[1] = '/usr/local/bin/gbrain';
     try {
       const path = resolveGbrainCliPath();
-      // On a machine with `which gbrain`, we get the shim. On a machine
+      // On a machine with `which foresights`, we get the shim. On a machine
       // without, argv[1] fallback fires. Either way the result is valid.
       expect(path.endsWith('/gbrain') || path.endsWith('\\gbrain.exe')).toBe(true);
     } finally {

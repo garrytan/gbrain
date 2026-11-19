@@ -405,7 +405,7 @@ export function isCleanDiff(diff: SchemaDiff): boolean {
 //
 // Extension-owned objects (pgvector / pg_trgm / pgcrypto functions installed
 // into `public`) are excluded via pg_depend deptype 'e': they belong to the
-// extension version, not to gbrain's schema.
+// extension version, not to foresights's schema.
 //
 // Role names are environment-dependent (the connecting superuser is
 // `postgres` locally but may differ elsewhere), so the connecting role is

@@ -1,11 +1,11 @@
 /**
- * GST-2784: after `gbrain setup codex`, Codex starts gbrain serve through the
+ * GST-2784: after `foresights setup codex`, Codex starts foresights serve through the
  * hook launcher with whatever PATH the Codex process has. The script-mode
- * install's gbrain is src/cli.ts, whose shebang is `#!/usr/bin/env bun`, so a
+ * install's foresights is src/cli.ts, whose shebang is `#!/usr/bin/env bun`, so a
  * Codex started without bun on its PATH (the desktop app, a launcher) failed
  * with "/usr/bin/env: 'bun': No such file or directory" and showed no tools.
  * Every entry setup writes runs through the launcher, which now carries the
- * Bun that setup ran under; a compiled gbrain needs no Bun and gets none.
+ * Bun that setup ran under; a compiled foresights needs no Bun and gets none.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -70,7 +70,7 @@ async function initializeRecordedServer(b: Box): Promise<{ reply: string; stderr
   return { reply: out.split('\n')[0] ?? '', stderr };
 }
 
-describe('gbrain setup codex: the recorded entries start gbrain without bun on PATH (GST-2784)', () => {
+describe('foresights setup codex: the recorded entries start foresights without bun on PATH (GST-2784)', () => {
   test('the MCP server entry starts serve and answers initialize under a PATH with no bun', async () => {
     const b = box();
     await setupCodex(b);
@@ -129,7 +129,7 @@ describe('gbrain setup codex: the recorded entries start gbrain without bun on P
   }, 180_000);
 });
 
-describe('the launcher carries the runtime setup ran under, and only when gbrain needs one', () => {
+describe('the launcher carries the runtime setup ran under, and only when foresights needs one', () => {
   test('a Bun in a non-default directory is the one the launcher puts first on PATH', () => {
     const root = mkdtempSync(join(tmpdir(), 'gbrain-launcher-runtime-'));
     roots.push(root);
@@ -174,7 +174,7 @@ describe('the launcher carries the runtime setup ran under, and only when gbrain
     expect(readFileSync(launcher, 'utf8')).toBe(hookLauncherScript(b!));
   });
 
-  test('a compiled gbrain (no runtime) keeps the launcher it had, which needs no bun', () => {
+  test('a compiled foresights (no runtime) keeps the launcher it had, which needs no bun', () => {
     const root = mkdtempSync(join(tmpdir(), 'gbrain-launcher-compiled-'));
     roots.push(root);
     const launcher = join(root, 'home', 'hook-launcher', 'gbrain-hook');

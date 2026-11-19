@@ -2,7 +2,7 @@
  * E2E test for storage tiering — Postgres-only.
  *
  * Per the v0.23.0 plan: full lifecycle. Container restart simulation:
- * write pages via Postgres, delete files from disk, run gbrain export
+ * write pages via Postgres, delete files from disk, run foresights export
  * --restore-only, assert files restored. Real .gitignore round-trip.
  * Real source-resolver path through getDefaultSourcePath().
  *
@@ -126,7 +126,7 @@ if (!hasDatabase()) {
         // .gitignore management: empty .gitignore → managed block written.
         manageGitignore(tmp, 'postgres');
         const gitignore = readFileSync(join(tmp, '.gitignore'), 'utf-8');
-        expect(gitignore).toContain('# Auto-managed by gbrain');
+        expect(gitignore).toContain('# Auto-managed by foresights');
         expect(gitignore).toContain('media/x/');
         expect(gitignore).toContain('media/articles/');
 

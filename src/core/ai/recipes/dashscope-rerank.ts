@@ -6,7 +6,7 @@ export const dashscopeRerank: Recipe = {
   tier: 'openai-compat',
   implementation: 'openai-compatible',
   // No shipped rate for these yet: they warn and run under a default cap; a
-  // user cap refuses them until `gbrain pricing set` registers one (X1 guard).
+  // user cap refuses them until `foresights pricing set` registers one (X1 guard).
   unpriced_models: [
     'qwen3-rerank',
   ],
@@ -33,7 +33,7 @@ export const dashscopeRerank: Recipe = {
   },
   setup_hint:
     'Get an API key at https://help.aliyun.com/zh/model-studio/getting-started/, then ' +
-    '`export DASHSCOPE_API_KEY=...` and `gbrain config set search.reranker.model ' +
-    'dashscope-rerank:qwen3-rerank`. China-region accounts: `gbrain config set ' +
+    '`export DASHSCOPE_API_KEY=...` and `foresights config set search.reranker.model ' +
+    'dashscope-rerank:qwen3-rerank`. China-region accounts: `foresights config set ' +
     'provider_base_urls.dashscope-rerank https://dashscope.aliyuncs.com/compatible-api/v1`.',
 };

@@ -1,5 +1,5 @@
 /**
- * `gbrain eval run-all` outcomes for the wired suite (brainbench).
+ * `foresights eval run-all` outcomes for the wired suite (brainbench).
  *
  * Protects: a bare run sweeps only the wired suites, names the per-suite
  * commands for longmemeval and replay, writes no `skipped` record and returns
@@ -45,8 +45,8 @@ describe('eval run-all wired-suite outcomes', () => {
     const r = await run([]);
     expect(r.code).toBe(0);
     expect(r.records.map(x => [x.suite, x.status])).toEqual([['brainbench', 'completed']]);
-    expect(r.stderr).toContain('gbrain eval longmemeval <dataset.jsonl> --mode <mode> --record');
-    expect(r.stderr).toContain('gbrain eval replay --mode <mode>');
+    expect(r.stderr).toContain('foresights eval longmemeval <dataset.jsonl> --mode <mode> --record');
+    expect(r.stderr).toContain('foresights eval replay --mode <mode>');
   });
 
   test('a failed brainbench record makes run-all exit 1 and keeps the record', async () => {
@@ -56,6 +56,6 @@ describe('eval run-all wired-suite outcomes', () => {
     expect(r.records).toHaveLength(1);
     expect(r.records[0]).toMatchObject({ suite: 'brainbench', status: 'failed', error: 'seed failures: fixture-a' });
     expect(r.stderr).toContain('FAILED');
-    expect(r.stderr).not.toContain('gbrain eval replay --mode');
+    expect(r.stderr).not.toContain('foresights eval replay --mode');
   });
 });

@@ -6,7 +6,7 @@
  * unstamped fields follow the contract in src/core/embedding-state.ts.
  *
  * Protects: the state counts doctor `embedding_state`, `get_brain_health` and
- * `gbrain pages unsearchable` report. Regression it catches: a classifier that
+ * `foresights pages unsearchable` report. Regression it catches: a classifier that
  * reads the legacy `embedding` column on a registry-routed brain, drifts from the
  * embed job's predicate, or scans in ops mode. No existing owner: the classifier
  * is new. PGLite in-memory; the SQL is shared by both engines.

@@ -1,8 +1,8 @@
 /**
- * X8 (D18): `gbrain serve --http` drains the session corpus. A stdio serve
+ * X8 (D18): `foresights serve --http` drains the session corpus. A stdio serve
  * sweeps at startup and on idle ticks; the HTTP serve never swept, so a turn
  * the serve-side harvest refused (#5557) or a session-end corpus file sat
- * un-extracted until someone ran `gbrain sweep --once` by hand, and retention
+ * un-extracted until someone ran `foresights sweep --once` by hand, and retention
  * GC deleted it after 30 days.
  *
  * Hermetic: in-memory PGLite + chat-transport stub; the --http lane runs

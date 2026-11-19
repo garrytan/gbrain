@@ -196,7 +196,7 @@ describe('refresh + cache + resolution overlay', () => {
     expect(calls).toBe(2);
   });
 
-  test('a provider-use decline recorded by gbrain setup stops discovery, even forced; acceptance does not', async () => {
+  test('a provider-use decline recorded by foresights setup stops discovery, even forced; acceptance does not', async () => {
     process.env.CLAUDE_CONFIG_DIR = tmpHome;
     const receipt = join(tmpHome, '.gbrain-connection-claude-code-gbrain.json');
     const write = (providers: string) => writeFileSync(receipt, JSON.stringify({

@@ -158,7 +158,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         expect(item.docs).toBe('docs/guides/write-refusals.md#unsupported_path-not_utf8');
         const fix = item.fix;
         for (const arg of [fix.argv, fix.verify?.argv, fix.then?.argv].flatMap(argv => argv ?? [])) expect(arg).not.toMatch(/notes\/caf|[^\x20-\x7e]/);
-        expect(renderFix(fix)).toBe(`gbrain sources status ${r.sourceId} --json`);
+        expect(renderFix(fix)).toBe(`foresights sources status ${r.sourceId} --json`);
         expect(fix.actor).toBe('user');
         expect(fix.user_message).toContain(itemId(CAFE));
         expect(fix.user_message).toContain("printf 'notes/caf\\351.md\\000'");

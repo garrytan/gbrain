@@ -1,6 +1,6 @@
 /**
  * G8a of git-canonical memory (docs/designs/GIT_CANONICAL_MEMORY.md, "Conversion"): the plan and apply behind
- * `gbrain sources canonical <id> --to git|mixed` (commands/sources-canonical.ts). Trusted local CLI only, managed
+ * `foresights sources canonical <id> --to git|mixed` (commands/sources-canonical.ts). Trusted local CLI only, managed
  * brains only, never an MCP operation.
  *
  * The preview (read-only) puts every live page of the source in one category, from the git-gap census (G1, the equality
@@ -196,7 +196,7 @@ export interface GitConversionPlan { preview: GitConversionPreview; context: Man
  * d4: one owner decision of a `--decisions` file, for a page the content evidence could not place. It names the page as the
  * review list showed it (slug, revision, committed blob, evidence kind) and applies only while the page is still that.
  * `adopt` writes the database's page to its file; `git_wins` lets the committed file replace the row. A merged body is
- * written first with gbrain repair file-drift; the page then reads equal and leaves the list.
+ * written first with foresights repair file-drift; the page then reads equal and leaves the list.
  */
 export interface ConversionDecision { slug: string; revision: string | null; blob: string | null; evidence: DirectionEvidence; decision: 'adopt' | 'git_wins' }
 export const DECISIONS_KIND = 'gbrain-conversion-decisions';
@@ -247,7 +247,7 @@ export async function writeConversionFile(engine: BrainEngine, file: string, fla
 /** Reads a `--decisions` file (the review list with `decision` filled in): entries whose decision is null are skipped. */
 export async function readConversionDecisions(engine: BrainEngine, file: string, sourceId: string): Promise<ConversionDecision[]> {
   const real = await assertOutsideSourceRoots(engine, file, '--decisions');
-  const bad = (why: string) => opError('invalid_params', `--decisions ${file}: ${why}`, `Fill in "decision" (adopt or git_wins) on entries of the review list gbrain sources canonical ${sourceId} --to git --dry-run --list-out <file> wrote, and pass that file unchanged otherwise.`);
+  const bad = (why: string) => opError('invalid_params', `--decisions ${file}: ${why}`, `Fill in "decision" (adopt or git_wins) on entries of the review list foresights sources canonical ${sourceId} --to git --dry-run --list-out <file> wrote, and pass that file unchanged otherwise.`);
   let parsed: { kind?: unknown; version?: unknown; source_id?: unknown; pages?: unknown };
   try { parsed = JSON.parse(readFileSync(real, 'utf8')); } catch { throw bad('it is not JSON.'); }
   if (parsed?.kind !== DECISIONS_KIND || parsed.version !== 1) throw bad(`it is not a ${DECISIONS_KIND} file (version 1).`);
@@ -315,7 +315,7 @@ export async function assertConversionCaller(engine: BrainEngine, sourceId: stri
 type UnreadableRootReason = 'missing' | 'not_directory' | 'permission_denied' | 'symlink_loop' | 'unreadable';
 const ROOT_ERRNO: Record<string, UnreadableRootReason> = { ENOENT: 'missing', ENOTDIR: 'not_directory', EACCES: 'permission_denied', EPERM: 'permission_denied', ELOOP: 'symlink_loop' };
 const ROOT_STATE: Record<UnreadableRootReason, string> = { missing: 'does not exist (it was moved, deleted or unmounted)', not_directory: 'is not a directory',
-  permission_denied: 'cannot be read by the account that runs gbrain', symlink_loop: 'is a symlink loop', unreadable: 'cannot be read' };
+  permission_denied: 'cannot be read by the account that runs foresights', symlink_loop: 'is a symlink loop', unreadable: 'cannot be read' };
 
 /** #7956: why the registered root cannot be listed as a directory, or null when it can. */
 function unreadableRoot(root: string): UnreadableRootReason | null {
@@ -336,7 +336,7 @@ async function assertConversionCheckout(sourceId: string, root: string): Promise
   const unreadable = unreadableRoot(root);
   if (unreadable) {
     throw opError('source_root_unreadable', `Source ${sourceId}'s registered root ${root} ${ROOT_STATE[unreadable]}, so nothing was read or written.`,
-      `Restore or remount the directory on the brain host (or make it readable to the account that runs gbrain), compare it with the root gbrain sources writer status --source ${sourceId} --json names, then preview again.`,
+      `Restore or remount the directory on the brain host (or make it readable to the account that runs foresights), compare it with the root foresights sources writer status --source ${sourceId} --json names, then preview again.`,
       { reason: unreadable, docs: DOCS, retryable: false, fix: { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'], consent: [], actor: 'agent', requires_exclusive: false,
         why: 'Shows the root the owner registered, to compare with the directory on disk; read-only.', verify: { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] } } });
   }
@@ -384,7 +384,7 @@ export async function planGitConversion(engine: BrainEngine, sourceId: string, o
   } });
   if (!census.checkout || realpathSync(census.checkout) !== context.root) {
     throw opError('source_changed', `Source ${sourceId}'s registered checkout is not its owner's root, so nothing was planned.`,
-      `Check the owner with gbrain sources writer status --source ${sourceId} --json, then preview again.`);
+      `Check the owner with foresights sources writer status --source ${sourceId} --json, then preview again.`);
   }
   const root = context.root;
   const [{ incarnation }] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
@@ -692,7 +692,7 @@ export interface GitConversionResult {
 }
 
 /**
- * A live writer's door commits (`gbrain git commit-push`) that land after strict_pass_2 read its level leave the closing
+ * A live writer's door commits (`foresights git commit-push`) that land after strict_pass_2 read its level leave the closing
  * plan with Git ahead of the database at their paths (git_wins) and nothing else. The source is git-canonical by then and
  * those commits are Git's, so an incremental strict pass imports them and loses nothing: the apply runs up to this many
  * such passes, planning again after each. Any other open item, or Git still ahead after the last one, ends incomplete.
@@ -702,7 +702,7 @@ export const CLOSING_PASSES = 3;
 const blockedError = (preview: GitConversionPreview): OperationError => {
   const categories = DISCARD_CATEGORIES.filter(category => preview.discard.by[category] > 0);
   return opError('git_conversion_blocked', `Converting source ${preview.source_id} would discard database content or cannot place it (${categories.map(category => `${category} ${preview.discard.by[category]}`).join(', ')}); nothing was written.`,
-    `Resolve each listed path (gbrain sources canonical ${preview.source_id} --to git --dry-run lists them), then preview again. There is no override.`,
+    `Resolve each listed path (foresights sources canonical ${preview.source_id} --to git --dry-run lists them), then preview again. There is no override.`,
     { reason: categories[0], docs: DOCS, detail: categories.join(','), fix: { argv: ['gbrain', 'sources', 'canonical', preview.source_id, '--to', 'git', '--dry-run', '--json'], consent: [], actor: 'user',
       requires_exclusive: false, why: 'Lists every path of each blocking category; nothing changes.',
       user_message: `Converting ${preview.source_id} to git-canonical would lose database content in ${categories.join(', ')}. Each path needs a decision before conversion can run.` } });
@@ -730,7 +730,7 @@ export function conversionRollback(sourceId: string, mode: 'mixed' | 'git'): str
 export async function applyGitConversion(engine: BrainEngine, sourceId: string, expect: string,
   opts: { noEmbed?: boolean; noExtract?: boolean; onProgress?: (progress: ConversionProgress) => void; decisions?: ConversionDecision[]; decisionsFile?: string } = {}): Promise<GitConversionResult> {
   const plan = await planGitConversion(engine, sourceId, { decisions: opts.decisions });
-  if (plan.preview.preview_hash !== expect) throw previewChangedError(expect, `gbrain sources canonical ${sourceId} --to git --dry-run${opts.decisionsFile ? ` --decisions ${opts.decisionsFile}` : ''}`);
+  if (plan.preview.preview_hash !== expect) throw previewChangedError(expect, `foresights sources canonical ${sourceId} --to git --dry-run${opts.decisionsFile ? ` --decisions ${opts.decisionsFile}` : ''}`);
   return runConversion(engine, plan, expect, opts);
 }
 
@@ -761,7 +761,7 @@ export function conversionApproval(plan: GitConversionPlan): ConversionApproval 
 
 export async function readConversionApproval(engine: BrainEngine, file: string, sourceId: string): Promise<ConversionApproval> {
   const real = await assertOutsideSourceRoots(engine, file, '--approved');
-  const bad = (why: string) => opError('invalid_params', `--approved ${file}: ${why}`, `Write the approval with gbrain sources canonical ${sourceId} --to git --dry-run --approval-out <file> and pass it unchanged.`);
+  const bad = (why: string) => opError('invalid_params', `--approved ${file}: ${why}`, `Write the approval with foresights sources canonical ${sourceId} --to git --dry-run --approval-out <file> and pass it unchanged.`);
   let parsed: ConversionApproval;
   try { parsed = JSON.parse(readFileSync(real, 'utf8')); } catch { throw bad('it is not JSON.'); }
   if (parsed?.kind !== APPROVAL_KIND || parsed.version !== 1 || typeof parsed.items !== 'object' || parsed.items === null || Array.isArray(parsed.items) || !Array.isArray(parsed.decisions)) throw bad(`it is not a ${APPROVAL_KIND} file (version 1).`);
@@ -782,7 +782,7 @@ export async function applyApprovedConversion(engine: BrainEngine, sourceId: str
   opts: { noEmbed?: boolean; noExtract?: boolean; onProgress?: (progress: ConversionProgress) => void; decisions?: ConversionDecision[] } = {}): Promise<GitConversionResult> {
   const plan = await planGitConversion(engine, sourceId, { decisions: approval.decisions });
   if (plan.incarnation !== approval.incarnation) throw opError('source_changed', `Source ${sourceId} was replaced since the approval, so nothing was applied.`,
-    `Preview again with gbrain sources canonical ${sourceId} --to git --dry-run --approval-out <file> and have the owner approve it.`);
+    `Preview again with foresights sources canonical ${sourceId} --to git --dry-run --approval-out <file> and have the owner approve it.`);
   const approved = new Map(approval.decisions.map(decision => [decision.slug, JSON.stringify(decision)]));
   const delta: ConversionDeltaItem[] = (opts.decisions ?? []).filter(decision => approved.get(decision.slug) !== JSON.stringify(decision))
     .map(decision => ({ item: `decision:${decision.slug}`, reason: 'new_decision' as const }));
@@ -795,7 +795,7 @@ export async function applyApprovedConversion(engine: BrainEngine, sourceId: str
   const partial = { ...plan, adopt: plan.adopt.filter(item => unchanged('adopt', item.path)), withhold: plan.withhold.filter(item => unchanged('withhold', item.path)) };
   const progress: ConversionProgress = { phase: 'adopt', groups_committed: 0, scanned: 0, total: partial.adopt.length };
   const report: ConversionReporter = patch => { Object.assign(progress, patch); opts.onProgress?.({ ...progress }); };
-  const previewCommand = `gbrain sources canonical ${sourceId} --to git --dry-run --approval-out <file>`;
+  const previewCommand = `foresights sources canonical ${sourceId} --to git --dry-run --approval-out <file>`;
   const recovery: ConversionRecovery = { mode: plan.preview.strict ? 'git' : 'mixed', phase: 'adopt', commits: [], push: null,
     accepted: { adopted: 0, withheld: 0, holds_cleared: 0, pass_writes: 0 }, reclassified: [], rollback: [] };
   let committed: GitConversionResult['committed'], withheld: GitConversionResult['withheld'], push: ConversionPush;
@@ -817,7 +817,7 @@ export async function applyApprovedConversion(engine: BrainEngine, sourceId: str
 async function runConversion(engine: BrainEngine, plan: GitConversionPlan, expect: string,
   opts: { noEmbed?: boolean; noExtract?: boolean; onProgress?: (progress: ConversionProgress) => void }): Promise<GitConversionResult> {
   const sourceId = plan.preview.source_id;
-  const previewCommand = `gbrain sources canonical ${sourceId} --to git --dry-run`;
+  const previewCommand = `foresights sources canonical ${sourceId} --to git --dry-run`;
   const progress: ConversionProgress = { phase: 'adopt', groups_committed: 0, scanned: 0, total: plan.adopt.length };
   const report: ConversionReporter = patch => { Object.assign(progress, patch); opts.onProgress?.({ ...progress }); };
   const recovery: ConversionRecovery = { mode: plan.preview.strict ? 'git' : 'mixed', phase: 'adopt', commits: [], push: null,
@@ -858,7 +858,7 @@ async function runConversion(engine: BrainEngine, plan: GitConversionPlan, expec
     for (const hold of plan.holds) {
       if (!await engine.transaction(tx => clearGitHold(tx, { sourceId, incarnation: plan.incarnation, path: hold.path, observedAt: hold.observed_at }))) {
         throw opError('git_conversion_incomplete', `The hold on ${hold.path} of source ${sourceId} changed or was cleared by another run after the conversion was planned, so the apply stopped before any strict pass, with the source still mixed.`,
-          `Preview again with gbrain sources canonical ${sourceId} --to git --dry-run and apply the new hash.`, { docs: DOCS, reason: 'changed_since_preview', detail: 'changed_since_preview', fix: conversionIncompleteFix(sourceId) });
+          `Preview again with foresights sources canonical ${sourceId} --to git --dry-run and apply the new hash.`, { docs: DOCS, reason: 'changed_since_preview', detail: 'changed_since_preview', fix: conversionIncompleteFix(sourceId) });
       }
       holdsCleared++;
       recovery.accepted.holds_cleared = holdsCleared;
@@ -912,7 +912,7 @@ async function withRecovery(engine: BrainEngine, sourceId: string, error: unknow
 function changedSincePlan(sourceId: string, paths: ReadonlySet<string>, mode: 'mixed' | 'git'): OperationError {
   const sample = [...paths].sort().slice(0, SAMPLE);
   return opError('git_conversion_incomplete', `${paths.size} page(s) of source ${sourceId} changed since the conversion was planned (${sample.join(', ')}${paths.size > sample.length ? ', …' : ''}); the strict pass held them instead of overwriting them, and the conversion stopped there${mode === 'mixed' ? ' with the source still mixed' : ''}.`,
-    `Preview again with gbrain sources canonical ${sourceId} --to git --dry-run: each held page is classified again by its content evidence; apply the new hash.`,
+    `Preview again with foresights sources canonical ${sourceId} --to git --dry-run: each held page is classified again by its content evidence; apply the new hash.`,
     { docs: DOCS, reason: 'changed_since_preview', detail: 'changed_since_preview', fix: conversionIncompleteFix(sourceId) });
 }
 
@@ -925,7 +925,7 @@ function changedSincePlan(sourceId: string, paths: ReadonlySet<string>, mode: 'm
 async function pushConversion(engine: BrainEngine, context: ManagedSyncContext): Promise<ConversionPush> {
   const { root } = context;
   const pending = (code: string, why: string): ConversionPush => ({ state: 'pending', code,
-    notice: `The conversion's door commits are committed locally, but their push did not land (${why}). Nothing retries it until the next page write, whose push sends them; to push now, run gbrain git commit-push --push-only --keep-checkout --scan-secrets --path ${root}.` });
+    notice: `The conversion's door commits are committed locally, but their push did not land (${why}). Nothing retries it until the next page write, whose push sends them; to push now, run foresights git commit-push --push-only --keep-checkout --scan-secrets --path ${root}.` });
   try {
     if (!(await gitDurabilityPolicy(context.binding, root)).durable) return { state: 'skipped', reason: DURABILITY_NOT_ENABLED_REASON };
     if (!(await gitRootAhead(root))) return { state: 'skipped', reason: 'nothing_to_push' };
@@ -941,7 +941,7 @@ async function pushConversion(engine: BrainEngine, context: ManagedSyncContext):
 }
 
 /**
- * #7866: a strict pass of the apply. It drains (sync-drain.ts) under the source's drain lease, as `gbrain sync` does: the
+ * #7866: a strict pass of the apply. It drains (sync-drain.ts) under the source's drain lease, as `foresights sync` does: the
  * single pass (`performManagedSync`) stops `writer_pending` whenever one of its own writes outlives its 5 s wait, which on a
  * large source ended the conversion on work it had queued itself. The drain re-enters on that and stops only on its own
  * rules (no progress, contention, a blocked head), so an unrelated write that never settles still stops the apply.
@@ -1001,7 +1001,7 @@ function passOrThrow(sourceId: string, phase: ConversionPhase, result: SyncResul
   const stop = result.drain?.stop_reason ?? result.reason;
   const written = result.added + result.modified + result.deleted + result.renamed;
   throw opError('git_conversion_incomplete', `The ${phase} of source ${sourceId} ended ${result.status}${stop ? ` (${stop})` : ''} after ${written} page write(s), at round ${at.round ?? 0}, ${at.scanned} of ${at.candidates ?? 0} candidate(s) settled of ${at.total} planned path(s); the conversion stopped there${phase === 'strict_pass_1' ? ' and the source is still mixed' : ' and the source stays git-canonical'}.`,
-    `Run gbrain sync status --source ${sourceId} --json until the source is idle, then preview again with gbrain sources canonical ${sourceId} --to git --dry-run and apply the new hash.`,
+    `Run foresights sync status --source ${sourceId} --json until the source is idle, then preview again with foresights sources canonical ${sourceId} --to git --dry-run and apply the new hash.`,
     { docs: DOCS, reason: stop ?? result.status, detail: `${result.status}${stop ? `:${stop}` : ''}`, fix: conversionIncompleteFix(sourceId) });
 }
 
@@ -1144,7 +1144,7 @@ export async function recordConversion(engine: BrainEngine, sourceId: string, in
     const [updated] = await tx.executeRaw<{ id: string }>(to === 'git'
       ? `UPDATE sources SET config = config || '{"canonical":"git"}'::jsonb WHERE id=$1 AND incarnation::text=$2 RETURNING id`
       : `UPDATE sources SET config = config - 'canonical' WHERE id=$1 AND incarnation::text=$2 RETURNING id`, [sourceId, incarnation]);
-    if (!updated) throw opError('source_changed', `Source ${sourceId} was replaced during the conversion, so its mode was not changed.`, `Preview again with gbrain sources canonical ${sourceId} --to ${to} --dry-run.`);
+    if (!updated) throw opError('source_changed', `Source ${sourceId} was replaced during the conversion, so its mode was not changed.`, `Preview again with foresights sources canonical ${sourceId} --to ${to} --dry-run.`);
     await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
       ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
       [CONVERSION_OP, `${sourceId}:${incarnation}`, JSON.stringify([{ source_id: sourceId, incarnation, to, preview_hash: hash, head }])]);
@@ -1166,7 +1166,7 @@ export async function planMixedConversion(engine: BrainEngine, sourceId: string)
 /** Removes `canonical: git` in the transaction that records it; Git keeps every door commit and no row changes. */
 export async function applyMixedConversion(engine: BrainEngine, sourceId: string, expect: string): Promise<{ status: 'mixed' | 'unchanged'; source_id: string }> {
   const plan = await planMixedConversion(engine, sourceId);
-  if (plan.preview_hash !== expect) throw previewChangedError(expect, `gbrain sources canonical ${sourceId} --to mixed --dry-run`);
+  if (plan.preview_hash !== expect) throw previewChangedError(expect, `foresights sources canonical ${sourceId} --to mixed --dry-run`);
   if (!plan.strict) return { status: 'unchanged', source_id: sourceId };
   await recordConversion(engine, sourceId, plan.incarnation, 'mixed', expect, null);
   return { status: 'mixed', source_id: sourceId };

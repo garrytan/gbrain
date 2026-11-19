@@ -1,9 +1,9 @@
 /**
  * post-install-advisory.ts (v0.25.1) — agent-readable "what to do next"
- * after `gbrain init` or `gbrain upgrade`.
+ * after `foresights init` or `foresights upgrade`.
  *
- * gbrain users typically interact through their host agent (openclaw,
- * claude-code) rather than the gbrain CLI directly. So an interactive
+ * foresights users typically interact through their host agent (openclaw,
+ * claude-code) rather than the foresights CLI directly. So an interactive
  * TTY prompt at install time misses most of the audience.
  *
  * Instead: every `init` and `post-upgrade` ends by printing an advisory
@@ -113,7 +113,7 @@ export function buildAdvisory(opts: {
   if (missing.length === 0) return null;
 
   // #8: `skillpack install` was removed — scaffold is canonical. The shared
-  // renderer emits scaffold commands so this surface and `gbrain advisor` agree.
+  // renderer emits scaffold commands so this surface and `foresights advisor` agree.
   return renderRecommendedSkills({
     version: opts.version,
     context: opts.context,
@@ -124,8 +124,8 @@ export function buildAdvisory(opts: {
 
 function scaffoldCommandFor(missing: RecommendedSkill[], all: RecommendedSkill[]): string {
   return missing.length === all.length
-    ? 'gbrain skillpack scaffold --all'
-    : `gbrain skillpack scaffold ${missing.map((s) => s.slug).join(' ')}`;
+    ? 'foresights skillpack scaffold --all'
+    : `foresights skillpack scaffold ${missing.map((s) => s.slug).join(' ')}`;
 }
 
 function buildAdvisoryWithoutWorkspace(
@@ -137,7 +137,7 @@ function buildAdvisoryWithoutWorkspace(
     version,
     context,
     skills: all,
-    scaffoldAllCommand: 'gbrain skillpack scaffold --all',
+    scaffoldAllCommand: 'foresights skillpack scaffold --all',
     workspaceNotDetected: true,
   });
 }
@@ -147,7 +147,7 @@ function buildAdvisoryWithoutWorkspace(
  * skills missing from the detected agent workspace and the scaffold argv
  * that installs them. Null when no workspace is detected (scaffold has no
  * target), when every recommended skill is installed, or on any read error.
- * The full agent-addressed banner stays the `upgrade` surface and `gbrain
+ * The full agent-addressed banner stays the `upgrade` surface and `foresights
  * advisor`.
  */
 export function initSkillsScaffold(opts: {

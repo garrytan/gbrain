@@ -2,7 +2,7 @@
  * Cross-session "magic moment" — the keyless agent-authored memory contract
  * proven across a REAL engine session boundary (agent-bootstrap GAP 1).
  *
- * The shipped `gbrain bootstrap verify` magic_moment check writes a `## Facts`
+ * The shipped `foresights bootstrap verify` magic_moment check writes a `## Facts`
  * fence, reconciles it in the SAME connection, and reads it straight back with
  * one SQL statement. That proves the fence parser runs — but it can NOT prove
  * the fact survives a process/connection boundary, that the ZERO-LLM sweep pass
@@ -172,7 +172,7 @@ beforeAll(async () => {
   });
 
   // Reconcile the fence into the facts index via the sweep's ZERO-LLM pass —
-  // the exact `gbrain sweep --once` fence path, keyless.
+  // the exact `foresights sweep --once` fence path, keyless.
   const report = await runMaintenanceSweep(engineA, {
     sourceId: WORKSPACE_SOURCE,
     budgetMs: 60_000,

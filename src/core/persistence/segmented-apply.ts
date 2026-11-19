@@ -159,7 +159,7 @@ export interface SegmentedApplied { pageId: number; complete: boolean; retireDef
  * The lead is indexed as the inline seal indexes a snapshot's timeline: after the page's withdrawal overlay, sanitized.
  * `chunker_version` is the oldest segmented chunker among the live chunks: a page sealed at an older one keeps it while
  * any chunk row from before this generation is still stored (a write re-chunks only the occurrences it changed), so
- * `gbrain reindex --segmented` still lists it.
+ * `foresights reindex --segmented` still lists it.
  */
 export async function sealSegmentedPage(tx: Pick<BrainEngine, 'executeRaw'>, pageId: number, timelineLead?: string): Promise<void> {
   const [page] = await tx.executeRaw<{ slug: string; source_id: string; timeline_lead: string | null; chunker_version: number | null; body_generation: number | string }>(

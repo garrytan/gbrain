@@ -1,13 +1,13 @@
 /**
  * #7242: the terminal hook. A command from LOCAL file-plane config (`minions.terminal_hook` in
- * ~/.gbrain/config.json, set with `gbrain config set minions.terminal_hook '["/abs/path", "arg"]'`) that the
+ * ~/.gbrain/config.json, set with `foresights config set minions.terminal_hook '["/abs/path", "arg"]'`) that the
  * worker runs once each job it ran reaches completed, failed, dead or cancelled. It is off by default and is
  * never read from the database config plane, MCP or job data, so nobody who can only submit jobs or write DB
  * config can choose what runs.
  *
  * The command is an argv array spawned without a shell; job data is never interpolated into it. The job
  * arrives in a fixed set of env vars (GBRAIN_JOB_ID, GBRAIN_JOB_NAME, GBRAIN_JOB_QUEUE, GBRAIN_JOB_STATUS)
- * and as one JSON object on stdin (TERMINAL_HOOK_FIELDS, never data or result). It runs as the gbrain process
+ * and as one JSON object on stdin (TERMINAL_HOOK_FIELDS, never data or result). It runs as the foresights process
  * user with that process's environment, is killed after timeout_ms (default 10 s), and a failure is logged
  * once and never retried, never changing the job.
  */
@@ -51,14 +51,14 @@ export function resolveTerminalHook(cfg: GBrainConfig | null): TerminalHook | nu
   catch (e) { console.warn(`[worker] terminal hook disabled: ${(e as Error).message}`); return null; }
 }
 
-/** `gbrain config set minions.terminal_hook <json>`: validate, then write the file plane only. */
+/** `foresights config set minions.terminal_hook <json>`: validate, then write the file plane only. */
 export function setTerminalHookConfig(cfg: GBrainConfig, value: string, save: (cfg: GBrainConfig) => void): void {
   let hook: TerminalHook;
   try { hook = parseTerminalHook(value); }
   catch (e) { console.error(`[config] ${e instanceof SyntaxError ? `${TERMINAL_HOOK_CONFIG_KEY} is not valid JSON` : (e as Error).message}. Nothing was written.`); process.exit(1); }
   const stored = hook.timeout_ms === TERMINAL_HOOK_DEFAULT_TIMEOUT_MS ? hook.argv : hook;
   save({ ...cfg, minions: { ...((cfg as { minions?: object }).minions ?? {}), terminal_hook: stored } } as GBrainConfig);
-  console.log(`Set ${TERMINAL_HOOK_CONFIG_KEY} (file plane: ~/.gbrain/config.json). Workers started after this run it, as the gbrain process user, when a job they ran finishes; restart the worker or supervisor to apply.`);
+  console.log(`Set ${TERMINAL_HOOK_CONFIG_KEY} (file plane: ~/.gbrain/config.json). Workers started after this run it, as the foresights process user, when a job they ran finishes; restart the worker or supervisor to apply.`);
 }
 
 function hookPayload(job: MinionJob): Record<string, unknown> {

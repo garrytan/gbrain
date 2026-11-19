@@ -159,7 +159,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         const result = await expectUnitNotAborted(() => b.pass());
         expect({ redirected: result.redirected, drift: result.skipped_drift }).toEqual({ redirected: 0, drift: 1 });
         const held = heldFor(result, CANONICAL);
-        expect({ held: held.length, fix: held.some(h => h.includes('gbrain sync --source default')) }).toEqual({ held: 1, fix: true });
+        expect({ held: held.length, fix: held.some(h => h.includes('foresights sync --source default')) }).toEqual({ held: 1, fix: true });
         expect({ body: (await b.body(CANONICAL)) === bodyBefore, file: b.file(CANONICAL) === fileBefore }).toEqual({ body: true, file: true });
         expect({ phantomLive: await b.live(PHANTOM), phantomFile: b.file(PHANTOM) === phantomFile }).toEqual({ phantomLive: true, phantomFile: true });
       });

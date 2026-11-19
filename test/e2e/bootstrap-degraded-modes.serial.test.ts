@@ -119,7 +119,7 @@ beforeAll(() => {
   dbDir = join(tmpParent, 'db');
   process.env.GBRAIN_HOME = tmpParent;
 
-  // Engine phase artifact — a keyless `gbrain init --pglite` config (no
+  // Engine phase artifact — a keyless `foresights init --pglite` config (no
   // provider keys anywhere in the file plane either).
   writeFileSync(
     join(home, 'config.json'),
@@ -203,13 +203,13 @@ describe('bootstrap degraded modes (decline-everything + keyless, serial e2e)', 
     expect(existsSync(join(ws, '.claude', 'settings.local.json'))).toBe(false);
     // But MCP registration still happened (keyless ≠ toolless).
     const flat = recorded.map((argv) => argv.join(' '));
-    expect(flat.some((c) => c.startsWith('claude mcp add gbrain') && c.includes('GBRAIN_SOURCE=workspace'))).toBe(true);
+    expect(flat.some((c) => c.startsWith('claude mcp add foresights') && c.includes('GBRAIN_SOURCE=workspace'))).toBe(true);
     const receipt = readReceipt(home);
     expect(receipt!.registrations).toEqual([{ host: 'claude-code', scope: 'project', detail: 'mcp' }]);
   }, 60_000);
 
   test('verify THROUGH THE DISPATCHER, fully keyless: exit 0-with-warnings, capability says keyless, every degradation named', async () => {
-    // Pre-init the brain the way `gbrain init --pglite` + `sources add` would.
+    // Pre-init the brain the way `foresights init --pglite` + `sources add` would.
     const engineConfig = { engine: 'pglite' as const, database_path: dbDir };
     const engine = await createEngine(engineConfig);
     await engine.connect(engineConfig);
@@ -301,7 +301,7 @@ describe('cloud-sandbox simulation (CLAUDE_CODE_REMOTE=true)', () => {
       const code = await runBootstrap(['repo', '--workspace', ws], { runner });
       expect(code).toBe(2);
       expect(err).toContain('cloud sandbox');
-      expect(err).toContain('gbrain bootstrap attach');
+      expect(err).toContain('foresights bootstrap attach');
     } finally {
       console.error = origErr;
     }

@@ -2,7 +2,7 @@
  * archive.ts — the built-in conversation archive (GST-2768): on by default on a personal brain, offered on a shared one
  * (archive-default.ts); the maintenance pass runs it (archive-maintenance.ts).
  *
- * gbrain transcripts archive run | backfill --from --to | status | adopt-legacy | on | off.
+ * foresights transcripts archive run | backfill --from --to | status | adopt-legacy | on | off.
  *
  * Each run reads every readable harness (the file adapters through harnessRoots(), OpenClaw archived session files,
  * and the OpenClaw Gateway), redacts each session as a whole, cuts it into local days in the source's pinned
@@ -28,11 +28,11 @@
  * is committed where repository readers could read it.
  *
  * Write paths: managed persistence goes through the coordinator; an unmanaged repository source gets the redacted
- * files written, committed with gbrain git commit-push -- <paths>, then imported by sync (git stays the parent); any
+ * files written, committed with foresights git commit-push -- <paths>, then imported by sync (git stays the parent); any
  * other brain writes the database directly. Nothing refuses for lack of a repository.
  *
  * Embedding: pages are written keyword-only. Backfilled pages are held in page_embedding_budget (reason
- * archive_backfill) until the owner approves the previewed cost with gbrain embed --held. The open day is held
+ * archive_backfill) until the owner approves the previewed cost with foresights embed --held. The open day is held
  * (archive_open_day) until it closes or has been quiet for transcripts.archive.quiet_minutes. No fact extraction.
  */
 
@@ -235,7 +235,7 @@ export interface ArchiveRunOpts {
   makeContext?: (sourceId: string) => Promise<OperationContext>;
   /** Test seam: the redaction pass (default redactSession over the whole session). */
   redact?: (session: ParsedSession) => RedactedSession;
-  /** Repository path: commit the written files (default gbrain git commit-push -- <paths>). */
+  /** Repository path: commit the written files (default foresights git commit-push -- <paths>). */
   commitPaths?: (root: string, paths: string[], message: string) => Promise<void>;
   /** Stop starting new readers and conversations at this instant (epoch ms); what was not reached waits for the next run. */
   deadlineAtMs?: number;
@@ -408,10 +408,10 @@ export async function archiveRescopeSkipped(engine: BrainEngine, sourceId?: stri
   const privacy = await resolvePrivacy(engine);
   if (!privacy.shared) return null;
   if (!privacy.owner) {
-    return { code: 'archive_rescope_owner_unset', message: 'Conversation archive pages written while this brain was personal are not yet kept to the owner, because the shared brain names no owner; run gbrain access owner set <member> and the next archive run applies the owner-only rules.' };
+    return { code: 'archive_rescope_owner_unset', message: 'Conversation archive pages written while this brain was personal are not yet kept to the owner, because the shared brain names no owner; run foresights access owner set <member> and the next archive run applies the owner-only rules.' };
   }
   const policy = await import('../access/policy.ts');
-  const pending: ArchiveRescopeSkip = { code: 'archive_rescope_pending', message: 'Conversation archive pages written while this brain was personal are not yet kept to the owner; the next maintenance pass applies the owner-only rules, or run gbrain transcripts archive run now.' };
+  const pending: ArchiveRescopeSkip = { code: 'archive_rescope_pending', message: 'Conversation archive pages written while this brain was personal are not yet kept to the owner; the next maintenance pass applies the owner-only rules, or run foresights transcripts archive run now.' };
   if ((await engine.executeRaw('SELECT 1 FROM sources WHERE id = $1', [configured])).length === 0) return pending;
   if (await policy.readAccessStore(engine, configured) !== 'git') return pending;
   if ((await policy.appliedRules(engine, configured)).some(r => r.prefix === 'conversations/')) return null;
@@ -435,7 +435,7 @@ async function rescopeCapped(engine: BrainEngine, sourceId: string): Promise<Arc
   const ownerOnly = owner ? normalizeRule({ prefix: 'conversations/', readable_by: [owner] }) : null;
   const kept = !!ownerOnly && 'rule' in ownerOnly && rule.readable_by.join() === ownerOnly.rule.readable_by.join();
   const over = rules.length > MAX_RULES
-    ? 'Source ' + sourceId + ' now holds ' + rules.length + ' rules, more than the ' + MAX_RULES + ' a rule file accepts, so gbrain access rule export then import fails validation until you remove one of its other rules.'
+    ? 'Source ' + sourceId + ' now holds ' + rules.length + ' rules, more than the ' + MAX_RULES + ' a rule file accepts, so foresights access rule export then import fails validation until you remove one of its other rules.'
     : '';
   if (!kept) return over ? { code: 'archive_rescope_folder_cap', message: over } : null;
   return { code: 'archive_rescope_folder_cap', message: 'Conversation archive pages written while this brain was personal fill ' + folders + ' folders, and one owner-only rule per folder with the source\'s other rules would pass the ' + MAX_RULES + ' rules a source holds, so one rule keeps the whole conversations/ folder of source ' + sourceId + ' to the owner: group conversations archived since stay owner-only too, and widening that conversations/ rule opens every earlier personal day to the same readers, not just one chat.' + (over ? ' ' + over : '') };
@@ -456,7 +456,7 @@ async function ensureSource(engine: BrainEngine, sourceId: string): Promise<{ lo
 const offFix: Action = { argv: ['gbrain', 'transcripts', 'archive', 'on'], consent: [], actor: 'user', why: 'Turns the conversation archive on for this brain: it is off here because it was turned off, or because a shared brain is only offered it.', requires_exclusive: false };
 const ownerFix: Action = {
   argv: ['gbrain', 'access', 'owner', 'set', '<MEMBER>'], consent: [], actor: 'user', ask_user: true, requires_exclusive: false,
-  inputs: [{ name: 'MEMBER', how: 'Ask the user which enabled member is the brain owner (gbrain access member list).' }],
+  inputs: [{ name: 'MEMBER', how: 'Ask the user which enabled member is the brain owner (foresights access member list).' }],
   why: 'On a shared brain every archive page is kept to the owner member; with none named the archive holds every day and writes nothing.',
 } as Action;
 
@@ -555,7 +555,7 @@ async function readReaders(engine: BrainEngine, readers: ArchiveReader[], scanOp
         if (entry.newest && (!newest || entry.newest > newest)) newest = entry.newest;
       }
       reads.set(reader.name, { harness: reader.harness, conversations: found, ...(newest ? { newest } : {}) });
-      if (found === 0) result.info.push('no readable sessions for ' + reader.harness + '; use gbrain connectors or an export with gbrain transcripts ingest');
+      if (found === 0) result.info.push('no readable sessions for ' + reader.harness + '; use foresights connectors or an export with foresights transcripts ingest');
     } catch (err) {
       if (classifyItemFailure(err).scope === 'run') throw err;
       const e = err as { code?: string; message?: string; fix?: Action };
@@ -596,7 +596,7 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
   if (privacy.unproven) {
     const { opError } = await import('../ops/contract.ts');
     throw opError('archive_audience_unproven', 'The brain\'s audience could not be checked (its client-usage read failed), so the conversation archive wrote nothing: a page written as personal could be open to other members.',
-      'Rerun gbrain transcripts archive run; if it repeats, declare the audience with gbrain config set brain.audience personal|shared.');
+      'Rerun foresights transcripts archive run; if it repeats, declare the audience with foresights config set brain.audience personal|shared.');
   }
   // One run per source at a time: a run decides from the ledger it read at its start, so an overlapping run could publish
   // older history over what the other run just wrote.
@@ -607,7 +607,7 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
     if (!(err instanceof LockUnavailableError)) throw err;
     const { opError } = await import('../ops/contract.ts');
     throw opError('archive_run_busy', 'Another conversation archive run holds source ' + sourceId + ', so this run read and wrote nothing.',
-      'Wait for the other run to finish, then rerun; gbrain status --section locks --json shows the holder.');
+      'Wait for the other run to finish, then rerun; foresights status --section locks --json shows the holder.');
   }
 }
 
@@ -636,7 +636,7 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
     if (!opts.from || !DAY_RE.test(opts.from) || (opts.to && !DAY_RE.test(opts.to))) {
       const { opError } = await import('../ops/contract.ts');
       throw opError('invalid_params', 'backfill needs --from YYYY-MM-DD (and an optional --to YYYY-MM-DD); nothing was read.',
-        'Run gbrain transcripts archive backfill --from 2026-01-01 --to 2026-01-31.');
+        'Run foresights transcripts archive backfill --from 2026-01-01 --to 2026-01-31.');
     }
     from = opts.from;
     to = opts.to ?? today;
@@ -1060,7 +1060,7 @@ export async function archiveStatus(engine: BrainEngine, opts: { sourceId?: stri
     const newest = read?.newest ? localDay(read.newest, zone) : null;
     if (!read?.at) { out.harnesses.push({ ...row, newest_session_day: newest }); continue; }
     out.harnesses.push({ ...row, conversations: read.conversations ?? 0, newest_session_day: newest, read_at: read.at, ...(read.mode ? { read_mode: read.mode } : {}),
-      ...(newest ? {} : { info: 'no readable sessions for ' + reader.harness + '; use gbrain connectors or an export with gbrain transcripts ingest' }) });
+      ...(newest ? {} : { info: 'no readable sessions for ' + reader.harness + '; use foresights connectors or an export with foresights transcripts ingest' }) });
   }
   const rescope = await archiveRescopeSkipped(engine, opts.sourceId);
   if (rescope) out.rescope = rescope;

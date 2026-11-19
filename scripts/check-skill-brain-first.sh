@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # CI guard for the v0.36.x skill_brain_first doctor check.
 #
-# Runs `gbrain doctor --json` against this repo's own skills/ and parses
+# Runs `foresights doctor --json` against this repo's own skills/ and parses
 # the JSON to assert `checks[name=skill_brain_first].status !== "warn"`.
 # Doctor's exit code only flags `fail`, not `warn`, so explicit JSON-
 # parsing is required to gate `bun run verify` on this warning-class check

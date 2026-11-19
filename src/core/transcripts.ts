@@ -121,7 +121,7 @@ async function transcriptCandidates(engine: Pick<BrainEngine, 'getConfig'>, days
     } catch {
       // Missing dir or permission error → skip silently. The op deliberately
       // doesn't surface filesystem-level diagnostics; users running into this
-      // path should `gbrain doctor` to debug.
+      // path should `foresights doctor` to debug.
       continue;
     }
     for (const name of entries) {
@@ -146,7 +146,7 @@ export function localTranscriptsFix(): Action {
   return {
     argv: ['gbrain', 'transcripts', 'recent', '--json'],
     consent: [], actor: 'agent', requires_exclusive: false,
-    why: 'Lists the recent session transcripts with a short summary of each (add --full for the text, --days <n> for a wider window). It reads through a running gbrain serve when one holds the brain.',
+    why: 'Lists the recent session transcripts with a short summary of each (add --full for the text, --days <n> for a wider window). It reads through a running foresights serve when one holds the brain.',
   };
 }
 

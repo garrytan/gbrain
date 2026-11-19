@@ -1,6 +1,6 @@
 /**
  * #5742: a page about a historical work keeps its explicit pre-1990 date
- * through the write path, and `gbrain reindex-frontmatter` recomputes pages
+ * through the write path, and `foresights reindex-frontmatter` recomputes pages
  * stored under the old 1990 floor (source `fallback`, dated by ingest time).
  */
 import { afterAll, beforeAll, beforeEach, expect, test } from 'bun:test';

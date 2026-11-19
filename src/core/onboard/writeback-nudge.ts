@@ -2,7 +2,7 @@
  * Ambient-writeback consent nudge (WP8): the ONE-TIME relayed ASK that fires
  * on PERSONAL brains only — company/team/shared brains stay silent, and
  * nothing is EVER auto-enabled (the only writes here are the fire-once
- * sentinel; enabling is the human's explicit `gbrain config set`, relayed by
+ * sentinel; enabling is the human's explicit `foresights config set`, relayed by
  * the agent).
  *
  * Discipline copied from the two proven one-shot surfaces:
@@ -77,22 +77,22 @@ export async function runWritebackNudge(
     const line = console.log;
     line('');
     line('═══════════════════════════════════════════════════════════════');
-    line('[gbrain] Ambient memory writeback is available for this brain (off by default).');
-    line('[gbrain] What it does, mechanically, once enabled:');
-    line('[gbrain]   - agents connected to this brain are instructed to save durable facts');
-    line('[gbrain]     you state directly (preferences, decisions, commitments) via the');
-    line(`[gbrain]     remember tool, with provenance; transient facts (health, travel,`);
-    line(`[gbrain]     mood, near-term schedule) expire after ${DEFAULT_TRANSIENT_TTL} by default.`);
-    line('[gbrain]   - on Claude Code, a Stop-hook backstop banks missed turns locally for');
-    line('[gbrain]     extraction; greetings, questions, tool output and pastes are skipped.');
-    line('[gbrain]     (Backstop-extracted facts carry no expiry yet — only agent-saved');
-    line('[gbrain]     transient facts do.)');
-    line('[gbrain]   - saved facts are readable by agents authorized on THIS brain — not the');
-    line('[gbrain]     public internet. Nothing new leaves your machine beyond your');
-    line('[gbrain]     configured model provider calls.');
-    line('[gbrain] Off switch (anytime): gbrain config set memory.auto_writeback off');
-    line('[gbrain]   (it also stops the compaction harvest and SessionEnd transcript extraction),');
-    line('[gbrain]   then gbrain bootstrap harness --yes to remove installed instruction blocks.');
+    line('[foresights] Ambient memory writeback is available for this brain (off by default).');
+    line('[foresights] What it does, mechanically, once enabled:');
+    line('[foresights]   - agents connected to this brain are instructed to save durable facts');
+    line('[foresights]     you state directly (preferences, decisions, commitments) via the');
+    line(`[foresights]     remember tool, with provenance; transient facts (health, travel,`);
+    line(`[foresights]     mood, near-term schedule) expire after ${DEFAULT_TRANSIENT_TTL} by default.`);
+    line('[foresights]   - on Claude Code, a Stop-hook backstop banks missed turns locally for');
+    line('[foresights]     extraction; greetings, questions, tool output and pastes are skipped.');
+    line('[foresights]     (Backstop-extracted facts carry no expiry yet — only agent-saved');
+    line('[foresights]     transient facts do.)');
+    line('[foresights]   - saved facts are readable by agents authorized on THIS brain — not the');
+    line('[foresights]     public internet. Nothing new leaves your machine beyond your');
+    line('[foresights]     configured model provider calls.');
+    line('[foresights] Off switch (anytime): foresights config set memory.auto_writeback off');
+    line('[foresights]   (it also stops the compaction harvest and SessionEnd transcript extraction),');
+    line('[foresights]   then foresights bootstrap harness --yes to remove installed instruction blocks.');
     line('═══════════════════════════════════════════════════════════════');
     // Agent contract v1 (F7): the ask is a decision for the user; the
     // sentinel is stamped on their ANSWER (any memory.auto_writeback value,
@@ -103,9 +103,9 @@ export async function runWritebackNudge(
       why: 'Agents would save durable facts the user states directly, with provenance; nothing is enabled until the user agrees.',
       consent: 'persistent_install',
       actor: 'user',
-      if_yes: 'gbrain config set memory.auto_writeback salient, then gbrain bootstrap harness --yes',
-      if_no: 'gbrain config set memory.auto_writeback off (records the answer; this ask then stops)',
-      verify: 'gbrain config get memory.auto_writeback',
+      if_yes: 'foresights config set memory.auto_writeback salient, then foresights bootstrap harness --yes',
+      if_no: 'foresights config set memory.auto_writeback off (records the answer; this ask then stops)',
+      verify: 'foresights config get memory.auto_writeback',
     }, { showUser: 'Should I save important facts from our conversations automatically (ambient writeback, "salient" mode)? You can turn it off any time.' }));
   } catch {
     /* Nudge is cosmetic — init/upgrade MUST succeed even if it crashes. */

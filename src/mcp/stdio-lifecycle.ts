@@ -1,6 +1,6 @@
 /**
  * The engine-free part of a stdio MCP server's lifecycle, shared by local
- * `gbrain serve` (src/commands/serve.ts installStdioLifecycle, which adds its
+ * `foresights serve` (src/commands/serve.ts installStdioLifecycle, which adds its
  * engine hooks: idle sweep, facts drain, tickers, engine close) and the
  * thin-client bridge (src/mcp/remote-bridge.ts, which has none):
  *   - SIGTERM / SIGINT / SIGHUP converge on one graceful shutdown;
@@ -25,7 +25,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
  */
 export const MCP_STDIO_MAX_MESSAGE_BYTES = 64 * 1024 * 1024;
 
-/** The stdio transport `gbrain serve` connects, sized for ceiling-size page writes. */
+/** The stdio transport `foresights serve` connects, sized for ceiling-size page writes. */
 export function mcpStdioTransport(stdin: Readable = process.stdin, stdout: Writable = process.stdout): StdioServerTransport {
   return new StdioServerTransport(stdin, stdout, { maxBufferSize: MCP_STDIO_MAX_MESSAGE_BYTES });
 }
@@ -53,7 +53,7 @@ export function resolveEofDrainMs(defaultMs: number = DEFAULT_EOF_DRAIN_MS): num
   const n = Number(raw);
   if (!Number.isFinite(n) || n < 0) {
     console.error(
-      `[gbrain serve] ignoring invalid GBRAIN_SERVE_EOF_DRAIN_MS=${JSON.stringify(raw)} — using default ${defaultMs}ms`,
+      `[foresights serve] ignoring invalid GBRAIN_SERVE_EOF_DRAIN_MS=${JSON.stringify(raw)} — using default ${defaultMs}ms`,
     );
     return defaultMs;
   }
@@ -140,7 +140,7 @@ export function installStdioShutdownTriggers(deps: StdioLifecycleDeps, o: StdioS
   // 'end' fires on a clean EOF; 'close' fires when the underlying handle
   // is destroyed (e.g. parent SIGKILL'd while pipe still open). Both
   // converge on the same idempotent shutdown.
-  // Skip when stdin is a TTY: interactive `gbrain serve` use shouldn't
+  // Skip when stdin is a TTY: interactive `foresights serve` use shouldn't
   // terminate just because the user hasn't typed anything. Signal /
   // watchdog paths still cover that case if needed.
   // v0.34.1 (#870): when MCP_STDIO=1, the wrapping gateway pipes the
@@ -168,7 +168,7 @@ export function installStdioShutdownTriggers(deps: StdioLifecycleDeps, o: StdioS
         await new Promise<void>((r) => setTimeout(r, 0));
         if (o.pendingRpcs() > 0) {
           deps.log(
-            `GBrain MCP server: stdin EOF with ${o.pendingRpcs()} in-flight request(s) — draining before exit (bound ${o.eofDrainMs}ms; GBRAIN_SERVE_EOF_DRAIN_MS)`,
+            `Foresights MCP server: stdin EOF with ${o.pendingRpcs()} in-flight request(s) — draining before exit (bound ${o.eofDrainMs}ms; GBRAIN_SERVE_EOF_DRAIN_MS)`,
           );
           const deadlineAt = Date.now() + o.eofDrainMs;
           while (o.pendingRpcs() > 0 && Date.now() < deadlineAt && !o.isShuttingDown()) {
@@ -229,7 +229,7 @@ export function installStdioShutdownTriggers(deps: StdioLifecycleDeps, o: StdioS
   if (initialParentPid > 1) {
     if (!deps.probeWatchdog()) {
       deps.log(
-        `${o.logPrefix ?? '[gbrain serve]'} watchdog disabled: no parent-liveness mechanism (ps / signal-0 probe failed) — child will rely on stdin EOF / signals only`,
+        `${o.logPrefix ?? '[foresights serve]'} watchdog disabled: no parent-liveness mechanism (ps / signal-0 probe failed) — child will rely on stdin EOF / signals only`,
       );
     } else {
       parentWatchdog = deps.setInterval(() => {

@@ -146,7 +146,7 @@ for (const kind of ['pglite', 'postgres'] as const) {
       const check = await credentialProjectionPendingCheck(engine, [SOURCE]);
       expect(check.status).toBe('warn');
       expect(check.details).toMatchObject({ pages_pending: 2, kept_pages: 0 });
-      expect(check.message).toContain('gbrain apply-migrations --yes');
+      expect(check.message).toContain('foresights apply-migrations --yes');
     });
 
     test('after an interrupted re-chunk: the finished page is clean and visible, the rest stay withheld', async () => {

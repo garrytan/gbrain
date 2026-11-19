@@ -1,6 +1,6 @@
 # Brains and Sources — the mental model
 
-GBrain has two orthogonal axes for organizing knowledge. Users and agents both
+Foresights has two orthogonal axes for organizing knowledge. Users and agents both
 need to understand both of them, or queries misroute silently.
 
 **TL;DR:**
@@ -25,7 +25,7 @@ Each brain has:
 Brains are enumerated by:
 - **host** — your default brain, configured in `~/.gbrain/config.json`.
 - **mounts** — additional brains registered in `~/.gbrain/mounts.json` via
-  `gbrain mounts add <id>`.
+  `foresights mounts add <id>`.
 
 Routing: `--brain <id>`, `GBRAIN_BRAIN_ID`, `.gbrain-mount` dotfile, or
 longest-path match against registered mount paths. Falls back to `host`.
@@ -45,28 +45,28 @@ A few commands have their own `--source` option for provenance:
 `timeline-add`, `ontology-add`, `takes add|update|supersede` and the raw-data
 operations. On those, `--source` is the provenance value (a slug, URL or
 source name) and never picks the repo, on a local brain, through a running
-`gbrain serve` or on a thin client. The write goes to the source that
+`foresights serve` or on a thin client. The write goes to the source that
 `GBRAIN_SOURCE`, `.gbrain-source` or the defaults select, and the JSON result
 names it in `source_id`.
 
 ### Git is the parent of a source with a checkout
 
-Most sources are a Git checkout (`local_path`) plus the pages gbrain derived
+Most sources are a Git checkout (`local_path`) plus the pages foresights derived
 from it. The files are the record people read, review and clone; the
-database is an index that gbrain can rebuild from them. How tightly the
+database is an index that foresights can rebuild from them. How tightly the
 database follows Git depends on the source:
 
 | Source | Where the record is | How the database follows |
 |---|---|---|
 | Checkout, mixed (the default) | The files in Git | Sync imports what is committed (or the working tree when asked). A write publishes the file and its database row together (managed) or the row first (classic), and the Git commit follows later (a background Git effect once Git durability is on). When the two disagree, sync keeps the database version or holds the page for review. |
 | Checkout, strict (`canonical: git`, opt-in per source) | Git commits | Every write is committed to Git before its row. Sync indexes committed blobs only, and Git wins. Private pages, `storage.db_only` directories and ignored paths are declared database-only. |
-| Read-only mirror (`gbrain sources mirror-readonly`) | The upstream repository | Sync imports; gbrain never writes into the checkout. |
+| Read-only mirror (`foresights sources mirror-readonly`) | The upstream repository | Sync imports; foresights never writes into the checkout. |
 | No checkout (connector sources, database-only sources) | The database | Nothing to derive from; back up the database. |
 
 Scripts, crons and people that write files in a checkout commit them with
-`gbrain git commit-push -- <paths>`, which takes the same writer lock. To make
+`foresights git commit-push -- <paths>`, which takes the same writer lock. To make
 a source strict, or to see how far its database is from Git, read
-[git-canonical sources](../guides/git-canonical.md); `gbrain sources git-gap <id>`
+[git-canonical sources](../guides/git-canonical.md); `foresights sources git-gap <id>`
 is the read-only check, and doctor's `db_ahead_of_git` and `git_index_lag`
 report it brain-wide.
 
@@ -78,8 +78,8 @@ report it brain-wide.
 | Query a team-published brain that isn't yours | `--brain` |
 | Isolate a topic so it never leaks into personal search | `--source` with `federated=false` |
 | Share a brain with teammates | `--brain` (mount the team brain) |
-| Add a new repo to your personal brain | `--source` via `gbrain sources add` |
-| Add a team brain | `--brain` via `gbrain mounts add` |
+| Add a new repo to your personal brain | `--source` via `foresights sources add` |
+| Add a team brain | `--brain` via `foresights mounts add` |
 
 **Rule of thumb:** if the data owner changes, it's a brain boundary. If the
 data owner stays the same but the topic/repo changes, it's a source boundary.
@@ -98,7 +98,7 @@ Simplest case. One brain, one source.
 └─────────────────────────────────────────┘
 ```
 
-`gbrain query "retry budgets"` finds everything. No `--brain`, no `--source`
+`foresights query "retry budgets"` finds everything. No `--brain`, no `--source`
 needed.
 
 ---
@@ -155,8 +155,8 @@ as-is; you mount the team brain alongside it.
 └──────────────────────────────────────────────┘
 ```
 
-`gbrain query "X"` (no flags) → runs against host (your personal brain).
-`gbrain query "X" --brain media-team` → runs against the team's DB.
+`foresights query "X"` (no flags) → runs against host (your personal brain).
+`foresights query "X" --brain media-team` → runs against the team's DB.
 Inside `~/team-brains/media/` a `.gbrain-mount` dotfile pins brain to
 `media-team` automatically.
 
@@ -201,7 +201,7 @@ internally however the team owner chose.
 
 Inside each team's checkout, a `.gbrain-mount` dotfile pins the brain. Inside
 a specific subdirectory, a `.gbrain-source` dotfile pins the source. So `cd
-~/team-brains/policy/research && gbrain query "X"` targets
+~/team-brains/policy/research && foresights query "X"` targets
 `brain=policy-team, source=research` with zero flags.
 
 Use this topology when:
@@ -238,7 +238,7 @@ ARRAY of readable sources that takes precedence over the scalar
 operations layer). Local CLI callers never set it; the scalar chain above
 is the whole story for them.
 
-One guard on tier 2 for the MCP stdio lane: a harness-launched `gbrain serve`
+One guard on tier 2 for the MCP stdio lane: a harness-launched `foresights serve`
 checks a well-formed `GBRAIN_SOURCE` against the `sources` table at startup
 and exits with the offending value and the fix when it names no active
 (non-archived) source, instead of serving a scope that holds zero pages while
@@ -258,7 +258,7 @@ The CLI env tier fails the same way (`assertSourceExists` in
   (e.g. "what did Team X decide last week?"), the right move is to *query
   the team's brain explicitly* rather than searching host with "team x".
 - Cross-brain federation is YOUR JOB, not the DB's. You have the brain list
-  (`gbrain mounts list`). You decide when to fan out. You synthesize
+  (`foresights mounts list`). You decide when to fan out. You synthesize
   findings. You cite `brain:source:slug`.
 - When writing a page, respect the brain boundary. A fact about a team's
   work belongs in the team's brain, not in the user's personal brain. Ask
@@ -267,10 +267,10 @@ The CLI env tier fails the same way (`assertSourceExists` in
 
 ## For users reading this
 
-- **Default path:** set up your personal brain (`gbrain init`), add a source
-  per repo you care about (`gbrain sources add gstack --path ~/gstack`).
+- **Default path:** set up your personal brain (`foresights init`), add a source
+  per repo you care about (`foresights sources add gstack --path ~/gstack`).
   You'll almost never need `--brain`.
-- **When a team publishes a brain:** `gbrain mounts add <team-id> --path
+- **When a team publishes a brain:** `foresights mounts add <team-id> --path
   <clone> --db-url <url>` and the `.gbrain-mount` dotfile in that checkout
   routes queries there automatically.
 - **When you are the CEO-class user with multiple team memberships:** mount
@@ -291,10 +291,10 @@ When they ARE the same entity, say so explicitly with the manual-only
 identity ops (no auto-matching, no name-similarity heuristics):
 
 ```
-gbrain entity-identity-link   --entity-id alice-chen --slug people/alice --source-id wiki
-gbrain entity-identity-link   --entity-id alice-chen --slug people/alice-chen --source-id team-brain --canonical
-gbrain entity-identity-list   --entity-id alice-chen
-gbrain entity-identity-unlink --entity-id alice-chen --slug people/alice --source-id wiki
+foresights entity-identity-link   --entity-id alice-chen --slug people/alice --source-id wiki
+foresights entity-identity-link   --entity-id alice-chen --slug people/alice-chen --source-id team-brain --canonical
+foresights entity-identity-list   --entity-id alice-chen
+foresights entity-identity-unlink --entity-id alice-chen --slug people/alice --source-id wiki
 ```
 
 Members live in the `entity_identities` table (one identity per page;
@@ -309,16 +309,16 @@ federated caller's source grant.
 Wikilink and markdown-link edges stay inside one source by default. When a
 page in source A links a target that exists only in source B (typically via
 `link_resolution.global_basename`), the edge is NOT written; instead the drop
-is counted so graph sparsity is observable — `gbrain extract links --source db`
-and `gbrain extract --stale` print `Skipped N cross-source candidate(s)` (JSON:
+is counted so graph sparsity is observable — `foresights extract links --source db`
+and `foresights extract --stale` print `Skipped N cross-source candidate(s)` (JSON:
 `skipped_cross_source`), and the serve sweep records it as `cross_source_link`
 in its skip ledger.
 
 To write those edges, opt in:
 
 ```
-gbrain config set link_resolution.cross_source true   # or env GBRAIN_LINK_RESOLUTION_CROSS_SOURCE=1
-gbrain extract links --source db                      # re-extract once; --stale will not revisit stamped pages
+foresights config set link_resolution.cross_source true   # or env GBRAIN_LINK_RESOLUTION_CROSS_SOURCE=1
+foresights extract links --source db                      # re-extract once; --stale will not revisit stamped pages
 ```
 
 Without the flag, an isolated (`federated=false`) source only writes edges
@@ -353,7 +353,7 @@ fail-closed and tested:
   grant for a source cannot read its pages, chunks, or edges.
 - **Facts visibility** — facts carry `private`/`world` visibility; remote
   callers see `world` only, except the brain owner's `recall`.
-- **Takes holders** — per-token allow-lists (`gbrain auth permissions <token>
+- **Takes holders** — per-token allow-lists (`foresights auth permissions <token>
   set-takes-holders ...`) scope which held takes a remote caller sees.
 - **Write-side slug fences** — a client bound to slug prefixes can only write
   under them, and only a small fenced allow-list of write operations
@@ -373,7 +373,7 @@ is private, an atom whose origin page is private is hidden, and so is a
 synthesized concept built from a private atom or from an atom whose origin is
 private, even after a rename moved that origin. Trusted local CLI callers
 retain access, and so does a credential bound to the brain owner
-(`gbrain access owner set <member>`). Operator settings can opt out of private-page
+(`foresights access owner set <member>`). Operator settings can opt out of private-page
 filtering, so source grants remain an independent boundary: keep content in an
 ungranted source when remote callers must have no access to that source.
 Every designation, who reads it and when to use it:

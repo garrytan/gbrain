@@ -9,7 +9,7 @@ import { agentFix } from '../check-fix.ts';
 /**
  * #5012 item 9: Google sources whose last calendar sweep could not read the
  * configured calendar (403/404 recorded as `calendar_unreadable` in connector
- * state). Zero-network: it reads the stored result only; `gbrain google
+ * state). Zero-network: it reads the stored result only; `foresights google
  * status` probes the calendar live. Without it an unreadable calendar looks
  * exactly like an empty one.
  */
@@ -36,7 +36,7 @@ export async function googleCalendarReadableCheck(engine: BrainEngine, sourceIds
       message: unreadable.map((u) => `Google source ${u.source_id}: ${u.account} cannot read calendar "${u.calendar_id}" (HTTP ${u.http_status} at the last sync), `
         + `so it imports no events. List the readable calendars with ${u.list_command}, then run ${u.set_command}.`).join(' '),
       fix: agentFix(['gbrain', 'google', 'calendars', '--account', first.account, '--json'],
-        'Read-only: lists the calendar ids this account can read; pick one and point the source at it with gbrain sources set-calendar.',
+        'Read-only: lists the calendar ids this account can read; pick one and point the source at it with foresights sources set-calendar.',
         'google_calendar_readable', { docs: 'docs/guides/google-connect.md#unreadable-calendar' }),
     };
   } catch (error) {

@@ -34,13 +34,13 @@ export interface DiscoveredFile {
 
 export interface DiscoverOpts {
   /**
-   * #4472 — include gbrain's OWN claude-cli subprocess sessions. The
+   * #4472 — include foresights's OWN claude-cli subprocess sessions. The
    * claude-cli provider spawns `claude --print` from a per-PID tmpdir cwd
    * (gbrain-claude-cli-cwd-<pid>), and Claude Code records each of those
    * calls as a session under ~/.claude/projects/<slugified-cwd>/. Importing
-   * them is a self-ingestion feedback loop (gbrain's prompt scaffolding +
+   * them is a self-ingestion feedback loop (foresights's prompt scaffolding +
    * page content re-entering the brain as "conversations"), so discovery
-   * skips them by default. `gbrain transcripts ingest --include-self` is the
+   * skips them by default. `foresights transcripts ingest --include-self` is the
    * escape hatch for deliberately auditing the provider's own calls.
    */
   includeSelf?: boolean;
@@ -108,7 +108,7 @@ export function discoverTranscriptFiles(roots?: HarnessRoot[], opts: DiscoverOpt
       // adapter format). Discoverable, it errored every ingest and froze the
       // shared --since watermark via cleanScan.
       if (format === 'claude-code' && isClaudeCodeWorkflowArtifactFile(p)) continue;
-      // #4472: skip gbrain's own claude-cli subprocess sessions (see
+      // #4472: skip foresights's own claude-cli subprocess sessions (see
       // DiscoverOpts.includeSelf) — the scratch-cwd fingerprint survives
       // Claude Code's project-dir slugification.
       if (!opts.includeSelf && isClaudeCliSelfTranscriptPath(p)) continue;
@@ -227,7 +227,7 @@ export async function indexTranscriptPages(
  * The conversation page(s) a transcript file was rendered into, or [] when the
  * transcript has not been imported as a page. Matches on the basename stem,
  * which every supported harness derives from the session id. That
- * includes the `<session_id>.txt` corpus files gbrain's own hook capture writes
+ * includes the `<session_id>.txt` corpus files foresights's own hook capture writes
  * (hook.ts); compaction segments (`<sid>.seg-<hash>.txt`) are not matched.
  */
 export function resolveTranscriptPageSlugs(

@@ -21,6 +21,7 @@ import { admitsTrust, minTrust, storedTrustTier, type TrustTier } from '../trust
 import { guestView, loadGuestMarks, unattributedGuest, withGuestSourceSql, type GuestStamp } from '../guests/marker.ts';
 import { activationSuppressedSql, type EligibilityTable } from './sql.ts';
 import type { ReadEligibility } from './policy.ts';
+import { commandText } from '../brand.ts';
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 
@@ -98,7 +99,7 @@ export async function partitionForActivation<T>(
   return { kept, withheld };
 }
 
-/** The command that lists every unconfirmed item for the owner (DX-7 `gbrain trust review`). */
+/** The command that lists every unconfirmed item for the owner (DX-7 `foresights trust review`). */
 export const TRUST_REVIEW_COMMAND = ['gbrain', 'trust', 'review'] as const;
 
 /** DX-10: the structured suppression notice. A count and the review command; never the withheld content. */
@@ -107,7 +108,7 @@ export function activationSuppressionNotice(withheld: number, surface: string): 
   return {
     code: 'memory_suppressed',
     kind: 'info',
-    why: `${withheld} unconfirmed agent-written ${withheld === 1 ? 'memory was' : 'memories were'} not used in ${surface} because ${withheld === 1 ? 'it reads' : 'they read'} like instructions. They stay searchable; the owner reviews them with gbrain trust review.`,
+    why: `${withheld} unconfirmed agent-written ${withheld === 1 ? 'memory was' : 'memories were'} not used in ${surface} because ${withheld === 1 ? 'it reads' : 'they read'} like instructions. They stay searchable; the owner reviews them with foresights trust review.`,
     fix: { argv: [...TRUST_REVIEW_COMMAND], consent: [], actor: 'user', requires_exclusive: false,
       why: 'Lists unconfirmed agent-written memories with the command to confirm or drop each; only the owner can confirm.' },
   };
@@ -116,7 +117,7 @@ export function activationSuppressionNotice(withheld: number, surface: string): 
 /** The wire form proactive results carry alongside their text (DX-10). */
 export interface SuppressionSummary { withheld: number; review: string }
 export function suppressionSummary(withheld: number): SuppressionSummary | undefined {
-  return withheld > 0 ? { withheld, review: TRUST_REVIEW_COMMAND.join(' ') } : undefined;
+  return withheld > 0 ? { withheld, review: commandText(TRUST_REVIEW_COMMAND) } : undefined;
 }
 
 export interface PageKey { source_id: string; slug: string }

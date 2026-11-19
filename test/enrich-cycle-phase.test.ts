@@ -101,7 +101,7 @@ describe('runPhaseEnrichThin', () => {
   test("#2504: max_cost_usd accepts 'off' (uncapped per-source; brain-wide still governs)", async () => {
     // parseFloat('off') is NaN — the operator's explicit opt-out used to be
     // silently replaced with the $1 default. Same off/unlimited/none spellings
-    // as `gbrain enrich --max-usd`.
+    // as `foresights enrich --max-usd`.
     await engine.setConfig('cycle.enrich_thin.enabled', 'true');
     await engine.setConfig('cycle.enrich_thin.max_cost_usd', 'off');
     const r = await runPhaseEnrichThin(engine, { dryRun: true });

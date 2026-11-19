@@ -44,7 +44,7 @@ export const google: Recipe = {
       // gemini-embedding-2 (GA 2026-04-22) is Google's current embedding model.
       // `models` is informational (providers list / docs), not a runtime
       // allowlist — see assertTouchpoint. Its vector space is incompatible
-      // with -001: switching an existing brain needs `gbrain migrate embeddings`.
+      // with -001: switching an existing brain needs `foresights migrate embeddings`.
       models: ['gemini-embedding-001', 'gemini-embedding-2'],
       // [R13] audit: gemini-embedding-001's documented input limit is 2,048
       // tokens and the endpoint TRUNCATES silently past it (autoTruncate

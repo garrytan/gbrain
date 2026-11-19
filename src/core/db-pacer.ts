@@ -1,7 +1,7 @@
 /**
  * db-pacer.ts — composable DB-contention pacing primitive (paced-backfill internals).
  *
- * gbrain's bulk write paths (embed --stale, sync) can saturate a PgBouncer
+ * foresights's bulk write paths (embed --stale, sync) can saturate a PgBouncer
  * transaction-mode pooler and starve the minion supervisor's lock renewals.
  * An operator's external SIGSTOP/SIGCONT wrapper proved the idea but was blind
  * (out-of-band probe pool), unsafe (froze the child mid-transaction), and

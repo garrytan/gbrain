@@ -50,7 +50,7 @@ async function cli(args: string[], home: string, extra: Record<string, string> =
   const killer = setTimeout(() => { try { proc.kill(9); } catch { /* exited */ } }, 120_000);
   try {
     const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
-    if (exitCode !== 0) console.error(`--- gbrain ${args.join(' ')} (exit ${exitCode}) ---\n${stdout}\n${stderr}`);
+    if (exitCode !== 0) console.error(`--- foresights ${args.join(' ')} (exit ${exitCode}) ---\n${stdout}\n${stderr}`);
     return { stdout, stderr, exitCode };
   } finally {
     clearTimeout(killer);

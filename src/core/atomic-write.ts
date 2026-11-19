@@ -79,7 +79,7 @@ function createPrivateDir(dir: string): void {
 /**
  * Create `dir` for gbrain-private files. A missing `root` is created with
  * default-permission ancestors and only `root` itself made exactly 0700 (past
- * the umask); each missing directory between `root` and `dir` is gbrain's own
+ * the umask); each missing directory between `root` and `dir` is foresights's own
  * layout and is created 0700 too. A directory that already exists, which may
  * be one the user chose, is never chmod-ed.
  */

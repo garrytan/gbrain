@@ -28,7 +28,7 @@
  * and content_only beside it are set aside; body 'none' or 'outline' beside it
  * is refused); otherwise an explicit `body` wins; without it include_content
  * or content_only mean 'full' (content_only keeps the round-trip shape),
- * gbrain's thin client means 'full' (an older thin
+ * foresights's thin client means 'full' (an older thin
  * client renders compiled_truth as the whole page), a trusted local read means
  * 'full', anything else 'auto'.
  */
@@ -118,7 +118,7 @@ export interface BodyRequest {
   maxBytes?: number;
   contextLines: number;
   outlineFrom: number;
-  /** The caller named no mode and is gbrain's thin client (full or refused, never a window). */
+  /** The caller named no mode and is foresights's thin client (full or refused, never a window). */
   legacyThin: boolean;
   /** section or grep (#7180): one part of the read view instead of a window. */
   slice?: SliceRequest;
@@ -239,7 +239,7 @@ export async function assertFullReadFits(ctx: OperationContext, page: Pick<Page,
   throw opError('page_too_large_for_inline',
     `Page ${page.slug} is too large to return whole on this connection (about ${frame} bytes encoded; the cap is ${cap}).`,
     req.legacyThin
-      ? 'This gbrain CLI is older than the host and reads pages whole. Upgrade it (gbrain upgrade) to page through large pages, or read windows over MCP with get_page body: \'window\'.'
+      ? 'This foresights CLI is older than the host and reads pages whole. Upgrade it (foresights upgrade) to page through large pages, or read windows over MCP with get_page body: \'window\'.'
       : "Read it in windows: get_page body: 'outline' lists the sections, then body: 'window' with lines, bytes, around_chunk_id or next_cursor. Edit with edit_page (revision from body: 'none').",
     { legacy_error: 'invalid_params', detail: JSON.stringify({ total_bytes: raw, result_bytes: frame, max_result_bytes: cap, transport, config_key: EGRESS_CAP_CONFIG_KEYS[transport] }),
       fix: sizeFix(page.slug, page.source_id, "Returns the page's size, revision and outline; each entry names the lines to read with body: 'window'.") });
@@ -247,7 +247,7 @@ export async function assertFullReadFits(ctx: OperationContext, page: Pick<Page,
 
 /**
  * A segmented page is never built whole (spec 7.2). Every caller gets page_body_segmented with a fix that reads it in
- * pieces (body: 'auto' gives the outline and the first window), and a trusted local `gbrain get` answers it by
+ * pieces (body: 'auto' gives the outline and the first window), and a trusted local `foresights get` answers it by
  * streaming the page. The thin client's whole-page read keeps page_too_large_for_inline: that is its paging signal
  * (it pages view: 'markdown' to the end), refused before any window is read. A remote caller is told the size of the
  * read projection (as an inline page reports its privacy-stripped body), never the stored body_bytes, whose difference
@@ -264,7 +264,7 @@ export async function segmentedFullReadError(ctx: OperationContext, page: Page, 
   const fix = segmentedReadFix(page.slug, page.source_id);
   if (ctx.remote === false) {
     return opError('page_body_segmented', `get_page: page ${page.slug} (source ${page.source_id}) stores its ${total}-byte body in segments; it is not returned as one string.`,
-      `${windows} gbrain get (no --body) prints it whole, streamed.`, { fix });
+      `${windows} foresights get (no --body) prints it whole, streamed.`, { fix });
   }
   const transport = egressTransport(ctx)!;
   const detail = JSON.stringify({ total_bytes: total, body_storage: 'segmented', transport });
@@ -274,7 +274,7 @@ export async function segmentedFullReadError(ctx: OperationContext, page: Page, 
   }
   return opError('page_too_large_for_inline', `Page ${page.slug} is stored in segments (${total} bytes) and is never returned whole on this connection.`,
     req.legacyThin
-      ? 'This gbrain CLI is older than the host and reads pages whole. Upgrade it (gbrain upgrade) to page through large pages, or read windows over MCP with get_page body: \'window\'.'
+      ? 'This foresights CLI is older than the host and reads pages whole. Upgrade it (foresights upgrade) to page through large pages, or read windows over MCP with get_page body: \'window\'.'
       : `${windows} Edit with edit_page (revision from body: 'none').`,
     { legacy_error: 'invalid_params', detail,
       fix: sizeFix(page.slug, page.source_id, "Returns the page's size, revision and outline; each entry names the lines to read with body: 'window'.") });

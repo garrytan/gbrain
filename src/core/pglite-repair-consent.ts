@@ -1,9 +1,9 @@
 /**
- * The consent shape of `gbrain pglite-repair` (agent operator contract v1,
+ * The consent shape of `foresights pglite-repair` (agent operator contract v1,
  * A4/C2), shared by the command itself and by the repair-failed gate in
  * `PGLiteEngine.connect()`: the same plan (data dir, WAL segments, stale
  * postmaster.pid) and plan_hash, so the fix the gate prints
- * (`gbrain pglite-repair --yes --expect <plan_hash>`) is exactly the command
+ * (`foresights pglite-repair --yes --expect <plan_hash>`) is exactly the command
  * the repair accepts once the user agrees.
  */
 import { buildConsentRefusal, computePlanHash, type ConsentRefusal, type PlanSelection } from './consent.ts';
@@ -55,12 +55,12 @@ export function repairFailedRefusal(dataDir: string, marker: RepairFailedMarker,
     effects: ['destructive'],
     actor: 'agent',
     what: `Opening the damaged PGLite brain at ${dataDir}`,
-    why: `gbrain's automatic WAL repair of this brain failed${when} (${marker.repair}${detail || marker.detail ? `: ${(detail ?? marker.detail)!.split('\n')[0]}` : ''}), `
+    why: `foresights's automatic WAL repair of this brain failed${when} (${marker.repair}${detail || marker.detail ? `: ${(detail ?? marker.detail)!.split('\n')[0]}` : ''}), `
       + `so every command now refuses to open it and nothing writes to it until the user decides how to recover.${backup} ${HANDS_OFF_BRAIN_FILES}`,
     risk: `The repair rewrites the brain's write-ahead log. ${WAL_REPAIR_RISK} If the damage is in the catalog, WAL repair may not be enough; `
-      + 'the other recoveries (restoring a backup the user has, or `gbrain reinit-pglite`, which rebuilds the brain and can lose database-only pages and facts) are also the user\'s decision.',
-    user_message: `Your gbrain brain at ${dataDir} is damaged and gbrain's automatic repair did not fix it, so gbrain has stopped opening it to keep it from getting worse. `
-      + 'I can run gbrain\'s repair (it keeps a backup, but changes from just before the crash may be lost), or you can restore it from a backup you have. '
+      + 'the other recoveries (restoring a backup the user has, or `foresights reinit-pglite`, which rebuilds the brain and can lose database-only pages and facts) are also the user\'s decision.',
+    user_message: `Your foresights brain at ${dataDir} is damaged and foresights's automatic repair did not fix it, so foresights has stopped opening it to keep it from getting worse. `
+      + 'I can run foresights\'s repair (it keeps a backup, but changes from just before the crash may be lost), or you can restore it from a backup you have. '
       + 'I won\'t copy, move or edit the brain files myself. Which do you want?',
     argv: ['gbrain', 'pglite-repair', ...path],
     preview_argv: ['gbrain', 'pglite-repair', ...path, '--dry-run', '--json'],

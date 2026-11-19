@@ -10,14 +10,14 @@
 # rot and never point at an unreviewed branch head. This guard keeps the two
 # public entry documents on that contract:
 #
-#   1. Every raw.githubusercontent.com/garrytan/gbrain/<ref>/<path> reference
+#   1. Every raw.githubusercontent.com/aimonk2025/gbrain/<ref>/<path> reference
 #      in README.md and BOOTSTRAP_FOR_AGENTS.md uses <ref> = stable.
 #      Carve-out: <path> = INSTALL_FOR_AGENTS.md — that is the pre-bootstrap
 #      OpenClaw/Hermes headline install path with its own (master) contract,
 #      outside the bootstrap ref rule.
-#   2. Every explicit `github:garrytan/gbrain#<ref>` install pin in those
+#   2. Every explicit `github:aimonk2025/gbrain#<ref>` install pin in those
 #      files is #stable — no v-prefixed pins, no branch refs
-#      (master/main). The historical un-pinned `github:garrytan/gbrain`
+#      (master/main). The historical un-pinned `github:aimonk2025/gbrain`
 #      quick-start form is tolerated (it predates bootstrap and is owned by
 #      the README task).
 #   3. BOOTSTRAP_FOR_AGENTS.md embeds `<!-- gbrain-runbook-stamp: X.Y.Z.W -->`
@@ -45,8 +45,8 @@ SANCTIONED=$(sed -n "s/^export const INSTALL_REF = '\(.*\)';$/\1/p" "$(cd "$(dir
 
 # URL terminators: whitespace, ), <, >, ", ', backtick. Built by concatenation
 # so the single quote and backtick stay literal.
-RAW_URL_RE='raw\.githubusercontent\.com/garrytan/gbrain/[^/[:space:]]+/[^[:space:])<>"'\''`]*'
-PIN_RE='github:garrytan/gbrain#[0-9A-Za-z._/-]+'
+RAW_URL_RE='raw\.githubusercontent\.com/aimonk2025/gbrain/[^/[:space:]]+/[^[:space:])<>"'\''`]*'
+PIN_RE='github:aimonk2025/gbrain#[0-9A-Za-z._/-]+'
 
 fail=0
 checked=0
@@ -63,7 +63,7 @@ for rel in README.md BOOTSTRAP_FOR_AGENTS.md; do
   raw_refs=$(grep -oE "$RAW_URL_RE" "$f" | LC_ALL=C sort -u || true)
   while IFS= read -r u; do
     [ -n "$u" ] || continue
-    rest="${u#raw.githubusercontent.com/garrytan/gbrain/}"
+    rest="${u#raw.githubusercontent.com/aimonk2025/gbrain/}"
     ref="${rest%%/*}"
     path="${rest#*/}"
     [ "$ref" = "$SANCTIONED" ] && continue
@@ -78,11 +78,11 @@ for rel in README.md BOOTSTRAP_FOR_AGENTS.md; do
   pins=$(grep -oE "$PIN_RE" "$f" | LC_ALL=C sort -u || true)
   while IFS= read -r p; do
     [ -n "$p" ] || continue
-    ref="${p#github:garrytan/gbrain#}"
+    ref="${p#github:aimonk2025/gbrain#}"
     if [ "$ref" != "$SANCTIONED" ]; then
       fail=1
       echo "FAIL: $rel pins the install to '#$ref' ($p)." >&2
-      echo "      The only sanctioned install pin is github:garrytan/gbrain#$SANCTIONED." >&2
+      echo "      The only sanctioned install pin is github:aimonk2025/gbrain#$SANCTIONED." >&2
     fi
   done <<< "$pins"
 done
@@ -111,9 +111,9 @@ if [ -f "$runbook" ]; then
 fi
 
 # ── Rule 4: plugin marketplace refs pin a sanctioned ref ─────────────────────
-# `codex plugin marketplace add garrytan/gbrain@<ref>` in docs must use the
+# `codex plugin marketplace add aimonk2025/gbrain@<ref>` in docs must use the
 # stable channel (@stable) or the slim dist branch (@codex-plugin).
-# The @-less form (`plugin marketplace add garrytan/gbrain`) is deliberately
+# The @-less form (`plugin marketplace add aimonk2025/gbrain`) is deliberately
 # OUT of scope: Claude Code marketplace adds have no ref pin syntax, so the
 # Claude lane documents the bare form and installs the repo default branch —
 # a recorded decision, not a gate hole. Codex docs headline the pinned form.
@@ -123,12 +123,12 @@ while IFS=: read -r file line match; do
     "$SANCTIONED"|codex-plugin) ;;
     *)
       fail=1
-      echo "FAIL: $file:$line pins 'marketplace add garrytan/gbrain@$ref' — use @$SANCTIONED or @codex-plugin." >&2
+      echo "FAIL: $file:$line pins 'marketplace add aimonk2025/gbrain@$ref' — use @$SANCTIONED or @codex-plugin." >&2
       ;;
   esac
-done < <(grep -RInE 'plugin marketplace add garrytan/gbrain@[A-Za-z0-9._-]+' \
+done < <(grep -RInE 'plugin marketplace add aimonk2025/gbrain@[A-Za-z0-9._-]+' \
   "$ROOT/README.md" "$ROOT/BOOTSTRAP_FOR_AGENTS.md" "$ROOT/INSTALL_FOR_AGENTS.md" "$ROOT/docs" 2>/dev/null \
-  | sed -E 's/^([^:]+):([0-9]+):.*(plugin marketplace add garrytan\/gbrain@[A-Za-z0-9._-]+).*/\1:\2:\3/' || true)
+  | sed -E 's/^([^:]+):([0-9]+):.*(plugin marketplace add aimonk2025\/gbrain@[A-Za-z0-9._-]+).*/\1:\2:\3/' || true)
 
 if [ "$fail" -ne 0 ]; then
   exit 1

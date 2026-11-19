@@ -1,5 +1,5 @@
 /**
- * Synthetic brain for the batched `gbrain extract all --source db` walk
+ * Synthetic brain for the batched `foresights extract all --source db` walk
  * (GBRA-69): enough pages for several 100-page batches across two sources,
  * with every derived row the walk writes (markdown, wikilink and typed links,
  * meeting attendance, stated relation lines with validity ranges, dated
@@ -125,7 +125,7 @@ export async function extractDbState(engine: BrainEngine): Promise<Record<string
   return state;
 }
 
-/** `gbrain extract <args>` in process: the parsed --json result and the exit verdict. */
+/** `foresights extract <args>` in process: the parsed --json result and the exit verdict. */
 export async function runExtractJson(engine: BrainEngine, args: string[]): Promise<{ result: unknown; exitCode: number }> {
   const out: string[] = [];
   const log = console.log;

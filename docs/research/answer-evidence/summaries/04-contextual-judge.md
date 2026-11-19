@@ -8,7 +8,7 @@ refusal, faithfulness, completeness and conciseness. The main metric is
 consistent accuracy: a judge must pick the correct response in both orders of
 the pair. Random selection scores 25% under this rule. The best reported model,
 o1, reaches 55.3%; that number is not ordinary one-pass accuracy and does not
-mean the GBrain grader mislabels 44.7% of answers.
+mean the Foresights grader mislabels 44.7% of answers.
 
 The study is relevant because an answer can sound polished while missing a
 necessary qualification or declining a question that the context can answer.
@@ -16,7 +16,7 @@ Judging those distinctions is itself a reasoning task. But the benchmark's
 constructed pairs, ordered criteria and pairwise setup differ from our
 reference-based LongMemEval grading.
 
-For the next GBrain experiment, retain raw judgments and inspect changed
+For the next Foresights experiment, retain raw judgments and inspect changed
 outcomes against the source. Blind manual checks to the treatment label, and
 report any adjudication separately. An identical-prompt repeatability sample
 helps distinguish reading/judging noise from a formatting effect. This paper

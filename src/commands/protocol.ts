@@ -1,12 +1,12 @@
 /**
- * MEMORY_VERBS v1 — `gbrain protocol` (Cathedral 1, E2 + E4 + D6C).
+ * MEMORY_VERBS v1 — `foresights protocol` (Cathedral 1, E2 + E4 + D6C).
  *
- *   gbrain protocol [--json]            machine-readable verb schemas + version
- *   gbrain protocol conformance [...]   certify an MCP endpoint against the contract
- *   gbrain protocol stats [--days N]    local verb usage + TTHW (never uploaded)
+ *   foresights protocol [--json]            machine-readable verb schemas + version
+ *   foresights protocol conformance [...]   certify an MCP endpoint against the contract
+ *   foresights protocol stats [--days N]    local verb usage + TTHW (never uploaded)
  *
  * Conformance targets:
- *   (default)                     spawn gbrain's own stdio server (self-certify)
+ *   (default)                     spawn foresights's own stdio server (self-certify)
  *   --target http://host/mcp      Streamable HTTP endpoint [--token gbrain_xxx]
  *   --target "cmd arg arg"        spawn any stdio MCP server (space-split; for
  *                                 commands with complex quoting, certify via a
@@ -32,14 +32,14 @@ import { readVerbUsage, earliestVerbUsageTs, usageLogPath } from '../core/verbs/
 import { loadConfig } from '../core/config.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 
-const HELP = `gbrain protocol — the MEMORY_VERBS v1 wire contract (frozen, additive-forever)
+const HELP = `foresights protocol — the MEMORY_VERBS v1 wire contract (frozen, additive-forever)
 
 Usage:
-  gbrain protocol [--json]              Print the protocol: verb input schemas
+  foresights protocol [--json]              Print the protocol: verb input schemas
                                         (from live defs), response schemas, error
                                         contract, version. --json for machines.
-  gbrain protocol conformance           Certify an MCP endpoint against the
-                                        contract. Default target: gbrain's own
+  foresights protocol conformance           Certify an MCP endpoint against the
+                                        contract. Default target: foresights's own
                                         stdio server (self-certification).
     --target http://host:3131/mcp       HTTP MCP endpoint (add --token gbrain_xxx)
     --target "bun run src/cli.ts serve" Any stdio MCP server command
@@ -48,14 +48,14 @@ Usage:
                                         one it asserts the clean 'unavailable'
                                         error — what CI does)
     --json                              Machine-readable report
-  gbrain protocol stats [--days N]      Per-verb usage, error rate, budget drops,
+  foresights protocol stats [--days N]      Per-verb usage, error rate, budget drops,
                                         entity hit rate, TTHW (install -> first
                                         verb call). Local JSONL only — this data
                                         never leaves the machine. Default 30 days.
 
 Docs: docs/protocol/MEMORY_VERBS_v1.md
 Why default surface is 'full': verbs is for agents and quickstarts
-(gbrain serve --surface verbs); full preserves existing advanced tooling.`;
+(foresights serve --surface verbs); full preserves existing advanced tooling.`;
 
 export async function runProtocol(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
@@ -123,7 +123,7 @@ function printProtocol(json: boolean): void {
     console.log(`  ${name}(${params})`);
     console.log(`      ${op.description.split('. ')[0]}.`);
   }
-  console.log(`\nFull schemas: gbrain protocol --json`);
+  console.log(`\nFull schemas: foresights protocol --json`);
   console.log(`Doc: docs/protocol/MEMORY_VERBS_v1.md`);
 }
 
@@ -158,7 +158,7 @@ async function runConformanceCommand(args: string[]): Promise<void> {
       cmdArgs = parts.slice(1);
     } else {
       // Self-certification: spawn our own server. Dev (bun run src/cli.ts)
-      // vs compiled binary both resolve to "this gbrain, serve".
+      // vs compiled binary both resolve to "this foresights, serve".
       const entry = process.argv[1] ?? '';
       if (entry.endsWith('.ts')) {
         command = process.execPath;

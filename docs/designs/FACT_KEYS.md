@@ -5,7 +5,7 @@ ships.** Fact keys under `balanced` did not beat `tokenmax` synopses on the
 LoCoMo development conversations, which the gate requires, and did not beat
 `balanced` there either. The full build described below (migration v209
 `page_fact_keys` + `content_chunks.fact_keys`, publication, retirement,
-withdrawal discovery, `gbrain fact-keys`, doctor `retrieval_enrichment`) is
+withdrawal discovery, `foresights fact-keys`, doctor `retrieval_enrichment`) is
 preserved in branch history at `5024ec99f4f591227d12b39b38e304d3255de2c5`.
 Results and the decision record:
 [`docs/eval/TIME_AWARE_RETRIEVAL_RESULTS.md`](../eval/TIME_AWARE_RETRIEVAL_RESULTS.md),
@@ -39,10 +39,10 @@ This note covers obligations 1–9 from the preregistered plan
   matches any subject-scoped withdrawal) and sends them down the existing
   delete-and-rebuild path. The rebuild runs under a new revision, so the
   page's other keys are retired too until its next extraction.
-- **Disable and recovery are commands.** `gbrain fact-keys clear` strips keys
+- **Disable and recovery are commands.** `foresights fact-keys clear` strips keys
   page by page with the same prepare-then-swap (re-embed without keys, then
-  swap), whatever the setting says. `gbrain fact-keys refresh` re-runs facts
-  extraction for eligible pages without current keys. `gbrain fact-keys status`
+  swap), whatever the setting says. `foresights fact-keys refresh` re-runs facts
+  extraction for eligible pages without current keys. `foresights fact-keys status`
   and doctor's `retrieval_enrichment` report coverage and leftovers.
 - **Extraction lanes.** Keys come from the extractor's output for that lane.
   `put_page` and capture lanes extract every notability tier. Git sync asks
@@ -53,7 +53,7 @@ This note covers obligations 1–9 from the preregistered plan
 
 ## What it does
 
-gbrain already extracts facts when an eligible page is written
+foresights already extracts facts when an eligible page is written
 (`facts/backstop.ts`; on by default, `facts/extract.ts`
 `isFactsExtractionEnabled`; eligibility in `facts/eligibility.ts`). Fact keys
 take the extractor's output for the current revision of a page and place each
@@ -78,10 +78,10 @@ All numbers come from development data. Held-out verdicts set the default.
 |---|---:|---:|
 | baseline | 450/470 | 367/470 |
 | chunk keys, published user-fact prompt | 451/470 | 383/470 (+3.4 pts, CI [+1.5, +5.5]) |
-| chunk keys, gbrain's extractor as shipped (Haiku 4.5 pinned) | 452/470 | 381/468 vs 366 (+3.2 pts, CI [+1.3, +5.1]) |
+| chunk keys, foresights's extractor as shipped (Haiku 4.5 pinned) | 452/470 | 381/468 vs 366 (+3.2 pts, CI [+1.3, +5.1]) |
 | page keys (every fact on every chunk) | 435/470 (rejected) | — |
 
-On M, gbrain's own extractor can't be told apart from the published prompt
+On M, foresights's own extractor can't be told apart from the published prompt
 (−0.2 pts, CI [−2.1, +1.7]), so keys reuse the extraction the backstop already
 pays for. The preregistered comparison against `tokenmax` synopses has **not**
 run, so the development gate is incomplete (open question 1).
@@ -228,7 +228,7 @@ so atomicity with them adds nothing.
   is `world` (`facts/visibility.ts`). The single-principal posture that
   bootstrap configures sets it to `world`. Under the fail-closed default, a
   world page gets no keys from private facts, and doctor reports that
-  coverage gap with its fix (`gbrain config set facts.default_visibility
+  coverage gap with its fix (`foresights config set facts.default_visibility
   world`, which needs the user's agreement). The alternative policy is
   open question 4.
 
@@ -274,7 +274,7 @@ retrieval when the withdrawal commits. The page's own prose is unchanged.
   vectors, and keyed-coverage counts report it as unkeyed. The failure is
   returned in the backstop result (`fact_keys: {published: false, reason}`)
   and counted in doctor's `retrieval_enrichment` check along with the
-  recovery command, `gbrain fact-keys refresh --page <slug>`. No vector is
+  recovery command, `foresights fact-keys refresh --page <slug>`. No vector is
   ever nulled in this path.
 - **Removal invalidates synchronously and rebuilds on existing durable
   paths.** Withdrawal already deletes the affected pages' chunks and queues
@@ -311,8 +311,8 @@ recomputed from the row at install time. Fact keys change this:
   then swaps them in and deletes the rows under the page lock, the same
   prepare-then-swap as publication. Keyed vectors are therefore never left
   null. The sweep is
-  idempotent and resumable. If it's interrupted, rerunning `gbrain config set
-  search.fact_keys off` or `gbrain doctor --fix` finishes it, and doctor flags
+  idempotent and resumable. If it's interrupted, rerunning `foresights config set
+  search.fact_keys off` or `foresights doctor --fix` finishes it, and doctor flags
   rows that remain while the setting is off. Publication reads the setting
   after taking the page lock, so a publication that runs behind the sweep sees
   `off`.
@@ -388,7 +388,7 @@ Doctor check `retrieval_enrichment` reports keyed pages and eligible but
 unkeyed pages, grouped by reason: protected, visibility, `embed_skip`, no
 extraction yet, or failed publication. Each group comes with its fix command.
 
-`gbrain fact-keys refresh [--page <slug> | --source <id>] [--max-usd <n>]
+`foresights fact-keys refresh [--page <slug> | --source <id>] [--max-usd <n>]
 [--dry-run] [--json]` is a new CLI-only command and adds no new op. For eligible
 pages without keys, it re-runs extraction and publication through the spend
 gate. It serves as both the recovery command and the backfill command. It's a

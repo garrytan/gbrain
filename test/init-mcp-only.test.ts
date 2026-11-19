@@ -1,5 +1,5 @@
 /**
- * Tests for `gbrain init --mcp-only` — thin-client setup branch.
+ * Tests for `foresights init --mcp-only` — thin-client setup branch.
  *
  * Strategy: subprocess invocation against a tiny in-process HTTP server that
  * mimics the host's OAuth + /mcp endpoints. Subprocess because runInit calls
@@ -126,7 +126,7 @@ async function run(args: string[], extraEnv: Record<string, string | undefined> 
 
 function configPath(): string { return join(tmp, '.gbrain', 'config.json'); }
 
-describe('gbrain init --mcp-only — happy path', () => {
+describe('foresights init --mcp-only — happy path', () => {
   test('writes remote_mcp config and creates NO local DB', async () => {
     const r = await run([
       'init', '--mcp-only', '--json',
@@ -184,7 +184,7 @@ describe('gbrain init --mcp-only — happy path', () => {
   });
 });
 
-describe('gbrain init --mcp-only — required-flag errors', () => {
+describe('foresights init --mcp-only — required-flag errors', () => {
   test('missing --issuer-url exits 2 (usage) with clear error', async () => {
     const r = await run([
       'init', '--mcp-only', '--json',
@@ -234,7 +234,7 @@ describe('gbrain init --mcp-only — required-flag errors', () => {
   });
 });
 
-describe('gbrain init --mcp-only — pre-flight smoke failures', () => {
+describe('foresights init --mcp-only — pre-flight smoke failures', () => {
   test('discovery 404 → exits 1 with discovery_http reason', async () => {
     discoveryStatus = 404;
     const r = await run([
@@ -313,7 +313,7 @@ describe('gbrain init --mcp-only — pre-flight smoke failures', () => {
   });
 });
 
-describe('gbrain init re-run guard', () => {
+describe('foresights init re-run guard', () => {
   const remoteArgs = () => ['init', '--mcp-only', '--json', '--issuer-url', `http://127.0.0.1:${port}`, '--mcp-url', `http://127.0.0.1:${port}/mcp`, '--oauth-client-id', 'fixture-client', '--oauth-client-secret', 'fixture-secret'];
 
   test('local brain requires explicit conversion and preserves both config and data', async () => {
@@ -357,7 +357,7 @@ describe('gbrain init re-run guard', () => {
     }, null, 2));
   }
 
-  test('default `gbrain init` (no flags) refuses when remote_mcp is set', async () => {
+  test('default `foresights init` (no flags) refuses when remote_mcp is set', async () => {
     seedThinClientConfig();
     const r = await run(['init', '--json', '--non-interactive']);
     expect(r.exitCode).toBe(1);
@@ -366,7 +366,7 @@ describe('gbrain init re-run guard', () => {
     expect(parsed.mcp_url).toBe('https://existing.example/mcp');
   });
 
-  test('`gbrain init --pglite` refuses when remote_mcp is set', async () => {
+  test('`foresights init --pglite` refuses when remote_mcp is set', async () => {
     seedThinClientConfig();
     const r = await run(['init', '--pglite', '--json', '--non-interactive']);
     expect(r.exitCode).toBe(1);
@@ -374,7 +374,7 @@ describe('gbrain init re-run guard', () => {
     expect(parsed.reason).toBe('thin_client_config_present');
   });
 
-  test('`gbrain init --mcp-only` (no --force) refuses when remote_mcp is already set', async () => {
+  test('`foresights init --mcp-only` (no --force) refuses when remote_mcp is already set', async () => {
     seedThinClientConfig();
     const r = await run([
       'init', '--mcp-only', '--json',
@@ -391,7 +391,7 @@ describe('gbrain init re-run guard', () => {
     expect(cfg.remote_mcp.oauth_client_id).toBe('old-cid');
   });
 
-  test('`gbrain init --mcp-only --force` overwrites existing thin-client config', async () => {
+  test('`foresights init --mcp-only --force` overwrites existing thin-client config', async () => {
     seedThinClientConfig();
     const r = await run([
       'init', '--mcp-only', '--force', '--json',

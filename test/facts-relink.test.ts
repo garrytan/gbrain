@@ -1,5 +1,5 @@
 /**
- * #5836 — `gbrain facts relink`: unlinked facts move by id onto the entity
+ * #5836 — `foresights facts relink`: unlinked facts move by id onto the entity
  * page's fence through the write coordinator; duplicates retire, nothing is
  * superseded, withdrawn claims stay off, fence-owned rows are untouched, dry
  * runs write nothing, and the model tier is memoized, capped and verified.

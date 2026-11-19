@@ -24,8 +24,8 @@ export async function extractorFactsCheck(engine: BrainEngine, sourceIds?: strin
     return { name: 'extractor_facts_expired', status: 'warn', details,
       message: `${details.evidenced + details.ambiguous} conversation-extractor fact(s) were expired by the pre-v0.60.11.0 canonical projection `
         + `(${details.evidenced} with receipt evidence, ${details.ambiguous} ambiguous); recall no longer returns them. `
-        + 'Preview the restore on the brain host: gbrain repair extractor-facts — then run the apply command it prints after the user agrees '
-        + '(ambiguous rows only with gbrain repair extractor-facts --include-ambiguous).' };
+        + 'Preview the restore on the brain host: foresights repair extractor-facts — then run the apply command it prints after the user agrees '
+        + '(ambiguous rows only with foresights repair extractor-facts --include-ambiguous).' };
   } catch (error) {
     return { name: 'extractor_facts_expired', status: 'warn',
       message: `Expired extractor facts could not be inspected: ${error instanceof Error ? error.message : String(error)}. Health is unknown.`,

@@ -2,16 +2,16 @@
  * S9 sweep: judges facts written since the per-source watermark against
  * their nearest eligible neighbours, one packed `choice` request per fact.
  * Runs as the tail of the extract_facts cycle phase (only when the slot is
- * not off) and on demand (`gbrain decide sweep --slot conflict`). The fact
+ * not off) and on demand (`foresights decide sweep --slot conflict`). The fact
  * write path stays zero-LLM and unchanged; the sweep never supersedes
  * anything: `supersede` answers at or above the proposal floor become pending
  * decide_proposals rows in `on` mode (receipts only in shadow), reviewed with
- * `gbrain decide proposals`.
+ * `foresights decide proposals`.
  *
  * Scope: the first run records the current max fact id and sweeps nothing
  * unless `since` is given. The watermark only advances past facts created
  * more than 60 s ago. Transient skips (no embedding, provider failure) go to
- * decide_sweep_deferred and are retried with an attempt cap; `gbrain facts
+ * decide_sweep_deferred and are retried with an attempt cap; `foresights facts
  * relink` queues facts that just gained an entity there too (enqueueRelinked).
  * A pair is always presented newer fact first (valid_from, then created_at),
  * so a relinked older fact never becomes the claim that retires a newer one.

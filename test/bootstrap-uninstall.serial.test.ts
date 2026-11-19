@@ -40,7 +40,7 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-/** A realistic gbrain home: global config, a brain, clones, foreign files,
+/** A realistic foresights home: global config, a brain, clones, foreign files,
  * bootstrap telemetry, and one bootstrap-created path (hook wiring). */
 function seedHome(receiptOverrides: Partial<InstallReceipt> = {}): { hooksDir: string; receipt: InstallReceipt } {
   writeFileSync(join(home, 'config.json'), JSON.stringify({ engine: 'pglite', database_path: join(home, 'brain.pglite') }), 'utf8');
@@ -63,7 +63,7 @@ function seedHome(receiptOverrides: Partial<InstallReceipt> = {}): { hooksDir: s
     created_by: '0.0.0-test',
     brain_created_by_bootstrap: false,
     created_paths: [hooksDir],
-    registrations: [{ host: 'claude-code', scope: 'project', detail: 'mcp gbrain' }],
+    registrations: [{ host: 'claude-code', scope: 'project', detail: 'mcp foresights' }],
     ...receiptOverrides,
   };
   writeReceipt(home, receipt);
@@ -99,7 +99,7 @@ describe('uninstallWorkspace', () => {
     expect(result.receipt_removed).toBe(true);
     expect(result.brain_deleted).toBe(false);
     // Host registrations come back as structured removal requests.
-    expect(result.registration_removals).toEqual([{ host: 'claude-code', scope: 'project', detail: 'mcp gbrain' }]);
+    expect(result.registration_removals).toEqual([{ host: 'claude-code', scope: 'project', detail: 'mcp foresights' }]);
   });
 
   test('no receipt → NO_RECEIPT refusal ("nothing bootstrap-created on this machine")', async () => {
@@ -405,7 +405,7 @@ describe('probeLivePgliteHolder', () => {
     mkdirSync(join(dataDir, '.gbrain-lock'), { recursive: true });
     writeFileSync(
       join(dataDir, '.gbrain-lock', 'lock'),
-      JSON.stringify({ pid: process.pid, command: 'gbrain serve', pid_ns: readPidNs(), boot_id: readBootId() }),
+      JSON.stringify({ pid: process.pid, command: 'foresights serve', pid_ns: readPidNs(), boot_id: readBootId() }),
       'utf8',
     );
     expect(probeLivePgliteHolder(dataDir)).toEqual({ pid: process.pid, serve: true, isSelf: true });

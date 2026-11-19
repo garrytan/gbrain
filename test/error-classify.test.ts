@@ -24,7 +24,7 @@ describe('classifyJobError', () => {
     expect(classifyJobError('')).toBe('unknown');
   });
 
-  test('rate_lease_full — gbrain internal', () => {
+  test('rate_lease_full — foresights internal', () => {
     expect(classifyJobError('rate lease "anthropic:messages" full (8/8)')).toBe('rate_lease_full');
     expect(classifyJobError('rate lease "openai:responses" full (32/32)')).toBe('rate_lease_full');
   });

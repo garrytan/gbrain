@@ -48,7 +48,7 @@ export class BackfillRollbackError extends GBrainError {
     super(
       `Backfill ${name} stopped: ROLLBACK of a failed batch also failed`,
       `batch error: ${brief(batchError)}; rollback error: ${brief(rollbackError)}`,
-      `gbrain backfill ${name} --resume`,
+      `foresights backfill ${name} --resume`,
       'docs/ENGINES.md#backfill-rollback-failed',
     );
     this.name = 'BackfillRollbackError';
@@ -68,7 +68,7 @@ export class BackfillCommitIndeterminateError extends GBrainError {
     super(
       `Backfill ${name} stopped: a batch COMMIT was sent but its outcome is unknown`,
       `commit error: ${brief(commitError)}; the checkpoint stays before the batch`,
-      `gbrain backfill ${name} --resume`,
+      `foresights backfill ${name} --resume`,
       'docs/ENGINES.md#backfill-commit-indeterminate',
     );
     this.name = 'BackfillCommitIndeterminateError';
@@ -367,7 +367,7 @@ export async function runBackfill<TRow = Record<string, unknown>>(
 
   try {
     // Rows recorded by earlier runs that still need the backfill are retried one at a time first;
-    // a held row is retried only once it or the gbrain version changed. Records of rows that landed or went away are dropped.
+    // a held row is retried only once it or the foresights version changed. Records of rows that landed or went away are dropped.
     const recorded = opts.dryRun ? [] : Object.keys(ledger.items).map(Number).filter(id => id <= lastId);
     for (let i = 0; i < recorded.length; i += 500) {
       const ids = recorded.slice(i, i + 500);

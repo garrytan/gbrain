@@ -1,24 +1,24 @@
 /**
  * turn-hook.ts — the per-turn brain-first rule on install paths that do not
- * run `gbrain setup`'s own hooks: `gbrain connect --install` (a remote brain),
- * `gbrain connect --harness … --install` (a hosted grant),
- * `gbrain bootstrap harness` (Codex, and Claude Code when its own hooks are off) and
- * `gbrain setup <claude-code|codex> --instructions-only` (a bare `mcp add`
- * registration gbrain did not write).
+ * run `foresights setup`'s own hooks: `foresights connect --install` (a remote brain),
+ * `foresights connect --harness … --install` (a hosted grant),
+ * `foresights bootstrap harness` (Codex, and Claude Code when its own hooks are off) and
+ * `foresights setup <claude-code|codex> --instructions-only` (a bare `mcp add`
+ * registration foresights did not write).
  *
- * Why: harness evals found the brain is used when "check gbrain first" reaches
+ * Why: harness evals found the brain is used when "check foresights first" reaches
  * the model on every turn (a per-turn hook: 80 of 80) and almost never when it
  * rides only the MCP tool list (2 of 99) or a startup file (0 of 80).
  *
  * The hook is one UserPromptSubmit entry running
- * `env GBRAIN_HOOK_LANE=turn-rule <launcher> <gbrain> hook user-prompt`, where
- * <launcher> starts gbrain from its own directory so the session directory's
+ * `env GBRAIN_HOOK_LANE=turn-rule <launcher> <foresights> hook user-prompt`, where
+ * <launcher> starts foresights from its own directory so the session directory's
  * bunfig.toml and .env never load (#8424, hook-launcher.ts). In that lane the
  * hook adds only the rule (read from the brain-first ledger, so an opt-out or
  * GBRAIN_AGENT_INSTRUCTIONS=0 silences it) and never reads local context: the
- * connection may point at another brain. It yields when another gbrain lane
+ * connection may point at another brain. It yields when another foresights lane
  * (setup, bootstrap) wires the same event, so a turn gets the rule once; a
- * gbrain plugin yields to it the same way.
+ * foresights plugin yields to it the same way.
  *
  * Ownership: Claude Code entries carry the `turn-rule-v1` marker, and the
  * command (lane token + `hook user-prompt`) identifies them when Claude Code
@@ -105,14 +105,14 @@ function claudePromptEntries(path: string): Array<Record<string, unknown>> {
     .filter((e): e is Record<string, unknown> => !!e && typeof e === 'object');
 }
 
-/** An entry another gbrain lane owns (setup, workspace bootstrap, bootstrap harness). A repo's committed settings.json counts only a command that parses as gbrain's hook, never a bare marker. */
+/** An entry another foresights lane owns (setup, workspace bootstrap, bootstrap harness). A repo's committed settings.json counts only a command that parses as foresights's hook, never a bare marker. */
 export function isOtherGbrainEntry(e: Record<string, unknown>, committed = false): boolean {
   if (isTurnRuleEntry(e) || isSkillResolverEntry(e)) return false;
   return (!committed && typeof e[GBRAIN_HOOK_MARKER_KEY] === 'string') || !!classifyHarnessHook(e, EVENT, 'any');
 }
 
 /**
- * Runtime dedupe for the turn-rule lane: another gbrain lane already wires
+ * Runtime dedupe for the turn-rule lane: another foresights lane already wires
  * UserPromptSubmit for this harness, and that hook adds the same rule.
  * Fail-open (an unreadable file counts as not wired).
  */
@@ -132,8 +132,8 @@ export function syncTurnRuleHook(opts: { harness: TurnRuleHarness; gbrainBin: st
   const paths = opts.paths ?? {};
   const where = opts.harness === 'codex' ? codexPaths(paths).hooks : claudePath(paths);
   const print = (why: string): TurnHookOutcome => ({ harness: opts.harness, action: 'print', path: where, detail: `per-turn rule hook not installed: ${why}`, next: opts.rerun });
-  if (!opts.gbrainBin || !(opts.gbrainBin.startsWith('/') || win32.isAbsolute(opts.gbrainBin))) return print('no absolute gbrain binary was found (harnesses inherit no PATH); install gbrain globally or pass --gbrain-bin');
-  if (opts.harness === 'codex' && !opts.gbrainBin.startsWith('/')) return print('Codex runs hook commands on Windows without a POSIX shell, so it cannot run gbrain\'s hook launcher');
+  if (!opts.gbrainBin || !(opts.gbrainBin.startsWith('/') || win32.isAbsolute(opts.gbrainBin))) return print('no absolute foresights binary was found (harnesses inherit no PATH); install foresights globally or pass --gbrain-bin');
+  if (opts.harness === 'codex' && !opts.gbrainBin.startsWith('/')) return print('Codex runs hook commands on Windows without a POSIX shell, so it cannot run foresights\'s hook launcher');
   try {
     const launcher = paths.hookLauncher ?? hookLauncherPath();
     // The launcher goes down first: a hook that names it must find it.
@@ -196,7 +196,7 @@ function syncCodex(bin: string, home: string | undefined, launcher: string, path
   const entry = codexSetupTrustEntry(paths.hooks, EVENT, index, group);
   const existing = readCodexTomlTable(paths.config, trustPath(entry.key)) as { trusted_hash?: unknown } | undefined;
   if (existing === undefined) appendCodexTomlTable(paths.config, trustPath(entry.key), { trusted_hash: entry.trusted_hash }, 'gbrain setup (turn-rule): trusts the per-turn brain-first rule hook; owned by its hash');
-  else if (existing.trusted_hash !== entry.trusted_hash) return print(`${paths.config} already has a different [hooks.state."${entry.key}"]; trust gbrain's UserPromptSubmit hook in Codex's /hooks`);
+  else if (existing.trusted_hash !== entry.trusted_hash) return print(`${paths.config} already has a different [hooks.state."${entry.key}"]; trust foresights's UserPromptSubmit hook in Codex's /hooks`);
   return { harness: 'codex', action: 'write', path: paths.hooks, detail };
 }
 

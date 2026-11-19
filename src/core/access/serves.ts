@@ -6,7 +6,7 @@
  * config access.serves_derived (migration v309), which a remote request reads
  * from its config snapshot (servesPolicyFrom); `since` is when the brain first
  * served several people, which starts the unscoped-read grace.
- * `gbrain setup <harness> --serves several` writes the explicit value; the
+ * `foresights setup <harness> --serves several` writes the explicit value; the
  * doctor checks and setup's refusal read it here. Everything lives in the
  * database, so a repo-less brain gets it unchanged.
  */

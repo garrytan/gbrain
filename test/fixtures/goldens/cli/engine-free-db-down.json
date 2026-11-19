@@ -132,7 +132,7 @@
         "reason: conn_refused (auto tier)  connect ECONNREFUSED  <REDACTED:ipv4>:1",
         "plan: bounded reconnect; if the server is down, start it and re-run",
         "Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port.",
-        "Apply: gbrain db-repair --yes"
+        "Apply: foresights db-repair --yes"
       ],
       "stdoutFirstLine": "GBRAIN_DB_ACCESS conn_refused",
       "url": "config"
@@ -143,9 +143,9 @@
       "stderr": [],
       "stderrFirstLine": null,
       "stdout": [
-        "{\"schema_version\":1,\"brain_id\":\"host\",\"reason\":\"conn_refused\",\"tier\":\"auto\",\"marker\":\"GBRAIN_DB_ACCESS conn_refused\",\"diagnosis\":{\"reason\":\"conn_refused\",\"transient\":true,\"message\":\"connect ECONNREFUSED  <REDACTED:ipv4>:1\",\"remediation\":\"Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port.\",\"brainId\":\"host\"},\"plan\":[\"bounded reconnect; if the server is down, start it and re-run\"],\"applied\":[],\"fixed\":false,\"remaining\":{\"reason\":\"conn_refused\",\"transient\":true,\"message\":\"connect ECONNREFUSED  <REDACTED:ipv4>:1\",\"remediation\":\"Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port.\",\"brainId\":\"host\"},\"error\":\"database_error\",\"code\":\"database_error\",\"message\":\"connect ECONNREFUSED  <REDACTED:ipv4>:1\",\"suggestion\":\"Apply the plan: gbrain db-repair --yes --brain host\",\"docs\":\"https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#database_error\",\"why\":\"Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port.\",\"fix\":{\"argv\":[\"gbrain\",\"db-repair\",\"--yes\",\"--brain\",\"host\"],\"command\":\"gbrain db-repair --yes --brain host\",\"consent\":[],\"actor\":\"agent\",\"next\":\"run\",\"why\":\"Applies the auto tier the plan names (bounded retries, pending migrations, CREATE EXTENSION vector, starting gbrain's own docker container).\",\"requires_exclusive\":false},\"docs_cmd\":[\"gbrain\",\"errors\",\"database_error\"],\"class\":\"server\",\"retryable\":false,\"contract_version\":1}"
+        "{\"schema_version\":1,\"brain_id\":\"host\",\"reason\":\"conn_refused\",\"tier\":\"auto\",\"marker\":\"GBRAIN_DB_ACCESS conn_refused\",\"diagnosis\":{\"reason\":\"conn_refused\",\"transient\":true,\"message\":\"connect ECONNREFUSED  <REDACTED:ipv4>:1\",\"remediation\":\"Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port.\",\"brainId\":\"host\"},\"plan\":[\"bounded reconnect; if the server is down, start it and re-run\"],\"applied\":[],\"fixed\":false,\"remaining\":{\"reason\":\"conn_refused\",\"transient\":true,\"message\":\"connect ECONNREFUSED  <REDACTED:ipv4>:1\",\"remediation\":\"Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port.\",\"brainId\":\"host\"},\"error\":\"database_error\",\"code\":\"database_error\",\"message\":\"connect ECONNREFUSED  <REDACTED:ipv4>:1\",\"suggestion\":\"Apply the plan: foresights db-repair --yes --brain host\",\"docs\":\"https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#database_error\",\"why\":\"Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port.\",\"fix\":{\"argv\":[\"gbrain\",\"db-repair\",\"--yes\",\"--brain\",\"host\"],\"command\":\"foresights db-repair --yes --brain host\",\"consent\":[],\"actor\":\"agent\",\"next\":\"run\",\"why\":\"Applies the auto tier the plan names (bounded retries, pending migrations, CREATE EXTENSION vector, starting foresights's own docker container).\",\"requires_exclusive\":false},\"docs_cmd\":[\"gbrain\",\"errors\",\"database_error\"],\"class\":\"server\",\"retryable\":false,\"contract_version\":1}"
       ],
-      "stdoutFirstLine": "{\"schema_version\":1,\"brain_id\":\"host\",\"reason\":\"conn_refused\",\"tier\":\"auto\",\"marker\":\"GBRAIN_DB_ACCESS conn_refused\",\"diagnosis\":{\"reason\":\"conn_refused\",\"transient\":true,\"message\":\"connect ECONNREFUSED  <REDACTED:ipv4>:1\",\"remediation\":\"Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port.\",\"brainId\":\"host\"},\"plan\":[\"bounded reconnect; if the server is down, start it and re-run\"],\"applied\":[],\"fixed\":false,\"remaining\":{\"reason\":\"conn_refused\",\"transient\":true,\"message\":\"connect ECONNREFUSED  <REDACTED:ipv4>:1\",\"remediation\":\"Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port.\",\"brainId\":\"host\"},\"error\":\"database_error\",\"code\":\"database_error\",\"message\":\"connect ECONNREFUSED  <REDACTED:ipv4>:1\",\"suggestion\":\"Apply the plan: gbrain db-repair --yes --brain host\",\"docs\":\"https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#database_error\",\"why\":\"Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port.\",\"fix\":{\"argv\":[\"gbrain\",\"db-repair\",\"--yes\",\"--brain\",\"host\"],\"command\":\"gbrain db-repair --yes --brain host\",\"consent\":[],\"actor\":\"agent\",\"next\":\"run\",\"why\":\"Applies the auto tier the plan names (bounded retries, pending migrations, CREATE EXTENSION vector, starting gbrain's own docker container).\",\"requires_exclusive\":false},\"docs_cmd\":[\"gbrain\",\"errors\",\"database_error\"],\"class\":\"server\",\"retryable\":false,\"contract_version\":1}",
+      "stdoutFirstLine": "{\"schema_version\":1,\"brain_id\":\"host\",\"reason\":\"conn_refused\",\"tier\":\"auto\",\"marker\":\"GBRAIN_DB_ACCESS conn_refused\",\"diagnosis\":{\"reason\":\"conn_refused\",\"transient\":true,\"message\":\"connect ECONNREFUSED  <REDACTED:ipv4>:1\",\"remediation\":\"Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port.\",\"brainId\":\"host\"},\"plan\":[\"bounded reconnect; if the server is down, start it and re-run\"],\"applied\":[],\"fixed\":false,\"remaining\":{\"reason\":\"conn_refused\",\"transient\":true,\"message\":\"connect ECONNREFUSED  <REDACTED:ipv4>:1\",\"remediation\":\"Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port.\",\"brainId\":\"host\"},\"error\":\"database_error\",\"code\":\"database_error\",\"message\":\"connect ECONNREFUSED  <REDACTED:ipv4>:1\",\"suggestion\":\"Apply the plan: foresights db-repair --yes --brain host\",\"docs\":\"https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#database_error\",\"why\":\"Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port.\",\"fix\":{\"argv\":[\"gbrain\",\"db-repair\",\"--yes\",\"--brain\",\"host\"],\"command\":\"foresights db-repair --yes --brain host\",\"consent\":[],\"actor\":\"agent\",\"next\":\"run\",\"why\":\"Applies the auto tier the plan names (bounded retries, pending migrations, CREATE EXTENSION vector, starting foresights's own docker container).\",\"requires_exclusive\":false},\"docs_cmd\":[\"gbrain\",\"errors\",\"database_error\"],\"class\":\"server\",\"retryable\":false,\"contract_version\":1}",
       "url": "config"
     },
     {
@@ -158,7 +158,7 @@
         "reason: conn_refused (auto tier)  connect ECONNREFUSED  <REDACTED:ipv4>:1",
         "plan: bounded reconnect; if the server is down, start it and re-run",
         "Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port.",
-        "Apply: gbrain db-repair --yes"
+        "Apply: foresights db-repair --yes"
       ],
       "stdoutFirstLine": "GBRAIN_DB_ACCESS conn_refused",
       "url": "env"
@@ -167,9 +167,9 @@
       "argv": "pglite-repair",
       "exitCode": 1,
       "stderr": [
-        "Error (not_pglite): gbrain pglite-repair is for PGLite brains (current engine: postgres). Pass --path <dir> to repair a specific data dir."
+        "Error (not_pglite): foresights pglite-repair is for PGLite brains (current engine: postgres). Pass --path <dir> to repair a specific data dir."
       ],
-      "stderrFirstLine": "Error (not_pglite): gbrain pglite-repair is for PGLite brains (current engine: postgres). Pass --path <dir> to repair a specific data dir.",
+      "stderrFirstLine": "Error (not_pglite): foresights pglite-repair is for PGLite brains (current engine: postgres). Pass --path <dir> to repair a specific data dir.",
       "stdout": [],
       "stdoutFirstLine": null,
       "url": "config"
@@ -180,11 +180,11 @@
       "stderr": [],
       "stderrFirstLine": null,
       "stdout": [
-        "gbrain bootstrap — paste-in agent install (Claude Code / Codex / opencode)",
+        "foresights bootstrap — paste-in agent install (Claude Code / Codex / opencode)",
         "",
-        "Usage: gbrain bootstrap <subcommand> [flags]",
+        "Usage: foresights bootstrap <subcommand> [flags]",
         "",
-        "Subcommands (run `gbrain bootstrap status` first — it is the resume entrypoint):",
+        "Subcommands (run `foresights bootstrap status` first — it is the resume entrypoint):",
         "  status [--json]                 Phase list + next action + support blob. The CLI's",
         "                                  phase list is the source of truth the runbook defers to.",
         "  interview --init                Create state/interview.json.",
@@ -196,7 +196,7 @@
         "  render [--force] [--only F] [--minimal] [--host openclaw|generic|auto]",
         "                                  Render identity files from the confirmed answers.",
         "                                  Never clobbers; --force backs up first. OpenClaw: SCHEDULES.md.",
-        "  contract [--repair]             Audit the same-turn GBrain write-back contract.",
+        "  contract [--repair]             Audit the same-turn Foresights write-back contract.",
         "                                  --repair appends it additively and backs up AGENTS.md.",
         "  hooks [--harness claude-code|codex|opencode] [--repair] [--no-hooks] [--gbrain-bin <path>]",
         "        [--seat <label> | --no-seat]",
@@ -219,7 +219,7 @@
         "          [--no-hooks] [--no-capture] [--force] [--status] [--remove [--dry-run]] [--refresh-skills] [--yes] [--json]",
         "          [--seat <label> | --no-seat]",
         "                                  Wire framework-spawned Claude Code / Codex / opencode",
-        "                                  sessions to a RUNNING `gbrain serve --http` on this box",
+        "                                  sessions to a RUNNING `foresights serve --http` on this box",
         "                                  (#4043): scoped bearer token, user-scope MCP + headless",
         "                                  pre-approval, lifecycle hooks (user scope, or per --project",
         "                                  dir), codex config block, opencode config entry. No",
@@ -232,7 +232,7 @@
         "                                  enrollment epoch (no token rotation).",
         "                                  (--local is an accepted no-op alias.)",
         "  cloud-setup-script              Print the paste-ready cloud environment setup",
-        "                                  script (installs the gbrain binary into the",
+        "                                  script (installs the foresights binary into the",
         "                                  environment snapshot; npm-based — bun fetching",
         "                                  is proxy-incompatible in cloud sandboxes).",
         "  uninstall [--delete-brain] [--home <dir>] [--yes]",
@@ -245,20 +245,20 @@
         "Env: GBRAIN_BOOTSTRAP_ABORT_AFTER=<phase> (test seam — abort after that phase's work).",
         ""
       ],
-      "stdoutFirstLine": "gbrain bootstrap — paste-in agent install (Claude Code / Codex / opencode)",
+      "stdoutFirstLine": "foresights bootstrap — paste-in agent install (Claude Code / Codex / opencode)",
       "url": "config"
     },
     {
       "argv": "hook",
       "exitCode": 1,
       "stderr": [
-        "Usage: gbrain hook <event>",
+        "Usage: foresights hook <event>",
         "",
-        "Events (wired into .claude/settings.local.json by gbrain bootstrap):",
+        "Events (wired into .claude/settings.local.json by foresights bootstrap):",
         "  session-start   print the greeting digest (MEMORY.md sections, push status,",
         "                  hook health) to stdout",
         "  user-prompt     read hook JSON on stdin, request per-turn context from a",
-        "                  running 'gbrain serve' over IPC, print additionalContext JSON",
+        "                  running 'foresights serve' over IPC, print additionalContext JSON",
         "                  (--harness <claude-code|codex|opencode> sets the feedback-loop",
         "                  channel; default claude-code, unknown values fall back to the default)",
         "  stop            bank the writeback backstop and spawn the workspace push",
@@ -272,9 +272,9 @@
         "     GBRAIN_SESSION_AGENT=<label>|off|owner names who wrote the session's user",
         "     turns (an agent's are never saved as yours; off saves nothing).",
         "All events fail open: errors exit 0 with empty stdout and a heartbeat entry at",
-        "<gbrain home>/integrations/hooks/heartbeat.jsonl."
+        "<foresights home>/integrations/hooks/heartbeat.jsonl."
       ],
-      "stderrFirstLine": "Usage: gbrain hook <event>",
+      "stderrFirstLine": "Usage: foresights hook <event>",
       "stdout": [],
       "stdoutFirstLine": null,
       "url": "config"
@@ -294,7 +294,7 @@
       "stderr": [],
       "stderrFirstLine": null,
       "stdout": [
-        "gbrain backup <status|check|create|restore> [--json]",
+        "foresights backup <status|check|create|restore> [--json]",
         "",
         "  status   Configured repos and recently verified remote commits. Git alone",
         "           is not a full database backup. Uses the",
@@ -319,11 +319,11 @@
         "  --json   Structured verdict (includes the recovery field).",
         "",
         "Exit codes: 0 ok / 1 warn / 2 usage error. Off switches: GBRAIN_BACKUP_CHECK=0 or",
-        "`gbrain config set backup.check_enabled false`. Interval:",
-        "`gbrain config set backup.check_interval_days <n>` (default 30, min 1;",
+        "`foresights config set backup.check_enabled false`. Interval:",
+        "`foresights config set backup.check_interval_days <n>` (default 30, min 1;",
         "env GBRAIN_BACKUP_CHECK_DAYS wins over config)."
       ],
-      "stdoutFirstLine": "gbrain backup <status|check|create|restore> [--json]",
+      "stdoutFirstLine": "foresights backup <status|check|create|restore> [--json]",
       "url": "config"
     },
     {
@@ -341,12 +341,12 @@
       "argv": "status",
       "exitCode": 1,
       "stderr": [
-        "[gbrain] reading the brain status snapshot; large brains can take minutes. Progress prints here every <dur>; the result prints on stdout when it is ready.",
+        "[foresights] reading the brain status snapshot; large brains can take minutes. Progress prints here every <dur>; the result prints on stdout when it is ready.",
         "GBRAIN_DB_ACCESS conn_refused",
-        "Error [database_error]: Cannot connect to database: connect ECONNREFUSED  <REDACTED:ipv4>:1. Fix: Check the database URL; `gbrain engine status --probe` names where it comes from (environment variable or the config file under GBRAIN_HOME)",
-        "Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port. Run: gbrain db-repair"
+        "Error [database_error]: Cannot connect to database: connect ECONNREFUSED  <REDACTED:ipv4>:1. Fix: Check the database URL; `foresights engine status --probe` names where it comes from (environment variable or the config file under GBRAIN_HOME)",
+        "Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port. Run: foresights db-repair"
       ],
-      "stderrFirstLine": "[gbrain] reading the brain status snapshot; large brains can take minutes. Progress prints here every <dur>; the result prints on stdout when it is ready.",
+      "stderrFirstLine": "[foresights] reading the brain status snapshot; large brains can take minutes. Progress prints here every <dur>; the result prints on stdout when it is ready.",
       "stdout": [],
       "stdoutFirstLine": null,
       "url": "config"
@@ -356,8 +356,8 @@
       "exitCode": 1,
       "stderr": [
         "GBRAIN_DB_ACCESS conn_refused",
-        "Error [database_error]: Cannot connect to database: connect ECONNREFUSED  <REDACTED:ipv4>:1. Fix: Check the database URL; `gbrain engine status --probe` names where it comes from (environment variable or the config file under GBRAIN_HOME)",
-        "Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port. Run: gbrain db-repair"
+        "Error [database_error]: Cannot connect to database: connect ECONNREFUSED  <REDACTED:ipv4>:1. Fix: Check the database URL; `foresights engine status --probe` names where it comes from (environment variable or the config file under GBRAIN_HOME)",
+        "Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port. Run: foresights db-repair"
       ],
       "stderrFirstLine": "GBRAIN_DB_ACCESS conn_refused",
       "stdout": [],
@@ -369,8 +369,8 @@
       "exitCode": 1,
       "stderr": [
         "GBRAIN_DB_ACCESS conn_refused",
-        "Error [database_error]: Cannot connect to database: connect ECONNREFUSED  <REDACTED:ipv4>:1. Fix: Check the database URL; `gbrain engine status --probe` names where it comes from (environment variable or the config file under GBRAIN_HOME)",
-        "Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port. Run: gbrain db-repair"
+        "Error [database_error]: Cannot connect to database: connect ECONNREFUSED  <REDACTED:ipv4>:1. Fix: Check the database URL; `foresights engine status --probe` names where it comes from (environment variable or the config file under GBRAIN_HOME)",
+        "Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port. Run: foresights db-repair"
       ],
       "stderrFirstLine": "GBRAIN_DB_ACCESS conn_refused",
       "stdout": [],

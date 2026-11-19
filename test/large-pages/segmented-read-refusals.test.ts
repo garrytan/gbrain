@@ -5,7 +5,7 @@
  * 1. Protects:
  *    - get_page body 'full' refuses with page_body_segmented for a trusted local
  *      caller and for a remote MCP caller alike, with a fix that reads it in
- *      pieces (body 'auto', argv and mcp); gbrain's thin client keeps its
+ *      pieces (body 'auto', argv and mcp); foresights's thin client keeps its
  *      paging signal, page_too_large_for_inline. The fix runs and answers.
  *    - grammar_diagnostics on a segmented page answers the read with a
  *      structured `line_grammar: { state: 'skipped', reason }` instead of

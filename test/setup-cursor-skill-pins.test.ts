@@ -1,19 +1,19 @@
 /**
- * GBRA-435 PR 3: gbrain setup cursor --skill-loading resolve|off, Cursor's
+ * GBRA-435 PR 3: foresights setup cursor --skill-loading resolve|off, Cursor's
  * pinned skills only (src/core/setup/cursor-skill-pins.ts), plus its half
  * of doctor's skill_resolver check.
  *
  * Protects: setup run in a project builds that project's catalog from the
  * skill directories Cursor loads and records the project; with no pins there
- * is no rule file; gbrain skills pin add writes a separate always-applied
+ * is no rule file; foresights skills pin add writes a separate always-applied
  * rule (.cursor/rules/gbrain-pinned-skills.mdc) that names each pinned
  * skill's SKILL.md and leaves out a pin the catalog does not hold; inside git
  * the rule's path goes in info/exclude (from a subdirectory too), so it is
- * never committed; a rule file gbrain did not write is never touched; off
+ * never committed; a rule file foresights did not write is never touched; off
  * removes the rule, the exclude line and the record, keeping the pins, the
  * user's exclude lines and the brain-first rule; doctor reports Cursor as
  * partial (pinned only, no per-turn hook, unverified); a brainless home
- * stays brainless and a plain gbrain setup cursor writes no pins.
+ * stays brainless and a plain foresights setup cursor writes no pins.
  */
 import { afterAll, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -69,7 +69,7 @@ const statePath = (b: Box) => join(gbrainHome(b), 'cursor-skill-pins.json');
 const rulePath = (b: Box) => join(b.project, RULE);
 const exclude = (b: Box) => { try { return readFileSync(join(b.repo, '.git', 'info', 'exclude'), 'utf8'); } catch { return ''; } };
 
-describe('gbrain setup cursor --skill-loading resolve (pinned skills only)', () => {
+describe('foresights setup cursor --skill-loading resolve (pinned skills only)', () => {
   test('resolve records the project catalog and writes no rule while there are no pins; a brainless home stays brainless', async () => {
     const b = box();
     const r = await setup(b, ['--skill-loading', 'resolve']);
@@ -163,7 +163,7 @@ describe('gbrain setup cursor --skill-loading resolve (pinned skills only)', () 
     expect(JSON.parse(readFileSync(join(gbrainHome(b), 'config.json'), 'utf8')).skills.resolver.pins[catalog]).toEqual([{ name: 'deploy-service' }]);
   });
 
-  test('a rule file gbrain did not write is left as it is and setup exits non-zero', async () => {
+  test('a rule file foresights did not write is left as it is and setup exits non-zero', async () => {
     const b = box();
     mkdirSync(join(b.project, '.cursor', 'rules'), { recursive: true });
     writeFileSync(rulePath(b), '---\nalwaysApply: true\n---\nMy own rule.\n');
@@ -218,7 +218,7 @@ describe('gbrain setup cursor --skill-loading resolve (pinned skills only)', () 
     expect(existsSync(join(b.project, BRAIN_FIRST)) ? readFileSync(join(b.project, BRAIN_FIRST), 'utf8') : '').not.toContain('gbrain:skills');
   });
 
-  test('a plain gbrain setup cursor writes no pins, and a project with no skill directory refuses resolve', async () => {
+  test('a plain foresights setup cursor writes no pins, and a project with no skill directory refuses resolve', async () => {
     const b = box({ skills: false });
     const plain = await setup(b, []);
     expect(plain.exitCode).toBe(0);

@@ -4,7 +4,7 @@
  *
  * Protects: every registered orchestrator migration (the full `migrations`
  * array, v0.11.0 through shared-content, so a later migration is included
- * automatically) completes under the real `gbrain apply-migrations` runner
+ * automatically) completes under the real `foresights apply-migrations` runner
  * on a brain that was claimed and activated before any of them ran, with
  * legacy content each data phase has to move, and a rerun changes nothing.
  * Fails when: a migration writes canonical tables outside the coordinator

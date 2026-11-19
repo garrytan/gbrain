@@ -1,5 +1,5 @@
 /**
- * Repeated-consolidation regression pin (gbrain 10x plan, amendment 7).
+ * Repeated-consolidation regression pin (foresights 10x plan, amendment 7).
  *
  * Three real dream cycles on a fixed brain with a scripted model that
  * invents quotes, swaps speakers, invents numbers and states one speaker's

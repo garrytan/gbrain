@@ -32,7 +32,7 @@ import { isCrossSourceLinksEnabled } from '../../../core/link-extraction.ts';
  *
  *   3. >=30% → ok with the percentage.
  *      <10%  → warn (mismatch: signal enabled but link graph is too
- *              sparse to fire often; fix: `gbrain extract all` to
+ *              sparse to fire often; fix: `foresights extract all` to
  *              populate the link graph from frontmatter + markdown).
  *      10-29% → ok with note (signal will fire occasionally).
  *
@@ -48,7 +48,7 @@ export async function checkGraphSignalsCoverage(engine: BrainEngine, opts: { sou
     if (cfgVal !== null && cfgVal !== undefined) {
       // v0.40.4 codex F1 — case-insensitive + trim, parity with
       // loadOverridesFromConfig in src/core/search/mode.ts. Without
-      // this, `gbrain config set search.graph_signals TRUE` enables
+      // this, `foresights config set search.graph_signals TRUE` enables
       // the feature in production but doctor reports "disabled".
       const v = cfgVal.trim().toLowerCase();
       enabled = v === 'true' || v === '1';
@@ -102,7 +102,7 @@ export async function checkGraphSignalsCoverage(engine: BrainEngine, opts: { sou
       return {
         name: 'graph_signals_coverage',
         status: 'warn',
-        message: `graph_signals enabled but only ${pctStr}% of pages have inbound links (<10%). Signal will rarely fire. Fix: \`gbrain extract all\` to populate the link graph from frontmatter + markdown.`,
+        message: `graph_signals enabled but only ${pctStr}% of pages have inbound links (<10%). Signal will rarely fire. Fix: \`foresights extract all\` to populate the link graph from frontmatter + markdown.`,
       };
     }
 
@@ -122,28 +122,28 @@ export async function checkGraphSignalsCoverage(engine: BrainEngine, opts: { sou
 /**
  * v0.37.0 brainstorm_health doctor check.
  *
- * Surfaces four readiness signals for `gbrain brainstorm` / `gbrain lsd`:
+ * Surfaces four readiness signals for `foresights brainstorm` / `foresights lsd`:
  *
  *   1. Migration v79 applied — the `pages.last_retrieved_at` column exists.
  *      If missing, LSD's stale-page signal degrades silently (corpus-sampling
- *      fallback only). Fix: `gbrain apply-migrations --yes`.
+ *      fallback only). Fix: `foresights apply-migrations --yes`.
  *
  *   2. search.track_retrieval — when explicitly off, LSD never accumulates
  *      stale signal (every page stays at NULL last_retrieved_at). Default-on
  *      is fine; explicit-off is a warning so the user notices the setting.
- *      Fix: `gbrain config set search.track_retrieval true`.
+ *      Fix: `foresights config set search.track_retrieval true`.
  *
  *   3. Chat model pricing (#5873): a cross or judge chat model nothing
  *      prices runs under the default $5 cap with a warning (its calls go
  *      unmetered), and a run with an explicit --max-usd refuses it. The
- *      warning names the model, its role and the `gbrain pricing set`
+ *      warning names the model, its role and the `foresights pricing set`
  *      command. Skipped when no gateway is configured: the chat model is
  *      then unknown, not unpriced.
  *
  *   4. Calibration cold-start — the latest calibration profile has empty
  *      `active_bias_tags`. brainstorm + LSD judge fall back to no-anti-bias
  *      mode with a stderr warning at run time; this surfaces it earlier.
- *      Fix: `gbrain calibration --regenerate` once enough takes are resolved.
+ *      Fix: `foresights calibration --regenerate` once enough takes are resolved.
  *
  * Returns the FIRST non-ok signal as the status — column-missing dominates,
  * then disabled-tracking, then unpriced-chat-model, then cold-start. All four
@@ -165,7 +165,7 @@ export async function checkBrainstormHealth(engine: BrainEngine, opts: { sourceI
       return {
         name: 'brainstorm_health',
         status: 'warn',
-        message: `pages.last_retrieved_at column missing. LSD stale-bias degraded to corpus-sampling. Fix: \`gbrain apply-migrations --yes\``,
+        message: `pages.last_retrieved_at column missing. LSD stale-bias degraded to corpus-sampling. Fix: \`foresights apply-migrations --yes\``,
       };
     }
   } catch (e) {
@@ -186,7 +186,7 @@ export async function checkBrainstormHealth(engine: BrainEngine, opts: { sourceI
       return {
         name: 'brainstorm_health',
         status: 'warn',
-        message: `search.track_retrieval is explicitly off — LSD's stale-page signal never accumulates. Fix: \`gbrain config set search.track_retrieval true\` (or accept and use brainstorm only).`,
+        message: `search.track_retrieval is explicitly off — LSD's stale-page signal never accumulates. Fix: \`foresights config set search.track_retrieval true\` (or accept and use brainstorm only).`,
       };
     }
   } catch {
@@ -234,7 +234,7 @@ export async function checkBrainstormHealth(engine: BrainEngine, opts: { sourceI
       return {
         name: 'brainstorm_health',
         status: 'ok',
-        message: `Migration v79 applied; tracking enabled. Calibration cold-start (no active_bias_tags) — judge runs unbiased. Fix when ready: \`gbrain calibration --regenerate\`.`,
+        message: `Migration v79 applied; tracking enabled. Calibration cold-start (no active_bias_tags) — judge runs unbiased. Fix when ready: \`foresights calibration --regenerate\`.`,
       };
     }
     return {
@@ -292,7 +292,7 @@ export async function checkEmbeddingWidthConsistency(engine: BrainEngine): Promi
       return {
         name: 'embedding_width_consistency',
         status: 'warn',
-        message: 'content_chunks.embedding column not found. Fix: run `gbrain init --migrate-only` or check schema.',
+        message: 'content_chunks.embedding column not found. Fix: run `foresights init --migrate-only` or check schema.',
       };
     }
     if (existing.dims === null) {
@@ -304,7 +304,7 @@ export async function checkEmbeddingWidthConsistency(engine: BrainEngine): Promi
     }
     if (existing.dims !== configDim) {
       // E.2: use the engine-kind-branched recipe instead of pointing at
-      // the no-op `gbrain config set` path. The recipe is paste-ready
+      // the no-op `foresights config set` path. The recipe is paste-ready
       // for the brain's actual engine.
       const databasePath = (engine as { _savedConfig?: { database_path?: string } })._savedConfig?.database_path;
       const recipe = embeddingMismatchMessage({
@@ -547,19 +547,19 @@ export async function checkJunkEntityHubs(
         `before a page of the same name elsewhere unless link_resolution.cross_source is on. ` +
         `${withTwin} of them ${withTwin === 1 ? 'has' : 'have'} a canonical twin in another source. ` +
         (crossSource
-          ? `cross_source is on, so the next mention pass (gbrain extract --stale, or autopilot) re-binds those mentions to the twin; ` +
+          ? `cross_source is on, so the next mention pass (foresights extract --stale, or autopilot) re-binds those mentions to the twin; ` +
             `edges already on the stub move as the pass reaches each page.`
-          : `Run gbrain config set link_resolution.cross_source true, then gbrain extract --stale: mentions in the connector source ` +
+          : `Run foresights config set link_resolution.cross_source true, then foresights extract --stale: mentions in the connector source ` +
             `bind to the twin from then on. `) +
         `To keep a Google source's contacts out of people/ entirely, add it with --contacts-dir contacts (g_contacts_dir). ` +
-        `Frontmatter edits do not stick (the connector re-renders the page) and gbrain has no merge command.`);
+        `Frontmatter edits do not stick (the connector re-renders the page) and foresights has no merge command.`);
     }
     const verify = { argv: ['gbrain', 'doctor', '--only', 'junk_entity_hubs', '--json'] };
     const twinFix = twins.length === 0 ? {} : crossSource
       ? { fix: { argv: ['gbrain', 'extract', '--stale'], consent: [], actor: 'agent' as const, requires_exclusive: false,
         why: 'Runs the mention pass, which binds names in the connector source to their canonical twin now that cross_source is on.', verify } }
       : { fix: { argv: ['gbrain', 'config', 'set', 'link_resolution.cross_source', 'true'], consent: [], actor: 'agent' as const, requires_exclusive: false,
-        why: 'Lets a mention resolve to a same-name page in another source; a connector contact stub then yields to its canonical twin on the next mention pass (gbrain extract --stale).',
+        why: 'Lets a mention resolve to a same-name page in another source; a connector contact stub then yields to its canonical twin on the next mention pass (foresights extract --stale).',
         user_message: 'Mentions in your Gmail source bind to the connector\'s own contact stubs instead of your real person pages. Turn on cross-source link resolution so they bind to the real pages?', verify } };
     return {
       name: 'junk_entity_hubs',

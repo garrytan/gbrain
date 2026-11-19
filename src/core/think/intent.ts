@@ -1,5 +1,5 @@
 /**
- * v0.40.2.0 — Pure intent classifier for `gbrain think` trajectory routing.
+ * v0.40.2.0 — Pure intent classifier for `foresights think` trajectory routing.
  *
  * Regex-first (no LLM call) so the fast path adds zero latency on the
  * common "other" intent. Three buckets:

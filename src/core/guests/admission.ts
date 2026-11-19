@@ -70,7 +70,7 @@ export function parseGuestAttribution(channels: GuestChannels | undefined): Gues
 /** A lookup of guest_sources by a role that row-level security keeps from reading it (GUEST_SOURCES_HIDDEN_SQL). */
 export function guestSourcesUnreadable(sourceId: string): OperationError {
   return new OperationError('writer_coordinator_required',
-    `writer_coordinator_required: writer state is unreadable to this database role: row-level security hides guest_sources, so gbrain cannot tell whether source ${sourceId} is a guest source. Nothing was written.`,
+    `writer_coordinator_required: writer state is unreadable to this database role: row-level security hides guest_sources, so foresights cannot tell whether source ${sourceId} is a guest source. Nothing was written.`,
     'Run gbrain as a database role that can read guest_sources (the table owner, a role that bypasses row-level security, or a scoped write role holding the guest_sources SELECT policy in docs/ENGINES.md#derived-state-maintainers), then retry with a new request ID.',
     'docs/guides/write-refusals.md#writer-coordinator-required');
 }
@@ -108,7 +108,7 @@ export function sourceWriterRestricted(sourceId: string): OperationError {
 
 export function guestPageImmutable(what: string): OperationError {
   return new OperationError('guest_page_immutable', `${what}: a guest page is saved once, as a new page, and never changed. Nothing was written.`,
-    'Save the note again under a new slug with put_page, or ask the brain owner to promote the page (gbrain guests promote) and edit the owner page.',
+    'Save the note again under a new slug with put_page, or ask the brain owner to promote the page (foresights guests promote) and edit the owner page.',
     DOCS('guest_page_immutable'));
 }
 
@@ -119,7 +119,7 @@ export function guestPagePromoted(slug: string): OperationError {
 
 export function guestNoteNotYours(slug: string): OperationError {
   return new OperationError('permission_denied', `Guest note ${slug} was saved by another writer, so this credential cannot delete it. Nothing was deleted.`,
-    'Delete only the guest notes this credential saved; the brain owner deletes any guest note on the brain host (gbrain delete).', 'docs/guides/guest-notes.md#save-a-guest-note-for-the-writer');
+    'Delete only the guest notes this credential saved; the brain owner deletes any guest note on the brain host (foresights delete).', 'docs/guides/guest-notes.md#save-a-guest-note-for-the-writer');
 }
 
 /**
@@ -196,7 +196,7 @@ export function assertGuestFrontmatter(content: unknown, note: GuestAttribution)
 export async function assertGuestReaders(engine: Pick<BrainEngine, 'getConfig'>, frontmatter: Record<string, unknown>, audience: readonly string[] | null | undefined): Promise<string> {
   if (!audience || audience.length !== 1 || audience[0] === 'guest') throw guestReadersInvalid('needs a call that speaks for exactly one member or group');
   const owner = await ownerMemberId(engine);
-  if (!owner) throw guestReadersInvalid('cannot be checked: this brain has no owner set (gbrain access owner set)');
+  if (!owner) throw guestReadersInvalid('cannot be checked: this brain has no owner set (foresights access owner set)');
   const readers = normalizeReaders(frontmatter);
   const want = new Set([`member:${owner}`, audience[0]!]);
   if (!readers || readers.length !== want.size || !readers.every(r => want.has(r))) throw guestReadersInvalid('is not exactly the brain owner and the audience the call speaks for');
@@ -226,6 +226,6 @@ export async function insertGuestMark(tx: Pick<BrainEngine, 'executeRaw'>, row: 
     [row.source_id, row.slug, audience, note.group, note.sender_label, row.principal_kind, row.principal_id, row.request_id]);
   if (marked.length !== 1) {
     throw new OperationError('storage_error', `The guest mark for ${row.slug} wrote ${marked.length} rows instead of one, so the guest note was not saved. Nothing was written.`,
-      'Retry the save with a new request_id; if it fails the same way, run gbrain doctor --json on the brain host and report the result.');
+      'Retry the save with a new request_id; if it fails the same way, run foresights doctor --json on the brain host and report the result.');
   }
 }

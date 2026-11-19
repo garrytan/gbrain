@@ -1,5 +1,5 @@
 /**
- * GBRA-431: the /mcp rate limits and body cap SECURITY.md documents are enforced by `gbrain serve --http`.
+ * GBRA-431: the /mcp rate limits and body cap SECURITY.md documents are enforced by `foresights serve --http`.
  *
  * 1. Protects: with GBRAIN_HTTP_RATE_LIMIT_IP set, POST /mcp answers 429 with Retry-After once an address spends its
  *    bucket, before any token lookup; with GBRAIN_HTTP_RATE_LIMIT_TOKEN set, an authenticated token is throttled the

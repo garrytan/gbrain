@@ -1,5 +1,5 @@
 /**
- * #7167: `gbrain sync --dry-run` on a large managed source sat for five minutes and then failed `partial` / `writer_pending`
+ * #7167: `foresights sync --dry-run` on a large managed source sat for five minutes and then failed `partial` / `writer_pending`
  * with `drain_stalled` (`no_progress`). The CLI runs a sync as a drain, and the drain's governor stops a pass that commits
  * nothing for five minutes; a dry run commits nothing by design, so a long read of a big source was abandoned as a writer
  * stall. A dry run now previews once, outside the drain, and reports the writer's open requests as a field instead of

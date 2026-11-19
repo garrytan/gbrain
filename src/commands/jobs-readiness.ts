@@ -29,10 +29,10 @@ export async function checkWorkerStartup(
   const child = await checkChildReadiness({ invocation, tiniPath });
   noteChildSpendEnforcement(child.features);
   if (!child.features.includes('spend-enforcement-v1')) {
-    console.error(`[gbrain jobs] selected child ${child.version} cannot enforce spend authorizations; spend-authorized jobs are released for an upgraded worker instead of running.`);
+    console.error(`[foresights jobs] selected child ${child.version} cannot enforce spend authorizations; spend-authorized jobs are released for an upgraded worker instead of running.`);
   }
   if (child.versionSkew) {
-    console.error(`[gbrain jobs] selected child version ${child.version} differs from worker ${VERSION}; required protocol and capabilities are compatible.`);
+    console.error(`[foresights jobs] selected child version ${child.version} differs from worker ${VERSION}; required protocol and capabilities are compatible.`);
   }
   selectedChildIdentity = {
     executable: invocation.argsPrefix[0] ?? invocation.cmd,

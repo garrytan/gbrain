@@ -6,7 +6,7 @@
  * the single-write group path (`publishSingleWrite` → `publishGroup`, the path PR #6310 missed) release the claim as
  * `queued` / `writer_lock_unavailable` with no page written, and an owner that can open the lock publishes the same request
  * later. Negative controls: an EISDIR on the brain path (the page's own file) still fails terminally with `storage_error`,
- * and an addon/close failure is not an open failure. `ownerExceptionFailure` reports the OS error, not the gbrain code.
+ * and an addon/close failure is not an open failure. `ownerExceptionFailure` reports the OS error, not the foresights code.
  * Test idea from PR #6310 (@andreineacsu).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
@@ -65,12 +65,12 @@ describe('native lock open failures are typed and carry the OS error', () => {
     const stall = { request_id: 'req-1', state: 'queued', blocked_reason: 'writer_lock_unavailable', head_request_id: 'req-1', head_state: 'queued', claimable_here: false, owner_is_this_host: true };
     const result = await runDrain({ pass: async () => pending, pauseMs: 1, stallMs: 20, probe: { blockedHead: async () => null, fingerprint: async () => ({ key: 'same', stall, claim: null }) } });
     expect(result.drain).toMatchObject({ outcome: 'blocked', stop_reason: 'drain_stalled', stall: { blocked_reason: 'writer_lock_unavailable', cause: 'no_progress' } });
-    const next = drainNext(result, 'gbrain sync --source default --no-pull', 'default')!;
-    expect(next).toMatchObject({ command: 'gbrain sources writer status --source default --json', code: 'drain_stalled', safe_to_loop: false });
+    const next = drainNext(result, 'foresights sync --source default --no-pull', 'default')!;
+    expect(next).toMatchObject({ command: 'foresights sources writer status --source default --json', code: 'drain_stalled', safe_to_loop: false });
     expect(next.why).toContain('blocked_reason=writer_lock_unavailable');
     expect(next.why).toContain('names the OS error');
   });
-  test('ownerExceptionFailure reports the OS error, not the gbrain code', () => {
+  test('ownerExceptionFailure reports the OS error, not the foresights code', () => {
     const error = new NativeLockUnavailableError('The OS could not acquire the writer lock', Object.assign(new Error('x'), { code: 'EACCES' }));
     expect(ownerExceptionFailure(error).detail).toMatchObject({ origin: 'owner_exception', errno: 'EACCES' });
   });

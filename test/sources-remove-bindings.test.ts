@@ -5,7 +5,7 @@
  * claimed and every sync fails with writer_coordinator_required. Every source
  * delete path drops the removed incarnation's binding; the claim check and the
  * doctor join match on incarnation; `orphan_persistence_bindings` reports
- * leftovers and `gbrain repair orphan-bindings` removes them.
+ * leftovers and `foresights repair orphan-bindings` removes them.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';

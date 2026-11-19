@@ -2,7 +2,7 @@
  * GST-2059: the brain owner. On a personal brain the owner's own agents must read the whole brain, private pages
  * included, while every other remote caller keeps the read policy. The owner is named explicitly, never guessed: config
  * access.owner_member holds one member id, and a credential (token or OAuth client, bound with
- * `gbrain auth rescope --member <id>`) or a stdio server (config mcp.stdio_member) bound to that live member reads as
+ * `foresights auth rescope --member <id>`) or a stdio server (config mcp.stdio_member) bound to that live member reads as
  * the owner (CallerAccess.owner, src/core/access/caller.ts). Everything lives in the database, so a repo-less brain
  * gets it unchanged. Only the trusted local CLI writes it.
  *
@@ -64,7 +64,7 @@ export async function readersOwner(engine: BrainEngine): Promise<{ owner: string
 
 /**
  * GST-2476, GST-2698: readers that leave out the owner close `what` to the owner's own keys on every read path
- * (access/caller.ts), so `gbrain repair visibility --readers` and `gbrain access rule add` refuse such a list unless
+ * (access/caller.ts), so `foresights repair visibility --readers` and `foresights access rule add` refuse such a list unless
  * --allow-without-owner. A group that holds the owner does not count. `principals` are normalized (member:<id>, group:<id>).
  */
 export function readersOmitOwnerError(owner: string, live: boolean, principals: string[], what: string): OperationError {
@@ -75,7 +75,7 @@ export function readersOmitOwnerError(owner: string, live: boolean, principals: 
 }
 
 /**
- * GST-2128: the reader list a printed `gbrain access rule add` command names: `readers` plus the owner readersOwner names,
+ * GST-2128: the reader list a printed `foresights access rule add` command names: `readers` plus the owner readersOwner names,
  * when one is set and not listed, so pasting it is not refused readers_omit_owner. An unreadable owner prints `readers`.
  */
 export async function hintReaders(engine: BrainEngine, readers: string[]): Promise<string> {
@@ -124,11 +124,11 @@ export function labelledOnlyOwnerError(member: string, via: 'grant' | 'owner'): 
     grant ? `Member "${member}" is the brain owner, so it cannot be labelled-only; nothing was changed.`
       : `Member "${member}" is labelled-only, so it cannot be the brain owner; nothing was changed.`,
     grant ? 'Ask the user which member the group or audience credential should read as, add that member, bind the credential to it and mark that member labelled-only.'
-      : `Ask the user whether to clear the labelled-only grant first (gbrain access member labelled-only ${member} off) or name another member the owner.`,
+      : `Ask the user whether to clear the labelled-only grant first (foresights access member labelled-only ${member} off) or name another member the owner.`,
     {
       why: 'The owner reads the whole brain. A labelled-only grant would hide every unlabelled page from the owner\'s own credentials, so the two never go together.',
       fix: grant
-        ? { ask_user: true, argv: ['gbrain', 'access', 'member', 'add', '<MEMBER>'], inputs: [{ name: 'MEMBER', how: 'Ask the user for a new member id for the group or audience credential (lower-case letters, digits, ., _ and -). Then: gbrain auth rescope --token <name> --member <MEMBER>, and gbrain access member labelled-only <MEMBER> on.' }],
+        ? { ask_user: true, argv: ['gbrain', 'access', 'member', 'add', '<MEMBER>'], inputs: [{ name: 'MEMBER', how: 'Ask the user for a new member id for the group or audience credential (lower-case letters, digits, ., _ and -). Then: foresights auth rescope --token <name> --member <MEMBER>, and foresights access member labelled-only <MEMBER> on.' }],
           consent: [], actor: 'user', why: 'Gives the group or audience credential its own member, which can be labelled-only, and leaves the owner reading the whole brain.', requires_exclusive: false }
         : { ask_user: true, argv: ['gbrain', 'access', 'member', 'labelled-only', member, 'off'], consent: [], actor: 'user', requires_exclusive: false,
           why: 'Clears the labelled-only grant, so the member may be named the owner; every credential bound to it then reads its whole grant again.' },

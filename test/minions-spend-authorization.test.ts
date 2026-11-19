@@ -145,7 +145,7 @@ describe('coalesce compare-and-set', () => {
     expect((await queue.getJob(legacy.id))!.spend_authorization?.group_id).toBe(first.group_id);
     const { summary, lines } = spendSubmitSummary(second, [kept], ['gbrain', 'book-mirror', '--slug', 'b-book']);
     expect(summary.kept).toEqual([{ group_id: first.group_id, cap_usd: 10, job_ids: [legacy.id] }]);
-    expect(lines.join('\n')).toContain(`gbrain jobs cancel --group ${first.group_id}`);
+    expect(lines.join('\n')).toContain(`foresights jobs cancel --group ${first.group_id}`);
   });
 
   test('a stamped legacy_default row is re-authorized by a rerun', async () => {

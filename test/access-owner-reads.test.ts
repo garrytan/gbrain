@@ -1,11 +1,11 @@
 /**
  * GST-2059: the brain owner reads the whole personal brain over remote MCP.
  *
- * 1. Protects: a credential bound to the member config access.owner_member names (`gbrain access owner set`),
+ * 1. Protects: a credential bound to the member config access.owner_member names (`foresights access owner set`),
  *    and every delegate credential bound to the same member, reads visibility: private pages, privacy-alias pages
  *    (access: private), derived pages that default to private and private facts through get_page, search, query and
  *    recall. Every other caller keeps exactly the read policy it had: another member, an unbound token, the owner's
- *    credential speaking for a channel audience, and the owner after `gbrain access owner clear`. Member access
+ *    credential speaking for a channel audience, and the owner after `foresights access owner clear`. Member access
  *    (readable_by) stays mandatory for the owner too.
  * 2. Fails when: the owner's agent gets not_found for its own private pages, or any non-owner caller sees one.
  * 3. Real seams: tokens minted by the token service and verified by the serve --http verifier, dispatched through MCP
@@ -221,7 +221,7 @@ for (const kind of testBackends()) {
         expect(await hot('owner')).toContain(PRIVATE_FACT);
         expect({ next, seen: (await hot(next[0], next[1])).includes(PRIVATE_FACT) }).toEqual({ next, seen: false });
       }
-      // With privacy relaxed by the operator, the same credential after `gbrain access owner clear` shares the owner's
+      // With privacy relaxed by the operator, the same credential after `foresights access owner clear` shares the owner's
       // page tier and identity; the fact tier still keeps it off the owner's cached private facts.
       await engine.setConfig('search.remote_private_pages', 'visible');
       __resetPrivateVisibilityCacheForTests();

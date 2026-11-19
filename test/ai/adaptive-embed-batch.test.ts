@@ -229,7 +229,7 @@ describe('isTokenLimitError (pure helper)', () => {
 
   test('matches OpenAI embeddings "maximum request size" error (regression: PR ###)', () => {
     // Real error string returned by OpenAI's /v1/embeddings endpoint when the
-    // sum of all input items exceeds 300k tokens. Without this match, gbrain's
+    // sum of all input items exceeds 300k tokens. Without this match, foresights's
     // recursive-halving safety net never engages on OpenAI and the queue stalls
     // forever on token-dense pages.
     const openaiErr = new Error(

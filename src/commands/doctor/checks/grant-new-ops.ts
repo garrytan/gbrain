@@ -28,6 +28,7 @@ import { disabledOpsForPublishGates } from '../../../mcp/publish-gates.ts';
 import type { Check } from '../../doctor.ts';
 import { checkError, doctorVerify } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { commandText } from '../../../core/brand.ts';
 
 const DOCS = 'docs/mcp/ADMIN.md#grants-that-cannot-reach-new-operations';
 
@@ -152,7 +153,7 @@ export async function checkGrantNewOps(engine: BrainEngine, opts: { cfg?: GBrain
       why: 'An operation snapshot or a stored client surface keeps this grant from operations its scopes allow; changing it widens what that credential can do.',
       user_message: `${findings.length} connection grant(s) cannot call operations their scopes allow (first: ${first.name}). `
         + `For ${first.name}: preview the change with ${shownCommand(first.preview_argv!)}, then apply it; or leave it as it is; `
-        + `or remove its snapshot with ${first.all_operations_argv.join(' ')} (${ALL_OPERATIONS_CHOICE}).${byNameNote(first)} Which do you want?`,
+        + `or remove its snapshot with ${commandText(first.all_operations_argv)} (${ALL_OPERATIONS_CHOICE}).${byNameNote(first)} Which do you want?`,
       ...(placeholder ? { inputs: [{ name: 'OPERATIONS', how: `The operations the user approves for ${first.name}, comma-separated (clients: the whole new snapshot, i.e. the current one plus the approved additions; details.grants[${findings.indexOf(first)}].excluded_operations lists the candidates).` }] } : {}),
     };
     return {

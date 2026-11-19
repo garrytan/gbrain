@@ -110,8 +110,8 @@ export function sendAdminMutationError(res: Response, error: unknown, details: {
   res.status(status).json({ error: known ? message : code, code, message, stage: details.stage,
     outcome: unknown ? 'unknown' : 'failed', ...(details.clientId ? { client_id: details.clientId } : {}),
     next_action: unknown ? details.clientId
-      ? `Inspect client ${details.clientId} with gbrain mcp admin client before another mutation; reload its current grant and review a fresh preview.`
-      : 'Use gbrain mcp admin clients to inspect existing registrations before retrying; recover setup for an existing client instead of registering it again.'
+      ? `Inspect client ${details.clientId} with foresights mcp admin client before another mutation; reload its current grant and review a fresh preview.`
+      : 'Use foresights mcp admin clients to inspect existing registrations before retrying; recover setup for an existing client instead of registering it again.'
       : known ? 'Review the error, inspect the current registration, and obtain a fresh preview before applying changes.'
         : 'Check the running server and retry the read or preview. No mutation was attempted.',
   });
@@ -130,7 +130,7 @@ export function mountAdminGrantDiscovery(app: Express, requireAdmin: RequestHand
       res.status(code === 'grant_conflict' ? 409 : code === 'client_not_found' ? 404 : known ? 400 : 503).json({
         error: code, message: known ? message : 'The grant response could not be confirmed. Inspect the current registration before another mutation.',
         stage: 'grant', outcome: known || req.body?.dryRun || req.body?.resume ? 'failed' : 'unknown',
-        next_action: 'Use gbrain mcp admin clients or client ID to inspect the existing registration. Do not automatically repeat a mutation.',
+        next_action: 'Use foresights mcp admin clients or client ID to inspect the existing registration. Do not automatically repeat a mutation.',
       });
     }
   });
@@ -154,7 +154,7 @@ export function mountAdminGrantEdits(app: Express, requireAdmin: RequestHandler,
   // v0.42.x (#1914): rescope an OAuth client's write source / federated read
   // scope. Admin-gated on purpose — DCR clients must never self-widen their
   // scope (fail-closed trust); only the operator rescopes, here or via
-  // `gbrain auth rescope-client`. Source ids are validated by the canonical
+  // `foresights auth rescope-client`. Source ids are validated by the canonical
   // validator inside rescopeClient.
   app.post('/admin/api/rescope-client', requireAdmin, express.json(), async (req: Request, res: Response) => {
     let mutationStarted = false;

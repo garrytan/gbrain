@@ -54,7 +54,7 @@ Two halves of one loop:
    `conversations/` (the native importer writes them directly, one page per
    new session; sessions it split into parts before keep their parts; the
    manual path converts one page per conversation, then
-   `gbrain import`/`gbrain sync`) → parser validation →
+   `foresights import`/`foresights sync`) → parser validation →
    fact extraction → gap check.
 2. **RETRIEVE** — search the archive, pull threads, build timelines, and
    answer "when did I first discuss X".
@@ -63,7 +63,7 @@ Years of AI-assistant history is one of the largest personal corpora most
 users own. This skill makes it first-class brain content instead of a JSON
 blob in a downloads folder.
 
-**A native importer now exists: `gbrain transcripts ingest`.** It parses
+**A native importer now exists: `foresights transcripts ingest`.** It parses
 agent session logs (Claude Code, Codex, OpenClaw, Hermes, Grok Build) AND
 extracted consumer exports (ChatGPT `conversations.json`, Claude.ai export)
 directly: detection, secret redaction, imessage-slack rendering, one page
@@ -72,11 +72,11 @@ over the manual procedure whenever the source is one of those seven
 formats:
 
 ```
-gbrain transcripts ingest ~/Downloads/conversations.json   # unzip first
-gbrain transcripts ingest                                  # discover harness logs
-gbrain transcripts ingest --max-bytes 4gb <store>          # oversized store (omit = per-format caps)
-gbrain transcripts status                                  # found vs imported gaps
-gbrain transcripts archive run                             # one page per conversation per local day (on by default on a personal brain, run by maintenance; `archive off` stops it)
+foresights transcripts ingest ~/Downloads/conversations.json   # unzip first
+foresights transcripts ingest                                  # discover harness logs
+foresights transcripts ingest --max-bytes 4gb <store>          # oversized store (omit = per-format caps)
+foresights transcripts status                                  # found vs imported gaps
+foresights transcripts archive run                             # one page per conversation per local day (on by default on a personal brain, run by maintenance; `archive off` stops it)
 ```
 
 `--max-bytes` note: the cap is part of the `--since last` checkpoint
@@ -94,7 +94,7 @@ addresses) remains YOUR review pass — the manual procedure's human scrub step
 still applies to sensitive corpora. Preview what will be scrubbed with
 `--dry-run` before a bulk `--all`. If a secret still reached a page, rotate
 it first, then remove the page immediately with
-`gbrain delete <slug> --purge` (local CLI only — no 72h tombstone); the
+`foresights delete <slug> --purge` (local CLI only — no 72h tombstone); the
 brain-repo git history or a synced file may still hold it. Two more deltas: the
 native lane caps each message at ~4K characters in the page body (readable
 archive, not verbatim — the session file named in `source_uri` stays the
@@ -120,8 +120,8 @@ to the 24 MiB page ceiling: it is chunked and keyword-searchable at any size
 under it, and a page over 1 MiB embeds after the write. Don't write `-p2`,
 `-p3` part pages to get under a size limit. Only a conversation over 24 MiB
 needs more than one page. A page bigger than one MCP request goes through an
-upload session (`begin_page_upload`, parts, `commit_page_upload`; `gbrain put
-<slug> --file` and `gbrain capture --file` do this on a remote brain), or import
+upload session (`begin_page_upload`, parts, `commit_page_upload`; `foresights put
+<slug> --file` and `foresights capture --file` do this on a remote brain), or import
 the file on the brain host (Step 4). Limits and costs:
 `docs/guides/memory-boundaries.md#large-pages`.
 
@@ -131,7 +131,7 @@ so `YYYY-MM-DD-new-chat` collides across threads. `put_page` has no
 compare-and-swap: a second write to a colliding slug overwrites the first
 (silent loss). Suffix the slug with a short stable hash of the thread id or
 export url (`YYYY-MM-DD-new-chat-a1b2c3`) so distinct threads never share a
-slug, and check-before-write (`gbrain get <slug>`) — a hit that is NOT the same
+slug, and check-before-write (`foresights get <slug>`) — a hit that is NOT the same
 thread means append the hash, not overwrite.
 
 ## Import Procedure
@@ -169,7 +169,7 @@ PII, and redact each match to a labeled placeholder (`[REDACTED_API_KEY]`,
 - Personal data the transcript wasn't meant to publish: phone numbers, home
   addresses, government ids, private emails.
 
-The model is gbrain's own `~/.gbrain` deny-list / `runPrivacyLint` pattern
+The model is foresights's own `~/.gbrain` deny-list / `runPrivacyLint` pattern
 (`src/core/skillpack/harvest-lint.ts`): a fixed set of secret-shaped patterns
 matched deterministically, redacted before the content is committed. Redaction
 changes the transcript, so note it in the import receipt (`Redacted: N secrets
@@ -197,12 +197,12 @@ tags: [conversation, chatgpt]
 Rules that make the page machine-readable, not just human-readable:
 
 - `type: conversation` is REQUIRED — it is what makes the page eligible for
-  `gbrain extract-conversation-facts`.
+  `foresights extract-conversation-facts`.
 - Message lines use `**Speaker:** text` (parses via the built-in
   `bold-name-no-time` pattern, date taken from frontmatter). When the export
   carries per-message timestamps, prefer
   `**Speaker** (YYYY-MM-DD H:MM AM): text` (the `imessage-slack` pattern,
-  inline dates). Run `gbrain conversation-parser list-builtins` to see every
+  inline dates). Run `foresights conversation-parser list-builtins` to see every
   supported line shape.
 - Transcript text is verbatim. The user's exact words are the signal —
   no paraphrase, no cleanup, no summarization in the transcript body.
@@ -219,8 +219,8 @@ ground truth.
 
 ### Step 4 — Import
 
-- Pages written inside the brain repo: `gbrain sync --no-pull`
-- Standalone conversion directory: `gbrain import <dir> --source-id <id>`
+- Pages written inside the brain repo: `foresights sync --no-pull`
+- Standalone conversion directory: `foresights import <dir> --source-id <id>`
 
 **Write-path == commit-path (invariant 3, below):** the directory the
 converter writes and the directory the import/commit covers MUST be derived
@@ -231,7 +231,7 @@ permanent.
 ### Step 5 — Validate via the conversation-parser surface
 
 ```bash
-gbrain conversation-parser scan conversations/chatgpt/2025-03-15-agent-memory
+foresights conversation-parser scan conversations/chatgpt/2025-03-15-agent-memory
 ```
 
 Reports which pattern matched and the parsed message count. A `no_match` on a
@@ -242,14 +242,14 @@ read — fix the converter and regenerate, don't hand-patch individual pages.
 
 ```bash
 # Preview: segmentation + counts, no DB writes
-gbrain extract-conversation-facts --types conversation --dry-run --limit 5
+foresights extract-conversation-facts --types conversation --dry-run --limit 5
 
 # Real run (paid, cost-capped): only after the user agrees to the cap;
 # use --background for large archives
-gbrain extract-conversation-facts --types conversation --max-cost-usd 5
+foresights extract-conversation-facts --types conversation --max-cost-usd 5
 ```
 
-This is the shipped batch extractor (`gbrain extract-conversation-facts
+This is the shipped batch extractor (`foresights extract-conversation-facts
 --help` for workers, per-page `--slug`, resumability). Entity pages,
 backlinks, and deeper enrichment route through the existing
 [ingest](../ingest/SKILL.md) / [enrich](../enrich/SKILL.md) skills — do not
@@ -308,7 +308,7 @@ format, same three invariants. Filter before writing:
 - System messages, heartbeats, bootstrap prompts
 - Empty sessions
 
-Related native surface: `gbrain transcripts recent --days 7` reads recent raw
+Related native surface: `foresights transcripts recent --days 7` reads recent raw
 transcripts from the dream-cycle corpus directories (local-only). That is a
 read of the raw corpus, not the durable archive — this skill is what makes
 session history permanent, searchable, and fact-extracted.
@@ -316,7 +316,7 @@ session history permanent, searchable, and fact-extracted.
 ## Appending to a Live Conversation
 
 A conversation that keeps growing (an agent session, a running chat log) gets
-its new messages with `append_page` (CLI: `gbrain append <slug> --file new.md`,
+its new messages with `append_page` (CLI: `foresights append <slug> --file new.md`,
 or the text on stdin). It adds text to the end of the page in time
 proportional to the text added and is idempotent by `request_id`, so a retry
 with the same id never adds a message twice. **Never re-put a large page to
@@ -331,18 +331,18 @@ every time.
   the window's `edit_target` range. That tells repeated lines ("ok", "thanks")
   apart without matching the rest of the page.
 - An append bigger than one request goes through an upload session with mode
-  `append`; `gbrain append` does this by itself.
+  `append`; `foresights append` does this by itself.
 
 ## Retrieval & Tracing
 
 - **Find a conversation:**
-  `gbrain search "<what you remember>" --limit 20` — then filter results to
+  `foresights search "<what you remember>" --limit 20` — then filter results to
   `conversations/` slugs (prefix per provider: `conversations/chatgpt/`, …).
-- **Pull a thread:** `gbrain get conversations/chatgpt/2025-03-15-agent-memory`
+- **Pull a thread:** `foresights get conversations/chatgpt/2025-03-15-agent-memory`
 - **"When did I first discuss X":**
-  1. `gbrain query "X" --limit 50` and sort `conversations/` hits by the
+  1. `foresights query "X" --limit 50` and sort `conversations/` hits by the
      slug's date prefix.
-  2. Probe earlier: `gbrain query "X" --until <earliest-date-found>` and
+  2. Probe earlier: `foresights query "X" --until <earliest-date-found>` and
      repeat until no earlier hit survives.
   3. Retry with synonyms and adjacent phrasings before declaring an origin —
      the user's early vocabulary for an idea often differs from the current
@@ -351,8 +351,8 @@ every time.
      answer with the date, a verbatim quote, and the slug.
 - **Idea evolution timeline:** collect the dated hits, quote key moments
   verbatim, present oldest → newest with slugs as citations.
-- **Context around a date:** `gbrain day 2025-03-15` shows what else happened
-  that day; `gbrain recall --query "X"` checks the extracted-facts arm.
+- **Context around a date:** `foresights day 2025-03-15` shows what else happened
+  that day; `foresights recall --query "X"` checks the extracted-facts arm.
 
 ## Output Format
 
@@ -382,11 +382,11 @@ Evolution:
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
-- `gbrain extract-conversation-facts` stops at its cost cap (exit 11): run the printed `resume_command`; it skips pages already done. Raise `--max-cost-usd` only after the user agrees.
-- Under an explicit cap it refuses with `no_pricing`: the user must agree to register the model price; the brain host's operator runs `gbrain pricing set <model> --input <usd-per-1M> --output <usd-per-1M>`.
-- `gbrain transcripts ingest` writes nothing: check the path the converter actually writes to before re-running; an empty import is silent, so verify page counts.
+- `foresights extract-conversation-facts` stops at its cost cap (exit 11): run the printed `resume_command`; it skips pages already done. Raise `--max-cost-usd` only after the user agrees.
+- Under an explicit cap it refuses with `no_pricing`: the user must agree to register the model price; the brain host's operator runs `foresights pricing set <model> --input <usd-per-1M> --output <usd-per-1M>`.
+- `foresights transcripts ingest` writes nothing: check the path the converter actually writes to before re-running; an empty import is silent, so verify page counts.
 - A "did we discuss X?" search is empty with a degraded notice: that is not proof it was never discussed; say the search was keyword-only.
 
 ## Anti-Patterns
@@ -399,9 +399,9 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 - ❌ Overwriting a colliding slug (same-day "New chat") — suffix a short thread
   hash; `put_page` has no CAS, so a blind write silently loses the first thread
 - ❌ Re-putting a whole conversation page to add a message — append it with
-  `append_page` (`gbrain append`)
+  `append_page` (`foresights append`)
 - ❌ Inventing a message line format the parser can't read — validate with
-  `gbrain conversation-parser scan` before bulk-converting
+  `foresights conversation-parser scan` before bulk-converting
 - ❌ Hand-patching pages the parser rejects — fix the converter and
   regenerate (write-path discipline)
 - ❌ "Yesterday only" archiving — every run diffs a trailing window and
@@ -411,7 +411,7 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 - ❌ A wrapper that commits/imports a different directory than the converter
   writes (invariant 3)
 - ❌ Declaring "you never discussed X" after one failed search — try
-  synonyms, check `gbrain recall`, and only then answer in the negative
+  synonyms, check `foresights recall`, and only then answer in the negative
 - ❌ Bulk-converting thousands of threads before validating a 3-5 page sample
 - ❌ Filing conversations under `sources/` or as summary notes — the filing
   rule for imported chat exports is `conversations/`
@@ -432,7 +432,7 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
   Meeting transcripts file under `meetings/` with attendee enrichment and
   timeline merge. An AI-assistant thread is not a meeting.
 - **[capture](../capture/SKILL.md)** — the single-item front door
-  (`gbrain capture` → `inbox/`). One pasted snippet routes there; a corpus of
+  (`foresights capture` → `inbox/`). One pasted snippet routes there; a corpus of
   conversations routes here.
 - **[bulk-ingestion](../bulk-ingestion/SKILL.md)** — the generic large-corpus
   lifecycle (manifest, trial → bulk, resume). For a multi-thousand-thread
@@ -459,14 +459,14 @@ This skill guarantees:
   credentials, high-entropy assignments) and PII before its page is written;
   matches are redacted to labeled placeholders and counted in the import
   receipt (untrusted-content convention). A page that still captured a
-  secret is removed immediately with `gbrain delete <slug> --purge`.
+  secret is removed immediately with `foresights delete <slug> --purge`.
 - Colliding slugs (untitled/same-day threads) are disambiguated with a short
   stable thread hash and check-before-write, never overwritten.
 - New messages on an existing conversation page are appended with
   `append_page`, never by re-putting the page.
-- Every import run validates a sample via `gbrain conversation-parser scan`
+- Every import run validates a sample via `foresights conversation-parser scan`
   before bulk conversion, and reports parser results in the import receipt.
-- Fact extraction goes through the native `gbrain extract-conversation-facts`
+- Fact extraction goes through the native `foresights extract-conversation-facts`
   flow (cost-capped, resumable) — never a hand-rolled extractor.
 - Every import or scheduled archive run performs the gap diff (source vs
   archive) over a trailing window and backfills the difference; completion is

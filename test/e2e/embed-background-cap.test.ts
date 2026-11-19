@@ -1,5 +1,5 @@
 /**
- * Fix wave 13 P1.18 [R4]: `gbrain embed --background --max-usd N` carries the
+ * Fix wave 13 P1.18 [R4]: `foresights embed --background --max-usd N` carries the
  * approval to the worker. The queued `embed` row stores the spend
  * authorization with the approved cap (the worker's runWithJobSpend meters
  * every provider call against it); a run with no authorization (a free

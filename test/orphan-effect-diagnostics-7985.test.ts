@@ -90,9 +90,9 @@ describe.each(backends.map(url => [url ? 'postgres' : 'pglite', url] as const))(
     expect(doctor.details).toMatchObject({ parked_effects: 2, parked_groups: groups });
     const listed = (doctor.details as { effects: Array<{ request_id: string; command?: string; former_binding?: boolean }> }).effects;
     expect(listed.find(effect => effect.request_id === orphan.request_id)).toMatchObject({ former_binding: true,
-      command: `gbrain sources writer settle-effects default --request-id ${orphan.request_id} --dry-run` });
+      command: `foresights sources writer settle-effects default --request-id ${orphan.request_id} --dry-run` });
     expect(listed.find(effect => effect.request_id === live.request_id)).toMatchObject({
-      command: `gbrain sources writer retry-effects default --request-id ${live.request_id} --dry-run` });
+      command: `foresights sources writer retry-effects default --request-id ${live.request_id} --dry-run` });
     expect(listed.find(effect => effect.request_id === live.request_id)).not.toHaveProperty('former_binding');
 
     const refusal = await retryParkedEffects(engine, 'default', orphan.request_id, true).then(() => null, error => error);

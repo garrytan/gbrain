@@ -81,7 +81,7 @@ export function looksLikeGbrainAutopilotCommand(command: string): boolean {
   const normalized = command.replace(/\\/g, '/').trim();
   if (!/(^|\s)autopilot(\s|$)/i.test(normalized)) return false;
   // Win32_Process.CommandLine quotes executables under paths with spaces: `"C:/Program Files/gbrain/gbrain.exe" autopilot`.
-  if (/(^|[\/\s])"?gbrain(?:\.exe)?"?(\s|$)/i.test(normalized)) return true;
+  if (/(^|[\/\s])"?(?:foresights|gbrain)(?:\.exe)?"?(\s|$)/i.test(normalized)) return true;
   return /(^|[\/\s])["']?cli\.(?:ts|js|mjs)["']?(\s|$)/i.test(normalized);
 }
 

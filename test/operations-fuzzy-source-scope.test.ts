@@ -80,7 +80,7 @@ describe('#1436 — resolveSlugs honors source scope', () => {
   });
 
   test('unscoped call (no opts) preserves pre-fix back-compat for internal callers', async () => {
-    // Internal CLI callers (gbrain query --resolve, etc.) walk every source.
+    // Internal CLI callers (foresights query --resolve, etc.) walk every source.
     const unscoped = await engine.resolveSlugs('people/alice');
     expect(unscoped).toEqual(['people/alice']);
   });

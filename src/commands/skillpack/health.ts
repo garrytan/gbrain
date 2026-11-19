@@ -1,9 +1,9 @@
 /**
- * `gbrain skillpack health [<skill>] [--skills-dir PATH] [--json] [--strict]`:
+ * `foresights skillpack health [<skill>] [--skills-dir PATH] [--json] [--strict]`:
  * read-only skill health (size, growth since the last diet, description,
- * triggers, drift against this gbrain) for the active skills folder: the
+ * triggers, drift against this foresights) for the active skills folder: the
  * harness or workspace skills dir, else the bundled skills. Also the loader the
- * `skill_health` doctor check and `gbrain maintain` use.
+ * `skill_health` doctor check and `foresights maintain` use.
  */
 
 import { existsSync, readFileSync } from 'fs';
@@ -14,15 +14,15 @@ import { bundledSkillSlugs, findGbrainRoot, loadBundleManifest } from '../../cor
 import { computeSkillHealth, parseSkillBudgets, registeredSkillSurface, skillHealthSummary, type SkillHealthReport } from '../../core/skill-health.ts';
 import { resolveAbs } from './shared.ts';
 
-const HELP = `gbrain skillpack health [<skill>] [--skills-dir PATH] [--json] [--strict]
+const HELP = `foresights skillpack health [<skill>] [--skills-dir PATH] [--json] [--strict]
 
 Read-only skill health for the active skills folder (the harness or workspace
-skills dir, else gbrain's bundled skills): bytes against the skill's budget,
+skills dir, else foresights's bundled skills): bytes against the skill's budget,
 growth past 10% over its last diet, description size, frontmatter triggers,
-and every gbrain command, flag or tool the skill shows that this gbrain does
+and every foresights command, flag or tool the skill shows that this foresights does
 not have. Each finding names the edit or command that fixes it and a verify
 command. A folder without a skills manifest or skills.lock.json is checked
-only for copies of gbrain's bundled skills.
+only for copies of foresights's bundled skills.
 
 Exit 0 (findings included), 1 with --strict when there are findings, 2 when
 no skills folder is found.`;
@@ -62,7 +62,7 @@ export async function cmdHealth(args: string[]): Promise<void> {
   }
   const report = skillHealthFor(dir, only);
   if (only && report.skills.length === 0) {
-    console.error(`skillpack health: no gbrain skill named '${only}' in ${dir}.`);
+    console.error(`skillpack health: no foresights skill named '${only}' in ${dir}.`);
     process.exit(2);
   }
   if (json) {

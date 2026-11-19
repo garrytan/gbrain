@@ -32,14 +32,14 @@ async function runIntegrity(ctx: DoctorContext): Promise<Check[]> {
   // 10. Integrity sample scan (v0.13 knowledge runtime).
   // Read-only — no network, no writes, no resolver calls. Samples the first
   // 500 pages by slug order and surfaces bare-tweet + dead-link counts as a
-  // warning. Full-brain scan: `gbrain integrity check`.
+  // warning. Full-brain scan: `foresights integrity check`.
   progress.heartbeat('integrity_sample');
   const integrityHb = startHeartbeat(progress, 'scanning 500-page integrity sample…');
   try {
     const { scanIntegrity } = await import('../../integrity.ts');
     const res = await scanIntegrity(engine, { limit: 500 });
     const total = res.bareHits.length + res.externalHits.length;
-    const unread = res.skipped.length ? ` ${res.skipped.length} page(s) could not be scanned (first: ${res.skipped[0]!.source_id}:${res.skipped[0]!.slug}, ${res.skipped[0]!.reason}); gbrain integrity check lists them.` : '';
+    const unread = res.skipped.length ? ` ${res.skipped.length} page(s) could not be scanned (first: ${res.skipped[0]!.source_id}:${res.skipped[0]!.slug}, ${res.skipped[0]!.reason}); foresights integrity check lists them.` : '';
     if (total === 0) {
       checks.push({
         name: 'integrity',
@@ -48,7 +48,7 @@ async function runIntegrity(ctx: DoctorContext): Promise<Check[]> {
       });
     } else if (res.bareHits.length > 0) {
       // v0.40.3.0 T8b (D8): emit integrity-auto RemediationStep.
-      // Three-bucket repair handled by `gbrain integrity auto` (the
+      // Three-bucket repair handled by `foresights integrity auto` (the
       // existing CLI). Deterministic — no LLM cost.
       const { makeRemediationStep } = await import('../../../core/remediation-step.ts');
       const integrityStep = makeRemediationStep({
@@ -67,7 +67,7 @@ async function runIntegrity(ctx: DoctorContext): Promise<Check[]> {
       checks.push({
         name: 'integrity',
         status: 'warn',
-        message: `Sampled ${res.pagesScanned} pages; ${res.bareHits.length} bare-tweet phrase(s), ${res.externalHits.length} external link(s). Run: gbrain integrity check (or integrity auto to repair).${unread}`,
+        message: `Sampled ${res.pagesScanned} pages; ${res.bareHits.length} bare-tweet phrase(s), ${res.externalHits.length} external link(s). Run: foresights integrity check (or integrity auto to repair).${unread}`,
         remediation: [integrityStep],
         remediation_status: 'remediable',
       });
@@ -158,7 +158,7 @@ async function runWhoknows(ctx: DoctorContext): Promise<Check[]> {
   const checks: Check[] = [];
 
   // v0.33: whoknows_health — fixture presence + row count. The eval
-  // gate itself runs via `gbrain eval whoknows`; this check is the
+  // gate itself runs via `foresights eval whoknows`; this check is the
   // "did you do the assignment?" signal.
   // SKILL group — gated behind --scope=all (v0.41.19.0).
   if (scope === 'all') {
@@ -185,7 +185,7 @@ async function runCrossModal(ctx: DoctorContext): Promise<Check[]> {
   // `modality='image'` default-set may have image chunks where
   // embedding_image is populated but modality wasn't tagged. The cross-modal
   // search routing in v0.36 depends on `modality` for keyword filtering;
-  // surface the gap so operators can run `gbrain backfill modality`.
+  // surface the gap so operators can run `foresights backfill modality`.
   progress.heartbeat('cross_modal_modality_backfill');
   try {
     const mismatchRows = await engine.executeRaw<{ count: string | number }>(
@@ -207,7 +207,7 @@ async function runCrossModal(ctx: DoctorContext): Promise<Check[]> {
         status: 'warn',
         message:
           `${mismatch} image-asset chunk(s) have embedding_image populated but modality != 'image'. ` +
-          `Fix: \`gbrain backfill modality\``,
+          `Fix: \`foresights backfill modality\``,
       });
     }
   } catch {
@@ -270,7 +270,7 @@ async function runCrossModal(ctx: DoctorContext): Promise<Check[]> {
           status: 'fail',
           message:
             `unified_multimodal_only is ON but lowest source coverage is ${(lowestCoverage * 100).toFixed(1)}% (${summary}). ` +
-            `Run \`gbrain reindex --multimodal\` to bring coverage to 99%+ or disable strict mode.`,
+            `Run \`foresights reindex --multimodal\` to bring coverage to 99%+ or disable strict mode.`,
         });
       } else if (lowestCoverage < 0.95) {
         checks.push({
@@ -278,7 +278,7 @@ async function runCrossModal(ctx: DoctorContext): Promise<Check[]> {
           status: 'warn',
           message:
             `unified_multimodal is on but lowest source coverage is ${(lowestCoverage * 100).toFixed(1)}% (${summary}). ` +
-            `Run \`gbrain reindex --multimodal\` to fill the gap.`,
+            `Run \`foresights reindex --multimodal\` to fill the gap.`,
         });
       } else {
         checks.push({
@@ -357,7 +357,7 @@ async function runMarkdownBody(ctx: DoctorContext): Promise<Check[]> {
         name: 'markdown_body_completeness',
         status: 'warn',
         details: { count: Math.min(rows.length, LISTED_PAGE_LIMIT), exact: !capped, ...(capped ? { limit: LISTED_PAGE_LIMIT } : {}) },
-        message: `${capped ? `At least ${LISTED_PAGE_LIMIT}` : rows.length} page(s) appear truncated (sample: ${sample}). Re-import: edit each page body, then run gbrain sync (see docs/integrations/reliability-repair.md)`,
+        message: `${capped ? `At least ${LISTED_PAGE_LIMIT}` : rows.length} page(s) appear truncated (sample: ${sample}). Re-import: edit each page body, then run foresights sync (see docs/integrations/reliability-repair.md)`,
       }, skipped));
     }
   } catch (error) {

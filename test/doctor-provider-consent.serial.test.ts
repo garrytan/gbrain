@@ -1,6 +1,6 @@
 /**
  * Cat 41 wave 2 consent negative: with provider keys in the environment and
- * `gbrain setup`'s provider-use decision recorded as declined, `gbrain doctor`
+ * `foresights setup`'s provider-use decision recorded as declined, `foresights doctor`
  * sent one unbilled `GET /v1/models` with the user's key in every run. The
  * request was OpenAI model discovery, which ran on every engine connect
  * (src/core/ai/openai-latest.ts). Now a recorded decline stops discovery and
@@ -60,7 +60,7 @@ function setConfig(patch: Record<string, unknown>, drop: string[] = []): void {
   writeFileSync(path, JSON.stringify({ ...cfg, ...patch }));
 }
 
-/** What `gbrain setup claude-code` leaves beside ~/.claude.json. */
+/** What `foresights setup claude-code` leaves beside ~/.claude.json. */
 function writeReceipt(providers: 'accepted' | 'declined'): void {
   writeFileSync(join(home, '.gbrain-connection-claude-code-gbrain.json'), JSON.stringify({
     harness: 'claude-code', connection: 'local-stdio', setup_receipt_version: 1, status: 'installed', name: 'gbrain',
@@ -128,7 +128,7 @@ describe('doctor with provider keys present', () => {
     expect((check.details as { provider_env: string[] }).provider_env).toEqual(['OPENAI_API_KEY']);
     for (const text of [String(check.message), String((check.fix as { user_message: string }).user_message)]) {
       expect(text).toContain('on its own');
-      expect(text).toContain('gbrain embed');
+      expect(text).toContain('foresights embed');
     }
   }, 180_000);
 

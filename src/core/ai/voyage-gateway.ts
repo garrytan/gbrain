@@ -46,6 +46,6 @@ export function embeddingDimMismatchError(
   const host = requestHostname(route.baseUrl!) ?? route.baseUrl!;
   return new AIConfigError(
     `Embedding dim mismatch: model ${modelId} returned ${returned} but schema expects ${expected}. Requests go through ${host} (provider_base_urls.${route.provider}), not the provider's own API; a proxy that drops the requested width returns the model default. Nothing was written.`,
-    `Check that the proxy forwards the requested embedding width (then \`gbrain doctor --only embedding_provider --probe --json\`); only if ${returned} dimensions is what you want, run ${migrate}.`,
+    `Check that the proxy forwards the requested embedding width (then \`foresights doctor --only embedding_provider --probe --json\`); only if ${returned} dimensions is what you want, run ${migrate}.`,
   );
 }

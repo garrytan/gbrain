@@ -5,7 +5,7 @@
  * simulated by writing the row once per five-minute tick and stamping `updated_at` back to that tick.
  *
  * Unhealthy (blocked, a not-converged streak, a settle-mismatch streak): the backlog lists it, movement is `not_moving`,
- * doctor `managed_sync_not_moving` and `git_held_files` warn, `gbrain sources writer movement` exits 1, the blocked
+ * doctor `managed_sync_not_moving` and `git_held_files` warn, `foresights sources writer movement` exits 1, the blocked
  * reader lists it, doctor `managed_sync_blocked` fails past the hour and get_brain_health's `sync_blocked` band counts it.
  * Healthy (converged at HEAD, ended `synced`): nothing pending anywhere; a commit past the converged target is pending
  * again. Also: the lease holder's progress is the pass row's write, `set-strategy` refuses during a drain lease or an
@@ -96,7 +96,7 @@ async function stuckForAnHour(f: Fixture & { head: string }, ending: 'blocked' |
       mismatch: ending === 'settle_mismatch' ? { 'notes/flaky.md': { level: 'abc', streak: Math.min(tick, 2) } } : {} }, ago((65 - tick * 5) * MIN));
   }
 }
-/** The same hour, from a gbrain that writes no `stuck_since`: one row, untouched for the hour. */
+/** The same hour, from a foresights that writes no `stuck_since`: one row, untouched for the hour. */
 const stuckRowOnly = (f: Fixture & { head: string }) => writePass(f, { outcome: 'resumable', stop_reason: 'not_converged', not_converged_streak: 12, remaining: 3, target: f.head, ended_at: ago(61 * MIN) }, ago(61 * MIN));
 const converged = (f: Fixture & { head: string }) => writePass(f, { outcome: 'synced', converged: f.head, target: f.head });
 const forget = (f: Fixture) => engine.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [MANAGED_SYNC_PASS_OP, `${f.id}:${f.incarnation}`]);
@@ -252,7 +252,7 @@ describe('the other cursor readers', () => {
       const episode = await cli(['set-strategy', f.id, 'code']);
       expect(episode.exit).toBe(1);
       expect(episode.err).toContain('sync_run_unfinished');
-      expect(episode.err).toContain(`gbrain sync --source ${f.id} --no-pull`);
+      expect(episode.err).toContain(`foresights sync --source ${f.id} --no-pull`);
       expect(await strategy()).toBeNull();
       await converged(f);
       expect((await cli(['set-strategy', f.id, 'code'])).exit).toBeNull();

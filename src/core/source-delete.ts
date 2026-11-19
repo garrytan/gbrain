@@ -12,7 +12,7 @@ export const EXPIRED_ARCHIVE_SQL = `archived = true AND archived_at > '1970-01-0
 export const UNVERIFIED_ARCHIVE_SQL = `archived = true AND (archived_at IS NULL OR archived_at <= '1970-01-02'::timestamptz
   OR archive_expires_at IS NULL OR archive_expires_at <= '1970-01-02'::timestamptz)`;
 export const unverifiedArchiveReason = (id: string) =>
-  `archive timestamps are missing or invalid, so the 72h recovery window cannot be verified; run gbrain sources restore ${id}, then gbrain sources archive ${id} to restart it`;
+  `archive timestamps are missing or invalid, so the 72h recovery window cannot be verified; run foresights sources restore ${id}, then foresights sources archive ${id} to restart it`;
 
 /**
  * #7072: a source delete removes its pages only through the pages -> sources
@@ -32,7 +32,7 @@ const PAGES_CASCADE_SQL = `EXISTS (
  * Delete a `sources` row together with that incarnation's persistence source
  * binding (#5732). `persistence_source_bindings` has no FK to `sources`, so a
  * delete that leaves the binding would make a same-id replacement read as
- * claimed. A binding of another incarnation is never touched here; `gbrain
+ * claimed. A binding of another incarnation is never touched here; `foresights
  * repair orphan-bindings` removes those. The source's managed-sync cursors
  * (`op_checkpoints`, also no FK) go too (#8741): nothing can resume them, and doctor `managed_sync_backlog` would warn with a resume command
  * that fails `unknown_source`. The same statement runs
@@ -95,6 +95,6 @@ export function removedSourceScrubCtes(gate: string): string {
 function sourcePagesRemain(id: string, n: number) {
   return opError('source_pages_remain', `Deleting source '${id}' would leave ${n} page(s) with no source row, so nothing was deleted.`,
     `The database would not cascade the delete of source '${id}' to its ${n} page(s): the pages -> sources foreign key on this brain is missing, does not cascade or is disabled. `
-    + `The source and its pages are unchanged. Keep the source (if it is archived, gbrain sources restore ${id} makes it active again) and give the brain host's operator the output of the command in fix.`,
+    + `The source and its pages are unchanged. Keep the source (if it is archived, foresights sources restore ${id} makes it active again) and give the brain host's operator the output of the command in fix.`,
     { fix: { ...readFix('Reports the brain\'s schema and health, read-only.', { argv: ['gbrain', 'doctor', '--json'] }), actor: 'host_admin' } });
 }

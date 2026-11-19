@@ -26,7 +26,7 @@ async function runDatabaseEncoding(ctx: DoctorContext): Promise<Check[]> {
         name: 'database_encoding',
         status: 'warn',
         message: `The database encoding is ${encoding}, not UTF8. SQL-side whitespace trimming in the privacy and trust checks covers ASCII only, `
-          + 'and text with non-ASCII characters is not handled reliably. gbrain keeps running; to remove this warning, move the brain to a database created with UTF8 encoding.',
+          + 'and text with non-ASCII characters is not handled reliably. foresights keeps running; to remove this warning, move the brain to a database created with UTF8 encoding.',
         details: { server_encoding: encoding },
       });
     }

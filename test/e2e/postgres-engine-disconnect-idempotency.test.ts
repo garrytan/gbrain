@@ -87,7 +87,7 @@ describe.skipIf(skip)('PostgresEngine.disconnect idempotency + module-singleton 
   test('ownership tracks CREATION, not role: a probe that creates the singleton owns it', async () => {
     // codex #2: ownership is not "the cycle engine" by name — it is whoever
     // atomically created the pool. If a probe creates first, it owns; a later
-    // joiner is the borrower. (Safe in gbrain because the CLI engine is always
+    // joiner is the borrower. (Safe in foresights because the CLI engine is always
     // the first creator and last to disconnect — the dominance invariant.)
     const firstCreator = new PostgresEngine();
     await firstCreator.connect({ database_url: DATABASE_URL! }); // creates → owns
@@ -104,7 +104,7 @@ describe.skipIf(skip)('PostgresEngine.disconnect idempotency + module-singleton 
     const engine = new PostgresEngine();
     await engine.connect({ database_url: DATABASE_URL! });
     await engine.disconnect();
-    // Pool must be CLOSED so the CLI event loop drains and `gbrain init` /
+    // Pool must be CLOSED so the CLI event loop drains and `foresights init` /
     // op-dispatch exit cleanly (the failure mode refcount would risk).
     expect(() => db.getConnection()).toThrow(/No database connection/);
     // Idempotent second disconnect.

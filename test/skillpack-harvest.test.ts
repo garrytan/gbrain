@@ -1,8 +1,8 @@
 /**
- * Tests for src/core/skillpack/harvest.ts — the host→gbrain lift.
+ * Tests for src/core/skillpack/harvest.ts — the host→foresights lift.
  *
  * Pins:
- *   - happy path: skill files + paired sources land in gbrain's tree
+ *   - happy path: skill files + paired sources land in foresights's tree
  *   - openclaw.plugin.json updated (sorted, idempotent)
  *   - slug collision refused unless --overwrite-local
  *   - symlinks in host source rejected
@@ -92,7 +92,7 @@ function emptyPatternsFile(): string {
 }
 
 describe('runHarvest — happy path', () => {
-  it('copies a clean skill into gbrain, updates manifest', () => {
+  it('copies a clean skill into foresights, updates manifest', () => {
     const hostRoot = scratchHost();
     const gbrainRoot = scratchGbrain();
 
@@ -141,7 +141,7 @@ describe('runHarvest — error paths', () => {
     }
   });
 
-  it('slug_collision when gbrain already has skills/<slug>/ — without --overwrite-local', () => {
+  it('slug_collision when foresights already has skills/<slug>/ — without --overwrite-local', () => {
     const hostRoot = scratchHost();
     const gbrainRoot = scratchGbrain();
     mkdirSync(join(gbrainRoot, 'skills', 'my-fork-skill'), { recursive: true });
@@ -205,7 +205,7 @@ describe('runHarvest — privacy linter integration (T7)', () => {
     expect(result.lintHits.length).toBeGreaterThan(0);
     expect(result.lintHits[0]).toContain('Wintermute');
 
-    // Rollback: nothing in gbrain tree.
+    // Rollback: nothing in foresights tree.
     expect(existsSync(join(gbrainRoot, 'skills', 'my-fork-skill'))).toBe(false);
     // Manifest NOT updated.
     const manifest = JSON.parse(readFileSync(join(gbrainRoot, 'openclaw.plugin.json'), 'utf-8'));

@@ -1,5 +1,5 @@
 /**
- * GBRA-133: `gbrain repair file-drift --held --side deleted --state file_gone --prefer file` soft-deleted the page but left
+ * GBRA-133: `foresights repair file-drift --held --side deleted --state file_gone --prefer file` soft-deleted the page but left
  * its `file_drift` hold, and no later sync released it, not even `--full`: the pass found the hold "at its level" (no file)
  * and kept it. The soft delete is the decision the hold waited for, so the ghost retirement now clears it in the same
  * publication. A hold an earlier version left behind (its page already deleted, its file gone) is released by the next

@@ -29,7 +29,7 @@ export const WORKER_EXIT_CONFIGURATION = 16;
  *  to the queue. The worker stopped, but it did not drain. */
 export const WORKER_EXIT_DRAIN_FORCED = 17;
 
-// --- `gbrain jobs run-child` exit codes (issue #5 process isolation) -------
+// --- `foresights jobs run-child` exit codes (issue #5 process isolation) -------
 //
 // The parent (child-job-runner.ts) classifies a child by RESULT-FILE PRESENCE
 // first: a written outcome file + exit 0 is the normal path even for handler

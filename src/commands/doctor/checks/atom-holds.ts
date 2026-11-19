@@ -18,7 +18,7 @@ async function runAtomHeldFailedCheck(ctx: DoctorContext): Promise<Check[]> {
   const checks: Check[] = [];
   try {
     const held = await listHeldManagedAtoms(connectedEngine(ctx));
-    const items = held.map(item => ({ ...item, receipt_command: `gbrain write-request -- ${item.request_id}`,
+    const items = held.map(item => ({ ...item, receipt_command: `foresights write-request -- ${item.request_id}`,
       retry_command: shellQuote(retryArgv(item.source_id, item.request_id)) }));
     const details = { held: items.length, items, code: 'held_failed' };
     if (!items.length) {
@@ -31,7 +31,7 @@ async function runAtomHeldFailedCheck(ctx: DoctorContext): Promise<Check[]> {
         + `${items.slice(0, 5).map(item => `${item.source_id}:${item.locator} (request ${item.request_id}: ${item.failure})`).join('; ')}${items.length > 5 ? `; and ${items.length - 5} more` : ''}. `
         + 'They are out of the atom backlog until their content changes or an explicit retry runs.',
       fix: { argv: retryArgv(first.source_id, first.request_id), consent: ['paid'], actor: 'agent', requires_exclusive: false,
-        why: `Queues one reviewed paid retry of the held atom batch ${first.request_id} (${first.source_id}:${first.locator}); read its receipt first with gbrain write-request -- ${first.request_id}. Repeat per held item in details.items.`,
+        why: `Queues one reviewed paid retry of the held atom batch ${first.request_id} (${first.source_id}:${first.locator}); read its receipt first with foresights write-request -- ${first.request_id}. Repeat per held item in details.items.`,
         verify: doctorVerify('extract_atoms_held_failed') } });
   } catch (error) {
     checks.push(checkError('extract_atoms_held_failed', 'list held managed atom origins', error, { details: { health: 'unknown' } }));

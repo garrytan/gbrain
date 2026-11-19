@@ -1,5 +1,5 @@
 /**
- * F0 `gbrain sources refresh` (spec section 1.8; tests 1 and 3-13, test 2 is
+ * F0 `foresights sources refresh` (spec section 1.8; tests 1 and 3-13, test 2 is
  * persistence-worktree-refresh-restart.test.ts).
  *
  * Protects: a managed checkout shared by several sources is fast-forwarded only
@@ -117,7 +117,7 @@ test('1. O-ENG-9: writes and syncs to every member are refused while draining, t
     if (point !== 'drained') return;
     await refusedWith(f.put(f.alpha, 'notes/during-alpha', page('During', 'alpha body'), ids.alpha), 'worktree_refreshing');
     const beta = await refusedWith(f.put(f.beta, 'notes/during-beta', page('During', 'beta body'), ids.beta), 'worktree_refreshing');
-    expect(beta.suggestion).toContain(`gbrain sources writer status ${f.beta}`);
+    expect(beta.suggestion).toContain(`foresights sources writer status ${f.beta}`);
     expect(beta.docs).toBe('docs/guides/write-refusals.md#worktree_refreshing');
     await refusedWith(performManagedSync(f.engine, { sourceId: f.beta, noPull: true, noEmbed: true }), 'worktree_refreshing');
     expect(await f.requestCount()).toBe(before);
@@ -159,7 +159,7 @@ const refusedOnGit = async (f: RefreshFixture, token: string, code: number, comm
   const head = f.head();
   const error = await withFailingGit(token, code, () => refusedWith(refreshWorktree(f.engine, f.alpha), 'git_unavailable'));
   expect(error.message).toContain(`git ${command} failed (fatal: injected failure of ${token})`);
-  expect(error.suggestion).toContain(`gbrain sources refresh ${f.alpha}`);
+  expect(error.suggestion).toContain(`foresights sources refresh ${f.alpha}`);
   expect(await f.refreshRows()).toEqual([]);
   expect(f.head()).toBe(head);
 };
@@ -203,7 +203,7 @@ test('4. a diverged checkout is refused with no row and HEAD unchanged', () => e
   git(f.root, 'add', 'beta/local.md'); git(f.root, 'commit', '-qm', 'local only');
   const head = f.head();
   const error = await refusedWith(refreshWorktree(f.engine, f.alpha), 'refresh_diverged');
-  expect(error.suggestion).toContain(`gbrain sources reclone ${f.alpha}`);
+  expect(error.suggestion).toContain(`foresights sources reclone ${f.alpha}`);
   expect(await f.refreshRows()).toEqual([]);
   expect(f.head()).toBe(head);
 }), 120_000);
@@ -263,7 +263,7 @@ test('4c. Q1: commit-push on the managed checkout commits only the named page pa
 test('4d. Q1: writer status and doctor name each commit a diverged managed checkout holds (sha, author, date, paths) and its porcelain', () => each(async f => {
   f.push('alpha/two.md', page('Alpha two', 'Upstream side.'));
   git(f.root, 'fetch', '-q', 'origin');
-  writeFileSync(join(f.root, 'beta/local.md'), page('Local', 'A commit made outside gbrain.'));
+  writeFileSync(join(f.root, 'beta/local.md'), page('Local', 'A commit made outside foresights.'));
   git(f.root, 'add', 'beta/local.md'); git(f.root, 'commit', '-qm', 'cron: bare commit');
   const sha = f.head(), author = git(f.root, 'log', '-1', '--format=%an <%ae>').trim(), date = git(f.root, 'log', '-1', '--format=%aI').trim();
   writeFileSync(join(f.root, 'beta/scratch.txt'), 'untracked\n');
@@ -320,7 +320,7 @@ test('7. a crash leaving HEAD on an unrelated commit is recovery_required; write
   await resumeWorktreeRefreshes(f.engine);
   expect((await f.refreshRows()).map(r => r.state)).toEqual(['recovery_required']);
   const refused = await refusedWith(f.put(f.alpha, 'notes/blocked', page('Blocked', 'refused')), 'refresh_recovery_required');
-  expect(refused.suggestion).toContain(`gbrain sources refresh ${f.alpha} --resume`);
+  expect(refused.suggestion).toContain(`foresights sources refresh ${f.alpha} --resume`);
   // Ship review: a refused --resume never hides the refresher that died. Value: protects=previous_holder keeps the first holder replaced across
   // refused resumes; fails_when=each resume shifts its own pid into previous_holder; why_new=no test resumed twice; seam=a holder written with SQL;
   // no_claim=a real foreign process (the holder pid is a placeholder).
@@ -449,9 +449,9 @@ test('7f. #7679: a plain refresh whose adopted orphan ends sync_blocked returns 
   try {
     const result = await refreshWorktree(f.engine, f.alpha);
     expect(result).toMatchObject({ status: 'sync_blocked', refresh_id: orphan.id, target_head: target,
-      sync_blocked: [{ source_id: f.alpha, resume: `gbrain sync --source ${f.alpha} --no-pull` }],
+      sync_blocked: [{ source_id: f.alpha, resume: `foresights sync --source ${f.alpha} --no-pull` }],
       recovered: { refresh_id: orphan.id, state: 'completed', status: 'sync_blocked', previous_holder: { pid: process.pid } } });
-    expect(result.next).toContain(`gbrain sync --source ${f.alpha} --no-pull`);
+    expect(result.next).toContain(`foresights sync --source ${f.alpha} --no-pull`);
     expect(f.head()).toBe(target);
     expect(f.head()).not.toBe(next);
     const rows = await f.refreshRows();
@@ -670,7 +670,7 @@ test('7p. #7712: writer status for a recovery_required refresh names the step HE
   expect(atTarget.fix.why).not.toContain('ask the user');
   git(f.root, 'reset', '-q', '--hard', old);
   const atOld = await writerStatusRow(f);
-  expect(atOld).toMatchObject({ fix: { argv: ['gbrain', 'sources', 'refresh', f.alpha, '--abandon'] }, next: `gbrain sources refresh ${f.alpha} --abandon` });
+  expect(atOld).toMatchObject({ fix: { argv: ['gbrain', 'sources', 'refresh', f.alpha, '--abandon'] }, next: `foresights sources refresh ${f.alpha} --abandon` });
   expect((await refreshWorktree(f.engine, f.alpha, { abandon: true })).status).toBe('abandoned');
   git(f.root, 'merge', '-q', '--ff-only', target);
   await f.engine.executeRaw(`UPDATE persistence_worktree_refreshes SET state='recovery_required',completed_at=NULL WHERE id=$1::uuid`, [orphan.id]);
@@ -755,7 +755,7 @@ test('7s. GST-1457: with no member synced past the start commit, --resume still 
   const before = await livePages(f, f.alpha);
   git(f.root, 'reset', '-q', '--hard', old);
   const resume = await refusedWith(refreshWorktree(f.engine, f.alpha, { resume: true }), 'refresh_recovery_required');
-  expect(resume.suggestion).toBe(`gbrain sources refresh ${f.alpha} --abandon`);
+  expect(resume.suggestion).toBe(`foresights sources refresh ${f.alpha} --abandon`);
   expect((await refreshWorktree(f.engine, f.alpha, { abandon: true })).status).toBe('abandoned');
   expect((await f.refreshRows()).map(r => r.state)).toEqual(['aborted']);
   await performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true });
@@ -943,7 +943,7 @@ test('9. an unexhausted managed-sync cursor refuses sync_in_progress with its re
       syncOptions: { full: false, workingTree: false, srcSubpath: null, exclude: [], includeHidden: [], strategy: null } }])]);
   try {
     const error = await refusedWith(refreshWorktree(f.engine, f.alpha), 'sync_in_progress');
-    expect(error.suggestion).toContain(`gbrain sync --source ${f.beta} --no-pull --no-embed`);
+    expect(error.suggestion).toContain(`foresights sync --source ${f.beta} --no-pull --no-embed`);
     expect(error.suggestion).not.toContain('--retry-failed');
     expect(await f.refreshRows()).toEqual([]);
   } finally { await f.engine.executeRaw(`DELETE FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1`, [key]); }
@@ -988,7 +988,7 @@ test('10. source add and remove on the worktree during a refresh refuse refresh_
   expect(result.status).toBe('completed');
 }), 180_000);
 
-test('11. end to end: a new upstream commit, `gbrain sources refresh --json`, then query finds it', () => each(async f => {
+test('11. end to end: a new upstream commit, `foresights sources refresh --json`, then query finds it', () => each(async f => {
   f.push('beta/zebra.md', page('Zebra', 'A zebracorn observation pushed upstream.'));
   const out: string[] = [];
   const log = console.log;
@@ -1005,16 +1005,16 @@ test('11. end to end: a new upstream commit, `gbrain sources refresh --json`, th
   expect(observed).toEqual({ upstream_commit: f.head(), upstream_behind: 0 });
 }), 180_000);
 
-test('12. an unmanaged brain refuses refresh_not_managed naming gbrain sync, on stdout with exit 1', () => each(async f => {
+test('12. an unmanaged brain refuses refresh_not_managed naming foresights sync, on stdout with exit 1', () => each(async f => {
   await f.engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
   try {
-    await refusedWith(refreshWorktree(f.engine, f.alpha), 'refresh_not_managed').then(error => expect(error.suggestion).toBe(`gbrain sync --source ${f.alpha}`));
+    await refusedWith(refreshWorktree(f.engine, f.alpha), 'refresh_not_managed').then(error => expect(error.suggestion).toBe(`foresights sync --source ${f.alpha}`));
     const out: string[] = [];
     const log = console.log;
     _resetCliExitVerdictForTests();
     console.log = (line: string) => { out.push(line); };
     try { await runSourcesRefresh(f.engine, [f.alpha, '--json']); } finally { console.log = log; }
-    expect(JSON.parse(out.join('\n'))).toMatchObject({ status: 'refused', code: 'refresh_not_managed', fix: `gbrain sync --source ${f.alpha}`,
+    expect(JSON.parse(out.join('\n'))).toMatchObject({ status: 'refused', code: 'refresh_not_managed', fix: `foresights sync --source ${f.alpha}`,
       docs: 'docs/guides/write-refusals.md#refresh_not_managed' });
     expect(currentExitCode()).toBe(1);
   } finally {

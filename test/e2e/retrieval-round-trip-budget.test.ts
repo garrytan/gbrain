@@ -4,7 +4,7 @@
  * brain every round trip costs the pooler RTT, so the count is the cold-path
  * latency that a CI runner can measure without noise: at 40 ms RTT, a cold
  * search on v0.60.328.0 paid about 113 round trips (4.3 s) against 55 for the
- * same search in a running `gbrain serve`
+ * same search in a running `foresights serve`
  * (scripts/bench/retrieval-scale/run.ts --trace).
  *
  * Counted: `execute` and `simple` records (statements) and `connect`

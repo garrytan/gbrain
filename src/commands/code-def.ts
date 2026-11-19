@@ -1,5 +1,5 @@
 /**
- * gbrain code-def <symbol>
+ * foresights code-def <symbol>
  *
  * v0.19.0 Layer 7 — look up the definition site(s) of a named symbol
  * (function, class, type, interface, enum) among the brain's code pages.
@@ -154,7 +154,7 @@ export async function runCodeDef(engine: BrainEngine, args: string[]): Promise<v
       class: 'UsageError',
       code: 'code_def_requires_symbol',
       message: 'code-def requires a symbol name',
-      hint: 'gbrain code-def <symbol> [--source S | --all-sources] [--lang <language>] [--json]',
+      hint: 'foresights code-def <symbol> [--source S | --all-sources] [--lang <language>] [--json]',
     });
     if (shouldEmitJson(args)) {
       console.log(JSON.stringify(legacyNestedErrorDocument(err.envelope, ['gbrain', 'code-def', '--help'])));
@@ -197,7 +197,7 @@ export async function runCodeDef(engine: BrainEngine, args: string[]): Promise<v
     const filteredHint = filteredTypes.length > 0
       ? `Symbol "${sym}" IS indexed, but only with symbol type(s) outside the definition allowlist: ` +
         `${filteredTypes.join(', ')}. Likely a DEF_TYPES gap or pre-upgrade chunk data — ` +
-        'try `gbrain code-refs` for these sites, and consider re-syncing the source.'
+        'try `foresights code-refs` for these sites, and consider re-syncing the source.'
       : null;
     if (shouldEmitJson(args)) {
       console.log(JSON.stringify({

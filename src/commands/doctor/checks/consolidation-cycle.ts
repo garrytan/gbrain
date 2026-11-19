@@ -19,7 +19,7 @@ const _resolveSyncFreshnessHours = resolveHoursEnv;
  * v0.41.19.0 (Issue 5 of ops-fix-wave) — surface `sync --all --parallel`
  * to operators with multi-source brains.
  *
- * Background: `gbrain sync --all --parallel N --workers N --skip-failed`
+ * Background: `foresights sync --all --parallel N --workers N --skip-failed`
  * has existed since v0.40.3.0 but most operators still maintain separate
  * per-source cron entries with manual deconfliction. One `--all` line
  * replaces N per-source lines AND auto-picks-up future sources without
@@ -27,7 +27,7 @@ const _resolveSyncFreshnessHours = resolveHoursEnv;
  *
  * Surgical scope: we can't reach into the user's crontab (host-specific,
  * portability risk). What we CAN do is surface the paste-ready command
- * inside `gbrain doctor` so the operator sees it whenever they run a
+ * inside `foresights doctor` so the operator sees it whenever they run a
  * health check on a multi-source brain.
  *
  * Posture: never failure-state. Always `ok` with the paste-ready cmd
@@ -38,8 +38,8 @@ const _resolveSyncFreshnessHours = resolveHoursEnv;
  *
  * A managed brain refuses that line (`writer_coordinator_required`: managed
  * sync needs `--no-pull` and rejects `--skip-failed`), so it gets the recipe
- * it accepts: `gbrain sync --all --no-pull --hard-deadline 13m` every 15
- * minutes on the owner host, after `gbrain sources refresh <id>` for each
+ * it accepts: `foresights sync --all --no-pull --hard-deadline 13m` every 15
+ * minutes on the owner host, after `foresights sources refresh <id>` for each
  * checkout that tracks a remote. Managed sync takes no per-source lock, so
  * the deadline stays under the interval to keep ticks from overlapping. A
  * schema without `persistence_brain` reads as unmanaged.
@@ -69,8 +69,8 @@ export async function checkSyncConsolidation(engine: BrainEngine, opts: { source
         status: 'ok',
         message:
           `${sourceCount} active sources on a managed brain. Recommended cron on the owner host, every 15 minutes: ` +
-          '`gbrain sync --all --no-pull --hard-deadline 13m`. Managed sync never pulls: for each checkout that tracks a remote, ' +
-          'chain `gbrain sources refresh <id>;` in front of it to take upstream commits. ' +
+          '`foresights sync --all --no-pull --hard-deadline 13m`. Managed sync never pulls: for each checkout that tracks a remote, ' +
+          'chain `foresights sources refresh <id>;` in front of it to take upstream commits. ' +
           'Keep the deadline under the interval: managed sync takes no per-source lock, so a tick that outlives the interval would overlap the next one.',
       };
     }
@@ -79,7 +79,7 @@ export async function checkSyncConsolidation(engine: BrainEngine, opts: { source
       status: 'ok',
       message:
         `${sourceCount} active sources detected. Recommended cron: ` +
-        '`gbrain sync --all --parallel 4 --workers 4 --skip-failed`. ' +
+        '`foresights sync --all --parallel 4 --workers 4 --skip-failed`. ' +
         'If your crontab has separate per-source entries, replace them with one --all line — ' +
         'future sources auto-pick-up without a crontab edit.',
     };
@@ -93,7 +93,7 @@ export async function checkSyncConsolidation(engine: BrainEngine, opts: { source
  * is set (the operator opted into the single-source connection clamp), verify
  * the parent pool leaves room for at least one parallel worker. If even the
  * parent pool alone is at/over the budget, sync clamps to serial AND every
- * other gbrain process competes for the same cap — the operator should lower
+ * other foresights process competes for the same cap — the operator should lower
  * `GBRAIN_POOL_SIZE`. Pure so it's unit-testable without env/engine.
  */
 export function computePoolBudgetCheck(
@@ -116,7 +116,7 @@ export function computePoolBudgetCheck(
         `GBRAIN_MAX_CONNECTIONS=${maxConnections} leaves no room for a parallel sync worker ` +
         `(parent pool ${parentPool} + ${perWorkerPool} per-worker > ${maxConnections}). ` +
         `Sync will run serial. If you hit EMAXCONNSESSION, lower the parent pool: ` +
-        '`gbrain config` / set GBRAIN_POOL_SIZE=2 (recommended for low-cap poolers like Supabase Supavisor).',
+        '`foresights config` / set GBRAIN_POOL_SIZE=2 (recommended for low-cap poolers like Supabase Supavisor).',
     };
   }
   const maxWorkers = Math.floor((maxConnections - parentPool) / perWorkerPool);
@@ -202,7 +202,7 @@ export async function checkCycleFreshness(
       if (typeof raw !== 'string') {
         // #2540: WARN, not FAIL. This check iterates EVERY local_path source,
         // so on a multi-source install where only some vaults are cycled
-        // (e.g. one nightly `gbrain dream --dir <vault>`), a never-cycled
+        // (e.g. one nightly `foresights dream --dir <vault>`), a never-cycled
         // sibling source turned doctor permanently red — which erodes the
         // check's signal until real staleness hides inside the noise (the
         // reporter's install masked genuinely stale sources for weeks this
@@ -244,7 +244,7 @@ export async function checkCycleFreshness(
       return {
         name: 'cycle_freshness',
         status: 'fail',
-        message: `${issues.join('; ')}. Run \`gbrain dream --source <id>\` for each stale source, or start \`gbrain autopilot\`.`,
+        message: `${issues.join('; ')}. Run \`foresights dream --source <id>\` for each stale source, or start \`foresights autopilot\`.`,
         ...(fix ? { fix } : {}),
       };
     }
@@ -252,7 +252,7 @@ export async function checkCycleFreshness(
       return {
         name: 'cycle_freshness',
         status: 'warn',
-        message: `${issues.join('; ')}. Run \`gbrain dream --source <id>\` to cycle a source, or start \`gbrain autopilot\`.`,
+        message: `${issues.join('; ')}. Run \`foresights dream --source <id>\` to cycle a source, or start \`foresights autopilot\`.`,
         ...(fix ? { fix } : {}),
       };
     }
@@ -291,7 +291,7 @@ async function youngOrEmptySources(engine: BrainEngine, ids: string[], now: numb
 /** GBRA-438: a keyless brain has no paid phase to run, so the fix asks no paid consent there. */
 function cycleFix(sourceId: string, paid: boolean): Action {
   return agentFix(['gbrain', 'dream', '--source', sourceId], paid
-    ? `Runs one full maintenance cycle for source '${sourceId}' (sync, extract, consolidate). Phases that call a chat model spend provider credits when keys are configured; \`gbrain autopilot --install\` keeps every source cycled.`
+    ? `Runs one full maintenance cycle for source '${sourceId}' (sync, extract, consolidate). Phases that call a chat model spend provider credits when keys are configured; \`foresights autopilot --install\` keeps every source cycled.`
     : `Runs one full maintenance cycle for source '${sourceId}' (sync, extract, consolidate). No model key is configured, so no phase spends anything.`, 'cycle_freshness',
     { consent: paid ? ['paid'] : [], requires_exclusive: true });
 }

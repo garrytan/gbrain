@@ -1,5 +1,5 @@
 /**
- * gbrain eval export — NDJSON contract (v0.21.0).
+ * foresights eval export — NDJSON contract (v0.21.0).
  *
  * Verifies:
  *   - every line is valid JSON
@@ -72,7 +72,7 @@ async function captureExport(args: string[]): Promise<string> {
   return captured.join('');
 }
 
-describe('gbrain eval export — NDJSON shape', () => {
+describe('foresights eval export — NDJSON shape', () => {
   test('empty table → zero lines, exit 0', async () => {
     const out = await captureExport([]);
     expect(out).toBe('');

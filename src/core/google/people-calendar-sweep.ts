@@ -258,7 +258,7 @@ async function throughHolds(deps: GoogleSyncDeps, summary: GoogleSyncSummary, ho
     if (classified.class === 'content') await holds.fail(item.key, e, { version: item.version, meta: { title: item.title } });
     summary.failedFiles++;
     deps.log(`[google] ${JSON.stringify(item.key)} failed (${classified.code}): ${classified.message}; `
-      + (classified.class === 'content' ? `counted toward a hold (see: gbrain sources status ${deps.sourceId})` : 'retried on the next sync'));
+      + (classified.class === 'content' ? `counted toward a hold (see: foresights sources status ${deps.sourceId})` : 'retried on the next sync'));
     if (wasHeld) return true;
     summary.status = 'partial';
     return false;
@@ -424,8 +424,8 @@ function recordCalendarUnreadable(deps: GoogleSyncDeps, state: GoogleSourceState
   if (httpStatus === null) return false;
   state.calendar_unreadable = { code: 'calendar_unreadable', calendar_id: deps.cfg.calendarId, http_status: httpStatus, at: new Date().toISOString() };
   deps.log(`[google] calendar_unreadable: ${deps.cfg.account} cannot read calendar "${deps.cfg.calendarId}" (HTTP ${httpStatus}); no events were synced. `
-    + `List the calendars it can read: gbrain google calendars --account ${deps.cfg.account}; `
-    + `then point the source at one: gbrain sources set-calendar ${deps.sourceId} <calendar-id>`);
+    + `List the calendars it can read: foresights google calendars --account ${deps.cfg.account}; `
+    + `then point the source at one: foresights sources set-calendar ${deps.sourceId} <calendar-id>`);
   return true;
 }
 

@@ -57,7 +57,7 @@ function buildPackFixture(root: string, opts: FixtureOptions = {}): SkillpackMan
     mkdirSync(join(root, 'runbooks'), { recursive: true });
     writeFileSync(
       join(root, 'runbooks/bootstrap.md'),
-      '1. agent: gbrain put_page wiki/example\n2. show user: "Pack installed."\n',
+      '1. agent: foresights put_page wiki/example\n2. show user: "Pack installed."\n',
     );
   }
   return manifest;
@@ -166,11 +166,11 @@ describe('runScaffoldThirdParty — happy path', () => {
 
     expect(result.bootstrap.shown).toBe(true);
     expect(result.bootstrap.text).toContain('BOOTSTRAP STEPS');
-    expect(result.bootstrap.text).toContain('agent: gbrain put_page wiki/example');
+    expect(result.bootstrap.text).toContain('agent: foresights put_page wiki/example');
   });
 });
 
-describe('runScaffoldThirdParty — gbrain version gate', () => {
+describe('runScaffoldThirdParty — foresights version gate', () => {
   test('rejects when current version is below gbrain_min_version', async () => {
     freshSandbox();
     buildPackFixture(packDir, { manifestOverrides: { gbrain_min_version: '99.0.0' } });

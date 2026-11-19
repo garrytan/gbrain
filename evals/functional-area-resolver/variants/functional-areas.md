@@ -21,7 +21,7 @@ This folder is home. Treat it that way.
 
 ⛔ **PUBLIC REPO GUARD.** Before ANY public GitHub interaction: read `skills/public-repo-guard/SKILL.md`. Run PII scanner on ALL content.
 
-⚡ **MINIONS OVER SUB-AGENTS.** Use gbrain Minions (shell jobs) for batch/deterministic work. Sub-agents only when LLM reasoning is required mid-task. Always set `--timeout-ms 900000` for long jobs.
+⚡ **MINIONS OVER SUB-AGENTS.** Use foresights Minions (shell jobs) for batch/deterministic work. Sub-agents only when LLM reasoning is required mid-task. Always set `--timeout-ms 900000` for long jobs.
 
 ## Gate -1 — Acknowledge Immediately
 
@@ -44,7 +44,7 @@ If the owner mentions a **death, funeral, birth, hospitalization, emergency, dia
 
 Every the owner message: scan for entity mentions (people, companies, deals, YC batches). For each: search brain, load context, update if stale. Read `skills/entity-detector/ENTITY-DETECTION.md` for the full protocol.
 
-**Brain-First Content Resolution (MANDATORY):** When the owner references ANY content — article, essay, concept, tweet, meeting, book, person, company — by name or description, search gbrain FIRST. Never ask "which article?" or "can you share the link?" The brain has 100K pages. Search it. Only ask the owner if gbrain + memory + web all fail.
+**Brain-First Content Resolution (MANDATORY):** When the owner references ANY content — article, essay, concept, tweet, meeting, book, person, company — by name or description, search foresights FIRST. Never ask "which article?" or "can you share the link?" The brain has 100K pages. Search it. Only ask the owner if foresights + memory + web all fail.
 
 ## Gate 2 — Session Startup
 
@@ -87,7 +87,7 @@ Read the skill file before acting. If two could match, read both. Non-the owner 
 - Inline buttons / user decision gate → `ask-user`
 
 ### Functional Areas
-- **Brain & knowledge**: create/enrich/search/export brain pages, filing, citations, publishing, book analysis, strategic reading, concept synthesis, archive mining, conversation history → `brain-ops` (dispatcher for: enrich, query, brain-pdf, brain-publish, brain-export, brain-plan, brain-librarian, brain-commit, brain-storage, brain-storage-links, citation-fixer, repo-architecture, book-mirror, book-mirror-extreme, book-mirror-synthesis, strategic-reading, concept-synthesis, archive-crawler, conversation-history, conversation-enrichment, garry-voice, essay-review, fact-check, takes-extraction, gbrain, gbrain-upgrade, benchmark-gbrain, freshness-monitor, dropbox-archive-review, bulk-skillify, x-handle-enrich, person-score)
+- **Brain & knowledge**: create/enrich/search/export brain pages, filing, citations, publishing, book analysis, strategic reading, concept synthesis, archive mining, conversation history → `brain-ops` (dispatcher for: enrich, query, brain-pdf, brain-publish, brain-export, brain-plan, brain-librarian, brain-commit, brain-storage, brain-storage-links, citation-fixer, repo-architecture, book-mirror, book-mirror-extreme, book-mirror-synthesis, strategic-reading, concept-synthesis, archive-crawler, conversation-history, conversation-enrichment, garry-voice, essay-review, fact-check, takes-extraction, foresights, gbrain-upgrade, benchmark-gbrain, freshness-monitor, dropbox-archive-review, bulk-skillify, x-handle-enrich, person-score)
 - **Content ingestion**: ingest links/articles/PDFs/video/audio/tweets/books/meetings/voice notes, transcription, media enrichment → `ingest` (dispatcher for: media-ingest, meeting-ingestion, meeting-digest, meeting-gold-standard, meeting-signal-pass, voice-note-ingest, article-enrichment, post-ingestion-enrichment, media-enrichment, book-acquisition, annas-archive, pdf-ingest, tweet-deep-ingest, substack-ingest, pocket-ingest, investor-update-ingest, yc-ingest, yc-oh-ingest, yc-app-ingest, yc-meeting-ingest, kindle-library, therapy-ingest, transcript-save, file-archive-ingestion, idea-ingest)
 - **Calendar & scheduling**: schedule, events, conflicts, sync, prep, travel booking, time/location → `google-calendar` (dispatcher for: calendar-event-create, calendar-check, calendar-sync, calendar-recall, calendar-travel-setup, meeting-prep, interview-prep, context-now, jet-lag, location-inference)
 - **Email & comms**: inbox triage, email search/send, iMessage, Slack, unsubscribe, Front API → `executive-assistant` (dispatcher for: gmail, email-triage, email-unsubscribe, cold-email-lookup, cold-pitch-scorer, front-api, slack, intro-reping, startup-intro, investigate-no-response)
@@ -141,6 +141,6 @@ Key rules always in effect:
 Coding on gstack/gbrain/GL/any dev project: read `skills/acp-coding/SKILL.md`, spawn Codex via ACP, give full context, monitor+relay. Slash: `/code`, `/codex`, `/ship`, `/qa`, `/review`, `/investigate`.
 
 <!-- gbrain:skillpack:begin -->
-<!-- Installed by gbrain 0.25.1. All 35 skills in this pack are already referenced in the resolver tables above. -->
+<!-- Installed by foresights 0.25.1. All 35 skills in this pack are already referenced in the resolver tables above. -->
 <!-- gbrain:skillpack:manifest cumulative-slugs="academic-verify,archive-crawler,article-enrichment,book-mirror,brain-ops,brain-pdf,briefing,citation-fixer,concept-synthesis,cron-scheduler,cross-modal-review,daily-task-manager,daily-task-prep,data-research,enrich,idea-ingest,ingest,maintain,media-ingest,meeting-ingestion,minion-orchestrator,perplexity-research,query,repo-architecture,reports,signal-detector,skill-creator,skillify,skillpack-check,soul-audit,strategic-reading,testing,voice-note-ingest,webhook-transforms" version="0.25.1" -->
 <!-- gbrain:skillpack:end -->

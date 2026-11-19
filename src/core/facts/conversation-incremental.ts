@@ -211,7 +211,7 @@ export async function processSegmentedConversationPage(run: SegmentedConversatio
   const recorded = prior.filter(row => sameContext(row) && liveOccurrence.has(row.occurrenceId) && rowOutput(row).pattern);
   const kept = recorded.filter(row => hex(liveOccurrence.get(row.occurrenceId)!.sha256) === hex(row.segmentSha256));
   const bytesOf = (rows: SegmentDerivationRow[]) => rows.reduce((n, row) => n + liveOccurrence.get(row.occurrenceId)!.byteLen, 0);
-  // The operator's format for the page (gbrain extract-conversation-facts --grammar): this run's, else the one chosen for
+  // The operator's format for the page (foresights extract-conversation-facts --grammar): this run's, else the one chosen for
   // this page version. It covers the whole page, so the stream starts at its head; none (null) settles it as non-extractable.
   const stored = opts.grammar === undefined ? await readExtractionReceipt(engine, page.id, KIND) : null;
   const choice = opts.grammar !== undefined ? opts.grammar
@@ -226,7 +226,7 @@ export async function processSegmentedConversationPage(run: SegmentedConversatio
   const hold = async (grammars: Record<string, number>, checked: boolean) => {
     if (checked && !run.dryRun) await setExtractionReceipt(engine, page.id, KIND, { kind: 'detection_ambiguous', pipeline: KIND, processed_chars: 0, grammars, version_token: versionToken });
     result.pages_detection_ambiguous = (result.pages_detection_ambiguous ?? 0) + 1;
-    process.stderr.write(`[extract-conversation-facts] ${page.slug}: held${checked ? '' : ' (unchanged since it was held, nothing read)'}: no format is detected over the page, yet ${Object.entries(grammars).map(([id, n]) => `${id} parses ${n}`).join(', ')} message(s); its facts were kept and nothing was extracted; gbrain extract-conversation-facts --source-id ${sourceId} --slug ${page.slug} --grammar <format|none> --dry-run previews a choice\n`);
+    process.stderr.write(`[extract-conversation-facts] ${page.slug}: held${checked ? '' : ' (unchanged since it was held, nothing read)'}: no format is detected over the page, yet ${Object.entries(grammars).map(([id, n]) => `${id} parses ${n}`).join(', ')} message(s); its facts were kept and nothing was extracted; foresights extract-conversation-facts --source-id ${sourceId} --slug ${page.slug} --grammar <format|none> --dry-run previews a choice\n`);
     return { newestEnd: null };
   };
   // A page held at this version stays held without reading it (a --force run checks it again).
@@ -412,7 +412,7 @@ export async function processSegmentedConversationPage(run: SegmentedConversatio
           failures.delete(sha);
           // A failed window keeps whatever facts its key still holds (an earlier context's), and its row claims them.
           Object.assign(w, { state: 'failed', failed: failure, facts: await countWindowFacts(engine, sourceId, page.slug, sourceWindowKey(w.window)), text: null });
-          process.stderr.write(`[extract-conversation-facts] ${page.slug}: window ${w.window.window_ordinal} of occurrence ${w.owner} failed ${failure.attempts} runs (${failure.error}); skipped, gbrain doctor lists it, --force retries it\n`);
+          process.stderr.write(`[extract-conversation-facts] ${page.slug}: window ${w.window.window_ordinal} of occurrence ${w.owner} failed ${failure.attempts} runs (${failure.error}); skipped, foresights doctor lists it, --force retries it\n`);
           continue;
         }
         unpricedModel = metered.unpricedModel ?? unpricedModel;

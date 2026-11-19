@@ -9,7 +9,7 @@
  * and the bulk delete of the rest still run, and the bulk delete leaves the
  * failed tombstone alone (it would otherwise lose its page.expired event). A
  * content failure counts toward the shared purge park (PURGE_PARK_LIMIT, doctor
- * purge_parked_pages, `gbrain pages purge-deleted --retry-parked`); a
+ * purge_parked_pages, `foresights pages purge-deleted --retry-parked`); a
  * transient one is retried every run and never parked. A run-scoped failure or
  * a systemic run stops the purge and records no park.
  * Fails when: the per-row loop has no catch (the purge throws and the bulk
@@ -78,7 +78,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         expect({ failed: result.failed, parked: result.parked, status: purgePhaseStatus(result) }).toEqual({ failed: 1, parked: 0, status: 'warn' });
         expect(result.blocked.length).toBe(1);
         expectItemFailure({ key: `${result.blocked[0]!.source_id}/${result.blocked[0]!.slug}`, code: result.blocked[0]!.code ?? undefined, fix: result.blocked[0]!.reason },
-          { key: `${b.sourceId}/${POISON}`, code: 'invalid_data', fix: /gbrain pages purge-deleted --retry-parked/ });
+          { key: `${b.sourceId}/${POISON}`, code: 'invalid_data', fix: /(?:foresights|gbrain) pages purge-deleted --retry-parked/ });
         expect(await alive(b.engine, b.sourceId)).toEqual([LIVE, POISON].sort());
         expect(await alive(b.engine, 'default')).not.toContain(BULK);
         expectOthersUnchanged(before, await snapshotItems(b.engine, b.sourceId), { changed: RECORDED });
@@ -95,7 +95,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         const parkedRun = await expectUnitNotAborted(() => purge(b.engine));
         expect({ failed: parkedRun.failed, parked: parkedRun.parked, status: purgePhaseStatus(parkedRun) }).toEqual({ failed: 0, parked: 1, status: 'warn' });
         expectItemFailure({ key: parkedRun.blocked[0]!.slug, code: parkedRun.blocked[0]!.code ?? undefined, fix: parkedRun.blocked[0]!.reason },
-          { key: POISON, code: 'purge_parked', fix: /gbrain pages purge-deleted --retry-parked/ });
+          { key: POISON, code: 'purge_parked', fix: /(?:foresights|gbrain) pages purge-deleted --retry-parked/ });
         const preview = await selectPurgeCandidates(b.engine, 72);
         expect({ count: preview.count, parked: preview.parked.map(p => [p.slug, p.failures]) }).toEqual({ count: 0, parked: [[POISON, PURGE_PARK_LIMIT]] });
         const doctor = await checkPurgeParkedPages(b.engine);

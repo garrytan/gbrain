@@ -5,7 +5,7 @@
  * context wiring serves BOTH execution modes:
  *
  *   inline  — the worker builds it against its own engine/queue;
- *   process — `gbrain jobs run-child` builds it against the CHILD's engine
+ *   process — `foresights jobs run-child` builds it against the CHILD's engine
  *             (child-owns-engine design: every write below is token-fenced,
  *             so a reclaimed job's orphan child degrades to a no-op writer).
  *

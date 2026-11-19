@@ -7,7 +7,7 @@
  * export maps here; keep this barrel to the externally-consumed surface —
  * internal skillopt modules stay internal. B1.1 adds the rollout and scoring
  * primitives a method benchmark's rollout server runs, so every optimizer arm
- * runs the target with gbrain's own rollout.
+ * runs the target with foresights's own rollout.
  */
 
 export { runSkillOpt } from './orchestrator.ts';

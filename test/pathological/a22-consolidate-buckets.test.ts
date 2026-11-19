@@ -51,7 +51,7 @@ describe('A-22 consolidate isolates one bucket whose consolidation is refused', 
         const [sample] = result.details.bucket_failures as Array<{ source_id: string; entity_slug: string; code: string; fix: string }>;
         expect(sample?.source_id).toBe(sourceId);
         expectItemFailure({ key: sample?.entity_slug, code: sample?.code, fix: sample?.fix },
-          { key: 'people/alice-example', code: 'page_not_found', fix: new RegExp(`^gbrain dream --phase consolidate --source ${sourceId}$`) });
+          { key: 'people/alice-example', code: 'page_not_found', fix: new RegExp(`^foresights dream --phase consolidate --source ${sourceId}$`) });
         expect(await consolidated(engine, sourceId, 'people/alice-example')).toBe(0);
         expect(await consolidated(engine, sourceId, 'people/bob-example')).toBe(3);
         expect(result.details.takes_written).toBe(1);

@@ -60,7 +60,7 @@ function walkFiles(root: string, relativePath: string, excluded: string[] = []):
   const stat = lstatSync(path);
   const name = basename(relativePath).toLowerCase();
   const reason = stat.isFile() && (name.endsWith('.gbrain-backup') || isBackupArchiveFile(path))
-    ? 'previous GBrain backup archive'
+    ? 'previous Foresights backup archive'
     : name.startsWith('.env') || (stat.isFile() && (EXCLUDED_FILES.has(name) || credentialFilename.test(name) || /\.(?:key|p12|pfx)$/.test(name)))
     ? 'known standalone credential/environment filename'
     : stat.isDirectory() && EXCLUDED_DIRECTORIES.has(name) ? 'cache, browser, credential, runtime or backup directory' : null;
@@ -196,7 +196,7 @@ export async function createPgliteBackup(options: { output: string; root?: strin
         'Unmanaged files, including .gbrain/credential-deliveries, browser sessions, git metadata, caches and prior backups outside managed data paths, are not included.',
         ...excludedPaths,
         ...externalPaths,
-        ...sweep.removed.map(path => `Removed stale runtime socket left by an exited gbrain process: ${path}`),
+        ...sweep.removed.map(path => `Removed stale runtime socket left by an exited foresights process: ${path}`),
         ...(state.config.storage && (state.config.storage as { backend?: string }).backend !== 'local' ? ['Remote object storage content is not included; reconnect and verify the configured storage backend.'] : []),
         ...sources.filter(s => s.local_path && !s.managed_relative_path).map(s => `External source ${s.id}: ${s.local_path}`),
         'Native harness skills/routines must be reattached and verified; no platform account state is included.',
@@ -217,7 +217,7 @@ function metadataOf(manifest: ArchiveManifest): BackupMetadata {
     throw new AgentInstallError('invalid_backup', 'Invalid PGLite backup metadata.');
   }
   if (relativeBackupPath(value.original_root, value.original_root) !== '') throw new AgentInstallError('invalid_backup', 'Invalid archived root.');
-  if (value.schema_version > LATEST_VERSION) throw new AgentInstallError('newer_backup_schema', 'Upgrade GBrain before restoring this newer database schema.');
+  if (value.schema_version > LATEST_VERSION) throw new AgentInstallError('newer_backup_schema', 'Upgrade Foresights before restoring this newer database schema.');
   checkedManagedPaths(null, value.managed_paths);
   if ([...value.credential_references, ...value.omitted].some(v => typeof v !== 'string')) throw new AgentInstallError('invalid_backup', 'Invalid backup reconnect inventory.');
   for (const source of value.sources) {
@@ -341,7 +341,7 @@ export async function restorePgliteBackup(options: { archive: string; into: stri
       renameSync(join(restored, name), join(root, name));
     }
     const replayWarning = purgeReplay.state === 'none' || purgeReplay.state === 'complete' ? [] : [purgeReplay.state === 'unavailable'
-      ? `Purges made after the archive (${metadata.created_at}) were not replayed: no purge mirror could be read under ${metadata.original_root}. Restore again into a new root with the original brain's .gbrain/${PURGE_MIRROR_FILE} in place, or name a copy of it with gbrain backup restore --purge-mirror <absolute path>; otherwise purge the content again.`
+      ? `Purges made after the archive (${metadata.created_at}) were not replayed: no purge mirror could be read under ${metadata.original_root}. Restore again into a new root with the original brain's .gbrain/${PURGE_MIRROR_FILE} in place, or name a copy of it with foresights backup restore --purge-mirror <absolute path>; otherwise purge the content again.`
       : `Purge replay is ${purgeReplay.state} for request(s) ${purgeReplay.replays.filter(r => r.outcome !== 'complete').map(r => `${r.request_id} (${r.outcome})`).join(', ')}: review them and run those purges again if the content is still present.`];
     const reconnect = [...new Set([...metadata.credential_references.map(key => `Configure credential: ${key}`), ...metadata.omitted, ...detachedConfig, ...execution!.reconnect, ...replayWarning, 'Autopilot is paused; review .gbrain/restore-detached.json before explicitly resuming automation.'])];
     privateWrite(receiptPath, JSON.stringify({ format_version: 1, restore_id: restoreId, state: 'ready', original_root: metadata.original_root, shared_skills: sharedSkills, quarantined_jobs: quarantined, reconnect_required: reconnect, purge_replay: purgeReplay, launcher_ready: false, setup_required: true, native_automation_started: false }, null, 2) + '\n');

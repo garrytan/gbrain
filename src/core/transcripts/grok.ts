@@ -109,7 +109,7 @@ export function isGrokSessionSidecar(path: string): boolean {
 
 /**
  * Evidence-checked variant of isGrokSessionSidecar for EXPLICIT user paths
- * (`gbrain transcripts ingest <path>`). The bare-UUID/basename heuristics
+ * (`foresights transcripts ingest <path>`). The bare-UUID/basename heuristics
  * above are deliberately broad and FORMAT-SCOPED: discovery applies them only
  * under the grok root. Explicit paths carry no format scope, so this variant
  * only claims a path as a grok sidecar when a real grok session log is

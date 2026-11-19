@@ -18,7 +18,7 @@ mock.module('../src/core/engine-factory.ts', () => {
 const { createGBrainContextEngine, __resetSdkLoadStateForTests } = await import('../src/core/context-engine.ts');
 const { disposeReflex } = await import('../src/core/context/reflex.ts');
 
-const EXPECTED = '[gbrain] context engine: failed to load src/core/engine-factory.ts (ERR_UNKNOWN_FILE_EXTENSION); brain context is degraded';
+const EXPECTED = '[foresights] context engine: failed to load src/core/engine-factory.ts (ERR_UNKNOWN_FILE_EXTENSION); brain context is degraded';
 
 describe('assemble() path lazy-load failures are visible (#6906)', () => {
   let home: string;

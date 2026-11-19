@@ -2,7 +2,7 @@
 /**
  * Windows hidden-console guard (#4992; docs/TESTING.md#windows-hidden-console-guard).
  *
- * On Windows a detached gbrain child has no console, so every console program
+ * On Windows a detached foresights child has no console, so every console program
  * it launches without `windowsHide` opens a visible console window that takes
  * focus. src/core/spawn.ts is the one module that launches subprocesses and
  * defaults `windowsHide: true`. Outside it, this guard fails on any runtime
@@ -127,7 +127,7 @@ for (const [rel, reason] of Object.entries(NOT_YET_MIGRATED)) {
 
 if (violations.length) {
   for (const v of violations) console.error(v);
-  console.error('Why:  on Windows a console program launched from a detached gbrain process without windowsHide opens a visible console window that takes focus (#4992).');
+  console.error('Why:  on Windows a console program launched from a detached foresights process without windowsHide opens a visible console window that takes focus (#4992).');
   console.error(`See:  ${ANCHOR}`);
   console.error(`check-windows-hide: ${violations.length} violation(s)`);
   process.exit(1);

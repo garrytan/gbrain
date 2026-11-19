@@ -1,5 +1,5 @@
 /**
- * `gbrain decide dataset --slot recall_needed --from know-to-ask <dir>` over
+ * `foresights decide dataset --slot recall_needed --from know-to-ask <dir>` over
  * two committed BrainBench fixtures (copied to a temp corpus dir).
  *
  * Protects: one item per gold user turn with the gold label, the reflex state

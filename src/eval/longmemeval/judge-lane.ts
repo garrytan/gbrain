@@ -1,5 +1,5 @@
 /**
- * judge-lane.ts — harness-side orchestration for `gbrain eval longmemeval
+ * judge-lane.ts — harness-side orchestration for `foresights eval longmemeval
  * --judge`: the `--max-usd` parser, the per-row `judge_config_hash` (D33),
  * backfill row selection + the mixed-config gate, the spend preflight, and
  * the concurrent judge-only backfill. Keeps src/commands/eval-longmemeval.ts

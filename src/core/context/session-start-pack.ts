@@ -5,7 +5,7 @@
  *
  * Cat 41 first push: Claude Code spawns its MCP servers alongside SessionStart
  * (observed on 2.1.285: the server starts ~45ms before the hook, in parallel),
- * and a fresh stdio `gbrain serve` binds its socket about 2s later. Without a
+ * and a fresh stdio `foresights serve` binds its socket about 2s later. Without a
  * wait the hook found no socket and a fresh session got no pack. When
  * `sessionStartAwaitsServe` says the harness is starting a serve for this
  * session, the request is retried until the serve answers or the deadline
@@ -29,7 +29,7 @@ const WRITE_MARGIN_MS = 100;
 /**
  * True when this SessionStart belongs to a new Claude Code process (source
  * startup or resume; clear and compact run inside a process whose serve is
- * already up) and an installed `gbrain setup claude-code` receipt says that
+ * already up) and an installed `foresights setup claude-code` receipt says that
  * process spawns a stdio serve for this directory. Fail-open: false.
  */
 export function sessionStartAwaitsServe(source: unknown, harness: string, cwd: string): boolean {

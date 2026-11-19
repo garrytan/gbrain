@@ -3,20 +3,23 @@ name: skillpack-harvest
 version: 0.33.0
 description: |
   Lift a proven skill from a host repo (e.g. your OpenClaw fork) back into
-  gbrain's bundle so other clients can scaffold it. Editorial workflow:
+  foresights's bundle so other clients can scaffold it. Editorial workflow:
   the CLI does the file copy + privacy lint; this skill drives the
   judgment-heavy genericization (scrub real names, generalize triggers,
   lift fork-specific conventions to references).
 triggers:
   - "harvest this skill"
   - "harvest my skill"
+  - "publish this skill to foresights"
   - "publish this skill to gbrain"
   - "lift this skill"
   - "share this skill"
   - "promote this skill"
   - "promote my skill"
   - "skill upstream"
+  - "into the foresights core"
   - "into the gbrain core"
+  - "foresights bundle"
   - "gbrain bundle"
 mutating: true
 writes_pages: false
@@ -25,15 +28,15 @@ writes_to:
   - openclaw.plugin.json
 ---
 
-# skillpack-harvest — Editorial workflow for lifting host skills into gbrain
+# skillpack-harvest — Editorial workflow for lifting host skills into foresights
 
 > **Convention:** see [_brain-filing-rules.md](../_brain-filing-rules.md) for
-> file placement rules. This skill writes into gbrain's own tree, not the
+> file placement rules. This skill writes into foresights's own tree, not the
 > brain repo's notes.
 
-This skill is the inverse of `gbrain skillpack scaffold`. Scaffold ships
-skills downstream (gbrain → host). Harvest lifts proven patterns
-upstream (host → gbrain) so they become references every other client
+This skill is the inverse of `foresights skillpack scaffold`. Scaffold ships
+skills downstream (foresights → host). Harvest lifts proven patterns
+upstream (host → foresights) so they become references every other client
 can scaffold.
 
 ## Contract
@@ -44,20 +47,20 @@ A harvest is "properly done" when:
    cases pass).
 2. The editorial genericization in Phase 3 has scrubbed every
    fork-specific reference (names, real entities, internal channels).
-3. `gbrain skillpack harvest --dry-run` previewed the file set.
-4. The real `gbrain skillpack harvest <slug> --from <host>` succeeded
+3. `foresights skillpack harvest --dry-run` previewed the file set.
+4. The real `foresights skillpack harvest <slug> --from <host>` succeeded
    with `status: harvested` (no privacy-lint hits).
 5. `bun test test/skills-conformance.test.ts` passes on the new
    `skills/<slug>/SKILL.md`.
-6. The user has reviewed the diff in gbrain and explicitly approved
+6. The user has reviewed the diff in foresights and explicitly approved
    the commit.
 
 If any of these is incomplete, the skill is NOT yet harvested — the
-files may sit in gbrain's working tree, but they're not landed.
+files may sit in foresights's working tree, but they're not landed.
 
 ## Output Format
 
-This skill produces three artifacts in gbrain's working tree:
+This skill produces three artifacts in foresights's working tree:
 
 1. `skills/<harvested-slug>/SKILL.md` (and any sibling files like
    `routing-eval.jsonl`)
@@ -73,15 +76,15 @@ a list of files written. JSON mode (`--json`) returns the full
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `lint_failed`: the privacy linter caught a real name or private detail; go back to Phase 3 and replace it with placeholders (`alice-example`, `acme-example`, `fund-a`).
-- `gbrain skillpack check --strict` reports drift after the harvest: regenerate the bundle and re-run; never ship a drifting skillpack.
+- `foresights skillpack check --strict` reports drift after the harvest: regenerate the bundle and re-run; never ship a drifting skillpack.
 
 ## Anti-Patterns
 
 - **Skipping the dry-run.** Always preview first. Files land in
-  gbrain's working tree; cleanup is a `git checkout` away, but you
+  foresights's working tree; cleanup is a `git checkout` away, but you
   shouldn't need to.
 - **Trusting the linter alone.** The default regex set catches the
   common cases. It doesn't catch every proper noun. Phase 3 (the
@@ -90,7 +93,7 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
   for a reason. If you bypass it, document why in the commit.
 - **Harvesting a skill that's still in flux.** Wait until the host
   version stabilizes. Otherwise you'll harvest, then re-harvest,
-  then re-harvest, and that churns gbrain's bundle for no benefit.
+  then re-harvest, and that churns foresights's bundle for no benefit.
 - **Moving files instead of copying.** Harvest is a copy. The host
   retains its skill. Don't `rm -rf` the source after harvesting.
 - **Harvesting batch (multiple skills at once).** Not supported, and
@@ -99,7 +102,7 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 ## When to invoke
 
 - The user developed a skill in their host fork (your OpenClaw or any
-  private downstream fork) and wants other gbrain clients to be able to use it
+  private downstream fork) and wants other foresights clients to be able to use it
 - A skill has proven itself in production and is ready to generalize
 - The user explicitly asks to "harvest" or "publish" a skill upstream
 
@@ -118,8 +121,8 @@ Before running this skill, confirm:
 2. **The skill is generalizable.** Strip-test in your head: replace
    every fork-specific name. Does it still make sense as a skill?
 
-3. **The user owns the gbrain checkout.** The harvest writes into
-   gbrain's working tree. They'll review and commit. Don't harvest
+3. **The user owns the foresights checkout.** The harvest writes into
+   foresights's working tree. They'll review and commit. Don't harvest
    into a checkout the user doesn't intend to commit from.
 
 ## Workflow
@@ -128,7 +131,7 @@ Before running this skill, confirm:
 
 Ask the user:
 - What slug should the harvested skill have? (Slugs must be kebab-case,
-  globally unique in the gbrain bundle.)
+  globally unique in the foresights bundle.)
 - Which host repo is the source? (Path to repo root, not to the skill
   directory — e.g. `~/git/agent-fork`, not `~/git/agent-fork/skills/foo`.)
 - Should paired source files come along? (Check the host SKILL.md's
@@ -139,11 +142,11 @@ Ask the user:
 Run the CLI with `--dry-run`:
 
 ```bash
-gbrain skillpack harvest <slug> --from <host-repo-root> --dry-run
+foresights skillpack harvest <slug> --from <host-repo-root> --dry-run
 ```
 
 The output shows:
-- Which files would land in gbrain's tree
+- Which files would land in foresights's tree
 - Whether paired sources are included
 - (Implicit) The skill's frontmatter triggers — read them and check
   they generalize
@@ -174,7 +177,7 @@ file FIRST, then run harvest.
 
 3. **Fork-specific conventions → references**
    - Mentions of `<host-repo>/docs/...` files → either lift the doc
-     into gbrain OR replace with a generic placeholder explanation
+     into foresights OR replace with a generic placeholder explanation
    - Mentions of `<host-repo>/skills/<other-fork-only-skill>` → either
      decide to harvest that one too, or replace with a generic
      pattern reference
@@ -198,7 +201,7 @@ file FIRST, then run harvest.
 Once Phase 3 is complete, run the real harvest:
 
 ```bash
-gbrain skillpack harvest <slug> --from <host-repo-root>
+foresights skillpack harvest <slug> --from <host-repo-root>
 ```
 
 Default behavior:
@@ -210,29 +213,29 @@ Default behavior:
 - `openclaw.plugin.json` updated to add the slug, sorted
 
 Outcomes:
-- `harvested` — success, manifest updated, files in gbrain's tree
+- `harvested` — success, manifest updated, files in foresights's tree
 - `lint_failed` — privacy linter caught something. Go back to Phase 3,
   scrub the host file, retry.
-- `slug_collision` — gbrain already has a skill at that slug. Either
+- `slug_collision` — foresights already has a skill at that slug. Either
   use a different slug, or pass `--overwrite-local` if you really
   mean to replace.
 
-### Phase 5 — Verify in gbrain
+### Phase 5 — Verify in foresights
 
 After a successful harvest:
 
 1. `bun test test/skills-conformance.test.ts` — confirms the new
    SKILL.md meets the frontmatter contract.
-2. `gbrain skillpack check --strict` — confirms no drift between
-   bundle and gbrain's own checkout.
-3. `gbrain skillpack list` — confirms the slug shows up in the bundle.
+2. `foresights skillpack check --strict` — confirms no drift between
+   bundle and foresights's own checkout.
+3. `foresights skillpack list` — confirms the slug shows up in the bundle.
 4. Review the diff: `cd <gbrainRoot> && git diff -- skills/<slug>/`
-5. Commit the additions in gbrain (do NOT commit any leftover files
+5. Commit the additions in foresights (do NOT commit any leftover files
    in the host repo — harvest is a copy, not a move).
 
 ### Phase 6 — Downstream announcement (optional)
 
-If other gbrain clients should pick up the new skill:
+If other foresights clients should pick up the new skill:
 - Note it in `CHANGELOG.md` under "Skills added" for the next release
 - Tag the user / contributor in the PR if the skill came from
   someone outside the core team
@@ -244,7 +247,7 @@ primary defense. If you've completed Phase 3 thoroughly and the
 linter is still firing on a false positive, use `--no-lint`:
 
 ```bash
-gbrain skillpack harvest <slug> --from <host-repo-root> --no-lint
+foresights skillpack harvest <slug> --from <host-repo-root> --no-lint
 ```
 
 **Document the bypass in the commit message.** Future maintainers
@@ -261,18 +264,18 @@ editorial pass.
   stays in place.
 - It does NOT auto-scrub names. The editorial pass is human-driven.
 - It does NOT publish to npm or a remote bundle. It writes to
-  gbrain's working tree; the user commits + ships via the normal
-  gbrain release process.
+  foresights's working tree; the user commits + ships via the normal
+  foresights release process.
 - It does NOT support `--all` (no batch harvest). One skill at a
   time keeps the editorial review tractable.
 
 ## Files this skill touches
 
-- gbrain's `skills/<slug>/` — every file in the host skill dir
+- foresights's `skills/<slug>/` — every file in the host skill dir
   (copy)
-- gbrain's mirror path for declared paired sources
+- foresights's mirror path for declared paired sources
   (e.g. `src/commands/<slug>.ts` if the host SKILL.md declares it
   in frontmatter)
-- gbrain's `openclaw.plugin.json` — adds the slug to `skills:`
+- foresights's `openclaw.plugin.json` — adds the slug to `skills:`
   array, sorted alphabetically, without removing OpenClaw-native plugin fields
   like `id`, `configSchema`, or `contracts`

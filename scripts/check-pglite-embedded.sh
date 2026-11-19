@@ -5,7 +5,7 @@
 # the compiled binary's read-only vfs (`/$bunfs/root`).
 #
 # This is the Bun-vfs #1340 failure mode: `bun build --compile` bundles our JS
-# but does NOT embed PGLite's assets, so a compiled `gbrain serve`/`init` on a
+# but does NOT embed PGLite's assets, so a compiled `foresights serve`/`init` on a
 # PGLite brain used to die with a bunfs ENOENT. src/core/pglite-embedded-assets.ts
 # embeds them via `with { type: 'file' }` and feeds them to PGLite via
 # PGliteOptions. If that regresses (asset path drifts, option names change, the

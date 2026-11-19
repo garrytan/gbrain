@@ -1,5 +1,5 @@
 /**
- * gbrain pages — page-level operator commands. v0.26.5+.
+ * foresights pages — page-level operator commands. v0.26.5+.
  *
  * The first subcommand: `pages purge-deleted [--older-than HOURS|Nh|Nd] [--retry-parked] [--dry-run] [--json] [--yes]`.
  * `pages unsearchable` (#6696 B3) lists embedding-state rows; its body is pages-unsearchable.ts.
@@ -63,12 +63,12 @@ async function runPurgeDeleted(engine: BrainEngine, args: string[]): Promise<voi
     }
     console.log(`(dry-run) Would purge ${selection.count} page(s) soft-deleted more than ${olderThanHours}h ago.`);
     // #7130: the automatic purge keeps these; a purged page can only come back from a backup.
-    if (selection.sync_unreviewed) console.log(`  ${selection.sync_unreviewed} of them were deleted by a managed sync, not a person, and no live page has their content; restore any you need first (gbrain restore <slug> --source-id <id> --force). A purged page can only come back from a backup.`);
+    if (selection.sync_unreviewed) console.log(`  ${selection.sync_unreviewed} of them were deleted by a managed sync, not a person, and no live page has their content; restore any you need first (foresights restore <slug> --source-id <id> --force). A purged page can only come back from a backup.`);
     for (const p of selection.pages ?? []) console.log(`  ${p.slug}  deleted_at=${p.deleted_at.toISOString()}`);
     for (const c of selection.candidates) console.log(`  ${c.source_id}/${c.slug}${c.park ? ' (parked; retried once more)' : ''}${c.sync_unreviewed ? ' (deleted by a managed sync; no live twin)' : ''}`);
     for (const p of selection.parked.filter(park => !park.retried)) console.log(`  parked: ${p.source_id}/${p.slug} after ${p.failures} failures (${p.code ?? 'error'}); skipped unless --retry-parked`);
     for (const b of selection.blocked.filter(entry => entry.code === 'writer_not_active')) console.log(`  waiting: ${b.source_id}/${b.slug}: ${b.reason}`);
-    for (const o of selection.released_origins) console.log(`  released: ${o.source_id}/${o.slug} is parked (gbrain doctor: derived_origin_parked); the run labels the pages derived from it private first and keeps it parked if that fails`);
+    for (const o of selection.released_origins) console.log(`  released: ${o.source_id}/${o.slug} is parked (foresights doctor: derived_origin_parked); the run labels the pages derived from it private first and keeps it parked if that fails`);
     return;
   }
 
@@ -104,12 +104,12 @@ async function runPurgeDeleted(engine: BrainEngine, args: string[]): Promise<voi
 }
 
 export function printUsage(): void {
-  console.log(`gbrain pages — page-level operator commands
+  console.log(`foresights pages — page-level operator commands
 
 Subcommands:
   ghosts [--source <id>] [--json]   List live pages whose canonical file is missing on the
                                     owner host (ghost pages). Read-only; remove them with
-                                    gbrain repair ghost-pages --source <id> (preview first).
+                                    foresights repair ghost-pages --source <id> (preview first).
   purges list [--source <id>] [--json]
                                     List page purge tombstones (slug, hash, request, time).
   unpurge <slug> [--source <id>] [--json]
@@ -139,7 +139,7 @@ Subcommands:
                                     the fix. A page that is not searchable still exits 0.
 
 Notes:
-  Soft-delete a page via \`gbrain delete <slug> --force\`; restore via \`gbrain restore <slug> --force\`
+  Soft-delete a page via \`foresights delete <slug> --force\`; restore via \`foresights restore <slug> --force\`
   (the delete_page / restore_page ops, equally reachable over MCP). Deleting also removes
   the page's markdown file from the source working tree; restoring re-creates it.
   This command is the manual operator escape hatch — the autopilot cycle's

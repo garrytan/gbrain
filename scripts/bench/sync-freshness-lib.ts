@@ -166,7 +166,7 @@ export function waitLine(child: Child, re: RegExp, timeoutMs: number, fromT = 0)
   });
 }
 
-// MCP stdio client over a gbrain serve child.
+// MCP stdio client over a foresights serve child.
 export class McpClient {
   private id = 0;
   private pending = new Map<number, (v: { result?: any; error?: any }) => void>();
@@ -219,7 +219,7 @@ export function getTargets(c: Change): { present: string[]; gone: string[] } {
 }
 
 /**
- * `embeddedText` returns the input the embedding stub embedded for a token (the chunk text plus the context header gbrain
+ * `embeddedText` returns the input the embedding stub embedded for a token (the chunk text plus the context header foresights
  * adds), so the vector check queries searchVector with exactly the vector the provider returned for that chunk.
  */
 export async function engineProber(gbrainRoot: string, databaseUrl: string, embed = false, embeddedText?: (token: string) => string | undefined): Promise<Prober> {

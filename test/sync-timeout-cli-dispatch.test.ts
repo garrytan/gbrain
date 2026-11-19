@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { resolveReadOnlyDispatchTimeoutMs } from '../src/cli/main.ts';
 import { parseGlobalFlags } from '../src/core/cli-options.ts';
 
-// #3013 — `gbrain sync --timeout <s>` was unreachable: the global option
+// #3013 — `foresights sync --timeout <s>` was unreachable: the global option
 // parser claimed --timeout before dispatch, and the read-only timeout path
 // gated on "a timeout is present" rather than "the command is read-only".
 // Any command carrying a user --timeout was rerouted into

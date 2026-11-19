@@ -2,7 +2,7 @@
  * D15 recovery for #5163. A brain that imported codex 0.154 rollouts before
  * the fix holds assistant-only conversation pages, and its `--since last`
  * watermark is already past them, so the fixed parser alone never restores
- * the user turns. `gbrain transcripts recover codex` previews, then restores
+ * the user turns. `foresights transcripts recover codex` previews, then restores
  * them from the retained rollouts; a rerun neither duplicates pages nor
  * re-imports, nothing touches the watermark, and a session whose rollout is
  * gone is reported as unrecoverable.

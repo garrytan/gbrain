@@ -2,7 +2,7 @@
  * diagnostics.ts — ranker wave Phase B1: locate WHERE a LongMemEval strict
  * miss is lost before any fix is chosen (plan D27, "B1 locates causes").
  *
- * Input is a harness receipt (`gbrain eval longmemeval` ndjson) plus the
+ * Input is a harness receipt (`foresights eval longmemeval` ndjson) plus the
  * dataset. For every scored question with `recall_all_hit=false` (or every
  * question with `all: true`) the question's brain is re-created EXACTLY as the
  * harness built it — one in-memory PGLite for the run, `resetTables` per

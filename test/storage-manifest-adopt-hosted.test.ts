@@ -1,5 +1,5 @@
 /**
- * GST-1943: `gbrain storage adopt` and JSONL import on a brain with a Git checkout (managed persistence, PGLite). Git stays
+ * GST-1943: `foresights storage adopt` and JSONL import on a brain with a Git checkout (managed persistence, PGLite). Git stays
  * the parent. Protects:
  *   - adopt and import refuse storage_manifest_missing until storage init has hosted the shelf, and write nothing;
  *   - after init, the adopt apply commits each card to the hosted repository (origin adopt) and tags the original through

@@ -3,7 +3,7 @@
  * state no MCP or HTTP operation writes:
  *
  *   - `wakeshift.enabled` / `wakeshift.url` in the file plane (~/.gbrain/config.json), written only by the
- *     trusted local `gbrain wakeshift enable|disable`, so a remote caller can never turn reporting back on;
+ *     trusted local `foresights wakeshift enable|disable`, so a remote caller can never turn reporting back on;
  *   - the key: WAKESHIFT_API_KEY (moved out of this process's environment whenever config loads, wakeshift-env-key.ts, so
  *     child processes do not inherit it), else ~/.gbrain/wakeshift.key, which must be 0600 (a looser file is ignored and doctor says so);
  *   - the HMAC secret ~/.gbrain/wakeshift.secret (0600, random): the Wakeshift `user` is the first 32 hex of
@@ -64,7 +64,7 @@ export interface WakeshiftRuntime { key: WakeshiftKey; url: string; api: Wakeshi
 
 /**
  * The live runtime when reporting back is on and the key parses, else null. Reads the file plane fresh (never a
- * DB-merged snapshot), so `gbrain wakeshift disable` takes effect on the next call or tools/list.
+ * DB-merged snapshot), so `foresights wakeshift disable` takes effect on the next call or tools/list.
  */
 export function wakeshiftRuntime(opts: { config?: GBrainConfig | null; fetch?: typeof fetch } = {}): WakeshiftRuntime | null {
   const file = wakeshiftFileConfig(opts.config === undefined ? loadConfig() : opts.config);
@@ -99,7 +99,7 @@ export function wakeshiftSecret(): Buffer {
     if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
   }
   const s = read();
-  if (s.length < 32) throw new Error(`${file} is not a gbrain Wakeshift secret; remove it and retry.`);
+  if (s.length < 32) throw new Error(`${file} is not a foresights Wakeshift secret; remove it and retry.`);
   return s;
 }
 

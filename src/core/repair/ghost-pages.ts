@@ -1,5 +1,5 @@
 /**
- * `gbrain repair ghost-pages --source <id>` (#6696 B5): soft-delete live pages
+ * `foresights repair ghost-pages --source <id>` (#6696 B5): soft-delete live pages
  * whose canonical file is gone (a ghost: `liveFileDrift` reason
  * `canonical_file_missing` on the owner host, `src/core/ghost-pages.ts`).
  *
@@ -32,7 +32,7 @@
  * (`ghost_mass_delete_refused` unless `GBRAIN_ALLOW_MASS_RECONCILE=1`) when the
  * ghosts are more than half of a source's file-backed pages. Soft-deleted
  * pages are purged by the autopilot purge phase after 72 h; until then
- * `gbrain restore <slug> --force` undoes one page.
+ * `foresights restore <slug> --force` undoes one page.
  */
 import { existsSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
@@ -67,13 +67,13 @@ const FILE_CHANGED = 'The canonical file changed after preparation.';
 const SKILL_PATH_SAMPLE = 20;
 /** #6910: the stable code of a ghost on a file of the adopted shared skillpack. */
 export const SKILL_PACK_MEMBER_CODE = 'ghost_skill_pack_member';
-/** #6910: why such a ghost is left alone and the human step that clears it; the preview, `gbrain pages ghosts` and doctor say it. */
+/** #6910: why such a ghost is left alone and the human step that clears it; the preview, `foresights pages ghosts` and doctor say it. */
 export const SKILL_PATH_NOTE = 'A ghost page whose path is a file of the source\'s adopted shared skillpack (skills/<name>/..., skillpack.json) is the pack\'s own file missing from the checkout; '
   + 'the shared skill publisher owns it, so this repair never removes the page. Restore the file on the owner host (git -C <source root> checkout -- <path> when it is committed; '
   + 'otherwise republish the skill with put_skill and its catalog expected_revision so the publisher writes it again); the page then stops being a ghost. These pages never block the other ghosts.';
-/** #7736: why a page whose recorded path names no file inside its source is left alone; the preview, `gbrain pages ghosts` and doctor say it. */
+/** #7736: why a page whose recorded path names no file inside its source is left alone; the preview, `foresights pages ghosts` and doctor say it. */
 export const UNRESOLVABLE_NOTE = 'A page whose recorded file path names no file inside its source (an absolute path, a path with .., or NUL) is never treated as a ghost or removed: '
-  + 'gbrain cannot tell whether its file exists. Read it with gbrain pages status <slug> --source <id> --json; the page stays as it is.';
+  + 'foresights cannot tell whether its file exists. Read it with foresights pages status <slug> --source <id> --json; the page stays as it is.';
 /** The `unresolvable` detail every reader prints. */
 export const unresolvableDetail = (count: number, samples: UnresolvablePage[]) => ({ code: UNRESOLVABLE_PATH_CODE, count, samples, note: UNRESOLVABLE_NOTE, docs: DOCS });
 /** The exact restore command for one pack-member ghost. */
@@ -88,7 +88,7 @@ export function skillPathDetail(root: string | undefined, ghosts: GhostPage[], c
 interface ApprovedGhost extends GhostPage { owner: GhostOwner; selection: string[] }
 interface GhostItem extends RepairItem { ghost: GhostPage; owner: GhostOwner; hash: string; last: boolean }
 
-export const ghostPreviewCommand = (sourceId: string) => `gbrain repair ghost-pages --source ${sourceId}`;
+export const ghostPreviewCommand = (sourceId: string) => `foresights repair ghost-pages --source ${sourceId}`;
 const previewFix = (sourceId: string) => readFix('Previews the ghost pages of the source again; writes nothing.',
   { argv: ['gbrain', 'repair', 'ghost-pages', '--source', sourceId, '--json'] });
 const writerStatusFix = (sourceId: string) => readFix('Shows the source\'s canonical binding and owner host, read-only.',
@@ -97,8 +97,8 @@ const writerStatusFix = (sourceId: string) => readFix('Shows the source\'s canon
 /** The three consequences every preview and the consent payload state. */
 export const GHOST_CONSEQUENCES = {
   purge: `Soft-deleted pages are purged for good by the autopilot purge phase ${GHOST_PURGE_FUSE_HOURS} h after deletion.`,
-  undo: 'Until then, undo one page with gbrain restore <slug> --force (per slug; it writes the file back).',
-  keep: 'To keep a page instead, restore its file at the recorded canonical path on the owner host (from Git or a backup; gbrain has no automated file restore), then run gbrain sync for the source.',
+  undo: 'Until then, undo one page with foresights restore <slug> --force (per slug; it writes the file back).',
+  keep: 'To keep a page instead, restore its file at the recorded canonical path on the owner host (from Git or a backup; foresights has no automated file restore), then run foresights sync for the source.',
 };
 
 /** The consent payload of `--apply --expect <hash>` (registry `consentText`). */
@@ -106,7 +106,7 @@ export const GHOST_CONSENT_TEXT = {
   what: 'Soft-delete the previewed ghost pages: live pages whose canonical file is missing on the owner host',
   why: 'The preview listed each page with its recorded canonical path and revision; no sync can import a file that is not there, so every write to these pages refuses until the file is restored or the page is removed.',
   risk: `The pages leave search and reads now. ${GHOST_CONSEQUENCES.purge} ${GHOST_CONSEQUENCES.undo} ${GHOST_CONSEQUENCES.keep.replace('To keep a page instead, ', 'To keep a page instead, do not apply: ')} A page whose file comes back before the apply is kept.`,
-  user_message: `Soft-delete the previewed ghost pages? They are purged after ${GHOST_PURGE_FUSE_HOURS} h; gbrain restore <slug> --force undoes one until then`,
+  user_message: `Soft-delete the previewed ghost pages? They are purged after ${GHOST_PURGE_FUSE_HOURS} h; foresights restore <slug> --force undoes one until then`,
 };
 
 /** The sync valve (#2828) over a source's file-backed pages. */
@@ -155,8 +155,8 @@ export const ghostPagesRepair: RepairHandler = {
   embeds: false,
   async plan(engine, scope, after, opts): Promise<RepairPlan> {
     if (scope.source_ids.length !== 1) {
-      throw opError('invalid_params', 'gbrain repair ghost-pages needs --source <id>.',
-        'Ghost pages are checked on each source\'s own canonical owner host; name one source, e.g. gbrain repair ghost-pages --source default.',
+      throw opError('invalid_params', 'foresights repair ghost-pages needs --source <id>.',
+        'Ghost pages are checked on each source\'s own canonical owner host; name one source, e.g. foresights repair ghost-pages --source default.',
         { fix: readFix('Lists the registered sources.', { argv: ['gbrain', 'sources', 'list', '--json'] }), docs: DOCS });
     }
     const sourceId = scope.source_ids[0]!;
@@ -191,12 +191,12 @@ export const ghostPagesRepair: RepairHandler = {
           detail: `shared skillpack file ${ghost.path} is missing; not applied. Restore it: ${skillPathRestore(scan.root, ghost)}` })),
         ...scan.unresolvable.map(page => ({ item: `${page.source_id}:${page.slug}`, class: UNRESOLVABLE_PATH_CODE,
           detail: `recorded path ${page.source_path} names no file inside the source; not applied` }))],
-        details: { purge_fuse_hours: GHOST_PURGE_FUSE_HOURS, undo: 'gbrain restore <slug> --force', keep: GHOST_CONSEQUENCES.keep, mass_delete: mass, truncated: scan.truncated, docs: DOCS,
+        details: { purge_fuse_hours: GHOST_PURGE_FUSE_HOURS, undo: 'foresights restore <slug> --force', keep: GHOST_CONSEQUENCES.keep, mass_delete: mass, truncated: scan.truncated, docs: DOCS,
           ...(skillPaths ? { skill_paths: skillPathDetail(scan.root, scan.skill_paths) } : {}),
           ...(scan.unresolvable_count ? { unresolvable: unresolvableDetail(scan.unresolvable_count, scan.unresolvable) } : {}) } };
     }
     if (!opts.expect) {
-      throw opError('invalid_params', 'gbrain repair ghost-pages --apply removes only the set a preview printed.',
+      throw opError('invalid_params', 'foresights repair ghost-pages --apply removes only the set a preview printed.',
         `Preview first: ${command} — then, after the user agrees, run the apply command it prints: ${command} --apply --expect <preview-hash> --yes`,
         { fix: previewFix(sourceId), docs: DOCS });
     }
@@ -258,7 +258,7 @@ export async function ghostFileBacked(engine: BrainEngine, ghost: GhostPage, own
 }
 
 export const DATABASE_AHEAD_CODE = 'database_ahead_of_file';
-export const databaseAheadDetail = (ghost: GhostPage) => `file ${ghost.path} is gone, but page ${ghost.slug} was written in the database after the file last held it, so it holds the only copy of that content; not soft-deleted. Recreate the file from the page with gbrain repair file-drift --source ${ghost.source_id} --slug ${ghost.slug} --prefer database, or keep the page as it is`;
+export const databaseAheadDetail = (ghost: GhostPage) => `file ${ghost.path} is gone, but page ${ghost.slug} was written in the database after the file last held it, so it holds the only copy of that content; not soft-deleted. Recreate the file from the page with foresights repair file-drift --source ${ghost.source_id} --slug ${ghost.slug} --prefer database, or keep the page as it is`;
 
 /** Whether the live page is still the approved ghost under the approved owner, with a file-backed revision; otherwise the outcome that skips it. */
 async function stillApproved(engine: BrainEngine, ghost: GhostPage, owner: GhostOwner): Promise<RepairItemOutcome | null> {
@@ -270,7 +270,7 @@ async function stillApproved(engine: BrainEngine, ghost: GhostPage, owner: Ghost
   return null;
 }
 
-/** Soft-deletes one approved ghost; a managed brain submits it under `requestId()` (also `gbrain repair file-drift --prefer file` on a page whose file is gone, #6712 wave). */
+/** Soft-deletes one approved ghost; a managed brain submits it under `requestId()` (also `foresights repair file-drift --prefer file` on a page whose file is gone, #6712 wave). */
 export async function retireGhost(ctx: OperationContext, ghost: GhostPage, owner: GhostOwner, requestId: () => Promise<string>): Promise<RepairItemOutcome> {
   const engine = ctx.engine;
   const skip = await stillApproved(engine, ghost, owner);

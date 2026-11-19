@@ -58,12 +58,12 @@ describe('put_page remote auto-link disclosure (#4525)', () => {
   test('tool description names the remote auto-link skip', () => {
     expect(putPage.description).toMatch(/[Rr]emote .*callers/);
     expect(putPage.description).toContain('skipped');
-    // #4679: name the async path too (serve maintenance sweep / `gbrain sweep`).
+    // #4679: name the async path too (serve maintenance sweep / `foresights sweep`).
     expect(putPage.description).toContain('sweep');
     // Wave review: only a stdio serve self-sweeps (startup + idle);
-    // `gbrain serve --http` never arms one. The disclosure must be per-lane.
-    expect(putPage.description).toMatch(/stdio `gbrain serve` sweeps/);
-    expect(putPage.description).toMatch(/`gbrain serve --http` does not self-sweep/);
+    // `foresights serve --http` never arms one. The disclosure must be per-lane.
+    expect(putPage.description).toMatch(/stdio `(?:foresights|gbrain) serve` sweeps/);
+    expect(putPage.description).toMatch(/`(?:foresights|gbrain) serve --http` does not self-sweep/);
     expect(putPage.description).not.toMatch(/sweep \(startup \+ idle\)/);
   });
 
@@ -77,8 +77,8 @@ describe('put_page remote auto-link disclosure (#4525)', () => {
     expect(result.auto_links?.hint).toContain('NOT reconciled');
     expect(result.auto_links?.hint).toContain('sweep');
     // Wave review: lane-accurate — HTTP serve callers are told it does NOT self-sweep.
-    expect(result.auto_links?.hint).toMatch(/stdio `gbrain serve` sweeps/);
-    expect(result.auto_links?.hint).toMatch(/`gbrain serve --http` does not self-sweep/);
+    expect(result.auto_links?.hint).toMatch(/stdio `(?:foresights|gbrain) serve` sweeps/);
+    expect(result.auto_links?.hint).toMatch(/`(?:foresights|gbrain) serve --http` does not self-sweep/);
     expect(result.auto_links?.hint).not.toMatch(/sweep \(startup \+ idle\)/);
     // Canonical timeline projections commit with the page snapshot.
     expect(result.auto_timeline?.skipped).toBeUndefined();
@@ -95,7 +95,7 @@ describe('put_page remote auto-link disclosure (#4525)', () => {
     expect(skill).toContain('sweep');
     // Wave review: the skill must not promise a startup/idle sweep to HTTP
     // callers — only the stdio serve arms one.
-    expect(skill).toMatch(/`gbrain serve --http` does not self-sweep/);
+    expect(skill).toMatch(/`(?:foresights|gbrain) serve --http` does not self-sweep/);
     expect(skill).not.toMatch(/\(at startup and on 10-minute idle ticks\)/);
   });
 

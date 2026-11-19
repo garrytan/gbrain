@@ -58,8 +58,8 @@ preregistered run; this verdict stands for this build.
 ## Defaults
 
 - `memory.core.enabled`: `false`. An owner who wants it turns it on with
-  `gbrain config set memory.core.enabled true` and marks pages with
-  `gbrain core init` or `gbrain core add`; `gbrain core` and `gbrain doctor`
+  `foresights config set memory.core.enabled true` and marks pages with
+  `foresights core init` or `foresights core add`; `foresights core` and `foresights doctor`
   say so when pages are marked while it is off.
 - `memory.pressure.enabled`: `true`, from its own pass
   ([pressure verdict](../p4-heldout-pressure-2026-10-05/README.md)).

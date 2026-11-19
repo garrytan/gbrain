@@ -142,7 +142,7 @@ export function skillsManifestIntegrityCheck(skillsDir: string): Check {
  * doesn't have yet. Advisory: `new` skills are a WARN (you're missing
  * shipped capability); `drifted` skills are informational only (local edits
  * are legitimate — the ownership model). No-ops when running inside the
- * gbrain repo itself (bundle == install, always current) or when the bundle
+ * foresights repo itself (bundle == install, always current) or when the bundle
  * can't be located.
  */
 export function skillCurrencyCheck(skillsDir: string): Check {
@@ -153,7 +153,7 @@ export function skillCurrencyCheck(skillsDir: string): Check {
     return { name, status: 'ok', message: 'skill currency not applicable (no bundled skills pack found)' };
   }
   if (resolvePath(targetWorkspace) === resolvePath(gbrainRoot)) {
-    return { name, status: 'ok', message: 'skill currency not applicable (running inside the gbrain repo)' };
+    return { name, status: 'ok', message: 'skill currency not applicable (running inside the foresights repo)' };
   }
   let report: ReturnType<typeof computeSkillCurrency>;
   try {
@@ -183,8 +183,8 @@ export function skillCurrencyCheck(skillsDir: string): Check {
       `${newCount} new built-in skill(s) available that this workspace hasn't installed: ${sample('new')}. ` +
       (isManagedFilesystemPath(skillsDir)
         // #5606: on a managed canonical worktree skillpack sync is refused; name the route that works there.
-        ? 'This is a managed canonical worktree, where `gbrain skillpack sync` is refused: publish each reviewed bundle through `gbrain call --source <source> import_skill_proposal` (docs/guides/shared-brain-skills.md#publish-reviewed-filesystem-edits).'
-        : `Add them with \`gbrain skillpack sync\`.`) +
+        ? 'This is a managed canonical worktree, where `foresights skillpack sync` is refused: publish each reviewed bundle through `foresights call --source <source> import_skill_proposal` (docs/guides/shared-brain-skills.md#publish-reviewed-filesystem-edits).'
+        : `Add them with \`foresights skillpack sync\`.`) +
       (counts.drifted > 0 ? ` (${counts.drifted} drifted from the bundle — local edits are fine.)` : ''),
     details: {
       new: skills.filter(k => k.status === 'new').map(k => k.slug),
@@ -199,7 +199,7 @@ export function skillCurrencyCheck(skillsDir: string): Check {
  * preconditions, verify each against the connected brain and WARN on unmet
  * ones with a paste-ready hint. Engine-dependent: skips cleanly when there
  * is no brain to check against (the static list lives in
- * `gbrain skillpack setup`).
+ * `foresights skillpack setup`).
  */
 export async function skillPreconditionsCheck(
   skillsDir: string,
@@ -395,7 +395,7 @@ export function skillBrainFirstCheck(skillsDir: string): Check {
     writeSnapshotAtomically(violatorSlugs);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[gbrain] skill_brain_first audit step failed (${msg}); check continues\n`);
+    process.stderr.write(`[foresights] skill_brain_first audit step failed (${msg}); check continues\n`);
   }
 
   // --- Build the check result ---------------------------------------------
@@ -417,13 +417,13 @@ export function skillBrainFirstCheck(skillsDir: string): Check {
   const summary: string[] = [];
   summary.push(
     `${violators.length} skill(s) do external lookups without a brain-first compliance signal. ` +
-    `Fix via 'gbrain doctor --fix' (adds canonical Convention callout) ` +
+    `Fix via 'foresights doctor --fix' (adds canonical Convention callout) ` +
     `or set 'brain_first: exempt' in skill frontmatter for genuine infra skills.`,
   );
   if (formerlyExempt.length > 0) {
     summary.push(
       `Of these, ${formerlyExempt.length} were hardcoded-exempt in PR #1206 (${formerlyExempt.map(v => v.skill).slice(0, 6).join(', ')}${formerlyExempt.length > 6 ? ', ...' : ''}). ` +
-      `These need explicit opt-out now: run 'gbrain doctor --fix' to add the canonical callout, ` +
+      `These need explicit opt-out now: run 'foresights doctor --fix' to add the canonical callout, ` +
       `or add 'brain_first: exempt' to frontmatter for skills that genuinely shouldn't consult the brain.`,
     );
   }

@@ -1,13 +1,13 @@
 /**
  * #6712 PR 4a (design v3.1 §11 step 2, v3.2 §9 and §11): the convergence receipt, the one schema the read-only dry run
- * (`gbrain sync --dry-run --json`'s `convergence`), `sync status --detail`'s `convergence` and doctor's counts share.
+ * (`foresights sync --dry-run --json`'s `convergence`), `sync status --detail`'s `convergence` and doctor's counts share.
  * Built from the shadow level (sync-pass.ts); every value is a prediction (`dry_run: true`), nothing is admitted.
  *
  * - `classes`: `{<class>: {count, action, by_action}}` with `action ∈ none | owner | repair`. The action is per path
  *   (sync-classify.ts `classAction`: a settled `dirty` path is `none`, an unsettled one `repair`), so `by_action` counts the
  *   class's paths by it and `action` is the most demanding one present; `in_flight`, `keep_db_pending` and
  *   `deletes_withheld` are classes here too.
- * - `legacy_twin_pairs`: the #6885 forked pairs `gbrain repair legacy-twins` would list (its read-only scan, bounded by
+ * - `legacy_twin_pairs`: the #6885 forked pairs `foresights repair legacy-twins` would list (its read-only scan, bounded by
  *   `LEGACY_TWINS_LIMIT`); null when this host cannot scan the source. Dry runs and status only, never an idle tick.
  * - `decisions`: the `file_drift` holds the pass would write, by side, after the read-only `sameContentAtOrigin` screen
  *   of each drift path (a dry run only, at most `SCREEN_CAP` paths): equal content is a `same_content_noops` settle, an

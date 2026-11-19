@@ -388,7 +388,7 @@ describe('vector legacy guard setting', () => {
         expect(resolveVectorLegacyGuard(engineC, null)).toBe(false);
       });
       expect(stderr).toHaveBeenCalledTimes(1);
-      expect(String(stderr.mock.calls[0][0])).toStartWith('[gbrain] vector legacy guard active');
+      expect(String(stderr.mock.calls[0][0])).toStartWith('[foresights] vector legacy guard active');
     } finally {
       stderr.mockRestore();
     }

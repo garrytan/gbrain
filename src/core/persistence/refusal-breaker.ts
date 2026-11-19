@@ -56,7 +56,7 @@ function refusalBreakerError(sourceId: string, slug: string, prior: PriorRefusal
   return opError(prior.error_code as Parameters<typeof opError>[0], 'The same maintenance write was already refused repeatedly.',
     `Maintenance submitted nothing for ${slug} in '${sourceId}': the same write was refused ${prior.count} time(s) with ${prior.error_code} in the last ${REFUSAL_BREAKER_WINDOW_HOURS} hours `
     + `(${REFUSAL_BREAKER_THRESHOLD_KEY}=${threshold}), so another attempt would only add a receipt. It is tried again once the page, the planner or the write changes, `
-    + `or when the oldest refusal is ${REFUSAL_BREAKER_WINDOW_HOURS} hours old. Read the last refusal with gbrain write-request -- ${prior.request_id} and fix what it names.`,
+    + `or when the oldest refusal is ${REFUSAL_BREAKER_WINDOW_HOURS} hours old. Read the last refusal with foresights write-request -- ${prior.request_id} and fix what it names.`,
     { detail: 'refusal_breaker', docs: 'docs/guides/write-refusals.md#refusal_breaker', fix: readFix(`Reads the last refused attempt (request ${prior.request_id}), read-only.`, { argv: ['gbrain', 'write-request', '--', prior.request_id] }) });
 }
 
@@ -73,6 +73,6 @@ export async function listSuppressedWrites(engine: BrainEngine, sourceId: string
     GROUP BY slug,digest,error_code HAVING count(*) >= $3 ORDER BY slug LIMIT $4`, [sourceId, REFUSAL_BREAKER_WINDOW_HOURS, threshold, limit]);
   return rows.map(row => ({ source_id: sourceId, slug: row.slug, error_code: row.error_code, refusals: Number(row.refusals), last_request_id: row.last_request_id, cause: row.cause,
     exit: row.cause === 'canonical_file_missing'
-      ? `gbrain sources reconcile ${sourceId} ${row.slug} --brain host --preview (import the deletion or restore the file)`
-      : `gbrain write-request -- ${row.last_request_id} (fix what it names; any page, planner or write change releases it)` }));
+      ? `foresights sources reconcile ${sourceId} ${row.slug} --brain host --preview (import the deletion or restore the file)`
+      : `foresights write-request -- ${row.last_request_id} (fix what it names; any page, planner or write change releases it)` }));
 }

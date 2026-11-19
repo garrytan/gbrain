@@ -134,7 +134,7 @@ describe('prepareDecideEval', () => {
     const o = newDecideEvalOptions();
     applyDecideEvalFlag(o, '--decide', 'evidence=on');
     applyDecideEvalFlag(o, '--decide-force-on', 'evidence');
-    expect(() => prepareDecideEval(o, { command: 'gbrain eval retrieval-quality', throwaway: false })).toThrow('never writes its config');
+    expect(() => prepareDecideEval(o, { command: 'foresights eval retrieval-quality', throwaway: false })).toThrow('never writes its config');
   });
 });
 

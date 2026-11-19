@@ -45,14 +45,14 @@ export function originAlreadyClaimed(sourceId: string, sourcePath: string, holde
   const held = holders.length ? `Page ${holders.join(', ')} already records` : 'Another live page already records';
   return opError('page_identity_changed', `Another live page of source ${sourceId} already records ${JSON.stringify(sourcePath)} as its origin.`,
     `${held} ${JSON.stringify(sourcePath)} in source ${sourceId}, so ${target ? `page ${target}` : 'this page'} cannot become a second page of that file; nothing was written. `
-    + `Write to the page that records the file, or preview gbrain repair origin-twins --source ${sourceId} to see which page keeps it.`,
+    + `Write to the page that records the file, or preview foresights repair origin-twins --source ${sourceId} to see which page keeps it.`,
     { detail: 'origin_already_claimed', fix: originTwinsFix(sourceId) });
 }
 
 /** A reader's refusal to pick one of several live pages recording a file (`origin_conflict`). */
 export function originConflictMessage(sourceId: string, sourcePath: string, slugs: readonly string[]): string {
   return `${sourcePath} is recorded by several live pages of source ${sourceId} (${slugs.join(', ')}) and none is its canonical page, so nothing was written into either. `
-    + `Preview gbrain repair origin-twins --source ${sourceId}, apply the merge it proposes, then preview this repair again.`;
+    + `Preview foresights repair origin-twins --source ${sourceId}, apply the merge it proposes, then preview this repair again.`;
 }
 
 /** Whether `error` is the guard's refusal (or a mapped index violation). */

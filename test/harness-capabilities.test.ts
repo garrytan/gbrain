@@ -46,7 +46,7 @@ describe('authenticated delegation readiness', () => {
     const result = describeAuthCapabilities(auth({ grantRevision: 4, boundSourceId: undefined,
       budgetUsdPerDay: '0.30', boundMaxConcurrent: 2, boundSlugPrefixes: ['agents/kept/'] }), catalog);
     expect(result.delegation_repair).toMatchObject({ command_kind: 'preview', missing_choices: [],
-      preview_command: 'gbrain auth rescope-client fixture-client --dry-run --json --if-version 4 --bound-source default' });
+      preview_command: 'foresights auth rescope-client fixture-client --dry-run --json --if-version 4 --bound-source default' });
     expect(result.delegation_repair?.preview_command).not.toMatch(/--(?:budget|scopes|bound-tools|allowed-operations|bound-slug|bound-max|token-ttl)/);
   });
 

@@ -12,7 +12,7 @@ written for this trace (`test/fixtures/q2-dev-phrasings/`). No custodian or seal
 
 ## Setup
 
-- Builds: gbrain master `c5fb0201` (the Track C base), `583a851ee` (set H's build) and `27b1b6af` (= `780a4fc5^`, the
+- Builds: foresights master `c5fb0201` (the Track C base), `583a851ee` (set H's build) and `27b1b6af` (= `780a4fc5^`, the
   last state before the amendment-3 removal). `583a851ee` and `27b1b6af` have identical `src/core/link-extraction.ts`
   and `src/core/link-temporal-evidence.ts`; master differs from both by exactly the `git show 780a4fc5` diff in those
   files, so every difference below comes from the removed rules.
@@ -116,13 +116,13 @@ Runner metrics that moved (seeds 3 and 5; master → `583a851ee`):
 - **U3/U4 dependency:** see `dev-units.md` (board-director development phrasing). The trace above has no board line that
   master types `works_at`, so it cannot show the set-F interaction by itself.
 
-Reproduce (from a gbrain checkout with gbrain-evals beside it):
+Reproduce (from a foresights checkout with gbrain-evals beside it):
 
 ```bash
 bun eval/runner/temporal-edges.ts --gbrain ../gbrain@583a851ee --seeds 3,5 --e5-probe \
   --pack eval/data/p3-single-value/works-at-one-per-from.yaml --single-value-pass \
   --dev-phrasing-file ../gbrain/test/fixtures/q2-dev-phrasings/onboarding.json --output /tmp/te   # in gbrain-evals
 bun scripts/q2-typing-dev.ts dump --evals ../gbrain-evals --root ../gbrain-evals/.gbrain-overlays/583a851ee \
-  --phrasing test/fixtures/q2-dev-phrasings/onboarding.json --out /tmp/583.json                      # in gbrain
+  --phrasing test/fixtures/q2-dev-phrasings/onboarding.json --out /tmp/583.json                      # in foresights
 bun scripts/q2-typing-dev.ts compare --base /tmp/master.json --arm /tmp/583.json
 ```

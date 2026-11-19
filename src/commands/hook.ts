@@ -1,9 +1,9 @@
 /**
- * hook.ts — `gbrain hook <event>`: the harness-side hook command
+ * hook.ts — `foresights hook <event>`: the harness-side hook command
  * (agent-bootstrap plan: D5, A3, A9, G3, G4, G15, B3, B4, ENG-1, S3#2,
  * S3#7, S3#8).
  *
- * ENGINE-FREE BY CONSTRUCTION (plan D5): `gbrain serve` holds the PGLite
+ * ENGINE-FREE BY CONSTRUCTION (plan D5): `foresights serve` holds the PGLite
  * single-writer lock for its lifetime, so this command NEVER imports an
  * engine or connectEngine — config comes from `loadConfig()` only, per-turn
  * context comes from serve's resolve-IPC unix socket (requestTurnContext),
@@ -18,7 +18,7 @@
  * `GBRAIN_HOOKS=0` env kill switch short-circuits every event.
  *
  * HEARTBEAT [S3#7, B3]: append-JSONL at
- * `<gbrain home>/integrations/hooks/heartbeat.jsonl` — counters, durations,
+ * `<foresights home>/integrations/hooks/heartbeat.jsonl` — counters, durations,
  * and error CODES only, never prompt/fact/slug text. Dir 0700, file capped
  * at HEARTBEAT_MAX_LINES (tail-rewrite). `readHeartbeatTail` is the
  * doctor/status read surface.
@@ -259,13 +259,13 @@ export interface HookIo {
 export { HOOK_EVENTS, HOOK_EVENTS as SUBCOMMANDS };
 export const printUsage = (): void => { process.stdout.write(`${USAGE}\n`); };
 
-const USAGE = `Usage: gbrain hook <event>
+const USAGE = `Usage: foresights hook <event>
 
-Events (wired into .claude/settings.local.json by gbrain bootstrap):
+Events (wired into .claude/settings.local.json by foresights bootstrap):
   session-start   print the greeting digest (MEMORY.md sections, push status,
                   hook health) to stdout
   user-prompt     read hook JSON on stdin, request per-turn context from a
-                  running 'gbrain serve' over IPC, print additionalContext JSON
+                  running 'foresights serve' over IPC, print additionalContext JSON
                   (--harness <claude-code|codex|opencode> sets the feedback-loop
                   channel; default claude-code, unknown values fall back to the default)
   stop            bank the writeback backstop and spawn the workspace push
@@ -279,7 +279,7 @@ Env: GBRAIN_HOOKS=0 disables all events (immediate exit 0).
      GBRAIN_SESSION_AGENT=<label>|off|owner names who wrote the session's user
      turns (an agent's are never saved as yours; off saves nothing).
 All events fail open: errors exit 0 with empty stdout and a heartbeat entry at
-<gbrain home>/integrations/hooks/heartbeat.jsonl.`;
+<foresights home>/integrations/hooks/heartbeat.jsonl.`;
 
 /** Dispatch a hook event. Returns the process exit code (0 for every runtime path). */
 export async function runHook(args: string[], io: HookIo = {}): Promise<number> {
@@ -350,9 +350,9 @@ export async function runHook(args: string[], io: HookIo = {}): Promise<number> 
       /* fail-open */
     }
   }
-  // Plugin lane (the Claude Code and Codex plugin manifests): yields to any other gbrain lane wiring this event.
+  // Plugin lane (the Claude Code and Codex plugin manifests): yields to any other foresights lane wiring this event.
   if (process.env.GBRAIN_HOOK_LANE === 'plugin' && pluginHookYields(io.harness ?? 'claude-code', event, io.cwd ?? hookSessionCwd())) return 0;
-  // Turn-rule lane (src/core/setup/turn-hook.ts): rule only, and only when no other gbrain lane wires this event.
+  // Turn-rule lane (src/core/setup/turn-hook.ts): rule only, and only when no other foresights lane wires this event.
   if (process.env.GBRAIN_HOOK_LANE === TURN_RULE_LANE && event === 'user-prompt' && turnRuleHookYields(io.harness ?? 'claude-code', io.cwd ?? hookSessionCwd())) return 0;
 
   switch (event) {
@@ -440,7 +440,7 @@ function readProcessStdin(timeoutMs: number): Promise<string> {
 }
 
 /**
- * Gbrain home resolver: the S3#10 choke point, statically imported [CX2-8].
+ * Foresights home resolver: the S3#10 choke point, statically imported [CX2-8].
  * Only the CALL is guarded — ensureGbrainHome throws solely when the create
  * fails, and resolveGbrainHome (pure path resolution, same semantics) is the
  * fail-open fallback; downstream writers under an uncreatable home fail into
@@ -551,7 +551,7 @@ async function hookSessionStart(io: HookIo): Promise<number> {
       if (statusNote) out.push(statusNote);
 
       // 5. Dirty-tree recovery push [G4] — bootstrap workspaces ONLY (the
-      //    initialized agent.json manifest is the gate; `gbrain hook
+      //    initialized agent.json manifest is the gate; `foresights hook
       //    session-start` run in an arbitrary repo must never commit it).
       //    The push itself runs as a detached child; the hook only spawns.
       const dirty = await dirtyTreePush(ws, io);
@@ -683,7 +683,7 @@ async function pushStatusNote(): Promise<string | null> {
       const e = failing[0]!;
       const which = e.repoRoot ? ` for ${e.repoRoot}` : '';
       const rest = failing.length > 1 ? ` [+${failing.length - 1} more workspace(s)]` : '';
-      return `Workspace push${which} is FAILING (since ${e.ts ?? 'unknown'}): ${sanitizePushReason(e.reason)}${rest} — run gbrain doctor`;
+      return `Workspace push${which} is FAILING (since ${e.ts ?? 'unknown'}): ${sanitizePushReason(e.reason)}${rest} — run foresights doctor`;
     }
     if (stalestTs !== null && Date.now() - stalestTs > PUSH_STALE_MS) {
       return `Workspace push: last success ${new Date(stalestTs).toISOString()} (>48h ago) — recent work may be unpushed [B4]`;
@@ -705,7 +705,7 @@ async function hookFailureNotice(): Promise<string | null> {
   if (tail.length === 0) return null;
   const failures = tail.filter((e) => e.outcome === 'error').length;
   if (failures / tail.length > HEARTBEAT_FAILURE_RATE_THRESHOLD) {
-    return 'brain context unavailable for recent turns — run gbrain doctor';
+    return 'brain context unavailable for recent turns — run foresights doctor';
   }
   return null;
 }
@@ -719,7 +719,7 @@ async function statusFileNotice(): Promise<string | null> {
     const s = JSON.parse(readFileSync(p, 'utf8')) as { ts?: string; error?: string };
     const t = s.ts ? Date.parse(s.ts) : NaN;
     if (!Number.isFinite(t) || Date.now() - t > STATUS_NOTICE_MAX_AGE_MS) return null;
-    return `Hook alert: ${s.error ?? 'unknown'} (${s.ts}) — transcript ingestion may be broken; run gbrain doctor`;
+    return `Hook alert: ${s.error ?? 'unknown'} (${s.ts}) — transcript ingestion may be broken; run foresights doctor`;
   } catch {
     return null;
   }
@@ -754,7 +754,7 @@ function tryExecAsync(bin: string, args: string[], timeoutMs = HOOK_GIT_TIMEOUT_
  * Resolve the bootstrap workspace root for a hook event: the git toplevel of
  * `ws`, which must be the install receipt's workspace_dir (checked before any
  * git runs, #8427) and hold an `initialized` agent.json manifest. The gate
- * is the security boundary — `gbrain hook <event>` run in an arbitrary repo
+ * is the security boundary — `foresights hook <event>` run in an arbitrary repo
  * must never commit or push it. Shared by session-start and session-end.
  */
 async function resolveBootstrapWorkspaceRoot(ws: string): Promise<string | null> {
@@ -818,7 +818,7 @@ async function repoPhaseComplete(root: string): Promise<boolean> {
 }
 
 /**
- * Fire-and-forget `gbrain sources push --path <root>` as a DETACHED child.
+ * Fire-and-forget `foresights sources push --path <root>` as a DETACHED child.
  * workspacePush must never run inline in a hook — its git chain is fully
  * synchronous (execFileSync) and would block the event loop past every
  * deadline. The child owns the push lock/status plumbing; the hook only
@@ -827,9 +827,9 @@ async function repoPhaseComplete(root: string): Promise<boolean> {
 function spawnDetachedPush(root: string): void {
   const exec = process.execPath ?? '';
   const pushArgs = ['sources', 'push', '--path', root];
-  // Compiled binary: execPath IS gbrain. Dev (bun src/cli.ts): re-exec the
+  // Compiled binary: execPath IS foresights. Dev (bun src/cli.ts): re-exec the
   // entrypoint — the jobs.ts --detach precedent.
-  const argv = /[/\\]gbrain(\.exe)?$/.test(exec) ? pushArgs : [process.argv[1], ...pushArgs];
+  const argv = /[/\\](?:foresights|gbrain)(\.exe)?$/.test(exec) ? pushArgs : [process.argv[1], ...pushArgs];
   // Explicit env: a child spawned without one does not see the parent's
   // cwd-.env quarantine deletions (core/env-trust.ts).
   const child = spawn(exec, argv, { detached: true, stdio: 'ignore', env: process.env });
@@ -856,19 +856,19 @@ async function dirtyTreePush(
     // (create-repo-first race). Only fires when work actually exists (P2-1).
     if (!(await repoPhaseComplete(root))) {
       return {
-        note: 'Unpushed work detected; will push after the repo phase completes (`gbrain bootstrap repo`).',
+        note: 'Unpushed work detected; will push after the repo phase completes (`foresights bootstrap repo`).',
         reason: 'push_deferred_repo_pending',
       };
     }
     try {
       (io.spawnPush ?? spawnDetachedPush)(root);
       return {
-        note: 'Unpushed work from a previous session detected — recovering unpushed work in background (gbrain sources push).',
+        note: 'Unpushed work from a previous session detected — recovering unpushed work in background (foresights sources push).',
         reason: 'push_spawned',
       };
     } catch {
       return {
-        note: 'Unpushed work from a previous session detected; automatic push unavailable — run gbrain doctor',
+        note: 'Unpushed work from a previous session detected; automatic push unavailable — run foresights doctor',
         reason: 'push_unavailable',
         degraded: true,
       };
@@ -1034,7 +1034,7 @@ function pendingPushFailureBanner(): { text: string; record: () => void } | null
     const text = (
       `NOTICE: the background workspace push for ${which} is FAILING ` +
       `(${sanitizePushReason(first.reason)})${more} — work is committed locally ` +
-      'but NOT on GitHub. Run gbrain doctor.'
+      'but NOT on GitHub. Run foresights doctor.'
     ).slice(0, PUSH_BANNER_MAX_CHARS);
     const record = () => {
       for (const e of due) {
@@ -1096,7 +1096,7 @@ function pendingBackupBanner(): { text: string; record: () => void } | null {
 }
 
 /**
- * Fire-and-forget `gbrain backup check --quiet` as a DETACHED child (the
+ * Fire-and-forget `foresights backup check --quiet` as a DETACHED child (the
  * spawnDetachedPush pattern). The child re-resolves everything itself and
  * exits 0 silently when the PGLite lock is held by a live serve — that
  * install is covered by the serve-side refresher instead.
@@ -1104,7 +1104,7 @@ function pendingBackupBanner(): { text: string; record: () => void } | null {
 function spawnDetachedBackupCheck(): void {
   const exec = process.execPath ?? '';
   const checkArgs = ['backup', 'check', '--quiet'];
-  const argv = /[/\\]gbrain(\.exe)?$/.test(exec) ? checkArgs : [process.argv[1], ...checkArgs];
+  const argv = /[/\\](?:foresights|gbrain)(\.exe)?$/.test(exec) ? checkArgs : [process.argv[1], ...checkArgs];
   const child = spawn(exec, argv, {
     detached: true,
     stdio: 'ignore',
@@ -1524,7 +1524,7 @@ async function hookStop(io: HookIo): Promise<number> {
       });
       if (!conf.ok) return `transcript_${conf.reason}`;
       // #5820: the SessionEnd guard's fingerprint (#5413) — a turn from
-      // gbrain's own claude-cli subprocess is never banked, or extracting it
+      // foresights's own claude-cli subprocess is never banked, or extracting it
       // spawns another claude-cli call that banks again.
       const ws = io.cwd ?? (typeof j?.cwd === 'string' ? j.cwd : hookSessionCwd());
       if (isClaudeCliSelfTranscriptPath(conf.path) || isClaudeCliSelfTranscriptPath(ws)) return 'self_capture';
@@ -1773,7 +1773,7 @@ async function hookSessionEnd(io: HookIo): Promise<number> {
       isClaudeCliSelfTranscriptPath(conf.path) ||
       (ws !== undefined && isClaudeCliSelfTranscriptPath(ws))
     ) {
-      // #5413: this session is gbrain's OWN claude-cli subprocess (the
+      // #5413: this session is foresights's OWN claude-cli subprocess (the
       // scratch cwd fingerprint appears in the transcript path or the
       // payload cwd). Writing it to the dream corpus is a self-ingestion
       // feedback loop — extraction prompts and page content re-enter as
@@ -1870,7 +1870,7 @@ async function hookSessionEnd(io: HookIo): Promise<number> {
           writeFileSync(tmpCorpus, text, { mode: 0o600 });
           renameSync(tmpCorpus, corpusFile);
           await clearDriftStatus(io.harness ?? 'claude-code'); // #8016: a lane that saves turns again is not drifting
-          // Additive signal for a local third-party consumer (never gbrain
+          // Additive signal for a local third-party consumer (never foresights
           // itself): the corpus file above is done, hashed post-redaction so
           // the hash can never fingerprint pre-scrub content. Receipt + relay
           // live in hook-heartbeat.ts's recordAndRelayReceipt (shared with the

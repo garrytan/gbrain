@@ -1,21 +1,21 @@
 /**
- * GBRA-218 (PR A2): `gbrain access rule|apply|resume`, the operator surface for folder rules.
+ * GBRA-218 (PR A2): `foresights access rule|apply|resume`, the operator surface for folder rules.
  *
- *   gbrain access rule add --prefix <folder/> | --slug <page> --readers a,group:b [--raw-only] [--allow-without-owner] [--id <rule>] [--source <id>] [--yes] [--expect <rev>] [--operation <id>]
- *   gbrain access rule rm <rule> [--source <id>] [--yes] [--expect <rev>] [--operation <id>]
- *   gbrain access rule list|status|history [--source <id>] [--operation <id>] [--limit <n>]
- *   gbrain access rule revert --to <revision> [--source <id>] [--yes]
- *   gbrain access rule export [--source <id>] [--approved]
- *   gbrain access rule import --file <access.yml> [--source <id>] [--yes]
- *   gbrain access rule migrate [--to git|database] [--source <id>] [--yes]
- *   gbrain access apply [--source <id>] [--revision <n>] [--yes --expect <plan_hash>]
- *   gbrain access resume [--source <id>]
+ *   foresights access rule add --prefix <folder/> | --slug <page> --readers a,group:b [--raw-only] [--allow-without-owner] [--id <rule>] [--source <id>] [--yes] [--expect <rev>] [--operation <id>]
+ *   foresights access rule rm <rule> [--source <id>] [--yes] [--expect <rev>] [--operation <id>]
+ *   foresights access rule list|status|history [--source <id>] [--operation <id>] [--limit <n>]
+ *   foresights access rule revert --to <revision> [--source <id>] [--yes]
+ *   foresights access rule export [--source <id>] [--approved]
+ *   foresights access rule import --file <access.yml> [--source <id>] [--yes]
+ *   foresights access rule migrate [--to git|database] [--source <id>] [--yes]
+ *   foresights access apply [--source <id>] [--revision <n>] [--yes --expect <plan_hash>]
+ *   foresights access resume [--source <id>]
  *
  * The source's persisted store decides where an edit lands: the database
  * revision log (repo-less sources, the default keyless install) or
  * `.gbrain/access.yml` committed through the git door (git-backed sources). Every
  * edit previews first; narrowing applies at once, widening waits for
- * `gbrain access apply`. Trusted local CLI only.
+ * `foresights access apply`. Trusted local CLI only.
  */
 import { readFileSync } from 'node:fs';
 import type { BrainEngine } from '../core/engine.ts';
@@ -84,7 +84,7 @@ function changeLine(c: RuleChange): string {
   const what = c.kind === 'added' ? 'add rule' : c.kind === 'removed' ? 'remove rule' : c.kind === 'prefix_moved' ? `move rule to ${c.prefix}` : c.kind === 'prefix_released' ? 'release the old prefix of moved rule'
     : c.kind === 'derived_released' ? 'stop keeping derived pages and facts to the readers of (raw only)' : c.kind === 'derived_covered' ? 'keep derived pages and facts to the readers of'
     : c.kind === 'readers_removed' ? `remove readers ${(c.readers ?? []).map(reader).join(', ')} from` : `add readers ${(c.readers ?? []).map(reader).join(', ')} to`;
-  return `  ${what} ${c.rule} (${c.prefix}): ${c.narrowing ? 'narrowing, applies at once' : 'widening, held until gbrain access apply'}`;
+  return `  ${what} ${c.rule} (${c.prefix}): ${c.narrowing ? 'narrowing, applies at once' : 'widening, held until foresights access apply'}`;
 }
 
 /** The store an edit lands in: the persisted one, else git when the source root is a git work tree, else the database. */
@@ -94,7 +94,7 @@ async function resolveStore(engine: BrainEngine, sourceId: string): Promise<{ st
   const gitRoot = root && isGitWorkTree(root) ? root : null;
   if (persisted === 'git' && !gitRoot) {
     throw opError('access_policy_store_mismatch', `Source ${sourceId} keeps its folder rules in git, but this host sees no git work tree at its root (${root ?? 'no local path'}); nothing was written.`,
-      `Run gbrain access rule migrate --source ${sourceId} to move the rules into the database (preview first), or run this on the host that holds the checkout.`,
+      `Run foresights access rule migrate --source ${sourceId} to move the rules into the database (preview first), or run this on the host that holds the checkout.`,
       { fix: { argv: ['gbrain', 'access', 'rule', 'migrate', '--source', sourceId], consent: [], actor: 'user', requires_exclusive: false, why: 'Previews moving the applied rulebook into the database store; writes nothing without --yes.',
         verify: { argv: ['gbrain', 'access', 'rule', 'status', '--source', sourceId, '--json'] } } });
   }
@@ -195,7 +195,7 @@ async function previewRules(engine: BrainEngine, sourceId: string, store: Access
   for (const rule of cls.changes.filter(c => c.narrowing).map(c => cls.target.find(r => r.id === c.rule)).filter(r => r !== undefined)) {
     const covered = await engine.executeRaw<{ source_id: string; slug: string }>(`SELECT source_id, slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND ${ruleCoversSql('slug', '$2::text')} ORDER BY slug LIMIT ${OPEN_TWINS_PAGES}`, [sourceId, rule.prefix]);
     const found = await openTwins(engine, covered, rule.readable_by,
-      source => `gbrain access rule add ${rule.prefix.endsWith('/') ? '--prefix' : '--slug'} ${rule.prefix} --readers ${rule.readable_by.map(reader).join(',')}${ruleOwner && !rule.readable_by.includes(`member:${ruleOwner}`) ? ' --allow-without-owner' : ''} --source ${source}`);
+      source => `foresights access rule add ${rule.prefix.endsWith('/') ? '--prefix' : '--slug'} ${rule.prefix} --readers ${rule.readable_by.map(reader).join(',')}${ruleOwner && !rule.readable_by.includes(`member:${ruleOwner}`) ? ' --allow-without-owner' : ''} --source ${source}`);
     Object.assign(twins, { count: twins.count + found.count, twins: [...twins.twins, ...found.twins], commands: [...twins.commands, ...found.commands] });
   }
   const owner = await ownerReadsRestrictedOn(engine) ? (await ownerView(engine)).owner : null;
@@ -254,7 +254,7 @@ const segmentedConsequence = (slug: string, n: number) => `Readers of ${slug}'s 
 /** The words of a held-fact move left incomplete: segmented saved versions of the page it left unedited, or a move still pending. */
 function heldIncompleteLines(held: EditResult['held_facts']): string[] {
   return [...(held?.segmented_pages ?? []).map(p => `  Incomplete: the held facts moved, but ${p.versions} saved version(s) of ${p.slug} are stored in segments and were not edited. ${segmentedConsequence(p.slug, p.versions)}`),
-    ...(held?.pending ?? []).map(p => `  Incomplete: the move of held facts off ${p.from} to ${p.slug} is accepted and still pending (request ${p.request_id}; gbrain write-request ${p.request_id} shows it); until it commits they read as they did on ${p.from}.`)];
+    ...(held?.pending ?? []).map(p => `  Incomplete: the move of held facts off ${p.from} to ${p.slug} is accepted and still pending (request ${p.request_id}; foresights write-request ${p.request_id} shows it); until it commits they read as they did on ${p.from}.`)];
 }
 
 /**
@@ -284,7 +284,7 @@ async function heldFactsMoved(engine: BrainEngine, sourceId: string): Promise<Ed
 async function writeRules(engine: BrainEngine, sourceId: string, desired: FolderRule[], opts: { expect?: number; operation?: string; message: string; json: boolean }): Promise<EditResult> {
   const { store, root } = await resolveStore(engine, sourceId);
   const operationId = opts.operation ?? newOperationId();
-  if (!opts.json) process.stderr.write(`[access] operation ${operationId} (if this reply is lost: gbrain access rule status --source ${sourceId} --operation ${operationId})` + '\n');
+  if (!opts.json) process.stderr.write(`[access] operation ${operationId} (if this reply is lost: foresights access rule status --source ${sourceId} --operation ${operationId})` + '\n');
   if (store === 'database') {
     const r = await proposeRevision(engine, sourceId, desired, { origin: 'cli', operationId, expectDesired: opts.expect, store: 'database', onProgress: progressLogger(opts.json) });
     return withHeldFactsMoved(engine, { source_id: sourceId, store, operation_id: operationId, applied: r.state === 'applied' || r.state === 'unchanged', state: r.state, revision: r.revision,
@@ -309,16 +309,16 @@ function editLines(r: EditResult): string[] {
     ...(r.git ? [`  ${r.git.path} committed ${r.git.commit?.slice(0, 12) ?? '(nothing to commit)'} (${r.git.outcome})`] : []),
     ...(r.pages_restamped ? [`  ${r.pages_restamped} page(s) restamped`] : []),
     ...(r.held_facts?.moved ? [`  ${r.held_facts.moved} held fact(s) moved to a page the rules now cover`] : []),
-    ...(r.held_facts?.unmovable.length ? [`  Held facts that could not move yet (the next gbrain dream retries): ${r.held_facts.unmovable.map(u => `${u.slug} facts ${u.fact_ids.join(',')} (${u.reason})`).join('; ')}`] : []),
+    ...(r.held_facts?.unmovable.length ? [`  Held facts that could not move yet (the next foresights dream retries): ${r.held_facts.unmovable.map(u => `${u.slug} facts ${u.fact_ids.join(',')} (${u.reason})`).join('; ')}`] : []),
     ...heldIncompleteLines(r.held_facts),
-    ...(r.held.length ? [`Held: preview with gbrain access apply --source ${r.source_id}`] : []),
-    ...(r.state === 'pending' ? [`Still pending: finish with gbrain access resume --source ${r.source_id}`] : []),
+    ...(r.held.length ? [`Held: preview with foresights access apply --source ${r.source_id}`] : []),
+    ...(r.state === 'pending' ? [`Still pending: finish with foresights access resume --source ${r.source_id}`] : []),
     ...(r.note ? [r.note] : []),
   ];
 }
 
 /**
- * GST-363: adds folder rules through the same path as `gbrain access rule add`: one desired rulebook (the store's
+ * GST-363: adds folder rules through the same path as `foresights access rule add`: one desired rulebook (the store's
  * base plus `rules`), previewed, then written with the preview's revision as --expect when `apply` is set.
  */
 export async function addFolderRules(engine: BrainEngine, sourceId: string, rules: FolderRule[], opts: { apply: boolean; json: boolean }): Promise<{ preview: RulePreview; result: EditResult | null }> {
@@ -358,12 +358,12 @@ async function ruleCmd(engine: BrainEngine, sub: string | undefined, args: strin
         const slug = flag(args, '--slug');
         const r = normalizeRule({ ...(slug === undefined ? { prefix: flag(args, '--prefix') } : { slug, ...(flag(args, '--prefix') === undefined ? {} : { prefix: flag(args, '--prefix') }) }), readable_by: readers === undefined ? undefined : readers.split(',').map(s => s.trim()).filter(Boolean), ...(flag(args, '--id') ? { id: flag(args, '--id') } : {}), ...(args.includes('--raw-only') ? { covers_derived: false } : {}) });
         if ('problem' in r) {
-          throw opError('access_rule_invalid', `The rule is invalid: ${r.problem}.`, 'Nothing was written. Example: gbrain access rule add --prefix partners/alice-example/ --readers alice-example,group:team-a');
+          throw opError('access_rule_invalid', `The rule is invalid: ${r.problem}.`, 'Nothing was written. Example: foresights access rule add --prefix partners/alice-example/ --readers alice-example,group:team-a');
         }
         const taken = flag(args, '--id') === undefined ? base.find(b => b.id === r.rule.id && b.prefix !== r.rule.prefix) : undefined;
-        if (taken) throw opError('access_rule_invalid', `Rule id "${taken.id}" already names ${taken.prefix}, and ${r.rule.prefix} derives the same id.`, `Nothing was written. Name the new rule yourself: gbrain access rule add --id <rule> ${r.rule.prefix.endsWith('/') ? '--prefix' : '--slug'} ${r.rule.prefix} --readers <list>.`);
+        if (taken) throw opError('access_rule_invalid', `Rule id "${taken.id}" already names ${taken.prefix}, and ${r.rule.prefix} derives the same id.`, `Nothing was written. Name the new rule yourself: foresights access rule add --id <rule> ${r.rule.prefix.endsWith('/') ? '--prefix' : '--slug'} ${r.rule.prefix} --readers <list>.`);
         const clash = base.find(b => b.prefix === r.rule.prefix && b.id !== r.rule.id);
-        if (clash) throw opError('access_rule_invalid', `Rule "${clash.id}" already covers ${r.rule.prefix}.`, `Nothing was written. Change that rule's readers instead: gbrain access rule add --id ${clash.id} ${r.rule.prefix.endsWith('/') ? '--prefix' : '--slug'} ${r.rule.prefix} --readers <list>.`);
+        if (clash) throw opError('access_rule_invalid', `Rule "${clash.id}" already covers ${r.rule.prefix}.`, `Nothing was written. Change that rule's readers instead: foresights access rule add --id ${clash.id} ${r.rule.prefix.endsWith('/') ? '--prefix' : '--slug'} ${r.rule.prefix} --readers <list>.`);
         const { owner, live } = await readersOwner(engine);
         if (owner && !r.rule.readable_by.includes(`member:${owner}`) && !args.includes('--allow-without-owner')) {
           throw readersOmitOwnerError(owner, live, r.rule.readable_by, r.rule.prefix.endsWith('/') ? `the pages under ${r.rule.prefix}` : `the page ${r.rule.prefix}`);
@@ -372,20 +372,20 @@ async function ruleCmd(engine: BrainEngine, sub: string | undefined, args: strin
         message = `access: rule ${r.rule.id} on ${r.rule.prefix} readable by ${r.rule.readable_by.map(reader).join(', ')}${coversDerived(r.rule) ? '' : ' (raw only)'}`;
       } else if (sub === 'rm') {
         const id = positionals(args)[0];
-        if (!id) throw usageError('rule rm needs a rule id.', 'gbrain access rule rm <rule> --source <id> (gbrain access rule list shows the ids)');
-        if (!base.some(b => b.id === id)) throw opError('not_found', `Source ${sourceId} has no rule "${id}".`, `List rules with gbrain access rule list --source ${sourceId}.`);
+        if (!id) throw usageError('rule rm needs a rule id.', 'foresights access rule rm <rule> --source <id> (foresights access rule list shows the ids)');
+        if (!base.some(b => b.id === id)) throw opError('not_found', `Source ${sourceId} has no rule "${id}".`, `List rules with foresights access rule list --source ${sourceId}.`);
         desired = base.filter(b => b.id !== id);
         message = `access: remove rule ${id}`;
       } else if (sub === 'revert') {
         const to = intFlag(args, '--to');
-        if (to === undefined) throw usageError('rule revert needs --to <revision>.', `gbrain access rule history --source ${sourceId} lists revisions.`);
+        if (to === undefined) throw usageError('rule revert needs --to <revision>.', `foresights access rule history --source ${sourceId} lists revisions.`);
         const rev = await getRevision(engine, sourceId, to);
-        if (!rev) throw opError('not_found', `Source ${sourceId} has no folder-rule revision ${to}.`, `List revisions with gbrain access rule history --source ${sourceId}.`);
+        if (!rev) throw opError('not_found', `Source ${sourceId} has no folder-rule revision ${to}.`, `List revisions with foresights access rule history --source ${sourceId}.`);
         desired = rev.rules;
         message = `access: revert folder rules to revision ${to}`;
       } else {
         const file = flag(args, '--file');
-        if (!file) throw usageError('rule import needs --file <access.yml>.', 'gbrain access rule import --file access.yml --source <id>');
+        if (!file) throw usageError('rule import needs --file <access.yml>.', 'foresights access rule import --file access.yml --source <id>');
         const parsed = parsePolicyYaml(readFileSync(file, 'utf8'));
         if (!parsed.ok) throw opError('access_policy_invalid', `${file} does not validate: ${parsed.problems.map(p => `${p.line ? `line ${p.line}: ` : ''}${p.message}`).join('; ')}.`, 'Nothing was written. Fix the file and run the import again.');
         desired = parsed.rules;
@@ -393,7 +393,7 @@ async function ruleCmd(engine: BrainEngine, sub: string | undefined, args: strin
       }
       const preview = await previewRules(engine, sourceId, store, persisted, desired);
       if (!yes) {
-        return print(json, { ...preview, applied: false }, () => previewLines(preview, `gbrain access rule ${[sub, ...args.filter(a => a !== '--json')].join(' ')} --yes`));
+        return print(json, { ...preview, applied: false }, () => previewLines(preview, `foresights access rule ${[sub, ...args.filter(a => a !== '--json')].join(' ')} --yes`));
       }
       const r = await writeRules(engine, sourceId, desired, { expect, operation, message, json });
       if (r.state === 'invalid') setCliExitVerdict(1);
@@ -403,13 +403,13 @@ async function ruleCmd(engine: BrainEngine, sub: string | undefined, args: strin
     case 'status': {
       const s = await policyStatus(engine, sourceId, operation);
       const { root } = await resolveStore(engine, sourceId).catch(() => ({ root: null }));
-      const mismatch = s.store === 'database' && !!root ? 'This source now has a git work tree but keeps its rules in the database; gbrain access rule migrate moves them into .gbrain/access.yml.' : undefined;
+      const mismatch = s.store === 'database' && !!root ? 'This source now has a git work tree but keeps its rules in the database; foresights access rule migrate moves them into .gbrain/access.yml.' : undefined;
       return print(json, { ...s, ...(mismatch ? { store_mismatch: mismatch } : {}) }, () => [
         `Source ${sourceId}: ${s.store ?? 'no folder rules yet'}${s.store === 'git' ? ` (${POLICY_FILE})` : s.store === 'database' ? ' (revision log)' : ''}`,
         `  Revisions: desired ${s.desired?.revision ?? '-'}, applied ${s.applied_revision ?? '-'}, approved ${s.approved_revision ?? '-'}`,
         ...(s.rules.length ? ['Applied rules:', ...s.rules.map(ruleLine)] : ['  No applied rule: no folder restricts reads.']),
-        ...(s.held.length ? ['Held widening (gbrain access apply previews it):', ...s.held.map(changeLine)] : []),
-        ...(s.pending.length ? [`Pending (reads as nobody until stamped; gbrain access resume --source ${sourceId}): ${s.pending.map(c => c.prefix || '(whole source)').join(', ')}`] : []),
+        ...(s.held.length ? ['Held widening (foresights access apply previews it):', ...s.held.map(changeLine)] : []),
+        ...(s.pending.length ? [`Pending (reads as nobody until stamped; foresights access resume --source ${sourceId}): ${s.pending.map(c => c.prefix || '(whole source)').join(', ')}`] : []),
         ...s.invalid.flatMap(c => {
           const detail = c.detail as { problems?: Array<{ line: number | null; message: string }>; commit?: string } | null;
           return [`Invalid policy file${detail?.commit ? ` at ${detail.commit}` : ''} (reads as nobody: ${c.prefix || 'the whole source'}):`,
@@ -434,11 +434,11 @@ async function ruleCmd(engine: BrainEngine, sub: string | undefined, args: strin
     }
     case 'migrate': {
       const to = flag(args, '--to');
-      if (to !== undefined && to !== 'git' && to !== 'database') throw usageError('rule migrate --to takes git or database.', `gbrain access rule migrate --to database --source ${sourceId}`);
+      if (to !== undefined && to !== 'git' && to !== 'database') throw usageError('rule migrate --to takes git or database.', `foresights access rule migrate --to database --source ${sourceId}`);
       return migrateCmd(engine, sourceId, yes, json, to);
     }
     default:
-      throw usageError(`Unknown access rule subcommand: ${sub ?? '(none)'}.`, 'Use add, rm, list, status, history, revert, export, import or migrate (gbrain access --help).');
+      throw usageError(`Unknown access rule subcommand: ${sub ?? '(none)'}.`, 'Use add, rm, list, status, history, revert, export, import or migrate (foresights access --help).');
   }
 }
 
@@ -448,7 +448,7 @@ async function migrateCmd(engine: BrainEngine, sourceId: string, yes: boolean, j
     const p = await previewMigrate(engine, sourceId, to);
     return print(json, { ...p, applied: false }, () => [
       `Source ${sourceId}: move folder rules from the ${p.from ?? 'unset'} store to the ${p.to} store`,
-      ...(p.to === 'git' ? [`  Writes ${POLICY_FILE} (desired, ${p.desired.length} rule(s)) and ${APPROVED_FILE} (approved, ${p.approved.length} rule(s)) under ${p.root} and commits them through gbrain git commit-push.`]
+      ...(p.to === 'git' ? [`  Writes ${POLICY_FILE} (desired, ${p.desired.length} rule(s)) and ${APPROVED_FILE} (approved, ${p.approved.length} rule(s)) under ${p.root} and commits them through foresights git commit-push.`]
         : [p.from ? '  The applied rulebook, pending coverage and held widenings stay in the database, which becomes the record.'
           : '  Sets the database store (sources.config.access_store) and records the migration; commits nothing and writes no file, so a checkout that cannot take commits keeps its rules in the database.']),
       '  The applied rules stay in force throughout; no rule is missing at any point.',
@@ -475,11 +475,11 @@ async function applyCmd(engine: BrainEngine, args: string[], json: boolean): Pro
         w.lineage ? '    Gaining access to those derived pages and facts: whoever reads them (a summary of a raw-only page reads like any other page)'
           : `    Gaining access: ${w.gains === 'every_source_reader' ? 'every caller entitled to the source, unbound credentials included' : w.gains.join(', ') || 'no enabled member'}`])
         : ['  Nothing is held: the applied rules already match.']),
-      ...(p.plan_hash ? [`Nothing written; approve with gbrain access apply --source ${sourceId}${revision ? ` --revision ${revision}` : ''} --yes --expect ${p.plan_hash}`] : []),
+      ...(p.plan_hash ? [`Nothing written; approve with foresights access apply --source ${sourceId}${revision ? ` --revision ${revision}` : ''} --yes --expect ${p.plan_hash}`] : []),
     ]);
   }
   const expect = flag(args, '--expect');
-  if (!expect) throw usageError('access apply --yes needs --expect <plan_hash> from the preview.', `Preview first: gbrain access apply --source ${sourceId}`);
+  if (!expect) throw usageError('access apply --yes needs --expect <plan_hash> from the preview.', `Preview first: foresights access apply --source ${sourceId}`);
   const r = await applyApproved(engine, sourceId, { revision, expect, onProgress: progressLogger(json) });
   let git: GitPolicyReceipt | undefined;
   if ((await readAccessStore(engine, sourceId)) === 'git') {
@@ -487,7 +487,7 @@ async function applyCmd(engine: BrainEngine, args: string[], json: boolean): Pro
     const approved = (await getRevision(engine, sourceId, r.revision ?? undefined))?.rules ?? [];
     if (!root || !isGitWorkTree(root)) {
       throw opError('access_policy_store_mismatch', `The widening is applied in the database, but ${APPROVED_FILE} could not be committed: this host sees no git work tree for source ${sourceId}.`,
-        `Run gbrain access apply --source ${sourceId} on the host that holds the checkout, or gbrain access rule migrate --source ${sourceId} to keep the rules in the database.`);
+        `Run foresights access apply --source ${sourceId} on the host that holds the checkout, or foresights access rule migrate --source ${sourceId} to keep the rules in the database.`);
     }
     git = await writeApprovedFile(root, approved, `access: approve folder rules revision ${r.revision}`);
     await syncGitPolicy(engine, sourceId, root);
@@ -495,10 +495,10 @@ async function applyCmd(engine: BrainEngine, args: string[], json: boolean): Pro
   const held = await heldFactsMoved(engine, sourceId);
   return print(json, { ...r, ...(git ? { git } : {}), ...(held ? { held_facts: held } : {}) }, () => [`Source ${sourceId}: revision ${r.revision} approved and applied (${r.pages_restamped} page(s) restamped)`,
     ...(git ? [`  ${git.path} committed ${git.commit?.slice(0, 12) ?? '(unchanged)'} (${git.outcome})`] : []),
-    ...(r.held.length ? [`A later revision still holds ${r.held.length} widening change(s); preview with gbrain access apply --source ${sourceId}`] : []), ...heldIncompleteLines(held)]);
+    ...(r.held.length ? [`A later revision still holds ${r.held.length} widening change(s); preview with foresights access apply --source ${sourceId}`] : []), ...heldIncompleteLines(held)]);
 }
 
-/** Dispatches `gbrain access rule|apply|resume`; false when `cmd` is not one of them. */
+/** Dispatches `foresights access rule|apply|resume`; false when `cmd` is not one of them. */
 export async function runAccessRules(engine: BrainEngine, cmd: string, rest: string[], json: boolean): Promise<boolean> {
   switch (cmd) {
     case 'rule': await ruleCmd(engine, rest[0], rest.slice(1), json); return true;

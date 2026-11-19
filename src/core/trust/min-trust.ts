@@ -3,7 +3,7 @@
  * `access_tokens.min_trust` hold the lowest trust tier a connection may read;
  * token verification carries it as `AuthInfo.minTrust` and read ops apply
  * max(floor, caller param). Only the trusted local CLI writes it
- * (`gbrain auth create --min-trust`, `gbrain auth set-min-trust`); no MCP or
+ * (`foresights auth create --min-trust`, `foresights auth set-min-trust`); no MCP or
  * admin HTTP surface can change it.
  */
 import type { BrainEngine } from '../engine.ts';
@@ -54,12 +54,12 @@ export async function setMinTrust(engine: BrainEngine, target: string, tier: Tru
         WHERE revoked_at IS NULL AND (id::text = $1 OR name = $1)`, [target]);
     if (tokens.length > 1) {
       throw opError('invalid_params', `${tokens.length} active tokens are named "${target}".`,
-        'Name the token by its id from gbrain auth list instead.');
+        'Name the token by its id from foresights auth list instead.');
     }
     const token = tokens[0];
     if (!token) {
       throw opError('not_found', `No active OAuth client or token is named "${target}".`,
-        'List clients with gbrain auth clients and tokens with gbrain auth list, then pass a client id, token id or token name.');
+        'List clients with foresights auth clients and tokens with foresights auth list, then pass a client id, token id or token name.');
     }
     await setTokenMinTrust(engine, token.id, tier);
     return { kind: 'legacy_token', id: token.id, name: token.name, before: token.before as TrustTier | null, after: tier };

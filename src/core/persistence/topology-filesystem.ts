@@ -15,7 +15,7 @@ const recoveryFix=(why:string):Action=>readFix(why,{argv:['gbrain','sources','wr
 export function topologyDirectoryIdentity(path:string):{device:string;inode:string;birthNs:string}{
   const info=lstatSync(path,{bigint:true});
   if(!info.isDirectory()||info.isSymbolicLink())throw opError('recovery_required','The staging directory was substituted.',
-    `The topology staging path ${path} is no longer the directory gbrain created, so the lifecycle step stopped for recovery. Inspect the pending recovery in writer status; do not delete or recreate the staging directory by hand.`,
+    `The topology staging path ${path} is no longer the directory foresights created, so the lifecycle step stopped for recovery. Inspect the pending recovery in writer status; do not delete or recreate the staging directory by hand.`,
     {fix:recoveryFix('Shows pending lifecycle requests and their recovery records, read-only.')});
   return {device:info.dev.toString(),inode:info.ino.toString(),birthNs:info.birthtimeNs.toString()};
 }

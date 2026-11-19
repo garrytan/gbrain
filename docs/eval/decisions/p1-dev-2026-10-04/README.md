@@ -49,7 +49,7 @@ Guardrails:
 - N4 entity resolution: the kit blocked the comparison (no eligible rows).
   Read from the receipts: identical headline (B³-F1 0.771, accuracy 0.706, 0
   wrong merges) and identical rows apart from one result ordering.
-- Link type accuracy was not compared: its runner reads the installed gbrain
+- Link type accuracy was not compared: its runner reads the installed foresights
   package rather than the build under test.
 
 ## Held-out preregistration (for the custodian)

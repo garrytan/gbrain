@@ -41,7 +41,7 @@ describe('CLI structure', () => {
       for (const { command, output } of results) {
         expect(output, command).not.toContain('Unknown command');
       }
-      expect(results.find(r => r.command === 'reindex')!.output).toContain('gbrain reindex');
+      expect(results.find(r => r.command === 'reindex')!.output).toContain('foresights reindex');
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -129,10 +129,10 @@ describe('BigInt-safe output normalization (#2450)', () => {
   });
 });
 
-// #5433: `gbrain list` (formatResult('list_pages', ...) at src/cli.ts) joined
+// #5433: `foresights list` (formatResult('list_pages', ...) at src/cli.ts) joined
 // raw fields with \t and rows with \n. Titles are free text; a title with a
 // newline turns one page into two output lines, a tab adds a column. Anything
-// that pipes `gbrain list` into `cut`/`awk`/`while read` miscounts or
+// that pipes `foresights list` into `cut`/`awk`/`while read` miscounts or
 // misattributes pages. The fix escapes \n/\r/\t/\\ in every cell so the row
 // boundary is always the single \n the caller asked for. --json output is
 // untouched (the JSON path carries the raw characters).
@@ -210,7 +210,7 @@ describe('ask alias', () => {
     });
     const stdout = await new Response(proc.stdout).text();
     const exitCode = await proc.exited;
-    expect(stdout).toContain('Usage: gbrain query');
+    expect(stdout).toContain('Usage: foresights query');
     expect(exitCode).toBe(0);
   });
 
@@ -237,7 +237,7 @@ describe('CLI dispatch integration', () => {
     });
     const stdout = await new Response(proc.stdout).text();
     await proc.exited;
-    expect(stdout.trim()).toMatch(/^gbrain \d+\.\d+\.\d+/);
+    expect(stdout.trim()).toMatch(/^(?:foresights|gbrain) \d+\.\d+\.\d+/);
   });
 
   test('unknown command prints error and exits 2 (usage)', async () => {
@@ -260,7 +260,7 @@ describe('CLI dispatch integration', () => {
     });
     const stdout = await new Response(proc.stdout).text();
     const exitCode = await proc.exited;
-    expect(stdout).toContain('Usage: gbrain get');
+    expect(stdout).toContain('Usage: foresights get');
     expect(exitCode).toBe(0);
   });
 
@@ -272,13 +272,13 @@ describe('CLI dispatch integration', () => {
     });
     const stdout = await new Response(proc.stdout).text();
     const exitCode = await proc.exited;
-    expect(stdout).toContain('Usage: gbrain upgrade');
+    expect(stdout).toContain('Usage: foresights upgrade');
     expect(exitCode).toBe(0);
   });
 
   test('sync --help prints sync-specific usage block without running sync (v0.37 D.4)', async () => {
     // v0.37 fix wave (Lane D.4 + CDX2-12): sync was added to
-    // CLI_ONLY_SELF_HELP so `gbrain sync --help` reaches runSync's own
+    // CLI_ONLY_SELF_HELP so `foresights sync --help` reaches runSync's own
     // usage block (which lists --no-embed, the flag that didn't surface
     // anywhere pre-fix). Pre-fix the generic CLI-only short-circuit
     // printed a header but never mentioned --no-embed.
@@ -293,7 +293,7 @@ describe('CLI dispatch integration', () => {
       const stdout = await new Response(proc.stdout).text();
       const stderr = await new Response(proc.stderr).text();
       const exitCode = await proc.exited;
-      expect(stdout).toContain('Usage: gbrain sync');
+      expect(stdout).toContain('Usage: foresights sync');
       // D.4 regression: the user-visible flag that the bug report wanted
       // surfaced. Pre-v0.37 this string was unreachable.
       expect(stdout).toContain('--no-embed');
@@ -319,7 +319,7 @@ describe('CLI dispatch integration', () => {
       const stdout = await new Response(proc.stdout).text();
       const stderr = await new Response(proc.stderr).text();
       const exitCode = await proc.exited;
-      expect(stdout).toContain('Usage: gbrain doctor');
+      expect(stdout).toContain('Usage: foresights doctor');
       expect(stdout).not.toContain('resolver_health');
       expect(stderr).not.toContain('No brain configured');
       expect(exitCode).toBe(0);
@@ -341,10 +341,10 @@ describe('CLI dispatch integration', () => {
       const exitCode = await proc.exited;
       // init prints its OWN detailed help (printInitHelp), not the generic
       // CLI-only one-line stub. Assert on markers unique to the real help...
-      expect(stdout).toContain('gbrain init [flags]');
+      expect(stdout).toContain('foresights init [flags]');
       expect(stdout).toContain('ENGINE SELECTION');
       // ...and confirm the generic stub (printCliOnlyHelp) did NOT fire.
-      expect(stdout).not.toContain('run gbrain --help for the full command list');
+      expect(stdout).not.toContain('run foresights --help for the full command list');
       // #5800: the thin-client example must name the flags initRemoteMcp
       // actually reads (--issuer-url/--mcp-url/oauth), not `--url`, which it
       // ignores while requiring --issuer-url.
@@ -366,7 +366,7 @@ describe('CLI dispatch integration', () => {
     const stdout = await new Response(proc.stdout).text();
     const exitCode = await proc.exited;
     expect(stdout).toContain('USAGE');
-    expect(stdout).toContain('gbrain <command>');
+    expect(stdout).toContain('foresights <command>');
     expect(exitCode).toBe(0);
   });
 

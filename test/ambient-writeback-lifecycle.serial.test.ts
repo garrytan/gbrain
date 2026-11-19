@@ -53,7 +53,7 @@ function childEnv(): Record<string, string | undefined> {
   } as Record<string, string | undefined>;
 }
 
-/** One stdio MCP session against `gbrain serve` (ndjson JSON-RPC). */
+/** One stdio MCP session against `foresights serve` (ndjson JSON-RPC). */
 class StdioSession {
   private child: ChildProcess;
   private buf = '';
@@ -141,7 +141,7 @@ describe('ambient writeback — hermetic 5-step lifecycle', () => {
     });
     // G5: the ask is the `writeback` decision in init's one first-run bundle ([AGENT] block).
     expect(initOut).toContain('(id: writeback)');
-    expect(initOut).toContain('(run: gbrain config set memory.auto_writeback salient)');
+    expect(initOut).toContain('(run: foresights config set memory.auto_writeback salient)');
     expect(initOut).toContain('default: off');
 
     // The ask fires ONCE: a second init pass over the same brain stays quiet
@@ -312,7 +312,7 @@ describe('ambient writeback — hermetic 5-step lifecycle', () => {
 
       const roInstructions = await initWith(roToken);
       expect(roInstructions).not.toContain('Ambient memory writeback');
-      expect(roInstructions).toContain('GBrain agent operating contract');
+      expect(roInstructions).toContain('Foresights agent operating contract');
     } finally {
       httpServe.kill('SIGTERM');
       await new Promise<void>((resolve) => {

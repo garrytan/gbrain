@@ -1,11 +1,11 @@
 /**
- * #7183: every transaction gbrain opens on Postgres declares itself read-write, and an autocommit statement the server
+ * #7183: every transaction foresights opens on Postgres declares itself read-write, and an autocommit statement the server
  * refuses as read-only runs once more inside such a transaction.
  *
  * A transaction-mode pooler (PgBouncer `pool_mode=transaction`, Supavisor) shares server connections between clients.
  * A client that runs a session-level `SET default_transaction_read_only = on` leaves that default on the server
  * connection, and a pooler that does not restore it hands it to every later client of that connection; a role or
- * database default does the same to every connection. gbrain's writes then fail with SQLSTATE 25006 (`cannot execute
+ * database default does the same to every connection. foresights's writes then fail with SQLSTATE 25006 (`cannot execute
  * INSERT in a read-only transaction`, `... SELECT FOR SHARE ...`). A transaction's own characteristics outrank the
  * session default, so:
  *

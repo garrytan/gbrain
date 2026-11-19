@@ -12,7 +12,7 @@
  *    principal that wrote the revision when recorded.
  *  - access_page_readers_backfill: pages whose derived `page_readers` differs
  *    from their frontmatter (written before the migration); they read as
- *    nobody until `gbrain repair access` derives them.
+ *    nobody until `foresights repair access` derives them.
  *
  * A brain that holds no member restriction (config access.restrictions_present)
  * is not applicable for all four; nothing is read.
@@ -108,7 +108,7 @@ async function backfill(engine: BrainEngine): Promise<Check> {
   if (!total) return { name, status: 'ok', details: { count: 0 }, message: 'Every page that names readers has its derived readers.' };
   return { name, status: 'warn', details: { count: total, repair: 'access' },
     message: `${total} page(s) name readers in frontmatter but have no derived readers yet (written before member access), so they read as nobody for every remote caller, listed members included. `
-      + 'Preview with gbrain repair access, then apply the printed command after the user agrees; it never widens anything.',
+      + 'Preview with foresights repair access, then apply the printed command after the user agrees; it never widens anything.',
     fix: agentFix(['gbrain', 'repair', 'access', '--apply'], 'Derives the missing readers; run the preview first and apply after the user agrees. It only restores reads for listed members and never widens anything.', name,
       { preview_argv: ['gbrain', 'repair', 'access', '--json'], ask_user: true, docs: DOCS }) };
 }

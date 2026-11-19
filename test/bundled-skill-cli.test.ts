@@ -1,5 +1,5 @@
 /**
- * GBRA-194: `gbrain bundled-skill`, the on-demand half of the spring-loaded skill
+ * GBRA-194: `foresights bundled-skill`, the on-demand half of the spring-loaded skill
  * resolver: the skills index names it, so it must work wherever the index
  * was written, with no brain at all.
  *
@@ -28,7 +28,7 @@ function emptyHome(): string {
 const SKILLS = join(import.meta.dir, '..', 'skills');
 const cli = (home: string, args: string[]) => runCli(['bundled-skill', ...args], { env: { HOME: home, GBRAIN_HOME: home }, cwd: home });
 
-describe('gbrain bundled-skill', () => {
+describe('foresights bundled-skill', () => {
   test('prints a skill from the binary with no brain, then the files it names', async () => {
     const home = emptyHome();
     const r = await cli(home, ['meeting-ingestion']);
@@ -98,7 +98,7 @@ describe('gbrain bundled-skill', () => {
   });
 });
 
-describe('gbrain bundled-skill: argument order', () => {
+describe('foresights bundled-skill: argument order', () => {
   test('--asset=<path> before the name, and a second name or unknown flag is refused', async () => {
     const home = emptyHome();
     const r = await cli(home, ['--asset=_brain-filing-rules.md', 'meeting-ingestion']);

@@ -34,7 +34,7 @@ export interface SharedSourceMigration {
  * A source whose pack exceeds an inventory bound. Later runs skip it without
  * re-inventorying (the migration completes instead of going partial) until the
  * configured bounds change, the source opts out, or
- * `gbrain sources shared-skills <id> on` releases it.
+ * `foresights sources shared-skills <id> on` releases it.
  */
 export interface SharedSourceParked {
   limit: string;
@@ -63,8 +63,8 @@ const sameLimits = (a: InventoryLimits, b: InventoryLimits): boolean =>
 export function parkedReason(sourceId: string, parked: SharedSourceParked): string {
   const ceiling = INVENTORY_LIMIT_CEILINGS[parked.limit.split('.').pop() as keyof InventoryLimits];
   return `payload_too_large: ${parked.reason} Parked: this source is skipped, not retried, and the rest of the migration completes. `
-    + `Raise the bound (gbrain config set ${parked.limit} <n>, at most ${ceiling}), opt the source out (gbrain sources shared-skills ${sourceId} off), `
-    + `or shrink the pack and release it (gbrain sources shared-skills ${sourceId} on); then run gbrain apply-migrations --migration 0.53.0 --yes. `
+    + `Raise the bound (foresights config set ${parked.limit} <n>, at most ${ceiling}), opt the source out (foresights sources shared-skills ${sourceId} off), `
+    + `or shrink the pack and release it (foresights sources shared-skills ${sourceId} on); then run foresights apply-migrations --migration 0.53.0 --yes. `
     + 'See docs/guides/shared-brain-skills.md#oversized-skill-packs.';
 }
 
@@ -88,7 +88,7 @@ export async function legacyPublication(ctx: OperationContext): Promise<Migratio
 export async function runSharedSkillsMigration(ctx: OperationContext, options: { dryRun?: boolean; acceptReviewedInventory?: Record<string, string> } = {}): Promise<SharedMigrationReport> {
   if (ctx.remote !== false) {
     throw opError('permission_denied', 'Shared-skills migration requires the trusted local host.',
-      'The shared-skills migration runs only from gbrain apply-migrations on the brain host; a remote connection cannot run it.');
+      'The shared-skills migration runs only from foresights apply-migrations on the brain host; a remote connection cannot run it.');
   }
   const dryRun = options.dryRun ?? ctx.dryRun;
   const report: SharedMigrationReport = { version: 1, brain_id: null, dry_run: dryRun, status: dryRun ? 'planned' : 'complete', sources: [], pending_actions: [], permission_changes: [] };
@@ -140,7 +140,7 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
         await pending('projection', sourcePolicy.reason);
         continue;
       }
-      await pending('inventory', 'db_only_export_required: preview gbrain apply-migrations --migration 0.53.0 --export-db-only --content-root <new-root> --export-source ' + source.id + ' --dry-run --json; approve quiescence and backup choice before exporting. Memory stays available.');
+      await pending('inventory', 'db_only_export_required: preview foresights apply-migrations --migration 0.53.0 --export-db-only --content-root <new-root> --export-source ' + source.id + ' --dry-run --json; approve quiescence and backup choice before exporting. Memory stays available.');
       continue;
     }
     const checkpoint = await ctx.engine.getConfig(key);
@@ -177,14 +177,14 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
           const changed = changedInventoryPaths(prior.inventory.hashes, row.inventory?.hashes ?? {});
           row.inventory = prior.inventory;
           throw opError('local_conflict', `Files changed since migration inventory; preserve edits and review the checkpoint before retrying. Changed: ${changed.slice(0, 20).join(', ')}${changed.length > 20 ? ` and ${changed.length - 20} more` : ''}.`
-            + (digest ? ` After the user reviews these changes, accept exactly this inventory with gbrain apply-migrations --migration 0.53.0 --accept-reviewed-inventory ${source.id}=${digest} --yes.` : ''),
+            + (digest ? ` After the user reviews these changes, accept exactly this inventory with foresights apply-migrations --migration 0.53.0 --accept-reviewed-inventory ${source.id}=${digest} --yes.` : ''),
             `Skill files under ${row.root} changed since the migration inventory. Keep the edits and review them with the user; only after they agree, accept the reviewed inventory with the command in the message (a later edit changes the digest and is refused again).`);
         }
       }
       // A-NEW-4: one canonical adoption writes one SKILL.md per declared skill plus skillpack.json.
       if (row.inventory && row.inventory.names.length + 1 > SHARED_SKILL_LIMITS.packFiles) {
         await pending('inventory', `payload_too_large: source ${source.id} declares ${row.inventory.names.length} skills, but one canonical adoption publishes at most ${SHARED_SKILL_LIMITS.packFiles} files (one SKILL.md per skill plus skillpack.json). `
-          + `Split the pack across sources or remove skills from skillpack.json, then run gbrain apply-migrations --migration 0.53.0 --yes. See docs/guides/shared-brain-skills.md#oversized-skill-packs.`);
+          + `Split the pack across sources or remove skills from skillpack.json, then run foresights apply-migrations --migration 0.53.0 --yes. See docs/guides/shared-brain-skills.md#oversized-skill-packs.`);
         continue;
       }
     } catch (error) {
@@ -235,7 +235,7 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
     }
     if (!row.inventory) {
       throw opError('catalog_unavailable', 'Committed pack inventory could not be verified.',
-        `Source ${source.id}'s pack inventory is missing, so its catalog adoption cannot be checked. Inspect the per-source stages with gbrain apply-migrations --migration 0.53.0 --dry-run --json.`);
+        `Source ${source.id}'s pack inventory is missing, so its catalog adoption cannot be checked. Inspect the per-source stages with foresights apply-migrations --migration 0.53.0 --dry-run --json.`);
     }
     if (!dryRun) {
       try {
@@ -280,7 +280,7 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
         complete = entries.length <= limits.max_files && entries.every(name => !existsSync(join(hostDir, name, 'SKILL.md')) || declared.has(name));
       } catch { complete = false; }
     }
-    if (!complete) report.pending_actions.push('Host-global catalog assignment is pending. Review a dedicated content pack root with skillpack.json (brain_resident:true) and declared skills; never register the application checkout. After approval, register it with `gbrain sources add shared-skills --path <reviewed-pack-root> --force --no-federated`. Inspect `gbrain sources writer status --json` before deliberate ownership changes; follow skills/migrations/v0.53.0.0.md for action-specific --admin-intent and reviewed --expected-state claim/activation steps. Quiescence is a separate prerequisite, not administration authority. Preview `gbrain apply-migrations --migration 0.53.0 --dry-run --json`, then apply with --yes only when those stages are approved. Original files and grants are unchanged; unmanifested or undeclared skills require explicit review.');
+    if (!complete) report.pending_actions.push('Host-global catalog assignment is pending. Review a dedicated content pack root with skillpack.json (brain_resident:true) and declared skills; never register the application checkout. After approval, register it with `foresights sources add shared-skills --path <reviewed-pack-root> --force --no-federated`. Inspect `foresights sources writer status --json` before deliberate ownership changes; follow skills/migrations/v0.53.0.0.md for action-specific --admin-intent and reviewed --expected-state claim/activation steps. Quiescence is a separate prerequisite, not administration authority. Preview `foresights apply-migrations --migration 0.53.0 --dry-run --json`, then apply with --yes only when those stages are approved. Original files and grants are unchanged; unmanifested or undeclared skills require explicit review.');
   }
   report.status = report.sources.some(row => row.status === 'conflict') ? 'conflict'
     : report.sources.some(row => row.status === 'action_required') || report.pending_actions.length ? 'action_required' : dryRun ? 'planned' : 'complete';

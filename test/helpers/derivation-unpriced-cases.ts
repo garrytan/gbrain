@@ -6,7 +6,7 @@
  *
  * 1. Protects: when the facts, conversation facts or synopsis step stops (or books its reservation) because the
  *    model has no price, its derivation receipt says reason `unpriced_model` with the model id, and doctor
- *    derivation_unpriced_model warns with a fix naming pricing.overrides (gbrain pricing set <model> ...); once the price
+ *    derivation_unpriced_model warns with a fix naming pricing.overrides (foresights pricing set <model> ...); once the price
  *    is registered the warning clears.
  * 2. Fails when: an unpriced stop reads as a plain cap stop (cap_reached) with no model, or doctor stays silent.
  */
@@ -24,7 +24,7 @@ import type { DoctorContext } from '../../src/commands/doctor/context.ts';
 import type { Check } from '../../src/commands/doctor.ts';
 import { chatDays, chatPage, derivations, SOURCE } from './conversation-facts-incremental-cases.ts';
 
-/** A model id gbrain ships no price for. */
+/** A model id foresights ships no price for. */
 export const UNPRICED = 'anthropic:claude-unpriced-example';
 
 const doctor = async (engine: BrainEngine) => (await derivationUnpricedModelEntry.run({ engine } as unknown as DoctorContext) as Check[])

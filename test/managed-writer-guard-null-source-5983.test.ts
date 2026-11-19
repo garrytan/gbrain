@@ -1,6 +1,6 @@
 /**
  * #5983: on a managed brain whose tags / timeline_entries / takes carry a
- * nullable source_id column (not created by gbrain; every value NULL), the
+ * nullable source_id column (not created by foresights; every value NULL), the
  * managed writer guard read the NULL column instead of the parent page and
  * refused every coordinated INSERT/UPDATE as writer_coordinator_required.
  *

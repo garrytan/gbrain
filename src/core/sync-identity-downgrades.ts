@@ -1,7 +1,7 @@
 /**
  * #6729: inexact Git renames a sync could not confirm (see sync-rename-identity.ts) were split into a delete plus an
  * add, so the old page's facts, links and aliases stay on its soft-deleted slug. Each one is recorded here until the
- * pair gets a disposition: `gbrain sync status --json` lists it, doctor `rename_identity_downgrades` names it, the purge
+ * pair gets a disposition: `foresights sync status --json` lists it, doctor `rename_identity_downgrades` names it, the purge
  * leaves its old page alone and the checkpoint sweep keeps the record while it is open, and the report names the
  * restore of the old page. There is no time window: a pair recorded before its remedy exists can still be repaired.
  *
@@ -10,7 +10,7 @@
  * or closed without merging) and its old page is still soft-deleted from that sync (`deleted_at` = `old_deleted_at`);
  * a restore, a purge or a later delete of the restored page closes it.
  *
- * Every surface names the remedy per pair (`identityRemedy`): the preview `gbrain repair rename-identity --source <id>
+ * Every surface names the remedy per pair (`identityRemedy`): the preview `foresights repair rename-identity --source <id>
  * --slug <new>`, its apply with the plan hash (destructive consent), and what releases the purge hold. On a managed brain
  * carrying identity is unavailable (`managed_remedy_unavailable`), so the remedy there is `--close`.
  */
@@ -22,6 +22,7 @@ import { readManagedMode } from './persistence/managed-mode.ts';
 import { previewHash } from './persistence/preview-approval.ts';
 import { canonicalOriginPage, pickCanonicalOrigin } from './persistence/origin-guard.ts';
 import { resolveSlugForPath, type DowngradedRename, type RenameDowngradeReason } from './sync.ts';
+import { commandText } from './brand.ts';
 
 export const IDENTITY_DOWNGRADE_OP = 'sync-identity-downgrade';
 
@@ -35,7 +36,7 @@ export interface IdentityDowngrade extends DowngradedRename {
   recorded_at: string; old_deleted_at: string;
   /** Set when the pair is remedied or closed without merging; the record is then closed. */
   disposition?: { kind: 'remedied' | 'closed'; at: string };
-  /** Read live: whether `gbrain restore` can write the old page back on this source (see `identityRestoreAvailable`). */
+  /** Read live: whether `foresights restore` can write the old page back on this source (see `identityRestoreAvailable`). */
   restore_available?: boolean;
 }
 
@@ -167,7 +168,7 @@ export async function identityRemedyParts(engine: Pick<BrainEngine, 'executeRaw'
 }
 export type IdentityRemedyParts = Awaited<ReturnType<typeof identityRemedyParts>>;
 
-/** `gbrain repair rename-identity --source <id> --slug <new>` (`--from <old>` when another open pair shares the new slug). */
+/** `foresights repair rename-identity --source <id> --slug <new>` (`--from <old>` when another open pair shares the new slug). */
 export function renameIdentityPreviewArgv(record: Pick<IdentityDowngrade, 'source_id' | 'new_slug' | 'old_slug'>, opts: { from?: boolean; close?: boolean } = {}): string[] {
   return ['gbrain', 'repair', 'rename-identity', '--source', record.source_id, ...(record.new_slug ? ['--slug', record.new_slug] : []),
     ...(opts.from || !record.new_slug ? ['--from', record.old_slug] : []), ...(opts.close ? ['--close'] : [])];
@@ -251,8 +252,8 @@ export function identityDowngradeLines(records: readonly IdentityDowngradeEntry[
     ...records.flatMap(record => [`  Identity not kept: ${record.from} -> ${record.to} (git similarity ${record.similarity}%; ${REASON_TEXT[record.reason]}). `
       + `${record.facts} fact(s), ${record.links} link(s) and ${record.aliases} alias(es) stay on the soft-deleted ${record.old_slug}; `
       + `${record.new_slug ? `${record.new_slug} starts fresh.` : 'the new file did not import.'} The purge holds ${record.old_slug} until ${record.remedy.hold_releases}.`,
-    `    ${remedyAction(record)}: preview ${record.remedy.preview_argv.join(' ')}, then apply ${record.remedy.argv.join(' ')}`
-      + (record.restore_available === false ? '' : `; or keep ${record.old_slug} as its own page: ${identityRestoreArgv(record).join(' ')}`)]),
+    `    ${remedyAction(record)}: preview ${commandText(record.remedy.preview_argv)}, then apply ${commandText(record.remedy.argv)}`
+      + (record.restore_available === false ? '' : `; or keep ${record.old_slug} as its own page: ${commandText(identityRestoreArgv(record))}`)]),
     '  A move keeps its page when the files share a frontmatter id: (or a unique slug: line or title); to move and rewrite a page, move, commit and sync, then edit.',
   ];
 }

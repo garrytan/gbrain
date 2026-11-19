@@ -93,14 +93,14 @@ export function validatePreparationConfigValue(key: string, value: string, other
   const n = parseWhole(value);
   if (n === null || n < range.min || n > range.max) {
     return { message: `${key} must be a whole number of ${range.unit} from ${range.min} to ${range.max} (default ${DEFAULT_PREPARATION_POLICY[name]}); got '${value}'. Nothing was written.`,
-      suggestion: `Re-run with a value in range, for example gbrain config set ${key} ${DEFAULT_PREPARATION_POLICY[name]}.`, example: String(DEFAULT_PREPARATION_POLICY[name]) };
+      suggestion: `Re-run with a value in range, for example foresights config set ${key} ${DEFAULT_PREPARATION_POLICY[name]}.`, example: String(DEFAULT_PREPARATION_POLICY[name]) };
   }
   const merged = new Map(others);
   merged.set(key, value);
   const policy = resolvePreparationPolicyStrict(merged);
   const floor = Math.max(policy.syncMs, policy.maintenanceMs) + PREPARATION_CEILING_GRACE_MS;
   if (policy.ceilingMs < floor) {
-    const fix = name === 'ceilingMs' ? `gbrain config set ${key} ${floor}` : `gbrain config set ${PREPARATION_BUDGET_KEYS.ceilingMs} ${Math.min(floor, RANGES.ceilingMs.max)}`;
+    const fix = name === 'ceilingMs' ? `foresights config set ${key} ${floor}` : `foresights config set ${PREPARATION_BUDGET_KEYS.ceilingMs} ${Math.min(floor, RANGES.ceilingMs.max)}`;
     return { message: `${PREPARATION_BUDGET_KEYS.ceilingMs} (${policy.ceilingMs}) must be at least the larger preparation budget plus ${PREPARATION_CEILING_GRACE_MS} ms (${floor}); nothing was written.`,
       suggestion: `Raise the ceiling first (${fix}), or lower the budget so the ceiling stays above it.`, example: String(floor) };
   }

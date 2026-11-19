@@ -37,7 +37,7 @@ gbrain-evals `eval/runner/p4-stream/` (branch `capy/p4-streaming-harness`,
 `8cfae29` at this revision; the sealed run pins its own commit here first):
 
 - One stream per conversation and arm. Each stream gets a fresh PGLite brain
-  built by the arm's gbrain build, served as `gbrain serve --surface starter`
+  built by the arm's foresights build, served as `foresights serve --surface starter`
   over stdio. The agent sees the starter tools and the first 2,048 characters
   of the server instructions (Claude Code's per-server cap).
 - Sessions stream in order. A session's turns up to its last user message
@@ -45,12 +45,12 @@ gbrain-evals `eval/runner/p4-stream/` (branch `capy/p4-streaming-harness`,
   700-token reply cap. A tool call cut off at that cap arrives with empty
   arguments, so that step is reissued with an 8,192-token cap (both calls are
   billed to the stream; the count is reported). Before each live turn the
-  build's real `gbrain hook user-prompt` runs against a Claude Code-shaped
+  build's real `foresights hook user-prompt` runs against a Claude Code-shaped
   transcript and its `additionalContext` is injected as a system reminder.
-- When the next session would pass 95% of the window, `gbrain hook compact`
+- When the next session would pass 95% of the window, `foresights hook compact`
   runs, the model summarizes the conversation (2,500-token cap), a
   `compact_boundary` line is written, the history is replaced by the summary,
-  and `gbrain hook session-start` (source `compact`) is injected.
+  and `foresights hook session-start` (source `compact`) is injected.
 - Every question of the conversation is asked from the same end state as a
   final live turn. Answers are judged 10 times with the BEAM rubric and
   `gpt-4.1-mini`.
@@ -61,9 +61,9 @@ gbrain-evals `eval/runner/p4-stream/` (branch `capy/p4-streaming-harness`,
 
 ## Arms
 
-| Arm | gbrain build | What the agent gets |
+| Arm | foresights build | What the agent gets |
 |---|---|---|
-| A′ | master at the sealed run (contains gbrain#6025, the MCP instructions reordered under the 2,048-char cap; development used that PR's head `5c82936a2`) | Baseline. |
+| A′ | master at the sealed run (contains foresights#6025, the MCP instructions reordered under the 2,048-char cap; development used that PR's head `5c82936a2`) | Baseline. |
 | B | final head of this PR; `memory.core.enabled=false`, `memory.pressure.enabled=true`, `memory.pressure.context_window` = the window | Growth-aware save notice before compaction; `remember` with `items`. |
 | C | same build; `memory.core.enabled=true`, `memory.pressure.enabled=false` | The standing-preferences page is core and loaded every session. |
 
@@ -72,7 +72,7 @@ allowed) ran in early development only and are not part of the sealed run.
 
 ## Models
 
-The newest frontier model of each family, per the gbrain eval model rules
+The newest frontier model of each family, per the foresights eval model rules
 (checked 2026-10-05): claude-sonnet-5-5 (the gate model, the model most users
 run, reported first), claude-opus-5-5, gpt-6.1-sol and claude-fable-5-1. A
 model at 100% on every arm is reported as a ceiling and counts neither way.
@@ -83,7 +83,7 @@ model at 100% on every arm is reported as a ceiling and counts neither way.
   type.
 - Evidence-saved rate: share of questions where the agent saved at least one
   fact (`remember`) while a gold evidence session was live.
-- Cost per question and cost per correct answer (agent, gbrain's own provider
+- Cost per question and cost per correct answer (agent, foresights's own provider
   calls, standing-preferences page; stream cost shared evenly across the
   conversation's questions), from the budget ledger.
 - Pressure notice fire rate and miss rate (compaction segments with no notice
@@ -176,7 +176,7 @@ check (E2) is capped at $4. Latency check (E3): session-start p95 under
 
 - 2026-10-04: models moved from gpt-6-luna (full split) and
   claude-sonnet-5-5 (150-question slice) to the newest model of each family,
-  per the gbrain eval model rules.
+  per the foresights eval model rules.
 - 2026-10-05: the sealed source moved from LongMemEval-S to BEAM, because
   LongMemEval-S has no held-out portion and almost no question whose only
   evidence is the first session (core cannot move there). The custodian named
@@ -191,7 +191,7 @@ check (E2) is capped at $4. Latency check (E3): session-start p95 under
   every earlier B measurement invalid: `remember` with `items` still required
   top-level provenance (fixed in this PR), and the 700-token reply cap cut off
   long batched `remember` calls, which then arrived with empty arguments
-  (harness fixed by reissuing the step; gbrain now names that cause in its
+  (harness fixed by reissuing the step; foresights now names that cause in its
   error). Only results from the corrected harness and build count as
   development evidence.
 - 2026-10-05: Garry decided that the gates are accuracy only. The cost

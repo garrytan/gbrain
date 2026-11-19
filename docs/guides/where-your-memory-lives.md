@@ -1,8 +1,8 @@
 # Where your memory lives
 
-**The short answer.** gbrain keeps your knowledge as Markdown files with YAML
+**The short answer.** foresights keeps your knowledge as Markdown files with YAML
 frontmatter, in a folder you own and normally version in Git. Those files are
-the record. gbrain indexes them into Postgres (embedded PGLite by default, or
+the record. foresights indexes them into Postgres (embedded PGLite by default, or
 Postgres with pgvector) with embeddings and keyword search for recall, and that
 index can be rebuilt from the files at any time. What lives only in the
 database, such as private pages, saved facts with no page, revision history and
@@ -16,7 +16,7 @@ and what follows from it.
 | Layer | What it holds | Can it be rebuilt? |
 |---|---|---|
 | Markdown files in a source folder | Every file-backed page: frontmatter, compiled truth, timeline, and the facts and takes tables ([anatomy of a page](page-anatomy.md)). | It is the record. Git, when the folder is a repository, holds its history. |
-| The index in Postgres | Pages, chunks with embeddings, the keyword (full-text) index, links, timeline rows, and facts and takes parsed from the files. | Yes, from the files: `gbrain sync`, then `gbrain extract all`. Embeddings cost a provider call again. |
+| The index in Postgres | Pages, chunks with embeddings, the keyword (full-text) index, links, timeline rows, and facts and takes parsed from the files. | Yes, from the files: `foresights sync`, then `foresights extract all`. Embeddings cost a provider call again. |
 | Database-only records | Pages that have no file on purpose (private pages on a strict source, `storage.db_only` folders, a brain or source with write-through off), facts saved with no page to hold them, page revision history, receipts and other operational state. | No. Back up the database. |
 
 Recall reads the index: hybrid search ranks keyword and vector matches
@@ -26,13 +26,13 @@ pages whose text is in the files.
 
 ## Where the folder is
 
-A fresh `gbrain init` creates one source at
+A fresh `foresights init` creates one source at
 `~/.gbrain/content/<brain-id>/default` (under `GBRAIN_HOME` when it is set).
-It is a plain folder until you make it a repository: `gbrain init --git`
+It is a plain folder until you make it a repository: `foresights init --git`
 initializes Git in a new empty folder, `--content-root <path>` picks the
-folder, and `gbrain sources add <id> --path <repo>` adds a Git repository
-you already have. `gbrain sources harden <id>` adds the commit-and-push hook that
-keeps a remote copy current. `gbrain sources list` shows every source and its
+folder, and `foresights sources add <id> --path <repo>` adds a Git repository
+you already have. `foresights sources harden <id>` adds the commit-and-push hook that
+keeps a remote copy current. `foresights sources list` shows every source and its
 folder. A brain initialized with `--db-only` has no folder, and the database is its
 record. Connector sources (Gmail, Calendar, GitHub) render their pages into
 a folder of their own.
@@ -58,7 +58,7 @@ whether the database can ever be briefly ahead of it.
 - **The folder, through Git.** Push it somewhere you control. That covers every
   file-backed page and its history.
 - **The database.** It holds the database-only records above. On PGLite that
-  is `gbrain backup create --output <absolute path>`; on Postgres, your
+  is `foresights backup create --output <absolute path>`; on Postgres, your
   provider's backups or `pg_dump`. Markdown export is
   not a database backup.
 

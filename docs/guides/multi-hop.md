@@ -1,6 +1,6 @@
 # Multi-hop relationship questions
 
-GBrain answers questions that chain two or three relationships, such as
+Foresights answers questions that chain two or three relationships, such as
 "who founded the companies Alice invested in?", by walking the typed links
 between pages: from Alice to the companies she invested in, then from those
 companies to their founders. Each answer comes back with the links that prove
@@ -44,7 +44,7 @@ already knows the relationships passes them explicitly and gets an exact,
 deterministic chain:
 
 ```bash
-gbrain graph-query people/alice-example --hop invested_in:object --hop founded:subject
+foresights graph-query people/alice-example --hop invested_in:object --hop founded:subject
 ```
 
 ```json
@@ -65,17 +65,17 @@ default); the starter surface leaves it out to stay inside its size budget.
 ## Try it keyless (about a minute)
 
 ```bash
-gbrain init --pglite --no-embedding
-printf -- '---\ntype: person\ntitle: Bob Example\n---\nBob Example is a robotics engineer.\n' | gbrain put people/bob-example
-printf -- '---\ntype: company\ntitle: Acme Example\n---\nAcme Example makes robots. It was founded by [Bob Example](people/bob-example).\n' | gbrain put companies/acme-example
-printf -- '---\ntype: person\ntitle: Alice Example\n---\nAlice Example is a seed investor. She backed [Acme Example](companies/acme-example) in 2024.\n' | gbrain put people/alice-example
-gbrain graph-query people/alice-example --hop invested_in:object --hop founded:subject
-gbrain search "Who founded the companies that Alice Example invested in?" --json
+foresights init --pglite --no-embedding
+printf -- '---\ntype: person\ntitle: Bob Example\n---\nBob Example is a robotics engineer.\n' | foresights put people/bob-example
+printf -- '---\ntype: company\ntitle: Acme Example\n---\nAcme Example makes robots. It was founded by [Bob Example](people/bob-example).\n' | foresights put companies/acme-example
+printf -- '---\ntype: person\ntitle: Alice Example\n---\nAlice Example is a seed investor. She backed [Acme Example](companies/acme-example) in 2024.\n' | foresights put people/alice-example
+foresights graph-query people/alice-example --hop invested_in:object --hop founded:subject
+foresights search "Who founded the companies that Alice Example invested in?" --json
 ```
 
 The chain answers `people/bob-example`; the second edge is marked "written on
 the other page" because the founding is stated on Acme's page. Pages written
-before the pages they link to get their links on `gbrain extract links
+before the pages they link to get their links on `foresights extract links
 --source db`. Keyless `think` returns the gathered evidence rather than a
 synthesized answer.
 
@@ -159,7 +159,7 @@ sanitized excerpt of at most 160 characters.
 
 | Key | Effect |
 |---|---|
-| `search.relational_planner` | Plan 2-3 relationship questions into typed chains (search, query, recall, think). On in `balanced` and `tokenmax`, off in `conservative`; `gbrain config set search.relational_planner false` turns it off |
+| `search.relational_planner` | Plan 2-3 relationship questions into typed chains (search, query, recall, think). On in `balanced` and `tokenmax`, off in `conservative`; `foresights config set search.relational_planner false` turns it off |
 | `search.relational_orient_onehop` | Single-relationship walks read links written on either page. Off by default; unset follows the planner |
 | `search.relational_chain_slots` | When a chain fires, up to this many chain rows (answers, then the pages on their paths) lead page 1; 0..10, default 10, 0 keeps a single evidence slot |
 

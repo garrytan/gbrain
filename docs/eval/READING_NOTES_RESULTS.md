@@ -2,11 +2,11 @@
 
 **Keeping the evidence intact and asking for notes helped in both completed
 comparisons.** We reproduced the paper's positive reading effect and measured
-a smaller positive transfer to the existing GBrain reader. Source inspection
-confirms real improvements, but grading artifacts and nine truncated GBrain
+a smaller positive transfer to the existing Foresights reader. Source inspection
+confirms real improvements, but grading artifacts and nine truncated Foresights
 responses mean this is not a production-default recommendation.
 
-Both frozen experiments completed: 361 fresh GBrain comparisons and all 500
+Both frozen experiments completed: 361 fresh Foresights comparisons and all 500
 questions in the four-condition paper replication. The
 [protocol](READING_NOTES_REPLICATION.md) records the cohorts, treatment,
 original prompt functions, model snapshots, date differences, controls and
@@ -46,7 +46,7 @@ The factorial controls matter more than the best single cell:
 | JSON versus natural language, notes | +2 | +0.4 points | [-1.8, +2.6] |
 
 **Notes helped in both formats; JSON alone did not demonstrate a benefit.**
-There is no evidence here that GBrain needs a new JSON memory representation.
+There is no evidence here that Foresights needs a new JSON memory representation.
 All intervals describe question sampling, not grader validity or generation
 variability. The corpora and readers differ across phases, and the full
 oracle set overlaps the fresh transfer cohort; these are not two independent
@@ -96,7 +96,7 @@ treat a device-acquisition date as its setup date. The latter inference is
 plausible, but not explicitly established. These findings remain caveats,
 not a post-hoc replacement score.
 
-## Completed GBrain comparison
+## Completed Foresights comparison
 
 | Metric | Full-session baseline | Same sessions, notes first |
 |---|---:|---:|
@@ -232,7 +232,7 @@ regression; no latency claim is made here.
 | Experiment phase, including its grading and controls | Settled calls | Usage-priced USD |
 |---|---:|---:|
 | Earlier excerpt pilot | 348 | $8.0127305 |
-| GBrain notes transfer | 1,524 | $36.6096000 |
+| Foresights notes transfer | 1,524 | $36.6096000 |
 | Full four-condition oracle replication | 4,142 | $34.5237000 |
 | **Total** | **6,014** | **$79.1460305** |
 
@@ -270,7 +270,7 @@ The preceding decision was the study-completion recommendation on 2026-09-24,
 before an implementation or larger-output completion check. In v0.59.0.0,
 the **LongMemEval benchmark reader only** defaults to the tested notes-first
 instruction with a 1024-token output cap; `--reader-mode direct` retains the
-exact historical v3 prompt and 512-token cap. This does not change `gbrain think`
+exact historical v3 prompt and 512-token cap. This does not change `foresights think`
 or external agents, and the failed excerpt selector remains inactive.
 
 A separately authorized bounded [completion smoke](reading-notes-completion-smoke.json)

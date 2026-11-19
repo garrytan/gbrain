@@ -3,7 +3,7 @@
  * `writer_busy` with a backoff (effect-journal.ts `retryBusyEffect`), which records when each one's busy streak began.
  * This reads, per source, the effects that have waited on the worktree for over `CATCHUP_STALL_MS` without one take:
  * ordinary writes may still commit beside them, but this backlog does not move. Read by doctor (`parked_effects`) and
- * `gbrain sources writer status`.
+ * `foresights sources writer status`.
  */
 import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';

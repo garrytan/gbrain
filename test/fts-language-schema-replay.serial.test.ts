@@ -11,7 +11,7 @@
  * what v123 stamped on the first: v123 is already recorded as applied, so the
  * migration runner skips it and nothing puts the language back.
  *
- * That second call is not hypothetical — it is what `gbrain init
+ * That second call is not hypothetical — it is what `foresights init
  * --migrate-only` does on every upgrade, and it prints "Schema up to date"
  * while doing it. The write side then tokenizes under a different
  * configuration than `searchKeyword`/`searchTitles`/`searchKeywordChunks`
@@ -134,7 +134,7 @@ describe('initSchema replay preserves the configured FTS language (the upgrade p
       expect(afterFirst.length).toBe(1);
       expect(afterFirst[0]!.prosrc).toContain("'simple'");
 
-      // Replay — what `gbrain init --migrate-only` does on every upgrade.
+      // Replay — what `foresights init --migrate-only` does on every upgrade.
       // v123 is already recorded as applied, so nothing re-stamps the
       // functions; only the schema template runs, via CREATE OR REPLACE.
       await engine.initSchema();

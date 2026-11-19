@@ -85,7 +85,7 @@ export async function seedWaveFindings(brain: ManagedBrain, home: string, kinds:
     mkdirSync(self, { recursive: true });
     mkdirSync(corpus, { recursive: true });
     writeFileSync(join(self, 'self-session.jsonl'), '{}\n');
-    writeFileSync(join(corpus, 'self-session.txt'), 'captured from a gbrain claude-cli call');
+    writeFileSync(join(corpus, 'self-session.txt'), 'captured from a foresights claude-cli call');
     await engine.setConfig('dream.synthesize.session_corpus_dir', corpus);
   }
   return { claudeDir, corpus };

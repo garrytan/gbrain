@@ -1,5 +1,5 @@
 /**
- * GST-2767: `gbrain embed --status --source <id> --json` answered internal_error "Page not found: <id>": embed has no
+ * GST-2767: `foresights embed --status --source <id> --json` answered internal_error "Page not found: <id>": embed has no
  * --status mode, so the run fell through to the single-page branch, which took the first argument not starting with
  * `--` as the slug, the source id. The slug is now the first argument that is neither a flag nor a flag's value, and an
  * unknown flag is refused as unknown_flag (exit 2) before consent or any provider call.
@@ -34,7 +34,7 @@ test('a flag no embed mode takes is refused as unknown_flag, naming the read-onl
   try { embedSlugTarget(['--status', '--source', 'source-a', '--json']); } catch (e) { caught = e as typeof caught; }
   expect(caught?.code).toBe('unknown_flag');
   expect(caught?.detail).toBe('--status');
-  expect(caught?.suggestion).toContain('gbrain embed --stale --dry-run --json');
+  expect(caught?.suggestion).toContain('foresights embed --stale --dry-run --json');
 });
 
 test('CLI: embed --status --source <id> --json exits 2 with unknown_flag instead of looking the source id up as a page', async () => {

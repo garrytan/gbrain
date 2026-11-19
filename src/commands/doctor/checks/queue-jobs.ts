@@ -28,7 +28,7 @@ function registryFailureDetails(failure: RegistryFailure, remote: boolean): Reco
 }
 
 function registryFailureLabel(failure: RegistryFailure, remote: boolean): string {
-  if (remote) return `${failure.errno}; path withheld from remote callers, run \`gbrain doctor\` on the brain host`;
+  if (remote) return `${failure.errno}; path withheld from remote callers, run \`foresights doctor\` on the brain host`;
   return `${failure.errno}${failure.path ? ` at ${failure.path}` : ''}`;
 }
 
@@ -58,7 +58,7 @@ function registryFailureLabel(failure: RegistryFailure, remote: boolean): string
  * no-worker signal: old `embed-backfill` jobs waiting on a queue with no live
  * registered worker for that queue. That catches the default deployment shape
  * where `sync` enqueues deferred embedding work but the operator never started
- * `gbrain jobs work` or a supervisor.
+ * `foresights jobs work` or a supervisor.
  */
 export async function computeQueueHealthCheck(
   engine: BrainEngine,
@@ -200,7 +200,7 @@ export async function computeQueueHealthCheck(
         .join(', ');
       problems.push(
         `${Number(stalledRows[0]!.total)} stalled-forever job(s)${Number(stalledRows[0]!.total) > stalledRows.length ? ` (oldest ${stalledRows.length} listed)` : ''}: ${sample}. ` +
-        `Fix: gbrain jobs get <id> to inspect; gbrain jobs cancel <id> to force-kill.`
+        `Fix: foresights jobs get <id> to inspect; foresights jobs cancel <id> to force-kill.`
       );
     }
     if (depthRows.length > 0) {
@@ -219,21 +219,21 @@ export async function computeQueueHealthCheck(
         problems.push(
           `${row.depth} ${row.name} job(s) have waited on queue '${row.queue}' for up to ${hours}h; ` +
           `the worker registry is unreadable (${registryFailureLabel(registryFailure, opts.remote === true)}), ` +
-          `so worker liveness is unknown. Check that directory's permissions, then run \`gbrain jobs supervisor status\`.`
+          `so worker liveness is unknown. Check that directory's permissions, then run \`foresights jobs supervisor status\`.`
         );
         continue;
       }
       problems.push(
         `${row.depth} ${row.name} job(s) have waited on queue '${row.queue}' for up to ${hours}h ` +
         `and no live worker is registered for that queue. ` +
-        `Start one with \`gbrain jobs work --queue ${row.queue}\` or ` +
-        `\`gbrain jobs supervisor start --queue ${row.queue}\`.`
+        `Start one with \`foresights jobs work --queue ${row.queue}\` or ` +
+        `\`foresights jobs supervisor start --queue ${row.queue}\`.`
       );
     }
     if (rssKillCount > 0) {
       problems.push(
         `${rssKillCount} job(s) dead-lettered for RSS-watchdog memory-limit kills in last 24h. ` +
-        `Fix: raise the limit (e.g. \`gbrain jobs work --max-rss 4096\`) or opt out (\`--max-rss 0\`). ` +
+        `Fix: raise the limit (e.g. \`foresights jobs work --max-rss 4096\`) or opt out (\`--max-rss 0\`). ` +
         `→ see worker_oom_loop for the cap + fix (the authoritative OOM-loop signal).`
       );
     }
@@ -271,7 +271,7 @@ export async function computeQueueHealthCheck(
           problems.push(
             `DIVERGENT queue type '${sanitizeTypeForDisplay(r.name)}': intake ${intake}/24h vs ${completed} completed/24h, ` +
             `${waiting} waiting — the backlog grows structurally. Reduce intake, raise drain, or cap ` +
-            `admission: \`gbrain config set minions.quota_max_waiting.${safeConfigSegment(r.name) ?? '<job-name>'} <n>\`. See \`gbrain jobs stats\`.`
+            `admission: \`foresights config set minions.quota_max_waiting.${safeConfigSegment(r.name) ?? '<job-name>'} <n>\`. See \`foresights jobs stats\`.`
           );
         }
       }
@@ -287,7 +287,7 @@ export async function computeQueueHealthCheck(
       for (const r of ttlRows) {
         problems.push(
           `waiting-TTL cancelled ${r.count} '${sanitizeTypeForDisplay(r.name)}' job(s) in the last 24h (queued work expired ` +
-          `unclaimed — intake still exceeds drain). Tune: \`gbrain config set ` +
+          `unclaimed — intake still exceeds drain). Tune: \`foresights config set ` +
           `minions.ttl_waiting_hours.${safeConfigSegment(r.name) ?? '<job-name>'} <hours|0>\`.`
         );
       }
@@ -303,7 +303,7 @@ export async function computeQueueHealthCheck(
       problems.push(
         `${promptTooLong.synthesize} dream synthesize subagent job(s) dead-lettered with prompt_too_long in last 24h. ` +
         `Dream/synthesize transcripts exceeded the model's input context. ` +
-        `Fix: \`gbrain dream --phase synthesize --dry-run --json\` to identify fat transcripts; ` +
+        `Fix: \`foresights dream --phase synthesize --dry-run --json\` to identify fat transcripts; ` +
         `set \`dream.synthesize.max_prompt_tokens\` to bound the per-chunk budget, or use a ` +
         `larger-context model (Opus 4.7 = 1M tokens vs Sonnet 4.6 = 200K).`
       );
@@ -343,7 +343,7 @@ export async function computeQueueHealthCheck(
 /**
  * queue_health on PGLite (agent-first operator wave E5): there is no
  * background worker, so every waiting row (outside parent-owned dream-inline
- * queues) waits until a foreground `gbrain jobs work` drain runs it. Counted
+ * queues) waits until a foreground `foresights jobs work` drain runs it. Counted
  * and reported as `no_worker` with that drain as the fix (it needs the brain
  * exclusively). A live drain registered for the queue reads as ok.
  */
@@ -362,7 +362,7 @@ async function computePgliteQueueHealth(engine: BrainEngine, readWorkers?: () =>
     const hours = Math.floor(Number(top.oldest_age_seconds ?? 0) / 3600);
     return {
       name: 'queue_health', status: 'warn', details,
-      message: `no_worker: ${depth} job(s) are waiting (${waiting.map(r => `${r.queue}=${Number(r.depth)}`).join(', ')}; oldest ${hours}h) and PGLite has no background worker, so they run only when a \`gbrain jobs work\` drain does.`,
+      message: `no_worker: ${depth} job(s) are waiting (${waiting.map(r => `${r.queue}=${Number(r.depth)}`).join(', ')}; oldest ${hours}h) and PGLite has no background worker, so they run only when a \`foresights jobs work\` drain does.`,
       fix: { ...runWaitingJobsFix('pglite', top.queue), verify: doctorVerify('queue_health') },
     };
   } catch (e) {
@@ -444,7 +444,7 @@ export async function computeWedgedQueueCheck(
         status: 'warn',
         message: `Held by ${operator ? 'the operator\'s autopilot pause' : 'the migration pause marker'} (${autopilotPauseReason()}): ${wedged.map(w => w.label).join('; ')}. ` +
           'Workers claim no jobs while it is present, so a restart does not help; ' +
-          (operator ? '`gbrain autopilot resume` releases the hold.' : 'it clears when the migration that set it finishes.'),
+          (operator ? '`foresights autopilot resume` releases the hold.' : 'it clears when the migration that set it finishes.'),
         details: { wedged_queues: wedged.length, paused: operator ? 'operator' : 'cooperative', threshold_minutes: thresholdMin },
       };
     }
@@ -474,8 +474,8 @@ export async function computeWedgedQueueCheck(
           `Wedged queue(s) — worker registry unreadable (${registryFailureLabel(registryFailure, opts.remote === true)}), worker liveness unknown: ` +
           `${wedged.map((w) => w.label).join('; ')}. ` +
           `If a worker is running for the queue, restart it: ` +
-          '`gbrain jobs supervisor stop && gbrain jobs supervisor start [--queue <name>]`; ' +
-          'if none is, start one: `gbrain jobs supervisor start --queue <name> --detach`.',
+          '`foresights jobs supervisor stop && foresights jobs supervisor start [--queue <name>]`; ' +
+          'if none is, start one: `foresights jobs supervisor start --queue <name> --detach`.',
         details: {
           wedged_queues: wedged.length,
           ...registryFailureDetails(registryFailure, opts.remote === true),
@@ -500,22 +500,22 @@ export async function computeWedgedQueueCheck(
       const nonDefault = stuckQueueNames.filter((q) => q !== 'default');
       const hints: string[] = [];
       if (nonDefault.length < stuckQueueNames.length || nonDefault.length === 0) {
-        hints.push('`gbrain jobs supervisor stop && gbrain jobs supervisor start`');
+        hints.push('`foresights jobs supervisor stop && foresights jobs supervisor start`');
       }
       for (const q of nonDefault) {
-        hints.push(`\`gbrain jobs supervisor stop && gbrain jobs supervisor start --queue ${shellQuote(q)}\``);
+        hints.push(`\`foresights jobs supervisor stop && foresights jobs supervisor start --queue ${shellQuote(q)}\``);
       }
       messageParts.push(
         `Wedged queue(s) — worker alive but not claiming work: ${stuck.map((w) => w.label).join('; ')}. ` +
           `Restart the worker so it rebuilds a fresh DB pool: ${hints.join(', ')}, ` +
-          `then \`gbrain jobs retry <id>\` on any dead-lettered jobs.`,
+          `then \`foresights jobs retry <id>\` on any dead-lettered jobs.`,
       );
     }
     if (noWorker.length > 0) {
       messageParts.push(
         `No worker subscribed to queue(s): ${noWorker.map((w) => w.label).join('; ')}. ` +
-          `Start one: \`gbrain jobs supervisor start --queue <name> --detach\` ` +
-          `or \`gbrain jobs work --queue <name>\`.`,
+          `Start one: \`foresights jobs supervisor start --queue <name> --detach\` ` +
+          `or \`foresights jobs work --queue <name>\`.`,
       );
     }
     return {
@@ -727,19 +727,19 @@ export async function computeOrphanedPrivateQueueCheck(engine: BrainEngine): Pro
       remediation.push(
         `Auto-recovery cancels the metadata-backed queue(s) at the next worker spawn or dream-cycle start` +
         (engine.kind === 'postgres'
-          ? ` (trigger now: \`gbrain jobs supervisor start\`)`
-          : ` (trigger now: \`gbrain dream\`)`) + `.`,
+          ? ` (trigger now: \`foresights jobs supervisor start\`)`
+          : ` (trigger now: \`foresights dream\`)`) + `.`,
       );
     }
     if (legacyUnowned.length > 0) {
       remediation.push(
-        `Legacy unowned queue(s) need manual retriage: preview with \`gbrain dream retriage --help\` ` +
+        `Legacy unowned queue(s) need manual retriage: preview with \`foresights dream retriage --help\` ` +
         `and apply cancellation only after reviewing that dry run.`,
       );
     }
     if (ownerPending.length > 0) {
       remediation.push(
-        `Owner-pending queue(s) have a NON-terminal owner job — inspect it with \`gbrain jobs get <owner id>\` before cancelling anything.`,
+        `Owner-pending queue(s) have a NON-terminal owner job — inspect it with \`foresights jobs get <owner id>\` before cancelling anything.`,
       );
     }
     return {
@@ -800,7 +800,7 @@ export async function computeAutopilotFanoutConcurrencyCheck(engine: BrainEngine
         message:
           `autopilot fan-out (${fanoutMax}/tick) exceeds worker concurrency (${concurrency}). ` +
           `Surplus cycles queue behind the worker and race the stalled-sweeper. ` +
-          `Lower fan-out: \`gbrain config set autopilot.fanout_max_per_tick ${effectiveSlots}\`, ` +
+          `Lower fan-out: \`foresights config set autopilot.fanout_max_per_tick ${effectiveSlots}\`, ` +
           `or raise the supervisor's \`--concurrency\` to ${fanoutMax + 1}. ` +
           `(The clamp in autopilot does this automatically unless disabled.)`,
         details: { fanout_max: fanoutMax, concurrency, effective_slots: effectiveSlots },
@@ -851,7 +851,7 @@ export async function checkBatchRetryHealth(_engine: BrainEngine): Promise<Check
     // Disconnect events are informational — every CLI command legitimately
     // disconnects at end-of-life. The value is the most_recent_caller
     // frame: when the v0.41.25 retry reconnect callback fires, the
-    // operator runs `gbrain doctor` and the stack trace tells them which
+    // operator runs `foresights doctor` and the stack trace tells them which
     // code path triggered the mid-process disconnect. v0.41.26 fixes
     // that specific ownership boundary.
     let disconnectNote = '';

@@ -85,13 +85,13 @@ in stages instead of jumping from the small test to the full batch.
 
 ## Use the Native Machinery (don't rebuild it in bash)
 
-gbrain already ships the bulk-run plumbing. Wrapping a bulk command in sleep
+foresights already ships the bulk-run plumbing. Wrapping a bulk command in sleep
 loops or stop/continue scripts rebuilds worse versions of these:
 
-- **Pacing (DB-contention throttling):** `gbrain embed --stale --pace` (bare
+- **Pacing (DB-contention throttling):** `foresights embed --stale --pace` (bare
   `--pace` = balanced; or `--pace=gentle|balanced|aggressive`), plus
   `--pace-max-concurrency=N`. The config key is `pace.mode`, and `GBRAIN_PACE_*`
-  env vars override config as the incident escape hatch. `gbrain sync` reads
+  env vars override config as the incident escape hatch. `foresights sync` reads
   the same env/config. Details in the Pace Mode section of `CLAUDE.md` and
   `src/core/pace-mode.ts`.
 - **Progress reporting:** the global flags `--progress-json`,
@@ -99,7 +99,7 @@ loops or stop/continue scripts rebuilds worse versions of these:
   (doctor, embed, import, export, sync, extract, migrate, ...). Progress
   streams to stderr; stdout stays clean for data. See
   `docs/progress-events.md`.
-- **Dry runs:** `gbrain embed --stale --dry-run` shows what would be embedded
+- **Dry runs:** `foresights embed --stale --dry-run` shows what would be embedded
   without spending anything.
 
 ## What Silent Failure Looks Like (the ramp catches all of these)

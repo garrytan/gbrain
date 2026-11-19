@@ -29,7 +29,7 @@ describe('parseSemver', () => {
 });
 
 describe('isNewerVersion', () => {
-  test('detects the patch segment used by the gbrain release train', () => {
+  test('detects the patch segment used by the foresights release train', () => {
     expect(isNewerVersion('0.42.10.0', '0.42.66.0')).toBe(true);
   });
 

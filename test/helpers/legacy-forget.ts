@@ -1,5 +1,5 @@
 /**
- * What a gbrain before GBRA-190 G4 left for a `forget`: the withdrawal committed database-first in the request's own
+ * What a foresights before GBRA-190 G4 left for a `forget`: the withdrawal committed database-first in the request's own
  * transaction (ledger row, expiries, chunk invalidation) with withdrawal-mirror, git and embedding effects queued to
  * strike and commit the page files afterwards (recordFactWithdrawal with `requestId`). A current forget publishes the
  * struck files first and queues no mirror; the effect only drains rows like these, so tests of that drain seed them here.

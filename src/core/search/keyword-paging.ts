@@ -240,7 +240,7 @@ export function searchCountLine(rows: unknown, retrieval: unknown): string | nul
       : `Keyword match count unavailable (${reason}; not a count of zero)`;
     const omitted = Array.isArray(rows) ? rows.filter(x => (x as { evidence_omitted?: unknown })?.evidence_omitted === true).length : 0;
     const shown = Number(r.shown_to) < Number(r.shown_from) ? 'none on this page' : `showing ${r.shown_from}-${r.shown_to}, keyword-score order`;
-    return `[gbrain search] ${total}; ${shown}.`
+    return `[foresights search] ${total}; ${shown}.`
       + (omitted ? ` ${omitted} row(s) have evidence_omitted: true (text did not fit token_budget; read with get_page).` : '')
       + (r.next ? ` More: call search with next = ${JSON.stringify(r.next)}` : ' No more keyword matches.');
   }
@@ -248,5 +248,5 @@ export function searchCountLine(rows: unknown, retrieval: unknown): string | nul
   const count = typeof r.keyword_total === 'number'
     ? `Keyword matches: ${countWords(r.keyword_total, r.keyword_total_capped === true)} (pages matching the query's keywords, not a count of these rows)`
     : `Keyword match count unavailable (${reason}; not a count of zero)`;
-  return `[gbrain search] Rows are a ranked top-K, not proof of coverage. ${count}. List every keyword match with match: "keyword".`;
+  return `[foresights search] Rows are a ranked top-K, not proof of coverage. ${count}. List every keyword match with match: "keyword".`;
 }

@@ -4,7 +4,7 @@
  * Pure text in, text out: `orderTimeline` takes a page's two halves
  * (`compiled_truth` above the timeline sentinel, `timeline` below it) and
  * returns the repaired halves with what changed, or the reason it would not
- * touch the page. `gbrain repair timeline-order` (repair/timeline-order.ts)
+ * touch the page. `foresights repair timeline-order` (repair/timeline-order.ts)
  * publishes the result through a revision-bound `put_page`.
  *
  * A timeline section is the headingless lead of the timeline half, or an

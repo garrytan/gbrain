@@ -9,20 +9,20 @@ names in the `x-qm-actor` header. The wire contract QM vendors is
 ## Set up on the brain host
 
 ```bash
-gbrain auth register-client qm --grant-types client_credentials --scopes "read write"
-gbrain auth rescope --client <client_id> --attest-actor qm      # attested ops default to get_write_request,memory_recall,memory_write
-gbrain access member add alice-example --email alice@example.com   # --email is optional
-gbrain access member link alice-example --qm U0ALICE            # the canonical id QM sends, compared exactly
-gbrain access member link --email alice@example.com --qm U0ALICE # the same link, finding the member by email
+foresights auth register-client qm --grant-types client_credentials --scopes "read write"
+foresights auth rescope --client <client_id> --attest-actor qm      # attested ops default to get_write_request,memory_recall,memory_write
+foresights access member add alice-example --email alice@example.com   # --email is optional
+foresights access member link alice-example --qm U0ALICE            # the canonical id QM sends, compared exactly
+foresights access member link --email alice@example.com --qm U0ALICE # the same link, finding the member by email
 ```
 
-A declared email (`--email` on `member add`, or `gbrain access member set <id> --email <addr>|none`) is
+A declared email (`--email` on `member add`, or `foresights access member set <id> --email <addr>|none`) is
 stored lower-case and is unique per brain. It only helps the operator find the member: the operator
 still makes every link, an unknown email is `not_found` and creates nothing, and QM can't set an email
 or make a link.
 
 From another machine, the owner runs the same steps over the running server with
-`gbrain mcp admin attest`, `member-add`, `member-set` and `link` (owner session only; see
+`foresights mcp admin attest`, `member-add`, `member-set` and `link` (owner session only; see
 [ADMIN](../mcp/ADMIN.md#inspect-clients-and-edit-access)).
 
 Add `forget` with `--attest-ops forget,get_write_request,memory_recall,memory_write` if QM
@@ -50,7 +50,7 @@ a repo exists, saved facts go through the same git-first writer door as `remembe
 
 Use the attest client only for QM's personal-scope memory route. An attested call
 reads as the named person, including their own private facts and pages only they
-may read, and gbrain cannot tell which conversation the answer goes to. Don't
+may read, and foresights cannot tell which conversation the answer goes to. Don't
 register the client as a model-callable MCP connector in QM, and don't route it to
 shared scopes (channels, groups, projects, teams, the org): either can show one
 person's private facts to a whole room. Shared conversations wait for
@@ -75,14 +75,14 @@ v5 adds `context_pack` to the marked tools.
 Set how each client reads named sources with `--attest-read`:
 
 ```bash
-gbrain auth rescope --client <room_client_id> --attest-read scope    # every call must name a person
-gbrain auth rescope --client <dm_client_id> --attest-read person     # named sources, read as the person
+foresights auth rescope --client <room_client_id> --attest-read scope    # every call must name a person
+foresights auth rescope --client <dm_client_id> --attest-read person     # named sources, read as the person
 ```
 
 `scope` also refuses any call that names no person (`actor_not_attested`, reason
 `actor_required`), so the client never reads as itself. `person` is for a client that
 serves only one person's own conversations, so a client with `--attest-sources` refuses it; a `person` client that reads a source a
-room client reads is flagged by `gbrain doctor` (`attest_read_shared_scope`). Unset
+room client reads is flagged by `foresights doctor` (`attest_read_shared_scope`). Unset
 (`none`) reads named sources as the scope and still serves calls that name no person.
 
 ### Each person's own sources
@@ -93,10 +93,10 @@ client is granted that source. Grant the client every DM source and bind each on
 its member, so a person reads their own and nobody else's:
 
 ```bash
-gbrain auth rescope --client <client_id> --sources source-a,dm-alice-example,dm-bob-example
-gbrain access member source add alice-example dm-alice-example
-gbrain access member source add bob-example dm-bob-example
-gbrain access member source list
+foresights auth rescope --client <client_id> --sources source-a,dm-alice-example,dm-bob-example
+foresights access member source add alice-example dm-alice-example
+foresights access member source add bob-example dm-bob-example
+foresights access member source list
 ```
 
 A bound source is personal. An attested call reads its credential's grant minus every
@@ -107,7 +107,7 @@ no personal source, not even the speaker's own, so a room never reads a DM. A hi
 source named in `source_id` or `source_ids` is refused exactly like a source outside
 the grant (`permission_denied`). Binding only hides inside the grant: a source the
 credential is not granted stays unreadable. Unattested calls and member-bound
-credentials are unchanged. `gbrain access member source remove <member> <source>`
+credentials are unchanged. `foresights access member source remove <member> <source>`
 previews first and says whether the source stays personal; `--yes` applies. Bindings
 are database state, so a repo-less brain works the same.
 
@@ -130,21 +130,21 @@ the person it serves. Nothing is written until the brain owner says yes. Grant i
   person it was made for reads it; anyone else gets `not_found`.
 - `cancel_write_request {request_id}` withdraws a proposal still awaiting the owner.
 
-The owner reviews on the brain host, or from another machine with `gbrain mcp admin
+The owner reviews on the brain host, or from another machine with `foresights mcp admin
 memory-proposals list|show|approve|deny` (owner session only), never over MCP:
 
 ```bash
-gbrain memory-proposals list                       # awaiting your decision, oldest first
-gbrain memory-proposals show <request_id>          # the proposed text, fenced as untrusted transcript text
-gbrain memory-proposals approve <request_id>       # re-checks the person, the grant and the page, then writes it; exits 1 if the write fails
-gbrain memory-proposals deny <request_id> --reason "<why>"
+foresights memory-proposals list                       # awaiting your decision, oldest first
+foresights memory-proposals show <request_id>          # the proposed text, fenced as untrusted transcript text
+foresights memory-proposals approve <request_id>       # re-checks the person, the grant and the page, then writes it; exits 1 if the write fails
+foresights memory-proposals deny <request_id> --reason "<why>"
 ```
 
 An approved proposal becomes an ordinary write admitted at approval, under the same
 `request_id`, with the person's member id (never QM's id) in its provenance. Until then the
 text lives only in the `memory_proposals` table: it never reaches git, an export, search or
-recall. `gbrain doctor` (`memory_proposals_pending`) and `gbrain status` show how many wait.
-Limits, all set with `gbrain config set`: `proposals.ttl_hours` (168), `proposals.max_pending_per_actor`
+recall. `foresights doctor` (`memory_proposals_pending`) and `foresights status` show how many wait.
+Limits, all set with `foresights config set`: `proposals.ttl_hours` (168), `proposals.max_pending_per_actor`
 (10), `proposals.max_pending_per_credential` (50; over either cap is `proposals_pending_limit`),
 `proposals.max_payload_chars` (1,000; over it is `invalid_params`, reason `proposal_too_large`),
 `proposals.max_reason_chars` (500) and `proposals.retention_days` (30: closed proposals are
@@ -189,9 +189,9 @@ deleted after it; awaiting ones expire at their TTL first). A repo-less brain wo
 Give each scope its own source and list it on the QM credential:
 
 ```bash
-gbrain sources add scope-acme-example --path <dir>   # on a repo brain: git-first, like member pages
-gbrain sources add scope-acme-example                # on a repo-less brain
-gbrain auth rescope --client <client_id> --attest-sources scope-acme-example --federated-read <home>,scope-acme-example
+foresights sources add scope-acme-example --path <dir>   # on a repo brain: git-first, like member pages
+foresights sources add scope-acme-example                # on a repo-less brain
+foresights auth rescope --client <client_id> --attest-sources scope-acme-example --federated-read <home>,scope-acme-example
 ```
 
 Listing a source marks it a scope source for good (`sources.config.qm_scope`): revoking or rotating the

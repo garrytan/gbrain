@@ -8,7 +8,7 @@
  *          timeline; parse fence; batch upsert
  *
  * Source-of-truth contract: markdown is canonical. The takes table is a
- * derived index. `gbrain takes rebuild <slug>` (rebuild) first deletes every
+ * derived index. `foresights takes rebuild <slug>` (rebuild) first deletes every
  * indexed row whose (row_num, claim) is not in the page's fence, so a row the
  * index and the fence disagree on is re-inserted fresh, while a row whose
  * claim is unchanged keeps its resolution and vector (#5167). Without
@@ -158,7 +158,7 @@ async function reconcileTakesGeneration(db: BrainEngine, inTx: boolean, page: { 
       writer: 'extract_takes' });
     if (outcome.state === 'held') {
       result.warnings.push(`${page.slug}: TAKES_FENCE_HELD: ${outcome.reason}: the page's takes fence is ${read.state}, so its ${ids.length} take row(s) were kept and nothing was upserted; `
-        + 'gbrain doctor --only generation_held names the user\'s choice (restore the fence or write an empty one)');
+        + 'foresights doctor --only generation_held names the user\'s choice (restore the fence or write an empty one)');
       return false;
     }
     if (ids.length) await tx.executeRaw('DELETE FROM takes WHERE id = ANY($1::bigint[])', [ids]);
@@ -284,7 +284,7 @@ export async function extractTakesFromFs(
 
     const pageId = await getPageIdForSlug(engine, slug, sourceId);
     if (pageId === null) {
-      if (takes.length > 0) result.warnings.push(`TAKES_PAGE_NOT_IN_DB: slug=${slug} has takes fence but no page row; run 'gbrain sync' first`);
+      if (takes.length > 0) result.warnings.push(`TAKES_PAGE_NOT_IN_DB: slug=${slug} has takes fence but no page row; run 'foresights sync' first`);
       continue;
     }
     // #6259: the stored page decides (the gate stamps quarantine on it); a quarantined page projects no takes.
@@ -494,7 +494,7 @@ export async function prepareTakesReextract(engine: BrainEngine, row: WriteReque
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
   if (!snapshot || snapshot.page.id !== Number(row.page_id)) {
     throw opError('page_identity_changed', 'The page was deleted or replaced before its takes were extracted.',
-      `Page ${row.slug} in source ${row.source_id} changed before request ${row.request_id} ran, so its takes index was left as it was. Run gbrain extract takes --source db again; it reads the current page.`);
+      `Page ${row.slug} in source ${row.source_id} changed before request ${row.request_id} ran, so its takes index was left as it was. Run foresights extract takes --source db again; it reads the current page.`);
   }
   await authorizeWrite(engine, row.authority, 'submit_job', row.slug);
   const rebuild = (row.intent as { rebuild?: unknown } | null)?.rebuild === true;
@@ -514,7 +514,7 @@ export async function prepareTakesReextract(engine: BrainEngine, row: WriteReque
     } };
 }
 
-/** Single-entry dispatch for `gbrain extract takes` and the v0_28_0 orchestrator. */
+/** Single-entry dispatch for `foresights extract takes` and the v0_28_0 orchestrator. */
 export async function extractTakes(
   engine: BrainEngine,
   opts: ExtractTakesOpts,

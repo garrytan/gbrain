@@ -110,10 +110,10 @@ export async function runScaffoldThirdParty(
     );
   }
 
-  // 2. gbrain version check.
+  // 2. foresights version check.
   if (!semverGte(currentGbrainVersion, manifest.gbrain_min_version)) {
     throw new ScaffoldThirdPartyError(
-      `skillpack ${manifest.name} requires gbrain >= ${manifest.gbrain_min_version}; you have ${currentGbrainVersion}. Run \`gbrain upgrade\` first.`,
+      `skillpack ${manifest.name} requires foresights >= ${manifest.gbrain_min_version}; you have ${currentGbrainVersion}. Run \`foresights upgrade\` first.`,
       'gbrain_version_too_old',
     );
   }

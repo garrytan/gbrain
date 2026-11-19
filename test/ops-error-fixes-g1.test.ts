@@ -70,7 +70,7 @@ describe('context.ts grant and fence refusals (B6/B7)', () => {
 
   test('slug-bound refusal fills the client id instead of <id>', async () => {
     const e = await caught(() => enforceBoundClientOpAllowList(oauth({ boundSlugPrefixes: ['wiki/agents/alpha/'] }), { name: 'sources_remove', scope: 'admin', mutating: true }));
-    expect(e.suggestion).toContain('gbrain auth rescope-client cli-alpha --bound-slug-prefixes none');
+    expect(e.suggestion).toContain('foresights auth rescope-client cli-alpha --bound-slug-prefixes none');
     expect(e.suggestion).not.toContain('<id>');
   });
 

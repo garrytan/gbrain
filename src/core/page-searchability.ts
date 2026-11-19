@@ -1,6 +1,6 @@
 /**
- * Whether search can find each live page of a source now, in the vocabulary `gbrain sources resolve-path` and
- * `gbrain pages status` share: a page state, `searchable: true | 'keyword' | false`, its visible chunks, `unembedded`
+ * Whether search can find each live page of a source now, in the vocabulary `foresights sources resolve-path` and
+ * `foresights pages status` share: a page state, `searchable: true | 'keyword' | false`, its visible chunks, `unembedded`
  * (visible chunks with no vector in the active embedding column), and `embedding_hold` (a large page whose embedding
  * budget is held or capped: it reads `pending_embedding`, never `keyword_only`, which means `embed_skip`).
  * Readers: resolve-path and write receipts (#7190). Indexed reads only.

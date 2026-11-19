@@ -18,7 +18,7 @@
  *
  * The remaining plan scenarios run in the lane suites on this integrated
  * branch: #5693 lease x chain x upgrade in the migration-chain tests (the
- * real `gbrain apply-migrations` child runs under Lane D's orchestration
+ * real `foresights apply-migrations` child runs under Lane D's orchestration
  * lock); holds x #5581 checkpoint x abort and holds x waiting in
  * test/connector-holds.test.ts; the query prefix x MCP cache in
  * test/embedding-query-prefix.test.ts.
@@ -223,8 +223,8 @@ test('X11: the remediation run reaches every new repair kind, runs the free ones
       await engine.executeRaw("DELETE FROM sources WHERE id = 'x11-orphan'");
     });
     const planned = Object.fromEntries((await planRepairSteps(engine, { noEmbed: true })).map(step => [step.kind, step]));
-    expect(planned['request-indexes']).toMatchObject({ paid: false, embeds: 'none', command: 'gbrain repair request-indexes --apply' });
-    expect(planned['orphan-bindings']).toMatchObject({ paid: false, embeds: 'none', command: 'gbrain repair orphan-bindings --apply' });
+    expect(planned['request-indexes']).toMatchObject({ paid: false, embeds: 'none', command: 'foresights repair request-indexes --apply' });
+    expect(planned['orphan-bindings']).toMatchObject({ paid: false, embeds: 'none', command: 'foresights repair orphan-bindings --apply' });
     const run = JSON.parse((await capture(async () => runRemediate(engine, await approvedRemediateArgs(engine, ['--remediate', '--yes', '--include-repairs', '--no-embed', '--max-usd', '0', '--json'])))).out);
     await disposePersistenceConsumer(engine);
     const byKind = Object.fromEntries(run.repairs.map((r: { kind: string }) => [r.kind, r]));

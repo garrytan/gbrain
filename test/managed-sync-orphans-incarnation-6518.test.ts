@@ -103,7 +103,7 @@ test('an old-incarnation cursor and failure are incarnation_retired; doctor reac
   const local = await checkSyncFailures(engine, { remote: false, sourceIds: [f.id] });
   expect(local?.status).toBe('warn');
   expect(local!.message).toContain('incarnation_retired');
-  expect(local!.message).toContain(`gbrain repair managed-sync-orphans --source ${f.id}`);
+  expect(local!.message).toContain(`foresights repair managed-sync-orphans --source ${f.id}`);
   expect(local!.message).toContain('says nothing about whether the current source\'s files are imported');
   expect((local!.details as { orphans: unknown[] }).orphans).toHaveLength(2);
   const remote = await checkSyncFailures(engine, { remote: true, sourceIds: [f.id] });
@@ -192,7 +192,7 @@ test('doctor --fast (no engine) warns on mirror rows it cannot verify and keeps 
   const mirrorOnly = await checkSyncFailures(null, { remote: false, sourceIds: [id] });
   expect(mirrorOnly?.status).toBe('warn');
   expect(mirrorOnly!.message).toContain('could not be verified without a database connection');
-  expect(mirrorOnly!.message).toContain('gbrain doctor --only sync_failures');
+  expect(mirrorOnly!.message).toContain('foresights doctor --only sync_failures');
   expect(mirrorOnly!.message).toMatch(/less certainty/);
   expect(mirrorOnly!.remediation).toBeUndefined();
   // A genuinely old unmanaged failure in the same ledger keeps its authoritative severity.

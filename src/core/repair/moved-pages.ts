@@ -1,5 +1,5 @@
 /**
- * `gbrain repair moved-pages --source <id> [--slug <old-slug>]...` (GST-2584): fold a page left behind by a file that moved
+ * `foresights repair moved-pages --source <id> [--slug <old-slug>]...` (GST-2584): fold a page left behind by a file that moved
  * into the page the moved file imported as.
  *
  * Sync follows a move only when it happens. When the old page's deletion was held (a managed source holds `file_gone`
@@ -38,6 +38,7 @@ import { ghostPageNamed, ghostPageNow, scanGhostSource, sourceContext, type Ghos
 import { MASS_RECONCILE_MIN_PAGES, MASS_RECONCILE_RATIO, massReconcileAllowed } from '../sync-reconcile.ts';
 import { ghostScanRefusal, GHOST_PURGE_FUSE_HOURS, GHOST_REPAIR_LIMIT } from './ghost-pages.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
+import { commandText } from '../brand.ts';
 
 export const MOVED_PAGES_INTENT = 'managed_maintenance_fold_moved_page';
 export const MOVED_PAGES_PURGE_FUSE_HOURS = GHOST_PURGE_FUSE_HOURS;
@@ -58,7 +59,7 @@ const sameOwner = (a: GhostOwner | undefined, b: GhostOwner) => !!a && a.host_id
 export const MOVED_PAGES_CONSENT_TEXT = {
   what: 'Fold each previewed page whose file moved into the page the moved file imported as',
   why: 'Each old page was left behind when its file moved while its deletion was held; Git shows the moved file started from exactly what the old page still holds, so folding it loses no edit.',
-  risk: `The old page's links in every role, relationship dates, timeline, raw data, files, user tags, aliases, facts and saved versions move to the moved page, its slug becomes an alias, its hold is cleared, and it is soft-deleted and purged ${MOVED_PAGES_PURGE_FUSE_HOURS} h later; gbrain restore brings back its text as a database-only page until then, and moved references stay on the moved page. No file is written.`,
+  risk: `The old page's links in every role, relationship dates, timeline, raw data, files, user tags, aliases, facts and saved versions move to the moved page, its slug becomes an alias, its hold is cleared, and it is soft-deleted and purged ${MOVED_PAGES_PURGE_FUSE_HOURS} h later; foresights restore brings back its text as a database-only page until then, and moved references stay on the moved page. No file is written.`,
   user_message: `Fold the previewed pages whose file moved into their moved pages? Each old page is soft-deleted and purged after ${MOVED_PAGES_PURGE_FUSE_HOURS} h`,
 };
 
@@ -78,10 +79,10 @@ export const movedPagesRepair: RepairHandler = {
   kind: 'moved-pages',
   embeds: false,
   async plan(engine, scope, after, opts): Promise<RepairPlan> {
-    if (opts?.remote === true) throw trustedCliRequired('gbrain repair moved-pages runs only from the trusted local CLI on the brain host.');
+    if (opts?.remote === true) throw trustedCliRequired('foresights repair moved-pages runs only from the trusted local CLI on the brain host.');
     if (scope.source_ids.length !== 1) {
-      throw opError('invalid_params', 'gbrain repair moved-pages needs --source <id>.',
-        'Moved files are read from each source\'s own canonical checkout; name one source, e.g. gbrain repair moved-pages --source default.',
+      throw opError('invalid_params', 'foresights repair moved-pages needs --source <id>.',
+        'Moved files are read from each source\'s own canonical checkout; name one source, e.g. foresights repair moved-pages --source default.',
         { fix: readFix('Lists the registered sources.', { argv: ['gbrain', 'sources', 'list', '--json'] }), docs: DOCS });
     }
     const sourceId = scope.source_ids[0]!;
@@ -135,7 +136,7 @@ export const movedPagesRepair: RepairHandler = {
         details: { pairs, held, mass_fold: mass, truncated: scan.truncated, purge_fuse_hours: MOVED_PAGES_PURGE_FUSE_HOURS, docs: DOCS } };
     }
     if (!opts.expect) {
-      throw opError('invalid_params', 'gbrain repair moved-pages --apply folds only the set a preview printed.',
+      throw opError('invalid_params', 'foresights repair moved-pages --apply folds only the set a preview printed.',
         `Preview first: ${command} — then, after the user agrees, run the apply command it prints: ${command} --apply --expect <preview-hash> --yes`, { fix: previewFix(sourceId), docs: DOCS });
     }
     const approved = await loadApprovedSet<ApprovedPair>(engine, { command: 'moved-pages', hash: opts.expect, previewCommand: command,
@@ -204,7 +205,7 @@ async function applyFold(tx: BrainEngine, pair: MovedPair, incarnation: string):
   return { status: 'moved_page_folded', source_id: pair.source_id, old_slug: pair.old.slug, old_path: pair.old.path, survivor_slug: pair.survivor.slug, survivor_path: pair.survivor.path,
     move_commit: pair.move_commit, old_blob: pair.old_blob, evidence: pair.evidence, links_moved: merged.links_moved.length, link_ids: merged.links_moved, facts_moved: merged.facts_moved.length,
     transitions_moved: merged.transitions_moved, tags_moved: merged.tags_moved, versions_moved: versions.length, deduplicated: merged.deduplicated, hold_cleared: holdCleared, restore_argv: restore,
-    restore_note: `${restore.join(' ')} brings back ${pair.old.slug}'s own text as a database-only page within ${MOVED_PAGES_PURGE_FUSE_HOURS} h; references and versions moved to ${pair.survivor.slug} stay there.` };
+    restore_note: `${commandText(restore)} brings back ${pair.old.slug}'s own text as a database-only page within ${MOVED_PAGES_PURGE_FUSE_HOURS} h; references and versions moved to ${pair.survivor.slug} stay there.` };
 }
 
 /** Folds one pair; a managed brain submits it under `requestId()`. Returns the receipt fields on success. */

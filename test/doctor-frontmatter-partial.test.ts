@@ -5,7 +5,7 @@
  * layers: (a) `test/brain-writer-partial-scan.test.ts` exercises the
  * scanBrainSources + deadline contract that doctor depends on, and
  * (b) `tests/heavy/frontmatter_scan_wallclock.sh` (manual / nightly)
- * subprocesses real `gbrain doctor` against a synthesized 60K-file brain.
+ * subprocesses real `foresights doctor` against a synthesized 60K-file brain.
  *
  * The unit layer here can't drive `runDoctor` directly because it calls
  * `process.exit(hasFail ? 1 : 0)` unconditionally, which terminates the
@@ -40,7 +40,7 @@ describe('doctor frontmatter_integrity — structural rendering (source-grep)', 
 
   test('source renders NOT SCANNED per skipped source with remediation hint', () => {
     expect(DOCTOR_SOURCE).toContain('NOT SCANNED');
-    expect(DOCTOR_SOURCE).toContain('gbrain frontmatter validate');
+    expect(DOCTOR_SOURCE).toContain('foresights frontmatter validate');
   });
 
   test('source has been simplified to remove the unreachable AbortError catch branch (codex D4)', () => {

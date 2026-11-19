@@ -17,7 +17,7 @@
         "incomplete": true,
         "next": {
           "code": "admission_paused",
-          "command": "gbrain sync status --source default --json",
+          "command": "foresights sync status --source default --json",
           "docs": "docs/guides/write-refusals.md#drain-admission-paused",
           "eta_seconds": null,
           "fix": {
@@ -29,11 +29,11 @@
               "sync.admission",
               "normal"
             ],
-            "command": "gbrain config set sync.admission normal",
+            "command": "foresights config set sync.admission normal",
             "consent": [],
             "next": "tell_user_to_run",
             "requires_exclusive": false,
-            "user_message": "Managed sync of default is paused by sync.admission. To resume it, run: gbrain config set sync.admission normal",
+            "user_message": "Managed sync of default is paused by sync.admission. To resume it, run: foresights config set sync.admission normal",
             "verify": {
               "argv": [
                 "gbrain",
@@ -49,7 +49,7 @@
           "rate_pages_per_min": null,
           "retry_after_ms": 0,
           "safe_to_loop": false,
-          "why": "sync.admission is not normal, so the pass admitted only what it allows and stopped; nothing failed. Restoring it is the owner's decision: gbrain config set sync.admission normal, then the next sync continues."
+          "why": "sync.admission is not normal, so the pass admitted only what it allows and stopped; nothing failed. Restoring it is the owner's decision: foresights config set sync.admission normal, then the next sync continues."
         },
         "outcome": "resumable",
         "pagesAffected": []
@@ -68,7 +68,7 @@
         },
         "next": {
           "code": "admission_paused",
-          "command": "gbrain sync status --source default --json",
+          "command": "foresights sync status --source default --json",
           "docs": "docs/guides/write-refusals.md#drain-admission-paused",
           "eta_seconds": null,
           "fix": {
@@ -80,11 +80,11 @@
               "sync.admission",
               "normal"
             ],
-            "command": "gbrain config set sync.admission normal",
+            "command": "foresights config set sync.admission normal",
             "consent": [],
             "next": "tell_user_to_run",
             "requires_exclusive": false,
-            "user_message": "Managed sync of default is paused by sync.admission. To resume it, run: gbrain config set sync.admission normal",
+            "user_message": "Managed sync of default is paused by sync.admission. To resume it, run: foresights config set sync.admission normal",
             "verify": {
               "argv": [
                 "gbrain",
@@ -100,7 +100,7 @@
           "rate_pages_per_min": null,
           "retry_after_ms": 0,
           "safe_to_loop": false,
-          "why": "sync.admission is not normal, so the pass admitted only what it allows and stopped; nothing failed. Restoring it is the owner's decision: gbrain config set sync.admission normal, then the next sync continues."
+          "why": "sync.admission is not normal, so the pass admitted only what it allows and stopped; nothing failed. Restoring it is the owner's decision: foresights config set sync.admission normal, then the next sync continues."
         },
         "outcome": "resumable"
       },
@@ -124,23 +124,23 @@
         "incomplete": true,
         "next": {
           "code": "grant_scope",
-          "command": "gbrain sync status --source default --json",
+          "command": "foresights sync status --source default --json",
           "docs": "docs/guides/write-refusals.md#drain-grant-scope",
           "eta_seconds": null,
           "fix": {
             "actor": "user",
             "argv": [
-              "gbrain",
+              "foresights",
               "sync",
               "--source",
               "default",
               "--no-pull"
             ],
-            "command": "gbrain sync --source default --no-pull",
+            "command": "foresights sync --source default --no-pull",
             "consent": [],
             "next": "tell_user_to_run",
             "requires_exclusive": false,
-            "user_message": "On the host that owns source default, run: gbrain sync --source default --no-pull",
+            "user_message": "On the host that owns source default, run: foresights sync --source default --no-pull",
             "verify": {
               "argv": [
                 "gbrain",
@@ -156,7 +156,7 @@
           "rate_pages_per_min": null,
           "retry_after_ms": 0,
           "safe_to_loop": false,
-          "why": "This writer's grant covers only part of source default, so the pass admitted what it could see and cannot finish the source; the owner host's sync finishes it: gbrain sync --source default --no-pull."
+          "why": "This writer's grant covers only part of source default, so the pass admitted what it could see and cannot finish the source; the owner host's sync finishes it: foresights sync --source default --no-pull."
         },
         "outcome": "blocked",
         "pagesAffected": []
@@ -175,23 +175,23 @@
         },
         "next": {
           "code": "grant_scope",
-          "command": "gbrain sync status --source default --json",
+          "command": "foresights sync status --source default --json",
           "docs": "docs/guides/write-refusals.md#drain-grant-scope",
           "eta_seconds": null,
           "fix": {
             "actor": "user",
             "argv": [
-              "gbrain",
+              "foresights",
               "sync",
               "--source",
               "default",
               "--no-pull"
             ],
-            "command": "gbrain sync --source default --no-pull",
+            "command": "foresights sync --source default --no-pull",
             "consent": [],
             "next": "tell_user_to_run",
             "requires_exclusive": false,
-            "user_message": "On the host that owns source default, run: gbrain sync --source default --no-pull",
+            "user_message": "On the host that owns source default, run: foresights sync --source default --no-pull",
             "verify": {
               "argv": [
                 "gbrain",
@@ -207,7 +207,7 @@
           "rate_pages_per_min": null,
           "retry_after_ms": 0,
           "safe_to_loop": false,
-          "why": "This writer's grant covers only part of source default, so the pass admitted what it could see and cannot finish the source; the owner host's sync finishes it: gbrain sync --source default --no-pull."
+          "why": "This writer's grant covers only part of source default, so the pass admitted what it could see and cannot finish the source; the owner host's sync finishes it: foresights sync --source default --no-pull."
         },
         "outcome": "blocked"
       },
@@ -243,7 +243,7 @@
               "default",
               "--no-pull"
             ],
-            "command": "gbrain sync --source default --no-pull",
+            "command": "foresights sync --source default --no-pull",
             "consent": [],
             "next": "run",
             "requires_exclusive": false,
@@ -281,7 +281,7 @@
         },
         "next": {
           "code": "not_converged",
-          "command": "gbrain sync --source default --no-pull",
+          "command": "foresights sync --source default --no-pull",
           "docs": "docs/guides/write-refusals.md#drain-not-converged",
           "eta_seconds": null,
           "fix": {
@@ -293,7 +293,7 @@
               "default",
               "--no-pull"
             ],
-            "command": "gbrain sync --source default --no-pull",
+            "command": "foresights sync --source default --no-pull",
             "consent": [],
             "next": "run",
             "requires_exclusive": false,
@@ -312,7 +312,7 @@
           "rate_pages_per_min": null,
           "retry_after_ms": 0,
           "safe_to_loop": true,
-          "why": "The pass ran 4 rounds without the level settling (another writer kept changing it); everything it admitted stands. The next sync reads the level again: rerun gbrain sync --source default --no-pull."
+          "why": "The pass ran 4 rounds without the level settling (another writer kept changing it); everything it admitted stands. The next sync reads the level again: rerun foresights sync --source default --no-pull."
         },
         "outcome": "resumable"
       },
@@ -336,7 +336,7 @@
         "incomplete": true,
         "next": {
           "code": "not_converged",
-          "command": "gbrain sync status --source default --json",
+          "command": "foresights sync status --source default --json",
           "docs": "docs/guides/write-refusals.md#drain-not-converged",
           "eta_seconds": null,
           "fix": {
@@ -359,7 +359,7 @@
           "rate_pages_per_min": null,
           "retry_after_ms": 0,
           "safe_to_loop": false,
-          "why": "3 passes in a row ended without the level settling, so rerunning is not converging. Report it with the status (read-only) and gbrain doctor --json; the writer changing the checkout is named there."
+          "why": "3 passes in a row ended without the level settling, so rerunning is not converging. Report it with the status (read-only) and foresights doctor --json; the writer changing the checkout is named there."
         },
         "outcome": "resumable",
         "pagesAffected": []
@@ -378,7 +378,7 @@
         },
         "next": {
           "code": "not_converged",
-          "command": "gbrain sync status --source default --json",
+          "command": "foresights sync status --source default --json",
           "docs": "docs/guides/write-refusals.md#drain-not-converged",
           "eta_seconds": null,
           "fix": {
@@ -401,7 +401,7 @@
           "rate_pages_per_min": null,
           "retry_after_ms": 0,
           "safe_to_loop": false,
-          "why": "3 passes in a row ended without the level settling, so rerunning is not converging. Report it with the status (read-only) and gbrain doctor --json; the writer changing the checkout is named there."
+          "why": "3 passes in a row ended without the level settling, so rerunning is not converging. Report it with the status (read-only) and foresights doctor --json; the writer changing the checkout is named there."
         },
         "outcome": "resumable"
       },
@@ -425,23 +425,23 @@
         "incomplete": true,
         "next": {
           "code": "reconcile_host_required",
-          "command": "gbrain sync status --source default --json",
+          "command": "foresights sync status --source default --json",
           "docs": "docs/guides/write-refusals.md#drain-reconcile-host-required",
           "eta_seconds": null,
           "fix": {
             "actor": "user",
             "argv": [
-              "gbrain",
+              "foresights",
               "sync",
               "--source",
               "default",
               "--no-pull"
             ],
-            "command": "gbrain sync --source default --no-pull",
+            "command": "foresights sync --source default --no-pull",
             "consent": [],
             "next": "tell_user_to_run",
             "requires_exclusive": false,
-            "user_message": "On the host that owns source default, run: gbrain sync --source default --no-pull",
+            "user_message": "On the host that owns source default, run: foresights sync --source default --no-pull",
             "verify": {
               "argv": [
                 "gbrain",
@@ -457,7 +457,7 @@
           "rate_pages_per_min": null,
           "retry_after_ms": 0,
           "safe_to_loop": false,
-          "why": "What is left in source default needs the owner host (holds, markers or decisions a remote caller never writes); everything this run admitted stands. On the owner host run: gbrain sync --source default --no-pull."
+          "why": "What is left in source default needs the owner host (holds, markers or decisions a remote caller never writes); everything this run admitted stands. On the owner host run: foresights sync --source default --no-pull."
         },
         "outcome": "blocked",
         "pagesAffected": []
@@ -476,23 +476,23 @@
         },
         "next": {
           "code": "reconcile_host_required",
-          "command": "gbrain sync status --source default --json",
+          "command": "foresights sync status --source default --json",
           "docs": "docs/guides/write-refusals.md#drain-reconcile-host-required",
           "eta_seconds": null,
           "fix": {
             "actor": "user",
             "argv": [
-              "gbrain",
+              "foresights",
               "sync",
               "--source",
               "default",
               "--no-pull"
             ],
-            "command": "gbrain sync --source default --no-pull",
+            "command": "foresights sync --source default --no-pull",
             "consent": [],
             "next": "tell_user_to_run",
             "requires_exclusive": false,
-            "user_message": "On the host that owns source default, run: gbrain sync --source default --no-pull",
+            "user_message": "On the host that owns source default, run: foresights sync --source default --no-pull",
             "verify": {
               "argv": [
                 "gbrain",
@@ -508,7 +508,7 @@
           "rate_pages_per_min": null,
           "retry_after_ms": 0,
           "safe_to_loop": false,
-          "why": "What is left in source default needs the owner host (holds, markers or decisions a remote caller never writes); everything this run admitted stands. On the owner host run: gbrain sync --source default --no-pull."
+          "why": "What is left in source default needs the owner host (holds, markers or decisions a remote caller never writes); everything this run admitted stands. On the owner host run: foresights sync --source default --no-pull."
         },
         "outcome": "blocked"
       },
@@ -532,7 +532,7 @@
         "incomplete": true,
         "next": {
           "code": "reconcile_read_incomplete",
-          "command": "gbrain sync status --source default --json",
+          "command": "foresights sync status --source default --json",
           "docs": "docs/guides/write-refusals.md#drain-reconcile-read-incomplete",
           "eta_seconds": null,
           "fix": {
@@ -550,12 +550,12 @@
                 "--json"
               ]
             },
-            "why": "The checkout could not be listed; report it with gbrain doctor --json."
+            "why": "The checkout could not be listed; report it with foresights doctor --json."
           },
           "rate_pages_per_min": null,
           "retry_after_ms": 0,
           "safe_to_loop": false,
-          "why": "A Git listing of source default's checkout did not finish cleanly, so the pass classified nothing and wrote nothing. Check the checkout (git status), then report it with gbrain doctor --json if it repeats."
+          "why": "A Git listing of source default's checkout did not finish cleanly, so the pass classified nothing and wrote nothing. Check the checkout (git status), then report it with foresights doctor --json if it repeats."
         },
         "outcome": "blocked",
         "pagesAffected": []
@@ -574,7 +574,7 @@
         },
         "next": {
           "code": "reconcile_read_incomplete",
-          "command": "gbrain sync status --source default --json",
+          "command": "foresights sync status --source default --json",
           "docs": "docs/guides/write-refusals.md#drain-reconcile-read-incomplete",
           "eta_seconds": null,
           "fix": {
@@ -592,12 +592,12 @@
                 "--json"
               ]
             },
-            "why": "The checkout could not be listed; report it with gbrain doctor --json."
+            "why": "The checkout could not be listed; report it with foresights doctor --json."
           },
           "rate_pages_per_min": null,
           "retry_after_ms": 0,
           "safe_to_loop": false,
-          "why": "A Git listing of source default's checkout did not finish cleanly, so the pass classified nothing and wrote nothing. Check the checkout (git status), then report it with gbrain doctor --json if it repeats."
+          "why": "A Git listing of source default's checkout did not finish cleanly, so the pass classified nothing and wrote nothing. Check the checkout (git status), then report it with foresights doctor --json if it repeats."
         },
         "outcome": "blocked"
       },

@@ -1,5 +1,5 @@
 /**
- * `gbrain skillpack scaffold` — bundled-skill scaffold + third-party sources.
+ * `foresights skillpack scaffold` — bundled-skill scaffold + third-party sources.
  *
  * Peeled from src/commands/skillpack.ts (module-size ratchet). Behavior is
  * unchanged from the façade version. Flag-registry note: this file is scanned
@@ -46,7 +46,7 @@ export async function cmdScaffold(args: string[]): Promise<void> {
   }
   if (args.includes('--help') || args.includes('-h')) {
     console.log(
-      'gbrain skillpack scaffold <name> | <source> | --all [--workspace PATH] [--dry-run] [--trust] [--no-cache] [--json]\n\n' +
+      'foresights skillpack scaffold <name> | <source> | --all [--workspace PATH] [--dry-run] [--trust] [--no-cache] [--json]\n\n' +
       '<name>   — bundled skill slug (e.g. `book-mirror`)\n' +
       '<source> — third-party skillpack source. Accepted shapes:\n' +
       '             owner/repo                (expands to https://github.com/owner/repo)\n' +
@@ -55,7 +55,7 @@ export async function cmdScaffold(args: string[]): Promise<void> {
       '             ./local/pack.tgz          (local tarball)\n' +
       '\nFlags:\n' +
       '  --workspace PATH    Target workspace (default: auto-detected)\n' +
-      '  --all               Scaffold every bundled skill (gbrain only)\n' +
+      '  --all               Scaffold every bundled skill (foresights only)\n' +
       '  --dry-run           Validate + report; no writes\n' +
       '  --trust             The user\'s approval to trust a new third-party author + pin\n' +
       '                      (without it a non-interactive run writes nothing and exits 3)\n' +
@@ -161,7 +161,7 @@ export async function cmdScaffold(args: string[]): Promise<void> {
         // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
         const onboardingPath = join(targetWorkspace, 'skills', '_AGENT_README.md');
         console.log(
-          `\nNext: your agent walks \`skills/*/SKILL.md\` frontmatter \`triggers:\` for routing.\nIf this is a fresh install, read ${onboardingPath} for the agent contract.\nWhen gbrain ships an update later, run \`gbrain skillpack reference --all\` to sweep.`,
+          `\nNext: your agent walks \`skills/*/SKILL.md\` frontmatter \`triggers:\` for routing.\nIf this is a fresh install, read ${onboardingPath} for the agent contract.\nWhen foresights ships an update later, run \`foresights skillpack reference --all\` to sweep.`,
         );
       }
     }
@@ -205,7 +205,7 @@ async function runThirdPartyScaffold(opts: ThirdPartyScaffoldOptions): Promise<v
       if (!found) {
         console.error(
           `Error: no skillpack named "${cls.normalized}" in the registry (${loaded.registry_url}).\n` +
-            `Run \`gbrain skillpack search ${cls.normalized}\` for matches, or pass a full source (owner/repo, https URL, ./path, ./*.tgz).`,
+            `Run \`foresights skillpack search ${cls.normalized}\` for matches, or pass a full source (owner/repo, https URL, ./path, ./*.tgz).`,
         );
         process.exit(2);
       }
@@ -310,7 +310,7 @@ async function runThirdPartyScaffold(opts: ThirdPartyScaffoldOptions): Promise<v
       if (!opts.dryRun && summary && summary.wroteNew > 0) {
         console.log(
           `\nNext: your agent walks skills/*/SKILL.md frontmatter triggers: for routing.\n` +
-            `Run \`gbrain skillpack reference ${m.name}\` later if upstream changes.`,
+            `Run \`foresights skillpack reference ${m.name}\` later if upstream changes.`,
         );
       }
     }

@@ -11,7 +11,7 @@
  * The host timezone default is the actual fix; `cycle.timezone` is the
  * escape hatch for servers pinned to UTC whose operator lives elsewhere.
  * An invalid configured timezone falls back loudly instead of killing the
- * cycle (config.ts also validates at `gbrain config set` time).
+ * cycle (config.ts also validates at `foresights config set` time).
  */
 
 import type { BrainEngine } from '../engine.ts';

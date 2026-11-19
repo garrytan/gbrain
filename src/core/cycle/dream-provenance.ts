@@ -54,7 +54,7 @@ export async function stampDreamProvenance(
         // and transcript discovery forever.
         [slug, source_id, cycleDate, first_write_at?.toISOString() ?? null, seat === null],
         // #1978 raw-source persistence: record the transcript path the
-        // synthesis was derived from, so `gbrain doctor` (raw_provenance
+        // synthesis was derived from, so `foresights doctor` (raw_provenance
         // check) can verify every generated page carries a raw trace.
         [{
           dream_generated: true,

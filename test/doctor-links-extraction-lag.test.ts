@@ -55,7 +55,7 @@ describe('links_extraction_lag doctor check', () => {
     const c = await checkLinksExtractionLag(engine);
     expect(c.status).toBe('warn');
     expect(c.message).toContain('un-extracted edges');
-    expect(c.message).toContain('gbrain extract --stale');
+    expect(c.message).toContain('foresights extract --stale');
     expect((c.details as any).pct).toBe(100);
   });
 

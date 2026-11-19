@@ -115,7 +115,7 @@ export async function claimWorktree(engine: BrainEngine, sourceId: string, path:
   const lockPath = resolveCoordinationLock(root, candidateId, { reservation: existingPhysical?.coordinationPath }, hostId).path;
   const probe = await tryAcquireNativeLock(lockPath);
   if (!probe) throw opError('writer_lock_unavailable', 'Cannot acquire the new worktree coordination lock.',
-    `Another gbrain process holds the coordination lock for this checkout, so source ${sourceId} was not claimed. Check writer status and run the claim again once that process has finished.`,
+    `Another foresights process holds the coordination lock for this checkout, so source ${sourceId} was not claimed. Check writer status and run the claim again once that process has finished.`,
     { fix: writerStatusFix(sourceId) });
   await probe.release();
   await engine.transaction(async tx => {
@@ -230,9 +230,9 @@ async function lockWorktree(binding: WorktreeBinding, waitMs: number, signal: Ab
       if (error instanceof OperationError && error.detail === 'physical_root_directory_changed') {
         // #6501: a directory recreated (or drifted beyond tolerance) at its recorded path; fill the #5914 exit for this source.
         error.suggestion = `The directory at ${binding.local_path} is not the one this owner stamped (inode or birth time changed; owner token, brain, worktree, root and device match). `
-          + `If this checkout was restored or recreated at its recorded path, on the brain host run gbrain sources writer status ${binding.source_id} and note admin_state, `
-          + `then gbrain sources writer transfer prepare ${binding.source_id} --self-transfer --confirm-relocated-root --admin-intent writer_transfer_prepare --expected-state <admin_state>, `
-          + `then gbrain sources writer transfer accept ${binding.source_id} --path ${binding.local_path} --expected-epoch ${binding.owner_epoch} --manifest <manifest digest printed by prepare> `
+          + `If this checkout was restored or recreated at its recorded path, on the brain host run foresights sources writer status ${binding.source_id} and note admin_state, `
+          + `then foresights sources writer transfer prepare ${binding.source_id} --self-transfer --confirm-relocated-root --admin-intent writer_transfer_prepare --expected-state <admin_state>, `
+          + `then foresights sources writer transfer accept ${binding.source_id} --path ${binding.local_path} --expected-epoch ${binding.owner_epoch} --manifest <manifest digest printed by prepare> `
           + `--self-transfer --confirm-relocated-root --admin-intent writer_transfer_accept --expected-state <admin_state from a fresh status>. Retry the original write with the same request_id afterwards; never remove the ownership markers.`;
         error.fix = relocatedRootTransferFix(binding.source_id, { root: binding.local_path, epoch: String(binding.owner_epoch) });
         throw error;
@@ -242,9 +242,9 @@ async function lockWorktree(binding: WorktreeBinding, waitMs: number, signal: Ab
       const why = !engine ? 'this caller cannot verify database ownership'
         : readPhysicalRootStamp(binding.local_path)?.birth === '0' ? 'this filesystem reports no birth time'
           : 'database ownership of this checkout did not verify';
-      error.suggestion = `The automatic device re-stamp did not apply because ${why}. On the brain host, run gbrain sources writer status ${binding.source_id} and note admin_state, `
-        + `then gbrain sources writer transfer prepare ${binding.source_id} --self-transfer --admin-intent writer_transfer_prepare --expected-state <admin_state>, `
-        + `then gbrain sources writer transfer accept ${binding.source_id} --path ${binding.local_path} --expected-epoch ${binding.owner_epoch} --manifest <manifest digest printed by prepare> `
+      error.suggestion = `The automatic device re-stamp did not apply because ${why}. On the brain host, run foresights sources writer status ${binding.source_id} and note admin_state, `
+        + `then foresights sources writer transfer prepare ${binding.source_id} --self-transfer --admin-intent writer_transfer_prepare --expected-state <admin_state>, `
+        + `then foresights sources writer transfer accept ${binding.source_id} --path ${binding.local_path} --expected-epoch ${binding.owner_epoch} --manifest <manifest digest printed by prepare> `
         + `--self-transfer --admin-intent writer_transfer_accept --expected-state <admin_state from a fresh status>. Retry the original write with the same request_id afterwards.`;
       throw error;
     } catch (failure) { await lock.release(); throw failure; }
@@ -306,7 +306,7 @@ export function successorManifestMismatch(sourceId: string, root: string, expect
     `Source ${sourceId}'s transfer manifest ${expected} was recorded by an older release over every file in the owner's checkout, including files Git ignores (such as .env files), so a clean clone at ${root} cannot match it and nothing was accepted. `
       + `Do not copy ignored files across. On the owner host, prepare the transfer again (it now records tracked Git files only), then accept with the new epoch and manifest it prints.`,
     { fix: { argv: ['gbrain', 'sources', 'writer', 'transfer', 'prepare', sourceId, '--admin-intent', 'writer_transfer_prepare', '--expected-state', '<admin_state>'],
-      inputs: [{ name: 'admin_state', how: `admin_state from gbrain sources writer status ${sourceId} --json on the owner host` }],
+      inputs: [{ name: 'admin_state', how: `admin_state from foresights sources writer status ${sourceId} --json on the owner host` }],
       consent: [], actor: 'host_admin', requires_exclusive: false, docs: 'docs/architecture/topologies.md#transfer-manifest-scope',
       why: 'Re-records the transfer manifest over tracked Git files on the owner host; the successor then accepts with the printed epoch and manifest.' } });
   const untracked = candidate.scope === 'git' && candidate.untracked_count ? ` ${candidate.untracked_count} untracked file(s) here that Git does not ignore are not part of the manifest and do not cause this.` : '';
@@ -401,7 +401,7 @@ export async function cancelWriterTransfer(engine: BrainEngine, sourceId: string
     { fix: writerStatusFix(sourceId) });
   const lock = await acquireNativeLock(binding.coordination_path, { timeoutMs: 5000 });
   if (!lock) throw opError('write_pending', 'The worktree is busy; retry the cancel.',
-    `Another gbrain process holds source ${sourceId}'s coordination lock, so the transfer was not cancelled. Run the cancel again once that process has finished.`,
+    `Another foresights process holds source ${sourceId}'s coordination lock, so the transfer was not cancelled. Run the cancel again once that process has finished.`,
     { fix: writerStatusFix(sourceId) });
   try {
     return await engine.transaction(async tx => {
@@ -436,7 +436,7 @@ export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string
     { fix: writerStatusFix(sourceId) });
   const lock = await acquireNativeLock(coordination, { timeoutMs: 5000 });
   if (!lock) throw opError('write_pending', 'Successor worktree is busy.',
-    `Another gbrain process holds the successor checkout's coordination lock, so source ${sourceId}'s transfer was not accepted. Run transfer accept again once that process has finished.`,
+    `Another foresights process holds the successor checkout's coordination lock, so source ${sourceId}'s transfer was not accepted. Run transfer accept again once that process has finished.`,
     { fix: writerStatusFix(sourceId) });
   try {
     // #6099: verify in the scope the owner recorded (a manifest an older release prepared is in tree scope).

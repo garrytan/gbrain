@@ -1,5 +1,5 @@
 /**
- * C7 (agent operator wave): `gbrain connectors auth` has a headless lane that
+ * C7 (agent operator wave): `foresights connectors auth` has a headless lane that
  * mirrors Google connect.
  *
  * Protects: with no human at the terminal and no credential, the command
@@ -45,7 +45,7 @@ test('no credential, nobody at the terminal: [AGENT] block with the [SHOW USER] 
   expect(r.stdout).toContain('[SHOW USER]');
   expect(r.stdout).toContain('actor: user');
   expect(r.stdout).toContain('next: tell_user_to_run');
-  expect(r.stdout).toContain('gbrain connectors auth chatgpt --cookie -');
+  expect(r.stdout).toContain('foresights connectors auth chatgpt --cookie -');
   expect(r.stdout).toContain('Copy the full `Cookie:` request header value.');
   expect(existsSync(join(home, '.gbrain', 'connectors', 'chatgpt.json'))).toBe(false);
 }, 10_000);

@@ -22,7 +22,7 @@
 # CI runners under load (one CI flake observed on PR #475 hitting
 # exactly 5000.09ms in the Tags beforeAll).
 #
-# HOME isolation: E2E tests call paths that resolve to gbrain init / saveConfig
+# HOME isolation: E2E tests call paths that resolve to foresights init / saveConfig
 # (e.g. setupDB writing config for the test container) and would otherwise
 # write the user's real ~/.gbrain/config.json. The wrapper redirects HOME and
 # GBRAIN_HOME to a tmpdir before bun starts so config writes land in the
@@ -146,7 +146,7 @@ mkdir -p "$E2E_TMP_HOME/.gbrain"
 # cannot fire under this runner (their venue is heavy-tests.yml's direct bun
 # test). GROK_ also drops an operator's GROK_BIN/GROK_HOME; OPENCODE_ drops
 # OPENCODE_BIN and the OPENCODE_CONFIG* trio. Adapts GStack's
-# buildHermeticEnv() allowlist to gbrain's shell E2E runner.
+# buildHermeticEnv() allowlist to foresights's shell E2E runner.
 for _e2e_var in $(env | grep -oE '^(CONDUCTOR_|MCP_|OPENCLAW_|HERMES_|GROK_|OPENCODE_|GBRAIN_)[A-Za-z0-9_]*' | sort -u); do
   case "$_e2e_var" in
     GBRAIN_HOME) ;;  # required for HOME isolation (set above) — keep
@@ -442,7 +442,7 @@ for f in "${files[@]}"; do
   # files in their own job WITHOUT this wrapper (see .github/workflows/
   # e2e.yml tier2), so the cap only ever bit local runs: give them 4x.
   # serve-http-multi-agent rides the same carve-out for a different reason:
-  # it spawns TWO `gbrain serve --http` subprocesses (19133 + a chaos serve
+  # it spawns TWO `foresights serve --http` subprocesses (19133 + a chaos serve
   # on 19134) plus several CLI register subprocesses, so its wall clock is
   # process-spawn-bound, not test-bound.
   file_timeout="${GBRAIN_E2E_FILE_TIMEOUT:-${E2E_FILE_TIMEOUT_SECS:-180}}"

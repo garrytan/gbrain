@@ -139,5 +139,5 @@ export class ConnectorHoldSession {
 /** The sync result's hold counts (printed by the sync summary with the retry command). */
 export function connectorHoldsResult(sourceId: string, summary: HoldRunSummary): { connectorHolds?: { held: number; newly_held: number; retry_command: string; status_command: string } } {
   if (!summary.held) return {};
-  return { connectorHolds: { held: summary.held, newly_held: summary.newlyHeld, retry_command: `gbrain sources retry-held ${sourceId}`, status_command: `gbrain sources status ${sourceId}` } };
+  return { connectorHolds: { held: summary.held, newly_held: summary.newlyHeld, retry_command: `foresights sources retry-held ${sourceId}`, status_command: `foresights sources status ${sourceId}` } };
 }

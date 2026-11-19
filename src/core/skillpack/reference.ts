@@ -1,11 +1,11 @@
 /**
- * skillpack/reference.ts — `gbrain skillpack reference <name>`.
+ * skillpack/reference.ts — `foresights skillpack reference <name>`.
  *
- * Read-only update lens. Compares every file in gbrain's bundle (skill
+ * Read-only update lens. Compares every file in foresights's bundle (skill
  * dir + paired sources + shared deps) against the host's local copy
  * and emits per-file status + unified diffs.
  *
- * The agent reads this output and decides what to integrate. gbrain
+ * The agent reads this output and decides what to integrate. foresights
  * does NOT auto-apply (that's `reference --apply-clean-hunks` in T15,
  * which composes a separate apply step on top).
  *
@@ -27,7 +27,7 @@ import { unifiedDiff } from './diff-text.ts';
 import { applyHunks, parseUnifiedDiff } from './apply-hunks.ts';
 
 export interface ReferenceOptions {
-  /** Absolute path to gbrain repo root (source-of-truth bundle). */
+  /** Absolute path to foresights repo root (source-of-truth bundle). */
   gbrainRoot: string;
   /** Absolute path to the target workspace. */
   targetWorkspace: string;
@@ -102,7 +102,7 @@ export function runReference(opts: ReferenceOptions): ReferenceResult {
 
 /**
  * Run reference across every bundled skill — one-line-per-skill summary.
- * Used by `gbrain skillpack reference --all` for the upgrade sweep
+ * Used by `foresights skillpack reference --all` for the upgrade sweep
  * workflow.
  */
 export function runReferenceAll(opts: Omit<ReferenceOptions, 'skillSlug'>): ReferenceAllResult {
@@ -170,18 +170,18 @@ export interface ReferenceApplyResult {
 
 /**
  * Run `reference --apply-clean-hunks`. For each `differs` file, parses
- * the diff between the user's local copy (target) and gbrain's bundle
+ * the diff between the user's local copy (target) and foresights's bundle
  * (source), then applies every hunk whose pre-change context appears
  * uniquely in the user's file. Writes the result back. Conflicting
  * hunks are left alone and reported.
  *
  * **Two-way merge limitation (D15 contract).** Without scaffold-time
- * base tracking, this command cannot distinguish "gbrain changed line
+ * base tracking, this command cannot distinguish "foresights changed line
  * X" from "the user changed line X." Both look like differences from
- * gbrain's current bundle. Applied hunks therefore replace the user's
- * local content with gbrain's wherever they differ, including spots
+ * foresights's current bundle. Applied hunks therefore replace the user's
+ * local content with foresights's wherever they differ, including spots
  * the user intentionally edited. Use `--dry-run` first, or run
- * `gbrain skillpack reference <name>` to inspect the diff before
+ * `foresights skillpack reference <name>` to inspect the diff before
  * applying. True three-way merge with scaffold-time base is in the
  * NOT-in-scope section of the v0.33 plan.
  *
@@ -253,7 +253,7 @@ function applyOne(
 
   const diff = unifiedDiff(aBuf.toString('utf-8'), bBuf.toString('utf-8'));
   // The diff above is target→source (b→a). We need source→target for
-  // apply: gbrain (a) is what we want to bring into the target. So
+  // apply: foresights (a) is what we want to bring into the target. So
   // recompute with the operands swapped.
   const diffApply = unifiedDiff(bBuf.toString('utf-8'), aBuf.toString('utf-8'));
   const parsed = parseUnifiedDiff(diffApply);

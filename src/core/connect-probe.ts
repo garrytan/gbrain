@@ -1,5 +1,5 @@
 /**
- * Raw-bearer MCP smoke probe for `gbrain connect --install` (D4).
+ * Raw-bearer MCP smoke probe for `foresights connect --install` (D4).
  *
  * Purpose-built so a bad/expired token fails at setup time instead of
  * silently on the agent's first tool call. It does the FULL handshake the

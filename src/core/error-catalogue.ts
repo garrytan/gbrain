@@ -81,13 +81,13 @@ export const ERROR_CATALOGUE = {
   page_projection_conflict: { code: 'page_projection_conflict', docs: 'docs/guides/repair.md#page-projection-conflict' },
   explicit_kind_required: { code: 'explicit_kind_required', docs: 'docs/guides/repair.md#explicit-only-repair-kinds' },
   repair_kind_unavailable: { code: 'unavailable', docs: 'docs/guides/repair.md#explicit-only-repair-kinds' },
-  // #6650: gbrain repair stuck-recovery resolves page recovery records only; a shared-skill bundle record is refused.
+  // #6650: foresights repair stuck-recovery resolves page recovery records only; a shared-skill bundle record is refused.
   recovery_bundle_unsupported: { code: 'recovery_bundle_unsupported', docs: 'docs/guides/repair.md#recovery-bundle-unsupported' },
   // #6650: a (request state, --keep) pair stuck-recovery cannot make safe: a terminal request, or a choice the record cannot support.
   recovery_choice_refused: { code: 'recovery_choice_refused', docs: 'docs/guides/repair.md#recovery-choice-refused' },
   // #6650: a withdrawal-mirror effect recovery only finishes forward, so stuck-recovery lists it as refused.
   recovery_effect_unsupported: { code: 'recovery_effect_unsupported', docs: 'docs/guides/repair.md#recovery-effect-unsupported' },
-  // LPH (d): a recovery record a newer gbrain wrote is refused unread; a segmented mirror waits for older writers.
+  // LPH (d): a recovery record a newer foresights wrote is refused unread; a segmented mirror waits for older writers.
   recovery_version_unsupported: { code: 'recovery_version_unsupported', docs: 'docs/guides/write-refusals.md#recovery_version_unsupported' },
   segmented_mirror_writer_gate: { code: 'segmented_mirror_writer_gate', docs: 'docs/guides/write-refusals.md#segmented_mirror_writer_gate' },
   colon_slug_windows_write_through: { code: 'colon_slug_windows_write_through', docs: 'docs/guides/write-refusals.md#colon_slug_windows_write_through' },
@@ -110,7 +110,7 @@ export const ERROR_CATALOGUE = {
   write_quota_exhausted: { code: 'write_quota_exhausted', docs: 'docs/guides/write-refusals.md#write_quota_exhausted' },
   write_quota_insufficient: { code: 'write_quota_insufficient', docs: 'docs/guides/write-refusals.md#write_quota_insufficient' },
   write_capacity_low: { code: 'write_capacity_low', docs: 'docs/guides/write-refusals.md#write_capacity_low' },
-  // F0 `gbrain sources refresh` (worktree-wide coordinated ff-only refresh).
+  // F0 `foresights sources refresh` (worktree-wide coordinated ff-only refresh).
   refresh_not_managed: { code: 'refresh_not_managed', docs: 'docs/guides/write-refusals.md#refresh_not_managed' },
   refresh_not_owner: { code: 'refresh_not_owner', docs: 'docs/guides/write-refusals.md#refresh_not_owner' },
   refresh_no_upstream: { code: 'refresh_no_upstream', docs: 'docs/guides/write-refusals.md#refresh_no_upstream' },
@@ -144,7 +144,7 @@ export const ERROR_CATALOGUE = {
   sync_drain_grant_scope: { code: 'grant_scope', docs: 'docs/guides/write-refusals.md#drain-grant-scope' },
   sync_drain_reconcile_host_required: { code: 'reconcile_host_required', docs: 'docs/guides/write-refusals.md#drain-reconcile-host-required' },
   sync_drain_reconcile_read_incomplete: { code: 'reconcile_read_incomplete', docs: 'docs/guides/write-refusals.md#drain-reconcile-read-incomplete' },
-  // D8 `gbrain setup <harness>` (src/commands/setup.ts).
+  // D8 `foresights setup <harness>` (src/commands/setup.ts).
   setup_harness_unsupported: { code: 'setup_harness_unsupported', docs: 'docs/guides/repair.md#setup-harness-unsupported' },
   setup_owner_conflict: { code: 'setup_owner_conflict', docs: 'docs/guides/repair.md#setup-owner-conflict' },
   setup_hosted_connection: { code: 'setup_hosted_connection', docs: 'docs/guides/repair.md#setup-hosted-connection' },
@@ -178,9 +178,9 @@ const CLASS_SUGGESTION: Record<ErrorClass, string> = {
   caller: 'Correct the request using the message above, then retry.',
   consent: 'Stop and ask the user; re-run only with the authorization the message names.',
   retryable: 'Wait briefly, then retry the same request (writes: reuse the same request_id).',
-  unavailable: 'A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing.',
-  server: 'Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user.',
-  host_only: 'Only the brain host\'s operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host.',
+  unavailable: 'A required capability is not available on this brain. Run `foresights doctor --json` to see what is missing.',
+  server: 'Server-side failure, not a caller mistake. Run `foresights doctor --json` on the brain host; if it repeats, report it to the user.',
+  host_only: 'Only the brain host\'s operator can resolve this. Tell the user the message and run `foresights doctor --json` on the brain host.',
 };
 
 const REFUSAL_DOCS_BY_CODE: ReadonlyMap<string, string> = new Map(

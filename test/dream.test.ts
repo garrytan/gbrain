@@ -276,7 +276,7 @@ describe('runDream — --once (issue #2860)', () => {
       throw new Error('--help with --once should NOT exit; got: ' + e.message);
     }
     expect(exitSpy).not.toHaveBeenCalled();
-    expect(logSpy.mock.calls.flat().join(' ')).toMatch(/Usage: gbrain dream/);
+    expect(logSpy.mock.calls.flat().join(' ')).toMatch(/Usage: (?:foresights|gbrain) dream/);
     exitSpy.mockRestore();
     logSpy.mockRestore();
   });
@@ -425,7 +425,7 @@ describe('runDream — exit-code semantics', () => {
 //   - --help short-circuit ordering (C-8)
 //   - typed-error propagation (T3: TypeError must NOT be swallowed)
 //   - end-to-end dream→doctor (D5): writeback flips cycle_freshness
-//   - back-compat regression: bare `gbrain dream` writes no per-source stamp
+//   - back-compat regression: bare `foresights dream` writes no per-source stamp
 
 describe('runDream — --source / --source-id (v0.41.13)', () => {
   async function seedSource(id: string, archived: boolean = false): Promise<void> {
@@ -534,7 +534,7 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
       throw new Error('--help with --source should NOT exit; got: ' + e.message);
     }
     expect(exitSpy).not.toHaveBeenCalled();
-    expect(logSpy.mock.calls.flat().join(' ')).toMatch(/Usage: gbrain dream/);
+    expect(logSpy.mock.calls.flat().join(' ')).toMatch(/Usage: (?:foresights|gbrain) dream/);
     exitSpy.mockRestore();
     logSpy.mockRestore();
   });
@@ -574,7 +574,7 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
     const errOut = errSpy.mock.calls.flat().join(' ');
     expect(errOut).toMatch(/Source "no-such-source" not found/);
-    expect(errOut).toMatch(/gbrain sources list/);
+    expect(errOut).toMatch(/(?:foresights|gbrain) sources list/);
     exitSpy.mockRestore();
     errSpy.mockRestore();
   });
@@ -625,11 +625,11 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
     expect(writtenMs).toBeLessThanOrEqual(Date.now() + 1000);
   }, 300_000);
 
-  // ─── Back-compat: bare `gbrain dream` does NOT write per-source stamp ─
+  // ─── Back-compat: bare `foresights dream` does NOT write per-source stamp ─
 
-  test('gbrain dream (no --source) stamps only the source whose local_path matches --dir (#1869)', async () => {
+  test('foresights dream (no --source) stamps only the source whose local_path matches --dir (#1869)', async () => {
     // Pre-#1869 this asserted NO source was ever stamped without an explicit
-    // --source — which is exactly the bug: a path-scoped `gbrain dream --dir`
+    // --source — which is exactly the bug: a path-scoped `foresights dream --dir`
     // run never landed a freshness stamp and doctor's cycle_freshness stayed
     // stale forever. New truth: the source whose local_path matches the
     // resolved brain dir is derived and stamped; unrelated sources stay
@@ -911,7 +911,7 @@ describe('runDream — help and human totals', () => {
       const help = logSpy.mock.calls.flat().join('\n');
       expect(help).toContain('skips the synthesis subagents');
       expect(help.toLowerCase()).toContain('zero llm calls');
-      expect(help).toContain('gbrain config set cycle.timezone');
+      expect(help).toContain('foresights config set cycle.timezone');
     } finally {
       logSpy.mockRestore();
     }

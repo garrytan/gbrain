@@ -3,7 +3,7 @@
  * `pages.max_bytes` (Wave B, PR 2 fix lane D).
  *
  * 1. Protects: on a managed source with a claimed worktree, a soft delete of a page over 24 MiB removes its
- *    canonical file and restore_page writes it back byte for byte (the file in gbrain's serialization), at
+ *    canonical file and restore_page writes it back byte for byte (the file in foresights's serialization), at
  *    27 MiB (over the 25 MiB pre-push scan cap) and at 90 MiB (whose base64 recovery record once reserved more
  *    than the 256 MiB worktree recovery budget); a purge then removes page and file. The restore streams the
  *    file from the segments into its staging file and the delete stages the prior file by copy: no file read,

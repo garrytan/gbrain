@@ -22,13 +22,13 @@
  * a git source in classic mode (history pages plus `--deletes` pages that are
  * imported, then soft-deleted), commits the backlog (`--files` new pages and
  * the deletion of the soft-deleted files), activates managed persistence
- * through the real `gbrain sources writer claim/activate` CLI, and points the
+ * through the real `foresights sources writer claim/activate` CLI, and points the
  * brain at the proxy. Then it drives the catch-up:
  *
- *   cli        the reporter's workaround: `gbrain sync --source <id> --no-pull --no-embed --json` re-run until synced
+ *   cli        the reporter's workaround: `foresights sync --source <id> --no-pull --no-embed --json` re-run until synced
  *   reentry    one long-lived process re-entering performSync until synced (250 ms pause, like the PGLite delegate)
  *   unmanaged  classic sync of the same corpus (no activation), one CLI run
- *   serve      `cli` with a resident `gbrain serve --http` on the same brain
+ *   serve      `cli` with a resident `foresights serve --http` on the same brain
  *   effects    `cli` without --no-embed against a loopback stub /v1/embeddings (200 ms, 4 concurrent, 429 beyond),
  *              plus time to retrieval-ready
  *   foreground `cli` while a second process submits put_page every second (p95, lock_timeout count),
@@ -36,17 +36,17 @@
  *   foreground-open
  *              `cli` while a second process submits one put_page every --fg-interval seconds whether or
  *              not earlier ones finished (open loop: arrival rate, p50/p95, failures by code)
- *   all        `gbrain sync --all --no-pull --no-embed --json` re-run until synced, two sources
+ *   all        `foresights sync --all --no-pull --no-embed --json` re-run until synced, two sources
  *   newcomer   cold start to first progress line, and a 5-page managed source to a search hit
  *
- * Every gbrain process runs with GBRAIN_SQL_TRACE (src/core/sql-trace.ts), so
+ * Every foresights process runs with GBRAIN_SQL_TRACE (src/core/sql-trace.ts), so
  * each database round trip is attributed to its process; pg_stat_statements
  * gives the server-side totals; pg_locks/pg_stat_activity are sampled every
  * 100 ms for lock waits and their holders. Rows stop at --max-minutes and
  * report a labelled extrapolation. `--pool-size N` sets GBRAIN_POOL_SIZE for
- * every gbrain process (unset: the product default of 10); `--pooler pgbouncer`
+ * every foresights process (unset: the product default of 10); `--pooler pgbouncer`
  * puts a transaction-mode PgBouncer between toxiproxy and Postgres and runs
- * gbrain with GBRAIN_PREPARE=false (report-only). Each row records its pool,
+ * foresights with GBRAIN_PREPARE=false (report-only). Each row records its pool,
  * lane and pooler settings. Works against any branch: it only drives the CLI,
  * performSync and submitPageMutation.
  */
@@ -123,7 +123,7 @@ const POOLER = flag('pooler', '');
 if (POOLER && POOLER !== 'pgbouncer') { console.error(`--pooler takes pgbouncer; got ${POOLER}`); process.exit(2); }
 if (POOL_SIZE && !(Number.isInteger(Number(POOL_SIZE)) && Number(POOL_SIZE) > 0)) { console.error(`--pool-size takes a whole number above 0; got ${POOL_SIZE}`); process.exit(2); }
 if (!(FG_INTERVAL_S > 0)) { console.error(`--fg-interval takes seconds above 0; got ${FG_INTERVAL_S}`); process.exit(2); }
-/** Pool, lane and pooler settings every measured gbrain process runs with, recorded on each row. */
+/** Pool, lane and pooler settings every measured foresights process runs with, recorded on each row. */
 const SETTINGS = {
   pool_size: Number(POOL_SIZE || process.env.GBRAIN_POOL_SIZE || 10),
   pool_size_source: POOL_SIZE ? '--pool-size' : process.env.GBRAIN_POOL_SIZE ? 'GBRAIN_POOL_SIZE' : 'product default',
@@ -186,7 +186,7 @@ async function runCli(home: string, args: string[], env: Record<string, string |
 }
 async function mustCli(home: string, args: string[], env: Record<string, string | undefined> = {}): Promise<CliRun> {
   const r = await runCli(home, args, env);
-  if (r.code !== 0) throw new Error(`gbrain ${args.join(' ')} exited ${r.code}\nstdout: ${r.stdout.slice(-1500)}\nstderr: ${r.stderr.slice(-1500)}`);
+  if (r.code !== 0) throw new Error(`foresights ${args.join(' ')} exited ${r.code}\nstdout: ${r.stdout.slice(-1500)}\nstderr: ${r.stderr.slice(-1500)}`);
   return r;
 }
 
@@ -509,8 +509,8 @@ async function collect(row: RowContext, driven: Driven, locks: LockSample[], mea
   for (const r of syncProc) byClass[classify(r.sql)] = (byClass[classify(r.sql)] ?? 0) + 1;
   const holder = new Map<string, { samples: number; waiting: string; blocker_app: string; blocker_query: string; blocker_state: string }>();
   for (const s of locks) {
-    const key = `${normalizeSql(s.waiting_query)}|${family(s.blocker_app.replace(/^gbrain:/, ''))}|${normalizeSql(s.blocker_query)}`;
-    const h = holder.get(key) ?? { samples: 0, waiting: normalizeSql(s.waiting_query), blocker_app: family(s.blocker_app.replace(/^gbrain:/, '')), blocker_query: normalizeSql(s.blocker_query), blocker_state: s.blocker_state };
+    const key = `${normalizeSql(s.waiting_query)}|${family(s.blocker_app.replace(/^(?:foresights|gbrain):/, ''))}|${normalizeSql(s.blocker_query)}`;
+    const h = holder.get(key) ?? { samples: 0, waiting: normalizeSql(s.waiting_query), blocker_app: family(s.blocker_app.replace(/^(?:foresights|gbrain):/, '')), blocker_query: normalizeSql(s.blocker_query), blocker_state: s.blocker_state };
     h.samples++; holder.set(key, h);
   }
   const byFamily = (re: RegExp) => {

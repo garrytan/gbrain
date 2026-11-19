@@ -5,7 +5,7 @@
  *
  *   bun scripts/bench/managed-sync-pipeline-spike.ts [--rtt 57] [--out <file.json>] [--keep]
  *
- * Inside one gbrain `engine.transaction` on Postgres, issues `tx.executeRaw`
+ * Inside one foresights `engine.transaction` on Postgres, issues `tx.executeRaw`
  * calls without awaiting between them and checks, from the wire trace
  * (src/core/sql-trace.ts), whether postgres.js sends them on one connection
  * before the first reply (pipelined) and whether they keep their order. Covers

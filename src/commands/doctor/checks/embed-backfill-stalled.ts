@@ -6,7 +6,7 @@
  *
  * The usual blocker is a page whose text projection cannot be rebuilt
  * (`page_projection_jobs.reason = 'rebuild_failed'`), which the backfill's
- * bounded recovery retries silently. `gbrain projections drain` retries it
+ * bounded recovery retries silently. `foresights projections drain` retries it
  * in the foreground and prints why it fails and what to do; its `--dry-run`
  * is the preview. Image and media pages are rebuilt only by their importer.
  * Nothing here runs a repair.
@@ -47,8 +47,8 @@ export async function embedBackfillStalledCheck(engine: BrainEngine): Promise<Ch
       name: 'embed_backfill_stalled',
       status: 'warn',
       message: `Automatic embed-backfill is stuck on pages it cannot project. ${lines.join('. ')}. `
-        + 'Preview with gbrain projections drain --dry-run, then run gbrain projections drain: it retries each queued Markdown or code page in the foreground and prints why one fails and the next step. '
-        + (media ? 'Image and media pages are rebuilt only by their importer: restore their source files and run gbrain sync --full --source <id>, or gbrain embed --stale --images --source <id>. ' : '')
+        + 'Preview with foresights projections drain --dry-run, then run foresights projections drain: it retries each queued Markdown or code page in the foreground and prints why one fails and the next step. '
+        + (media ? 'Image and media pages are rebuilt only by their importer: restore their source files and run foresights sync --full --source <id>, or foresights embed --stale --images --source <id>. ' : '')
         + `Once the blocked pages change, the next automatic backfill runs by itself. Nothing was changed by this check. See ${DOCS}.`,
       details: { code: 'embed_backfill_stalled', sources: stalled, stall_limit: EMBED_BACKFILL_STALL_LIMIT, docs: DOCS },
       fix: {

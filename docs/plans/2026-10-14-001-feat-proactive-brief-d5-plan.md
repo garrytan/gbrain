@@ -349,7 +349,7 @@ REALITY: pr-count pass one PR for D5 docs/plans/2026-10-14-001-feat-proactive-br
   Adding `title-surname` to the gate arms alone stays green, because the
   ≥ 0.8 floor rejects it too (defense in depth).
 - Gaps:
-  - [P2] (7/10) A live `gbrain serve` IPC end-to-end test with
+  - [P2] (7/10) A live `foresights serve` IPC end-to-end test with
     `hook user-prompt` is not in this suite; the handler-level and binding
     tests cover the same code path.
   - [P3] (6/10) The hook golden for stdout is not re-pinned; the

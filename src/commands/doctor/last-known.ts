@@ -19,6 +19,7 @@
 import type { BrainEngine } from '../../core/engine.ts';
 import type { Check } from '../doctor.ts';
 import type { DoctorContext, DoctorEntry } from './context.ts';
+import { commandText } from '../../core/brand.ts';
 
 export const LAST_KNOWN_OP = 'doctor-last-known';
 /** A last known result older than this is not served; its checks are unknown. */
@@ -140,10 +141,10 @@ export function unmeasuredCheck(stale: readonly EntryOutcome[], cache: ReadonlyM
   const names = [...new Set(stale.flatMap(o => o.entry.emits))].sort();
   const old = stale.filter(o => cache.has(o.entry.name)).length;
   const argv = ['gbrain', 'doctor', '--tier', 'standard', '--budget-ms', '0', '--json'];
-  const queued = refreshJob ? ` A background refresh is queued (job #${refreshJob.id}); it needs a running jobs worker${engineKind === 'pglite' ? ' (gbrain jobs work)' : ''}.` : '';
+  const queued = refreshJob ? ` A background refresh is queued (job #${refreshJob.id}); it needs a running jobs worker${engineKind === 'pglite' ? ' (foresights jobs work)' : ''}.` : '';
   return {
     name: 'doctor_last_known', status: 'warn',
-    message: `${names.length} check(s) have no result from the last ${LAST_KNOWN_MAX_AGE_MS / 3_600_000} h (${old === stale.length ? 'their last results are too old' : old ? `${old} of ${stale.length} entries have only an older result, the rest were never measured` : 'never measured'}); their health is unknown, not clear.${queued} Measure them now with: ${argv.join(' ')}`,
+    message: `${names.length} check(s) have no result from the last ${LAST_KNOWN_MAX_AGE_MS / 3_600_000} h (${old === stale.length ? 'their last results are too old' : old ? `${old} of ${stale.length} entries have only an older result, the rest were never measured` : 'never measured'}); their health is unknown, not clear.${queued} Measure them now with: ${commandText(argv)}`,
     details: { health: 'unknown', reason: 'not_measured', exact: false, unknown_checks: names, ...(refreshJob ? { refresh_job: refreshJob.id } : {}) },
     fix: { argv, consent: [], actor: 'user', requires_exclusive: false, why: 'Runs every standard check with no overall budget and records each result, so later quick runs report them; read-only, and it can take minutes on a large brain.' },
   };

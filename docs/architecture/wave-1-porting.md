@@ -99,7 +99,7 @@ is a module plus one registration line, and changes `test/fixtures/goldens/jobs/
 `hybridSearch` and `hybridSearchCached` run as named stages under
 `src/core/search/hybrid/` (request, arms, rank, cache stages, keyword-only, degraded). Apply the
 fix in the stage that owns the code. The deterministic output is pinned exactly:
-`bun test --timeout=60000 test/hybrid-golden.test.ts`. A retrieval change also needs `gbrain eval replay`.
+`bun test --timeout=60000 test/hybrid-golden.test.ts`. A retrieval change also needs `foresights eval replay`.
 
 ### Generated-file conflicts: regenerate, never hand-merge
 

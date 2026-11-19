@@ -1,5 +1,5 @@
 /**
- * `gbrain post-upgrade` makes zero embedding-provider calls without
+ * `foresights post-upgrade` makes zero embedding-provider calls without
  * affirmative consent (security wave ENG-3), in non-TTY and TTY runs.
  *
  * Protects: an upgrade on a brain with an embedding provider configured, with

@@ -56,7 +56,7 @@ export interface DreamWriteReconcile {
 }
 
 export function writeStatusCommand(requestId: string): string {
-  return `gbrain write-request -- ${requestId}`;
+  return `foresights write-request -- ${requestId}`;
 }
 
 export function dreamWriteDeferralEnabled(engine: Pick<BrainEngine, 'getConfig'>): Promise<boolean> {

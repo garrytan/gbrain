@@ -1,5 +1,5 @@
 /**
- * `gbrain repair take-supersession` (#5886): rebuild `takes.superseded_by`
+ * `foresights repair take-supersession` (#5886): rebuild `takes.superseded_by`
  * for supersession chains written before the pointer moved onto the old
  * fence row.
  *
@@ -197,8 +197,8 @@ function actionText(plan: PagePlan): string {
 
 function ambiguityFix(page: TakePage, ambiguous: SupersessionAnalysis['ambiguous']): string {
   return ambiguous.map(a => `row #${a.new_row} replaced one of #${a.candidates.join(', #')}`).join('; ')
-    + `. Read the page (gbrain get --source ${page.source_id} -- ${page.slug}), append "; superseded by #<new row>" to the source cell of the row each new row replaced, `
-    + 'save it with the current expected_revision, then run gbrain repair take-supersession again.';
+    + `. Read the page (foresights get --source ${page.source_id} -- ${page.slug}), append "; superseded by #<new row>" to the source cell of the row each new row replaced, `
+    + 'save it with the current expected_revision, then run foresights repair take-supersession again.';
 }
 
 async function candidatePages(engine: BrainEngine, sourceIds: string[], after: RepairCursor | null): Promise<TakePage[]> {

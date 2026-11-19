@@ -230,7 +230,7 @@ export class ItemRun {
     const sample = this.failed.slice(0, 3).map(f => `${f.key} (${f.code})`).join(', ');
     const error = opError('item_failures_systemic',
       `${this.failed.length} of ${this.attempted} items failed at ${this.site} (most often ${topCode}: ${sameCode}); this looks systemic, so no item was held. First failures: ${sample}.`,
-      'Fix the shared cause the first failures name, then rerun; run `gbrain doctor --json` if the cause is unclear.',
+      'Fix the shared cause the first failures name, then rerun; run `foresights doctor --json` if the cause is unclear.',
       { detail: this.site, reason: topCode });
     return error;
   }

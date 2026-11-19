@@ -11,7 +11,7 @@ anything.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `dream.patterns.enabled` | boolean | `true` | Turns the phase off (`gbrain dream --phase patterns --once` still forces one run). |
+| `dream.patterns.enabled` | boolean | `true` | Turns the phase off (`foresights dream --phase patterns --once` still forces one run). |
 | `dream.patterns.min_evidence` | integer ≥ 1 | `3` | Distinct reflections a pattern needs; also the smallest run worth submitting. |
 | `dream.patterns.subagent_timeout_ms` | milliseconds | `1800000` (30 min) | The child job's own timeout. Inside the cycle it is clamped to the time left. |
 | `dream.patterns.subagent_wait_timeout_ms` | milliseconds | `2100000` (35 min) | How long the phase waits for the child. Clamped the same way. |
@@ -19,7 +19,7 @@ anything.
 | `dream.patterns.child_read_budget_kb` | whole KB, 0 to 100000 | `200` | `get_page` output the child reads in full before reads come back summarized. `0` turns it off. See [Child read budget](#child-read-budget). |
 
 ```bash
-gbrain config set dream.patterns.subagent_timeout_ms 2400000
+foresights config set dream.patterns.subagent_timeout_ms 2400000
 ```
 
 ## Updating an existing pattern page
@@ -64,7 +64,7 @@ deprecated and will be removed two releases after this one; read
 `timeline_appends` and `patterns_written` instead.
 
 **Say to your agent:** *"Did the last dream patterns run check the quotes it added to my pattern pages?"*
-The agent reads the phase result (`gbrain dream --phase patterns --json` on a
+The agent reads the phase result (`foresights dream --phase patterns --json` on a
 direct run) and reports `quote_verify.timeline_appends`.
 
 ## A page that fails quote grounding
@@ -78,11 +78,11 @@ page whose write-back is refused does not fail the run:
   `patterns_written`. The other pages still ground, the evidence watermark is
   stamped (so no new child is paid for the same evidence) and the phase warns.
 - A leftover page refused with the same content error on 3 runs, while its
-  content and the gbrain version stay the same, is held: it leaves the
+  content and the foresights version stay the same, is held: it leaves the
   leftover list and appears in `grounding_held`, and the phase keeps warning.
-  Editing the page or upgrading gbrain retries it on the next run;
-  `gbrain config unset dream.patterns.grounding_holds.<source>` followed by
-  `gbrain dream --phase patterns --once --source <source>` retries every held
+  Editing the page or upgrading foresights retries it on the next run;
+  `foresights config unset dream.patterns.grounding_holds.<source>` followed by
+  `foresights dream --phase patterns --once --source <source>` retries every held
   page now.
 - A page the child only appended timeline entries to is different: those
   entries exist in that run alone. When its write-back is refused, the entries
@@ -91,9 +91,9 @@ page whose write-back is refused does not fail the run:
   stamped. Every later run retries them first, before the evidence check and
   before any paid child, and reports the retry in `timeline_append_retry`. A
   retry that fails warns (even when the run otherwise skips). After 3 content
-  refusals at the same page content and gbrain version the page's entries are
+  refusals at the same page content and foresights version the page's entries are
   held: they stay saved, are listed in `grounding_held` with
-  `timeline_appends`, and editing the page or upgrading gbrain retries them.
+  `timeline_appends`, and editing the page or upgrading foresights retries them.
   Don't unset that key: it is the only copy of the entries still to check.
 - A lost database connection, a cancelled run, or most pages failing at once
   still fails the phase and holds nothing.
@@ -105,13 +105,13 @@ The agent reads `grounding_failed` and `grounding_held` from the phase result.
 
 Every maintenance pass writes new reflections, so the evidence check alone
 started a paid patterns child on every pass. An in-cycle run (autopilot or a
-bare `gbrain dream`) now waits `dream.patterns.min_interval_hours` (default 6)
+bare `foresights dream`) now waits `dream.patterns.min_interval_hours` (default 6)
 after the last **completed** run. A timed-out or failed child does not start
 the clock, so the next pass retries it.
 
 A skipped run reports `reason: patterns_min_interval` with
 `last_completed_at` and `next_eligible_at`, and submits nothing. A direct
-`gbrain dream --phase patterns` and `--once` are not held to the interval; a
+`foresights dream --phase patterns` and `--once` are not held to the interval; a
 direct run is paid, so ask the user first.
 
 The stamp is state, not a setting: it lives in
@@ -121,7 +121,7 @@ with their own stamp (the same key plus `.external`), so the owner pass never
 holds them back.
 
 ```bash
-gbrain config set dream.patterns.min_interval_hours 12   # 0 turns the cadence off
+foresights config set dream.patterns.min_interval_hours 12   # 0 turns the cadence off
 ```
 
 ## Child read budget
@@ -149,8 +149,8 @@ in `dream.patterns.last_run`:
 { "duration_ms": 1801000, "reflections": 100, "at": "2026-10-06T19:00:00.000Z", "outcome": "completed", "budget_skips": 0 }
 ```
 
-This is state, not a setting: `gbrain config set` refuses it, and
-`gbrain config unset dream.patterns.last_run` resets it.
+This is state, not a setting: `foresights config set` refuses it, and
+`foresights config unset dream.patterns.last_run` resets it.
 
 An in-cycle run sizes itself from that record:
 
@@ -169,7 +169,7 @@ An in-cycle run sizes itself from that record:
   old, the next cycle submits a `min_evidence`-sized probe, so the phase
   never skips forever.
 
-A direct `gbrain dream --phase patterns` has no cycle deadline: it keeps its
+A direct `foresights dream --phase patterns` has no cycle deadline: it keeps its
 full size (up to 100 reflections) and records `last_run` like an in-cycle
 run. It is the skip's `fix`; it is a paid run, so ask the user first.
 

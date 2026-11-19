@@ -1,6 +1,6 @@
 # PostgreSQL cancellation ownership
 
-GBrain ships the exact `postgres` 3.4.9 source with `patches/postgres@3.4.9.patch` already applied under `vendor/postgres`. The package-private `#postgres` import resolves directly to those bytes, so global installs do not depend on Bun applying transitive `patchedDependencies`. The patch covers the ESM, CommonJS and workerd entrypoints and their shared types. Keep the implementations equivalent, run `bash vendor/update-postgres.sh --check`, and verify isolated package and compiled installations after changing the patch. See [driver provenance and update instructions](../../vendor/README.md). An edited `node_modules` directory is not a distributable fix.
+Foresights ships the exact `postgres` 3.4.9 source with `patches/postgres@3.4.9.patch` already applied under `vendor/postgres`. The package-private `#postgres` import resolves directly to those bytes, so global installs do not depend on Bun applying transitive `patchedDependencies`. The patch covers the ESM, CommonJS and workerd entrypoints and their shared types. Keep the implementations equivalent, run `bash vendor/update-postgres.sh --check`, and verify isolated package and compiled installations after changing the patch. See [driver provenance and update instructions](../../vendor/README.md). An edited `node_modules` directory is not a distributable fix.
 
 ## Dispatch and settlement
 

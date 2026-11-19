@@ -2,7 +2,7 @@
  * GST-2492 PR 2, review findings on the held facts of memory/unattributed.
  *
  * 1. Protects: the same claim held for two entities stays two rows (the Facts table, the extract_facts upkeep step and a
- *    rebuild keep both); `gbrain repair facts-home` writes two such facts in one apply; a fact whose entity page is
+ *    rebuild keep both); `foresights repair facts-home` writes two such facts in one apply; a fact whose entity page is
  *    soft-deleted is never written to the world-readable holding page, by the repair or by a writer, and the repair lists
  *    it as `entity_page_deleted`.
  * 2. Fails when: one of two same-claim held rows is expired or never written, the repair's apply never lands because two

@@ -5,7 +5,7 @@
 //
 // Two-gate consent per A12:
 //   - takes.bootstrap_enabled (default false): must be true to run at all.
-//     Even manual `gbrain takes extract --from-pages` refuses without it.
+//     Even manual `foresights takes extract --from-pages` refuses without it.
 //   - takes.autopilot_allowed (default false): must be true for autopilot's
 //     auto-apply tier to fire the takes-bootstrap remediation.
 //
@@ -411,7 +411,7 @@ export async function extractTakesFromPages(
         const composed = appendTakesToPageBody(body, rows);
         const { operations } = await import('./operations.ts');
         const putPage = operations.filter(operation => !operation.localOnly).find(operation => operation.name === 'put_page');
-        if (!putPage) throw new Error('put_page operation missing (gbrain build issue)');
+        if (!putPage) throw new Error('put_page operation missing (foresights build issue)');
         const config = loadConfig() ?? { engine: engine.kind };
         const ctx: OperationContext = {
           engine, config, logger: { info: () => {}, warn: () => {}, error: () => {} },

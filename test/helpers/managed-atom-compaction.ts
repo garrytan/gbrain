@@ -129,7 +129,7 @@ export async function exerciseAtomCompaction(engine: BrainEngine, scenario: type
           expect(error).toMatchObject({ code: 'recovery_required' });
           const refusal = error as OperationError;
           expect(refusal.message).toContain('expired');
-          expect(refusal.suggestion ?? '').not.toContain('gbrain jobs submit');
+          expect(refusal.suggestion ?? '').not.toContain('foresights jobs submit');
           const expired = retained.find(item => item.request_id === refusal.writeRequest?.request_id)!;
           expect(expired.compacted).toBe(true);
           expect(refusal.writeRequest).toEqual(receiptFor(expired));

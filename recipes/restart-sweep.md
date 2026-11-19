@@ -569,7 +569,7 @@ tail -20 ~/.gbrain/integrations/restart-sweep/cron.log
 
 ## Step 6: Verification
 
-1. `gbrain integrations doctor` — restart-sweep's three health checks
+1. `foresights integrations doctor` — restart-sweep's three health checks
    should pass (the command runs checks for ALL configured integrations;
    it takes no per-recipe filter, so look for the restart-sweep rows)
 2. `~/.gbrain/integrations/restart-sweep/sweep.log.jsonl` exists and
@@ -645,7 +645,7 @@ the OpenClaw repo against `gbrain/minions` (see
 `docs/guides/plugin-handlers.md`). Plugin-handler advantages:
 
 - Built-in queue idempotency (no cooldown layer needed)
-- Submit via `gbrain jobs submit restart-sweep` from any cron / agent /
+- Submit via `foresights jobs submit restart-sweep` from any cron / agent /
   manual trigger
 - Centralized retry / backoff / lock management
 - One less host script to maintain

@@ -1,12 +1,12 @@
 /**
- * #7083: gbrain's ANALYZEs never cancel an autovacuum. ANALYZE takes SHARE UPDATE EXCLUSIVE, which a running
+ * #7083: foresights's ANALYZEs never cancel an autovacuum. ANALYZE takes SHARE UPDATE EXCLUSIVE, which a running
  * autovacuum holds, and Postgres cancels a (non-wraparound) autovacuum once another session has waited
  * deadlock_timeout (1 s) for it. The chunk refresh after every embed drain waited up to its 2 s lock timeout, so on a
  * 10M-chunk content_chunks every autovacuum of the table was cancelled before it finished.
  *
  * Runs in a dedicated database. It makes autovacuum vacuum content_chunks slowly (cost delay 100 ms per page, naptime
  * 1 s for the duration of the test, restored in afterAll), then, while that autovacuum holds the table, runs every
- * ANALYZE path gbrain owns on Postgres: each returns at once without waiting, and the same autovacuum is still
+ * ANALYZE path foresights owns on Postgres: each returns at once without waiting, and the same autovacuum is still
  * vacuuming content_chunks after deadlock_timeout has passed. Before the fix the first refresh cancelled it.
  * It also pins the drain rate limit (a small drain on a sampled table leaves the statistics alone) and doctor's
  * starved-autovacuum signal.
@@ -119,7 +119,7 @@ async function vacuumingPid(): Promise<number | null> {
     expect(check!.message).toContain('Autovacuum is starved: content_chunks');
   }, 60_000);
 
-  test('every ANALYZE gbrain runs defers at once while an autovacuum holds content_chunks, and the autovacuum is not cancelled', async () => {
+  test('every ANALYZE foresights runs defers at once while an autovacuum holds content_chunks, and the autovacuum is not cancelled', async () => {
     const [deadlock] = await admin!.unsafe(`SELECT setting::int AS ms FROM pg_settings WHERE name = 'deadlock_timeout'`);
     const deadlockMs = Number(deadlock!.ms);
     // A slow autovacuum of content_chunks only: 100 ms per page visited, no analyze.

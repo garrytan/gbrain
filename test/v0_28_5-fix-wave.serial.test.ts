@@ -12,7 +12,7 @@
  *      re-run initSchema and assert all migrations through LATEST_VERSION
  *      apply with no crash.
  *
- *   2. Embedding-dim corruption — `gbrain init --embedding-dimensions 768`
+ *   2. Embedding-dim corruption — `foresights init --embedding-dimensions 768`
  *      previously created a `vector(1536)` column anyway because the schema
  *      blob hardcoded the dim. After v0.28.5 (cluster B / #641) the dim
  *      flag templates end-to-end. Test: fresh PGLite init configured for
@@ -265,7 +265,7 @@ describe('v0.28.5 A4 — existing-brain dim mismatch loud failure', () => {
       // and points at the data-preserving migration, never a hand-run wipe.
       expect(msg).toContain('vector(1536)');
       expect(msg).toContain('vector(768)');
-      expect(msg).toContain('gbrain migrate embeddings --to ollama:nomic-embed-text --dim 768 --dry-run');
+      expect(msg).toContain('foresights migrate embeddings --to ollama:nomic-embed-text --dim 768 --dry-run');
       expect(msg).toContain('PGLite cannot ALTER vector column types');
       expect(msg).toContain('docs/embedding-migrations.md');
       expect(msg).not.toMatch(/\bmv /);

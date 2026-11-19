@@ -54,7 +54,7 @@ export async function maybeBackupCoverageRefresh(engine: BrainEngine): Promise<v
  * carries a link/timeline extraction backlog. It IS doctor's
  * `links_extraction_lag` (one statement and verdict, core/extraction-lag.ts),
  * so it prints iff doctor would warn (attendance-blocked pages excluded), and
- * names both routes: plain `gbrain extract --stale` (30 min per run, resumes)
+ * names both routes: plain `foresights extract --stale` (30 min per run, resumes)
  * and `--catch-up` (finishes in one run), with an estimate at its stated basis.
  * Always stderr (never stdout — keeps `--json` clean), suppressible via
  * GBRAIN_SYNC_NO_EXTRACT_NUDGE, best-effort (never throws). Source-prefix-aware
@@ -91,7 +91,7 @@ export function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = p
     write(
       `  NOTE: ${u.added + u.modified + u.deleted} uncommitted file(s) not synced ` +
       `(${u.added} untracked/added, ${u.modified} modified, ${u.deleted} deleted) — ` +
-      `commit them or run 'gbrain sync --working-tree'.`,
+      `commit them or run 'foresights sync --working-tree'.`,
     );
   switch (result.status) {
     case 'up_to_date':
@@ -120,15 +120,15 @@ export function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = p
         const retries = [...new Set((result.failures ?? []).map(failure => managedSyncRetryCommand(failure)))];
         write(retries.length
           ? `  Fix the cause, then run: ${retries.join(' ; ')} (this admits a fresh run after active work drains).`
-          : '  Fix the cause, then run gbrain sync --no-pull with the same source and options; it retries the recorded failure and admits a fresh run after active work drains.');
+          : '  Fix the cause, then run foresights sync --no-pull with the same source and options; it retries the recorded failure and admits a fresh run after active work drains.');
         break;
       }
       if (!result.toCommit) {
-        write(`Sync BLOCKED: ${result.failedFiles ?? 0} file(s) failed to import (named above); fix them, then re-run 'gbrain sync'.`);
+        write(`Sync BLOCKED: ${result.failedFiles ?? 0} file(s) failed to import (named above); fix them, then re-run 'foresights sync'.`);
         break;
       }
       write(`Sync BLOCKED at ${result.toCommit.slice(0, 8)}: ${result.failedFiles ?? 0} file(s) failed.`);
-      write(`  See ~/.gbrain/sync-failures.jsonl for details, or run 'gbrain doctor'.`);
+      write(`  See ~/.gbrain/sync-failures.jsonl for details, or run 'foresights doctor'.`);
       // #3875: code-aware recovery hint — provider-infra failures are not
       // fixed by --skip-failed (that would silently unindex good files).
       const infraCodes = (result.failureCodes ?? []).filter(c => isEmbeddingInfraCode(c.code));
@@ -137,11 +137,11 @@ export function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = p
       } else if (infraCodes.length > 0) {
         write(
           `  Embedding provider errors (${infraCodes.map(c => `${c.code} x${c.count}`).join(', ')}): ` +
-          `check provider health, then re-run 'gbrain sync' (or 'gbrain sync --full'). ` +
+          `check provider health, then re-run 'foresights sync' (or 'foresights sync --full'). ` +
           `Do NOT use --skip-failed for provider errors.`,
         );
       } else {
-        write(`  Pinpoint with 'gbrain frontmatter validate <path>', fix, then re-run 'gbrain sync', or 'gbrain sync --skip-failed' to move on.`);
+        write(`  Pinpoint with 'foresights frontmatter validate <path>', fix, then re-run 'foresights sync', or 'foresights sync --skip-failed' to move on.`);
       }
       break;
     }
@@ -154,7 +154,7 @@ export function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = p
           `Sync INCOMPLETE at ${result.fromCommit?.slice(0, 8) ?? '<initial>'}: ` +
           `git pull failed — the local checkout may be behind its remote.`,
         );
-        write(`  Fix the pull (see the warning above), then re-run 'gbrain sync' (last_commit unchanged; safe to retry).`);
+        write(`  Fix the pull (see the warning above), then re-run 'foresights sync' (last_commit unchanged; safe to retry).`);
         break;
       }
       if (result.reason === 'connector_item_failures') {
@@ -162,7 +162,7 @@ export function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = p
           `Sync PARTIAL [connector_item_failures]: ${result.failedFiles ?? 0} connector item(s) failed to import; ` +
           `${result.filesImported ?? result.added + result.modified} page(s) written.`,
         );
-        write(`  The failure reasons are in the warnings above. Fix the cause, then re-run 'gbrain sync --source <id>' (the cursor did not advance past failed items; see 'gbrain sources status <id>'). Docs: docs/guides/google-connect.md#held-items`);
+        write(`  The failure reasons are in the warnings above. Fix the cause, then re-run 'foresights sync --source <id>' (the cursor did not advance past failed items; see 'foresights sources status <id>'). Docs: docs/guides/google-connect.md#held-items`);
         break;
       }
       if (result.reason === 'connector_partial') {
@@ -170,7 +170,7 @@ export function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = p
           `Sync PARTIAL [connector_partial]: the connector stopped before finishing and reported no cause; ` +
           `${result.filesImported ?? result.added + result.modified} page(s) written.`,
         );
-        write(`  Check the warnings above (expired or revoked credentials print there), fix the cause, then re-run 'gbrain sync --source <id>'.`);
+        write(`  Check the warnings above (expired or revoked credentials print there), fix the cause, then re-run 'foresights sync --source <id>'.`);
         break;
       }
       // #5984: a managed cursor knows its manifest size; the drain summary prints the next step.
@@ -188,7 +188,7 @@ export function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = p
         `imported ${result.filesImported ?? 0} of ${result.added + result.modified} file(s), ` +
         `reason=${result.reason ?? 'timeout'}.`,
       );
-      write(`  Re-run 'gbrain sync' to continue (last_commit unchanged; safe to retry).`);
+      write(`  Re-run 'foresights sync' to continue (last_commit unchanged; safe to retry).`);
       break;
   }
   const holds = result.connectorHolds;

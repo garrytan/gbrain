@@ -357,7 +357,7 @@ export async function deltaBeliefs(engine: BrainEngine, q: BeliefChangesQuery, b
 
 /** The CLI's text for a whole window: a header, the coverage note, one line per change. */
 export function renderBeliefChanges(b: BeliefChanges): string {
-  if (b.not_recorded) return `The belief ledger is not recording ${b.source_id}; enable it with gbrain beliefs enable --source ${b.source_id}.`;
+  if (b.not_recorded) return `The belief ledger is not recording ${b.source_id}; enable it with foresights beliefs enable --source ${b.source_id}.`;
   return [`Belief changes on ${b.source_id} from ${b.since} to ${b.until}: ${b.changes.length}${b.truncated ? ' (truncated: more changed than this lists)' : ''}`,
     ...(b.coverage_from ? [`  The ledger starts at ${b.coverage_from}; changes before it are unknown, not absent.`] : []),
     ...b.changes.map(renderBeliefChange)].join('\n');

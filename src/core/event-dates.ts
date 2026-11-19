@@ -4,7 +4,7 @@
  * Three times are kept apart, matching the facts pipeline's vocabulary:
  * the observation date (when the text was written or said), the dates the
  * text mentions (when the events it describes happened), and the recorded
- * time (when GBrain stored the row, never used here). Relative phrases
+ * time (when Foresights stored the row, never used here). Relative phrases
  * ("yesterday", "two weeks ago") resolve only against a known observation
  * date; without one, only absolute dates are extracted.
  *

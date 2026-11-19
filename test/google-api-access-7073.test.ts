@@ -143,7 +143,7 @@ describe('#7073 one probe names every disabled API and missing scope', () => {
     expect(fix.next).toBe('ask_user');
     expect(fix.user_message).toContain(`https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=${PROJECT}`);
     expect(fix.user_message).toContain(`https://console.developers.google.com/apis/api/people.googleapis.com/overview?project=${PROJECT}`);
-    expect(fix.user_message).toContain(`gbrain google connect --reauth ${OWNER}`);
+    expect(fix.user_message).toContain(`foresights google connect --reauth ${OWNER}`);
     expect(fix.verify).toEqual({ argv: ['gbrain', 'google', 'status', '--json'] });
   });
 

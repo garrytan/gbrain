@@ -5,7 +5,7 @@ using your own session credential, incrementally and (opt-in) on a schedule.
 They are the LIVE front-end to the export-file lane the `conversation-archive`
 skill already documents: fetch replaces the manual download, and everything
 downstream (redaction, slugging, part-splitting, idempotency) is the exact
-`gbrain transcripts ingest` pipeline.
+`foresights transcripts ingest` pipeline.
 
 Agent sessions on this machine (Claude Code, Codex, OpenClaw, Hermes, Grok) need
 no connector: the [conversation archive](conversation-archive.md) keeps them,
@@ -25,31 +25,31 @@ the manual path.
 
 ```bash
 # 1. Connect (cookie paste-in is the primary lane; kept out of argv via stdin)
-gbrain connectors auth chatgpt --cookie -      # paste the Cookie header, Ctrl-D
-gbrain connectors auth claude  --cookie -      # paste `sessionKey=<value>`, Ctrl-D
+foresights connectors auth chatgpt --cookie -      # paste the Cookie header, Ctrl-D
+foresights connectors auth claude  --cookie -      # paste `sessionKey=<value>`, Ctrl-D
 
 # 2. First sync (preview → sample → full)
-gbrain connectors sync chatgpt --dry-run
-gbrain connectors sync chatgpt --limit 5
-gbrain connectors sync chatgpt --full
+foresights connectors sync chatgpt --dry-run
+foresights connectors sync chatgpt --limit 5
+foresights connectors sync chatgpt --full
 
 # 3. (optional) keep it synced automatically — opt-in, daily
-gbrain config set connectors.chatgpt.auto_sync true
-gbrain autopilot --install
+foresights config set connectors.chatgpt.auto_sync true
+foresights autopilot --install
 ```
 
 A usage error (no provider, an unknown provider, or `--source` without a
 value) exits 2 with an `invalid_params` error; under `--json` it is one
-envelope whose `fix` is the corrected command (`gbrain connectors sync --help`
+envelope whose `fix` is the corrected command (`foresights connectors sync --help`
 prints the usage).
 
-`gbrain connectors status` shows credential provenance/expiry and sync state
-(never the secret). `gbrain connectors logout <provider>` removes a credential.
+`foresights connectors status` shows credential provenance/expiry and sync state
+(never the secret). `foresights connectors logout <provider>` removes a credential.
 
 ### Headless lane (an agent without a terminal)
 
 The credential is the user's own browser session, so an agent cannot sign in
-for them. When `gbrain connectors auth <provider>` runs with no credential and
+for them. When `foresights connectors auth <provider>` runs with no credential and
 nobody at the terminal (no TTY, `CI`, an agent process, or
 `GBRAIN_NON_INTERACTIVE=1`), it does not wait for a paste:
 
@@ -62,14 +62,14 @@ nobody at the terminal (no TTY, `CI`, an agent process, or
 
 What the agent does: relay the `[SHOW USER]` text verbatim and ask the user to
 copy the cookie from a browser where they are logged in (never reuse, guess or
-search for one). The user can run `pbpaste | gbrain connectors auth <provider>
+search for one). The user can run `pbpaste | foresights connectors auth <provider>
 --cookie -` themselves; if they hand the value over, pass it only on stdin
-(`printf '%s' "$COOKIE" | gbrain connectors auth <provider> --cookie -`), never
+(`printf '%s' "$COOKIE" | foresights connectors auth <provider> --cookie -`), never
 in argv. A stdin that stays open without data ends after 30 seconds ("stdin
 was open but silent"; `GBRAIN_STDIN_TIMEOUT_MS` waits longer) and saves
 nothing. If the user would rather not share a session cookie, use the export
-lane (`gbrain transcripts ingest <export-file>`). Verify with
-`gbrain connectors status --json`. The full agent script lives in
+lane (`foresights transcripts ingest <export-file>`). Verify with
+`foresights connectors status --json`. The full agent script lives in
 `skills/chat-connectors/SKILL.md`.
 
 ## How it works
@@ -113,7 +113,7 @@ the watermark where it is, so the next run lists it and tries again.
 Re-imports are free (content-hash idempotency), so re-running is safe.
 
 One conversation the brain refuses (a typed refusal such as `source_changed`)
-fails alone: the rest of its batch still imports, and `gbrain connectors status
+fails alone: the rest of its batch still imports, and `foresights connectors status
 <provider> --json` shows the refusal's `code` on its row. Only a failure of the
 run itself (a lost database connection, the writer unavailable, an abort)
 stops the sync. On a managed brain, a conversation whose write was accepted but
@@ -129,8 +129,8 @@ and keeps slots for them under `--limit`. A quarantined conversation waits 1
 hour, then 6 hours, then a day between attempts; an edit at the
 provider or `--full` retries it at once. While any conversation is
 unresolved, the sync status is `partial` and the result counts `unresolved`;
-`gbrain connectors status <provider> --json` lists each one with its next
-retry time, and `gbrain doctor` warns that the archive is incomplete. Aborting
+`foresights connectors status <provider> --json` lists each one with its next
+retry time, and `foresights doctor` warns that the archive is incomplete. Aborting
 a sync or an expired cookie never counts against a conversation. When a
 `--full` listing no longer contains a failed conversation (it was deleted at
 the provider), the sync drops it and lists it under `gone`.
@@ -155,13 +155,13 @@ provider, and pages whose text grows are re-imported (and re-extracted if fact
 extraction is on). **Ask the user first**, then run:
 
 ```bash
-gbrain connectors sync <chatgpt|claude> --full
+foresights connectors sync <chatgpt|claude> --full
 ```
 
 Conversations the provider deleted, or no longer returns, can't be recovered
-this way; use the official export if you still have one (`gbrain transcripts
+this way; use the official export if you still have one (`foresights transcripts
 ingest conversations.json` re-imports it in full). Claude failures recorded
-before gbrain tracked their organization are held for the same `--full` run
+before foresights tracked their organization are held for the same `--full` run
 (the sync hint and doctor name the command).
 
 The watermark is deliberately a config scalar, **not** `op_checkpoint`:
@@ -173,10 +173,10 @@ GC'd.
 
 ## Feed imported conversations to Dream
 
-Every imported session (connectors, `gbrain transcripts ingest` of a Hermes
+Every imported session (connectors, `foresights transcripts ingest` of a Hermes
 `state.db`, Claude or ChatGPT export) is a `type: conversation` page. Dream's
 synthesize phase reads those pages from the database, in the cycle's source
-(`gbrain dream --source <id>`), beside any `dream.synthesize.session_corpus_dir`
+(`foresights dream --source <id>`), beside any `dream.synthesize.session_corpus_dir`
 files. `--date` / `--from` / `--to` filter on the page's `date` frontmatter;
 `dream.synthesize.min_chars` and `exclude_patterns` apply as for corpus files;
 a page is judged and synthesized again only after its text changes.
@@ -184,8 +184,8 @@ a page is judged and synthesized again only after its text changes.
 | Setting | Effect |
 | --- | --- |
 | `session_corpus_dir` set, `conversation_pages` unset | corpus files + conversation pages |
-| `gbrain config set dream.synthesize.conversation_pages true` | conversation pages, with or without a corpus dir |
-| `gbrain config set dream.synthesize.conversation_pages false` | corpus files only |
+| `foresights config set dream.synthesize.conversation_pages true` | conversation pages, with or without a corpus dir |
+| `foresights config set dream.synthesize.conversation_pages false` | corpus files only |
 
 With neither a corpus dir nor `conversation_pages` set, synthesis is not
 configured; when the source holds conversation pages the phase warns
@@ -199,19 +199,19 @@ Scheduled sync is **opt-in per provider** and **daily by default**. It polls you
 account on a cadence — that is your account making automated requests, so it is
 off until you enable it.
 
-- **Autopilot (preferred, harness-agnostic):** `gbrain autopilot --install`
+- **Autopilot (preferred, harness-agnostic):** `foresights autopilot --install`
   installs the right OS tick (launchd / systemd / crontab / container start
   script) and runs the dispatch. It is credential-gated and auto_sync-gated, and
-  a dead cookie stops it (and surfaces in `gbrain doctor`).
-- **Host cron (daemonless):** `0 6 * * * gbrain connectors sync --all` (daily).
-  Tune the floor with `gbrain config set connectors.sync_floor_min <minutes>`
+  a dead cookie stops it (and surfaces in `foresights doctor`).
+- **Host cron (daemonless):** `0 6 * * * foresights connectors sync --all` (daily).
+  Tune the floor with `foresights config set connectors.sync_floor_min <minutes>`
   (default 1440).
 
 `connectors.<p>.auto_sync` is the owner's switch for every unattended run:
 `connectors sync --all` syncs only providers whose `auto_sync` is on (it names
 each one it skips on stderr), and a queued `connector-sync` job rechecks it when
 it starts and returns `skipped` (`reason: auto_sync_off`) if it was turned off
-while the job waited. Only an explicit `gbrain connectors sync <provider>`
+while the job waited. Only an explicit `foresights connectors sync <provider>`
 (inline or `--background`) syncs a provider with `auto_sync` off.
 
 On PGLite (the default engine, no worker daemon) sync runs inline; on Postgres,
@@ -224,7 +224,7 @@ On PGLite (the default engine, no worker daemon) sync runs inline; on Postgres,
 | `connectors.source_id` | `default` | Source the pages land in. |
 | `connectors.sync_floor_min` | `1440` | Scheduled-sync cadence floor (minutes). |
 | `connectors.embed_kickoff_min_pages` | `25` | Embed backfill after a run importing ≥ this many pages. |
-| `connectors.doctor_stale_hours` | `72` | `gbrain doctor` flags a stalled auto-sync past this. |
+| `connectors.doctor_stale_hours` | `72` | `foresights doctor` flags a stalled auto-sync past this. |
 | `connectors.<p>.auto_sync` | off | Opt-in scheduled sync for a provider. |
 | `connectors.<p>.last_sync_at` | — | Stamped each run (staleness gate). |
 | `connectors.<p>.auth_error_at` | — | Stamped on a dead credential. |
@@ -267,7 +267,7 @@ goes through the same client: it is paced and counted like any other request.
 
 A run that stops at a bound keeps what it imported, leaves the watermark where it
 was and records no failure against the conversations it did not reach. Continue
-with `gbrain connectors sync <provider>` without `--full`: conversations already
+with `foresights connectors sync <provider>` without `--full`: conversations already
 imported are skipped, so each run gets further. (`--full` fetches every listed
 conversation again, so a history larger than the ceiling never completes in one
 `--full` run.)
@@ -296,17 +296,17 @@ the export-file lane (`conversation-archive`) — it always works.
 
 | Symptom | Cause | Fix | Who acts | Consent | Verify |
 |---|---|---|---|---|---|
-| `forbidden` | Cloudflare/bot challenge on server-side fetch | Use the official export + `gbrain transcripts ingest` | user (downloads the export); agent ingests it | none | `gbrain connectors status --json` |
-| `partial` with `stopReason: max_requests` or `deadline` | the run reached its request ceiling, `--max-requests` or `--deadline` ([request bounds](#request-bounds)) | Run `gbrain connectors sync <provider>` again, without `--full`; imported conversations are skipped | agent | `credentials` | `gbrain connectors status --json` |
-| `connectors sync --all` prints `Skipped <p>: connectors.<p>.auto_sync is off` | that provider's owner has not opted in to unattended sync | Nothing, or sync it once explicitly with `gbrain connectors sync <p>`; `gbrain config set connectors.<p>.auto_sync true` opts in | user (decides on unattended sync) | `credentials` | `gbrain config get connectors.<p>.auto_sync` |
-| `rate_limited` | the provider kept answering 429 after four retries, or asked for a wait over two minutes | Wait, then re-run; the next sync resumes where this one stopped. Don't loop it | agent | `credentials` | `gbrain connectors status --json` |
-| `auth_required` with "cannot carry" in the hint | the saved cookie or token holds a line break, control or non-ASCII character (`invalid_header_value`); nothing was sent | Re-copy the Cookie header on one line, `gbrain connectors auth` | user (copies the cookie) | `credentials` | `gbrain connectors status --json` |
-| `auth_required` | cookie expired/invalid | Re-copy a fresh Cookie header, `gbrain connectors auth` | user (copies a fresh Cookie header) | `credentials` | `gbrain connectors status --json` |
-| `connectors auth` exits 1 with an `[AGENT]` cookie checklist | no credential and nobody at the terminal ([headless lane](#headless-lane-an-agent-without-a-terminal)) | Relay the `[SHOW USER]` checklist; the user pipes the cookie into `gbrain connectors auth <provider> --cookie -` | user (copies the cookie) | `credentials` | `gbrain connectors status --json` |
-| `partial` | a conversation failed to fetch or import, the conversation list failed, or `--limit` capped the run | Re-run. A failed conversation is retried and holds the watermark until it imports. One that failed three times at the same update time is quarantined instead: it no longer holds the watermark and later syncs retry it on a backoff until it imports | agent | `credentials` (fetches from the provider again with the saved session) | `gbrain connectors status --json` |
-| `partial` with `unresolved`, doctor says "archive incomplete" | conversations not archived yet | Nothing to do: sync retries them automatically. If `held` lists ids (or doctor's fix names `--full`), ask the user, then run `gbrain connectors sync <provider> --full` ([recovery](#recovering-an-archive-synced-before-this-fix)) | agent | `credentials` (`--full` re-downloads the whole history with the saved session) | `gbrain connectors status <provider> --json` |
-| conversations or long-message tails synced before this fix are missing | lost before the fix; nothing records them | Ask the user, then run `gbrain connectors sync <provider> --full` once ([recovery](#recovering-an-archive-synced-before-this-fix)) | agent | `credentials` | `gbrain connectors status <provider> --json` |
-| receipt shows drift | provider API shape changed | Affected threads skipped (not lost); export lane still works | agent (reports it) | none | `gbrain connectors status --json` |
+| `forbidden` | Cloudflare/bot challenge on server-side fetch | Use the official export + `foresights transcripts ingest` | user (downloads the export); agent ingests it | none | `foresights connectors status --json` |
+| `partial` with `stopReason: max_requests` or `deadline` | the run reached its request ceiling, `--max-requests` or `--deadline` ([request bounds](#request-bounds)) | Run `foresights connectors sync <provider>` again, without `--full`; imported conversations are skipped | agent | `credentials` | `foresights connectors status --json` |
+| `connectors sync --all` prints `Skipped <p>: connectors.<p>.auto_sync is off` | that provider's owner has not opted in to unattended sync | Nothing, or sync it once explicitly with `foresights connectors sync <p>`; `foresights config set connectors.<p>.auto_sync true` opts in | user (decides on unattended sync) | `credentials` | `foresights config get connectors.<p>.auto_sync` |
+| `rate_limited` | the provider kept answering 429 after four retries, or asked for a wait over two minutes | Wait, then re-run; the next sync resumes where this one stopped. Don't loop it | agent | `credentials` | `foresights connectors status --json` |
+| `auth_required` with "cannot carry" in the hint | the saved cookie or token holds a line break, control or non-ASCII character (`invalid_header_value`); nothing was sent | Re-copy the Cookie header on one line, `foresights connectors auth` | user (copies the cookie) | `credentials` | `foresights connectors status --json` |
+| `auth_required` | cookie expired/invalid | Re-copy a fresh Cookie header, `foresights connectors auth` | user (copies a fresh Cookie header) | `credentials` | `foresights connectors status --json` |
+| `connectors auth` exits 1 with an `[AGENT]` cookie checklist | no credential and nobody at the terminal ([headless lane](#headless-lane-an-agent-without-a-terminal)) | Relay the `[SHOW USER]` checklist; the user pipes the cookie into `foresights connectors auth <provider> --cookie -` | user (copies the cookie) | `credentials` | `foresights connectors status --json` |
+| `partial` | a conversation failed to fetch or import, the conversation list failed, or `--limit` capped the run | Re-run. A failed conversation is retried and holds the watermark until it imports. One that failed three times at the same update time is quarantined instead: it no longer holds the watermark and later syncs retry it on a backoff until it imports | agent | `credentials` (fetches from the provider again with the saved session) | `foresights connectors status --json` |
+| `partial` with `unresolved`, doctor says "archive incomplete" | conversations not archived yet | Nothing to do: sync retries them automatically. If `held` lists ids (or doctor's fix names `--full`), ask the user, then run `foresights connectors sync <provider> --full` ([recovery](#recovering-an-archive-synced-before-this-fix)) | agent | `credentials` (`--full` re-downloads the whole history with the saved session) | `foresights connectors status <provider> --json` |
+| conversations or long-message tails synced before this fix are missing | lost before the fix; nothing records them | Ask the user, then run `foresights connectors sync <provider> --full` once ([recovery](#recovering-an-archive-synced-before-this-fix)) | agent | `credentials` | `foresights connectors status <provider> --json` |
+| receipt shows drift | provider API shape changed | Affected threads skipped (not lost); export lane still works | agent (reports it) | none | `foresights connectors status --json` |
 
 ## v2 roadmap
 

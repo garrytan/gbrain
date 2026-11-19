@@ -1,4 +1,4 @@
-/** GST-363: `gbrain serve --stdio-member <id>`, parsed and read back from a harness entry. Kept apart from mcp-registration.ts so serve and doctor import only this flag. */
+/** GST-363: `foresights serve --stdio-member <id>`, parsed and read back from a harness entry. Kept apart from mcp-registration.ts so serve and doctor import only this flag. */
 import { ACCESS_ID_RE } from './access/principals.ts';
 
 /**
@@ -19,7 +19,7 @@ export function parseStdioMemberFlag(args: readonly string[]): string | undefine
   if (values.length > 1) throw new Error(`${STDIO_MEMBER_FLAG} was given ${values.length} times; pass one member id.`);
   const id = values[0];
   if (id === undefined || !ACCESS_ID_RE.test(id)) {
-    throw new Error(`${STDIO_MEMBER_FLAG} needs a member id (lowercase letters, digits, '.', '_' or '-'; gbrain access member list names them). Got: ${id === undefined ? '(missing value)' : JSON.stringify(id)}`);
+    throw new Error(`${STDIO_MEMBER_FLAG} needs a member id (lowercase letters, digits, '.', '_' or '-'; foresights access member list names them). Got: ${id === undefined ? '(missing value)' : JSON.stringify(id)}`);
   }
   return id;
 }

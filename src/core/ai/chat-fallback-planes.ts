@@ -156,7 +156,7 @@ export function diagnoseChatFallbackEntry(
   if (!cred.present) return { entry, provider: recipe.id, credential: cred.how, problem: 'no_credential', detail: `${recipe.name} needs ${cred.how}, which is not present.` };
   if (ctx.userCapKeys.length > 0 && !isModelPriceable(entry, 'chat', ctx.pricingOverrides)) {
     return { entry, provider: recipe.id, credential: cred.how, problem: 'unpriced_under_cap',
-      detail: `gbrain has no price for ${entry}, and a cost cap the user set (${ctx.userCapKeys.join(', ')}) refuses unpriced models.` };
+      detail: `foresights has no price for ${entry}, and a cost cap the user set (${ctx.userCapKeys.join(', ')}) refuses unpriced models.` };
   }
   return { entry, provider: recipe.id, credential: cred.how };
 }
@@ -164,29 +164,29 @@ export function diagnoseChatFallbackEntry(
 export const CHAT_FALLBACK_PLANE_LABEL: Record<ChatFallbackPlane, string> = {
   env: `the ${CHAT_FALLBACK_ENV} environment variable`,
   file: 'config.json',
-  db: 'the brain database (gbrain config set)',
+  db: 'the brain database (foresights config set)',
 };
 
 /**
  * Per-plane removal guidance. Optional: the user decides. DB: the agent may
- * run `gbrain config unset` after the user agrees (`ask_user`). Env and file:
+ * run `foresights config unset` after the user agrees (`ask_user`). Env and file:
  * only the user can change them (`tell_user_to_run` / `report`), and a
  * long-lived process keeps the old value until it restarts.
  */
 export function chatFallbackRemovalFix(plane: ChatFallbackPlane, filePath: string, reason = 'Removing it makes chat calls use only their own model.'): Action {
-  const restart = 'A long-lived process (gbrain serve, autopilot, a worker) keeps the old value until it restarts.';
+  const restart = 'A long-lived process (foresights serve, autopilot, a worker) keeps the old value until it restarts.';
   const base = { consent: ['destructive' as const], requires_exclusive: false, verify: { argv: ['gbrain', 'doctor', '--only', 'chat_fallback_chain', '--json'] }, docs: 'docs/guides/chat-fallback.md' };
   if (plane === 'db') {
     return { ...base, argv: ['gbrain', 'config', 'unset', 'chat_fallback_chain'], actor: 'agent',
       why: `The chain is stored in the brain database. ${reason} Optional: ask the user first. ${restart}`,
-      user_message: 'A chat fallback chain is stored in your brain. Do you want it removed (gbrain config unset chat_fallback_chain)? Chat calls would then use only their own model.' };
+      user_message: 'A chat fallback chain is stored in your brain. Do you want it removed (foresights config unset chat_fallback_chain)? Chat calls would then use only their own model.' };
   }
   if (plane === 'env') {
     return { ...base, argv: ['unset', CHAT_FALLBACK_ENV], actor: 'user',
-      why: `The chain comes from ${CHAT_FALLBACK_ENV}. ${reason} Only the user can remove it from the environment that launches gbrain (shell profile, service unit, MCP client config). ${restart}`,
-      user_message: `To remove the chat fallback chain, delete ${CHAT_FALLBACK_ENV} from the environment that starts gbrain, then restart any running gbrain serve or autopilot.` };
+      why: `The chain comes from ${CHAT_FALLBACK_ENV}. ${reason} Only the user can remove it from the environment that launches foresights (shell profile, service unit, MCP client config). ${restart}`,
+      user_message: `To remove the chat fallback chain, delete ${CHAT_FALLBACK_ENV} from the environment that starts foresights, then restart any running foresights serve or autopilot.` };
   }
   return { ...base, actor: 'user',
     why: `The chain is the chat_fallback_chain key in ${filePath}. ${reason} Only the user edits that file. ${restart}`,
-    user_message: `To remove the chat fallback chain, delete the "chat_fallback_chain" key from ${filePath}, then restart any running gbrain serve or autopilot.` };
+    user_message: `To remove the chat fallback chain, delete the "chat_fallback_chain" key from ${filePath}, then restart any running foresights serve or autopilot.` };
 }

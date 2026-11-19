@@ -405,7 +405,7 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
     expect(remainingPages[0].n).toBe(0);
   });
 
-  test('gbrain#5452 — epoch or missing archive timestamps are never purge-eligible and are reported', async () => {
+  test('foresights#5452 — epoch or missing archive timestamps are never purge-eligible and are reported', async () => {
     const epochId = 'pe-epoch';
     const nullId = 'pe-null-expiry';
     await seedSource(engine, epochId, { withPages: 1 });
@@ -435,7 +435,7 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
     await engine.executeRaw(`DELETE FROM sources WHERE id IN ($1, $2)`, [epochId, nullId]);
   });
 
-  test('gbrain#5452 — a missing/epoch archived_at refuses purge even with a normal past expiry', async () => {
+  test('foresights#5452 — a missing/epoch archived_at refuses purge even with a normal past expiry', async () => {
     const epochArchId = 'pe-epoch-arch';
     const nullArchId = 'pe-null-arch';
     await seedSource(engine, epochArchId, { withPages: 1 });
@@ -464,7 +464,7 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
     await engine.executeRaw(`DELETE FROM sources WHERE id IN ($1, $2)`, [epochArchId, nullArchId]);
   });
 
-  test('gbrain#5452 — timestamps flipped to epoch/missing after candidate selection are refused at delete time', async () => {
+  test('foresights#5452 — timestamps flipped to epoch/missing after candidate selection are refused at delete time', async () => {
     const flipExpiryId = 'pe-flip-expiry';
     const flipArchId = 'pe-flip-arch';
     await seedSource(engine, flipExpiryId, { withPages: 1 });
@@ -509,7 +509,7 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
     await engine.executeRaw(`DELETE FROM sources WHERE id IN ($1, $2)`, [flipExpiryId, flipArchId]);
   });
 
-  test('gbrain#4115 — an FK-blocked source is reported and skipped; the deletable one still purges', async () => {
+  test('foresights#4115 — an FK-blocked source is reported and skipped; the deletable one still purges', async () => {
     const blockedId = 'pe-fk-blocked';
     const deletableId = 'pe-fk-deletable';
     await seedSource(engine, blockedId, { withPages: 1 });
@@ -568,11 +568,11 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
     },
   }) as never;
 
-  test('gbrain#4115 — a NON-FK error re-raises instead of reading as blocked (review gap G8)', async () => {
+  test('foresights#4115 — a NON-FK error re-raises instead of reading as blocked (review gap G8)', async () => {
     await expect(purgeExpiredSources(nonFkStub('08006', 'Connection terminated unexpectedly'))).rejects.toThrow('Connection terminated');
     const { purged, blocked } = await purgeExpiredSources(nonFkStub('57014', 'canceling statement due to statement timeout'));
     expect(purged).toEqual([]);
-    expect(blocked.map(b => [b.id, b.code, b.fix?.next, b.fix?.command])).toEqual([['boom', 'statement_timeout', 'tell_user_to_run', 'gbrain sources purge boom --confirm-destructive']]);
+    expect(blocked.map(b => [b.id, b.code, b.fix?.next, b.fix?.command])).toEqual([['boom', 'statement_timeout', 'tell_user_to_run', 'foresights sources purge boom --confirm-destructive']]);
     expect(blocked[0]!.reason).toContain('statement timeout');
     expect(blocked[0]!.reason).not.toContain('foreign key');
   });
@@ -658,7 +658,7 @@ describe('FK-RESTRICT lifecycle (clientsReferencingSource + purge skip)', () => 
     expect(block).toContain('Cannot delete source "fk-soft-only"');
     expect(block).toContain('Revoked-but-retained rows still block the FK');
     expect(block).toContain('hard-deletes them');
-    expect(block).toContain('gbrain auth revoke-client "cl-soft-only"');
+    expect(block).toContain('foresights auth revoke-client "cl-soft-only"');
     // No live rows → no live-revoke section.
     expect(block).not.toContain('Revoke each live client first');
   });
@@ -742,10 +742,10 @@ describe('FK-RESTRICT lifecycle (clientsReferencingSource + purge skip)', () => 
     expect(block).toContain('Agent Two (client-2)  [revoked, retained]');
     // Live rows get the hard-delete revoke guidance...
     expect(block).toContain('Revoke each live client first');
-    expect(block).toContain('gbrain auth revoke-client "client-1"');
+    expect(block).toContain('foresights auth revoke-client "client-1"');
     // ...soft-deleted rows get the retained-rows-still-block guidance.
     expect(block).toContain('Revoked-but-retained rows still block the FK');
-    expect(block).toContain('gbrain auth revoke-client "client-2"');
+    expect(block).toContain('foresights auth revoke-client "client-2"');
   });
 
   test('degrade ladder: missing oauth_clients table → [], missing deleted_at → all referents, other errors propagate', async () => {

@@ -1,5 +1,5 @@
 /**
- * `gbrain repair timeline-comments` (#6184): junk timeline rows filed from HTML
+ * `foresights repair timeline-comments` (#6184): junk timeline rows filed from HTML
  * comments, and the materialized bullets that copied a section END marker into
  * the page, are cleaned through coordinated writes; preview first, a second
  * apply is a no-op, valid bullets are untouched. Runs on PGLite and, through
@@ -83,7 +83,7 @@ test('preview counts junk rows and bullets; apply cleans them; a second apply is
         const scope = await resolveRepairScope(engine, sourceId);
         const timelinePreview = async () => (await repairRunner(engine, { apply: false, logger })).run('timeline', scope, { sourceFlag: sourceId });
         expect((await timelinePreview()).warnings?.join('\n')).toContain(`timeline_comment_markup: 2 timeline row(s)`);
-        expect((await timelinePreview()).warnings?.join('\n')).toContain(`gbrain repair timeline-comments --source ${sourceId}`);
+        expect((await timelinePreview()).warnings?.join('\n')).toContain(`foresights repair timeline-comments --source ${sourceId}`);
         const preview = await (await repairRunner(engine, { apply: false, logger })).run('timeline-comments', scope, { explicit: true, sourceFlag: sourceId });
         expect(preview).toMatchObject({ mode: 'dry_run', affected: 1, residuals: { comment_only_rows: 1, comment_bearing_rows: 1, pages_with_comment_bullets: 1 } });
         expect(await stored()).toContain(junkBullet(junkOnly));

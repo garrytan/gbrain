@@ -17,9 +17,9 @@ export interface RemediationEntry {
 
 const DOCS_PATH = 'docs/guides/skillopt.md';
 
-const RAISE_CAP = 'The optimizer ran out of output tokens. Raise the cap: --reflect-max-tokens <n> or gbrain config set skillopt.reflect_max_tokens <n>.';
+const RAISE_CAP = 'The optimizer ran out of output tokens. Raise the cap: --reflect-max-tokens <n> or foresights config set skillopt.reflect_max_tokens <n>.';
 const CONTRACT = 'The optimizer is not following the edits JSON contract. Try a different --optimizer-model.';
-const PROVIDER = 'The optimizer provider call failed. Check the provider (gbrain models doctor), then resume the run.';
+const PROVIDER = 'The optimizer provider call failed. Check the provider (foresights models doctor), then resume the run.';
 const CONTEXT = 'The optimizer context window cannot hold the prompt plus the output cap. Lower --reflect-max-tokens / skillopt.reflect_max_tokens, or use an --optimizer-model with a larger context window.';
 
 const FIXES: Readonly<Record<string, string>> = {
@@ -35,9 +35,9 @@ const FIXES: Readonly<Record<string, string>> = {
   one_shot_rewrite_body_truncated: 'The skill body does not fit the optimizer context. Lower --reflect-max-tokens / skillopt.reflect_max_tokens (the output cap shares the window), use a larger-context --optimizer-model, or use the default reflect mode.',
   one_shot_rewrite_empty_reply: CONTRACT,
   one_shot_rewrite_failed: PROVIDER,
-  budget_exhausted: 'Raise --max-cost-usd (cycle runs: gbrain config set cycle.skillopt.per_skill_cap_usd <usd>). Each optimizer call reserves its full output cap, so lowering --reflect-max-tokens / skillopt.reflect_max_tokens also helps.',
+  budget_exhausted: 'Raise --max-cost-usd (cycle runs: foresights config set cycle.skillopt.per_skill_cap_usd <usd>). Each optimizer call reserves its full output cap, so lowering --reflect-max-tokens / skillopt.reflect_max_tokens also helps.',
   runtime_exceeded: 'Raise --max-runtime-min, then resume the run.',
-  reservation_exceeds_cap: 'One call alone reserves more than the cost cap, so no model call was made. Lower --reflect-max-tokens / skillopt.reflect_max_tokens, pick a cheaper model, or raise --max-cost-usd (cycle runs: gbrain config set cycle.skillopt.per_skill_cap_usd <usd>).',
+  reservation_exceeds_cap: 'One call alone reserves more than the cost cap, so no model call was made. Lower --reflect-max-tokens / skillopt.reflect_max_tokens, pick a cheaper model, or raise --max-cost-usd (cycle runs: foresights config set cycle.skillopt.per_skill_cap_usd <usd>).',
 };
 
 /** Every code that can appear in `remediation[].code` (docs table pins this). */

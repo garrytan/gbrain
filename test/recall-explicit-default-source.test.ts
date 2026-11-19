@@ -41,7 +41,7 @@ describe('#5535 explicit --source default (local engine)', () => {
 
   beforeAll(async () => {
     // A throwaway PGLite brain created in-process (config-set-unknown-flag's
-    // pattern) — `gbrain init` would also run the shared-skills/managed
+    // pattern) — `foresights init` would also run the shared-skills/managed
     // marker writes, which this test does not exercise.
     home = mkdtempSync(join(tmpdir(), 'gbrain-recall-5535-'));
     mkdirSync(join(home, '.gbrain'), { recursive: true });

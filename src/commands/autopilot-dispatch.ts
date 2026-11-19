@@ -1,5 +1,5 @@
 /**
- * One Minions-dispatch tick of the `gbrain autopilot` daemon: per-source
+ * One Minions-dispatch tick of the `foresights autopilot` daemon: per-source
  * freshness syncs, the extract_atoms auto-drain, then the remediation plan
  * routed to a sleep, a full per-source cycle fan-out or targeted handler
  * submits. Called by runAutopilotDaemon (src/commands/autopilot-daemon.ts).
@@ -272,7 +272,7 @@ export function connectorAwaitingFirstSync(src: { id: string; config: unknown },
   if (attempted?.has(src.id)) return false;
   if (!connectorNoticePrinted.has(src.id)) {
     connectorNoticePrinted.add(src.id);
-    const command = `gbrain sync --source ${src.id}`;
+    const command = `foresights sync --source ${src.id}`;
     write(jsonMode ? JSON.stringify({ event: 'connector_awaiting_first_sync', source_id: src.id, command })
       : `[dispatch] ${src.id}: ${kind} source has never synced; autopilot keeps it synced after its first sync. Enable it with: ${command}`);
   }
@@ -334,7 +334,7 @@ const reportedRefusalJobs = new Set<number>();
  * the freshness dispatch stops queueing a new one per slot and per commit. A source's refusals since its last completed
  * sync job (looking back a day) hold it for the autopilot failure cooldown of that count (10 minutes doubling to the
  * 2-hour cap; `autopilot.failure_cooldown_min` / `_cap_min`, 0 disables), counted from the newest refusal. A completed
- * sync job clears the hold; an explicit `gbrain sync --source <id>` is never held. Fails open (no holds) on a read error.
+ * sync job clears the hold; an explicit `foresights sync --source <id>` is never held. Fails open (no holds) on a read error.
  */
 export async function readSyncRefusalHolds(engine: BrainEngine, now = Date.now()): Promise<Map<string, SyncRefusalHold>> {
   const holds = new Map<string, SyncRefusalHold>();
@@ -371,7 +371,7 @@ function skipRefusedSync(holds: ReadonlyMap<string, SyncRefusalHold>, sourceId: 
     process.stderr.write((jsonMode
       ? JSON.stringify({ event: 'freshness_sync_refused', source_id: sourceId, job_id: hold.job_id, code: hold.code, refusals: hold.count, retry_at: retryAt })
       : `[dispatch] sync of ${sourceId} waits until ${retryAt}: its last sync job #${hold.job_id} was refused (${hold.code}) and would be refused again. `
-        + `gbrain jobs get ${hold.job_id} --json shows the fix; after fixing it, gbrain sync --source ${sourceId} runs now.`) + '\n');
+        + `foresights jobs get ${hold.job_id} --json shows the fix; after fixing it, foresights sync --source ${sourceId} runs now.`) + '\n');
   }
   return true;
 }
@@ -416,7 +416,7 @@ export async function dispatchFreshnessSyncs(
         if (!src.local_path) continue;
         // #4399 / #5198 / P4.2 (supersedes #6465): one predicate decides whether AUTOMATIC sync runs for this source
         // (disabled config, claim awaiting activation, gbrain-owned content directory where sync does not apply); the
-        // reason is stated once per source and reason, and an explicit `gbrain sync --source <id>` is unaffected.
+        // reason is stated once per source and reason, and an explicit `foresights sync --source <id>` is unaffected.
         const skip = await automaticSyncSkip(engine, src, activationPending);
         if (skip?.reason !== 'sync_disabled') reportAutomaticSyncSkip(src.id, skip, 'freshness_sync_skipped', jsonMode, (l) => process.stderr.write(l + '\n'));
         if (skip) decisions.push({ source_id: src.id, outcome: 'skipped' });
@@ -847,7 +847,7 @@ async function computeAutopilotPlan(engine: BrainEngine, repoPath: string, jsonM
     embeddingModel = (await engine.getConfig('embedding_model')) ?? undefined;
   }
   // #2662 (codex round-3): HOSTED_EMBED_KEY_CONFIG entries are keys
-  // buildGatewayConfig folds from the FILE plane only — `gbrain config
+  // buildGatewayConfig folds from the FILE plane only — `foresights config
   // set <key> X` writes the DB plane, which never reaches the gateway
   // for these fields. Reading via engine.getConfig() here (DB plane)
   // would report a provider "configured" from a DB-only key that the

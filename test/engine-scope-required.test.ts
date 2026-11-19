@@ -1,6 +1,6 @@
 /**
  * GBRA-283 B3a: in a process that holds engines opened from settings, an AI call decides by scope presence alone. In an
- * embedded engine's scope it uses that engine's providers; in a local scope (withLocalScope, entered by the CLI, gbrain
+ * embedded engine's scope it uses that engine's providers; in a local scope (withLocalScope, entered by the CLI, foresights
  * serve and the jobs worker, or a non-embedded engine's scope) it uses the process gateway; with no scope at all it
  * refuses engine_scope_required, whatever process gateway the host configured. Every provider is a transport stub.
  */

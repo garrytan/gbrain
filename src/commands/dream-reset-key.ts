@@ -1,5 +1,5 @@
 /**
- * `gbrain dream reset-key <base-key>` / `gbrain dream reset-key --list [--json]`
+ * `foresights dream reset-key <base-key>` / `foresights dream reset-key --list [--json]`
  * — the operator controls for the dream paid-loop breaker (dream-breaker.ts).
  */
 import type { BrainEngine } from '../core/engine.ts';
@@ -13,8 +13,8 @@ import { opError } from '../core/ops/contract.ts';
 import { usageError, writeCliRefusal } from '../cli/cli-error.ts';
 import { printHelpText } from '../cli/help/render.ts';
 
-const HELP = `Usage: gbrain dream reset-key <base-key>
-       gbrain dream reset-key --list [--json]
+const HELP = `Usage: foresights dream reset-key <base-key>
+       foresights dream reset-key --list [--json]
 
 The paid-loop breaker refuses to resubmit a dream synthesize or patterns key
 whose submissions died ${'`'}${DREAM_BREAKER_CONFIG_KEY}${'`'} times (default 3) within 24 hours.
@@ -39,13 +39,13 @@ export async function runDreamResetKey(engine: BrainEngine | null, args: string[
   const json = args.includes('--json');
   const positional = args.filter(arg => !arg.startsWith('--'));
   if (list === (positional.length === 1) || positional.length > 1) {
-    setCliExitVerdict(writeCliRefusal(usageError('gbrain dream reset-key takes exactly one of <base-key> or --list.',
-      'Example: gbrain dream reset-key --list --json'), 'dream', { json, human: HELP }));
+    setCliExitVerdict(writeCliRefusal(usageError('foresights dream reset-key takes exactly one of <base-key> or --list.',
+      'Example: foresights dream reset-key --list --json'), 'dream', { json, human: HELP }));
     return;
   }
   if (!engine) {
-    setCliExitVerdict(writeCliRefusal(opError('database_error', 'gbrain dream reset-key needs the brain database; the connection failed.',
-      'Fix the brain connection (`gbrain doctor --json` names the cause), then retry.'), 'dream', { json }));
+    setCliExitVerdict(writeCliRefusal(opError('database_error', 'foresights dream reset-key needs the brain database; the connection failed.',
+      'Fix the brain connection (`foresights doctor --json` names the cause), then retry.'), 'dream', { json }));
     return;
   }
   if (list) {
@@ -64,8 +64,8 @@ export async function runDreamResetKey(engine: BrainEngine | null, args: string[
   }
   const baseKey = dreamBreakerBaseKey(positional[0]!);
   if (!DREAM_RESETTABLE_KEY_PREFIXES.some(prefix => baseKey.startsWith(prefix))) {
-    setCliExitVerdict(writeCliRefusal(usageError(`Not a dream breaker key: ${baseKey}. Keys start with ${DREAM_RESETTABLE_KEY_PREFIXES.join(', ')}; run gbrain dream reset-key --list.`,
-      'Run `gbrain dream reset-key --list --json` for the tripped keys and their reset commands.'), 'dream', { json }));
+    setCliExitVerdict(writeCliRefusal(usageError(`Not a dream breaker key: ${baseKey}. Keys start with ${DREAM_RESETTABLE_KEY_PREFIXES.join(', ')}; run foresights dream reset-key --list.`,
+      'Run `foresights dream reset-key --list --json` for the tripped keys and their reset commands.'), 'dream', { json }));
     return;
   }
   const before = (await countDeadDreamSubmissions(engine)).find(row => row.base_key === baseKey)?.dead_submissions ?? 0;

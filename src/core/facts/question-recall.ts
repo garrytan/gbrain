@@ -152,7 +152,7 @@ async function questionEmbedding(ctx: OperationContext, question: string): Promi
 function rankingUnavailable(p: Record<string, unknown>, error: unknown) {
   const args = callArgs(p);
   const verify: Action['verify'] = { argv: ['gbrain', 'doctor', '--json'] };
-  const e = opError('unavailable', 'recall could not rank facts for this question: the facts read failed.', 'Retry the same call in a few seconds; if it keeps failing, run `gbrain doctor --json`.', {
+  const e = opError('unavailable', 'recall could not rank facts for this question: the facts read failed.', 'Retry the same call in a few seconds; if it keeps failing, run `foresights doctor --json`.', {
     reason: 'facts_read_failed',
     why: `Reading the fact candidates failed (${error instanceof Error ? error.message.slice(0, 160) : 'unknown error'}); an empty list here would read as "no saved facts".`,
     fix: { argv: recallArgv(args), mcp: { tool: 'recall', arguments: args }, consent: [], actor: 'provider', requires_exclusive: false, why: 'Retry the same recall after a few seconds.', verify },

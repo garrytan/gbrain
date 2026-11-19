@@ -11,6 +11,7 @@ import { isParked, PURGE_PARK_LIMIT, readPurgeParks } from '../../../core/persis
 import { finishPurgeArgv, readDerivedOriginParks } from '../../../core/persistence/derived-origin-hold.ts';
 import { agentFix, checkError, doctorVerify } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { commandText } from '../../../core/brand.ts';
 
 const NAME = 'purge_parked_pages';
 const SAMPLE = 20;
@@ -63,13 +64,13 @@ export async function checkDerivedOriginParked(engine: BrainEngine): Promise<Che
   if (!parks.length) return { name: ORIGIN_NAME, status: 'ok', message: 'No soft-deleted page is kept from the purge to keep a page derived from it private.', details: { parked: 0, origins: [] } };
   const origins = parks.slice(0, SAMPLE).map(park => ({ source_id: park.source_id, slug: park.slug, blocking_slug: park.blocking_slug, code: park.code, reason: park.reason, parked_at: park.parked_at,
     ...(park.held_request_id ? { held_request_id: park.held_request_id, finish_argv: finishPurgeArgv(park.source_id, park.slug) } : {}) }));
-  const finish = origins.filter(origin => origin.finish_argv).map(origin => `${origin.finish_argv!.join(' ')} (held request_id ${origin.held_request_id})`);
+  const finish = origins.filter(origin => origin.finish_argv).map(origin => `${commandText(origin.finish_argv!)} (held request_id ${origin.held_request_id})`);
   const listed = origins.map(origin => `${origin.source_id}/${origin.slug} (blocked by ${origin.blocking_slug ?? 'a derived page that could not be read'}: ${origin.code ?? 'error'}: ${origin.reason})`).join(', ');
   const first = origins.find(origin => origin.blocking_slug);
   return {
     name: ORIGIN_NAME, status: 'warn', details: { parked: parks.length, truncated: parks.length > origins.length, origins },
     message: `${parks.length} soft-deleted page(s) are kept from the purge, because a page derived from each reads as private only through it and could not be labelled private: ${listed}`
-      + `${parks.length > origins.length ? ` (first ${origins.length} of ${parks.length} shown)` : ''}. Fix the cause each reason names, or give the blocking page its own visibility label; the next purge labels the rest and frees the origin, and the purge after removes it (a consented gbrain pages purge-deleted does both).`
+      + `${parks.length > origins.length ? ` (first ${origins.length} of ${parks.length} shown)` : ''}. Fix the cause each reason names, or give the blocking page its own visibility label; the next purge labels the rest and frees the origin, and the purge after removes it (a consented foresights pages purge-deleted does both).`
       + `${finish.length ? ` An owner purge of ${finish.length} of them was held: once its blocking page is labelled, finish it as a new request with ${finish.join('; ')}, which writes the purge tombstones the automatic purge does not.` : ''}`,
     ...(first ? { fix: agentFix(['gbrain', 'repair', 'visibility', '--source', first.source_id, '--slug', first.blocking_slug!],
       'Previews giving the blocking page its own visibility label; nothing is written.', ORIGIN_NAME) } : {}),

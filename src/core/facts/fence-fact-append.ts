@@ -91,7 +91,7 @@ async function insertFenceFactRow(tx: BrainEngine, row: WriteRequest, rowNum: nu
   throw opError('storage_error', 'The new canonical fact row was not indexed.',
     `The fact row for request ${row.request_id} in source ${row.source_id} was not indexed, so its transaction rolled back.`
     + (occupant ? ` Row ${rowNum} of ${row.slug} is already held by fact ${occupant.id}.` : '')
-    + ' Inspect the request before submitting it again; if it repeats, run gbrain doctor --json and report it to the user.',
+    + ' Inspect the request before submitting it again; if it repeats, run foresights doctor --json and report it to the user.',
     { fix: requestReceiptFix(row) });
 }
 
@@ -135,7 +135,7 @@ export async function prepareFenceFactAppend(engine: BrainEngine, row: WriteRequ
   const page = { sourceId: row.source_id, slug: row.slug };
   if (!snapshot && (!isHoldingSlug(row.slug) || input.mode === 'index-existing')) {
     throw opError('storage_error', 'The facts fence target page does not exist.',
-      `Request ${row.request_id} writes a facts row on ${row.slug} in source ${row.source_id}, which has no page, so nothing was written. Inspect the request; if it repeats, run gbrain doctor --json and report it to the user.`,
+      `Request ${row.request_id} writes a facts row on ${row.slug} in source ${row.source_id}, which has no page, so nothing was written. Inspect the request; if it repeats, run foresights doctor --json and report it to the user.`,
       { fix: requestReceiptFix(row) });
   }
   // Wave B: a segmented page is read back whole up to the single-string ceiling.

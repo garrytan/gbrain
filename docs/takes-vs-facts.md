@@ -1,6 +1,6 @@
 # Takes vs Facts — Architectural Distinction
 
-gbrain has two epistemological storage layers that serve different purposes.
+foresights has two epistemological storage layers that serve different purposes.
 **Never conflate them.**
 
 ## Takes (cold storage — `takes` table)
@@ -19,25 +19,25 @@ The epistemological layer. WHO believes WHAT, with confidence weight and time.
 - `holder=world kind=fact` "acme-example raised a Series C" (w=1.0)
 - `holder=brain kind=hunch` "alice-example has a hero/rescuer pattern" (w=0.70)
 
-**Query surface:** `gbrain takes list`, `gbrain takes search`, `gbrain takes search --semantic`, `gbrain think`
+**Query surface:** `foresights takes list`, `foresights takes search`, `foresights takes search --semantic`, `foresights think`
 
 Take vectors (used by `takes search --semantic` and the `think` vector stream)
-are kept current by `gbrain embed --stale`, which the cycle's embed phase runs:
+are kept current by `foresights embed --stale`, which the cycle's embed phase runs:
 it embeds every active take that has no vector, whose claim changed since it
 was embedded, or whose vector came from another embedding model. Each vector
 records the model and the claim text it was computed from. Takes on deleted
-pages or archived sources are skipped. `gbrain takes embed` runs the same pass
-on its own; `gbrain takes embed --dry-run` shows the pending provider work
+pages or archived sources are skipped. `foresights takes embed` runs the same pass
+on its own; `foresights takes embed --dry-run` shows the pending provider work
 without making calls.
 
-To stop automatic take embedding, run `gbrain config set takes.auto_embed false`
+To stop automatic take embedding, run `foresights config set takes.auto_embed false`
 (or set `GBRAIN_EMBED_TAKES=0` for one process; the variable wins over the
-config key). `gbrain takes embed` keeps working when it is off.
+config key). `foresights takes embed` keeps working when it is off.
 
-`gbrain migrate embeddings` moves take vectors with the rest of the brain: the
+`foresights migrate embeddings` moves take vectors with the rest of the brain: the
 plan counts stale takes, a width change resizes `takes.embedding`, the re-embed
 drain refills it, and the run does not complete while takes are still stale.
-`gbrain doctor` reports takes and facts without a current-model vector in the
+`foresights doctor` reports takes and facts without a current-model vector in the
 `fact_take_vectors` check ([verification runbook](GBRAIN_VERIFY.md#5a-fact-and-take-vectors)).
 Until take vectors exist, `think` falls back to keyword-only takes retrieval and
 `takes search --semantic` simply reports no semantic matches.
@@ -60,7 +60,7 @@ Personal knowledge from the brain owner's conversations. Real-time capture.
 - `kind=commitment` "We decided to move the offsite to March"
 - `kind=belief` "I think the market is overheated"
 
-**Query surface:** `gbrain recall`, MCP `_meta.brain_hot_memory`
+**Query surface:** `foresights recall`, MCP `_meta.brain_hot_memory`
 
 ## The Category Error
 

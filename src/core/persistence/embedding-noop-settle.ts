@@ -1,7 +1,7 @@
 /**
  * Settles queued embedding effects that have nothing left to do, in bulk.
  *
- * A classic import followed by `gbrain embed --stale` (or a restored or moved
+ * A classic import followed by `foresights embed --stale` (or a restored or moved
  * brain) can leave tens of thousands of queued page embedding effects whose
  * chunks already carry current vectors. Each one would otherwise take a claim,
  * a guard transaction, a projection read and a completion update before

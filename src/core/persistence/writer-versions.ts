@@ -91,7 +91,7 @@ export async function recentWriterVersions(engine: SqlEngine, days = 7): Promise
 export interface SegmentedGateWriter {
   /**
    * admitter / consumer: a managed write's admitting and publishing binary (persistence_requests); importer: a run
-   * logged in ingest_log (gbrain import, sync, connectors, facts); resident: a live persistence consumer
+   * logged in ingest_log (foresights import, sync, connectors, facts); resident: a live persistence consumer
    * (serve, sync, jobs, autopilot, mcp; Postgres only).
    */
   role: 'admitter' | 'consumer' | 'importer' | 'resident';

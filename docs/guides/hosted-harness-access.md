@@ -1,6 +1,6 @@
-# Connect your agent to an existing hosted GBrain
+# Connect your agent to an existing hosted Foresights
 
-Use this guide when your memory already lives on another machine. If you want to run GBrain inside your current agent instead, start with [Grok Bot](grok-bot.md), [Muse](muse.md), or the [coding-agent walkthrough](../tutorials/connect-coding-agent.md).
+Use this guide when your memory already lives on another machine. If you want to run Foresights inside your current agent instead, start with [Grok Bot](grok-bot.md), [Muse](muse.md), or the [coding-agent walkthrough](../tutorials/connect-coding-agent.md).
 
 The brain owner grants access on the running server; the connecting harness
 configures access in its own environment. Installing configuration on the host
@@ -21,8 +21,8 @@ credential. Local stdio connections do not create an HTTP admin panel.
 Paste this into the agent that should use the hosted brain:
 
 ```text
-Connect this existing agent to my hosted GBrain. Follow:
-https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/hosted-harness-access.md
+Connect this existing agent to my hosted Foresights. Follow:
+https://raw.githubusercontent.com/aimonk2025/gbrain/master/docs/guides/hosted-harness-access.md
 Keep my identity and unrelated configuration. Use memory-writer unless I explicitly
 request another capability. Select this harness's native OAuth/PKCE flow when
 available; otherwise have the owner provision a private machine handoff and
@@ -42,14 +42,14 @@ Do not claim that generated instructions or a job ID prove a working integration
    `none` and has no client secret; confidential PKCE uses its documented
    `client_secret_post` or `client_secret_basic` method.
 2. The owner follows [native registration](../mcp/ADMIN.md#native-oauth-with-pkce)
-   with `gbrain mcp admin register NAME --redirect-uri URI`. Select the desired
+   with `foresights mcp admin register NAME --redirect-uri URI`. Select the desired
    source and permissions explicitly; the native CLI default is read access.
    This creates authorization-code/refresh registration, not a machine token.
-3. The owner runs `gbrain mcp admin setup CLIENT_ID --harness ID --flow
+3. The owner runs `foresights mcp admin setup CLIENT_ID --harness ID --flow
    authorization-code` against that server. It returns live endpoint,
    registration, and setup instructions. Confidential delivery additionally
    requires `--credentials-out PRIVATE_FILE`. An `OAuthClientSetup` export is
-   not the machine handoff accepted by `gbrain connect --credentials-file`.
+   not the machine handoff accepted by `foresights connect --credentials-file`.
 4. Enter the setup fields in the actual harness and start its OAuth connection.
    The native harness generates and retains the PKCE verifier. When the browser
    asks for owner approval, the authorized administrator issues a login link
@@ -70,16 +70,16 @@ as a substitute when the native client requires OAuth/PKCE.
 
 ## 1. Grant access on the brain host
 
-The owner needs a current GBrain runtime and an initialized brain. Stop older servers and workers while applying the grant migration; do not run mixed authorization implementations. Use your normal upgrade and maintenance procedure before restarting them.
+The owner needs a current Foresights runtime and an initialized brain. Stop older servers and workers while applying the grant migration; do not run mixed authorization implementations. Use your normal upgrade and maintenance procedure before restarting them.
 
-**Get the HTTPS endpoint.** Use the configured endpoint if the brain is already served over HTTPS; do not republish it. When the brain runs on the owner's own computer and needs publishing, `gbrain mcp expose` publishes `gbrain serve --http` on the owner's Tailscale tailnet with HTTPS, keeps it running as a user service, and writes the admin bootstrap token to `~/.gbrain/serve/admin-token`. Tailnet-only reach (the default) serves the owner's own devices; agents that run in a vendor's cloud — Grok Bot, Muse, ChatGPT, Claude.ai, Perplexity — need `gbrain mcp expose --funnel`. The printed MCP URL looks like `https://your-machine.your-tailnet.ts.net/mcp`. Steps, flags and troubleshooting: [Use your brain from anywhere over MCP](remote-mcp.md). Other HTTPS fronts (ngrok, a cloud host) come from your [server deployment](../mcp/DEPLOY.md); substitute the intended server's configured URL in every example below.
+**Get the HTTPS endpoint.** Use the configured endpoint if the brain is already served over HTTPS; do not republish it. When the brain runs on the owner's own computer and needs publishing, `foresights mcp expose` publishes `foresights serve --http` on the owner's Tailscale tailnet with HTTPS, keeps it running as a user service, and writes the admin bootstrap token to `~/.gbrain/serve/admin-token`. Tailnet-only reach (the default) serves the owner's own devices; agents that run in a vendor's cloud — Grok Bot, Muse, ChatGPT, Claude.ai, Perplexity — need `foresights mcp expose --funnel`. The printed MCP URL looks like `https://your-machine.your-tailnet.ts.net/mcp`. Steps, flags and troubleshooting: [Use your brain from anywhere over MCP](remote-mcp.md). Other HTTPS fronts (ngrok, a cloud host) come from your [server deployment](../mcp/DEPLOY.md); substitute the intended server's configured URL in every example below.
 
 **Say to your agent:** *"use my brain over mcp"* — *"connect grok bot to my brain"* — the `remote-mcp` skill publishes, then grants.
 
 For ordinary memory, choose `memory-writer`:
 
 ```bash
-gbrain mcp grant agent-example --harness codex --profile memory-writer \
+foresights mcp grant agent-example --harness codex --profile memory-writer \
   --source default --url https://your-machine.your-tailnet.ts.net/mcp \
   --admin-token-file ~/.gbrain/serve/admin-token \
   --credentials-out /absolute/private/agent-example.json --json
@@ -87,7 +87,7 @@ gbrain mcp grant agent-example --harness codex --profile memory-writer \
 
 Replace `codex` with the actual adapter identifier. The protected owner file
 provisions through the running server's authenticated admin API and existing
-database connection. `~/.gbrain/serve/admin-token` is the file `gbrain mcp
+database connection. `~/.gbrain/serve/admin-token` is the file `foresights mcp
 expose` maintains; for another deployment, use the private file holding that
 server's configured owner credential. Without the flag,
 `GBRAIN_ADMIN_BOOTSTRAP_TOKEN` supplies the credential. An ordinary OAuth token
@@ -119,24 +119,24 @@ are one principal. See [shared brain skills](shared-brain-skills.md).
 
 A **profile grants authority**. A **surface selects visible tools**. Full surface does not bypass a grant, and `admin` does not imply delegation, the named shared-skill scopes, or owner dashboard/client-management authority. Starter includes authorized skill discovery and membership; the exact seven-tool `verbs` surface is memory-only. `rescope-client <client_id> --surface full` lists every tool. Thin CLI adapters use the full surface while retaining their source, operation, and write restrictions. Direct local CLI access is trusted access to the local computer; OAuth profiles do not confine a local shell.
 
-Clients granted a memory profile before the full-surface default keep their stored `starter` surface; no migration or repair widens it, and only an explicit `--profile` application regrants it. New grants snapshot operation names and source access. A later server upgrade does not silently give a snapshot-bound client new operations. The connection's own `whoami` reports `grant_diagnosis`: which blocker applies (scope, operation snapshot, client pin or server ceiling) and how many operations it hides, without naming them; `gbrain doctor` on the host reports the same as `grant_new_ops_available` with the commands. The connection is also told once per session, in band, by the `grant_blocked_operations` notice (same blockers and counts, the owner's preview-then-apply command as `fix`, `next: tell_user_to_run`; once per grant revision for stateless HTTP calls), and a read that left out takes a hidden tool serves carries `hidden_tool_content` with the next step that connection can actually take ([connection notices](repair.md#connection-notices)). Neither notice changes what the connection can call. A grant written before snapshots recorded their operation catalog says "original intent unknown" rather than claiming it predates the operations. Explicitly regrant to include them: `gbrain auth rescope --client <client_id> --operations <op,...> --surface full --dry-run` (then without `--dry-run`; `--surface full` only when the stored surface also blocks) for OAuth clients, or `gbrain auth rescope-token <name> --refresh-operations` (preview) then `--add <op,...>` for legacy tokens ([grants that cannot reach new operations](../mcp/ADMIN.md#grants-that-cannot-reach-new-operations)). `gbrain auth rescope --client <client_id> --operations all` (alias: `gbrain auth rescope-client <client_id> --allowed-operations all`) stores no snapshot and clears the profile instead, so the scopes and the surface alone decide, including operations later upgrades add. `gbrain auth clients` marks su... (line truncated to 2000 chars)
+Clients granted a memory profile before the full-surface default keep their stored `starter` surface; no migration or repair widens it, and only an explicit `--profile` application regrants it. New grants snapshot operation names and source access. A later server upgrade does not silently give a snapshot-bound client new operations. The connection's own `whoami` reports `grant_diagnosis`: which blocker applies (scope, operation snapshot, client pin or server ceiling) and how many operations it hides, without naming them; `foresights doctor` on the host reports the same as `grant_new_ops_available` with the commands. The connection is also told once per session, in band, by the `grant_blocked_operations` notice (same blockers and counts, the owner's preview-then-apply command as `fix`, `next: tell_user_to_run`; once per grant revision for stateless HTTP calls), and a read that left out takes a hidden tool serves carries `hidden_tool_content` with the next step that connection can actually take ([connection notices](repair.md#connection-notices)). Neither notice changes what the connection can call. A grant written before snapshots recorded their operation catalog says "original intent unknown" rather than claiming it predates the operations. Explicitly regrant to include them: `foresights auth rescope --client <client_id> --operations <op,...> --surface full --dry-run` (then without `--dry-run`; `--surface full` only when the stored surface also blocks) for OAuth clients, or `foresights auth rescope-token <name> --refresh-operations` (preview) then `--add <op,...>` for legacy tokens ([grants that cannot reach new operations](../mcp/ADMIN.md#grants-that-cannot-reach-new-operations)). `foresights auth rescope --client <client_id> --operations all` (alias: `foresights auth rescope-client <client_id> --allowed-operations all`) stores no snapshot and clears the profile instead, so the scopes and the surface alone decide, including operations later upgrades add. `foresights auth clients` marks su... (line truncated to 2000 chars)
 
 Snapshot-bound clients write through approved MCP operations such as `remember`, `capture`, or `put_page`. They cannot use the legacy `POST /ingest` webhook, whose queued writes do not yet enforce operation snapshots. Existing webhook clients with a `NULL` snapshot keep their legacy behavior.
 
 ## 2. Install inside the intended harness
 
-Install GBrain there if needed, using the documented GitHub/Bun distribution. Then:
+Install Foresights there if needed, using the documented GitHub/Bun distribution. Then:
 
 ```bash
-gbrain connect https://your-machine.your-tailnet.ts.net/mcp --harness codex \
+foresights connect https://your-machine.your-tailnet.ts.net/mcp --harness codex \
   --credentials-file /absolute/private/agent-example.json --install
 ```
 
-For Grok Bot, Muse, or another supported thin CLI adapter, also supply `--root /absolute/verified/persistent-root`. Grok Bot's recommended root is `/workspace/gbrain`. Discover and verify Muse's durable location before choosing a root. Use the generated **absolute launcher** for every later GBrain call; it pins routing and isolates inherited configuration.
+For Grok Bot, Muse, or another supported thin CLI adapter, also supply `--root /absolute/verified/persistent-root`. Grok Bot's recommended root is `/workspace/gbrain`. Discover and verify Muse's durable location before choosing a root. Use the generated **absolute launcher** for every later Foresights call; it pins routing and isolates inherited configuration.
 
-The installer preserves unrelated configuration and refuses an unowned or edited connection. Codex, Claude Code, and opencode receive private managed configuration (mode 0600) with the bearer token stored **inline** in that file: `~/.codex/config.toml`, Claude Code's user MCP config, or opencode's global config. The receipt names it with `token_storage: "inline"` and `config_path`, gives the `renew_command` that exchanges and writes a fresh token (`--install --fresh-token`), and lists `if_exposed`: preview and apply `gbrain mcp admin invalidate-tokens <client_id>` on the brain host ([invalidate tokens](../mcp/ADMIN.md#invalidate-tokens-revoke-or-delete)), run the renew command, which exchanges a new token instead of reusing the cached invalidated one (a handoff without a client secret needs a new handoff from the owner), then reload the harness. Neither the receipt nor the output prints the token. Treat that config file as a secret: when it sits in a Git working tree that does not ignore it, the receipt adds `token_warning`; add the file to the repository's `.gitignore` or move it, and follow `if_exposed` if it was already committed. Rotating the client secret does not invalidate issued access tokens. Generic adapters supply endpoint/authentication guidance; there is no universal configuration file. [Adapter reference](harness-adapters.md) lists supported mechanisms and reload steps.
+The installer preserves unrelated configuration and refuses an unowned or edited connection. Codex, Claude Code, and opencode receive private managed configuration (mode 0600) with the bearer token stored **inline** in that file: `~/.codex/config.toml`, Claude Code's user MCP config, or opencode's global config. The receipt names it with `token_storage: "inline"` and `config_path`, gives the `renew_command` that exchanges and writes a fresh token (`--install --fresh-token`), and lists `if_exposed`: preview and apply `foresights mcp admin invalidate-tokens <client_id>` on the brain host ([invalidate tokens](../mcp/ADMIN.md#invalidate-tokens-revoke-or-delete)), run the renew command, which exchanges a new token instead of reusing the cached invalidated one (a handoff without a client secret needs a new handoff from the owner), then reload the harness. Neither the receipt nor the output prints the token. Treat that config file as a secret: when it sits in a Git working tree that does not ignore it, the receipt adds `token_warning`; add the file to the repository's `.gitignore` or move it, and follow `if_exposed` if it was already committed. Rotating the client secret does not invalidate issued access tokens. Generic adapters supply endpoint/authentication guidance; there is no universal configuration file. [Adapter reference](harness-adapters.md) lists supported mechanisms and reload steps.
 
-A configured server is only one step. Follow the adapter's reload instructions and enable the GBrain standing instruction through the harness's actual controls. Thin CLI installations write that instruction to `<ROOT>/GBRAIN-INSTRUCTIONS.md`. Grok Bot/Muse native skill activation remains a separate, visible step until observed in that harness. Generated files alone do not activate a skill.
+A configured server is only one step. Follow the adapter's reload instructions and enable the Foresights standing instruction through the harness's actual controls. Thin CLI installations write that instruction to `<ROOT>/GBRAIN-INSTRUCTIONS.md`. Grok Bot/Muse native skill activation remains a separate, visible step until observed in that harness. Generated files alone do not activate a skill.
 
 With an approved follow handoff, managed Claude Code, Codex, and opencode
 connections also install an owned, namespaced shared-brain router. Successful
@@ -147,7 +147,7 @@ or ownership conflict can leave memory working while skill enrollment is pending
 The router's freshness instruction is advisory, not a vendor-enforced hook.
 
 Inspect this connection's local skill receipt without credentials or a live
-host using `gbrain connect --harness codex --status --json`. Supply the actual
+host using `foresights connect --harness codex --status --json`. Supply the actual
 adapter, connection `--name`, and the recorded `--root` for thin CLI adapters.
 It reports desired/installed/acknowledged views and pending cleanup, but keeps
 `current_authority: unprobed` and `native_use: unverified`; reconnect and test
@@ -156,10 +156,10 @@ the native session separately.
 ### Harnesses that only speak stdio
 
 A harness that can launch a command but cannot reach an HTTP MCP server uses
-a thin client's `gbrain serve`: install the CLI there, run `gbrain init
+a thin client's `foresights serve`: install the CLI there, run `foresights init
 --mcp-only` with the client from step 1, then register
-`gbrain serve --surface starter --advertise verbs` (absolute path from
-`command -v gbrain`) as the harness's stdio server. It relays to the brain
+`foresights serve --surface starter --advertise verbs` (absolute path from
+`command -v foresights`) as the harness's stdio server. It relays to the brain
 host with that client's grant and adds nothing to it
 ([stdio bridge](../architecture/thin-client.md#stdio-bridge)). For a narrower
 harness, register its own client (`--scopes read` for read-only) and init it
@@ -178,7 +178,7 @@ not a full database backup. See [memory boundaries](memory-boundaries.md).
 Run the server verifier from the harness environment:
 
 ```bash
-gbrain mcp verify --client CLIENT_ID --harness codex \
+foresights mcp verify --client CLIENT_ID --harness codex \
   --url https://your-machine.your-tailnet.ts.net/mcp \
   --credentials-file /absolute/private/agent-example.json --json
 ```
@@ -187,7 +187,7 @@ It checks transport, authentication, effective permissions, reading, a randomize
 
 `server_status: "passed"` proves those server checks. Overall `status: "partial"` and exit code **2** mean actual harness evidence is still missing; exit **1** means a failed stage. A fluent response or an SDK probe is not proof that your Bot loaded its standing instructions.
 
-Now ask the actual agent to remember a unique harmless fact, with provenance, and note the observed GBrain call and returned ID. Start a new conversation and ask for it without repeating the fact. Observe `recall`. Correct it, read it back, then withdraw it and check active recall again. Keep the result in your private setup receipt. The harness must identify uncertainty if it cannot load the tool or retrieve the record.
+Now ask the actual agent to remember a unique harmless fact, with provenance, and note the observed Foresights call and returned ID. Start a new conversation and ask for it without repeating the fact. Observe `recall`. Correct it, read it back, then withdraw it and check active recall again. Keep the result in your private setup receipt. The harness must identify uncertainty if it cannot load the tool or retrieve the record.
 
 For native OAuth, make these calls through the harness's authenticated MCP
 connection; the private-handoff verifier above is for machine credentials.
@@ -206,7 +206,7 @@ verify an authenticated capabilities/read call without adding write authority.
 Only grant delegation when you want this client to start work on the brain host. Supply a nonempty set of tools from the running registry:
 
 ```bash
-gbrain mcp grant research-example --harness grok-bot \
+foresights mcp grant research-example --harness grok-bot \
   --profile delegating-agent --source default \
   --bound-tools search,get_page --delegated-namespace job \
   --url https://brain.example.com/mcp \
@@ -229,19 +229,19 @@ Inspect `whoami` or the authenticated `gbrain://capabilities` resource. It repor
 Preview an explicit profile update:
 
 ```bash
-gbrain mcp grant agent-example --client CLIENT_ID --if-version REVISION \
+foresights mcp grant agent-example --client CLIENT_ID --if-version REVISION \
   --harness codex --profile memory-reader --source default \
   --url https://brain.example.com/mcp \
   --admin-token-file /absolute/private/admin-token --dry-run --json
 ```
 
-Get the current revision with `gbrain mcp admin client CLIENT_ID` using the
+Get the current revision with `foresights mcp admin client CLIENT_ID` using the
 same server URL and owner credential. Review the before/after grant, then repeat
 without `--dry-run`. `--if-version` rejects a stale edit. The client ID and secret
 remain unchanged. When updating a client, omit `--profile` to preserve its
 profile, scopes, operation snapshot, and bindings while changing only the fields
 you supply. An explicit profile selection regrants its eligible operations.
-Advanced local-maintenance repairs remain available through `gbrain auth
+Advanced local-maintenance repairs remain available through `foresights auth
 rescope-client CLIENT_ID --help`; omitted restrictions are retained.
 
 Omitting `--skills` preserves the existing follow choice, including previously
@@ -262,14 +262,14 @@ Scope removals affect existing tokens immediately. Added scopes need a newly iss
 The host retains a private delivery journal before committing a new client. If the response or destination write is lost, recover the original handoff without duplicating the client:
 
 ```bash
-gbrain mcp grant agent-example --client CLIENT_ID --resume --harness codex \
+foresights mcp grant agent-example --client CLIENT_ID --resume --harness codex \
   --url https://brain.example.com/mcp \
   --admin-token-file /absolute/private/admin-token \
   --credentials-out /absolute/private/recovered-agent.json --json
 ```
 
 Resume changes no permissions and rotates no secret. If the client ID was lost,
-use `gbrain mcp admin clients` with the same URL and owner credential and inspect
+use `foresights mcp admin clients` with the same URL and owner credential and inspect
 the existing registration before retrying. A lost response can follow a
 committed mutation; it does not prove that creation failed.
 
@@ -296,7 +296,7 @@ from default backups.
 Keep the host runtime and schema current together. Keep native instructions enabled for each harness, check token expiry for static adapters, and periodically repeat a harmless memory round trip. The host's normal maintenance schedule serves its connected clients; installing a remote connection does not silently create another server or paid routine.
 
 For a hosted thin CLI connection, a removed runtime is repaired by reinstalling
-GBrain in the harness, then repeating `gbrain connect ... --install` with the
+Foresights in the harness, then repeating `foresights connect ... --install` with the
 existing private handoff, endpoint, harness identifier, and root. The installer
 updates its owned launcher while preserving the host's memory and client
 identity. This connection has no local database backup or `bin/gbrain-setup`
@@ -305,7 +305,7 @@ recover it through the host's delivery procedure first.
 
 Before applying the grant migration, stop old servers and workers and take a protected backup. Start only runtimes that enforce the migrated grants. If rollout fails, disable the affected entry points and restore a compatible runtime while preserving memory and the tightened grants; do not run an older authorization implementation against the migrated database. Local installations can be released independently of hosted delegation.
 
-Remove a managed configuration with the same private handoff and `gbrain connect
+Remove a managed configuration with the same private handoff and `foresights connect
 ... --remove`, or remove the native OAuth connection through its harness
 settings. Disable saved skills/routines through the harness controls. Use
 [token invalidation, revocation, or deletion](../mcp/ADMIN.md#invalidate-tokens-revoke-or-delete)
@@ -327,15 +327,15 @@ policy history, revocations, or receipts. See
 
 | Symptom | Next action | Who acts | Consent | Verify |
 | --- | --- | --- | --- | --- |
-| PGLite is busy | Use authenticated host administration (`--admin-token-file ~/.gbrain/serve/admin-token` against the running server) or wait for the current owner to close. Never remove a live lock. | brain host | none | `gbrain doctor --only connection --json` on the host |
-| Published URL unreachable from the agent | On the host, `gbrain mcp expose --status`. A cloud agent needs `--funnel`; tailnet-only reach serves only the owner's own devices. Certificate issuance can leave tailnet health `pending` for a minute. See the [remote MCP troubleshooting table](remote-mcp.md#troubleshooting). | brain host | `egress` when switching to `--funnel` | `gbrain mcp expose --status --json` |
+| PGLite is busy | Use authenticated host administration (`--admin-token-file ~/.gbrain/serve/admin-token` against the running server) or wait for the current owner to close. Never remove a live lock. | brain host | none | `foresights doctor --only connection --json` on the host |
+| Published URL unreachable from the agent | On the host, `foresights mcp expose --status`. A cloud agent needs `--funnel`; tailnet-only reach serves only the owner's own devices. Certificate issuance can leave tailnet health `pending` for a minute. See the [remote MCP troubleshooting table](remote-mcp.md#troubleshooting). | brain host | `egress` when switching to `--funnel` | `foresights mcp expose --status --json` |
 | Configuration conflict | Select a fresh connection name/root or inspect the changed entry; do not overwrite unrelated settings. | agent | none | re-read the harness's MCP configuration |
 | `grant_conflict` | Fetch the new revision and preview again. | agent, after the user agrees | none | preview the grant again |
 | Delegation missing | Inspect repair reasons and explicitly bind supported tools, an active source, path policy, and positive concurrency. | brain host | none | the harness's tool list |
-| Read works, writes fail | Check issued/current scopes, operation snapshot, source grant, and direct fence. Full surface alone adds no authority. | brain host | none | `whoami` (where callable) or `gbrain doctor --json` on the host |
-| Work queues but never finishes | Check the host worker and terminal job status; queue admission is not worker verification. | brain host | none | `gbrain jobs stats` on the host |
-| Finite cap blocks a call | Inspect unresolved reservations and provider pricing/bounds; do not treat unknown usage as zero. | user (sets or raises the cap) | `paid` | `gbrain doctor --json` on the host |
-| Server checks pass, new conversation fails | Verify native instruction activation, reload, absolute launcher, and observed GBrain calls inside that harness. | user (restarts or reloads the harness) | none | a `recall` from a new conversation |
+| Read works, writes fail | Check issued/current scopes, operation snapshot, source grant, and direct fence. Full surface alone adds no authority. | brain host | none | `whoami` (where callable) or `foresights doctor --json` on the host |
+| Work queues but never finishes | Check the host worker and terminal job status; queue admission is not worker verification. | brain host | none | `foresights jobs stats` on the host |
+| Finite cap blocks a call | Inspect unresolved reservations and provider pricing/bounds; do not treat unknown usage as zero. | user (sets or raises the cap) | `paid` | `foresights doctor --json` on the host |
+| Server checks pass, new conversation fails | Verify native instruction activation, reload, absolute launcher, and observed Foresights calls inside that harness. | user (restarts or reloads the harness) | none | a `recall` from a new conversation |
 
 ## Evidence and release gates
 

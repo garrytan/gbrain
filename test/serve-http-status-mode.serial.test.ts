@@ -1,5 +1,5 @@
 /**
- * Status-only `gbrain serve --http` (agent operator follow-up, Item 3).
+ * Status-only `foresights serve --http` (agent operator follow-up, Item 3).
  *
  * Protects: a shared HTTP serve whose brain cannot be opened stays up on its
  * port and explains itself (503 /health with an allowlisted, path-free,
@@ -249,7 +249,7 @@ describe('serve --http: lock held → status-only → recovery on the same port'
   }, 300_000);
 });
 
-describe('serve --http: no brain → gbrain init → recovery', () => {
+describe('serve --http: no brain → foresights init → recovery', () => {
   let home: string;
   let http: ReturnType<typeof startHttp> | null = null;
   afterAll(async () => { await stopChild(http?.child ?? null); rmSync(home, { recursive: true, force: true }); });

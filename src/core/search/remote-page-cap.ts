@@ -45,7 +45,7 @@ export async function remotePageCap(ctx: OperationContext, p: Record<string, unk
 export function pageCapLine(retrieval: unknown, how = 'limit'): string | null {
   const m = (retrieval as { page_cap?: RemotePageCapMeta } | null)?.page_cap;
   if (!m) return null;
-  return `[gbrain search] ${m.dropped_pages} more pages matched only by meaning and were left out (default remote cap ${m.cap}). Pass ${how} to read them.`;
+  return `[foresights search] ${m.dropped_pages} more pages matched only by meaning and were left out (default remote cap ${m.cap}). Pass ${how} to read them.`;
 }
 
 function hasLexicalEvidence(r: SearchResult): boolean {

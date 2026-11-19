@@ -25,7 +25,7 @@ const FOLLOW_OPERATIONS = ['list_skills', 'get_skill', 'list_brain_skillpack', '
 export async function provisionHarnessGrant(engine: BrainEngine, input: ProvisionGrantInput, actor: string) {
   if (!input || typeof input.name !== 'string' || !isValidName(input.name)) throw new GrantError('invalid_grant', 'Use a lowercase connection name containing letters, numbers, underscores or hyphens');
   let adapter: ReturnType<typeof harnessAdapter>;
-  try { adapter = harnessAdapter(input.harness); } catch { throw new GrantError('invalid_grant', 'Unknown harness; use gbrain mcp adapters'); }
+  try { adapter = harnessAdapter(input.harness); } catch { throw new GrantError('invalid_grant', 'Unknown harness; use foresights mcp adapters'); }
   const normalized = normalizeMcpUrl(input.url);
   if (!normalized.ok) throw new GrantError('invalid_grant', 'Pass a valid MCP endpoint URL');
   try { assertSecureEndpoint(normalized.url); } catch { throw new GrantError('invalid_grant', 'Use HTTPS or loopback HTTP without credentials or fragments'); }
@@ -40,7 +40,7 @@ export async function provisionHarnessGrant(engine: BrainEngine, input: Provisio
       if (!existing || existing.revoked) throw new GrantError('invalid_grant', '--resume requires an active --client');
       if (input.profile || input.sourceId || input.sharedSkills !== undefined || Object.keys(input.patch ?? {}).length || input.dryRun) throw new GrantError('invalid_grant', '--resume only recovers delivery; run a separate grant update to change permissions');
       const [metadata] = await sql`SELECT client_id, client_name, redirect_uris, grant_types, token_endpoint_auth_method, client_secret_expires_at FROM oauth_clients WHERE client_id = ${existing.clientId} FOR UPDATE`;
-      if (selectClientFlow(clientMetadata(metadata)) !== 'client-credentials') throw new GrantError('invalid_grant', 'Native OAuth setup uses gbrain mcp admin setup --credentials-out, not a machine credential handoff');
+      if (selectClientFlow(clientMetadata(metadata)) !== 'client-credentials') throw new GrantError('invalid_grant', 'Native OAuth setup uses foresights mcp admin setup --credentials-out, not a machine credential handoff');
       if (Number(metadata.client_secret_expires_at) > 0 && Number(metadata.client_secret_expires_at) <= Math.floor(Date.now() / 1000)) throw new GrantError('invalid_grant', 'Client secret expired. Inspect the registration and arrange explicit owner-side replacement; repeating a download cannot renew it.');
       const credentials = recoverCredentialDelivery(existing.clientId, normalized.url);
       // The journal is a delivery record, never authority after secret rotation.

@@ -196,7 +196,7 @@ describe('GitHub fixture', () => {
       const home = join(work, 'home');
       mkdirSync(join(home, '.gbrain'), { recursive: true });
       writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', database_path: join(home, '.gbrain', 'brain.pglite'), self_upgrade: { mode: 'notify', channel: 'stable' } }));
-      writeFileSync(join(work, 'gitconfig'), '[url "' + fx.mirror + '"]\n\tinsteadOf = https://github.com/garrytan/gbrain\n');
+      writeFileSync(join(work, 'gitconfig'), '[url "' + fx.mirror + '"]\n\tinsteadOf = https://github.com/garrytan/gbrain\n\tinsteadOf = https://github.com/aimonk2025/gbrain\n');
       const dryRun = async (extra: Record<string, string>) => {
         const p = Bun.spawn([process.execPath, join(import.meta.dir, '..', '..', 'src', 'cli.ts'), 'upgrade', '--dry-run', '--json'], {
           cwd: home, stdout: 'pipe', stderr: 'pipe',

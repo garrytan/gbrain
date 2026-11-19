@@ -1,11 +1,11 @@
 /**
  * #7311 / #7305: a soft-deleted page whose canonical file a live page of its source also records (a shared-origin
- * tombstone: what `gbrain delete` of a duplicate-origin twin leaves, receipt `write_through.skipped: shared_origin`).
+ * tombstone: what `foresights delete` of a duplicate-origin twin leaves, receipt `write_through.skipped: shared_origin`).
  * Master refused every purge of it as a shared origin, the 72 h retention purge included, so the cycle purge phase
  * failed every pass (`managed_purge_failed`), the tombstone parked after PURGE_PARK_LIMIT failures and global
  * maintenance never stamped.
  *
- * Protects: the retention purge (the cycle purge phase, `gbrain pages purge-deleted`) removes such a tombstone
+ * Protects: the retention purge (the cycle purge phase, `foresights pages purge-deleted`) removes such a tombstone
  * database-only, like an `origin_twin` page: the page row and its facts go, the file and the surviving page (its row,
  * facts and later fact inserts) are untouched, no content or fact tombstone is written and the phase reports ok; a
  * tombstone parked by the old refusal is purged by `--retry-parked`; an owner `--purge` of the tombstone still refuses
@@ -70,7 +70,7 @@ async function refusal(fn: () => Promise<unknown>): Promise<OperationError> {
 
 /**
  * The first sync imports FILE into SURVIVOR; a duplicate-origin twin TWIN (same content, recording the same file, as a
- * sync before #6948 left it) holds a fact of its own, and SURVIVOR holds one too. `gbrain delete TWIN` keeps the file
+ * sync before #6948 left it) holds a fact of its own, and SURVIVOR holds one too. `foresights delete TWIN` keeps the file
  * (`shared_origin`), leaving a tombstone that still records it.
  */
 async function sharedTombstone(engine: BrainEngine, ctx: OperationContext): Promise<void> {
@@ -145,7 +145,7 @@ for (const backend of testBackends()) {
       expect(error.message).toContain('shared with another live page');
       expect(error.message).not.toContain('Soft-delete it instead');
       expect(error.message).toContain('already soft-deleted');
-      expect(error.message).toContain('gbrain pages purge-deleted --older-than 72h --yes');
+      expect(error.message).toContain('foresights pages purge-deleted --older-than 72h --yes');
       expect(await pageRow(engine, TWIN)).toEqual(before.twin);
       expect(await pageRow(engine, SURVIVOR)).toEqual(before.survivor);
       expect(await count(engine, 'page_purges')).toBe(before.purges);

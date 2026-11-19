@@ -4,7 +4,7 @@
 // corpus alone can exhaust the (default $0.30) budget every single call,
 // so the page pool — the ONLY pool `countExtractAtomsBacklog` /
 // doctor's extract_atoms_backlog check measures — never gets processed.
-// `gbrain dream --phase extract_atoms --drain` then reports forward
+// `foresights dream --phase extract_atoms --drain` then reports forward
 // progress (atoms extracted) while the doctor-visible backlog number
 // never moves, because it was all coming from transcripts. Real-world
 // case: a brain with a growing transcript corpus and a stagnant

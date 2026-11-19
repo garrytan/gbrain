@@ -66,6 +66,6 @@ export function fileWinsContent(raw: string, file: ParsedPage, result: ParsedPag
   }
   throw opError('file_wins_rewrite', 'File wins would rewrite the canonical file beyond the protected parts it keeps.',
     `Nothing was written. The resolved result of ${page.slug} in '${page.sourceId}' differs from its file in more than appended protected frontmatter keys and database-only timeline rows, so keeping the file would need a full re-render of it. `
-      + 'Commit the differences into the file through the door with `gbrain git commit-push`, or preview with `gbrain repair file-drift --prefer database`, then preview again.',
+      + 'Commit the differences into the file through the door with `foresights git commit-push`, or preview with `foresights repair file-drift --prefer database`, then preview again.',
     { detail: 'file_wins_rewrite' });
 }

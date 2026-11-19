@@ -1,7 +1,7 @@
 /**
- * #6340: the operator contract. `gbrain sync status --json` turns every hold and
+ * #6340: the operator contract. `foresights sync status --json` turns every hold and
  * the last error into `class` / `safe_actions` / `needs_human`, and
- * `gbrain sync unblock --apply` performs the safe action for each hold that has
+ * `foresights sync unblock --apply` performs the safe action for each hold that has
  * one and refuses the rest by name. The classifier table and the runbook are
  * pinned to each other in `test/sync-runbook-table.test.ts`. Synthetic content.
  *
@@ -80,7 +80,7 @@ test('the classifier: every table code has a class and at least one safe action;
   expect(classifySyncFault({ code: 'connection_lost' })).toMatchObject({ class: 'connection', needs_human: false });
   expect(classifySyncFault({ code: 'preparation_systemic' })).toMatchObject({ class: 'systemic', needs_human: true });
   expect(classifySyncFault({ code: 'something_new' })).toMatchObject({ class: 'systemic', safe_actions: ['none'], needs_human: true });
-  expect(classifySyncFault({ code: 'something_new' }).human_reason).toContain('gbrain errors something_new');
+  expect(classifySyncFault({ code: 'something_new' }).human_reason).toContain('foresights errors something_new');
 });
 
 test('status joins the pass, the recent commits, each hold with its triple and one next; unblock schedules a committed dirty file, refuses a still-dirty one and a file drift by name', async () => withEnv({ GBRAIN_HOME: home }, async () => {

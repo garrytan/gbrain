@@ -1,6 +1,6 @@
 /**
  * #6817: the one mapping from an atom drain's stop to what its caller does
- * next, shared by `gbrain dream --drain` (exit code, JSON `status` /
+ * next, shared by `foresights dream --drain` (exit code, JSON `status` /
  * `retryable` / `code`, the human last line) and the `extract-atoms-drain`
  * Minion handler (retry under backoff, or dead-letter).
  *
@@ -12,7 +12,7 @@
  *   every other stop, or an unknown count     exit 11, retryable (atom_drain_incomplete)
  *
  * Exit codes and retryability come from the error registry entries, so this
- * table and `gbrain errors <code>` cannot disagree. Type-only import of the
+ * table and `foresights errors <code>` cannot disagree. Type-only import of the
  * drain module: dream.ts loads this next to a drain helper tests replace.
  */
 import { codeRetryable, exitCodeForCode } from '../error-catalogue.ts';

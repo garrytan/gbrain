@@ -205,7 +205,7 @@ export async function decideSingleFact(engine: BrainEngine, sourceId: string, in
 
 /** #6764: a conversation-derived fact changes when its page is re-extracted (forget + remember would only withdraw it). */
 function replacesDerivedSuggestion(sourceId: string, slug: string): string {
-  const base = `gbrain extract-conversation-facts --source-id ${sourceId} --slugs ${slug} --force`;
+  const base = `foresights extract-conversation-facts --source-id ${sourceId} --slugs ${slug} --force`;
   return `Re-extract the conversation page to change its facts: preview with ${base} --dry-run, then run ${base} --max-cost-usd <n> (paid).`;
 }
 

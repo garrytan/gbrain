@@ -1,6 +1,6 @@
 /**
  * W4: isGbrainManagedSkillsDir — the marker doctor uses to grade an auto-detected skills folder (and GBRA-225's
- * skill_health check reuses). Only files gbrain writes count; a generic RESOLVER.md does not.
+ * skill_health check reuses). Only files foresights writes count; a generic RESOLVER.md does not.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -21,7 +21,7 @@ function workspace(): { root: string; skills: string } {
 }
 
 describe('isGbrainManagedSkillsDir', () => {
-  test('an agent skills folder with no gbrain file is not managed, even with its own RESOLVER.md or AGENTS.md', () => {
+  test('an agent skills folder with no foresights file is not managed, even with its own RESOLVER.md or AGENTS.md', () => {
     const { root, skills } = workspace();
     expect(isGbrainManagedSkillsDir(skills)).toBe(false);
     writeFileSync(join(skills, 'RESOLVER.md'), '# RESOLVER\n\n| Trigger | Skill |\n|---|---|\n');

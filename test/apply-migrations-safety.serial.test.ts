@@ -21,11 +21,11 @@ async function fixture(run: (home: string, ledger: string) => Promise<void>): Pr
   }
 }
 
-/** A systemd user unit for this brain's autopilot, as `gbrain autopilot --install` writes it; HOME and GBRAIN_HOME are both `home`. */
+/** A systemd user unit for this brain's autopilot, as `foresights autopilot --install` writes it; HOME and GBRAIN_HOME are both `home`. */
 function installedAutopilotUnit(home: string): void {
   const unitDir = join(home, '.config/systemd/user');
   mkdirSync(unitDir, { recursive: true });
-  writeFileSync(join(unitDir, 'gbrain-autopilot.service'), `[Unit]\nDescription=GBrain Autopilot\n[Service]\nExecStart=${join(home, '.gbrain', 'autopilot-run.sh')}\nRestart=always\n`);
+  writeFileSync(join(unitDir, 'gbrain-autopilot.service'), `[Unit]\nDescription=Foresights Autopilot\n[Service]\nExecStart=${join(home, '.gbrain', 'autopilot-run.sh')}\nRestart=always\n`);
 }
 
 function entries(ledger: string): CompletedMigrationEntry[] {
@@ -224,7 +224,7 @@ await runApplyMigrations(process.argv.slice(2));
         expect(record.status).toBe('complete');
         expect(record.autopilot_installed).toBe(false);
         expect(record.phases).toContainEqual({
-          name: 'install', status: 'skipped', detail: 'PGLite is single-writer; use gbrain serve for background maintenance',
+          name: 'install', status: 'skipped', detail: 'PGLite is single-writer; use foresights serve for background maintenance',
         });
       });
     });
@@ -255,12 +255,12 @@ await runApplyMigrations(process.argv.slice(2));
  * #6755: Phase F on a Postgres brain with no sync.repo_path. The child scripts
  * stub the schema step, the orchestration lock and the engine (sync.repo_path
  * and the default source's local_path are the fixture's), and a PATH shim
- * stands in for the gbrain child, logging every invocation.
+ * stands in for the foresights child, logging every invocation.
  */
 describe('v0.11.0 Phase F without a repo path (#6755)', () => {
   // What the old Phase F's refusal left in the ledger, reproduced on cadaf5cd7 with a PATH shim that prints the refusal
   // and exits 1: execSync's message only; the child's stderr ("No repo path. ...") went to the terminal, not the ledger.
-  const OLD_REFUSAL = 'Command failed: gbrain autopilot --install --yes';
+  const OLD_REFUSAL = 'Command failed: foresights autopilot --install --yes';
   const phaseRows = (installDetail: string) => [
     { name: 'schema', status: 'complete' }, { name: 'smoke', status: 'complete' }, { name: 'mode', status: 'complete' },
     { name: 'prefs', status: 'complete' }, { name: 'host', status: 'complete' },
@@ -344,7 +344,7 @@ console.log('CHECK=' + JSON.stringify(autopilotInstallPendingCheck()));
       expect(record).toMatchObject({ version: '0.11.0', status: 'complete', autopilot_installed: false });
       const install = record.phases!.find(phase => phase.name === 'install')!;
       expect(install).toMatchObject({ status: 'skipped', reason: 'no_repo_path' });
-      expect(install.detail).toContain('gbrain autopilot --install --yes --repo <REPO_PATH>');
+      expect(install.detail).toContain('foresights autopilot --install --yes --repo <REPO_PATH>');
       const items = pendingInstallItems(home);
       expect(items).toHaveLength(1);
       expect(items[0]).toMatchObject({ status: 'pending', install_argv: ['gbrain', 'autopilot', '--install', '--yes', '--repo', '<REPO_PATH>'] });
@@ -366,7 +366,7 @@ console.log('CHECK=' + JSON.stringify(autopilotInstallPendingCheck()));
       const record = entries(ledger).at(-1)!;
       expect(record.status).toBe('complete');
       expect(record.phases!.find(phase => phase.name === 'install')).toMatchObject({ status: 'skipped' });
-      expect(run.stdout).toContain("gbrain autopilot --install --yes --repo '/srv/brain repo'");
+      expect(run.stdout).toContain("foresights autopilot --install --yes --repo '/srv/brain repo'");
       expect(pendingInstallItems(home)[0].install_argv).toEqual(['gbrain', 'autopilot', '--install', '--yes', '--repo', repo]);
       const check = doctorLine(script);
       expect(check.fix.argv).toEqual(['gbrain', 'autopilot', '--install', '--yes', '--repo', repo]);
@@ -394,7 +394,7 @@ console.log('CHECK=' + JSON.stringify(autopilotInstallPendingCheck()));
       const record = entries(ledger).at(-1)!;
       expect(record).toMatchObject({ version: '0.11.0', status: 'complete', autopilot_installed: false });
       expect(record.phases!.find(phase => phase.name === 'install')).toMatchObject({ status: 'skipped', reason: 'not_installed' });
-      expect(run.stdout).toContain('gbrain autopilot --install --yes --repo /srv/brain');
+      expect(run.stdout).toContain('foresights autopilot --install --yes --repo /srv/brain');
       expect(pendingInstallItems(home)[0].install_argv).toEqual(['gbrain', 'autopilot', '--install', '--yes', '--repo', '/srv/brain']);
       expect(doctorLine(script).fix.argv).toEqual(['gbrain', 'autopilot', '--install', '--yes', '--repo', '/srv/brain']);
     });
@@ -454,7 +454,7 @@ console.log('CHECK=' + JSON.stringify(autopilotInstallPendingCheck()));
         writeFileSync(ledger, rows);
         const run = apply(['--yes', '--migration', '0.11.0']);
         expect(run.exitCode).not.toBe(0);
-        expect(run.stderr).toContain('gbrain apply-migrations --force-retry 0.11.0');
+        expect(run.stderr).toContain('foresights apply-migrations --force-retry 0.11.0');
         expect(run.stderr).not.toContain('Cleared the v0.11.0 wedge');
         expect(readFileSync(ledger, 'utf8')).toBe(rows);
       });

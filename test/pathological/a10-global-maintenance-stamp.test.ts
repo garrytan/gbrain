@@ -1,14 +1,14 @@
 /**
  * GBRA-130 A-10 + C-6 (#6837): one maintenance phase that fails every pass
  * used to withhold `autopilot.last_global_at` forever, with no streak, no
- * back-off and nothing in doctor or `gbrain autopilot --status`.
+ * back-off and nothing in doctor or `foresights autopilot --status`.
  *
  * Authoring gate:
  * 1. Protects: a pass stamps past a phase that failed with the same code in
  *    three earlier passes (budget and child blockers never do; a triage
  *    deferral does once its count stops shrinking for three passes, #7307), the
  *    failing phase backs off, the back-off resets on a version change, a new
- *    blocker key and `gbrain autopilot --retry-global`, doctor reports
+ *    blocker key and `foresights autopilot --retry-global`, doctor reports
  *    `global_maintenance_stalled`, and `autopilot --status` exits 1 on it.
  * 2. Fails if the stamp gate goes back to "any fail blocks", if streaks count
  *    a systemic or run-scoped run, or if the stall stops reaching doctor or
@@ -124,7 +124,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       const streak = (await progress()).failures.purge;
       expect(streak).toMatchObject({ key: 'fail:invalid_data', count: 3 });
       expectItemFailure({ key: 'purge', code: streak.key.slice('fail:'.length), fix: fourth.phase_streaks[0].fix },
-        { key: 'purge', code: 'invalid_data', fix: /gbrain autopilot --retry-global --phase purge/ });
+        { key: 'purge', code: 'invalid_data', fix: /(?:foresights|gbrain) autopilot --retry-global --phase purge/ });
       expect(Date.parse(streak.retry_at)).toBeGreaterThan(Date.now());
       expect(fourth.report.phases.find((p: PhaseResult) => p.phase === 'purge'))
         .toMatchObject({ status: 'skipped', details: { reason: 'phase_backoff', blocker: 'fail:invalid_data' } });
@@ -196,7 +196,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       const check = await stalledCheck();
       expect(check.status).toBe('warn');
       expect(check.message).toContain('synthesize');
-      expect(check.message).toContain('gbrain dream retriage --dry-run');
+      expect(check.message).toContain('foresights dream retriage --dry-run');
       expect(check.fix).toMatchObject({ argv: ['gbrain', 'dream', 'retriage'], consent: ['paid'], preview_argv: ['gbrain', 'dream', 'retriage', '--dry-run', '--json'] });
 
       await resetState();
@@ -204,7 +204,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       await resetState();
       expect((await run([5, 6, 7, 8])).map(r => r.stamped)).toEqual([false, false, false, true]);
       const pastResult = await (async () => { deferring(8); return pass(['orphans', 'synthesize']); })();
-      expect(pastResult.pass_completed_with_failing_phase).toEqual([expect.objectContaining({ phase: 'synthesize', key: 'deferred', fix: 'gbrain dream retriage' })]);
+      expect(pastResult.pass_completed_with_failing_phase).toEqual([expect.objectContaining({ phase: 'synthesize', key: 'deferred', fix: 'foresights dream retriage' })]);
     }, 120_000);
 
     test('#7307: a shrinking triage backlog keeps withholding the stamp, and a stale stamp names dream retriage, not the phase rerun', async () => {
@@ -312,7 +312,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       expect({ streaks: (await progress()).failures ?? {}, stamped: await stamped() }).toEqual({ streaks: {}, stamped: null });
     }, 120_000);
 
-    test('the back-off resets on a gbrain version change, and the retried phase lands', async () => {
+    test('the back-off resets on a foresights version change, and the retried phase lands', async () => {
       outcomes.purge = fail('invalid_data');
       for (let n = 0; n < 3; n++) await pass();
       await patchStreak('purge', { version: '0.0.1' });
@@ -333,7 +333,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       expect({ stamped: await stamped(), bypassed: result.pass_completed_with_failing_phase ?? null }).toEqual({ stamped: null, bypassed: null });
     }, 120_000);
 
-    test('gbrain autopilot --retry-global --phase ends the back-off and keeps the streak count', async () => {
+    test('foresights autopilot --retry-global --phase ends the back-off and keeps the streak count', async () => {
       outcomes.purge = fail('invalid_data');
       for (let n = 0; n < 3; n++) await pass();
       const { runAutopilotRetryGlobal } = await import('../../src/commands/autopilot-retry-global.ts');

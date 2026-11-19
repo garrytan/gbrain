@@ -27,12 +27,12 @@ when_to_use: "Use when the user asks: \"second opinion\", \"cross-modal review\"
 > **Convention:** see [conventions/cross-modal.yaml](../conventions/cross-modal.yaml)
 > for the review pairs and refusal routing chain.
 
-> **Relationship to `gbrain eval cross-modal`:** This skill is the manual
+> **Relationship to `foresights eval cross-modal`:** This skill is the manual
 > mid-flow gate (one model reviews work product before commit, with refusal
-> routing). The `gbrain eval cross-modal` command (v0.27.x) is a sibling
+> routing). The `foresights eval cross-modal` command (v0.27.x) is a sibling
 > surface: 3 different-provider frontier models score-and-iterate on a
 > documented dimension list *before* tests cement behavior. Use this skill
-> for ad-hoc second opinions; use `gbrain eval cross-modal` for the
+> for ad-hoc second opinions; use `foresights eval cross-modal` for the
 > skillify Phase 3 quality gate. The two are complementary, not redundant.
 
 ## Contract
@@ -176,10 +176,10 @@ decision.
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - A review model refuses: switch to the next model in the chain silently; escalate to the user only when every model refuses.
-- `gbrain eval cross-modal` fails on a missing provider key or `no_pricing`: name the missing provider and run with the models that are configured; never report a review that did not run as passed.
+- `foresights eval cross-modal` fails on a missing provider key or `no_pricing`: name the missing provider and run with the models that are configured; never report a review that did not run as passed.
 
 ## Anti-Patterns
 

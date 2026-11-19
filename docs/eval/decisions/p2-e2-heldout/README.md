@@ -4,7 +4,7 @@ Decision `p2-e2-heldout-2026-10-04` ran on the 7 sealed LoCoMo conversations (1,
 custodian ran it under preregistration amendment 1 (gbrain-evals `docs/benchmarks/2026-10-04-p2-ranking-extraction-preregistration.md`).
 
 The candidate was `extraction.date_grounding=true` on the frozen build. The baseline was the same build with the
-setting absent. Both arms ran the decision kit's facts lane: gbrain's conversation-facts extractor on dated
+setting absent. Both arms ran the decision kit's facts lane: foresights's conversation-facts extractor on dated
 conversation pages, two extractions per arm, and a fixed reader that answers from the saved facts with 10
 replicates. The gate is correctness first. It decides on the share of saved facts that still hold a relative date
 ("yesterday", "3 days ago") with no absolute date. QA has to stay non-inferior.
@@ -23,10 +23,10 @@ All 7 conversations improved individually on the primary metric.
 
 `extraction.date_grounding` defaults on for fact extraction and for the three other prompts that passed their per-consumer
 check. `false`, `off` or `0` turns all of them off. `true` also turns on life chronicle events, the one prompt that did not
-pass. `gbrain doctor` (`extraction_date_grounding`) reports which prompts are grounded on a brain.
+pass. `foresights doctor` (`extraction_date_grounding`) reports which prompts are grounded on a brain.
 
 Facts extracted before the default changed keep their original wording. Re-extracting a source is an explicit,
-previewed action that needs the user's consent: `gbrain extract-conversation-facts --source-id <id> --dry-run`.
+previewed action that needs the user's consent: `foresights extract-conversation-facts --source-id <id> --dry-run`.
 
 ## Per-consumer checks (preregistration amendment 3)
 

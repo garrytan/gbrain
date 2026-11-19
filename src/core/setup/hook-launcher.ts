@@ -1,27 +1,27 @@
 /**
  * hook-launcher.ts — the trusted-directory launcher that the per-turn hooks
- * `gbrain setup <claude-code|codex>` and the turn-rule lane write run gbrain
+ * `foresights setup <claude-code|codex>` and the turn-rule lane write run foresights
  * through (#8424).
  *
  * Why: the script-mode install (`bun install -g`, `bun link`) maps the
  * `gbrain` bin to src/cli.ts, so Bun reads the working directory's
- * bunfig.toml (a top-level `preload` runs before any gbrain code) and its
+ * bunfig.toml (a top-level `preload` runs before any foresights code) and its
  * .env files. Harnesses start hooks in the session's directory, so a hook
- * that ran gbrain directly would run a cloned repository's code as the user
+ * that ran foresights directly would run a cloned repository's code as the user
  * on every prompt, with nothing for the user to approve.
  *
  * The launcher is a POSIX sh script at <config dir>/hook-launcher/gbrain-hook.
  * It records the session directory in GBRAIN_HOOK_CWD, moves into its own
- * directory and execs its arguments (the absolute gbrain binary and the hook
+ * directory and execs its arguments (the absolute foresights binary and the hook
  * subcommand) there. That directory holds only the launcher: when anything
  * else is in it, the launcher refuses (exit 1, one stderr line) instead of
- * starting Bun next to a file gbrain did not write. `gbrain hook` reads the
+ * starting Bun next to a file foresights did not write. `foresights hook` reads the
  * session directory from GBRAIN_HOOK_CWD where it used process.cwd().
  *
- * The script-mode gbrain starts with `#!/usr/bin/env bun`, and a harness may
+ * The script-mode foresights starts with `#!/usr/bin/env bun`, and a harness may
  * start the launcher with a PATH that has no bun on it (the Codex desktop app,
  * a GUI launcher), so the launcher of a script-mode install puts the directory
- * of the Bun that wrote it first on PATH (GST-2784). A compiled gbrain needs no
+ * of the Bun that wrote it first on PATH (GST-2784). A compiled foresights needs no
  * Bun, and its launcher stays the plain one.
  */
 import { randomBytes } from 'node:crypto';
@@ -59,10 +59,10 @@ exec "$@"
 const shellSingleQuote = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
 const RUNTIME_LINE = /^PATH='((?:[^']|'\\'')*)':\$PATH$/m;
 
-/** The launcher text: the plain one, or for a script-mode install the same with `runtimeDir` (a shell path) put first on PATH before gbrain starts. */
+/** The launcher text: the plain one, or for a script-mode install the same with `runtimeDir` (a shell path) put first on PATH before foresights starts. */
 export function hookLauncherScript(runtimeDir: string | null): string {
   if (runtimeDir === null) return HOOK_LAUNCHER_SCRIPT;
-  return HOOK_LAUNCHER_SCRIPT.replace('exec "$@"\n', () => `# gbrain runs under the Bun gbrain setup ran under, so a harness started without bun on PATH still starts it.
+  return HOOK_LAUNCHER_SCRIPT.replace('exec "$@"\n', () => `# gbrain runs under the Bun foresights setup ran under, so a harness started without bun on PATH still starts it.
 PATH=${shellSingleQuote(runtimeDir)}:$PATH
 export PATH
 exec "$@"
@@ -72,7 +72,7 @@ exec "$@"
 const sameFile = (a: string, b: string) => { try { return realpathSync(a) === realpathSync(b); } catch { return false; } };
 
 /**
- * The directory of the Bun this gbrain runs under, as a hook shell path; null for a compiled gbrain, which needs none.
+ * The directory of the Bun this foresights runs under, as a hook shell path; null for a compiled foresights, which needs none.
  * The bun on PATH wins when it is this same Bun: execPath is the resolved file, which for Homebrew, mise or asdf sits in
  * a per-version directory that a Bun upgrade deletes, while the PATH entry survives it.
  */
@@ -94,40 +94,40 @@ export function hookLauncherPath(home: string = configDir()): string {
 export type HookLauncherState = 'current' | 'missing' | 'stale' | 'foreign';
 
 /**
- * Files only. `foreign`: the launcher's directory holds something gbrain did not write, so the launcher refuses to run.
- * `runtimeDir`: the Bun directory this gbrain needs (null for a compiled gbrain); a launcher that names a Bun that is
+ * Files only. `foreign`: the launcher's directory holds something foresights did not write, so the launcher refuses to run.
+ * `runtimeDir`: the Bun directory this foresights needs (null for a compiled foresights); a launcher that names a Bun that is
  * gone, or none when one is needed, is stale.
  */
 export function hookLauncherState(path: string, runtimeDir: string | null = launcherRuntimeDir()): { state: HookLauncherState; detail: string } {
   let names: string[];
   try { names = readdirSync(dirname(path)); } catch { return { state: 'missing', detail: `no hook launcher at ${path}` }; }
   const other = names.find((n) => n !== HOOK_LAUNCHER_NAME);
-  if (other !== undefined) return { state: 'foreign', detail: `${dirname(path)} holds ${other}, which gbrain did not write, so the hook launcher refuses to start gbrain there` };
+  if (other !== undefined) return { state: 'foreign', detail: `${dirname(path)} holds ${other}, which foresights did not write, so the hook launcher refuses to start foresights there` };
   try {
     const st = lstatSync(path);
     if (!st.isFile()) return { state: 'stale', detail: `${path} is not a regular file` };
     const text = readFileSync(path, 'utf8');
     const recorded = RUNTIME_LINE.exec(text)?.[1]?.replace(/'\\''/g, "'") ?? null;
-    if (text !== hookLauncherScript(recorded)) return { state: 'stale', detail: `${path} differs from the launcher this gbrain writes` };
+    if (text !== hookLauncherScript(recorded)) return { state: 'stale', detail: `${path} differs from the launcher this foresights writes` };
     if ((st.mode & 0o100) === 0) return { state: 'stale', detail: `${path} is not executable` };
-    if (recorded !== null && !existsSync(bunIn(recorded))) return { state: 'stale', detail: `${path} starts gbrain with ${bunIn(recorded)}, which is no longer there, so a harness started without bun on PATH cannot start gbrain` };
-    if (recorded === null && runtimeDir !== null) return { state: 'stale', detail: `${path} does not record where bun is, so a harness started without bun on PATH (the Codex app, a GUI launcher) cannot start gbrain` };
+    if (recorded !== null && !existsSync(bunIn(recorded))) return { state: 'stale', detail: `${path} starts foresights with ${bunIn(recorded)}, which is no longer there, so a harness started without bun on PATH cannot start foresights` };
+    if (recorded === null && runtimeDir !== null) return { state: 'stale', detail: `${path} does not record where bun is, so a harness started without bun on PATH (the Codex app, a GUI launcher) cannot start foresights` };
   } catch { return { state: 'missing', detail: `no hook launcher at ${path}` }; }
   return { state: 'current', detail: `hook launcher ${path}` };
 }
 
 /**
  * Write (or refresh) the launcher and return its path. Throws when its
- * directory holds anything else: gbrain never deletes a file it did not write,
+ * directory holds anything else: foresights never deletes a file it did not write,
  * and a hook routed through that directory would refuse anyway. A script-mode
- * gbrain rewrites a launcher that records another Bun, so it starts under this one.
+ * foresights rewrites a launcher that records another Bun, so it starts under this one.
  */
 export function ensureHookLauncher(path: string = hookLauncherPath(), runtimeDir: string | null = launcherRuntimeDir()): string {
   const dir = dirname(path);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   chmodSync(dir, 0o700);
   const other = readdirSync(dir).find((n) => n !== HOOK_LAUNCHER_NAME);
-  if (other !== undefined) throw new Error(`${dir} holds ${other}, which gbrain did not write; the hook launcher runs gbrain from that directory, so remove it, then run this again`);
+  if (other !== undefined) throw new Error(`${dir} holds ${other}, which foresights did not write; the hook launcher runs foresights from that directory, so remove it, then run this again`);
   if (hookLauncherState(path, runtimeDir).state === 'current' && (runtimeDir === null || readFileSync(path, 'utf8') === hookLauncherScript(runtimeDir))) return path;
   // The temp file sits beside the directory, never in it: a hook running meanwhile would refuse to start next to it.
   const tmp = join(dirname(dir), `.${HOOK_LAUNCHER_DIR}.tmp-${randomBytes(6).toString('hex')}`);
@@ -189,7 +189,7 @@ export function hookShellPath(path: string): string {
   return drive ? `/${drive[1]!.toLowerCase()}/${drive[2]!.replace(/\\/g, '/')}` : path;
 }
 
-/** The launcher a hook command runs gbrain through, as a path this platform's file calls can read, or null for a command that starts gbrain in the session directory. */
+/** The launcher a hook command runs foresights through, as a path this platform's file calls can read, or null for a command that starts foresights in the session directory. */
 export function hookLauncherInCommand(command: string, platform: NodeJS.Platform = process.platform): string | null {
   const launcher = shellWords(command)?.find((word) => isHookLauncherPath(word, platform));
   return launcher ? msysToNativePath(launcher, platform) : null;

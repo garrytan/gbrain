@@ -9,7 +9,7 @@ import type { SlugRootMode } from './sync-anchor.ts';
 export class RestoreTargetError extends Error {}
 
 /**
- * The source and repo `gbrain export --restore-only` restores. `gbrain
+ * The source and repo `foresights export --restore-only` restores. `foresights
  * storage status` resolves its restore hint with the same rule, so the files
  * it lists as missing are the ones the hint restores.
  *
@@ -33,7 +33,7 @@ export async function resolveRestoreTarget(
       // A repo registered only to an archived source is that source's repo;
       // restoring another source's pages from it would be wrong.
       const [archived] = matches.length ? [] : await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS TRUE AND local_path=$1 ORDER BY id LIMIT 1', [resolve(repo)]);
-      if (archived) throw new RestoreTargetError(`The restore repo belongs to archived source "${archived.id}". Run gbrain sources restore ${archived.id} first. Or pass --source <id> and --repo <path> for an active source.`);
+      if (archived) throw new RestoreTargetError(`The restore repo belongs to archived source "${archived.id}". Run foresights sources restore ${archived.id} first. Or pass --source <id> and --repo <path> for an active source.`);
       const owners = await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id LIMIT 2');
       if (!matches.length && owners.length === 1) source = owners[0].id;
       else throw new RestoreTargetError('The restore repo does not identify exactly one source. Pass --source <id> and --repo <path> for that source.');

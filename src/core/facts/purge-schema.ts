@@ -11,9 +11,9 @@
  * - `take_purges`: the same tombstone for verbatim take copies; canonical
  *   projections and the takes guard consult it, so a stale takes fence cannot
  *   re-project a purged claim.
- * - `page_purges`: `gbrain delete <slug> --purge` records the purged page's
+ * - `page_purges`: `foresights delete <slug> --purge` records the purged page's
  *   content hash. A page write whose content hash matches, under any slug,
- *   raises `purged_content`; `gbrain pages unpurge` clears it.
+ *   raises `purged_content`; `foresights pages unpurge` clears it.
  * - `derivation_inputs`: complete row -> input edges written by every deriver
  *   (`recordDerivationInputs`). Purge walks them transitively to hide derived
  *   rows and mark them `needs_rederive` before cascades delete the evidence.

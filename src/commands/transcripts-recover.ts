@@ -1,5 +1,5 @@
 /**
- * `gbrain transcripts recover codex` — D15 recovery for #5163 (logic in
+ * `foresights transcripts recover codex` — D15 recovery for #5163 (logic in
  * core/transcripts/recover.ts). Preview by default; `--apply` re-imports the
  * recoverable rollouts. Never extracts facts and never moves the
  * `--since last` watermark.
@@ -10,9 +10,9 @@ import type { CliDispatchContext } from '../cli/command-table.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 
 export const TRANSCRIPTS_RECOVER_HELP = `Usage:
-  gbrain transcripts recover codex [<rollout>...] [--apply] [--source-id S] [--json]
+  foresights transcripts recover codex [<rollout>...] [--apply] [--source-id S] [--json]
 
-Restores the user turns of Codex sessions imported before gbrain read codex
+Restores the user turns of Codex sessions imported before foresights read codex
 0.153+ rollouts (#5163): finds codex conversation pages with no user turn,
 re-reads their retained rollouts (~/.codex/sessions and the archived store,
 or the rollouts given) and reports which can be restored and which cannot
@@ -31,7 +31,7 @@ export async function runTranscriptsRecover(engine: BrainEngine, args: string[],
     return;
   }
   if (args[0] !== 'codex') {
-    console.error('gbrain transcripts recover: name the harness to recover (only codex is supported): gbrain transcripts recover codex');
+    console.error('foresights transcripts recover: name the harness to recover (only codex is supported): foresights transcripts recover codex');
     setCliExitVerdict(2);
     return;
   }
@@ -62,7 +62,7 @@ export async function runTranscriptsRecover(engine: BrainEngine, args: string[],
   console.log(`  unrecoverable: ${plan.unrecoverable.length} (no retained rollout; their user turns are gone)`);
   for (const u of plan.unrecoverable) console.log(`    ${u.slug} (session ${u.session_id})`);
   if (!apply) {
-    if (plan.recoverable.length) console.log('  apply: gbrain transcripts recover codex --apply');
+    if (plan.recoverable.length) console.log('  apply: foresights transcripts recover codex --apply');
     return;
   }
   if (!result) {
@@ -70,6 +70,6 @@ export async function runTranscriptsRecover(engine: BrainEngine, args: string[],
     return;
   }
   console.log(`  restored: ${result.pages.imported} page(s) re-imported, ${result.sessionsErrored} session error(s)`);
-  console.log('  facts were not re-extracted; for a session you want them from, run: gbrain transcripts ingest <rollout> --facts --max-cost-usd <n>');
+  console.log('  facts were not re-extracted; for a session you want them from, run: foresights transcripts ingest <rollout> --facts --max-cost-usd <n>');
   if (result.sessionsErrored > 0 || result.erroredFiles > 0) setCliExitVerdict(1);
 }

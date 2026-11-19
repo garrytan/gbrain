@@ -1,7 +1,7 @@
 /**
- * v0.42 Wave D1 — `gbrain extract status` dashboard CLI.
+ * v0.42 Wave D1 — `foresights extract status` dashboard CLI.
  *
- *   gbrain extract status [--source-id ID] [--kind X] [--run-id Y] [--json]
+ *   foresights extract status [--source-id ID] [--kind X] [--run-id Y] [--json]
  *
  * Reads `extract_rollup_7d` (migration v106) and emits per-kind +
  * (optionally) per-source aggregates from the last 7 days. Operator-
@@ -138,7 +138,7 @@ export function formatStatusTable(report: ExtractStatusReport, verbose: boolean)
 }
 
 /**
- * CLI entry: `gbrain extract status`.
+ * CLI entry: `foresights extract status`.
  */
 export async function runExtractStatus(
   engine: BrainEngine,
@@ -203,7 +203,7 @@ export async function runExtractStatus(
         }, null, 2));
       } else {
         console.log('No extract_rollup_7d table found (pre-v0.42 brain or fresh init).');
-        console.log('Run: gbrain apply-migrations --yes');
+        console.log('Run: foresights apply-migrations --yes');
       }
       return;
     }
