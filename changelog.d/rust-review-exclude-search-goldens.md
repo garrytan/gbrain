@@ -1,2 +1,0 @@
-### Changed
-- Contributors: `/ship`'s reviewers now leave the Rust store's three PostgreSQL search goldens (`english_stem.tsv`, `ts_parse.json` and `tsearch.json`) out of their diffs, as they already do for docs and other generated goldens. Those files are about 1.7 MB of generated test data, and `regen-search-goldens.ts` checks every output column against PostgreSQL 18.6. Nothing changes for gbrain users.
