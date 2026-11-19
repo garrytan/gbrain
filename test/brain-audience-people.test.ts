@@ -76,4 +76,33 @@ describe('brain audience counts people, not credentials', () => {
     await client('phone', null);
     expect((await classifyBrainAudience(engine)).audience).toBe('shared');
   });
+
+  test('a client name bound to two different members counts as unbound, not as either member', async () => {
+    await client('dup', 'alice-example');
+    await client('dup', 'bob-example', 'client');
+    await client('alice-phone', 'alice-example');
+    await client('x', null);
+    const r = await classifyBrainAudience(engine);
+    expect(r.audience).toBe('shared');
+    expect(r.reasons.join(' ')).toContain('1 member(s), 2 unbound client(s)');
+  });
+
+  test('when the member bindings cannot be read, every client counts by itself', async () => {
+    await client('alice-laptop', 'alice-example');
+    await client('alice-phone', 'alice-example');
+    await client('alice-agent', 'alice-example', 'client');
+    const failing = new Proxy(engine, {
+      get(target, prop) {
+        if (prop === 'executeRaw') {
+          return (sql: string, params?: unknown[]) => sql.includes('FROM oauth_clients WHERE client_id = ANY')
+            ? Promise.reject(new Error('bindings unreadable')) : target.executeRaw(sql, params as never);
+        }
+        const value = Reflect.get(target, prop);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const r = await classifyBrainAudience(failing);
+    expect(r.audience).toBe('shared');
+    expect(r.reasons.join(' ')).toContain('0 member(s), 3 unbound client(s)');
+  });
 });
