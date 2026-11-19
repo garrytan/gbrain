@@ -150,13 +150,7 @@ export async function runFiles(engine: BrainEngine, args: string[]) {
 }
 
 async function listFiles(engine: BrainEngine, slug?: string) {
-  const sql = sqlQueryForEngine(engine);
-  let rows;
-  if (slug) {
-    rows = await sql`SELECT * FROM files WHERE page_slug = ${slug} ORDER BY filename LIMIT 100`;
-  } else {
-    rows = await sql`SELECT * FROM files ORDER BY page_slug, filename LIMIT 100`;
-  }
+  const rows = await engine.listFiles({ pageSlug: slug || null, limit: 100 });
 
   if (rows.length === 0) {
     console.log(slug ? `No files for page: ${slug}` : 'No files stored.');

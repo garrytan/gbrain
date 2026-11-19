@@ -301,6 +301,7 @@
           "linkConversationFact: (sourceId: string, link: ConversationFactLink) => Promise<boolean>",
           "linkRelationshipKeysForOrigin: (pageId: number) => Promise<RelationshipKey[]>",
           "linkRelationshipKeysForPages: (pageIds: readonly number[]) => Promise<RelationshipKey[]>",
+          "listAccessTokens: () => Promise<AccessTokenRow[]>",
           "listActiveAccessMembers: () => Promise<string[]>",
           "listActiveFactsForEntity: (sourceId: string, entitySlug: string, limit: number) => Promise<EvidenceFactRow[]>",
           "listActiveTakesForPages: (pageIds: number[], opts?: { takesHoldersAllowList?: string[]; }) => Promise<Map<number, Take[]>>",
@@ -345,6 +346,7 @@
           "listFenceFactRows: (target: FenceRowsTarget) => Promise<FenceFactRow[]>",
           "listFenceRetireCandidates: (target: FenceProjectionTarget) => Promise<FactPreimage[]>",
           "listFenceRowGroups: () => Promise<FenceRowGroupRow[]>",
+          "listFiles: (opts: ListFilesOptions) => Promise<FileRow[]>",
           "listFilesForPage: (pageId: number) => Promise<FileRow[]>",
           "listFreshExtractionOutcomes: (sourceId: string, slugs: string[], sources: string[], preferredSource: string) => Promise<ExtractionOutcomeRow[]>",
           "listGatedMirrorRequests: (hostId: string, gateCode: string, allowedCodes: readonly string[]) => Promise<GatedMirrorRequest[]>",
@@ -1814,6 +1816,7 @@
           "linkConversationFact: (sourceId: string, link: ConversationFactLink) => Promise<boolean>",
           "linkRelationshipKeysForOrigin: (pageId: number) => Promise<RelationshipKey[]>",
           "linkRelationshipKeysForPages: (pageIds: readonly number[]) => Promise<RelationshipKey[]>",
+          "listAccessTokens: () => Promise<AccessTokenRow[]>",
           "listActiveAccessMembers: () => Promise<string[]>",
           "listActiveFactsForEntity: (sourceId: string, entitySlug: string, limit: number) => Promise<EvidenceFactRow[]>",
           "listActiveTakesForPages: (pageIds: number[], opts?: { takesHoldersAllowList?: string[]; }) => Promise<Map<number, Take[]>>",
@@ -1858,6 +1861,7 @@
           "listFenceFactRows: (target: FenceRowsTarget) => Promise<FenceFactRow[]>",
           "listFenceRetireCandidates: (target: FenceProjectionTarget) => Promise<FactPreimage[]>",
           "listFenceRowGroups: () => Promise<FenceRowGroupRow[]>",
+          "listFiles: (opts: ListFilesOptions) => Promise<FileRow[]>",
           "listFilesForPage: (pageId: number) => Promise<FileRow[]>",
           "listFreshExtractionOutcomes: (sourceId: string, slugs: string[], sources: string[], preferredSource: string) => Promise<ExtractionOutcomeRow[]>",
           "listGatedMirrorRequests: (hostId: string, gateCode: string, allowedCodes: readonly string[]) => Promise<GatedMirrorRequest[]>",
@@ -4867,6 +4871,7 @@
           "linkConversationFact: (sourceId: string, link: ConversationFactLink) => Promise<boolean>",
           "linkRelationshipKeysForOrigin: (pageId: number) => Promise<RelationshipKey[]>",
           "linkRelationshipKeysForPages: (pageIds: readonly number[]) => Promise<RelationshipKey[]>",
+          "listAccessTokens: () => Promise<AccessTokenRow[]>",
           "listActiveAccessMembers: () => Promise<string[]>",
           "listActiveFactsForEntity: (sourceId: string, entitySlug: string, limit: number) => Promise<FactsCycleSql.EvidenceFactRow[]>",
           "listActiveTakesForPages: (pageIds: number[], opts?: { takesHoldersAllowList?: string[]; }) => Promise<Map<number, Take[]>>",
@@ -4911,6 +4916,7 @@
           "listFenceFactRows: (target: FenceRowsTarget) => Promise<FenceFactRow[]>",
           "listFenceRetireCandidates: (target: FenceProjectionTarget) => Promise<FactPreimage[]>",
           "listFenceRowGroups: () => Promise<FactsCycleSql.FenceRowGroupRow[]>",
+          "listFiles: (opts: ListFilesOptions) => Promise<FileRow[]>",
           "listFilesForPage: (pageId: number) => Promise<FileRow[]>",
           "listFreshExtractionOutcomes: (sourceId: string, slugs: string[], sources: string[], preferredSource: string) => Promise<FactsCycleSql.ExtractionOutcomeRow[]>",
           "listGatedMirrorRequests: (hostId: string, gateCode: string, allowedCodes: readonly string[]) => Promise<GatedMirrorRequest[]>",
@@ -5558,6 +5564,14 @@
           "type: string"
         ],
         "name": "LinkPageMetadataRow"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "limit: number",
+          "pageSlug?: string | null | undefined"
+        ],
+        "name": "ListFilesOptions"
       },
       {
         "kind": "variable",
@@ -8980,6 +8994,7 @@
           "linkConversationFact: (sourceId: string, link: factRelinkWritesImpl.ConversationFactLink) => Promise<boolean>",
           "linkRelationshipKeysForOrigin: (pageId: number) => Promise<RelationshipKey[]>",
           "linkRelationshipKeysForPages: (pageIds: readonly number[]) => Promise<RelationshipKey[]>",
+          "listAccessTokens: () => Promise<writeMiscImpl.AccessTokenRow[]>",
           "listActiveAccessMembers: () => Promise<string[]>",
           "listActiveFactsForEntity: (sourceId: string, entitySlug: string, limit: number) => Promise<factsCycleImpl.EvidenceFactRow[]>",
           "listActiveTakesForPages: (pageIds: number[], opts?: { takesHoldersAllowList?: string[]; }) => Promise<Map<number, Take[]>>",
@@ -9024,6 +9039,7 @@
           "listFenceFactRows: (target: trustFenceImpl.FenceRowsTarget) => Promise<trustFenceImpl.FenceFactRow[]>",
           "listFenceRetireCandidates: (target: factsImpl.FenceProjectionTarget) => Promise<factsImpl.FactPreimage[]>",
           "listFenceRowGroups: () => Promise<factsCycleImpl.FenceRowGroupRow[]>",
+          "listFiles: (opts: ListFilesOptions) => Promise<FileRow[]>",
           "listFilesForPage: (pageId: number) => Promise<FileRow[]>",
           "listFreshExtractionOutcomes: (sourceId: string, slugs: string[], sources: string[], preferredSource: string) => Promise<factsCycleImpl.ExtractionOutcomeRow[]>",
           "listGatedMirrorRequests: (hostId: string, gateCode: string, allowedCodes: readonly string[]) => Promise<effectScansImpl.GatedMirrorRequest[]>",

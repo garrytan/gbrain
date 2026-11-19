@@ -15,7 +15,8 @@
  *    UPDATE) carries its path, raw config and archived flag, archived sources included, and null for an unknown id; the
  *    sync preflight reads the source's stamped chunker version, null before the first stamp; a source's page count keeps
  *    to that source and counts soft-deleted pages only when asked; `sources add` inserts a row with its name, path and
- *    config (a key set to undefined is dropped), and a taken id or name throws and leaves the first row as it was.
+ *    config (a key set to undefined is dropped), and a taken id or name throws and leaves the first row as it was; the
+ *    scope-source check of a remote recall (`withoutScopeSources`) drops exactly the sources whose config marks them.
  *  - Regression: an engine that drops archived sources from tier 4 (a cwd inside an archived checkout then falls
  *    through silently instead of refusing), counts soft-deleted pages (the guard then nags or routes a write to the
  *    wrong source), or counts pages instead of sources in `nonDefaultSources`; an engine that lists archived sources
@@ -32,6 +33,7 @@
  *  - Seam: none. Real engines, typed reads only; sources are made and archived through the harness fixtures.
  */
 import { describe, expect } from 'bun:test';
+import { markedScopeSources, withoutScopeSources } from '../../src/core/access/attest-sources.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { RustEngine } from '../../src/core/rust-engine.ts';
 import type { PageInput } from '../../src/core/types.ts';
@@ -280,5 +282,18 @@ describe('engine parity: source-resolution reads', () => {
     expect(names).toEqual([['default', 'default'], ['bare', 'bare'], ['wiki', 'Wiki']]);
     return { refused, rows, names };
   });
-});
 
+  // A remote memory_recall drops the QM scope sources it did not name (withoutScopeSources); the census found the Rust
+  // engine refused it, because the scope check read the sources through sqlQueryForEngine. It reads getSource now.
+  parityTest('the scope-source check of a remote recall drops marked sources and keeps the rest', { methods: ['getSource'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'scope', { qm_scope: true, federated: false });
+    await createSource(engine, backend, 'plain', { federated: true });
+    const marked = [...await markedScopeSources(engine, ['plain', 'scope', 'scope', 'default', 'no-such-source'])];
+    expect(marked).toEqual(['scope']);
+    const remote = await withoutScopeSources({ remote: true, engine }, ['default', 'scope', 'plain']);
+    expect(remote).toEqual(['default', 'plain']);
+    const local = await withoutScopeSources({ remote: false, engine }, ['default', 'scope']);
+    expect(local).toEqual(['default', 'scope']);
+    return { marked, remote, local, none: [...await markedScopeSources(engine, [])] };
+  });
+});

@@ -513,7 +513,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'setSourceChunkerVersion': 'sources', 'isSourceClaimed': 'sources',
   'countSourcePages': 'sources', 'insertSource': 'sources',
   // files
-  'upsertFile': 'files', 'getFile': 'files', 'listFilesForPage': 'files',
+  'upsertFile': 'files', 'getFile': 'files', 'listFilesForPage': 'files', 'listFiles': 'files',
   // chunks
   'upsertChunks': 'chunks', 'sealChunks': 'chunks', 'getChunks': 'chunks', 'getChunkPage': 'chunks', 'getChunkWindows': 'chunks', 'countStaleChunks': 'chunks', 'sumStaleChunkChars': 'chunks',
   'setPageEmbeddingSignature': 'chunks', 'invalidateStaleSignatureEmbeddings': 'chunks',
@@ -571,6 +571,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'hasExtractedEvents': OOS.writeMisc,
   'listActiveAccessMembers': OOS.writeMisc,
   'hasLabelledOnlyMember': OOS.writeMisc,
+  'listAccessTokens': OOS.writeMisc,
   'expireMemoryProposals': OOS.writeMisc,
   'attachSourcePath': OOS.writeMisc,
   'listAwaitingMemoryProposals': OOS.writeMisc, 'readMemoryProposal': OOS.writeMisc,
@@ -1000,6 +1001,7 @@ export const SQL_CASES: SqlCase[] = [
   ]),
   ...variants('getFile', [['default', (e) => e.getFile(SRC, 'attachments/a.png')]]),
   ...variants('listFilesForPage', [['default', (e) => e.listFilesForPage(1)]]),
+  ...variants('listFiles', [['default', (e) => e.listFiles({ limit: 100 })], ['page_slug', (e) => e.listFiles({ pageSlug: 'people/alice-example', limit: 100 })]]),
 
   // ── chunks ──
   ...variants('upsertChunks', [

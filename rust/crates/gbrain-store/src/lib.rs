@@ -95,6 +95,11 @@ pub struct OpenOptions {
     pub engine_abi: u32,
     pub catalog_version: u32,
     pub created_by: String,
+    /// Config rows a fresh brain starts with besides `version`, in the order given: the
+    /// caller's embedding identity (`embedding_model`, `embedding_dimensions`) and
+    /// `chunk_strategy`, the rows the SQL engines' schema seeds. The store has no default of
+    /// its own; an existing brain keeps the rows it has.
+    pub initial_config: Vec<(String, String)>,
 }
 
 impl Default for OpenOptions {
@@ -104,6 +109,7 @@ impl Default for OpenOptions {
             engine_abi: 1,
             catalog_version: 0,
             created_by: format!("gbrain-store {}", env!("CARGO_PKG_VERSION")),
+            initial_config: Vec::new(),
         }
     }
 }
@@ -317,12 +323,21 @@ pub(crate) struct StoredFormat {
 }
 
 /// Records a fresh brain starts with, written in the same transaction as its format record: the
-/// schema version config (`getConfig('version')`) and the `default` source.
+/// schema version config (`getConfig('version')`), the caller's `initial_config` rows and the
+/// `default` source.
 fn seed(tx: &mut dyn KvWrite, env: &dyn Env, options: &OpenOptions) -> Result<()> {
     tx.put(
         &keys::text(keys::CONFIG, &["version"]),
         options.schema_version.to_string().as_bytes(),
     )?;
+    for (key, value) in &options.initial_config {
+        if key.is_empty() || key == "version" {
+            return Err(StoreError::invalid(format!(
+                "initial config key {key:?} is not allowed"
+            )));
+        }
+        tx.put(&keys::text(keys::CONFIG, &[key.as_str()]), value.as_bytes())?;
+    }
     access_flag::record_scan_done(tx)?;
     sources::seed_default_source(tx, env)
 }

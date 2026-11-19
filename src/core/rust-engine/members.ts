@@ -431,6 +431,7 @@ export const RUST_ENGINE_MEMBERS = {
   upsertFile: 'files',
   getFile: 'files',
   listFilesForPage: 'files',
+  listFiles: 'files',
   // code_edges
   addCodeEdges: 'code_edges',
   deleteCodeEdgesForChunks: 'code_edges',
@@ -593,6 +594,7 @@ export const RUST_ENGINE_MEMBERS = {
   readFolderAccess: 'access_control',
   listActiveAccessMembers: 'access_control',
   hasLabelledOnlyMember: 'access_control',
+  listAccessTokens: 'access_control',
   // pages: entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts)
   readMentionLastPass: 'pages',
   countPagesDueForMentions: 'pages',
