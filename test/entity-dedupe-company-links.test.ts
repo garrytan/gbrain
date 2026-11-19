@@ -143,6 +143,32 @@ test('reject removes the automatic rows and no later sweep links the pair again'
     { source_id: 'source-b', slug: 'companies/acme-example' }]), 'different']]);
 });
 
+test('a reject removes the automatic rows even when another decision lands while its sweep reads', async () => {
+  await seed();
+  await put('company', 'companies/beta-example', 'Beta Example', { github: 'beta-example' }, 'default');
+  await put('company', 'companies/beta-example', 'Beta Example', { github: 'beta-example' }, 'source-b');
+  await sweep();
+  const acme = await groupOf('companies/acme-example');
+  const replace = engine.replaceAutoLinks.bind(engine);
+  let raced = false;
+  engine.replaceAutoLinks = async (input) => {
+    if (!raced) {
+      raced = true;
+      const members = [{ source_id: 'default', slug: 'people/alice-example' }, { source_id: 'source-b', slug: 'people/alice-example' }];
+      await engine.applyIdentityDecisions({ upsert: [{ decision_id: decisionId(members), verdict: 'different', members, group_id: null, entity_id: null, canonical: null,
+        decided_by: 'owner', decided_at: '2026-11-18T00:00:00Z', origin: 'database', home_source_id: null, git_blob: null }] });
+    }
+    return replace(input);
+  };
+  try {
+    await cli(['reject', acme]);
+  } finally {
+    engine.replaceAutoLinks = replace;
+  }
+  expect(raced).toBe(true);
+  expect((await identities()).map(r => r.slug)).toEqual(['companies/beta-example', 'companies/beta-example']);
+});
+
 test('a page linked by hand, an unverified stub, a quarantined or a flagged page keeps its company group out of the sweep', async () => {
   await seed();
   await linkEntityIdentity(engine, { entityId: 'acme-by-hand', slug: 'companies/acme-example', sourceId: 'default', canonical: true });

@@ -42,8 +42,19 @@ export async function companyLinkGroups(engine: BrainEngine, read?: IdentityDeci
 
 const rowKey = (r: AutoLinkWrite) => `${r.entity_id}\t${r.source_id}\t${r.page_id}\t${r.canonical}`;
 
-/** Recompute the automatic company links: one transaction, writing only when something changed. */
+/**
+ * Recompute the automatic company links: one transaction, writing only when something changed. A write planned from
+ * decisions that moved meanwhile (a reject or confirm recorded while the sweep read) is planned again from a fresh read, up
+ * to five times, so a rejected pair never stays linked because another decision landed at the same moment.
+ */
 export async function sweepCompanyLinks(engine: BrainEngine): Promise<CompanySweepResult> {
+  for (let attempt = 1; ; attempt++) {
+    const result = await sweepOnce(engine);
+    if (!result.stale || attempt >= 5) return result;
+  }
+}
+
+async function sweepOnce(engine: BrainEngine): Promise<CompanySweepResult> {
   const read = await engine.listIdentityDecisions();
   const home = await identityHome(engine);
   if (!home && read.decisions.some(d => d.origin === 'git')) return { groups: 0, linked: 0, unlinked: 0, skipped: [], store_mismatch: true };
