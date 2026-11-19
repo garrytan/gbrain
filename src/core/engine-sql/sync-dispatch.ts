@@ -1,11 +1,9 @@
 /**
  * The single-source sync routing read src/core/sync-dispatch-read.ts ran through `executeRaw` (Rust engine lane 11).
  * The statement text is the caller's, byte for byte (test/engine-sql-caller-raw-sql-pins.test.ts), with
- * `MANAGED_MODE_SQL` (engine-sql/persistence-state.ts) interpolated, so PGLite and Postgres answer exactly as before and
- * the mode statement keeps one home (test/persistence-mode-reader-guard.test.ts).
+ * `MANAGED_MODE_SQL` (engine-sql/persistence-state.ts) written out, so PGLite and Postgres answer exactly as before.
  * The Rust engine builds the same row from its source members (src/core/rust-engine/store-members/cli-reads-import.ts).
  */
-import { MANAGED_MODE_SQL } from './persistence-state.ts';
 
 /** The engine's own executeRaw, so a statement a test counts or fails on the engine reaches the routing read. */
 export interface DispatchRead {
@@ -24,7 +22,7 @@ export interface SyncDispatchRow {
 export const SYNC_DISPATCH_SQL = `SELECT s.id, s.archived, s.config, s.incarnation::text AS incarnation, s.local_path,
   EXISTS(SELECT 1 FROM persistence_source_bindings b WHERE b.source_id=s.id AND b.source_incarnation=s.incarnation) AS claimed,
   EXISTS(SELECT 1 FROM source_ingestion_receipts r WHERE r.source_id=s.id AND r.source_incarnation=s.incarnation AND r.profile='company-brain') AS company_receipt,
-  (SELECT COALESCE(jsonb_agg(m.enabled), '[]'::jsonb) FROM (${MANAGED_MODE_SQL}) m) AS modes
+  (SELECT COALESCE(jsonb_agg(m.enabled), '[]'::jsonb) FROM (SELECT enabled FROM persistence_brain WHERE singleton=1) m) AS modes
   FROM (SELECT $1::text AS want) w LEFT JOIN sources s ON s.id=w.want`;
 
 /** The routing row of `sourceId`: the source row, its claim and company-brain receipt, and the brain's persistence mode. */
