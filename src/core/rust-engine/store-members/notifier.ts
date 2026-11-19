@@ -1,13 +1,19 @@
 /**
  * The commit notifier members the Rust store answers (engine-sql/notifier.ts): the host lease (claimNotifierLease,
- * readNotifierLease, holdsNotifierLease, releaseNotifierLease) and the host source list (listNotifierHostSourceRows).
+ * readNotifierLease, holdsNotifierLease, releaseNotifierLease), the host source list (listNotifierHostSourceRows), the
+ * per-source state and coverage rows (readNotifierSources, writeNotifierState, writeNotifierCoverage,
+ * recordNotifierSyncerHost) and the freshness status rows (readNotifierStatusRows, hasNotifierCoverage).
  *
- * The store keeps the lease row with Postgres's fencing rule. It keeps no managed worktree bindings, no classic syncer
- * rows and no source `last_commit`, so every source row reads `bound` false and those fields null.
+ * The store keeps the lease row with Postgres's fencing rule and one notifier row per source. It keeps no managed
+ * worktree bindings and no source `last_commit`, so every source row reads `bound` false and those fields null.
  *
  * What each member answers and why: rust/docs/store/persistence.md ("Commit notifier").
  */
-import type { NotifierHostSourceRow, NotifierLeaseClaim, NotifierLeaseClaimInput, NotifierLeaseHolder } from '../../engine-sql/notifier.ts';
+import {
+  toNotifierSourceRow, toNotifierStatusRow,
+  type Coverage, type NotifierHostSourceRow, type NotifierLeaseClaim, type NotifierLeaseClaimInput, type NotifierLeaseHolder,
+  type NotifierSourceRow, type NotifierStatusRow, type StatePatch,
+} from '../../engine-sql/notifier.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /** The store stamps microseconds; the SQL engines read an expiry back as a millisecond ISO string. */
@@ -39,3 +45,35 @@ export const releaseNotifierLease: StoreMember<[hostId: string, ownerId: string]
 /** Every source that is not archived, in id order. */
 export const listNotifierHostSourceRows: StoreMember<[], NotifierHostSourceRow[]> = (brain) =>
   storeCall({ member: 'listNotifierHostSourceRows' }, () => brain.listNotifierHostSourceRows());
+
+/** The per-source rows of `sourceIds` (every row when null), in source id order. */
+export const readNotifierSources: StoreMember<[sourceIds: string[] | null], NotifierSourceRow[]> = async (brain, sourceIds) =>
+  (await storeCall({ member: 'readNotifierSources' }, () => brain.readNotifierSources(sourceIds)) as Array<Record<string, unknown>>).map(toNotifierSourceRow);
+
+/** One state transition of a source, in one store write. The message is cut as the SQL engines' caller cuts it. */
+export const writeNotifierState: StoreMember<[sourceId: string, patch: StatePatch], void> = async (brain, sourceId, p) => {
+  const error = p.error ? { code: p.error.code, message: p.error.message.slice(0, 2000), tracePath: p.error.tracePath ?? null } : null;
+  await storeCall({ member: 'writeNotifierState' }, () => brain.writeNotifierState(sourceId, {
+    state: p.state, reason: p.reason ?? null, firstDue: p.firstDue, attempts: p.attempts ?? null, nextRetryInMs: p.nextRetryInMs ?? null,
+    progress: p.progress === true, errorGiven: p.error !== undefined, error,
+  }));
+};
+
+/** The coverage record of a source, in one store write. */
+export const writeNotifierCoverage: StoreMember<[sourceId: string, coverage: Coverage], void> = async (brain, sourceId, c) => {
+  await storeCall({ member: 'writeNotifierCoverage' }, () => brain.writeNotifierCoverage(sourceId,
+    { head: c.head, mode: c.mode, ownerHostId: c.ownerHostId, ownerKind: c.ownerKind, ownerPid: c.ownerPid }));
+};
+
+/** The host that advanced a classic source; nothing is written when it did not change. */
+export const recordNotifierSyncerHost: StoreMember<[sourceId: string, hostId: string], void> = async (brain, sourceId, hostId) => {
+  await storeCall({ member: 'recordNotifierSyncerHost' }, () => brain.recordNotifierSyncerHost(sourceId, hostId));
+};
+
+/** The status rows of the sources that are not archived, in id order, at most 200. */
+export const readNotifierStatusRows: StoreMember<[sourceIds: string[] | null], NotifierStatusRow[]> = async (brain, sourceIds) =>
+  (await storeCall({ member: 'readNotifierStatusRows' }, () => brain.readNotifierStatusRows(sourceIds)) as Array<Record<string, unknown>>).map(toNotifierStatusRow);
+
+/** Whether some source has a coverage record. */
+export const hasNotifierCoverage: StoreMember<[], boolean> = (brain) =>
+  storeCall({ member: 'hasNotifierCoverage' }, () => brain.hasNotifierCoverage());

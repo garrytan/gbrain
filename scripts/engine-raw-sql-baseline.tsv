@@ -553,8 +553,8 @@ src/core/minions/worker.ts	execute_raw	7
 src/core/multi-source-drift.ts	execute_raw	1
 src/core/notifier/nudge.ts	execute_raw	1
 src/core/notifier/resident.ts	execute_raw	2
-src/core/notifier/status.ts	execute_raw	3
-src/core/notifier/store.ts	execute_raw	11
+src/core/notifier/status.ts	execute_raw	1
+src/core/notifier/store.ts	execute_raw	7
 src/core/oauth-grants.ts	sql_template	16
 src/core/oauth-provider.ts	sql_template	22
 src/core/onboard/checks.ts	execute_raw	5

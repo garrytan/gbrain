@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 679/679
+# covered: 685/685
 # lifecycle: 9/9
 # pages: 39/39
 # search: 7/7
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 10/10
-# persistence_journal: 44/44
+# persistence_journal: 50/50
 # entity_reads: 6/6
 # cycle_locks: 7/7
 # minion_jobs: 8/8
@@ -363,10 +363,16 @@ applyTransactionSettings	import_guards	yes	34	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readLedgerSource	import_guards	yes	8	no	yes	yes	serves
 isFolderRestricted	import_guards	yes	3	no	yes	yes	serves
-claimNotifierLease	persistence_journal	yes	2	no	yes	yes	serves
+claimNotifierLease	persistence_journal	yes	4	no	yes	yes	serves
 readNotifierLease	persistence_journal	yes	1	no	yes	yes	serves
 holdsNotifierLease	persistence_journal	yes	1	no	yes	yes	serves
 releaseNotifierLease	persistence_journal	yes	1	no	yes	yes	serves
+readNotifierSources	persistence_journal	yes	1	no	yes	yes	serves
+writeNotifierState	persistence_journal	yes	2	no	yes	yes	serves
+writeNotifierCoverage	persistence_journal	yes	3	no	yes	yes	serves
+recordNotifierSyncerHost	persistence_journal	yes	1	no	yes	yes	serves
+readNotifierStatusRows	persistence_journal	yes	2	no	yes	yes	serves
+hasNotifierCoverage	persistence_journal	yes	2	no	yes	yes	serves
 declarePersistence	persistence_journal	yes	5	no	yes	yes	serves
 readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldPageRows	persistence_journal	yes	1	no	yes	yes	serves

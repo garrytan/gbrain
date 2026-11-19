@@ -1,13 +1,21 @@
 /**
- * The commit notifier's host lease and host source list (migration v262 tables). notifier/store.ts claimLease,
- * readLease, holdsLease and releaseLease and notifier/resident.ts listHostSources sent these statements through `executeRaw`; the SQL text is
- * theirs, unchanged.
+ * The commit notifier's host lease, host source list, per-source state and coverage, and the freshness status rows
+ * (migration v262 tables). notifier/store.ts (the lease, readNotifierSources, writeState, writeCoverage,
+ * recordSyncerHost), notifier/resident.ts listHostSources and notifier/status.ts (readRows, freshnessReported) sent
+ * these statements through `executeRaw`; the SQL text is theirs, unchanged.
  *
  * - The lease (`sync_notifier_leases`): one owner per host. A claim wins when the row is free, expired or already the
  *   caller's; a takeover bumps the fencing token. A lost claim reads the current holder. The owner re-checks its token
  *   before each start (holdsNotifierLease) and expires the row on a clean stop (releaseNotifierLease).
  * - The host source list: every source that is not archived, in id order, with its managed binding, the worktree's
  *   owner host and checkout root, and the classic syncer host. notifier/resident.ts decides what the host watches.
+ * - Per-source state and coverage (`sync_notifier_sources`): one row per source, written only for a source that exists.
+ *   A state write is one transition (writeNotifierState); a coverage write records the observed HEAD, the detection
+ *   mode and the owner (writeNotifierCoverage); the syncer write records the host that advanced a classic source and
+ *   writes nothing when it did not change (recordNotifierSyncerHost).
+ * - The status rows (readNotifierStatusRows): each source that is not archived, with its notifier row, whether the
+ *   owner host's lease is live, and how many wanted markers are still due. The freshness notice and the sync status
+ *   notifier block read them.
  */
 import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
@@ -40,11 +48,107 @@ export interface NotifierHostSourceRow {
   config: unknown;
 }
 
+export type NotifierState = 'idle' | 'due' | 'running' | 'retry' | 'operator_blocked';
+export type DetectionMode = 'watch' | 'poll';
+
+/** One `sync_notifier_sources` row. */
+export interface NotifierSourceRow {
+  source_id: string;
+  syncer_host_id: string | null;
+  state: NotifierState;
+  reason: string | null;
+  first_due_at: string | null;
+  attempts: number;
+  next_retry_at: string | null;
+  last_progress_at: string | null;
+  last_error_code: string | null;
+  last_error: string | null;
+  last_error_at: string | null;
+  trace_path: string | null;
+  observed_head: string | null;
+  observed_at: string | null;
+  detection_mode: DetectionMode | null;
+  owner_host_id: string | null;
+  owner_kind: string | null;
+  owner_pid: number | null;
+  owner_seen_at: string | null;
+}
+
+/** One state transition of a source (writeNotifierState). */
+export interface StatePatch {
+  state: NotifierState;
+  reason?: string | null;
+  /** 'keep' keeps first_due_at (setting it when null); 'clear' sets it NULL (verified convergence). */
+  firstDue: 'keep' | 'clear';
+  attempts?: number;
+  nextRetryInMs?: number | null;
+  progress?: boolean;
+  /** null clears the last error; omitted keeps it. */
+  error?: { code: string; message: string; tracePath: string | null } | null;
+}
+
+/** The coverage record of a source (writeNotifierCoverage). */
+export interface Coverage { head: string | null; mode: DetectionMode; ownerHostId: string; ownerKind: string; ownerPid: number }
+
+/** One source as the freshness notice and the sync status notifier block read it (readNotifierStatusRows). */
+export interface NotifierStatusRow {
+  id: string;
+  last_commit: string | null;
+  state: NotifierState | null;
+  reason: string | null;
+  first_due_at: string | null;
+  attempts: number | null;
+  next_retry_at: string | null;
+  last_error_code: string | null;
+  last_error: string | null;
+  last_error_at: string | null;
+  trace_path: string | null;
+  observed_head: string | null;
+  observed_at: string | null;
+  detection_mode: DetectionMode | null;
+  owner_host_id: string | null;
+  owner_kind: string | null;
+  owner_pid: number | null;
+  owner_seen_at: string | null;
+  /** The owner host's notifier lease has not expired. */
+  lease_live: boolean;
+  lease_expires_at: string | null;
+  /** Wanted markers of the source that still ask for work. */
+  due_markers: number;
+}
+
 const iso = (v: unknown): string | null => v === null || v === undefined ? null : v instanceof Date ? v.toISOString() : new Date(String(v)).toISOString();
 const num = (v: unknown): number => typeof v === 'number' ? v : Number(v);
 const optNum = (v: unknown): number | null => v === null || v === undefined ? null : num(v);
 const optStr = (v: unknown): string | null => v === null || v === undefined ? null : String(v);
 const bool = (v: unknown): boolean => v === true || v === 't';
+/** notifier/status.ts's reading of a boolean column. */
+const truthy = (v: unknown): boolean => v === true || v === 't' || v === 1;
+
+/** A `sync_notifier_sources` row with its timestamps as ISO strings (the Rust store's member maps its rows here too). */
+export function toNotifierSourceRow(row: Record<string, unknown>): NotifierSourceRow {
+  return {
+    source_id: String(row.source_id), syncer_host_id: optStr(row.syncer_host_id), state: row.state as NotifierState,
+    reason: optStr(row.reason), first_due_at: iso(row.first_due_at), attempts: num(row.attempts ?? 0),
+    next_retry_at: iso(row.next_retry_at), last_progress_at: iso(row.last_progress_at), last_error_code: optStr(row.last_error_code),
+    last_error: optStr(row.last_error), last_error_at: iso(row.last_error_at), trace_path: optStr(row.trace_path),
+    observed_head: optStr(row.observed_head), observed_at: iso(row.observed_at), detection_mode: row.detection_mode ? row.detection_mode as DetectionMode : null,
+    owner_host_id: optStr(row.owner_host_id), owner_kind: optStr(row.owner_kind), owner_pid: optNum(row.owner_pid), owner_seen_at: iso(row.owner_seen_at),
+  };
+}
+
+/** A status row with its timestamps as ISO strings and its counts as numbers (the Rust store's member maps its rows here too). */
+export function toNotifierStatusRow(row: Record<string, unknown>): NotifierStatusRow {
+  return {
+    id: String(row.id), last_commit: optStr(row.last_commit), state: row.state ? row.state as NotifierState : null, reason: optStr(row.reason),
+    first_due_at: iso(row.first_due_at), attempts: optNum(row.attempts), next_retry_at: iso(row.next_retry_at),
+    last_error_code: optStr(row.last_error_code), last_error: optStr(row.last_error), last_error_at: iso(row.last_error_at),
+    trace_path: optStr(row.trace_path), observed_head: optStr(row.observed_head), observed_at: iso(row.observed_at),
+    detection_mode: row.detection_mode ? row.detection_mode as DetectionMode : null, owner_host_id: optStr(row.owner_host_id),
+    owner_kind: optStr(row.owner_kind), owner_pid: optNum(row.owner_pid), owner_seen_at: iso(row.owner_seen_at),
+    lease_live: truthy(row.lease_live), lease_expires_at: iso(row.lease_expires_at), due_markers: num(row.due_markers ?? 0),
+  };
+}
 
 /** Claims or renews the host's notifier lease: the fencing token when this resident owns it, else the current holder. */
 export async function claimNotifierLease(exec: RawExec, l: NotifierLeaseClaimInput): Promise<NotifierLeaseClaim> {
@@ -92,4 +196,74 @@ export async function listNotifierHostSourceRows(exec: LegacyUnscopedRead): Prom
       WHERE NOT s.archived ORDER BY s.id`);
   return rows.map(r => ({ id: String(r.id), local_path: optStr(r.local_path), last_commit: optStr(r.last_commit), bound: bool(r.bound),
     owner: optStr(r.owner), root: optStr(r.root), syncer: optStr(r.syncer), config: r.config }));
+}
+
+/** The `sync_notifier_sources` rows of `sourceIds` (every row when null), in source id order. */
+export async function readNotifierSources(exec: RawExec, sourceIds: string[] | null): Promise<NotifierSourceRow[]> {
+  const rows = await exec.executeRaw<Record<string, unknown>>(
+    'SELECT * FROM sync_notifier_sources WHERE ($1::text[] IS NULL OR source_id = ANY($1::text[])) ORDER BY source_id', [sourceIds]);
+  return rows.map(toNotifierSourceRow);
+}
+
+/** One state transition of a source; nothing when the source does not exist. One write per transition, never per poll. */
+export async function writeNotifierState(exec: RawExec, sourceId: string, p: StatePatch): Promise<void> {
+  await exec.executeRaw(
+    `INSERT INTO sync_notifier_sources (source_id, source_incarnation, state, reason, first_due_at, attempts, next_retry_at, last_progress_at,
+        last_error_code, last_error, last_error_at, trace_path, updated_at)
+     SELECT s.id, s.incarnation::text, $2, $3, CASE WHEN $4::text = 'keep' THEN now() END, COALESCE($5::int, 0),
+        CASE WHEN $6::int IS NULL THEN NULL ELSE now() + $6::int * interval '1 millisecond' END, CASE WHEN $7::boolean THEN now() END,
+        $8::text, $9::text, CASE WHEN $8::text IS NULL THEN NULL ELSE now() END, $10::text, now()
+       FROM sources s WHERE s.id = $1
+     ON CONFLICT (source_id) DO UPDATE SET state = EXCLUDED.state, reason = EXCLUDED.reason,
+       first_due_at = CASE WHEN $4::text = 'clear' THEN NULL ELSE COALESCE(sync_notifier_sources.first_due_at, now()) END,
+       attempts = COALESCE($5::int, sync_notifier_sources.attempts), next_retry_at = EXCLUDED.next_retry_at,
+       last_progress_at = CASE WHEN $7::boolean THEN now() ELSE sync_notifier_sources.last_progress_at END,
+       last_error_code = CASE WHEN $11::boolean THEN EXCLUDED.last_error_code ELSE sync_notifier_sources.last_error_code END,
+       last_error = CASE WHEN $11::boolean THEN EXCLUDED.last_error ELSE sync_notifier_sources.last_error END,
+       last_error_at = CASE WHEN $11::boolean THEN EXCLUDED.last_error_at ELSE sync_notifier_sources.last_error_at END,
+       trace_path = CASE WHEN $11::boolean THEN EXCLUDED.trace_path ELSE sync_notifier_sources.trace_path END,
+       source_incarnation = EXCLUDED.source_incarnation, updated_at = now()`,
+    [sourceId, p.state, p.reason ?? null, p.firstDue, p.attempts ?? null, p.nextRetryInMs ?? null, p.progress === true,
+      p.error?.code ?? null, p.error?.message?.slice(0, 2000) ?? null, p.error?.tracePath ?? null, p.error !== undefined]);
+}
+
+/** The coverage record of a source; nothing when the source does not exist. */
+export async function writeNotifierCoverage(exec: RawExec, sourceId: string, c: Coverage): Promise<void> {
+  await exec.executeRaw(
+    `INSERT INTO sync_notifier_sources (source_id, source_incarnation, observed_head, observed_at, detection_mode, owner_host_id, owner_kind, owner_pid, owner_seen_at, updated_at)
+     SELECT s.id, s.incarnation::text, $2, now(), $3, $4, $5, $6, now(), now() FROM sources s WHERE s.id = $1
+     ON CONFLICT (source_id) DO UPDATE SET observed_head = EXCLUDED.observed_head, observed_at = now(), detection_mode = EXCLUDED.detection_mode,
+       owner_host_id = EXCLUDED.owner_host_id, owner_kind = EXCLUDED.owner_kind, owner_pid = EXCLUDED.owner_pid, owner_seen_at = now(),
+       source_incarnation = EXCLUDED.source_incarnation, updated_at = now()`,
+    [sourceId, c.head, c.mode, c.ownerHostId, c.ownerKind, c.ownerPid]);
+}
+
+/** Records the host that advanced a classic source's last_commit; writes nothing when it did not change or the source does not exist. */
+export async function recordNotifierSyncerHost(exec: RawExec, sourceId: string, hostId: string): Promise<void> {
+  await exec.executeRaw(
+    `INSERT INTO sync_notifier_sources (source_id, source_incarnation, syncer_host_id, syncer_recorded_at, updated_at)
+     SELECT s.id, s.incarnation::text, $2, now(), now() FROM sources s WHERE s.id = $1
+     ON CONFLICT (source_id) DO UPDATE SET syncer_host_id = EXCLUDED.syncer_host_id, syncer_recorded_at = now(), updated_at = now()
+     WHERE sync_notifier_sources.syncer_host_id IS DISTINCT FROM EXCLUDED.syncer_host_id`, [sourceId, hostId]);
+}
+
+/** Each source of `sourceIds` (every source when null) that is not archived, in id order, at most 200, with its notifier status. */
+export async function readNotifierStatusRows(exec: LegacyUnscopedRead, sourceIds: string[] | null): Promise<NotifierStatusRow[]> {
+  const rows = await exec.executeRaw<Record<string, unknown>>(
+    `SELECT s.id, s.last_commit, n.state, n.reason, n.first_due_at, n.attempts, n.next_retry_at, n.last_error_code, n.last_error, n.last_error_at,
+            n.trace_path, n.observed_head, n.observed_at, n.detection_mode, n.owner_host_id, n.owner_kind, n.owner_pid, n.owner_seen_at,
+            EXISTS (SELECT 1 FROM sync_notifier_leases l WHERE l.host_id = n.owner_host_id AND l.expires_at > now()) AS lease_live,
+            (SELECT l.expires_at FROM sync_notifier_leases l WHERE l.host_id = n.owner_host_id) AS lease_expires_at,
+            (SELECT count(*) FROM sync_wanted_markers m WHERE m.source_id = s.id
+               AND (m.intent <> 'freshness' OR m.wanted_head IS NULL OR m.wanted_head IS DISTINCT FROM s.last_commit)) AS due_markers
+       FROM sources s LEFT JOIN sync_notifier_sources n ON n.source_id = s.id
+      WHERE NOT s.archived AND ($1::text[] IS NULL OR s.id = ANY($1::text[]))
+      ORDER BY s.id LIMIT 200`, [sourceIds]);
+  return rows.map(toNotifierStatusRow);
+}
+
+/** Whether a resident has recorded coverage for any source (the freshness notice turns on with it). */
+export async function hasNotifierCoverage(exec: RawExec): Promise<boolean> {
+  const [row] = await exec.executeRaw<{ covered: unknown }>('SELECT EXISTS (SELECT 1 FROM sync_notifier_sources WHERE observed_at IS NOT NULL) AS covered');
+  return truthy(row?.covered);
 }

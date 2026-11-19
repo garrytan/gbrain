@@ -283,15 +283,17 @@ describe('Rust engine on the store', () => {
     expect([...engine.capabilities].sort()).toEqual([...servedCapabilities()].sort());
   });
 
-  withAddon('search on a Rust brain carries no freshness notice, as a brain without the notifier tables does', async () => {
+  withAddon('search on a Rust brain carries the freshness notice once the brain opts in, and none before', async () => {
     const { engine } = await open();
-    await engine.setConfig('sync.on_commit', 'true');
     const errors: string[] = [];
     const original = console.error;
     console.error = (...args: unknown[]) => { errors.push(args.map(String).join(' ')); };
+    const unwatched = { source_id: 'default', state: 'not_monitored' as const, observed_head: null, observed_at: null, mode: null, held_count: 0 };
     try {
       expect(await readSourceFreshness(engine, { sourceIds: ['default'] })).toEqual([]);
-      expect(await readSourceFreshness(engine, {})).toEqual([]);
+      await engine.setConfig('sync.on_commit', 'true');
+      expect(await readSourceFreshness(engine, { sourceIds: ['default'] })).toEqual([unwatched]);
+      expect(await readSourceFreshness(engine, {})).toEqual([unwatched]);
     } finally { console.error = original; }
     expect(errors.filter(line => line.includes('[notifier]'))).toEqual([]);
   });

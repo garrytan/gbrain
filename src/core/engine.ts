@@ -53,7 +53,7 @@ import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from '
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
-import type { NotifierHostSourceRow, NotifierLeaseClaim, NotifierLeaseClaimInput, NotifierLeaseHolder } from './engine-sql/notifier.ts';
+import type { Coverage as NotifierCoverage, NotifierHostSourceRow, NotifierLeaseClaim, NotifierLeaseClaimInput, NotifierLeaseHolder, NotifierSourceRow, NotifierStatusRow, StatePatch as NotifierStatePatch } from './engine-sql/notifier.ts';
 import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from './engine-sql/write-misc.ts';
@@ -1371,6 +1371,27 @@ export interface BrainEngine {
 
   /** Every source that is not archived, in id order, as the commit notifier's host source list reads it (notifier/resident.ts). */
   listNotifierHostSourceRows(): Promise<NotifierHostSourceRow[]>;
+
+  /** The commit notifier's per-source rows of `sourceIds` (every row when null), in source id order. notifier/store.ts readNotifierSources. */
+  readNotifierSources(sourceIds: string[] | null): Promise<NotifierSourceRow[]>;
+
+  /** One commit notifier state transition of a source; nothing when the source does not exist. notifier/store.ts writeState. */
+  writeNotifierState(sourceId: string, patch: NotifierStatePatch): Promise<void>;
+
+  /** A source's commit notifier coverage record (observed HEAD, detection mode, owner). notifier/store.ts writeCoverage. */
+  writeNotifierCoverage(sourceId: string, coverage: NotifierCoverage): Promise<void>;
+
+  /** Records the host that advanced a classic source; writes nothing when it did not change. notifier/store.ts recordSyncerHost. */
+  recordNotifierSyncerHost(sourceId: string, hostId: string): Promise<void>;
+
+  /**
+   * Each source of `sourceIds` (every source when null) that is not archived, in id order, at most 200, with its notifier
+   * row, whether the owner host's lease is live and how many wanted markers are still due (notifier/status.ts).
+   */
+  readNotifierStatusRows(sourceIds: string[] | null): Promise<NotifierStatusRow[]>;
+
+  /** Whether a resident has recorded commit notifier coverage for any source (notifier/status.ts, the freshness notice). */
+  hasNotifierCoverage(): Promise<boolean>;
 
   /** Source resolution reads (SQL and contracts in engine-sql/sources.ts): sources with a local path and `archived`; every source row with `default`'s emptiness flag; the default-write guard's page split. */
   listLocalPathSources(): Promise<LocalPathSourceRow[]>;

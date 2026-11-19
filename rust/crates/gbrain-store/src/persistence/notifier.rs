@@ -11,21 +11,40 @@
 //! owner, with its fence, before the expiry. A release (`releaseNotifierLease`) sets the expiry
 //! to now when the caller owns the row, in one write; rows are never deleted on this engine.
 //!
-//! The host source list reads the source records. This engine keeps no managed worktree bindings
-//! and no classic syncer rows (`sync_notifier_sources`), and a source keeps no `last_commit`, so
-//! every row reads `bound` false and `last_commit`, `owner`, `root` and `syncer` null, as Postgres
-//! reads a source with none of those rows.
+//! The per-source row is one `sync_notifier_sources` row per source. Key `d 0x08 0x02 <source_id>`
+//! (a source id cannot hold NUL), JSON `NotifierSourceRecord`. A state, coverage or syncer write
+//! inserts the row when the source has none and writes nothing when the source does not exist,
+//! as Postgres's `INSERT ... SELECT ... FROM sources` does; every timestamp one write sets is the
+//! same `now`. The state and the detection mode keep the v262 CHECK lists. Deleting the source
+//! deletes its row (`remove_source_rows`, the `ON DELETE CASCADE`).
+//!
+//! The host source list reads the source records and the classic syncer host of each row. This
+//! engine keeps no managed worktree bindings, and a source keeps no `last_commit`, so every row
+//! reads `bound` false and `last_commit`, `owner` and `root` null, as Postgres reads a source with
+//! none of those rows.
+//!
+//! The status rows join each source that is not archived to its notifier row and to the lease of
+//! the row's owner host. This engine records no wanted markers yet, so `due_markers` reads 0.
 
 use crate::env::{Env, iso};
 use crate::error::{Result, StoreError};
-use crate::kv::{KvRead, KvWrite};
-use crate::sources::all_sources;
+use crate::kv::{KvRead, KvWrite, scan_prefix};
+use crate::sources::{all_sources, read_source};
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 /// The byte after `d 0x08` of a lease row.
 const LEASE: u8 = 0x01;
+/// The byte after `d 0x08` of a per-source row.
+const SOURCE_ROW: u8 = 0x02;
+
+/// `sync_notifier_sources.state` CHECK.
+const STATES: &[&str] = &["idle", "due", "running", "retry", "operator_blocked"];
+/// `sync_notifier_sources.detection_mode` CHECK.
+const DETECTION_MODES: &[&str] = &["watch", "poll"];
+/// The status rows' `LIMIT 200`.
+const STATUS_LIMIT: usize = 200;
 
 /// One stored `sync_notifier_leases` row.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,6 +66,118 @@ pub struct NotifierLeaseClaim {
     pub kind: String,
     pub pid: i64,
     pub lease_ms: f64,
+}
+
+/// One stored `sync_notifier_sources` row; a missing field reads as the column default.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+struct NotifierSourceRecord {
+    source_incarnation: Option<String>,
+    syncer_host_id: Option<String>,
+    syncer_recorded_at_us: Option<i64>,
+    state: String,
+    reason: Option<String>,
+    first_due_at_us: Option<i64>,
+    attempts: i64,
+    next_retry_at_us: Option<i64>,
+    last_progress_at_us: Option<i64>,
+    last_error_code: Option<String>,
+    last_error: Option<String>,
+    last_error_at_us: Option<i64>,
+    trace_path: Option<String>,
+    observed_head: Option<String>,
+    observed_at_us: Option<i64>,
+    detection_mode: Option<String>,
+    owner_host_id: Option<String>,
+    owner_kind: Option<String>,
+    owner_pid: Option<i64>,
+    owner_seen_at_us: Option<i64>,
+    updated_at_us: i64,
+}
+
+impl NotifierSourceRecord {
+    /// A new row with the column defaults (`state` 'idle', `attempts` 0).
+    fn new(source_incarnation: String, now: i64) -> Self {
+        Self {
+            source_incarnation: Some(source_incarnation),
+            state: "idle".into(),
+            updated_at_us: now,
+            ..Self::default()
+        }
+    }
+}
+
+/// `writeNotifierState(sourceId, patch)`. The TypeScript member sends `errorGiven` (the patch
+/// named an error, or null to clear it) and the message already cut to 2000 characters.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotifierStatePatch {
+    pub state: String,
+    #[serde(default)]
+    pub reason: Option<String>,
+    pub first_due: String,
+    #[serde(default)]
+    pub attempts: Option<f64>,
+    #[serde(default)]
+    pub next_retry_in_ms: Option<f64>,
+    #[serde(default)]
+    pub progress: bool,
+    #[serde(default)]
+    pub error_given: bool,
+    #[serde(default)]
+    pub error: Option<NotifierStateError>,
+}
+
+/// The last error of a state patch.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotifierStateError {
+    pub code: String,
+    pub message: String,
+    #[serde(default)]
+    pub trace_path: Option<String>,
+}
+
+/// `writeNotifierCoverage(sourceId, coverage)`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotifierCoverage {
+    #[serde(default)]
+    pub head: Option<String>,
+    pub mode: String,
+    pub owner_host_id: String,
+    pub owner_kind: String,
+    pub owner_pid: f64,
+}
+
+/// A number bound as `$n::int`: Postgres rounds half away from zero and refuses a value outside
+/// the integer range.
+fn pg_int(v: f64, name: &str) -> Result<i64> {
+    let r = v.round();
+    if !r.is_finite() || r < i32::MIN as f64 || r > i32::MAX as f64 {
+        return Err(StoreError::invalid(format!(
+            "{name} is out of the integer range"
+        )));
+    }
+    Ok(r as i64)
+}
+
+fn source_row_key(source_id: &str) -> Vec<u8> {
+    let mut key = vec![keys::PERSISTENCE, super::NOTIFIER, SOURCE_ROW];
+    key.extend_from_slice(source_id.as_bytes());
+    key
+}
+
+/// The source's incarnation and its stored row, or `None` when the source does not exist.
+fn source_and_row(
+    read: &dyn KvRead,
+    source_id: &str,
+) -> Result<Option<(String, Option<NotifierSourceRecord>)>> {
+    let Some(source) = read_source(read, source_id)? else {
+        return Ok(None);
+    };
+    let row = get_json::<NotifierSourceRecord>(read, &source_row_key(source_id))?;
+    Ok(Some((source.incarnation, row)))
 }
 
 fn lease_key(host_id: &str) -> Result<Vec<u8>> {
@@ -145,26 +276,269 @@ pub(crate) fn release_notifier_lease_in(
     Ok(())
 }
 
+/// The SELECT * of `readNotifierSources`: the rows of `ids` (every row when `None`), in source id
+/// order.
+pub(crate) fn read_notifier_sources_in(
+    read: &dyn KvRead,
+    ids: Option<&[String]>,
+) -> Result<Vec<Value>> {
+    let mut out = Vec::new();
+    let mut failure = None;
+    let prefix = [keys::PERSISTENCE, super::NOTIFIER, SOURCE_ROW];
+    scan_prefix(read, &prefix, false, &mut |k, v| {
+        let id = String::from_utf8_lossy(&k[prefix.len()..]).into_owned();
+        if ids.is_some_and(|ids| !ids.contains(&id)) {
+            return true;
+        }
+        match serde_json::from_slice::<NotifierSourceRecord>(v) {
+            Ok(r) => out.push(source_row(&id, &r)),
+            Err(e) => failure = Some(StoreError::from(e)),
+        }
+        failure.is_none()
+    })?;
+    failure.map_or(Ok(out), Err)
+}
+
+/// A row as `SELECT *` returns it.
+fn source_row(source_id: &str, r: &NotifierSourceRecord) -> Value {
+    json!({
+        "source_id": source_id,
+        "source_incarnation": r.source_incarnation,
+        "syncer_host_id": r.syncer_host_id,
+        "syncer_recorded_at": r.syncer_recorded_at_us.map(iso),
+        "state": r.state,
+        "reason": r.reason,
+        "first_due_at": r.first_due_at_us.map(iso),
+        "attempts": r.attempts,
+        "next_retry_at": r.next_retry_at_us.map(iso),
+        "last_progress_at": r.last_progress_at_us.map(iso),
+        "last_error_code": r.last_error_code,
+        "last_error": r.last_error,
+        "last_error_at": r.last_error_at_us.map(iso),
+        "trace_path": r.trace_path,
+        "observed_head": r.observed_head,
+        "observed_at": r.observed_at_us.map(iso),
+        "detection_mode": r.detection_mode,
+        "owner_host_id": r.owner_host_id,
+        "owner_kind": r.owner_kind,
+        "owner_pid": r.owner_pid,
+        "owner_seen_at": r.owner_seen_at_us.map(iso),
+        "updated_at": iso(r.updated_at_us),
+    })
+}
+
+/// The INSERT ... ON CONFLICT DO UPDATE of `writeNotifierState`: one transition.
+pub(crate) fn write_notifier_state_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    source_id: &str,
+    p: &NotifierStatePatch,
+) -> Result<()> {
+    if !STATES.contains(&p.state.as_str()) {
+        return Err(StoreError::invalid(format!(
+            "state \"{}\" is not one of {STATES:?}",
+            p.state
+        )));
+    }
+    let attempts = p.attempts.map(|a| pg_int(a, "attempts")).transpose()?;
+    let retry_ms = p
+        .next_retry_in_ms
+        .map(|ms| pg_int(ms, "nextRetryInMs"))
+        .transpose()?;
+    let Some((incarnation, old)) = source_and_row(&*tx, source_id)? else {
+        return Ok(());
+    };
+    let now = env.now_micros();
+    let fresh = old.is_none();
+    let mut r = old.unwrap_or_else(|| NotifierSourceRecord::new(incarnation.clone(), now));
+    r.state = p.state.clone();
+    r.reason = p.reason.clone();
+    r.first_due_at_us = match (p.first_due.as_str(), fresh) {
+        ("keep", true) => Some(now),
+        (_, true) => None,
+        ("clear", false) => None,
+        (_, false) => r.first_due_at_us.or(Some(now)),
+    };
+    r.attempts = match (attempts, fresh) {
+        (Some(a), _) => a,
+        (None, true) => 0,
+        (None, false) => r.attempts,
+    };
+    r.next_retry_at_us = retry_ms.map(|ms| now.saturating_add(ms.saturating_mul(1000)));
+    if p.progress {
+        r.last_progress_at_us = Some(now);
+    } else if fresh {
+        r.last_progress_at_us = None;
+    }
+    if fresh || p.error_given {
+        let e = p.error.as_ref();
+        r.last_error_code = e.map(|e| e.code.clone());
+        r.last_error = e.map(|e| e.message.clone());
+        r.last_error_at_us = e.map(|_| now);
+        r.trace_path = e.and_then(|e| e.trace_path.clone());
+    }
+    r.source_incarnation = Some(incarnation);
+    r.updated_at_us = now;
+    put_json(tx, &source_row_key(source_id), &r)
+}
+
+/// The INSERT ... ON CONFLICT DO UPDATE of `writeNotifierCoverage`.
+pub(crate) fn write_notifier_coverage_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    source_id: &str,
+    c: &NotifierCoverage,
+) -> Result<()> {
+    if !DETECTION_MODES.contains(&c.mode.as_str()) {
+        return Err(StoreError::invalid(format!(
+            "detection_mode \"{}\" is not one of {DETECTION_MODES:?}",
+            c.mode
+        )));
+    }
+    let pid = pg_int(c.owner_pid, "ownerPid")?;
+    let Some((incarnation, old)) = source_and_row(&*tx, source_id)? else {
+        return Ok(());
+    };
+    let now = env.now_micros();
+    let mut r = old.unwrap_or_else(|| NotifierSourceRecord::new(incarnation.clone(), now));
+    r.observed_head = c.head.clone();
+    r.observed_at_us = Some(now);
+    r.detection_mode = Some(c.mode.clone());
+    r.owner_host_id = Some(c.owner_host_id.clone());
+    r.owner_kind = Some(c.owner_kind.clone());
+    r.owner_pid = Some(pid);
+    r.owner_seen_at_us = Some(now);
+    r.source_incarnation = Some(incarnation);
+    r.updated_at_us = now;
+    put_json(tx, &source_row_key(source_id), &r)
+}
+
+/// The INSERT ... ON CONFLICT DO UPDATE ... WHERE of `recordNotifierSyncerHost`: nothing is
+/// written when the row already names `host_id`. An update keeps the stored incarnation.
+pub(crate) fn record_notifier_syncer_host_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    source_id: &str,
+    host_id: &str,
+) -> Result<()> {
+    let Some((incarnation, old)) = source_and_row(&*tx, source_id)? else {
+        return Ok(());
+    };
+    if old
+        .as_ref()
+        .is_some_and(|r| r.syncer_host_id.as_deref() == Some(host_id))
+    {
+        return Ok(());
+    }
+    let now = env.now_micros();
+    let mut r = old.unwrap_or_else(|| NotifierSourceRecord::new(incarnation, now));
+    r.syncer_host_id = Some(host_id.to_owned());
+    r.syncer_recorded_at_us = Some(now);
+    r.updated_at_us = now;
+    put_json(tx, &source_row_key(source_id), &r)
+}
+
+/// The lease row of `host_id`, or `None` (a host id with NUL names no row).
+fn lease_of(read: &dyn KvRead, host_id: &str) -> Result<Option<NotifierLeaseRecord>> {
+    match lease_key(host_id) {
+        Ok(key) => get_json(read, &key),
+        Err(_) => Ok(None),
+    }
+}
+
+/// The SELECT of `readNotifierStatusRows`: each source of `ids` (every source when `None`) that
+/// is not archived, in id order, at most 200, with its notifier row and its owner's lease.
+pub(crate) fn read_notifier_status_rows_in(
+    read: &dyn KvRead,
+    env: &dyn Env,
+    ids: Option<&[String]>,
+) -> Result<Vec<Value>> {
+    let now = env.now_micros();
+    let mut sources = all_sources(read)?;
+    sources.retain(|s| !s.archived && ids.is_none_or(|ids| ids.contains(&s.id)));
+    sources.sort_by(|a, b| a.id.cmp(&b.id));
+    sources.truncate(STATUS_LIMIT);
+    let mut out = Vec::with_capacity(sources.len());
+    for s in sources {
+        let n = get_json::<NotifierSourceRecord>(read, &source_row_key(&s.id))?;
+        let lease = match n.as_ref().and_then(|n| n.owner_host_id.as_deref()) {
+            Some(host) => lease_of(read, host)?,
+            None => None,
+        };
+        let n = n.as_ref();
+        out.push(json!({
+            "id": s.id,
+            "last_commit": Value::Null,
+            "state": n.map(|n| n.state.clone()),
+            "reason": n.and_then(|n| n.reason.clone()),
+            "first_due_at": n.and_then(|n| n.first_due_at_us).map(iso),
+            "attempts": n.map(|n| n.attempts),
+            "next_retry_at": n.and_then(|n| n.next_retry_at_us).map(iso),
+            "last_error_code": n.and_then(|n| n.last_error_code.clone()),
+            "last_error": n.and_then(|n| n.last_error.clone()),
+            "last_error_at": n.and_then(|n| n.last_error_at_us).map(iso),
+            "trace_path": n.and_then(|n| n.trace_path.clone()),
+            "observed_head": n.and_then(|n| n.observed_head.clone()),
+            "observed_at": n.and_then(|n| n.observed_at_us).map(iso),
+            "detection_mode": n.and_then(|n| n.detection_mode.clone()),
+            "owner_host_id": n.and_then(|n| n.owner_host_id.clone()),
+            "owner_kind": n.and_then(|n| n.owner_kind.clone()),
+            "owner_pid": n.and_then(|n| n.owner_pid),
+            "owner_seen_at": n.and_then(|n| n.owner_seen_at_us).map(iso),
+            "lease_live": lease.as_ref().is_some_and(|l| l.expires_at_us > now),
+            "lease_expires_at": lease.as_ref().map(|l| iso(l.expires_at_us)),
+            "due_markers": 0,
+        }));
+    }
+    Ok(out)
+}
+
+/// The SELECT EXISTS of `hasNotifierCoverage`: some row has an `observed_at`.
+pub(crate) fn has_notifier_coverage_in(read: &dyn KvRead) -> Result<bool> {
+    let mut covered = false;
+    let mut failure = None;
+    scan_prefix(
+        read,
+        &[keys::PERSISTENCE, super::NOTIFIER, SOURCE_ROW],
+        false,
+        &mut |_, v| {
+            match serde_json::from_slice::<NotifierSourceRecord>(v) {
+                Ok(r) => covered = r.observed_at_us.is_some(),
+                Err(e) => failure = Some(StoreError::from(e)),
+            }
+            !covered && failure.is_none()
+        },
+    )?;
+    failure.map_or(Ok(covered), Err)
+}
+
+/// The `ON DELETE CASCADE` of `sync_notifier_sources`: deleting a source deletes its row.
+pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
+    tx.delete(&source_row_key(source_id))
+}
+
 /// The notifier's host source list: every source that is not archived, in id order.
 pub(crate) fn list_notifier_host_source_rows_in(read: &dyn KvRead) -> Result<Vec<Value>> {
     let mut records = all_sources(read)?;
     records.retain(|r| !r.archived);
     records.sort_by(|a, b| a.id.cmp(&b.id));
-    Ok(records
+    records
         .into_iter()
         .map(|r| {
-            json!({
+            let syncer = get_json::<NotifierSourceRecord>(read, &source_row_key(&r.id))?
+                .and_then(|n| n.syncer_host_id);
+            Ok(json!({
                 "id": r.id,
                 "local_path": r.local_path,
                 "last_commit": Value::Null,
                 "bound": false,
                 "owner": Value::Null,
                 "root": Value::Null,
-                "syncer": Value::Null,
+                "syncer": syncer,
                 "config": r.config,
-            })
+            }))
         })
-        .collect())
+        .collect()
 }
 
 impl Store {
@@ -186,6 +560,40 @@ impl Store {
     /// `releaseNotifierLease(hostId, ownerId)`: one write.
     pub fn release_notifier_lease(&self, host_id: &str, owner_id: &str) -> Result<()> {
         self.write(|tx| release_notifier_lease_in(tx, &*self.env, host_id, owner_id))
+    }
+
+    /// `readNotifierSources(ids)`.
+    pub fn read_notifier_sources(&self, ids: Option<&[String]>) -> Result<Vec<Value>> {
+        read_notifier_sources_in(&*self.read()?, ids)
+    }
+
+    /// `writeNotifierState(sourceId, patch)`: one write.
+    pub fn write_notifier_state(&self, source_id: &str, patch: &NotifierStatePatch) -> Result<()> {
+        self.write(|tx| write_notifier_state_in(tx, &*self.env, source_id, patch))
+    }
+
+    /// `writeNotifierCoverage(sourceId, coverage)`: one write.
+    pub fn write_notifier_coverage(
+        &self,
+        source_id: &str,
+        coverage: &NotifierCoverage,
+    ) -> Result<()> {
+        self.write(|tx| write_notifier_coverage_in(tx, &*self.env, source_id, coverage))
+    }
+
+    /// `recordNotifierSyncerHost(sourceId, hostId)`: one write.
+    pub fn record_notifier_syncer_host(&self, source_id: &str, host_id: &str) -> Result<()> {
+        self.write(|tx| record_notifier_syncer_host_in(tx, &*self.env, source_id, host_id))
+    }
+
+    /// `readNotifierStatusRows(ids)`.
+    pub fn read_notifier_status_rows(&self, ids: Option<&[String]>) -> Result<Vec<Value>> {
+        read_notifier_status_rows_in(&*self.read()?, &*self.env, ids)
+    }
+
+    /// `hasNotifierCoverage()`.
+    pub fn has_notifier_coverage(&self) -> Result<bool> {
+        has_notifier_coverage_in(&*self.read()?)
     }
 
     /// `listNotifierHostSourceRows()`.
@@ -239,6 +647,47 @@ mod tests {
         ] {
             assert_ne!(other, super::super::NOTIFIER);
         }
+    }
+
+    #[test]
+    fn a_source_row_key_sits_in_its_own_range_apart_from_the_leases() {
+        let (lease_start, lease_end) = range(&[keys::PERSISTENCE, super::super::NOTIFIER, LEASE]);
+        let (start, end) = range(&[keys::PERSISTENCE, super::super::NOTIFIER, SOURCE_ROW]);
+        assert!(
+            start >= lease_end || end <= lease_start,
+            "source rows overlap the leases"
+        );
+        for id in ["", "default", "\u{ff}\u{ff}", "a\u{1}"] {
+            let key = source_row_key(id);
+            assert!(
+                key.as_slice() >= start.as_slice() && key.as_slice() < end.as_slice(),
+                "{id:?}"
+            );
+            assert!(!(lease_start.as_slice()..lease_end.as_slice()).contains(&key.as_slice()));
+        }
+    }
+
+    #[test]
+    fn a_source_delete_removes_its_notifier_row_only() {
+        let store = crate::test_support::store();
+        for id in ["a", "ab"] {
+            let input = crate::sources::SourceInput {
+                id: id.into(),
+                ..crate::sources::SourceInput::default()
+            };
+            store.upsert_source(&input).unwrap();
+            store.record_notifier_syncer_host(id, "host-s").unwrap();
+        }
+        store
+            .write(|tx| crate::cascade::remove_source_rows(tx, "a"))
+            .unwrap();
+        let left: Vec<Value> = store
+            .read_notifier_sources(None)
+            .unwrap()
+            .iter()
+            .map(|r| r["source_id"].clone())
+            .collect();
+        assert_eq!(left, vec![json!("ab")]);
     }
 
     #[test]

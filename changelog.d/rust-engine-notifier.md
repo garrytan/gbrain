@@ -1,9 +1,11 @@
-**On an experimental Rust brain, a serve or worker now starts the commit notifier: it claims the host lease and lists the brain's sources. PGLite and Postgres brains send the same SQL as before.**
+**On an experimental Rust brain, a serve or worker now starts the commit notifier: it claims the host lease, lists the brain's sources and records each source's state and coverage. Search on a Rust brain now says whether each source is current, behind or not watched. PGLite and Postgres brains send the same SQL as before.**
 
 ### Changed
 - The notifier's host lease and its source list are typed engine calls: `claimNotifierLease`, `readNotifierLease`, `holdsNotifierLease` (the check before each start), `releaseNotifierLease` (a clean stop) and `listNotifierHostSourceRows`. Postgres and PGLite send the same SQL text as before, byte for byte, from `src/core/engine-sql/notifier.ts`.
 - On a Rust brain the lease is one record per host, with the same fence rules as Postgres: the first claim wins, a renewal keeps the fence, and a takeover after expiry bumps it. A release expires only the caller's own lease. Each lease change is one store write. A host id with a NUL byte is refused.
-- The notifier's other reads and writes still refuse on a Rust brain. The notifier logs each refusal once and keeps running. Search freshness still reports no source on a Rust brain.
+- The notifier's per-source rows are typed engine calls too: `readNotifierSources`, `writeNotifierState`, `writeNotifierCoverage` and `recordNotifierSyncerHost`, and the freshness reads `readNotifierStatusRows` and `hasNotifierCoverage`. Postgres and PGLite send the same SQL text as before.
+- On a Rust brain each source's notifier row is one record, with the same keep and clear rules as Postgres, and a source delete removes it. With `sync.on_commit` on, or once a resident has recorded coverage, search carries the freshness notice. A Rust brain keeps no source `last_commit` and no due markers yet, so a source whose observed head is set reads behind.
+- The notifier's due markers and the drain lease still refuse on a Rust brain. The notifier logs each refusal once and keeps running.
 - On a Rust brain with waiting jobs and no worker, the readiness fix now says the job supervisor keeps a worker running "for this brain", not "for this Postgres brain". PGLite and Postgres text is unchanged.
 
 ### Added

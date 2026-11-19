@@ -1947,6 +1947,17 @@
         ],
         "flagOnScopes": []
       },
+      "hasNotifierCoverage#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "holdsNotifierLease#default": {
         "flagOffLanes": [
           "pool"
@@ -3547,6 +3558,50 @@
         ],
         "flagOnScopes": []
       },
+      "readNotifierSources#all": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readNotifierSources#ids": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readNotifierStatusRows#all": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readNotifierStatusRows#ids": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readPageSnapshot#default": {
         "flagOffLanes": [
           "pool"
@@ -3686,6 +3741,17 @@
         "flagOnScopes": []
       },
       "readWriteRequestById#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "recordNotifierSyncerHost#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -4716,6 +4782,28 @@
           "pool"
         ],
         "flagOnScopes": []
+      },
+      "writeNotifierCoverage#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "writeNotifierState#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
       }
     },
     "static": {
@@ -4997,6 +5085,7 @@
         "hasExtractedEvents": "none",
         "hasFactWithdrawalForSubject": "none",
         "hasGuestSource": "none",
+        "hasNotifierCoverage": "none",
         "hasOverdueWatchdogSuspect": "none",
         "hasPersistenceTable": "none",
         "hasSegmentStorage": "none",
@@ -5298,6 +5387,8 @@
         "readMcpRollupPrunedBefore": "none",
         "readMentionLastPass": "none",
         "readNotifierLease": "none",
+        "readNotifierSources": "none",
+        "readNotifierStatusRows": "none",
         "readOldestWaitingAge": "none",
         "readPageAliasRows": "none",
         "readPageHiddenFromCaller": "none",
@@ -5344,6 +5435,7 @@
         "readWriterSlugFence": "none",
         "reclaimStalledJobs": "none",
         "reconnect": "none",
+        "recordNotifierSyncerHost": "none",
         "recordSearchTelemetry": "none",
         "recordSubagentToolExecutions": "none",
         "recordWakeCronRun": "none",
@@ -5477,6 +5569,8 @@
         "writeManualLinkTransitions": "none",
         "writeMiscRead": "none",
         "writeMiscReads": "none",
+        "writeNotifierCoverage": "none",
+        "writeNotifierState": "none",
         "writeTextProjectionSeal": "none"
       }
     }

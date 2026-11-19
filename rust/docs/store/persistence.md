@@ -112,10 +112,13 @@ The consumer's housekeeping after a write (`persistence-housekeeping.ts`).
 
 ## Commit notifier
 
-The resident commit notifier's host lease and host source list (`src/core/engine-sql/notifier.ts`,
-`notifier/store.ts` `claimLease`, `readLease`, `holdsLease` and `releaseLease`, and
-`notifier/resident.ts` `listHostSources`). With both typed, a
-resident on this engine starts the notifier, as it does on Postgres.
+The resident commit notifier's host lease, host source list, per-source rows and freshness reads
+(`src/core/engine-sql/notifier.ts`; `notifier/store.ts` `claimLease`, `readLease`, `holdsLease`,
+`releaseLease`, `readNotifierSources`, `writeState`, `writeCoverage` and `recordSyncerHost`;
+`notifier/resident.ts` `listHostSources`; `notifier/status.ts` `readSourceFreshness` and the
+`gbrain sync status` notifier block). With these typed, a resident on this engine starts the
+notifier and records each source's state and coverage, and search reports each source's freshness,
+as on Postgres.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
@@ -123,12 +126,16 @@ resident on this engine starts the notifier, as it does on Postgres.
 | `brain.readNotifierLease(hostId)` | the host's lease row `{ owner_id, fence, resident_kind, pid, expires_at, live }`, or `null` when it has none. `invalid_argument` for a host id with NUL | `readNotifierLease` |
 | `brain.holdsNotifierLease(hostId, ownerId, fence)` | `true` only when the host's row is `ownerId`'s, with `fence`, and not expired: the fencing check before a start | `holdsNotifierLease` |
 | `brain.releaseNotifierLease(hostId, ownerId)` | sets the row's expiry to now when the row is `ownerId`'s, in one write; another owner's row, or no row, is left as it is | `releaseNotifierLease` |
-| `brain.listNotifierHostSourceRows()` | every source that is not archived, in id order: `{ id, local_path, last_commit, bound, owner, root, syncer, config }`. This engine keeps no managed worktree binding, no classic syncer row and no source `last_commit`, so `bound` is `false` and the other four are `null` | `listNotifierHostSourceRows` |
+| `brain.listNotifierHostSourceRows()` | every source that is not archived, in id order: `{ id, local_path, last_commit, bound, owner, root, syncer, config }`. This engine keeps no managed worktree binding and no source `last_commit`, so `bound` is `false` and `last_commit`, `owner` and `root` are `null`; `syncer` is the host `recordNotifierSyncerHost` recorded, else `null` | `listNotifierHostSourceRows` |
+| `brain.readNotifierSources(ids \| null)` | the per-source notifier row of each listed source (every source when `null`) that has one, in id order: the `sync_notifier_sources` columns, timestamps as ISO strings | `readNotifierSources` |
+| `brain.writeNotifierState(sourceId, { state, reason, firstDue, attempts, nextRetryInMs, progress, errorGiven, error })` | one write. A first write makes the row (`first_due_at` only for `firstDue: 'keep'`, `attempts` 0 when not given); a later one keeps `first_due_at` (set when null) unless `'clear'`, keeps `attempts` and `last_progress_at` unless given, and replaces the error fields only when `errorGiven`. Nothing for a source that does not exist. `invalid_argument` for a state or number outside the Postgres CHECK and `int` range | `writeNotifierState` |
+| `brain.writeNotifierCoverage(sourceId, { head, mode, ownerHostId, ownerKind, ownerPid })` | one write: the observed head, the detection mode and the owner, each with now as its time. Nothing for a source that does not exist | `writeNotifierCoverage` |
+| `brain.recordNotifierSyncerHost(sourceId, hostId)` | one write that records the host when it changed; the same host, or a source that does not exist, writes nothing | `recordNotifierSyncerHost` |
+| `brain.readNotifierStatusRows(ids \| null)` | each listed source (every source when `null`) that is not archived, in id order, at most 200, with its row (null fields when it has none), `lease_live` (the owner host's lease has not expired) and `lease_expires_at`. `last_commit` is `null` and `due_markers` is 0: this engine keeps no source `last_commit` and no due marker yet | `readNotifierStatusRows` |
+| `brain.hasNotifierCoverage()` | `true` when some source's row has an observed time | `hasNotifierCoverage` |
 
-The notifier's other reads and writes (sync states, due markers, coverage records, the drain lease)
-still refuse with `engine_capability_missing`; the notifier logs each refusal once and
-keeps running. Search freshness on this engine reports no source, as a brain without the notifier
-tables does.
+The notifier's due markers and the drain lease still refuse with `engine_capability_missing`;
+the notifier logs each refusal once and keeps running. A source delete removes its notifier row.
 
 ## Effect scans
 
