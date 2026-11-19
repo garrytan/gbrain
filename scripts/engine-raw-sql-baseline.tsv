@@ -124,7 +124,6 @@ src/commands/edge-proposals.ts	execute_raw	6
 src/commands/edges-backfill.ts	execute_raw	1
 src/commands/embed.ts	execute_raw	1
 src/commands/engine-status.ts	execute_raw	1
-src/commands/eval-suspected-contradictions.ts	execute_raw	1
 src/commands/eval-whoknows.ts	execute_raw	1
 src/commands/export.ts	execute_raw	2
 src/commands/extract-conversation-facts.ts	execute_raw	1
@@ -316,8 +315,6 @@ src/core/cycle/concept-publication.ts	execute_raw	3
 src/core/cycle/concept-redirects.ts	execute_raw	2
 src/core/cycle/derived-write-through.ts	execute_raw	5
 src/core/cycle/drift.ts	execute_raw	2
-src/core/cycle/edge-contradictions.ts	execute_raw	13
-src/core/cycle/edge-contradictions.ts	sql_template	1
 src/core/cycle/extract-atoms-generation.ts	execute_raw	4
 src/core/cycle/extract-atoms-input.ts	execute_raw	6
 src/core/cycle/extract-atoms-page-state.ts	execute_raw	4
@@ -366,8 +363,6 @@ src/core/entities/near-name.ts	execute_raw	1
 src/core/entities/resolve-on-save.ts	execute_raw	1	GBRA-574 F #9674 (opened before this ratchet): the live-page check before keeping an unbacked name tag
 src/core/entities/resolve.ts	execute_raw	12
 src/core/entity-identity.ts	execute_raw	6
-src/core/eval-contradictions/cost-prompt.ts	execute_raw	1
-src/core/eval-contradictions/scoped-read.ts	execute_raw	2
 src/core/export-publish.ts	driver_call	3
 src/core/export-snapshot.ts	execute_raw	4
 src/core/export-stage.ts	driver_call	3
@@ -386,8 +381,6 @@ src/core/facts/derivation-inputs.ts	execute_raw	6
 src/core/facts/embedding-identity.ts	execute_raw	1
 src/core/facts/forget.ts	execute_raw	4
 src/core/facts/fts-index.ts	execute_raw	3
-src/core/facts/held-fact-move.ts	execute_raw	1
-src/core/facts/ontology-rekey.ts	execute_raw	4
 src/core/facts/proposal-review.ts	execute_raw	3
 src/core/facts/proposal-supersede.ts	execute_raw	4
 src/core/facts/purge-overlay.ts	execute_raw	2
@@ -514,7 +507,6 @@ src/core/onboard/checks.ts	sql_template	2
 src/core/onboard/impact-capture.ts	execute_raw	3
 src/core/onboard/mcp-onboarding.ts	execute_raw	1
 src/core/op-checkpoint.ts	execute_raw	7
-src/core/ops/admin.ts	execute_raw	2
 src/core/ops/attribution.ts	execute_raw	8
 src/core/ops/backlinks-paged.ts	execute_raw	3
 src/core/ops/chronicle.ts	execute_raw	1
@@ -834,7 +826,6 @@ src/core/repair/loop-facts.ts	execute_raw	2
 src/core/repair/lost-fence-rows.ts	execute_raw	10
 src/core/repair/missing-tables.ts	execute_raw	2
 src/core/repair/moved-pages.ts	execute_raw	4
-src/core/repair/ontology-facts.ts	execute_raw	4
 src/core/repair/open-facts.ts	execute_raw	11
 src/core/repair/origin-carry.ts	execute_raw	4
 src/core/repair/origin-twins-heal.ts	execute_raw	4

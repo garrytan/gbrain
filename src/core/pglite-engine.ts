@@ -20,6 +20,7 @@ import { configurePgliteCodecs, PgliteStatementCache } from './pglite-statements
 import { snapshotSchemaInputs } from './snapshot-schema-inputs.ts';
 import type { PageReadScope } from './types.ts';
 import type { PageReadPolicy } from './types.ts';
+import type { TrustTier } from './trust/tier.ts';
 import { readRelationalFanout, readChainHop, readAliases, readBacklinkCounts, readAdjacencyBoosts, readContentFlags, readExtractionStates, readEffectiveDates, readSalienceScores } from './search/read-enrichment.ts';
 import { PGlite } from '@electric-sql/pglite';
 import type { Transaction } from '@electric-sql/pglite';
@@ -196,6 +197,9 @@ import * as factsPurgeImpl from './engine-sql/facts-purge.ts';
 import * as dreamCycleImpl from './engine-sql/dream-cycle.ts';
 import * as factsRepairImpl from './engine-sql/facts-repair.ts';
 import * as filesOpsImpl from './engine-sql/files-ops.ts';
+import * as contradictionsCycleImpl from './engine-sql/contradictions-cycle.ts';
+import * as ontologyRepairImpl from './engine-sql/ontology-repair.ts';
+import * as adminReadsImpl from './engine-sql/admin-reads.ts';
 import * as factsTrustImpl from './engine-sql/facts-trust.ts';
 import * as factsConversationImpl from './engine-sql/facts-conversation.ts';
 import type * as FactsConversationSql from './engine-sql/facts-conversation.ts';
@@ -2903,6 +2907,14 @@ export class PGLiteEngine implements BrainEngine {
     });
   }
 
+  // The ontology re-key and repair statements (engine-sql/ontology-repair.ts).
+  listRekeyLosers(sourceId: string, move: ontologyRepairImpl.RekeyMove) { return ontologyRepairImpl.listRekeyLosers(this.rawRead, sourceId, move); }
+  repointSupersededToKept(ids: number[], keeps: number[]) { return ontologyRepairImpl.repointSupersededToKept(this.rawRead, ids, keeps); }
+  clearOntologySlots(ids: number[]) { return ontologyRepairImpl.clearOntologySlots(this.rawRead, ids); }
+  deleteRekeyLosers(ids: number[]) { return ontologyRepairImpl.deleteRekeyLosers(this.rawRead, ids); }
+  listOntologyFactCandidates(sourceIds: string[]) { return ontologyRepairImpl.listOntologyFactCandidates(this.rawRead, sourceIds); }
+  restoreOntologyFact(row: ontologyRepairImpl.OntologyFactRestore) { return ontologyRepairImpl.restoreOntologyFact(this.rawRead, row); }
+
   async findOntologyConflicts(opts?: PageReadScope & Pick<OntologyReadOpts, 'minConfidence' | 'visibility' | 'excludeDiary'>): Promise<OntologyConflict[]> {
     const minConf = opts?.minConfidence ?? 0;
     const params: unknown[] = [minConf];
@@ -3370,6 +3382,25 @@ export class PGLiteEngine implements BrainEngine {
     return takesImpl.sweepContradictionCache(this.engineSql);
   }
 
+  // The edge-contradictions phase, the scoped contradiction reader and the eval reads (engine-sql/contradictions-cycle.ts).
+  listEdgeContradictionCandidates(query: contradictionsCycleImpl.EdgeCandidateQuery) { return contradictionsCycleImpl.listEdgeContradictionCandidates(this.rawRead, query); }
+  listKnownEdgeProposals(fromPageId: number, linkType: string, evidenceHashes: string[]) { return contradictionsCycleImpl.listKnownEdgeProposals(this.rawRead, fromPageId, linkType, evidenceHashes); }
+  listLinkContexts(fromPageId: number, toPageId: number, linkType: string) { return contradictionsCycleImpl.listLinkContexts(this.rawRead, fromPageId, toPageId, linkType); }
+  recordEdgeProposal(proposal: contradictionsCycleImpl.EdgeProposalInput) { return contradictionsCycleImpl.recordEdgeProposal(this.rawRead, proposal); }
+  readEdgeProposal(id: number) { return contradictionsCycleImpl.readEdgeProposal(this.rawRead, id); }
+  edgeClosureLanded(fromPageId: number, endingToPageId: number | null, linkType: string, closeDate: string | null) { return contradictionsCycleImpl.edgeClosureLanded(this.rawRead, fromPageId, endingToPageId, linkType, closeDate); }
+  readEdgeProposalEvidence(id: number) { return contradictionsCycleImpl.readEdgeProposalEvidence(this.rawRead, id); }
+  readEdgeProposalHash(id: number) { return contradictionsCycleImpl.readEdgeProposalHash(this.rawRead, id); }
+  markEdgeProposalStale(id: number) { return contradictionsCycleImpl.markEdgeProposalStale(this.rawRead, id); }
+  setEdgeProposalStatus(id: number, status: string) { return contradictionsCycleImpl.setEdgeProposalStatus(this.rawRead, id, status); }
+  rejectOpenEdgeProposal(id: number) { return contradictionsCycleImpl.rejectOpenEdgeProposal(this.rawRead, id); }
+  markEdgeProposalUndone(id: number) { return contradictionsCycleImpl.markEdgeProposalUndone(this.rawRead, id); }
+  markRevertedEdgeProposals() { return contradictionsCycleImpl.markRevertedEdgeProposals(this.rawRead); }
+  listLiveChunksByIds(ids: number[], policy: PageReadPolicy, floor: TrustTier | undefined) { return contradictionsCycleImpl.listLiveChunksByIds(this.rawRead, ids, policy, floor); }
+  listLiveTakesByIds(ids: number[], policy: PageReadPolicy, floor: TrustTier | undefined) { return contradictionsCycleImpl.listLiveTakesByIds(this.rawRead, ids, policy, floor); }
+  readLastContradictionsPromptVersion() { return contradictionsCycleImpl.readLastContradictionsPromptVersion(this.rawRead); }
+  listEvalCandidateQueries(limit: number) { return contradictionsCycleImpl.listEvalCandidateQueries(this.rawRead, limit); }
+
   async listTakes(opts: TakesListOpts = {}): Promise<Take[]> {
     return takesImpl.listTakes(unscopedExecutor(this.engineSql, 'takes: unscoped on master (EO4 inventory)'), opts);
   }
@@ -3517,6 +3548,10 @@ export class PGLiteEngine implements BrainEngine {
       entityTypes: (scope) => resolveEntityTypes(this, scope),
     }));
   }
+
+  // The admin operations' statements (engine-sql/admin-reads.ts).
+  listVisiblePageSlugs(slugs: string[], sourceIds: string[] | null, policy: adminReadsImpl.PagePolicyPart) { return adminReadsImpl.listVisiblePageSlugs(this.rawRead, slugs, sourceIds, policy); }
+  readPagesForVersionHistory(pageIds: number[]) { return adminReadsImpl.readPagesForVersionHistory(this.rawRead, pageIds); }
 
   // Ingest log
   async logIngest(entry: IngestLogInput): Promise<void> {

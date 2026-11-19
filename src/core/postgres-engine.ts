@@ -17,6 +17,7 @@ import { dropPhantomMigrationDuplicates } from './facts/ontology-rekey.ts';
 import { composablePostgresTransaction, transactionMemo, withCommitChecks } from './page-state/transactions.ts';
 import type { PageReadScope } from './types.ts';
 import type { PageReadPolicy } from './types.ts';
+import type { TrustTier } from './trust/tier.ts';
 import { readRelationalFanout, readChainHop, readAliases, readBacklinkCounts, readAdjacencyBoosts, readContentFlags, readExtractionStates, readEffectiveDates, readSalienceScores } from './search/read-enrichment.ts';
 import postgres from '#postgres'
 import { reservedTransactions, type ReservedTransactions } from './postgres-engine/reserved-transactions.ts';
@@ -190,6 +191,9 @@ import * as factsPurgeImpl from './engine-sql/facts-purge.ts';
 import * as dreamCycleImpl from './engine-sql/dream-cycle.ts';
 import * as factsRepairImpl from './engine-sql/facts-repair.ts';
 import * as filesOpsImpl from './engine-sql/files-ops.ts';
+import * as contradictionsCycleImpl from './engine-sql/contradictions-cycle.ts';
+import * as ontologyRepairImpl from './engine-sql/ontology-repair.ts';
+import * as adminReadsImpl from './engine-sql/admin-reads.ts';
 import * as factsTrustImpl from './engine-sql/facts-trust.ts';
 import * as factsConversationImpl from './engine-sql/facts-conversation.ts';
 import type * as FactsConversationSql from './engine-sql/facts-conversation.ts';
@@ -2739,6 +2743,14 @@ export class PostgresEngine implements BrainEngine {
     return rows.map((r) => ({ dimension: r.dimension, entities: Number(r.entities), observations: Number(r.observations) }));
   }
 
+  // The ontology re-key and repair statements (engine-sql/ontology-repair.ts).
+  listRekeyLosers(sourceId: string, move: ontologyRepairImpl.RekeyMove) { return ontologyRepairImpl.listRekeyLosers(this.executeRaw.bind(this), sourceId, move); }
+  repointSupersededToKept(ids: number[], keeps: number[]) { return ontologyRepairImpl.repointSupersededToKept(this.executeRaw.bind(this), ids, keeps); }
+  clearOntologySlots(ids: number[]) { return ontologyRepairImpl.clearOntologySlots(this.executeRaw.bind(this), ids); }
+  deleteRekeyLosers(ids: number[]) { return ontologyRepairImpl.deleteRekeyLosers(this.executeRaw.bind(this), ids); }
+  listOntologyFactCandidates(sourceIds: string[]) { return ontologyRepairImpl.listOntologyFactCandidates(this.executeRaw.bind(this), sourceIds); }
+  restoreOntologyFact(row: ontologyRepairImpl.OntologyFactRestore) { return ontologyRepairImpl.restoreOntologyFact(this.executeRaw.bind(this), row); }
+
   async findOntologyConflicts(opts?: PageReadScope & Pick<OntologyReadOpts, 'minConfidence' | 'visibility' | 'excludeDiary'>): Promise<OntologyConflict[]> {
     const sql = this.sql;
     const minConf = opts?.minConfidence ?? 0;
@@ -3246,6 +3258,25 @@ export class PostgresEngine implements BrainEngine {
     return takesImpl.sweepContradictionCache(this.engineSql);
   }
 
+  // The edge-contradictions phase, the scoped contradiction reader and the eval reads (engine-sql/contradictions-cycle.ts).
+  listEdgeContradictionCandidates(query: contradictionsCycleImpl.EdgeCandidateQuery) { return contradictionsCycleImpl.listEdgeContradictionCandidates(this.executeRaw.bind(this), query); }
+  listKnownEdgeProposals(fromPageId: number, linkType: string, evidenceHashes: string[]) { return contradictionsCycleImpl.listKnownEdgeProposals(this.executeRaw.bind(this), fromPageId, linkType, evidenceHashes); }
+  listLinkContexts(fromPageId: number, toPageId: number, linkType: string) { return contradictionsCycleImpl.listLinkContexts(this.executeRaw.bind(this), fromPageId, toPageId, linkType); }
+  recordEdgeProposal(proposal: contradictionsCycleImpl.EdgeProposalInput) { return contradictionsCycleImpl.recordEdgeProposal(this.executeRaw.bind(this), proposal); }
+  readEdgeProposal(id: number) { return contradictionsCycleImpl.readEdgeProposal(this.executeRaw.bind(this), id); }
+  edgeClosureLanded(fromPageId: number, endingToPageId: number | null, linkType: string, closeDate: string | null) { return contradictionsCycleImpl.edgeClosureLanded(this.executeRaw.bind(this), fromPageId, endingToPageId, linkType, closeDate); }
+  readEdgeProposalEvidence(id: number) { return contradictionsCycleImpl.readEdgeProposalEvidence(this.executeRaw.bind(this), id); }
+  readEdgeProposalHash(id: number) { return contradictionsCycleImpl.readEdgeProposalHash(this.executeRaw.bind(this), id); }
+  markEdgeProposalStale(id: number) { return contradictionsCycleImpl.markEdgeProposalStale(this.executeRaw.bind(this), id); }
+  setEdgeProposalStatus(id: number, status: string) { return contradictionsCycleImpl.setEdgeProposalStatus(this.executeRaw.bind(this), id, status); }
+  rejectOpenEdgeProposal(id: number) { return contradictionsCycleImpl.rejectOpenEdgeProposal(this.executeRaw.bind(this), id); }
+  markEdgeProposalUndone(id: number) { return contradictionsCycleImpl.markEdgeProposalUndone(this.executeRaw.bind(this), id); }
+  markRevertedEdgeProposals() { return contradictionsCycleImpl.markRevertedEdgeProposals(this.executeRaw.bind(this)); }
+  listLiveChunksByIds(ids: number[], policy: PageReadPolicy, floor: TrustTier | undefined) { return contradictionsCycleImpl.listLiveChunksByIds(this.executeRaw.bind(this), ids, policy, floor); }
+  listLiveTakesByIds(ids: number[], policy: PageReadPolicy, floor: TrustTier | undefined) { return contradictionsCycleImpl.listLiveTakesByIds(this.executeRaw.bind(this), ids, policy, floor); }
+  readLastContradictionsPromptVersion() { return contradictionsCycleImpl.readLastContradictionsPromptVersion(this.executeRaw.bind(this)); }
+  listEvalCandidateQueries(limit: number) { return contradictionsCycleImpl.listEvalCandidateQueries(this.executeRaw.bind(this), limit); }
+
   async listTakes(opts: TakesListOpts = {}): Promise<Take[]> {
     return takesImpl.listTakes(unscopedExecutor(this.engineSql, 'takes: unscoped on master (EO4 inventory)'), opts);
   }
@@ -3399,6 +3430,10 @@ export class PostgresEngine implements BrainEngine {
       entityTypes: (scope) => resolveEntityTypes(this, scope),
     });
   }
+
+  // The admin operations' statements (engine-sql/admin-reads.ts).
+  listVisiblePageSlugs(slugs: string[], sourceIds: string[] | null, policy: adminReadsImpl.PagePolicyPart) { return adminReadsImpl.listVisiblePageSlugs(this.executeRaw.bind(this), slugs, sourceIds, policy); }
+  readPagesForVersionHistory(pageIds: number[]) { return adminReadsImpl.readPagesForVersionHistory(this.executeRaw.bind(this), pageIds); }
 
   // Ingest log
   async logIngest(entry: IngestLogInput): Promise<void> {
