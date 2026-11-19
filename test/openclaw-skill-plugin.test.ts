@@ -423,6 +423,16 @@ describe.skipIf(!NODE)('the gbrain-skill-resolver plugin under Node', () => {
     ]);
   });
 
+  test('a turn whose run is no longer active (ctx.hookInvocation.assertActive throws) commits nothing to the session', async () => {
+    const b = box();
+    await setup(b, ['--skill-loading', 'resolve']);
+    const sessions = () => { try { return readdirSync(join(gbrainHome(b), 'skill-index', 'sessions')).length; } catch { return 0; } };
+    drive(b, [['turn', { text: 'triage the email inbox', inactive: true }]], undefined, { DRIVE_LOG_LINES: '1' });
+    expect(sessions()).toBe(0);
+    drive(b, [['turn', { text: 'triage the email inbox' }]], undefined, { DRIVE_LOG_LINES: '2' });
+    expect(sessions()).toBe(1);
+  });
+
   test('the daily log keeps event order when a skill read follows a turn at once', async () => {
     const b = box();
     await setup(b, ['--skill-loading', 'resolve']);
