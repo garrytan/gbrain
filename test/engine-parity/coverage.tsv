@@ -115,10 +115,10 @@ searchKeyword	search	yes	16	yes	yes	yes	serves
 countKeywordPages	search	yes	6	no	yes	yes	serves
 searchKeywordPages	search	yes	8	no	yes	yes	serves
 searchTitles	search	yes	9	yes	yes	yes	serves
-searchVector	search	yes	2	yes	yes	yes	refuses:vector_search
+searchVector	search	yes	3	yes	yes	yes	serves
 getEmbeddingsByChunkIds	search	yes	1	no	yes	yes	serves
 searchKeywordChunks	search	yes	9	yes	yes	yes	serves
-cosinesByChunkIds	search_reads	yes	1	no	yes	yes	refuses:vector_search
+cosinesByChunkIds	search_reads	yes	1	no	yes	yes	serves
 hasSupersedeEdges	search_reads	yes	1	no	yes	yes	serves
 supersedingPageSlugs	search_reads	yes	5	no	yes	yes	serves
 aliasCanonicalRefs	search_reads	yes	4	no	yes	yes	serves
@@ -262,7 +262,7 @@ addTakesBatch	takes	yes	30	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	1	no	yes	yes	serves
 listTakes	takes	yes	12	no	yes	yes	serves
 searchTakes	takes	yes	1	no	yes	yes	serves
-searchTakesVector	takes	yes	1	no	yes	yes	refuses:takes
+searchTakesVector	takes	yes	1	no	yes	yes	serves
 getTakeEmbeddings	takes	yes	1	no	yes	yes	serves
 countStaleTakes	takes	yes	1	no	yes	yes	serves
 listStaleTakes	takes	yes	1	no	yes	yes	serves
