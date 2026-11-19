@@ -15,7 +15,7 @@ import { connectorIdentity } from '../persistence/connector-identity.ts';
 import type { ConnectorKind } from '../persistence/connector-kinds.ts';
 import { defaultCheckout } from './destination.ts';
 import { isOwnedFolderKind, OWNED_FOLDER_ROOT, ownedFolderRel } from './paths.ts';
-import { commitOwnedBatch, OWNER_FILE, README_FILE, type OwnedFolderState } from './writer.ts';
+import { adoptRedactions, commitOwnedBatch, OWNER_FILE, README_FILE, type OwnedFolderState } from './writer.ts';
 
 type Exec = Pick<BrainEngine, 'executeRaw'> & Partial<Pick<BrainEngine, 'getConfig'>>;
 
@@ -79,6 +79,7 @@ export async function removeOwnedFolder(engine: Exec, sourceId: string, opts: { 
     process.stderr.write(`[gbrain notice owned_folder_kept] ${sourceId}: ${rel}/ is not where it was written (${'reason' in checkout ? checkout.detail : 'no OWNER.json'}), so gbrain removed no file there.\n`);
     return { files, removed: 0, kept: [], sha: null, kept_storage: false };
   }
+  adoptRedactions(root, rel, record.owned);
   const batch = commitOwnedBatch({ root, rel, sourceId, kind: record.kind, incarnation: record.owned.incarnation, pushUrls: record.owned.push_urls,
     writes: new Map(), removes: Object.keys(record.owned.files),
     message: `${record.kind}(${sourceId}): remove the source's ${files} chat-day file(s) from ${rel}` }, record.owned);

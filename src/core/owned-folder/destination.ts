@@ -44,11 +44,11 @@ export function normalizePushUrl(url: string): string {
   }
 }
 
-/** The normalized push URLs of the checkout's current branch (its push remote, else the branch remote, else origin); [] when none. */
+/** The normalized push URLs of the remote gbrain's publish pushes the current branch to (commit-push.ts resolveCtx: the branch remote, else origin); [] when none. */
 export function branchPushUrls(root: string): string[] {
   const cfg = (key: string) => git(root, ['config', '--get', key]).stdout.trim();
   const branch = git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']).stdout.trim();
-  const remote = (branch && cfg(`branch.${branch}.pushRemote`)) || cfg('remote.pushDefault') || (branch && cfg(`branch.${branch}.remote`)) || 'origin';
+  const remote = (branch && cfg(`branch.${branch}.remote`)) || 'origin';
   const out = git(root, ['remote', 'get-url', '--push', '--all', remote]);
   if (out.code !== 0) return [];
   return [...new Set(out.stdout.split('\n').map(s => s.trim()).filter(Boolean).map(normalizePushUrl))].sort();

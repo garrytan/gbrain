@@ -7,7 +7,8 @@
  * page rebuilt from scratch. After the first window, the next starts `lookbackDays` before the boundary, so an edit or
  * an unsend in recent days converges and the facts extracted from the changed page are retired. A day whose messages
  * are unchanged (the fingerprint) publishes nothing, so a second run over the same messages writes nothing. A message
- * deleted on the phone after the lookback stays until the page is deleted by hand.
+ * deleted on the phone after the lookback stays until the page is deleted by hand (in the owned folder, until the
+ * source is removed).
  *
  * Privacy: every page is `visibility: private` and the source is owner-only (access/owner-only.ts), decided at read
  * time from the source's kind; `source_kind: imessage` keeps every copy at the external-untrusted trust tier.
@@ -40,7 +41,7 @@ import { imessageChatKey, imessageDayFingerprint, imessagePagePath, renderIMessa
 import { IMESSAGE_HELPER_PORT_KEY, type IMessageMessage, type IMessageSourceConfig, type IMessageThread } from './types.ts';
 import { resolveOwnedDestination, type OwnedDatabaseOnlyReason } from '../owned-folder/destination.ts';
 import { git } from '../git/git-run.ts';
-import { commitOwnedBatch, ownedConflict, OWNER_FILE, README_FILE, type OwnedFolderState, type OwnedHold } from '../owned-folder/writer.ts';
+import { adoptRedactions, commitOwnedBatch, ownedConflict, OWNER_FILE, README_FILE, type OwnedFolderState, type OwnedHold } from '../owned-folder/writer.ts';
 import { ownedFolderRel } from '../owned-folder/paths.ts';
 
 export interface IMessageChatState {
@@ -156,6 +157,7 @@ async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: 
   const destination = managed
     ? { record: 'database' as const, reason: 'managed' as const, detail: 'the brain is managed by its coordinator', root: null }
     : await resolveOwnedDestination(engine, sourceId, owned?.push_urls ?? null);
+  if (owned && destination.root) adoptRedactions(destination.root, ownedFolderRel(sourceId), owned);
   state.record_status = { record: destination.record, folder: destination.record === 'folder' ? ownedFolderRel(sourceId) : null,
     reason: destination.record === 'database' ? destination.reason : null, detail: destination.record === 'database' ? destination.detail : null,
     checked_at: new Date(now()).toISOString() };

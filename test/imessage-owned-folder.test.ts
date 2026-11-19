@@ -28,6 +28,7 @@ import { purgeExpiredSources } from '../src/core/destructive-guard.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { resolveOwnedDestination } from '../src/core/owned-folder/destination.ts';
 import { slugifyPath } from '../src/core/sync.ts';
+import { redactUnpushed, spoolSealer, type RedactOutcome } from '../src/core/git/redact-unpushed.ts';
 
 const DAY = 86_400_000;
 const NOW = Date.parse('2026-06-15T12:00:00Z');
@@ -239,6 +240,43 @@ for (const kind of testBackends()) describe(`owned folder (${kind})`, () => {
     expect(commits(repo)).toBe(c1);
     expect(await pageCount(id)).toBe(2);
     await expect(runIMessageSync(engine, id, cfg, { ...options }, { helper: down, now: () => NOW + 180_000 })).rejects.toMatchObject({ code: 'apple_helper_not_running' });
+  });
+
+  test('a day the push redacted stays this writer\'s: a later message rewrites it, status follows the rebuilt commit and removal takes it', async () => {
+    const { repo, id, cfg, folder } = await setup();
+    const fake = mac();
+    fake.chats[0]!.messages[2]!.text = `key ${'AKIA'}${'ABCDEFGHIJKLMNOP'} here`;
+    await withEnv({ GBRAIN_SECRETS_ON_PUSH: undefined }, () => run(id, cfg, fake));
+    const file = join(folder, dayFile(ALICE, 1));
+    const outcome = await withEnv({ GBRAIN_HOME: join(home, `gbrain-home-${id}`), GBRAIN_SECRETS_ON_PUSH: undefined },
+      async () => redactUnpushed(repo, { base: '', sealer: spoolSealer(repo, null) })) as RedactOutcome;
+    expect(outcome.new_head).not.toBe(outcome.old_head);
+    expect(readFileSync(file, 'utf8')).toContain('<REDACTED:');
+    const rebuilt = git(repo, 'rev-parse', 'HEAD').stdout.trim();
+    expect((await readPagesIn(engine, [id])).get(id)!.last_batch).toBe(rebuilt);
+    const c1 = commits(repo);
+    fake.chats[0]!.messages.push({ rowid: 13, at: at(1, 9), text: 'Parking on level two.' });
+    await withEnv({ GBRAIN_SECRETS_ON_PUSH: undefined }, () => run(id, cfg, fake, { now: NOW + 60_000 }));
+    expect(commits(repo)).toBe(c1 + 1);
+    expect(readFileSync(file, 'utf8')).toContain('Parking on level two.');
+    expect((await stateOf(id)).owned!.held ?? {}).toEqual({});
+    const removed = await removeSource(engine, { id, yes: true });
+    expect(removed.owned_files).toBe(3);
+    expect(existsSync(file)).toBe(false);
+  });
+
+  test('the first write after a failed one is not blocked by the empty folders it left; the README names the remote gbrain pushes to', async () => {
+    const { repo, remote, id, cfg, folder } = await setup();
+    mkdirSync(join(folder, 'imessage', imessageChatKey(ALICE)), { recursive: true });
+    git(home, 'init', '--bare', '-q', join(home, `fork-${id}.git`));
+    git(repo, 'remote', 'add', 'fork', join(home, `fork-${id}.git`));
+    git(repo, 'config', 'branch.main.pushRemote', 'fork');
+    const before = commits(repo);
+    await run(id, cfg, mac());
+    expect(commits(repo)).toBe(before + 1);
+    expect((await stateOf(id)).record_status?.record).toBe('folder');
+    expect(readFileSync(join(folder, 'README.md'), 'utf8')).toContain(remote.replace(/\.git$/, ''));
+    expect(readFileSync(join(folder, 'README.md'), 'utf8')).not.toContain('fork-');
   });
 
   test('removing the source removes its files in one commit and keeps a hand-edited one; --keep-storage leaves them', async () => {

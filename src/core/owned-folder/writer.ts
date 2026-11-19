@@ -13,6 +13,7 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync } f
 import { dirname, join, relative } from 'node:path';
 import { atomicWriteFileSync } from '../atomic-write.ts';
 import { acquireCommitLock, assertNoOperationInProgress, commitPaths } from '../git/commit-push.ts';
+import { ledgerLocation, readLedger } from '../git/commit-ledger.ts';
 import { git } from '../git/git-run.ts';
 import { onPushMode } from '../git/redact-unpushed.ts';
 import { OperationError } from '../ops/contract.ts';
@@ -69,6 +70,41 @@ const indexBlob = (root: string, path: string): string | null => {
 };
 const headBlob = (root: string, path: string): string | null => git(root, ['rev-parse', '--verify', '-q', `HEAD:${path}`]).stdout.trim() || null;
 
+/**
+ * A publish redaction (GST-2988, the default `secrets.on_push redact`) rebuilds unpushed commits and moves the checkout's
+ * files and index to the redacted blobs, ledgering each rebuilt commit as `redact_rebuild` superseding the old one. A
+ * recorded blob that a rebuild replaced moves to its redacted successor, and `last_batch` to its rebuilt commit, so the
+ * redacted file is still this writer's. Ledger records are read in order, so a rebuild of a rebuild follows the chain.
+ * A superseded commit Git no longer has (its backup ref expired) is skipped. Returns whether `state` changed.
+ */
+export function adoptRedactions(root: string, rel: string, state: OwnedFolderState): boolean {
+  const loc = ledgerLocation(root);
+  if (!loc) return false;
+  let records: ReturnType<typeof readLedger>;
+  try { records = readLedger(loc.common); } catch { return false; }
+  let changed = false;
+  for (const record of records) {
+    if (record.e !== 'commit' || record.writer !== 'redact_rebuild' || record.held) continue;
+    for (const old of record.supersedes ?? []) {
+      if (state.last_batch === old) { state.last_batch = record.sha; changed = true; }
+      const diff = git(root, ['diff-tree', '-r', '-z', '--no-renames', old, record.sha, '--', rel]);
+      if (diff.code !== 0) continue;
+      const parts = diff.stdout.split('\0');
+      for (let i = 0; i + 1 < parts.length; i += 2) {
+        const [, , from, to] = parts[i]!.split(' ');
+        const p = relative(rel, parts[i + 1]!).split('\\').join('/');
+        if (from && to && !/^0+$/.test(to) && state.files[p] === from) { state.files[p] = to; changed = true; }
+      }
+    }
+  }
+  return changed;
+}
+
+/** Whether `dir` holds anything but (nested) empty directories. */
+function holdsFiles(dir: string): boolean {
+  try { return readdirSync(dir, { withFileTypes: true }).some(e => !e.isDirectory() || holdsFiles(join(dir, e.name))); } catch { return false; }
+}
+
 /** A symlink at the path or any directory between the checkout root and it. */
 function symlinkOnPath(root: string, checkoutRel: string): boolean {
   let at = root;
@@ -123,7 +159,7 @@ export function commitOwnedBatch(input: OwnedBatchInput, state: OwnedFolderState
       try { found = JSON.parse(readFileSync(ownerPath, 'utf8')); } catch { /* unreadable reads as not ours */ }
       if (found?.source_id !== sourceId || found?.incarnation !== input.incarnation) throw ownedConflict(`${rel}/${OWNER_FILE}`, 'names another source or an earlier one with this id', sourceId);
     } else {
-      if (existsSync(folder) && readdirSync(folder).length) throw ownedConflict(`${rel}/`, 'holds files and no OWNER.json', sourceId);
+      if (holdsFiles(folder)) throw ownedConflict(`${rel}/`, 'holds files and no OWNER.json', sourceId);
       mkdirSync(folder, { recursive: true, mode: 0o700 });
       atomicWriteFileSync(ownerPath, `${JSON.stringify(owner, null, 2)}\n`, { mode: 0o600 });
       atomicWriteFileSync(join(folder, README_FILE), readme(input), { mode: 0o600 });
