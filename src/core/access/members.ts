@@ -126,9 +126,7 @@ export async function getMember(engine: BrainEngine, id: string): Promise<Member
 }
 
 export async function listMembers(engine: BrainEngine, opts: { includeRemoved?: boolean } = {}): Promise<MemberRecord[]> {
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `${MEMBER_SELECT}${opts.includeRemoved ? '' : ' WHERE m.tombstoned_at IS NULL'} GROUP BY m.id ORDER BY m.id`);
-  return rows.map(toRecord);
+  return (await engine.listAccessMemberRows(opts.includeRemoved === true)).map(toRecord);
 }
 
 export async function existingMember(engine: BrainEngine, raw: unknown, action: string): Promise<MemberRecord> {

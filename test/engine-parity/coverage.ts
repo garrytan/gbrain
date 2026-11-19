@@ -151,6 +151,19 @@ export const FAMILIES: Record<string, readonly string[]> = {
   embedding_catalog: ['readChunkVectorColumn', 'readEmbeddingIdentity', 'listEmbeddingStores', 'hasStoredVectors', 'countChunkVectorCoverage'],
   // doctor_reads: the statements doctor checks ran through executeRaw (engine-sql/doctor-reads.ts)
   doctor_reads: ['countPageChildOrphans'],
+  // doctor_reads_acc: the access, token, OAuth, request-log, decide, chronicle, feedback, belief and volunteer reads (engine-sql/doctor-acc.ts)
+  doctor_reads_acc: [
+    'listPolicySourceIds', 'isAccessStateUnreadable', 'listRawOnlyRules',
+    'listAudienceMemberIds', 'listLabelledOnlyMemberIds', 'listAccessMemberRows',
+    'listAttestCredentialRows', 'listActiveAccessTokenRows', 'listActiveOauthClientRows',
+    'listOauthClientAuthShapes', 'listDanglingFederatedReads', 'listOrphanWorkspaceSources',
+    'listPrivilegedDcrClients', 'readMcpRequestLogBytes', 'countMcpRequestLogRows',
+    'hasMcpLogRowsPastWindow', 'readKnowledgeRevisionNotNull', 'readDriftSchema',
+    'listDriftLiveRows', 'listDriftVersionRows', 'originIndexPresent',
+    'listDecideCalibrationRows', 'listRecentResolvedModels', 'listMixedModelDecisions',
+    'listDecideSlotUsage', 'readDecideDailySpend', 'listDecideReceiptStats',
+    'readPendingProposalSummary', 'readChronicleLedgerStats', 'readChronicleDuplicateEvents',
+    'readFeedbackStatus', 'listBeliefCoveredSources', 'listVolunteerChannels'],
 
   // fact_relink_attempts: relink-attempt memos
   fact_relink_attempts: ['upsertFactRelinkAttempt', 'listFactRelinkOutcomes', 'deleteFactRelinkMemos'],

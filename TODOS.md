@@ -1,5 +1,13 @@
 # TODOS
 
+## Rust engine lane 14 follow-ups (filed 2026-11-19)
+
+- [ ] **P2 — rust-drift-scan-populated: the provenance stamp drift scan refuses on a populated Rust brain.** **What:** `listDriftLiveRows` and `listDriftVersionRows` (`src/core/rust-engine/store-members/doctor-acc.ts`) answer an empty source and refuse, as a typed `raw_sql` refusal, any source that holds a page: the scan needs the request that wrote each revision, which the Rust store does not keep. `provenance_stamp_drift` therefore warns on a Rust brain with pages where PGLite reports ok or a count. **Why:** the doctor must read the same on both engines. **Fix:** keep the writing request per revision in the store (or compute the drift in the store), then serve both members from it.
+- [ ] **P3 — rust-doctor-page-counts-raw: two doctor page counts still read through raw SQL.** **What:** `src/commands/doctor/checks/routing-federation.ts:53` (the `source_routing_health` page count) and the `pages` count joined with `gbrain_access_folder_rules` in `src/commands/doctor/checks/folder-access.ts`. Both sit behind a catch, so a Rust brain degrades their note instead of failing the check. **Fix:** typed members, once the store keeps the folder rules those counts join.
+- [ ] **P3 — rust-origin-twins-fallback: the origin twin scan still reads raw when the index is missing.** **What:** `originTwinCounts` and the `sources LIMIT 1` read in `src/core/persistence/origin-index.ts` run only when `pages_live_origin_key` is absent. A Rust brain answers the index as present, so it never reaches them. **Fix:** none needed until a Rust brain can lack the index; then move both behind members.
+- [ ] **P3 — rust-atom-provenance-drift: `atom_provenance_drift` reads through raw SQL.** **What:** `computeAtomProvenanceDriftCheck` (`src/commands/doctor/checks/extraction-sync.ts`) runs a CTE over atoms, pages and slug aliases through `executeRaw`. Not part of the access/decide cohort; another lane's files touch it.
+- [ ] **P3 — rust-request-log-bytes: `mcp_request_log_retention` reports the store's byte count, not Postgres page size.** **What:** `details.bytes` is the summed key and value bytes on a Rust brain (0 on an empty log) and the relation size (32768 on PGLite). The message rounds to 0.0 MB on both. **Fix:** none; accepted difference, listed so nobody chases it.
+
 ## Rust engine lane 12 follow-ups (filed 2026-11-19)
 
 Note (decision by the Rust engine owner, not the project owner): `gbrain embeddings enable` writes `embedding_model` and `embedding_dimensions` through `setConfig` only when the vector column does not exist; PGLite and Postgres always have that column, so default brains see no change.

@@ -48,6 +48,7 @@ const TYPED_SQL_READS = new Set<PropertyKey>([
   'sampleEffectiveDates', 'sampleEffectiveDateSources', // effective_date_health
   'countZeroWeightWithTakes', // the salience count
   'listTrustScanRows', 'countUnscannedTrustRows', // trust_scan (src/core/eligibility/scan.ts)
+  'listOauthClientAuthShapes', 'listDanglingFederatedReads', 'listPrivilegedDcrClients', 'listVolunteerChannels', // doctor-acc reads
 ]);
 
 /** The real engine, except every SQL read (executeRaw, the raw PGLite handle, the typed reads above) throws `error`. */
