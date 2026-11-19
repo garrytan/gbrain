@@ -51,6 +51,7 @@ const CONSTANT_ALLOWLIST: Record<string, string> = {
   GUEST_SOURCES_HIDDEN_SQL: 'src/core/guests/note.ts: constant row-security probe of guest_sources (no input)',
   ANY_OWNER_ONLY_SQL: 'src/core/access/owner-only.ts: constant any-owner-only-source EXISTS over sources read_source; the kinds and flag key are module constants (no input)',
   READ_SOURCE_OWNER_ONLY_SQL: 'src/core/access/owner-only.ts: constant owner-only row test of the sources alias read_source; the kinds and flag key are module constants (no input)',
+  ACTIVATION_SERVED_REVISION: 'src/core/search/safe-chunks.ts: the constant v153 served-index marker uuid (#9192); no input',
   RELEASE_STAGED_CTE: 'src/core/persistence/limits.ts: constant CTE releasing upload reservations of a preceding gone CTE (no input)',
 };
 
@@ -135,6 +136,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   vectorCastSuffix: 'src/core/search/embedding-column.ts: constant ::vector / ::halfvec cast suffix from the resolved column type',
   safeChunksFilter: 'src/core/search/safe-chunks.ts: constant safe-chunk predicate over a caller alias',
   pageBudgetLimitedFilter: 'src/core/page-size-policy.ts: constant held-or-capped budget predicate over a caller page alias; no values',
+  projectionJobProbes: 'src/core/engine-sql/projection-rebuild.ts: constant source and live-inline-page lateral probes over the queue alias j; `media` picks between module constants (projection-class.ts sealableImageSql); no values',
   movableChunkSql: 'src/core/search/safe-chunks.ts: constant vector-matches-its-text predicate over a caller-quoted embedding column; no values',
   bodyWriteChunkVersion: 'src/core/search/safe-chunks.ts: constant chunker-version CASE over caller column expressions (or master\'s literal $1/$2 bind reuse); no values',
   privateLinkOriginFilterFragment: 'src/core/search/private-visibility.ts: constant link-origin visibility predicate over a caller alias',

@@ -1,13 +1,15 @@
 /**
  * The statements a projection rebuild sends (page-state/projections.ts rebuildPendingPageProjections,
  * installPageProjection, planProjectionKeep and the statistics' drained probe). Each function runs the statement its
- * caller ran through `executeRaw`, with the same text and parameters, on the engine's own `executeRaw`; only its home
- * moved. `test/projection-rebuild-sql-pin.test.ts` pins each text and its binds against the ones recorded before the
+ * caller ran through `executeRaw` on the engine's own `executeRaw`. The queue listing, the keep plan and the vector
+ * clear are composed with sqlFragment, so their placeholders are numbered in text order; every other text is unchanged.
+ * `test/projection-rebuild-sql-pin.test.ts` pins each statement and its binds against the ones recorded before the
  * move. The rebuild's other queue statements (the segmented probe, the re-key, the deferred and failure stamps) stay
  * raw in projections.ts.
  */
 import type { EngineRawRead } from './cli-reads-ops.ts';
-import { PROJECTION_RETRY_READY_TEXT } from './persistence-housekeeping.ts';
+import { joinFragments, renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
+import { projectionRetryReadyFragment } from './persistence-housekeeping.ts';
 import { sealableImageSql } from '../page-state/projection-class.ts';
 import { ACTIVATION_SERVED_REVISION, movableChunkSql } from '../search/safe-chunks.ts';
 import { chunkModelMatchesSql } from '../embedding-invalidation.ts';
@@ -59,30 +61,30 @@ export interface ProjectionJobKey { sourceIncarnation: string; slug: string; rev
  * the C collation), at most `limit`.
  */
 export async function listQueuedPageProjections(raw: EngineRawRead, filter: QueuedProjectionFilter): Promise<QueuedPageProjection[]> {
-  const params: unknown[] = [filter.limit];
-  const filters: string[] = [];
-  if (filter.retryCooldown) filters.push(PROJECTION_RETRY_READY_TEXT);
-  if (filter.notAfter !== undefined) { params.push(filter.notAfter); filters.push(`j.updated_at<=$${params.length}::text::timestamptz`); }
-  if (filter.reasons) { params.push(filter.reasons); filters.push(`j.reason=ANY($${params.length}::text[])`); }
-  if (filter.pages) { params.push(filter.pages.slugs); filters.push(`j.slug=ANY($${params.length}::text[])`); }
+  const filters: SqlFragment[] = [];
+  if (filter.retryCooldown) filters.push(projectionRetryReadyFragment());
+  if (filter.notAfter !== undefined) filters.push(sqlFragment`j.updated_at<=${filter.notAfter}::text::timestamptz`);
+  if (filter.reasons) filters.push(sqlFragment`j.reason=ANY(${[...filter.reasons]}::text[])`);
+  if (filter.pages) filters.push(sqlFragment`j.slug=ANY(${[...filter.pages.slugs]}::text[])`);
   const after = filter.after;
   if (after) {
-    params.push(after.updated_at, after.source_incarnation, after.slug);
-    filters.push(`(j.updated_at,j.source_incarnation,j.slug COLLATE "C")>($${params.length - 2}::text::timestamptz,$${params.length - 1}::uuid,$${params.length} COLLATE "C")`);
+    filters.push(sqlFragment`(j.updated_at,j.source_incarnation,j.slug COLLATE "C")>(${after.updated_at}::text::timestamptz,${after.source_incarnation}::uuid,${after.slug} COLLATE "C")`);
   }
-  const outer: string[] = [];
-  if (filter.pages) outer.push(`s.id=$${params.push(filter.pages.sourceId)}`);
+  const outer: SqlFragment[] = [];
+  if (filter.pages) outer.push(sqlFragment`s.id=${filter.pages.sourceId}`);
   if (filter.served) {
-    outer.push(`${filter.served === 'waiting' ? 'NOT ' : ''}EXISTS (SELECT 1 FROM pages q WHERE q.source_id=s.id AND q.slug=j.slug
-      AND q.text_projection_revision='${ACTIVATION_SERVED_REVISION}'::uuid)`);
+    outer.push(sqlFragment`${trustedSql(filter.served === 'waiting' ? 'NOT ' : '')}EXISTS (SELECT 1 FROM pages q WHERE q.source_id=s.id AND q.slug=j.slug
+      AND q.text_projection_revision='${trustedSql(ACTIVATION_SERVED_REVISION)}'::uuid)`);
   }
-  const sourceFilter = outer.length ? `WHERE ${outer.join(' AND ')}` : '';
-  return raw<QueuedPageProjection>(`SELECT s.id AS source_id,j.source_incarnation,j.slug,j.revision,p.page_kind,j.updated_at::text AS updated_at
+  const where = filters.length ? sqlFragment`WHERE ${joinFragments(filters, ' AND ')}` : sqlFragment``;
+  const sourceFilter = outer.length ? sqlFragment`WHERE ${joinFragments(outer, ' AND ')}` : sqlFragment``;
+  const { text, params } = renderFragment(sqlFragment`SELECT s.id AS source_id,j.source_incarnation,j.slug,j.revision,p.page_kind,j.updated_at::text AS updated_at
     FROM (SELECT source_incarnation,slug,revision,updated_at FROM page_projection_jobs j
-      ${filters.length ? `WHERE ${filters.join(' AND ')}` : ''}
+      ${where}
       ORDER BY updated_at,source_incarnation,slug COLLATE "C" OFFSET 0) j
-    ${PROJECTION_JOB_PROBES} ${sourceFilter}
-    ORDER BY j.updated_at,j.source_incarnation,j.slug COLLATE "C" LIMIT $1`, params);
+    ${trustedSql(PROJECTION_JOB_PROBES)} ${sourceFilter}
+    ORDER BY j.updated_at,j.source_incarnation,j.slug COLLATE "C" LIMIT ${filter.limit}`);
+  return raw<QueuedPageProjection>(text, params);
 }
 
 /** The reason of the queue row `key`, or null when no such row is queued (another worker consumed it). */
@@ -108,9 +110,10 @@ export interface ChunkKeepState { id: number; embedding_input_hash: string | nul
  */
 export async function readChunkKeepState(raw: EngineRawRead, pageId: number, provenanceModel: string | null, column: KeepColumn): Promise<ChunkKeepState[]> {
   const col = quoteIdentifier(column.name);
-  return raw<ChunkKeepState>(
-    `SELECT id,embedding_input_hash,${movableChunkSql(col)} AND ${chunkModelMatchesSql('model', '$2', `vector_dims(${col}) = ${column.dimensions}`)} AS movable FROM content_chunks WHERE page_id=$1`,
-    [pageId, provenanceModel]);
+  const { text, params } = renderFragment(
+    // chunk-visibility-ok: the keep plan compares every stored chunk row of the page it is about to replace
+    sqlFragment`SELECT id,embedding_input_hash,${trustedSql(movableChunkSql(col))} AND ${keptModelFragment(col, column.dimensions, provenanceModel)} AS movable FROM content_chunks WHERE page_id=${pageId}`);
+  return raw<ChunkKeepState>(text, params);
 }
 
 /**
@@ -120,11 +123,21 @@ export async function readChunkKeepState(raw: EngineRawRead, pageId: number, pro
  */
 export async function clearUnkeptChunkVectors(raw: EngineRawRead, pageId: number, provenanceModel: string | null, column: KeepColumn, currentIds: readonly number[]): Promise<void> {
   const col = quoteIdentifier(column.name);
-  await raw(`UPDATE content_chunks SET ${col}=NULL,
+  const { text, params } = renderFragment(sqlFragment`UPDATE content_chunks SET ${trustedSql(col)}=NULL,
         embedded_at=NULL,embedded_text_hash=NULL,embedding_input_hash=NULL,
-        embedding_pending_since=COALESCE(embedding_pending_since,now()) WHERE page_id=$1 AND
-        (NOT ${chunkModelMatchesSql('model', '$2', `vector_dims(${col}) = ${column.dimensions}`)} OR embedded_text_hash <> md5(chunk_text) OR NOT(id=ANY($3::int[])))`,
-  [pageId, provenanceModel, currentIds]);
+        embedding_pending_since=COALESCE(embedding_pending_since,now()) WHERE page_id=${pageId} AND
+        (NOT ${keptModelFragment(col, column.dimensions, provenanceModel)} OR embedded_text_hash <> md5(chunk_text) OR NOT(id=ANY(${[...currentIds]}::int[])))`);
+  await raw(text, params);
+}
+
+/**
+ * `chunkModelMatchesSql` (embedding-invalidation.ts) over the chunk's `model` as a fragment: built from its text, with
+ * `model` bound in place of its model parameter (as chunks.ts currentSpaceChunkFragment does), so the two cannot drift.
+ */
+function keptModelFragment(col: string, dimensions: number, model: string | null): SqlFragment {
+  if (!Number.isInteger(dimensions)) throw new Error(`embedding column width must be an integer, got ${dimensions}`);
+  const strings = chunkModelMatchesSql('model', '$9001', `vector_dims(${col}) = ${dimensions}`).split('$9001');
+  return sqlFragment(Object.assign([...strings], { raw: [...strings] }), model);
 }
 
 /** Stamps the chunker version a sealed projection was built with on the page. */

@@ -5,9 +5,11 @@
  * plan or a result on Postgres alone, which PGLite parity cannot see.
  *
  * Protects: the queue listing the rebuild sends for five option sets, and each member's text and binds, equal the old
- * raw statements byte for byte (the texts below were recorded from the raw callers before the move). Fails when a
- * member reorders a clause, renumbers a placeholder, binds a value differently or moves the listing off the pool.
- * No database: the engine runs on the recording fake.
+ * raw statements (the texts below were recorded from the raw callers before the move). The queue listing, the keep
+ * plan and the vector clear are composed with sqlFragment, which numbers placeholders in text order: they are compared
+ * with each placeholder replaced by the value it binds, so only the numbering may differ. The other statements match
+ * byte for byte. Fails when a member reorders a clause, binds a value differently or in a different place, or moves
+ * the listing off the pool. No database: the engine runs on the recording fake.
  */
 import { expect, test } from 'bun:test';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
@@ -23,6 +25,11 @@ function recordingEngine() {
     return { text: s.text, params: s.params };
   };
   return { engine, fake, last };
+}
+
+/** The statement with each `$n` replaced by the value it binds: equal for two texts that differ only in numbering. */
+function bound(statement: { text: string; params: unknown[] }): string {
+  return statement.text.replace(/\$(\d+)/g, (_, n: string) => `<${JSON.stringify(statement.params[Number(n) - 1])}>`);
 }
 
 /** The queue listing the rebuild sent, recorded before the move (one pool statement per option set). */
@@ -69,7 +76,8 @@ for (const [name, [limit, opts]] of Object.entries(VARIANTS)) {
     await rebuildPendingPageProjections(engine, limit, opts);
     const sent = fake.statements().map(s => ({ text: s.text, params: s.params, lane: s.lane }));
     const old = OLD_LISTS[name as keyof typeof OLD_LISTS];
-    expect(sent).toEqual([{ text: old.text, params: old.params, lane: 'pool' }]);
+    expect(sent.map(s => ({ statement: bound(s), lane: s.lane }))).toEqual([{ statement: bound(old), lane: 'pool' }]);
+    expect(sent[0]!.params.length).toBe(old.params.length);
   });
 }
 
@@ -77,6 +85,10 @@ test('the queue listing member, called directly, sends the same statement as the
   const { engine, fake } = recordingEngine();
   expect(await engine.listQueuedPageProjections({ limit: 20 })).toEqual([]);
   expect(fake.statements().map(s => ({ text: s.text, params: s.params }))).toEqual([{ text: OLD_LISTS.none.text, params: OLD_LISTS.none.params }]);
+  await engine.listQueuedPageProjections({ limit: 7, reasons: ['canonical_change'] });
+  expect(bound(fake.statements().at(-1)!)).toBe(bound({ text: OLD_LISTS.served.text.replace(' AND j.slug=ANY($3::text[])', '')
+    .replace(/ WHERE s\.id=\$4 AND EXISTS \(SELECT 1 FROM pages q WHERE q\.source_id=s\.id AND q\.slug=j\.slug\n      AND q\.text_projection_revision='[0-9-]+'::uuid\)/, ' '),
+    params: [7, ['canonical_change']] }));
 });
 
 test('the job reason read and delete send the recorded statements', async () => {
@@ -90,7 +102,7 @@ test('the job reason read and delete send the recorded statements', async () => 
 test('the keep plan, the vector clear and the chunker stamp send the recorded statements', async () => {
   const { engine, last } = recordingEngine();
   await engine.readChunkKeepState(9, 'openai:text-embedding-3-large', COLUMN);
-  expect(last()).toEqual({ text: OLD.keep, params: [9, 'openai:text-embedding-3-large'] });
+  expect(bound(last())).toBe(bound({ text: OLD.keep, params: [9, 'openai:text-embedding-3-large'] }));
   await engine.clearUnkeptChunkVectors(9, null, COLUMN, [3, 4]);
   expect(last()).toEqual({ text: OLD.clear, params: [9, null, [3, 4]] });
   await engine.setProjectionChunkerVersion('src-a', 'notes/a', 4);
