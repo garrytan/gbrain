@@ -106,6 +106,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listFactWithdrawalDates': OOS.trustWithdrawals,
   'listFactWithdrawalKeys': OOS.trustWithdrawals,
   'readFactCacheWatermark': OOS.trustWithdrawals,
+  'readTrustGeneration': OOS.trustWithdrawals,
   'moveFactWithdrawalSubject': OOS.trustWithdrawals,
   'decideWriteGateHold': OOS.trustWriteGate,
   'deleteStalePageWriteGateReceipts': OOS.trustWriteGate,

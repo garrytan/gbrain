@@ -481,6 +481,7 @@ export const RUST_ENGINE_MEMBERS = {
   hasFactWithdrawalForSubject: 'facts',
   listFactWithdrawalKeys: 'facts',
   readFactCacheWatermark: 'facts',
+  readTrustGeneration: 'facts',
   // trust: the write gate's receipts and holds (engine-sql/trust-write-gate.ts)
   upsertWriteGateReceipt: 'facts',
   upsertPageWriteGateReceipt: 'facts',

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 644/644
+# covered: 645/645
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -52,7 +52,7 @@
 # code_edges: 9/9
 # eval_capture: 5/5
 # salience_enrich: 6/6
-# trust: 16/16
+# trust: 17/17
 # open_loops: 3/3
 # cli_reads_import: 12/12
 # wanted_links: 2/2
@@ -338,7 +338,7 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	9	no	yes	yes	serves
-setConfig	config	yes	22	no	yes	yes	serves
+setConfig	config	yes	23	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
@@ -621,6 +621,7 @@ moveFactWithdrawalSubject	trust	yes	1	no	yes	yes	serves
 hasFactWithdrawalForSubject	trust	yes	1	no	yes	yes	serves
 listFactWithdrawalKeys	trust	yes	3	no	yes	yes	serves
 readFactCacheWatermark	trust	yes	1	no	yes	yes	serves
+readTrustGeneration	trust	yes	1	no	yes	yes	serves
 upsertWriteGateReceipt	trust	yes	6	no	yes	yes	serves
 upsertPageWriteGateReceipt	trust	yes	12	no	yes	yes	serves
 deleteStalePageWriteGateReceipts	trust	yes	1	no	yes	yes	serves

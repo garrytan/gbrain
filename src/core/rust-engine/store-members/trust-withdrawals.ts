@@ -1,8 +1,9 @@
 /**
  * Trust: the fact withdrawal ledger members (BrainEngine hasCoveringFactWithdrawal, insertFactWithdrawal,
  * listFactWithdrawalDates, moveFactWithdrawalSubject, hasFactWithdrawalForSubject, listFactWithdrawalKeys,
- * readFactCacheWatermark), over `rust/crates/gbrain-store/src/trust/withdrawals.rs`. The watermark's access digest is
- * that of empty folder access tables: the store keeps none. `withdrawnAt` must be the ISO form `Date#toISOString` gives;
+ * readFactCacheWatermark, readTrustGeneration), over `rust/crates/gbrain-store/src/trust/withdrawals.rs`. The
+ * watermark's access digest is that of empty folder access tables: the store keeps none. The trust generation is the
+ * store's commit sequence, which moves on every commit. `withdrawnAt` must be the ISO form `Date#toISOString` gives;
  * the store refuses any other spelling with `invalid_argument` (rust/docs/store/trust.md).
  */
 import type { BrainEngine } from '../../engine.ts';
@@ -35,3 +36,6 @@ export const listFactWithdrawalKeys: Member<'listFactWithdrawalKeys'> = (brain, 
 
 export const readFactCacheWatermark: Member<'readFactCacheWatermark'> = (brain, sourceId) =>
   storeCall({ member: 'readFactCacheWatermark', sourceId }, () => brain.readFactCacheWatermark(sourceId));
+
+export const readTrustGeneration: Member<'readTrustGeneration'> = (brain) =>
+  storeCall({ member: 'readTrustGeneration' }, () => brain.readTrustGeneration());

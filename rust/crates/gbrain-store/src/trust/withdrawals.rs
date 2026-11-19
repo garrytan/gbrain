@@ -359,6 +359,15 @@ impl Store {
         Ok(found)
     }
 
+    /// `readTrustGeneration`: the trust policy generation as decimal text. The store keeps no
+    /// `trust_policy_state` row and no triggers that bump it, so it answers its commit sequence:
+    /// it moves on every commit, a superset of the events that bump the SQL generation (tier and
+    /// quarantine changes, `trust.%` config, purges). A cache keyed on it rebuilds after any write,
+    /// never after none, and so never serves content a trust change made wrong.
+    pub fn read_trust_generation(&self) -> Result<String> {
+        Ok(self.commit_version()?.to_string())
+    }
+
     /// `readFactCacheWatermark`: the source's withdrawal count and newest withdrawal time, and the
     /// folder access digest. The store keeps no folder access rules or pending coverage (only raw
     /// SQL writes them, and `executeRaw` refuses), so the digest is that of two empty tables.

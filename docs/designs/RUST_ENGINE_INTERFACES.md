@@ -1610,7 +1610,9 @@ Trust tiers, the write gate, trust review, fact withdrawal and the belief ledger
   `ENGINE_CAPABILITIES`) for the policy, tier, gate, withdrawal and review members, and the existing
   `belief_ledger` for the belief members, so the belief part can ship later without holding the rest.
 - **Store and binding:** the Rust method is the member name in snake_case.
-  - Policy and gate: `readTrustGeneration`, `readWriteGateReceipt`, `clearStalePageGateReceipts`,
+  - Policy and gate: `readTrustGeneration` (the other half of the hot-memory cache identity; the store keeps no
+    `trust_policy_state` and answers its commit sequence, which moves on every commit, a superset of the SQL
+    generation's trigger events, so a Rust cache rebuilds after any write), `readWriteGateReceipt`, `clearStalePageGateReceipts`,
     `listWriteGateHolds`, `listTrustAllowRules`, `insertTrustProposal`, `listTrustProposals`.
   - Page tiers: `readPageTrustRows` (one read for the four sites that read page tiers), `readTrustTierCounts`,
     `lowerPageTrustTiers`, `relowerClaimedRows`, `readTaintInputPages`, `findPageVersionByTier`, `listFlaggedPages`,
@@ -1620,7 +1622,8 @@ Trust tiers, the write gate, trust review, fact withdrawal and the belief ledger
     `planFactWithdrawal`, `listWithdrawals` (one filtered list for the discovery, dates and export readers),
     `hasSourcePurges`, `readFactCacheWatermark` (the hot-memory cache watermark: the source's withdrawal count, the
     newest withdrawal in UTC with microseconds, and the folder access digest, which the store reports as the digest of
-    two empty tables because it keeps no folder rules).
+    two empty tables because it keeps no folder rules; the newest withdrawal is UTC ISO text, not `::text`, which
+    followed the session time zone; the text is a cache key only, so no answer changed).
   - Review: `insertWithdrawReviewItem`, `countPurgeReviewQueueRefs`.
   - Beliefs (`belief_ledger`): `readCoverageIntervals`, `listCoveredSources`, `readOpenLifetimes`,
     `mintBeliefLifetime`, `resolveBeliefLifetimes`, `readBeliefRedactions`, `readBeliefState`.
