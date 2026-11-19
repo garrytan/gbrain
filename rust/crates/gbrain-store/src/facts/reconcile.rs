@@ -10,9 +10,8 @@
 //! phase (`settleFactsReconcile`, `selectFactsReconcileDrain`; their SQL is in
 //! engine-sql/facts-purge.ts). A hard page delete removes the page's row (`remove_page_rows`, the
 //! `ON DELETE CASCADE` from `pages`); a soft delete keeps it, as Postgres does. The extract_facts
-//! phase settles `complete` inside its write transaction after it locks the page row with
-//! `lockReconcileRevision`, which is raw SQL: on Rust that step stops on the typed `raw_sql`
-//! refusal, so only the settles outside it (and the drain) reach this store from that phase.
+//! phase settles `complete` inside its write transaction after `lockReconcileRevision` confirms the
+//! page is still at the revision it read; on Rust that transaction's single writer is the lock.
 
 use super::source_rows;
 use crate::Store;
@@ -43,6 +42,16 @@ pub struct SettleArgs {
     pub outcome: String,
     pub revision: Option<String>,
     pub any_revision: bool,
+}
+
+/// `lockReconcileRevision`: `revision` is the `knowledge_revision` the reconcile read (null when
+/// it read none).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LockArgs {
+    pub source_id: String,
+    pub slug: String,
+    pub revision: Option<String>,
 }
 
 /// `selectFactsReconcileDrain`: `marker` is `FACTS_FENCE_BEGIN` (plain text, as for the backlog),
@@ -220,6 +229,26 @@ impl Store {
         })
     }
 
+    /// `lockReconcileRevision`: true when the live page `(sourceId, slug)` is at `revision`.
+    /// Postgres takes a `FOR SHARE` row lock for the rest of the transaction. On a store bound to a
+    /// transaction the read runs inside it and sees its own writes; that transaction holds the
+    /// store's single writer from begin to commit, so no other writer changes the page before the
+    /// caller's settle commits, which is the lock. A plain read is not blocked, as on Postgres.
+    /// Outside a transaction it reads the last commit, as Postgres' lock ends with its statement.
+    pub fn lock_reconcile_revision(&self, a: &LockArgs) -> Result<bool> {
+        no_nul(
+            "lockReconcileRevision",
+            &[("sourceId", &a.source_id), ("slug", &a.slug)],
+        )?;
+        let read = self.read()?;
+        Ok(match read_page(&*read, &a.source_id, &a.slug)? {
+            Some(page) if page.deleted_at_us.is_none() => {
+                a.revision.as_deref() == Some(page.knowledge_revision.as_str())
+            }
+            _ => false,
+        })
+    }
+
     /// `selectFactsReconcileDrain` (engine-sql/facts-purge.ts). First settles `complete`, at most
     /// `settleLimit` in id order, the due live pages of the source whose body and timeline hold no
     /// `marker` and that own no fence row (a segmented page, NULL body, is never settled here). Then
@@ -376,6 +405,66 @@ mod tests {
                 any_revision: revision.is_none(),
             })
             .unwrap();
+    }
+
+    fn locked(store: &crate::Store, source_id: &str, slug: &str, revision: Option<&str>) -> bool {
+        store
+            .lock_reconcile_revision(&LockArgs {
+                source_id: source_id.into(),
+                slug: slug.into(),
+                revision: revision.map(str::to_string),
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn the_lock_answers_true_only_for_the_live_page_at_the_read_revision_and_sees_its_transaction()
+    {
+        let store = crate::test_support::store();
+        let page = put(&store, "notes/live", "x");
+        let gone = put(&store, "notes/gone", "x");
+        store.soft_delete_page("notes/gone", None).unwrap();
+        let rev = page.knowledge_revision.as_str();
+        assert!(locked(&store, "default", "notes/live", Some(rev)));
+        assert!(!locked(
+            &store,
+            "default",
+            "notes/live",
+            Some("00000000-0000-4000-8000-000000000000")
+        ));
+        assert!(!locked(&store, "default", "notes/live", None));
+        assert!(!locked(
+            &store,
+            "default",
+            "notes/gone",
+            Some(gone.knowledge_revision.as_str())
+        ));
+        assert!(!locked(&store, "other", "notes/live", Some(rev)));
+        assert!(!locked(&store, "default", "notes/missing", Some(rev)));
+        assert!(
+            store
+                .lock_reconcile_revision(&LockArgs {
+                    source_id: "default".into(),
+                    slug: "notes/\0live".into(),
+                    revision: Some(rev.into()),
+                })
+                .is_err()
+        );
+
+        // Inside a transaction the lock reads the transaction's own writes.
+        let tx = store.begin_transaction(false).unwrap();
+        assert!(locked(&tx, "default", "notes/live", Some(rev)));
+        let edited = put(&tx, "notes/live", "y");
+        assert_ne!(edited.knowledge_revision, page.knowledge_revision);
+        assert!(!locked(&tx, "default", "notes/live", Some(rev)));
+        assert!(locked(
+            &tx,
+            "default",
+            "notes/live",
+            Some(edited.knowledge_revision.as_str())
+        ));
+        tx.rollback_transaction().unwrap();
+        assert!(locked(&store, "default", "notes/live", Some(rev)));
     }
 
     #[test]

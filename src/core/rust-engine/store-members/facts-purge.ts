@@ -4,9 +4,8 @@
  * turns the ISO times the store returns into `Date`s, as PGLite returns them.
  *
  * `listFactsReconcileBacklog`, `settleFactsReconcile` and `selectFactsReconcileDrain` read and write the store's
- * `page_facts_reconcile` watermark (facts/reconcile.rs). The extract_facts phase's in-transaction 'complete' settle and its
- * `lockReconcileRevision` (raw SQL) still stop on Rust on the typed `transactions` refusal, so a fence page settles there
- * only through the out-of-transaction outcomes.
+ * `page_facts_reconcile` watermark (facts/reconcile.rs). `lockReconcileRevision` reads the page inside the caller's store
+ * transaction, whose single writer is the lock, so the extract_facts commit step (lock, then 'complete' settle) runs whole.
  * `listSingleFactMetadata` is served by facts-trust-reads.ts.
  * `findActiveSingleFact` serves the remote provenance floor for a caller that does not change it (storeFloorPolicy);
  * it and `listSimilarActiveFacts` refuse a caller whose policy the store does not model (private-provenance.ts).
@@ -44,6 +43,10 @@ export const settleFactsReconcile: Member<'settleFactsReconcile'> = (brain, sour
   storeCall({ member: 'settleFactsReconcile' }, async () => {
     await brain.settleFactsReconcile({ sourceId, slug, outcome, revision: revision ?? null, anyRevision: revision === undefined });
   });
+
+/** `lockReconcileRevision`: the store's transaction holds its single writer until commit, which is the row lock. */
+export const lockReconcileRevision: Member<'lockReconcileRevision'> = (brain, sourceId, slug, revision) =>
+  storeCall({ member: 'lockReconcileRevision' }, () => brain.lockReconcileRevision({ sourceId, slug, revision }));
 
 /** `selectFactsReconcileDrain`: the store matches the fence marker as plain text and settles at most FACTLESS_SETTLE_LIMIT pages, as the SQL does. */
 export const selectFactsReconcileDrain: Member<'selectFactsReconcileDrain'> = (brain, sourceId, pageLimit) =>

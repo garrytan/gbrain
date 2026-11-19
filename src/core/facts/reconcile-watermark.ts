@@ -51,15 +51,12 @@ export async function settleFactsReconcile(
 
 /**
  * Lock the page row against concurrent writers for the rest of the
- * transaction and confirm it is still the revision the reconcile read.
- * `SELECT … FOR SHARE` fires no trigger and changes nothing.
+ * transaction and confirm it is still the revision the reconcile read
+ * (engine member; on PGLite and Postgres `SELECT … FOR SHARE`, which fires
+ * no trigger and changes nothing).
  */
 export async function lockReconcileRevision(tx: BrainEngine, sourceId: string, slug: string, revision: string | null): Promise<boolean> {
-  const rows = await tx.executeRaw<{ knowledge_revision: string | null }>(
-    `SELECT knowledge_revision FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL FOR SHARE`,
-    [sourceId, slug],
-  );
-  return rows.length === 1 && (rows[0]!.knowledge_revision ?? null) === revision;
+  return tx.lockReconcileRevision(sourceId, slug, revision);
 }
 
 /**

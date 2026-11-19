@@ -1195,6 +1195,7 @@ export class PostgresEngine implements BrainEngine {
   planFactPurgeIds(sourceId: string, visibility: string, factHash: string, subject: string) { return factsPurgeImpl.planFactPurgeIds(this.executeRaw.bind(this), sourceId, visibility, factHash, subject); }
   listFactsReconcileBacklog() { return factsPurgeImpl.listFactsReconcileBacklog(this.executeRaw.bind(this)); }
   settleFactsReconcile(sourceId: string, slug: string, outcome: factsPurgeImpl.FactsReconcileOutcome, revision?: string | null) { return factsPurgeImpl.settleFactsReconcile(this.executeRaw.bind(this), sourceId, slug, outcome, revision); }
+  lockReconcileRevision(sourceId: string, slug: string, revision: string | null) { return factsPurgeImpl.lockReconcileRevision(this.executeRaw.bind(this), sourceId, slug, revision); }
   selectFactsReconcileDrain(sourceId: string, pageLimit: number) { return factsPurgeImpl.selectFactsReconcileDrain(this.executeRaw.bind(this), sourceId, pageLimit); }
   listRelinkCandidateRows(opts: { sourceId: string; afterId: number; since: Date | null; limit: number }) { return factsPurgeImpl.listRelinkCandidateRows(this.executeRaw.bind(this), opts); }
   countRelinkCandidates(sourceId: string) { return factsPurgeImpl.countRelinkCandidates(this.executeRaw.bind(this), sourceId); }

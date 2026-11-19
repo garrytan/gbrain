@@ -106,6 +106,15 @@ export async function settleFactsReconcile(
   );
 }
 
+/** extract_facts' commit step: locks the live page row `FOR SHARE` for the rest of the caller's transaction and reports whether its `knowledge_revision` is still `revision`. Fires no trigger and changes nothing. Moved from facts/reconcile-watermark.ts lockReconcileRevision unchanged. */
+export async function lockReconcileRevision(raw: EngineRawRead, sourceId: string, slug: string, revision: string | null): Promise<boolean> {
+  const rows = await raw<{ knowledge_revision: string | null }>(
+    `SELECT knowledge_revision FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL FOR SHARE`,
+    [sourceId, slug],
+  );
+  return rows.length === 1 && (rows[0]!.knowledge_revision ?? null) === revision;
+}
+
 /** extract_facts: settles up to FACTLESS_SETTLE_LIMIT due fenceless pages of the source as complete, then returns up to `pageLimit` due retryable slugs, never-attempted first, then oldest attempt, then page id. Moved from facts/reconcile-watermark.ts selectFactsReconcileDrain; `sqlFragment` numbers the placeholders, the predicates are the same. */
 export async function selectFactsReconcileDrain(raw: EngineRawRead, sourceId: string, pageLimit: number): Promise<string[]> {
   const marker = `%${FACTS_FENCE_BEGIN}%`;

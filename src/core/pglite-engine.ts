@@ -1544,6 +1544,7 @@ export class PGLiteEngine implements BrainEngine {
   planFactPurgeIds(sourceId: string, visibility: string, factHash: string, subject: string) { return factsPurgeImpl.planFactPurgeIds(this.rawRead, sourceId, visibility, factHash, subject); }
   listFactsReconcileBacklog() { return factsPurgeImpl.listFactsReconcileBacklog(this.rawRead); }
   settleFactsReconcile(sourceId: string, slug: string, outcome: factsPurgeImpl.FactsReconcileOutcome, revision?: string | null) { return factsPurgeImpl.settleFactsReconcile(this.rawRead, sourceId, slug, outcome, revision); }
+  lockReconcileRevision(sourceId: string, slug: string, revision: string | null) { return factsPurgeImpl.lockReconcileRevision(this.rawRead, sourceId, slug, revision); }
   selectFactsReconcileDrain(sourceId: string, pageLimit: number) { return factsPurgeImpl.selectFactsReconcileDrain(this.rawRead, sourceId, pageLimit); }
   listRelinkCandidateRows(opts: { sourceId: string; afterId: number; since: Date | null; limit: number }) { return factsPurgeImpl.listRelinkCandidateRows(this.rawRead, opts); }
   countRelinkCandidates(sourceId: string) { return factsPurgeImpl.countRelinkCandidates(this.rawRead, sourceId); }
