@@ -5,7 +5,7 @@ test/engine-parity/chunk-reads.test.ts	9	0
 test/engine-parity/chunks.test.ts	13	1
 test/engine-parity/cli-capabilities.test.ts	2	0
 test/engine-parity/cli-reads-import.test.ts	13	1
-test/engine-parity/cli-reads-ops.test.ts	13	5
+test/engine-parity/cli-reads-ops.test.ts	14	4
 test/engine-parity/code-eval-salience.test.ts	12	0
 test/engine-parity/config-ingest.test.ts	8	0
 test/engine-parity/connect-gate.test.ts	6	0
@@ -43,7 +43,7 @@ test/engine-parity/open-loops.test.ts	4	0
 test/engine-parity/pages.test.ts	24	1
 test/engine-parity/persistence-declaration.test.ts	6	0
 test/engine-parity/persistence.test.ts	29	0
-test/engine-parity/private-page-reads.test.ts	12	0
+test/engine-parity/private-page-reads.test.ts	23	0
 test/engine-parity/raw-sql.test.ts	0	4
 test/engine-parity/retrieval-coverage.test.ts	11	1
 test/engine-parity/search-reads.test.ts	15	1

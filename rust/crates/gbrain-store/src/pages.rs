@@ -359,6 +359,9 @@ pub struct VersionsOptions {
     pub limit: Option<usize>,
     /// `false` leaves `compiled_truth` and `timeline` out. Default true.
     pub include_body: Option<bool>,
+    /// The page policy `excludePrivate` names: a page it hides has no versions, and a version
+    /// whose own readers or fields the caller may not read is left out before `limit`.
+    pub exclude_private: Option<crate::facts::PrivacyPolicy>,
 }
 
 /// A page key given to `lock_page_keys`.
@@ -1586,7 +1589,8 @@ impl Store {
         })
     }
 
-    /// `getVersions(slug, opts)`, newest first.
+    /// `getVersions(slug, opts)`, newest first; under `excludePrivate`, only the versions the page
+    /// and version policies keep.
     pub fn get_versions(&self, slug: &str, options: &VersionsOptions) -> Result<Vec<Value>> {
         let read = self.read()?;
         let slug = slug.to_lowercase();
@@ -1595,12 +1599,27 @@ impl Store {
         let sources = scope_sources(&*read, &options.source_id, &options.source_ids)?;
         for id in sources {
             if let Some(page) = read_page(&*read, &id, &slug)? {
+                let policy = options.exclude_private.as_ref();
+                if let Some(policy) = policy
+                    && crate::facts::page_hidden(&*read, &page, policy)?
+                {
+                    continue;
+                }
                 scan_prefix(
                     &*read,
                     &keys::version_prefix(page.id),
                     false,
                     &mut |_, v| {
-                        if let Ok(row) = serde_json::from_slice::<VersionRecord>(v) {
+                        if let Ok(row) = serde_json::from_slice::<VersionRecord>(v)
+                            && policy.is_none_or(|policy| {
+                                !crate::facts::caller_version_hidden(
+                                    &page,
+                                    &row.page_type,
+                                    &row.frontmatter,
+                                    policy,
+                                )
+                            })
+                        {
                             rows.push(row);
                         }
                         true

@@ -38,9 +38,9 @@ function checkBatch(member: string, n: number): void {
  * apply the page's stored trust tier and its write-gate flag receipts (`pageEligibleSql`). `requireSafeChunks` changes
  * nothing on these reads.
  */
-function readScope(member: string, opts: PageReadScope | undefined): Record<string, unknown> {
+function readScope(member: string, opts: PageReadScope | undefined, unread: readonly string[] = []): Record<string, unknown> {
   if (opts === undefined || opts === null) return {};
-  const taken = takeOptions(member, opts, ['sourceId', 'sourceIds', 'excludePrivate', 'minTrust', 'suppressFlagged'], ['requireSafeChunks']);
+  const taken = takeOptions(member, opts, ['sourceId', 'sourceIds', 'excludePrivate', 'minTrust', 'suppressFlagged'], ['requireSafeChunks', ...unread]);
   return {
     sourceId: taken.sourceId, sourceIds: taken.sourceIds, live: true,
     excludePrivate: storePagePolicy(member, taken.excludePrivate, { callerReaders: true }) ?? null,
@@ -48,6 +48,9 @@ function readScope(member: string, opts: PageReadScope | undefined): Record<stri
     suppressFlagged: taken.suppressFlagged === true,
   };
 }
+
+/** The `WhoknowsOpts` keys and the read-policy holder list that getEffectiveDates is handed but never reads. */
+const WHOKNOWS_UNREAD = ['topic', 'limit', 'explain', 'types', 'onMeta', 'takesHoldersAllowList'] as const;
 
 const reviveDate = (value: unknown): Date => new Date(String(value));
 
@@ -271,7 +274,8 @@ export const getEffectiveDates: StoreMember<[refs: Array<{ slug: string; source_
   opts,
 ) => {
   if (!refs.length) return new Map();
-  const scope = readScope('getEffectiveDates', opts);
+  // whoknows passes its whole options object (src/commands/whoknows.ts); readEffectiveDates reads only the page scope.
+  const scope = readScope('getEffectiveDates', opts, WHOKNOWS_UNREAD);
   const rows: Array<{ slug: string; source_id: string; ts: string }> = await storeCall({ member: 'getEffectiveDates' }, () =>
     brain.getEffectiveDates(refs.map((r) => ({ slug: r.slug, source_id: r.source_id })), scope));
   return new Map(rows.map((r) => [`${r.source_id}::${r.slug}`, reviveDate(r.ts)]));
