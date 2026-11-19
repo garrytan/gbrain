@@ -5,7 +5,7 @@ test/engine-parity/alias-trust.test.ts	5	0
 test/engine-parity/chunk-reads.test.ts	9	0
 test/engine-parity/chunks.test.ts	13	1
 test/engine-parity/cli-capabilities.test.ts	2	0
-test/engine-parity/cli-reads-import.test.ts	13	1
+test/engine-parity/cli-reads-import.test.ts	15	0
 test/engine-parity/cli-reads-ops.test.ts	13	5
 test/engine-parity/code-eval-salience.test.ts	12	0
 test/engine-parity/config-ingest.test.ts	8	0

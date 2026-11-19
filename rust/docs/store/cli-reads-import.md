@@ -17,7 +17,7 @@ and has no keys of its own.
 | `brain.listGuestSourceIds(sourceIds)` | the given ids, each once and in id order, of sources whose config says guest | `listGuestSourceIds` |
 | `brain.hasGuestSource()` | whether any source's config says guest | `hasGuestSource` |
 | `brain.readPageTrustRows({ ids?, keys?, includeDeleted? })` | one row per page found: by id (deleted pages too) and by `{ source_id, slug }` key (live pages unless `includeDeleted`); `{ id, source_id, slug, trust_tier, write_origin, flagged, guest, byId }` | `readPageTrustRows` |
-| `brain.readRowTrustRows({ table, ids })` | one row per `timeline_entries` or `takes` id found; `{ id, trust_tier, write_origin, flagged, contested }` (`contested` is always null for a timeline row; for a take it is `contestedRefSql`). Any other table refuses `invalid_argument` in the store; the TypeScript member refuses `facts` with `engine_capability_missing` first | `readRowTrustRows` |
+| `brain.readRowTrustRows({ table, ids })` | one row per `timeline_entries`, `facts` or `takes` id found, in id order; `{ id, trust_tier, write_origin, flagged, contested }` (`contested` is always null for a timeline row). Any other table refuses `invalid_argument` | `readRowTrustRows` |
 | `brain.readDatabaseClock()` | the store clock, `YYYY-MM-DDTHH:MM:SS.ffffffZ` in UTC | `readDatabaseClock` |
 | `brain.listLinkPageMetadata(sourceId?)` | live pages (of `sourceId` when given) by source then slug: `{ slug, source_id, type, title, aliases, knowledge_revision }`, `aliases` from the frontmatter or `null` | `listLinkPageMetadata` |
 | `brain.listStoredTimelineRows(sourceId, slug)` | the page's timeline rows that no event page projects, by id: `{ id, date, source, summary, detail }`; the page may be soft-deleted | `listStoredTimelineRows` |
@@ -44,14 +44,13 @@ Each answer below is what Postgres gives for a brain that never wrote the missin
   below `agent_written` and one of its write-gate receipts (`trust/write_gate.rs`) has the verdict `flag` and a reason
   family in `standing_instruction`, `override`, `exfiltration` or `credential`. An owner rewrite that raises the tier
   clears it and keeps the receipt. `guest` is the source's config value above.
-- **Row trust.** A timeline row reads the `trust_tier` and `write_origin` its last write stamped
-  ([links-graph-timeline.md](links-graph-timeline.md)); `flagged` is the same activation test as a page, on the
-  row's `timeline_entries` receipts. A timeline row is never contested. A take reads the pair its last write
-  stamped ([takes.md](takes.md), "Trust"), its origin in jsonb key order, `flagged` over its `takes` receipts,
-  and `contested` as `contestedRefSql`: `tp<id>:challenger` or `tp<id>:challenged` from the lowest-id pending
-  `supersede_fact` or `supersede_take` proposal that targets or relates to it. `facts` is not served yet (its
-  `contested` read is not in the store), so it refuses typed and `stampRowTrust` passes the refusal on instead
-  of marking the rows unrecorded.
+- **Row trust.** A timeline, fact or take row reads the `trust_tier` and `write_origin` its last write stamped
+  ([links-graph-timeline.md](links-graph-timeline.md), [facts.md](facts.md), [takes.md](takes.md)); `flagged` is
+  the same activation test as a page, on the row's own receipts. A fact or take is `contested` when a pending
+  `supersede_fact` or `supersede_take` proposal names it (`trust::proposals::contested_ref`, the lowest id first):
+  `tp<id>:challenger` when it is the proposal's related row, `tp<id>:challenged` otherwise. A timeline row is never
+  contested. Each row's `write_origin` reads in jsonb key order (`pg_text::jsonb_value`), as the column
+  returns it.
 - **Knowledge revision.** Every stored page has a UUID `knowledge_revision`; it is never `null`. The extract stamp's
   "no revision" sentinel therefore never matches a store page, as it never matches a Postgres page written since the
   column became `NOT NULL`.

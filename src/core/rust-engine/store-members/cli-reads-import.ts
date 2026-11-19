@@ -8,7 +8,7 @@ import type {
   SourceIncarnationRow, SourceRecordRow, StoredTimelineRow,
 } from '../../engine.ts';
 import { withDates } from '../store-codec.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { storeCall, type StoreMember } from './common.ts';
 
 export const listSourceRecords: StoreMember<[], SourceRecordRow[]> = async (brain) => {
   const rows: SourceRecordRow[] = await storeCall({ member: 'listSourceRecords' }, () => brain.listSourceRecords());
@@ -35,15 +35,9 @@ export const readPageTrustRows: StoreMember<[lookup: PageTrustLookup], PageTrust
     ids: [...(lookup.ids ?? [])], keys: [...(lookup.keys ?? [])], includeDeleted: lookup.includeDeleted === true,
   }));
 
-/**
- * Timeline and take rows read the tier, origin and activation flag their writes stamped; a take also reads `contested`
- * from the pending supersede proposals naming it. Fact rows are not served yet, so `facts` refuses before the store is
- * called.
- */
-export const readRowTrustRows: StoreMember<[lookup: RowTrustLookup], RowTrustRow[]> = async (brain, lookup) => {
-  if (lookup.table !== 'timeline_entries' && lookup.table !== 'takes') refuseMember('readRowTrustRows', `table ${lookup.table}`);
-  return storeCall({ member: 'readRowTrustRows' }, () => brain.readRowTrustRows({ table: lookup.table, ids: [...lookup.ids] }));
-};
+/** Timeline, fact and take rows read the tier, origin, activation flag and contested reference their writes stamped. */
+export const readRowTrustRows: StoreMember<[lookup: RowTrustLookup], RowTrustRow[]> = (brain, lookup) =>
+  storeCall({ member: 'readRowTrustRows' }, () => brain.readRowTrustRows({ table: lookup.table, ids: [...lookup.ids] }));
 
 export const readDatabaseClock: StoreMember<[], string> = (brain) =>
   storeCall({ member: 'readDatabaseClock' }, () => brain.readDatabaseClock());

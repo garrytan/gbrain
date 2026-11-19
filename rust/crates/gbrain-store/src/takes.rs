@@ -27,17 +27,15 @@ use crate::keyword::{TRGM_WORD_SIMILARITY_THRESHOLD, trgm_word_similarity};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::{PageRecord, next_id, read_page_by_id};
-use crate::trust::TrustPolicy;
+use crate::trust::{RowTrust, TrustPolicy, TrustTable, check_insert, stamp_row};
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod reads;
-pub(crate) mod trust;
 
 pub use reads::{McpResolvedInput, PurgeTakesInput};
-pub(crate) use trust::TakeTrust;
 
 const NEXT_TAKE_ID: &str = "next_take_id";
 const TAKE: u8 = 0x01;
@@ -145,11 +143,10 @@ pub(crate) struct TakeRecord {
     /// Goes up by one each time the claim changes.
     #[serde(default)]
     pub claim_rev: u64,
-    /// `trust_tier` and `write_origin` ([`trust::stamp`]). Absent in a record stored before the
-    /// store kept them, and omitted while the tier is `unknown` with no origin: both read as the
-    /// column defaults.
-    #[serde(default, skip_serializing_if = "TakeTrust::is_empty")]
-    pub trust: TakeTrust,
+    /// `trust_tier` and `write_origin`, stamped by [`store_take`]. Absent in a record stored before
+    /// them, and omitted while the tier is `unknown` with no origin.
+    #[serde(default, skip_serializing_if = "RowTrust::is_empty")]
+    pub trust: RowTrust,
 }
 
 /// One `synthesis_evidence` row (the key holds the three key columns).
@@ -502,20 +499,34 @@ pub(crate) fn all_takes(read: &dyn KvRead) -> Result<Vec<TakeRecord>> {
         .collect()
 }
 
-/// Writes a changed take's record (its row index never changes: `page_id` and `row_num` are
-/// fixed), stamped first against the stored row under the open write's trust context
-/// ([`trust::stamp`], the `BEFORE UPDATE` trigger).
+/// Writes a take's record as it is (its row index never changes: `page_id` and `row_num` are
+/// fixed). A write that changes no trust column (the embedding) uses it; a takes writer uses
+/// [`store_take`].
 pub(crate) fn write_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
-    let old: Option<TakeRecord> = get_json(&*tx, &take_key(take.id))?;
-    let take = trust::stamp(old.as_ref(), take)?;
-    put_json(tx, &take_key(take.id), &take)
+    put_json(tx, &take_key(take.id), take)
 }
 
-/// Inserts a new take and its row index, stamped as an insert ([`trust::stamp`], the
-/// `BEFORE INSERT` trigger).
+/// Writes `take` with the trust tier and write origin PGLite's `trust_tier_stamp` trigger gives it
+/// (`trust::stamp_row`): an insert when no row with its id is stored, else an update of the stored
+/// row, restamped only when `claim`, `kind` or `holder` changed. A refused raise is the trigger's
+/// error; the caller's write then rolls back.
+fn store_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
+    let old: Option<TakeRecord> = get_json(&*tx, &take_key(take.id))?;
+    let content_changed = old
+        .as_ref()
+        .is_some_and(|o| (&o.claim, &o.kind, &o.holder) != (&take.claim, &take.kind, &take.holder));
+    let mut stamped = take.clone();
+    stamped.trust = stamp_row(
+        TrustTable::Takes,
+        old.as_ref().map(|o| &o.trust),
+        &take.trust,
+        content_changed,
+    )?;
+    write_take(tx, &stamped)
+}
+
 fn insert_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
-    let take = trust::stamp(None, take)?;
-    put_json(tx, &take_key(take.id), &take)?;
+    store_take(tx, take)?;
     tx.put(&row_key(take.page_id, take.row_num), &take.id.to_be_bytes())
 }
 
@@ -841,7 +852,7 @@ impl Store {
                 let id = next_id(tx, NEXT_TAKE_ID)?;
                 // The BEFORE INSERT trigger runs on every proposed row, before its NOT NULL and
                 // CHECK constraints and before ON CONFLICT decides (`trust::check_insert`).
-                trust::check_insert()?;
+                check_insert(TrustTable::Takes)?;
                 let page_id = page_id.ok_or_else(|| not_null(TAKES, "page_id"))?;
                 let row_num = row_num.ok_or_else(|| not_null(TAKES, "row_num"))?;
                 let claim = r.claim.clone().ok_or_else(|| not_null(TAKES, "claim"))?;
@@ -895,7 +906,7 @@ impl Store {
                     existing.superseded_by = *superseded_by;
                     existing.active = active;
                     existing.updated_at_us = now;
-                    write_take(tx, &existing)?;
+                    store_take(tx, &existing)?;
                 } else {
                     let source_id = match read_page_by_id(&*tx, page)? {
                         Some(p) => p.source_id,
@@ -930,7 +941,7 @@ impl Store {
                             created_at_us: now,
                             updated_at_us: now,
                             claim_rev: 0,
-                            trust: TakeTrust::default(),
+                            trust: RowTrust::default(),
                         },
                     )?;
                 }
@@ -1183,7 +1194,7 @@ impl Store {
                 take.source = Some(s.clone());
             }
             take.updated_at_us = self.env.now_micros();
-            write_take(tx, &take)?;
+            store_take(tx, &take)?;
             Ok(true)
         })
     }
@@ -1272,13 +1283,13 @@ impl Store {
                     created_at_us: now,
                     updated_at_us: now,
                     claim_rev: 0,
-                    trust: TakeTrust::default(),
+                    trust: RowTrust::default(),
                 },
             )?;
             old.active = false;
             old.superseded_by = Some(new_row);
             old.updated_at_us = now;
-            write_take(tx, &old)?;
+            store_take(tx, &old)?;
             Ok(json!({ "status": "ok", "old_row": old_row, "new_row": new_row }))
         })
     }
@@ -1343,7 +1354,7 @@ impl Store {
             take.resolved_source = resolution.source.clone();
             take.resolved_by = resolution.resolved_by.clone();
             take.updated_at_us = now;
-            write_take(tx, &take)?;
+            store_take(tx, &take)?;
             Ok("ok".into())
         })
     }

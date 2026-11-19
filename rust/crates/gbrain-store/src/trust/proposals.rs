@@ -346,25 +346,21 @@ pub(crate) fn held_narrower(read: &dyn KvRead, fact_id: u64) -> Result<bool> {
     Ok(false)
 }
 
-/// `contestedRefSql(table, alias)` (src/core/eligibility/sql.ts) for one row: `tp<id>:challenger`
-/// when the first pending `supersede_fact` / `supersede_take` proposal naming the row names it as
-/// `related`, `tp<id>:challenged` when it names it as `target` only, `None` when no such proposal
-/// names it. "First" is the lowest id (`ORDER BY elig_tp.id LIMIT 1`).
-pub(crate) fn contested_ref(read: &dyn KvRead, table: &str, row_id: u64) -> Result<Option<String>> {
-    let Ok(row_id) = i64::try_from(row_id) else {
-        return Ok(None);
-    };
-    let mut ids = ids_naming(read, table, row_id)?;
-    ids.sort_unstable();
-    for id in ids {
-        let p = read_record(read, id)?.ok_or_else(|| corrupt("row index entry without its row"))?;
+/// The contested reference of one fact or take row (eligibility/sql.ts `contestedRefSql`): the
+/// lowest-id pending `supersede_fact` or `supersede_take` proposal naming it, as `tp<id>:challenger`
+/// when the row is the proposal's related row and `tp<id>:challenged` otherwise; `None` when no
+/// such proposal names it.
+pub(crate) fn contested_ref(read: &dyn KvRead, table: &str, row_id: i64) -> Result<Option<String>> {
+    for id in ids_naming(read, table, row_id)? {
+        let Some(p) = read_record(read, id)? else {
+            return Err(corrupt("row index entry without its row"));
+        };
         if p.status == "pending"
             && matches!(p.action.as_str(), "supersede_fact" | "supersede_take")
             && p.names(table, row_id)
         {
-            let challenger =
-                p.related_table.as_deref() == Some(table) && p.related_id == Some(row_id);
-            let side = if challenger {
+            let side = if p.related_table.as_deref() == Some(table) && p.related_id == Some(row_id)
+            {
                 "challenger"
             } else {
                 "challenged"

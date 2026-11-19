@@ -21,6 +21,15 @@ Keys (tag `A`, `keys::TAKE`):
 the `source_id` of its page and a `claim_rev` that moves each time the claim text changes (for the
 embedding staleness check owned by core).
 
+A take record also holds the `trust_tier` and `write_origin` PGLite's `trust_tier_stamp` trigger stamps
+(`trust::stamp_row`, [trust.md](trust.md)), left out of the record while the tier is `unknown` with no origin, so a
+record stored before them decodes unchanged. Every takes writer stores through `store_take`: an insert takes the
+write's declared tier and origin; an update (`addTakesBatch` in place, `updateTake`, both `supersedeTake` rows,
+`resolveTake`) keeps the stored tier and origin unless `claim`, `kind` or `holder` changed, and then lowers them to
+the write's. Only `readRowTrustRows` ([cli-reads-import.md](cli-reads-import.md)) reads them; the take reads
+return neither column, as PGLite's `takeRowToTake` does. The embedding write changes no trust column and stores
+the record as it is.
+
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.addTakesBatch(rows)` | number of rows sent. Inserts or, when one of the nine written columns is DISTINCT, updates in place (`updated_at` moves, `created_at` stays). `constraint_violation` for a `NOT NULL` column, `takes_weight_check`, the same key twice in one batch ("ON CONFLICT DO UPDATE command cannot affect row a second time") or a missing page (`takes_page_id_fkey`, raised after every row is read); `invalid_argument` for a NUL byte, an `int4` overflow or an `f32` overflow | `addTakesBatch` |
@@ -44,17 +53,9 @@ members send `eligible_only: true` for any eligibility object and the store appl
 tier at or above the floor) and `suppress_flagged` (`eligibility.suppressFlagged`: `activationSuppressedSql`
 over the take's tier and its write-gate receipts), through `trust::TrustPolicy`.
 
-Trust (`takes/trust.rs`): a take record carries `trust_tier` and `write_origin` under a `trust` key, as
-PGLite's `trust_tier_stamp` trigger stamps them (`trust::stamp`, `TrustTable::Takes`). Every take write runs
-inside `Store::write`, which opens the write's trust context. An insert takes the declared tier (`unknown`
-when none) and the context's origin. An update keeps the stored pair unless `claim`, `kind` or `holder`
-changed; then the stamp lowers the tier to the write's and sets the context's origin. Each `addTakesBatch`
-row runs the insert check first, as the `BEFORE INSERT` trigger runs before `ON CONFLICT` decides, so a
-writer that declares a tier above `operator_curated` without owner confirmation is refused even when the row
-is already current. The `trust` key is omitted while the tier is `unknown` with no origin, so a record
-stored before the store kept the columns reads as the column defaults; the store format does not change.
-`Take` rows (`listTakes`, `listActiveTakesForPages`) do not carry the two columns, as `takeRowToTake` drops
-them on PGLite; `readRowTrustRows({ table: 'takes' })` reads them ([cli-reads-import.md](cli-reads-import.md)).
+Each `addTakesBatch` row runs `trust::check_insert` first, as the `BEFORE INSERT` trigger runs before
+`ON CONFLICT` decides: a writer that declares a tier above `operator_curated` without owner confirmation is
+refused even when the row is already current and nothing would be written.
 
 Cascades: deleting a page (`remove_page_rows`) drops its takes, their evidence, and the evidence the page
 cites as a synthesis page. `remove_source_rows` sweeps every take and evidence row of the source; page
