@@ -57,6 +57,7 @@ const OOS = {
   connectGate: 'out-of-scope:connect-gate (born in engine-sql/connect-gate.ts; pinned by test/engine-parity/connect-gate.test.ts and test/cold-read-folded-statements.test.ts)',
   pageBody: 'out-of-scope:page-body (Wave B segmented storage, born in engine-sql/page-body.ts; pinned by test/engine-sql-page-body.test.ts)',
   cycleLocks: 'out-of-scope:cycle-locks (gbrain_cycle_locks leases, born in engine-sql/cycle-locks.ts; pinned by test/engine-parity/cycle-locks.test.ts)',
+  callerRawSql: 'out-of-scope:caller-raw-sql (statements callers ran through executeRaw, now typed members; pinned byte-identical by test/engine-sql-caller-raw-sql-pins.test.ts)',
   linkReads: 'out-of-scope:link-reads (born in engine-sql/link-reads.ts; pinned by test/engine-parity/link-reads.test.ts)',
   linkTemporal: 'out-of-scope:link-temporal (born in engine-sql/link-temporal.ts, search-vector.ts, retrieval-coverage.ts; pinned by test/engine-parity/link-temporal.test.ts)',
   chunkReads: 'out-of-scope:chunk-reads (born in engine-sql/chunk-reads.ts; pinned by test/engine-parity/chunk-reads.test.ts)',
@@ -521,6 +522,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readManagedModeRows': OOS.importGuards, 'getSourceStrictness': OOS.importGuards, 'readPersistenceBrainId': OOS.importGuards,
   'readLocalWriterRow': OOS.importGuards, 'insertLocalWriterRow': OOS.importGuards, 'readTransactionSettings': OOS.importGuards,
   'applyTransactionSettings': OOS.importGuards, 'readLedgerSource': OOS.importGuards, 'isFolderRestricted': OOS.importGuards,
+  'listAppliedPolicyRevisions': OOS.callerRawSql,
   // the page-write reads and upkeep that belong to no other domain
   'readSourceState': OOS.writeMisc,
   'readAdmissionSource': OOS.writeMisc,
@@ -1271,6 +1273,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     ['batch', (e) => e.readLedgerSource(SRC, { batch: true })],
   ]),
   ...variants('isFolderRestricted', [['default', (e) => e.isFolderRestricted(SRC, SLUG)]]),
+  ...variants('listAppliedPolicyRevisions', [['default', (e) => e.listAppliedPolicyRevisions()]]),
   ...variants('readJournalLimitRows', [['default', (e) => e.readJournalLimitRows()]]),
   ...variants('readHeldPageRows', [['default', (e) => e.readHeldPageRows(['1', '2'])]]),
   ...variants('readHeldCoverageRows', [
