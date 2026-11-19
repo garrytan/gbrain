@@ -23,9 +23,15 @@ fn seeded(dir: &TempDir) -> Store {
     let store = open(dir);
     put(&store, "notes/open", json!({}));
     put(&store, "notes/private", json!({"visibility": "private"}));
-    put(&store, "notes/alice", json!({"readable_by": ["member:alice"]}));
+    put(
+        &store,
+        "notes/alice",
+        json!({"readable_by": ["member:alice"]}),
+    );
     put(&store, "notes/gone", json!({}));
-    store.soft_delete_page("notes/gone", Some("default")).unwrap();
+    store
+        .soft_delete_page("notes/gone", Some("default"))
+        .unwrap();
     store
 }
 
@@ -91,7 +97,9 @@ fn access_names_each_page_row_once() {
         readable,
     };
     assert_eq!(
-        store.read_caller_page_access(&pages, &read_policy()).unwrap(),
+        store
+            .read_caller_page_access(&pages, &read_policy())
+            .unwrap(),
         [
             row("notes/alice", false),
             row("notes/gone", false),
