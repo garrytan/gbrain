@@ -48,12 +48,15 @@ pub mod relink_writes;
 pub mod repair;
 pub mod trust;
 pub mod trust_reads;
+mod widen;
 
 pub use crate::owner_only::OwnerOnlyForm;
 pub use fence::{FenceContext, FenceTarget};
 pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
 pub(crate) use privacy::{page_hidden, version_hidden};
+pub use widen::VisibilityWidening;
+use widen::visibility_admits;
 
 use crate::chunks::embedding_dimensions;
 use crate::config::read_config;
@@ -915,7 +918,8 @@ pub struct KeysetAfter {
 }
 
 /// The filters of the four list reads. The TypeScript member clamps `limit`, builds the `grep`
-/// pattern, and passes `visibility` as the plain list (`Some(empty)` matches nothing), and the
+/// pattern, and passes `visibility` as the plain list (`Some(empty)` matches nothing) with the
+/// caller's `widen` record when member pages or a private-facts grant widen it, and the
 /// read eligibility as `eligible`, `min_trust` and `suppress_flagged` (as `SupersessionQuery`).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
@@ -928,6 +932,8 @@ pub struct FactQuery {
     pub unconsolidated_only: bool,
     pub kinds: Option<Vec<String>>,
     pub visibility: Option<Vec<String>>,
+    /// What widens a `visibility` list without `private` for the caller (`facts/widen.rs`).
+    pub widen: Option<VisibilityWidening>,
     pub exclude_audit_rows: bool,
     pub grep: Option<String>,
     pub fingerprint: bool,
@@ -956,6 +962,8 @@ pub struct SupersessionQuery {
     pub since: Option<String>,
     pub limit: f64,
     pub visibility: Option<Vec<String>>,
+    /// What widens a `visibility` list without `private` for the caller (`facts/widen.rs`).
+    pub widen: Option<VisibilityWidening>,
     /// `excludePrivate`: the private-provenance policy (`facts/privacy.rs`).
     pub exclude_private: Option<PrivacyPolicy>,
     /// The caller passed a read eligibility: `projectionEligibleSql('facts')` replaces the
@@ -1257,7 +1265,7 @@ impl FactQuery {
         if (self.active_only && !row.active(now))
             || (self.unconsolidated_only && row.consolidated_at_us.is_some())
             || !listed(&self.kinds, &row.kind)
-            || !listed(&self.visibility, &row.visibility)
+            || !visibility_admits(read, &self.visibility, &self.widen, row)?
             || (self.exclude_audit_rows && row.audit_row())
         {
             return Ok(false);
@@ -1525,7 +1533,7 @@ impl Store {
             let ended = row.expired_at_us.or(row.valid_until_us);
             if row.superseded_by.is_none()
                 || since.is_some_and(|s| ended.is_none_or(|e| e < s))
-                || !listed(&q.visibility, &row.visibility)
+                || !visibility_admits(&*read, &q.visibility, &q.widen, &row)?
                 || hidden_by_policy(&*read, &row, &q.exclude_private)?
                 || hidden_by_deleted_page(&*read, &row)?
                 || (q.eligible && hidden_by_quarantine(&*read, &row)?)
