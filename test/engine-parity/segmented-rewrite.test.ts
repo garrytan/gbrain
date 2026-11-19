@@ -88,7 +88,8 @@ async function pageView(engine: BrainEngine, slug: string) {
 describe('engine parity: segmented fence rewrites', () => {
   parityTest('a live fence rewrite flips a new generation that keeps the unchanged segments and leaves a soft-deleted page deleted',
     { methods: ['setConfig', 'getPage', 'getChunks', 'transaction', 'readSegmentedPageHead', 'readManifest', 'readSegmentTexts',
-      'upsertSegmentDerivations', 'readSegmentDerivations', 'softDeletePage'], timeout: 600_000 },
+      'upsertSegmentDerivations', 'readSegmentDerivations', 'softDeletePage', 'readSegmentedRewritePage', 'restorePageDeletedAt',
+      'deleteRewrittenDerivationRows'], timeout: 600_000 },
     async (engine) => {
       await engine.setConfig('pages.segmented_storage', 'on');
       await fencedPage(engine, 'notes/fenced', fencedBody(11));
@@ -114,7 +115,8 @@ describe('engine parity: segmented fence rewrites', () => {
     });
 
   parityTest('a retained generation rebuilds under its own number with the rewritten hash, and the needle scan follows it',
-    { methods: ['setConfig', 'getPage', 'getVersions', 'transaction', 'readSegmentedPageHead', 'readManifest', 'readSegmentTexts', 'createVersion'], timeout: 600_000 },
+    { methods: ['setConfig', 'getPage', 'getVersions', 'transaction', 'readSegmentedPageHead', 'readManifest', 'readSegmentTexts', 'createVersion',
+      'lockSegmentedGenerationPage', 'splitManifestGeneration', 'publishRebuiltGeneration', 'setSegmentedVersionHash'], timeout: 600_000 },
     async (engine) => {
       await engine.setConfig('pages.segmented_storage', 'on');
       await fencedPage(engine, 'notes/retained', fencedBody(21));

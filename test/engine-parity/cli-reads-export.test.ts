@@ -309,11 +309,17 @@ describe('engine parity: export reads', () => {
       'openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'flipBodyGeneration', 'setBodyStagingState', 'transaction'],
   }, async (engine) => {
     const titles = ['Intro', 'Next'];
-    const { pageId } = await publishSegmented(engine, 'notes/big', {
+    const { pageId, occurrences } = await publishSegmented(engine, 'notes/big', {
       row: seq => ({ outline: [{ level: seq + 1, text: titles[seq]!, proj_byte: 0 }], factsSlots: [] }),
     });
     const body = await openSegmentedBody(engine, { pageId });
+    // The member itself, by occurrence position (ids differ by arm): the last occurrence only, then none past the generation.
+    const rows = (await engine.readBodyManifestOutline(pageId, occurrences.slice(1), 1))
+      .map(row => ({ seq: occurrences.indexOf(Number(row.occurrence_id)), facts_slots: row.facts_slots, outline: row.outline }));
+    expect(rows.map(row => row.seq)).toEqual([1]);
     return {
+      rows,
+      unpublished: await engine.readBodyManifestOutline(pageId, occurrences, 0),
       all: await projectedOutline(engine, body, 0, 10),
       second: await projectedOutline(engine, body, 1, 1),
       past: await projectedOutline(engine, body, 5, 1),

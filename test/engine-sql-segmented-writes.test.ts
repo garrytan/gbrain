@@ -1,7 +1,8 @@
 /**
  * Caller pins for engine-sql/segmented-writes.ts: each member sends Postgres and PGLite the exact statement and
  * parameters its caller sent before the statement moved behind a typed member (segmented-apply.ts, searchable.ts,
- * ingest.ts, import-chunk-reuse.ts, projection.ts, rechunk.ts, fence-append.ts at 1e1cfaabc2). The expected texts
+ * ingest.ts, import-chunk-reuse.ts, projection.ts, rechunk.ts, fence-append.ts at 1e1cfaabc2; segment-rewrite.ts and
+ * segment-derive.ts at 8a7ded1c6d). The expected texts
  * below are those callers' own expressions, copied verbatim, so a drift in either direction fails here.
  */
 import { describe, expect, test } from 'bun:test';
@@ -114,6 +115,32 @@ describe('engine-sql/segmented-writes sends each caller its old statement', () =
       { sql: 'SELECT id, trust_tier, write_origin FROM pages WHERE id=$1', params: [7] }]);
   });
 
+  test('segment-rewrite.ts and segment-derive.ts: the fence rewrite statements', async () => {
+    const MANIFEST_COLUMNS = `page_id,occurrence_id,seq,region,source_id,sha256,byte_start,byte_len,line_start,line_count,cut_kind,entry_state,
+  protected_regions,facts_slots,static_proj_bytes,static_proj_lines,outline,date_min,date_max,hash_state`;
+    const staging = 'u-1', next = 4;
+    expect(await sends(tx => sw.readSegmentedRewritePage(tx, 7))).toEqual([{ sql: `SELECT p.id,p.slug,p.source_id,p.title,
+      p.type,p.page_kind,p.frontmatter,p.body_generation,p.body_bytes,p.body_flags,p.body_storage,p.deleted_at,p.contextual_retrieval_mode,p.corpus_generation,
+      COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id),'[]'::jsonb) AS tags FROM pages p WHERE p.id=$1`, params: [7] }]);
+    expect(await sends(tx => sw.restorePageDeletedAt(tx, 7, '2026-01-01T00:00:00.000Z'))).toEqual([
+      { sql: 'UPDATE pages SET deleted_at=$2 WHERE id=$1', params: [7, '2026-01-01T00:00:00.000Z'] }]);
+    expect(await sends(tx => sw.lockSegmentedGenerationPage(tx, 7))).toEqual([
+      { sql: 'SELECT slug,source_id,body_flags,body_storage,body_generation FROM pages WHERE id=$1 FOR UPDATE', params: [7] }]);
+    expect(await sends(tx => sw.splitManifestGeneration(tx, 7, 3, staging))).toEqual([
+      { sql: `INSERT INTO page_body_manifest (${MANIFEST_COLUMNS},gen_from,gen_to,staging_id) SELECT ${MANIFEST_COLUMNS},$3::bigint,gen_to,$4::uuid
+    FROM page_body_manifest WHERE page_id=$1 AND staging_id IS NULL AND gen_from<=$2 AND (gen_to IS NULL OR gen_to>$3)`, params: [7, 3, next, staging] },
+      { sql: 'UPDATE page_body_manifest SET gen_to=$2 WHERE page_id=$1 AND staging_id IS NULL AND gen_from<$2 AND (gen_to IS NULL OR gen_to>$2)', params: [7, 3] },
+      { sql: 'DELETE FROM page_body_manifest WHERE page_id=$1 AND staging_id IS NULL AND gen_from=$2', params: [7, 3] }]);
+    expect(await sends(tx => sw.publishRebuiltGeneration(tx, 7, 3, staging))).toEqual([{ sql: `UPDATE page_body_manifest SET staging_id=NULL, gen_to=CASE WHEN gen_from=$2 THEN $3 ELSE gen_to END
+    WHERE page_id=$1 AND staging_id=$4::uuid`, params: [7, 3, next, staging] }]);
+    expect(await sends(tx => sw.setSegmentedVersionHash(tx, 7, 3, 'h', 12))).toEqual([
+      { sql: `UPDATE page_versions SET content_hash=$3,body_bytes=$4 WHERE page_id=$1 AND body_generation=$2 AND body_storage='segmented'`, params: [7, 3, 'h', 12] }]);
+    expect(await sends(tx => sw.deleteRewrittenDerivationRows(tx, 7, { touched: [4], reach: [5], unpaidKinds: ['links', 'mentions'], live: [4, 5, 6] }))).toEqual([
+      { sql: `DELETE FROM page_segment_derivations WHERE page_id=$1
+    AND (occurrence_id = ANY($2::bigint[]) OR (pipeline = 'links' AND occurrence_id = ANY($3::bigint[]))
+      OR (pipeline = ANY($4::text[]) AND NOT (occurrence_id = ANY($5::bigint[])))) RETURNING 1`, params: [7, [4], [5], ['links', 'mentions'], [4, 5, 6]] }]);
+  });
+
   test('results keep the callers\' shapes', async () => {
     const { tx } = recorder([]);
     expect(await sw.lockBodyStagingState(tx, 'u-1')).toBeNull();
@@ -124,5 +151,8 @@ describe('engine-sql/segmented-writes sends each caller its old statement', () =
     expect(await sw.retireStaleSegmentChunks(recorder([{ id: 1 }, { id: 2 }]).tx, 7, 3, [], 500)).toBe(2);
     expect(await sw.listSegmentedRechunkCandidates(recorder([{ id: '12' }]).tx, 2)).toEqual([12]);
     expect(await sw.readSegmentedSealed(recorder([{ sealed: true }]).tx, 'default', 'a')).toBe(true);
+    expect(await sw.readSegmentedRewritePage(tx, 7)).toBeNull();
+    expect(await sw.lockSegmentedGenerationPage(tx, 7)).toBeNull();
+    expect(await sw.deleteRewrittenDerivationRows(recorder([{ '?column?': 1 }, { '?column?': 1 }]).tx, 7, { touched: [4], reach: [], unpaidKinds: [], live: [4] })).toBe(2);
   });
 });

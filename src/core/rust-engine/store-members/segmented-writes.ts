@@ -1,10 +1,12 @@
 /**
- * The reads and writes a segmented write and a segmented re-chunk ran through executeRaw, served by gbrain-store
- * `page_body::segmented_writes` (rust/docs/store/page_body.md, "Segmented write statements"). PGLite and Postgres run
+ * The reads and writes a segmented write, a segmented re-chunk and a fence rewrite ran through executeRaw, served by
+ * gbrain-store `page_body::segmented_writes` and `page_body::segment_rewrite` (rust/docs/store/page_body.md, "Segmented
+ * write statements"). PGLite and Postgres run
  * them from engine-sql/segmented-writes.ts. Each store write is one store transaction.
  *
- * readRetiredChunkVectors returns no rows: the store keeps no vectors (stageSegmentChunks refuses a chunk that carries
- * one), so there is no vector to reuse and a re-chunked text waits for the embed sweep, as a new text does elsewhere.
+ * readRetiredChunkVectors returns no rows: the store keeps chunk vectors (gbrain-store embeddings.rs), but this read
+ * does not look them up yet and stageSegmentChunks refuses a chunk that carries one, so a re-chunked text waits for the
+ * embed sweep, as a new text does elsewhere.
  * The materializing-revision members keep the setting in the transaction's own settings map, which flipBodyGeneration
  * reads (page-body.ts); outside a transaction the read is null and the set does nothing, as on PGLite, where the
  * setting ends with its statement.
@@ -13,8 +15,8 @@
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served.
  */
 import type { RustEngine } from '../../rust-engine.ts';
-import type { OccurrenceChunkRow, PageTrustRef, PageTrustStamp, RechunkCandidateScope, RetiredChunkVectorRow, SegmentedLivePageRow,
-  SegmentedProjectionPage, SegmentedRechunkPageRow } from '../../engine-sql/segmented-writes.ts';
+import type { OccurrenceChunkRow, PageTrustRef, PageTrustStamp, RechunkCandidateScope, RetiredChunkVectorRow, RewrittenDerivationScope,
+  SegmentedGenerationLock, SegmentedLivePageRow, SegmentedProjectionPage, SegmentedRechunkPageRow, SegmentedRewritePageRow } from '../../engine-sql/segmented-writes.ts';
 import type { StoreBrain } from '../store.ts';
 import { mapStoreError } from '../store-errors.ts';
 import { storeCall, type StoreMember } from './common.ts';
@@ -71,6 +73,36 @@ export const restorePageUpdatedAt: StoreMember<[pageId: number, updatedUs: strin
 
 export const readPageTrustStamp: StoreMember<[page: PageTrustRef], PageTrustStamp | null> = (brain, page) =>
   storeCall({ member: 'readPageTrustStamp' }, () => brain.readPageTrustStamp('id' in page ? { id: page.id } : { sourceId: page.sourceId, slug: page.slug }));
+
+export const readSegmentedRewritePage: StoreMember<[pageId: number], SegmentedRewritePageRow | null> = (brain, pageId) =>
+  storeCall({ member: 'readSegmentedRewritePage' }, () => brain.readSegmentedRewritePage(pageId));
+
+export const restorePageDeletedAt: StoreMember<[pageId: number, deletedAt: string], void> = async (brain, pageId, deletedAt) => {
+  await storeCall({ member: 'restorePageDeletedAt' }, () => brain.restorePageDeletedAt(pageId, String(deletedAt)));
+};
+
+/** The store serializes writes, so the row lock is a plain read. */
+export const lockSegmentedGenerationPage: StoreMember<[pageId: number], SegmentedGenerationLock | null> = (brain, pageId) =>
+  storeCall({ member: 'lockSegmentedGenerationPage' }, () => brain.lockSegmentedGenerationPage(pageId));
+
+export const splitManifestGeneration: StoreMember<[pageId: number, generation: number, stagingId: string], void> =
+  async (brain, pageId, generation, stagingId) => {
+    await storeCall({ member: 'splitManifestGeneration' }, () => brain.splitManifestGeneration(pageId, generation, stagingId));
+  };
+
+export const publishRebuiltGeneration: StoreMember<[pageId: number, generation: number, stagingId: string], void> =
+  async (brain, pageId, generation, stagingId) => {
+    await storeCall({ member: 'publishRebuiltGeneration' }, () => brain.publishRebuiltGeneration(pageId, generation, stagingId));
+  };
+
+export const setSegmentedVersionHash: StoreMember<[pageId: number, generation: number, contentHash: string, bodyBytes: number], void> =
+  async (brain, pageId, generation, contentHash, bodyBytes) => {
+    await storeCall({ member: 'setSegmentedVersionHash' }, () => brain.setSegmentedVersionHash(pageId, generation, contentHash, bodyBytes));
+  };
+
+export const deleteRewrittenDerivationRows: StoreMember<[pageId: number, scope: RewrittenDerivationScope], number> = (brain, pageId, scope) =>
+  storeCall({ member: 'deleteRewrittenDerivationRows' }, () => brain.deleteRewrittenDerivationRows(pageId, {
+    touched: [...scope.touched], reach: [...scope.reach], unpaidKinds: [...scope.unpaidKinds], live: [...scope.live] }));
 
 /** `current_setting('gbrain.materializing_revision', true)`: the transaction's value, null when never set in it. */
 export const readMaterializingRevision = async function readMaterializingRevision(this: RustEngine, _brain: StoreBrain): Promise<string | null> {

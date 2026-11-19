@@ -1,4 +1,4 @@
-import type { OccurrenceChunkRow, PageTrustRef, PageTrustStamp, RechunkCandidateScope, RetiredChunkVectorRow, SegmentedLivePageRow, SegmentedProjectionPage, SegmentedRechunkPageRow } from './engine-sql/segmented-writes.ts';
+import type { OccurrenceChunkRow, PageTrustRef, PageTrustStamp, RechunkCandidateScope, RetiredChunkVectorRow, RewrittenDerivationScope, SegmentedGenerationLock, SegmentedLivePageRow, SegmentedProjectionPage, SegmentedRechunkPageRow, SegmentedRewritePageRow } from './engine-sql/segmented-writes.ts';
 import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead, BodyManifestRow, BodyManifestMeta, BodyManifestOutline } from './engine-sql/export-reads.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as DecideStoreSql from './engine-sql/decide-store.ts';
@@ -3270,6 +3270,20 @@ export interface BrainEngine {
   restorePageUpdatedAt(pageId: number, updatedUs: string): Promise<void>;
   /** A fence append: the trust tier and write origin of the live page at a source and slug, or of a page by id, or null (engine-sql/segmented-writes.ts). */
   readPageTrustStamp(page: PageTrustRef): Promise<PageTrustStamp | null>;
+  /** A fence rewrite: page `pageId` with its body columns, contextual stamp and tags, deleted or not, or null (engine-sql/segmented-writes.ts). */
+  readSegmentedRewritePage(pageId: number): Promise<SegmentedRewritePageRow | null>;
+  /** A fence rewrite: set page `pageId`'s deleted_at back to `deletedAt` (engine-sql/segmented-writes.ts). */
+  restorePageDeletedAt(pageId: number, deletedAt: string): Promise<void>;
+  /** A retained-generation rewrite: page `pageId`'s body columns, row-locked for the rest of the transaction, or null (engine-sql/segmented-writes.ts). */
+  lockSegmentedGenerationPage(pageId: number): Promise<SegmentedGenerationLock | null>;
+  /** A retained-generation rewrite: give generation `generation` manifest rows of its own, the later part of shared rows staged under `stagingId` (engine-sql/segmented-writes.ts). */
+  splitManifestGeneration(pageId: number, generation: number, stagingId: string): Promise<void>;
+  /** A retained-generation rewrite: publish the rows staged under `stagingId`, the rebuilt ones covering exactly `generation` (engine-sql/segmented-writes.ts). */
+  publishRebuiltGeneration(pageId: number, generation: number, stagingId: string): Promise<void>;
+  /** A retained-generation rewrite: set content_hash and body_bytes of the segmented version rows at `generation` (engine-sql/segmented-writes.ts). */
+  setSegmentedVersionHash(pageId: number, generation: number, contentHash: string, bodyBytes: number): Promise<void>;
+  /** A fence rewrite: delete the derivation rows that may hold replaced text; returns how many it deleted (engine-sql/segmented-writes.ts). */
+  deleteRewrittenDerivationRows(pageId: number, scope: RewrittenDerivationScope): Promise<number>;
   /** gbrain export: the sources with an access policy, in id order, whose folder rulebooks an export carries (engine-sql/export-reads.ts). */
   listAccessPolicySourceIds(): Promise<string[]>;
   /** whois candidates by title, slug basename, alias and email (engine-sql/exact-identity.ts), at most `opts.limit`. */

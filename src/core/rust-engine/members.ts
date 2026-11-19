@@ -202,6 +202,13 @@ export const RUST_ENGINE_MEMBERS = {
   setMaterializingRevision: 'page_body',
   restorePageUpdatedAt: 'page_body',
   readPageTrustStamp: 'page_body',
+  readSegmentedRewritePage: 'page_body',
+  restorePageDeletedAt: 'page_body',
+  lockSegmentedGenerationPage: 'page_body',
+  splitManifestGeneration: 'page_body',
+  publishRebuiltGeneration: 'page_body',
+  setSegmentedVersionHash: 'page_body',
+  deleteRewrittenDerivationRows: 'page_body',
   // tags
   pruneFrontmatterTags: 'tags',
   addPageTagsById: 'tags',

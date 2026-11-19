@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 763/763
+# covered: 770/770
 # lifecycle: 9/9
 # pages: 40/40
 # search: 7/7
@@ -26,7 +26,7 @@
 # dream: 3/3
 # contradictions: 5/5
 # facts: 15/15
-# segmented_body: 31/31
+# segmented_body: 38/38
 # versions: 5/5
 # stats_ingest: 5/5
 # sync_aliases: 10/10
@@ -77,11 +77,11 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	77	no	yes	yes	serves
+transaction	lifecycle	yes	79	no	yes	yes	serves
 transactionDirect	lifecycle	yes	5	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	88	yes	yes	yes	serves
+getPage	pages	yes	90	yes	yes	yes	serves
 readPageSnapshot	pages	yes	19	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
@@ -91,7 +91,7 @@ findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	10	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	106	yes	yes	yes	serves
+softDeletePage	pages	yes	107	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -185,7 +185,7 @@ listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	3	no	yes	yes	serves
 upsertChunks	chunks	yes	28	yes	yes	yes	serves
 sealChunks	chunks	yes	47	no	yes	yes	serves
-getChunks	chunks	yes	31	yes	yes	yes	serves
+getChunks	chunks	yes	32	yes	yes	yes	serves
 getChunkPage	chunks	yes	11	no	yes	yes	serves
 getChunkWindows	chunks	yes	11	no	yes	yes	serves
 countStaleChunks	chunks	yes	5	no	yes	yes	serves
@@ -316,9 +316,9 @@ findTrajectory	facts	yes	3	yes	yes	yes	serves
 getFactsHealth	facts	yes	2	yes	yes	yes	serves
 allocateBodyOccurrenceIds	segmented_body	yes	10	no	yes	yes	serves
 stageSegmentTexts	segmented_body	yes	11	no	yes	yes	serves
-readSegmentTexts	segmented_body	yes	6	no	yes	yes	serves
+readSegmentTexts	segmented_body	yes	8	no	yes	yes	serves
 stageManifestRows	segmented_body	yes	12	no	yes	yes	serves
-readManifest	segmented_body	yes	10	no	yes	yes	serves
+readManifest	segmented_body	yes	12	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	10	no	yes	yes	serves
 createSegmentedPageShell	segmented_body	yes	19	no	yes	yes	serves
 flipBodyGeneration	segmented_body	yes	20	no	yes	yes	serves
@@ -326,8 +326,8 @@ sealSegmentedPage	segmented_body	yes	6	no	yes	yes	serves
 openBodyStaging	segmented_body	yes	14	no	yes	yes	serves
 setBodyStagingState	segmented_body	yes	13	no	yes	yes	serves
 sweepSegments	segmented_body	yes	3	no	yes	yes	serves
-readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
-upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
+readSegmentDerivations	segmented_body	yes	3	no	yes	yes	serves
+upsertSegmentDerivations	segmented_body	yes	3	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 lockBodyStagingState	segmented_body	yes	1	no	yes	yes	serves
 deleteUnstagedSegmentChunks	segmented_body	yes	1	no	yes	yes	serves
@@ -345,8 +345,15 @@ readMaterializingRevision	segmented_body	yes	1	no	yes	yes	serves
 setMaterializingRevision	segmented_body	yes	1	no	yes	yes	serves
 restorePageUpdatedAt	segmented_body	yes	1	no	yes	yes	serves
 readPageTrustStamp	segmented_body	yes	1	no	yes	yes	serves
-createVersion	versions	yes	18	no	yes	yes	serves
-getVersions	versions	yes	8	no	yes	yes	serves
+readSegmentedRewritePage	segmented_body	yes	1	no	yes	yes	serves
+restorePageDeletedAt	segmented_body	yes	1	no	yes	yes	serves
+lockSegmentedGenerationPage	segmented_body	yes	1	no	yes	yes	serves
+splitManifestGeneration	segmented_body	yes	1	no	yes	yes	serves
+publishRebuiltGeneration	segmented_body	yes	1	no	yes	yes	serves
+setSegmentedVersionHash	segmented_body	yes	1	no	yes	yes	serves
+deleteRewrittenDerivationRows	segmented_body	yes	1	no	yes	yes	serves
+createVersion	versions	yes	19	no	yes	yes	serves
+getVersions	versions	yes	9	no	yes	yes	serves
 readLatestVersionId	versions	yes	1	no	yes	yes	serves
 stampVersionChangeReason	versions	yes	1	no	yes	yes	serves
 revertToVersion	versions	yes	2	no	yes	yes	serves
@@ -366,7 +373,7 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	10	no	yes	yes	serves
-setConfig	config	yes	25	no	yes	yes	serves
+setConfig	config	yes	27	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
@@ -578,7 +585,7 @@ readExportWithdrawalLedgerBytes	cli_reads_export	yes	1	no	yes	yes	serves
 listExportWithdrawals	cli_reads_export	yes	1	no	yes	yes	serves
 readExportPageRows	cli_reads_export	yes	1	no	yes	yes	serves
 normalizeFenceLines	cli_reads_export	yes	1	no	yes	yes	serves
-readSegmentedPageHead	cli_reads_export	yes	5	no	yes	yes	serves
+readSegmentedPageHead	cli_reads_export	yes	7	no	yes	yes	serves
 readBodyManifestRows	cli_reads_export	yes	4	no	yes	yes	serves
 readBodyManifestMeta	cli_reads_export	yes	1	no	yes	yes	serves
 readBodyManifestOutline	cli_reads_export	yes	1	no	yes	yes	serves

@@ -1,7 +1,8 @@
 /**
- * The statements a segmented write and a segmented re-chunk ran through executeRaw (persistence/segmented-apply.ts,
- * persistence/searchable.ts, page-body/ingest.ts, page-body/projection.ts, page-body/rechunk.ts,
- * import-chunk-reuse.ts and trust/fence-append.ts), one function per BrainEngine member. PGLite and Postgres run the
+ * The statements a segmented write, a segmented re-chunk and a fence rewrite ran through executeRaw
+ * (persistence/segmented-apply.ts, persistence/searchable.ts, page-body/ingest.ts, page-body/projection.ts,
+ * page-body/rechunk.ts, page-body/segment-rewrite.ts, page-body/segment-derive.ts, import-chunk-reuse.ts and
+ * trust/fence-append.ts), one function per BrainEngine member. PGLite and Postgres run the
  * same text the callers ran before; the Rust engine answers from its store (rust/docs/store/page_body.md). Each runs on
  * the engine it is given, so a call on a transaction engine reads and writes inside that transaction.
  */
@@ -217,4 +218,83 @@ export async function readPageTrustStamp(tx: Raw, page: PageTrustRef): Promise<P
     : await tx.executeRaw<PageTrustStamp>(
       'SELECT id, trust_tier, write_origin FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [page.sourceId, page.slug]);
   return row ?? null;
+}
+
+/** The page a live fence rewrite reads (page-body/segment-rewrite.ts), deleted or not, with its tags in order. */
+export interface SegmentedRewritePageRow {
+  id: number; slug: string; source_id: string; title: string; type: string; page_kind: string; frontmatter: JsonObject | null;
+  body_generation: number | string; body_bytes: number | string; body_flags: JsonObject | null; body_storage: string; deleted_at: string | null;
+  contextual_retrieval_mode: string | null; corpus_generation: string | null; tags: string[];
+}
+
+/** The page row a retained-generation rewrite locks for the rest of the transaction. */
+export interface SegmentedGenerationLock {
+  slug: string; source_id: string; body_flags: JsonObject | null; body_storage: string; body_generation: number | string;
+}
+
+/** What a fence rewrite drops of page_segment_derivations (page-body/segment-derive.ts `deleteRewrittenDerivations`). */
+export interface RewrittenDerivationScope {
+  /** Occurrences of the runs holding a rewritten row: every kind's rows go. */
+  touched: readonly number[];
+  /** Occurrences of the neighbouring runs whose link excerpts can reach the rewrite: their links rows go. */
+  reach: readonly number[];
+  /** Pipelines whose rows of occurrences outside `live` go (they retire only when they next run). */
+  unpaidKinds: readonly string[];
+  /** The occurrences of the rewritten generation. */
+  live: readonly number[];
+}
+
+/** Page `pageId` as a live fence rewrite reads it, deleted or not, or null. */
+export async function readSegmentedRewritePage(tx: Raw, pageId: number): Promise<SegmentedRewritePageRow | null> {
+  const [row] = await tx.executeRaw<SegmentedRewritePageRow>(`SELECT p.id,p.slug,p.source_id,p.title,
+      p.type,p.page_kind,p.frontmatter,p.body_generation,p.body_bytes,p.body_flags,p.body_storage,p.deleted_at,p.contextual_retrieval_mode,p.corpus_generation,
+      COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id),'[]'::jsonb) AS tags FROM pages p WHERE p.id=$1`, [pageId]);
+  return row ?? null;
+}
+
+/** Set page `pageId`'s deleted_at back to `deletedAt` (a rewrite of a soft-deleted page leaves it deleted). */
+export async function restorePageDeletedAt(tx: Raw, pageId: number, deletedAt: string): Promise<void> {
+  await tx.executeRaw('UPDATE pages SET deleted_at=$2 WHERE id=$1', [pageId, deletedAt]);
+}
+
+/** Lock page `pageId`'s row for the rest of the transaction and return its body columns, or null. */
+export async function lockSegmentedGenerationPage(tx: Raw, pageId: number): Promise<SegmentedGenerationLock | null> {
+  const [row] = await tx.executeRaw<SegmentedGenerationLock>(
+    'SELECT slug,source_id,body_flags,body_storage,body_generation FROM pages WHERE id=$1 FOR UPDATE', [pageId]);
+  return row ?? null;
+}
+
+/**
+ * Give retained generation `generation` of page `pageId` rows of its own: the part of each published row after it moves
+ * to a copy staged under `stagingId` (so the live-seq index sees one live row), the part before it ends at it, and rows
+ * that began at it go.
+ */
+export async function splitManifestGeneration(tx: Raw, pageId: number, generation: number, stagingId: string): Promise<void> {
+  const next = generation + 1;
+  await tx.executeRaw(`INSERT INTO page_body_manifest (page_id,occurrence_id,seq,region,source_id,sha256,byte_start,byte_len,line_start,line_count,cut_kind,entry_state,
+  protected_regions,facts_slots,static_proj_bytes,static_proj_lines,outline,date_min,date_max,hash_state,gen_from,gen_to,staging_id) SELECT page_id,occurrence_id,seq,region,source_id,sha256,byte_start,byte_len,line_start,line_count,cut_kind,entry_state,
+  protected_regions,facts_slots,static_proj_bytes,static_proj_lines,outline,date_min,date_max,hash_state,$3::bigint,gen_to,$4::uuid
+    FROM page_body_manifest WHERE page_id=$1 AND staging_id IS NULL AND gen_from<=$2 AND (gen_to IS NULL OR gen_to>$3)`, [pageId, generation, next, stagingId]);
+  await tx.executeRaw('UPDATE page_body_manifest SET gen_to=$2 WHERE page_id=$1 AND staging_id IS NULL AND gen_from<$2 AND (gen_to IS NULL OR gen_to>$2)', [pageId, generation]);
+  await tx.executeRaw('DELETE FROM page_body_manifest WHERE page_id=$1 AND staging_id IS NULL AND gen_from=$2', [pageId, generation]);
+}
+
+/** Publish the rows staged under `stagingId`: the rebuilt rows of `generation` cover exactly it, the moved copies keep their end. */
+export async function publishRebuiltGeneration(tx: Raw, pageId: number, generation: number, stagingId: string): Promise<void> {
+  await tx.executeRaw(`UPDATE page_body_manifest SET staging_id=NULL, gen_to=CASE WHEN gen_from=$2 THEN $3 ELSE gen_to END
+    WHERE page_id=$1 AND staging_id=$4::uuid`, [pageId, generation, generation + 1, stagingId]);
+}
+
+/** Set content_hash and body_bytes of each segmented version row of page `pageId` at `generation`. */
+export async function setSegmentedVersionHash(tx: Raw, pageId: number, generation: number, contentHash: string, bodyBytes: number): Promise<void> {
+  await tx.executeRaw(`UPDATE page_versions SET content_hash=$3,body_bytes=$4 WHERE page_id=$1 AND body_generation=$2 AND body_storage='segmented'`,
+    [pageId, generation, contentHash, bodyBytes]);
+}
+
+/** Delete page `pageId`'s derivation rows a fence rewrite may have left holding replaced text; returns how many it deleted. */
+export async function deleteRewrittenDerivationRows(tx: Raw, pageId: number, scope: RewrittenDerivationScope): Promise<number> {
+  return (await tx.executeRaw(`DELETE FROM page_segment_derivations WHERE page_id=$1
+    AND (occurrence_id = ANY($2::bigint[]) OR (pipeline = 'links' AND occurrence_id = ANY($3::bigint[]))
+      OR (pipeline = ANY($4::text[]) AND NOT (occurrence_id = ANY($5::bigint[])))) RETURNING 1`,
+  [pageId, [...scope.touched], [...scope.reach], [...scope.unpaidKinds], [...scope.live]])).length;
 }

@@ -252,6 +252,10 @@ const INTERFACE_METHODS: readonly string[] = [
   // The segmented import's and re-chunk's statements (engine-sql/segmented-writes.ts; pinned by test/engine-sql-segmented-writes.test.ts)
   'lockBodyStagingState', 'deleteUnstagedSegmentChunks', 'readSegmentedLivePage', 'readSegmentedSealed', 'listChunkedOccurrences', 'readRetiredChunkVectors', 'hasStaleSegmentChunks', 'retireStaleSegmentChunks',
   'readSegmentedProjectionPage', 'listSegmentedRechunkCandidates', 'readSegmentedRechunkPage', 'listOccurrenceChunks', 'readMaterializingRevision', 'setMaterializingRevision', 'restorePageUpdatedAt', 'readPageTrustStamp',
+  'listExportPageKeys', 'readExportWithdrawalLedgerBytes', 'listExportWithdrawals', 'readExportPageRows', 'normalizeFenceLines',
+  'readSegmentedPageHead', 'readBodyManifestRows', 'readBodyManifestMeta', 'readBodyManifestOutline', 'listAccessPolicySourceIds',
+  'setLocalStatementTimeout',
+  'readSegmentedRewritePage', 'restorePageDeletedAt', 'lockSegmentedGenerationPage', 'splitManifestGeneration', 'publishRebuiltGeneration', 'setSegmentedVersionHash', 'deleteRewrittenDerivationRows',
   // Trust: the fact withdrawal ledger (engine-sql/trust-withdrawals.ts)
   'hasCoveringFactWithdrawal', 'insertFactWithdrawal', 'listFactWithdrawalDates', 'moveFactWithdrawalSubject',
   'hasFactWithdrawalForSubject', 'listFactWithdrawalKeys',
