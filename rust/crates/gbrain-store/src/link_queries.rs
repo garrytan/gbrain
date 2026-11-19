@@ -225,6 +225,9 @@ pub struct ChainHopOptions {
     pub object_types: Vec<String>,
     pub degree_link_types: Vec<String>,
     pub neighbor_cap: usize,
+    /// `temporal` with the hop's `excludePrivate`: the relationship filter on every step and
+    /// degree edge.
+    pub temporal: Option<EdgeTemporalPolicy>,
 }
 
 /// `DerivedLinkOrigin` without the refused `snapshot`.
@@ -1406,6 +1409,13 @@ impl Store {
             suppress_flagged: options.suppress_flagged,
         };
         let cap = options.neighbor_cap.clamp(1, 1000);
+        let today = iso(self.env.now_micros())[..10].to_string();
+        let live = |link: &LinkRecord| -> Result<bool> {
+            match &options.temporal {
+                Some(temporal) => edge_passes(&*read, link, temporal, &today),
+                None => Ok(true),
+            }
+        };
         let has = |list: &[String], v: &str| list.iter().any(|x| x == v);
         let frontier: BTreeSet<u64> = frontier.iter().copied().collect();
         let toward_object = options.toward == "object";
@@ -1429,7 +1439,8 @@ impl Store {
                 ) else {
                     continue;
                 };
-                if lf.source_id != lt.source_id || !pages.origin_ok(&link, &scope)? {
+                if lf.source_id != lt.source_id || !pages.origin_ok(&link, &scope)? || !live(&link)?
+                {
                     continue;
                 }
                 let forward = has(&options.subject_types, &lf.page_type)
@@ -1521,6 +1532,7 @@ impl Store {
                     || !has(&options.degree_link_types, &link.link_type)
                     || !not_mentions(&link)
                     || !ranks(&link)
+                    || !live(&link)?
                 {
                     continue;
                 }

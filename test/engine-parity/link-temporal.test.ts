@@ -421,4 +421,51 @@ describe('engine parity: link temporal state', () => {
       return out;
     },
   );
+
+  parityTest(
+    'relationalChainHop with a temporal option steps along and counts only the edges whose relationship matches the status, day or window',
+    { methods: ['putPage', 'readPageSnapshot', 'replaceDerivedLinks', 'relationalChainHop'] },
+    async (engine) => {
+      await publishAlice(engine);
+      const ids = await slugsById(engine, [ALICE, ACME, WIDGET]);
+      const idOf = (slug: string) => [...ids].find(([, s]) => s === slug)![0];
+      const hop = async (from: string, toward: 'object' | 'subject', temporal?: EdgeTemporalOpts, excludePrivate = false) =>
+        (await engine.relationalChainHop([idOf(from)], {
+          linkTypes: ['works_at'], toward, subjectTypes: ['person'], objectTypes: ['company'], degreeLinkTypes: ['works_at'], neighborCap: 10,
+          ...(temporal ? { temporal } : {}), ...(excludePrivate ? { excludePrivate } : {}),
+        })).map(e => `${ids.get(e.from_page_id)}>${e.to_slug}:${e.orientation}:degree=${e.from_degree}`);
+      const out: Record<string, unknown> = {};
+      const cases: Array<[string, EdgeTemporalOpts | undefined]> = [
+        ['none', undefined],
+        ['live', { status: 'live' }],
+        ['ended', { status: 'ended' }],
+        ['all', { status: 'all' }],
+        ['disabled', { status: 'live', disabled: true }],
+        ['asOf2020', { status: 'live', asOf: '2020-06-01' }],
+        ['endedAsOf2018', { status: 'ended', asOf: '2018-06-01' }],
+        ['during2022', { during: { from: '2022-01-01', until: '2023-01-01' } }],
+        ['during2026', { status: 'all', during: { from: '2026-01-01', until: '2027-01-01' } }],
+      ];
+      for (const [from, toward] of [[ALICE, 'object'], [ACME, 'subject'], [WIDGET, 'subject']] as const) {
+        for (const [name, temporal] of cases) {
+          for (const excludePrivate of [false, true]) out[`${from}:${name}:${excludePrivate}`] = await hop(from, toward, temporal, excludePrivate);
+        }
+      }
+      expect(out[`${ALICE}:none:false`]).toEqual([`${ALICE}>${ACME}:stored:degree=2`, `${ALICE}>${WIDGET}:stored:degree=2`]);
+      expect(out[`${ALICE}:live:false`]).toEqual([`${ALICE}>${WIDGET}:stored:degree=1`]);
+      expect(out[`${ALICE}:ended:false`]).toEqual([`${ALICE}>${ACME}:stored:degree=1`]);
+      expect(out[`${ALICE}:asOf2020:false`]).toEqual([`${ALICE}>${ACME}:stored:degree=1`]);
+      expect(out[`${ALICE}:during2026:true`]).toEqual([`${ALICE}>${WIDGET}:stored:degree=1`]);
+      expect(out[`${ACME}:live:false`]).toEqual([]);
+      expect(out[`${ACME}:ended:false`]).toEqual([`${ACME}>${ALICE}:stored:degree=1`]);
+      expect(out[`${ACME}:endedAsOf2018:false`]).toEqual([]);
+      expect(out[`${WIDGET}:live:true`]).toEqual([`${WIDGET}>${ALICE}:stored:degree=1`]);
+      expect(out[`${WIDGET}:during2022:false`]).toEqual([]);
+      // A date that is not a calendar day is the SQL engines' TypeError on every engine.
+      let bad: unknown = null;
+      try { await hop(ALICE, 'object', { status: 'live', asOf: '2020-13-45' }); } catch (e) { bad = e instanceof TypeError ? 'TypeError' : String(e); }
+      expect(bad).toBe('TypeError');
+      return out;
+    },
+  );
 });
