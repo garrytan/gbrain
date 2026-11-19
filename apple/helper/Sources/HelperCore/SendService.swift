@@ -414,11 +414,9 @@ public final class SendService {
             let first = try locked { () throws -> (change: (state: SendState, reason: String?, save: Bool), seen: SendState, saves: Int) in
                 var current = try store.load() ?? SendState()
                 observeKill(&current)
-                defer {
-                    if action == "off" { bump(nil) }
-                    if action == "remove_key" { bump(fields["name"] ?? "") }
-                }
+                defer { if action == "off" { bump(nil) } }
                 let change = try Self.change(action, fields, current)
+                defer { if action == "remove_key", let name = fields["name"] { bump(name) } }
                 if change.reason == nil, change.save {
                     try store.save(change.state)
                     adminSaves += 1

@@ -658,6 +658,14 @@ final class Harness {
         #expect(admin(h, ["action": "add_key", "name": "bad", "public_key": "abc"]).1["code"] as? String == "bad_param")
     }
 
+    @Test func removingAKeyThatIsNotThereLeavesNoStopBehind() {
+        let h = Harness()
+        #expect(admin(h, ["action": "remove_key", "name": "no-key-has-this-name"]).1["code"] as? String == "not_found")
+        #expect(h.service.currentStops().keys.isEmpty)
+        #expect(admin(h, ["action": "remove_key", "name": "box"]).0 == 200)
+        #expect(h.service.currentStops().keys == ["box": 1])
+    }
+
     @Test func aSendSeeingTheSwitchOffDuringTouchIDRefusesTheChange() {
         let h = Harness()
         h.presence.gate = DispatchSemaphore(value: 0)

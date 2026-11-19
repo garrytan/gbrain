@@ -82,16 +82,25 @@ public struct SendSetup {
 }
 
 public enum HelperProcess {
-    public static func others(named name: String) -> [pid_t] {
-        let count = proc_listallpids(nil, 0)
-        guard count > 0 else { return [] }
-        var pids = [pid_t](repeating: 0, count: Int(count) + 64)
-        let filled = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size))
-        guard filled > 0 else { return [] }
+    public static func running(named name: String, in pids: [pid_t]? = allPids()) -> Bool {
+        guard let pids else { return true }
+        return !others(named: name, in: pids).isEmpty
+    }
+
+    public static func others(named name: String, in pids: [pid_t]) -> [pid_t] {
         var path = [CChar](repeating: 0, count: 4096)
-        return pids.prefix(Int(filled)).filter { pid in
+        return pids.filter { pid in
             guard pid > 0, pid != getpid(), proc_pidpath(pid, &path, UInt32(path.count)) > 0 else { return false }
             return (String(cString: path) as NSString).lastPathComponent == name
         }
+    }
+
+    public static func allPids() -> [pid_t]? {
+        let count = proc_listallpids(nil, 0)
+        guard count > 0 else { return nil }
+        var pids = [pid_t](repeating: 0, count: Int(count) + 64)
+        let filled = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size))
+        guard filled > 0 else { return nil }
+        return Array(pids.prefix(Int(filled)))
     }
 }

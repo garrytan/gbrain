@@ -124,7 +124,7 @@ case "send-setup":
                           loadConfig: { loadConfig().0 },
                           saveConfig: save,
                           post: { fields, timeout in AdminClient.post(port: loadConfig().1.port, fields: fields, timeout: timeout) },
-                          helperRunning: { !HelperProcess.others(named: name).isEmpty })
+                          helperRunning: { HelperProcess.running(named: name) })
     let result = arguments.contains("--off") ? setup.off() : setup.on()
     result.out.forEach { print($0) }
     if let err = result.err { FileHandle.standardError.write(Data("\(name): \(err)\n".utf8)) }

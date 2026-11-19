@@ -173,11 +173,17 @@ func loopbackSocket() -> (fd: Int32, port: UInt16) {
         sleeper.arguments = ["30"]
         try sleeper.run()
         defer { sleeper.terminate() }
-        #expect(HelperProcess.others(named: "sleep").contains(sleeper.processIdentifier))
+        #expect(HelperProcess.others(named: "sleep", in: try #require(HelperProcess.allPids())).contains(sleeper.processIdentifier))
         let own = (ProcessInfo.processInfo.arguments[0] as NSString).lastPathComponent
-        #expect(!HelperProcess.others(named: own).contains(getpid()))
+        #expect(!HelperProcess.others(named: own, in: try #require(HelperProcess.allPids())).contains(getpid()))
         sleeper.terminate()
         sleeper.waitUntilExit()
-        #expect(!HelperProcess.others(named: "sleep").contains(sleeper.processIdentifier))
+        #expect(!HelperProcess.others(named: "sleep", in: try #require(HelperProcess.allPids())).contains(sleeper.processIdentifier))
+    }
+
+    @Test func anUnreadableProcessTableCountsAsAHelperRunning() {
+        #expect(HelperProcess.running(named: "no-process-has-this-name", in: nil))
+        #expect(!HelperProcess.running(named: "no-process-has-this-name", in: [getpid()]))
+        #expect(!HelperProcess.running(named: "no-process-has-this-name"))
     }
 }
