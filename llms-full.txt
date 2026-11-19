@@ -6324,27 +6324,22 @@ addon, and refusing a missing or mismatched one, belong to the loader (below), n
   `pages`, `search`, ...), the member in `detail`, and `written=nothing`, before any work.
   `src/core/rust-engine/members.ts` maps every member to its capability; the type fails when a new `BrainEngine`
   member is not classified. What each capability still lacks is under "What a Rust brain serves now".
-- **One owner process per brain.** `connect()` takes the kernel lock `<database_path>.gbrain-owner.lock`, with
-  symlinks in the path resolved, so every alias of one brain names one lock. The process
-  that holds it opens the store and serves its engine on `<database_path>/.gbrain-owner.sock`
-  (`src/core/rust-engine/owner-ipc/`); `ownerRole` reads `'owner'`. Any other process becomes a client (`ownerRole`
-  `'client'`): it never opens the store, forwards each member call over the socket, and reports the capabilities in
-  the owner's hello, so a member the owner lacks refuses at the client with the error the owner's own engine gives.
-  `transaction`, `transactionDirect`, `withReservedConnection` and `keywordBoundedRead` take a callback that cannot
-  cross the socket. On a client of a Rust owner they refuse `engine_capability_missing` as the owner's own engine does
-  (reason `transactions` or `raw_sql`, because the owner's hello does not report them). `holdSchemaMigrationLock`, and
-  any call whose arguments hold a function other than a search metadata hook, refuse `engine_capability_missing` with
-  `via=owner_ipc`; nothing runs.
-  `importFromContent`, `importFromFile`, `importImageFile` and `importManagedFiles` are forwarded whole and run their
+- **One owner process per brain.** `connect()` takes the kernel lock `<database_path>.gbrain-owner.lock` (symlinks
+  resolved, so every alias names one lock). Its holder opens the store and serves its engine on
+  `<database_path>/.gbrain-owner.sock` (`src/core/rust-engine/owner-ipc/`); `ownerRole` is `'owner'`. Any other
+  process is a client (`'client'`): it never opens the store, forwards each call, and mirrors the owner's hello
+  capabilities, so a member the owner lacks refuses as the owner's engine does. So `transaction`,
+  `transactionDirect`, `withReservedConnection` and `keywordBoundedRead` refuse `engine_capability_missing` with
+  reason `transactions` or `raw_sql`; `holdSchemaMigrationLock` and a call whose arguments hold a function (other than
+  a search metadata hook) refuse with `via=owner_ipc`. The four `import*` members are forwarded whole and run their
   transaction in the owner (a remote caller or a function option refuses). A call carries its caller's access record,
-  so a restricted caller reads no more through the socket than in process. The owner runs 32 calls at once and queues
-  the rest; a call carries its deadline and ends `timeout` there, with reason `not_sent`, `not_started` (it waited in
-  the queue and never ran) or `outcome_unknown` (the owner had started it, so a write may have committed). An owner
-  reply over 128 MiB ends `response_too_large`, and a call whose arguments are over it refuses with `via=owner_ipc`. When the owner exits,
-  a call in flight ends `owner_unavailable` with reason `outcome_unknown` and a later call ends `not_sent`; no client
-  takes the brain over. A process that is neither owner nor client within 5 seconds ends `owner_unavailable` with reason
-  `not_sent`. `disconnect()` on the owner stops the server, waits for running calls, closes the store and releases the
-  lock last.
+  so a restricted caller reads no more than in process. The owner runs 32 calls at once and queues the rest; a call
+  past its deadline ends `timeout` reason `not_sent`, `not_started` (queued, never ran) or `outcome_unknown` (started;
+  a write may have committed). A reply over 128 MiB ends `response_too_large`; a larger request refuses with
+  `via=owner_ipc`. When the owner exits, a call in flight ends `owner_unavailable` reason `outcome_unknown` and a
+  later call `not_sent`; no client takes over. With no owner or client role within 5 seconds, `connect()` ends
+  `owner_unavailable` reason `not_sent`. `disconnect()` on the owner stops the server, waits for running calls,
+  closes the store and releases the lock last.
 - **SQL-only paths.** Code that only works through SQL (migrations, cycle locks, engine migration and graduation,
   embed backfill, page-body staging) takes the kind as `EngineKind`, narrows it with `sqlEngineKind` or
   `isRustEngineKind` (`src/core/sql-engine-kind.ts`), and refuses a Rust brain with `engine_capability_missing` reason `raw_sql` instead of treating it as Postgres.
