@@ -707,7 +707,9 @@ describe('owner socket file modes', () => {
   test.skipIf(process.platform === 'win32')(
     'the owner sets the brain directory to 0700 before it binds, and the socket to 0600 after listen',
     async () => {
-      const root = mkdtempSync(join(tmpdir(), 'gbrain-owner-mode-'));
+      // A short POSIX root, not tmpdir(): a long TMPDIR would push the socket past the Unix path budget,
+      // and the owner would use the private gbi-<uid>-<hash> fallback instead of the brain directory.
+      const root = mkdtempSync('/tmp/gbrain-om-');
       const databasePath = join(root, 'brain.rust');
       mkdirSync(databasePath);
       chmodSync(databasePath, 0o755);
