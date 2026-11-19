@@ -131,3 +131,30 @@ Two PGLite cases in `test/sync-partial-clone-2331.test.ts` fail on git 2.43.0:
 
 Both pass on CI's git 2.56.0 (master run 44277593744, job 134709792876). Nothing was changed. A
 user with an older git and a partial clone sees the less specific hold code.
+
+## Follow-up: ranking stages that fail with no trace (no fix)
+
+A search's post-fusion ranking stages are fail-open: when a stage's read fails, the search ranks
+without that stage. The Rust branch `rust-engine/admit-write` now lets a refused engine capability
+(`engine_capability_missing`) through four more of these stages, so a Rust brain that does not
+serve a stage's read fails the search instead of ranking without the stage and looking healthy.
+Every other failure stays silent on Postgres and PGLite, on purpose: this note records it, and
+nothing was changed.
+
+Master, read at `3f2ed1e6f9`, has the same four catches with no rethrow:
+
+| Stage | Master |
+|---|---|
+| Backlink boost | `src/core/search/hybrid.ts:597` |
+| Salience boost | `src/core/search/hybrid.ts:606` |
+| Recency boost | `src/core/search/hybrid.ts:631` |
+| Graph signals | `src/core/search/hybrid.ts:669`, and the adjacency read in `src/core/search/graph-signals.ts:348` |
+
+The alias and supersession stages (`hybrid.ts:684` and `:699`) already rethrow a capability
+refusal on master. Master has no engine that refuses these reads, so the missing rethrow has no
+effect there today.
+
+What stays silent: a missing table on an old schema, a statement timeout or a dropped
+connection on one of the backlink, salience or recency reads ranks the search without that
+stage, and nothing records it. Only the graph-signals read writes an audit row. A follow-up
+could count or log these stage failures; it would not change the results.

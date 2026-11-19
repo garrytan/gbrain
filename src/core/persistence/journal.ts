@@ -89,7 +89,7 @@ function ownerStatusFix(sourceId: string): Action {
 const lifecycleIdConflict = (requestId: string) => opError('idempotency_conflict', 'This request_id belongs to a source lifecycle operation.',
   `Request ID ${requestId} is already recorded for a source lifecycle change of this CLI writer, so this page write was not admitted and nothing changed. Submit the page write with a new request_id.`);
 /** #6696 (A5): a background admission of `ids` requests and `bytes` reservation refuses past the pause line of any locked counter. */
-async function assertBackgroundRoom(tx: SqlEngine, counters: Counter[], limits: JournalLimits, ids: number, bytes: number): Promise<void> {
+async function assertBackgroundRoom(tx: SqlEngine & Pick<BrainEngine, 'readAdmissionRate'>, counters: Counter[], limits: JournalLimits, ids: number, bytes: number): Promise<void> {
   const share = await readBackgroundPauseShare(tx);
   for (const row of counters) {
     const scope = row.key === 'brain' ? 'brain' : 'principal';
@@ -123,18 +123,17 @@ export function capacityError(resource: string, outstanding?: { used: number; li
  * holding the most slots. GST-1623: a managed sync job passes `held`, the counter's writes waiting in `deferred` (heldBehindImport). Deferred
  * writes hold slots like queued ones, so they count toward their source's share.
  */
-async function outstandingRefusal(tx: SqlEngine, row: Counter, principal: Principal, sourceId: string, need: number, limit: number,
+async function outstandingRefusal(tx: Pick<BrainEngine, 'countOutstandingBySource'>, row: Counter, principal: Principal, sourceId: string, need: number, limit: number,
   held = 0): Promise<OperationError | null> {
   const used = Number(row.outstanding_count);
   if (used - held + need <= limit) return null;
   if (row.key === 'brain' || principal.kind !== 'local_cli') return capacityError(`${row.key === 'brain' ? 'brain' : 'principal'} outstanding requests`, { used, limit });
-  const holders = await tx.executeRaw<{ source_id: string; n: number | string }>(`SELECT source_id,count(*) AS n FROM persistence_requests
-    WHERE principal_kind=$1 AND principal_id=$2 AND state IN ('queued','deferred','running','recovering') GROUP BY source_id ORDER BY count(*) DESC,source_id`, [principal.kind, principal.id]);
-  const own = Number(holders.find(holder => holder.source_id === sourceId)?.n ?? 0);
+  const holders = await tx.countOutstandingBySource(principal.kind, principal.id);
+  const own = holders.find(holder => holder.source_id === sourceId)?.n ?? 0;
   const sources = holders.length + (own > 0 ? 0 : 1);
   if (sources > 1 && own < Math.floor(limit / sources)) return null;
   const top = holders[0];
-  return capacityError(`principal outstanding requests${top ? ` (source ${top.source_id} holds ${Number(top.n)})` : ''}`, { used, limit });
+  return capacityError(`principal outstanding requests${top ? ` (source ${top.source_id} holds ${top.n})` : ''}`, { used, limit });
 }
 /**
  * GST-1623: the writes counted on `principal`'s counter (the brain's when null) that still wait in `deferred` on source
@@ -159,7 +158,7 @@ const managedSyncJob = (input: Pick<WriteAdmission, 'operation' | 'intent'>) => 
  * year at the current admission rate; `detail` keeps the limit key, `reason`
  * the resource.
  */
-async function cumulativeCapacityError(tx: SqlEngine, resource: string, scope: string, setting: keyof JournalLimits, used: number, limit: number): Promise<OperationError> {
+async function cumulativeCapacityError(tx: SqlEngine & Pick<BrainEngine, 'readAdmissionRate'>, resource: string, scope: string, setting: keyof JournalLimits, used: number, limit: number): Promise<OperationError> {
   const key = journalLimitKey(setting);
   const ids = setting.endsWith('LifetimeIds');
   const value = await oneYearCapacity(tx, scope, ids ? 'LifetimeIds' : 'TerminalBytes', used, limit);
@@ -183,7 +182,7 @@ export function quotaExhausted(resource: string, key: string, value: number, use
  * refuses with the same filled capacity command an admission would, before
  * the caller mutates anything.
  */
-export async function assertLifetimeIdHeadroom(engine: SqlEngine & Pick<BrainEngine, 'readJournalLimitRows'>, principal: Principal, needed: number): Promise<void> {
+export async function assertLifetimeIdHeadroom(engine: SqlEngine & Pick<BrainEngine, 'readJournalLimitRows' | 'readCounterRows' | 'readAdmissionRate'>, principal: Principal, needed: number): Promise<void> {
   await assertWriteHeadroom(engine, principal, { ids: needed });
 }
 /**
@@ -194,12 +193,11 @@ export async function assertLifetimeIdHeadroom(engine: SqlEngine & Pick<BrainEng
  * writes but cannot cover the run refuses `write_quota_insufficient`, both
  * with the config value that covers the run and one more year.
  */
-export async function assertWriteHeadroom(engine: SqlEngine & Pick<BrainEngine, 'readJournalLimitRows'>, principal: Principal, needed: { ids: number; bytes?: number }, share = 1): Promise<void> {
+export async function assertWriteHeadroom(engine: SqlEngine & Pick<BrainEngine, 'readJournalLimitRows' | 'readCounterRows' | 'readAdmissionRate'>, principal: Principal, needed: { ids: number; bytes?: number }, share = 1): Promise<void> {
   if (needed.ids <= 0 && !needed.bytes) return;
   const limits = await readJournalLimits(engine);
   const keys = ['brain', principalKey(principal)];
-  const rows = await engine.executeRaw<{ key: string; lifetime_ids: number | string; terminal_bytes: number | string }>(
-    'SELECT key,lifetime_ids,terminal_bytes FROM persistence_counters WHERE key=ANY($1::text[])', [keys]);
+  const rows = await engine.readCounterRows(keys);
   for (const key of keys) {
     const scope = key === 'brain' ? 'brain' : 'principal';
     for (const [resource, setting, need, label] of [['lifetime_ids', `${scope}LifetimeIds`, needed.ids, 'permanent request IDs'],
@@ -225,10 +223,9 @@ export async function assertWriteHeadroom(engine: SqlEngine & Pick<BrainEngine, 
  * #6884: how many more requests `principal` can have outstanding before the tighter of its own and the brain's
  * outstanding caps, each taken at `share` (a background run stops at the pause line), with that cap's counts.
  */
-export async function readOutstandingRoom(engine: SqlEngine & Pick<BrainEngine, 'readJournalLimitRows'>, principal: Principal, share = 1): Promise<{ room: number; scope: 'brain' | 'principal'; used: number; limit: number }> {
+export async function readOutstandingRoom(engine: SqlEngine & Pick<BrainEngine, 'readJournalLimitRows' | 'readCounterRows'>, principal: Principal, share = 1): Promise<{ room: number; scope: 'brain' | 'principal'; used: number; limit: number }> {
   const limits = await readJournalLimits(engine);
-  const rows = await engine.executeRaw<{ key: string; outstanding_count: number | string }>('SELECT key,outstanding_count FROM persistence_counters WHERE key=ANY($1::text[])',
-    [['brain', principalKey(principal)]]);
+  const rows = await engine.readCounterRows(['brain', principalKey(principal)]);
   const room = (scope: 'brain' | 'principal', key: string, cap: number) => {
     const used = Number(rows.find(row => row.key === key)?.outstanding_count ?? 0), limit = Math.floor(cap * share);
     return { room: limit - used, scope, used, limit };
@@ -253,12 +250,11 @@ export async function assertPageRequestIdentity(engine: Pick<BrainEngine, 'readT
 export async function getWriteRequestById(engine: Pick<BrainEngine, 'readWriteRequestById'>, id: string, signal?: AbortSignal): Promise<WriteRequest | null> {
   return engine.readWriteRequestById(id, { signal });
 }
-/** #5984: the columns a waiter needs while a request is unfinished; the full row is read once it is terminal. */
-export type WriteRequestProgress = Pick<WriteRequest, 'state' | 'error_code' | 'error_message' | 'completed_at' | 'updated_at' | 'blocked_reason' | 'outcome' | 'deferred_refresh_id' | 'deferred_import_from'>;
-export const WRITE_PROGRESS_SQL = 'SELECT state,error_code,error_message,completed_at,updated_at,blocked_reason,outcome,deferred_refresh_id,deferred_import_from FROM persistence_requests WHERE id=$1::uuid';
-export async function getWriteRequestProgress(engine: SqlEngine, id: string, signal?: AbortSignal): Promise<WriteRequestProgress | null> {
-  const [row] = await engine.executeRaw<WriteRequestProgress>(WRITE_PROGRESS_SQL, [id], { signal });
-  return row ?? null;
+/** #5984: the progress columns a waiter polls (engine-sql/persistence-journal.ts `readWriteRequestProgress`). */
+export { WRITE_PROGRESS_SQL, type WriteRequestProgress } from '../engine-sql/persistence-journal.ts';
+import type { WriteRequestProgress } from '../engine-sql/persistence-journal.ts';
+export async function getWriteRequestProgress(engine: Pick<BrainEngine, 'readWriteRequestProgress'>, id: string, signal?: AbortSignal): Promise<WriteRequestProgress | null> {
+  return engine.readWriteRequestProgress(id, { signal });
 }
 export function intentDigest(a: Pick<WriteAdmission, 'operation' | 'sourceId' | 'slug' | 'callerIntent'>): string {
   return digest({ operation: a.operation, source_id: a.sourceId, slug: a.slug, intent: a.callerIntent });

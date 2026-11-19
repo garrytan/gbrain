@@ -47,6 +47,7 @@ Each returns what PGLite returns for a brain with the same contents.
 | `insertLocalWriterRow(row)` | `brain.insertLocalWriterRow` | The same two unique keys as PGLite's table. |
 | `readJournalLimitRows()` | the config keys that start with `persistence.limits.`, the page-body keys, then `{ key: null, value: null }` | The store keeps no segmented pages, so the largest one has no size. |
 | `readHeldPageRows(pageIds)`, `readHeldCoverageRows(sourceIds)` | `[]` | The store holds no files from a sync, so nothing is held. |
+| `ownsSchemaTables()` | `true` | The process that opens the store owns all of it, so the schema owner of a schema-behind refusal is this caller (fix actor `agent`). |
 
 `src/core/rust-engine/store-members/connect-gate.ts` answers the connect gate's persistence reads the same way
 (SQL for PGLite and Postgres in `src/core/engine-sql/connect-gate.ts`):
@@ -68,8 +69,10 @@ engine serves both members, so its connect is unchanged. An engine or test fake 
 does not serve these members now stops at connect. Refusing is the safer answer: a guessed "no row" could admit a
 connect during a graduation.
 
-The request members (`readWriteRequest`, `readWriteRequestById`, `lockPersistenceCounters`,
+The request members (`readWriteRequest`, `readWriteRequestById`, `readWriteRequestProgress`, `countOutstandingBySource`, `readCounterRows`, `readAdmissionRate`, `lockPersistenceCounters`,
 `insertWriteRequest`, `stampWriteClaim`, `lockWriteRequest`, `completeWriteRow`), the claim upkeep
 (`renewWriteClaim`, `expireStaleWriteClaims`, `hasClaimableWrite`) and the admission reads
 (`readSourceMembership`, `findTopologyChanges`, `readLedgerSource`) are served from the persistence
-rows in [persistence.md](persistence.md). The journal calls most of them inside `transaction`.
+rows in [persistence.md](persistence.md). The journal calls most of them inside `transaction`. The consumer row
+members (`listHostConsumerRows`, `probeLiveConsumerRows`, `renewConsumerRow`, `deleteConsumerRow`,
+`stampWorktreeHeartbeats`) keep no stored state; see "TypeScript members with no stored state" there.
