@@ -17,6 +17,9 @@
  *    member caller (`withCallerAccess` with a `member:` identity), whose own member page's private facts are not held.
  *  - Member regression: the Rust member refused a member caller, so heldFenceLines held every fence row line of the
  *    member's own page, while the SQL engines showed the member the rows of its own private facts.
+ *  - Grant regression: the Rust member refused a caller with a private-facts grant (GBRA-575), so heldFenceLines held
+ *    every fence row line of a granted source, while the SQL engines showed that caller the rows of the private facts
+ *    its grant admits (an open, live holding page; never an unpaged or transcript-lane fact).
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -166,5 +169,52 @@ describe('engine parity: the held fence cells of a world-only fact read', () => 
     expect(named).toEqual([]);
     expect(deleted).toEqual(held);
     return [unnamed, named, deleted];
+  });
+
+  // A caller with a private-facts grant (privateFactSources): a private fact in a granted source on a live, open page
+  // is admitted (grantedPrivateFactSql); a private page, a transcript-lane fact, a grant on another source and a
+  // soft-deleted page stay held.
+  const GRANTED = 'notes/granted-example';
+  const SECRET = 'notes/secret-example';
+  const grantPage = (engine: BrainEngine, slug: string, frontmatter: Record<string, unknown>) =>
+    engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'body', timeline: '', frontmatter });
+  const grantFacts = (engine: BrainEngine) => engine.insertFacts([
+    { fact: 'Ana grows figs', entity_slug: GRANTED, source_markdown_slug: GRANTED, row_num: 1, kind: 'fact', visibility: 'private', source: 'fence' },
+    { fact: 'Ana lives in Quito', entity_slug: GRANTED, source_markdown_slug: GRANTED, row_num: 2, kind: 'fact', visibility: 'world', source: 'fence' },
+    { fact: 'Ana naps daily', entity_slug: GRANTED, source_markdown_slug: GRANTED, row_num: 3, kind: 'fact', visibility: 'private', source: 'transcript:chat' },
+    { fact: 'Ana hides gold', entity_slug: SECRET, source_markdown_slug: SECRET, row_num: 1, kind: 'fact', visibility: 'private', source: 'fence' },
+  ] as never, { source_id: SRC });
+  const grantKeys = [
+    { sourceId: SRC, slug: GRANTED, rowNum: 1, claim: 'Ana grows figs', partial: false },
+    { sourceId: SRC, slug: GRANTED, rowNum: -1, claim: 'figs', partial: true },
+    { sourceId: SRC, slug: GRANTED, rowNum: 2, claim: 'Ana lives in Quito', partial: false },
+    { sourceId: SRC, slug: GRANTED, rowNum: 3, claim: 'Ana naps daily', partial: false },
+    { sourceId: SRC, slug: SECRET, rowNum: 1, claim: 'Ana hides gold', partial: false },
+  ];
+  const GRANT = { hidePrivate: true, privateFactSources: [SRC] };
+  const OTHER_GRANT = { hidePrivate: true, privateFactSources: ['other-source'] };
+
+  parityTest('a caller with a private-facts grant sees the fence rows its grant admits', {
+    methods: ['putPage', 'insertFacts', 'softDeletePage', 'listHeldFenceCells'],
+  }, async (engine) => {
+    await grantPage(engine, GRANTED, {});
+    await grantPage(engine, SECRET, { visibility: 'private' });
+    await grantFacts(engine);
+    const granted = cellsOf(await withCallerAccess(GRANT, () => engine.listHeldFenceCells(grantKeys)));
+    const plain = cellsOf(await engine.listHeldFenceCells(grantKeys));
+    const other = cellsOf(await withCallerAccess(OTHER_GRANT, () => engine.listHeldFenceCells(grantKeys)));
+    await engine.softDeletePage(GRANTED);
+    const deleted = cellsOf(await withCallerAccess(GRANT, () => engine.listHeldFenceCells(grantKeys)));
+    const everyPrivate = sorted([
+      `${SRC}|${GRANTED}|1|Ana grows figs`,
+      `${SRC}|${GRANTED}|-1|figs`,
+      `${SRC}|${GRANTED}|3|Ana naps daily`,
+      `${SRC}|${SECRET}|1|Ana hides gold`,
+    ]);
+    expect(granted).toEqual(sorted([`${SRC}|${GRANTED}|3|Ana naps daily`, `${SRC}|${SECRET}|1|Ana hides gold`]));
+    expect(plain).toEqual(everyPrivate);
+    expect(other).toEqual(everyPrivate);
+    expect(deleted).toEqual(everyPrivate);
+    return [granted, plain, other, deleted];
   });
 });
