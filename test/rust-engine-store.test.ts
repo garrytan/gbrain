@@ -24,6 +24,8 @@ import { PageRevisionConflictError } from '../src/core/page-state/types.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { ENGINE_CAPABILITIES } from '../src/core/engine-capabilities.ts';
 import { withCallerAccess } from '../src/core/search/private-visibility.ts';
+import { readSourceFreshness } from '../src/core/notifier/status.ts';
+import { startResidentNotifier } from '../src/core/notifier/resident.ts';
 
 const TARGET = detectAddonTarget();
 const BUILT = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
@@ -276,6 +278,28 @@ describe('Rust engine on the store', () => {
   withAddon('a brain on a partial capability set reports exactly what the store serves', async () => {
     const { engine } = await open();
     expect([...engine.capabilities].sort()).toEqual([...servedCapabilities()].sort());
+  });
+
+  withAddon('search on a Rust brain carries no freshness notice, as a brain without the notifier tables does', async () => {
+    const { engine } = await open();
+    await engine.setConfig('sync.on_commit', 'true');
+    const errors: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => { errors.push(args.map(String).join(' ')); };
+    try {
+      expect(await readSourceFreshness(engine, { sourceIds: ['default'] })).toEqual([]);
+      expect(await readSourceFreshness(engine, {})).toEqual([]);
+    } finally { console.error = original; }
+    expect(errors.filter(line => line.includes('[notifier]'))).toEqual([]);
+  });
+
+  withAddon('a resident on a Rust brain starts no commit notifier and says so', async () => {
+    const { engine } = await open();
+    const lines: string[] = [];
+    const notifier = startResidentNotifier(engine, { resident: 'serve', log: line => lines.push(line), env: {} });
+    if (notifier) await notifier.stop();
+    expect(notifier).toBeNull();
+    expect(lines).toEqual(['[notifier:serve] off (Rust brain: the store has no notifier tables); commits on this host are not synced by this process']);
   });
 });
 

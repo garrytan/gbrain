@@ -121,6 +121,9 @@ export async function readSourceFreshness(engine: FreshnessExec, scope: { source
   const ids = scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : null);
   if (ids && ids.length === 0) return [];
   const heldBy = new Map(held.map(h => [h.source_id, h.missing + h.stale]));
+  // A Rust brain's store has no notifier tables (no resident can record coverage there), so it reports none, as a
+  // Postgres or PGLite brain without the v262 tables does.
+  if (engine.kind === 'rust') return [];
   try {
     if (!await freshnessReported(engine)) return [];
     return (await readRows(engine, ids)).map(row => freshnessOf(engine, row, heldBy.get(row.id) ?? 0));
