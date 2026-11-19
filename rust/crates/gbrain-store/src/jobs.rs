@@ -39,8 +39,8 @@
 //!   reservation_uuid` indexes it by job, `0x22 expires_at reservation_uuid` by expiry (pending only).
 //!   `0x24 id -> record` is one lease-pressure row (sequence `lease_pressure`), `0x25 bounced_at id` its time
 //!   order and `0x26 job id` its job. The layout is in `spend.rs`; `0x27` indexes the open holds by owner, and
-//!   `0x28`/`0x29` (the spend ledger, `spend_log.rs`), `0x2A` (the whole client row, `oauth_clients.rs`) and `0x2B` (the
-//!   token row, `access_tokens.rs`) follow.
+//!   `0x28`/`0x29` (the spend ledger, `spend_log.rs`), `0x2A` (the whole client row, `oauth_clients.rs`), `0x2B` (the
+//!   token row, `access_tokens.rs`) and `0x2C` (an OAuth token by hash, `oauth_tokens.rs`) follow.
 //! - `m 0x18..=0x1C`: the subagent messages, tool rows and their three indexes (see `subagent.rs`).
 //!
 //! Integers are big-endian; a signed one has its sign bit flipped so byte order is numeric order.
@@ -67,6 +67,7 @@ mod inbox;
 mod insight;
 mod mutations;
 mod oauth_clients;
+mod oauth_tokens;
 mod private_queues;
 mod reads;
 mod spend;
@@ -86,6 +87,7 @@ pub use health::{DivergenceSpec, HealthSpec};
 pub use insight::InsightSpec;
 pub use mutations::{DelayOpts, TokenDelta};
 pub use oauth_clients::{ClientInsert, ClientPatch, ClientPatchGuard};
+pub use oauth_tokens::OauthTokenInsert;
 pub use private_queues::PrivateQueueState;
 pub use reads::{JobPageCursor, JobPageSpec, OverdueSpec};
 pub use spend::{ExpireScope, LeaseFilter, LeaseInsert, SpendInsert, SpendTreeSpec};

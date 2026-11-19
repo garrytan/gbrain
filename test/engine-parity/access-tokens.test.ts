@@ -12,6 +12,11 @@
  *    `source_grant` outside the list is 23514 (`access_tokens_source_grant_check`), each leaving no row. The same answers
  *    on every engine arm. The bearer check `serve --http` runs (oauth-provider.ts verifyAccessToken with an engine)
  *    authenticates an active token with its scopes, source grant and read floor, and refuses a revoked or unknown token.
+ *    The OAuth rung of that check reads the `oauth_tokens` rows the store keeps: a valid OAuth token authenticates with the
+ *    same AuthInfo (grant, sources, surface, floor), an expired one, a refresh token, a token of a deleted client and a
+ *    token of a soft-deleted client are refused the same way, and a repeated hash (23505) or an unknown client (23503) is
+ *    refused on insert. The bearer check stamps `last_used_at` (null before, set after, unchanged by a second check inside
+ *    60 seconds), and the stamp leaves a row with no `source_grant` alone when it is the unified one.
  *  - Regression: a store that finds a revoked token, ignores the id-or-name pair, matches a name partly, lets two tokens
  *    share a hash, takes a tier it should refuse, or returns the ambiguity as a pick of the first row: a floor set on the
  *    wrong credential, which widens or narrows what an agent can read.
@@ -234,5 +239,124 @@ describe('engine parity: access_tokens members', () => {
       } finally {
         await new Promise<void>(resolve => { server.closeAllConnections?.(); server.close(() => resolve()); });
       }
+    });
+
+  /** A bearer check as serve --http runs it, as what a caller sees: the AuthInfo (ids by name, times as a flag) or the refusal. */
+  async function bearer(engine: BrainEngine, provider: GBrainOAuthProvider, token: string): Promise<Record<string, unknown>> {
+    try {
+      const auth = await provider.verifyAccessToken(token) as unknown as Record<string, unknown>;
+      const { expiresAt, createdAt, ...rest } = auth;
+      return { ...rest, expiresAtIsStored: typeof expiresAt === 'number', hasCreatedAt: createdAt != null };
+    } catch (error) {
+      if ((error as { code?: unknown }).code === 'engine_capability_missing') throw error;
+      return { refused: (error as Error).constructor.name, message: (error as Error).message };
+    }
+  }
+
+  parityTest('bearer check, OAuth rung: a valid OAuth token authenticates with its client grant, and an expired one, a refresh token, and a deleted or soft-deleted client\'s token are refused',
+    { methods: ['insertOauthClient', 'insertOauthToken', 'readOauthAccessTokenRows', 'readActiveAccessTokenByHash', 'deleteOAuthClient', 'insertSource'] }, async (engine) => {
+      const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), engine });
+      await engine.insertSource({ id: 'wiki', name: 'wiki', local_path: null, config: {} });
+      const now = Math.floor(Date.now() / 1000);
+      const client = (id: string, extra: Record<string, unknown> = {}) => engine.insertOauthClient({
+        client_id: id, client_name: `Client ${id}`, scope: 'read write', source_id: 'default', federated_read: ['default', 'wiki'], client_id_issued_at: 1_700_000_000,
+        token_ttl: 600, bound_slug_prefixes: ['notes/'], surface: 'full', surface_set_by: 'operator', min_trust: 'tool_observed', ...extra,
+      });
+      await client('oc-valid');
+      await client('oc-gone');
+      await client('oc-soft', { deleted_at: new Date('2026-01-02T03:04:05Z') });
+      await client('oc-wiki', { source_id: null, federated_read: [], scope: 'read' });
+      const token = (hash: string, clientId: string, extra: Record<string, unknown> = {}) => engine.insertOauthToken({
+        token_hash: hashToken(hash), token_type: 'access', client_id: clientId, scopes: ['read', 'write'], expires_at: now + 3600,
+        resource: null, created_at: now, grant_type: 'client_credentials', ...extra,
+      });
+      await token('ot-valid', 'oc-valid');
+      await token('ot-plain', 'oc-valid', { grant_type: undefined, scopes: ['read'], resource: 'https://brain.example/mcp' });
+      await token('ot-narrow', 'oc-wiki', { scopes: ['read', 'admin'] });
+      await token('ot-expired', 'oc-valid', { expires_at: now - 10 });
+      await token('ot-refresh', 'oc-valid', { token_type: 'refresh' });
+      await token('ot-gone', 'oc-gone');
+      await token('ot-soft', 'oc-soft');
+
+      const out: Record<string, unknown> = {};
+      for (const name of ['valid', 'plain', 'narrow', 'expired', 'refresh']) out[name] = await bearer(engine, provider, `ot-${name}`);
+      out.beforeDelete = await bearer(engine, provider, 'ot-gone');
+      out.deleted = await engine.deleteOAuthClient('oc-gone');
+      out.afterDelete = await bearer(engine, provider, 'ot-gone');
+      out.soft = await bearer(engine, provider, 'ot-soft');
+      out.hashNotToken = await bearer(engine, provider, hashToken('ot-valid'));
+      out.reread = await bearer(engine, provider, 'ot-valid');
+      // The rung rows the check reads: the same keys on every arm (a degraded rung drops columns), and none for a bad hash.
+      const rungs: Record<string, unknown> = {};
+      for (const rung of [0, 1, 2, 3, 4] as const) rungs[rung] = Object.keys((await engine.readOauthAccessTokenRows(hashToken('ot-valid'), rung))[0] ?? {}).sort();
+      out.rungKeys = rungs;
+      out.noRow = (await engine.readOauthAccessTokenRows(hashToken('ot-nobody'), 0)).length;
+      // Not vacuous: the valid ones authenticate, the others are refused, on every arm.
+      for (const k of ['valid', 'plain', 'narrow', 'beforeDelete', 'reread']) if ('refused' in (out[k] as object)) throw new Error(`${k} refused: ${JSON.stringify(out[k])}`);
+      for (const k of ['expired', 'refresh', 'afterDelete', 'soft', 'hashNotToken']) if (!('refused' in (out[k] as object))) throw new Error(`${k} authenticated`);
+      return out;
+    });
+
+  parityTest('the expired-credential sweep serve --http runs at startup deletes the expired OAuth tokens of any type and keeps the live ones',
+    { methods: ['insertOauthClient', 'insertOauthToken', 'deleteExpiredOauthCredentials', 'readOauthAccessTokenRows'] }, async (engine) => {
+      const now = Math.floor(Date.now() / 1000);
+      await engine.insertOauthClient({ client_id: 'oc-sweep', client_name: 'Client oc-sweep', scope: 'read', client_id_issued_at: 1_700_000_000 });
+      const token = (name: string, extra: Record<string, unknown>) => engine.insertOauthToken({
+        token_hash: hashToken(name), token_type: 'access', client_id: 'oc-sweep', scopes: ['read'], expires_at: now + 3600,
+        resource: null, created_at: now, grant_type: 'client_credentials', ...extra,
+      });
+      await token('ot-sweep-live', {});
+      await token('ot-sweep-old', { expires_at: now - 10 });
+      await token('ot-sweep-old-refresh', { token_type: 'refresh', expires_at: now - 10 });
+      const swept = await new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), engine }).sweepExpiredTokens();
+      const kept = async (name: string) => (await engine.readOauthAccessTokenRows(hashToken(name), 0)).length;
+      const out = { swept, live: await kept('ot-sweep-live'), again: await engine.deleteExpiredOauthCredentials(now) };
+      // Not vacuous: two expired tokens go, the live one stays, and a second sweep finds nothing.
+      if (out.swept !== 2 || out.live !== 1 || out.again !== 0) throw new Error(`sweep: ${JSON.stringify(out)}`);
+      return out;
+    });
+
+  parityTest('insertOauthToken refuses a repeated token hash (23505) and a client with no row (23503) and leaves no row',
+    { methods: ['insertOauthClient', 'insertOauthToken', 'readOauthAccessTokenRows'] }, async (engine) => {
+      await engine.insertOauthClient({ client_id: 'oc-a', client_name: 'A', scope: 'read' });
+      const now = Math.floor(Date.now() / 1000);
+      const row = (hash: string, clientId: string) => ({ token_hash: hashToken(hash), token_type: 'access' as const, client_id: clientId, scopes: ['read'], expires_at: now + 60, resource: null, created_at: now, grant_type: 'client_credentials' as const });
+      const out: Record<string, unknown> = {};
+      out.first = await refusal(() => engine.insertOauthToken(row('t1', 'oc-a')));
+      out.repeated = await refusal(() => engine.insertOauthToken(row('t1', 'oc-a')));
+      out.noClient = await refusal(() => engine.insertOauthToken(row('t2', 'nobody')));
+      out.repeatedNoClient = await refusal(() => engine.insertOauthToken(row('t1', 'nobody')));
+      out.rows = { t1: (await engine.readOauthAccessTokenRows(hashToken('t1'), 0)).length, t2: (await engine.readOauthAccessTokenRows(hashToken('t2'), 0)).length };
+      return out;
+    });
+
+  parityTest('bearer check stamps last_used_at: null before, set after, unchanged by a second check inside 60 seconds; the unified stamp leaves a row with no source_grant alone',
+    { methods: ['insertAccessToken', 'listAccessTokens', 'readActiveAccessTokenByHash', 'touchAccessTokenLastUsed'] }, async (engine) => {
+      const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), engine });
+      const seen = await insert(engine, 'seen', 'tok-seen');
+      const old = await insert(engine, 'old', 'tok-old', { source_grant: null });
+      const lastUsed = async (id: string) => (await engine.listAccessTokens()).find(r => r.id === id)!.last_used_at;
+      const state = (v: Date | null) => (v ? 'set' : 'null');
+      const settle = async () => { for (let i = 0; i < 100 && !(await lastUsed(seen.id)); i++) await new Promise(r => setTimeout(r, 20)); };
+      const out: Record<string, unknown> = {};
+      out.before = state(await lastUsed(seen.id));
+      out.beforeByHash = state((await engine.readActiveAccessTokenByHash(hashToken('tok-seen'), 'transport'))!.last_used_at as Date | null);
+      await provider.verifyAccessToken('tok-seen');
+      await settle();
+      const first = await lastUsed(seen.id);
+      out.afterFirst = state(first);
+      await provider.verifyAccessToken('tok-seen');
+      await new Promise(r => setTimeout(r, 150));
+      const second = await lastUsed(seen.id);
+      out.afterSecond = state(second);
+      out.unchangedBySecond = first?.getTime() === second?.getTime();
+      out.byHash = state((await engine.readActiveAccessTokenByHash(hashToken('tok-seen'), 'provider'))!.last_used_at as Date | null);
+      out.byHashIsDate = (await engine.readActiveAccessTokenByHash(hashToken('tok-seen'), 'provider'))!.last_used_at instanceof Date;
+      await engine.touchAccessTokenLastUsed(old.id, true);
+      out.unifiedLeavesLegacyShape = state(await lastUsed(old.id));
+      await engine.touchAccessTokenLastUsed(old.id, false);
+      out.legacyStamps = state(await lastUsed(old.id));
+      if (out.afterFirst !== 'set' || out.before !== 'null' || out.unchangedBySecond !== true) throw new Error(`last_used_at: ${JSON.stringify(out)}`);
+      return out;
     });
 });

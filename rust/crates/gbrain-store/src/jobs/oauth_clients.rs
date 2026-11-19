@@ -14,10 +14,11 @@
 //! key. A refusal is `constraint_violation` with the Postgres message (`new row for relation "oauth_clients" violates
 //! check constraint "..."`); the TypeScript member gives it the SQLSTATE and constraint name PGLite and Postgres raise.
 //! Not kept: the `trust_generation_update` trigger, the secondary indexes (a read scans the table) and the
-//! `ON DELETE RESTRICT` of `sources` (deleting a source a client names is not refused here). The store keeps no
-//! `oauth_tokens` and no `oauth_codes`, so the `ON DELETE CASCADE` a client delete runs on Postgres has nothing to
-//! remove here.
+//! `ON DELETE RESTRICT` of `sources` (deleting a source a client names is not refused here). The store keeps the
+//! client's `oauth_tokens` (`oauth_tokens.rs`) and removes them with the client, as the `ON DELETE CASCADE` does; it keeps
+//! no `oauth_codes`, so that cascade has nothing to remove there.
 
+use super::oauth_tokens::delete_client_tokens;
 use super::spend::numeric_fixed;
 use super::*;
 use crate::env::{iso, parse_iso};
@@ -271,6 +272,44 @@ impl ClientRecord {
             "private_facts": self.private_facts,
         })
     }
+}
+
+impl ClientRecord {
+    /// The row as `to_jsonb(c) - 'client_secret_hash'` returns it (the bearer check's `current_grant`): the same columns
+    /// as `to_row`, but the way `to_jsonb` prints them: the cap and the times (`+00:00`, no trailing zeros) as JSON
+    /// numbers and text.
+    pub(super) fn to_grant_json(&self) -> Value {
+        let mut row = self.to_row();
+        let Some(map) = row.as_object_mut() else {
+            return row;
+        };
+        map.remove("client_secret_hash");
+        map.insert(
+            "budget_usd_per_day".into(),
+            self.budget.map_or(Value::Null, |h| json!(h as f64 / 100.0)),
+        );
+        for (name, micros) in [
+            ("deleted_at", self.deleted_at),
+            ("created_at", Some(self.created_at)),
+            ("reads_unscoped", self.reads_unscoped),
+        ] {
+            map.insert(
+                name.into(),
+                micros.map_or(Value::Null, |m| json!(jsonb_time(m))),
+            );
+        }
+        row
+    }
+}
+
+/// A timestamp as `to_jsonb` prints one in a UTC session: `2026-01-02T03:04:05.5+00:00` (the fraction without trailing
+/// zeros, and none when it is zero).
+fn jsonb_time(micros: i64) -> String {
+    let text = iso(micros);
+    let (whole, frac) = text.trim_end_matches('Z').split_at(19);
+    let frac = frac.trim_end_matches('0');
+    let frac = if frac == "." { "" } else { frac };
+    format!("{whole}{frac}+00:00")
 }
 
 pub(super) fn load_client(read: &dyn KvRead, client_id: &str) -> Result<Option<ClientRecord>> {
@@ -613,6 +652,7 @@ impl Store {
                 return Ok(None);
             };
             tx.delete(&client_key(client_id))?;
+            delete_client_tokens(tx, client_id)?;
             Ok(Some((record.client_id, record.client_name)))
         })
     }
@@ -648,6 +688,22 @@ mod tests {
         assert_eq!(budget_text(-50), "-0.50");
         assert_eq!(budget_text(0), "0.00");
         assert_eq!(budget_text(1250), "12.50");
+    }
+
+    #[test]
+    fn a_jsonb_time_has_the_offset_and_no_trailing_zeros() {
+        assert_eq!(
+            jsonb_time(1_800_000_000_000_000),
+            "2027-01-15T08:00:00+00:00"
+        );
+        assert_eq!(
+            jsonb_time(1_800_000_000_500_000),
+            "2027-01-15T08:00:00.5+00:00"
+        );
+        assert_eq!(
+            jsonb_time(1_800_000_000_000_001),
+            "2027-01-15T08:00:00.000001+00:00"
+        );
     }
 
     #[test]

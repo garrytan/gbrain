@@ -9,12 +9,13 @@
 //! - `m 0x2B id -> TokenRecord`: one token row, keyed by its generated UUID.
 //!
 //! Kept: the columns those members read or write (id, name, token_hash, scopes, permissions, the five grant
-//! columns, grant_revision, min_trust, revoked_at, created_at) and the table's constraints on them: the unique
+//! columns, grant_revision, min_trust, revoked_at, created_at, last_used_at) and the table's constraints on them: the unique
 //! `token_hash` (`access_tokens_token_hash_key`, found by scanning the table, as the secondary indexes are not kept), the
 //! `source_grant` list and the `min_trust` list. A refusal is `constraint_violation` with the Postgres message.
-//! Not kept: `last_used_at`, the member, attest and private columns, and the `trust_generation_update` trigger: a listed
-//! row reads them as the table's defaults (`last_used_at` and `member_id` NULL, `private_pages` and `private_facts`
-//! `'none'`). No member returns `token_hash`. Setting
+//! Not kept: the member, attest and private columns, and the `trust_generation_update` trigger: a listed
+//! row reads them as the table's defaults (`member_id` NULL, `private_pages` and `private_facts`
+//! `'none'`). `last_used_at` is stamped by the bearer check (`touch_access_token_last_used`) and NULL before. No member
+//! returns `token_hash`. Setting
 //! the floor of an id no token has changes nothing (Postgres also refuses an id that is not a UUID with 22P02; the
 //! caller here always passes the id `findActiveAccessTokens` returned).
 
@@ -57,6 +58,9 @@ struct TokenRecord {
     min_trust: Option<String>,
     revoked_at: Option<i64>,
     created_at: i64,
+    /// Stamped by the bearer check, at most once a minute; a record written before the field existed reads NULL.
+    #[serde(default)]
+    last_used_at: Option<i64>,
 }
 
 fn refuse_check(constraint: &str) -> StoreError {
@@ -160,6 +164,7 @@ impl Store {
                 min_trust: row.min_trust.clone(),
                 revoked_at,
                 created_at: self.env.now_micros(),
+                last_used_at: None,
             };
             record.check()?;
             if all_tokens(&*tx)?
@@ -215,7 +220,7 @@ impl TokenRecord {
             "name": self.name,
             "scopes": self.scopes,
             "created_at": iso(self.created_at),
-            "last_used_at": Value::Null,
+            "last_used_at": self.last_used_at.map(iso),
             "revoked_at": self.revoked_at.map(iso),
             "private_pages": "none",
             "private_facts": "none",
@@ -260,7 +265,7 @@ impl Store {
             .map(|t| {
                 json!({
                     "id": t.id, "name": t.name, "scopes": t.scopes, "created_at": iso(t.created_at),
-                    "last_used_at": Value::Null, "revoked_at": Value::Null, "permissions": t.permissions,
+                    "last_used_at": t.last_used_at.map(iso), "revoked_at": Value::Null, "permissions": t.permissions,
                     "source_grant": t.source_grant, "source_id": t.source_id, "federated_read": t.federated_read,
                     "allowed_operations": t.allowed_operations, "takes_holders": t.takes_holders,
                     "grant_revision": t.grant_revision, "min_trust": t.min_trust, "private_pages": "none",
@@ -269,6 +274,29 @@ impl Store {
                     "reads_unscoped": Value::Null, "private_facts": "none",
                 })
             }))
+    }
+
+    /// `touchAccessTokenLastUsed(id, unified)`: stamps the token's `last_used_at` with the store clock, once per token per
+    /// 60 seconds (`last_used_at IS NULL OR last_used_at < now() - interval '60 seconds'`), in one write. `unified` is
+    /// the statement that only touches a row whose `source_grant` is not NULL: a row still on the legacy shape is left
+    /// to its first-read conversion. A token no row has, or a revoked one, is stamped the same as the statement does
+    /// (it has no revoked filter); nothing changes for an id no token has.
+    pub fn touch_access_token_last_used(&self, id: &str, unified: bool) -> Result<()> {
+        let id = id.to_ascii_lowercase();
+        self.write(|tx| {
+            let Some(mut t) = get_json::<TokenRecord>(&*tx, &token_key(&id))? else {
+                return Ok(());
+            };
+            if unified && t.source_grant.is_none() {
+                return Ok(());
+            }
+            let now = self.env.now_micros();
+            if t.last_used_at.is_some_and(|last| last >= now - 60_000_000) {
+                return Ok(());
+            }
+            t.last_used_at = Some(now);
+            put_json(tx, &token_key(&id), &t)
+        })
     }
 
     /// `accessTokenLive(id)`: whether a token not revoked has this id, compared as text (`id::text = $1`).

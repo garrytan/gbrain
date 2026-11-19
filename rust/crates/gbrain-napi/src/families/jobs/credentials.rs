@@ -1,13 +1,14 @@
 //! Jobs: the credential members of `src/core/engine-sql/access-credentials.ts` over `access_tokens` and
 //! `oauth_clients` (the token list and revokes, the client delete, the liveness checks, the token lifetime write)
-//! (rust/docs/store/access-tokens.md, rust/docs/store/oauth-clients.md).
+//! and the OAuth token insert and bearer read (rust/docs/store/access-tokens.md, oauth-clients.md, oauth-tokens.md).
 
+use gbrain_store::jobs::OauthTokenInsert;
 use napi::Env;
 use napi::bindgen_prelude::Object;
 use napi_derive::napi;
-use serde_json::json;
+use serde_json::{Value, json};
 
-use crate::store_binding::Brain;
+use crate::store_binding::{Brain, required};
 
 #[napi]
 impl Brain {
@@ -99,5 +100,52 @@ impl Brain {
         ttl: i32,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.set_oauth_client_token_ttl(&client_id, ttl))
+    }
+
+    /// `insertOauthToken(row)`: null.
+    #[napi]
+    pub fn insert_oauth_token<'env>(
+        &self,
+        env: &'env Env,
+        row: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let row: OauthTokenInsert = required(row, "insertOauthToken row")?;
+            s.insert_oauth_token(&row)
+        })
+    }
+
+    /// `readOauthAccessTokenRows(hash, rung)`: `[row]` of the bearer check's OAuth token read, or `[]`.
+    #[napi]
+    pub fn read_oauth_access_token_rows<'env>(
+        &self,
+        env: &'env Env,
+        hash: String,
+        rung: u32,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_oauth_access_token_rows(&hash, u8::try_from(rung).unwrap_or(u8::MAX))
+        })
+    }
+
+    /// `touchAccessTokenLastUsed(id, unified)`: null.
+    #[napi]
+    pub fn touch_access_token_last_used<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+        unified: bool,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.touch_access_token_last_used(&id, unified))
+    }
+
+    /// `delete_expired_oauth_tokens(now)`: how many tokens with `expires_at` before `now` (epoch seconds) it deleted.
+    #[napi]
+    pub fn delete_expired_oauth_tokens<'env>(
+        &self,
+        env: &'env Env,
+        now: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.delete_expired_oauth_tokens(now))
     }
 }

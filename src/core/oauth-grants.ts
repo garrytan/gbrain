@@ -5,6 +5,7 @@ import type { AuthorizationParams } from '@modelcontextprotocol/sdk/server/auth/
 import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { InvalidClientError, InvalidGrantError, InvalidRequestError, InvalidTargetError, ServerError, TooManyRequestsError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import type { SqlQuery } from './sql-query.ts';
+import { oauthPgArray } from './engine-sql/access-credentials.ts';
 import { generateToken, hashToken } from './utils.ts';
 import { hasScope, parseScopeString } from './scope.ts';
 import { TOKEN_TTL_MAX_SECONDS, intersectGrantedScopes } from './grants/model.ts';
@@ -14,9 +15,7 @@ import { clientHoldsAuthorization, GrantError, recordFirstConsentInTransaction }
 
 export type OAuthTransaction = <T>(fn: (sql: SqlQuery) => Promise<T>) => Promise<T>;
 type ClientRow = Record<string, unknown>;
-export function oauthPgArray(values: string[]): string {
-  return `{${values.map(s => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`).join(',')}}`;
-}
+export { oauthPgArray };
 
 function assertActive(row: ClientRow | undefined): asserts row is ClientRow {
   if (!row || row.deleted_at != null) throw new InvalidClientError('Invalid client or client has been revoked');

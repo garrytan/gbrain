@@ -384,3 +384,40 @@ export async function deleteExpiredOauthCredentials(tx: Raw, nowEpochSeconds: nu
   const codes = await tx.executeRaw(OAUTH_SWEEP_SQL.codes, [nowEpochSeconds]);
   return tokens.length + codes.length;
 }
+
+/** A TEXT[] literal of the values, as `OAuthGrants.issue` binds `scopes` (a text parameter the column's type reads as an array). */
+export function oauthPgArray(values: readonly string[]): string {
+  return `{${values.map(s => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`).join(',')}}`;
+}
+
+/**
+ * The two INSERTs of `OAuthGrants.issue` (oauth-grants.ts), byte for byte as the SqlQuery tag sent them at afc2094edd:
+ * `grant` writes `grant_type` (a schema with the v286 column), `plain` does not. `created_at` is `to_timestamp($7)` of epoch seconds.
+ */
+export const OAUTH_TOKEN_SQL = {
+  insert_grant: `INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource, created_at, grant_type)
+          VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7), $8)`,
+  insert_plain: `INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource, created_at)
+          VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7))`,
+} as const;
+
+/** One `oauth_tokens` row as `OAuthGrants.issue` writes it. `grant_type` left out is the INSERT for a schema without that column. */
+export interface OauthTokenInsert {
+  token_hash: string;
+  token_type: 'access' | 'refresh';
+  client_id: string;
+  scopes: readonly string[];
+  /** Epoch seconds. */
+  expires_at: number;
+  resource: string | null;
+  /** Epoch seconds (the issue time, `to_timestamp`). */
+  created_at: number;
+  grant_type?: 'authorization_code' | 'refresh_token' | 'client_credentials';
+}
+
+/** Insert one OAuth token. A repeated hash is 23505 (`oauth_tokens_pkey`), a client with no row 23503 (`oauth_tokens_client_id_fkey`). */
+export async function insertOauthToken(tx: Raw, row: OauthTokenInsert): Promise<void> {
+  const common = [row.token_hash, row.token_type, row.client_id, oauthPgArray(row.scopes), row.expires_at, row.resource, row.created_at];
+  if (row.grant_type === undefined) await tx.executeRaw(OAUTH_TOKEN_SQL.insert_plain, common);
+  else await tx.executeRaw(OAUTH_TOKEN_SQL.insert_grant, [...common, row.grant_type]);
+}

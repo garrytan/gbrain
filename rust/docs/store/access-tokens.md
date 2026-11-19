@@ -19,7 +19,7 @@ same members. No store call returns a token hash, and the store never logs one. 
 | `brain.accessTokenLive(id)` | whether a token not revoked has this id, compared as text (`id::text = $1`) |
 | `brain.revokeAccessTokensNamed(name)` | the ids it revoked, by id: stamps `revoked_at` on every token not revoked with exactly this name, in one write |
 | `brain.revokeAccessToken(id)` | the name of the token not revoked with this id after stamping its `revoked_at`, or null |
-| `brain.readActiveAccessTokenByHash(hash)` | the whole row (`SELECT *`) of the token not revoked with this hash, or null: the kept columns, `created_at` as ISO text, and the table defaults for the rest (`last_used_at`, the member and attest columns and `reads_unscoped` null, `private_pages` and `private_facts` `none`). It leaves out `token_hash`; the TypeScript member adds back the hash the caller passed and makes `created_at` a Date, as PGLite and PostgreSQL return them |
+| `brain.readActiveAccessTokenByHash(hash)` | the whole row (`SELECT *`) of the token not revoked with this hash, or null: the kept columns, `created_at` as ISO text, and `last_used_at` as ISO text (null until a check stamps it), and the table defaults for the rest (the member and attest columns and `reads_unscoped` null, `private_pages` and `private_facts` `none`). It leaves out `token_hash`; the TypeScript member adds back the hash the caller passed and makes `created_at` a Date, as PGLite and PostgreSQL return them |
 
 ## Callers
 
@@ -35,8 +35,8 @@ the token's wake watches. `readActiveTokenPrivatePages` and `readActiveTokenPerm
 `accessTokenLive`. The bearer check `serve --http` runs (`verifyAccessToken` in `src/core/oauth-provider.ts`, given the
 engine by `src/commands/serve-http.ts`) and `validateToken` in `src/mcp/http-transport.ts` call
 `readActiveAccessTokenByHash` and `touchAccessTokenLastUsed`; the OAuth token read before it
-(`readOauthAccessTokenRows`) finds nothing here, because the store keeps no OAuth tokens, and `touchAccessTokenLastUsed`
-writes nothing, because `last_used_at` is not kept.
+(`readOauthAccessTokenRows`) reads the OAuth tokens the store keeps ([oauth-tokens.md](oauth-tokens.md)), and
+`touchAccessTokenLastUsed` stamps `last_used_at` (below).
 
 ## Constraints
 
@@ -52,13 +52,18 @@ and constraint name a caller reads on PGLite and PostgreSQL.
 
 A refused write leaves the row as it was (no row on an insert).
 
+`brain.touchAccessTokenLastUsed(id, unified)` stamps `last_used_at` with the store clock, at most once a minute: it skips a
+token stamped in the last 60 seconds, a token that is not there, and (when `unified` is true) a token with no `source_grant`,
+which is the legacy-shape row `resolveTokenGrant` converts first. With `unified` false it stamps any row. The id is
+compared lower-cased. A caller does not wait for it (`touchTokenLastUsed` ignores the result).
+
 Keys: `m 0x2B id -> record` (the kept columns as JSON; times in microseconds). The unique token hash is checked by scanning
 the table.
 
 Differences from PGLite and PostgreSQL:
 
 - `private_pages` reads as `none` for every token: a token minted with private pages loses that grant here.
-- Not kept: `last_used_at`, the member, attest and private columns, the `private_*` checks, the `trust_generation_update`
+- Not kept: the member, attest and private columns, the `private_*` checks, the `trust_generation_update`
   trigger and the secondary indexes.
 - `setAccessTokenMinTrust` with an id that is not a UUID changes nothing here; Postgres refuses it (22P02). The callers
   pass the id `findActiveAccessTokens` returned.

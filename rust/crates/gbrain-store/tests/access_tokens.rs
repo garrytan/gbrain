@@ -248,3 +248,63 @@ fn the_bearer_read_finds_the_active_token_by_hash_without_the_hash_and_not_after
             .is_some()
     );
 }
+
+const MINUTE_US: i64 = 60_000_000;
+
+#[test]
+fn the_last_use_stamp_is_null_until_a_check_and_waits_a_minute_before_it_moves() {
+    let b = brain("tokens-last-used");
+    let id = insert(&b, token("seen", "hash-s", json!({}))).unwrap();
+    let last = |b: &Brain| {
+        let row = b
+            .read_active_access_token_by_hash("hash-s")
+            .unwrap()
+            .unwrap();
+        let listed = b.list_access_tokens().unwrap();
+        assert_eq!(
+            listed[0]["last_used_at"], row["last_used_at"],
+            "the list and the bearer read agree"
+        );
+        row["last_used_at"].clone()
+    };
+    assert_eq!(last(&b), Value::Null);
+    b.touch_access_token_last_used(&id, true).unwrap();
+    let first = last(&b);
+    assert_eq!(first, json!(gbrain_store::env::iso(memory_env::T0)));
+    b.clock.advance(MINUTE_US - 1);
+    b.touch_access_token_last_used(&id, true).unwrap();
+    assert_eq!(last(&b), first, "inside 60 seconds nothing changes");
+    b.clock.advance(1);
+    b.touch_access_token_last_used(&id, true).unwrap();
+    assert_eq!(
+        last(&b),
+        first,
+        "exactly 60 seconds is not older than now() - 60 s"
+    );
+    b.clock.advance(1);
+    b.touch_access_token_last_used(&id, true).unwrap();
+    assert_eq!(
+        last(&b),
+        json!(gbrain_store::env::iso(memory_env::T0 + MINUTE_US + 1))
+    );
+}
+
+#[test]
+fn the_unified_stamp_leaves_a_row_with_no_source_grant_and_the_legacy_stamp_does_not() {
+    let b = brain("tokens-last-used-unified");
+    let id = insert(&b, token("old", "hash-o", json!({ "source_grant": null }))).unwrap();
+    b.touch_access_token_last_used(&id, true).unwrap();
+    let row = b
+        .read_active_access_token_by_hash("hash-o")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row["last_used_at"], Value::Null);
+    b.touch_access_token_last_used(&id, false).unwrap();
+    let row = b
+        .read_active_access_token_by_hash("hash-o")
+        .unwrap()
+        .unwrap();
+    assert!(row["last_used_at"].is_string());
+    b.touch_access_token_last_used("00000000-0000-0000-0000-00000000dead", true)
+        .unwrap();
+}

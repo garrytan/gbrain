@@ -24,6 +24,9 @@ import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { markedScopeSources } from '../src/core/access/attest-sources.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { touchTokenLastUsed } from '../src/core/grants/legacy-token.ts';
+import { OAuthGrants } from '../src/core/oauth-grants.ts';
+import { OAUTH_TOKEN_SQL } from '../src/core/engine-sql/access-credentials.ts';
+import { hashToken } from '../src/core/utils.ts';
 
 interface Pin {
   /** The caller site the statement came from, at 7470c703ed unless it names another commit. */
@@ -799,4 +802,37 @@ describe('the expired-credential sweep sends the same statements through an engi
     expect({ ...member, sent: member.sent.map(s => ({ ...s, params: s.params.map(() => 'now') })) })
       .toEqual({ ...template, sent: template.sent.map(s => ({ ...s, params: s.params.map(() => 'now') })) });
   });
+});
+
+describe('insertOauthToken sends what OAuthGrants.issue sends', () => {
+  // The drift pin: issue() stays on the grant transaction's SqlQuery (it runs under the client row lock, so an engine
+  // write on another connection would wait on the foreign key and deadlock), so the member's constant text and
+  // parameter order must keep matching the templates it was captured from. The refresh token is the second INSERT.
+  const NOW = 1_700_000_000_000;
+  const CLIENT = { client_id: 'pin-oauth', client_name: 'pin', grant_types: ['client_credentials'], scope: 'read write', client_secret_hash: hashToken('secret'),
+    client_secret_expires_at: 0, deleted_at: null };
+  for (const marked of [true, false]) {
+    test(marked ? 'a schema with grant_type' : 'a schema without grant_type', async () => {
+      const client = marked ? { ...CLIENT, attest_actor: false } : CLIENT;
+      const capture = await withPinnedSqlEnvironment(undefined, () => runCase({
+        method: 'issue', variant: marked ? 'grant' : 'plain',
+        rows: [[/FROM oauth_clients WHERE client_id = \$1 FOR UPDATE/, [client]]],
+        run: async e => {
+          const grants = new OAuthGrants({ sql: sqlQueryForEngine(e), transaction: fn => fn(sqlQueryForEngine(e)) as never, tokenTtl: 3600, refreshTtl: 86400, now: () => NOW });
+          await grants.clientCredentials('pin-oauth', 'secret');
+        },
+      }));
+      expect(capture.error).toBeUndefined();
+      const template = capture.trace.flatMap(t => (t.kind === 'query' && /INSERT INTO oauth_tokens/.test(t.text) ? [{ text: t.text, params: t.params as unknown[] }] : []));
+      expect(template.length).toBe(1);
+      expect(template[0].text).toBe(marked ? OAUTH_TOKEN_SQL.insert_grant : OAUTH_TOKEN_SQL.insert_plain);
+      const [hash, type, clientId, scopes, expiresAt, resource, created, grantType] = template[0].params;
+      expect([type, clientId, scopes, expiresAt, resource, created, grantType]).toEqual(['access', 'pin-oauth', '{"read","write"}', NOW / 1000 + 3600, null, NOW / 1000, ...(marked ? ['client_credentials'] : [])]);
+      const row = { token_hash: hash as string, token_type: 'access' as const, client_id: 'pin-oauth', scopes: ['read', 'write'], expires_at: expiresAt as number, resource: null, created_at: created as number,
+        ...(marked ? { grant_type: 'client_credentials' as const } : {}) };
+      const member = await withPinnedSqlEnvironment(undefined, () => runCase({ method: 'insertOauthToken', variant: marked ? 'grant' : 'plain', run: e => e.insertOauthToken(row) }));
+      expect(member.error).toBeUndefined();
+      expect(member.trace.flatMap(t => (t.kind === 'query' ? [{ text: t.text, params: t.params }] : []))).toEqual(template);
+    });
+  }
 });
