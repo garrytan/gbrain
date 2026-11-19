@@ -368,7 +368,7 @@ src/core/db.ts	driver_call	2
 src/core/db.ts	sql_template	4
 src/core/derived-links.ts	execute_raw	10
 src/core/destructive-guard.ts	execute_raw	17
-src/core/eligibility/activation.ts	execute_raw	2
+src/core/eligibility/activation.ts	execute_raw	1
 src/core/eligibility/explain.ts	execute_raw	3
 src/core/eligibility/scan.ts	execute_raw	4
 src/core/eligibility/stamp.ts	execute_raw	1
@@ -978,7 +978,7 @@ src/core/search/relational-recall.ts	execute_raw	3
 src/core/search/safe-chunks.ts	execute_raw	2
 src/core/search/saved-facts-match.ts	execute_raw	1
 src/core/search/slot-history.ts	execute_raw	1	GBRA-574 F #9674 (opened before this ratchet): the readable-page lookup that maps a bare name tag to the page later written at <dir>/<tag>
-src/core/search/transcript-quote.ts	execute_raw	3
+src/core/search/transcript-quote.ts	execute_raw	1
 src/core/search/two-pass.ts	execute_raw	5
 src/core/serve-sync-runner.ts	execute_raw	1
 src/core/session-lane.ts	execute_raw	3

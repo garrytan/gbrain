@@ -404,6 +404,8 @@ export const RUST_ENGINE_MEMBERS = {
   readFactForOwnerAction: 'facts',
   listStandingPreferences: 'facts',
   listLexicalContestCandidates: 'facts',
+  listFactsFromQuotedPages: 'facts',
+  listOwnerTierFacts: 'facts',
   listRestatedPrivateCopies: 'facts',
   countDerivedFactTaint: 'facts',
 

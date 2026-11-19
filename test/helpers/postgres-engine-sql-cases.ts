@@ -159,6 +159,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'listFreshExtractionOutcomes': OOS.factsCycle,
   'listHeldFenceFactRows': OOS.factsPurge,
   'listLexicalContestCandidates': OOS.factsTrust,
+  'listFactsFromQuotedPages': OOS.factsTrust,
+  'listOwnerTierFacts': OOS.factsTrust,
   'listOutsideContentFenceCounts': OOS.factsDoctor,
   'listRelinkCandidateRows': OOS.factsPurge,
   'listRestatedPrivateCopies': OOS.factsTrust,

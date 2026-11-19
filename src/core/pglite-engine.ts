@@ -1572,6 +1572,8 @@ export class PGLiteEngine implements BrainEngine {
   readFactForOwnerAction(id: number) { return factsTrustImpl.readFactForOwnerAction(this.rawRead, id); }
   listStandingPreferences(opts: { sourceId?: string; since?: Date }) { return factsTrustImpl.listStandingPreferences(this.rawRead, opts); }
   listLexicalContestCandidates(opts: Parameters<typeof factsTrustImpl.listLexicalContestCandidates>[1]) { return factsTrustImpl.listLexicalContestCandidates(this.rawRead, opts); }
+  listFactsFromQuotedPages(opts: Parameters<typeof factsTrustImpl.listFactsFromQuotedPages>[1]) { return factsTrustImpl.listFactsFromQuotedPages(this.rawRead, opts); }
+  listOwnerTierFacts(opts: Parameters<typeof factsTrustImpl.listOwnerTierFacts>[1]) { return factsTrustImpl.listOwnerTierFacts(this.rawRead, opts); }
   listRestatedPrivateCopies(opts: Parameters<typeof factsTrustImpl.listRestatedPrivateCopies>[1]) { return factsTrustImpl.listRestatedPrivateCopies(this.rawRead, opts); }
   countDerivedFactTaint() { return factsTrustImpl.countDerivedFactTaint(this.rawRead); }
 

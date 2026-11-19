@@ -3329,6 +3329,10 @@ export interface BrainEngine {
   listStandingPreferences(opts: { sourceId?: string; since?: Date }): Promise<FactsTrustSql.StandingPreferenceRow[]>;
   /** Active facts about the entity, kind and visibility that are more trusted than the writer: the keyless conflict slot's candidates. */
   listLexicalContestCandidates(opts: { sourceId: string; entitySlug: string; kind: string; visibility: string; pageSlug?: string; writer: import('./trust/tier.ts').TrustTier }): Promise<Array<{ id: number; fact: string; trust_tier: string }>>;
+  /** Of `ids`, the facts held on, derived from, or saved by a backstop naming a page of one of `pageTypes` (search/transcript-quote.ts). */
+  listFactsFromQuotedPages(opts: Parameters<typeof FactsTrustSql.listFactsFromQuotedPages>[1]): Promise<number[]>;
+  /** Of `ids`, the facts whose stored tier ranks at or above `floor`. */
+  listOwnerTierFacts(opts: { ids: readonly number[]; floor: import('./trust/tier.ts').TrustTier }): Promise<number[]>;
   /** The active non-world copy of a claim that a world write would restate, more trusted than the writer, when no active world copy exists. */
   listRestatedPrivateCopies(opts: { sourceId: string; claim: string; entity: string | null; writer: import('./trust/tier.ts').TrustTier }): Promise<Array<{ id: number; visibility: string; trust_tier: string }>>;
   /** How many facts carry taint inputs in their write origin, and how many of those are external_untrusted. */
