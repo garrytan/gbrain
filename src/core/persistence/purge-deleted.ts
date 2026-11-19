@@ -21,6 +21,18 @@ import { writerOnboardingPreflight } from './onboarding.ts';
 import { clearPurgePark, isParked, notePurgeSourceWriter, PURGE_PARK_LIMIT, purgeParkKey, prunePurgeParks, readPurgeParks, recordPurgeFailure, type PurgePark } from './purge-parks.ts';
 import { ItemRun, type ItemFailure } from '../item-failure.ts';
 import { readUnreviewedSyncTombstones, syncDeleteHeld } from './sync-delete-tombstones.ts';
+
+/**
+ * #9653: concept tombstones the automatic purges keep, whatever their age: a concept hidden only because one of its
+ * inputs was purged, whose needs_rederive mark is still open (hideDerivedRows keeps `marked_at` equal to the
+ * `deleted_at` it set). A concept a person or a sync deleted has no such mark and expires on time; the consented and
+ * explicit purges remove a kept one.
+ */
+async function readRederiveHeldConcepts(engine: Pick<BrainEngine, 'executeRaw'>): Promise<number[]> {
+  const rows = await engine.executeRaw<{ id: number | string }>(`SELECT p.id FROM pages p WHERE p.deleted_at IS NOT NULL AND p.type = 'concept'
+    AND EXISTS (SELECT 1 FROM needs_rederive n WHERE n.derived_table = 'pages' AND n.derived_id = p.id::text AND n.marked_at = p.deleted_at)`);
+  return rows.map(row => Number(row.id));
+}
 import { scrubPurgedSlugs } from '../feedback/store.ts';
 import { scrubPurgedNameStores } from './purge-name-stores.ts';
 import { scrubPurgedSlugHolds, scrubPurgedSlugStores } from './purge-slug-stores.ts';
@@ -253,7 +265,7 @@ export async function selectPurgeCandidates(engine: BrainEngine, olderThanHours:
     const skipped = new Set(opts.retryParked ? [] : parked.map(row => row.id));
     const unreviewed = (await readUnreviewedSyncTombstones(engine, olderThanHours)).filter(row => !skipped.has(row.id));
     const kept = opts.automatic ? unreviewed : [];
-    const excludeIds = [...skipped, ...kept.map(row => row.id), ...hold];
+    const excludeIds = [...skipped, ...kept.map(row => row.id), ...hold, ...opts.automatic ? await readRederiveHeldConcepts(engine) : []];
     const preview = await engine.purgeDeletedPages(olderThanHours, { dryRun: true, excludeIds });
     // The engine's preview keeps every parked origin; the ones the run frees are read here under the purge's other holds.
     const released = release.length ? (await engine.executeRaw<{ slug: string; source_id: string; deleted_at: Date | string }>(`SELECT p.slug, p.source_id, p.deleted_at FROM pages p
@@ -279,6 +291,7 @@ export async function selectPurgeCandidates(engine: BrainEngine, olderThanHours:
   if (rows.length) for (const source of (await writerOnboardingPreflight(engine)).sources) states.set(source.source_id, source);
   const parks = rows.length ? await readPurgeParks(engine) : new Map<string, PurgePark>();
   const unreviewed = new Set(rows.length ? (await readUnreviewedSyncTombstones(engine, hours)).map(row => row.id) : []);
+  const rederive = new Set(rows.length && opts.automatic ? await readRederiveHeldConcepts(engine) : []);
   const selection: PurgeSelection = { managed: true, count: 0, slugs: [], candidates: [], blocked: [], parked: [], inactive: 0, held: 0, sync_unreviewed: 0, writers: {}, released_origins: [] };
   for (const { id, ...row } of rows) {
     const writer = states.get(row.source_id);
@@ -290,6 +303,7 @@ export async function selectPurgeCandidates(engine: BrainEngine, olderThanHours:
         reason: `Source ${row.source_id}'s writer is ${writer!.state}${writer!.physical_error ? ` (${writer!.physical_error})` : ''}, so the purge submitted nothing; it resumes once gbrain sources writer status --source ${row.source_id} shows the writer ready.` });
       continue;
     }
+    if (rederive.has(Number(id))) continue;
     const syncUnreviewed = unreviewed.has(Number(id));
     if (syncUnreviewed && opts.automatic) {
       selection.held++;
@@ -429,8 +443,9 @@ async function purgeExpired(engine: BrainEngine, olderThanHours: number, opts: {
     const kept = opts.automatic ? await readUnreviewedSyncTombstones(engine, olderThanHours) : [];
     // GST-2766: a page an owner purge is owed for is left out of both expiries and purged as that purge, tombstones included.
     const owed = [...opts.owed ?? []].filter(id => !kept.some(row => row.id === id));
-    const recorded = await expireRecordedTombstones(engine, olderThanHours, opts.retryParked === true, new Set([...kept.map(row => row.id), ...owed]), opts.only);
-    const exclude = [...recorded.exclude, ...kept.map(row => row.id), ...owed];
+    const rederive = opts.automatic ? await readRederiveHeldConcepts(engine) : [];
+    const recorded = await expireRecordedTombstones(engine, olderThanHours, opts.retryParked === true, new Set([...kept.map(row => row.id), ...owed, ...rederive]), opts.only);
+    const exclude = [...recorded.exclude, ...kept.map(row => row.id), ...owed, ...rederive];
     const reparked = [...recorded.reparked];
     const result = await maintenanceTransaction(engine, async tx => {
       const unlisted = opts.only ? (await tx.executeRaw<{ id: number; source_id: string; slug: string }>(
