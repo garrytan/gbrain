@@ -177,9 +177,9 @@ async function refusal(run: () => Promise<unknown>): Promise<unknown> {
 }
 
 describe('engine parity: shared-skill membership', () => {
-  parityTest('the catalog identity is the brain id, a 64-hex token secret and the serving epoch; an empty brain has no heads and no stored policy', {
+  parityTest('the catalog identity is the brain id, a 64-hex token secret and the serving epoch; an empty brain has no heads and no stored policy, and a written policy reads back', {
     methods: ['readSharedSkillCatalogIdentity', 'readPersistenceBrainId', 'readSharedSkillServingEpoch', 'lockSharedSkillBrainId', 'listSharedSkillCatalogHeads',
-      'readSharedSkillPolicyRow', 'readSourceMembership', 'transaction'],
+      'readSharedSkillPolicyRow', 'writeSharedSkillPolicy', 'readSourceMembership', 'transaction'],
   }, async (engine, backend) => {
     await installSingletons(engine, backend);
     const first = await engine.readSharedSkillCatalogIdentity();
@@ -197,7 +197,13 @@ describe('engine parity: shared-skill membership', () => {
       locked: await engine.transaction(tx => tx.readSharedSkillPolicyRow('default', incarnation, true)) ?? null,
     };
     expect(result).toEqual({ brain: true, secret: true, epoch: true, stable: true, heads: [], policy: null, locked: null });
-    return result;
+    // A policy the engine writes is the row it then reads back, on every arm.
+    const written = { version: 1, enabled: true, classes: ['prose'], audiences: ['readers'], requirements: [], allow_follow: true };
+    await engine.transaction(tx => tx.writeSharedSkillPolicy({ sourceId: 'default', incarnation, epoch: 'f0000000-0000-4000-8000-0000000000e1', policy: written,
+      principalKind: 'local_cli', principalId: 'parity', previousEpoch: 'consent-required' }));
+    const stored = await engine.readSharedSkillPolicyRow('default', incarnation, false) ?? null;
+    expect(stored).toEqual({ epoch: 'f0000000-0000-4000-8000-0000000000e1', policy: written });
+    return { ...result, stored };
   });
 
   parityTest('the follow sources are the live sources in both lists, by id; an archived source never binds', {
