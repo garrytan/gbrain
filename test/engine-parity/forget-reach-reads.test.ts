@@ -15,6 +15,9 @@
  *    for a remote caller, one that would reach a copy it cannot see; an engine that drops a clause withdraws facts the
  *    caller never named, or refuses a forget nothing else shares.
  *  - Why existing coverage misses it: the reads were raw SQL inside forget-prepare.ts, so no engine arm ran them.
+ *  - Owner-only sources: the last describe adds a source of kind imessage and one with owner_only set, then reads the
+ *    floor reads with no schema version in context (the closed form: a non-owner reads no fact while any source is
+ *    owner-only) and at schema 320 (the fn form: only the facts of an owner-only source are hidden).
  *  - Seam: none. Sources come from the harness fixture, rows from typed members. Ids differ between arms, so facts are
  *    named by their text and an answered id is compared only as the name it maps to.
  */
@@ -23,6 +26,9 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -177,5 +183,71 @@ describe('engine parity: forget reach reads', () => {
       expect(out['on member page']).toBe(false);
       expect(out['on scope page']).toBe(false);
       return out;
+    });
+});
+
+/** The schema-320 form of the owner-only rule ('fn'): the read runs in an engine scope that records the latest schema version. */
+async function underFnForm<T>(engine: BrainEngine, read: () => Promise<T>): Promise<T> {
+  noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+  try {
+    return await withEngineScope(engine, read);
+  } finally {
+    noteSchemaVersion(engine, Number.NaN);
+  }
+}
+
+describe('engine parity: owner-only sources on the forget floor reads', () => {
+  parityTest('the remote floor of readRemoteForgetTier, readForgetTarget, readLinkedFactCopies and hasHiddenFactCopy hides every fact while a source is owner-only (closed form) and only owner-only facts at schema 320 (fn form)',
+    { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'insertFacts', 'readRemoteForgetTier', 'readForgetTarget', 'readLinkedFactCopies', 'hasHiddenFactCopy'] },
+    async (engine, backend) => {
+      await engine.putPage('notes/open', note('Open'));
+      const rows: Array<{ name: string; fact: string; entity: string | null; page: string | null; sourceId?: string }> = [
+        { name: 'x-unlinked', fact: 'Xena flies kites', entity: null, page: 'notes/open' },
+        { name: 'x-e', fact: 'Xena flies kites', entity: 'people/e-example', page: 'notes/open' },
+        { name: 'x-no-page', fact: 'Xena flies kites', entity: 'people/f-example', page: null },
+      ];
+      const ids = new Map<string, number>();
+      for (const [i, r] of rows.entries()) ids.set(r.name, await insert(engine, r, i + 1));
+      const nameOf = (id: unknown) => [...ids].find(([, v]) => v === Number(id))?.[0] ?? 'unknown';
+      const refs = (): Array<[name: string, sourceId: string]> => [...ids.keys()].map(name => [name, name.startsWith('v-') ? 'vault' : 'default']);
+      const read = async () => {
+        const out: Record<string, unknown> = {};
+        for (const [name, sourceId] of refs()) {
+          const id = ids.get(name)!;
+          const target = await engine.readForgetTarget({ id, sourceId, worldOnly: true, remoteFloor: true, lock: false, ownPage: null });
+          out[name] = {
+            tier: await engine.readRemoteForgetTier({ factId: id, sourceId, remoteFloor: true }),
+            target: target ? nameOf(target.id) : null,
+            linked: (await engine.readLinkedFactCopies({ id, sourceId, worldOnly: true, remoteFloor: true })).map(r => nameOf(r.id)),
+            hidden: await engine.hasHiddenFactCopy({ id, sourceId }),
+          };
+        }
+        return out;
+      };
+      const open = (name: string, linked: string[]) => ({ tier: 'operator_curated', target: name, linked, hidden: false });
+
+      // Before an owner-only source exists every fact reads: the case is not vacuous.
+      const before = await read();
+      const kept = { 'x-unlinked': open('x-unlinked', ['x-e', 'x-no-page']), 'x-e': open('x-e', ['x-no-page']), 'x-no-page': open('x-no-page', ['x-e']) };
+      expect(before).toEqual(kept);
+
+      await createSource(engine, backend, 'chat', { kind: 'imessage' });
+      await createSource(engine, backend, 'vault', { owner_only: true });
+      await engine.putPage('notes/vault-note', note('Vault'), { sourceId: 'vault' });
+      const vault: typeof rows = [
+        { name: 'v-unlinked', fact: 'Vic sings', entity: null, page: 'notes/vault-note', sourceId: 'vault' },
+        { name: 'v-e', fact: 'Vic sings', entity: 'people/e-example', page: null, sourceId: 'vault' },
+      ];
+      for (const [i, r] of vault.entries()) ids.set(r.name, await insert(engine, r, i + 10));
+
+      // Closed form: no schema version in context. A non-owner reads no fact while any source is owner-only.
+      const closed = await read();
+      const gone = (hidden: boolean) => ({ tier: null, target: null, linked: [], hidden });
+      const vaultGone = { 'v-unlinked': gone(true), 'v-e': gone(false) };
+      expect(closed).toEqual({ 'x-unlinked': gone(true), 'x-e': gone(false), 'x-no-page': gone(false), ...vaultGone });
+      // Fn form (schema 320): only the facts of the owner-only source are hidden.
+      const fn = await underFnForm(engine, read);
+      expect(fn).toEqual({ ...kept, ...vaultGone });
+      return { before, closed, fn };
     });
 });

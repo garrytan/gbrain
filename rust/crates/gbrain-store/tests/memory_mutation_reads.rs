@@ -5,7 +5,7 @@
 
 mod memory_env;
 
-use gbrain_store::facts::InsertFactsArgs;
+use gbrain_store::facts::{InsertFactsArgs, OwnerOnlyForm};
 use gbrain_store::memory_mutation_reads::{
     FactReadableQuery, ForgetTargetQuery, HiddenCopyQuery, LinkedCopiesQuery, OwnPage,
     OwnerReachQuery, RemoteFloor, RemoteForgetTierQuery,
@@ -216,6 +216,7 @@ fn a_remote_forget_reads_the_tier_of_a_world_fact_under_the_remote_floor() {
             remote_floor: floor.map(|honor_aliases| RemoteFloor {
                 honor_aliases,
                 restricted: true,
+                owner_only: OwnerOnlyForm::Fn,
             }),
         })
         .unwrap()
@@ -238,6 +239,7 @@ fn a_remote_forget_reads_the_tier_of_a_world_fact_under_the_remote_floor() {
             remote_floor: Some(RemoteFloor {
                 honor_aliases: true,
                 restricted,
+                owner_only: OwnerOnlyForm::Fn,
             }),
         })
         .unwrap()
@@ -289,6 +291,7 @@ fn the_forget_target_reads_under_visibility_the_floor_and_a_member_page() {
             remote_floor: floor.then_some(RemoteFloor {
                 honor_aliases: true,
                 restricted: true,
+                owner_only: OwnerOnlyForm::Fn,
             }),
             own_page: own.map(|slug| OwnPage {
                 slug: slug.into(),
@@ -467,4 +470,50 @@ fn an_owner_with_no_member_identity_reaches_only_a_fact_on_no_page() {
     assert!(!reach(deleted, "default"));
     assert!(!reach(member, "default"));
     assert!(!reach(free + 1000, "default"));
+}
+
+#[test]
+fn the_remote_floor_hides_owner_only_facts_in_its_form() {
+    let b = brain("memory-mutation-reads-floor-owner-only");
+    page(&b, "notes/open", json!({}), None);
+    let open = fact(&b, "default", "open fact", "notes/open", "world", 1);
+    let bare = fact(
+        &b,
+        "default",
+        "no page fact",
+        "notes/never-written",
+        "world",
+        2,
+    );
+    let tier = |id: u64, source: &str, form: OwnerOnlyForm| {
+        b.read_remote_forget_tier(&RemoteForgetTierQuery {
+            fact_id: id as i64,
+            source_id: source.into(),
+            remote_floor: Some(RemoteFloor {
+                honor_aliases: true,
+                restricted: true,
+                owner_only: form,
+            }),
+        })
+        .unwrap()
+        .is_some()
+    };
+    let forms = [OwnerOnlyForm::Closed, OwnerOnlyForm::Fn, OwnerOnlyForm::Off];
+    for form in forms {
+        assert!(
+            tier(open, "default", form) && tier(bare, "default", form),
+            "{form:?} with no owner-only source"
+        );
+    }
+    source(&b, "vault", None, json!({ "owner_only": true }));
+    page(&b, "notes/vault-note", json!({}), None);
+    let vault = fact(&b, "vault", "vault fact", "notes/never-written", "world", 3);
+    // Closed: any owner-only source hides every fact, a fact on no page included.
+    assert!(!tier(open, "default", OwnerOnlyForm::Closed));
+    assert!(!tier(bare, "default", OwnerOnlyForm::Closed));
+    // Fn (schema 320): only the owner-only source's fact.
+    assert!(tier(open, "default", OwnerOnlyForm::Fn) && tier(bare, "default", OwnerOnlyForm::Fn));
+    assert!(!tier(vault, "vault", OwnerOnlyForm::Fn));
+    // Off (the owner): nothing.
+    assert!(tier(vault, "vault", OwnerOnlyForm::Off) && tier(open, "default", OwnerOnlyForm::Off));
 }

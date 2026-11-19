@@ -16,11 +16,11 @@ from the source, fact and page records the other families write
 | `brain.readFactEntitySlug(id, sourceId)` | the fact's `entity_slug` when the fact belongs to the source, else null | `readFactEntitySlug` |
 | `brain.hasLiveFileBackedPage(sourceId, slugs)` | whether a page of the source among the slugs is live and has a `source_path` | `hasLiveFileBackedPage` |
 | `brain.factReadableUnder({ id, sourceId, anyVisibility, minTrust, suppressFlagged, excludePrivate })` | whether the caller reads the fact | `factReadableUnder` |
-| `brain.readRemoteForgetTier({ factId, sourceId, remoteFloor })` | the fact's stored `trust_tier` when it belongs to the source and is `world`, else null; `remoteFloor` is null or `{ honorAliases, restricted }` | `readRemoteForgetTier` |
-| `brain.readForgetTarget({ id, sourceId, worldOnly, remoteFloor, ownPage })` | `{ id, entity_slug, source_markdown_slug, row_num, expired_at, trust_tier }` for the fact the forget names, or null; `remoteFloor` is null or `{ honorAliases, restricted }`, `ownPage` is null or `{ slug, reader }` | `readForgetTarget` |
+| `brain.readRemoteForgetTier({ factId, sourceId, remoteFloor })` | the fact's stored `trust_tier` when it belongs to the source and is `world`, else null; `remoteFloor` is null or `{ honorAliases, restricted, ownerOnly }` | `readRemoteForgetTier` |
+| `brain.readForgetTarget({ id, sourceId, worldOnly, remoteFloor, ownPage })` | `{ id, entity_slug, source_markdown_slug, row_num, expired_at, trust_tier }` for the fact the forget names, or null; `remoteFloor` is null or `{ honorAliases, restricted, ownerOnly }`, `ownPage` is null or `{ slug, reader }` | `readForgetTarget` |
 | `brain.isFactEntityUnbacked(id, sourceId)` | whether the fact belongs to the source and names an entity with no `/` and no live page of that slug | `isFactEntityUnbacked` |
-| `brain.readLinkedFactCopies({ id, sourceId, worldOnly, remoteFloor })` | `[{ id, entity_slug }]`, the copies of the fact's claim on other entities, by id, at most five; `remoteFloor` is null or `{ honorAliases, restricted }` | `readLinkedFactCopies` |
-| `brain.hasHiddenFactCopy({ id, sourceId, remoteFloor })` | whether a copy of the claim the withdrawal reaches fails the floor; `remoteFloor` is `{ honorAliases, restricted }` | `hasHiddenFactCopy` |
+| `brain.readLinkedFactCopies({ id, sourceId, worldOnly, remoteFloor })` | `[{ id, entity_slug }]`, the copies of the fact's claim on other entities, by id, at most five; `remoteFloor` is null or `{ honorAliases, restricted, ownerOnly }` | `readLinkedFactCopies` |
+| `brain.hasHiddenFactCopy({ id, sourceId, remoteFloor })` | whether a copy of the claim the withdrawal reaches fails the floor; `remoteFloor` is `{ honorAliases, restricted, ownerOnly }` | `hasHiddenFactCopy` |
 | `brain.ownerReachesFact({ id, sourceId })` | whether an owner with no member identity reaches the fact | `ownerReachesFact` |
 
 ## Rules
@@ -33,8 +33,11 @@ from the source, fact and page records the other families write
 - `readRemoteForgetTier` with `remoteFloor` also drops a fact whose provenance page exists and fails the page policy
   for the empty identity (`hidden_by_provenance_page` in `facts/privacy.rs`): `privateProvenanceFilterFragment`, the
   provenance half of the fact policy, with no entity gate. With `restricted: false` (a brain that holds no
-  member-access restrictions) the member-access part is only "names no readers", with no origin test. The store keeps
-  no owner-only source, folder rule or pending coverage, so those conjuncts hide nothing.
+  member-access restrictions) the member-access part is only "names no readers", with no origin test. The floor also
+  drops an owner-only fact and judges the provenance page by the page owner-only test (`owner_only.rs`), both in the
+  form `ownerOnly` names: `closed` (no schema version: any owner-only source hides every fact), `fn` (schema 320: only
+  a fact or page of an owner-only source) or `off` (the owner, which has no owner-only test). The store keeps no folder
+  rule or pending coverage, so those conjuncts hide nothing.
 - `readForgetTarget` reads the fact when it belongs to the source and, with `ownPage`, is `private`, cites the
   member's page as its provenance, and that page is live and names `reader` in its readers; otherwise when it is
   `world` or `worldOnly` is false, and, with `remoteFloor`, passes the same provenance-page check as
@@ -61,5 +64,12 @@ from the source, fact and page records the other families write
   - `readForgetTarget` under `remoteFloor` (without `ownPage`), `readLinkedFactCopies` under `remoteFloor` and
     `hasHiddenFactCopy` on the same terms;
   - `ownerReachesFact` for an owner bound to a member, whose pages GST-2490's owner read rule judges.
+
 - Pinned by `test/engine-parity/memory-mutation-reads.test.ts` and `test/engine-parity/forget-reach-reads.test.ts` on every arm and by
   `crates/gbrain-store/tests/memory_mutation_reads.rs`.
+
+## Not modelled yet
+
+| Rule | What it judges | Where it renders | What Rust does |
+| --- | --- | --- | --- |
+| GST-2490's owner read rule (lineage) | the pages an owner bound to a member reaches: its own member page by readers, satisfied folder rules, lineage origins and the owner-only test, then the privacy part | `ownerReadPolicyFragment` (`src/core/search/private-visibility.ts`) | `ownerReachesFact` refuses (`engine_capability_missing`); TODOS.md `rust-owner-read-rule` |

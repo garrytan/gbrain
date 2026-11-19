@@ -23,6 +23,7 @@ use crate::facts::{
 };
 use crate::kv::KvRead;
 use crate::links::no_nul;
+use crate::owner_only::{OwnerOnlyForm, fact_owner_only};
 use crate::pages::read_page;
 use crate::sources::read_source;
 use crate::trust::TrustPolicy;
@@ -64,6 +65,11 @@ pub struct RemoteFloor {
     pub honor_aliases: bool,
     /// The caller record's `restricted` flag: whether the brain holds member-access restrictions.
     pub restricted: bool,
+    /// The owner-only test the floor ends with (`ownerOnlyFactAllowedSql` on the fact, and the page
+    /// owner-only test on its provenance page), in the form the member read off the text. Absent
+    /// takes `closed`, which hides the most.
+    #[serde(default)]
+    pub owner_only: OwnerOnlyForm,
 }
 
 /// `readForgetTarget(spec)`; `lock` (FOR UPDATE) is dropped by the TypeScript member: one store
@@ -118,10 +124,16 @@ pub struct OwnerReachQuery {
     pub source_id: String,
 }
 
-/// Whether `floor` hides `row` (its provenance page fails the remote provenance floor).
+/// Whether `floor` hides `row` (`privateProvenanceFilterFragment`): its provenance page fails the
+/// page policy for the empty identity, or the fact is owner-only in the floor's form.
 fn floor_hides(read: &dyn KvRead, row: &FactRecord, floor: &RemoteFloor) -> Result<bool> {
+    if fact_owner_only(read, &row.source_id, floor.owner_only)? {
+        return Ok(true);
+    }
     let policy = PrivacyPolicy {
         honor_aliases: floor.honor_aliases,
+        provenance_only: true,
+        owner_only: floor.owner_only,
         ..PrivacyPolicy::default()
     };
     hidden_by_provenance_page(read, row, &policy, floor.restricted)
@@ -228,9 +240,9 @@ impl Store {
     }
 
     /// `readRemoteForgetTier`: the stored tier of fact `fact_id` when it belongs to `source_id` and
-    /// is a `world` fact, and with `remote_floor` its provenance page passes the page policy for
-    /// the empty identity (`privateProvenanceFilterFragment`; the store keeps no owner-only source or
-    /// folder rule, so those conjuncts hide nothing). `None` otherwise.
+    /// is a `world` fact, and with `remote_floor` the floor does not hide it ([`floor_hides`]: its
+    /// provenance page passes the page policy for the empty identity and the fact is not owner-only;
+    /// the store keeps no folder rule, so that conjunct hides nothing). `None` otherwise.
     pub fn read_remote_forget_tier(&self, q: &RemoteForgetTierQuery) -> Result<Option<String>> {
         no_nul("readRemoteForgetTier", &[("sourceId", &q.source_id)])?;
         let Ok(id) = u64::try_from(q.fact_id) else {
@@ -243,14 +255,10 @@ impl Store {
         if row.source_id != q.source_id || row.visibility != "world" {
             return Ok(None);
         }
-        if let Some(floor) = &q.remote_floor {
-            let policy = PrivacyPolicy {
-                honor_aliases: floor.honor_aliases,
-                ..PrivacyPolicy::default()
-            };
-            if hidden_by_provenance_page(&*read, &row, &policy, floor.restricted)? {
-                return Ok(None);
-            }
+        if let Some(floor) = &q.remote_floor
+            && floor_hides(&*read, &row, floor)?
+        {
+            return Ok(None);
         }
         Ok(Some(row.tier().as_str().to_owned()))
     }
@@ -290,13 +298,7 @@ impl Store {
             None => {
                 (!q.world_only || row.visibility == "world")
                     && match &q.remote_floor {
-                        Some(floor) => {
-                            let policy = PrivacyPolicy {
-                                honor_aliases: floor.honor_aliases,
-                                ..PrivacyPolicy::default()
-                            };
-                            !hidden_by_provenance_page(&*read, &row, &policy, floor.restricted)?
-                        }
+                        Some(floor) => !floor_hides(&*read, &row, floor)?,
                         None => true,
                     }
             }
