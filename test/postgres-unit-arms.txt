@@ -225,6 +225,7 @@ test/engine-parity/unrestricted-caller-reads.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-parity/wanted-links.test.ts
 test/engine-parity/withdrawal-discovery-reads.test.ts
+test/engine-parity/withdrawal-forget.test.ts
 test/engine-parity/write-guards.test.ts
 test/engine-parity/write-misc.test.ts
 test/engine-parity/writer-versions.test.ts

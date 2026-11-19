@@ -216,9 +216,10 @@ export interface LinkedFactCopy { id: number; entity_slug: string }
 /**
  * `readFactWithdrawalClaim`: the fact a withdrawal admits, never an extraction outcome marker. `worldOnly` keeps world
  * facts and a private fact on `memberPage` (a member's own page, checked by the caller); `remoteFloor` adds the remote
- * provenance floor.
+ * provenance floor. `lock` reads the row FOR UPDATE inside the caller's transaction (the withdrawal itself); the Rust
+ * store serializes its writes, so it takes no row lock there.
  */
-export interface FactWithdrawalClaimSpec { id: number; sourceId: string; worldOnly: boolean; memberPage: string | null; remoteFloor: boolean }
+export interface FactWithdrawalClaimSpec { id: number; sourceId: string; worldOnly: boolean; memberPage: string | null; remoteFloor: boolean; lock?: boolean }
 /** The claim `readFactWithdrawalClaim` answers: its visibility, text, fingerprint, withdrawal subject and whether it expired. */
 export interface FactWithdrawalClaim { visibility: 'private' | 'world'; fact: string; fact_hash: string; subject: string; expired: boolean }
 /** `ownerReachesFact`: the owner's member identity and the folder rules it satisfies. */

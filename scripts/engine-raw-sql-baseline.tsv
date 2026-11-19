@@ -434,7 +434,7 @@ src/core/facts/single-prepare.ts	execute_raw	5
 src/core/facts/slot-tagging.ts	execute_raw	1	GBRA-574 #9668: the live person-page read that picks slot-tagging candidates, written before this ratchet landed; moves behind a typed facts engine method with its area
 src/core/facts/subject-infer.ts	execute_raw	1
 src/core/facts/unfenced-facts.ts	execute_raw	3
-src/core/facts/withdrawal.ts	execute_raw	7
+src/core/facts/withdrawal.ts	execute_raw	4
 src/core/facts/write-single.ts	execute_raw	3
 src/core/facts/writeback-settings.ts	execute_raw	1
 src/core/feedback/store.ts	execute_raw	19

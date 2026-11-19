@@ -143,6 +143,7 @@ export const ownerReachesFact: Member<'ownerReachesFact'> = (brain, spec) => {
   return storeCall({ member }, () => brain.ownerReachesFact({ id: spec.id, sourceId: spec.sourceId }));
 };
 
+/** `lock` takes no row lock: the store serializes its writes, so the withdrawal's own Store::write is the lock. */
 export const readFactWithdrawalClaim: Member<'readFactWithdrawalClaim'> = (brain, spec) => {
   const member = 'readFactWithdrawalClaim';
   requireInteger(member, spec.id);

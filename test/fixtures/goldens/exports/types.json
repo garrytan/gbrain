@@ -5835,6 +5835,7 @@
         "kind": "interface",
         "members": [
           "id: number",
+          "lock?: boolean | undefined",
           "memberPage: string | null",
           "remoteFloor: boolean",
           "sourceId: string",
