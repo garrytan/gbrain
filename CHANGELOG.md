@@ -10,6 +10,88 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.745.0] - 2026-11-19
+
+**Brains with page titles longer than about 2,700 bytes upgrade again, and pages with long titles save instead of being refused (#9779).**
+
+### Fixed
+- The index behind exact-title lookups (`entity`, `whois`, context cards, search's alias check) was a btree on the lowercased title, and a btree entry must fit in 2,704 bytes. Upgrading a brain that already held a longer title stopped with "index row requires N bytes, maximum size is 8191", and on an upgraded brain saving such a page failed with `storage_error` ("index row size N exceeds btree version 4 maximum 2704"). The index is now a hash index on the lowercased title, which indexes a title of any length; the lookups are unchanged and still use it. Brains that already built the old index get the new one built online, then the old one dropped online, on the next upgrade. Reported by @mweber82.
+- Transcript imports cap the title of a new page at 200 characters, ending in an ellipsis when cut. Some harnesses report a session's opening text as its title, which ran to over 100 KB. Pages already imported keep their titles.
+
+<!-- behavior-change: transcript_title_cap_9779 -->
+
+**Turning GBrain Helper's sending off now wins over a text in progress and over a Touch ID dialog still open.**
+
+### Fixed
+- Each send checks the kill switch and its key again right before it hands the text to Messages, under the lock the settings are saved under. Once `send-setup --off` or `send-key remove` has returned, no new text is handed to Messages; a text Messages has already accepted may still be delivered. Both commands now say so when they succeed.
+- `send-setup --off` no longer waits for an earlier `send-setup` that is still showing its Touch ID dialog, and an approval given after the switch went off answers `send_disabled` instead of turning sending back on. `--off` keeps the config file locked until the helper has answered, so a `send-setup` started meanwhile waits for it instead of writing sending back on in between.
+- `send-setup --off` says what happened when the helper doesn't confirm: if the helper isn't running it says so and exits 0, because the config switch alone stops every send; if it doesn't answer within 40 seconds it exits 69; and if it answers with an error, it names the error (for example that the helper was busy) instead of blaming the keychain.
+
+## [0.60.744.0] - 2026-11-19
+
+**Archiving a source now hides its pages from every API token, not just from search.**
+
+<!-- behavior-change: archived_source_token_reads_gst3163 -->
+
+### Fixed
+- After `gbrain sources archive <id>`, a bearer token whose source list named that source still read its pages over HTTP when the call named no source: `get_page` by slug returned the body, and `list_pages`, `get_versions`, `get_backlinks`, `get_timeline`, `get_raw_data`, `entity`, `recall`, `chronicle_day` and `chronicle_since` all answered from it. A token's sources are now checked against the live sources each time it is used, the way OAuth clients already were, so an archived source reads as absent until `gbrain sources restore <id>` brings it back for the same token. Naming the archived source still answers `unknown_source` on every read that takes a `source_id`, `resolve_slugs` included. A token whose write source is archived, or whose every source is, reads nothing and is told so with that code, as an OAuth client whose source is archived already was. The owner's own tokens keep reading everything else.
+- `gbrain access serves several --members <ids> --yes` and adding or enabling a member from the admin page over HTTP now keep conversation archive pages written while the brain was personal to the owner before the new member can read them, as `gbrain access member add` already did. Before, those pages stayed readable by the new member until the next archive run.
+
+**`gbrain sources refresh` no longer stops and asks for the user when a local commit lands while it publishes the checkout's earlier local commits.**
+
+### Fixed
+- On a managed brain whose refresh publishes local commits by itself (Git durability on, or `sources.refresh_publish_diverged` true), a commit made on the checkout after that publish and before the fast-forward ended the run with `refresh_diverged` and a fix that said to ask the user, although nothing was lost and the next refresh succeeded. The refresh now retries once from a fresh check in the same run, which publishes the new commit too. If that retry is refused as well, the refusal still says the first commits were already published.
+
+**A managed `gbrain sources refresh` that brings in a few files now holds the checkout's refresh lock for about a second instead of minutes, and reports where its time went.**
+
+### Fixed
+- After its import, a refresh's member sync used to derive links for up to 1,000 pages of the source's stale-link backlog while the refresh still held the lock. That took minutes on a large brain, and other refreshes of the checkout failed with `refresh_in_progress` meanwhile. Now the lock covers only the pages the refresh imported. The rest of the sync's link budget (the same 1,000 pages and 5 minutes) is spent on the backlog after the lock is released, so an uncontended run drains as much as before. Refreshes drain a source's backlog one at a time: a refresh that finds another refresh's drain running skips its own. A failed drain never fails the refresh. (GST-3107)
+
+### Added
+- `gbrain sources refresh --json` reports `phase_ms` (whole milliseconds for each phase the run reached: `fetch`, `precheck`, `drain`, `merge`, `sync`, `tail`, `backlog`), `lock_held_ms` and `link_backlog` (each member's backlog drain: `drained` with `pages` and `remaining`, `skipped` or `failed`). `GBRAIN_DEBUG=1` prints the phase times on stderr.
+
+<!-- behavior-change: refresh_link_backlog_after_lock_gst3107 -->
+
+**The Mac helper's send log no longer keeps a recipient hash that can be reversed by trying every phone number.**
+
+### Fixed
+- After 90 days, a line in GBrain Helper's send log keeps only a short hash of the recipient. That hash was a plain SHA-256 of the phone number or email, so anyone holding the log could recover a number by hashing every possible one. It is now keyed with a random 32-byte secret the helper makes on its first send and keeps with the send keys in its keychain item, so the hash can't be reversed without that secret and differs from Mac to Mac. The hourly limit to one recipient uses the same keyed hash. A malformed secret in the keychain item stops sending with `send_keys_tampered` instead of being replaced. Nothing is installed on any Mac yet, so no existing log needs rewriting.
+
+**The experimental Rust engine's store now serves vector search, embeddings, link and graph reads, takes, salience, stats and the ingest log the way PGLite does, but nothing selects it yet; PGLite and Postgres brains are unchanged.**
+
+### Added
+- The Rust engine serves `searchVector` and `searchTakesVector` (an exact scan over the stored vectors, scored as pgvector scores them) and the embedding members, and `upsertChunks` and `sealChunks` store the vector a chunk carries. It reports the `vector_search`, `embeddings`, `links`, `graph`, `takes`, `salience` and `ingest_log` capabilities (`rust/docs/store/vectors.md`, `embeddings.md`).
+- The Rust engine serves the link reads, alias and slug members, the take members, salience, `getStats`, `getHealth`, the ingest log, the extraction reads and the page-listing reads (`rust/docs/store/`). A caller that asks for `excludePrivate` gets the pages PGLite hides, including a page of an owner-only source.
+
+### Changed
+- A chunk that carries an image vector, and a brain whose config names a vector column other than `embedding`, still refuse with `engine_capability_missing`; the store keeps one vector column.
+
+**A publish that redacts secrets no longer reports a failure that did not happen, and the secret audit logs are private to their owner.**
+
+### Fixed
+- The `secret_store_spooled` notice is now an info notice. It says the originals were sealed in this machine's encrypted spool, which every redacting publish does, and that the next owner push or maintenance pass moves them into the secret store. It also says that `gbrain git commit-push` does not move them itself. It used to be a degraded notice saying the store could not be written, which was not true. `gbrain doctor`'s `secret_store` check still reports originals left in the spool.
+- The `secrets` and `secret-spans` audit logs (`~/.gbrain/audit/`) are now created at mode 0600, and an existing file with looser permissions is tightened on its next write. Before, a publish created them with the process umask (usually 0644). They hold page slugs, field names, store entry ids and span offsets, never a value.
+
+<!-- behavior-change: secret_store_spooled_info_gst2988 -->
+
+**Purging a page now removes the secret store originals only that page held.**
+
+### Changed
+- `gbrain delete <slug> --purge`, the batch hard delete and the expiry of a deleted page now remove the places the redactor recorded on that page, and every sealed original no other page and no publish commit still references. An original another page holds, or that a redacted publish commit points to, stays. A place recorded under a slug the page had before a rename goes with the page.
+- Renaming a page moves the places the redactor recorded on it to the new slug, so a later purge of a page that takes the old slug leaves them alone.
+- `gbrain secrets backup --restore` adds the recorded places of an entry the store already holds, and skips an original whose every place was on a page this brain does not hold (`skipped_no_page`), so it never brings back what a purge removed. When it skips every entry that way, it refuses with `invalid_params` and writes nothing.
+- `gbrain doctor`'s `secret_store` check counts sealed originals no page or commit references.
+
+### Known limits
+- Backups uploaded to the storage bucket before a purge still hold that page's sealed original (encrypted, under the store key). Delete those objects from the bucket when it must be gone from there too.
+- A restore from a backup taken before a rename can tie an original to a different page that has since taken the renamed page's old slug, and that page's readers then pass the `reveal_secret` read check for it. It needs both: an older backup and another page now at that slug. After a restore, `gbrain secrets list` shows the pages each original is tied to. A backup taken after the rename names the new slug.
+- A backup taken before this release can name a place by a slug its page had before an older rename. A restore of that backup skips such an entry today (`skipped_no_page`); GST-3178 makes it restore the entry without a place instead. Backups from this release on name each place by its page's current slug.
+
+**The bake-off baseline benchmark can run against Postgres on a clean install again.**
+
+### Fixed
+- `rust/bench/baseline` with `--engine postgres` loaded a `postgres` package that a clean install does not have, so it stopped before it reached the database. It now loads the repo's vendored driver (`#postgres`), like the rest of gbrain. A new test checks that the driver loads before the database name is checked, and the test connects to nothing.
+
 ## [0.60.743.0] - 2026-11-19
 
 **OpenClaw's skill resolver now suggests skills for the message the user just sent.**

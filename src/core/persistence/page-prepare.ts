@@ -44,6 +44,7 @@ import { findLiveFileClaimants, type FileClaimant, type FileClaimTarget } from '
 import { digest, sha256 } from './digest.ts';
 import { replaceableFile } from '../facts/file-body-guard.ts';
 import { releaseHiddenMoment } from '../facts/derivation-inputs.ts';
+import { tombstoneWindow } from './concept-rebuild.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import type { PreparedContentImport } from './prepared-import.ts';
 import type { PreparedMutation } from './coordinator.ts';
@@ -755,6 +756,7 @@ async function prepareDeletePageMutation(engine: BrainEngine, row: WriteRequest,
   const observedRevision = snapshot.revision;
   const purge = p.purge === true;
   const noop = !purge && snapshot.page.deleted_at != null;
+  const retentionHours = purge ? 0 : await (await import('../sync-reconcile.ts')).readPurgeRetentionHours(engine);
   // Always-loaded core pages: a remote caller cannot delete one (owner-only).
   if (!noop) { enterClaimStep(clock, 'core_guard', undefined, 'db'); await prepareCoreGuard(engine, { row, snapshot, incoming: null }); }
   enterClaimStep(clock, 'file_target', undefined, 'fs');
@@ -826,8 +828,11 @@ async function prepareDeletePageMutation(engine: BrainEngine, row: WriteRequest,
       // GST-2518: a soft delete authors no content, so the tombstone keeps its tier (and a write over it the page's label guard).
       if (!noop) { await tx.createVersion(row.slug, source); await withTrustKeep(tx, ['pages'], () => tx.softDeletePage(row.slug, source)); }
       else await releaseHiddenMoment(tx, Number(snapshot.page.id));
+      // #9653: a page already deleted keeps its tombstone's date, so its window runs from that date (a released hold included).
+      const window = noop ? await tombstoneWindow(tx, Number(snapshot.page.id), retentionHours) : null;
+      const until = !window ? `now + ${retentionHours}h` : window.past ? `the next purge (its ${retentionHours}h window ended ${window.until})` : window.until;
       return { status: 'soft_deleted', slug: row.slug, source_id: row.source_id, noop,
-        recoverable_until: 'now + 72h via restore_page (remove immediately instead: gbrain delete <slug> --purge, local CLI only)' };
+        recoverable_until: `${until} via restore_page (remove immediately instead: gbrain delete <slug> --purge, local CLI only)` };
     } };
   return prepared;
 }
