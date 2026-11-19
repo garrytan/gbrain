@@ -36,6 +36,9 @@ Flags: `--writers 1,4,16,64`, `--secs N`, `--workloads disjoint,hot`, `--dir DIR
 bench deletes and recreates its own subdirectories there), and for `rawkv-bench`
 `--modes serial/redb,occ/fjall,...`. Each line of output is one JSON result.
 
+`--fjall` (build with `--features fjall`) keeps the brain's records in a fjall database instead
+of the redb file, under the same store code; with `--concurrent` the optimistic layer runs on it.
+
 `--concurrent` opens each brain with `concurrent_writes` and adds the conflict counters
 (`Store::occ_stats`) to the output. Numbers depend on the disk's fsync latency, so compare runs from
 the same machine only.

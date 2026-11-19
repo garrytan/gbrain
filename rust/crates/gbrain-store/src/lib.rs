@@ -14,6 +14,8 @@ pub mod cli_reads;
 pub mod config;
 pub mod env;
 pub mod error;
+#[cfg(feature = "fjall")]
+pub mod fjall_kv;
 pub mod format;
 pub mod journal;
 pub mod keys;
@@ -140,6 +142,27 @@ pub struct Store {
     pub(crate) bound: Option<Arc<transactions::Transaction>>,
 }
 
+/// The record file of a brain directory, with one writer or many. Only for the storage bake-off:
+/// a build with the `fjall` feature (never the addon's) keeps the records in a fjall database
+/// instead when `GBRAIN_RUST_BAKEOFF_STORE=fjall`.
+fn open_records(dir: &Path, concurrent: bool) -> Result<Arc<dyn Kv>> {
+    #[cfg(feature = "fjall")]
+    if std::env::var("GBRAIN_RUST_BAKEOFF_STORE").is_ok_and(|v| v == "fjall") {
+        let kv = fjall_kv::FjallKv::open_dir(&dir.join("records.fjall"))?;
+        return Ok(if concurrent {
+            Arc::new(occ_kv::OccKv::new_fjall(kv)?)
+        } else {
+            Arc::new(kv)
+        });
+    }
+    let kv = redb_kv::RedbKv::open_path(&dir.join(format::RECORDS_FILE))?;
+    Ok(if concurrent {
+        Arc::new(occ_kv::OccKv::new(kv)?)
+    } else {
+        Arc::new(kv)
+    })
+}
+
 /// How many times `Store::write` runs a transaction that keeps losing conflicts.
 const WRITE_RETRY_LIMIT: u32 = 1_000;
 
@@ -164,12 +187,7 @@ impl Store {
             .map_err(|e| StoreError::io(format!("creating {}: {e}", dir.display())))?;
         // FORMAT is judged before the record file is opened: a newer brain is never touched.
         let existing = format::read(dir)?;
-        let kv = redb_kv::RedbKv::open_path(&dir.join(format::RECORDS_FILE))?;
-        let kv: Arc<dyn Kv> = if options.concurrent_writes {
-            Arc::new(occ_kv::OccKv::new(kv)?)
-        } else {
-            Arc::new(kv)
-        };
+        let kv = open_records(dir, options.concurrent_writes)?;
         let store = Store::open_kv(kv, Arc::new(SystemEnv), options.clone())?;
         // FORMAT follows the records: written when missing (a crash before it, or a deleted
         // file) and repaired when it is behind the records.

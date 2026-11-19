@@ -10,9 +10,10 @@
 //! By default it measures the store as it opens today (redb, one writer at a time; a writer waits
 //! on redb's write lock, so there are no busy errors). With `--concurrent` it opens the brain with
 //! `concurrent_writes` (the optimistic store) and also reports conflicts (internal reruns) from
-//! `Store::occ_stats`.
+//! `Store::occ_stats`. With `--fjall` (built with the `fjall` feature) the brain's records live in
+//! a fjall database instead of the redb file; `--concurrent` then puts the optimistic layer on it.
 //!
-//! Usage: store-bench [--concurrent] [--label NAME] [--writers 1,4,16,64] [--secs 3] [--dir DIR]
+//! Usage: store-bench [--concurrent] [--fjall] [--label NAME] [--writers 1,4,16,64] [--secs 3] [--dir DIR]
 //! Prints one JSON object per (workload, writers) on stdout.
 
 use gbrain_store::chunks::{ChunkInput, UpsertChunksOptions};
@@ -235,8 +236,24 @@ fn main() {
             .cloned()
     };
     let concurrent = args.iter().any(|a| a == "--concurrent");
-    let label = flag("--label")
-        .unwrap_or_else(|| if concurrent { "proto-occ" } else { "today" }.to_string());
+    let fjall = args.iter().any(|a| a == "--fjall");
+    if fjall {
+        assert!(
+            cfg!(feature = "fjall"),
+            "--fjall needs a build with --features fjall"
+        );
+        // SAFETY: set once at start, before any thread exists.
+        unsafe { std::env::set_var("GBRAIN_RUST_BAKEOFF_STORE", "fjall") };
+    }
+    let label = flag("--label").unwrap_or_else(|| {
+        match (concurrent, fjall) {
+            (true, false) => "proto-occ",
+            (false, false) => "today",
+            (true, true) => "proto-occ-fjall",
+            (false, true) => "fjall",
+        }
+        .to_string()
+    });
     let writers: Vec<usize> = flag("--writers")
         .unwrap_or_else(|| "1,4,16,64".into())
         .split(',')

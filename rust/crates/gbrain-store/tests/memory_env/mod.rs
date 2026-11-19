@@ -77,9 +77,21 @@ pub fn brain(name: &str) -> Brain {
         now: AtomicI64::new(T0),
         ids: AtomicU64::new(1),
     });
+    let concurrent = std::env::var("GBRAIN_RUST_CONCURRENT_WRITES").is_ok_and(|v| v == "1");
+    #[cfg(feature = "fjall")]
+    if std::env::var("GBRAIN_RUST_BAKEOFF_STORE").is_ok_and(|v| v == "fjall") {
+        use gbrain_store::fjall_kv::FjallKv;
+        let kv = FjallKv::open_dir(&dir.join("records.fjall")).unwrap();
+        let kv: Arc<dyn Kv> = if concurrent {
+            Arc::new(OccKv::new_fjall(kv).unwrap())
+        } else {
+            Arc::new(kv)
+        };
+        let store = Store::open_kv(kv, clock.clone(), OpenOptions::default()).unwrap();
+        return Brain { store, clock, dir };
+    }
     let kv = RedbKv::open_path(&dir.join("records.redb")).unwrap();
-    let kv: Arc<dyn Kv> = if std::env::var("GBRAIN_RUST_CONCURRENT_WRITES").is_ok_and(|v| v == "1")
-    {
+    let kv: Arc<dyn Kv> = if concurrent {
         Arc::new(OccKv::new(kv).unwrap())
     } else {
         Arc::new(kv)

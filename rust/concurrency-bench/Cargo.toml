@@ -13,6 +13,8 @@ publish = false
 [features]
 # The raw key-value tier needs the bake-off crate (redb, fjall, LMDB under one optimistic layer).
 raw = ["dep:gbrain-bakeoff"]
+# `--fjall`: the store's records in a fjall database (the storage bake-off).
+fjall = ["gbrain-store/fjall"]
 
 [[bin]]
 name = "store-bench"

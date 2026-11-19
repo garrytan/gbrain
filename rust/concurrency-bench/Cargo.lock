@@ -285,6 +285,7 @@ version = "0.0.0"
 name = "gbrain-store"
 version = "0.0.0"
 dependencies = [
+ "fjall",
  "getrandom 0.3.4",
  "redb",
  "serde",

@@ -1,8 +1,10 @@
 # Many writers on one Rust brain: research, benchmark and prototype
 
-Status: research plus a working prototype on branch `rust-engine/concurrency-proto` (from master
-`41e33807b6`). Rust only; no TypeScript change, no flag. Measured 2026-11-18 on one 8-core Linux
-machine with a network disk (one `fdatasync` takes about 3 ms).
+Status: research plus a working prototype, first on branch `rust-engine/concurrency-proto` (from
+master `41e33807b6`), then hardened on `rust-engine/concurrency-proto-2`. Many-writer commits are
+opt-in (`GBRAIN_RUST_CONCURRENT_WRITES=1`, default off). The fjall store is a bake-off behind the
+off-by-default cargo feature `fjall`. Measured 2026-11-18 on one 8-core Linux machine with a
+network disk (one `fdatasync` takes about 3 ms).
 
 This builds on `docs/research/rust-engine/multi-user-prior-art.md`. That note recommends
 FoundationDB-style optimistic transactions (OCC) with one ordered commit pipeline and group commit,
@@ -33,6 +35,14 @@ Headline numbers (this machine, two runs each, 0 errors everywhere):
 - **Raw key-value tier** (same transaction shape on redb, LMDB and fjall). Under OCC + group
   commit at 64 disjoint writers: redb 604 ops/s, LMDB 700, fjall 5959. A single serialized writer
   stays flat at 183-291 ops/s on every engine.
+
+fjall bake-off (the whole gbrain store on fjall under the same OCC layer, three runs per point;
+see "fjall bake-off" below): at 64 disjoint writers the store does 1629 ops/s against 219 on redb
+(7.4x), p99 80 ms against 500 ms. Through the owner protocol at 64 clients: 1350 against 606 ops/s
+(2.2x). It loses at one client (0.6x of redb), and it ties redb on one hot page. 837 of 839 store
+tests pass on it; the 2 that fail open the redb file by name. We learned that fjall is the base
+store to move to. You should do that after the Dec 1 parity work, behind the same flag and not as
+the default, once crash simulation also runs on fjall.
 
 ## What gbrain relies on from Postgres, and the embedded answer
 
@@ -74,7 +84,7 @@ length; the owner and store tiers were each run twice (both runs below or averag
 varied by up to 10% between runs, p99 by more. Errors were 0 everywhere except where the table
 says so.
 
-- **Owner tier**: `scripts/bench-rust-owner.ts` from `rust-engine/owner-protocol` at
+- **Owner tier**: the owner bench `bench-rust-owner.ts` from `rust-engine/owner-protocol` at
   `e58b0795e8` (Ember's baseline), built twice: once as it is, once with this branch's
   `rust/crates` applied on top (the owner branch changes no Rust). 1000 ops per client.
 - **Store tier**: `rust/concurrency-bench` `store-bench`, 5 s per point, against master's store
@@ -198,7 +208,8 @@ Code on `rust-engine/concurrency-proto`, all in `rust/crates/gbrain-store`:
   that never conflict: `allocate` (sequences), `add_i64` (counters), `counter_below` (admission
   caps). `KeyLocks` queues reruns on the key they lost. `OccStats` counts commits, conflicts,
   batches and the hottest keys.
-- `src/lib.rs`: the store opens `OccKv` by default. `Store::write` takes an `FnMut` and reruns it on
+- `src/lib.rs`: the store opens `OccKv` when `OpenOptions::concurrent_writes` is set (the addon
+  sets it from `GBRAIN_RUST_CONCURRENT_WRITES=1`; default off). `Store::write` takes an `FnMut` and reruns it on
   `write_conflict` (an internal code; callers never see it unless 1000 reruns fail).
 - `journal.rs`, `chunks.rs`: shared counters that every writer used to read-modify-write as one
   JSON value are now separate `add_i64` counters (`journal_outstanding/*`, `chunk_stats/*`), so
@@ -222,31 +233,128 @@ Tests (all pass in debug; `cargo clippy --workspace --all-targets` is clean):
 - Every gbrain-store test binary passes: 62 lib tests (the 4 above included), `tests/sim.rs`
   (updated for the new counter keys) and the rest.
 
+## fjall bake-off (concurrency-proto-2)
+
+`src/fjall_kv.rs` puts the whole gbrain store on fjall 3.1 (an LSM tree that appends to a
+journal). It builds only with the cargo feature `fjall` (off by default) and is picked at run time
+by `GBRAIN_RUST_BAKEOFF_STORE=fjall`, which opens `records.fjall` in place of `records.redb`.
+`FjallKv` gives the same `Kv` contract as `RedbKv`: snapshot reads, one write transaction at a
+time that reads its own writes, and a durable commit (`PersistMode::SyncAll`) that also writes a
+commit sequence in the same batch. With the flag on, `OccKv` runs over it unchanged, so the
+concurrency design, the typed ops and the queue-on-conflict are the same code on both stores.
+Nothing in a default build or a default run changes.
+
+Tests: the full `gbrain-store` suite on fjall (`GBRAIN_RUST_BAKEOFF_STORE=fjall cargo test -p
+gbrain-store --features fjall`) passes 837 of 839, with the flag off and with it on. The 2 that
+fail are redb harness tests: `an_unknown_format_is_refused_before_the_records_are_touched` reads
+`records.redb` by name, and `a_format_1_brain_is_upgraded_on_open_and_keeps_its_counts` builds its
+format-1 brain with `RedbKv`. The crash and fsync simulation in `tests/occ_history.rs` runs only on
+redb.
+
+Store tier (5 s per point, three runs, 0 errors in every run; p50 and p99 are the mean of the
+three runs; "serial" is one writer at a time, "OCC" is the flag on):
+
+| Store | Workload | Writers | ops/s (runs 1 / 2 / 3) | p50 ms | p99 ms | Conflicts per op | Txns per fsync |
+|---|---|---|---|---|---|---|---|
+| redb serial (today) | disjoint | 1 | 69 / 69 / 71 | 17.4 | 20 | – | 1 |
+| redb serial (today) | disjoint | 4 | 42 / 44 / 44 | 25.3 | 988 | – | 1 |
+| redb serial (today) | disjoint | 16 | 39 / 39 / 39 | 41.3 | 3846 | – | 1 |
+| redb serial (today) | disjoint | 64 | 35 / 34 / 35 | 789.6 | 6374 | – | 1 |
+| redb OCC | disjoint | 1 | 64 / 64 / 64 | 15.9 | 20 | 0 | 1.0 |
+| redb OCC | disjoint | 4 | 71 / 72 / 68 | 60.4 | 67 | 0 | 2.0 |
+| redb OCC | disjoint | 16 | 110 / 114 / 114 | 147 | 207 | 0 | 9.1 |
+| redb OCC | disjoint | 64 | 222 / 215 / 221 | 290.5 | 500 | 0 | 60.1 |
+| fjall serial | disjoint | 1 | 90 / 96 / 88 | 10.9 | 12 | – | 1 |
+| fjall serial | disjoint | 4 | 96 / 95 / 92 | 11.3 | 546 | – | 1 |
+| fjall serial | disjoint | 16 | 93 / 93 / 95 | 11.1 | 1830 | – | 1 |
+| fjall serial | disjoint | 64 | 93 / 93 / 91 | 13.3 | 4834 | – | 1 |
+| fjall OCC | disjoint | 1 | 118 / 120 / 119 | 8.3 | 12 | 0 | 1.0 |
+| fjall OCC | disjoint | 4 | 251 / 246 / 254 | 15.8 | 22 | 0 | 2.0 |
+| fjall OCC | disjoint | 16 | 723 / 720 / 718 | 23.1 | 30 | 0 | 8.8 |
+| fjall OCC | disjoint | 64 | 1626 / 1630 / 1632 | 36.8 | 80 | 0 | 58.4 |
+| redb serial (today) | hot | 1 | 80 / 80 / 81 | 12.8 | 14 | – | 1 |
+| redb serial (today) | hot | 4 | 79 / 79 / 79 | 13.5 | 707 | – | 1 |
+| redb serial (today) | hot | 16 | 79 / 78 / 79 | 13.6 | 1703 | – | 1 |
+| redb serial (today) | hot | 64 | 77 / 75 / 74 | 14.9 | 5358 | – | 1 |
+| redb OCC | hot | 1 | 108 / 106 / 103 | 9.4 | 13 | 0 | 1.0 |
+| redb OCC | hot | 4 | 116 / 111 / 110 | 27.2 | 150 | 2.91 | 1.0 |
+| redb OCC | hot | 16 | 104 / 106 / 109 | 134.6 | 427 | 3.00 | 1.0 |
+| redb OCC | hot | 64 | 106 / 100 / 100 | 550.6 | 1646 | 3.00 | 1.0 |
+| fjall serial | hot | 1 | 81 / 80 / 80 | 12.4 | 15 | – | 1 |
+| fjall serial | hot | 4 | 82 / 87 / 86 | 12.7 | 676 | – | 1 |
+| fjall serial | hot | 16 | 82 / 83 / 85 | 30.4 | 1679 | – | 1 |
+| fjall serial | hot | 64 | 84 / 84 / 83 | 265.3 | 4518 | – | 1 |
+| fjall OCC | hot | 1 | 104 / 106 / 106 | 9.5 | 12 | 0 | 1.0 |
+| fjall OCC | hot | 4 | 109 / 104 / 106 | 29.6 | 145 | 2.89 | 1.0 |
+| fjall OCC | hot | 16 | 107 / 105 / 106 | 137.4 | 390 | 3.00 | 1.0 |
+| fjall OCC | hot | 64 | 104 / 106 / 106 | 535.2 | 1611 | 3.00 | 1.0 |
+
+Owner tier (the owner bench from `e58b0795e8`, 1000 ops per client, three runs, every run wrote all
+its pages and found them again, 0 errors). All three columns are this branch at `0a7a3b17c5`
+plus the fjall change; "today" is the flag off on redb. p50 / p99 are the mean of the three runs:
+
+| Clients | Today ops/s | p50 / p99 ms | redb OCC ops/s | p50 / p99 ms | fjall OCC ops/s | p50 / p99 ms | fjall / today | fjall / redb OCC |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 883 / 880 / 890 | 1.0 / 4 | 786 / 828 / 777 | 1.1 / 5 | 487 / 498 / 485 | 1.4 / 5 | 0.55x | 0.61x |
+| 4 | 606 / 618 / 613 | 2.1 / 19 | 971 / 918 / 997 | 1.6 / 13 | 1327 / 1313 / 1326 | 2.2 / 7 | 2.16x | 1.37x |
+| 16 | 504 / 500 / 496 | 28.5 / 117 | 776 / 772 / 732 | 21.5 / 44 | 1304 / 1315 / 1302 | 12.2 / 22 | 2.61x | 1.72x |
+| 64 | 390 / 419 / 419 | 159.3 / 266 | 597 / 630 / 590 | 109.0 / 161 | 1350 / 1350 / 1351 | 47.3 / 74 | 3.30x | 2.23x |
+
+What the bake-off says:
+
+1. **fjall stays well ahead under the full design when writers touch different pages.** At 64
+   disjoint writers the store does 7.4x redb OCC (1629 against 219 ops/s) with p99 80 ms against
+   500 ms, and the owner protocol does 2.2x (1350 against 606 ops/s) with p99 74 ms against
+   161 ms. Group commit packs the same number of transactions into one fsync on both stores
+   (about 58-60 at 64 writers); fjall's batch is cheaper because it appends to a journal instead
+   of copying B-tree pages.
+2. **On one hot page the stores tie** (about 105 ops/s, p99 about 1.6 s at 64 writers). A hot
+   page commits one writer at a time on any store, so the commit cost is not the limit there.
+3. **fjall loses at one client through the owner protocol** (about 490 against 880 ops/s). With
+   `strace` on one 1-client run each: both stores sync once per write (517 syncs on redb, 535 on
+   fjall), but fjall calls `fsync` on its growing journal (2.92 ms mean) where redb calls
+   `fdatasync` (1.65 ms mean). In the store tier, where one op is 3 larger commits, fjall is
+   faster at one writer too (119 against 64 ops/s), so the loss is the per-commit sync, not the
+   data path. `PersistMode::SyncData` would likely close it; it changes the durability call, so
+   it needs the crash simulation on fjall first. Not tried.
+4. **The today column moved.** This branch's "today" is 883 / 612 / 500 / 409 ops/s; the first
+   write-up measured 910 / 762 / 602 / 520 on `e58b0795e8`. The base is different (this branch
+   carries the cli-members merges and format 2), and I did not profile the difference.
+
 ## Caveats and losses
 
 - **One machine, one disk.** fsync here is about 3 ms. On a laptop NVMe disk fsync is often
   under 1 ms, which raises every serialized number and shrinks the group-commit gain; on slower
-  disks the gain grows. Each point is one or two runs, not a distribution.
+  disks the gain grows. Each point of the first write-up is one or two runs, not a distribution;
+  the fjall bake-off is three runs per point.
 - **One writer is not faster.** At 1 writer the prototype is within noise of today (owner tier
   0.98x; store tier 66 against 70 ops/s disjoint). Its gain starts at 4 writers.
 - **A hot page is still one writer at a time.** That is the Postgres result too, and it is what
   "Postgres-equal output" requires; the prototype only makes the line fair.
-- **File format.** The new counters live under new keys. A binary from master reads only the old
-  JSON counters, so it would read stale counts from a brain this code wrote. A format-version bump
-  is needed before this ships.
+- **File format (fixed on concurrency-proto-2).** The new counters live under new keys.
+  `FORMAT_VERSION` is now 2: a format-1 brain is upgraded to the new counter keys when it opens,
+  and a binary that knows only format 1 refuses a format-2 brain instead of reading stale counts
+  (`tests/lifecycle.rs`).
 - **Order of journal ids.** Journal sequence numbers are handed out at allocation, not at commit,
   so across disjoint writers they are not in commit order (the same as a Postgres `bigserial`).
   Version ids per page stay monotonic. Reruns leave gaps in ids.
-- **Not built**: the job queue (`SKIP LOCKED`), wake subscriptions (`LISTEN/NOTIFY`) and as-of
-  reads. The table above maps them to primitives the prototype has; they were out of scope.
+- **Job queue (built on concurrency-proto-2).** Job claims stay exactly-once with concurrent
+  writes on: `tests/jobs.rs` races 4, 16 and 64 workers over 128 jobs, and the engine-parity
+  `jobs.test.ts` runs an 8-worker case against PGLite and Postgres. Flag-on conflicts (325 / 505 /
+  593 at 4 / 16 / 64 workers) are all on the claim-index head keys, which is inherent to one
+  ordered queue. Not built: wake subscriptions (`LISTEN/NOTIFY`).
 - **Vectors were not in the write.** `upsert_chunks` does not store embeddings, so the benchmark
   has no vector cost.
 - **The owner tier mixes in things the store does not control** (IPC, the 32-permit pool, Bun
   processes on 8 cores). I did not profile why the prototype's gain there falls from 1.8x at 4
   clients to 1.6x at 64.
-- **Not done**: the deterministic simulation and Elle-style history check that the prior-art note
-  asks for. The prototype's tests check outcomes under real threads, which finds bugs but does
-  not prove their absence.
+- **History check (built on concurrency-proto-2), redb only.** `tests/occ_history.rs` runs 4, 16
+  and 64 writers, records every transaction's reads and writes, and checks that the acknowledged
+  commits have a serial order, also across simulated crashes and failed fsyncs (every acknowledged
+  commit survives; the batch in flight is applied whole or not at all). Two mutations of the
+  conflict check make it fail. The thread interleaving is real, not deterministic, so a run finds
+  bugs but does not prove their absence. The crash and fsync faults are injected through a redb
+  fault backend; fjall has had no crash simulation.
 - **A future change, not done**: `raise_latest` in `timeline.rs` reads and rewrites a "latest"
   marker; it could become an `Op::Max`-style raise so it never conflicts.
 
@@ -258,10 +366,14 @@ queue-on-conflict for hot keys. It is the only option measured that raises throu
 writers (6.3x at 64 disjoint writers in the store, 1.6-1.8x through the owner protocol). It cuts
 store p99 at 64 writers from 6.4 s to 0.45 s for disjoint pages and from 5.4 s to 1.5 s for one
 hot page (1.6x lower through the owner protocol). It returns no busy error, and keeps every result equal to a serial (Postgres) order.
-Do not shard. As the next step, put fjall under the same layer and run this benchmark again: on
-the raw tier it was 10x redb at 64 writers, because redb's copy-on-write commits are what the
-pipeline waits on. Before shipping, bump the format version for the new counter keys and add the
-deterministic simulation with a history checker.
+Do not shard. The format bump, the history checker and the job queue are now built (see
+"Caveats and losses"); the design stays behind `GBRAIN_RUST_CONCURRENT_WRITES`, default off.
+
+For the base store: move to fjall after the Dec 1 parity work, behind the same opt-in and not as
+the default, if it still leads under the full design. Before the move: run `tests/occ_history.rs`
+crash and fsync simulation on fjall, make the 2 redb-named lifecycle tests store-neutral, decide
+the redb-to-fjall migration for existing brains, and measure `PersistMode::SyncData` against the
+1-client loss.
 
 ## Reproduce
 
@@ -272,9 +384,23 @@ cargo build --release --features raw
 ./target/release/store-bench --concurrent --secs 5   # concurrent_writes on
 ./target/release/rawkv-bench --secs 3
 
-# Owner tier: in a checkout of rust-engine/owner-protocol (e58b0795e8), once as it is and once
-# with this branch's rust/crates copied in:
+# fjall bake-off (store tier):
+cargo build --release --features fjall
+./target/release/store-bench --fjall --secs 5                # fjall, one writer at a time
+./target/release/store-bench --fjall --concurrent --secs 5   # fjall under OCC
+# store tests on fjall (from rust/):
+GBRAIN_RUST_BAKEOFF_STORE=fjall cargo test -p gbrain-store --features fjall
+
+# fjall bake-off (owner tier): this branch does not carry the owner bench. OWNER_CHECKOUT is a
+# worktree of this branch with the bench script and its two test helpers (rust-owner-bench.ts,
+# rust-owner-child.ts) copied in from e58b0795e8. In its rust/:
+cargo build --release -p gbrain-napi --features gbrain-store/fjall
+GBRAIN_RUST_ENGINE_ADDON=<that libgbrain_napi.so> GBRAIN_RUST_CONCURRENT_WRITES=1 \
+  GBRAIN_RUST_BAKEOFF_STORE=fjall bun "$OWNER_CHECKOUT"/scripts/bench-rust-owner.ts --clients 16 --ops 1000
+
+# Owner tier, first write-up: OWNER_CHECKOUT is a checkout of rust-engine/owner-protocol
+# (e58b0795e8), run once as it is and once with this branch's rust/crates copied in:
 bun install && bun run rust:build
 GBRAIN_RUST_ENGINE_ADDON=$PWD/rust/target/addon/gbrain_engine.linux-x64-glibc.node \
-  bun scripts/bench-rust-owner.ts --clients 16 --ops 1000
+  bun "$OWNER_CHECKOUT"/scripts/bench-rust-owner.ts --clients 16 --ops 1000
 ```
