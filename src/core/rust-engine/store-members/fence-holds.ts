@@ -1,10 +1,9 @@
 /**
  * The fence generation statements (engine-sql/fence-holds.ts) on a Rust brain.
  *
- * A fence result is held only by a facts or takes fence publish (generations/publish.ts), which writes
- * `derived_generations` through `executeRaw`, and this engine refuses `executeRaw`. The store holds no
- * `derived_generations` rows, so no fence result is held: the held list is empty and clearing a hold deletes nothing.
- * A family that lets the store publish fence generations must read and clear its held rows here.
+ * A fence result is held by a facts or takes fence publish (generations/publish.ts `recordHeld`), which the store keeps
+ * in its `derived_generations` family (rust/crates/gbrain-store/src/generations.rs). The held list reads those rows and
+ * clearing a hold deletes the key's held row when it waits for a readable fence (`fence_absent`, `no_proof`).
  *
  * The generation key lock is the store's write: a `transaction` holds the store's writer gate from open to commit or
  * rollback, so two writers of one key already run one after the other, and the lock adds nothing.
@@ -14,8 +13,10 @@
 import type { FenceHoldFileRow, FenceHoldKey, FenceHoldRow } from '../../engine-sql/fence-holds.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
-/** No fence result is held on this engine (see the module comment). */
-export const listFenceHoldRows: StoreMember<[sourceIds: readonly string[], kinds: readonly string[], ownerKey?: string], FenceHoldRow[]> = async () => [];
+/** The held rows of `kinds` in `sourceIds` (one owner with `ownerKey`), oldest first; `created_at` is `timestamptz::text`. */
+export const listFenceHoldRows: StoreMember<[sourceIds: readonly string[], kinds: readonly string[], ownerKey?: string], FenceHoldRow[]> =
+  async (brain, sourceIds, kinds, ownerKey) => storeCall({ member: 'listFenceHoldRows' },
+    () => brain.listFenceHoldRows([...sourceIds], [...kinds], ownerKey ?? null));
 
 /** The page at `(sourceId, slug)` in any deleted state, or null. */
 type StoredPage = { page: { deleted_at?: string | null; source_path?: string | null } } | null;
@@ -30,8 +31,10 @@ export const readFenceOriginGone: StoreMember<[sourceId: string, slug: string], 
 /** The store's write is the generation key lock (see the module comment). */
 export const lockGenerationKey: StoreMember<[lockKey: string], void> = async () => {};
 
-/** No fence result is held on this engine, so no held row is deleted (see the module comment). */
-export const clearFenceHoldRows: StoreMember<[key: FenceHoldKey], void> = async () => {};
+/** Deletes the key's held row when it waits for a readable fence (see the module comment). */
+export const clearFenceHoldRows: StoreMember<[key: FenceHoldKey], void> = async (brain, key) => {
+  await storeCall({ member: 'clearFenceHoldRows', sourceId: key.sourceId }, () => brain.clearFenceHoldRows(key));
+};
 
 /** The live pages of `slugs` in `sourceIds`, with whether each records no file. */
 export const readFenceHoldFiles: StoreMember<[sourceIds: readonly string[], slugs: readonly string[]], FenceHoldFileRow[]> =

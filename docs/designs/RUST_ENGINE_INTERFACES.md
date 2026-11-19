@@ -169,6 +169,7 @@ Reserved tags:
 | jobs, the `dream_synthesis_completions` archive | `f` | `DREAM_SYNTHESIS_COMPLETION` | no |
 | entity_identities | `i` | `ENTITY_IDENTITY` | yes |
 | session_state | `y` | `SESSION_STATE` | no |
+| persistence_journal, the `derived_generations` ledger | `h` | `DERIVED_GENERATION` | no (a source delete removes its rows) |
 
 The telemetry family (`telemetry.rs`) holds search telemetry (`src/core/search/telemetry.ts`), MCP usage
 (`src/core/mcp-usage.ts`), retrieval feedback (`src/core/feedback/`) and the budget ledger
@@ -1397,7 +1398,7 @@ the same rows into one member, so the member counts here are smaller than the si
 
 These four sections are design only. No file, tag, constant or list entry below exists yet. The tags are proposed:
 core adds them to the reserved block in `keys.rs` and to the reserved tag table above in one reviewed change, and
-until then no family writes under them. The free lowercase bytes today are `h i x y z` (`g` is the code traversal cache) (`d`, `m` and `t` are now reserved above, `a` is telemetry and `f` is the dream synthesis completion archive).
+until then no family writes under them. The free lowercase bytes today are `i x y z` (`g` is the code traversal cache) (`d`, `m` and `t` are now reserved above, `a` is telemetry, `f` is the dream synthesis completion archive and `h` is the derived generation ledger).
 
 | Family | Proposed tag | Proposed constant | Cascade on page delete | Owner |
 |---|---|---|---|---|

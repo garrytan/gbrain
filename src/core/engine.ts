@@ -55,6 +55,7 @@ import type { CodeTraversalCacheClear, CodeTraversalCacheKey, CodeTraversalCache
 import type { FactPreimage, FenceProjectionTarget } from './engine-sql/facts.ts';
 import type { FenceFactRow, FenceRowsTarget } from './engine-sql/trust-fence.ts';
 import type { FenceHoldFileRow, FenceHoldKey, FenceHoldRow } from './engine-sql/fence-holds.ts';
+import type { GenerationActivationRow, GenerationLedgerRow, GenerationRowKey, HeldGenerationRow, LiveGenerationRow } from './engine-sql/derived-generations.ts';
 import type { TrustTable } from './trust/schema.ts';
 import type { NewTrustProposal, PendingContradictionFilter, PendingContradictionRow, TrustProposalFilter, TrustProposalRow, TrustProposalStatus, TrustProposalTransition } from './engine-sql/trust-proposals.ts';
 import type { GraduationGateRow, ManagedRootBindingRow, PersistenceTable, RetiredDeactivationRow } from './engine-sql/connect-gate.ts';
@@ -3486,6 +3487,10 @@ export interface BrainEngine {
   lockGenerationKey(lockKey: string): Promise<void>;
   clearFenceHoldRows(key: FenceHoldKey): Promise<void>;
   readFenceHoldFiles(sourceIds: readonly string[], slugs: readonly string[]): Promise<FenceHoldFileRow[]>;
+  /** The generation ledger statements of generations/publish.ts (engine-sql/derived-generations.ts): the live generation with its items, a new generation's activation, and a held result. */
+  readLiveGenerationRow(key: GenerationRowKey): Promise<LiveGenerationRow | null>;
+  activateGenerationRows(key: GenerationRowKey, liveId: number | null, row: GenerationActivationRow, items: readonly GenerationLedgerRow[]): Promise<number>;
+  recordHeldGenerationRow(key: GenerationRowKey, row: HeldGenerationRow): Promise<void>;
   /** The request a principal admitted under `requestId` (a uuid), or null. */
   readWriteRequest(principalKind: string, principalId: string, requestId: string): Promise<WriteRequest | null>;
   /** At most two requests with this request_id (a uuid), from any principal, in no set order. */

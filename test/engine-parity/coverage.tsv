@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 788/788
+# covered: 791/791
 # lifecycle: 9/9
 # pages: 40/40
 # search: 7/7
@@ -33,7 +33,7 @@
 # config: 6/6
 # import_guards: 12/12
 # access_grants: 6/6
-# persistence_journal: 83/83
+# persistence_journal: 86/86
 # entity_reads: 8/8
 # cycle_locks: 10/10
 # minion_jobs: 8/8
@@ -77,7 +77,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	85	no	yes	yes	serves
+transaction	lifecycle	yes	86	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -85,7 +85,7 @@ getPage	pages	yes	105	yes	yes	yes	serves
 readPageSnapshot	pages	yes	29	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	458	yes	yes	yes	serves
+putPage	pages	yes	459	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	8	yes	yes	yes	serves
@@ -392,11 +392,14 @@ requireSynchronousCommit	persistence_journal	yes	1	no	yes	yes	serves
 readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldPageRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldCoverageRows	persistence_journal	yes	1	no	yes	yes	serves
-listFenceHoldRows	persistence_journal	yes	3	no	yes	yes	serves
+listFenceHoldRows	persistence_journal	yes	4	no	yes	yes	serves
 readFenceOriginGone	persistence_journal	yes	1	no	yes	yes	serves
 lockGenerationKey	persistence_journal	yes	2	no	yes	yes	serves
 clearFenceHoldRows	persistence_journal	yes	1	no	yes	yes	serves
 readFenceHoldFiles	persistence_journal	yes	1	no	yes	yes	serves
+readLiveGenerationRow	persistence_journal	yes	1	no	yes	yes	serves
+activateGenerationRows	persistence_journal	yes	1	no	yes	yes	serves
+recordHeldGenerationRow	persistence_journal	yes	1	no	yes	yes	serves
 readWriteRequest	persistence_journal	yes	9	no	yes	yes	serves
 readWriteRequestsByRequestId	persistence_journal	yes	1	no	yes	yes	serves
 readWriteRequestById	persistence_journal	yes	8	no	yes	yes	serves

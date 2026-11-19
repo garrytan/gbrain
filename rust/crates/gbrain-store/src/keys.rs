@@ -100,6 +100,8 @@ pub const DREAM_SYNTHESIS_COMPLETION: u8 = b'f';
 pub const ENTITY_IDENTITY: u8 = b'i';
 /// Family `session_state` (`session_state.rs`).
 pub const SESSION_STATE: u8 = b'y';
+/// Family `persistence_journal`, the `derived_generations` ledger (`generations.rs`).
+pub const DERIVED_GENERATION: u8 = b'h';
 
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];

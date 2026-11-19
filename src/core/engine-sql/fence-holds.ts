@@ -4,7 +4,8 @@
  * (`readFenceOriginGone`) and of the held list (`readFenceHoldFiles`), the generation key lock (`lockGenerationKey`)
  * and the hold a readable fence clears (`clearFenceHoldRows`). One SQL implementation for both engines; each statement
  * is the text fence.ts sent through `executeRaw`, byte for byte, on the engine's own `executeRaw`. Only its home moved.
- * The Rust engine holds no fence results and serves the rest from its pages (store-members/fence-holds.ts).
+ * The Rust engine reads and clears held rows in its derived generation family and serves the page reads from its pages
+ * (store-members/fence-holds.ts).
  */
 import type { EngineRawRead } from './cli-reads-ops.ts';
 

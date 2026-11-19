@@ -1,6 +1,28 @@
 {
   "golden": {
     "runtime": {
+      "activateGenerationRows#first": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "activateGenerationRows#successor": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "addCodeEdges#resolved+unresolved": {
         "flagOffLanes": [
           "pool"
@@ -3947,6 +3969,28 @@
         ],
         "flagOnScopes": []
       },
+      "readLiveGenerationRow#live": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readLiveGenerationRow#none": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readLiveMember#legacy_token": {
         "flagOffLanes": [
           "pool"
@@ -4434,6 +4478,39 @@
         "flagOn": "unscoped",
         "flagOnLanes": [
           "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "recordHeldGenerationRow#new": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "recordHeldGenerationRow#otherHold": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "recordHeldGenerationRow#sameHold": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
         ],
         "flagOnScopes": []
       },
@@ -5646,6 +5723,7 @@
         "_searchKeywordCJK": "direct",
         "_upsertChunksOnce": "via:readPageSnapshot",
         "acquireCycleLock": "none",
+        "activateGenerationRows": "none",
         "activeEmbeddingColId": "none",
         "addCodeEdges": "none",
         "addJobTokens": "none",
@@ -6237,6 +6315,7 @@
         "readLinkContextMatches": "none",
         "readLinkContextOriginPages": "none",
         "readLinkRelationshipEvidence": "none",
+        "readLiveGenerationRow": "none",
         "readLiveMember": "none",
         "readLivePageBody": "none",
         "readLocalWriterMemberGrant": "none",
@@ -6316,6 +6395,7 @@
         "recentWriterVersions": "none",
         "reclaimStalledJobs": "none",
         "reconnect": "none",
+        "recordHeldGenerationRow": "none",
         "recordPageEmbeddingHold": "none",
         "recordSearchTelemetry": "none",
         "recordSubagentToolExecutions": "none",

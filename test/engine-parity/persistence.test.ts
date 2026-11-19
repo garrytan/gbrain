@@ -209,6 +209,35 @@ describe('engine parity: write journal', () => {
     return held;
   });
 
+  parityTest('the generation ledger activates generation 1 then 2 and keeps one held row per key', {
+    methods: ['transaction', 'putPage', 'readLiveGenerationRow', 'activateGenerationRows', 'recordHeldGenerationRow', 'listFenceHoldRows'],
+  }, async (engine) => {
+    await engine.putPage('people/alice-example', { type: 'person', title: 'Alice', compiled_truth: 'alice body' });
+    const key = { sourceId: 'default', kind: 'fact_fence', ownerKey: 'page:people/alice-example' };
+    const row = (generation: number, operationId: string) => ({ generation, runId: null, operationId, inputPin: 'pin', inputSize: 4,
+      completeness: '{"complete":true}', setHash: 'h', restoreOf: null, activationId: null, locator: null });
+    const item = (itemKey: string, action: string) => ({ item_key: itemKey, identity_hash: itemKey, action, preimage: null, preimage_bytes: null, pending: false });
+    const held = (holdId: string) => ({ holdId, runId: null, inputPin: null, inputSize: null, setHash: 'h', reason: 'no_proof', context: '{"slug":"people/alice-example"}',
+      proposal: '[]', proposalBytes: 2 });
+    const none = await engine.readLiveGenerationRow(key);
+    const first = await engine.transaction(tx => tx.activateGenerationRows(key, null, row(1, 'op-1'), [item('row:a', 'published')]));
+    const one = await engine.readLiveGenerationRow(key);
+    await engine.transaction(tx => tx.activateGenerationRows(key, one!.id, row(2, 'op-2'), [item('row:a', 'kept'), item('row:b', 'published'), item('row:c', 'retired')]));
+    const two = await engine.readLiveGenerationRow(key);
+    await engine.transaction(tx => tx.recordHeldGenerationRow(key, held('hold-1')));
+    await engine.transaction(tx => tx.recordHeldGenerationRow(key, held('hold-1')));
+    const sameHold = (await engine.listFenceHoldRows(['default'], ['fact_fence'], key.ownerKey)).map(r => r.held_reason);
+    await engine.transaction(tx => tx.recordHeldGenerationRow(key, held('hold-2')));
+    const otherHold = (await engine.listFenceHoldRows(['default'], ['fact_fence'], key.ownerKey)).length;
+    const answers = { none, firstIsNumber: typeof first === 'number', one: { generation: one?.generation, items: one?.items },
+      two: { generation: two?.generation, input_pin: two?.input_pin, input_size: two?.input_size, locator: two?.locator,
+        items: [...(two?.items ?? [])].sort((a, b) => a.item_key.localeCompare(b.item_key)) }, sameHold, otherHold };
+    expect(answers).toEqual({ none: null, firstIsNumber: true, one: { generation: 1, items: [{ item_key: 'row:a', identity_hash: 'row:a' }] },
+      two: { generation: 2, input_pin: 'pin', input_size: 4, locator: null, items: [{ item_key: 'row:a', identity_hash: 'row:a' }, { item_key: 'row:b', identity_hash: 'row:b' }] },
+      sameHold: ['no_proof'], otherHold: 1 });
+    return answers;
+  });
+
   parityTest('forgetting a fact reprojects its page\'s facts fence: the generation key lock, then the generation read', {
     methods: ['transaction', 'putPage', 'listFenceRetireCandidates', 'lockGenerationKey'],
   }, async (engine) => {
