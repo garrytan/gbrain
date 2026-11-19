@@ -229,7 +229,7 @@ pub struct SegmentedProjectionFilter {
 }
 
 /// The sources by incarnation.
-fn sources_by_incarnation(read: &dyn KvRead) -> Result<HashMap<String, SourceRecord>> {
+pub(crate) fn sources_by_incarnation(read: &dyn KvRead) -> Result<HashMap<String, SourceRecord>> {
     Ok(all_sources(read)?
         .into_iter()
         .map(|s| (s.incarnation.clone(), s))

@@ -1035,15 +1035,13 @@ function printResolvedAIChoice(
 
 }
 
-async function assertInitEmbeddingIdentity(engine: BrainEngine, model: string | undefined): Promise<void> {
+/** Refuses an init whose embedding model differs from the one the stored vectors carry (exported for its test). */
+export async function assertInitEmbeddingIdentity(engine: BrainEngine, model: string | undefined): Promise<void> {
   if (!model) return;
   const stored = await readStoredEmbeddingIdentity(engine);
   if (stored?.model === model) return;
   for (const table of await readPrimaryEmbeddingStores(engine)) {
-    const rows = await engine.executeRaw<{ present: boolean }>(
-      `SELECT EXISTS (SELECT 1 FROM ${table} WHERE embedding IS NOT NULL) AS present`,
-    );
-    if (rows[0]?.present) {
+    if (await engine.hasStoredVectors(table)) {
       throw new Error('Existing vectors belong to a different or unrecorded embedding model. Re-initialization cannot change their identity, even at the same width. Run gbrain migrate embeddings --status and preview an explicit migration with --dry-run.');
     }
   }

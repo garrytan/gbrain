@@ -34,9 +34,8 @@ export async function guardEffectSource(tx: BrainEngine, effect: PersistenceEffe
   await declarePersistenceProtocol(tx);
   // Lock order is brain row, then source row: the effect-row protocol trigger share-locks the brain row,
   // and a worktree claim holds the brain row while it locks the source (#6007 deadlock).
-  await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR SHARE');
+  const owner = await tx.lockEffectGuard(effect.worktree_id ?? null);
   if (effect.worktree_id) {
-    const [owner] = await tx.executeRaw<{ owner_host_id: string; state: string }>('SELECT owner_host_id,state FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [effect.worktree_id]);
     if (!owner || owner.owner_host_id !== hostId || owner.state !== 'active') throw opError('owner_unavailable', 'The effect requires its active canonical owner.',
       `This host is not the active canonical owner of source ${effect.source_id}'s worktree, so its ${effect.kind} effect waits for the owner; the committed write is unaffected. Inspect the owner; the effect runs there.`,
       { fix: effectStatusFix(effect) });

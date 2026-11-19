@@ -148,6 +148,9 @@ test/engine-parity/cycle-locks.test.ts
 test/engine-parity/decide-proposals.test.ts
 test/engine-parity/decide-store.test.ts
 test/engine-parity/effect-scans.test.ts
+test/engine-parity/embedding-catalog.test.ts
+test/engine-parity/embedding-install.test.ts
+test/engine-parity/entity-anchor-reads.test.ts
 test/engine-parity/entity-reads.test.ts
 test/engine-parity/extraction.test.ts
 test/engine-parity/fact-purge-ledger.test.ts
@@ -186,6 +189,7 @@ test/engine-parity/links.test.ts
 test/engine-parity/memory-mutation-reads.test.ts
 test/engine-parity/open-loops.test.ts
 test/engine-parity/owner-recovery-scans.test.ts
+test/engine-parity/page-embedding-budget.test.ts
 test/engine-parity/page-visibility.test.ts
 test/engine-parity/pages.test.ts
 test/engine-parity/persistence-declaration.test.ts

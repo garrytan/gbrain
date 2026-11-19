@@ -170,7 +170,7 @@ describe('rank_entities counting', () => {
     const refusing = (err: Error) => new Proxy(engine, {
       get: (target, key) => COVERAGE_READS.has(key) ? async () => { throw err; } : Reflect.get(target, key, target),
     });
-    const refusal = capabilityMissing('raw_sql', 'executeRaw');
+    const refusal = capabilityMissing('graph', 'readRankCoverage');
     for (const ctx of [ctxOf({ engine: refusing(refusal) as any }), ctxOf({ engine: refusing(refusal) as any, remote: true, transport: 'stdio', auth: { allowedSources: ['source-a'] } as any })]) {
       const err = await rank(ctx).then(() => null, (e: unknown) => e as { code?: string });
       expect(err?.code).toBe('engine_capability_missing');

@@ -10,7 +10,7 @@
 //! (`purge_ledger::purged_claim`).
 //! See rust/docs/store/facts.md, "The fence overlay".
 
-use super::{FactRecord, held_cells, page_rows};
+use super::{held_cells, page_rows};
 use crate::Store;
 use crate::error::{INVALID_ARGUMENT, Result, StoreError};
 use crate::links::no_nul;
@@ -76,10 +76,14 @@ impl Store {
             .filter(|p| p.deleted_at_us.is_none())
             .map(|p| TrustTier::stored(p.trust_tier.as_deref()).as_str());
         let rows = page_rows(&*read, &input.source_id, &input.slug)?;
-        let live: Vec<FactRecord> = if input.hide_held {
+        // `heldRowSql` with both caller admissions `FALSE`: no live row is admitted.
+        let live: Vec<held_cells::LiveRow> = if input.hide_held {
             rows.iter()
                 .filter(|r| r.expired_at_us.is_none())
-                .cloned()
+                .map(|r| held_cells::LiveRow {
+                    row: r.clone(),
+                    admitted: false,
+                })
                 .collect()
         } else {
             Vec::new()

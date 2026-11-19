@@ -1666,7 +1666,6 @@ way PGLite does, refuses `engine_capability_missing` and writes nothing. These a
 - a vector search with `where`, a date bound, `minTrust` or `suppressFlagged`, or on a column other than `embedding`,
   and a take vector search with `eligibility.floor` or `eligibility.suppressFlagged` (`rust/docs/store/vectors.md`);
 - a `putPage` that claims a `source_path` (the store has no such claim);
-- `listPages` with `listColumnsOnly`;
 - `resolveSlugs` when no live page has exactly that slug, because PGLite goes on to a fuzzy title match the store does
   not have, so an empty answer would be wrong to give;
 - a `getChunks` over more than one distinct `sourceIds` entry, a read of unsealed chunks or embeddings;

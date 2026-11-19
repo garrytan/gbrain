@@ -3,8 +3,8 @@
  * runs before it claims effects (listGatedMirrorRequests, listEffectRecoveries) and the claim's candidate read
  * (selectClaimableEffect), and a write receipt's read of its effects (readRequestEffects).
  *
- * Each scan joins persistence effects to the worktrees a host owns. The store keeps no worktree and claims no effect yet,
- * so each one answers no row; it still refuses the arguments the Postgres casts refuse (a host id that is not a uuid,
+ * The worktree scans join persistence effects to the worktrees a host owns. The store keeps no worktree, so each one
+ * answers no row; it still refuses the arguments the Postgres casts refuse (a host id that is not a uuid,
  * an `after` that is not a bigint, a fractional or negative limit).
  *
  * What each member answers and why: rust/docs/store/persistence.md ("Effect scans").
@@ -20,9 +20,12 @@ export const listGatedMirrorRequests: StoreMember<[hostId: string, gateCode: str
 export const listEffectRecoveries: StoreMember<[hostId: string, after: string | null, limit: number], Record<string, unknown>[]> =
   (brain, hostId, after, limit) => storeCall({ member: 'listEffectRecoveries' }, () => brain.listEffectRecoveries(hostId, after, limit));
 
-/** No effect is claimed on this engine yet, so a stored effect waits queued (null); the dead owner keys change nothing. */
+/**
+ * The next effect to claim with the Postgres queue rules (effect_worker.rs): queued, an expired claim or a claim of a dead
+ * owner, due now, with no recovery and no withdrawal mirror of its request pending; on no worktree (every one here).
+ */
 export const selectClaimableEffect: StoreMember<[hostId: string, deadOwners: readonly string[]], Record<string, unknown> | null> =
-  (brain, hostId) => storeCall({ member: 'selectClaimableEffect' }, () => brain.selectClaimableEffect(hostId));
+  (brain, hostId, deadOwners) => storeCall({ member: 'selectClaimableEffect' }, () => brain.selectClaimableEffect(hostId, [...deadOwners]));
 
 /** The request's stored effects, in kind order, or only its Git effect; a non-uuid request id refuses as `::uuid` does. */
 export const readRequestEffects: StoreMember<[requestId: string, kind?: 'git'], RequestEffectState[]> =

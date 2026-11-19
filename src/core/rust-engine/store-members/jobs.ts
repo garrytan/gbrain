@@ -1,7 +1,7 @@
 /**
  * Minion queue members (BrainEngine admitJob, getJob, listJobs, claimNextJob, renewJobLease, completeJob, failJob,
- * reclaimStalledJobs) and the cycle locks (acquire, refresh, release, read, delete, delete-if-stale, assert). The store
- * keeps the `minion_jobs`, `minion_inbox` and `gbrain_cycle_locks` rows (rust/docs/store/jobs.md); timestamps cross
+ * reclaimStalledJobs), the cycle locks (acquire, refresh, release, read, delete, delete-if-stale, assert) and the page
+ * embedding leases (take, renew, release). The store keeps the `minion_jobs`, `minion_inbox` and `gbrain_cycle_locks` rows (rust/docs/store/jobs.md); timestamps cross
  * the binding as ISO strings and come back as `Date`s, as PGLite returns them.
  */
 import type { BrainEngine, CycleLockFilter, CycleLockRow } from '../../engine.ts';
@@ -148,6 +148,20 @@ export const deleteCycleLockIfStale: StoreMember<[lockId: string, opts: HolderOp
 export const readCycleLocks: StoreMember<[filter: CycleLockFilter], CycleLockRow[]> = async (brain, filter) => {
   const rows: CycleLockRow[] = await storeCall({ member: 'readCycleLocks' }, () => brain.readCycleLocks(filter));
   return rows.map(r => withDates(r, LOCK_DATES));
+};
+
+// ---------------------------------------------------------------- page embedding leases (page-embedding-lease.ts)
+
+type PageLeaseTake = Parameters<BrainEngine['takePageEmbeddingLease']>[1];
+
+export const takePageEmbeddingLease: StoreMember<[leaseId: string, opts: PageLeaseTake], boolean> = (brain, leaseId, opts) =>
+  storeCall({ member: 'takePageEmbeddingLease' }, () => brain.takePageEmbeddingLease(leaseId, opts));
+
+export const renewPageEmbeddingLease: StoreMember<[leaseId: string, opts: { acquisitionToken: string; ttlMinutes: number }], boolean> = (brain, leaseId, opts) =>
+  storeCall({ member: 'renewPageEmbeddingLease' }, () => brain.renewPageEmbeddingLease(leaseId, opts));
+
+export const releasePageEmbeddingLease: StoreMember<[leaseId: string, opts: { acquisitionToken: string }], void> = async (brain, leaseId, opts) => {
+  await storeCall({ member: 'releasePageEmbeddingLease' }, () => brain.releasePageEmbeddingLease(leaseId, opts));
 };
 
 export const assertCycleLease: StoreMember<[lockId: string, acquisitionToken: string], boolean> = (brain, lockId, acquisitionToken) =>

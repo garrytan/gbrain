@@ -9,9 +9,13 @@
  *    `restricted: true`, and the reads render the full form. On both brains, on every engine arm, a plain caller reads
  *    the open page and not the private one; on the second brain it also reads the page that dropped its readers and
  *    not the page that still names them.
- *  - Regression: the Rust store implements only the full form. It serves a `restricted: false` caller because
- *    private-provenance.ts reads that caller under `restricted: true`. Without that mapping the never-held brain
- *    stops on a typed refusal on the Rust arm, while the once-held brain still reads, because its flag is set.
+ *    A caller record built under `restricted: false` on a brain that holds a `readable_by` page (a stale flag read)
+ *    renders the short form, which hides every page that names readers, the caller's own included; the Rust store
+ *    reads its own flag, finds it set and hides the same pages.
+ *  - Regression: the Rust member compared the short form with the full form and refused a `restricted: false` caller,
+ *    so the never-held brain stopped on a typed refusal on the Rust arm (an earlier fix read such a caller as
+ *    `restricted: true`, which ignored the store's own flag). The member now sends the short form as `open`, and the
+ *    store's flag decides what it adds.
  *  - Why existing coverage misses it: unrestricted-caller-reads.test.ts sets `restricted` by hand and writes no
  *    `readable_by` page; access-flag.test.ts reads the flag and no page through it.
  *  - Seam: none. Real engines, typed methods only; the caller record takes its `restricted` value from the flag read.
@@ -84,5 +88,31 @@ describe('engine parity: excludePrivate reads for a remote caller whose record f
     expect(JSON.stringify(kept)).not.toContain(PRIVATE);
     expect(JSON.stringify(kept)).not.toContain(READERS);
     return kept;
+  });
+
+  // A caller record built while the flag read unset (a stale read, or a brain whose flag an operator cleared) on a
+  // brain that holds a readable_by page: PGLite and Postgres render the short form, which hides every page that names
+  // readers, even one that names the caller. The Rust store reads its own flag, finds it set and hides the same pages.
+  parityTest('a caller read under the short form on a brain that holds readable_by pages sees none of them', { methods: ['putPage', 'addTimelineEntry', 'insertFacts', 'getRecentSalience', 'findOrphanPages', 'getSince', 'listUnattributedFacts'] }, async (engine) => {
+    await page(engine, OPEN, {});
+    await page(engine, PRIVATE, { visibility: 'private' });
+    await page(engine, READERS, { readable_by: ['member:alice-example'] });
+    await facts(engine, [OPEN, PRIVATE, READERS]);
+    const reads = async () => ({
+      salience: sorted((await engine.getRecentSalience({ days: 7, limit: 100, excludePrivate: true })).map((r) => r.slug)),
+      orphans: sorted((await engine.findOrphanPages({ excludePrivate: true })).map((r) => r.slug)),
+      since: sorted((await engine.getSince('2026-06-18', { excludePrivate: true })).map((r) => r.page_slug)),
+      facts: sorted((await engine.listUnattributedFacts({ sourceIds: ['default'], worldOnly: false, excludePrivateProvenance: true, limit: 10, offset: 0 }))
+        .map((r) => r.fact)),
+    });
+    const plain = await withCallerAccess({ restricted: false, hidePrivate: true }, reads);
+    const named = await withCallerAccess({ restricted: false, hidePrivate: true, identity: ['member:alice-example'] }, reads);
+    for (const kept of [plain, named]) {
+      expect(kept.salience).toEqual([OPEN]);
+      expect(kept.orphans).toEqual([OPEN]);
+      expect(kept.since).toEqual([OPEN]);
+      expect(kept.facts).toEqual([`from ${OPEN}`]);
+    }
+    return { plain, named };
   });
 });
