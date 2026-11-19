@@ -367,7 +367,21 @@ const PINS: Pin[] = [
       WHERE p.source_id = $1 AND p.deleted_at IS NULL AND NOT ${retiredPageSql('p')} AND p.slug = ANY($2::text[]) ${predicate()}
       ORDER BY p.slug LIMIT 5`],
   })),
+  ...([
+    ['all', {}],
+    ['sources-run', { sourceIds: ['default'], runId: 'run-1' }],
+  ] as const).map(([variant, opts]): Pin => ({
+    from: `src/core/persistence/sync-holds.ts:575 readGitSourceHolds (${variant})`,
+    case: { method: 'readGitHoldRecords', variant, run: e => e.readGitHoldRecords(opts) },
+    texts: () => [`SELECT ${READ_HOLD_RECORD_SQL} AS record FROM op_checkpoints h
+    JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
+    WHERE h.op=$1 AND ($2::text[] IS NULL OR s.id=ANY($2::text[])) AND ($3::text IS NULL OR h.completed_keys->0->>'run_id'=$3)
+    ORDER BY s.id,h.fingerprint`],
+  })),
 ];
+
+/** sync-holds.ts READ_HOLD_RECORD_SQL at 8bfcd19ad8, verbatim. */
+const READ_HOLD_RECORD_SQL = `CASE WHEN COALESCE(s.config->>'mirror_read_only','false')='true' THEN jsonb_set(h.completed_keys->0,'{read_only_checkout}','true'::jsonb) ELSE h.completed_keys->0 END`;
 
 /** entity-card.ts CARD_ROW_COLUMNS at 7470c703ed, verbatim. */
 function CARD_ROW_COLUMNS(): string {

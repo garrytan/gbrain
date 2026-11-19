@@ -5424,6 +5424,7 @@
         "readFactSubject": "none",
         "readFieldUsageSamples": "none",
         "readFolderAccess": "none",
+        "readGitHoldRecords": "none",
         "readGlobalMaintenanceDeaths": "none",
         "readGraduationGateRow": "none",
         "readGuestSourceRow": "none",

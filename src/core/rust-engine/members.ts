@@ -540,6 +540,7 @@ export const RUST_ENGINE_MEMBERS = {
   readJournalLimitRows: 'persistence_journal',
   readHeldPageRows: 'persistence_journal',
   readHeldCoverageRows: 'persistence_journal',
+  readGitHoldRecords: 'persistence_journal',
   hasPersistenceTable: 'persistence_journal',
   listManagedRootBindings: 'persistence_journal',
   readGraduationGateRow: 'persistence_journal',

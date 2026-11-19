@@ -1,6 +1,6 @@
 /**
  * BrainEngine parity — the write-journal members (engine-sql/persistence-journal.ts and persistence-claims.ts): the
- * limit read, the hold reads, one request's admission, claim and completion (in a transaction and member by member),
+ * limit read, the hold reads (held pages, held coverage, git sync holds), one request's admission, claim and completion (in a transaction and member by member),
  * the claim upkeep (renewal, expiry, the claimable probe) and the admission reads (source membership, topology changes,
  * the ledger's source view).
  *
@@ -140,6 +140,15 @@ describe('engine parity: write journal', () => {
     const oneSource = await engine.readHeldCoverageRows(['default']);
     const answers = { pages, noPages, everySource, oneSource };
     expect(answers).toEqual({ pages: [], noPages: [], everySource: [], oneSource: [] });
+    return answers;
+  });
+
+  parityTest('readGitHoldRecords finds no git sync holds on a brain with no held files, for every source, one source or one run', { methods: ['readGitHoldRecords'] }, async (engine) => {
+    const everySource = await engine.readGitHoldRecords();
+    const oneSource = await engine.readGitHoldRecords({ sourceIds: ['default'] });
+    const oneRun = await engine.readGitHoldRecords({ sourceIds: ['default', 'other'], runId: 'run-1' });
+    const answers = { everySource, oneSource, oneRun };
+    expect(answers).toEqual({ everySource: [], oneSource: [], oneRun: [] });
     return answers;
   });
 

@@ -18,6 +18,7 @@ import type * as FactsPurgeSql from './engine-sql/facts-purge.ts';
 import type * as FactsRepairSql from './engine-sql/facts-repair.ts';
 import type * as FactsTrustSql from './engine-sql/facts-trust.ts';
 import type { EngineCapabilities } from './engine-capabilities.ts';
+import type { GitHoldRecordsQuery } from './engine-sql/sync-hold-reads.ts';
 import type { GetVersionsOpts, PageVersionRows } from './page-state/version-types.ts';
 import type { PageSnapshotBatch } from './page-snapshot-batch.ts';
 import type { LinkReadScope } from './link-validity.ts';
@@ -3393,6 +3394,8 @@ export interface BrainEngine {
   readHeldPageRows<R = Record<string, unknown>>(pageIds: string[]): Promise<Array<{ record: R; revision: string | null }>>;
   /** The held-file summary rows of live sources with at least one held file, in source order; null reads every source. */
   readHeldCoverageRows(sourceIds: string[] | null): Promise<HeldCoverageRow[]>;
+  /** The git sync hold records of each source's current incarnation, by source then fingerprint (SQL in engine-sql/sync-hold-reads.ts). */
+  readGitHoldRecords<R = Record<string, unknown>>(opts?: GitHoldRecordsQuery): Promise<Array<{ record: R }>>;
   /** The request a principal admitted under `requestId` (a uuid), or null. */
   readWriteRequest(principalKind: string, principalId: string, requestId: string): Promise<WriteRequest | null>;
   /** The request with journal id `id`, or null; `signal` cancels the read. */

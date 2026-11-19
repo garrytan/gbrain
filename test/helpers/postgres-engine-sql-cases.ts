@@ -196,6 +196,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listHeldFenceCells': OOS.cliReadsOps,
   'listSourceRecords': OOS.cliReadsImport,
   'readSourceIncarnation': OOS.cliReadsImport,
+  'readGitHoldRecords': OOS.callerRawSql,
   'hasCompanyBrainReceipt': OOS.cliReadsImport,
   'readGuestSourceRow': OOS.cliReadsImport,
   'listGuestSourceIds': OOS.cliReadsImport,

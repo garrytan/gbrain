@@ -167,6 +167,8 @@ import * as persistenceStateImpl from './engine-sql/persistence-state.ts';
 import * as persistenceDeclarationImpl from './engine-sql/persistence-declaration.ts';
 import type { DurablePersistenceSettings } from './engine-sql/persistence-declaration.ts';
 import * as persistenceJournalImpl from './engine-sql/persistence-journal.ts';
+import * as syncHoldReadsImpl from './engine-sql/sync-hold-reads.ts';
+import type { GitHoldRecordsQuery } from './engine-sql/sync-hold-reads.ts';
 import * as writeGuardsImpl from './engine-sql/write-guards.ts';
 import * as pageVisibilityImpl from './engine-sql/page-visibility.ts';
 import * as largePageImpl from './engine-sql/large-page.ts';
@@ -1237,6 +1239,7 @@ export class PostgresEngine implements BrainEngine {
   readJournalLimitRows() { return this.preparationRead(exec => persistenceJournalImpl.readJournalLimitRows(unscopedExecutor(exec, 'persistence: journal limit read ran unscoped through executeRaw'))); }
   readHeldPageRows<R = Record<string, unknown>>(pageIds: string[]) { return this.preparationRead(exec => persistenceJournalImpl.readHeldPageRows<R>(unscopedExecutor(exec, 'persistence: hold read ran unscoped through executeRaw'), pageIds)); }
   readHeldCoverageRows(sourceIds: string[] | null) { return this.preparationRead(exec => persistenceJournalImpl.readHeldCoverageRows(unscopedExecutor(exec, 'persistence: hold summary read ran unscoped through executeRaw'), sourceIds)); }
+  readGitHoldRecords<R = Record<string, unknown>>(opts?: GitHoldRecordsQuery) { return syncHoldReadsImpl.readGitHoldRecords<R>(this, opts); }
   readWriteRequest(principalKind: string, principalId: string, requestId: string) { return this.preparationRead(exec => persistenceJournalImpl.readWriteRequest(unscopedExecutor(exec, 'persistence: request read ran unscoped through executeRaw'), principalKind, principalId, requestId)); }
   readWriteRequestById(id: string, opts?: { signal?: AbortSignal }) { return this.preparationRead(exec => persistenceJournalImpl.readWriteRequestById(unscopedExecutor(exec, 'persistence: request read ran unscoped through executeRaw'), id, opts)); }
   readWriteRequestProgress(id: string, opts?: { signal?: AbortSignal }) { return this.preparationRead(exec => persistenceJournalImpl.readWriteRequestProgress(unscopedExecutor(exec, 'persistence: request progress read ran unscoped through executeRaw'), id, opts)); }

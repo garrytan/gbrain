@@ -60,6 +60,7 @@ import { HOLD_ATTEMPTS_NEEDS_HUMAN, HOLD_ESCALATE_MS } from './sync-fault-class.
 import { retiredSyncSetting, type RetiredSyncKeyName } from '../sync-config-keys.ts';
 
 import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP } from '../engine-sql/persistence-journal.ts';
+import { readGitHoldRecords as readGitHoldRecordsOver, type GitHoldRecordsQuery } from '../engine-sql/sync-hold-reads.ts';
 export { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP };
 export const GIT_HOLD_RETRY_OP = 'sync-hold-retry';
 export const SYNC_IMPORT_PROVENANCE_OP = 'sync-import-provenance';
@@ -75,6 +76,8 @@ export const GIT_HOLD_ESCALATE_PCT = 5;
 export const GIT_HOLD_ESCALATE_MIN_SCREENED = 40;
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
+/** An engine (its typed readGitHoldRecords) or an executeRaw-only view of one. */
+type HoldsReader = Pick<BrainEngine, 'readGitHoldRecords'> | Exec;
 
 export type GitHoldCode = ContentRefusal['code'] | 'rename_held' | 'parser_regression' | 'managed_image_sync_unsupported' | 'concurrent_write' | 'preparation_stalled' | 'worktree_dirty' | 'file_drift'
   | 'legacy_slug_conflict' | 'write_interrupted' | 'origin_conflict'
@@ -569,13 +572,12 @@ export async function countGitHolds(engine: Exec, sourceId: string, incarnation:
 /**
  * Git-source holds of each source's current incarnation (sources with none are
  * omitted). Connector holds are read by `readAllSourceHolds`; only `sources
- * status` and `sources retry-held` merge the two.
+ * status` and `sources retry-held` merge the two. Reads through the typed
+ * readGitHoldRecords member when the engine has it (a Rust brain), else the same
+ * statement over an executeRaw-only view.
  */
-export async function readGitSourceHolds(engine: Exec, opts: { sourceIds?: string[]; runId?: string } = {}): Promise<GitSourceHolds[]> {
-  const rows = await engine.executeRaw<{ record: GitHoldRecord }>(`SELECT ${READ_HOLD_RECORD_SQL} AS record FROM op_checkpoints h
-    JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
-    WHERE h.op=$1 AND ($2::text[] IS NULL OR s.id=ANY($2::text[])) AND ($3::text IS NULL OR h.completed_keys->0->>'run_id'=$3)
-    ORDER BY s.id,h.fingerprint`, [GIT_HOLD_OP, opts.sourceIds ?? null, opts.runId ?? null]);
+export async function readGitSourceHolds(engine: HoldsReader, opts: GitHoldRecordsQuery = {}): Promise<GitSourceHolds[]> {
+  const rows = 'readGitHoldRecords' in engine ? await engine.readGitHoldRecords<GitHoldRecord>(opts) : await readGitHoldRecordsOver<GitHoldRecord>(engine, opts);
   const out = new Map<string, GitSourceHolds>();
   for (const { record } of rows) {
     const entry = out.get(record.source_id) ?? { sourceId: record.source_id, incarnation: record.incarnation, count: 0, holds: [] };

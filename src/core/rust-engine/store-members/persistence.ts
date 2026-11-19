@@ -18,6 +18,7 @@ import type { LocalWriterInsert, LocalWriterRow } from '../../engine-sql/persist
 import type { AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OutstandingBySource, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
 import type { LedgerSource } from '../../engine-sql/belief.ts';
+import type { GitHoldRecordsQuery } from '../../engine-sql/sync-hold-reads.ts';
 import type { WriteRequest } from '../../persistence/model.ts';
 import { PAGE_BODY_CONFIG_KEYS } from '../../page-body/limits.ts';
 import { requestRow, topologyRow } from '../store-codec.ts';
@@ -69,6 +70,9 @@ export const readHeldPageRows: StoreMember<[pageIds: string[]], Array<{ record: 
 
 /** No hold rows exist on this engine (see readHeldPageRows), so no source has held coverage. */
 export const readHeldCoverageRows: StoreMember<[sourceIds: string[] | null], HeldCoverageRow[]> = async () => [];
+
+/** No hold rows exist on this engine (see readHeldPageRows), so no source has a hold record. */
+export const readGitHoldRecords: StoreMember<[opts?: GitHoldRecordsQuery], Array<{ record: never }>> = async () => [];
 
 
 /** The request a principal admitted under `requestId`, or null. */
