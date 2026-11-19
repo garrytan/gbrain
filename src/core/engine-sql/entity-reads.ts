@@ -4,6 +4,7 @@
  * Each statement is the one its call site ran, with the same parameters; the call site keeps its own fallbacks.
  */
 import type { LegacyUnscopedRead } from './brands.ts';
+import type { SqlExecutor } from './executor.ts';
 import { extractionLagStatement } from './pages.ts';
 import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import { retiredPageSql } from '../entities/resolve.ts';
@@ -73,6 +74,29 @@ export async function countMentionDueSince(exec: LegacyUnscopedRead, sourceId: s
           AND (s.page_id IS NULL OR s.mention_revision IS DISTINCT FROM p.knowledge_revision OR s.mention_version IS DISTINCT FROM $3)`,
       [sourceId, since, mentionVersion]);
   return Number(n?.n ?? 0);
+}
+
+/** A recount mention coverage saves on a source's status row (`recountMentionIndexStatus`). */
+export interface MentionIndexRecount {
+  /** The recounted pending pages. */
+  pending: number;
+  /** The fingerprint to store: the policy hash and this binary's index version stamp. */
+  fingerprint: string;
+  /** The fingerprint the caller read; the row is updated only while it still holds this one. */
+  expectedFingerprint: string | null;
+}
+
+/**
+ * Saves a recount on one source's mention-index status row: pending, counted_at, the fingerprint,
+ * and `complete` becomes `pending` when the recount is above 0. A compare-and-set on the stored
+ * fingerprint, so a pass that finished meanwhile is not overwritten; a source with no row is untouched.
+ */
+export async function recountMentionIndexStatus(exec: SqlExecutor, sourceId: string, r: MentionIndexRecount): Promise<void> {
+  await exec.executeRaw(
+        `UPDATE mention_index_status SET pending = $2, counted_at = now(), policy_fingerprint = $3, updated_at = now(),
+                state = CASE WHEN state = 'complete' AND $2::int > 0 THEN 'pending' ELSE state END
+          WHERE source_id = $1 AND policy_fingerprint IS NOT DISTINCT FROM $4`,
+        [sourceId, r.pending, r.fingerprint, r.expectedFingerprint]);
 }
 
 /** Live pages due for the mention pass: no mention state, or state behind the page's content or the extractor version. */

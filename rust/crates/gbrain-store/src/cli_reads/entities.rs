@@ -47,6 +47,16 @@ pub struct MentionDueSinceQuery {
     pub since: String,
 }
 
+/// `recountMentionIndexStatus(sourceId, recount)`.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MentionIndexRecount {
+    pub source_id: String,
+    pub pending: i64,
+    pub fingerprint: String,
+    pub expected_fingerprint: Option<String>,
+}
+
 /// `countPagesDueForMentions(q)`: only the scope matters, since every page is due.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -179,6 +189,13 @@ impl Store {
             .filter(|p| p.updated_at_us >= since)
             .count();
         Ok(n as u64)
+    }
+
+    /// `recountMentionIndexStatus(sourceId, recount)`: the SQL updates the source's status row
+    /// only while its fingerprint is `expected_fingerprint`. The store keeps no status rows, so the
+    /// update matches nothing and nothing is written; it returns `null` as the engines do.
+    pub fn recount_mention_index_status(&self, _q: &MentionIndexRecount) -> Result<()> {
+        Ok(())
     }
 
     /// `countPagesDueForMentions(q)`: the live pages in the scope (every page when `source_id` is

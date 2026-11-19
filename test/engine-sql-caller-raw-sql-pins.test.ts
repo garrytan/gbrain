@@ -219,6 +219,13 @@ const PINS: Pin[] = [
         WHERE p.source_id = $1 AND p.updated_at >= $2::timestamptz AND p.deleted_at IS NULL
           AND (s.page_id IS NULL OR s.mention_revision IS DISTINCT FROM p.knowledge_revision OR s.mention_version IS DISTINCT FROM $3)`],
   },
+  {
+    from: 'src/core/mentions/coverage.ts:63 readMentionCoverage (the recount write)',
+    case: { method: 'recountMentionIndexStatus', variant: 'default', run: e => e.recountMentionIndexStatus('default', { pending: 2, fingerprint: 'h;v', expectedFingerprint: null }) },
+    texts: [`UPDATE mention_index_status SET pending = $2, counted_at = now(), policy_fingerprint = $3, updated_at = now(),
+                state = CASE WHEN state = 'complete' AND $2::int > 0 THEN 'pending' ELSE state END
+          WHERE source_id = $1 AND policy_fingerprint IS NOT DISTINCT FROM $4`],
+  },
 ];
 
 /** entity-card.ts CARD_ROW_COLUMNS at 7470c703ed, verbatim. */

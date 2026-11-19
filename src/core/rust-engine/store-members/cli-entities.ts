@@ -6,7 +6,7 @@
  * refuses for a caller whose members, grants or lineage change it. `readRetirementHop` applies the hop's page policy
  * the same way (retirementHopPolicy).
  */
-import type { EntityCardMatch, EntityCardRow, IgnoredLabelPageRow, MentionDueQuery, MentionIndexStatusRow, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow } from '../../engine-sql/entity-reads.ts';
+import type { EntityCardMatch, EntityCardRow, IgnoredLabelPageRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow } from '../../engine-sql/entity-reads.ts';
 import { ignoredPrivacyLabels, SCAN_CAP } from '../../search/ignored-privacy-labels.ts';
 import { callerAccessAllowedSql, currentCallerAccess, privatePagesFilterForCaller, remoteReadFloorSql, withCallerAccess, withoutCallerAccess } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
@@ -26,6 +26,13 @@ export const countLivePagesInSource: StoreMember<[sourceId: string], number> = a
 /** With no mention state every live page is unscanned, so this counts the source's live pages written at or after `since`. */
 export const countMentionDueSince: StoreMember<[sourceId: string, since: string, mentionVersion: number], number> = async (brain, sourceId, since) =>
   Number(await storeCall({ member: 'countMentionDueSince', sourceId }, () => brain.countMentionDueSince({ sourceId, since })));
+
+/** The store keeps no mention-index status rows, so the compare-and-set matches nothing; the store checks the arguments and writes nothing. */
+export const recountMentionIndexStatus: StoreMember<[sourceId: string, recount: MentionIndexRecount], void> = async (brain, sourceId, recount) => {
+  const r = takeOptions('recountMentionIndexStatus', recount, ['pending', 'fingerprint', 'expectedFingerprint']);
+  await storeCall({ member: 'recountMentionIndexStatus', sourceId }, () =>
+    brain.recountMentionIndexStatus({ sourceId, pending: r.pending, fingerprint: r.fingerprint, expectedFingerprint: r.expectedFingerprint ?? null }));
+};
 
 export const countPagesDueForMentions: StoreMember<[q: MentionDueQuery], number> = async (brain, q) => {
   const opts = takeOptions('countPagesDueForMentions', q, ['sourceId', 'mentionVersion', 'aliases']);

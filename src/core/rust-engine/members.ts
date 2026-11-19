@@ -580,6 +580,7 @@ export const RUST_ENGINE_MEMBERS = {
   readMentionIndexStatus: 'pages',
   countLivePagesInSource: 'pages',
   countMentionDueSince: 'pages',
+  recountMentionIndexStatus: 'pages',
   countPagesDueForMentions: 'pages',
   readIdentitySiblingCandidates: 'pages',
   findExactSlug: 'pages',

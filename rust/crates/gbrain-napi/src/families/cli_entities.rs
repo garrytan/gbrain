@@ -49,6 +49,21 @@ impl Brain {
         })
     }
 
+    /// `recountMentionIndexStatus({ sourceId, pending, fingerprint, expectedFingerprint })`: a
+    /// no-op, since the store keeps no status rows.
+    #[napi]
+    pub fn recount_mention_index_status<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: gbrain_store::cli_reads::entities::MentionIndexRecount =
+                required(query, "recountMentionIndexStatus query")?;
+            s.recount_mention_index_status(&q)
+        })
+    }
+
     /// `countPagesDueForMentions({ sourceId? })`: the live pages in scope.
     #[napi]
     pub fn count_pages_due_for_mentions<'env>(

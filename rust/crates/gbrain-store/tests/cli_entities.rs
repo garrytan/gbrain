@@ -6,7 +6,8 @@ mod common;
 use common::{TempDir, open};
 use gbrain_store::Store;
 use gbrain_store::cli_reads::entities::{
-    MentionDueQuery, MentionDueSinceQuery, MentionIndexStatusQuery, SiblingCandidateQuery,
+    MentionDueQuery, MentionDueSinceQuery, MentionIndexRecount, MentionIndexStatusQuery,
+    SiblingCandidateQuery,
 };
 use gbrain_store::facts::PrivacyPolicy;
 use gbrain_store::pages::{PageInput, PutPageOptions};
@@ -165,6 +166,16 @@ fn mention_coverage_reads_see_no_status_rows() {
     assert_eq!(since("default", "1970-01-01T00:00:00.000Z").unwrap(), 11);
     assert_eq!(since("default", "infinity").unwrap(), 0);
     assert!(since("default", "yesterday").is_err());
+    // The recount's compare-and-set finds no row, so nothing changes.
+    store
+        .recount_mention_index_status(&MentionIndexRecount {
+            source_id: "default".into(),
+            pending: 4,
+            fingerprint: "h;v".into(),
+            expected_fingerprint: None,
+        })
+        .unwrap();
+    assert!(status(&["default"]).is_empty());
 }
 
 #[test]

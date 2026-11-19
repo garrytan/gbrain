@@ -38,7 +38,7 @@ const toIso = (v: unknown): string | null => {
 };
 
 /** Coverage over `sourceIds` (the caller's permitted sources). */
-export async function readMentionCoverage(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'countPagesDueForMentions' | 'readMentionIndexStatus' | 'countLivePagesInSource' | 'countMentionDueSince'>, sourceIds: string[]): Promise<MentionCoverage> {
+export async function readMentionCoverage(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'countPagesDueForMentions' | 'readMentionIndexStatus' | 'countLivePagesInSource' | 'countMentionDueSince' | 'recountMentionIndexStatus'>, sourceIds: string[]): Promise<MentionCoverage> {
   const policy = await readMentionPolicy(engine);
   const rows = await engine.readMentionIndexStatus(sourceIds);
   const bySource = new Map(rows.map(r => [r.source_id, r]));
@@ -59,11 +59,8 @@ export async function readMentionCoverage(engine: Pick<BrainEngine, 'executeRaw'
     if (stored.versions !== INDEX_VERSION_STAMP) {
       // Counted by another binary: recount once (pages behind this binary's versions are due whatever their updated_at) and save it.
       const due = await countIndexDuePages(engine, sourceId, linkableTypesFor(await loadSourcePack(engine, sourceId), policy));
-      await engine.executeRaw(
-        `UPDATE mention_index_status SET pending = $2, counted_at = now(), policy_fingerprint = $3, updated_at = now(),
-                state = CASE WHEN state = 'complete' AND $2::int > 0 THEN 'pending' ELSE state END
-          WHERE source_id = $1 AND policy_fingerprint IS NOT DISTINCT FROM $4`,
-        [sourceId, due, `${stored.hash ?? ''};${INDEX_VERSION_STAMP}`, row.policy_fingerprint]).catch(() => undefined);
+      await engine.recountMentionIndexStatus(sourceId, { pending: due, fingerprint: `${stored.hash ?? ''};${INDEX_VERSION_STAMP}`, expectedFingerprint: row.policy_fingerprint })
+        .catch(() => undefined);
       pending += due;
       continue;
     }

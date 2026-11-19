@@ -5370,6 +5370,7 @@
         "recordSubagentToolExecutions": "none",
         "recordWakeCronRun": "none",
         "recordWakeTermsAcceptance": "none",
+        "recountMentionIndexStatus": "none",
         "refreshCycleLock": "none",
         "refreshPageBody": "none",
         "refreshPageOrigin": "none",

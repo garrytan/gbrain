@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 667/667
+# covered: 668/668
 # lifecycle: 9/9
 # pages: 39/39
 # search: 7/7
@@ -33,7 +33,7 @@
 # config: 6/6
 # import_guards: 10/10
 # persistence_journal: 40/40
-# entity_reads: 11/11
+# entity_reads: 12/12
 # cycle_locks: 7/7
 # minion_jobs: 8/8
 # minion_queue: 70/70
@@ -81,13 +81,13 @@ getPage	pages	yes	83	yes	yes	yes	serves
 readPageSnapshot	pages	yes	22	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	381	yes	yes	yes	serves
+putPage	pages	yes	382	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	109	yes	yes	yes	serves
+softDeletePage	pages	yes	110	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -340,7 +340,7 @@ rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
 resolveAliases	sync_aliases	yes	11	no	yes	yes	serves
-setPageAliases	sync_aliases	yes	24	no	yes	yes	serves
+setPageAliases	sync_aliases	yes	25	no	yes	yes	serves
 replaceDerivedAliases	sync_aliases	yes	12	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
@@ -402,9 +402,10 @@ listGatedMirrorRequests	persistence_journal	yes	1	no	yes	yes	serves
 listEffectRecoveries	persistence_journal	yes	1	no	yes	yes	serves
 selectClaimableEffect	persistence_journal	yes	1	no	yes	yes	serves
 readMentionLastPass	entity_reads	yes	1	no	yes	yes	serves
-readMentionIndexStatus	entity_reads	yes	1	no	yes	yes	serves
+readMentionIndexStatus	entity_reads	yes	2	no	yes	yes	serves
 countLivePagesInSource	entity_reads	yes	1	no	yes	yes	serves
 countMentionDueSince	entity_reads	yes	1	no	yes	yes	serves
+recountMentionIndexStatus	entity_reads	yes	1	no	yes	yes	serves
 countPagesDueForMentions	entity_reads	yes	1	no	yes	yes	serves
 readIdentitySiblingCandidates	entity_reads	yes	4	no	yes	yes	serves
 findExactSlug	entity_reads	yes	1	no	yes	yes	serves

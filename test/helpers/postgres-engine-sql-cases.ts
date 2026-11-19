@@ -563,7 +563,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listHostConsumerRows': OOS.journal, 'probeLiveConsumerRows': OOS.journal, 'renewConsumerRow': OOS.journal, 'deleteConsumerRow': OOS.journal,
   'stampWorktreeHeartbeats': OOS.journal,
   // entity and mention reads the CLI made through executeRaw
-  'readMentionLastPass': OOS.entityReads, 'readMentionIndexStatus': OOS.callerRawSql, 'countLivePagesInSource': OOS.callerRawSql, 'countMentionDueSince': OOS.callerRawSql, 'countPagesDueForMentions': OOS.entityReads, 'readIdentitySiblingCandidates': OOS.entityReads,
+  'readMentionLastPass': OOS.entityReads, 'readMentionIndexStatus': OOS.callerRawSql, 'countLivePagesInSource': OOS.callerRawSql, 'countMentionDueSince': OOS.callerRawSql, 'recountMentionIndexStatus': OOS.callerRawSql, 'countPagesDueForMentions': OOS.entityReads, 'readIdentitySiblingCandidates': OOS.entityReads,
   'findExactSlug': OOS.entityReads, 'readRetirementHop': OOS.callerRawSql, 'readEntityCardRows': OOS.callerRawSql, 'readExtractionLagCounts': OOS.entityReads, 'readIgnoredPrivacyLabelPages': OOS.entityReads,
   'readSourceMembership': OOS.journal, 'findTopologyChanges': OOS.journal, 'renewWriteClaim': OOS.journal, 'expireStaleWriteClaims': OOS.journal,
   'hasClaimableWrite': OOS.journal, 'directRawSql': OOS.helper,
