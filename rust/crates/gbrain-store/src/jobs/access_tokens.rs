@@ -3,7 +3,7 @@
 //!
 //! Members: insertAccessToken, findActiveAccessTokens, setAccessTokenMinTrust, and the credential members of
 //! `src/core/engine-sql/access-credentials.ts`: listAccessTokens, readActiveAccessTokenGrant, accessTokenLive,
-//! revokeAccessTokensNamed and revokeAccessToken.
+//! readActiveAccessTokenByHash (the bearer checks), revokeAccessTokensNamed and revokeAccessToken.
 //!
 //! Keys, all under `keys::JOBS` (`m`), sub-tag 0x2B (this file only):
 //! - `m 0x2B id -> TokenRecord`: one token row, keyed by its generated UUID.
@@ -247,6 +247,28 @@ impl Store {
                 .filter(|t| t.revoked_at.is_none())
                 .map(|t| json!({ "permissions": t.permissions, "private_pages": "none" })),
         )
+    }
+
+    /// `readActiveAccessTokenByHash(hash)`: the whole row (`SELECT *`) of the token not revoked with this hash, or None,
+    /// for the bearer checks. The columns not kept read as the table's defaults (NULL, and `'none'` for the two private
+    /// grants). The row leaves out `token_hash`: the caller passed it, and no member returns a hash.
+    pub fn read_active_access_token_by_hash(&self, hash: &str) -> Result<Option<Value>> {
+        let read = self.read()?;
+        Ok(all_tokens(&*read)?
+            .into_iter()
+            .find(|t| t.revoked_at.is_none() && t.token_hash == hash)
+            .map(|t| {
+                json!({
+                    "id": t.id, "name": t.name, "scopes": t.scopes, "created_at": iso(t.created_at),
+                    "last_used_at": Value::Null, "revoked_at": Value::Null, "permissions": t.permissions,
+                    "source_grant": t.source_grant, "source_id": t.source_id, "federated_read": t.federated_read,
+                    "allowed_operations": t.allowed_operations, "takes_holders": t.takes_holders,
+                    "grant_revision": t.grant_revision, "min_trust": t.min_trust, "private_pages": "none",
+                    "member_id": Value::Null, "may_act_for": Value::Null, "attest_actor": Value::Null,
+                    "attest_ops": Value::Null, "attest_sources": Value::Null, "attest_read": Value::Null,
+                    "reads_unscoped": Value::Null, "private_facts": "none",
+                })
+            }))
     }
 
     /// `accessTokenLive(id)`: whether a token not revoked has this id, compared as text (`id::text = $1`).

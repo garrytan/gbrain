@@ -5,10 +5,9 @@ Part of the Minion jobs family ([jobs.md](jobs.md), next to [oauth-clients.md](o
 
 The store keeps only the `access_tokens` columns the legacy-token mint, the read-floor command, the list and the revokes
 touch. The SQL for the PGLite and PostgreSQL engines is in `src/core/engine-sql/access-tokens.ts` (mint, floor) and
-`src/core/engine-sql/access-credentials.ts` (list, grant read, liveness, revokes); the store serves the same members. No
-member returns a token hash, and the store never logs one. The other readers and writers of the table (the MCP bearer check
-in `src/mcp/http-transport.ts`, rescope, rotate, the OAuth provider's token reads) are still raw SQL and stop on a Rust
-brain.
+`src/core/engine-sql/access-credentials.ts` (list, grant read, liveness, revokes, the bearer check); the store serves the
+same members. No store call returns a token hash, and the store never logs one. The other readers and writers of the table
+(rescope, rotate, the legacy-shape conversion in `resolveTokenGrant`) are still raw SQL and stop on a Rust brain.
 
 | Member | Returns |
 | --- | --- |
@@ -20,19 +19,24 @@ brain.
 | `brain.accessTokenLive(id)` | whether a token not revoked has this id, compared as text (`id::text = $1`) |
 | `brain.revokeAccessTokensNamed(name)` | the ids it revoked, by id: stamps `revoked_at` on every token not revoked with exactly this name, in one write |
 | `brain.revokeAccessToken(id)` | the name of the token not revoked with this id after stamping its `revoked_at`, or null |
+| `brain.readActiveAccessTokenByHash(hash)` | the whole row (`SELECT *`) of the token not revoked with this hash, or null: the kept columns, `created_at` as ISO text, and the table defaults for the rest (`last_used_at`, the member and attest columns and `reads_unscoped` null, `private_pages` and `private_facts` `none`). It leaves out `token_hash`; the TypeScript member adds back the hash the caller passed and makes `created_at` a Date, as PGLite and PostgreSQL return them |
 
 ## Callers
 
 `insertUnifiedToken` (`src/core/token-mint.ts`, behind `mintLegacyToken` and `gbrain auth create`) calls
-`insertAccessToken`. A grant that reads a named source still checks the source and inserts in one transaction
-(`assertScopeSourceGrant`, raw SQL), so that branch keeps stopping on a Rust brain. `setMinTrust` and `setTokenMinTrust`
+`insertAccessToken`. A grant that reads a named source checks the source and inserts in one transaction
+(`assertScopeSourceGrant`, through `readScopeSourceConfigs`). `setMinTrust` and `setTokenMinTrust`
 (`src/core/trust/min-trust.ts`, behind `gbrain auth set-min-trust`, `auth create --min-trust` and `auth-mint`) call
 `findActiveAccessTokens` and `setAccessTokenMinTrust`; their `migrations_pending` answer for a brain without the
 `min_trust` column still comes from the undefined-column error the SQL engines raise. `gbrain auth list` (`src/commands/auth.ts`) calls `listAccessTokens`; `auth revoke` and
 `auth revoke --id` (and `revokeLegacyTokenById` in `token-mint.ts`) call the two revokes, then `forgetWakePrincipal` ends
 the token's wake watches. `readActiveTokenPrivatePages` and `readActiveTokenPermissions` (`token-mint.ts`) call
 `readActiveAccessTokenGrant`, and the Wakeshift drain's `principalLive` (`src/core/wakeshift/drain.ts`) calls
-`accessTokenLive`.
+`accessTokenLive`. The bearer check `serve --http` runs (`verifyAccessToken` in `src/core/oauth-provider.ts`, given the
+engine by `src/commands/serve-http.ts`) and `validateToken` in `src/mcp/http-transport.ts` call
+`readActiveAccessTokenByHash` and `touchAccessTokenLastUsed`; the OAuth token read before it
+(`readOauthAccessTokenRows`) finds nothing here, because the store keeps no OAuth tokens, and `touchAccessTokenLastUsed`
+writes nothing, because `last_used_at` is not kept.
 
 ## Constraints
 

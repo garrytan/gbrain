@@ -4,7 +4,7 @@ import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
 import type * as JobsWake from './engine-sql/jobs-wake.ts';
-import type { AccessTokenListRow, ActiveTokenGrantField, DeletedOAuthClient, OauthClientGrantInsert, OauthClientProbe, ScopeSourceLock } from './engine-sql/access-credentials.ts';
+import type { AccessTokenListRow, ActiveTokenGrantField, DeletedOAuthClient, OauthClientGrantInsert, OauthClientProbe, OauthTokenRung, ScopeSourceLock, TokenByHashCaller } from './engine-sql/access-credentials.ts';
 import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
@@ -3533,6 +3533,12 @@ export interface BrainEngine {
   readTokenLifetimeClampedClients(): Promise<string[]>;
   /** The id and config of each source among `ids`; `lock` takes the rows in id order FOR SHARE or FOR UPDATE (a single-writer store takes none). */
   readScopeSourceConfigs(ids: readonly string[], lock?: ScopeSourceLock): Promise<{ id: string; config: unknown }[]>;
+  /** The bearer check's OAuth token read at one rung of its degrade ladder (a store that keeps no OAuth tokens finds none). */
+  readOauthAccessTokenRows(hash: string, rung: OauthTokenRung): Promise<Record<string, unknown>[]>;
+  /** The bearer check's whole row (`SELECT *`) of the token not revoked with this hash, or null. */
+  readActiveAccessTokenByHash(hash: string, caller: TokenByHashCaller): Promise<Record<string, unknown> | null>;
+  /** Stamp a token's `last_used_at`, debounced to once a minute (a store that keeps no last use writes nothing). */
+  touchAccessTokenLastUsed(id: string, unified: boolean): Promise<void>;
 
   /** The ids of the enabled, untombstoned audience-kind members, by id. */
   listAudienceAccessMembers(): Promise<string[]>;

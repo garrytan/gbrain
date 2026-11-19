@@ -18,6 +18,8 @@ import { clientGrantInsert, grantValidationContext, insertClientGrant } from '..
 import { CREDENTIAL_SQL } from '../src/core/engine-sql/access-credentials.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { markedScopeSources } from '../src/core/access/attest-sources.ts';
+import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
+import { touchTokenLastUsed } from '../src/core/grants/legacy-token.ts';
 
 /** caller.ts MEMBER_SQL at 7470c703ed: MEMBERS_WHERE_SQL(`m.id = (${member})`), copied verbatim. */
 const memberSql = (member: string) => `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
@@ -273,6 +275,119 @@ const PINS: Pin[] = [
     from: 'src/core/access/attest-sources.ts:70 markedScopeSources (at 758c3b853e)',
     case: { method: 'readScopeSourceConfigs', variant: 'default', run: e => e.readScopeSourceConfigs(['team-a']) },
     texts: ['SELECT id, config FROM sources WHERE id IN (SELECT jsonb_array_elements_text($1::text::jsonb))'],
+  },  {
+    from: 'src/core/oauth-provider.ts:778 verifyAccessToken OAuth rung 0 (at d51679a5fd)',
+    case: { method: 'readOauthAccessTokenRows', variant: 'rung0', run: e => e.readOauthAccessTokenRows('hash-x', 0) },
+    texts: [`
+        SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes, to_jsonb(t)->>'grant_type' AS token_grant,
+               (to_jsonb(c) - 'client_secret_hash') AS current_grant,
+               EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
+                 AND NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)) AS source_active,
+               ARRAY(SELECT s.id FROM sources s WHERE NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)
+                 AND s.id IN (SELECT jsonb_array_elements_text(COALESCE(NULLIF(to_jsonb(c)->'federated_read', 'null'::jsonb), jsonb_build_array(to_jsonb(c)->>'source_id'))))) AS active_read_sources,
+               c.source_id, c.federated_read, c.bound_slug_prefixes,
+               c.surface, c.surface_set_by
+        FROM oauth_tokens t
+        LEFT JOIN oauth_clients c ON c.client_id = t.client_id
+        WHERE t.token_hash = $1 AND t.token_type = 'access'
+          AND c.client_id IS NOT NULL AND (to_jsonb(c)->>'deleted_at') IS NULL
+      `],
+  },
+  {
+    from: 'src/core/oauth-provider.ts:824 verifyAccessToken OAuth rung 1 (at d51679a5fd)',
+    case: { method: 'readOauthAccessTokenRows', variant: 'rung1', run: e => e.readOauthAccessTokenRows('hash-x', 1) },
+    texts: [`
+          SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes,
+               (to_jsonb(c) - 'client_secret_hash') AS current_grant,
+               EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
+                 AND NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)) AS source_active,
+               ARRAY(SELECT s.id FROM sources s WHERE NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)
+                 AND s.id IN (SELECT jsonb_array_elements_text(COALESCE(NULLIF(to_jsonb(c)->'federated_read', 'null'::jsonb), jsonb_build_array(to_jsonb(c)->>'source_id'))))) AS active_read_sources,
+                 c.source_id, c.federated_read, c.bound_slug_prefixes
+          FROM oauth_tokens t
+          LEFT JOIN oauth_clients c ON c.client_id = t.client_id
+          WHERE t.token_hash = $1 AND t.token_type = 'access'
+          AND c.client_id IS NOT NULL AND (to_jsonb(c)->>'deleted_at') IS NULL
+        `],
+  },
+  {
+    from: 'src/core/oauth-provider.ts:841 verifyAccessToken OAuth rung 2 (at d51679a5fd)',
+    case: { method: 'readOauthAccessTokenRows', variant: 'rung2', run: e => e.readOauthAccessTokenRows('hash-x', 2) },
+    texts: [`
+            SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes,
+               (to_jsonb(c) - 'client_secret_hash') AS current_grant,
+               EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
+                 AND NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)) AS source_active,
+               ARRAY(SELECT s.id FROM sources s WHERE NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)
+                 AND s.id IN (SELECT jsonb_array_elements_text(COALESCE(NULLIF(to_jsonb(c)->'federated_read', 'null'::jsonb), jsonb_build_array(to_jsonb(c)->>'source_id'))))) AS active_read_sources,
+                   c.source_id, c.federated_read
+            FROM oauth_tokens t
+            LEFT JOIN oauth_clients c ON c.client_id = t.client_id
+            WHERE t.token_hash = $1 AND t.token_type = 'access'
+          AND c.client_id IS NOT NULL AND (to_jsonb(c)->>'deleted_at') IS NULL
+          `],
+  },
+  {
+    from: 'src/core/oauth-provider.ts:858 verifyAccessToken OAuth rung 3 (at d51679a5fd)',
+    case: { method: 'readOauthAccessTokenRows', variant: 'rung3', run: e => e.readOauthAccessTokenRows('hash-x', 3) },
+    texts: [`
+              SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes,
+               (to_jsonb(c) - 'client_secret_hash') AS current_grant,
+               EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
+                 AND NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)) AS source_active,
+               ARRAY(SELECT s.id FROM sources s WHERE NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)
+                 AND s.id IN (SELECT jsonb_array_elements_text(COALESCE(NULLIF(to_jsonb(c)->'federated_read', 'null'::jsonb), jsonb_build_array(to_jsonb(c)->>'source_id'))))) AS active_read_sources, c.source_id
+              FROM oauth_tokens t
+              LEFT JOIN oauth_clients c ON c.client_id = t.client_id
+              WHERE t.token_hash = $1 AND t.token_type = 'access'
+          AND c.client_id IS NOT NULL AND (to_jsonb(c)->>'deleted_at') IS NULL
+            `],
+  },
+  {
+    from: 'src/core/oauth-provider.ts:873 verifyAccessToken OAuth rung 4 (at d51679a5fd)',
+    case: { method: 'readOauthAccessTokenRows', variant: 'rung4', run: e => e.readOauthAccessTokenRows('hash-x', 4) },
+    texts: [`
+              SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes,
+               (to_jsonb(c) - 'client_secret_hash') AS current_grant,
+               EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
+                 AND NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)) AS source_active,
+               ARRAY(SELECT s.id FROM sources s WHERE NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)
+                 AND s.id IN (SELECT jsonb_array_elements_text(COALESCE(NULLIF(to_jsonb(c)->'federated_read', 'null'::jsonb), jsonb_build_array(to_jsonb(c)->>'source_id'))))) AS active_read_sources
+              FROM oauth_tokens t
+              LEFT JOIN oauth_clients c ON c.client_id = t.client_id
+              WHERE t.token_hash = $1 AND t.token_type = 'access'
+          AND c.client_id IS NOT NULL AND (to_jsonb(c)->>'deleted_at') IS NULL
+            `],
+  },
+  {
+    from: 'src/core/oauth-provider.ts:1021 verifyAccessToken legacy fallback (at d51679a5fd)',
+    case: { method: 'readActiveAccessTokenByHash', variant: 'provider', run: e => e.readActiveAccessTokenByHash('hash-x', 'provider') },
+    texts: [`
+      SELECT * FROM access_tokens
+      WHERE token_hash = $1 AND revoked_at IS NULL
+    `],
+  },
+  {
+    from: 'src/mcp/http-transport.ts:297 validateToken (at d51679a5fd)',
+    case: { method: 'readActiveAccessTokenByHash', variant: 'transport', run: e => e.readActiveAccessTokenByHash('hash-x', 'transport') },
+    texts: [`
+        SELECT * FROM access_tokens
+        WHERE token_hash = $1 AND revoked_at IS NULL
+      `],
+  },
+  {
+    from: 'src/core/grants/legacy-token.ts:413 touchTokenLastUsed unified row (at d51679a5fd)',
+    case: { method: 'touchAccessTokenLastUsed', variant: 'unified', run: e => e.touchAccessTokenLastUsed('00000000-0000-4000-8000-0000000000b1', true) },
+    texts: [`UPDATE access_tokens SET last_used_at = now()
+        WHERE id IN (SELECT id FROM access_tokens WHERE id = $1::uuid AND source_grant IS NOT NULL
+          AND (last_used_at IS NULL OR last_used_at < now() - interval '60 seconds') FOR UPDATE SKIP LOCKED)`],
+  },
+  {
+    from: 'src/core/grants/legacy-token.ts:416 touchTokenLastUsed legacy row (at d51679a5fd)',
+    case: { method: 'touchAccessTokenLastUsed', variant: 'legacy', run: e => e.touchAccessTokenLastUsed('00000000-0000-4000-8000-0000000000b1', false) },
+    texts: [`UPDATE access_tokens SET last_used_at = now()
+        WHERE id IN (SELECT id FROM access_tokens WHERE id = $1::uuid
+          AND (last_used_at IS NULL OR last_used_at < now() - interval '60 seconds') FOR UPDATE SKIP LOCKED)`],
   },
 ];
 
@@ -323,6 +438,53 @@ describe('markedScopeSources sends the same statement through an engine as throu
       expect(template.length).toBe(1);
       expect(member).toEqual(template);
       expect(member[0].params).toEqual([JSON.stringify(['team-b', 'team-a'])]);
+    });
+  }
+});
+
+describe('the bearer check sends the same statements through an engine as through a SqlQuery', () => {
+  // The drift pin: a provider built with only `sql` (no engine) keeps the template statements; serve --http passes its
+  // engine, which reads through readOauthAccessTokenRows, readActiveAccessTokenByHash and touchAccessTokenLastUsed.
+  const TOKEN_ROW = { id: '00000000-0000-4000-8000-0000000000b1', name: 'bearer', scopes: ['read'], permissions: {}, source_grant: 'default',
+    source_id: null, federated_read: null, allowed_operations: null, takes_holders: null, grant_revision: 1, min_trust: null,
+    private_pages: 'none', member_id: null, may_act_for: null, reads_unscoped: null, created_at: new Date(0) };
+  const sent = async (rows: unknown[], degrade: number, run: (e: any) => Promise<unknown>) => {
+    let failures = degrade;
+    const capture = await withPinnedSqlEnvironment(undefined, () => runCase({
+      method: 'verifyAccessToken', variant: 'default', run: async e => {
+        await run(e).catch(() => undefined);
+        await new Promise(r => setTimeout(r, 20)); // the last-use stamp is fire-and-forget
+      },
+      rows: [
+        [/FROM oauth_tokens t/, () => { if (failures-- > 0) throw Object.assign(new Error('column "surface" does not exist'), { code: '42703' }); return []; }],
+        [/SELECT \* FROM access_tokens/, rows],
+        [/UPDATE access_tokens SET last_used_at/, []],
+      ],
+    }));
+    expect(capture.error).toBeUndefined();
+    return capture.trace.filter(s => s.kind === 'query').map(s => ({ text: s.text, params: s.params }));
+  };
+  for (const degrade of [0, 4]) {
+    test(`a legacy token with ${degrade} failed OAuth rungs`, async () => {
+      const template = await sent([TOKEN_ROW], degrade, e => new GBrainOAuthProvider({ sql: sqlQueryForEngine(e) }).verifyAccessToken('tok'));
+      const member = await sent([TOKEN_ROW], degrade, e => new GBrainOAuthProvider({ sql: sqlQueryForEngine(e), engine: e }).verifyAccessToken('tok'));
+      expect(template.length).toBe(degrade + 3);
+      expect(member).toEqual(template);
+    });
+  }
+  test('an unknown token', async () => {
+    const template = await sent([], 0, e => new GBrainOAuthProvider({ sql: sqlQueryForEngine(e) }).verifyAccessToken('tok'));
+    const member = await sent([], 0, e => new GBrainOAuthProvider({ sql: sqlQueryForEngine(e), engine: e }).verifyAccessToken('tok'));
+    expect(template.length).toBe(2);
+    expect(member).toEqual(template);
+  });
+  for (const unified of [true, false]) {
+    test(`touchTokenLastUsed on a ${unified ? 'unified' : 'legacy'} row`, async () => {
+      const row: Record<string, unknown> = unified ? { id: TOKEN_ROW.id, source_grant: 'default' } : { id: TOKEN_ROW.id };
+      const template = await sent([], 0, e => touchTokenLastUsed(sqlQueryForEngine(e), row));
+      const member = await sent([], 0, e => touchTokenLastUsed(e, row));
+      expect(template.length).toBe(1);
+      expect(member).toEqual(template);
     });
   }
 });

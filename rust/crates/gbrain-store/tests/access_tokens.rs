@@ -215,3 +215,36 @@ fn a_revoke_by_id_returns_the_name_once_and_the_grant_read_stops_finding_it() {
     assert_eq!(b.read_active_access_token_grant(&id).unwrap(), None);
     assert!(!b.access_token_live(&id).unwrap());
 }
+
+#[test]
+fn the_bearer_read_finds_the_active_token_by_hash_without_the_hash_and_not_after_revoke() {
+    let b = brain("tokens-by-hash");
+    let id = insert(
+        &b,
+        token("bearer", "hash-b", json!({ "min_trust": "tool_observed" })),
+    )
+    .unwrap();
+    insert(&b, token("other", "hash-o", json!({}))).unwrap();
+    let row = b
+        .read_active_access_token_by_hash("hash-b")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row["id"], json!(id));
+    assert_eq!(row["name"], json!("bearer"));
+    assert_eq!(row["scopes"], json!(["read"]));
+    assert_eq!(row["source_grant"], json!("default"));
+    assert_eq!(row["min_trust"], json!("tool_observed"));
+    assert_eq!(row["grant_revision"], json!(1));
+    assert_eq!(row["private_pages"], json!("none"));
+    assert_eq!(row["member_id"], Value::Null);
+    assert!(row.get("token_hash").is_none());
+    assert_eq!(b.read_active_access_token_by_hash("hash-").unwrap(), None);
+    assert_eq!(b.read_active_access_token_by_hash("nope").unwrap(), None);
+    b.revoke_access_token(&id).unwrap();
+    assert_eq!(b.read_active_access_token_by_hash("hash-b").unwrap(), None);
+    assert!(
+        b.read_active_access_token_by_hash("hash-o")
+            .unwrap()
+            .is_some()
+    );
+}
