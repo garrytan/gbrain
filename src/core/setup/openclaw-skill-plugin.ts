@@ -82,7 +82,7 @@ export interface OpenclawSkillResult {
   error?: OpenclawSkillError;
 }
 
-type Run = (argv: string[]) => { ok: boolean; output: string };
+type Run = (argv: string[]) => { ok: boolean; output: string; stdout?: string };
 
 export interface OpenclawSkillDeps {
   openclawBin?: string | null;
@@ -94,9 +94,9 @@ export const openclawSkillPluginDir = (): string => join(openclawStateDir(), 'gb
 export const openclawSkillStatePath = (home: string): string => join(home, OPENCLAW_SKILL_STATE_FILE);
 export const openclawSkillLibDir = (home: string): string => join(home, 'lib');
 
-function defaultRun(argv: string[]): { ok: boolean; output: string } {
+function defaultRun(argv: string[]): { ok: boolean; output: string; stdout: string } {
   const r = bunSpawnSync(argv, { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: process.env, timeout: 120_000 });
-  return { ok: r.exitCode === 0, output: `${r.stdout.toString()}${r.stderr.toString()}`.trim() };
+  return { ok: r.exitCode === 0, output: `${r.stdout.toString()}${r.stderr.toString()}`.trim(), stdout: r.stdout.toString() };
 }
 
 function which(name: string): string | null {
@@ -210,7 +210,8 @@ function hostSkills(run: Run, bin: string, agentId: string): { listed: Set<strin
   const r = run([bin, 'skills', 'list', '--json', '--agent', agentId]);
   if (!r.ok) return null;
   try {
-    const j = JSON.parse(r.output.slice(r.output.indexOf('{'))) as unknown;
+    const stdout = r.stdout ?? r.output;
+    const j = JSON.parse(stdout.slice(stdout.indexOf('{'))) as unknown;
     const list = Array.isArray((j as { skills?: unknown })?.skills) ? (j as { skills: Array<Record<string, unknown>> }).skills : null;
     if (!list) return null;
     const named = list.filter((e) => e && typeof e.name === 'string');

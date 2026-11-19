@@ -116,6 +116,7 @@ import { gitWriterEntry } from './checks/git-writer.ts';
 import { foreignWritersEntry } from './checks/foreign-writers.ts';
 import { retrievalFeedbackEntry } from './checks/retrieval-feedback.ts';
 import { transcriptSecretExposureEntry } from './checks/transcript-secrets.ts';
+import { secretStoreEntry } from './checks/secret-store.ts';
 import { autoChronicleEntry } from './checks/auto-chronicle.ts';
 import { factsDrainEntry } from './checks/facts-drain.ts';
 import { wakeshiftEntry } from './checks/wakeshift.ts';
@@ -386,6 +387,8 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   storageManifestEntry,
   // GST-2731: facts pages (type: facts) with fact lines that carry no date (read-only; the fix asks the user for the dates).
   factsPagesEntry,
+  // GST-2988 PR 3: secret store entries, backups, keys and escrow, spool, held-back commits and side refs (read-only).
+  secretStoreEntry,
   fenceIntegrityEntry,
   searchModeEntry,
 ];

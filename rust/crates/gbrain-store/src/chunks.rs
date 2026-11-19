@@ -293,6 +293,8 @@ fn write_chunk(
     view_generation: u64,
     stats: &mut ChunkStats,
 ) -> Result<()> {
+    // `chunk_search_vector_trigger` builds the vector before the row is stored and its error aborts the statement.
+    crate::keyword::check_chunk_vector(record)?;
     put_json(tx, &keys::chunk(record.page_id, record.chunk_index), record)?;
     if record.visible_at(view_generation) {
         put_postings(tx, record)?;
@@ -336,12 +338,17 @@ fn remove_chunk_record(
 
 /// Replaces a page's chunks with `chunks` (an empty list removes them all). A chunk that keeps
 /// its index keeps its id; the chunk-delete hook gets the ids of the indexes that are gone. When `seal` is set the page's `text_projection_revision` becomes its
-/// `knowledge_revision`: the chunks now describe the current text.
+/// `knowledge_revision`: the chunks now describe the current text. A `certified` seal (the caller sends chunks it ran
+/// through the protected-fence sanitizer: `sealChunks`) also stamps the page `chunker_version` at
+/// `SAFE_FENCE_CHUNKER_VERSION` (PGLite's `sealChunkerVersion`). A write that is not certified (a plain upsert, or the
+/// store's own raw split of a body that no sanitizer read) stamps it -1 when it changes what the page holds or the page
+/// is below the fence (`chunkWriteInvalidations`), so an explicit certified seal is the only thing that makes chunks safe.
 pub(crate) fn replace_chunks(
     tx: &mut dyn KvWrite,
     page: &mut PageRecord,
     chunks: &[ChunkInput],
     seal: bool,
+    certified: bool,
     merge: bool,
 ) -> Result<()> {
     let previous: HashMap<u32, ChunkRecord> = read_chunks(&*tx, page.id)?
@@ -365,9 +372,14 @@ pub(crate) fn replace_chunks(
     }
     let mut stats = read_stats(&*tx)?;
     let view_generation = segment_view_generation(&*tx, page.id)?;
+    // `chunkWriteInvalidations`: a stored chunk the write leaves out (or an empty write that removes any) changes the page.
+    let mut changes_chunks = !removed.is_empty();
     for (index, input) in by_index {
         let source = checked_source(input)?;
         let text = input.chunk_text.replace('\0', "");
+        changes_chunks |= previous
+            .get(&index)
+            .is_none_or(|old| chunk_differs(old, input, &text, &source));
         let length = term_frequencies(&text).1;
         let id = match previous.get(&index) {
             Some(old) => old.id,
@@ -405,9 +417,54 @@ pub(crate) fn replace_chunks(
     put_json(tx, &keys::meta(STATS), &stats)?;
     if seal {
         page.text_projection_revision = Some(page.knowledge_revision.clone());
+    }
+    if seal && certified {
+        page.chunker_version = Some(SAFE_FENCE_CHUNKER_VERSION);
+        write_page(tx, page)?;
+    } else if changes_chunks
+        || page
+            .chunker_version
+            .is_some_and(|v| v < SAFE_FENCE_CHUNKER_VERSION)
+    {
+        // `UPDATE pages SET chunker_version = -1 WHERE NOT (chunker_version >= 4) OR <the chunks change>`: a page that holds
+        // no version is not below the fence (NULL), so it takes the stamp only when the chunks change.
+        page.chunker_version = Some(-1);
+        write_page(tx, page)?;
+    } else if seal {
         write_page(tx, page)?;
     }
     Ok(())
+}
+
+/// `SAFE_FENCE_CHUNKER_VERSION` (`src/core/search/safe-chunks.ts`): a page sealed at this version or later holds only
+/// safely fenced chunks.
+pub(crate) const SAFE_FENCE_CHUNKER_VERSION: i16 = 4;
+
+/// The metadata columns `chunkWriteInvalidations` compares: an incoming NULL keeps the stored value, so only a given value
+/// that differs counts.
+const COMPARED_META: [&str; 8] = [
+    "language",
+    "symbol_name",
+    "symbol_type",
+    "start_line",
+    "end_line",
+    "parent_symbol_path",
+    "doc_comment",
+    "symbol_name_qualified",
+];
+
+/// Whether writing `input` over the stored `old` chunk (same index) changes it, as `chunkWriteInvalidations` reads it:
+/// text, source, modality or any compared metadata column differs. `text` and `source` are the incoming values as stored.
+fn chunk_differs(old: &ChunkRecord, input: &ChunkInput, text: &str, source: &str) -> bool {
+    old.chunk_text != text
+        || old.chunk_source != source
+        || old.modality != input.modality.as_deref().unwrap_or("text")
+        || COMPARED_META.iter().any(|key| {
+            input
+                .rest
+                .get(*key)
+                .is_some_and(|new| !new.is_null() && old.meta.get(*key) != Some(new))
+        })
 }
 
 fn next_chunk_id(tx: &mut dyn KvWrite) -> Result<u64> {
@@ -800,19 +857,20 @@ impl Store {
                     tx,
                     page.id,
                     &page.knowledge_revision,
+                    &page.title,
                     timeline,
                 )?;
             }
             if chunks.is_empty() && !seal {
                 // PGLite: an empty write removes the chunks and leaves the page unsealed.
-                replace_chunks(tx, &mut page, chunks, false, true)?;
+                replace_chunks(tx, &mut page, chunks, false, false, true)?;
                 if page.text_projection_revision.is_some() {
                     page.text_projection_revision = None;
                     write_page(tx, &page)?;
                 }
                 return Ok(());
             }
-            replace_chunks(tx, &mut page, chunks, seal, !seal)
+            replace_chunks(tx, &mut page, chunks, seal, seal, !seal)
         })
     }
 
@@ -1247,5 +1305,69 @@ mod seal_guard_tests {
                 page.text_projection_revision
             );
         }
+    }
+
+    fn version_of(store: &Store) -> Option<i16> {
+        read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "big")
+            .unwrap()
+            .unwrap()
+            .chunker_version
+    }
+
+    fn write_chunks(store: &Store, text: &str, seal: bool) {
+        store
+            .upsert_chunks(
+                "big",
+                &[ChunkInput {
+                    chunk_text: text.into(),
+                    ..ChunkInput::default()
+                }],
+                &UpsertChunksOptions {
+                    seal,
+                    ..UpsertChunksOptions::default()
+                },
+            )
+            .unwrap();
+    }
+
+    /// `sealChunks` stamps the safe fence chunker; an `upsertChunks` that changes a chunk takes the stamp to -1 (and
+    /// one that repeats the stored chunks leaves it); only another seal restores it. A page with no stamp reads as
+    /// unsafe until then (`chunker_version >= 4` is NULL for it).
+    #[test]
+    fn seal_stamps_the_safe_version_and_a_changing_write_invalidates_it() {
+        let store = crate::test_support::store();
+        let input = PageInput {
+            page_type: "note".into(),
+            title: "Big".into(),
+            compiled_truth: "segment words".into(),
+            ..PageInput::default()
+        };
+        store
+            .put_page("big", &input, &PutPageOptions::default())
+            .unwrap();
+        write_chunks(&store, "alpha", true);
+        assert_eq!(version_of(&store), Some(SAFE_FENCE_CHUNKER_VERSION));
+
+        write_chunks(&store, "alpha", false);
+        assert_eq!(version_of(&store), Some(SAFE_FENCE_CHUNKER_VERSION));
+
+        write_chunks(&store, "beta", false);
+        assert_eq!(version_of(&store), Some(-1));
+
+        write_chunks(&store, "beta", true);
+        assert_eq!(version_of(&store), Some(SAFE_FENCE_CHUNKER_VERSION));
+
+        // An empty seal stamps too (sealChunks([]) on SQL).
+        store
+            .upsert_chunks(
+                "big",
+                &[],
+                &UpsertChunksOptions {
+                    seal: true,
+                    ..UpsertChunksOptions::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(version_of(&store), Some(SAFE_FENCE_CHUNKER_VERSION));
     }
 }
