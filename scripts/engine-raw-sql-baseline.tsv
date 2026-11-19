@@ -598,7 +598,6 @@ src/core/page-body/segment-rewrite.ts	execute_raw	9
 src/core/page-body/segmented-embedding.ts	execute_raw	8
 src/core/page-body/splice.ts	execute_raw	2
 src/core/page-body/streamed-import.ts	execute_raw	1
-src/core/page-body/tail-digest.ts	execute_raw	1
 src/core/page-embedding-budget.ts	execute_raw	13
 src/core/page-embedding-lease.ts	execute_raw	4
 src/core/page-searchability.ts	execute_raw	3
@@ -820,7 +819,7 @@ src/core/persistence/sync-tail-record.ts	execute_raw	3
 src/core/persistence/sync-tail.ts	execute_raw	2
 src/core/persistence/sync-waivers.ts	execute_raw	8
 src/core/persistence/sync-window.ts	execute_raw	2
-src/core/persistence/takes-prepare.ts	execute_raw	9
+src/core/persistence/takes-prepare.ts	execute_raw	7
 src/core/persistence/terminal-failures.ts	execute_raw	4
 src/core/persistence/topology-clone.ts	execute_raw	19
 src/core/persistence/topology-locks.ts	execute_raw	20
@@ -1054,7 +1053,7 @@ src/core/trust/marker-repair.ts	execute_raw	4
 src/core/trust/min-trust.ts	execute_raw	2
 src/core/trust/owner-actions.ts	execute_raw	6
 src/core/trust/page-handlers.ts	execute_raw	7
-src/core/trust/page-write.ts	execute_raw	9
+src/core/trust/page-write.ts	execute_raw	8
 src/core/trust/privacy-hold-reply.ts	execute_raw	1	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/trust/propagation.ts	execute_raw	4
 src/core/trust/provenance-drift.ts	execute_raw	3

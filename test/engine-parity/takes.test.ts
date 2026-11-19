@@ -788,6 +788,21 @@ describe('engine parity: takes reads (group D)', () => {
   );
 
   parityTest(
+    'listHeldFenceTakeRows returns nothing for a page whose take fence generation is not held, takes or not',
+    { methods: ['putPage', 'addTakesBatch', 'listHeldFenceTakeRows'] },
+    async (engine) => {
+      const a = await page(engine, 'notes/held-a');
+      await engine.addTakesBatch([take(a.id, 1, 'first'), take(a.id, 2, 'second', { active: false })]);
+      const spec = { sourceId: 'default', kind: 'take_fence', ownerKey: 'page:notes/held-a' };
+      const withTakes = await engine.listHeldFenceTakeRows({ ...spec, pageId: a.id });
+      const unknown = await engine.listHeldFenceTakeRows({ ...spec, pageId: 999_999 });
+      expect(withTakes).toEqual([]);
+      expect(unknown).toEqual([]);
+      return { withTakes, unknown };
+    },
+  );
+
+  parityTest(
     'planFactPurgeTakes plans the takes a purged fact consolidated into and the takes echoing its claim, within one source',
     { methods: ['putPage', 'addTakesBatch', 'insertFact', 'loadPurgeTarget', 'consolidateFact', 'planFactPurgeTakes'] },
     async (engine, backend) => {

@@ -50,7 +50,7 @@ import type { FenceFactRow, FenceRowsTarget } from './engine-sql/trust-fence.ts'
 import type { TrustTable } from './trust/schema.ts';
 import type { NewTrustProposal, TrustProposalFilter, TrustProposalRow, TrustProposalStatus, TrustProposalTransition } from './engine-sql/trust-proposals.ts';
 import type { GraduationGateRow, ManagedRootBindingRow, PersistenceTable, RetiredDeactivationRow } from './engine-sql/connect-gate.ts';
-import type { ImportedPageSeal, LivePageBodyRow, OriginClaimRow, PageIngestStamp, PageOriginRow, PageOriginTarget } from './engine-sql/write-guards.ts';
+import type { ImportedPageSeal, InlinePageRegionsRow, LivePageBodyRow, OriginClaimRow, PageIngestStamp, PageOriginRow, PageOriginTarget } from './engine-sql/write-guards.ts';
 import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from './engine-sql/page-visibility.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
@@ -68,7 +68,7 @@ import type {
   SettleLogOutcome, SpendLogInsert,
 } from './engine-sql/spend-log.ts';
 import type { OauthClientPatch, OauthClientPatchGuard, OauthClientPatched, OauthClientRow } from './engine-sql/oauth-clients.ts';
-import type { McpResolvedSpec, PurgeTakesSpec } from './engine-sql/takes-reads.ts';
+import type { HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PurgeTakesSpec } from './engine-sql/takes-reads.ts';
 import type {
   BeliefHistoryRowQuery, CorePageRow, CorePageRowSpec, TrustScanRow, TrustScanRowSpec, UnscannedTrustSpec, ValidTimeIdentityRow,
   ValidTimeIdentitySpec, ValidTimePickSpec, AmendmentsNotAppliedSpec, AmendmentNotAppliedRow, PageVersionEditionRow, CursorEditionRow, PageIdRef,
@@ -3069,6 +3069,10 @@ export interface BrainEngine {
   sealImportedPage(slug: string, seal: ImportedPageSeal): Promise<{ id: number } | null>;
   /** A live page's frontmatter, body columns, body storage and content hash (the valid-time advisory's after image), or null. */
   readLivePageBody(slug: string, opts: { sourceId: string }): Promise<LivePageBodyRow | null>;
+  /** A page's stored body columns by id, live or a tombstone, read raw (the append tail digest), or null (engine-sql/write-guards.ts). */
+  readInlinePageRegions(pageId: number): Promise<InlinePageRegionsRow | null>;
+  /** The raw stored `trust_tier` of a page by (source, slug), live or a tombstone (the page write gate), or null (engine-sql/write-guards.ts). */
+  readStoredPageTier(sourceId: string, slug: string): Promise<string | null>;
   // Page visibility guards (engine-sql/page-visibility.ts): the current caller's page policy, rendered in its access record.
   /** Whether a row of the page (live or soft-deleted) fails the current caller's policy: `read` (access, then privacy) or `access` alone. */
   readPageHiddenFromCaller(sourceId: string, slug: string, opts: { policy: PagePolicyPart }): Promise<boolean>;
@@ -4031,6 +4035,8 @@ export interface BrainEngine {
   planFactPurgeTakes(spec: PurgeTakesSpec): Promise<Array<{ id: number; page_id: number }>>;
   /** The page's stored takes, row number to claim. */
   listTakeRowsForPage(pageId: number): Promise<Array<{ row_num: number; claim: string }>>;
+  /** The page's stored takes by row number while its take_fence generation is held `fence_absent`; none otherwise. */
+  listHeldFenceTakeRows(spec: HeldFenceTakeSpec): Promise<HeldFenceTakeRow[]>;
   /** Resolved takes stamped `mcp:` by the MCP server, in the caller's source and holder scope. */
   countMcpResolvedTakes(spec: McpResolvedSpec): Promise<number>;
   /** Live pages of the sources with an inactive or `superseded by #` take, by page id. */

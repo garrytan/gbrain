@@ -520,9 +520,10 @@ store keeps the same rule in `pages.rs`.
   `store-members/pages.ts` refuses `putPage` with a `source_path` for such a source.
 - **Advisory locks.** PGLite takes a lock per origin so that two writers serialize. The store has one writer at a
   time, so it needs none.
-- **Write guards.** The origin check, the origin bind, the ingest stamp, the import seal and the valid-time body
-  read are typed engine members (`readPageOrigin`, `listOriginClaims`, `bindPageOrigin`, `stampPageIngest`,
-  `sealImportedPage`, `readLivePageBody`; SQL in `engine-sql/write-guards.ts`). The store answers them in
+- **Write guards.** The origin check, the origin bind, the ingest stamp, the import seal, the valid-time body
+  read, the append path's tail-digest body read and the page write gate's stored tier read are typed engine members
+  (`readPageOrigin`, `listOriginClaims`, `bindPageOrigin`, `stampPageIngest`, `sealImportedPage`, `readLivePageBody`,
+  `readInlinePageRegions`, `readStoredPageTier`; SQL in `engine-sql/write-guards.ts`). The store answers them in
   `write_guards.rs`, and `bindPageOrigin` runs the same origin check as `putPage`. See
   [`rust/docs/store/write-guards.md`](../../rust/docs/store/write-guards.md).
 - **Page visibility guards.** A remote page write's reads of whether the caller sees a page, which of a list of

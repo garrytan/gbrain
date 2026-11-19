@@ -7,7 +7,7 @@
  * applies when the caller is the one the store models, and refuses with `engine_capability_missing` for a caller
  * whose member pages, grants or lineage widen the policy.
  */
-import type { McpResolvedSpec, PurgeTakesSpec } from '../../engine-sql/takes-reads.ts';
+import type { HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PurgeTakesSpec } from '../../engine-sql/takes-reads.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
 
@@ -24,6 +24,12 @@ export const planFactPurgeTakes: StoreMember<[spec: PurgeTakesSpec], Array<{ id:
 
 export const listTakeRowsForPage: StoreMember<[pageId: number], Array<{ row_num: number; claim: string }>> = (brain, pageId) =>
   storeCall({ member: 'listTakeRowsForPage' }, () => brain.listTakeRowsForPage(pageId));
+
+/**
+ * The store keeps no fence generations (`derived_generations`), so no take_fence generation is ever held
+ * `fence_absent`, and the answer is none, as PGLite gives for a page whose fence generation is not held.
+ */
+export const listHeldFenceTakeRows: StoreMember<[spec: HeldFenceTakeSpec], HeldFenceTakeRow[]> = async () => [];
 
 export const countMcpResolvedTakes: StoreMember<[spec: McpResolvedSpec], number> = (brain, spec) => {
   const excludePrivate = storePagePolicy('countMcpResolvedTakes', spec.excludePrivate);
