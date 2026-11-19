@@ -19,10 +19,14 @@
  *    Ids differ between arms, so rows are compared by slug, fact text or version label.
  */
 import { describe, expect } from 'bun:test';
-import type { BrainEngine } from '../../src/core/engine.ts';
+import type { BrainEngine, LinkBatchInput } from '../../src/core/engine.ts';
 import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { VALID_TIME_CURRENT_ORD } from '../../src/core/engine-sql/trust-tier-reads.ts';
+import { applyTemporalEvidence, relationshipKeysForOrigin } from '../../src/core/link-temporal-apply.ts';
+import { primeRelationSemantics } from '../../src/core/link-semantics-pack.ts';
+import { setPackRelationSemantics } from '../../src/core/link-validity.ts';
+import { EXAMPLE_PACK, useExamplePack } from '../helpers/amends-ranking-scenarios.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -387,6 +391,47 @@ describe('engine parity: typed trust tier reads', () => {
       const row = await engine.pickValidTimeEdition({ pageId, asOf: '2026-07-01', excludePrivate: false, pinOrd: null, inlineMaxBytes: 1_000_000 });
       expect(row?.gap_at).toBeInstanceOf(Date);
       return { gap: row?.gap_at instanceof Date };
+    },
+  );
+  parityTest(
+    'listAmendmentsNotApplied lists the amending pages dated after the edition and on or before the date, or undated',
+    { methods: ['setConfig', 'putPage', 'getPage', 'addLinksBatch', 'listAmendmentsNotApplied'] },
+    async (engine, backend) => {
+      const restorePack = useExamplePack();
+      try {
+      await engine.setConfig('schema_pack', EXAMPLE_PACK);
+      await primeRelationSemantics(engine);
+      await createSource(engine, backend, 'beta');
+      await engine.putPage('vt/amended', { type: 'contract', title: 'Amended', compiled_truth: 'The agreement.', timeline: '', frontmatter: { valid_from: '2026-01-01' } });
+      // A frontmatter amends link with its since date, published the way put_page publishes it.
+      const amend = async (slug: string, since: string | null, opts: { private?: boolean } = {}) => {
+        const page = await engine.putPage(slug, { type: 'contract', title: slug, compiled_truth: 'An amendment.', timeline: '',
+          frontmatter: { ...(opts.private ? { visibility: 'private' } : {}), amends: [{ name: 'Amended', ...(since ? { since } : {}) }] } });
+        const rows: LinkBatchInput[] = [{ from_slug: slug, to_slug: 'vt/amended', link_type: 'amends', context: 'frontmatter.amends: Amended',
+          link_source: 'frontmatter', origin_slug: slug, origin_field: 'amends', from_source_id: 'default', to_source_id: 'default', origin_source_id: 'default' }];
+        await engine.addLinksBatch(rows);
+        await applyTemporalEvidence(engine, page, rows, await relationshipKeysForOrigin(engine, Number(page.id)));
+      };
+      await amend('vt/amend-b', '2026-03-01');
+      await amend('vt/amend-a', '2026-05-01');
+      await amend('vt/amend-early', '2025-06-01');
+      await amend('vt/amend-late', '2026-09-01');
+      await amend('vt/amend-undated', null);
+      await amend('vt/amend-private', '2026-04-01', { private: true });
+      const pageId = (await engine.getPage('vt/amended', { sourceId: 'default' }))!.id;
+      const spec = { pageId, editionFrom: '2026-01-01', asOf: '2026-07-01', excludePrivate: false, sourceIds: null, limit: 20 };
+      const all = await engine.listAmendmentsNotApplied(spec);
+      const world = await engine.listAmendmentsNotApplied({ ...spec, excludePrivate: true });
+      const scoped = await engine.listAmendmentsNotApplied({ ...spec, sourceIds: ['beta'] });
+      const capped = await engine.listAmendmentsNotApplied({ ...spec, limit: 2 });
+      const later = await engine.listAmendmentsNotApplied({ ...spec, editionFrom: '2026-04-01' });
+      expect(all.map(r => [r.slug, r.since])).toEqual([['vt/amend-a', '2026-05-01'], ['vt/amend-b', '2026-03-01'], ['vt/amend-private', '2026-04-01'], ['vt/amend-undated', null]]);
+      expect(world.map(r => r.slug)).toEqual(['vt/amend-a', 'vt/amend-b', 'vt/amend-undated']);
+      expect(scoped).toEqual([]);
+      expect(capped.map(r => r.slug)).toEqual(['vt/amend-a', 'vt/amend-b']);
+      expect(later.map(r => r.slug)).toEqual(['vt/amend-a', 'vt/amend-undated']);
+      return { all, world, scoped, capped, later };
+      } finally { setPackRelationSemantics(new Map()); restorePack(); }
     },
   );
 });

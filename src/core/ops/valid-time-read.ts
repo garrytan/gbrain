@@ -20,7 +20,7 @@ import { pageTrustForRead, readQuarantined } from './get-page-projection.ts';
 import { admitsTrust, type TrustTier } from '../trust/tier.ts';
 import { isCalendarDate } from '../link-validity.ts';
 import { VALID_TIME_CURRENT_ORD, type ValidTimeIdentityRow } from '../engine-sql/trust-tier-reads.ts';
-import { privateLinkOriginFilterFragment, remoteReadFloorSql, resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
+import { resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
 import { fenceTranscriptText, isQuotedPageType, neutralizeToolCalls, quotesStored } from '../search/transcript-quote.ts';
 import { quotedPageMeta } from './get-page-projection.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
@@ -133,15 +133,8 @@ function verdictOf(asOf: string, picked: PickResult): ValidTimeVerdict {
 
 /** Amendment records (`amends` links to the page) dated after the edition took effect and on or before the date: as_of does not fold them in. */
 async function amendmentsNotApplied(tx: BrainEngine, pageId: number, editionFrom: string, asOf: string, excludePrivate: boolean, scope: { sourceId?: string; sourceIds?: string[] }) {
-  const sources = scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : null);
-  const rows = await tx.executeRaw<{ slug: string; source_id: string; since: string | null }>(`SELECT f.slug, f.source_id, min(to_char(r.first_start, 'YYYY-MM-DD')) AS since
-      FROM links l JOIN pages f ON f.id = l.from_page_id AND f.deleted_at IS NULL${excludePrivate ? ` AND ${remoteReadFloorSql('f')}` : ''}
-      LEFT JOIN link_relationships r ON r.from_page_id = l.from_page_id AND r.to_page_id = l.to_page_id AND r.link_type = l.link_type AND r.scope = $4
-     WHERE l.to_page_id = $1 AND l.link_type = 'amends'${excludePrivate ? ` AND ${privateLinkOriginFilterFragment('l')}` : ''}
-       AND ($5::text[] IS NULL OR f.source_id = ANY($5::text[]))
-       AND (r.first_start IS NULL OR (r.first_start > $2::date AND r.first_start <= $3::date))
-     GROUP BY f.slug, f.source_id ORDER BY f.slug LIMIT ${AMENDMENTS_CAP}`, [pageId, editionFrom, asOf, excludePrivate ? 'world' : 'all', sources]).catch(() => []);
-  return rows.map(r => ({ slug: r.slug, source_id: r.source_id, since: r.since ?? null }));
+  const sourceIds = scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : null);
+  return tx.listAmendmentsNotApplied({ pageId, editionFrom, asOf, excludePrivate, sourceIds, limit: AMENDMENTS_CAP });
 }
 
 /** The serialized frontmatter edit that sets valid_from to the `<DATE>` placeholder: the existing line, or a new first key. */

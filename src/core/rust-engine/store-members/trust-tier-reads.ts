@@ -2,7 +2,8 @@
  * The typed reads of stamped trust tiers (src/core/engine-sql/trust-tier-reads.ts), served from the trust store
  * (rust/crates/gbrain-store/src/trust/tier_reads.rs): `listCorePageRows`, `listTrustScanRows` and
  * `countUnscannedTrustRows` over pages and facts, `listVersionTrustTiers` and `listVersionReasonWriters`; and the
- * valid-time reads (trust/valid_time.rs) `listValidTimeIdentities` and `pickValidTimeEdition`.
+ * valid-time reads (trust/valid_time.rs) `listValidTimeIdentities` and `pickValidTimeEdition`, and
+ * `listAmendmentsNotApplied` (link_queries/link_temporal.rs).
  *
  * Refused (`engine_capability_missing`); the members this file does not export refuse as every unserved member does:
  *  - `listCorePageRows` under `excludePrivate` for a caller whose page policy is not the no-caller one (a member
@@ -18,6 +19,8 @@
  *    holding page): the store never prunes, so its answer would count editions PGLite no longer has and miss the gap
  *    it records (TODOS.md `rust-version-prune`). The store keeps no change reason, so `reason` and
  *    `introduced_because` read null where PGLite may have one (TODOS.md `rust-version-change-reason`);
+ *  - `listAmendmentsNotApplied` under `excludePrivate` for a caller whose remote read floor is not the no-caller page
+ *    policy, and on dates that are not `YYYY-MM-DD`;
  *  - a limit, cursor or id that is not an integer, rather than guess at PGLite's bind error.
  */
 import type { BrainEngine } from '../../engine.ts';
@@ -128,4 +131,18 @@ export const pickValidTimeEdition: Member<'pickValidTimeEdition'> = async (brain
   if (!got.row) return null;
   const row = got.row;
   return { ...row, replaced_at: asDate(row.replaced_at), recorded_since: asDate(row.recorded_since), created_at: asDate(row.created_at) };
+};
+
+export const listAmendmentsNotApplied: Member<'listAmendmentsNotApplied'> = (brain, spec) => {
+  const member = 'listAmendmentsNotApplied';
+  requireInteger(member, 'page id', spec.pageId);
+  requireCount(member, 'limit', spec.limit);
+  if (validDate(spec.editionFrom) !== spec.editionFrom || validDate(spec.asOf) !== spec.asOf) {
+    refuseMember(member, 'an edition or as-of date that is not YYYY-MM-DD');
+  }
+  const excludePrivate = spec.excludePrivate ? storePageTextPolicy(member, () => remoteReadFloorSql('p')) : null;
+  return storeCall({ member }, () => brain.listAmendmentsNotApplied({
+    pageId: spec.pageId, editionFrom: spec.editionFrom, asOf: spec.asOf, excludePrivate,
+    sourceIds: spec.sourceIds ? [...spec.sourceIds] : null, limit: spec.limit,
+  }));
 };

@@ -60,7 +60,7 @@ import type {
 import type { McpResolvedSpec, PurgeTakesSpec } from './engine-sql/takes-reads.ts';
 import type {
   BeliefHistoryRowQuery, CorePageRow, CorePageRowSpec, TrustScanRow, TrustScanRowSpec, UnscannedTrustSpec, ValidTimeIdentityRow,
-  ValidTimeIdentitySpec, ValidTimePickSpec,
+  ValidTimeIdentitySpec, ValidTimePickSpec, AmendmentsNotAppliedSpec, AmendmentNotAppliedRow,
 } from './engine-sql/trust-tier-reads.ts';
 import type {
   CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobStatsRead, JobTokenCounts, PrivateQueueState, PruneJobsSpec,
@@ -3837,6 +3837,8 @@ export interface BrainEngine {
   listValidTimeIdentities(spec: ValidTimeIdentitySpec): Promise<ValidTimeIdentityRow[]>;
   /** The valid-time pick over one page and its retained versions; null when the page is gone. */
   pickValidTimeEdition(spec: ValidTimePickSpec): Promise<Record<string, unknown> | null>;
+  /** The amendment records dated after an edition took effect and on or before the date, by slug then source. */
+  listAmendmentsNotApplied(spec: AmendmentsNotAppliedSpec): Promise<AmendmentNotAppliedRow[]>;
 
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 5 populates, Layer 7 consumes)

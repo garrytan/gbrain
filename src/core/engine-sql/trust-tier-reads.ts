@@ -11,6 +11,7 @@
  *   of the write that replaced it (the next snapshot, or the live page).
  * - `listValidTimeIdentities`: the live pages a valid-time read may follow for a slug, with their file and checkout.
  * - `pickValidTimeEdition`: the edition of one page in force on a date, over the page and its retained versions.
+ * - `listAmendmentsNotApplied`: the amendment records an as-of edition does not fold in.
  *
  * Every function takes the engine (or transaction) it runs on. Ids come back as numbers; ordered text sorts
  * `COLLATE "C"`.
@@ -20,8 +21,8 @@ import type { ReadEligibility } from '../eligibility/policy.ts';
 import { activationSuppressedSql, pageEligibleSql } from '../eligibility/sql.ts';
 import { quarantineFilterFragment } from '../quarantine.ts';
 import {
-  callerReadersAllowedSql, privacyForCaller, privatePagesFilterForCaller, privatePagesFilterFragment, privateSnapshotFilterFragment,
-  remoteReadFloorSql,
+  callerReadersAllowedSql, privacyForCaller, privateLinkOriginFilterFragment, privatePagesFilterForCaller, privatePagesFilterFragment,
+  privateSnapshotFilterFragment, remoteReadFloorSql,
 } from '../search/private-visibility.ts';
 import { validDateSql } from '../valid-time.ts';
 import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
@@ -346,4 +347,39 @@ export async function pickValidTimeEdition(tx: Raw, spec: ValidTimePickSpec): Pr
            p.version_history_gap_at AS gap_at, p.created_at
       FROM pages p LEFT JOIN pick k ON true WHERE p.id = ${pageId}`);
   return r ?? null;
+}
+
+export interface AmendmentsNotAppliedSpec {
+  pageId: number;
+  /** The edition's `valid_from` (YYYY-MM-DD): an amendment dated on or before it is already in the text. */
+  editionFrom: string;
+  /** YYYY-MM-DD. */
+  asOf: string;
+  /** Leave out an amending page below the remote read floor and a link whose origin page is private. */
+  excludePrivate: boolean;
+  /** Only amending pages in these sources; null is any. */
+  sourceIds: readonly string[] | null;
+  limit: number;
+}
+
+/** An amending page, and the earliest date its `amends` relationship starts (null when undated). */
+export interface AmendmentNotAppliedRow { slug: string; source_id: string; since: string | null }
+
+/**
+ * The live pages that amend this page (`amends` links to it) and are dated after the edition took effect and on or
+ * before the date, or undated: an as-of read does not fold them in. By slug, then source, bytewise.
+ */
+export async function listAmendmentsNotApplied(tx: Raw, spec: AmendmentsNotAppliedSpec): Promise<AmendmentNotAppliedRow[]> {
+  const floor = spec.excludePrivate ? sqlFragment` AND ${trustedSql(remoteReadFloorSql('f'))}` : none;
+  const origin = spec.excludePrivate ? sqlFragment` AND ${trustedSql(privateLinkOriginFilterFragment('l'))}` : none;
+  const sources = spec.sourceIds ? sqlFragment` AND f.source_id = ANY(${[...spec.sourceIds]}::text[])` : none;
+  const scope = spec.excludePrivate ? 'world' : 'all';
+  const got = await rows<{ slug: string; source_id: string; since: string | null }>(tx, sqlFragment`SELECT f.slug, f.source_id,
+           min(to_char(r.first_start, 'YYYY-MM-DD')) AS since
+      FROM links l JOIN pages f ON f.id = l.from_page_id AND f.deleted_at IS NULL${floor}
+      LEFT JOIN link_relationships r ON r.from_page_id = l.from_page_id AND r.to_page_id = l.to_page_id AND r.link_type = l.link_type AND r.scope = ${scope}
+     WHERE l.to_page_id = ${spec.pageId} AND l.link_type = 'amends'${origin}${sources}
+       AND (r.first_start IS NULL OR (r.first_start > ${spec.editionFrom}::date AND r.first_start <= ${spec.asOf}::date))
+     GROUP BY f.slug, f.source_id ORDER BY f.slug COLLATE "C", f.source_id COLLATE "C" LIMIT ${spec.limit}`);
+  return got.map(r => ({ slug: r.slug, source_id: r.source_id, since: r.since ?? null }));
 }

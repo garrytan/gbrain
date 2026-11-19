@@ -48,6 +48,25 @@ pub struct ValidTimeIdentityQuery {
     pub world: PrivacyPolicy,
 }
 
+/// `listAmendmentsNotApplied`: the `amends` links to one page that an as-of edition does not fold in
+/// (`Store::list_amendments_not_applied`, link_queries/link_temporal.rs).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AmendmentsQuery {
+    pub page_id: i64,
+    /// The edition's `valid_from`, `YYYY-MM-DD`.
+    pub edition_from: String,
+    /// `YYYY-MM-DD`.
+    pub as_of: String,
+    /// The no-caller page policy, applied to the amending page and the link's origin page; none keeps every row.
+    #[serde(default)]
+    pub exclude_private: Option<PrivacyPolicy>,
+    /// Only amending pages in these sources; none is any.
+    #[serde(default)]
+    pub source_ids: Option<Vec<String>>,
+    pub limit: u64,
+}
+
 /// `pickValidTimeEdition(spec)`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
