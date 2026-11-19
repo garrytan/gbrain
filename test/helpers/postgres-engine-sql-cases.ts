@@ -50,6 +50,7 @@ const OOS = {
   journal: 'out-of-scope:persistence-journal (born in engine-sql/persistence-journal.ts, persistence-claims.ts and persistence-housekeeping.ts; pinned by test/engine-parity/persistence.test.ts and test/persistence-journal-statements.test.ts)',
   writeGuards: 'out-of-scope:write-guards (born in engine-sql/write-guards.ts; pinned by test/engine-parity/write-guards.test.ts and test/fold-hook-noop-6712.test.ts)',
   effectScans: 'out-of-scope:persistence-effect-scans (born in engine-sql/persistence-effect-scans.ts; pinned by test/engine-parity/effect-scans.test.ts)',
+  ownerScans: 'out-of-scope:persistence-owner-scans (born in engine-sql/persistence-owner-scans.ts; pinned by test/engine-parity/owner-recovery-scans.test.ts)',
   writerVersions: 'out-of-scope:writer-versions (born in engine-sql/writer-versions.ts; pinned by test/engine-parity/writer-versions.test.ts)',
   persistenceDeclaration: 'out-of-scope:persistence-declaration (born in engine-sql/persistence-declaration.ts; pinned by test/engine-parity/persistence-declaration.test.ts)',
   pageWriteRows: 'out-of-scope:page-write-rows (born in engine-sql/timeline.ts and takes.ts; pinned by test/engine-parity/timeline.test.ts, takes.test.ts and test/fold-hook-noop-6712.test.ts)',
@@ -556,6 +557,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readCapacityForecastInputs': OOS.journal, 'listPendingSegmentedProjections': OOS.journal, 'selectProjectionWindowJobs': OOS.journal,
   'readWriterVersionCutoff': OOS.writerVersions, 'listWriterVersions': OOS.writerVersions, 'recentWriterVersions': OOS.writerVersions,
   'listGatedMirrorRequests': OOS.effectScans, 'listEffectRecoveries': OOS.effectScans, 'selectClaimableEffect': OOS.effectScans,
+  'listOverdueHeldWrites': OOS.ownerScans, 'lockOverdueHold': OOS.ownerScans,
   'logIngest': OOS.ingest, 'getIngestLog': OOS.ingest,
   'logEvalCandidate': OOS.eval, 'listEvalCandidates': OOS.eval, 'deleteEvalCandidatesBefore': OOS.eval,
   'logEvalCaptureFailure': OOS.eval, 'listEvalCaptureFailures': OOS.eval,
@@ -1358,4 +1360,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('listGatedMirrorRequests', [['default', (e) => e.listGatedMirrorRequests(JOURNAL_REQUEST, 'segmented_mirror_writer_gate', ['segmented_mirror_writer_gate', 'withdrawal_mirror_failed'])]]),
   ...variants('listEffectRecoveries', [['default', (e) => e.listEffectRecoveries(JOURNAL_REQUEST, null, 10)], ['after', (e) => e.listEffectRecoveries(JOURNAL_REQUEST, '12', 10)]]),
   ...variants('selectClaimableEffect', [['default', (e) => e.transaction((tx: any) => tx.selectClaimableEffect(JOURNAL_REQUEST, []))], ['dead', (e) => e.transaction((tx: any) => tx.selectClaimableEffect(JOURNAL_REQUEST, ['1:n:2']))]]),
+  ...variants('listOverdueHeldWrites', [['refresh', (e) => e.listOverdueHeldWrites(JOURNAL_REQUEST, 60_000, 'refresh')], ['import', (e) => e.listOverdueHeldWrites(JOURNAL_REQUEST, 60_000, 'import')]]),
+  ...variants('lockOverdueHold', [['refresh', (e) => e.transaction((tx: any) => tx.lockOverdueHold({ kind: 'refresh', refreshId: JOURNAL_REQUEST }))],
+    ['import', (e) => e.transaction((tx: any) => tx.lockOverdueHold({ kind: 'import', id: JOURNAL_REQUEST, importFrom: 'abc', maxWaitMs: 60_000 }))]]),
 ];

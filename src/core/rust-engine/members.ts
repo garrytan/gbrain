@@ -556,6 +556,8 @@ export const RUST_ENGINE_MEMBERS = {
   listGatedMirrorRequests: 'persistence_journal',
   listEffectRecoveries: 'persistence_journal',
   selectClaimableEffect: 'persistence_journal',
+  listOverdueHeldWrites: 'persistence_journal',
+  lockOverdueHold: 'persistence_journal',
   readCapacityForecastInputs: 'persistence_journal',
   readWriterVersionCutoff: 'persistence_journal',
   listWriterVersions: 'persistence_journal',

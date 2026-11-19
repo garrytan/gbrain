@@ -425,6 +425,30 @@ impl Brain {
         self.run(env, move |s| s.select_claimable_effect(&host_id))
     }
 
+    /// `listOverdueHeldWrites(hostId, maxWaitMs, hold)`: the deferred writes past their hold; `[]`
+    /// (no worktree here). The wait limit only narrows the rows, so it is not sent.
+    #[napi]
+    pub fn list_overdue_held_writes<'env>(
+        &self,
+        env: &'env Env,
+        host_id: String,
+        hold: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_overdue_held_writes(&host_id, &hold))
+    }
+
+    /// `lockOverdueHold(hold)`: whether the hold still stands; `false` (no refresh row or
+    /// worktree import hold here).
+    #[napi]
+    pub fn lock_overdue_hold<'env>(
+        &self,
+        env: &'env Env,
+        hold: String,
+        id: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.lock_overdue_hold(&hold, id.as_deref()))
+    }
+
     #[napi]
     pub fn list_compactable_receipts<'env>(
         &self,

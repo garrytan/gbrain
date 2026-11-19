@@ -14,6 +14,9 @@
  *    tick before the claim, so a CLI put on a Rust brain stayed write_pending. The idle probe is one raw statement over
  *    the whole journal; on the Rust engine it failed every idle tick, which cost a report and a backoff each time.
  *  - Why existing coverage misses it: no parity case ran an owner tick phase; the scans were only reached by a CLI put.
+ *  - The deferred-write expiry's overdue lists and hold checks are typed members (listOverdueHeldWrites, lockOverdueHold):
+ *    with no managed worktree each list is empty and no hold stands on every arm, and an id that is not a uuid refuses
+ *    with the `::uuid` cast's message.
  *  - Seam: none. The real scans and typed members only (no executeRaw: D18). Generated ids are compared by equality
  *    with another member's answer.
  */
@@ -35,12 +38,25 @@ const { parityTest } = parityArms(testBackends());
 
 const REQUEST = 'c0000000-0000-4000-8000-0000000000c1';
 const IDLE_REQUEST = 'c0000000-0000-4000-8000-0000000000c2';
+const HELD_REQUEST = 'c0000000-0000-4000-8000-0000000000c3';
+const NO_REFRESH = 'c0000000-0000-4000-8000-0000000000f1';
 
 /** The owner's idle probe (`hasWork`, private): what an idle tick asks before it runs the full fan-out. */
 function idleProbe(engine: BrainEngine): () => Promise<boolean> {
   const consumer = new PersistenceConsumer(engine, { engine: engine.kind } as GBrainConfig,
     async () => { throw new Error('the idle probe prepares nothing'); }, { hostId: hostIdFor(engine) });
   return () => (consumer as unknown as { hasWork(): Promise<boolean> }).hasWork();
+}
+
+/** 'ok', or the part of the refusal message `pattern` matches (the whole message when it does not match). */
+async function outcome(run: () => Promise<unknown>, pattern: RegExp): Promise<string> {
+  try {
+    await run();
+    return 'ok';
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return pattern.exec(message)?.[0] ?? message;
+  }
 }
 
 /** Admits one put_page request through the real admission path, as a CLI put does. */
@@ -82,5 +98,28 @@ describe('engine parity: owner recovery scans', () => {
     const after = await probe();
     expect([before, after]).toEqual([false, true]);
     return { before, after };
+  });
+
+  parityTest('the deferred-write expiry lists no overdue hold and finds no standing hold when no managed worktree exists', {
+    methods: ['declarePersistence', 'transaction', 'readSourceMembership', 'insertWriteRequest', 'listOverdueHeldWrites', 'lockOverdueHold'],
+    timeout: 60_000,
+  }, async (engine) => {
+    await registerLocalWriter(engine, 'cli');
+    const queued = await admitPut(engine, 'notes/parity-overdue-hold', HELD_REQUEST);
+    const host = hostIdFor(engine);
+    const lists = { refresh: (await engine.listOverdueHeldWrites(host, 1, 'refresh')).length,
+      import: (await engine.listOverdueHeldWrites(host, 1, 'import')).length };
+    const held = await engine.transaction(async tx => ({
+      refresh: await tx.lockOverdueHold({ kind: 'refresh', refreshId: NO_REFRESH }),
+      import: await tx.lockOverdueHold({ kind: 'import', id: queued.id, importFrom: 'no-such-commit', maxWaitMs: 1 }),
+    }));
+    const uuidRefusal = /invalid input syntax for type uuid: "[^"]*"/;
+    const bad = {
+      host: await outcome(() => engine.listOverdueHeldWrites('not-a-host', 1, 'import'), uuidRefusal),
+      id: await outcome(() => engine.transaction(tx => tx.lockOverdueHold({ kind: 'import', id: 'not-a-request', importFrom: 'x', maxWaitMs: 1 })), uuidRefusal),
+    };
+    expect({ lists, held, bad }).toEqual({ lists: { refresh: 0, import: 0 }, held: { refresh: false, import: false },
+      bad: { host: 'invalid input syntax for type uuid: "not-a-host"', id: 'invalid input syntax for type uuid: "not-a-request"' } });
+    return { lists, held, bad };
   });
 });
