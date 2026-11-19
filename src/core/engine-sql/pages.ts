@@ -41,6 +41,7 @@ import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fra
 import { frontmatterWhereFragment } from '../search/frontmatter-where.ts';
 import { quoteIdentifier, resolveWriteColumnFromConfigRows } from '../search/embedding-column.ts';
 import { pickCanonicalOrigin } from '../persistence/origin-guard.ts';
+import { withTrustKeep } from '../persistence/context.ts';
 import { scrubPurgedSlugs } from '../feedback/store.ts';
 import { scrubPurgedNameStores } from '../persistence/purge-name-stores.ts';
 import { scrubPurgedSlugHolds, scrubPurgedSlugStores } from '../persistence/purge-slug-stores.ts';
@@ -1153,8 +1154,13 @@ export async function revertToVersion(
  * sweep up same-slug rows in sources B/C/D. The move advances the page's
  * knowledge revision, so it first versions the page as it stood: page-at-time
  * (belief ledger W2) reads the body before the rename from that preimage.
+ *
+ * #9735: the move re-keys the page and the facts that name it and authors no text, so it runs under withTrustKeep:
+ * the page and every re-keyed fact keep their stored tier whatever tier the caller declared (the tier trigger counts
+ * pages.slug and facts.entity_slug as content). Every caller moves through here, so none has to remember it.
  */
-export async function updateSlug(exec: SqlExecutor, tx: BrainEngine, oldSlug: string, newSlug: string, sourceId: string): Promise<number> {
+export function updateSlug(exec: SqlExecutor, tx: BrainEngine, oldSlug: string, newSlug: string, sourceId: string): Promise<number> {
+  return withTrustKeep(tx, ['pages', 'facts'], async () => {
       const preimage = await tx.readPageSnapshot(oldSlug, { sourceId, includeDeleted: true });
       if (preimage) await createPageVersion(tx, oldSlug, sourceId, preimage);
       // origin-guard-ok: the moved row keeps its own origin and liveness, so it adds no claimant (#6948); callers that record a new path bind it with bindOrigin
@@ -1169,7 +1175,8 @@ export async function updateSlug(exec: SqlExecutor, tx: BrainEngine, oldSlug: st
       // #3056: rows moved — a zero-row UPDATE does not throw, so the count is
       // the only way callers can see the no-op.
       return moved.length;
-  }
+  });
+}
 
 /**
  * Replace a page's frontmatter alias set under its page-key lock, inside the
