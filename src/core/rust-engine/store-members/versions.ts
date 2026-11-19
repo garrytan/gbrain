@@ -5,7 +5,10 @@
  */
 import type { PageVersion, GetVersionsOpts, PageVersionRows } from '../../page-state/version-types.ts';
 import { toCreatedVersion, toVersion } from '../store-codec.ts';
-import { storeCall, takeOptions, type StoreMember } from './common.ts';
+import { versionPrivacySql } from '../../engine-sql/pages.ts';
+import { withCallerAccess, withoutCallerAccess } from '../../search/private-visibility.ts';
+import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { normalizeConceptInputs, storePagePolicy, type StorePrivacyPolicy } from './private-provenance.ts';
 
 export const createVersion: StoreMember<[slug: string, opts?: { sourceId?: string }], PageVersion> = async (brain, slug, opts) => {
   const scope = takeOptions('createVersion', opts, ['sourceId']);
@@ -14,7 +17,28 @@ export const createVersion: StoreMember<[slug: string, opts?: { sourceId?: strin
 };
 
 export const getVersions: StoreMember<[slug: string, opts?: GetVersionsOpts<boolean>], PageVersionRows<boolean>> = async (brain, slug, opts) => {
-  const scope = takeOptions('getVersions', opts, ['sourceId', 'sourceIds', 'limit', 'includeBody']);
+  const scope = takeOptions('getVersions', opts, ['sourceId', 'sourceIds', 'limit', 'includeBody', 'excludePrivate']);
+  if ('excludePrivate' in scope) scope.excludePrivate = versionsPolicy(scope.excludePrivate) ?? null;
   const rows: PageVersion[] = await storeCall({ member: 'getVersions', slug }, () => brain.getVersions(slug, scope));
   return rows.map((row) => toVersion(row)) as PageVersionRows<boolean>;
 };
+
+/**
+ * The store policy of `getVersions` under `excludePrivate`: the caller's page policy on the live page
+ * (`storePagePolicy`, with `callerReaders`), served only when the whole predicate (`versionPrivacySql`, which adds the
+ * snapshot's readers, privacy and pinned marker) is the rendering for a record of only the reader identity and
+ * private-readable grant that policy carries. Any other caller refuses.
+ */
+function versionsPolicy(excludePrivate: unknown): StorePrivacyPolicy | undefined {
+  const policy = storePagePolicy('getVersions', excludePrivate, { callerReaders: true });
+  if (!policy) return undefined;
+  const text = normalizeConceptInputs(versionPrivacySql());
+  const readers = { identity: policy.identity ?? [], privateReadableSources: policy.privateReadableSources ?? [] };
+  const renderings = [
+    () => withoutCallerAccess(versionPrivacySql),
+    () => withoutCallerAccess(() => withCallerAccess({ ...readers, hidePrivate: true }, versionPrivacySql)),
+    () => withoutCallerAccess(() => withCallerAccess({ ...readers, hidePrivate: true, restricted: false }, versionPrivacySql)),
+  ];
+  if (renderings.some((render) => normalizeConceptInputs(render()) === text)) return policy;
+  refuseMember('getVersions', 'excludePrivate for a caller whose snapshot readers or grants widen the policy');
+}

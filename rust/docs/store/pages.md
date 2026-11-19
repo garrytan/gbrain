@@ -27,7 +27,7 @@ secondary indexes yet.
 | `brain.addTag(slug, tag, { sourceId? }?)` | `null`; `page_not_found` for a missing page | `addTag` |
 | `brain.removeTag(slug, tag, { sourceId? }?)` | `null`; no error when the page or tag is absent | `removeTag` |
 | `brain.createVersion(slug, { sourceId? }?)` | the version row, with the page's stamped `trust_tier` and `write_origin` copied into the snapshot (`snapshot_version_trust`; never the snapshot writer's own); `page_not_found` for a missing page. A segmented page's snapshot references its body generation (page_body.md, "The sweep") | `createVersion` |
-| `brain.getVersions(slug, { sourceId?, sourceIds?, limit?, includeBody? }?)` | version rows, newest first; `includeBody: false` leaves out `compiled_truth` and `timeline` | `getVersions` |
+| `brain.getVersions(slug, { sourceId?, sourceIds?, limit?, includeBody?, excludePrivate? }?)` | version rows, newest first; `includeBody: false` leaves out `compiled_truth` and `timeline`. `excludePrivate` is the caller's page policy: a live page it hides lists no version, and a snapshot whose own `readable_by` names none of the caller's identities, or (with the privacy part) whose frontmatter is private or marks a pinned question, is left out before `limit`. The member serves it only when `versionPrivacySql()` renders as that policy, else it refuses | `getVersions` |
 
 `putPage` follows PGLite:
 

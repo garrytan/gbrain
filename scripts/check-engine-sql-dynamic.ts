@@ -74,6 +74,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   remoteProvenanceFloorSql: 'src/core/search/private-visibility.ts: constant remote provenance floor (private-provenance filter plus labelled-only) over a caller facts alias',
 
   // trust-tier-reads.ts builders
+  versionPrivacySql: 'src/core/engine-sql/pages.ts: the get_versions excludePrivate predicate, built only from the vetted privatePagesFilterForCaller, callerReadersAllowedSql, privacyForCaller and privateSnapshotFilterFragment builders over the constant aliases p and pv, plus one constant pinned_question conjunct; no values',
   remoteReadFloorSql: 'src/core/search/private-visibility.ts: privatePagesFilterFragment, plus the constant labelledOnlySql conjunct for a labelled-only caller, over a caller page alias; no values',
 
   // facts-repair.ts builders

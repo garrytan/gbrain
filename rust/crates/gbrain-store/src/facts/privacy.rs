@@ -221,6 +221,28 @@ pub(crate) fn version_hidden(
         || (policy.entity_privacy && !snapshot_fields_allow(page_type, fm, policy.honor_aliases))
 }
 
+/// Whether a caller's `getVersions` policy hides a snapshot of the readable live page `page`
+/// (`callerReadersAllowedSql(pv, 'snapshot') AND privacyForCaller(p, privateSnapshotFilterFragment(pv))`
+/// and, while private pages are hidden, `NOT pv.frontmatter ? 'pinned_question'`): the snapshot names
+/// readers none of the caller's principals match, or, with `entity_privacy`, it carries
+/// `pinned_question` or its own fields are private and the live page's source is not in the
+/// caller's private-readable grant. Only the snapshot's type and frontmatter count.
+pub(crate) fn caller_version_hidden(
+    page: &PageRecord,
+    page_type: &str,
+    fm: &Map<String, Value>,
+    policy: &PrivacyPolicy,
+) -> bool {
+    let readers_allowed = !fm.contains_key("readable_by")
+        || access_readers(fm)
+            .is_some_and(|readers| readers.iter().any(|r| policy.identity.contains(r)));
+    !readers_allowed
+        || (policy.entity_privacy
+            && (fm.contains_key("pinned_question")
+                || !(private_source_open(page, policy)
+                    || snapshot_fields_allow(page_type, fm, policy.honor_aliases))))
+}
+
 /// `holdingSlugSql`: `memory/unattributed`, or a slug ending in `/memory/unattributed`.
 fn holding_slug(slug: &str) -> bool {
     slug == "memory/unattributed" || slug.ends_with("/memory/unattributed")
