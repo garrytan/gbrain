@@ -215,7 +215,7 @@ function textOf(content) {
 }
 
 function turnText(event) {
-  if (event && typeof event.prompt === 'string') return event.prompt.trim();
+  if (event && typeof event.prompt === 'string' && event.prompt.trim()) return event.prompt.trim();
   if (event && typeof event.currentUserMessage === 'string') return event.currentUserMessage.trim();
   const msgs = event && Array.isArray(event.messages) ? event.messages : [];
   for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i] && msgs[i].role === 'user') return textOf(msgs[i].content).trim();
