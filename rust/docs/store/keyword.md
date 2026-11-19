@@ -107,6 +107,7 @@ The postings (`keyword/index.rs`, numbers big-endian, `len` two bytes):
 |---|---|
 | `R 0x01 len lexeme page_id chunk_index` | the chunk vector's positions for the lexeme, two bytes each |
 | `R 0x02 len lexeme page_id` | the same for the page vector (`titles.rs`) |
+| `R 0x03 len trigram page_id` | empty: one raw pg_trgm trigram of the page's title (`trgm.rs`, CRC-compacted for multibyte characters), soft-deleted pages included |
 | `R 0x04 len basename page_id` | empty: the page's slug basename, for the handle arm (a basename over 65,535 bytes has none) |
 | `R 0x05 page_id chunk_index`, `R 0x06 page_id` | the forward record: the postings the document owns, `kind(1) len(2) text` each |
 
@@ -290,6 +291,12 @@ The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last 
 - `findByTitleFuzzy` without a `sourceId` reads soft-deleted pages too, as the SQL does (follow-up
   `fuzzy-title-unscoped-deleted`). PGLite types `$minSimilarity` as `real`; Postgres may bind it as `float8`, which
   would compare in f64 (not verified).
+- `findByTitleFuzzy` through the index reads only the pages whose titles share at least `min_shared(n1, min)` of the
+  name's `n1` trigrams (`R 0x03`), then runs the same exact score, `%`, LIKE and source checks. The score is
+  `c / (n1 + n2 - c)` divided in f32, at most `c / n1` in real numbers; the bound uses `min` lowered by two f32
+  steps, so a rounded score equal to `min` is never lost. A unit test checks the bound against `calc_sml` for every
+  `(c, n1)` with `n1 <= 2,048` at its hardest `n2`, and every `n2` for small and large `n1`. Above 2,048 name
+  trigrams any shared trigram admits; a `min` of zero, below zero or not finite scans.
 - `findByTitleFuzzy`'s `dirPrefix` is a LIKE pattern (`sql_like`): `%`, `_` and `\\` escapes as PostgreSQL reads them. The
   matcher is iterative with one backtrack point (the last `%`), so its work is bounded by the text length times the
   pattern length; a prefix of many `%` groups answers at once (`title-fuzzy-like-bound.test.ts`).

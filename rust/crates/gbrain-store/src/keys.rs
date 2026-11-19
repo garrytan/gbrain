@@ -122,6 +122,7 @@ pub fn keyword_index_state() -> Vec<u8> {
 pub const KW_STATE: u8 = 0x00;
 pub const KW_CHUNK_POSTING: u8 = 0x01;
 pub const KW_PAGE_POSTING: u8 = 0x02;
+pub const KW_TITLE_TRIGRAM: u8 = 0x03;
 pub const KW_BASENAME: u8 = 0x04;
 pub const KW_CHUNK_FORWARD: u8 = 0x05;
 pub const KW_PAGE_FORWARD: u8 = 0x06;
@@ -152,6 +153,13 @@ pub fn page_posting(lexeme: &str, page_id: u64) -> Vec<u8> {
     key
 }
 
+/// `R 0x03 len(2) trigram page_id`: a page whose title has the raw pg_trgm trigram (`trgm.rs`).
+pub fn title_trigram_posting(trigram: [u8; 3], page_id: u64) -> Vec<u8> {
+    let mut key = keyword_term_prefix(KW_TITLE_TRIGRAM, &trigram);
+    key.extend_from_slice(&page_id.to_be_bytes());
+    key
+}
+
 /// `R 0x04 len(2) basename page_id`: a page whose slug ends in `basename`.
 pub fn basename_posting(basename: &str, page_id: u64) -> Vec<u8> {
     let mut key = keyword_term_prefix(KW_BASENAME, basename.as_bytes());
@@ -167,7 +175,7 @@ pub fn chunk_forward(page_id: u64, index: u32) -> Vec<u8> {
     key
 }
 
-/// `R 0x06 page_id`: the lexemes and the basename a page has postings for.
+/// `R 0x06 page_id`: the lexemes, title trigrams and basename a page has postings for.
 pub fn page_forward(page_id: u64) -> Vec<u8> {
     let mut key = vec![TRIGRAM, KW_PAGE_FORWARD];
     key.extend_from_slice(&page_id.to_be_bytes());

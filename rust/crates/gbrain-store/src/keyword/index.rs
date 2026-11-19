@@ -9,6 +9,9 @@
 //! - `R 0x01 len(2) lexeme page_id chunk_index`: a chunk vector's entry for one lexeme. The value
 //!   is the entry's `WordEntryPos` list, two bytes each (empty: a lexeme without positions).
 //! - `R 0x02 len(2) lexeme page_id`: the same for the page vector (`titles.rs`).
+//! - `R 0x03 len(2) trigram page_id`: empty; one raw pg_trgm trigram of the page's title
+//!   (`trgm.rs`, CRC-compacted for multibyte characters), for `findByTitleFuzzy`. Soft-deleted
+//!   pages keep theirs, as the unscoped fuzzy read reads them.
 //! - `R 0x04 len(2) basename page_id`: empty; the page's slug basename (the handle arm).
 //! - `R 0x05 page_id chunk_index` and `R 0x06 page_id`: forward records, the postings the document
 //!   owns as `kind(1) len(2) text` entries, so a reindex deletes exactly the postings it no longer
@@ -32,11 +35,12 @@ use serde::{Deserialize, Serialize};
 
 use super::filters::readable_chunk_vector;
 use super::titles::readable_page_vector;
+use super::trgm::trigram_bytes;
 use super::tsearch::{Op, QItem, TsEntry, TsQuery, TsVector};
 use crate::chunks::ChunkRecord;
 use crate::error::Result;
 use crate::get_json;
-use crate::keys::{self, KW_BASENAME, KW_CHUNK_POSTING, KW_PAGE_POSTING};
+use crate::keys::{self, KW_BASENAME, KW_CHUNK_POSTING, KW_PAGE_POSTING, KW_TITLE_TRIGRAM};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::pages::read_page_by_id;
 
@@ -204,14 +208,19 @@ pub(crate) fn basename(slug: &str) -> &str {
     slug.rsplit('/').next().unwrap_or(slug)
 }
 
-/// Rebuilds the postings of page `page_id` (its vector lexemes and its basename) from the page
-/// as `w` holds it.
+/// Rebuilds the postings of page `page_id` (its vector lexemes, its title trigrams and its
+/// basename) from the page as `w` holds it.
 pub(crate) fn reindex_page(w: &mut dyn KvWrite, page_id: u64) -> Result<()> {
     let mut postings = Vec::new();
     if let Some(page) = read_page_by_id(&*w, page_id)? {
         if let Some(vector) = readable_page_vector(&*w, &page)? {
             postings = vector_postings(KW_PAGE_POSTING, &vector);
         }
+        postings.extend(trigram_bytes(&page.title).into_iter().map(|t| Posting {
+            kind: KW_TITLE_TRIGRAM,
+            term: t.to_vec(),
+            value: Vec::new(),
+        }));
         let base = basename(&page.slug);
         if base.len() <= usize::from(u16::MAX) {
             postings.push(Posting {
@@ -260,6 +269,30 @@ pub(crate) fn basename_pages(
         })?;
     }
     Ok(Some(out))
+}
+
+/// The page ids, ascending, whose title shares at least `need` of `trigrams` (each counted once;
+/// `trigrams` sorted and unique).
+pub(crate) fn title_trigram_pages(
+    read: &dyn KvRead,
+    trigrams: &[[u8; 3]],
+    need: usize,
+) -> Result<Vec<u64>> {
+    let mut shared: BTreeMap<u64, usize> = BTreeMap::new();
+    for t in trigrams {
+        let prefix = keys::keyword_term_prefix(KW_TITLE_TRIGRAM, t);
+        scan_prefix(read, &prefix, false, &mut |k, _| {
+            if let Some((page, _)) = doc_of(&k[prefix.len()..]) {
+                *shared.entry(page).or_default() += 1;
+            }
+            true
+        })?;
+    }
+    Ok(shared
+        .into_iter()
+        .filter(|(_, c)| *c >= need)
+        .map(|(page, _)| page)
+        .collect())
 }
 
 /// The value lexemes of `q`.

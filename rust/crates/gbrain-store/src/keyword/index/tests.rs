@@ -204,6 +204,61 @@ fn corpus(store: &Store) {
     seal(store, "notes/sealed", "sealed orchard pie");
     crate::keyword::titles::tests::segmented(store, "notes/seg", "Apple Segment", "orchard lead");
     put(store, "zz/empty", "Empty", "", "", json!({}));
+    put(store, "notes/a", "a", "letter", "", json!({}));
+    put(
+        store,
+        "notes/cafe",
+        "Café Ünïcode 東京",
+        "unicode",
+        "",
+        json!({}),
+    );
+}
+
+/// `findByTitleFuzzy` names: near and far titles, the review's `a b c d e` case, a soft-deleted
+/// page's title (`Three`), non-ASCII and empty names.
+const FUZZY_NAMES: [&str; 9] = [
+    "apple",
+    "Apple Exampl",
+    "orchrd log",
+    "a b c d e",
+    "Three",
+    "cafe unicode 東京",
+    "zzz",
+    "",
+    "!!",
+];
+
+/// `minSimilarity` values: the default, the `%` cut, the review's threshold, low, zero, negative,
+/// not finite, one, and out of `real` range (refused before any read).
+const FUZZY_MINS: [Option<f64>; 12] = [
+    None,
+    Some(0.3),
+    Some(0.200000001),
+    Some(0.1),
+    Some(0.0),
+    Some(-1.0),
+    Some(f64::NAN),
+    Some(f64::INFINITY),
+    Some(1.0),
+    Some(1e-50),
+    Some(1e39),
+    Some(0.05),
+];
+
+fn fuzzy_members(store: &Store) -> usize {
+    let mut by_index = 0;
+    for name in FUZZY_NAMES {
+        for min in FUZZY_MINS {
+            for (dir, source) in [(None, None), (Some("notes"), None), (None, Some("default"))] {
+                let label = format!("fuzzy {name:?} {min:?} {dir:?} {source:?}");
+                by_index += usize::from(same(&label, || {
+                    store.find_by_title_fuzzy(name, dir, min, source)
+                }));
+            }
+        }
+    }
+    by_index
 }
 
 const QUERIES: [&str; 14] = [
@@ -315,7 +370,7 @@ fn members(store: &Store) -> usize {
             );
         }
     }
-    by_index
+    by_index + fuzzy_members(store)
 }
 
 /// Every `R` record but the state.
@@ -553,4 +608,36 @@ fn sparse_vectors_rank_to_the_same_bits() {
             "{q}"
         );
     }
+}
+
+/// The fuzzy read reads the trigram postings when it has a bound, keeps soft-deleted pages for
+/// the unscoped call and finds a score equal to the rounded threshold.
+#[test]
+fn the_fuzzy_read_uses_the_trigram_bound() {
+    let store = indexed(store());
+    corpus(&store);
+    store.soft_delete_page("notes/three", None).unwrap();
+    for min in [None, Some(0.3), Some(0.05)] {
+        assert!(same("fuzzy", || store
+            .find_by_title_fuzzy("Three", None, min, None)));
+    }
+    for min in [Some(0.0), Some(-1.0), Some(f64::NAN)] {
+        assert!(!same("fuzzy", || store
+            .find_by_title_fuzzy("Three", None, min, None)));
+    }
+    let unscoped = store
+        .find_by_title_fuzzy("Three", None, None, None)
+        .unwrap();
+    assert_eq!(unscoped["slug"], "notes/three");
+    let scoped = store
+        .find_by_title_fuzzy("Three", None, None, Some("default"))
+        .unwrap();
+    assert_ne!(scoped["slug"], "notes/three");
+    let edge = store
+        .find_by_title_fuzzy("a b c d e", None, Some(0.200000001), None)
+        .unwrap();
+    assert_eq!(edge["slug"], "notes/a");
+    assert!(same("edge", || {
+        store.find_by_title_fuzzy("a b c d e", None, Some(0.200000001), None)
+    }));
 }
