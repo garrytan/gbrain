@@ -11,7 +11,8 @@ import { buildJobContext } from '../src/core/minions/job-context.ts';
 import { jobsOperations } from '../src/core/ops/jobs.ts';
 import { authorizeLegacyJobs } from '../src/core/minions/authorize-legacy.ts';
 import { readSourceFileSync, writeSourceFileSync, withSourceFilesystemLock } from '../src/core/minions/source-filesystem.ts';
-import { APPLICATION_AUTHORITY, assertNoUnreviewedJobs, assertRemoteJobControl, authorizeJobExecution, prepareRemoteJob, withSubmissionAuthority } from '../src/core/minions/submission-authority.ts';
+import { APPLICATION_AUTHORITY, assertCurrentRemoteJobPrincipal, assertNoUnreviewedJobs, assertRemoteJobControl, authorizeJobExecution, prepareRemoteJob, withSubmissionAuthority } from '../src/core/minions/submission-authority.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { caught, envelopeFor, expectFunnelSuggestions } from './helpers/agent-envelope.ts';
@@ -137,6 +138,30 @@ describe('generic remote job authority', () => {
     await engine.executeRaw('UPDATE access_tokens SET revoked_at = now() WHERE id = $1', [legacyId]);
     await engine.executeRaw("INSERT INTO access_tokens (name, token_hash, scopes) VALUES ('same-name', 'test-hash-b', ARRAY['admin'])");
     await expect(queue.retryJob(job.id)).rejects.toThrow('revoked');
+  }));
+
+  test('the current-principal check reads the client and the token through a typed engine member, not caller raw SQL', () => isolated(async () => {
+    // The two statements assertCurrentRemoteJobPrincipal ran before they moved to readJobPrincipal; a Rust brain refuses caller raw SQL.
+    const moved = (sql: string) => sql.startsWith('SELECT client_id, deleted_at, scope, source_id, bound_slug_prefixes, surface, allowed_operations FROM oauth_clients')
+      || sql === 'SELECT * FROM access_tokens WHERE id = $1';
+    const strict = new Proxy(engine, { get(target, key) {
+      if (key === 'executeRaw') return (sql: string, params?: unknown[]) => moved(sql) ? Promise.reject(new Error('caller raw SQL in the principal check')) : target.executeRaw(sql, params);
+      const value = Reflect.get(target, key, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } }) as BrainEngine;
+    const client = (await prepareRemoteJob(ctx(), 'lint', {})).authority;
+    await assertCurrentRemoteJobPrincipal(strict, client);
+    await engine.executeRaw('INSERT INTO access_tokens (id, name, token_hash, permissions, scopes) VALUES ($1, $2, $3, $4::jsonb, ARRAY[\'admin\'])', [legacyId, 'legacy', 'test-hash-a', { source_id: 'default' }]);
+    const legacy = ctx(); legacy.auth = { ...legacy.auth!, principal: { kind: 'legacy_token', id: legacyId }, clientId: 'legacy' };
+    const token = (await prepareRemoteJob(legacy, 'lint', {})).authority;
+    await assertCurrentRemoteJobPrincipal(strict, token);
+    // The member returns revoked and deleted rows, so the check still names which one denied the job.
+    await engine.executeRaw('UPDATE access_tokens SET revoked_at = now() WHERE id = $1', [legacyId]);
+    await expect(assertCurrentRemoteJobPrincipal(strict, token)).rejects.toThrow('legacy token is missing or revoked');
+    await engine.executeRaw("UPDATE oauth_clients SET deleted_at = now() WHERE client_id = 'client-a'");
+    await expect(assertCurrentRemoteJobPrincipal(strict, client)).rejects.toThrow('OAuth client is missing or revoked');
+    // A token id named as a client finds no client.
+    await expect(assertCurrentRemoteJobPrincipal(strict, { ...client, principal: { kind: 'oauth_client', id: legacyId } })).rejects.toThrow('OAuth client is missing or revoked');
   }));
 
   test('retry/resume/replay retain authority; remote overrides and other principals cannot restart', () => isolated(async () => {

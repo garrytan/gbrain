@@ -47,6 +47,7 @@ Each returns what PGLite returns for a brain with the same contents.
 | `insertLocalWriterRow(row)` | `brain.insertLocalWriterRow` | The same two unique keys as PGLite's table. |
 | `readJournalLimitRows()` | the config keys that start with `persistence.limits.`, the page-body keys, then `{ key: null, value: null }` | The store keeps no segmented pages, so the largest one has no size. |
 | `readHeldPageRows(pageIds)`, `readHeldCoverageRows(sourceIds)`, `readGitHoldRecords(opts)` | `[]` | The store holds no files from a sync, so nothing is held. `readGitHoldRecords` is the git sync hold read of `persistence/sync-holds.ts` `readGitSourceHolds`; its SQL lives in `src/core/engine-sql/sync-hold-reads.ts`. |
+| `readReasonPurgeTombstones(sourceId)`, `readSourcePurgeEpoch(sourceId)` | `[]`; `0` for a known source, `null` otherwise | The store keeps no change reasons and purges no facts, so no (commit, path) is tombstoned and a source's purge epoch stays 0 (`getSource` tells a known source). On PGLite and Postgres the reads are the statements `reason-trailers.ts` `scanSyncReasons` and `cachedSyncReasonScan` ran through `executeRaw` (`src/core/engine-sql/sync-reason-reads.ts`). |
 | `ownsSchemaTables()` | `true` | The process that opens the store owns all of it, so the schema owner of a schema-behind refusal is this caller (fix actor `agent`). |
 
 `src/core/rust-engine/store-members/connect-gate.ts` answers the connect gate's persistence reads the same way

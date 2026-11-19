@@ -403,6 +403,16 @@ const PINS: Pin[] = [
     texts: ['SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2'],
   },
   {
+    from: 'src/core/reason-trailers.ts:151 scanSyncReasons',
+    case: { method: 'readReasonPurgeTombstones', variant: 'default', run: e => e.readReasonPurgeTombstones('default') },
+    texts: ['SELECT commit_sha, path FROM reason_purge_tombstones WHERE source_id = $1'],
+  },
+  {
+    from: 'src/core/reason-trailers.ts:262 cachedSyncReasonScan',
+    case: { method: 'readSourcePurgeEpoch', variant: 'default', run: e => e.readSourcePurgeEpoch('default') },
+    texts: ['SELECT purge_epoch FROM sources WHERE id = $1'],
+  },
+  {
     from: 'src/core/persistence/sync-holds.ts:1452,1458 buildHoldReport',
     case: { method: 'readGitHoldReportInputs', variant: 'default', run: e => e.readGitHoldReportInputs('default', 'default:1') },
     texts: [`SELECT COALESCE((completed_keys->0->>'count')::int,0) AS count,
@@ -449,6 +459,16 @@ const PINS: Pin[] = [
     from: 'src/core/access/caller.ts:204 mayActForOf (stdio config)',
     case: { method: 'readMayActFor', variant: 'stdio-config', run: e => e.readMayActFor('stdio_config', 'mcp.stdio_may_act_for') },
     texts: ['SELECT value FROM config WHERE key = $1'],
+  },
+  {
+    from: 'src/core/minions/submission-authority.ts:144 assertCurrentRemoteJobPrincipal (OAuth client)',
+    case: { method: 'readJobPrincipal', variant: 'oauth-client', run: e => e.readJobPrincipal({ kind: 'oauth_client', id: 'client-1' }) },
+    texts: ['SELECT client_id, deleted_at, scope, source_id, bound_slug_prefixes, surface, allowed_operations FROM oauth_clients WHERE client_id = $1'],
+  },
+  {
+    from: 'src/core/minions/submission-authority.ts:160 assertCurrentRemoteJobPrincipal (legacy token)',
+    case: { method: 'readJobPrincipal', variant: 'legacy-token', run: e => e.readJobPrincipal({ kind: 'legacy_token', id: 'tok-1' }) },
+    texts: ['SELECT * FROM access_tokens WHERE id = $1'],
   },
   {
     from: 'src/core/access/caller.ts:253 resolveAudienceIdentities (members, then groups)',

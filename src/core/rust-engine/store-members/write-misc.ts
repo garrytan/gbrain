@@ -1,14 +1,14 @@
 /**
  * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
  * purgeMemoryProposals, attachSourcePath, getWorktreeBinding and listAccessTokens; SQL in engine-sql/write-misc.ts; isSourceClaimed, SQL in engine-sql/sources.ts), and the folder access read beside the
- * access members (isFolderRestricted, listAppliedPolicyRevisions, readLiveMember, readFolderAccess, readMayActFor and readAudiencePrincipals; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
+ * access members (isFolderRestricted, listAppliedPolicyRevisions, readLiveMember, readFolderAccess, readMayActFor, readAudiencePrincipals and readJobPrincipal; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
  * gbrain-store `write_misc`, the folder reads by gbrain-store `access_rules`; the rest answer for state the store does not keep. What each member answers and why:
  * rust/docs/store/write_misc.md.
  */
 import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from '../../engine-sql/write-misc.ts';
-import type { AccessMemberLookup, AccessMemberRow, AppliedPolicyRevision, AudiencePrincipalRows, FolderAccessRows, LiveMemberRow, MayActForVia, MemberBindingVia } from '../../engine-sql/access-control.ts';
+import type { AccessMemberLookup, AccessMemberRow, AppliedPolicyRevision, AudiencePrincipalRows, FolderAccessRows, JobPrincipalKind, LiveMemberRow, MayActForVia, MemberBindingVia } from '../../engine-sql/access-control.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /**
@@ -105,6 +105,9 @@ export const readFolderAccess: StoreMember<[readers: readonly string[]], FolderA
  */
 export const readMayActFor: StoreMember<[via: MayActForVia, key: string], string[] | string | null> = async (brain, via, key) =>
   via === 'stdio_config' ? storeCall({ member: 'readMayActFor' }, () => brain.getConfig(key)) : null;
+
+/** The store keeps no access tokens and no OAuth clients, so a remote job's principal has no row: the job is denied as revoked. */
+export const readJobPrincipal: StoreMember<[principal: { kind: JobPrincipalKind; id: string }], Record<string, unknown> | null> = async () => null;
 
 /**
  * The store keeps no access members (see listActiveAccessMembers), so no key names a live member through any binding:

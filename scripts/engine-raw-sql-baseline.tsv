@@ -212,7 +212,7 @@ src/commands/sources-writers.ts	execute_raw	1
 src/commands/sources.ts	execute_raw	13
 src/commands/storage.ts	execute_raw	1
 src/commands/sweep.ts	execute_raw	2
-src/commands/sync/full.ts	execute_raw	2
+src/commands/sync/full.ts	execute_raw	1
 src/commands/sync/holds.ts	execute_raw	4
 src/commands/sync/plain-directory.ts	execute_raw	1
 src/commands/sync/preflight.ts	execute_raw	3
@@ -538,7 +538,7 @@ src/core/minions/legacy-cancel.ts	execute_raw	4
 src/core/minions/legacy-selection.ts	execute_raw	2
 src/core/minions/rate-leases.ts	execute_raw	6
 src/core/minions/spend-authorization.ts	execute_raw	3
-src/core/minions/submission-authority.ts	execute_raw	4
+src/core/minions/submission-authority.ts	execute_raw	2
 src/core/minions/sync-queue-wake.ts	execute_raw	2
 src/core/minions/terminal-events.ts	execute_raw	1
 src/core/minions/terminal-hook.ts	execute_raw	1
@@ -846,7 +846,6 @@ src/core/questions/receipt.ts	execute_raw	1
 src/core/questions/refresh.ts	execute_raw	14
 src/core/questions/service.ts	execute_raw	1
 src/core/questions/store.ts	execute_raw	7
-src/core/reason-trailers.ts	execute_raw	2
 src/core/reindex-consent.ts	execute_raw	1
 src/core/remediation/run.ts	execute_raw	1
 src/core/repair/accepted-takes.ts	execute_raw	4

@@ -3793,6 +3793,28 @@
         ],
         "flagOnScopes": []
       },
+      "readJobPrincipal#legacy-token": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readJobPrincipal#oauth-client": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readJournalLimitRows#default": {
         "flagOffLanes": [
           "pool"
@@ -5837,6 +5859,7 @@
         "readIgnoredPrivacyLabelPages": "none",
         "readJobInbox": "none",
         "readJobInsight": "none",
+        "readJobPrincipal": "none",
         "readJobSourceState": "none",
         "readJobSpendTree": "none",
         "readJobStats": "none",
@@ -5887,6 +5910,7 @@
         "readQueuedPageChars": "none",
         "readQueuedSpendRows": "none",
         "readRankCoverage": "none",
+        "readReasonPurgeTombstones": "none",
         "readReceiptBudget": "none",
         "readRetirementHop": "none",
         "readRowTrustRows": "none",
@@ -5899,6 +5923,7 @@
         "readSourceIncarnation": "none",
         "readSourceJobCounts": "none",
         "readSourceMembership": "none",
+        "readSourcePurgeEpoch": "none",
         "readSourceRow": "none",
         "readSourceState": "none",
         "readStoredBodyBytes": "none",

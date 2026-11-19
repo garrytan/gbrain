@@ -8,7 +8,7 @@ import type * as JobsWake from './engine-sql/jobs-wake.ts';
 import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
-import type { AccessMemberLookup, AccessMemberRow, AppliedPolicyRevision, AudiencePrincipalRows, FolderAccessRows, LiveMemberRow, MayActForVia, MemberBindingVia } from './engine-sql/access-control.ts';
+import type { AccessMemberLookup, AccessMemberRow, AppliedPolicyRevision, AudiencePrincipalRows, FolderAccessRows, JobPrincipalKind, LiveMemberRow, MayActForVia, MemberBindingVia } from './engine-sql/access-control.ts';
 import type { AccessCoverageRow, AccessPolicyMarks, AccessRestampWindow, AccessRevisionInsert, AccessRevisionQuery, AccessRevisionRow, AccessRuleChanges, AccessRuleRow } from './engine-sql/access-policy.ts';
 import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, HeldFenceCellKey, HeldFenceCellRow, RankCoverageRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
@@ -21,6 +21,7 @@ import type * as FactsRepairSql from './engine-sql/facts-repair.ts';
 import type * as FactsTrustSql from './engine-sql/facts-trust.ts';
 import type { EngineCapabilities } from './engine-capabilities.ts';
 import type { GitHoldRecordsQuery, GitHoldReportInputs } from './engine-sql/sync-hold-reads.ts';
+import type { ReasonPurgeTombstone } from './engine-sql/sync-reason-reads.ts';
 import type { SourceCheckoutRoot, UnembeddedPageSummary, WriteWatermarkRow } from './engine-sql/applied-watermark-reads.ts';
 import type { SyncDispatchRow } from './engine-sql/sync-dispatch.ts';
 import type { GetVersionsOpts, PageVersionRows } from './page-state/version-types.ts';
@@ -3428,6 +3429,10 @@ export interface BrainEngine {
   readGitHoldRetryRequest(fingerprint: string): Promise<Array<{ paths?: unknown }> | null>;
   /** A sync hold report's summary counters (null when none) and the source's `mirror_read_only` text (SQL in engine-sql/sync-hold-reads.ts). */
   readGitHoldReportInputs(sourceId: string, fingerprint: string): Promise<GitHoldReportInputs>;
+  /** Every purged change reason's (commit, path) of one source; a sync import never stamps them again (SQL in engine-sql/sync-reason-reads.ts). */
+  readReasonPurgeTombstones(sourceId: string): Promise<ReasonPurgeTombstone[]>;
+  /** The source's purge epoch as stored, which every fact purge bumps, or null for an unknown source (SQL in engine-sql/sync-reason-reads.ts). */
+  readSourcePurgeEpoch(sourceId: string): Promise<string | number | null>;
   /** A source's sync point and pending write requests, for the applied watermark (SQL in engine-sql/applied-watermark-reads.ts). */
   readWriteWatermarkRow(sourceId: string): Promise<WriteWatermarkRow>;
   /** A source's incarnation and its checkout on host `hostId` (else the source's path); null when absent. */
@@ -3572,6 +3577,12 @@ export interface BrainEngine {
    * config key): a live token's or client's list, null when the row is revoked, deleted or absent; the stdio config text as stored.
    */
   readMayActFor(via: MayActForVia, key: string): Promise<string[] | string | null>;
+
+  /**
+   * The stored row of a queued remote job's principal (an OAuth client's grant columns, or the whole legacy token row),
+   * revoked and deleted rows included; null when there is none. minions/submission-authority.ts decides what it permits.
+   */
+  readJobPrincipal(principal: { kind: JobPrincipalKind; id: string }): Promise<Record<string, unknown> | null>;
 
   /** Which of `memberIds` are enabled members (with their groups) and which of `groupIds` exist; an empty list reads nothing. */
   readAudiencePrincipals(memberIds: readonly string[], groupIds: readonly string[]): Promise<AudiencePrincipalRows>;
