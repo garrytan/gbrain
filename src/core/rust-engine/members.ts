@@ -520,6 +520,7 @@ export const RUST_ENGINE_MEMBERS = {
   stampWriteClaim: 'persistence_journal',
   lockWriteRequest: 'persistence_journal',
   completeWriteRow: 'persistence_journal',
+  insertPublicationEffects: 'persistence_journal',
   readLedgerSource: 'persistence_journal',
   expireMemoryProposals: 'persistence_journal',
   listAwaitingMemoryProposals: 'persistence_journal',

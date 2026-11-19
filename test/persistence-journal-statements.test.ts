@@ -20,10 +20,14 @@
  * true-up and the capacity reads, the compacted-byte sizing, and the projection queue's probes are pinned below.
  *
  * The effect claim's candidate read in src/core/engine-sql/persistence-effect-scans.ts does too: its dead-owner test and
- * refresh fence are pinned below against the effect-journal and worktree-refresh fragments.
+ * refresh fence are pinned below against the effect-journal and worktree-refresh fragments. So does the publication's
+ * effects insert in persistence-journal.ts: its text and its auto-link gate key are pinned against effect-journal.ts.
  */
 import { describe, expect, test } from 'bun:test';
-import { CLAIM_STAMP_SQL, COMPLETE_WRITE_PURGE_PROBE_SQL, COMPLETE_WRITE_SQL } from '../src/core/engine-sql/persistence-journal.ts';
+import { CLAIM_STAMP_SQL, COMPLETE_WRITE_PURGE_PROBE_SQL, COMPLETE_WRITE_SQL, PUBLICATION_EFFECTS_SQL, publicationEffectsParams,
+  REMOTE_AUTO_LINKS_CONFIG_KEY } from '../src/core/engine-sql/persistence-journal.ts';
+import { REMOTE_AUTO_LINKS_KEY } from '../src/core/persistence/effect-model.ts';
+import { asciiLowerSql, edgeTrimSql } from '../src/core/edge-whitespace.ts';
 import { REFRESH_BARRIER_CLAIM_PREDICATE, SYNC_KIND } from '../src/core/persistence/journal.ts';
 import { EFFECT_BYTES_SQL, TRUE_UP_CLAMP_SQL } from '../src/core/persistence/receipt-bytes.ts';
 import { PURGE_PRESENCE_COLUMNS } from '../src/core/persistence/purged-intent.ts';
@@ -188,5 +192,25 @@ describe('the FIFO head read copies the journal claim formula', () => {
     expect(claimHeadStatement({ ...spec, leaseHolder: null }).params).toEqual(['h', ['x'], ['f'], ['l'], 'n', '{"w":"3"}']);
     expect(claimHeadStatement({ ...spec, leaseHolder: { lockPrefix: 'p:', pid: 7, host: 'host' } }).params)
       .toEqual(['h', ['x'], ['f'], ['l'], 'n', '{"w":"3"}', 'p:', 7, 'host']);
+  });
+});
+
+describe('the publication effects insert copies the effect journal statement', () => {
+  // The statement effect-journal.ts queuePublicationEffects sent through executeRaw before it called insertPublicationEffects.
+  const journalText = `INSERT INTO persistence_effects (request_id,kind,revision,data,source_id,source_incarnation,worktree_id)
+    SELECT $1::uuid,t.e->>'kind',$2::uuid,t.e->'data',$3,$4::uuid,$5::uuid FROM jsonb_array_elements($6::text::jsonb) WITH ORDINALITY AS t(e,n)
+    WHERE NOT (COALESCE((t.e->>'gated')::boolean,false) AND EXISTS (SELECT 1 FROM config
+      WHERE key IN ('auto_link',$7) AND ${asciiLowerSql(edgeTrimSql('value'))} IN ('false','0','no','off')))
+    ORDER BY t.n ON CONFLICT(request_id,kind) DO NOTHING RETURNING kind`;
+
+  test('insertPublicationEffects sends the journal text and gates on the remote auto-link key', () => {
+    expect(PUBLICATION_EFFECTS_SQL).toBe(journalText);
+    expect(REMOTE_AUTO_LINKS_CONFIG_KEY).toBe(REMOTE_AUTO_LINKS_KEY);
+  });
+
+  test('the effects bind as one text parameter, so postgres.js does not double-encode them', () => {
+    const effects = [{ kind: 'embedding', data: { slug: 'notes/a', page_id: 1 } }, { kind: 'links', data: { slug: 'notes/a' }, gated: true }];
+    expect(publicationEffectsParams({ requestId: 'r', revision: null, sourceId: 'default', sourceIncarnation: 'i', worktreeId: null, effects }))
+      .toEqual(['r', null, 'default', 'i', null, JSON.stringify(effects), 'mcp.remote_auto_links']);
   });
 });

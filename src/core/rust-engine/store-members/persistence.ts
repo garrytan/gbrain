@@ -5,7 +5,8 @@
  * stampWriteClaim, lockWriteRequest, completeWriteRow), the claim upkeep (renewWriteClaim, expireStaleWriteClaims,
  * hasClaimableWrite), the consumer rows (listHostConsumerRows, probeLiveConsumerRows, renewConsumerRow,
  * deleteConsumerRow, stampWorktreeHeartbeats), the admission reads (readSourceMembership, findTopologyChanges), the lifecycle receipts
- * (readTopologyChange, insertTopologyChange) and readLedgerSource.
+ * (readTopologyChange, insertTopologyChange) and readLedgerSource. insertPublicationEffects always refuses: the store
+ * records no effect.
  *
  * Each store call is one store write transaction, so the row locks PGLite takes (FOR SHARE, FOR UPDATE, the counter
  * lock) change nothing here: no other write can run between the read and the write that follows it. The callers that
@@ -15,13 +16,13 @@
  * rust/docs/store/persistence.md.
  */
 import type { LocalWriterInsert, LocalWriterRow } from '../../engine-sql/persistence-state.ts';
-import type { AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OutstandingBySource, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
+import type { AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OutstandingBySource, PublicationEffectsSpec, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimHeadSpec, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
 import type { LedgerSource } from '../../engine-sql/belief.ts';
 import type { WriteRequest } from '../../persistence/model.ts';
 import { PAGE_BODY_CONFIG_KEYS } from '../../page-body/limits.ts';
 import { requestRow, topologyRow } from '../store-codec.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
 /** The store keeps no managed brains: a brain on this engine is always unmanaged, one singleton row. */
 export const readManagedModeRows: StoreMember<[], Array<{ enabled: unknown }>> = async () => [{ enabled: false }];
@@ -131,6 +132,13 @@ export const stampWriteClaim: StoreMember<[id: string, token: string, leaseMs: n
 /** The completion; this engine keeps no persistence effects, so the queued effect size is 0. */
 export const completeWriteRow: StoreMember<[completion: WriteCompletion], CompletedWriteRow | null> = async (brain, completion) =>
   requestRow<CompletedWriteRow>(await storeCall({ member: 'completeWriteRow' }, () => brain.completeWriteRow(completion)));
+
+/**
+ * This engine records no persistence effect (rust/docs/store/persistence.md, "Effect scans"), so a publication's
+ * effects are refused, never dropped: a receipt that says an embedding is queued needs an effect that runs.
+ */
+export const insertPublicationEffects: StoreMember<[spec: PublicationEffectsSpec], string[]> = async () =>
+  refuseMember('insertPublicationEffects', 'a publication effect, which this engine does not record');
 
 /** Extends a claim's lease; true while request `id` is running under `token`. */
 export const renewWriteClaim: StoreMember<[renewal: ClaimRenewal, opts?: { signal?: AbortSignal }], boolean> = (brain, renewal) =>

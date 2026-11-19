@@ -1,7 +1,7 @@
 /**
  * BrainEngine parity — the write-journal members (engine-sql/persistence-journal.ts and persistence-claims.ts): the
  * limit read, the hold reads, one request's admission, claim and completion (in a transaction and member by member),
- * the claim upkeep (renewal, expiry, the claimable probe, the FIFO head read) and the admission reads (source membership, topology changes,
+ * the publication's effects insert, the claim upkeep (renewal, expiry, the claimable probe, the FIFO head read) and the admission reads (source membership, topology changes,
  * the ledger's source view).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
@@ -23,6 +23,7 @@ import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { WriteRequest } from '../../src/core/persistence/model.ts';
 import type { ClaimHeadSpec, TopologyChange } from '../../src/core/engine-sql/persistence-claims.ts';
+import type { QueuedPublicationEffect } from '../../src/core/engine-sql/persistence-journal.ts';
 import { assertPageRequestIdentity } from '../../src/core/persistence/journal.ts';
 import { CONSUMER_LIVE_MS, listHostConsumers, probeLiveFullConsumer, RESIDENT_CONSUMER_KINDS, startConsumerHeartbeat } from '../../src/core/persistence/consumer-heartbeat.ts';
 
@@ -465,6 +466,35 @@ describe('engine parity: write journal', () => {
       queued: { config: b1, on: b1, off: b1, fifo: b1, leaseHolder: b1, seen: b1, excluded: null, otherExcluded: b1, laneFirst: b1, laneFifo: null },
       behindRunning: null, claimed: null,
     });
+    return answers;
+  });
+
+  parityTest('insertPublicationEffects inserts in queue order, skips a gated effect while auto-linking is off and keeps a kind already queued', {
+    methods: ['insertPublicationEffects', 'transactionDirect', 'declarePersistence', 'setConfig', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest'],
+  }, async (engine) => {
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    const revision = 'e0000000-0000-4000-8000-0000000000e1';
+    const insert = (requestId: string, effects: QueuedPublicationEffect[], rev: string | null = revision) => engine.transactionDirect(async tx => {
+      await tx.declarePersistence();
+      return tx.insertPublicationEffects({ requestId, revision: rev, sourceId: 'default', sourceIncarnation: incarnation, worktreeId: null, effects });
+    });
+    const page = { slug: 'notes/parity', page_id: 1 };
+    const first = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b1');
+    const queued = await insert(first, [{ kind: 'embedding', data: page }, { kind: 'facts-backstop', data: { ...page, visibility: 'private' } },
+      { kind: 'links', data: { ...page, range: { from: 0, to: 4 } }, gated: true }]);
+    const again = await insert(first, [{ kind: 'embedding', data: { ...page, retry: true } }]);
+    await engine.setConfig('mcp.remote_auto_links', ' OFF ');
+    const second = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b2');
+    const remoteOff = await insert(second, [{ kind: 'links', data: page, gated: true }, { kind: 'embedding', data: page }], null);
+    await engine.setConfig('mcp.remote_auto_links', 'true');
+    await engine.setConfig('auto_link', 'No');
+    const third = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b3');
+    const autoLinkOff = await insert(third, [{ kind: 'links', data: page, gated: true }, { kind: 'git', data: page }]);
+    await engine.setConfig('auto_link', 'yes');
+    const fourth = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b4');
+    const switchesOn = await insert(fourth, [{ kind: 'links', data: page, gated: true }]);
+    const answers = { queued, again, remoteOff, autoLinkOff, switchesOn };
+    expect(answers).toEqual({ queued: ['embedding', 'facts-backstop', 'links'], again: [], remoteOff: ['embedding'], autoLinkOff: ['git'], switchesOn: ['links'] });
     return answers;
   });
 

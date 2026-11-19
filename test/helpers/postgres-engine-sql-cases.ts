@@ -524,6 +524,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readJournalLimitRows': OOS.journal, 'readHeldPageRows': OOS.journal, 'readHeldCoverageRows': OOS.journal,
   'readWriteRequest': OOS.journal, 'readWriteRequestById': OOS.journal, 'readWriteRequestProgress': OOS.journal, 'countOutstandingBySource': OOS.journal, 'ownsSchemaTables': OOS.journal, 'readCounterRows': OOS.journal, 'readAdmissionRate': OOS.journal, 'lockPersistenceCounters': OOS.journal,
   'insertWriteRequest': OOS.journal, 'stampWriteClaim': OOS.journal, 'lockWriteRequest': OOS.journal, 'completeWriteRow': OOS.journal,
+  'insertPublicationEffects': OOS.journal,
   'listHostConsumerRows': OOS.journal, 'probeLiveConsumerRows': OOS.journal, 'renewConsumerRow': OOS.journal, 'deleteConsumerRow': OOS.journal,
   'stampWorktreeHeartbeats': OOS.journal,
   // entity and mention reads the CLI made through executeRaw
@@ -1282,6 +1283,9 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     consumerHostId: null, errorDetail: null, resultBytes: 10, counterKeys: JOURNAL_KEYS, intentBytes: 100, retainedBytes: 110,
     terminalReservation: 4096, probePurges,
   }))])),
+  ...variants('insertPublicationEffects', [['default', (e) => e.transaction((tx: any) => tx.insertPublicationEffects({ requestId: JOURNAL_REQUEST,
+    revision: null, sourceId: SRC, sourceIncarnation: JOURNAL_REQUEST, worktreeId: null,
+    effects: [{ kind: 'embedding', data: { slug: SLUG } }, { kind: 'links', data: { slug: SLUG }, gated: true }] }))]]),
   ...variants('readMentionLastPass', [['default', (e) => e.readMentionLastPass()], ['sourceId', (e) => e.readMentionLastPass(SRC)]]),
   ...variants('countPagesDueForMentions', [
     ['default', (e) => e.countPagesDueForMentions({ sourceId: null, mentionVersion: 1 })],

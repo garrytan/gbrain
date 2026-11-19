@@ -1990,6 +1990,17 @@
         ],
         "flagOnScopes": []
       },
+      "insertPublicationEffects#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "insertSource#default": {
         "flagOffLanes": [
           "pool"
@@ -4873,6 +4884,7 @@
         "insertJobAttachment": "none",
         "insertLeasePressure": "none",
         "insertLocalWriterRow": "none",
+        "insertPublicationEffects": "none",
         "insertSource": "none",
         "insertSpendReservation": "none",
         "insertSubagentMessage": "none",
