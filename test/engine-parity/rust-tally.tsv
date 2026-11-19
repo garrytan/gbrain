@@ -33,7 +33,7 @@ test/engine-parity/facts-purge-sites.test.ts	0	24
 test/engine-parity/facts-purge.test.ts	23	2
 test/engine-parity/facts-repair-sites.test.ts	0	14
 test/engine-parity/facts-repair.test.ts	14	2
-test/engine-parity/facts-rest-sites.test.ts	0	12
+test/engine-parity/facts-rest-sites.test.ts	0	19
 test/engine-parity/facts-trust-owner.test.ts	6	0
 test/engine-parity/facts-trust.test.ts	10	0
 test/engine-parity/facts.test.ts	36	0

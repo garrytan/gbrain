@@ -29,7 +29,6 @@ const EXEMPT: Record<string, string> = {
   'src/core/embed-facts.ts': 'embedding columns only',
   'src/core/embedding-dim-check.ts': 'embedding columns only',
   'src/core/extract/receipt-writer.ts': 'gbrain-generated extraction receipt page (counts, cost, model id); no external text',
-  'src/core/facts/derivation-inputs.ts': 'derivation edge ledger; ids only',
   'src/core/facts/file-body-guard.ts': 'row-locked compare-and-swap body mirror: fence-write callers gate newly appended rows; forget, proposal-supersede, unfenced-facts and phantom-redirect only strike, adopt or relocate facts already stored; this helper adds no independently sourced text',
   'src/core/facts/forget.ts': 'withdrawal strike (lifecycle)',
   'src/core/facts/proposal-supersede.ts': 'checked supersede of existing rows (lifecycle)',

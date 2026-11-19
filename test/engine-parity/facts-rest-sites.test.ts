@@ -4,17 +4,20 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: readPendingWriteReceipt, lockSourceShared, lockAgentWritebackSetting, listOversizedStaleFacts, listLivePersonTitles,
- *    readLiveFactEntityPage, listFactsToRetireFromPage, listContestedProposalPairs, listFactProvenance,
- *    readFactsFtsIndexState, swapFactsFtsIndex, readFactsEmbeddingColumn, listNearestFacts, listSlotRows,
- *    listPoolUnbackedKeys, listCallOffCueFacts, listPoolEntityPairs and listFactRowsByIds return the same observable
+ *    readLiveFactEntityPage, listFactsToRetireFromPage, listContestedProposalPairs, listFactProvenance, recordDerivationEdges,
+ *    listDerivedRows, expireDerivedFacts, deactivateDerivedTakes, softDeleteDerivedPages, markNeedsRederive,
+ *    readMemberPageWithdrawal, readFactVisibility, readReplacementTarget, readPairFactRow, expireSupersededFact,
+ *    restoreSupersededFact, readFactForForget, expireFactSuperseded, expireFactAtDate, readWithdrawalAnchor, readFactActivity,
+ *    readReviewAcceptedMark, readFactsFtsIndexState, swapFactsFtsIndex, readFactsEmbeddingColumn, listNearestFacts,
+ *    listSlotRows, listPoolUnbackedKeys, listCallOffCueFacts, listPoolEntityPairs and listFactRowsByIds return the same observable
  *    result on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
- *  - Regression: an engine that answers one of these differently changes which receipt or lock a write waits on, which
- *    facts a retire or an embedding backfill picks, which proposals a recall flags as contested, which facts recall pools,
- *    ranks and calls off, and whether the keyword index swap leaves search an index. The Rust engine has no SQL, so each
- *    read and write has to exist as a typed member it can implement or refuse.
+ *  - Regression: an engine that answers one of these differently changes which fact a write supersedes, replaces, forgets or
+ *    refuses, which derived rows a purge hides, which proposals a recall flags as contested, which facts recall pools, ranks and
+ *    calls off, and whether the keyword index swap leaves search an index. The Rust engine has no SQL, so each read and write
+ *    has to exist as a typed member it can implement or refuse.
  *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call (D18), so
  *    no case compared them across engines (docs/research/rust-cli-executeraw-map.md).
- *  - Seam: none for the facts, pages and proposals, which are seeded through typed members. A write-gate
+ *  - Seam: none for the facts, pages, takes, proposals and withdrawals, which are seeded through typed members. A write-gate
  *    receipt has no typed writer, so readPendingWriteReceipt is compared on a request with none (its text is pinned in
  *    test/facts-rest-sites-sql-pin.test.ts). Fact ids differ between arms: rows are named by fact text. Generated timestamps
  *    are compared by shape or by relation, never by value. The keyword index swap runs through ensureFactsFtsIndex and
@@ -23,6 +26,7 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { derivedRowsFrom, hideDerivedRows, recordDerivationInputs } from '../../src/core/facts/derivation-inputs.ts';
 import { ensureFactsFtsIndex } from '../../src/core/facts/fts-index.ts';
 import { getFtsLanguage } from '../../src/core/fts-language.ts';
 import { basisEmbedding, createSource, archiveSource, parityArms } from './harness.ts';
@@ -243,6 +247,286 @@ describe('engine parity: facts write-path and recall statements that left execut
     expect(out.two).toEqual([{ fact: 'from a cli', source: 'cli:capture' }, { fact: 'from remember', source: 'mcp:remember' }]);
     expect(out.otherSource).toEqual([]);
     expect(out.inOther).toEqual([{ fact: 'in other source', source: 'mcp:remember' }]);
+    return out;
+  });
+
+  parityTest('derivation edges record once, walk to every derived row, and hide each row by its table', {
+    methods: ['recordDerivationEdges', 'listDerivedRows', 'expireDerivedFacts', 'deactivateDerivedTakes', 'softDeleteDerivedPages', 'markNeedsRederive',
+      'transaction', 'insertFact', 'putPage', 'addTakesBatch', 'listTakes', 'getPage', 'listFactsByEntity'],
+  }, async (engine) => {
+    const page = await engine.putPage('notes/derived', note('Derived'));
+    await engine.addTakesBatch([{ page_id: page.id, row_num: 1, claim: 'derived take', kind: 'fact' as const, holder: 'self' }]);
+    const take = (await engine.listTakes({ page_id: page.id }))[0]!;
+    const facts = await remember(engine, [
+      { fact: 'input', entity_slug: 'people/a' }, { fact: 'child', entity_slug: 'people/a' }, { fact: 'grandchild', entity_slug: 'people/a' },
+    ]);
+    const input = { table: 'facts', id: String(facts.get('input')!) };
+    const child = { table: 'facts', id: String(facts.get('child')!) };
+    await engine.transaction(async tx => {
+      await recordDerivationInputs(tx, { ...child, sourceId: SRC }, [input]);
+      await recordDerivationInputs(tx, { ...child, sourceId: SRC }, [input]);
+      await recordDerivationInputs(tx, { table: 'takes', id: take.id, sourceId: SRC }, [input]);
+      await recordDerivationInputs(tx, { table: 'pages', id: page.id, sourceId: SRC }, [input]);
+      await recordDerivationInputs(tx, { table: 'facts', id: facts.get('grandchild')!, sourceId: SRC }, [child]);
+    });
+    const label = new Map<string, string>([
+      [`facts:${facts.get('input')}`, 'input'], [`facts:${facts.get('child')}`, 'child'], [`facts:${facts.get('grandchild')}`, 'grandchild'],
+      [`takes:${take.id}`, 'take'], [`pages:${page.id}`, 'page'],
+    ]);
+    const nameOf = (r: { table: string; id: string }) => label.get(`${r.table}:${r.id}`) ?? `unknown:${r.table}:${r.id}`;
+    const walk = await derivedRowsFrom(engine, [input]);
+    const walked = walk.rows.map(r => ({ row: nameOf(r), depth: r.depth }));
+    const limited = await derivedRowsFrom(engine, [input], { limit: 2 });
+    const shallow = await derivedRowsFrom(engine, [input], { maxDepth: 1 });
+    const none = await derivedRowsFrom(engine, [{ table: 'facts', id: '999999' }]);
+    const hide = await engine.transaction(tx => hideDerivedRows(tx, walk.rows, { sourceId: SRC, requestId: '00000000-0000-4000-8000-000000000001', reason: 'purged' }));
+    const again = await engine.transaction(tx => hideDerivedRows(tx, walk.rows, { sourceId: SRC, requestId: null, reason: 'purged again' }));
+    const elsewhere = await engine.transaction(tx => hideDerivedRows(tx, walk.rows, { sourceId: 'other', requestId: null, reason: 'wrong source' }));
+    const out = {
+      walked, truncated: walk.truncated,
+      limited: { rows: limited.rows.map(r => nameOf(r)), truncated: limited.truncated },
+      shallow: { rows: shallow.rows.map(r => nameOf(r)), truncated: shallow.truncated },
+      none, hide, again, elsewhere,
+      facts: await factState(engine, 'people/a', namer(facts)),
+      page: (await engine.getPage('notes/derived')) === null,
+      take: (await engine.listTakes({ page_id: page.id, active: true } as never)).length,
+    };
+    expect(walked.map(r => r.row).sort()).toEqual(['child', 'grandchild', 'page', 'take']);
+    expect(limited.truncated).toBe(true);
+    expect(none.rows).toEqual([]);
+    return out;
+  });
+
+  parityTest('readFactVisibility, readWithdrawalAnchor and readFactActivity read one fact of the source, or null', {
+    methods: ['readFactVisibility', 'readWithdrawalAnchor', 'readFactActivity', 'insertFact', 'insertFactWithdrawal', 'expireFact'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const ids = await remember(engine, [
+      { fact: 'a world fact', entity_slug: 'people/a', visibility: 'world' },
+      { fact: 'a private fact', entity_slug: 'people/a', visibility: 'private' },
+      { fact: 'a withdrawn fact', entity_slug: 'people/a', visibility: 'world' },
+      { fact: 'a lapsed fact', entity_slug: 'people/a', visibility: 'world', valid_until: at('2020-01-01T00:00:00Z') },
+      { fact: 'an expired fact', entity_slug: 'people/a', visibility: 'world' },
+    ]);
+    await engine.expireFact(ids.get('an expired fact')!);
+    expect(await engine.insertFactWithdrawal(SRC, 'world', 'a withdrawn fact', '*', '2026-06-01T00:00:00Z')).toBe(true);
+    const id = (n: string) => ids.get(n)!;
+    const out = {
+      visibility: {
+        world: await engine.readFactVisibility(id('a world fact'), SRC),
+        private: await engine.readFactVisibility(id('a private fact'), SRC),
+        wrongSource: await engine.readFactVisibility(id('a world fact'), 'other'),
+        missing: await engine.readFactVisibility(999_999, SRC),
+      },
+      anchor: {
+        plain: await engine.readWithdrawalAnchor(id('a world fact'), SRC),
+        withdrawn: await engine.readWithdrawalAnchor(id('a withdrawn fact'), SRC),
+        wrongSource: await engine.readWithdrawalAnchor(id('a withdrawn fact'), 'other'),
+        missing: await engine.readWithdrawalAnchor(999_999, SRC),
+      },
+      activity: {
+        active: await engine.readFactActivity(id('a world fact'), SRC),
+        lapsed: await engine.readFactActivity(id('a lapsed fact'), SRC),
+        expired: await engine.readFactActivity(id('an expired fact'), SRC),
+        wrongSource: await engine.readFactActivity(id('a world fact'), 'other'),
+        missing: await engine.readFactActivity(999_999, SRC),
+      },
+    };
+    expect(out.anchor.withdrawn).toEqual({ withdrawn: true });
+    expect(out.anchor.plain).toEqual({ withdrawn: false });
+    expect(out.activity.active!.active).toBe(true);
+    expect(out.activity.lapsed!.active).toBe(false);
+    expect(out.activity.expired!.active).toBe(false);
+    expect(out.visibility.private).toEqual({ visibility: 'private' });
+    return out;
+  });
+
+  parityTest('readReplacementTarget reads the fact a replace names, with the withdrawal ledger and the remote floor applied', {
+    methods: ['readReplacementTarget', 'transaction', 'insertFacts', 'putPage', 'insertFactWithdrawal'],
+  }, async (engine) => {
+    await engine.putPage('memory/members/alice-example', note('Alice', { readable_by: ['alice-example'] }));
+    await engine.putPage('notes/hidden', note('Hidden', { visibility: 'private' }));
+    const ids = await fenced(engine, [
+      { fact: 'open row', entity_slug: 'people/a', source_markdown_slug: 'notes/open' },
+      { fact: 'hidden row', entity_slug: 'people/a', source_markdown_slug: 'notes/hidden', visibility: 'private' },
+      { fact: 'own page row', entity_slug: 'people/a', source_markdown_slug: 'memory/members/alice-example', visibility: 'private' },
+      { fact: 'withdrawn row', entity_slug: 'people/a', source_markdown_slug: 'notes/open' },
+    ]);
+    expect(await engine.insertFactWithdrawal(SRC, 'world', 'withdrawn row', '*', '2026-06-01T00:00:00Z')).toBe(true);
+    const view = (row: Awaited<ReturnType<BrainEngine['readReplacementTarget']>>) =>
+      row === null ? null : { fact: row.fact, visibility: row.visibility, expired: row.expired_at != null, withdrawn: row.withdrawn, page: row.source_markdown_slug };
+    const out: Record<string, unknown> = {};
+    for (const name of ['open row', 'hidden row', 'own page row', 'withdrawn row']) {
+      const targetId = ids.get(name)!;
+      out[name] = {
+        local: view(await engine.readReplacementTarget({ targetId, sourceId: SRC, ownPage: null })),
+        remote: view(await engine.readReplacementTarget({ targetId, sourceId: SRC, excludePrivate: true, ownPage: null })),
+        remoteOwn: view(await engine.readReplacementTarget({ targetId, sourceId: SRC, excludePrivate: true, ownPage: 'memory/members/alice-example' })),
+        locked: await engine.transaction(async tx => view(await tx.readReplacementTarget({ targetId, sourceId: SRC, ownPage: null, lock: true }))),
+        otherSource: view(await engine.readReplacementTarget({ targetId, sourceId: 'other', ownPage: null })),
+      };
+    }
+    expect(out['withdrawn row']).toMatchObject({ local: { withdrawn: true } });
+    expect(out['open row']).toMatchObject({ local: { withdrawn: false }, remote: { fact: 'open row' }, otherSource: null });
+    expect((out['hidden row'] as { remote: unknown }).remote).toBeNull();
+    expect((out['own page row'] as { remoteOwn: unknown }).remoteOwn).not.toBeNull();
+    expect(await engine.readReplacementTarget({ targetId: 999_999, sourceId: SRC, ownPage: null })).toBeNull();
+    return out;
+  });
+
+  parityTest('readMemberPageWithdrawal finds the withdrawal a save onto a member page meets: its own subject first, another subject only for a row the member reads', {
+    methods: ['readMemberPageWithdrawal', 'insertFacts', 'expireFact', 'insertFactWithdrawal', 'putPage'],
+  }, async (engine) => {
+    const PAGE = 'memory/members/alice-example';
+    await engine.putPage(PAGE, note('Alice', { readable_by: ['alice-example'] }));
+    await engine.putPage('notes/bob-only', note('Bob only', { readable_by: ['bob-example'] }));
+    const ids = await fenced(engine, [
+      { fact: 'own subject claim', entity_slug: 'people/a', source_markdown_slug: PAGE, visibility: 'private' },
+      { fact: 'wildcard claim', entity_slug: 'people/a', source_markdown_slug: PAGE },
+      { fact: 'entity claim on bob page', entity_slug: 'people/a', source_markdown_slug: 'notes/bob-only' },
+      { fact: 'entity claim on open page', entity_slug: 'people/a', source_markdown_slug: 'notes/open' },
+    ]);
+    for (const id of ids.values()) await engine.expireFact(id);
+    const T = '2026-06-01T00:00:00Z';
+    await engine.insertFactWithdrawal(SRC, 'private', 'own subject claim', PAGE, T);
+    await engine.insertFactWithdrawal(SRC, 'world', 'wildcard claim', '*', T);
+    await engine.insertFactWithdrawal(SRC, 'world', 'entity claim on bob page', 'people/a', T);
+    await engine.insertFactWithdrawal(SRC, 'world', 'entity claim on open page', 'people/a', T);
+    const view = (row: Awaited<ReturnType<BrainEngine['readMemberPageWithdrawal']>>) => {
+      if (row === null) return null;
+      expect(row.withdrawn_at).toMatch(PG_TEXT);
+      return { subject: row.subject, visibility: row.visibility };
+    };
+    const ask = async (fact: string, visibility: string, extra: Record<string, unknown> = {}) => view(await engine.readMemberPageWithdrawal({
+      sourceId: SRC, visibility, fact, entitySlug: 'people/a', page: PAGE, owner: false, identity: ['member:alice-example'], satisfied: [], ...extra,
+    }));
+    const out = {
+      ownSubject: await ask('own subject claim', 'private'),
+      wildcard: await ask('wildcard claim', 'world'),
+      bobPage: await ask('entity claim on bob page', 'world'),
+      bobPageAsOwner: await ask('entity claim on bob page', 'world', { owner: true }),
+      openPage: await ask('entity claim on open page', 'world'),
+      noEntity: await ask('entity claim on open page', 'world', { entitySlug: null }),
+      wrongVisibility: await ask('wildcard claim', 'private'),
+      unknown: await ask('never withdrawn', 'world'),
+      otherSource: await ask('wildcard claim', 'world', { sourceId: 'other' }),
+    };
+    expect(out.ownSubject).toEqual({ subject: PAGE, visibility: 'private' });
+    expect(out.wildcard).toEqual({ subject: '*', visibility: 'world' });
+    expect(out.unknown).toBeNull();
+    return out;
+  });
+
+  parityTest('expireSupersededFact and restoreSupersededFact move the old fact of a pair and back, once; readPairFactRow reads it', {
+    methods: ['readPairFactRow', 'expireSupersededFact', 'restoreSupersededFact', 'insertFact', 'transaction'],
+  }, async (engine) => {
+    const ids = await remember(engine, [
+      { fact: 'old claim', entity_slug: 'people/a', valid_from: at('2026-01-01T00:00:00Z') },
+      { fact: 'new claim', entity_slug: 'people/a', valid_from: at('2026-02-01T00:00:00Z') },
+    ]);
+    const name = namer(ids);
+    const oldId = ids.get('old claim')!, newId = ids.get('new claim')!;
+    const row = async (id: number, lock = false) => {
+      const r = await engine.readPairFactRow(id, lock);
+      return r === null ? null : {
+        fact: r.fact, source_id: r.source_id, entity: r.entity_slug, visibility: r.visibility, expired: r.expired_at != null,
+        valid_from: iso(r.valid_from), valid_until: iso(r.valid_until), superseded_by: r.superseded_by == null ? null : name(r.superseded_by as number),
+        row_num: r.row_num, page: r.source_markdown_slug,
+      };
+    };
+    const before = await row(oldId);
+    const locked = await engine.transaction(async tx => {
+      const r = await tx.readPairFactRow(oldId, true);
+      return r === null ? null : r.fact;
+    });
+    const wrongSource = await engine.expireSupersededFact({ oldId, sourceId: 'other', newId, until: null });
+    const expiredAt = await engine.expireSupersededFact({ oldId, sourceId: SRC, newId, until: '2026-03-01T00:00:00Z' });
+    const afterExpire = await row(oldId);
+    const secondExpire = await engine.expireSupersededFact({ oldId, sourceId: SRC, newId, until: null });
+    const wrongPointer = await engine.restoreSupersededFact({ oldId, sourceId: SRC, expiredAt: null, validUntil: null, supersededBy: null, expectedSupersededBy: 999_999 });
+    const restored = await engine.restoreSupersededFact({ oldId, sourceId: SRC, expiredAt: null, validUntil: null, supersededBy: null, expectedSupersededBy: newId });
+    const afterRestore = await row(oldId);
+    const secondRestore = await engine.restoreSupersededFact({ oldId, sourceId: SRC, expiredAt: null, validUntil: null, supersededBy: null, expectedSupersededBy: newId });
+    const nowExpire = await engine.expireSupersededFact({ oldId, sourceId: SRC, newId, until: null });
+    const nowIso = iso(new Date());
+    const afterNow = await row(oldId);
+    const out = {
+      before, locked, wrongSource, expiredAt, afterExpire, secondExpire, wrongPointer, restored, afterRestore, secondRestore, nowExpire,
+      afterNow: { ...afterNow!, valid_until: afterNow!.valid_until! >= afterNow!.valid_from! && afterNow!.valid_until! <= nowIso! },
+      missing: await row(999_999),
+    };
+    expect(out).toMatchObject({ wrongSource: 0, expiredAt: 1, secondExpire: 0, wrongPointer: 0, restored: 1, secondRestore: 0, nowExpire: 1, missing: null });
+    expect(out.afterExpire).toMatchObject({ expired: true, valid_until: '2026-03-01T00:00:00.000Z', superseded_by: 'new claim' });
+    expect(out.afterRestore).toMatchObject({ expired: false, valid_until: null, superseded_by: null });
+    return out;
+  });
+
+  parityTest('readFactForForget, expireFactSuperseded and expireFactAtDate read and end an active fact for a forget, and only an active one', {
+    methods: ['readFactForForget', 'expireFactSuperseded', 'expireFactAtDate', 'insertFact', 'insertFacts', 'listFactsByEntity'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const ids = await remember(engine, [
+      { fact: 'ends explicitly', entity_slug: 'people/a', valid_from: at('2026-01-01T00:00:00Z') },
+      { fact: 'ends now', entity_slug: 'people/a', valid_from: at('2026-01-02T00:00:00Z') },
+      { fact: 'ends on a date', entity_slug: 'people/a', valid_from: at('2026-01-03T00:00:00Z') },
+      { fact: 'already ended', entity_slug: 'people/a', valid_from: at('2026-01-04T00:00:00Z') },
+    ]);
+    const fenceIds = await fenced(engine, [{ fact: 'on a page', entity_slug: 'people/a', source_markdown_slug: 'notes/open', visibility: 'world' }]);
+    const elsewhere = await remember(engine, [{ fact: 'in other source', entity_slug: 'people/z' }], 'other');
+    const name = namer(new Map([...ids, ...fenceIds, ...elsewhere]));
+    const read = async (id: number) => {
+      const r = await engine.readFactForForget(id);
+      return r === null ? null : { source_id: r.source_id, entity: r.entity_slug, row_num: r.row_num, page: r.source_markdown_slug, expired: r.expired_at != null, visibility: r.visibility };
+    };
+    const before = { plain: await read(ids.get('ends now')!), fenced: await read(fenceIds.get('on a page')!), other: await read(elsewhere.get('in other source')!), missing: await read(999_999) };
+    await engine.expireFactSuperseded(ids.get('ends explicitly')!, '2026-02-01T00:00:00Z');
+    await engine.expireFactSuperseded(ids.get('ends now')!, null);
+    await engine.expireFactAtDate(ids.get('ends on a date')!, '2026-03-01');
+    await engine.expireFactAtDate(ids.get('already ended')!, '2026-03-01');
+    await engine.expireFactAtDate(ids.get('already ended')!, '2026-09-09');
+    await engine.expireFactSuperseded(ids.get('ends on a date')!, '2026-09-09');
+    const state = (await factState(engine, 'people/a', name)).filter(r => r.fact !== 'on a page');
+    const nowIso = iso(new Date())!;
+    const out = {
+      before,
+      state: state.map(r => (r.fact === 'ends now' ? { ...r, valid_until: r.valid_until! >= '2026-01-02T00:00:00.000Z' && r.valid_until! <= nowIso } : r)),
+      afterRead: await read(ids.get('ends now')!),
+    };
+    expect(out.state).toEqual([
+      { fact: 'already ended', expired: true, valid_until: '2026-03-01T00:00:00.000Z', superseded_by: null },
+      { fact: 'ends explicitly', expired: true, valid_until: '2026-02-01T00:00:00.000Z', superseded_by: null },
+      { fact: 'ends now', expired: true, valid_until: true, superseded_by: null },
+      { fact: 'ends on a date', expired: true, valid_until: '2026-03-01T00:00:00.000Z', superseded_by: null },
+    ]);
+    expect(out.afterRead!.expired).toBe(true);
+    return out;
+  });
+
+  parityTest('readReviewAcceptedMark finds an expired fact whose context carries the mark', {
+    methods: ['readReviewAcceptedMark', 'insertFact', 'expireFact'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const ids = await remember(engine, [
+      { fact: 'marked and expired', entity_slug: 'people/a', context: 'forgotten: review:7' },
+      { fact: 'marked and active', entity_slug: 'people/a', context: 'forgotten: review:7' },
+      { fact: 'unmarked and expired', entity_slug: 'people/a', context: 'something else' },
+      { fact: 'no context and expired', entity_slug: 'people/a' },
+    ]);
+    for (const n of ['marked and expired', 'unmarked and expired', 'no context and expired']) await engine.expireFact(ids.get(n)!);
+    const name = namer(ids);
+    const ask = async (n: string, mark: string, sourceId = SRC) => {
+      const r = await engine.readReviewAcceptedMark(ids.get(n)!, sourceId, mark);
+      return r === null ? null : name(r.id);
+    };
+    const out = {
+      found: await ask('marked and expired', 'review:7'),
+      activeFact: await ask('marked and active', 'review:7'),
+      otherMark: await ask('marked and expired', 'review:8'),
+      unmarked: await ask('unmarked and expired', 'review:7'),
+      noContext: await ask('no context and expired', 'review:7'),
+      wrongSource: await ask('marked and expired', 'review:7', 'other'),
+    };
+    expect(out).toEqual({ found: 'marked and expired', activeFact: null, otherMark: null, unmarked: null, noContext: null, wrongSource: null });
     return out;
   });
 

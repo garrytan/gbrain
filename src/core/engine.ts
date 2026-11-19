@@ -3890,6 +3890,42 @@ export interface BrainEngine {
   listContestedProposalPairs(ids: number[], policy: FactsTrustSql.ContestedReadPolicy): Promise<FactsTrustSql.ContestedProposalPairRow[]>;
   /** The stored provenance (`facts.source`) of these facts of the source. */
   listFactProvenance(sourceId: string, ids: number[]): Promise<Array<{ id: number | string; source: string | null }>>;
+  /** Records every input of one derived row (idempotent), in the transaction that writes the row. */
+  recordDerivationEdges(derived: FactsTrustSql.DerivationEdgeRef, sourceId: string | null, edges: readonly FactsTrustSql.DerivationEdgeRef[]): Promise<void>;
+  /** The rows derived from any of `frontier`, sorted by table and id, at most `limit`. */
+  listDerivedRows(frontier: readonly FactsTrustSql.DerivationEdgeRef[], limit: number): Promise<Array<{ derived_table: string; derived_id: string }>>;
+  /** Expires these facts of the source; returns how many rows it touched. */
+  expireDerivedFacts(ids: number[], sourceId: string): Promise<number>;
+  /** Deactivates these takes on pages of the source; returns how many rows it touched. */
+  deactivateDerivedTakes(ids: number[], sourceId: string): Promise<number>;
+  /** Soft-deletes these pages of the source; returns how many rows it touched. */
+  softDeleteDerivedPages(ids: number[], sourceId: string): Promise<number>;
+  /** Marks each derived row of `table` as needing re-derivation. */
+  markNeedsRederive(table: string, ids: string[], sourceId: string, requestId: string | null, reason: string): Promise<void>;
+  /** The withdrawal a remote save onto a member page meets, or null (GST-2346). */
+  readMemberPageWithdrawal(q: FactsTrustSql.MemberPageWithdrawalQuery): Promise<FactsTrustSql.WithdrawalRow | null>;
+  /** The visibility of one fact of the source, or null. */
+  readFactVisibility(id: number, sourceId: string): Promise<{ visibility: string } | null>;
+  /** The fact a `remember.replaces` names, with whether the withdrawal ledger covers it, or null. */
+  readReplacementTarget(q: FactsTrustSql.ReplacementTargetQuery): Promise<FactsTrustSql.ReplacementTargetRow | null>;
+  /** One fact of a supersede pair by id, `lock` taking the row lock; the raw row, or null. */
+  readPairFactRow(id: number, lock?: boolean): Promise<Record<string, unknown> | null>;
+  /** Expires the old fact of an accepted supersede pair and links it to the new one; returns how many rows it touched. */
+  expireSupersededFact(q: { oldId: number; sourceId: string; newId: number; until: string | null }): Promise<number>;
+  /** Puts the old fact of an undone supersede pair back as it was; returns how many rows it touched. */
+  restoreSupersededFact(q: { oldId: number; sourceId: string; expiredAt: string | null; validUntil: string | null; supersededBy: number | null; expectedSupersededBy: number | null }): Promise<number>;
+  /** The columns a forget decides on, for one fact by id, or null. */
+  readFactForForget(id: number): Promise<FactsTrustSql.ForgetFactRow | null>;
+  /** Expires an active fact for a supersession or retirement (`validUntil` or now ends it). */
+  expireFactSuperseded(factId: number, validUntil: string | null): Promise<void>;
+  /** Ends an active fact on `today` and expires it. */
+  expireFactAtDate(factId: number, today: string): Promise<void>;
+  /** Whether the withdrawal ledger covers this fact of the source, or null when the fact is not there. */
+  readWithdrawalAnchor(factId: number, sourceId: string): Promise<{ withdrawn: boolean } | null>;
+  /** Whether this fact of the source is active, and the md5 of its text, or null. */
+  readFactActivity(id: number, sourceId: string): Promise<{ active: boolean; text_hash: string } | null>;
+  /** The fact, when it is expired and its context carries `mark`, or null. */
+  readReviewAcceptedMark(id: number, sourceId: string, mark: string): Promise<{ id: number } | null>;
   /** Whether index `name` is valid, and its definition; null when there is no such index. */
   readFactsFtsIndexState(name: string): Promise<{ valid: boolean; def: string } | null>;
   /** Swaps the built `idx_facts_fts_next` into place (two renames), in the caller's transaction. */

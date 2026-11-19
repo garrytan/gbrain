@@ -11,11 +11,12 @@ import { claimBucketSql } from '../facts/typed-claim.ts';
 import { CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
 import { PAGE_EXTRACTION_SOURCE_LIST, contextHeadSql } from '../facts/gone-page-facts.ts';
 import { factsFtsDocument, getFtsLanguage } from '../fts-language.ts';
-import { privateFactFilterForCaller, privateFactFilterForReader, privateProvenanceFilterUnderPolicy, remoteReadFloorSql } from '../search/private-visibility.ts';
-import { factVisibilitySql, grantedPrivateFactSql, onOwnedMemoryPageSql, withdrawalCoversFactSql } from '../access/member-facts.ts';
+import { ownerReadPolicyFragment, privateFactFilterForCaller, privateFactFilterForReader, privateProvenanceFilterUnderPolicy, readPolicyFragment, remoteProvenanceFloorSql, remoteReadFloorSql } from '../search/private-visibility.ts';
+import { factVisibilitySql, grantedPrivateFactSql, onOwnedMemoryPageSql, withdrawalCoversFactSql, withdrawalReachedFactSql } from '../access/member-facts.ts';
 import { retiredPageSql } from '../entities/resolve.ts';
 import { eligibleFactEmbedding, OVERSIZED_SCAN_CAP, staleFactEmbedding } from '../facts/embedding-identity.ts';
 import type { ReadEligibility } from '../eligibility/policy.ts';
+import type { FactCandidate as ReplacementFact } from '../facts/single-prepare.ts';
 import { quarantinedProvenanceFilterFragment } from '../quarantine.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { claimPendingSql } from '../trust/claim-state.ts';
@@ -556,6 +557,198 @@ export async function listContestedProposalPairs(raw: EngineRawRead, ids: number
 /** The stored provenance (`facts.source`) of these facts of the source. */
 export async function listFactProvenance(raw: EngineRawRead, sourceId: string, ids: number[]): Promise<Array<{ id: number | string; source: string | null }>> {
   return raw<{ id: number | string; source: string | null }>('SELECT id, source FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[])', [sourceId, ids]);
+}
+
+/** A row reference in the derivation graph: the owning table's name and the row's primary key (stringified). */
+export interface DerivationEdgeRef { table: string; id: string }
+
+/** Records every input of one derived row (idempotent). Runs in the transaction that writes the derived row. */
+export async function recordDerivationEdges(raw: EngineRawRead, derived: DerivationEdgeRef, sourceId: string | null, edges: readonly DerivationEdgeRef[]): Promise<void> {
+  await raw(`INSERT INTO derivation_inputs(derived_table,derived_id,input_table,input_id,source_id)
+    SELECT $1,$2,e.input_table,e.input_id,$3 FROM jsonb_to_recordset($4::text::jsonb) AS e(input_table text,input_id text)
+    ON CONFLICT DO NOTHING`, [derived.table, derived.id, sourceId, JSON.stringify(edges.map(e => ({ input_table: e.table, input_id: e.id })))]);
+}
+
+/** The rows derived from any of `frontier`, sorted by table and id, at most `limit` (the caller asks for one more than it keeps to learn whether any were left). */
+export async function listDerivedRows(raw: EngineRawRead, frontier: readonly DerivationEdgeRef[], limit: number): Promise<Array<{ derived_table: string; derived_id: string }>> {
+  return raw<{ derived_table: string; derived_id: string }>(`SELECT DISTINCT d.derived_table,d.derived_id
+      FROM derivation_inputs d JOIN jsonb_to_recordset($1::text::jsonb) AS f(input_table text,input_id text)
+        ON d.input_table=f.input_table AND d.input_id=f.input_id
+      ORDER BY d.derived_table,d.derived_id LIMIT $2`, [JSON.stringify(frontier.map(f => ({ input_table: f.table, input_id: f.id }))), limit]);
+}
+
+/** Expires these facts of the source (those already expired keep their time); returns how many rows it touched. Runs in the caller's transaction. */
+export async function expireDerivedFacts(raw: EngineRawRead, ids: number[], sourceId: string): Promise<number> {
+  return (await raw(`UPDATE facts SET expired_at=COALESCE(expired_at,now()) WHERE id=ANY($1::bigint[]) AND source_id=$2 RETURNING id`, [ids, sourceId])).length;
+}
+
+/** Deactivates these takes on pages of the source; returns how many rows it touched. Runs in the caller's transaction. */
+export async function deactivateDerivedTakes(raw: EngineRawRead, ids: number[], sourceId: string): Promise<number> {
+  return (await raw(`UPDATE takes k SET active=false FROM pages p WHERE k.id=ANY($1::bigint[]) AND p.id=k.page_id AND p.source_id=$2 RETURNING k.id`, [ids, sourceId])).length;
+}
+
+/** Soft-deletes these pages of the source; returns how many rows it touched. Runs in the caller's transaction. */
+export async function softDeleteDerivedPages(raw: EngineRawRead, ids: number[], sourceId: string): Promise<number> {
+  return (await raw(`UPDATE pages SET deleted_at=COALESCE(deleted_at,now()) WHERE id=ANY($1::integer[]) AND source_id=$2 RETURNING id`, [ids, sourceId])).length;
+}
+
+/** Marks each derived row of `table` as needing re-derivation (a later mark replaces the reason and request). Runs in the caller's transaction. */
+export async function markNeedsRederive(raw: EngineRawRead, table: string, ids: string[], sourceId: string, requestId: string | null, reason: string): Promise<void> {
+  await raw(`INSERT INTO needs_rederive(derived_table,derived_id,source_id,request_id,reason)
+      SELECT $1,unnest($2::text[]),$3,$4::uuid,$5 ON CONFLICT (derived_table,derived_id) DO UPDATE SET reason=EXCLUDED.reason,request_id=EXCLUDED.request_id,marked_at=now()`,
+  [table, ids, sourceId, requestId, reason]);
+}
+
+export interface MemberPageWithdrawalQuery {
+  sourceId: string; visibility: string; fact: string; entitySlug: string | null | undefined;
+  /** The member page the save lands on. */
+  page: string;
+  /** The page's member is the enabled brain owner (owner read rule), and the identity and satisfied rule ids it reads under. */
+  owner: boolean; identity: readonly string[]; satisfied: readonly string[];
+}
+export interface WithdrawalRow { subject: string; withdrawn_at: string; visibility: 'world' | 'private' }
+
+function memberReadsSql(alias: string, q: Pick<MemberPageWithdrawalQuery, 'owner' | 'identity' | 'satisfied'>): string {
+  return q.owner ? ownerReadPolicyFragment(alias, q.identity, q.satisfied) : readPolicyFragment(alias, q.identity, true, q.satisfied);
+}
+
+const MEMBER_WITHDRAWAL_HEAD = `SELECT w.subject,w.visibility,w.withdrawn_at::text AS withdrawn_at FROM fact_withdrawals w
+    WHERE w.source_id=$1 AND w.visibility=$2 AND w.fact_hash IN (gbrain_fact_fingerprint($3),gbrain_fact_fingerprint_v1($3))
+      AND (w.subject=$5::text OR ((w.subject='*' OR w.subject=$4::text) AND EXISTS (SELECT 1 FROM facts f
+        WHERE f.source_id=w.source_id AND f.visibility=w.visibility AND f.expired_at IS NOT NULL
+          AND gbrain_fact_fingerprint(f.fact)=gbrain_fact_fingerprint($3) AND `;
+const MEMBER_READABLE_HEAD = ` AND (f.source_markdown_slug = $5::text OR (`;
+const MEMBER_READABLE_OWNER = 'TRUE';
+const MEMBER_READABLE_WORLD = `f.visibility = 'world'`;
+const MEMBER_READABLE_PAGE = `
+    AND NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = f.source_id AND pp.slug = f.source_markdown_slug AND NOT `;
+const MEMBER_READABLE_ENTITY = `)
+    AND NOT EXISTS (SELECT 1 FROM pages ep WHERE ep.source_id = f.source_id AND ep.slug = f.entity_slug AND NOT `;
+const MEMBER_WITHDRAWAL_TAIL = `))))))
+    ORDER BY (w.subject<>'*') DESC, w.withdrawn_at DESC LIMIT 1`;
+
+/**
+ * GST-2346: the withdrawal a remote save onto member page `page` meets, or null: the page's own withdrawals, and a withdrawal of
+ * another subject only when a row it withdrew is one the page's member reads (a row on the page, or on pages it reads; for the
+ * enabled brain owner any one).
+ */
+export async function readMemberPageWithdrawal(raw: EngineRawRead, q: MemberPageWithdrawalQuery): Promise<WithdrawalRow | null> {
+  const { text } = renderFragment(sqlFragment`${trustedSql(MEMBER_WITHDRAWAL_HEAD)}${trustedSql(withdrawalReachedFactSql('w', 'f'))}${trustedSql(MEMBER_READABLE_HEAD)}${trustedSql(q.owner ? MEMBER_READABLE_OWNER : MEMBER_READABLE_WORLD)}${trustedSql(MEMBER_READABLE_PAGE)}${trustedSql(memberReadsSql('pp', q))}${trustedSql(MEMBER_READABLE_ENTITY)}${trustedSql(memberReadsSql('ep', q))}${trustedSql(MEMBER_WITHDRAWAL_TAIL)}`);
+  const [row] = await raw<WithdrawalRow>(text, [q.sourceId, q.visibility, q.fact, q.entitySlug, q.page]);
+  return row ?? null;
+}
+
+/** The visibility of one fact of the source, or null. */
+export async function readFactVisibility(raw: EngineRawRead, id: number, sourceId: string): Promise<{ visibility: string } | null> {
+  const [row] = await raw<{ visibility: string }>('SELECT visibility FROM facts WHERE id=$1 AND source_id=$2', [id, sourceId]);
+  return row ?? null;
+}
+
+const REPLACEMENT_HEAD = `SELECT f.*,
+      EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
+        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact))
+        AND `;
+const REPLACEMENT_FROM = `) AS withdrawn
+    FROM facts f WHERE f.id=$1 AND f.source_id=$2`;
+const REPLACEMENT_OWN_PAGE = ' AND (f.source_markdown_slug = $3 OR ';
+
+export interface ReplacementTargetQuery {
+  targetId: number; sourceId: string;
+  /** A remote caller: the target must pass the remote provenance floor. */
+  excludePrivate?: boolean;
+  /** The member page this write goes to, which the caller may replace private rows of; only read with `excludePrivate`. */
+  ownPage: string | null;
+  /** Takes the target row lock (`FOR UPDATE OF f`) inside the publishing transaction. */
+  lock?: boolean;
+}
+
+export type ReplacementTargetRow = ReplacementFact & { withdrawn: boolean };
+
+/** The fact a `remember.replaces` names, with whether the withdrawal ledger covers it, or null. */
+export async function readReplacementTarget(raw: EngineRawRead, q: ReplacementTargetQuery): Promise<ReplacementTargetRow | null> {
+  const floor = trustedSql(remoteProvenanceFloorSql('f'));
+  const privacy = !q.excludePrivate ? sqlFragment``
+    : q.ownPage ? sqlFragment`${trustedSql(REPLACEMENT_OWN_PAGE)}${floor})` : sqlFragment` AND ${floor}`;
+  const { text } = renderFragment(sqlFragment`${trustedSql(REPLACEMENT_HEAD)}${trustedSql(withdrawalCoversFactSql('w', 'f'))}${trustedSql(REPLACEMENT_FROM)}${privacy}${q.lock ? sqlFragment` FOR UPDATE OF f` : sqlFragment``}`);
+  const [row] = await raw<ReplacementTargetRow>(text, q.excludePrivate && q.ownPage ? [q.targetId, q.sourceId, q.ownPage] : [q.targetId, q.sourceId]);
+  return row ?? null;
+}
+
+const PAIR_FACT_SQL = `SELECT id, source_id, entity_slug, visibility, fact, expired_at, valid_from, valid_until, superseded_by, row_num, source_markdown_slug
+       FROM facts WHERE id = $1`;
+const PAIR_FACT_LOCKED_SQL = `SELECT id, source_id, entity_slug, visibility, fact, expired_at, valid_from, valid_until, superseded_by, row_num, source_markdown_slug
+       FROM facts WHERE id = $1 FOR UPDATE`;
+
+/** One fact of a supersede pair by id (any source), `lock` taking the row lock; the raw row, or null. */
+export async function readPairFactRow(raw: EngineRawRead, id: number, lock = false): Promise<Record<string, unknown> | null> {
+  const [row] = await raw<Record<string, unknown>>(lock ? PAIR_FACT_LOCKED_SQL : PAIR_FACT_SQL, [id]);
+  return row ?? null;
+}
+
+/** Expires the old fact of an accepted supersede pair and links it to the new one (`until` null ends it now); returns how many rows it touched. Runs in the caller's transaction. */
+export async function expireSupersededFact(raw: EngineRawRead, q: { oldId: number; sourceId: string; newId: number; until: string | null }): Promise<number> {
+  return (await raw(
+    `UPDATE facts SET expired_at = now(), valid_until = COALESCE($4::timestamptz, GREATEST(valid_from, LEAST(COALESCE(valid_until, now()), now()))), superseded_by = $3
+      WHERE id = $1 AND source_id = $2 AND expired_at IS NULL RETURNING id`,
+    [q.oldId, q.sourceId, q.newId, q.until])).length;
+}
+
+/** Puts the old fact of an undone supersede pair back as it was (only while it still points at `expectedSupersededBy`); returns how many rows it touched. Runs in the caller's transaction. */
+export async function restoreSupersededFact(raw: EngineRawRead, q: { oldId: number; sourceId: string; expiredAt: string | null; validUntil: string | null; supersededBy: number | null; expectedSupersededBy: number | null }): Promise<number> {
+  return (await raw(
+    `UPDATE facts SET expired_at = $3::timestamptz, valid_until = $4::timestamptz, superseded_by = $5
+      WHERE id = $1 AND source_id = $2 AND superseded_by IS NOT DISTINCT FROM $6 RETURNING id`,
+    [q.oldId, q.sourceId, q.expiredAt, q.validUntil, q.supersededBy, q.expectedSupersededBy])).length;
+}
+
+export interface ForgetFactRow {
+  id: string; source_id: string; entity_slug: string | null; row_num: number | null;
+  source_markdown_slug: string | null; expired_at: Date | null; visibility: string;
+}
+
+/** The columns a forget decides on, for one fact by id (any source), or null. */
+export async function readFactForForget(raw: EngineRawRead, id: number): Promise<ForgetFactRow | null> {
+  const [row] = await raw<ForgetFactRow>(
+    `SELECT id, source_id, entity_slug, row_num, source_markdown_slug, expired_at, visibility
+       FROM facts WHERE id = $1`, [id]);
+  return row ?? null;
+}
+
+/** Expires an active fact for a supersession or retirement: `validUntil` (or now, never before it began) ends it. Runs in the caller's transaction. */
+export async function expireFactSuperseded(raw: EngineRawRead, factId: number, validUntil: string | null): Promise<void> {
+  await raw(`UPDATE facts SET valid_until = COALESCE($2::timestamptz, GREATEST(valid_from, LEAST(COALESCE(valid_until, now()), now()))), expired_at = now()
+      WHERE id = $1 AND expired_at IS NULL`, [factId, validUntil]);
+}
+
+/** Ends an active fact on `today` (a date) and expires it. Runs in the caller's transaction. */
+export async function expireFactAtDate(raw: EngineRawRead, factId: number, today: string): Promise<void> {
+  await raw(`UPDATE facts SET valid_until = $1, expired_at = now()
+         WHERE id = $2 AND expired_at IS NULL`, [today, factId]);
+}
+
+/** Whether the withdrawal ledger covers this fact of the source, or null when the fact is not there. */
+export async function readWithdrawalAnchor(raw: EngineRawRead, factId: number, sourceId: string): Promise<{ withdrawn: boolean } | null> {
+  const { text } = renderFragment(sqlFragment`SELECT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = f.source_id AND w.visibility = f.visibility
+        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact))
+        AND ${trustedSql(withdrawalCoversFactSql('w', 'f'))}) AS withdrawn
+       FROM facts f WHERE f.id = ${factId} AND f.source_id = ${sourceId}`);
+  const [row] = await raw<{ withdrawn: boolean }>(text, [factId, sourceId]);
+  return row ?? null;
+}
+
+/** Whether this fact of the source is active, and the md5 of its text, or null when it is not there. */
+export async function readFactActivity(raw: EngineRawRead, id: number, sourceId: string): Promise<{ active: boolean; text_hash: string } | null> {
+  const [row] = await raw<{ active: boolean; text_hash: string }>(
+    `SELECT (expired_at IS NULL AND (valid_until IS NULL OR valid_until > now())) AS active, md5(fact) AS text_hash
+       FROM facts WHERE id = $1 AND source_id = $2`, [id, sourceId]);
+  return row ?? null;
+}
+
+/** The fact, when it is expired and its context carries `mark` (a review's accept already forgot it), or null. */
+export async function readReviewAcceptedMark(raw: EngineRawRead, id: number, sourceId: string, mark: string): Promise<{ id: number } | null> {
+  const [row] = await raw<{ id: number }>(`SELECT id FROM facts WHERE id = $1 AND source_id = $2 AND expired_at IS NOT NULL
+      AND strpos(COALESCE(context, ''), $3) > 0`, [id, sourceId, mark]);
+  return row ?? null;
 }
 
 /** Whether index `name` is valid, and its definition; null when there is no such index. */

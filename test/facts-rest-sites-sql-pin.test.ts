@@ -242,6 +242,183 @@ const PINS: Pin[] = [
     statements: [{ text: `SELECT id, source FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[])`, params: ['s1', [1, 2]] }],
   },
   {
+    from: "src/core/facts/derivation-inputs.ts:39 recordDerivationInputs",
+    member: 'recordDerivationEdges',
+    run: e => e.recordDerivationEdges({ table: 'facts', id: '7' }, 's1', [{ table: 'pages', id: '3' }, { table: 'facts', id: '2' }]),
+    statements: [{ text: `INSERT INTO derivation_inputs(derived_table,derived_id,input_table,input_id,source_id)
+    SELECT $1,$2,e.input_table,e.input_id,$3 FROM jsonb_to_recordset($4::text::jsonb) AS e(input_table text,input_id text)
+    ON CONFLICT DO NOTHING`, params: ['facts', '7', 's1', '[{"input_table":"pages","input_id":"3"},{"input_table":"facts","input_id":"2"}]'] }],
+  },
+  {
+    from: "src/core/facts/derivation-inputs.ts:58 derivedRowsFrom",
+    member: 'listDerivedRows',
+    run: e => e.listDerivedRows([{ table: 'facts', id: '7' }], 1001),
+    statements: [{ text: `SELECT DISTINCT d.derived_table,d.derived_id
+      FROM derivation_inputs d JOIN jsonb_to_recordset($1::text::jsonb) AS f(input_table text,input_id text)
+        ON d.input_table=f.input_table AND d.input_id=f.input_id
+      ORDER BY d.derived_table,d.derived_id LIMIT $2`, params: ['[{"input_table":"facts","input_id":"7"}]', 1001] }],
+  },
+  {
+    from: "src/core/facts/derivation-inputs.ts:90 hideDerivedRows",
+    member: 'expireDerivedFacts',
+    run: e => e.expireDerivedFacts([1, 2], 's1'),
+    statements: [{ text: `UPDATE facts SET expired_at=COALESCE(expired_at,now()) WHERE id=ANY($1::bigint[]) AND source_id=$2 RETURNING id`, params: [[1, 2], 's1'] }],
+  },
+  {
+    from: "src/core/facts/derivation-inputs.ts:91 hideDerivedRows",
+    member: 'deactivateDerivedTakes',
+    run: e => e.deactivateDerivedTakes([3], 's1'),
+    statements: [{ text: `UPDATE takes k SET active=false FROM pages p WHERE k.id=ANY($1::bigint[]) AND p.id=k.page_id AND p.source_id=$2 RETURNING k.id`, params: [[3], 's1'] }],
+  },
+  {
+    from: "src/core/facts/derivation-inputs.ts:92 hideDerivedRows",
+    member: 'softDeleteDerivedPages',
+    run: e => e.softDeleteDerivedPages([4], 's1'),
+    statements: [{ text: `UPDATE pages SET deleted_at=COALESCE(deleted_at,now()) WHERE id=ANY($1::integer[]) AND source_id=$2 RETURNING id`, params: [[4], 's1'] }],
+  },
+  {
+    from: "src/core/facts/derivation-inputs.ts:95 hideDerivedRows",
+    member: 'markNeedsRederive',
+    run: e => e.markNeedsRederive('facts', ['1', '2'], 's1', null, 'why'),
+    statements: [{ text: `INSERT INTO needs_rederive(derived_table,derived_id,source_id,request_id,reason)
+      SELECT $1,unnest($2::text[]),$3,$4::uuid,$5 ON CONFLICT (derived_table,derived_id) DO UPDATE SET reason=EXCLUDED.reason,request_id=EXCLUDED.request_id,marked_at=now()`, params: ['facts', ['1', '2'], 's1', null, 'why'] }],
+  },
+  {
+    from: "src/core/facts/single-prepare.ts:97 memberPageWithdrawal",
+    member: 'readMemberPageWithdrawal',
+    run: e => e.readMemberPageWithdrawal({ sourceId: 's1', visibility: 'world', fact: 'F', entitySlug: 'people/x', page: 'memory/members/m1', owner: false, identity: [], satisfied: [] }),
+    statements: [{ digest: { length: 15378, sha256: 'e36ebea84c4bfc18088fe886a1d49ac46121f12619fdc03d371b6a5903265531' }, params: ['s1', 'world', 'F', 'people/x', 'memory/members/m1'] }],
+  },
+  {
+    from: "src/core/facts/single-prepare.ts:215 replacementVisibility",
+    member: 'readFactVisibility',
+    run: e => e.readFactVisibility(7, 's1'),
+    statements: [{ text: `SELECT visibility FROM facts WHERE id=$1 AND source_id=$2`, params: [7, 's1'] }],
+  },
+  {
+    from: "src/core/facts/single-prepare.ts:231 decideReplacement",
+    member: 'readReplacementTarget',
+    label: "plain",
+    run: e => e.readReplacementTarget({ targetId: 7, sourceId: 's1', ownPage: null }),
+    statements: [{ text: `SELECT f.*,
+      EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
+        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact))
+        AND (CASE WHEN starts_with(COALESCE(f.source_markdown_slug, ''), 'memory/members/') THEN w.subject = f.source_markdown_slug
+    ELSE (w.subject = '*' OR w.subject = COALESCE(f.entity_slug, '*') OR (COALESCE(strpos(f.entity_slug, '/') = 0 AND NOT EXISTS (SELECT 1 FROM pages unbacked_page
+    WHERE unbacked_page.source_id = f.source_id AND unbacked_page.slug = f.entity_slug AND unbacked_page.deleted_at IS NULL), false) AND NOT (starts_with(w.subject, 'memory/members/') OR w.subject = 'memory/scope')) OR ((starts_with(COALESCE(f.source_markdown_slug, ''), 'memory/members/') OR COALESCE(f.source_markdown_slug, '') = 'memory/scope') AND w.subject = f.source_markdown_slug)) END)) AS withdrawn
+    FROM facts f WHERE f.id=$1 AND f.source_id=$2`, params: [7, 's1'] }],
+  },
+  {
+    from: "src/core/facts/single-prepare.ts:231 decideReplacement",
+    member: 'readReplacementTarget',
+    label: "excludePrivate",
+    run: e => e.readReplacementTarget({ targetId: 7, sourceId: 's1', excludePrivate: true, ownPage: null }),
+    statements: [{ digest: { length: 8348, sha256: 'a1fbbf1863ec4354a5ac3360674b4d22c377397307dc0d3e3376144558fe18cf' }, params: [7, 's1'] }],
+  },
+  {
+    from: "src/core/facts/single-prepare.ts:231 decideReplacement",
+    member: 'readReplacementTarget',
+    label: "excludePrivate, own member page",
+    run: e => e.readReplacementTarget({ targetId: 7, sourceId: 's1', excludePrivate: true, ownPage: 'p1' }),
+    statements: [{ digest: { length: 8381, sha256: '3c9cc532ca388c2f40cb4e37b572f989453f5ae07ffdb9416d52889089579422' }, params: [7, 's1', 'p1'] }],
+  },
+  {
+    from: "src/core/facts/single-prepare.ts:231 decideReplacement",
+    member: 'readReplacementTarget',
+    label: "row lock",
+    run: e => e.readReplacementTarget({ targetId: 7, sourceId: 's1', ownPage: null, lock: true }),
+    statements: [{ text: `SELECT f.*,
+      EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
+        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact))
+        AND (CASE WHEN starts_with(COALESCE(f.source_markdown_slug, ''), 'memory/members/') THEN w.subject = f.source_markdown_slug
+    ELSE (w.subject = '*' OR w.subject = COALESCE(f.entity_slug, '*') OR (COALESCE(strpos(f.entity_slug, '/') = 0 AND NOT EXISTS (SELECT 1 FROM pages unbacked_page
+    WHERE unbacked_page.source_id = f.source_id AND unbacked_page.slug = f.entity_slug AND unbacked_page.deleted_at IS NULL), false) AND NOT (starts_with(w.subject, 'memory/members/') OR w.subject = 'memory/scope')) OR ((starts_with(COALESCE(f.source_markdown_slug, ''), 'memory/members/') OR COALESCE(f.source_markdown_slug, '') = 'memory/scope') AND w.subject = f.source_markdown_slug)) END)) AS withdrawn
+    FROM facts f WHERE f.id=$1 AND f.source_id=$2 FOR UPDATE OF f`, params: [7, 's1'] }],
+  },
+  {
+    from: "src/core/facts/single-prepare.ts:231 decideReplacement",
+    member: 'readReplacementTarget',
+    label: "excludePrivate, own member page, row lock",
+    run: e => e.readReplacementTarget({ targetId: 7, sourceId: 's1', excludePrivate: true, ownPage: 'p1', lock: true }),
+    statements: [{ digest: { length: 8397, sha256: 'a7a2195ef738eeb174974d438fef89183d86ecc90fe231c6f276bd18ae315c45' }, params: [7, 's1', 'p1'] }],
+  },
+  {
+    from: "src/core/facts/proposal-supersede.ts:107 loadPairFact",
+    member: 'readPairFactRow',
+    label: "no lock",
+    run: e => e.readPairFactRow(7),
+    statements: [{ text: `SELECT id, source_id, entity_slug, visibility, fact, expired_at, valid_from, valid_until, superseded_by, row_num, source_markdown_slug
+       FROM facts WHERE id = $1`, params: [7] }],
+  },
+  {
+    from: "src/core/facts/proposal-supersede.ts:107 loadPairFact",
+    member: 'readPairFactRow',
+    label: "row lock",
+    run: e => e.readPairFactRow(7, true),
+    statements: [{ text: `SELECT id, source_id, entity_slug, visibility, fact, expired_at, valid_from, valid_until, superseded_by, row_num, source_markdown_slug
+       FROM facts WHERE id = $1 FOR UPDATE`, params: [7] }],
+  },
+  {
+    from: "src/core/facts/proposal-supersede.ts:183 expireOld",
+    member: 'expireSupersededFact',
+    run: e => e.expireSupersededFact({ oldId: 1, sourceId: 's1', newId: 2, until: '2026-01-02T00:00:00.000Z' }),
+    statements: [{ text: `UPDATE facts SET expired_at = now(), valid_until = COALESCE($4::timestamptz, GREATEST(valid_from, LEAST(COALESCE(valid_until, now()), now()))), superseded_by = $3
+      WHERE id = $1 AND source_id = $2 AND expired_at IS NULL RETURNING id`, params: [1, 's1', 2, '2026-01-02T00:00:00.000Z'] }],
+  },
+  {
+    from: "src/core/facts/proposal-supersede.ts:202 applyUndoDb",
+    member: 'restoreSupersededFact',
+    run: e => e.restoreSupersededFact({ oldId: 1, sourceId: 's1', expiredAt: '2026-01-01T00:00:00.000Z', validUntil: null, supersededBy: null, expectedSupersededBy: 2 }),
+    statements: [{ text: `UPDATE facts SET expired_at = $3::timestamptz, valid_until = $4::timestamptz, superseded_by = $5
+      WHERE id = $1 AND source_id = $2 AND superseded_by IS NOT DISTINCT FROM $6 RETURNING id`, params: [1, 's1', '2026-01-01T00:00:00.000Z', null, null, 2] }],
+  },
+  {
+    from: "src/core/facts/forget.ts:166 forgetFactInFence",
+    member: 'readFactForForget',
+    run: e => e.readFactForForget(7),
+    statements: [{ text: `SELECT id, source_id, entity_slug, row_num, source_markdown_slug, expired_at, visibility
+       FROM facts WHERE id = $1`, params: [7] }],
+  },
+  {
+    from: "src/core/facts/forget.ts:194 forgetFactInFence",
+    member: 'expireFactSuperseded',
+    run: e => e.expireFactSuperseded(7, null),
+    statements: [{ text: `UPDATE facts SET valid_until = COALESCE($2::timestamptz, GREATEST(valid_from, LEAST(COALESCE(valid_until, now()), now()))), expired_at = now()
+      WHERE id = $1 AND expired_at IS NULL`, params: [7, null] }],
+  },
+  {
+    from: "src/core/facts/forget.ts:359 forgetFactInFence",
+    member: 'expireFactAtDate',
+    run: e => e.expireFactAtDate(7, '2026-01-02'),
+    statements: [{ text: `UPDATE facts SET valid_until = $1, expired_at = now()
+         WHERE id = $2 AND expired_at IS NULL`, params: ['2026-01-02', 7] }],
+  },
+  {
+    from: "src/core/facts/proposal-review.ts:41 staleReason",
+    member: 'readWithdrawalAnchor',
+    run: e => e.readWithdrawalAnchor(7, 's1'),
+    statements: [{ text: `SELECT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = f.source_id AND w.visibility = f.visibility
+        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact))
+        AND (CASE WHEN starts_with(COALESCE(f.source_markdown_slug, ''), 'memory/members/') THEN w.subject = f.source_markdown_slug
+    ELSE (w.subject = '*' OR w.subject = COALESCE(f.entity_slug, '*') OR (COALESCE(strpos(f.entity_slug, '/') = 0 AND NOT EXISTS (SELECT 1 FROM pages unbacked_page
+    WHERE unbacked_page.source_id = f.source_id AND unbacked_page.slug = f.entity_slug AND unbacked_page.deleted_at IS NULL), false) AND NOT (starts_with(w.subject, 'memory/members/') OR w.subject = 'memory/scope')) OR ((starts_with(COALESCE(f.source_markdown_slug, ''), 'memory/members/') OR COALESCE(f.source_markdown_slug, '') = 'memory/scope') AND w.subject = f.source_markdown_slug)) END)) AS withdrawn
+       FROM facts f WHERE f.id = $1 AND f.source_id = $2`, params: [7, 's1'] }],
+  },
+  {
+    from: "src/core/facts/proposal-review.ts:47 staleReason",
+    member: 'readFactActivity',
+    run: e => e.readFactActivity(8, 's1'),
+    statements: [{ text: `SELECT (expired_at IS NULL AND (valid_until IS NULL OR valid_until > now())) AS active, md5(fact) AS text_hash
+       FROM facts WHERE id = $1 AND source_id = $2`, params: [8, 's1'] }],
+  },
+  {
+    from: "src/core/facts/proposal-review.ts:78 acceptReviewProposal",
+    member: 'readReviewAcceptedMark',
+    run: e => e.readReviewAcceptedMark(8, 's1', '(review r5)'),
+    statements: [{ text: `SELECT id FROM facts WHERE id = $1 AND source_id = $2 AND expired_at IS NOT NULL
+      AND strpos(COALESCE(context, ''), $3) > 0`, params: [8, 's1', '(review r5)'] }],
+  },
+  {
     from: "src/core/facts/fts-index.ts:28 indexState",
     member: 'readFactsFtsIndexState',
     run: e => e.readFactsFtsIndexState('idx_facts_fts'),

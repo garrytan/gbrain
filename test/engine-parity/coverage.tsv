@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1019/1019
+# covered: 1037/1037
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -48,7 +48,7 @@
 # facts_cycle_sites: 34/34
 # facts_purge: 51/51
 # facts_repair: 25/25
-# facts_trust: 29/29
+# facts_trust: 47/47
 # facts_recall: 7/7
 # facts_conversation: 30/30
 # trust_tier_reads: 13/13
@@ -84,15 +84,15 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	103	no	yes	yes	serves
+transaction	lifecycle	yes	106	no	yes	yes	serves
 transactionDirect	lifecycle	yes	13	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	114	yes	yes	yes	serves
+getPage	pages	yes	115	yes	yes	yes	serves
 readPageSnapshot	pages	yes	27	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	490	yes	yes	yes	serves
+putPage	pages	yes	493	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	8	yes	yes	yes	serves
@@ -309,9 +309,9 @@ countFilesRegisteredElsewhere	raw_files	yes	1	no	yes	yes	refuses:files
 registerFileRow	raw_files	yes	1	no	yes	yes	refuses:files
 readReadableFileForVerify	raw_files	yes	1	no	yes	yes	refuses:files
 listReadableFilePaths	raw_files	yes	1	no	yes	yes	refuses:files
-addTakesBatch	takes	yes	39	yes	yes	yes	serves
+addTakesBatch	takes	yes	40	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	2	no	yes	yes	serves
-listTakes	takes	yes	18	no	yes	yes	serves
+listTakes	takes	yes	19	no	yes	yes	serves
 searchTakes	takes	yes	3	no	yes	yes	serves
 searchTakesVector	takes	yes	1	no	yes	yes	serves
 getTakeEmbeddings	takes	yes	1	no	yes	yes	serves
@@ -391,11 +391,11 @@ listLiveChunksByIds	contradictions	yes	1	no	yes	yes	refuses:chunks
 listLiveTakesByIds	contradictions	yes	1	no	yes	yes	refuses:takes
 readLastContradictionsPromptVersion	contradictions	yes	1	no	yes	yes	refuses:contradictions
 listEvalCandidateQueries	contradictions	yes	1	no	yes	yes	refuses:eval_capture
-insertFact	facts	yes	75	yes	yes	yes	serves
-insertFacts	facts	yes	104	no	yes	yes	serves
+insertFact	facts	yes	80	yes	yes	yes	serves
+insertFacts	facts	yes	107	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
-expireFact	facts	yes	57	no	yes	yes	serves
-listFactsByEntity	facts	yes	25	yes	yes	yes	serves
+expireFact	facts	yes	60	no	yes	yes	serves
+listFactsByEntity	facts	yes	27	yes	yes	yes	serves
 listFactsSince	facts	yes	15	yes	yes	yes	serves
 listFactsKeyset	facts	yes	3	no	yes	yes	serves
 listFactsBySession	facts	yes	5	yes	yes	yes	serves
@@ -856,6 +856,24 @@ lockAgentWritebackSetting	facts_trust	yes	1	no	yes	yes	refuses:facts
 listFactsToRetireFromPage	facts_trust	yes	1	no	yes	yes	refuses:facts
 listContestedProposalPairs	facts_trust	yes	1	no	yes	yes	refuses:facts
 listFactProvenance	facts_trust	yes	1	no	yes	yes	refuses:facts
+recordDerivationEdges	facts_trust	yes	1	no	yes	yes	refuses:facts
+listDerivedRows	facts_trust	yes	1	no	yes	yes	refuses:facts
+expireDerivedFacts	facts_trust	yes	1	no	yes	yes	refuses:facts
+deactivateDerivedTakes	facts_trust	yes	1	no	yes	yes	refuses:facts
+softDeleteDerivedPages	facts_trust	yes	1	no	yes	yes	refuses:facts
+markNeedsRederive	facts_trust	yes	1	no	yes	yes	refuses:facts
+readMemberPageWithdrawal	facts_trust	yes	1	no	yes	yes	refuses:facts
+readFactVisibility	facts_trust	yes	1	no	yes	yes	refuses:facts
+readReplacementTarget	facts_trust	yes	1	no	yes	yes	refuses:facts
+readPairFactRow	facts_trust	yes	1	no	yes	yes	refuses:facts
+expireSupersededFact	facts_trust	yes	1	no	yes	yes	refuses:facts
+restoreSupersededFact	facts_trust	yes	1	no	yes	yes	refuses:facts
+readFactForForget	facts_trust	yes	1	no	yes	yes	refuses:facts
+expireFactSuperseded	facts_trust	yes	1	no	yes	yes	refuses:facts
+expireFactAtDate	facts_trust	yes	1	no	yes	yes	refuses:facts
+readWithdrawalAnchor	facts_trust	yes	1	no	yes	yes	refuses:facts
+readFactActivity	facts_trust	yes	1	no	yes	yes	refuses:facts
+readReviewAcceptedMark	facts_trust	yes	1	no	yes	yes	refuses:facts
 readFactsFtsIndexState	facts_trust	yes	1	no	yes	yes	refuses:facts
 swapFactsFtsIndex	facts_trust	yes	1	no	yes	yes	refuses:facts
 readFactsEmbeddingColumn	facts_recall	yes	1	no	yes	yes	refuses:facts
@@ -954,7 +972,7 @@ getRecentSalience	salience_enrich	yes	8	yes	yes	yes	serves
 listEnrichCandidates	salience_enrich	yes	3	yes	yes	yes	serves
 findAnomalies	salience_enrich	yes	7	yes	yes	yes	serves
 hasCoveringFactWithdrawal	trust	yes	3	no	yes	yes	serves
-insertFactWithdrawal	trust	yes	15	no	yes	yes	serves
+insertFactWithdrawal	trust	yes	18	no	yes	yes	serves
 isFactWithdrawn	trust	yes	3	no	yes	yes	serves
 isFactPurged	trust	yes	3	no	yes	yes	serves
 listFactWithdrawalDates	trust	yes	2	no	yes	yes	serves
