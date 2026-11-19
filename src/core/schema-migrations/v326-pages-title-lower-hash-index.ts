@@ -1,3 +1,4 @@
+import type { BrainEngine } from '../engine.ts';
 import type { Migration } from './types.ts';
 import { buildIndexOnline, migrationNotice, runMigrationStatement } from './helpers.ts';
 import { PAGES_NAME_LOOKUP_INDEXES } from './v240-pages-name-lookup-indexes.ts';
@@ -15,11 +16,16 @@ import { PAGES_NAME_LOOKUP_INDEXES } from './v240-pages-name-lookup-indexes.ts';
 // the hash index is built first (CONCURRENTLY on Postgres), so the lookups
 // stay indexed throughout, then the btree is dropped CONCURRENTLY (PGLite
 // runs the same statement). The btree is dropped only once the hash index is
-// valid: when another session is still building it, that session's run drops
-// the btree. Each step is a no-op once done, so a rerun after an interruption
+// valid: when another session is still building it, v326 fails instead of
+// recording itself applied, so the next upgrade retries the drop. Each step is a no-op once done, so a rerun after an interruption
 // picks up where it stopped. An older gbrain runs against the new index
 // unchanged, since its queries are the same.
 export const LEGACY_TITLE_BTREE_INDEX = 'idx_pages_source_title_lower';
+
+async function buildHashIndex(engine: BrainEngine): Promise<void> {
+  const built = await buildIndexOnline(engine, 326, PAGES_NAME_LOOKUP_INDEXES[0], { notice: migrationNotice });
+  if (built === 'building') throw new Error(`${PAGES_NAME_LOOKUP_INDEXES[0].name} is being built by another session; rerun the migration once it finishes`);
+}
 
 export const v326: Migration = {
   version: 326,
@@ -28,7 +34,7 @@ export const v326: Migration = {
   transaction: false,
   sql: '',
   handler: async engine => {
-    if (await buildIndexOnline(engine, 326, PAGES_NAME_LOOKUP_INDEXES[0], { notice: migrationNotice }) === 'building') return;
+    await buildHashIndex(engine);
     await runMigrationStatement(engine, 326, `DROP INDEX CONCURRENTLY IF EXISTS ${LEGACY_TITLE_BTREE_INDEX}`);
   },
 };

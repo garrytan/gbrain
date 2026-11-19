@@ -62,6 +62,7 @@
       "analyzeYieldingToVacuum": "edba1beff1547ea5c2e9f902efe44ab24e8d7016b2253603dcbba92d4137ca9a",
       "backfillChunkVectors": "1c8cc09a28aa3e906fe2f112b71cd3aa61f750a99984e35a029cff9458272aa1",
       "backfillPageVectors": "a325a5eee3bab49723af311f21b38a1ee4a0eaff1fb3c7e1539aa4dcb287ed66",
+      "buildHashIndex": "c34dfce66c3ac9d323ba298220dcad7c507a9481c663053f4833dbe158dfabe5",
       "buildIndexOnline": "aea86be06da261a76f6fad15def8f417cb5318c7991d2ded3cd86aeed82fb2cc",
       "buildOriginIndexIfClean": "cc6d16f50a4b5e303b87338700b9cded9784fc9cc9391c795bdd755e32385e6c",
       "checkpointKey": "337ef776b18f428542093e27c4d570249d6a5856e5a17e4499d26a22877af34b",
@@ -5319,6 +5320,7 @@
             "analyzeAfterIndexBuild",
             "analyzeDeferred",
             "analyzeYieldingToVacuum",
+            "buildHashIndex",
             "buildIndexOnline",
             "dropInvalidConcurrentIndex",
             "lockTableForAnalyze",
@@ -5329,7 +5331,7 @@
             "tableRows",
             "withSchemaLockTimeout"
           ],
-          "sha256": "cc4c06e2cc14661c81aca36d4f2dc75e6736b7fda5e353eb23d96c9b80c7a4b4"
+          "sha256": "87148f1195d5caf8077eb0e9a6abf7380ac4412a37a5ab99dbbeb2c237cbfa59"
         },
         "idempotent": true,
         "name": "pages_title_lower_hash_index",

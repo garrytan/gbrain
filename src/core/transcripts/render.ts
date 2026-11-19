@@ -88,8 +88,10 @@ export const TRANSCRIPT_IMPORT_VERSION = 1;
  * harnesses report a session's opening text as its title, which can run to
  * 100 KB; the full text is already in the page body. A longer title is cut at
  * a codepoint boundary and ends in an ellipsis, so a cut title reads as cut.
- * A session whose page already exists (`existing`) keeps its title as given,
- * so a re-import never rewrites a page only to shorten its title.
+ * A session whose stored page already has a title over the cap (`existing`,
+ * a page written before the cap) keeps its title as given, so a re-import
+ * never rewrites a page only to shorten its title; a page written under the
+ * cap stays capped.
  */
 export const TRANSCRIPT_TITLE_MAX_CHARS = 200;
 
