@@ -98,6 +98,18 @@ for (const kind of testBackends()) {
       expect(Number(labelled!.n)).toBe(0);
     }, 120_000);
 
+    test('the preview lists a partly matched call under its own heading, never under "nothing is proposed"', async () => {
+      const text = await repair(['visibility', '--propose', '--source', SRC]);
+      const [proposed, rest] = text.split(/\nProposed with names left out \(1\):[^\n]*\n/);
+      expect(rest).toBeDefined();
+      expect(proposed).toContain('Reader sets');
+      const [partial, unmatched] = rest!.split(/\nUnmatched \(1\): nothing is proposed for these\./);
+      expect(partial).toContain('"company/calls/2026-11-09-acme-renewal" (dave-example (acme-example procurement))');
+      expect(partial).not.toContain('meetings/m1');
+      expect(unmatched).toContain('meetings/m1');
+      expect(unmatched).not.toContain('acme-renewal');
+    }, 120_000);
+
     test('apply is preview-bound: --expect writes the readers, and a page that moved refuses preview_changed', async () => {
       const p = await propose();
       const debrief = p.sets.find(s => s.readers.join(',') === 'owner-example,carol-example')!;
