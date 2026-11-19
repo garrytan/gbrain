@@ -891,6 +891,17 @@ pub(crate) fn list_notifier_host_source_rows_in(read: &dyn KvRead) -> Result<Vec
         .collect()
 }
 
+/// `readSourceSyncShape(sourceId)`: a source that exists and is not archived, as a sync request sees it. The store
+/// keeps no managed worktree bindings, so `root` is null and `bound` false; `None` for a missing or archived source.
+pub(crate) fn read_source_sync_shape_in(
+    read: &dyn KvRead,
+    source_id: &str,
+) -> Result<Option<Value>> {
+    Ok(read_source(read, source_id)?
+        .filter(|r| !r.archived)
+        .map(|r| json!({ "local_path": r.local_path, "root": Value::Null, "bound": false })))
+}
+
 impl Store {
     /// `claimNotifierLease(l)`.
     pub fn claim_notifier_lease(&self, claim: &NotifierLeaseClaim) -> Result<Value> {
@@ -1005,6 +1016,11 @@ impl Store {
     /// `listSourceWantedMarkers(sourceId)`.
     pub fn list_source_wanted_markers(&self, source_id: &str) -> Result<Vec<Value>> {
         list_source_wanted_markers_in(&*self.read()?, source_id)
+    }
+
+    /// `readSourceSyncShape(sourceId)`.
+    pub fn read_source_sync_shape(&self, source_id: &str) -> Result<Option<Value>> {
+        read_source_sync_shape_in(&*self.read()?, source_id)
     }
 }
 

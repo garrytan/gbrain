@@ -384,3 +384,19 @@ export async function listSourceWantedMarkers(exec: RawExec, sourceId: string): 
     'SELECT intent, wanted_head, first_due_at, requested_by FROM sync_wanted_markers WHERE source_id = $1 ORDER BY first_due_at, intent', [sourceId]);
   return rows.map(toPendingWantedMarker);
 }
+
+/** One source as a sync request sees it (readSourceSyncShape): its local path, the checkout root on the worktree's owner host, and whether it is bound to a managed worktree. */
+export interface SourceSyncShapeRow { local_path: string | null; root: string | null; bound: boolean }
+
+/** The shape of a source that exists and is not archived, or null. notifier/nudge.ts sourceSyncShape. */
+export async function readSourceSyncShape(exec: RawExec, sourceId: string): Promise<SourceSyncShapeRow | null> {
+  const [row] = await exec.executeRaw<{ local_path: string | null; root: string | null; bound: unknown }>(
+    `SELECT s.local_path, h.local_path AS root, (b.source_id IS NOT NULL) AS bound
+       FROM sources s
+       LEFT JOIN persistence_source_bindings b ON b.source_id = s.id AND b.source_incarnation = s.incarnation
+       LEFT JOIN persistence_worktrees w ON w.id = b.worktree_id
+       LEFT JOIN persistence_host_bindings h ON h.worktree_id = w.id AND h.host_id = w.owner_host_id
+      WHERE s.id = $1 AND NOT s.archived LIMIT 1`, [sourceId]);
+  if (!row) return null;
+  return { local_path: row.local_path ?? null, root: row.root ?? null, bound: row.bound === true || row.bound === 't' };
+}

@@ -271,4 +271,15 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_source_wanted_markers(&source_id))
     }
+
+    /// `readSourceSyncShape(sourceId)`: `{ local_path, root, bound }` for a live source, or null when it is missing
+    /// or archived.
+    #[napi]
+    pub fn read_source_sync_shape<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_source_sync_shape(&source_id))
+    }
 }

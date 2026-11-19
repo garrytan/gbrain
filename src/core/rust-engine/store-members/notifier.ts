@@ -4,7 +4,8 @@
  * per-source state and coverage rows (readNotifierSources, writeNotifierState, writeNotifierCoverage,
  * recordNotifierSyncerHost), the freshness status rows (readNotifierStatusRows, hasNotifierCoverage) and the wanted
  * markers (upsertWantedMarker, attachWantedMarkerJob, readWantedMarkers, readDueWantedMarkers,
- * pruneSatisfiedWantedMarkers, clearWantedMarker, settleFreshnessMarker, listSourceWantedMarkers).
+ * pruneSatisfiedWantedMarkers, clearWantedMarker, settleFreshnessMarker, listSourceWantedMarkers) and the source shape a
+ * sync request reads (readSourceSyncShape).
  *
  * The store keeps the lease row with Postgres's fencing rule, one notifier row per source and one marker row per source
  * and intent. It keeps no managed worktree bindings and no source `last_commit`, so every source row reads `bound` false
@@ -15,7 +16,7 @@
 import {
   toNotifierSourceRow, toNotifierStatusRow, toPendingWantedMarker, toWantedMarker,
   type Coverage, type MarkerIntent, type NotifierHostSourceRow, type NotifierLeaseClaim, type NotifierLeaseClaimInput, type NotifierLeaseHolder,
-  type NotifierSourceRow, type NotifierStatusRow, type PendingWantedMarker, type StatePatch, type WantedMarker, type WantedMarkerInput,
+  type NotifierSourceRow, type NotifierStatusRow, type PendingWantedMarker, type SourceSyncShapeRow, type StatePatch, type WantedMarker, type WantedMarkerInput,
 } from '../../engine-sql/notifier.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
@@ -121,3 +122,7 @@ export const settleFreshnessMarker: StoreMember<[sourceId: string, generation: n
 /** The source's markers as the sync status notifier block lists them. */
 export const listSourceWantedMarkers: StoreMember<[sourceId: string], PendingWantedMarker[]> = async (brain, sourceId) =>
   (await storeCall({ member: 'listSourceWantedMarkers' }, () => brain.listSourceWantedMarkers(sourceId)) as Rows).map(toPendingWantedMarker);
+
+/** A live source as a sync request sees it; the store keeps no worktree bindings, so `root` is null and `bound` false. */
+export const readSourceSyncShape: StoreMember<[sourceId: string], SourceSyncShapeRow | null> = async (brain, sourceId) =>
+  await storeCall({ member: 'readSourceSyncShape' }, () => brain.readSourceSyncShape(sourceId)) as SourceSyncShapeRow | null;

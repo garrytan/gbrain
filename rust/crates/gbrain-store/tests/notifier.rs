@@ -611,3 +611,19 @@ fn attach_clear_and_settle_act_only_at_the_generation_read_and_prune_deletes_not
         .unwrap();
     assert_eq!(store.read_wanted_markers(None).unwrap().len(), 2);
 }
+
+#[test]
+fn the_sync_shape_is_a_live_sources_path_with_no_binding_and_none_for_a_missing_or_archived_source()
+{
+    let dir = TempDir::new("notifier-sync-shape");
+    let store = open(&dir);
+    source(&store, "alpha");
+    source(&store, "gone");
+    store.set_source_archived("gone", true).unwrap();
+    assert_eq!(
+        store.read_source_sync_shape("alpha").unwrap(),
+        Some(json!({ "local_path": "/repos/alpha", "root": null, "bound": false }))
+    );
+    assert_eq!(store.read_source_sync_shape("gone").unwrap(), None);
+    assert_eq!(store.read_source_sync_shape("missing").unwrap(), None);
+}

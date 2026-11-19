@@ -268,6 +268,16 @@ const PINS: Pin[] = [
     case: { method: 'listSourceWantedMarkers', variant: 'default', run: e => e.listSourceWantedMarkers('source-a') },
     texts: ['SELECT intent, wanted_head, first_due_at, requested_by FROM sync_wanted_markers WHERE source_id = $1 ORDER BY first_due_at, intent'],
   },
+  {
+    from: 'src/core/notifier/nudge.ts:17 sourceSyncShape (at 87bd59b208)',
+    case: { method: 'readSourceSyncShape', variant: 'default', run: e => e.readSourceSyncShape('source-a') },
+    texts: [`SELECT s.local_path, h.local_path AS root, (b.source_id IS NOT NULL) AS bound
+       FROM sources s
+       LEFT JOIN persistence_source_bindings b ON b.source_id = s.id AND b.source_incarnation = s.incarnation
+       LEFT JOIN persistence_worktrees w ON w.id = b.worktree_id
+       LEFT JOIN persistence_host_bindings h ON h.worktree_id = w.id AND h.host_id = w.owner_host_id
+      WHERE s.id = $1 AND NOT s.archived LIMIT 1`],
+  },
 ];
 
 describe('caller raw SQL moved into typed members keeps its Postgres text byte for byte', () => {
