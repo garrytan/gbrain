@@ -22,7 +22,7 @@ test/engine-parity/entity-anchor-reads.test.ts	2	0
 test/engine-parity/entity-reads.test.ts	9	0
 test/engine-parity/extraction.test.ts	6	0
 test/engine-parity/fact-purge-ledger.test.ts	3	0
-test/engine-parity/fact-purge-sites.test.ts	0	8
+test/engine-parity/fact-purge-sites.test.ts	0	14
 test/engine-parity/fact-relink-attempts.test.ts	3	0
 test/engine-parity/fact-relink-writes.test.ts	4	0
 test/engine-parity/facts-conversation-sites.test.ts	0	22
