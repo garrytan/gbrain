@@ -325,6 +325,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readWriterSlugFence': OOS.pageVisibility,
   'readStoredBodyBytes': OOS.largePage,
   'readAdmittedPageRefs': OOS.relationalReads,
+  'readPageSynopses': OOS.relationalReads,
   'hasSegmentStorage': OOS.writeGuards,
   'removeTimelineRows': OOS.pageWriteRows,
   'updateTimelineDetails': OOS.pageWriteRows,

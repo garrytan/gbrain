@@ -5,6 +5,8 @@
  */
 import type { PageReadPolicy } from '../types.ts';
 import { pageReadFilter } from '../search/read-policy-sql.ts';
+import { buildVisibilityClause } from '../search/sql-ranking.ts';
+import { boundedBodyPrefixSql } from '../page-window/bounded-lead.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 
 /** A (source_id, slug) page reference. */
@@ -24,5 +26,29 @@ export async function readAdmittedPageRefs(exec: LegacyUnscopedRead, refs: reado
   return exec.executeRaw<PageRefRow>(
     `SELECT p.source_id, p.slug FROM pages p
      ${REFS_JOIN} WHERE ${filter}`, params,
+  );
+}
+
+/** A page the walk reached: its title, type and bounded body prefix (`boundedBodyPrefixSql`). */
+export interface RelationalPageRow { page_id: number; slug: string; source_id: string; title: string; type: string; synopsis: string | null }
+
+/**
+ * The refs that name a page `policy` admits (its source scope, private-page filter and trust floor; `pageReadFilter`)
+ * and the search visibility clause shows (live, served text projection, unarchived source, unquarantined, no pinned
+ * question, and the private-page filter when `policy.excludePrivate`), with the first 65536 code points of the body,
+ * in no set order. A ref listed twice answers twice.
+ */
+export async function readPageSynopses(exec: LegacyUnscopedRead, refs: readonly PageRefRow[], policy?: PageReadPolicy): Promise<RelationalPageRow[]> {
+  if (!refs.length) return [];
+  const params: unknown[] = [refs.map(ref => ref.source_id), refs.map(ref => ref.slug)];
+  const filter = pageReadFilter('p', policy, params);
+  return exec.executeRaw<RelationalPageRow>(
+    `SELECT p.id AS page_id, p.slug, p.source_id, p.title, p.type,
+            ${boundedBodyPrefixSql('p')} AS synopsis
+     FROM pages p
+     JOIN sources s ON s.id = p.source_id
+     ${REFS_JOIN}
+     WHERE ${filter} ${buildVisibilityClause('p', 's', { excludePrivate: policy?.excludePrivate, requireSafeChunks: false })}`,
+    params,
   );
 }

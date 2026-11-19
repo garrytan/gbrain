@@ -1,11 +1,13 @@
 //! The relational recall arm's seed admit read (`read_admitted_page_refs`): only the live pages the read
 //! scope admits come back; a soft-deleted, quarantined, archived-source, other-source or private page never
-//! leaks through, and a missing ref answers nothing.
+//! leaks through, and a missing ref answers nothing. The hydrate read (`read_page_synopses`) also needs a
+//! served text projection and no pinned question, and cuts the body to 65536 code points.
 
 mod common;
 
 use common::{TempDir, open};
 use gbrain_store::Store;
+use gbrain_store::chunks::{ChunkInput, UpsertChunksOptions};
 use gbrain_store::facts::PrivacyPolicy;
 use gbrain_store::page_ops::{PageReadScope, PageRef};
 use gbrain_store::pages::{PageInput, PutPageOptions};
@@ -139,4 +141,96 @@ fn no_refs_answer_nothing() {
             .unwrap()
             .is_empty()
     );
+}
+
+fn seal(store: &Store, source: &str, slug: &str) {
+    let inputs: Vec<ChunkInput> = vec![
+        serde_json::from_value(json!({
+            "chunk_index": 0, "chunk_text": slug, "chunk_source": "compiled_truth",
+        }))
+        .unwrap(),
+    ];
+    let options = UpsertChunksOptions {
+        source_id: Some(source.into()),
+        seal: true,
+        ..UpsertChunksOptions::default()
+    };
+    store.upsert_chunks(slug, &inputs, &options).unwrap();
+}
+
+fn synopses(store: &Store, scope: &PageReadScope) -> Vec<String> {
+    store
+        .read_page_synopses(&refs(), scope)
+        .unwrap()
+        .iter()
+        .map(|row| {
+            format!(
+                "{}:{}:{}",
+                row["source_id"].as_str().unwrap(),
+                row["slug"].as_str().unwrap(),
+                row["synopsis"].as_str().map_or(0, |s| s.chars().count())
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn the_hydrate_read_shows_only_served_unpinned_pages_with_a_bounded_synopsis() {
+    let dir = TempDir::new("relational-synopses");
+    let store = seeded(&dir);
+    // A page written without indexing has no served text projection yet.
+    let unindexed: PageInput = serde_json::from_value(json!({
+        "type": "company", "title": "unindexed", "compiled_truth": "body", "frontmatter": {}
+    }))
+    .unwrap();
+    let no_index: PutPageOptions =
+        serde_json::from_value(json!({ "sourceId": "default", "index": false })).unwrap();
+    store
+        .put_page("companies/unindexed", &unindexed, &no_index)
+        .unwrap();
+    let long = "é".repeat(70_000);
+    let input: PageInput = serde_json::from_value(json!({
+        "type": "company", "title": "open", "compiled_truth": long, "frontmatter": {}
+    }))
+    .unwrap();
+    let opts: PutPageOptions = serde_json::from_value(json!({ "sourceId": "default" })).unwrap();
+    store.put_page("companies/open", &input, &opts).unwrap();
+    for (source, slug) in [
+        ("default", "companies/open"),
+        ("default", "companies/private"),
+        ("default", "companies/held"),
+        ("other", "companies/open"),
+    ] {
+        seal(&store, source, slug);
+    }
+    put_in(
+        &store,
+        "default",
+        "companies/pinned",
+        json!({ "pinned_question": true }),
+    );
+    seal(&store, "default", "companies/pinned");
+    let mut with_pinned = refs();
+    with_pinned.push(r("default", "companies/pinned"));
+    with_pinned.push(r("default", "companies/unindexed"));
+    assert_eq!(
+        synopses(&store, &PageReadScope::default()),
+        vec![
+            "default:companies/open:65536",
+            "default:companies/private:4",
+            "other:companies/open:4"
+        ]
+    );
+    assert_eq!(
+        store
+            .read_page_synopses(&with_pinned, &PageReadScope::default())
+            .unwrap()
+            .len(),
+        3
+    );
+    let scoped = PageReadScope {
+        source_id: Some("other".into()),
+        ..Default::default()
+    };
+    assert_eq!(synopses(&store, &scoped), vec!["other:companies/open:4"]);
 }

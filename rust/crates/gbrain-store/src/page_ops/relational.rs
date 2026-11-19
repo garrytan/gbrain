@@ -1,7 +1,8 @@
 //! The relational recall arm's page reads (`src/core/engine-sql/relational-reads.ts`): which resolved
-//! seed pages the caller's read policy admits.
+//! seed pages the caller's read policy admits, and the title and bounded body prefix of each page the
+//! walk reached.
 //!
-//! Member: readAdmittedPageRefs.
+//! Members: readAdmittedPageRefs, readPageSynopses.
 //!
 //! Keys: this module adds none. It reads page and source records through `pages.rs` and
 //! `sources.rs`, and judges each page by the parent's read scope (`passes_read_scope`).
@@ -9,9 +10,22 @@
 use super::{PageReadScope, PageRef, passes_read_scope, sources_by_id};
 use crate::Store;
 use crate::error::Result;
-use crate::pages::read_page;
+use crate::pages::{PageRecord, read_page};
 use crate::trust::TrustPolicy;
 use serde_json::{Value, json};
+
+/// `ACTIVATION_SERVED_REVISION` of `src/core/search/safe-chunks.ts`.
+const ACTIVATION_SERVED_REVISION: &str = "00000000-0000-0000-0000-000000000153";
+/// `BOUNDED_PREFIX_BYTES` of `src/core/page-window/bounded-lead.ts`: SQL `left()` counts code points.
+const SYNOPSIS_CHARS: usize = 64 * 1024;
+
+/// `servedTextProjectionFilter`: the current projection, or the pre-activation marker.
+fn served(page: &PageRecord) -> bool {
+    match page.text_projection_revision.as_deref() {
+        Some(rev) => rev == page.knowledge_revision || rev == ACTIVATION_SERVED_REVISION,
+        None => false,
+    }
+}
 
 impl Store {
     /// `readAdmittedPageRefs(refs, scope)`: `{ source_id, slug }` for each ref that names a live,
@@ -40,6 +54,58 @@ impl Store {
             {
                 out.push(json!({ "source_id": page.source_id, "slug": page.slug }));
             }
+        }
+        Ok(out)
+    }
+
+    /// `readPageSynopses(refs, scope)`: `{ page_id, slug, source_id, title, type, synopsis }` for each
+    /// ref that names a page the scope admits and the search visibility clause shows (live, a served
+    /// text projection, an unarchived source, unquarantined, no `pinned_question` key, and the
+    /// private-page filter when `scope.exclude_private`), in ref order; a ref listed twice answers
+    /// twice. `synopsis` is the first 65536 code points of the body (`compiled_truth`, else the
+    /// segmented body's lead), or null.
+    pub fn read_page_synopses(
+        &self,
+        refs: &[PageRef],
+        scope: &PageReadScope,
+    ) -> Result<Vec<Value>> {
+        if refs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let read = self.read()?;
+        let sources = sources_by_id(&*read)?;
+        let trust = TrustPolicy::parse(scope.min_trust.as_deref(), scope.suppress_flagged)?;
+        let scope = PageReadScope {
+            live: true,
+            ..scope.clone()
+        };
+        let mut out = Vec::new();
+        for r in refs {
+            let Some(page) = read_page(&*read, &r.source_id, &r.slug)? else {
+                continue;
+            };
+            if !served(&page)
+                || page.frontmatter.contains_key("pinned_question")
+                || !passes_read_scope(&*read, &page, &scope, &trust, &sources)?
+            {
+                continue;
+            }
+            let body = match page.compiled_truth.as_deref() {
+                Some(text) => Some(text.to_string()),
+                None => crate::page_body::truth_lead(&*read, page.id)?,
+            };
+            let synopsis = body.map(|b| match b.char_indices().nth(SYNOPSIS_CHARS) {
+                Some((at, _)) => b[..at].to_string(),
+                None => b,
+            });
+            out.push(json!({
+                "page_id": page.id,
+                "slug": page.slug,
+                "source_id": page.source_id,
+                "title": page.title,
+                "type": page.page_type,
+                "synopsis": synopsis,
+            }));
         }
         Ok(out)
     }

@@ -4,7 +4,7 @@
  * Served: readPageSnapshotsBatch, findDuplicatePage, findDuplicatePages, deletePages, purgeDeletedPages, resolveSlugsByPaths,
  * softDeletePages, findPages, countPagesBy, getAllSlugs, listAllPageRefs, listPrefixSampledPages, listCorpusSample,
  * bumpPageRetrievals, getContentFlagsByPageIds, getUnverifiedExtractionPageIds, getPageTimestamps, getEffectiveDates, readAdmittedPageRefs,
- * revertToVersion.
+ * readPageSynopses, revertToVersion.
  * deletePages scrubs the eval candidates' retrieved slugs in the delete's transaction, as PGLite does.
  * purgeDeletedPages (also served) keeps the pages PGLite's atom and derived retirement holds keep, reading the `retired_by`
  * stamp on the page row, and removes and scrubs the rest as deletePages does (rust/docs/store/page_ops.md).
@@ -21,7 +21,7 @@ import type { PageSnapshot } from '../../page-state/types.ts';
 import { pickCanonicalOrigin } from '../../persistence/origin-guard.ts';
 import { segmentedRevertRefusal } from '../../page-state/versions.ts';
 import type { CorpusSampleOpts, DomainBankRow, DomainBankSampleOpts, PageReadPolicy, PageReadScope } from '../../types.ts';
-import type { PageRefRow } from '../../engine-sql/relational-reads.ts';
+import type { PageRefRow, RelationalPageRow } from '../../engine-sql/relational-reads.ts';
 import { toGetPage } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
@@ -307,6 +307,20 @@ export const readAdmittedPageRefs: StoreMember<[refs: readonly PageRefRow[], pol
   const rows: PageRefRow[] = await storeCall({ member: 'readAdmittedPageRefs' }, () =>
     brain.readAdmittedPageRefs(refs.map((r) => ({ source_id: r.source_id, slug: r.slug })), scope));
   return rows.map((r) => ({ source_id: r.source_id, slug: r.slug }));
+};
+
+/**
+ * The relational recall arm's hydrate read (engine-sql/relational-reads.ts): the refs' pages `policy` admits and the
+ * search visibility clause shows, with the first 65536 code points of the body as `synopsis`.
+ */
+export const readPageSynopses: StoreMember<[refs: readonly PageRefRow[], policy?: PageReadPolicy], RelationalPageRow[]> = async (brain, refs, policy) => {
+  if (!refs.length) return [];
+  const scope = readScope('readPageSynopses', policy ?? {});
+  const rows: RelationalPageRow[] = await storeCall({ member: 'readPageSynopses' }, () =>
+    brain.readPageSynopses(refs.map((r) => ({ source_id: r.source_id, slug: r.slug })), scope));
+  return rows.map((r) => ({
+    page_id: Number(r.page_id), slug: r.slug, source_id: r.source_id, title: r.title, type: r.type, synopsis: r.synopsis ?? null,
+  }));
 };
 
 export const revertToVersion: StoreMember<[slug: string, versionId: number, opts?: { sourceId?: string }], void> = async (brain, slug, versionId, opts) => {

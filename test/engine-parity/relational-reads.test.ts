@@ -1,11 +1,13 @@
 /**
  * BrainEngine parity — the relational recall arm's page reads (engine-sql/relational-reads.ts): which resolved seed
- * pages the caller's read policy admits.
+ * pages the caller's read policy admits, and the title and bounded body prefix of each page the walk reached.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: readAdmittedPageRefs returns the same (source_id, slug) set on every engine arm (PGLite always;
  *    Postgres with DATABASE_URL; the Rust arm through test/engine-parity/harness.ts): only live, unquarantined pages
  *    of an unarchived source that pass the policy's source scope, private-page filter and trust floor.
+ *    readPageSynopses returns the same rows under the search visibility clause too: a served text projection and no
+ *    pinned question; the synopsis is the first 65536 code points of the body.
  *  - Regression: an engine that admits a seed the policy hides lets a "who works at" query walk the links of a
  *    private, deleted, quarantined, archived, out-of-scope or below-floor page and name what it links to (a leak).
  *    The Rust engine has no SQL, so the statement has to exist as a typed member.
@@ -15,14 +17,15 @@
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import type { PageReadPolicy } from '../../src/core/types.ts';
+import type { PageInput, PageReadPolicy } from '../../src/core/types.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { archiveSource, createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { chunk, installChunks } from './chunk-fixtures.ts';
 
 const { parityTest } = parityArms(testBackends());
 
-const NOTE = { type: 'company' as const, title: 'Acme example', compiled_truth: 'A company.', timeline: '' };
+const NOTE: PageInput = { type: 'company', title: 'Acme example', compiled_truth: 'A company.', timeline: '' };
 
 /** Run `fn` in a transaction whose write trust settings declare `tier`. */
 function declared<T>(engine: BrainEngine, tier: string, fn: (tx: BrainEngine) => Promise<T>): Promise<T> {
@@ -75,6 +78,75 @@ describe('engine parity: relational recall page reads', () => {
       holders: live,
       none: [],
     });
+    return answers;
+  });
+
+  parityTest('readPageSynopses hydrates only the reached pages the search visibility clause and read policy let the caller read', {
+    methods: ['putPage', 'softDeletePage', 'transaction', 'applyTransactionSettings', 'sealChunks', 'getPage', 'readPageSynopses'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    await createSource(engine, backend, 'old');
+    // A page reads as searchable only once its chunks are sealed (a served text projection).
+    const served = async (slug: string, input = NOTE, sourceId?: string) => {
+      await engine.putPage(slug, input, sourceId ? { sourceId } : undefined);
+      await installChunks(engine, slug, [chunk(0, slug)], sourceId ? { sourceId } : undefined);
+    };
+    const LONG = `${'é'.repeat(65530)}abcdefghij`;
+    await served('companies/open');
+    await served('companies/private', { ...NOTE, frontmatter: { visibility: 'private' } });
+    await served('companies/alice', { ...NOTE, frontmatter: { readable_by: ['member:alice-example'] } });
+    await served('companies/held', { ...NOTE, frontmatter: { quarantine: { reason: 'test' } } });
+    await served('companies/pinned', { ...NOTE, frontmatter: { pinned_question: true } });
+    await served('companies/long', { ...NOTE, compiled_truth: LONG });
+    await served('companies/gone');
+    await engine.softDeletePage('companies/gone');
+    await engine.putPage('companies/unindexed', NOTE);
+    await served('companies/stale');
+    await engine.putPage('companies/stale', { ...NOTE, compiled_truth: 'Edited after the seal.' });
+    await declared(engine, 'external_untrusted', async tx => { await tx.putPage('companies/outside', NOTE); });
+    await installChunks(engine, 'companies/outside', [chunk(0, 'outside')]);
+    await served('companies/open', NOTE, 'other');
+    await served('companies/archived', NOTE, 'old');
+    await archiveSource(engine, backend, 'old');
+    const slugs = ['open', 'private', 'alice', 'held', 'pinned', 'long', 'gone', 'unindexed', 'stale', 'outside', 'missing'];
+    const refs = [
+      ...slugs.map(s => ({ source_id: 'default', slug: `companies/${s}` })),
+      { source_id: 'other', slug: 'companies/open' },
+      { source_id: 'old', slug: 'companies/archived' },
+    ];
+    const ids = new Map<string, number>();
+    for (const r of refs) {
+      const page = await engine.getPage(r.slug, { sourceId: r.source_id });
+      if (page) ids.set(key(r), Number(page.id));
+    }
+    // page_id is each arm's own serial: compare it to the arm's getPage id.
+    const read = async (policy?: PageReadPolicy) => sorted((await engine.readPageSynopses(refs, policy)).map(r => [
+      key(r), r.title, r.type, Number(r.page_id) === ids.get(key(r)),
+      r.synopsis == null ? null : `${[...r.synopsis].length}:${r.synopsis.slice(-12)}`,
+    ].join('|')));
+    const answers = {
+      none: await read(),
+      scoped: await read({ sourceId: 'default' }),
+      federated: await read({ sourceIds: ['other'] }),
+      hidden: await read({ excludePrivate: true }),
+      member: await withCallerAccess({ identity: ['member:alice-example'], hidePrivate: true }, () => read({ excludePrivate: true })),
+      floor: await read({ minTrust: 'unknown' }),
+      empty: await engine.readPageSynopses([], { sourceId: 'default' }),
+    };
+    const row = (k: string, synopsis = '10:A company.') => `${k}|Acme example|company|true|${synopsis}`;
+    const open = row('default:companies/open');
+    const alice = row('default:companies/alice');
+    const priv = row('default:companies/private');
+    const outside = row('default:companies/outside');
+    const long = row('default:companies/long', '65536:ééééééabcdef');
+    const other = row('other:companies/open');
+    expect(answers.none).toEqual(sorted([open, alice, priv, outside, long, other]));
+    expect(answers.scoped).toEqual(sorted([open, alice, priv, outside, long]));
+    expect(answers.federated).toEqual([other]);
+    expect(answers.hidden).toEqual(sorted([open, outside, long, other]));
+    expect(answers.member).toEqual(sorted([open, alice, outside, long, other]));
+    expect(answers.floor).toEqual(sorted([open, alice, priv, long, other]));
+    expect(answers.empty).toEqual([]);
     return answers;
   });
 });

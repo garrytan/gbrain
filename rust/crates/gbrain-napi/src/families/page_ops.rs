@@ -263,6 +263,23 @@ impl Brain {
         })
     }
 
+    /// `readPageSynopses(refs, { sourceId?, sourceIds?, excludePrivate?, minTrust?, suppressFlagged? })`:
+    /// `[{ page_id, slug, source_id, title, type, synopsis }]`.
+    #[napi]
+    pub fn read_page_synopses<'env>(
+        &self,
+        env: &'env Env,
+        refs: Value,
+        scope: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_page_synopses(
+                &required::<Vec<_>>(refs, "readPageSynopses refs")?,
+                &required(scope, "readPageSynopses scope")?,
+            )
+        })
+    }
+
     /// `revertToVersion(slug, versionId, { sourceId? }?)`: `null`.
     #[napi]
     pub fn revert_to_version<'env>(

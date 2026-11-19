@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 677/677
+# covered: 678/678
 # lifecycle: 9/9
 # pages: 40/40
 # search: 7/7
@@ -64,7 +64,7 @@
 # write_guards: 7/7
 # page_visibility: 3/3
 # large_page: 1/1
-# relational_reads: 1/1
+# relational_reads: 2/2
 # trust_fence: 1/1
 # trust_proposals: 7/7
 # connect_gate: 4/4
@@ -75,21 +75,21 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	57	no	yes	yes	serves
+transaction	lifecycle	yes	58	no	yes	yes	serves
 transactionDirect	lifecycle	yes	2	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	89	yes	yes	yes	serves
-readPageSnapshot	pages	yes	23	no	yes	yes	serves
+getPage	pages	yes	90	yes	yes	yes	serves
+readPageSnapshot	pages	yes	24	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	373	yes	yes	yes	serves
+putPage	pages	yes	375	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	8	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	121	yes	yes	yes	serves
+softDeletePage	pages	yes	122	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -184,7 +184,7 @@ deleteChunksForPages	chunks	yes	1	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	3	no	yes	yes	serves
 upsertChunks	chunks	yes	25	yes	yes	yes	serves
-sealChunks	chunks	yes	45	no	yes	yes	serves
+sealChunks	chunks	yes	46	no	yes	yes	serves
 getChunks	chunks	yes	28	yes	yes	yes	serves
 getChunkPage	chunks	yes	6	no	yes	yes	serves
 getChunkWindows	chunks	yes	3	no	yes	yes	serves
@@ -214,7 +214,7 @@ listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
 addLink	links	yes	70	yes	yes	yes	serves
 addLinksBatch	links	yes	10	yes	yes	yes	serves
-replaceDerivedLinks	links	yes	8	no	yes	yes	serves
+replaceDerivedLinks	links	yes	9	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
 removeLink	links	yes	2	no	yes	yes	serves
 removeLinksByPagesAndSource	links	yes	1	yes	yes	yes	serves
@@ -225,7 +225,7 @@ findByTitleFuzzy	links	yes	2	no	yes	yes	serves
 traverseGraph	links	yes	3	yes	yes	yes	serves
 traversePaths	links	yes	4	yes	yes	yes	serves
 traversePathsDetailed	links	yes	1	yes	yes	yes	serves
-relationalFanout	links	yes	4	yes	yes	yes	serves
+relationalFanout	links	yes	5	yes	yes	yes	serves
 relationalChainHop	links	yes	4	no	yes	yes	serves
 getBacklinkCounts	links	yes	4	no	yes	yes	serves
 getAdjacencyBoosts	links	yes	4	no	yes	yes	serves
@@ -360,7 +360,7 @@ readPersistenceBrainId	import_guards	yes	2	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	2	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	12	no	yes	yes	serves
-applyTransactionSettings	import_guards	yes	34	no	yes	yes	serves
+applyTransactionSettings	import_guards	yes	35	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readLedgerSource	import_guards	yes	8	no	yes	yes	serves
 isFolderRestricted	import_guards	yes	4	no	yes	yes	serves
@@ -716,6 +716,7 @@ readCallerPageAccess	page_visibility	yes	1	no	yes	yes	serves
 readWriterSlugFence	page_visibility	yes	1	no	yes	yes	serves
 readStoredBodyBytes	large_page	yes	1	no	yes	yes	serves
 readAdmittedPageRefs	relational_reads	yes	1	no	yes	yes	serves
+readPageSynopses	relational_reads	yes	1	no	yes	yes	serves
 listFenceFactRows	trust_fence	yes	4	no	yes	yes	serves
 insertTrustProposal	trust_proposals	yes	4	no	yes	yes	serves
 getTrustProposal	trust_proposals	yes	2	no	yes	yes	serves
