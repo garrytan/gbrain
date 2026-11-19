@@ -26,9 +26,7 @@ export async function coreMemoryCheck(engine: BrainEngine): Promise<Omit<Check, 
   const settings = await readCoreSettings(engine);
   const usage = await coreUsage(engine);
   // Decision #10: listCorePages reads a page stored in segments back whole up to PAGE_MAX_BYTES (24 MiB) and leaves a larger one out.
-  const [segmented] = await engine.executeRaw<{ n: number }>(`SELECT COUNT(*)::int AS n FROM pages p
-    WHERE p.deleted_at IS NULL AND p.frontmatter @> '{"always_load": true}'::jsonb AND p.body_storage = 'segmented' AND p.body_bytes > $1`, [PAGE_MAX_BYTES]).catch(() => []);
-  const skipped = Number(segmented?.n ?? 0);
+  const skipped = await engine.countOversizedCorePages(PAGE_MAX_BYTES).catch(() => 0);
   const problems: string[] = [];
   const badConfig: string[] = [];
   for (const key of [...Object.values(CORE_CONFIG_KEYS), ...Object.values(PRESSURE_CONFIG_KEYS)]) {

@@ -75,6 +75,7 @@ import * as telemetry from './telemetry.ts';
 import * as importMembers from './import-members.ts';
 import * as fieldUsage from './field-usage.ts';
 import * as doctorReads from './doctor-reads.ts';
+import * as doctorPages from './doctor-pages.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -123,7 +124,7 @@ export const STORE_MEMBERS = {
   // The field usage sample read of schema detect --fields (rust/docs/store/field-usage.md).
   ...fieldUsage,
   // The statements doctor checks ran through executeRaw (rust/docs/store/cli-reads-doctor.md).
-  ...doctorReads,
+  ...doctorReads, ...doctorPages,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

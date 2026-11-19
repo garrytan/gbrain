@@ -22,7 +22,6 @@ src/commands/core.ts	suggestCandidates	field	INLINE
 src/commands/core.ts	suggestCandidates	sql	INLINE	
 src/commands/doctor/checks/calibration.ts	checkLinkResolutionOpportunity	field	LEAD	
 src/commands/doctor/checks/calibration.ts	checkLinkResolutionOpportunity	sql	LEAD	
-src/commands/doctor/checks/content-quality.ts	runContentSanity	sql	META	
 src/commands/doctor/checks/data-integrity.ts	runMarkdownBody	sql	META	
 src/commands/doctor/checks/derived-visibility.ts	derivedVisibilityCheck	sql	NONE	not the page body: p.* in a CTE, only metadata columns read
 src/commands/enrich.ts	enrichOneLocked	call:serializeMarkdown	SEGW	
@@ -190,6 +189,10 @@ src/core/engine-sql/chunks.ts	getChunkWindows	sql	STREAM	lane 1e file: ships who
 src/core/engine-sql/chunks.ts	listChunklessPagesWithContent	field	STREAM	lane 1e file
 src/core/engine-sql/chunks.ts	listChunklessPagesWithContent	sql	STREAM	lane 1e file
 src/core/engine-sql/chunks.ts	listEmbeddingStateRows	sql	META	lane 1e file: octet_length metadata
+src/core/engine-sql/doctor-pages.ts	FACTS_PAGE_BODIES_SQL	sql	LEAD	moved from doctor/checks/facts-pages.ts unchanged: left(coalesce(compiled_truth, truth_lead), 65536), so a segmented page answers its stored lead
+src/core/engine-sql/doctor-pages.ts	OVERSIZED_PAGES_SQL	sql	META	moved from doctor/checks/content-quality.ts runContentSanity unchanged: octet_length metadata; a segmented page has a NULL body and is not listed (counted separately by the segmented-storage check)
+src/core/engine-sql/doctor-pages.ts	SCRAPER_JUNK_ALL_SQL	sql	LEAD	moved from doctor/checks/content-quality.ts runContentSanity unchanged: LEFT(compiled_truth, 2048) and LEFT(timeline, 1024) heads only; a segmented page has a null body head
+src/core/engine-sql/doctor-pages.ts	SCRAPER_JUNK_LIMITED_SQL	sql	LEAD	moved from doctor/checks/content-quality.ts runContentSanity unchanged: LEFT(compiled_truth, 2048) and LEFT(timeline, 1024) heads only; a segmented page has a null body head
 src/core/engine-sql/facts-purge.ts	listFactsReconcileBacklog	sql	STREAM	group 5 facts sites: moved from facts/reconcile-watermark.ts readFactsReconcileBacklog unchanged
 src/core/engine-sql/facts-repair.ts	countLabelFacts	sql	STREAM	group 5 facts sites: moved from repair/conversation-labels.ts countLabelFacts unchanged
 src/core/engine-sql/field-usage.ts	readFieldUsageSamples	field	LEAD	moved from schema-pack/field-usage.ts runFieldUsage unchanged: whole inline bodies of the sampled pages; a segmented page samples a null body, read as empty (TODOS.md)

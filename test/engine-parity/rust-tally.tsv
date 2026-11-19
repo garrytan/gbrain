@@ -11,6 +11,7 @@ test/engine-parity/code-eval-salience.test.ts	13	0
 test/engine-parity/config-ingest.test.ts	8	0
 test/engine-parity/connect-gate.test.ts	6	0
 test/engine-parity/cycle-locks.test.ts	10	0
+test/engine-parity/doctor-pages.test.ts	16	0
 test/engine-parity/doctor-reads.test.ts	1	0
 test/engine-parity/effect-scans.test.ts	3	0
 test/engine-parity/embedding-catalog.test.ts	7	0
