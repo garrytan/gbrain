@@ -171,6 +171,7 @@ function literalStartingWith(src: string, start: string): string | null {
 }
 
 describe('sql-move-check: the real engine-sql copies', () => {
+  // test-reads-source-ok[structural]: the claim under test is that two source texts are byte-identical, so the text itself is the subject.
   const read = (rel: string) => readFileSync(join(REPO, 'src/core', rel), 'utf8');
 
   it('lists eleven statements', () => {
