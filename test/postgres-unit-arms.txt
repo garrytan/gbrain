@@ -159,6 +159,7 @@ test/engine-parity/fact-relink-writes.test.ts
 test/engine-parity/facts-cycle.test.ts
 test/engine-parity/facts-doctor.test.ts
 test/engine-parity/facts-purge.test.ts
+test/engine-parity/facts-repair-sites.test.ts
 test/engine-parity/facts-repair.test.ts
 test/engine-parity/facts-trust-owner.test.ts
 test/engine-parity/facts-trust.test.ts
