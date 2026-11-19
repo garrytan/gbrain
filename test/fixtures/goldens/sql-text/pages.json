@@ -1994,10 +1994,13 @@
               "string",
               "string",
               "string",
+              "string",
+              "string",
+              "string",
               "string"
             ],
-            "sql": "UPDATE secret_store_occurrence SET slug = $1 WHERE source_id = $2 AND slug = $3 AND commit_sha IS NULL AND (page_id IS NULL OR page_id IN (SELECT id FROM pages WHERE source_id = $4 AND slug IN ($5, $6)))",
-            "textSha256": "dc82a72d28c14eaf8b2e4848234a3c3ce9b4281001969f91ef6f47a969eb4e3c"
+            "sql": "UPDATE secret_store_occurrence SET slug = $1 WHERE source_id = $2 AND slug = $3 AND commit_sha IS NULL AND (page_id IN (SELECT id FROM pages WHERE source_id = $4 AND slug IN ($5, $6)) OR (page_id IS NULL AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id = $7 AND p.slug IN ($8, $9) AND (strpos(p.title || ' ' || coalesce(p.compiled_truth, '') || ' ' || coalesce(p.timeline, '') || ' ' || p.frontmatter::text, ':' || secret_store_occurrence.entry_id || '>') > 0 OR EXISTS (SELECT 1 FROM raw_data hr WHERE hr.page_id = p.id AND strpos(hr.data::text, ':' || secret_store_occurrence.entry_id || '>') > 0) OR EXISTS (SELECT 1 FROM timeline_entries ht WHERE (ht.page_id = p.id OR ht.event_page_id = p.id) AND strpos(ht.summary || ' ' || ht.detail || ' ' || ht.source, ':' || secret_store_occurrence.entry_id || '>') > 0) OR EXISTS (SELECT 1 FROM takes hk WHERE hk.page_id = p.id AND strpos(coalesce(hk.claim, '') || ' ' || coalesce(hk.source, '') || ' ' || coalesce(hk.resolved_source, ''), ':' || secret_store_occurrence.entry_id || '>') > 0) OR EXISTS (SELECT 1 FROM links hl WHERE hl.from_page_id = p.id AND strpos(hl.context, ':' || secret_store_occurrence.entry_id || '>') > 0) OR EXISTS (SELECT 1 FROM facts hf WHERE hf.source_id = p.source_id AND (hf.source_markdown_slug = p.slug OR (hf.source_markdown_slug IS NULL AND hf.entity_slug = p.slug)) AND strpos(coalesce(hf.fact, '') || ' ' || coalesce(hf.context, '') || ' ' || coalesce(hf.value::text, ''), ':' || secret_store_occurrence.entry_id || '>') > 0) OR p.body_storage = 'segmented'))))",
+            "textSha256": "9115eaacc9d0e74e54d81a088a886f1f1b237a56f565b4cfbcf56cc445eafa63"
           },
           {
             "event": "savepoint-release",

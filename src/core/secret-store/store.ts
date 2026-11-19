@@ -13,6 +13,7 @@
 import { createCipheriv, createDecipheriv, createHmac, randomBytes } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
+import { pageHoldsSql } from './marker-sql.ts';
 import { createAuditWriter } from '../audit/audit-writer.ts';
 import { currentKey, keyById, keyIdOf, macKeyOf, SECRET_STORE_KEY_ENV, storeHost, keyringDir } from './keyring.ts';
 
@@ -218,18 +219,21 @@ export async function storeSnapshot(engine: BrainEngine): Promise<{ entries: Bac
 
 /**
  * Writes backed-up entries the store does not hold (by id, and never over a row that holds the same value, so a local
- * row changed since the backup stays as it is), with the occurrences of the entries it wrote. An occurrence on a page
- * (a slug and no commit) comes back only while that page exists in the source, live or soft-deleted; an entry whose
- * every occurrence was on pages this brain does not hold is not written (`skipped_no_page`): the page was purged, or is
- * not synced yet, and a restore cannot tell which, so it never brings back an original a page purge removed. Sync the
- * pages, then run the same restore again; it adds what it skipped. An
- * occurrence's page_id is the id of the page that holds its slug in the source now, never the backed-up number (a
- * rebuilt brain numbers its pages in another order, and the purge cascade trusts page_id); entries of a source this
- * brain no longer has are skipped.
+ * row changed since the backup stays as it is), with the occurrences of the entries it wrote or already holds. A place
+ * on a page (a slug and no commit) comes back only on a page whose text holds the entry's marker, so a restore never
+ * ties an original to a page that merely took its old slug. An entry recorded only on pages is written only while some
+ * page in its source holds its marker; otherwise it is not written (`skipped_no_page`): the page was purged, or is not
+ * synced yet, and a restore cannot tell which, so it never brings back an original a page purge removed. Sync the
+ * pages, then run the same restore again; it adds what it skipped. When no backed-up slug names a page holding the
+ * marker (the page was renamed before occurrences moved with it), the entry is tied to every page that holds it
+ * (`reattached`). An occurrence's page_id is the id of the page that holds its slug now, never the backed-up number
+ * (a rebuilt brain numbers its pages in another order, and the purge cascade trusts page_id); entries of a source
+ * this brain no longer has are skipped.
  */
-export async function insertBackupRows(engine: BrainEngine, entries: BackupEntryRow[], occurrences: BackupOccurrenceRow[]): Promise<{ entries: number; occurrences: number; skipped_no_page: number }> {
-  let written = 0, occ = 0, skippedNoPage = 0;
+export async function insertBackupRows(engine: BrainEngine, entries: BackupEntryRow[], occurrences: BackupOccurrenceRow[]): Promise<{ entries: number; occurrences: number; skipped_no_page: number; reattached: number }> {
+  let written = 0, occ = 0, skippedNoPage = 0, reattached = 0;
   const onPage = (o: BackupOccurrenceRow) => o.commit_sha === null && o.slug !== null;
+  const holds = (p: string, segmented = false) => pageHoldsSql(p, "':' || $1 || '>'", segmented);
   const byEntry = new Map<string, BackupOccurrenceRow[]>();
   for (const o of occurrences) byEntry.set(o.entry_id, [...(byEntry.get(o.entry_id) ?? []), o]);
   await engine.transaction(async tx => {
@@ -239,12 +243,12 @@ export async function insertBackupRows(engine: BrainEngine, entries: BackupEntry
       const anchored = own.length === 0 || own.some(o => !onPage(o));
       const inserted = await tx.executeRaw<{ id: string }>(`INSERT INTO secret_store (id,source_id,rule,ciphertext,nonce,tag,key_id,key_host,value_mac,status,created_at,updated_at)
         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::timestamptz,$12::timestamptz WHERE EXISTS (SELECT 1 FROM sources WHERE id=$2)
-          AND ($13::boolean OR EXISTS (SELECT 1 FROM pages p WHERE p.source_id=$2 AND p.slug = ANY($14::text[])))
+          AND ($13::boolean OR EXISTS (SELECT 1 FROM pages p WHERE p.source_id=$2 AND (${holds('p')} OR (p.slug = ANY($14::text[]) AND ${holds('p', true)}))))
         ON CONFLICT DO NOTHING RETURNING id`,
       [row.id, row.source_id, row.rule, row.ciphertext, row.nonce, row.tag, row.key_id, row.key_host, row.value_mac, row.status, row.created_at, row.updated_at, anchored, pageSlugs]);
       if (inserted.length) written++;
       else {
-        const [held] = await tx.executeRaw<{ same: boolean | null; paged: boolean }>(`SELECT h.same, EXISTS (SELECT 1 FROM pages p WHERE p.source_id=$2 AND p.slug = ANY($4::text[])) AS paged
+        const [held] = await tx.executeRaw<{ same: boolean | null; paged: boolean }>(`SELECT h.same, EXISTS (SELECT 1 FROM pages p WHERE p.source_id=$2 AND (${holds('p')} OR (p.slug = ANY($4::text[]) AND ${holds('p', true)}))) AS paged
           FROM (SELECT 1) one LEFT JOIN (SELECT (source_id=$2 AND value_mac=$3) AS same FROM secret_store WHERE id=$1) h ON true`, [row.id, row.source_id, row.value_mac, pageSlugs]);
         if (held!.same === null && !anchored && !held!.paged) skippedNoPage++;
         if (!held!.same) continue;
@@ -252,15 +256,24 @@ export async function insertBackupRows(engine: BrainEngine, entries: BackupEntry
       for (const o of own) {
         occ += (await tx.executeRaw(`INSERT INTO secret_store_occurrence (entry_id,source_id,page_id,slug,field,origin,commit_sha,path,line,pre_field_sha256,created_by,created_at)
           SELECT $1,$2,(SELECT id FROM pages WHERE source_id=$2 AND slug=$3),$3,$4,$5,$6,$7,$8,$9,$10,$11::timestamptz
-          WHERE ($6::text IS NOT NULL OR $3::text IS NULL OR EXISTS (SELECT 1 FROM pages p WHERE p.source_id=$2 AND p.slug=$3))
+          WHERE ($6::text IS NOT NULL OR $3::text IS NULL OR EXISTS (SELECT 1 FROM pages p WHERE p.source_id=$2 AND p.slug=$3 AND ${holds('p', true)}))
             AND NOT EXISTS (SELECT 1 FROM secret_store_occurrence x WHERE x.entry_id=$1 AND x.source_id=$2 AND x.slug IS NOT DISTINCT FROM $3 AND x.field=$4
               AND x.commit_sha IS NOT DISTINCT FROM $6 AND x.path IS NOT DISTINCT FROM $7 AND x.line IS NOT DISTINCT FROM $8::integer AND x.origin=$5
               AND x.pre_field_sha256 IS NOT DISTINCT FROM $9 AND x.created_by=$10 AND date_trunc('milliseconds', x.created_at) = $11::timestamptz) RETURNING 1`,
         [o.entry_id, o.source_id, o.slug, o.field, o.origin, o.commit_sha, o.path, o.line, o.pre_field_sha256, o.created_by, o.created_at])).length;
       }
+      const first = own.find(onPage);
+      if (!first) continue;
+      const tied = (await tx.executeRaw(`INSERT INTO secret_store_occurrence (entry_id,source_id,page_id,slug,field,origin,pre_field_sha256,created_by,created_at)
+        SELECT $1,$2,p.id,p.slug,$3,$4,$5,$6,$7::timestamptz FROM pages p WHERE p.source_id=$2 AND ${holds('p')}
+          AND NOT EXISTS (SELECT 1 FROM secret_store_occurrence x JOIN pages q ON q.source_id = x.source_id AND q.slug = x.slug
+            WHERE x.entry_id=$1 AND x.commit_sha IS NULL AND ${holds('q', true)}) RETURNING 1`,
+      [row.id, row.source_id, first.field, first.origin, first.pre_field_sha256, first.created_by, first.created_at])).length;
+      occ += tied;
+      if (tied) reattached++;
     }
   });
-  return { entries: written, occurrences: occ, skipped_no_page: skippedNoPage };
+  return { entries: written, occurrences: occ, skipped_no_page: skippedNoPage, reattached };
 }
 
 /**

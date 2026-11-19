@@ -136,6 +136,7 @@ export async function runSecrets(engine: BrainEngine, args: string[]): Promise<v
     if (object) {
       const out = await restoreBackup(engine, configured.storage, object);
       print(json, out, [`Restored ${out.inserted} entr${out.inserted === 1 ? 'y' : 'ies'} (${out.occurrences} occurrence(s)) from ${out.object}; ${out.existing} already here and left as they are.`,
+        ...(out.reattached ? [`${out.reattached} entr${out.reattached === 1 ? 'y was' : 'ies were'} tied to the page(s) that now hold their marker, because no backed-up slug names such a page (a rename the backup predates).`] : []),
         ...(out.skipped_no_page ? [`${out.skipped_no_page} ${SKIPPED_NO_PAGE_TEXT}. ${SKIPPED_NO_PAGE_NEXT}`] : []),
         ...(out.unreadable.length ? [`Skipped ${out.unreadable.length} that do not authenticate under a key on this host: ${out.unreadable.join(', ')}`] : [])].join('\n'));
       return;
