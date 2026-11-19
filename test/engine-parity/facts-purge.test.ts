@@ -842,4 +842,49 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     expect(released).toBe(true);
     return { before, counts, after, again, released };
   });
+
+  // The take reads after a hide (rederiveHiddenSql through takeEligibility): listTakes reads inactive takes, so a take
+  // the hide set inactive is hidden there only by its mark; searchTakes and searchTakesVector read active takes only,
+  // so a marked-only take of another source is hidden there by its mark alone. Without a policy nothing is hidden.
+  parityTest('after a hide, every take read under a policy leaves out the marked takes, active or inactive', {
+    methods: ['putPage', 'addTakesBatch', 'listTakes', 'updateTakeEmbeddings', 'recordDerivationInputs', 'listDerivedRows', 'hideDerivedRows',
+      'searchTakes', 'searchTakesVector'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const page = async (slug: string, sourceId = SRC) => (await engine.putPage(slug, note(slug, `${slug} body`), { sourceId })).id;
+    const input = await page('derive/take-input');
+    const holder = await page('people/take-holder');
+    const elsewhere = await page('people/take-elsewhere', 'other');
+    const take = (page_id: number, row_num: number, claim: string, active = true) =>
+      ({ page_id, row_num, claim, kind: 'take' as const, holder: 'world', weight: 0.5, active });
+    await engine.addTakesBatch([
+      take(holder, 1, 'Hidden heron take'), take(holder, 2, 'Plain heron take'), take(holder, 3, 'Inactive heron take', false),
+      take(elsewhere, 1, 'Marked heron take'),
+    ]);
+    const all = [...await engine.listTakes({ active: true, limit: 100 }), ...await engine.listTakes({ active: false, limit: 100 })];
+    const id = (claim: string) => all.find(t => t.claim === claim)!.id;
+    await engine.updateTakeEmbeddings(all.map(t => ({ take_id: t.id, embedding: vec(1), claim: t.claim, model: 'embed-m1' })));
+    for (const claim of ['Hidden heron take', 'Marked heron take']) {
+      await recordDerivationInputs(engine, { table: 'takes', id: String(id(claim)), sourceId: SRC }, [{ table: 'pages', id: String(input) }]);
+    }
+    const counts = await engine.transaction(async (tx) => hideDerivedRows(tx, (await derivedRowsFrom(tx, [{ table: 'pages', id: String(input) }])).rows,
+      { sourceId: SRC, requestId: null, reason: 'input purged' }));
+    const claims = (rows: Array<{ claim: string }>) => rows.map(r => r.claim).sort();
+    const reads = async (eligibility: {} | undefined) => ({
+      listActive: claims(await engine.listTakes({ active: true, limit: 100, eligibility })),
+      listInactive: claims(await engine.listTakes({ active: false, limit: 100, eligibility })),
+      search: claims(await engine.searchTakes('heron', { limit: 100, eligibility })),
+      vector: claims(await engine.searchTakesVector(vec(1), { limit: 100, eligibility })),
+    });
+    const answers = { counts, eligible: await reads({}), unfiltered: await reads(undefined) };
+    expect(counts).toEqual({ hidden: { takes: 1 }, markedOnly: { takes: 1 } });
+    expect(answers.eligible).toEqual({
+      listActive: ['Plain heron take'], listInactive: ['Inactive heron take'], search: ['Plain heron take'], vector: ['Plain heron take'],
+    });
+    expect(answers.unfiltered).toEqual({
+      listActive: ['Marked heron take', 'Plain heron take'], listInactive: ['Hidden heron take', 'Inactive heron take'],
+      search: ['Marked heron take', 'Plain heron take'], vector: ['Marked heron take', 'Plain heron take'],
+    });
+    return answers;
+  });
 });

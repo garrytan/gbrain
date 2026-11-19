@@ -703,9 +703,8 @@ fn search_takes(
         let Some(page) = page.as_ref() else {
             continue;
         };
-        let eligible = page.deleted_at_us.is_none() && !page.frontmatter.contains_key("quarantine");
         if !take_in_scope(&options.source_ids, &page.source_id)
-            || (options.eligible_only && !eligible)
+            || (options.eligible_only && !crate::takes::eligible_take(read, page, take.id)?)
         {
             continue;
         }

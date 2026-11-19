@@ -666,10 +666,13 @@ fn private_page(
 
 /// The part of `projectionEligibleSql('takes', ..)` a policy without `floor` or
 /// `suppressFlagged` applies: a take of a soft-deleted page, or of a page whose frontmatter has a
-/// `quarantine` key (any value, deleted or not), is hidden. Its third clause hides rows listed in
-/// `needs_rederive`, which only a raw-SQL purge writes; this engine has no such rows.
-fn eligible_page(page: &PageRecord) -> bool {
-    page.deleted_at_us.is_none() && !page.frontmatter.contains_key("quarantine")
+/// `quarantine` key (any value, deleted or not), is hidden, and so is a take a `needs_rederive`
+/// mark names (`rederiveHiddenSql('takes', 't')`). A hide marks every take derived from a purged
+/// input, active or not, so the mark is read here and not only through `active`.
+pub(crate) fn eligible_take(read: &dyn KvRead, page: &PageRecord, take_id: u64) -> Result<bool> {
+    Ok(page.deleted_at_us.is_none()
+        && !page.frontmatter.contains_key("quarantine")
+        && !crate::generations::awaits_rederive(read, "takes", &take_id.to_string())?)
 }
 
 /// `since_date ~ '^[0-9]{4}-[0-9]{2}(-[0-9]{2})?$'`.
@@ -991,7 +994,7 @@ impl Store {
             };
             if options.page_slug.as_ref().is_some_and(|s| *s != page.slug)
                 || !in_scope(&options.source_ids, &page.source_id)
-                || (options.eligible_only && !eligible_page(page))
+                || (options.eligible_only && !eligible_take(&*read, page, take.id)?)
                 || private_page(&*read, page, &options.exclude_private)?
                 || options.holder.as_ref().is_some_and(|h| *h != take.holder)
                 || options.kind.as_ref().is_some_and(|k| *k != take.kind)
@@ -1112,7 +1115,7 @@ impl Store {
                 continue;
             };
             if !in_scope(&options.source_ids, &page.source_id)
-                || (options.eligible_only && !eligible_page(page))
+                || (options.eligible_only && !eligible_take(&*read, page, take.id)?)
                 || private_page(&*read, page, &options.exclude_private)?
             {
                 continue;

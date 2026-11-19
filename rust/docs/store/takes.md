@@ -47,9 +47,9 @@ the record as it is.
 
 Read eligibility: `projectionEligibleSql('takes', ...)` always hides takes of soft-deleted pages, of pages
 whose frontmatter has a `quarantine` key (any value), and rows in `needs_rederive`. The store keeps those
-marks (`hideDerivedRows`, `h 0x0C`, store format 7), but the takes reads do not apply that clause yet; a
-take a purge hid is already inactive, so only a marked active take of another source still reads. The
-members send `eligible_only: true` for any eligibility object and the store applies the first two clauses.
+marks (`hideDerivedRows`, `h 0x0C`, store format 7). The members send `eligible_only: true` for any eligibility
+object, and `listTakes`, `searchTakes` and `searchTakesVector` apply all three clauses (`eligible_take` in
+`takes.rs`): a marked take is hidden whether a hide set it inactive or left it active in another source.
 `eligibility.floor` and `eligibility.suppressFlagged` refuse with `engine_capability_missing`.
 
 Cascades: deleting a page (`remove_page_rows`) drops its takes, their evidence, and the evidence the page
