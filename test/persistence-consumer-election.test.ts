@@ -19,7 +19,9 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { LANE_BUSY, type PersistenceConsumer } from '../src/core/persistence/consumer.ts';
 import { DRAIN_BACK_HEALTHY_TICKS, electOwner, forceOwnConsumer, PROBE_TIMEOUT_MISSES, resetOwnConsumerForTest, WaiterOnlyConsumer } from '../src/core/persistence/consumer-election.ts';
-import { CONSUMER_LAPSED_MS, CONSUMER_LIVE_MS, consumerIdentity, type ListedConsumer } from '../src/core/persistence/consumer-heartbeat.ts';
+import { CONSUMER_CAPABILITIES, CONSUMER_LAPSED_MS, CONSUMER_LIVE_MS, consumerIdentity, type ListedConsumer } from '../src/core/persistence/consumer-heartbeat.ts';
+import { RENEW_CONSUMER_SQL } from '../src/core/engine-sql/persistence-claims.ts';
+import { consumerRowsThroughRaw } from './helpers/consumer-rows-through-raw.ts';
 
 const CEILING = 600_000;
 
@@ -27,6 +29,7 @@ function fakeEngine(kind: 'postgres' | 'pglite' = 'postgres') {
   const statements: Array<{ sql: string; params: unknown[] }> = [];
   const engine = { kind, executeRaw: async (sql: string, params: unknown[] = []) => { statements.push({ sql, params }); return []; },
     executeRawDirect: async (sql: string, params: unknown[] = []) => { statements.push({ sql, params }); return []; } } as unknown as BrainEngine;
+  Object.assign(engine, consumerRowsThroughRaw(engine as never));
   return { engine, statements, heartbeatModes: () => statements.filter(s => s.sql.includes('INSERT INTO persistence_consumers')).map(s => s.params[5]) };
 }
 
@@ -59,6 +62,10 @@ function harness(opts: { rows?: () => ListedConsumer[] | Promise<ListedConsumer[
 }
 
 afterEach(() => resetOwnConsumerForTest());
+
+test('the renewed consumer row advertises exactly CONSUMER_CAPABILITIES', () => {
+  expect(RENEW_CONSUMER_SQL).toContain(`ARRAY[${CONSUMER_CAPABILITIES.map((c) => `'${c}'`).join(',')}]::text[]`);
+});
 
 describe('electOwner', () => {
   const self = consumerIdentity();

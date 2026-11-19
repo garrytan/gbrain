@@ -235,7 +235,7 @@ describe('runPostFusionStages — id-keyed reads run concurrently', () => {
     });
   }
 
-  for (const refused of ['alias', 'supersede-probe', 'supersede'] as const) {
+  for (const refused of ['backlinks', 'salience', 'dates', 'graph', 'alias', 'supersede-probe', 'supersede'] as const) {
     test(`a refused engine capability on the ${refused} read propagates`, async () => {
       setSystemTime(NOW);
       const { engine } = fakeEngine(name => (name === refused ? 'refuse' : 'resolve'));

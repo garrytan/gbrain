@@ -531,8 +531,10 @@ export const DOMAIN_OF: Record<string, string> = {
   'writeMiscReads': OOS.helper, 'writeMiscRead': OOS.helper,
   // the write journal (typed admission, claim, completion, limit and hold reads)
   'readJournalLimitRows': OOS.journal, 'readHeldPageRows': OOS.journal, 'readHeldCoverageRows': OOS.journal,
-  'readWriteRequest': OOS.journal, 'readWriteRequestById': OOS.journal, 'lockPersistenceCounters': OOS.journal,
+  'readWriteRequest': OOS.journal, 'readWriteRequestById': OOS.journal, 'readWriteRequestProgress': OOS.journal, 'countOutstandingBySource': OOS.journal, 'ownsSchemaTables': OOS.journal, 'readCounterRows': OOS.journal, 'readAdmissionRate': OOS.journal, 'lockPersistenceCounters': OOS.journal,
   'insertWriteRequest': OOS.journal, 'stampWriteClaim': OOS.journal, 'lockWriteRequest': OOS.journal, 'completeWriteRow': OOS.journal,
+  'listHostConsumerRows': OOS.journal, 'probeLiveConsumerRows': OOS.journal, 'renewConsumerRow': OOS.journal, 'deleteConsumerRow': OOS.journal,
+  'stampWorktreeHeartbeats': OOS.journal,
   // entity and mention reads the CLI made through executeRaw
   'readMentionLastPass': OOS.entityReads, 'countPagesDueForMentions': OOS.entityReads, 'readIdentitySiblingCandidates': OOS.entityReads,
   'findExactSlug': OOS.entityReads, 'readExtractionLagCounts': OOS.entityReads, 'readIgnoredPrivacyLabelPages': OOS.entityReads,
