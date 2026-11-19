@@ -209,6 +209,20 @@ impl Brain {
         })
     }
 
+    /// `readReferrerPageDetails`: `{ ids }`: the card details of each page id that exists.
+    #[napi]
+    pub fn read_referrer_page_details<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::link_queries::ReferrerPageDetailsInput =
+                arg(input, "readReferrerPageDetails input")?;
+            s.read_referrer_page_details(&input)
+        })
+    }
+
     /// `countSearchVectorRows`: `{ pages, chunks }`.
     #[napi]
     pub fn count_search_vector_rows<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {

@@ -7,8 +7,8 @@ use common::TempDir;
 use gbrain_store::link_queries::{
     ApplyTemporalInput, EdgeValidityInput, EvidenceInput, InboundCountInput, KeysForOriginInput,
     KeysForPagesInput, KeysTouchingInput, ManualRelationship, ManualWriteInput, NoteRowsInput,
-    PageStatusInput, RecordMetadataInput, ReferrerGroupInput, RelationshipKey, StaleKeysInput,
-    StateWrite,
+    PageStatusInput, RecordMetadataInput, ReferrerGroupInput, ReferrerPageDetailsInput,
+    RelationshipKey, StaleKeysInput, StateWrite,
 };
 use gbrain_store::links::AddLinkOptions;
 use gbrain_store::pages::{PageInput, PutPageOptions};
@@ -602,4 +602,51 @@ fn referrer_groups_by_canonical_type() {
         json!({"id": row["id"], "slug": "standup", "source_id": "default", "type": "call", "canonical_type": "call",
                "d": "2026-02-01T00:00:00.000000Z", "gtotal": 1})
     );
+}
+
+#[test]
+fn referrer_page_details_bound_the_body_and_name_the_date_source() {
+    let b = Brain::new("lt-referrer-details");
+    let put = |slug: &str, extra: Value| -> u64 {
+        let mut input = json!({"type": "note", "title": format!("Title {slug}"), "compiled_truth": format!("{slug} body")});
+        input
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        let input: PageInput = de(input);
+        let options: PutPageOptions = de(json!({"sourceId": "default", "index": false}));
+        b.store.put_page(slug, &input, &options).unwrap()["id"]
+            .as_u64()
+            .unwrap()
+    };
+    let long = put(
+        "long",
+        json!({"compiled_truth": "é".repeat(4100), "frontmatter": {"quarantine": {"reason": "test"}}}),
+    );
+    let dated = put(
+        "dated",
+        json!({"effective_date": "2026-02-01T00:00:00.000Z", "effective_date_source": "event_date"}),
+    );
+    let undated = put("undated", json!({}));
+    let read = |ids: Vec<u64>| {
+        let input: ReferrerPageDetailsInput = de(json!({"ids": ids}));
+        serde_json::to_value(b.store.read_referrer_page_details(&input).unwrap()).unwrap()
+    };
+    let rows = read(vec![undated, long, dated, long, 9999]);
+    let rows = rows.as_array().unwrap();
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0]["id"], long);
+    assert_eq!(rows[0]["body"].as_str().unwrap().chars().count(), 4000);
+    assert_eq!(
+        rows[0]["frontmatter"],
+        json!({"quarantine": {"reason": "test"}})
+    );
+    assert_eq!(rows[1]["date_source"], "event_date");
+    assert_eq!(
+        rows[2],
+        json!({"id": undated, "title": "Title undated", "body": "undated body", "date_source": "updated_at",
+               "trust_tier": rows[2]["trust_tier"], "write_origin": rows[2]["write_origin"], "flagged": false,
+               "frontmatter": {}})
+    );
+    assert!(read(vec![]).as_array().unwrap().is_empty());
 }

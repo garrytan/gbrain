@@ -111,6 +111,8 @@ export const readReferrerGroupRows: StoreMember<[target: { sources: readonly str
       includeQuarantined: scope.includeQuarantined === true, perGroup: Math.max(0, Math.trunc(scope.perGroup)) }));
   };
 
+export const readReferrerPageDetails: StoreMember<[ids: readonly number[]], LinkTemporalSql.ReferrerPageDetailRow[]> = async (brain, pageIds) =>
+  pageIds.length === 0 ? [] : storeCall({ member: 'readReferrerPageDetails' }, () => brain.readReferrerPageDetails({ ids: ids(pageIds) }));
 
 // ---------------------------------------------------------------------------------------------------------------------
 // reindex-search-vector: the store keeps one keyword index, built for the language PGLite's default `english` names.

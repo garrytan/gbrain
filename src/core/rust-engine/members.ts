@@ -319,6 +319,7 @@ export const RUST_ENGINE_MEMBERS = {
   listPageStatusByRef: 'links',
   listRecordMetadataRows: 'links',
   readReferrerGroupRows: 'links',
+  readReferrerPageDetails: 'links',
   // reindex-search-vector's steps (engine-sql/search-vector.ts): no-ops under the store's one language
   countSearchVectorRows: 'keyword_search',
   replaceSearchVectorTriggerFunction: 'keyword_search',

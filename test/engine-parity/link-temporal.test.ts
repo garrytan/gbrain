@@ -338,6 +338,26 @@ describe('engine parity: link temporal state', () => {
   );
 
   parityTest(
+    'mentions/referrers: referrer page details bound the body, name the date source and keep soft-deleted pages',
+    { methods: ['putPage', 'softDeletePage', 'readReferrerPageDetails'] },
+    async (engine) => {
+      await engine.putPage('notes/long', page('Long', { compiled_truth: 'é'.repeat(4100), frontmatter: { quarantine: { reason: 'test' } } }));
+      await engine.putPage('notes/dated', page('Dated', { effective_date: new Date('2026-02-01T00:00:00Z'), effective_date_source: 'event_date' }));
+      await engine.putPage('notes/undated', page('Undated'));
+      await engine.putPage('notes/gone', page('Gone', { effective_date: new Date('2026-03-01T00:00:00Z'), effective_date_source: 'date' }));
+      const ids = await slugsById(engine, ['notes/long', 'notes/dated', 'notes/undated', 'notes/gone']);
+      await engine.softDeletePage('notes/gone');
+      const rows = await engine.readReferrerPageDetails([...ids.keys(), 999999]);
+      const view = sorted(rows.map(({ id, body, ...r }) => ({ slug: ids.get(id), chars: [...(body ?? '')].length, head: body?.slice(0, 12), ...r })),
+        r => String(r.slug));
+      expect(view.map(r => `${r.slug}:${r.date_source}:${r.chars}`)).toEqual(
+        ['notes/dated:event_date:10', 'notes/gone:date:9', 'notes/long:updated_at:4000', 'notes/undated:updated_at:12']);
+      expect(await engine.readReferrerPageDetails([])).toEqual([]);
+      return view;
+    },
+  );
+
+  parityTest(
     'mentions/referrers and relationship notes under excludePrivate apply a caller\'s reader identity and private-readable grant',
     { methods: ['putPage', 'addLink', 'readPageSnapshot', 'replaceDerivedLinks', 'listPageStatusByRef', 'listRecordMetadataRows',
       'listRelationshipNoteRows'] },
