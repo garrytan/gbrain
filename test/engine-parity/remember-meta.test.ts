@@ -107,7 +107,21 @@ describe('engine parity: the remember _meta hook reads', () => {
     const untrusted = await quoted(true);
     expect(trusted).toEqual(fromPages);
     expect(untrusted).toEqual(['Agent remembered', 'Backstop from a chat page', 'Backstop from a note', 'Fence row on a chat page', 'Fence row on a note']);
-    return { fromPages, trusted, untrusted };
+    // The members themselves, with arguments the wrappers never pass: another page type and backstop pair, and two floors.
+    const names = (ids: number[]) => ids.map(id => label.get(Number(id)) ?? `other:${id}`).sort();
+    const ids = facts.map(f => f.id);
+    const members = {
+      notePages: names(await engine.listFactsFromQuotedPages({ ids, pageTypes: ['note'], backstop: [['sync:import', 'sync:'], ['mcp:put_page', 'put_page:']] })),
+      noBackstop: names(await engine.listFactsFromQuotedPages({ ids, pageTypes: ['chat'], backstop: [['none', 'none:'], ['none', 'none:']] })),
+      noIds: await engine.listFactsFromQuotedPages({ ids: [], pageTypes: ['chat'], backstop: [['sync:import', 'sync:'], ['mcp:put_page', 'put_page:']] }),
+      operator: names(await engine.listOwnerTierFacts({ ids: [...ids, 9_999_999], floor: 'operator_curated' })),
+      agent: names(await engine.listOwnerTierFacts({ ids, floor: 'agent_written' })),
+    };
+    expect(members).toEqual({
+      notePages: ['Backstop from a note', 'Fence row on a note'], noBackstop: ['Fence row on a chat page'], noIds: [],
+      operator: ['Owner remembered'], agent: ['Agent remembered', 'Owner remembered'],
+    });
+    return { fromPages, trusted, untrusted, members };
   });
 
   parityTest('listFactsSince and listFactsBySession hide a fact held on a private page from a remote caller whose record carries the schema version its request read', {
