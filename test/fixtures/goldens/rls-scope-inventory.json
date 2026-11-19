@@ -4822,6 +4822,7 @@
         "batchRetry": "none",
         "beginSnapshotRead": "none",
         "bindPageOrigin": "none",
+        "bumpPageRetrievals": "none",
         "cancelJobs": "none",
         "chunkRead": "none",
         "claimHousekeepingTurn": "none",
