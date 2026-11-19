@@ -114,7 +114,8 @@ const FACT_FORMS = [
  * The store serves the read when that text equals one of the two forms with no caller record or, for a family that opts
  * in with `callerReaders`, for a fresh record of just the caller's reader identity and private-readable grant. Under
  * that record the first form judges the caller's own member page by the identity (`memberPage`); the second has no
- * member-page case. Any other caller refuses.
+ * member-page case. The caller is judged by judgeWidenedCaller, so an anonymous caller on a brain that never named
+ * readers (`restricted` false) is also served under the restricted rendering. Any other caller refuses.
  */
 export function storePrivacyPolicy(
   member: string,
@@ -123,36 +124,40 @@ export function storePrivacyPolicy(
   opts: { callerReaders?: boolean } = {},
 ): StorePrivacyPolicy | undefined {
   if (excludePrivate !== true) return undefined;
-  const text = normalizeConceptInputs(rendered());
-  for (const form of FACT_FORMS) {
-    const baseline = withoutCallerAccess(() => form.sql('facts'));
-    if (text === normalizeConceptInputs(baseline)) return factPolicyFlags(baseline);
-  }
-  if (opts.callerReaders) {
-    const access = currentCallerAccess();
-    const readers = { identity: [...access.identity], privateReadableSources: [...access.privateReadableSources] };
+  const policy = judgeWidenedCaller<StorePrivacyPolicy>(readers => {
+    const text = normalizeConceptInputs(rendered());
+    for (const form of FACT_FORMS) {
+      const baseline = renderForStoreCaller({}, () => form.sql('facts'));
+      if (text === normalizeConceptInputs(baseline)) return factPolicyFlags(baseline);
+    }
+    if (!opts.callerReaders) return undefined;
     const own = readers.identity.find(p => p.startsWith('member:'))?.slice('member:'.length);
     for (const form of FACT_FORMS) {
-      const canonical = withoutCallerAccess(() =>
-        withCallerAccess({ ...readers, hidePrivate: true }, () => form.sql('facts')));
+      const canonical = renderForStoreCaller({ ...readers, hidePrivate: true }, () => form.sql('facts'));
       if (text !== normalizeConceptInputs(canonical)) continue;
       const memberPage = own === undefined ? undefined : `${MEMBER_PAGE_PREFIX}${own}`;
       const judged = form.memberCase && memberPage !== undefined && canonical.includes(`pp.slug = '${memberPage}'`);
       return { ...factPolicyFlags(canonical), ...readers, ...(judged ? { memberPage } : {}) };
     }
-  }
+    return undefined;
+  });
+  if (policy) return policy;
   refuseMember(member, 'excludePrivate for a caller whose member pages, grants or lineage widen the policy');
 }
 
 /**
  * The store policy for the remote provenance floor, remoteProvenanceFloorSql('facts'): the provenance page judged by
  * privatePagesFilterFragment('pp', true), which reads no caller identity, plus the owner-only conjunct. The store serves
- * it when the text equals the no-caller rendering; a labelled-only caller (its own conjunct) or an owner read refuses.
+ * it when the text equals the no-caller rendering (judgeWidenedCaller); a labelled-only caller (its own conjunct) or an
+ * owner read refuses.
  */
 export function storeFloorPolicy(member: string): StorePrivacyPolicy {
-  const text = normalizeConceptInputs(remoteProvenanceFloorSql('facts'));
-  const baseline = withoutCallerAccess(() => remoteProvenanceFloorSql('facts'));
-  if (text === normalizeConceptInputs(baseline)) return { ...factPolicyFlags(baseline), entityPrivacy: false, provenanceOnly: true };
+  const policy = judgeWidenedCaller<StorePrivacyPolicy>(() => {
+    const text = normalizeConceptInputs(remoteProvenanceFloorSql('facts'));
+    const baseline = renderForStoreCaller({}, () => remoteProvenanceFloorSql('facts'));
+    return text === normalizeConceptInputs(baseline) ? { ...factPolicyFlags(baseline), entityPrivacy: false, provenanceOnly: true } : undefined;
+  });
+  if (policy) return policy;
   refuseMember(member, 'the remote provenance floor for a caller whose labelled-only grant or owner read changes it');
 }
 

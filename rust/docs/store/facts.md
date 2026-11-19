@@ -74,7 +74,10 @@ second form has no CASE and sends no `memberPage`. Any other caller (folder rule
 lineage, labelled-only members) is refused with
 `engine_capability_missing` (`src/core/rust-engine/store-members/private-provenance.ts`). The store
 has no keyed-slug entity rule (an `entity_slug` with no `/`, judged at a name-key page directory by
-`privateEntityFilterForCaller`).
+`privateEntityFilterForCaller`). An anonymous caller on a brain that never named readers (`restricted` false in its
+record, the MCP stdio caller) renders the short member-access form; the member judges a fact read for it under the
+restricted rendering, the full form above, which hides the same rows on such a brain (`judgeWidenedCaller`,
+`test/engine-parity/unrestricted-fact-list-reads.test.ts`). A caller with a member identity there still refuses.
 
 A page read under `excludePrivate` sends the page policy (`storePagePolicy`). A page family that opts in with
 `callerReaders` also sends the caller's reader identity and private-readable grant, when the caller's text equals
