@@ -538,7 +538,8 @@ pub(crate) fn read_page_by_id(read: &dyn KvRead, id: u64) -> Result<Option<PageR
 
 /// Stores a page record and its id key, keeps its origin key (`o`) in step with it, and calls the
 /// page index hook (`page_index::reindex_page`) and the page projection hook
-/// (`page_projection::queue_page_projection`) with the record as stored before and after.
+/// (`page_projection::queue_page_projection`) with the record as stored before and after. It
+/// also sets the sticky member-access flag for a page with `readable_by` (`access_flag`).
 ///
 /// The record's `trust_tier` and `write_origin` are stamped first, as PGLite's
 /// `trust_tier_stamp` trigger stamps every row written to `pages` (see [`stamp_page_trust`]).
@@ -558,6 +559,7 @@ pub(crate) fn write_page(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()
     tx.put(&keys::page_id(record.id), &key)?;
     index_origin(tx, before.as_ref(), Some(record))?;
     crate::page_index::reindex_page(tx, before.as_ref(), Some(record))?;
+    crate::access_flag::mark_restricted(tx, record)?;
     crate::page_projection::queue_page_projection(tx, before.as_ref(), Some(record))
 }
 

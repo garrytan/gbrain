@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 641/641
+# covered: 645/645
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -61,6 +61,8 @@
 # field_usage: 1/1
 # alias_fanout_reads: 4/4
 # write_guards: 7/7
+# page_visibility: 3/3
+# large_page: 1/1
 # trust_fence: 1/1
 # trust_proposals: 6/6
 # connect_gate: 4/4
@@ -71,7 +73,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	50	no	yes	yes	serves
+transaction	lifecycle	yes	51	no	yes	yes	serves
 transactionDirect	lifecycle	yes	2	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -79,13 +81,13 @@ getPage	pages	yes	71	yes	yes	yes	serves
 readPageSnapshot	pages	yes	17	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	298	yes	yes	yes	serves
+putPage	pages	yes	302	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	92	yes	yes	yes	serves
+softDeletePage	pages	yes	96	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -304,17 +306,17 @@ findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
 consolidateFact	facts	yes	4	no	yes	yes	serves
 findTrajectory	facts	yes	3	yes	yes	yes	serves
 getFactsHealth	facts	yes	2	yes	yes	yes	serves
-allocateBodyOccurrenceIds	segmented_body	yes	2	no	yes	yes	serves
-stageSegmentTexts	segmented_body	yes	4	no	yes	yes	serves
+allocateBodyOccurrenceIds	segmented_body	yes	3	no	yes	yes	serves
+stageSegmentTexts	segmented_body	yes	5	no	yes	yes	serves
 readSegmentTexts	segmented_body	yes	5	no	yes	yes	serves
-stageManifestRows	segmented_body	yes	5	no	yes	yes	serves
+stageManifestRows	segmented_body	yes	6	no	yes	yes	serves
 readManifest	segmented_body	yes	9	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	4	no	yes	yes	serves
-createSegmentedPageShell	segmented_body	yes	7	no	yes	yes	serves
-flipBodyGeneration	segmented_body	yes	7	no	yes	yes	serves
+createSegmentedPageShell	segmented_body	yes	8	no	yes	yes	serves
+flipBodyGeneration	segmented_body	yes	8	no	yes	yes	serves
 sealSegmentedPage	segmented_body	yes	2	no	yes	yes	serves
-openBodyStaging	segmented_body	yes	7	no	yes	yes	serves
-setBodyStagingState	segmented_body	yes	6	no	yes	yes	serves
+openBodyStaging	segmented_body	yes	8	no	yes	yes	serves
+setBodyStagingState	segmented_body	yes	7	no	yes	yes	serves
 sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
@@ -337,7 +339,7 @@ replaceDerivedAliases	sync_aliases	yes	11	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
-getConfig	config	yes	9	no	yes	yes	serves
+getConfig	config	yes	10	no	yes	yes	serves
 setConfig	config	yes	21	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
@@ -347,7 +349,7 @@ readManagedModeRows	import_guards	yes	1	no	yes	yes	serves
 getSourceStrictness	import_guards	yes	2	no	yes	yes	serves
 readPersistenceBrainId	import_guards	yes	2	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
-insertLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
+insertLocalWriterRow	import_guards	yes	2	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	11	no	yes	yes	serves
 applyTransactionSettings	import_guards	yes	29	no	yes	yes	serves
 readLedgerSource	import_guards	yes	8	no	yes	yes	serves
@@ -677,6 +679,10 @@ bindPageOrigin	write_guards	yes	1	no	yes	yes	serves
 stampPageIngest	write_guards	yes	1	no	yes	yes	serves
 sealImportedPage	write_guards	yes	1	no	yes	yes	serves
 readLivePageBody	write_guards	yes	1	no	yes	yes	serves
+readPageHiddenFromCaller	page_visibility	yes	1	no	yes	yes	serves
+readCallerPageAccess	page_visibility	yes	1	no	yes	yes	serves
+readWriterSlugFence	page_visibility	yes	1	no	yes	yes	serves
+readStoredBodyBytes	large_page	yes	1	no	yes	yes	serves
 listFenceFactRows	trust_fence	yes	4	no	yes	yes	serves
 insertTrustProposal	trust_proposals	yes	4	no	yes	yes	serves
 getTrustProposal	trust_proposals	yes	2	no	yes	yes	serves
