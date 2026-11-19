@@ -8,15 +8,19 @@
 //! listAllPageRefs, listPrefixSampledPages, listCorpusSample, getContentFlagsByPageIds,
 //! getUnverifiedExtractionPageIds, getPageTimestamps, getEffectiveDates, revertToVersion.
 //!
-//! Keys: none. Every read scans the page records (`pages::all_pages`), as `list_pages` does; the
-//! family tag `keys::PAGE_OPS` (`p`) stays unused until an index is needed, and such an index needs
-//! the core `write_page` hook to stay in step.
+//! Keys (every record starts with `keys::PAGE_OPS`, `p`):
+//! - `p 0x03 <page id u64 BE>` -> `RetrievalRecord` (JSON): the time `bumpLastRetrieved` last
+//!   stamped the page (Postgres `page_retrievals`). A hard page delete drops it
+//!   (`remove_page_rows`), as the `gbrain_forget_page_retrievals` trigger does; a soft delete keeps it.
+//!
+//! Every read scans the page records (`pages::all_pages`), as `list_pages` does; an index of page
+//! fields under `p` needs the core `write_page` hook to stay in step.
 //!
 //! Text compares and sorts in byte order (Postgres `COLLATE "C"`). Dates cross the binding as ISO
 //! strings with microseconds.
 //!
-//! What the store does not hold answers as empty: no page has a `last_retrieved_at` (no retrieval
-//! records) and no chunk has an embedding (so `representative_chunk_id` is always null).
+//! `last_retrieved_at` is the page's retrieval record (null without one). No chunk has an embedding
+//! here, so `representative_chunk_id` is always null.
 //!
 //! Segmented pages (a NULL body, `pages::PageText`): `readPageSnapshotsBatch` sends the NULL body
 //! on and counts it as 0 bytes, as PGLite's `sum(octet_length(...))` skips it; the samplers leave
@@ -34,8 +38,8 @@ use crate::kv::{KvRead, KvWrite};
 use crate::pages::{PageRecord, VersionRecord, all_pages, read_page, remove_page, write_page};
 use crate::sources::{SourceRecord, all_sources, read_source};
 use crate::trust::{TrustPolicy, TrustTier};
-use crate::{Store, get_json, keys};
-use serde::Deserialize;
+use crate::{Store, get_json, keys, put_json};
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -645,8 +649,37 @@ fn find_duplicate_in(
         .map(|p| json!({ "slug": p.slug, "id": p.id }))
 }
 
+/// Sub-tag of the retrieval records under `keys::PAGE_OPS`.
+const RETRIEVAL: u8 = 0x03;
+
+/// How long a stamp stands before `bumpLastRetrieved` moves it again (`INTERVAL '5 minutes'`).
+const RETRIEVAL_WINDOW_US: i64 = 5 * 60 * 1_000_000;
+
+/// One `page_retrievals` row: when the page was last stamped.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RetrievalRecord {
+    last_retrieved_at_us: i64,
+}
+
+fn retrieval_key(page_id: u64) -> Vec<u8> {
+    let mut key = vec![keys::PAGE_OPS, RETRIEVAL];
+    key.extend_from_slice(&page_id.to_be_bytes());
+    key
+}
+
+fn last_retrieved_us(read: &dyn KvRead, page_id: u64) -> Result<Option<i64>> {
+    Ok(get_json::<RetrievalRecord>(read, &retrieval_key(page_id))?.map(|r| r.last_retrieved_at_us))
+}
+
+/// Deletes the page's retrieval record when the page is deleted for good
+/// (`cascade::remove_page_rows`).
+pub(crate) fn remove_page_rows(tx: &mut dyn crate::kv::KvWrite, page: &PageRecord) -> Result<()> {
+    tx.delete(&retrieval_key(page.id))
+}
+
 fn domain_bank_row(read: &dyn KvRead, page: &PageRecord) -> Result<Value> {
     let connections = crate::links::in_links(read, page.id)?.len();
+    let last_retrieved = last_retrieved_us(read, page.id)?;
     Ok(json!({
         "slug": page.slug,
         "source_id": page.source_id,
@@ -655,7 +688,7 @@ fn domain_bank_row(read: &dyn KvRead, page: &PageRecord) -> Result<Value> {
         "title": page.title,
         "compiled_truth": page.compiled_truth,
         "connection_count": connections,
-        "last_retrieved_at": Value::Null,
+        "last_retrieved_at": last_retrieved.map(iso),
         "representative_chunk_id": Value::Null,
     }))
 }
@@ -1152,8 +1185,8 @@ impl Store {
     }
 
     /// `listPrefixSampledPages(opts)`: one live inline page per wanted slug prefix (the first two slug
-    /// segments), the one with the most inbound links, then the lowest slug; ordered by prefix.
-    /// No page has a retrieval date, so `staleBias` ranks every page the same.
+    /// segments); ordered by prefix. With `staleBias` a page never stamped wins, then a page stamped
+    /// before `staleThresholdDays` (default 90); then the most inbound links, then the lowest slug.
     pub fn list_prefix_sampled_pages(&self, options: &PrefixSampleOptions) -> Result<Vec<Value>> {
         if options.prefixes.is_empty() {
             return Ok(Vec::new());
@@ -1166,7 +1199,22 @@ impl Store {
             .map(String::as_str)
             .collect();
         let read = self.read()?;
-        let mut best: BTreeMap<String, (usize, PageRecord)> = BTreeMap::new();
+        // PGLite casts the threshold `::int` and compares with `NOW() - n days`.
+        let stale_before = self.env.now_micros().saturating_sub(
+            (options.stale_threshold_days.unwrap_or(90.0).round() as i64)
+                .saturating_mul(86_400_000_000),
+        );
+        let stale_score = |page_id: u64| -> Result<u8> {
+            if !options.stale_bias {
+                return Ok(0);
+            }
+            Ok(match last_retrieved_us(&*read, page_id)? {
+                None => 2,
+                Some(t) if t < stale_before => 1,
+                Some(_) => 0,
+            })
+        };
+        let mut best: BTreeMap<String, ((u8, usize), PageRecord)> = BTreeMap::new();
         for page in all_pages(&*read)? {
             if page.deleted_at_us.is_some()
                 || page.compiled_truth.is_null()
@@ -1179,22 +1227,57 @@ impl Store {
                 continue;
             };
             let prefix = prefix.to_string();
-            let links = crate::links::in_links(&*read, page.id)?.len();
+            let rank = (
+                stale_score(page.id)?,
+                crate::links::in_links(&*read, page.id)?.len(),
+            );
             let better = match best.get(&prefix) {
                 None => true,
-                Some((n, held)) => match links.cmp(n) {
+                Some((held_rank, held)) => match rank.cmp(held_rank) {
                     Ordering::Greater => true,
                     Ordering::Less => false,
                     Ordering::Equal => page.slug < held.slug,
                 },
             };
             if better {
-                best.insert(prefix, (links, page));
+                best.insert(prefix, (rank, page));
             }
         }
         best.values()
             .map(|(_, page)| domain_bank_row(&*read, page))
             .collect()
+    }
+
+    /// `bumpLastRetrieved(pageIds)`: stamps now on each id that names a page (deleted or not) and
+    /// has no stamp from the last 5 minutes, in one transaction. Unknown ids are skipped. Returns
+    /// how many pages it stamped.
+    pub fn bump_last_retrieved(&self, page_ids: &[i64]) -> Result<u64> {
+        if page_ids.is_empty() {
+            return Ok(0);
+        }
+        let ids: BTreeSet<u64> = page_ids
+            .iter()
+            .filter_map(|&id| u64::try_from(id).ok())
+            .collect();
+        self.write(|tx| {
+            let now = self.env.now_micros();
+            let mut stamped = 0;
+            for id in ids {
+                if crate::pages::read_page_by_id(&*tx, id)?.is_none() {
+                    continue;
+                }
+                let fresh = last_retrieved_us(&*tx, id)?
+                    .is_some_and(|t| t >= now.saturating_sub(RETRIEVAL_WINDOW_US));
+                if !fresh {
+                    let record = RetrievalRecord {
+                        last_retrieved_at_us: now,
+                    };
+                    put_json(tx, &retrieval_key(id), &record)?;
+                    stamped += 1;
+                }
+            }
+            Ok(stamped)
+        })
     }
 
     /// `listCorpusSample(opts)`: up to `n` live inline pages picked at random (a seeded shuffle when

@@ -1442,6 +1442,12 @@ export interface BrainEngine {
    */
   listCorpusSample(opts: CorpusSampleOpts): Promise<DomainBankRow[]>;
 
+  /**
+   * Sets `last_retrieved_at` to now for each page id that names a page and was not bumped in the
+   * last 5 minutes (`last-retrieved.ts`, the LSD stale signal). Ids of pages that do not exist are skipped.
+   */
+  bumpLastRetrieved(pageIds: number[]): Promise<void>;
+
   // Search
   searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]>;
   /** Cat 40 Hard F2: pages matching searchKeyword's strict query (never the OR retry), capped at KEYWORD_COUNT_CAP + 1; `timeoutMs` bounds the Postgres statement. */

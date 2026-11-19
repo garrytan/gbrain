@@ -23,6 +23,9 @@
     "addTimelineEntry#default": {},
     "batchLoadEmotionalInputs#default": {},
     "batchLoadEmotionalInputs#slugs": {},
+    "bumpLastRetrieved#default": {
+      "raw": 1
+    },
     "clearCodeTraversalCache#allSources": {
       "raw": 1
     },

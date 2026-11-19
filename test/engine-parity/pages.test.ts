@@ -489,4 +489,27 @@ describe('engine parity: pages', () => {
     expect(sampleSlugs).toEqual(['wiki/bio/one', 'wiki/vc/one']);
     return { prefixedView, sampleSlugs };
   });
+
+  parityTest('bumpLastRetrieved stamps pages once per 5 minutes and steers the stale bias',
+    { methods: ['bumpLastRetrieved', 'listPrefixSampledPages'] }, async (engine) => {
+      await seed(engine, [['wiki/vc/linked', NOTE], ['wiki/vc/quiet', NOTE], ['notes/a', NOTE]]);
+      await engine.addLink('notes/a', 'wiki/vc/linked', '', 'mentions');
+      const linked = (await engine.getPage('wiki/vc/linked'))!.id;
+      const sample = async (staleBias: boolean) => {
+        const [row] = await engine.listPrefixSampledPages({ prefixes: ['wiki/vc'], staleBias });
+        return { slug: row!.slug, retrieved: row!.last_retrieved_at };
+      };
+      const before = await sample(false);
+      expect(before).toEqual({ slug: 'wiki/vc/linked', retrieved: null });
+      await engine.bumpLastRetrieved([linked, 987654]);
+      const first = await sample(false);
+      expect(first.retrieved).toBeInstanceOf(Date);
+      await engine.bumpLastRetrieved([linked]);
+      const again = await sample(false);
+      const unmoved = again.retrieved!.getTime() === first.retrieved!.getTime();
+      expect(unmoved).toBe(true);
+      const biased = await sample(true);
+      expect(biased).toEqual({ slug: 'wiki/vc/quiet', retrieved: null });
+      return { before, stamped: first.slug, unmoved, biased };
+    });
 });
