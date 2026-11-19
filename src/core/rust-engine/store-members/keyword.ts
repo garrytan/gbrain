@@ -5,14 +5,17 @@
  *
  * The keyword members resolve every engine default here (the hard-exclude list, the source-boost map, the slug
  * handles, the dash-run collapse, the date bounds) and send the store only predicates; rust/docs/store/keyword.md
- * lists what each member reads, ignores and refuses.
+ * lists what each member reads, ignores and refuses. A CJK query takes PGLite's CJK fallback: searchKeyword and
+ * searchKeywordChunks run `searchKeywordCjk` (engine-sql/cjk-search.ts), countKeywordPages and searchKeywordPages send
+ * the match terms (`cjkTerms`), and searchTitles runs its usual statements, as both SQL engines do.
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
  * unexported.
  */
-import { hasCJK } from '../../cjk.ts';
+import { cjkMatchTerms, hasCJK, splitCJKQueryTerms } from '../../cjk.ts';
 import { clampSearchLimit } from '../../engine.ts';
+import { CJK_CANDIDATE_CAP, PGLITE_CJK_CAPPED_CHUNKS, type CjkKeywordMeta } from '../../engine-sql/cjk-search.ts';
 import { rankByRarity } from '../../engine-sql/titles.ts';
 import { normalizeAlias } from '../../search/alias-normalize.ts';
 import { getFtsLanguage } from '../../fts-language.ts';
@@ -33,9 +36,11 @@ import { titleWholeVectorCandidates } from '../../search/title-statement.ts';
 import type { SearchOpts, SearchResult } from '../../types.ts';
 import { rowToSearchResult } from '../../utils.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import type { StoreBrain } from '../store.ts';
 import { storePagePolicy } from './private-provenance.ts';
 import { dateMicros, whereFields } from './search-filters.ts';
 
+type Row = Record<string, unknown>;
 type FuzzyHit = { slug: string; similarity: number } | null;
 
 export const findByTitleFuzzy: StoreMember<[name: string, dirPrefix?: string, minSimilarity?: number, sourceId?: string], FuzzyHit> =
@@ -49,7 +54,10 @@ export const findByTitleFuzzy: StoreMember<[name: string, dirPrefix?: string, mi
     return storeCall({ member: 'findByTitleFuzzy' }, () => brain.findByTitleFuzzy(String(name), dir, minSimilarity, source));
   };
 
-/** Options no keyword statement reads: hybrid-search, vector and reporting knobs. */
+/**
+ * Options no keyword statement reads: hybrid-search, vector and reporting knobs. On a CJK query searchKeyword and
+ * searchKeywordChunks read `orFallback` and `cjkKeyword` themselves (`searchCjk`).
+ */
 const NOT_READ = new Set([
   'onVectorPoolMeta', 'vectorLegacyGuard', 'hnswIterativeScan', 'cjkKeyword', 'onKeywordIncomplete', 'adaptiveReturn',
   'autocut', 'nearSymbol', 'walkDepth', 'orFallback', 'orFill', 'keywordTimeoutCache', 'rankQuery', 'embeddingColumn',
@@ -77,7 +85,6 @@ type Member = 'searchKeyword' | 'searchKeywordChunks' | 'countKeywordPages' | 's
 /** Checks every option `member` gets, refusing one it cannot answer exactly, and returns the store options. */
 function keywordOptions(member: Member, query: string, opts: (SearchOpts & { timeoutMs?: number }) | undefined): Record<string, unknown> {
   if (typeof query !== 'string') refuseMember(member, 'a query that is not a string');
-  if (hasCJK(query)) refuseMember(member, 'a CJK query (follow-up keyword-cjk)');
   if (getFtsLanguage() !== 'english') refuseMember(member, `the ${getFtsLanguage()} text search configuration`);
   const o = (opts ?? {}) as Record<string, unknown>;
   const pageGrain = member !== 'searchKeywordChunks';
@@ -131,6 +138,41 @@ function wholeCount(member: Member, value: unknown, what: string): number | unde
   return value;
 }
 
+/** The CJK match terms with their operator (`likeClauses`: LIKE for a term without case, else ILIKE). */
+function cjkTerms(query: string): { text: string; ilike: boolean }[] {
+  return cjkMatchTerms(query).map(text => ({ text, ilike: text.toLowerCase() !== text.toUpperCase() }));
+}
+
+/**
+ * engine-sql/cjk-search.ts `searchKeywordCJK` as PGLite runs it, over the raw query: strict AND, the OR fallback when
+ * `orFallback` applies and the strict rows fall short, and with `cjkKeyword` the bounded arm (bounded by work: the
+ * store compares its chunk count with `pgliteCappedChunks`) and its `onMeta` report. `dedup` is searchKeyword.
+ */
+async function searchCjk(
+  brain: StoreBrain, member: Member, query: string, opts: SearchOpts | undefined,
+  options: Record<string, unknown>, dedup: boolean,
+): Promise<SearchResult[]> {
+  const terms = cjkTerms(query);
+  if (query.length === 0 || terms.length === 0) return [];
+  const started = performance.now();
+  const bounded = opts?.cjkKeyword;
+  const run = {
+    terms, dedup, orFallback: opts?.orFallback === true && splitCJKQueryTerms(query).length > 1,
+    ...(bounded ? {
+      bounded: {
+        cap: bounded.candidateCap ?? CJK_CANDIDATE_CAP, cappedChunks: bounded.pgliteCappedChunks ?? PGLITE_CJK_CAPPED_CHUNKS,
+      },
+    } : {}),
+  };
+  const out: { rows: Row[]; capped: boolean; capHit: boolean } = await storeCall({ member }, () => brain.searchKeywordCjk(query, options, run));
+  if (bounded) {
+    const meta: Omit<CjkKeywordMeta, 'arm_ms'> = !out.capped ? { incomplete: false, capped: false }
+      : out.capHit ? { incomplete: true, reason: 'candidate_budget', capped: true } : { incomplete: false, capped: true };
+    bounded.onMeta?.({ ...meta, arm_ms: Math.round(performance.now() - started) });
+  }
+  return out.rows.map(rowToSearchResult);
+}
+
 export const searchKeywordChunks: StoreMember<[query: string, opts?: SearchOpts], SearchResult[]> = async (brain, query, opts) => {
   const options = keywordOptions('searchKeywordChunks', query, opts);
   const cap = searchLimitCap();
@@ -139,6 +181,7 @@ export const searchKeywordChunks: StoreMember<[query: string, opts?: SearchOpts]
   }
   options.limit = clampSearchLimit(opts?.limit, 20, cap);
   options.offset = wholeCount('searchKeywordChunks', opts?.offset || 0, 'an offset');
+  if (hasCJK(query)) return searchCjk(brain, 'searchKeywordChunks', query, opts, options, false);
   const rows: Record<string, unknown>[] = await storeCall({ member: 'searchKeywordChunks' },
     () => brain.searchKeywordChunks(collapseWebsearchDashRuns(query), options));
   return rows.map(rowToSearchResult);
@@ -147,7 +190,13 @@ export const searchKeywordChunks: StoreMember<[query: string, opts?: SearchOpts]
 export const countKeywordPages: StoreMember<[query: string, opts?: SearchOpts & { timeoutMs?: number }], number> = async (brain, query, opts) => {
   const options = keywordOptions('countKeywordPages', query, opts);
   if (query.trim() === '') return 0;
-  options.handles = slugHandles(query, true) ?? [];
+  if (hasCJK(query)) {
+    // buildKeywordMatch's CJK arm: the terms ANDed, no handle arm; no terms match nothing.
+    options.cjkTerms = cjkTerms(query);
+    if ((options.cjkTerms as unknown[]).length === 0) return 0;
+  } else {
+    options.handles = slugHandles(query, true) ?? [];
+  }
   return Number(await storeCall({ member: 'countKeywordPages' }, () => brain.countKeywordPages(query, options)));
 };
 
@@ -155,7 +204,12 @@ export const searchKeywordPages: StoreMember<[query: string, opts: SearchOpts | 
   async (brain, query, opts, page) => {
     const options = keywordOptions('searchKeywordPages', query, opts);
     if (query.trim() === '') return [];
-    options.handles = slugHandles(query, true) ?? [];
+    if (hasCJK(query)) {
+      options.cjkTerms = cjkTerms(query);
+      if ((options.cjkTerms as unknown[]).length === 0) return [];
+    } else {
+      options.handles = slugHandles(query, true) ?? [];
+    }
     options.limit = wholeCount('searchKeywordPages', page?.limit, 'a page limit');
     options.offset = wholeCount('searchKeywordPages', page?.offset ?? 0, 'a page offset');
     if (page?.after) {
@@ -168,7 +222,6 @@ export const searchKeywordPages: StoreMember<[query: string, opts: SearchOpts | 
     return rows.map(rowToSearchResult);
   };
 
-type Row = Record<string, unknown>;
 
 /**
  * PGLite's keyword arm (pglite-engine.ts searchKeyword): the strict statement over the dash-collapsed query, then the
@@ -188,6 +241,8 @@ export const searchKeyword: StoreMember<[query: string, opts?: SearchOpts], Sear
   options.limit = limit;
   options.innerLimit = Math.min(limit * 3, cap * 3);
   options.offset = offset;
+  // PGLite's CJK branch returns before the strict statement and its retries.
+  if (hasCJK(query)) return searchCjk(brain, 'searchKeyword', query, opts, options, true);
   const rankQuery = opts?.rankQuery ? String(opts.rankQuery) : undefined;
   const call = (match: string, rank: string): Promise<Row[]> =>
     storeCall({ member: 'searchKeyword' }, () => brain.searchKeywordArm(match, rank, options));

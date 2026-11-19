@@ -12,6 +12,7 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
+use super::cjk::CjkTerm;
 use super::tsearch::{TsVector, Weight, concat, fts_input, setweight, to_tsvector};
 use super::vector_cache::{VectorKind, cached};
 use crate::chunks::{ChunkRecord, SAFE_FENCE_CHUNKER_VERSION};
@@ -106,6 +107,10 @@ pub struct KeywordOptions {
     /// `suppressFlagged`: drops a page `activationSuppressedSql('pages', p)` suppresses, a page at or
     /// below `agent_written` that holds a `flag` receipt in an activation reason family.
     pub suppress_flagged: bool,
+    /// `countKeywordPages` and `searchKeywordPages` on a CJK query: the match terms
+    /// (`cjkMatchTerms`), matched with `LIKE` / `ILIKE` in place of the text search, with no
+    /// handle arm (`keyword/cjk.rs`).
+    pub cjk_terms: Option<Vec<CjkTerm>>,
 }
 
 /// A parsed date bound.

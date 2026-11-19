@@ -17,14 +17,19 @@
 //! collapse), and `stale` is always false, as `keyword-statement.ts` reports on both SQL
 //! engines (Postgres reads no `timeline_entries` here). With `handlesOnly` only the handle arm runs
 //! (`searchHandlePages`, the keyword arm's rows for the pages a slug handle names).
+//!
+//! A CJK query (`cjkTerms` set) runs `buildKeywordMatch`'s CJK arm instead: a text chunk matches
+//! when it holds every term (LIKE, or ILIKE for a term with case), scored
+//! `((Σ term occurrences) * factor)::float8`; no handle arm, and `handlesOnly` matches nothing.
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::cjk::{CjkMatcher, CjkTerm};
 use super::filters::{KeywordOptions, PageFilter, result_row, row_count, source_factor};
 use super::index::{basename, basename_pages};
 use super::rank::ts_rank;
 use super::tsearch::{TsQuery, phraseto_tsquery, ts_matches, websearch_to_tsquery};
-use super::walk::{Admit, ChunkSource, PageOrder, walk_chunks};
+use super::walk::{Admit, ChunkSource, PageOrder, walk_chunks, walk_text_chunks};
 use crate::Store;
 use crate::chunks::ChunkRecord;
 use crate::error::{Result, StoreError};
@@ -62,6 +67,9 @@ impl Store {
     ) -> Result<()> {
         if query.trim().is_empty() {
             return Ok(());
+        }
+        if let Some(terms) = &options.cjk_terms {
+            return self.cjk_keyword_pages(terms, options, with_stale, visit);
         }
         let matcher = Matcher {
             query: websearch_to_tsquery(query)?,
@@ -141,6 +149,58 @@ impl Store {
             },
         )?;
         Ok(())
+    }
+
+    /// `keyword_pages` on a CJK query (`buildKeywordMatch`'s CJK arm): every term matches the text
+    /// chunk (`LIKE` / `ILIKE`), scored `((Σ count(t, term_i)) * factor)::float8`, with no
+    /// handle arm, so a handles-only call matches nothing.
+    fn cjk_keyword_pages(
+        &self,
+        terms: &[CjkTerm],
+        options: &KeywordOptions,
+        with_stale: bool,
+        mut visit: impl FnMut(PageRecord, Best) -> bool,
+    ) -> Result<()> {
+        if terms.is_empty() || options.handles_only {
+            return Ok(());
+        }
+        let matcher = CjkMatcher::new(terms);
+        let read = self.read()?;
+        let mut filter = PageFilter::new(options)?;
+        let mut admit = Admit {
+            filter: Some(&mut filter),
+            text_only: true,
+            basenames: None,
+        };
+        walk_text_chunks(&*read, &mut admit, &mut |page, chunks| {
+            let mut factor: Option<f64> = None;
+            let mut best: Option<Best> = None;
+            for chunk in chunks {
+                if !matcher.all(&chunk.chunk_text) {
+                    continue;
+                }
+                let factor = *factor.get_or_insert_with(|| source_factor(&page, &options.boosts));
+                let score = matcher.term_counts(&chunk.chunk_text) as f64 * factor;
+                let better = best
+                    .as_ref()
+                    .is_none_or(|b| score > b.score || (score == b.score && chunk.id < b.chunk.id));
+                if better {
+                    best = Some(Best {
+                        score,
+                        chunk,
+                        stale: false,
+                    });
+                }
+            }
+            let Some(mut best) = best else {
+                return Ok(true);
+            };
+            if with_stale {
+                best.stale = latest_entry_micros(&*read, page.id)?
+                    .is_some_and(|latest| page.updated_at_us < latest);
+            }
+            Ok(visit(page, best))
+        })
     }
 
     /// `countKeywordPages`: the matching pages, at most `KEYWORD_COUNT_CAP + 1`.

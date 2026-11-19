@@ -57,6 +57,7 @@ test/engine-parity/persistence.test.ts	35	0
 test/engine-parity/private-page-reads.test.ts	7	0
 test/engine-parity/raw-sql.test.ts	0	4
 test/engine-parity/retrieval-coverage.test.ts	11	1
+test/engine-parity/search-cjk.test.ts	7	0
 test/engine-parity/search-deep-query.test.ts	1	0
 test/engine-parity/search-privacy-retention.test.ts	5	0
 test/engine-parity/search-privacy.test.ts	24	1

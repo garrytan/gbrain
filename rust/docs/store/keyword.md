@@ -13,8 +13,8 @@ Code: `rust/crates/gbrain-store/src/keyword.rs` and its `keyword/` modules, the 
 | Member | State |
 |---|---|
 | `findByTitleFuzzy(name, dirPrefix?, minSimilarity?, sourceId?)` | served (`keyword/title_fuzzy.rs`) |
-| `searchKeyword(query, opts?)` | served (`keyword/arm.rs`), with the hybrid keyword arm's options |
-| `searchKeywordChunks(query, opts?)` | served (`keyword/chunk_search.rs`) |
+| `searchKeyword(query, opts?)` | served (`keyword/arm.rs`), with the hybrid keyword arm's options; CJK in `keyword/cjk.rs` |
+| `searchKeywordChunks(query, opts?)` | served (`keyword/chunk_search.rs`); CJK in `keyword/cjk.rs` |
 | `countKeywordPages(query, opts?)` | served (`keyword/page_search.rs`) |
 | `searchKeywordPages(query, opts, page)` | served (`keyword/page_search.rs`) |
 | `searchTitles(query, opts?)` | served (`keyword/titles.rs`), the hybrid title arm |
@@ -27,7 +27,6 @@ rankers (`keyword/rank.rs`). Their signatures are listed in the `keyword.rs` hea
 
 Every keyword member except `findByTitleFuzzy` refuses:
 
-- a CJK query (`hasCJK`): the SQL engines take a separate CJK path (follow-up `keyword-cjk`);
 - a text search configuration other than `english` (`getFtsLanguage()`);
 - a date bound (`afterDate`, `beforeDate`) that is not an ISO date or date-time
   (`YYYY-M-D[( |T|t)H:MM[:SS[.f…]][Z|z|±HH[:MM]]]`) or that is outside the calendar. A fraction of any length rounds
@@ -81,7 +80,9 @@ Ignored, as in the SQL statements: the vector, reranking, recency and reporting 
 `cjkKeyword`, `embeddingColumn`, `recencyBoost`, `tokenBudget`, `reranker`, `relationalRetrieval` and the rest of
 `NOT_READ` in the TS member), `keywordTimeoutCache` (a statement-timeout cache), `countKeywordPages`'s `timeoutMs`
 (only a statement timeout), `searchKeywordChunks`'s `keywordPhrase` (its statement ranks without the phrase factor)
-and the paging members' `opts.limit` / `opts.offset` (the `page` window wins).
+and the paging members' `opts.limit` / `opts.offset` (the `page` window wins). On a CJK query `searchKeyword` and
+`searchKeywordChunks` read `orFallback` and `cjkKeyword` (see "CJK queries") and ignore `orFill`, `rankQuery`,
+`keywordPhrase` and `onKeywordIncomplete`, as PGLite's CJK branch does.
 `searchKeyword` reads `orFallback`, `orFill`, `rankQuery`, `keywordPhrase` and `onKeywordIncomplete` as the hybrid
 keyword arm does; `searchTitles` reads `onKeywordIncomplete`. `searchTitles` answers nothing for `language` or
 `symbolKind`, as the SQL engines do.
@@ -328,6 +329,37 @@ term rarity with `rankOrFallbackByRarity`) and the store answers each statement:
 
 The core BM25 member (`store-members/search.ts`) is gone; its napi method and `Store::search_keyword` stay, unused.
 
+## CJK queries
+
+A query with a CJK character (`hasCJK`) skips text search, as in both SQL engines. The match terms are
+`cjkMatchTerms(query)`: the whitespace-split terms, deduplicated, each with a trailing Korean particle stripped. A term
+whose lower and upper case differ matches with ILIKE, any other with LIKE (`likeClauses`). The TS member sends the
+terms with their operator; the store does not split the query.
+
+- `searchKeyword` and `searchKeywordChunks` call `searchKeywordCjk(query, options, run)` (`keyword/cjk.rs`), the port
+  of `src/core/search/cjk-keyword-sql.ts` as `engine-sql/cjk-search.ts` runs it on PGLite. A chunk matches when it
+  holds every term (strict). Its score is, in `double precision`, the sum of the non-overlapping occurrences of each
+  term (`REPLACE` is case-sensitive, so an ILIKE match of another case counts 0), plus the occurrences of the raw query
+  when there are two or more terms, plus `1 / position` of the raw query (1-based in characters, through a `real`, 0
+  when absent), times the source factor. Rows sort by score, then page id, then chunk id; `searchKeyword` keeps the
+  best text chunk per page from the first `innerLimit` rows, then applies `offset` and `limit`. `searchKeywordChunks`
+  keeps every chunk, image chunks included.
+- `orFallback` with two or more raw terms (`splitCJKQueryTerms`, before the particle strip): when the strict rows are
+  fewer than `limit`, every chunk holding any term ranks by `1000 × matched terms + score`.
+- `cjkKeyword` is the bounded arm. When the brain holds more than `pgliteCappedChunks` (50,000) chunks, the store scores
+  only the first `candidateCap` (2,000) strict candidates, then partial ones for the OR fallback, and the member reports
+  `onMeta` with `capped` and, when a stage filled the cap, `incomplete: 'candidate_budget'`. PGLite compares
+  `pg_class.reltuples`, an estimate; the store compares its exact chunk count. PGLite takes candidates in heap order;
+  the store takes them by ascending chunk id, the order of a freshly written heap. Postgres bounds the same arm by a
+  statement deadline instead, so the arms are not compared in the parity suite.
+- `countKeywordPages` and `searchKeywordPages` send `cjkTerms`: a page matches when one of its text chunks holds every
+  term, scored by the sum of the term occurrences times the source factor (`buildKeywordMatch`'s CJK arm). The slug
+  handles do not apply, and `handlesOnly` matches nothing.
+- `searchTitles` runs its usual statements on a CJK query, as both SQL engines do.
+
+ILIKE folds case with `pg_lower`, the store's port of the C.UTF-8 collation PGLite uses. A Postgres database with
+another collation (`en_US.utf8`) can fold some non-ASCII letters differently; ASCII folds the same everywhere.
+
 ## searchTitles (the hybrid title arm)
 
 The TS member runs `engine-sql/titles.ts`: the strict attempt over the whole page vector; when more pages match than
@@ -368,8 +400,6 @@ The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last 
 - `searchTitles` trigger form: PGLite's trigger reads the timeline entries that exist when the page row is written;
   the store approximates that with the entries created no later than `updated_at`. A NULL timeline reads the lead
   the page's last flip published.
-- `searchTitles` refuses CJK queries like the other keyword members; the SQL title statement has no CJK path of its
-  own, so this is conservative (follow-up `keyword-cjk`).
 - `findByTitleFuzzy` without a `sourceId` reads soft-deleted pages too, as the SQL does (follow-up
   `fuzzy-title-unscoped-deleted`). PGLite types `$minSimilarity` as `real`; Postgres may bind it as `float8`, which
   would compare in f64 (not verified).
@@ -388,5 +418,6 @@ The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last 
 - `keyword-lexeme-index`: every member still scans every live page and its chunks (about 8-10 ms per 4,000 chunks),
   and the first query after a start, or after the text outgrows the 64 MiB cache, rebuilds every vector. Add a stored
   positional lexeme index when the scan or a cold cache becomes the bottleneck for the brains the store serves.
-- `keyword-cjk`: serve CJK queries (the SQL engines' bigram path).
+- `keyword-bench-empty-tier`: `examples/keyword_scale.rs` `make_queries` panics (a remainder by zero) when the
+  common, mid or rare word set is empty; only a tiny or uniform corpus reaches it.
 - `fuzzy-title-unscoped-deleted`: the SQL unscoped arm returns soft-deleted pages.

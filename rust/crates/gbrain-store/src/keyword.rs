@@ -5,7 +5,10 @@
 //! (`keyword/chunk_search.rs`), countKeywordPages and searchKeywordPages (`keyword/page_search.rs`),
 //! and searchTitles (`keyword/titles.rs`: the title arm's statements, over page vectors rebuilt
 //! from the page, its timeline entries and the sealed search timeline), with the page and chunk
-//! filters they share in `keyword/filters.rs`. The rebuilt chunk and page vectors are cached in
+//! filters they share in `keyword/filters.rs`. A CJK query takes the substring path in
+//! `keyword/cjk.rs` (searchKeyword, searchKeywordChunks) and `keyword/page_search.rs` (the paging
+//! members); it scans the text chunks and reads no vector or posting. The rebuilt chunk and page
+//! vectors are cached in
 //! `keyword/vector_cache.rs` (bounded, keyed by the exact input text). rust/docs/store/keyword.md
 //! lists what each member reads, refuses and leaves as a follow-up.
 //!
@@ -47,6 +50,7 @@
 
 mod arm;
 mod chunk_search;
+mod cjk;
 mod filters;
 mod index;
 mod index_build;
@@ -62,6 +66,7 @@ mod tsearch;
 mod vector_cache;
 mod walk;
 
+pub use cjk::{CjkBound, CjkKeywordResult, CjkRun, CjkTerm};
 pub use filters::{AfterKey, DateBound, KeywordOptions};
 pub(crate) use filters::{DateWindow, frontmatter_holds, parse_trust_floor};
 pub(crate) use index::read_state as read_index_state;
