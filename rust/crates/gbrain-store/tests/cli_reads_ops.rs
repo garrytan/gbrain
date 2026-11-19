@@ -93,8 +93,10 @@ fn exact_batch_needs_a_word_and_a_non_negative_limit() {
 fn identity_and_rank_refuse_private_filters_the_store_does_not_keep() {
     let dir = TempDir::new("cli-reads-ops-private");
     let store = open(&dir);
+    // excludePrivate with no page policy is refused: the store never guesses the caller.
     let remote = Some(RemoteCaller {
         exclude_private: true,
+        policy: None,
     });
     let identity = ExactIdentityInput {
         probes: ExactIdentityProbes::default(),
