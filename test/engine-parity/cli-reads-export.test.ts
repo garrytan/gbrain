@@ -125,7 +125,7 @@ describe('engine parity: export reads', () => {
   parityTest('readExportPageRows reads live pages by id with their tags', {
     methods: ['readExportPageRows', 'putPage', 'addTag', 'softDeletePage', 'getPage'],
   }, async (engine) => {
-    await engine.putPage('export/a', { type: 'note', title: 'A', compiled_truth: 'alpha', timeline: '- 2026: one', frontmatter: { k: 'v', n: 2 } });
+    await engine.putPage('export/a', { type: 'note', title: 'A', compiled_truth: 'alpha', timeline: '- 2026: one', frontmatter: { status: 'v', nested: { bb: 1, a: 2 }, n: 2 } });
     await engine.putPage('export/b', { type: 'person', title: 'B', compiled_truth: 'beta' });
     await engine.putPage('export/gone', { type: 'note', title: 'Gone', compiled_truth: 'deleted' });
     await engine.addTag('export/a', 'zeta');
@@ -136,7 +136,9 @@ describe('engine parity: export reads', () => {
     expect(rows.every(row => ids.includes(String(row.page.id)))).toBe(true);
     return rows
       .map(({ page, tags }) => ({ slug: page.slug, source_id: page.source_id, type: page.type, title: page.title,
-        compiled_truth: page.compiled_truth, timeline: page.timeline, frontmatter: page.frontmatter, tags }))
+        compiled_truth: page.compiled_truth, timeline: page.timeline, frontmatter: page.frontmatter, tags,
+        // The export writes keys in the order the row gives them: jsonb's (shorter keys first, then by bytes), at every depth.
+        keyOrder: JSON.stringify(page.frontmatter) }))
       .sort((a, b) => a.slug.localeCompare(b.slug));
   });
 

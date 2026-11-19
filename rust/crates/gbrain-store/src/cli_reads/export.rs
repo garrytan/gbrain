@@ -9,7 +9,7 @@
 //!
 //! Keys: none of its own. It reads the page, page-id, page-body, raw-data and withdrawal records.
 
-use super::pg_text::{is_pg_space, jsonb_text, pg_lower, timestamptz_text};
+use super::pg_text::{is_pg_space, jsonb_text, jsonb_value, pg_lower, timestamptz_text};
 use super::reads::pages_after;
 use crate::Store;
 use crate::env::iso;
@@ -336,10 +336,12 @@ impl Store {
             }
             let mut tags = page.tags.clone();
             tags.sort();
-            rows.push(ExportPageRow {
-                page: page.to_page_with_columns(&*read)?,
-                tags,
-            });
+            // The export writes frontmatter keys in the row's order: jsonb's, at every depth.
+            let mut row = page.to_page_with_columns(&*read)?;
+            if let Some(frontmatter) = row.get_mut("frontmatter") {
+                *frontmatter = jsonb_value(frontmatter);
+            }
+            rows.push(ExportPageRow { page: row, tags });
         }
         Ok(rows)
     }
@@ -584,6 +586,30 @@ mod tests {
         assert!(head.revision.is_some());
         assert_eq!(s.read_segmented_page_head(id + 1000).unwrap(), None);
         assert_eq!(s.read_segmented_page_head(-1).unwrap(), None);
+    }
+
+    #[test]
+    fn export_rows_give_frontmatter_keys_in_jsonb_order() {
+        let s = store();
+        let mut frontmatter = serde_json::Map::new();
+        frontmatter.insert("status".into(), json!("v"));
+        frontmatter.insert("nested".into(), json!({"bb": 1, "a": 2}));
+        frontmatter.insert("n".into(), json!(2));
+        let input = PageInput {
+            page_type: "note".into(),
+            title: "T".into(),
+            compiled_truth: "body".into(),
+            frontmatter: Some(frontmatter),
+            ..PageInput::default()
+        };
+        s.put_page("notes/fm", &input, &PutPageOptions::default())
+            .unwrap();
+        let id = s.list_export_page_keys(&query("0")).unwrap()[0].id.clone();
+        let rows = s.read_export_page_rows(&[id]).unwrap();
+        assert_eq!(
+            serde_json::to_string(&rows[0].page["frontmatter"]).unwrap(),
+            r#"{"n":2,"nested":{"a":2,"bb":1},"status":"v"}"#
+        );
     }
 
     #[test]
