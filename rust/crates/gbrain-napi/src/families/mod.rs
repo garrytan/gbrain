@@ -10,6 +10,7 @@ mod cli_reads_doctor_persistence;
 mod cli_reads_doctor_pages;
 mod cli_reads_doctor_acc;
 mod cli_reads_doctor_checkpoints;
+mod cli_reads_doctor_src;
 mod cli_reads_import;
 mod cli_reads_ops;
 mod cli_reads_search_pages;

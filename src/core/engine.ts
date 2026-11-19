@@ -17,6 +17,7 @@ import type * as DoctorPersistenceSql from './engine-sql/doctor-persistence.ts';
 import type * as DoctorPagesSql from './engine-sql/doctor-pages.ts';
 import type * as DoctorAccSql from './engine-sql/doctor-acc.ts';
 import type * as DoctorCheckpointsSql from './engine-sql/doctor-checkpoints.ts';
+import type * as DoctorSourcesSql from './engine-sql/doctor-sources.ts';
 import type { FactRelinkAttempt, FactRelinkOutcome, FactRelinkUpsertOpts } from './engine-sql/fact-relink-attempts.ts';
 import type { ConversationFactLink, ConversationRelinkPagesQuery, RelinkPlacement } from './engine-sql/fact-relink-writes.ts';
 import type * as FactsCycleSql from './engine-sql/facts-cycle.ts';
@@ -4454,4 +4455,17 @@ export interface BrainEngine {
   readLatestConnectorReceipt(): Promise<string | null>;
   /** The `facts:absorb` ingest rows of the last 24 hours grouped by source and reason, by source then count. */
   listFactsAbsorbFailureGroups(): Promise<DoctorCheckpointsSql.FactsAbsorbFailureGroup[]>;
+  // Doctor reads over `sources` (engine-sql/doctor-sources.ts).
+  /** The rows of one doctor `sources` read (`variant` names the statement; `scope` confines it to some ids or one source). */
+  readDoctorSources<V extends DoctorSourcesSql.DoctorSourceVariant>(variant: V, scope?: DoctorSourcesSql.DoctorSourceScope): Promise<DoctorSourcesSql.DoctorSourceRows[V][]>;
+  /** Sources whose config says guest or that have a guest_sources row, with writers and ceiling; throws the missing-table error behind the guest-notes migration. */
+  listGuestSourceRows(): Promise<DoctorSourcesSql.GuestSourceRow[]>;
+  /** Live sources' checkout roots, and the roots the host's worktree bindings hold (none on an engine without managed persistence). */
+  listCheckoutRoots(hostId: string | null): Promise<DoctorSourcesSql.CheckoutRootRow[]>;
+  /** The sources whose commits sync, with their last commit, managed flag and this host's root; `sourceIds` null reads every source. */
+  listPendingRoster(sourceIds: readonly string[] | null, hostId: string | null): Promise<DoctorSourcesSql.PendingRosterRow[]>;
+  /** gbrain-owned content sources with their shared-skills receipt, owner binding and queued work (none on an engine without managed persistence). */
+  listOwnedContentRows(sourceIds: readonly string[] | null, inheritsPersistence: boolean): Promise<DoctorSourcesSql.OwnedContentRow[]>;
+  /** Live pages of the `default` source and how many of them record a source path. */
+  countDefaultSourceFiles(): Promise<DoctorSourcesSql.DefaultSourceFiles>;
 }

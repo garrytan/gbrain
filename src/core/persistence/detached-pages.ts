@@ -133,11 +133,10 @@ function recordedMetafilePage(metafilePages: MetafilePagesMode, root: string, la
  */
 export async function scanMissingRecordedFiles(engine: BrainEngine, sourceId: string): Promise<MissingRecordedFiles | null> {
   if (await managedPersistenceEnabled(engine)) return null;
-  const [source] = await engine.executeRaw<{ local_path: string | null; strategy: SyncStrategy | null; last_commit: string | null }>(
-    "SELECT local_path, config->>'strategy' AS strategy, last_commit FROM sources WHERE id=$1 AND archived IS NOT TRUE", [sourceId]);
+  const [source] = await engine.readDoctorSources('detached', { sourceId });
   const root = source?.local_path;
   if (!root || !existsSync(root) || !statSync(root).isDirectory()) return null;
-  const strategy = source.strategy ?? 'markdown';
+  const strategy = (source.strategy ?? 'markdown') as SyncStrategy;
   const rows = await engine.executeRaw<{ slug: string; source_path: string }>(
     `SELECT slug, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND NULLIF(btrim(source_path), '') IS NOT NULL
       ORDER BY id LIMIT ${scanLimit + 1}`, [sourceId]);

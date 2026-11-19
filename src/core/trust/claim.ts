@@ -182,7 +182,7 @@ export interface UnclaimedLegacySources {
  * would help. A brain before the trust migration throws (callers report it
  * as pre-trust); a fresh or empty brain has none.
  */
-export async function readUnclaimedLegacySources(engine: Pick<BrainEngine, 'executeRaw'>): Promise<UnclaimedLegacySources> {
+export async function readUnclaimedLegacySources(engine: Pick<BrainEngine, 'executeRaw' | 'readDoctorSources'>): Promise<UnclaimedLegacySources> {
   const { candidates, pending } = await claimCandidates(engine);
   const legacy = candidates.length ? await legacyUnknownBySource(engine, candidates) : new Map<string, number>();
   return {
@@ -196,7 +196,7 @@ export async function readUnclaimedLegacySources(engine: Pick<BrainEngine, 'exec
  * `unknown`? One existence probe per such source instead of a count of every source's rows, and no table scan at all
  * when every source is claimed. Throws before the trust migration, as readUnclaimedLegacySources does.
  */
-export async function hasUnclaimedLegacySources(engine: Pick<BrainEngine, 'executeRaw'>): Promise<boolean> {
+export async function hasUnclaimedLegacySources(engine: Pick<BrainEngine, 'executeRaw' | 'readDoctorSources'>): Promise<boolean> {
   const { candidates } = await claimCandidates(engine);
   if (candidates.length === 0) return false;
   const ceilings = await readLegacyCeilings(engine);
@@ -211,10 +211,8 @@ export async function hasUnclaimedLegacySources(engine: Pick<BrainEngine, 'execu
 }
 
 /** Live, non-connector sources: the unclaimed ones a claim could help, and the claimed ones whose lift has not finished. */
-async function claimCandidates(engine: Pick<BrainEngine, 'executeRaw'>): Promise<{ candidates: string[]; pending: string[] }> {
-  const rows = await engine.executeRaw<{ id: string; claimed: boolean; lifted: boolean }>(
-    `SELECT s.id, ${claimedSourceSql('s')} AS claimed, (s.config ? '${TRUST_CLAIM_LIFTED_AT_KEY}') AS lifted
-       FROM sources s WHERE NOT s.archived AND ${notConnectorSourceSql('s')} ORDER BY s.id`);
+async function claimCandidates(engine: Pick<BrainEngine, 'readDoctorSources'>): Promise<{ candidates: string[]; pending: string[] }> {
+  const rows = await engine.readDoctorSources('claim_candidates');
   return { candidates: rows.filter(r => !r.claimed).map(r => r.id), pending: rows.filter(r => r.claimed && !r.lifted).map(r => r.id) };
 }
 

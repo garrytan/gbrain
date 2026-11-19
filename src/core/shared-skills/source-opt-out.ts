@@ -45,7 +45,7 @@ async function readRecord(engine: BrainEngine, sourceId: string, incarnation: st
 }
 
 export async function readSharedSkillsSourceView(engine: BrainEngine, sourceId: string): Promise<SharedSkillsSourceView> {
-  const [source] = await engine.executeRaw<{ config: unknown; incarnation: string }>('SELECT config,incarnation FROM sources WHERE id=$1 AND NOT archived', [sourceId]);
+  const [source] = await engine.readDoctorSources('shared_skills_view', { sourceId });
   if (!source) throw sharedSkillsNotFound(sourceId);
   const stored = parseSourceConfig(source.config).shared_skills;
   const configured = typeof stored === 'boolean' ? stored : null;

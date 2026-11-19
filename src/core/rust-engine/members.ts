@@ -492,6 +492,13 @@ export const RUST_ENGINE_MEMBERS = {
   readSyncAdmissionSettingRow: 'config',
   readLatestConnectorReceipt: 'ingest_log',
   listFactsAbsorbFailureGroups: 'ingest_log',
+  // doctor reads over sources (engine-sql/doctor-sources.ts)
+  readDoctorSources: 'sources',
+  listGuestSourceRows: 'sources',
+  listCheckoutRoots: 'sources',
+  listPendingRoster: 'sources',
+  listOwnedContentRows: 'persistence_journal',
+  countDefaultSourceFiles: 'sources',
 
   // facts: relink attempts (engine-sql/fact-relink-attempts.ts)
   upsertFactRelinkAttempt: 'facts',

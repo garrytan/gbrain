@@ -1008,22 +1008,8 @@ export function walkDir(
 
 async function listSources(engine: BrainEngine, sourceId?: string): Promise<SourceRow[]> {
   if (sourceId) {
-    const rows = await engine.executeRaw<SourceRow>(
-      `SELECT id, local_path, config->>'kind' AS kind FROM sources WHERE id = $1`,
-      [sourceId],
-    );
-    return rows;
+    return engine.readDoctorSources('brain_writer_by_id', { sourceId });
   }
-  // #3880: archived sources are excluded from automatic all-source scanning.
-  // The archived column is v34+ — fall back on older brains (house style per
-  // pickSoleNonDefaultSource).
-  try {
-    return await engine.executeRaw<SourceRow>(
-      `SELECT id, local_path, config->>'kind' AS kind FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE ORDER BY id`,
-    );
-  } catch {
-    return engine.executeRaw<SourceRow>(
-      `SELECT id, local_path, config->>'kind' AS kind FROM sources WHERE local_path IS NOT NULL ORDER BY id`,
-    );
-  }
+  // #3880: archived sources are excluded from automatic all-source scanning (the fallback for pre-v34 brains is in the read).
+  return engine.readDoctorSources('brain_writer_live');
 }

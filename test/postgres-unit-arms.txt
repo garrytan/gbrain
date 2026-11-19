@@ -141,6 +141,7 @@ test/engine-parity/doctor-pages.test.ts
 test/engine-parity/doctor-acc.test.ts
 test/engine-parity/doctor-reads.test.ts
 test/engine-parity/doctor-checkpoints.test.ts
+test/engine-parity/doctor-sources.test.ts
 test/engine-parity/effect-scans.test.ts
 test/engine-parity/embedding-catalog.test.ts
 test/engine-parity/entity-anchor-reads.test.ts
