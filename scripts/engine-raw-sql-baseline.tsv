@@ -371,7 +371,6 @@ src/core/destructive-guard.ts	execute_raw	17
 src/core/eligibility/activation.ts	execute_raw	2
 src/core/eligibility/explain.ts	execute_raw	3
 src/core/eligibility/fence-overlay.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
-src/core/eligibility/generation.ts	execute_raw	1
 src/core/eligibility/scan.ts	execute_raw	4
 src/core/eligibility/stamp.ts	execute_raw	2	came from master #9574 (held private restatements), which landed before this ratchet
 src/core/embed-backfill-stall.ts	execute_raw	1
@@ -581,7 +580,6 @@ src/core/ops/known-as-of.ts	execute_raw	3
 src/core/ops/links.ts	execute_raw	1
 src/core/ops/loops.ts	execute_raw	3
 src/core/ops/page-upload.ts	execute_raw	3
-src/core/ops/persistence.ts	execute_raw	3
 src/core/ops/put-page-revision-source.ts	execute_raw	1
 src/core/ops/qm-memory.ts	execute_raw	2
 src/core/ops/request-tools.ts	execute_raw	2
@@ -989,7 +987,6 @@ src/core/shared-skills/catalog.ts	execute_raw	3
 src/core/shared-skills/compatibility.ts	execute_raw	2
 src/core/shared-skills/content-freshness.ts	execute_raw	1
 src/core/shared-skills/knowledge-guard.ts	execute_raw	3
-src/core/shared-skills/membership-authority.ts	execute_raw	4
 src/core/shared-skills/membership.ts	execute_raw	17
 src/core/shared-skills/migration-export.ts	execute_raw	7
 src/core/shared-skills/migration-members.ts	execute_raw	1

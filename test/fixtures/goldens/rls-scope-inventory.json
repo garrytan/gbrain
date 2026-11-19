@@ -3142,6 +3142,39 @@
           "default"
         ]
       },
+      "readAccessTokenMemberGrant#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "readAccessTokenReceiptGrant#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readAccessTokenReceiptGrant#lock": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "readCapacityForecastInputs#default": {
         "flagOffLanes": [
           "pool"
@@ -3338,6 +3371,17 @@
         ],
         "flagOnScopes": []
       },
+      "readLocalWriterMemberGrant#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "readLocalWriterRow#default": {
         "flagOffLanes": [
           "pool"
@@ -3393,6 +3437,39 @@
         ],
         "flagOnScopes": []
       },
+      "readOAuthClientMemberGrant#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "readOAuthClientReceiptGrant#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readOAuthClientReceiptGrant#lock": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "readPageSnapshot#default": {
         "flagOffLanes": [
           "pool"
@@ -3444,6 +3521,17 @@
         "flagOnScopes": []
       },
       "readReceiptBudget#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readSharedSkillServingEpoch#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -3520,6 +3608,17 @@
         ],
         "flagOnScopes": []
       },
+      "readTrustGeneration#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readWriteRequest#default": {
         "flagOffLanes": [
           "pool"
@@ -3532,6 +3631,17 @@
         "flagOnScopes": []
       },
       "readWriteRequestById#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readWriteRequestsByRequestId#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -5064,6 +5174,8 @@
         "queueWakeForget": "none",
         "rankEntities": "none",
         "rawTransaction": "none",
+        "readAccessTokenMemberGrant": "none",
+        "readAccessTokenReceiptGrant": "none",
         "readAdmissionRate": "none",
         "readAdmissionSource": "none",
         "readBeliefHistoryRows": "none",
@@ -5103,6 +5215,7 @@
         "readLegacyJobAuthority": "none",
         "readLinkRelationshipEvidence": "none",
         "readLivePageBody": "none",
+        "readLocalWriterMemberGrant": "none",
         "readLocalWriterRow": "none",
         "readManagedModeRows": "none",
         "readManifest": "none",
@@ -5112,6 +5225,8 @@
         "readMcpRollupPrunedBefore": "none",
         "readMemoryProposal": "none",
         "readMentionLastPass": "none",
+        "readOAuthClientMemberGrant": "none",
+        "readOAuthClientReceiptGrant": "none",
         "readOldestWaitingAge": "none",
         "readPageAliasRows": "none",
         "readPageHiddenFromCaller": "none",
@@ -5136,6 +5251,7 @@
         "readSearchStats": "none",
         "readSegmentDerivations": "none",
         "readSegmentTexts": "none",
+        "readSharedSkillServingEpoch": "none",
         "readSourceChunkerVersion": "none",
         "readSourceIncarnation": "none",
         "readSourceJobCounts": "none",
@@ -5146,6 +5262,7 @@
         "readTopologyChange": "none",
         "readTransaction": "none",
         "readTransactionSettings": "none",
+        "readTrustGeneration": "none",
         "readWaitingQueueDepths": "none",
         "readWaitingScopeState": "none",
         "readWakeDoctor": "none",
@@ -5153,6 +5270,7 @@
         "readWriteRequest": "none",
         "readWriteRequestById": "none",
         "readWriteRequestProgress": "none",
+        "readWriteRequestsByRequestId": "none",
         "readWriteVisibilityProbe": "none",
         "readWriterSlugFence": "none",
         "reclaimStalledJobs": "none",
