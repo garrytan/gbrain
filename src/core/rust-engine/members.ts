@@ -349,6 +349,7 @@ export const RUST_ENGINE_MEMBERS = {
   upsertEventProjection: 'timeline',
   removeTimelineRows: 'timeline',
   updateTimelineDetails: 'timeline',
+  insertCanonicalTimelineRows: 'timeline',
   sampleEffectiveDates: 'timeline',
   sampleEffectiveDateSources: 'timeline',
   readMaxTimelineEntryId: 'timeline',

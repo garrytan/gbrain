@@ -600,12 +600,8 @@ function timelineChunks(timeline: ReadonlyMap<string, ExtractedTimelineEntry>): 
  * row lock (lockPageKeys), so the rows go straight to its id; free text is sanitized as addTimelineEntry does (#2011).
  */
 function insertCanonicalTimeline(tx: BrainEngine, pageId: number, entries: ExtractedTimelineEntry[]) {
-  const rows = JSON.stringify(entries.map((entry, ord) => ({ ord, date: entry.date, source: sanitizeForJsonb(entry.source || ''),
+  return tx.insertCanonicalTimelineRows(pageId, entries.map(entry => ({ date: entry.date, source: sanitizeForJsonb(entry.source || ''),
     summary: sanitizeForJsonb(entry.summary), detail: sanitizeForJsonb(entry.detail || '') })));
-  return tx.executeRaw(`INSERT INTO timeline_entries (page_id,date,source,summary,detail)
-    SELECT $1,r.date::date,r.source,r.summary,r.detail FROM jsonb_to_recordset($2::text::jsonb) AS r(ord integer,date text,source text,summary text,detail text)
-    ORDER BY r.ord
-    ON CONFLICT (page_id,date,md5(summary),source) DO NOTHING`, [pageId, rows]);
 }
 
 /** The page body's own entry for one timeline row (same date, source and summary), inserted when the page carries it. */

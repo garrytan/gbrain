@@ -7171,6 +7171,7 @@
         "insertAccessMigration": "none",
         "insertAccessPolicyRevision": "none",
         "insertAccessToken": "none",
+        "insertCanonicalTimelineRows": "none",
         "insertFact": "none",
         "insertFactPurge": "none",
         "insertFactWithdrawal": "none",
