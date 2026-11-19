@@ -8,7 +8,8 @@ use gbrain_store::link_queries::{
     ApplyTemporalInput, EdgeValidityInput, EvidenceInput, InboundCountInput, KeysForOriginInput,
     KeysForPagesInput, KeysTouchingInput, ManualRelationship, ManualWriteInput, NoteRowsInput,
     PageStatusInput, RecordMetadataInput, ReferrerGroupInput, ReferrerPageDetailsInput,
-    ReferrerTargetCountInput, RelationshipKey, StaleKeysInput, StateWrite,
+    ReferrerRecordCandidateInput, ReferrerRowInput, ReferrerTargetCountInput,
+    ReferrerTargetSourcesInput, RelationshipKey, StaleKeysInput, StateWrite,
 };
 use gbrain_store::links::AddLinkOptions;
 use gbrain_store::pages::{PageInput, PutPageOptions};
@@ -715,5 +716,225 @@ fn referrer_target_counts_per_index_exclude_only_that_index() {
             json!([])
         ),
         ["0:*:4", "1:*:2"]
+    );
+}
+
+/// The referrer page fixture: `acme` with six dated referrers (two on one date), one private, one
+/// quarantined and one soft-deleted.
+fn referrer_page_brain(name: &str) -> Brain {
+    let b = Brain::new(name);
+    let dated = |slug: &str, page_type: &str, date: &str, frontmatter: Value| {
+        let input: PageInput = de(json!({
+            "type": page_type, "title": format!("Title {slug}"), "compiled_truth": format!("{slug} body"), "frontmatter": frontmatter,
+            "effective_date": format!("{date}T00:00:00.000Z"), "effective_date_source": "date",
+        }));
+        let options: PutPageOptions = de(json!({"sourceId": "default", "index": false}));
+        b.store.put_page(slug, &input, &options).unwrap();
+    };
+    b.page("acme");
+    dated("kickoff", "meeting", "2026-03-01", json!({}));
+    dated("review", "meeting", "2026-05-01", json!({}));
+    dated("standup", "call", "2026-02-15", json!({}));
+    dated("b-tie", "note", "2026-04-01", json!({}));
+    dated("a-tie", "note", "2026-04-01", json!({}));
+    dated("loose", "", "2026-02-01", json!({}));
+    dated(
+        "secret",
+        "note",
+        "2026-06-01",
+        json!({"visibility": "private"}),
+    );
+    dated("held", "note", "2026-06-02", json!({"quarantine": true}));
+    dated("gone", "note", "2026-07-01", json!({}));
+    for slug in [
+        "kickoff", "review", "standup", "b-tie", "a-tie", "loose", "secret", "held", "gone",
+    ] {
+        b.link(slug, "acme", "mentions");
+    }
+    b.store.soft_delete_page("gone", Some("default")).unwrap();
+    b
+}
+
+fn referrer_rows(b: &Brain, extra: Value) -> Vec<String> {
+    let mut input = json!({
+        "targetSources": ["default"], "targetSlugs": ["acme"], "referrerSources": ["default"],
+        "storedTypes": ["call"], "canonicalTypes": ["meeting"], "limit": 100,
+    });
+    input
+        .as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+    let input: ReferrerRowInput = de(input);
+    let rows = serde_json::to_value(b.store.read_referrer_rows(&input).unwrap()).unwrap();
+    rows.as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            format!(
+                "{}:{}",
+                r["canonical_type"].as_str().unwrap(),
+                r["slug"].as_str().unwrap()
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn referrer_rows_page_newest_first_and_continue_after_the_cursor() {
+    let b = referrer_page_brain("lt-referrer-rows");
+    assert_eq!(
+        referrer_rows(&b, json!({})),
+        [
+            "note:secret",
+            "meeting:review",
+            "note:a-tie",
+            "note:b-tie",
+            "meeting:kickoff",
+            "meeting:standup",
+            "untyped:loose"
+        ]
+    );
+    let private = json!({"honorAliases": false, "entityPrivacy": true});
+    assert_eq!(
+        referrer_rows(&b, json!({"excludePrivate": private, "limit": 2})),
+        ["meeting:review", "note:a-tie"]
+    );
+    // After the first tie row: the second tie row (same date, greater slug), then older rows.
+    assert_eq!(
+        referrer_rows(
+            &b,
+            json!({"cursor": ["2026-04-01T00:00:00.000000Z", "default", "a-tie"], "limit": 3})
+        ),
+        ["note:b-tie", "meeting:kickoff", "meeting:standup"]
+    );
+    // The type filter takes the canonical type (the `call` alias included) or a stored type.
+    assert_eq!(
+        referrer_rows(&b, json!({"type": "meeting"})),
+        ["meeting:review", "meeting:kickoff", "meeting:standup"]
+    );
+    assert_eq!(
+        referrer_rows(&b, json!({"type": "call"})),
+        ["meeting:standup"]
+    );
+    assert_eq!(
+        referrer_rows(&b, json!({"type": "untyped"})),
+        ["untyped:loose"]
+    );
+    // A cursor with no date continues with nothing; one that is not a time is refused.
+    assert!(referrer_rows(&b, json!({"cursor": [null, "default", "a-tie"]})).is_empty());
+    let bad: ReferrerRowInput = de(
+        json!({"targetSources": ["default"], "targetSlugs": ["acme"],
+        "referrerSources": ["default"], "cursor": ["yesterday", "default", "a-tie"], "limit": 5}),
+    );
+    assert!(b.store.read_referrer_rows(&bad).is_err());
+    let count = |extra: Value| {
+        let mut input = json!({"targetSources": ["default"], "targetSlugs": ["acme"], "referrerSources": ["default"],
+            "storedTypes": ["call"], "canonicalTypes": ["meeting"]});
+        input
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        let input: ReferrerRowInput = de(input);
+        b.store.count_referrer_rows(&input).unwrap()
+    };
+    assert_eq!(count(json!({})), 7);
+    assert_eq!(count(json!({"excludePrivate": private})), 6);
+    assert_eq!(count(json!({"type": "meeting"})), 3);
+    assert_eq!(count(json!({"includeQuarantined": true})), 8);
+    let row: ReferrerRowInput = de(
+        json!({"targetSources": ["default"], "targetSlugs": ["acme"],
+        "referrerSources": ["default"], "type": "untyped", "limit": 1}),
+    );
+    let row = serde_json::to_value(&b.store.read_referrer_rows(&row).unwrap()[0]).unwrap();
+    assert_eq!(
+        row,
+        json!({"id": row["id"], "slug": "loose", "source_id": "default", "type": "", "canonical_type": "untyped",
+               "d": "2026-02-01T00:00:00.000000Z"})
+    );
+}
+
+#[test]
+fn referrer_target_sources_name_the_live_page_sources_in_input_order() {
+    let b = referrer_page_brain("lt-referrer-sources");
+    let read = |slug: &str, sources: Value| {
+        let input: ReferrerTargetSourcesInput = de(json!({"slug": slug, "sources": sources}));
+        b.store.list_referrer_target_sources(&input).unwrap()
+    };
+    assert_eq!(
+        read("acme", json!(["other", "default", "default"])),
+        ["default"]
+    );
+    assert!(read("gone", json!(["default"])).is_empty());
+    assert!(read("acme", json!([])).is_empty());
+}
+
+#[test]
+fn referrer_record_candidates_keep_the_newest_per_index_and_name_titles() {
+    let b = referrer_page_brain("lt-referrer-records");
+    b.page("widget");
+    b.link("review", "widget", "mentions");
+    let read = |per_target: u64, exclude: Value| {
+        let input: ReferrerRecordCandidateInput = de(json!({
+            "targetSources": ["default", "default", "default"], "targetSlugs": ["acme", "widget", "nobody"],
+            "targetIndexes": [0, 1, 2], "referrerSources": ["default"], "storedTypes": ["call"],
+            "canonicalTypes": ["meeting"], "recordTypes": ["meeting", "note"], "excludePrivate": exclude,
+            "perTarget": per_target,
+        }));
+        let rows =
+            serde_json::to_value(b.store.read_referrer_record_candidates(&input).unwrap()).unwrap();
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .map(|r| {
+                format!(
+                    "{}:{}:{}:{}",
+                    r["i"],
+                    r["canonical_type"].as_str().unwrap(),
+                    r["slug"].as_str().unwrap(),
+                    r["d"].as_str().unwrap()
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        read(3, Value::Null),
+        [
+            "0:note:secret:2026-06-01T00:00:00.000000Z",
+            "0:meeting:review:2026-05-01T00:00:00.000000Z",
+            "0:note:a-tie:2026-04-01T00:00:00.000000Z",
+            "1:meeting:review:2026-05-01T00:00:00.000000Z"
+        ]
+    );
+    assert_eq!(
+        read(1, json!({"honorAliases": false, "entityPrivacy": true})),
+        [
+            "0:meeting:review:2026-05-01T00:00:00.000000Z",
+            "1:meeting:review:2026-05-01T00:00:00.000000Z"
+        ]
+    );
+    let id_of = |slug: &str| {
+        let input: ReferrerRowInput = de(
+            json!({"targetSources": ["default"], "targetSlugs": ["acme"],
+            "referrerSources": ["default"], "limit": 100}),
+        );
+        b.store
+            .read_referrer_rows(&input)
+            .unwrap()
+            .into_iter()
+            .find(|r| r.slug == slug)
+            .unwrap()
+            .id
+    };
+    let (review, loose) = (id_of("review"), id_of("loose"));
+    let input: ReferrerPageDetailsInput = de(json!({"ids": [loose, review, review, 9999]}));
+    let rows = serde_json::to_value(b.store.read_referrer_record_pages(&input).unwrap()).unwrap();
+    let mut rows = rows.as_array().unwrap().clone();
+    rows.sort_by_key(|r| r["title"].as_str().unwrap().to_string());
+    assert_eq!(
+        rows,
+        [
+            json!({"id": loose, "title": "Title loose", "date_source": "date"}),
+            json!({"id": review, "title": "Title review", "date_source": "date"})
+        ]
     );
 }
