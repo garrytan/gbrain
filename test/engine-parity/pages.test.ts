@@ -56,6 +56,39 @@ describe('engine parity: pages', () => {
     return { written: view(written), read: view(read), missing };
   });
 
+  // get_page reads its page through readPageSnapshot with alias resolution, and by legacy id with the identity options
+  // too (ops/pages.ts). A remote caller adds excludePrivate. After a write, an append and a tag every engine reads the
+  // same snapshot back, with every option.
+  parityTest('readPageSnapshot with the get_page options reads back a write, an append and a tag', {
+    methods: ['putPage', 'addTag', 'readPageSnapshot'],
+  }, async (engine) => {
+    const slug = 'notes/readback';
+    const read = async (opts: Parameters<BrainEngine['readPageSnapshot']>[1]) => {
+      const snapshot = await engine.readPageSnapshot(slug, opts);
+      return snapshot && { page: view(snapshot.page), tags: sorted(snapshot.tags), withdrawals: snapshot.withdrawals };
+    };
+    const reads = async () => ({
+      plain: await read({ sourceId: 'default' }),
+      byOp: await read({ sourceId: 'default', excludePrivate: true, resolveAlias: true }),
+      byId: await read({
+        sourceId: 'default', excludePrivate: true, resolveAlias: true, requireUnambiguous: true, requireLiveSource: true,
+        preserveExactIdentity: true,
+      }),
+    });
+    await engine.putPage(slug, NOTE);
+    const written = await reads();
+    await engine.putPage(slug, { ...NOTE, compiled_truth: `${NOTE.compiled_truth}\n\nAn appended line.` });
+    const appended = await reads();
+    await engine.addTag(slug, 'readback');
+    const tagged = await reads();
+    for (const step of [written, appended, tagged]) {
+      expect(step.byOp).toEqual(step.plain);
+      expect(step.byId).toEqual(step.plain);
+    }
+    expect(tagged.plain?.tags).toEqual(['readback']);
+    return { written, appended, tagged };
+  });
+
   parityTest('putPage on an existing slug updates in place', { methods: ['putPage', 'getPage', 'listPages'] }, async (engine) => {
     const first = await engine.putPage('companies/acme-example', ACME);
     const second = await engine.putPage('companies/acme-example', { ...ACME, compiled_truth: 'Acme builds better widgets.' });
