@@ -863,7 +863,7 @@ async function sameContentAtOrigin(engine: BrainEngine, cursor: Cursor, entry: C
     const budgetMs = await syncPreparationBudgetMs(engine);
     const prepared = await raceSyncBudget(prepareManagedSyncMutation(engine, screeningRequest({ source_id: cursor.sourceId, source_incarnation: cursor.incarnation, slug: snapshot.page.slug,
       page_id: snapshot.page.id, worktree_id: cursor.binding.worktree_id, authority: cursor.authority.writer, intent }), { engine: engine.kind }, startClaimPhase(Date.now(), undefined, budgetMs)), budgetMs, signal);
-    return (pageOnly ? prepared.pageUnchanged === true || prepared.noop === true : (prepared.contentUnchanged === true || prepared.noop === true) && !prepared.file) && prepared.observedRevision === snapshot.revision;
+    return (pageOnly ? (prepared.pageUnchanged ?? prepared.noop === true) : (prepared.contentUnchanged === true || prepared.noop === true) && !prepared.file) && prepared.observedRevision === snapshot.revision;
   } catch (error) {
     if (signal?.aborted) throw error;
     return false;
