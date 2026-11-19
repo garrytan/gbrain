@@ -391,6 +391,34 @@ describe('engine parity: pages', () => {
     return { nanDry, nan, infinity, stillThere, minusInfinity };
   });
 
+  // PGLite runs `now() - '<JS number> hours'::interval`. Past the first representable timestamp (4714-11-24 00:00:00
+  // UTC BC, about 5.9e7 hours back) it fails "timestamp out of range"; past 2562047788 hours the interval overflows;
+  // from 1e21 the JS text has an exponent and does not parse. Each fails before any row is read and purges nothing.
+  parityTest('purgeDeletedPages fails past the timestamp and interval range as PGLite does', { methods: ['purgeDeletedPages', 'softDeletePage'] }, async (engine) => {
+    await seed(engine, [['notes/a', NOTE]]);
+    await engine.softDeletePage('notes/a');
+    await tombstonesSettle();
+    const outcome = (p: Promise<{ slugs: string[] }>) => p.then((r) => ({ slugs: r.slugs }), (e: unknown) => ({ error: e instanceof Error ? e.message : String(e) }));
+    // The last hour count whose cutoff is still on or after the first timestamp, read just before each call.
+    const lastInRange = () => Math.floor((Date.now() * 1000 + 210_866_803_200_000_000) / 3_600_000_000);
+    const out: Record<string, unknown> = {};
+    for (const dryRun of [true, false]) {
+      const mode = dryRun ? 'dry' : 'real';
+      out[`${mode} last in range`] = await outcome(engine.purgeDeletedPages(lastInRange(), { dryRun }));
+      out[`${mode} first out of range`] = await outcome(engine.purgeDeletedPages(lastInRange() + 1, { dryRun }));
+      for (const hours of [2562047788, 2562047788.5, 2562047789, 2 ** 60, 1e20, 1e21, 1.5e21, Number.MAX_VALUE]) {
+        out[`${mode} ${hours}`] = await outcome(engine.purgeDeletedPages(hours, { dryRun }));
+      }
+    }
+    expect(out['dry last in range']).toEqual({ slugs: [] });
+    expect(out['real first out of range']).toEqual({ error: 'timestamp out of range' });
+    expect(out['real 2562047789']).toEqual({ error: 'interval field value out of range: "2562047789 hours"' });
+    expect(out['real 1e+21']).toEqual({ error: 'invalid input syntax for type interval: "1e+21 hours"' });
+    const stillThere = (await engine.getPage('notes/a', { includeDeleted: true }))?.slug ?? null;
+    expect(stillThere).toBe('notes/a');
+    return { ...out, stillThere };
+  });
+
   parityTest('resolveSlugsByPaths maps stored source paths to slugs', { methods: ['resolveSlugsByPaths'] }, async (engine) => {
     await seed(engine, [['notes/a', { ...NOTE, source_path: 'Notes/A File.md' }], ['notes/b', NOTE]]);
     const empty = await engine.resolveSlugsByPaths([], { sourceId: 'default' });

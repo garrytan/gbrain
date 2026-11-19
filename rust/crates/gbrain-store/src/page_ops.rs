@@ -690,6 +690,46 @@ pub(crate) fn reindex_page(
     Ok(())
 }
 
+/// Postgres' first representable timestamp, 4714-11-24 00:00:00 UTC BC, in microseconds since the
+/// Unix epoch (`MIN_TIMESTAMP` plus the 2000-01-01 offset).
+const PG_MIN_TIMESTAMP_UNIX_US: i64 = -210_866_803_200_000_000;
+
+/// The largest hour count a Postgres interval holds: `hours * 3_600_000_000` must fit an `i64`.
+const PG_MAX_INTERVAL_HOURS: f64 = 2_562_047_788.0;
+
+/// PGLite sends `max(0, floor(hours))` as the text `"<JS number> hours"` and casts it to an
+/// interval. This returns that interval in microseconds, or the error Postgres raises for the text.
+fn purge_interval_micros(older_than_hours: f64) -> Result<i64> {
+    // JS `Math.max(0, NaN)` is NaN, while Rust's `f64::max` would drop it.
+    let hours = if older_than_hours.is_nan() {
+        f64::NAN
+    } else {
+        older_than_hours.floor().max(0.0)
+    };
+    // JS Number-to-String: NaN, Infinity, exponent form from 1e21, plain digits below it.
+    let text = if hours.is_nan() {
+        "NaN".to_string()
+    } else if hours == f64::INFINITY {
+        "Infinity".to_string()
+    } else if hours >= 1e21 {
+        format!("{hours:e}").replacen('e', "e+", 1)
+    } else {
+        format!("{hours}")
+    };
+    if hours.is_nan() || hours >= 1e21 {
+        // Infinity lands here too: its text does not parse either.
+        return Err(StoreError::invalid(format!(
+            "invalid input syntax for type interval: \"{text} hours\""
+        )));
+    }
+    if hours > PG_MAX_INTERVAL_HOURS {
+        return Err(StoreError::invalid(format!(
+            "interval field value out of range: \"{text} hours\""
+        )));
+    }
+    Ok(hours as i64 * 3_600_000_000)
+}
+
 impl Store {
     /// `getAllSlugs({ sourceId? })`: every slug, soft-deleted pages included, in one source when
     /// `sourceId` is not empty. Sorted and distinct.
@@ -965,22 +1005,15 @@ impl Store {
         older_than_hours: f64,
         options: &PurgeOptions,
     ) -> Result<Value> {
-        // PGLite sends `max(0, floor(hours))` as interval text: NaN and Infinity do not parse, and
-        // nothing is purged. -Infinity is 0 hours there too.
-        if older_than_hours.is_nan() || older_than_hours == f64::INFINITY {
-            let text = if older_than_hours.is_nan() {
-                "NaN"
-            } else {
-                "Infinity"
-            };
-            return Err(StoreError::invalid(format!(
-                "invalid input syntax for type interval: \"{text} hours\""
-            )));
-        }
-        let hours = older_than_hours.floor().max(0.0) as i64;
+        let interval_us = purge_interval_micros(older_than_hours)?;
         let excluded: HashSet<i64> = options.exclude_ids.iter().flatten().copied().collect();
         let select = |read: &dyn KvRead, now: i64| -> Result<Vec<PageRecord>> {
-            let cutoff = now.saturating_sub(hours.saturating_mul(3_600_000_000));
+            // `now() - interval` below the first representable timestamp fails before any row is
+            // read, so the refusal is the same on an empty brain.
+            let cutoff = now
+                .checked_sub(interval_us)
+                .filter(|c| *c >= PG_MIN_TIMESTAMP_UNIX_US)
+                .ok_or_else(|| StoreError::invalid("timestamp out of range"))?;
             let all = all_pages(read)?;
             let holds = PurgeHolds::read(read, &all, now)?;
             let mut pages: Vec<PageRecord> = all
@@ -1894,6 +1927,64 @@ mod tests {
             .purge_deleted_pages(f64::NEG_INFINITY, &options)
             .unwrap();
         assert_eq!(out["slugs"], json!(["notes/a"]));
+    }
+
+    /// A clock that always reads `now`.
+    struct FixedClock(i64);
+
+    impl crate::Env for FixedClock {
+        fn now_micros(&self) -> i64 {
+            self.0
+        }
+        fn new_uuid(&self) -> String {
+            crate::env::uuid_from_bytes([7; 16])
+        }
+    }
+
+    // PGLite computes `now() - '<JS number> hours'::interval`. Past the interval's range or the first
+    // representable timestamp it fails with Postgres' text, on an empty brain too, and purges nothing.
+    #[test]
+    fn hours_past_the_interval_or_timestamp_range_fail_as_pglite_does() {
+        let now = 1_795_130_864_243_000; // 2026-11-19T23:27:44.243Z
+        let store = crate::test_support::store_with_env(std::sync::Arc::new(FixedClock(now)));
+        put(&store, "notes/a", None);
+        tombstone(&store, "notes/a", 10);
+        // The last hour count whose cutoff is still on or after 4714-11-24 00:00:00 UTC BC.
+        let last = (now - PG_MIN_TIMESTAMP_UNIX_US) / HOUR_US;
+        assert_eq!(last, 59_072_759);
+        let timestamp = "timestamp out of range".to_string();
+        let interval = |t: &str| format!("interval field value out of range: \"{t} hours\"");
+        let syntax = |t: &str| format!("invalid input syntax for type interval: \"{t} hours\"");
+        let cases: Vec<(f64, String)> = vec![
+            (last as f64 + 1.0, timestamp.clone()),
+            (2_562_047_788.0, timestamp.clone()),
+            (2_562_047_788.9, timestamp),
+            (2_562_047_789.0, interval("2562047789")),
+            (1e16, interval("10000000000000000")),
+            (2f64.powi(60), interval("1152921504606847000")),
+            (1e20, interval("100000000000000000000")),
+            (1e21, syntax("1e+21")),
+            (1.5e21, syntax("1.5e+21")),
+            (1.7976931348623157e308, syntax("1.7976931348623157e+308")),
+        ];
+        for (hours, message) in &cases {
+            for dry_run in [true, false] {
+                let options = serde_json::from_value(json!({ "dryRun": dry_run })).unwrap();
+                let err = store.purge_deleted_pages(*hours, &options).unwrap_err();
+                assert_eq!(&err.message, message, "{hours} hours, dry run {dry_run}");
+            }
+        }
+        assert!(
+            read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "notes/a")
+                .unwrap()
+                .is_some()
+        );
+        // The last hour count in range runs, and the tombstone is younger than its cutoff.
+        let options = serde_json::from_value(json!({ "dryRun": true })).unwrap();
+        let out = store.purge_deleted_pages(last as f64, &options).unwrap();
+        assert_eq!(out["slugs"], json!([]));
+        let out = store.purge_deleted_pages(last as f64 + 0.5, &PurgeOptions::default());
+        assert_eq!(out.unwrap()["slugs"], json!([]));
     }
 
     // #9823 review note 9: PGLite's `LIMIT NULL` is no limit, and a negative limit is refused.
