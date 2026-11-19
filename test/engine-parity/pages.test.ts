@@ -770,6 +770,42 @@ describe('engine parity: pages', () => {
     },
   );
 
+  parityTest(
+    "get_page's read path: the purge check answers for the page an alias, a hidden page or a reader-named page resolves to",
+    { methods: ['putPage', 'updateSlug', 'softDeletePage', 'readPageSnapshot', 'pageAwaitsRederive'] },
+    async (engine, backend) => {
+      await seedAliases(engine, backend);
+      await engine.putPage('people/readers-example',
+        { type: 'person', title: 'readers', compiled_truth: 'readers body', timeline: '', frontmatter: { readable_by: ['alice-example'] } });
+      const slugs = [...ALIAS_SLUGS, 'people/readers-example'];
+      // The options get_page passes (src/core/ops/pages.ts), then the purge check pageTrustForRead makes.
+      const read = (access: Parameters<typeof withCallerAccess>[0] | null) => {
+        const run = async () => {
+          const got: Record<string, { page: string | null; awaits: boolean | null }> = {};
+          for (const slug of slugs) {
+            const snapshot = await engine.readPageSnapshot(slug, { resolveAlias: true, excludePrivate: access !== null });
+            const page = snapshot?.page ?? null;
+            got[slug] = { page: page ? `${page.source_id}:${page.slug}` : null, awaits: page ? await engine.pageAwaitsRederive(Number(page.id)) : null };
+          }
+          return got;
+        };
+        return access === null ? run() : withCallerAccess({ ...access, hidePrivate: true }, run);
+      };
+      const out = {
+        trusted: await read(null),
+        open: await read({ identity: [], restricted: false }),
+        member: await read({ identity: ['member:alice-example'] }),
+        granted: await read({ identity: ['member:bob-example'], privateReadableSources: ['default'] }),
+      };
+      expect(out.trusted['people/old-name']).toEqual({ page: 'default:people/new-name', awaits: false });
+      expect(out.trusted['people/secret-old']!.page).toBe('default:people/secret-new');
+      expect(out.open['people/secret-old']).toEqual({ page: null, awaits: null });
+      expect(out.open['people/readers-example']).toEqual({ page: null, awaits: null });
+      expect(out.member['people/old-name']).toEqual({ page: 'default:people/new-name', awaits: false });
+      return out;
+    },
+  );
+
   parityTest('same slug in two sources stays separate', { methods: ['putPage', 'getPage', 'deletePage', 'resolveSlugs'] }, async (engine, backend) => {
     await createSource(engine, backend, 'work');
     await engine.putPage('notes/a', NOTE);
