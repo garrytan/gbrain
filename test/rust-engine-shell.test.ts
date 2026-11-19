@@ -400,14 +400,13 @@ describe('Rust kind on SQL-only paths', () => {
     expect(rows.engine_capability_missing?.reasons).toEqual([...ENGINE_CAPABILITIES]);
   });
 
-  test('sqlEngineKind and stageBatchBytes refuse a Rust brain instead of treating it as Postgres', async () => {
+  test('sqlEngineKind refuses a Rust brain instead of treating it as Postgres, and stageBatchBytes batches its staging like the SQL engines', async () => {
     expect(isSqlEngineKind('pglite')).toBe(true);
     expect(isSqlEngineKind('rust')).toBe(false);
     expect(sqlEngineKind('postgres', 'x')).toBe('postgres');
     const error = await refusal(() => sqlEngineKind('rust', 'gbrain migrate'));
     expect([error.code, error.reason]).toEqual(['engine_capability_missing', 'raw_sql']);
     expect(stageBatchBytes('pglite')).toBe(STAGE_BATCH_BYTES.pglite);
-    const staged = await refusal(() => stageBatchBytes('rust'));
-    expect(staged.code).toBe('engine_capability_missing');
+    expect(stageBatchBytes('rust')).toBe(STAGE_BATCH_BYTES.pglite);
   });
 });
