@@ -22,17 +22,18 @@
  *    case wrote a member. The end-to-end cases run the commands (addMember, disable, enable, set --email, kind) and
  *    read back through getMember, listMembers and readAudiencePrincipals on every arm.
  *    The credential binding members (gbrain access member add --bind-token, gbrain auth rescope --member) lock and
- *    write access_tokens and oauth_clients rows; the Rust store keeps no credentials, so there they stop on
- *    engine_capability_missing (test/rust-engine-store.test.ts pins that nothing is written first).
+ *    write access_tokens and oauth_clients rows. A client binding, with the attest-sources marks, runs on every arm
+ *    (the last case); a token binding still stops on the Rust arm on engine_capability_missing, because the Rust
+ *    store keeps no access tokens (test/rust-engine-store.test.ts pins that nothing is written first).
  *  - Seam: none. Timestamps are reduced to their shape; the credential fixture rows are harness-only SQL behind the
  *    backend switch, as test/engine-parity/access-grants.test.ts seeds them.
  */
 import { describe, expect } from 'bun:test';
-import { parityArms, type ParityBackend } from './harness.ts';
+import { archiveSource, createSource, parityArms, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { AccessMemberInsert, CredentialBindingRow } from '../../src/core/engine-sql/access-members.ts';
-import { addMember, disableMember, enableMember, getMember, listMembers, memberByEmail, setMemberEmail, setMemberKind, type MemberRecord } from '../../src/core/access/members.ts';
+import { addMember, bindCredential, disableMember, enableMember, getMember, listMembers, memberByEmail, setMemberEmail, setMemberKind, type MemberRecord } from '../../src/core/access/members.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -234,6 +235,65 @@ describe('access member writes', () => {
       client: { ...none, member_id: 'alice-example', grant_types: ['authorization_code'], confidential: false },
       missing: undefined,
     });
+    return out;
+  });
+
+  parityTest('bind a client to a member and list scope sources (--attest-sources): the checks, the marks and the binding commit together, and a refusal or a dry run changes nothing', {
+    methods: ['insertAccessMember', 'setAccessMemberDisabled', 'insertOauthClient', 'readCredentialBindingForUpdate', 'writeCredentialBinding', 'writeCredentialReadsUnscoped',
+      'readScopeSourceConfigs', 'readSourceAttestState', 'replaceSourceConfig', 'readLiveMember', 'deleteOAuthClient'],
+  }, async (engine, backend: ParityBackend) => {
+    await engine.insertAccessMember(member('alice-example', { groups: ['team-a'] }));
+    await engine.insertAccessMember(member('bob-example'));
+    await engine.setAccessMemberDisabled('bob-example', true);
+    await createSource(engine, backend, 'scope-a');
+    await createSource(engine, backend, 'scope-b', { note: 'kept' });
+    await createSource(engine, backend, 'scope-shared', { federated: true });
+    await createSource(engine, backend, 'scope-old');
+    await archiveSource(engine, backend, 'scope-old');
+    const trusted = { client_id: 'trusted', client_name: 'trusted', client_secret_hash: 'hash-trusted', grant_types: ['client_credentials'], scope: 'read write', source_id: 'default' };
+    await engine.insertOauthClient(trusted);
+    await engine.insertOauthClient({ client_id: 'person-client', client_name: 'person-client', grant_types: ['authorization_code'], scope: 'read' });
+    const target = { kind: 'client' as const, id: 'trusted' };
+    const binding = async (id: string) => {
+      const row = await engine.transaction(tx => tx.readCredentialBindingForUpdate({ kind: 'client', id }, { readsUnscoped: true }));
+      return row && { ...row, reads_unscoped: row.reads_unscoped == null ? null : 'set' };
+    };
+    const config = async (id: string) => (await engine.readScopeSourceConfigs([id]))[0]?.config;
+    const failure = async (run: () => Promise<unknown>) => {
+      try { await run(); return 'ok'; } catch (error) { const e = error as { code?: unknown; message?: unknown }; return { code: e.code, message: e.message }; }
+    };
+    const out: Record<string, unknown> = {};
+    out.preview = await bindCredential(engine, target, { attestActor: 'qm', attestOps: ['memory_write'], attestSources: ['scope-b'] }, { dryRun: true });
+    out.previewKept = { binding: await binding('trusted'), scopeB: await config('scope-b') };
+    out.bound = await bindCredential(engine, target, { attestActor: 'qm', attestOps: ['memory_write'], attestSources: ['scope-b', 'scope-a', 'scope-a'], readsUnscoped: true });
+    out.afterBind = { binding: await binding('trusted'), scopeA: await config('scope-a'), scopeB: await config('scope-b') };
+    out.restated = await bindCredential(engine, target, { attestSources: ['scope-a', 'scope-b'] });
+    out.refused = {
+      unknown: await failure(() => bindCredential(engine, target, { attestSources: ['scope-none'] })),
+      archived: await failure(() => bindCredential(engine, target, { attestSources: ['scope-old'] })),
+      federated: await failure(() => bindCredential(engine, target, { attestSources: ['scope-shared'] })),
+      default: await failure(() => bindCredential(engine, target, { attestSources: ['default'] })),
+      noActor: await failure(() => bindCredential(engine, { kind: 'client', id: 'person-client' }, { attestSources: ['scope-a'] })),
+      notConfidential: await failure(() => bindCredential(engine, { kind: 'client', id: 'person-client' }, { attestActor: 'qm' })),
+      noClient: await failure(() => bindCredential(engine, { kind: 'client', id: 'nobody' }, { member: 'alice-example' })),
+      disabledMember: await failure(() => bindCredential(engine, { kind: 'client', id: 'person-client' }, { member: 'bob-example' })),
+    };
+    out.afterRefusals = { trusted: await binding('trusted'), person: await binding('person-client'), scopeOld: await config('scope-old'), scopeShared: await config('scope-shared') };
+    out.cleared = await bindCredential(engine, target, { attestActor: null, readsUnscoped: false });
+    out.afterClear = await binding('trusted');
+    out.memberBound = await bindCredential(engine, { kind: 'client', id: 'person-client' }, { member: 'alice-example', mayActFor: ['alice-example'] });
+    out.identity = {
+      live: await engine.readLiveMember('oauth_client', 'person-client'),
+      unbound: await engine.readLiveMember('oauth_client', 'trusted'),
+      unknown: await engine.readLiveMember('oauth_client', 'nobody'),
+    };
+    await engine.setAccessMemberDisabled('alice-example', true);
+    const disabled = await engine.readLiveMember('oauth_client', 'person-client');
+    await engine.setAccessMemberDisabled('alice-example', false);
+    const reenabled = await engine.readLiveMember('oauth_client', 'person-client');
+    await engine.deleteOAuthClient('person-client');
+    out.identityAfter = { disabled, reenabled, deleted: await engine.readLiveMember('oauth_client', 'person-client') };
+    out.sourceState = { present: await engine.readSourceAttestState('scope-a'), archived: (await engine.readSourceAttestState('scope-old'))?.archived, missing: await engine.readSourceAttestState('scope-none') };
     return out;
   });
 });

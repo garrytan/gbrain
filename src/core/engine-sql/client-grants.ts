@@ -24,6 +24,8 @@ export const CLIENT_GRANT_SQL = {
   holds_authorization: `SELECT EXISTS (SELECT 1 FROM oauth_tokens WHERE client_id = $1)
     OR EXISTS (SELECT 1 FROM oauth_codes WHERE client_id = $2) AS held`,
   source_archived_for_share: 'SELECT archived FROM sources WHERE id = $1 FOR SHARE',
+  source_attest_state: 'SELECT archived, config FROM sources WHERE id = $1',
+  replace_source_config: 'UPDATE sources SET config = $1::text::jsonb WHERE id = $2',
   provenance_audit: `SELECT after_grant FROM oauth_grant_audit
       WHERE client_id = $1 AND after_grant->'catalogProvenance' IS NOT NULL ORDER BY id DESC LIMIT 1`,
   audit_rows: 'SELECT id, client_id, actor, action, revision, before_grant, after_grant, created_at FROM oauth_grant_audit WHERE client_id = $1 ORDER BY id',
@@ -98,6 +100,17 @@ export async function oauthClientHoldsAuthorization(tx: Raw, clientId: string): 
 export async function readSourceArchivedForShare(tx: Raw, id: string): Promise<boolean | null> {
   const [row] = await tx.executeRaw<{ archived: boolean }>(CLIENT_GRANT_SQL.source_archived_for_share, [id]);
   return row ? row.archived === true : null;
+}
+
+/** The source's archived flag and config, or null for no such source (the `--attest-sources` check reads each listed source). */
+export async function readSourceAttestState(tx: Raw, id: string): Promise<{ archived: boolean; config: unknown } | null> {
+  const [row] = await tx.executeRaw<{ archived: boolean; config: unknown }>(CLIENT_GRANT_SQL.source_attest_state, [id]);
+  return row ?? null;
+}
+
+/** Sets the source's whole `config` (the `--attest-sources` mark); nothing for no such source. */
+export async function replaceSourceConfig(tx: Raw, id: string, config: Record<string, unknown>): Promise<void> {
+  await tx.executeRaw(CLIENT_GRANT_SQL.replace_source_config, [JSON.stringify(config), id]);
 }
 
 /**

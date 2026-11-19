@@ -660,6 +660,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'readLiveAccessTokenRows': OOS.callerRawSql,
   'oauthClientHoldsAuthorization': OOS.callerRawSql,
   'readSourceArchivedForShare': OOS.callerRawSql,
+  'readSourceAttestState': OOS.callerRawSql,
+  'replaceSourceConfig': OOS.callerRawSql,
   'persistOauthClientGrant': OOS.callerRawSql,
   'readLatestCatalogProvenanceAudit': OOS.callerRawSql,
   'listOauthGrantAudit': OOS.callerRawSql,

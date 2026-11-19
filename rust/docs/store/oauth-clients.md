@@ -32,7 +32,9 @@ Grant members (`src/jobs/client_grants.rs`, NAPI `families/jobs/grants.rs`; the 
 | `brain.listOauthGrantAudit(clientId)` | the client's audit rows by id, with the documents in `jsonb` key order |
 | `brain.readLatestCatalogProvenanceAudit(clientId)` | the newest audit row's `after_grant` that has a `catalogProvenance` key (a JSON null counts as present) |
 | `brain.readLiveOauthClients()` | every client not deleted, by id |
-| `brain.readSourceGrantState(id)` / `brain.replaceSourceConfig(id, config)` | a source's `{archived, config}` and a whole-config replace |
+| `brain.readSourceGrantState(id)` / `brain.replaceSourceConfig(id, config)` | a source's `{archived, config}` and a whole-config replace (the engine members `readSourceAttestState` and `replaceSourceConfig` are these two, for the `--attest-sources` check and mark) |
+| `brain.writeClientBinding(clientId, binding)` | whether the client exists after setting `member_id`, `may_act_for` and the three attest columns from `binding` (`{ member, may_act_for, attest_actor, attest_ops, attest_sources, attest_read }`); no grant column changes. No constraint covers these columns |
+| `brain.writeClientReadsUnscoped(clientId, on)` | whether the client exists after setting `reads_unscoped` to the store clock (`on`) or clearing it |
 
 `oauthClientHoldsAuthorization(clientId)` is TypeScript-only and is false here: the store keeps no OAuth tokens or codes
 for a client, so a client at revision 0 can take its first consent even when a token exists on a real brain (this holds

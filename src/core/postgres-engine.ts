@@ -1435,6 +1435,8 @@ export class PostgresEngine implements BrainEngine {
   readLiveAccessTokenRows() { return clientGrants.readLiveAccessTokenRows(this); }
   oauthClientHoldsAuthorization(clientId: string) { return clientGrants.oauthClientHoldsAuthorization(this, clientId); }
   readSourceArchivedForShare(id: string) { return clientGrants.readSourceArchivedForShare(this, id); }
+  readSourceAttestState(id: string) { return clientGrants.readSourceAttestState(this, id); }
+  replaceSourceConfig(id: string, config: Record<string, unknown>) { return clientGrants.replaceSourceConfig(this, id, config); }
   persistOauthClientGrant(grant: OauthClientGrantPersist) { return clientGrants.persistOauthClientGrant(this, grant); }
   readLatestCatalogProvenanceAudit(clientId: string) { return clientGrants.readLatestCatalogProvenanceAudit(this, clientId); }
   listOauthGrantAudit(clientId: string) { return clientGrants.listOauthGrantAudit(this, clientId); }

@@ -11,9 +11,9 @@
  * listAudienceAccessMembers, readLiveMember, readAccessGroups) read the same records, so a member a write added is
  * visible to the next read.
  *
- * The store keeps no access tokens and no OAuth clients, so a token bind on insert and every credential binding
- * member refuse with engine_capability_missing before anything is written; readLiveMember finds no member through a
- * token or a client.
+ * The store keeps no access tokens, so a token bind on insert and every token binding member refuse with
+ * engine_capability_missing before anything is written. A client's binding is columns of its row, so the three binding
+ * members run on it, and readLiveMember finds the member a client is bound to; it finds none through a token.
  */
 import type { AccessGroupRow, AccessMemberLookup, AccessMemberRow, AudiencePrincipalRows, LiveMemberRow, MemberBindingVia } from '../../engine-sql/access-control.ts';
 import type { AccessMemberInsert, AccessMemberKind, CredentialBinding, CredentialBindingRow, CredentialTarget } from '../../engine-sql/access-members.ts';
@@ -21,8 +21,10 @@ import { withDates } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { readOauthClient } from './jobs-oauth-clients.ts';
 
-const NO_CREDENTIALS = 'the store keeps no access tokens and no OAuth clients';
+/** A token binding needs the token table, which the store does not keep; a client's binding is columns of its own row. */
+const NO_TOKENS = 'the store keeps no access tokens';
 
 const PG_CODE: ReadonlyArray<[RegExp, string]> = [[/_(pkey|key)$/, '23505'], [/_check$/, '23514'], [/_fkey$/, '23503']];
 
@@ -44,7 +46,7 @@ async function write<T>(member: string, run: () => Promise<T>): Promise<T> {
 }
 
 export const insertAccessMember: StoreMember<[spec: AccessMemberInsert], { groupsCreated: string[] }> = async (brain, spec) => {
-  if (spec.bindTokenId !== null) refuseMember('insertAccessMember', `${NO_CREDENTIALS}, so it binds no token`);
+  if (spec.bindTokenId !== null) refuseMember('insertAccessMember', `${NO_TOKENS}, so it binds no token`);
   const out = await write('insertAccessMember', () => brain.insertAccessMember({
     id: spec.id, displayName: spec.displayName, email: spec.email, kind: spec.kind, groups: [...spec.groups],
   })) as { groupsCreated: string[] };
@@ -106,13 +108,16 @@ export const listAudienceAccessMembers: StoreMember<[], string[]> = async (brain
 
 /**
  * The enabled, untombstoned member `via` and `key` name, with its groups, or null: by its id, or by the member the
- * config key names (edge whitespace trimmed, as Postgres btrims it). The store keeps no access tokens and no OAuth
- * clients, so no legacy token or client names a member.
+ * config key names (edge whitespace trimmed, as Postgres btrims it), or by the member an OAuth client not deleted is
+ * bound to. The store keeps no access-token binding, so no legacy token names a member.
  */
 export const readLiveMember: StoreMember<[via: MemberBindingVia, key: string], LiveMemberRow | null> = async (brain, via, key) => {
   let id: string | null = key;
-  if (via === 'legacy_token' || via === 'oauth_client') return null;
-  if (via === 'stdio_config') {
+  if (via === 'legacy_token') return null;
+  if (via === 'oauth_client') {
+    const client = await readOauthClient(brain, key);
+    id = client && client.deleted_at === null ? client.member_id : null;
+  } else if (via === 'stdio_config') {
     const value = await storeCall({ member: 'readLiveMember' }, () => brain.getConfig(key)) as string | null;
     id = typeof value === 'string' ? value.trim() : null;
   }
@@ -141,12 +146,30 @@ export const readAudiencePrincipals: StoreMember<[memberIds: readonly string[], 
     return { members, groups };
   };
 
+/** The client's binding columns, its grant types and whether it holds a secret (the row is read whole; the store has one writer). */
 export const readCredentialBindingForUpdate: StoreMember<[target: CredentialTarget, opts: { readsUnscoped: boolean }], CredentialBindingRow | undefined> =
-  async () => refuseMember('readCredentialBindingForUpdate', NO_CREDENTIALS);
+  async (brain, target, opts) => {
+    if (target.kind === 'token') refuseMember('readCredentialBindingForUpdate', NO_TOKENS);
+    const row = await readOauthClient(brain, target.id);
+    if (!row) return undefined;
+    return {
+      member_id: row.member_id, may_act_for: row.may_act_for, attest_actor: row.attest_actor, attest_ops: row.attest_ops,
+      attest_sources: row.attest_sources, attest_read: row.attest_read as CredentialBindingRow['attest_read'],
+      grant_types: row.grant_types, confidential: row.client_secret_hash !== null,
+      ...(opts.readsUnscoped ? { reads_unscoped: row.reads_unscoped } : {}),
+    };
+  };
 
-export const writeCredentialBinding: StoreMember<[target: CredentialTarget, binding: CredentialBinding], void> =
-  async () => refuseMember('writeCredentialBinding', NO_CREDENTIALS);
+export const writeCredentialBinding: StoreMember<[target: CredentialTarget, binding: CredentialBinding], void> = async (brain, target, binding) => {
+  if (target.kind === 'token') refuseMember('writeCredentialBinding', NO_TOKENS);
+  await write('writeCredentialBinding', () => brain.writeClientBinding(target.id, {
+    member: binding.member, may_act_for: binding.mayActFor, attest_actor: binding.attestActor, attest_ops: binding.attestOps,
+    attest_sources: binding.attestSources, attest_read: binding.attestRead,
+  }));
+};
 
-export const writeCredentialReadsUnscoped: StoreMember<[target: CredentialTarget, readsUnscoped: boolean], void> =
-  async () => refuseMember('writeCredentialReadsUnscoped', NO_CREDENTIALS);
+export const writeCredentialReadsUnscoped: StoreMember<[target: CredentialTarget, readsUnscoped: boolean], void> = async (brain, target, readsUnscoped) => {
+  if (target.kind === 'token') refuseMember('writeCredentialReadsUnscoped', NO_TOKENS);
+  await write('writeCredentialReadsUnscoped', () => brain.writeClientReadsUnscoped(target.id, readsUnscoped));
+};
 

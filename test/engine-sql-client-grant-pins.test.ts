@@ -15,7 +15,7 @@ import { runCase, withPinnedSqlEnvironment } from './helpers/postgres-engine-sql
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { CLIENT_GRANT_SQL } from '../src/core/engine-sql/client-grants.ts';
 import { clientHoldsAuthorization, readClientCatalogProvenance, recordFirstConsentInTransaction, rescopeClientGrantInTransaction } from '../src/core/grants/service.ts';
-import { assertScopeSourceGrant } from '../src/core/access/attest-sources.ts';
+import { applyAttestSources, assertScopeSourceGrant } from '../src/core/access/attest-sources.ts';
 import { rescopeOAuthClient } from '../src/core/grants/rescope.ts';
 
 const CLIENT_ROW = {
@@ -61,6 +61,10 @@ describe('each client grant member sends the text its caller sent', () => {
     OR EXISTS (SELECT 1 FROM oauth_codes WHERE client_id = $2) AS held`] },
     { name: 'readSourceArchivedForShare (service.ts recordFirstConsentInTransaction)', run: e => e.readSourceArchivedForShare('team-a'),
       texts: ['SELECT archived FROM sources WHERE id = $1 FOR SHARE'] },
+    { name: 'readSourceAttestState (attest-sources.ts applyAttestSources)', run: e => e.readSourceAttestState('team-a'),
+      texts: ['SELECT archived, config FROM sources WHERE id = $1'] },
+    { name: 'replaceSourceConfig (attest-sources.ts applyAttestSources)', run: e => e.replaceSourceConfig('team-a', { qm_scope: true }),
+      texts: ['UPDATE sources SET config = $1::text::jsonb WHERE id = $2'] },
     { name: 'readLatestCatalogProvenanceAudit (service.ts readClientCatalogProvenance)', run: e => e.readLatestCatalogProvenanceAudit('c1'),
       texts: [`SELECT after_grant FROM oauth_grant_audit
       WHERE client_id = $1 AND after_grant->'catalogProvenance' IS NOT NULL ORDER BY id DESC LIMIT 1`] },
@@ -129,6 +133,24 @@ describe('the grant flows send the same statements through an engine as through 
     const { template, member } = await both(db => rescopeOAuthClient(db, 'client-1', { sourceId: 'team-a', surface: 'verbs' }));
     expect(template.some(s => s.text === CLIENT_GRANT_SQL.persist)).toBe(true);
     expect(member).toEqual(template);
+  });
+
+  test('applyAttestSources (the --attest-sources check and mark) reads each listed source and rewrites its config with the same statements', async () => {
+    const rows = [
+      [/SELECT archived, config FROM sources WHERE id = \$1/, [{ archived: false, config: { note: 'x' } }]],
+      [/SELECT id, config FROM sources/, [{ id: 'team-a', config: {} }]],
+      [/FROM oauth_clients/, [{ ...CLIENT_ROW, attest_sources: [] }]],
+    ] as never;
+    const template = await sent(e => applyAttestSources(sqlQueryForEngine(e), { kind: 'client', id: 'client-1' }, ['team-a'], null), rows);
+    const member = await sent(e => applyAttestSources(e, { kind: 'client', id: 'client-1' }, ['team-a'], null), rows);
+    expect(template.error).toBeUndefined();
+    expect(member.error).toBeUndefined();
+    const sources = (t: Trace) => t.filter(s => /FROM sources|UPDATE sources/.test(s.text));
+    expect(sources(template.trace).some(s => s.text === CLIENT_GRANT_SQL.replace_source_config)).toBe(true);
+    expect(sources(member.trace).map(s => s.text))
+      .toEqual(sources(template.trace).map(s => s.text));
+    expect(sources(member.trace).find(s => s.text === CLIENT_GRANT_SQL.replace_source_config)?.params)
+      .toEqual(sources(template.trace).find(s => s.text === CLIENT_GRANT_SQL.replace_source_config)?.params);
   });
 
   test('readClientCatalogProvenance', async () => {

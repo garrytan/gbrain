@@ -862,6 +862,8 @@ export const RUST_ENGINE_MEMBERS = {
   readLiveAccessTokenRows: 'minion_queue',
   oauthClientHoldsAuthorization: 'minion_queue',
   readSourceArchivedForShare: 'minion_queue',
+  readSourceAttestState: 'minion_queue',
+  replaceSourceConfig: 'minion_queue',
   persistOauthClientGrant: 'minion_queue',
   readLatestCatalogProvenanceAudit: 'minion_queue',
   listOauthGrantAudit: 'minion_queue',

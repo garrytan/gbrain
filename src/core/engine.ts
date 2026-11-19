@@ -3867,6 +3867,10 @@ export interface BrainEngine {
   oauthClientHoldsAuthorization(clientId: string): Promise<boolean>;
   /** Whether the source is archived, read FOR SHARE inside the caller's transaction; null for no such source. */
   readSourceArchivedForShare(id: string): Promise<boolean | null>;
+  /** The source's archived flag and config, or null for no such source (the `--attest-sources` check). */
+  readSourceAttestState(id: string): Promise<{ archived: boolean; config: unknown } | null>;
+  /** Set the source's whole config (the `--attest-sources` mark). */
+  replaceSourceConfig(id: string, config: Record<string, unknown>): Promise<void>;
   /** Write a client's grant while it still holds the expected revision, rewrite its legacy open jobs and append the audit row; false (nothing written) when the revision moved. */
   persistOauthClientGrant(grant: OauthClientGrantPersist): Promise<boolean>;
   /** The `after_grant` document of the client's newest audit row that records a catalog provenance, or null; a brain with no audit table raises its error. */

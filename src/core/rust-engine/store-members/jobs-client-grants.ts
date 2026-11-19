@@ -31,6 +31,13 @@ export const readSourceArchivedForShare: StoreMember<[id: string], boolean | nul
   return state ? state.archived === true : null;
 };
 
+export const readSourceAttestState: StoreMember<[id: string], { archived: boolean; config: unknown } | null> = (brain, id) =>
+  storeCall({ member: 'readSourceAttestState', sourceId: id }, () => brain.readSourceGrantState(id)) as Promise<{ archived: boolean; config: unknown } | null>;
+
+export const replaceSourceConfig: StoreMember<[id: string, config: Record<string, unknown>], void> = async (brain, id, config) => {
+  await storeCall({ member: 'replaceSourceConfig', sourceId: id }, () => brain.replaceSourceConfig(id, config));
+};
+
 export const persistOauthClientGrant: StoreMember<[grant: OauthClientGrantPersist], boolean> = (brain, grant) => {
   const { budget_usd_per_day, ...rest } = grant;
   return refusing('persistOauthClientGrant', () => brain.persistOauthClientGrant({ ...rest, budget_usd_per_day: budget_usd_per_day === null ? null : Number(budget_usd_per_day) })) as Promise<boolean>;

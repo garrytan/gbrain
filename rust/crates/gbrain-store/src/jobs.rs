@@ -86,7 +86,7 @@ pub use attachments::AttachmentInput;
 pub use checks::{
     BuildSkewSpec, DeadDreamSpec, DeathsSpec, KeyPrefixSpec, QueuedSpendSpec, StillDeadSpec,
 };
-pub use client_grants::{GrantAudit, GrantPersist, JobGrantSource, RegisterAudit};
+pub use client_grants::{BindingWrite, GrantAudit, GrantPersist, JobGrantSource, RegisterAudit};
 pub use health::{DivergenceSpec, HealthSpec};
 pub use insight::InsightSpec;
 pub use mutations::{DelayOpts, TokenDelta};
