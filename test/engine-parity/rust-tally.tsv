@@ -53,7 +53,7 @@ test/engine-parity/forget-remember.test.ts	2	0
 test/engine-parity/held-fence-cells.test.ts	5	0
 test/engine-parity/hot-memory-watermark.test.ts	2	0
 test/engine-parity/import-members.test.ts	9	0
-test/engine-parity/import-path.test.ts	5	3
+test/engine-parity/import-path.test.ts	6	2
 test/engine-parity/import-writes.test.ts	11	0
 test/engine-parity/jobs-checks.test.ts	9	0
 test/engine-parity/jobs-health.test.ts	7	0
