@@ -11,8 +11,9 @@
  *    enrichment tiering count a confirmed group once, and a remote caller scoped to one source sees no member outside
  *    it; on a repository brain the decision file is committed before any row exists, a database rebuilt from git gets
  *    every decision back, a page imported later is linked on the next sync, a decision kept only in the database moves
- *    into git with reconcile (doctor reports the drift until then), a host without the checkout refuses, and a pair
- *    with a read-only source is recorded in the home source only.
+ *    into git with reconcile (doctor reports the drift until then), a host without the checkout refuses, a pair
+ *    with a read-only source is recorded in the home source only, and an owner-only source elsewhere in the brain
+ *    does not refuse a group outside it; a bulk confirm leaves out same-name companies whose domains differ.
  * 2. Fails when: a confirm writes part of a group; a decision lives only in the database on a repository brain; a
  *    rejected pair comes back; a confirmed person ranks twice.
  * 3. Real seams: both engines (Postgres with DATABASE_URL), real git repositories, performSync, the CLI module, the
@@ -361,6 +362,16 @@ describe('without a repository', () => {
     expect(before).toBe(1);
     expect(await tier()).toBe(4);
   });
+  test('confirm --clean leaves out two same-name companies on one LinkedIn page whose domains differ', async () => {
+    const company = (src: string, fm: Record<string, unknown>) => engine.putPage('companies/acme-example', { type: 'company', title: 'Acme Example', compiled_truth: 'Acme Example.', timeline: '', frontmatter: fm } as never, { sourceId: src });
+    await company('default', { linkedin: 'https://www.linkedin.com/company/acme-example/', domain: 'acme-example.com', country: 'US' });
+    await company('source-b', { linkedin: 'linkedin.com/company/acme-example', domain: 'acme-example.co.uk', country: 'UK' });
+    const list = await cliJson(['confirm', '--clean']);
+    expect(list.groups).toEqual([]);
+    expect(await cli(['confirm', '--clean', '--expect', list.preview_hash])).toContain('Nothing to confirm.');
+    expect((await preview()).map(g => g.class)).toEqual(['likely']);
+    expect(await rows()).toEqual({ decisions: [], identities: [] });
+  });
 });
 
 describe('with a repository', () => {
@@ -605,6 +616,14 @@ describe('with a repository', () => {
     const list = await cliJson(['confirm', '--clean']);
     expect(list.groups).toEqual([]);
     expect(await cli(['confirm', '--clean', '--expect', list.preview_hash])).toContain('Nothing to confirm.');
+  });
+
+  test('an owner-only source elsewhere in the brain does not stop a group outside it from being confirmed', async () => {
+    await engine.executeRaw("INSERT INTO sources (id, name, config) VALUES ('source-c', 'source-c', $1::jsonb) ON CONFLICT (id) DO UPDATE SET config = EXCLUDED.config", ['{"owner_only": true}']);
+    const alice = await groupOf('people/alice-example');
+    expect(await cli(['confirm', alice])).toContain('Confirmed ' + alice + ' as one');
+    expect((await rows()).identities.map(r => r.source_id)).toEqual(['default', 'source-b']);
+    expect(committed(decisionId([{ source_id: 'default', slug: 'people/alice-example' }, { source_id: 'source-b', slug: 'people/alice-example' }]))).toContain('verdict: same');
   });
 
   test('a host that does not see the checkout refuses instead of writing a decision only the database holds', async () => {
