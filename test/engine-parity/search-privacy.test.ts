@@ -294,7 +294,6 @@ const EXCLUDE_PRIVATE_CALLS: Array<[string, (e: BrainEngine) => Promise<unknown>
   ['searchKeywordChunks', (e) => e.searchKeywordChunks(Q, { excludePrivate: true })],
   ['countKeywordPages', (e) => e.countKeywordPages(Q, { excludePrivate: true })],
   ['searchKeywordPages', (e) => e.searchKeywordPages(Q, { excludePrivate: true }, WINDOW)],
-  ['searchTitles', (e) => e.searchTitles(Q, { excludePrivate: true })],
   ['getChunkPage', (e) => e.getChunkPage('notes/open', { fromIndex: 0, limit: 5, excludePrivate: true })],
   ['getChunkWindows', (e) => e.getChunkWindows([{ page_id: 1, from_index: 0, to_index: 1, priority: 0 }], { chunkSources: ['compiled_truth'], maxRows: 10, excludePrivate: true } as never)],
   ['countChunklessPagesWithContent', (e) => e.countChunklessPagesWithContent({ excludePrivate: true } as never)],
@@ -304,13 +303,15 @@ const EXCLUDE_PRIVATE_CALLS: Array<[string, (e: BrainEngine) => Promise<unknown>
 describe('the Rust arm answers or refuses each private-page case the way this file says', () => {
   // A parity case counts a typed refusal as a pass, so this test reads the Rust arm's own engine: it says which member is served
   // (and what it returns, hard-coded from PGLite's answer above) and which refuses, with the code and the option named.
-  test('searchKeyword serves excludePrivate and returns exactly the pages PGLite leaves visible; the other members refuse it', async () => {
+  test('searchKeyword and searchTitles serve excludePrivate and return exactly the pages PGLite leaves visible; the other members refuse it', async () => {
     const rust = arms().find((arm) => arm.backend === 'rust');
     if (!rust) return;
     const engine = rust.engine;
     await seedBrain(engine, 'rust', true);
     const served = await inBrainScope('rust', async () => keys(await engine.searchKeyword(Q, { limit: 50, excludePrivate: true })));
     expect(served).toEqual(VISIBLE);
+    const titles = await inBrainScope('rust', async () => keys(await engine.searchTitles(Q, { limit: 50, excludePrivate: true })));
+    expect(titles).toEqual(VISIBLE);
     for (const [member, call] of EXCLUDE_PRIVATE_CALLS) {
       const got = await inBrainScope('rust', () => refusal(() => call(engine)));
       expect({ member, code: got.code, message: got.message })
@@ -370,7 +371,6 @@ describe('a member refuses an option it does not handle before it reads the stor
     ['countKeywordPages', [Q, { notAnOption: true }], 'notAnOption'],
     ['searchKeywordPages', [Q, { excludePrivate: true }, WINDOW], 'excludePrivate'],
     ['searchKeywordPages', [Q, { notAnOption: true }, WINDOW], 'notAnOption'],
-    ['searchTitles', [Q, { excludePrivate: true }], 'excludePrivate'],
     ['searchTitles', [Q, { notAnOption: true }], 'notAnOption'],
     ['getChunkPage', ['notes/open', { fromIndex: 0, limit: 5, excludePrivate: true }], 'excludePrivate'],
     ['getChunkPage', ['notes/open', { fromIndex: 0, limit: 5, requireSafeChunks: true }], 'requireSafeChunks'],

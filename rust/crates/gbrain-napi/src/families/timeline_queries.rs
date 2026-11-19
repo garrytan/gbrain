@@ -1,10 +1,73 @@
-//! Timeline reads by date and event projections. No methods yet.
+//! Timeline reads by date (the Life Chronicle reads).
 //!
-//! Store methods for: getTimelineForDate, getSince, getOnThisDay, getLastSeen,
-//! upsertEventProjection.
+//! Store methods for getTimelineForDate, getSince, getOnThisDay and getLastSeen.
+//! upsertEventProjection has no method yet: it waits on the core timeline write helpers.
 //!
-//! Add them here as one `#[napi] impl Brain { ... }` block, each method a thin `self.run(env, move
-//! |s| s.<method>(...))` over the `gbrain_store::timeline_queries` module (see `pages.rs` in this
-//! directory for the pattern).
-//!
-//! Open to build now; see docs/designs/RUST_ENGINE_INTERFACES.md.
+//! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
+//! Each method decodes its arguments, runs one `Store` call on the pool through `Brain::run`,
+//! and resolves plain JSON (rust/README.md, "The brain store").
+
+use napi::Env;
+use napi::bindgen_prelude::Object;
+use napi_derive::napi;
+use serde_json::Value;
+
+use crate::store_binding::{Brain, arg};
+
+#[napi]
+impl Brain {
+    /// `getTimelineForDate(date, { week?, limit?, sourceId?, sourceIds? }?)`:
+    /// `ChronicleTimelineRow[]`, earliest first. `date` stays `YYYY-MM-DD`.
+    #[napi]
+    pub fn get_timeline_for_date<'env>(
+        &self,
+        env: &'env Env,
+        date: String,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.get_timeline_for_date(&date, &arg(options, "getTimelineForDate options")?)
+        })
+    }
+
+    /// `getSince(date, { kind?, limit?, sourceId?, sourceIds? }?)`: `ChronicleTimelineRow[]`,
+    /// earliest first.
+    #[napi]
+    pub fn get_since<'env>(
+        &self,
+        env: &'env Env,
+        date: String,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.get_since(&date, &arg(options, "getSince options")?)
+        })
+    }
+
+    /// `getOnThisDay({ date?, limit?, sourceId?, sourceIds? }?)`: `ChronicleTimelineRow[]`,
+    /// newest year first.
+    #[napi]
+    pub fn get_on_this_day<'env>(
+        &self,
+        env: &'env Env,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.get_on_this_day(&arg(options, "getOnThisDay options")?)
+        })
+    }
+
+    /// `getLastSeen(entitySlug, { asof?, sourceId?, sourceIds? }?)`: `{ last_date,
+    /// last_event_slug }`; the shell adds `entity_slug` and `days_ago`.
+    #[napi]
+    pub fn get_last_seen<'env>(
+        &self,
+        env: &'env Env,
+        entity_slug: String,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.get_last_seen(&entity_slug, &arg(options, "getLastSeen options")?)
+        })
+    }
+}

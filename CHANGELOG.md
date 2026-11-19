@@ -10,9 +10,102 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.744.0] - 2026-11-19
+
+**Archiving a source now hides its pages from every API token, not just from search.**
+
+<!-- behavior-change: archived_source_token_reads_gst3163 -->
+
+### Fixed
+- After `gbrain sources archive <id>`, a bearer token whose source list named that source still read its pages over HTTP when the call named no source: `get_page` by slug returned the body, and `list_pages`, `get_versions`, `get_backlinks`, `get_timeline`, `get_raw_data`, `entity`, `recall`, `chronicle_day` and `chronicle_since` all answered from it. A token's sources are now checked against the live sources each time it is used, the way OAuth clients already were, so an archived source reads as absent until `gbrain sources restore <id>` brings it back for the same token. Naming the archived source still answers `unknown_source` on every read that takes a `source_id`, `resolve_slugs` included. A token whose write source is archived, or whose every source is, reads nothing and is told so with that code, as an OAuth client whose source is archived already was. The owner's own tokens keep reading everything else.
+- `gbrain access serves several --members <ids> --yes` and adding or enabling a member from the admin page over HTTP now keep conversation archive pages written while the brain was personal to the owner before the new member can read them, as `gbrain access member add` already did. Before, those pages stayed readable by the new member until the next archive run.
+
+**`gbrain sources refresh` no longer stops and asks for the user when a local commit lands while it publishes the checkout's earlier local commits.**
+
+### Fixed
+- On a managed brain whose refresh publishes local commits by itself (Git durability on, or `sources.refresh_publish_diverged` true), a commit made on the checkout after that publish and before the fast-forward ended the run with `refresh_diverged` and a fix that said to ask the user, although nothing was lost and the next refresh succeeded. The refresh now retries once from a fresh check in the same run, which publishes the new commit too. If that retry is refused as well, the refusal still says the first commits were already published.
+
+**A managed `gbrain sources refresh` that brings in a few files now holds the checkout's refresh lock for about a second instead of minutes, and reports where its time went.**
+
+### Fixed
+- After its import, a refresh's member sync used to derive links for up to 1,000 pages of the source's stale-link backlog while the refresh still held the lock. That took minutes on a large brain, and other refreshes of the checkout failed with `refresh_in_progress` meanwhile. Now the lock covers only the pages the refresh imported. The rest of the sync's link budget (the same 1,000 pages and 5 minutes) is spent on the backlog after the lock is released, so an uncontended run drains as much as before. Refreshes drain a source's backlog one at a time: a refresh that finds another refresh's drain running skips its own. A failed drain never fails the refresh. (GST-3107)
+
+### Added
+- `gbrain sources refresh --json` reports `phase_ms` (whole milliseconds for each phase the run reached: `fetch`, `precheck`, `drain`, `merge`, `sync`, `tail`, `backlog`), `lock_held_ms` and `link_backlog` (each member's backlog drain: `drained` with `pages` and `remaining`, `skipped` or `failed`). `GBRAIN_DEBUG=1` prints the phase times on stderr.
+
+<!-- behavior-change: refresh_link_backlog_after_lock_gst3107 -->
+
+**The Mac helper's send log no longer keeps a recipient hash that can be reversed by trying every phone number.**
+
+### Fixed
+- After 90 days, a line in GBrain Helper's send log keeps only a short hash of the recipient. That hash was a plain SHA-256 of the phone number or email, so anyone holding the log could recover a number by hashing every possible one. It is now keyed with a random 32-byte secret the helper makes on its first send and keeps with the send keys in its keychain item, so the hash can't be reversed without that secret and differs from Mac to Mac. The hourly limit to one recipient uses the same keyed hash. A malformed secret in the keychain item stops sending with `send_keys_tampered` instead of being replaced. Nothing is installed on any Mac yet, so no existing log needs rewriting.
+
+**The experimental Rust engine's store now serves vector search, embeddings, link and graph reads, takes, salience, stats and the ingest log the way PGLite does, but nothing selects it yet; PGLite and Postgres brains are unchanged.**
+
+### Added
+- The Rust engine serves `searchVector` and `searchTakesVector` (an exact scan over the stored vectors, scored as pgvector scores them) and the embedding members, and `upsertChunks` and `sealChunks` store the vector a chunk carries. It reports the `vector_search`, `embeddings`, `links`, `graph`, `takes`, `salience` and `ingest_log` capabilities (`rust/docs/store/vectors.md`, `embeddings.md`).
+- The Rust engine serves the link reads, alias and slug members, the take members, salience, `getStats`, `getHealth`, the ingest log, the extraction reads and the page-listing reads (`rust/docs/store/`). A caller that asks for `excludePrivate` gets the pages PGLite hides, including a page of an owner-only source.
+
+### Changed
+- A chunk that carries an image vector, and a brain whose config names a vector column other than `embedding`, still refuse with `engine_capability_missing`; the store keeps one vector column.
+
+**A publish that redacts secrets no longer reports a failure that did not happen, and the secret audit logs are private to their owner.**
+
+### Fixed
+- The `secret_store_spooled` notice is now an info notice. It says the originals were sealed in this machine's encrypted spool, which every redacting publish does, and that the next owner push or maintenance pass moves them into the secret store. It also says that `gbrain git commit-push` does not move them itself. It used to be a degraded notice saying the store could not be written, which was not true. `gbrain doctor`'s `secret_store` check still reports originals left in the spool.
+- The `secrets` and `secret-spans` audit logs (`~/.gbrain/audit/`) are now created at mode 0600, and an existing file with looser permissions is tightened on its next write. Before, a publish created them with the process umask (usually 0644). They hold page slugs, field names, store entry ids and span offsets, never a value.
+
+<!-- behavior-change: secret_store_spooled_info_gst2988 -->
+
+**Purging a page now removes the secret store originals only that page held.**
+
+### Changed
+- `gbrain delete <slug> --purge`, the batch hard delete and the expiry of a deleted page now remove the places the redactor recorded on that page, and every sealed original no other page and no publish commit still references. An original another page holds, or that a redacted publish commit points to, stays. A place recorded under a slug the page had before a rename goes with the page.
+- Renaming a page moves the places the redactor recorded on it to the new slug, so a later purge of a page that takes the old slug leaves them alone.
+- `gbrain secrets backup --restore` adds the recorded places of an entry the store already holds, and skips an original whose every place was on a page this brain does not hold (`skipped_no_page`), so it never brings back what a purge removed. When it skips every entry that way, it refuses with `invalid_params` and writes nothing.
+- `gbrain doctor`'s `secret_store` check counts sealed originals no page or commit references.
+
+### Known limits
+- Backups uploaded to the storage bucket before a purge still hold that page's sealed original (encrypted, under the store key). Delete those objects from the bucket when it must be gone from there too.
+- A restore from a backup taken before a rename can tie an original to a different page that has since taken the renamed page's old slug, and that page's readers then pass the `reveal_secret` read check for it. It needs both: an older backup and another page now at that slug. After a restore, `gbrain secrets list` shows the pages each original is tied to. A backup taken after the rename names the new slug.
+- A backup taken before this release can name a place by a slug its page had before an older rename. A restore of that backup skips such an entry today (`skipped_no_page`); GST-3178 makes it restore the entry without a place instead. Backups from this release on name each place by its page's current slug.
+
+**The bake-off baseline benchmark can run against Postgres on a clean install again.**
+
+### Fixed
+- `rust/bench/baseline` with `--engine postgres` loaded a `postgres` package that a clean install does not have, so it stopped before it reached the database. It now loads the repo's vendored driver (`#postgres`), like the rest of gbrain. A new test checks that the driver loads before the database name is checked, and the test connects to nothing.
+
+## [0.60.743.0] - 2026-11-19
+
+**OpenClaw's skill resolver now suggests skills for the message the user just sent.**
+
+### Fixed
+- The `gbrain-skill-resolver` plugin read the user's text from fields a real OpenClaw gateway does not send. OpenClaw 2026.10.33 and 2026.11.5 pass it as `event.prompt` and keep only earlier turns in `event.messages`. So the first turn of every session got no suggestions (`skipped_empty`), and each later turn was ranked on the message before it, in live and in shadow mode. The plugin now reads `event.prompt` first.
+- The plugin now finds OpenClaw's `assertActive` check under `ctx.hookInvocation`, so a run that OpenClaw already ended no longer counts toward the session.
+- `gbrain setup openclaw` now parses `openclaw skills list --json` from stdout only. A warning OpenClaw printed on stderr used to make the list read as failed. Setup then skipped the hidden-skill filter and the `skill_resolver_host_load_cut` note.
+- An upgrade does not rewrite the plugin on its own. To install the fixed plugin, run `gbrain setup openclaw --skill-loading resolve` (or `shadow`) again, then restart the gateway.
+
+**Changing GBrain Helper's send settings at the Mac no longer holds up sends, and a Touch ID approval applies only to the settings it was shown for.**
+
+### Fixed
+- Turning sending on, adding a send key and raising a limit ask for Touch ID. The helper used to hold its settings lock for the whole dialog, which can take up to two minutes, so any send arriving then waited. It now asks with no lock held, and sends keep working while the dialog is open.
+- After the owner approves, the helper takes the lock, reads the settings again and applies the change only if they still match what the dialog was built from. If another change landed in the meantime it applies nothing and answers `overloaded`, and the owner runs the command again.
+- A send now reads its settings, checks the kill switch and its key, and takes the limits under the same lock admin uses to save. A send that arrives while a key is being replaced is checked against the new key.
+- `send-setup --off`, `send-key remove` and lowering a limit always write the keychain item in one step, so a failed write is reported as an error rather than taken as done, and a Touch ID approval still open from an earlier command is refused instead of undoing them. `send-setup --off` exits with an error when the helper answers but can't save.
+- `send-key add` and `send-limits set` wait for the helper's Touch ID wait plus a minute.
+
+**The secret store now backs itself up, encrypted, to your storage bucket, and `gbrain doctor` reports its health.**
+
+### Added
+- `gbrain secrets backup` uploads an encrypted export of the secret store to the storage backend you already configured for files (Supabase, S3 or local), and maintenance does it after new entries. The bucket gets no value, page name, path or rule in clear, and never the key; `gbrain secrets backup --restore <object>` adds back the entries a brain lacks, only where the key is. With no backend, the database backup carries the store and nothing is needed.
+- `gbrain doctor` has a `secret_store` check: entries, the last backup, keys entries need that this host lacks (`secret_store_key_forked`), a key whose escrow copy was never exported, originals waiting in the spool, held-back publish commits and local refs that still hold commits from before a redaction rebuild.
+
+### Known limits
+- Purging a page does not yet remove its sealed originals from the secret store. They stay encrypted, and `gbrain doctor`'s `secret_store` check still counts them. Removing them with the page follows in a later release.
+
 ## [0.60.742.0] - 2026-11-19
 
-**The PostgreSQL test lane runs on 28 shards, so new test files no longer push it past its time budget.**
+**The PostgreSQL unit tests run on 28 shards, so new test files no longer push them past their time budget.**
 
 ### Changed
 - `scripts/postgres-unit-arms.ts`: `ARM_SHARDS` 28. In `.github/workflows/persistence-validation.yml`, the `unit-postgres-arms` matrix, job name and `run` argument follow it (pinned by `test/scripts/postgres-unit-arms.test.ts`, whose 570 s budget is unchanged). `scripts/postgres-arm-weights.json` is re-mined from the arms jobs of the five newest complete full runs, so every listed file has a measured weight. The largest shard drops from 557.4 s on 24 shards to 478.4 s on 28. Check names become `Unit-lane PostgreSQL arms N/28 / Bun …`, and none of them is a required check.
