@@ -309,8 +309,8 @@ async function adminAddMember(b: Brain, id: string): Promise<void> {
 }
 
 async function threeOwnerClients(b: Brain): Promise<void> {
-  await mint(b, 'owner_muse', OWNER);
-  await mint(b, 'owner_grok', OWNER);
+  await mint(b, 'owner_muse', null);
+  await mint(b, 'owner_grok', null);
   for (const name of ['owner_http', 'owner_muse', 'owner_grok']) {
     for (const op of ['search', 'get_page', 'query']) await http(b, b.tokens[name]!, op, op === 'get_page' ? { slug: 'notes/adworldqzx' } : { query: 'harbor', limit: 3 });
   }
