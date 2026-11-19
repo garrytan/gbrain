@@ -1,0 +1,7 @@
+**On the Rust engine, `gbrain recall` with a trust policy now answers, and remote timeline, chronicle, tag and take reads no longer stop on read options they did not support.**
+
+### Fixed
+- On the Rust engine, `gbrain recall` and the MCP `recall` tool now apply a read trust policy to the fact list: a fact below the trust floor, a flagged agent-written fact and a fact from a quarantined page are left out, the same as on PGLite and Postgres. Before, they stopped on a missing-capability refusal.
+- On the Rust engine, the timeline and chronicle reads behind the MCP `get_timeline`, `chronicle_day`, `chronicle_since`, `chronicle_on_this_day` and `chronicle_last_seen` tools accept the extra read options a remote caller sends and answer as PGLite and Postgres do. Before, they stopped on those options, which the reads do not use.
+- On the Rust engine, the tag and take reads behind the MCP `get_tags`, `takes_list`, `takes_search`, `takes_scorecard` and `takes_calibration` tools now apply the private-page policy, including a caller's reader identity and private-readable grant. A tag or take of a page the caller cannot read is left out, the same as on PGLite and Postgres. The scorecard and calibration reads also accept the copy of the holder allow-list that a remote caller sends.
+- A brain that enforces member read rules still refuses these remote reads on the Rust engine. That refusal is a separate gap.
