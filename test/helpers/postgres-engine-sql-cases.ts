@@ -363,6 +363,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'preparationRead': OOS.helper,
   'ownRawRead': OOS.helper,
   'lockingPreparationRead': OOS.helper,
+  'configRead': OOS.helper,
+  'engineSqlRead': OOS.helper,
   'jitOffRead': OOS.helper,
   'readTransaction': OOS.helper,
   'connect': OOS.lifecycle,

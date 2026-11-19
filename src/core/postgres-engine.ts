@@ -136,7 +136,7 @@ import { PageMissingError } from './engine-errors.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from './embed-skip.ts';
 import { holdSchemaMigrationSessionLock, holdSchemaMigrationTransactionLock } from './postgres-engine/init-schema-lock.ts';
 import { assertSchemaNotAhead } from './schema-client-behind.ts';
-import { isPipelinableSearchRead, SEARCH_JIT_OFF, withSearchJitOff, withSearchSettings, type SearchSettings } from './postgres-engine/search-settings.ts';
+import { deadlineReadSettings, isPipelinableSearchRead, SEARCH_JIT_OFF, withSearchJitOff, withSearchSettings, type SearchSettings } from './postgres-engine/search-settings.ts';
 import { loadKeywordStatementTimeout } from './postgres-engine/keyword-statement-timeout.ts';
 import { applyPostgresForwardReferenceBootstrap } from './engine-sql/bootstrap.ts';
 import * as factsImpl from './engine-sql/facts.ts';
@@ -473,7 +473,8 @@ export class PostgresEngine implements BrainEngine {
     // Flag off + no pre-existing transaction need: call through on the
     // shared pool exactly as master does. No tx round-trip, no pool slot
     // held for the duration of the read.
-    if (deadlineAt !== undefined && !this.rlsScopeBindingEnabled && !opts?.alwaysTransaction) return await runDeadlineRead(this.sql, deadlineAt, callback, this.checkoutGauge, cancelSettleMs());
+    // Under a read deadline a read wanting its own transaction takes the deadline's, its settings inside (search-settings.ts).
+    if (deadlineAt !== undefined && !this.rlsScopeBindingEnabled) return await runDeadlineRead(this.sql, deadlineAt, tx => withSearchSettings(tx, false, deadlineReadSettings(opts, deadlineAt), () => callback(tx)), this.checkoutGauge, cancelSettleMs(), readDeadlineSignal());
     if (!this.rlsScopeBindingEnabled && !opts?.alwaysTransaction) {
       return await callback(this.sql);
     }
@@ -513,6 +514,11 @@ export class PostgresEngine implements BrainEngine {
     const deadlineAt = this._pageTransaction || unbounded ? undefined : readDeadline();
     if (deadlineAt === undefined) return fn(this.autocommitSql);
     return runDeadlineRead(this.sql, deadlineAt, tx => fn(this.engineSqlOn(tx)), this.checkoutGauge, cancelSettleMs(), readDeadlineSignal());
+  }
+
+  /** A typed read master ran on `engineSql`: still so, or `preparationRead` under a read deadline. */
+  private engineSqlRead<T>(fn: (exec: SqlExecutor) => Promise<T>): Promise<T> {
+    return this._pageTransaction || readDeadline() === undefined ? fn(this.engineSql) : this.preparationRead(fn);
   }
 
   /** A typed read master ran through this engine's executeRaw (a statement fault a test injects reaches it): still so, or `preparationRead` under a read deadline. */
@@ -1869,7 +1875,9 @@ export class PostgresEngine implements BrainEngine {
 
   /** #6495: resolve the keyword/title statement bound for this connection at connect (file plane, else the DB plane, else 8000 ms; postgres-engine/keyword-statement-timeout.ts), never from a request or inside a search's transaction. */
   private keywordStatementTimeoutSetting(): Promise<string> {
-    return this.keywordStatementTimeout ??= loadKeywordStatementTimeout(this, this._savedConfig?.keyword_statement_timeout_ms);
+    // Under a preparation deadline the config read takes the deadline, and a load it fails is not kept.
+    if (this.keywordStatementTimeout || this._pageTransaction || readDeadline() === undefined) return this.keywordStatementTimeout ??= loadKeywordStatementTimeout(this, this._savedConfig?.keyword_statement_timeout_ms);
+    return loadKeywordStatementTimeout(this, this._savedConfig?.keyword_statement_timeout_ms, text => this.configRead(sql => sql.unsafe(text))).then(value => this.keywordStatementTimeout ??= Promise.resolve(value));
   }
 
   async keywordBoundedRead<T>(read: (db: Pick<BrainEngine, 'executeRaw'>) => Promise<T>): Promise<T> {
@@ -2323,7 +2331,7 @@ export class PostgresEngine implements BrainEngine {
     minSimilarity: number = 0.55,
     sourceId?: string,
   ): Promise<{ slug: string; similarity: number } | null> {
-    return pagesImpl.findByTitleFuzzy(unscopedExecutor(this.engineSql, 'pages: unscoped on master (EO4 inventory)'), name, dirPrefix, minSimilarity, sourceId);
+    return this.engineSqlRead(exec => pagesImpl.findByTitleFuzzy(unscopedExecutor(exec, 'pages: unscoped on master (EO4 inventory)'), name, dirPrefix, minSimilarity, sourceId));
   }
 
   async traverseGraph(
@@ -2920,11 +2928,11 @@ export class PostgresEngine implements BrainEngine {
   async allocateBodyOccurrenceIds(count: number): Promise<number[]> { return pageBodyImpl.allocateBodyOccurrenceIds(this.engineSql, count); }
   async stageSegmentTexts(sourceId: string, texts: readonly SegmentTextInput[], opts?: { stagingId?: string }): Promise<{ inserted: number }> { return pageBodyImpl.stageSegmentTexts(this.engineSql, sourceId, texts, opts); }
   async readSegmentTexts(sourceId: string, sha256s: readonly Uint8Array[]): Promise<Map<string, Uint8Array>> {
-    return pageBodyImpl.readSegmentTexts(unscopedExecutor(this.engineSql, 'page-body: page-id keyed internal read'), sourceId, sha256s);
+    return this.engineSqlRead(exec => pageBodyImpl.readSegmentTexts(unscopedExecutor(exec, 'page-body: page-id keyed internal read'), sourceId, sha256s));
   }
   async stageManifestRows(rows: readonly ManifestRowInput[]): Promise<void> { return pageBodyImpl.stageManifestRows(this.engineSql, rows); }
   async readManifest(pageId: number, opts?: { generation?: number; stagingId?: string; region?: BodyRegion; lastN?: number }): Promise<ManifestRow[]> {
-    return pageBodyImpl.readManifest(unscopedExecutor(this.engineSql, 'page-body: page-id keyed internal read'), pageId, opts);
+    return this.engineSqlRead(exec => pageBodyImpl.readManifest(unscopedExecutor(exec, 'page-body: page-id keyed internal read'), pageId, opts));
   }
   async stageSegmentChunks(pageId: number, generation: number, chunks: readonly SegmentChunkInput[], opts?: { embeddingColumn?: ResolvedColumn }): Promise<number[]> {
     return pageBodyImpl.stageSegmentChunks(this.engineSql, pageId, generation, chunks, opts);
@@ -3330,10 +3338,17 @@ export class PostgresEngine implements BrainEngine {
     // #1603: a transient pooler drop on this read used to throw / fall through
     // to defaults silently — which on remote Postgres surfaces as the wrong
     // search mode/knobs and empty-stdout queries.
-    return this.connRetry(async () => {
-      const rows = await this.sql`SELECT value FROM config WHERE key = ${key}`;
+    return this.configRead(async sql => {
+      const rows = await sql`SELECT value FROM config WHERE key = ${key}`;
       return rows.length > 0 ? (rows[0].value as string) : null;
     });
+  }
+
+  /** A config read: retried on a pooler drop (#1603), or under a preparer's read deadline its bounded read-only transaction (`preparationRead`). */
+  private configRead<T>(run: (sql: ReturnType<typeof postgres>) => Promise<T>): Promise<T> {
+    const deadlineAt = this._pageTransaction ? undefined : readDeadline();
+    if (deadlineAt === undefined) return this.connRetry(() => run(this.sql));
+    return runDeadlineRead(this.sql, deadlineAt, run, this.checkoutGauge, cancelSettleMs(), readDeadlineSignal());
   }
 
   async setConfig(key: string, value: string): Promise<void> {
@@ -3359,8 +3374,8 @@ export class PostgresEngine implements BrainEngine {
     // correctly. Pure string work — stays outside the retried thunk.
     const escaped = prefix.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
     const pattern = `${escaped}%`;
-    return this.connRetry(async () => {
-      const rows = await this.sql<{ key: string }[]>`
+    return this.configRead(async sql => {
+      const rows = await sql<{ key: string }[]>`
         SELECT key FROM config WHERE key LIKE ${pattern} ESCAPE '\\' ORDER BY key
       `;
       return rows.map(r => r.key);
@@ -3370,8 +3385,8 @@ export class PostgresEngine implements BrainEngine {
   async getAllConfig(): Promise<Record<string, string>> {
     const held = await requestConfigRows(this);
     if (held) return held;
-    return this.connRetry(async () => {
-      const rows = await this.sql<{ key: string; value: string }[]>`
+    return this.configRead(async sql => {
+      const rows = await sql<{ key: string; value: string }[]>`
         SELECT key, value FROM config
       `;
       const out: Record<string, string> = {};
