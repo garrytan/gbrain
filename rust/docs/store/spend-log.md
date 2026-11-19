@@ -64,8 +64,10 @@ Differences from PGLite and PostgreSQL:
 - The store keeps the whole `oauth_clients` row and enforces its constraints, `oauth_clients_complete_agent_grant`
   among them ([oauth-clients.md](oauth-clients.md)). The agent view qualifies a client by the `agent` scope token or by
   `bound_tools`; a client with the token always has tools, as the constraint requires.
-- A delegated reservation (`validateAdmission` in `delegated-spend.ts`) still reads `effectiveDelegation` through raw SQL,
-  so it is refused on a Rust brain.
+- A delegated reservation (`validateAdmission` in `delegated-spend.ts`) reads the client's grant with `readOauthClient`
+  and the active sources with `listAllSources`, so it is admitted or denied on a Rust brain as on PGLite
+  (`test/engine-parity/delegated-grant.test.ts`). The archived-source denial is not exercised on Rust: no served member
+  archives a source.
 
 Not served (still raw SQL, so refused on a Rust brain): every other statement on `oauth_clients`, and `oauth_grant_audit`,
 `oauth_tokens` and `oauth_codes`, which belong to the OAuth family. No writer call site of `insertOauthClient` or
