@@ -51,7 +51,9 @@ member-access part alone (the page's readers, and the origin of a derived page):
   any source is owner-only, every page is hidden. `fn`: a page is hidden when its source is owner-only, or when it is
   a concept or question with a `concept-provenance` / `synthesized_from` link to a page in an owner-only source. The
   store keeps no `derivation_inputs` (PGLite writes them only through raw SQL, which a Rust brain refuses), so the
-  function's walk over them finds nothing on either side. A policy with no `ownerOnly` is `closed`.
+  function's walk over them finds nothing on either side. `ownerOnly` is always one of the three names: a policy
+  with no `ownerOnly` is `closed`, and any other value (`null` too) is refused before the store reads
+  (`tests/owner_only_form_contract.rs`).
 
 - **Callers the store does not render.** A caller whose access record adds folder rules, an audience, a lineage
   or a labelled-only grant renders a policy the store cannot judge. Both page members then refuse with
