@@ -718,6 +718,7 @@ export const RUST_ENGINE_MEMBERS = {
   setOauthClientTokenTtl: 'minion_queue',
   insertOauthClientGrant: 'minion_queue',
   readTokenLifetimeClampedClients: 'minion_queue',
+  readScopeSourceConfigs: 'minion_queue',
   insertLeasePressure: 'minion_queue',
   countLeasePressure: 'minion_queue',
   listRecentLeasePressure: 'minion_queue',

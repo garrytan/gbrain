@@ -17,6 +17,7 @@ import { planManualClient } from '../src/core/oauth-provider.ts';
 import { clientGrantInsert, grantValidationContext, insertClientGrant } from '../src/core/grants/service.ts';
 import { CREDENTIAL_SQL } from '../src/core/engine-sql/access-credentials.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
+import { markedScopeSources } from '../src/core/access/attest-sources.ts';
 
 /** caller.ts MEMBER_SQL at 7470c703ed: MEMBERS_WHERE_SQL(`m.id = (${member})`), copied verbatim. */
 const memberSql = (member: string) => `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
@@ -258,6 +259,21 @@ const PINS: Pin[] = [
     case: { method: 'readTokenLifetimeClampedClients', variant: 'default', run: e => e.readTokenLifetimeClampedClients() },
     texts: [`SELECT DISTINCT client_id FROM oauth_grant_audit WHERE actor = 'migration' AND action IN ('clamp_token_ttl', 'shorten_access_tokens')`],
   },
+  {
+    from: 'src/core/access/attest-sources.ts:67 markedScopeSources FOR UPDATE (at 758c3b853e)',
+    case: { method: 'readScopeSourceConfigs', variant: 'update', run: e => e.readScopeSourceConfigs(['team-a'], 'update') },
+    texts: ['SELECT id, config FROM sources WHERE id IN (SELECT jsonb_array_elements_text($1::text::jsonb)) ORDER BY id FOR UPDATE'],
+  },
+  {
+    from: 'src/core/access/attest-sources.ts:69 markedScopeSources FOR SHARE (at 758c3b853e)',
+    case: { method: 'readScopeSourceConfigs', variant: 'share', run: e => e.readScopeSourceConfigs(['team-a'], 'share') },
+    texts: ['SELECT id, config FROM sources WHERE id IN (SELECT jsonb_array_elements_text($1::text::jsonb)) ORDER BY id FOR SHARE'],
+  },
+  {
+    from: 'src/core/access/attest-sources.ts:70 markedScopeSources (at 758c3b853e)',
+    case: { method: 'readScopeSourceConfigs', variant: 'default', run: e => e.readScopeSourceConfigs(['team-a']) },
+    texts: ['SELECT id, config FROM sources WHERE id IN (SELECT jsonb_array_elements_text($1::text::jsonb))'],
+  },
 ];
 
 describe('caller raw SQL moved into typed members keeps its Postgres text byte for byte', () => {
@@ -289,4 +305,24 @@ describe('insertOauthClientGrant sends what insertClientGrant sends', () => {
     expect(member).toEqual(template);
     expect(member[0].text).toBe(CREDENTIAL_SQL.client_grant_insert);
   });
+});
+
+describe('markedScopeSources sends the same statement through an engine as through a SqlQuery', () => {
+  // The drift pin: the grant writes still pass a transaction SqlQuery (the template path); an engine caller now reads
+  // through readScopeSourceConfigs. Both must send one text and one parameter list.
+  for (const lock of [undefined, 'share', 'update'] as const) {
+    test(`lock ${lock ?? 'none'}`, async () => {
+      const sent = async (run: (e: any) => Promise<unknown>) => {
+        const capture = await withPinnedSqlEnvironment(undefined, () => runCase({ method: 'markedScopeSources', variant: lock ?? 'none', run }));
+        expect(capture.error).toBeUndefined();
+        return capture.trace.filter(s => s.kind === 'query').map(s => ({ text: s.text, params: s.params }));
+      };
+      const ids = ['team-b', 'team-a', 'team-b'];
+      const template = await sent(e => markedScopeSources(sqlQueryForEngine(e), ids, lock));
+      const member = await sent(e => markedScopeSources(e, ids, lock));
+      expect(template.length).toBe(1);
+      expect(member).toEqual(template);
+      expect(member[0].params).toEqual([JSON.stringify(['team-b', 'team-a'])]);
+    });
+  }
 });

@@ -47,7 +47,7 @@ test/engine-parity/link-read-options.test.ts	7	0
 test/engine-parity/link-reads.test.ts	10	0
 test/engine-parity/link-temporal.test.ts	15	0
 test/engine-parity/links.test.ts	32	0
-test/engine-parity/oauth-clients.test.ts	9	1
+test/engine-parity/oauth-clients.test.ts	10	0
 test/engine-parity/open-loops.test.ts	4	0
 test/engine-parity/page-visibility.test.ts	6	0
 test/engine-parity/pages.test.ts	34	1
@@ -84,4 +84,4 @@ test/engine-parity/unrestricted-caller-reads.test.ts	2	0
 test/engine-parity/versions-raw.test.ts	9	0
 test/engine-parity/wanted-links.test.ts	5	0
 test/engine-parity/write-guards.test.ts	7	0
-test/engine-parity/write-misc.test.ts	26	12
+test/engine-parity/write-misc.test.ts	27	12

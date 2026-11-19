@@ -1,5 +1,5 @@
 /**
- * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
+ * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState, the scope-source read readScopeSourceConfigs (SQL in engine-sql/access-credentials.ts) through
  * purgeMemoryProposals, attachSourcePath and getWorktreeBinding; SQL in engine-sql/write-misc.ts; isSourceClaimed, SQL in engine-sql/sources.ts), and the folder access read beside the
  * access members (isFolderRestricted, listAppliedPolicyRevisions, readMayActFor, readAudiencePrincipals, readAccessMembers, readAccessCredentials, listAudienceAccessMembers, readLiveMember, readAccessGroups and listPagesNamingReader; SQL in engine-sql/access-control.ts). The credential revokes are served by the jobs credential members (store-members/jobs-access-tokens.ts and jobs-oauth-clients.ts). The source read, the path attach and the pages naming a reader are served by
  * gbrain-store `write_misc`; the rest answer for state the store does not keep. What each member answers and why:
@@ -10,6 +10,7 @@ import type {
 } from '../../engine-sql/write-misc.ts';
 import type { AccessCredentialLookup, AccessCredentialRow, AccessGroupRow, AccessMemberLookup, AccessMemberRow, LiveMemberRow, LiveMemberVia, AppliedPolicyRevision, AudiencePrincipalRows, MayActForVia, PageNamingReaderRow } from '../../engine-sql/access-control.ts';
 import { PAGES_NAMING_READER_LIMIT } from '../../engine-sql/access-control.ts';
+import type { ScopeSourceLock } from '../../engine-sql/access-credentials.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /**
@@ -18,6 +19,20 @@ import { storeCall, type StoreMember } from './common.ts';
  */
 export const readSourceState: StoreMember<[sourceId: string, opts?: SourceStateOptions], SourceStateRow | null> = (brain, sourceId) =>
   storeCall({ member: 'readSourceState', sourceId }, () => brain.readSourceState(sourceId));
+
+/**
+ * The scope-source check's read (engine-sql/access-credentials.ts readScopeSourceConfigs): the id and config of each
+ * known source among `ids`, in id order, from the same source read. The store runs one write transaction at a time, so
+ * the lock changes nothing here.
+ */
+export const readScopeSourceConfigs: StoreMember<[ids: readonly string[], lock?: ScopeSourceLock], { id: string; config: unknown }[]> = async (brain, ids) => {
+  const rows: { id: string; config: unknown }[] = [];
+  for (const id of [...new Set(ids)].sort()) {
+    const row: SourceStateRow | null = await storeCall({ member: 'readScopeSourceConfigs', sourceId: id }, () => brain.readSourceState(id));
+    if (row) rows.push({ id, config: row.config });
+  }
+  return rows;
+};
 
 /** A config value as `config->>'key'` reads it: text as is, null for a missing key, JSON text otherwise. */
 function jsonText(value: unknown): string | null {

@@ -5384,6 +5384,7 @@
         "readRankCoverage": "none",
         "readReceiptBudget": "none",
         "readRowTrustRows": "none",
+        "readScopeSourceConfigs": "none",
         "readSearchStats": "none",
         "readSegmentDerivations": "none",
         "readSegmentTexts": "none",

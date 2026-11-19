@@ -261,10 +261,10 @@ describe('engine parity: oauth_clients rows and constraints', () => {
     { methods: ['readOauthClientColumns', 'insertOauthClientGrant', 'setOauthClientTokenTtl', 'readOauthClient', 'oauthClientLive'] }, async (engine) =>
       registerThroughCli(engine, ['--grant-types', 'client_credentials', '--scopes', 'read write', '--token-ttl', '7200']));
 
-  // A grant that reads a named source first checks it is not a QM scope source (attest-sources.ts markedScopeSources),
-  // a raw sources read the Rust arm refuses; the SQL arms still compare.
+  // A grant that reads a named source first checks it is not a QM scope source (attest-sources.ts markedScopeSources,
+  // through readScopeSourceConfigs); neither source is marked, so the registration goes through on every arm.
   parityTest('register a client that reads named sources: the same row, after the scope-source check',
-    { methods: ['readOauthClientColumns', 'insertOauthClientGrant', 'setOauthClientTokenTtl', 'readOauthClient', 'oauthClientLive'] }, async (engine, backend) => {
+    { methods: ['readOauthClientColumns', 'readScopeSourceConfigs', 'insertOauthClientGrant', 'setOauthClientTokenTtl', 'readOauthClient', 'oauthClientLive'] }, async (engine, backend) => {
       await setup(engine, backend);
       return registerThroughCli(engine, ['--grant-types', 'client_credentials', '--scopes', 'read write', '--source', 'src-a', '--federated-read', 'src-a,src-b', '--token-ttl', '7200']);
     });

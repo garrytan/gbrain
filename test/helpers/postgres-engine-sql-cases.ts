@@ -580,6 +580,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'setOauthClientTokenTtl': OOS.callerRawSql,
   'insertOauthClientGrant': OOS.callerRawSql,
   'readTokenLifetimeClampedClients': OOS.callerRawSql,
+  'readScopeSourceConfigs': OOS.callerRawSql,
   'listAudienceAccessMembers': OOS.callerRawSql,
   'readLiveMember': OOS.callerRawSql,
   'readAccessGroups': OOS.callerRawSql,
