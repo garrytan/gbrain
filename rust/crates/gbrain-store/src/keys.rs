@@ -73,7 +73,10 @@ pub const LOCK_QUEUE: u8 = b'w';
 pub const RELATION_CATALOG: u8 = b'v';
 /// Family `persistence` (`persistence.rs`): effects, checkpoints, bindings and the page
 /// projection queue. Its write requests stay under `REQUEST` and `REQUEST_ID`, and its local
-/// writers under `WRITER`.
+/// writers under `WRITER`. The byte after `d`: `0x01` counters, `0x02` housekeeping
+/// checkpoints, `0x03` topology changes, `0x04` page projection jobs, `0x05` to `0x07` effect
+/// rows, effect order and operation checkpoint paths, `0x08` the commit notifier
+/// (`persistence/notifier.rs`; `d 0x08 0x01 <host_id>` is the host lease).
 pub const PERSISTENCE: u8 = b'd';
 /// Family `jobs` (`jobs.rs`).
 pub const JOBS: u8 = b'm';

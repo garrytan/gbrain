@@ -20,6 +20,7 @@ PGLite. The code is `crates/gbrain-store/src/persistence.rs`, with `persistence/
 | `d 0x02 <op> 0x00 <fingerprint>` | one housekeeping `op_checkpoints` row, JSON |
 | `d 0x03 <principal id> 0x00 <request id>` | one `persistence_topology_changes` row (a lifecycle receipt), JSON (topology.rs) |
 | `d 0x04 <source incarnation> 0x00 <slug>` | one `page_projection_jobs` row `{ revision, reason, updated_at_us }`, JSON (projection_queue.rs) |
+| `d 0x08 0x01 <host id>` | one `sync_notifier_leases` row `{ owner_id, fence, resident_kind, pid, renewed_at_us, expires_at_us }`, JSON (notifier.rs) |
 
 A counter key is the text of `persistence_counters.key` (`brain`, `principal:<kind>:<id>`).
 
@@ -28,6 +29,9 @@ The `J` record is a superset of `journal::RequestRecord`, by design. A request r
 reads are named fields, the others are in the record's `extra` map with their table defaults. The
 native write path decodes the named fields and keeps `extra` as it found it, so both writers share one
 key and one record. A record the native write path stored reads back with those defaults filled in.
+
+`d 0x05` to `d 0x07` are kept for effect rows, effect order and operation checkpoint paths. The commit
+notifier owns `d 0x08`; a unit test in notifier.rs checks that its key range stays clear of them.
 
 A queue key holds the incarnation as its 36-byte lower-case UUID text, so key order is
 `(source_incarnation, slug)` order, the order of the Postgres primary key.
@@ -105,6 +109,22 @@ The consumer's housekeeping after a write (`persistence-housekeeping.ts`).
 | `brain.readCapacityForecastInputs(light)` | the counters, the per-day rows (the principal rows, then the lifecycle receipts grouped by writer and UTC day), the history and, unless `light`, the reclaim rows. `tableBytes` is `null` (no relation size) | `readCapacityForecastInputs` |
 | `brain.listPendingSegmentedProjections(filter)` | the queued jobs of segmented pages that a projector can take now, as `listPendingSegmentedProjections` returns them | `listPendingSegmentedProjections` |
 | `brain.selectProjectionWindowJobs(cursor, retryCooldown)` | the window rows (the recency lane, then the wrapped key-order lane), with `high_water` as Postgres prints a `timestamptz`; the one row of nulls for an empty queue | `selectProjectionWindowJobs` |
+
+## Commit notifier
+
+The resident commit notifier's host lease and host source list (`src/core/engine-sql/notifier.ts`,
+`notifier/store.ts` `claimLease` and `notifier/resident.ts` `listHostSources`). With both typed, a
+resident on this engine starts the notifier, as it does on Postgres.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.claimNotifierLease({ hostId, ownerId, kind, pid, leaseMs })` | `{ owner: true, fence }` when the host has no lease row, the row is the caller's (a renewal keeps the fence) or the row expired (a takeover adds 1 to the fence); the row then holds the caller with an expiry `leaseMs` (rounded, at least 1) from now. Otherwise `{ owner: false, holder: { owner_id, fence, resident_kind, pid, expires_at, live } }`. `invalid_argument` for a host id with NUL | `claimNotifierLease` |
+| `brain.listNotifierHostSourceRows()` | every source that is not archived, in id order: `{ id, local_path, last_commit, bound, owner, root, syncer, config }`. This engine keeps no managed worktree binding, no classic syncer row and no source `last_commit`, so `bound` is `false` and the other four are `null` | `listNotifierHostSourceRows` |
+
+The notifier's other reads and writes (sync states, due markers, coverage records, the drain lease,
+the lease release) still refuse with `engine_capability_missing`; the notifier logs each refusal once and
+keeps running. Search freshness on this engine reports no source, as a brain without the notifier
+tables does.
 
 ## Effect scans
 

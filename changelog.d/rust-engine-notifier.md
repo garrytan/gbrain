@@ -1,0 +1,9 @@
+**On an experimental Rust brain, a serve or worker now starts the commit notifier: it claims the host lease and lists the brain's sources. PGLite and Postgres brains send the same SQL as before.**
+
+### Changed
+- The notifier's host lease claim and its source list are typed engine calls, `claimNotifierLease` and `listNotifierHostSourceRows`. Postgres and PGLite send the same SQL text as before, byte for byte, from `src/core/engine-sql/notifier.ts`.
+- On a Rust brain the lease is one record per host, with the same fence rules as Postgres: the first claim wins, a renewal keeps the fence, and a takeover after expiry bumps it. A host id with a NUL byte is refused.
+- The notifier's other reads and writes still refuse on a Rust brain. The notifier logs each refusal once and keeps running. Search freshness still reports no source on a Rust brain.
+
+### Added
+- Caller tests on all three engines for the backup coverage check and the readiness worker and sync probes.

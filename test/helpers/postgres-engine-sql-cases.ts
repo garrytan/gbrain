@@ -84,6 +84,7 @@ const OOS = {
   trustTierReads: 'out-of-scope:trust-tier-reads (born in engine-sql/trust-tier-reads.ts; pinned by test/engine-parity/trust-tier-reads.test.ts)',
   openLoops: 'out-of-scope:open-loops (born in engine-sql/open-loops.ts; pinned by test/engine-parity/open-loops.test.ts)',
   minionJobs: 'out-of-scope:minion-jobs (born in engine-sql/jobs.ts and engine-sql/jobs-queue.ts; pinned by test/engine-parity/jobs.test.ts and jobs-queue.test.ts)',
+  notifier: 'out-of-scope:notifier (born in engine-sql/notifier.ts; pinned by test/engine-parity/notifier.test.ts and test/engine-sql-caller-raw-sql-pins.test.ts)',
   takesReads: 'out-of-scope:takes-reads (born in engine-sql/takes-reads.ts; pinned by test/engine-parity/takes.test.ts, code-eval-salience.test.ts and test/engine-sql-takes-reads.test.ts)',
 } as const;
 
@@ -582,6 +583,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'hasClaimableWrite': OOS.journal, 'directRawSql': OOS.helper,
   'readTopologyChange': OOS.journal, 'insertTopologyChange': OOS.journal,
   'claimHousekeepingTurn': OOS.journal, 'completeHousekeepingTurn': OOS.journal, 'readReceiptBudget': OOS.journal,
+  'claimNotifierLease': OOS.notifier, 'listNotifierHostSourceRows': OOS.notifier,
   'listCompactableReceipts': OOS.journal, 'listReservationsAfter': OOS.journal, 'listTrueUpRequests': OOS.journal,
   'readCapacityForecastInputs': OOS.journal, 'listPendingSegmentedProjections': OOS.journal, 'selectProjectionWindowJobs': OOS.journal,
   'listGatedMirrorRequests': OOS.effectScans, 'listEffectRecoveries': OOS.effectScans, 'selectClaimableEffect': OOS.effectScans,
@@ -1379,6 +1381,8 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('claimHousekeepingTurn', ([false, true] as const).map((direct) => [direct ? 'direct' : 'default',
     (e: any) => e.claimHousekeepingTurn({ op: 'parity-housekeeping', hostId: JOURNAL_REQUEST, intervalMs: 60_000, leaseMs: 3_600_000,
       consumerKinds: ['serve', 'sync'], consumerLiveMs: 30_000 }, { direct })])),
+  ...variants('claimNotifierLease', [['default', (e) => e.claimNotifierLease({ hostId: JOURNAL_REQUEST, ownerId: INCARNATION, kind: 'serve', pid: 4242, leaseMs: 30_000 })]]),
+  ...variants('listNotifierHostSourceRows', [['default', (e) => e.listNotifierHostSourceRows()]]),
   ...variants('completeHousekeepingTurn', [['default', (e) => e.completeHousekeepingTurn({ op: 'parity-housekeeping', hostId: JOURNAL_REQUEST })]]),
   ...variants('readReceiptBudget', [['default', (e) => e.readReceiptBudget('persistence.receipt_retention_days', 30)]]),
   ...variants('listCompactableReceipts', [['default', (e) => e.listCompactableReceipts(30)]]),

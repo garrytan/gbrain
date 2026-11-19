@@ -113,6 +113,8 @@ export const RUST_ENGINE_MEMBERS = {
   getSource: 'sources',
   listSourceLocalPaths: 'sources',
   countRepoBoundSources: 'sources',
+  // The commit notifier's host source list (engine-sql/notifier.ts).
+  listNotifierHostSourceRows: 'sources',
   listLocalPathSources: 'sources',
   listSourceRoutingRows: 'sources',
   countDefaultSourceSplit: 'sources',
@@ -567,6 +569,8 @@ export const RUST_ENGINE_MEMBERS = {
   deleteConsumerRow: 'persistence_journal',
   stampWorktreeHeartbeats: 'persistence_journal',
   claimHousekeepingTurn: 'persistence_journal',
+  // The commit notifier's host lease (engine-sql/notifier.ts), a per-host lease like the housekeeping turn.
+  claimNotifierLease: 'persistence_journal',
   completeHousekeepingTurn: 'persistence_journal',
   readReceiptBudget: 'persistence_journal',
   listCompactableReceipts: 'persistence_journal',

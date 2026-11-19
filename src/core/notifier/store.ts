@@ -21,6 +21,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { hostIdFor } from '../persistence/identity.ts';
+import { readNotifierLease, type NotifierLeaseClaim, type NotifierLeaseClaimInput, type NotifierLeaseHolder } from '../engine-sql/notifier.ts';
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 
@@ -182,27 +183,15 @@ export async function settleMarkers(engine: Exec, sourceId: string, read: Wanted
 
 // ── Notifier lease ───────────────────────────────────────────────────────────
 
-export interface LeaseHolder { owner_id: string; fence: number; resident_kind: string; pid: number | null; expires_at: string; live: boolean }
+export type LeaseHolder = NotifierLeaseHolder;
 
 /** Claims or renews the host's notifier lease: the fencing token when this resident owns it, else the current holder. */
-export async function claimLease(engine: Exec, l: { hostId: string; ownerId: string; kind: string; pid: number; leaseMs: number }): Promise<{ owner: true; fence: number } | { owner: false; holder: LeaseHolder | null }> {
-  const [won] = await engine.executeRaw<{ fence: unknown }>(
-    `INSERT INTO sync_notifier_leases (host_id, owner_id, fence, resident_kind, pid, renewed_at, expires_at)
-     VALUES ($1, $2, 1, $3, $4, now(), now() + $5::int * interval '1 millisecond')
-     ON CONFLICT (host_id) DO UPDATE SET owner_id = EXCLUDED.owner_id, resident_kind = EXCLUDED.resident_kind, pid = EXCLUDED.pid,
-       fence = sync_notifier_leases.fence + CASE WHEN sync_notifier_leases.owner_id = EXCLUDED.owner_id THEN 0 ELSE 1 END,
-       renewed_at = now(), expires_at = EXCLUDED.expires_at
-     WHERE sync_notifier_leases.owner_id = EXCLUDED.owner_id OR sync_notifier_leases.expires_at <= now()
-     RETURNING fence`, [l.hostId, l.ownerId, l.kind, l.pid, Math.max(1, Math.round(l.leaseMs))]);
-  if (won) return { owner: true, fence: num(won.fence) };
-  return { owner: false, holder: await readLease(engine, l.hostId) };
+export async function claimLease(engine: Pick<BrainEngine, 'claimNotifierLease'>, l: NotifierLeaseClaimInput): Promise<NotifierLeaseClaim> {
+  return engine.claimNotifierLease(l);
 }
 
 export async function readLease(engine: Exec, hostId: string): Promise<LeaseHolder | null> {
-  const [row] = await engine.executeRaw<Record<string, unknown>>(
-    'SELECT owner_id, fence, resident_kind, pid, expires_at, expires_at > now() AS live FROM sync_notifier_leases WHERE host_id = $1', [hostId]);
-  return row ? { owner_id: String(row.owner_id), fence: num(row.fence), resident_kind: String(row.resident_kind),
-    pid: optNum(row.pid), expires_at: iso(row.expires_at)!, live: row.live === true || row.live === 't' } : null;
+  return readNotifierLease(engine, hostId);
 }
 
 /** The fencing check before a start: still the owner, with the token this resident claimed, and unexpired. */
