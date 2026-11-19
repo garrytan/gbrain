@@ -543,7 +543,7 @@ fn find_active_single_fact_under_the_remote_floor_judges_only_the_holding_page()
     let (hidden, open) = (rows[0], rows[1]);
     let find = |page: Option<&str>, floor: bool| {
         let floor = floor.then(
-            || json!({ "honorAliases": true, "entityPrivacy": false, "provenanceOnly": true, "ownerOnly": "lineage" }),
+            || json!({ "honorAliases": true, "entityPrivacy": false, "provenanceOnly": true, "ownerOnly": "fn" }),
         );
         b.find_active_single_fact(&args::<SingleFactQuery>(json!({
             "sourceId": "default", "entitySlug": "people/secret", "visibility": "private",

@@ -1123,7 +1123,7 @@ mod tests {
         };
         let all = ["a-exact", "m-visibility", "n-access", "o-public", "p-atom"];
         assert_eq!(top(json!({"limit": 5})), all);
-        let policy = json!({"honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage"});
+        let policy = json!({"honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn"});
         // The limit counts visible pages only: the hidden pages tie at the top score and take no slot.
         assert_eq!(
             top(json!({"limit": 3, "exclude_private": policy})),
@@ -1139,13 +1139,13 @@ mod tests {
         );
         // Without the alias keys only `visibility` (and a derived page's default) hides a page.
         let visibility_only =
-            json!({"honorAliases": false, "entityPrivacy": true, "ownerOnly": "lineage"});
+            json!({"honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn"});
         assert_eq!(
             top(json!({"limit": 3, "exclude_private": visibility_only})),
             ["a-exact", "n-access", "o-public"]
         );
         // With the privacy part of the entity gate relaxed, only the member-access part applies: nothing here is hidden.
-        let relaxed = json!({"honorAliases": true, "entityPrivacy": false, "ownerOnly": "lineage"});
+        let relaxed = json!({"honorAliases": true, "entityPrivacy": false, "ownerOnly": "fn"});
         assert_eq!(top(json!({"limit": 5, "exclude_private": relaxed})), all);
         // `null` (excludePrivate off) hides nothing, and the policy composes with the other filters.
         assert_eq!(top(json!({"limit": 5, "exclude_private": null})), all);

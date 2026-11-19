@@ -40,7 +40,13 @@ export async function intentCarriesPurgedContent(tx: BrainEngine, row: Pick<Writ
   let parsed: ReturnType<typeof parseMarkdown> | null = null;
   try { parsed = content ? parseMarkdown(content, `${row.slug}.md`) : null; } catch { parsed = null; }
   if (parsed) for (const body of [parsed.compiled_truth, parsed.timeline ?? '']) claims.push(...parseFactsFenceFor(body, { slug: row.slug }).facts.map(f => ({ claim: f.claim, subject: row.slug })));
-  if (has.facts && claims.length) {
+  if (has.facts && claims.length && tx.capabilities?.has('raw_sql') === false) {
+    // An engine without raw SQL (Rust) probes each claim through the typed ledger read: a tombstone of either
+    // visibility, as the statement below matches any visibility. Its completeWriteRow reports no page tombstones.
+    for (const { claim, subject: s } of claims.slice(0, 1000)) {
+      for (const visibility of ['world', 'private']) if (await tx.isFactPurged(row.source_id, visibility, claim, s)) return true;
+    }
+  } else if (has.facts && claims.length) {
     const hit = await tx.executeRaw(`SELECT 1 FROM fact_purges p JOIN jsonb_to_recordset($2::text::jsonb) AS c(claim text, subject text)
       ON p.fact_hash=gbrain_fact_fingerprint(c.claim) AND (p.subject='*' OR p.subject=c.subject) WHERE p.source_id=$1 LIMIT 1`,
     [row.source_id, JSON.stringify(claims.slice(0, 1000))]);

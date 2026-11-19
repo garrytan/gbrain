@@ -387,7 +387,7 @@ fn exclude_private_drops_the_pages_the_page_policy_hides_from_both_salience_read
     );
     let policy = |honor_aliases: bool, entity_privacy: bool| {
         serde_json::to_value(
-            json!({"honorAliases": honor_aliases, "entityPrivacy": entity_privacy, "ownerOnly": "lineage"}),
+            json!({"honorAliases": honor_aliases, "entityPrivacy": entity_privacy, "ownerOnly": "fn"}),
         )
         .unwrap()
     };
@@ -492,13 +492,13 @@ fn salience_scores_under_exclude_private_skip_the_pages_the_policy_hides() {
         "default::notes/alias",
     ];
     assert_eq!(slugs(json!({})), all, "no policy hides nothing private");
-    let policy = json!({"honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage"});
+    let policy = json!({"honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn"});
     assert_eq!(
         slugs(json!({"exclude_private": policy})),
         ["default::notes/open"]
     );
     let visibility_only =
-        json!({"honorAliases": false, "entityPrivacy": true, "ownerOnly": "lineage"});
+        json!({"honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn"});
     assert_eq!(
         slugs(json!({"exclude_private": visibility_only})),
         ["default::notes/open", "default::notes/alias"],

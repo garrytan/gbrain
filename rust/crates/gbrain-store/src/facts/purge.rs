@@ -40,13 +40,13 @@ const MEMBER_PAGE_PREFIX: &str = "memory/members/";
 const SCOPE_PAGE_SLUG: &str = "memory/scope";
 
 /// `outcomeMarkerSql`.
-fn outcome_marker(row: &FactRecord) -> bool {
+pub(crate) fn outcome_marker(row: &FactRecord) -> bool {
     AUDIT_ROW_SOURCES.contains(&row.source.as_str())
         && OUTCOME_MARKER_FACTS.contains(&row.fact.as_str())
 }
 
 /// `unbackedEntitySql`: `COALESCE(strpos(entity_slug, '/') = 0 AND NOT EXISTS (live page), false)`.
-pub(super) fn unbacked(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
+pub(crate) fn unbacked(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
     let Some(entity) = row.entity_slug.as_deref() else {
         return Ok(false);
     };

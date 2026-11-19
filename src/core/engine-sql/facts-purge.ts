@@ -255,6 +255,19 @@ export async function listWithdrawalSlugs(raw: EngineRawRead, sourceId: string, 
 }
 
 /** recordFactWithdrawal: expires every live fact of the claim under `subject` now, closing its valid time at now; the ids it expired. */
+/** A fact purge tombstone, the row purge_fact writes into `fact_purges`. */
+export interface FactPurgeInsert {
+  sourceId: string; visibility: string; subject: string; factHash: string;
+  requestId: string | null; actor: string | null; reason: string | null;
+}
+
+/** purge_fact: stores the tombstone; false when one already holds the same (source, visibility, subject, fingerprint). */
+export async function insertFactPurge(raw: EngineRawRead, row: FactPurgeInsert): Promise<boolean> {
+  const rows = await raw<{ inserted: number }>(`INSERT INTO fact_purges(source_id,visibility,subject,fact_hash,request_id,actor,reason) VALUES ($1,$2,$3,$4,$5::uuid,$6,$7) ON CONFLICT DO NOTHING RETURNING 1 AS inserted`,
+    [row.sourceId, row.visibility, row.subject, row.factHash, row.requestId, row.actor, row.reason]);
+  return rows.length > 0;
+}
+
 export async function expireFactsByWithdrawal(raw: EngineRawRead, sourceId: string, visibility: string, fact: string, subject: string): Promise<Array<{ id: number }>> {
   const { text, params } = renderFragment(sqlFragment`UPDATE facts SET expired_at=now(),valid_until=LEAST(COALESCE(valid_until,now()),now()) FROM ${subjectOf(subject)}
     WHERE facts.source_id=${sourceId} AND facts.visibility=${visibility} AND gbrain_fact_fingerprint(facts.fact)=gbrain_fact_fingerprint(${fact})

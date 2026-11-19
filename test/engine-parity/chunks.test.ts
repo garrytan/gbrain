@@ -598,4 +598,29 @@ describe('engine parity: chunks', () => {
       return { implicitDefault, work, federated, staleDefault, staleWork, staleAll, staleRows, workAfter, defaultAfter, chunklessWork, chunklessDefault };
     },
   );
+
+  parityTest(
+    'getChunks with requireSafeChunks reads no chunks of a page chunked before the fence chunker version',
+    { methods: ['putPage', 'sealChunks', 'setChunkerVersion', 'getChunks'] },
+    async (engine) => {
+      for (const slug of ['notes/fence-safe', 'notes/fence-short']) {
+        await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'Body.', timeline: '' });
+        await installChunks(engine, slug, [chunk(0, `About ${slug}.`), chunk(1, 'Second.')]);
+      }
+      await engine.setChunkerVersion('notes/fence-short', 3);
+      const read = async (slug: string, requireSafeChunks?: boolean) =>
+        view(await engine.getChunks(slug, { sourceId: 'default', includeEmbedding: true, ...(requireSafeChunks === undefined ? {} : { requireSafeChunks }) }));
+      const out = {
+        safe: await read('notes/fence-safe', true),
+        short: await read('notes/fence-short', true),
+        shortOff: await read('notes/fence-short', false),
+        shortDefault: await read('notes/fence-short'),
+      };
+      expect(out.safe).toHaveLength(2);
+      expect(out.short).toEqual([]);
+      expect(out.shortOff).toHaveLength(2);
+      return out;
+    },
+  );
 });
+

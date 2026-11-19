@@ -10,7 +10,7 @@
 import type { BrainEngine, RowTrustLookup } from '../engine.ts';
 import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { admitsTrust, compareTrust, minTrust, storedTrustTier, type TrustTier } from '../trust/tier.ts';
-import { chunkFenceMarker, FENCE_TRUST_ORIGIN, fenceTrustMarker, heldRowSql, lowestFenceTrustMarker } from './fence-overlay.ts';
+import { chunkFenceMarker, FENCE_TRUST_ORIGIN, fenceTrustMarker, lowestFenceTrustMarker } from './fence-overlay.ts';
 import { decodeFenceCell, isSeparatorRow, parseRowCells } from '../fence-shared.ts';
 import { needsDataEnvelope, parseContested, renderTrustedText, trustFields, type Contested, type TrustFields } from './labels.ts';
 import { activationSuppressedSql, contestedRefSql } from './sql.ts';
@@ -26,14 +26,15 @@ interface PageRef {
 }
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
-type TrustExec = Pick<BrainEngine, 'executeRaw' | 'readPageTrustRows' | 'readRowTrustRows'>;
+type HeldExec = Pick<BrainEngine, 'listHeldFenceCells'>;
+type TrustExec = Pick<BrainEngine, 'executeRaw' | 'readPageTrustRows' | 'readRowTrustRows' | 'listHeldFenceCells'>;
 
 const key = (source: string | null | undefined, slug: string) => `${source ?? 'default'}\u0000${slug}`;
 
 /**
  * Trust fields per page id and per (source_id, slug). GBRA-504: a row in a guest source is decided here, per row from
  * its source's config and guest_sources (guests/marker.ts guestSourceSql), and carries origin `guest`, the external tier and its guest mark (one batched guest_marks read, only
- * when a guest row is among them; a mark that cannot be read leaves the row unattributed, never bare). The writer is
+ * when a guest row is among them; a mark that cannot be read leaves the row unattributed, never bare, and a refused read refuses the caller). The writer is
  * shown only with `guestWriter` (an owner caller); `includeDeleted` also resolves soft-deleted pages by slug.
  */
 export async function loadPageTrust(engine: TrustExec, refs: readonly PageRef[], opts: { guestWriter?: boolean; includeDeleted?: boolean } = {}): Promise<{ byId: Map<number, TrustFields>; byKey: Map<string, TrustFields> }> {
@@ -74,7 +75,7 @@ export async function stampPageTrust<T extends PageRef>(engine: TrustExec, rows:
   factRows.forEach((row, i) => Object.assign(row, factTrust[i]));
   const pageRows = rows.filter(row => typeof row.fact_row?.id !== 'number');
   let found: Awaited<ReturnType<typeof loadPageTrust>> | null = null;
-  try { found = pageRows.length ? await (pageTrust ?? loadPageTrust(engine, pageRows)) : null; } catch { found = null; }
+  try { found = pageRows.length ? await (pageTrust ?? loadPageTrust(engine, pageRows)) : null; } catch (err) { rethrowCapabilityRefusal(err); found = null; }
   for (const row of pageRows) {
     const fields = (typeof row.page_id === 'number' ? found?.byId.get(row.page_id) : undefined)
       ?? found?.byKey.get(key(row.source_id, row.slug))
@@ -128,18 +129,15 @@ function holdsText(text: string): boolean {
 /**
  * GST-2891: per row, the line numbers of the facts-fence row lines of its text held from a caller whose fact reads are
  * world-only (heldRowSql: a world cell whose fact is stored narrower, a widening the owner has not accepted), whenever
- * the text was cut. One batched lookup; a failed lookup, or a row that names no source, returns every fence row line
- * (fail closed).
+ * the text was cut. One batched lookup (BrainEngine listHeldFenceCells); a failed lookup, or a row that names no source,
+ * returns every fence row line (fail closed).
  */
-export async function heldFenceLines(engine: Exec, rows: readonly PageRef[]): Promise<Array<Set<number>>> {
+export async function heldFenceLines(engine: HeldExec, rows: readonly PageRef[]): Promise<Array<Set<number>>> {
   const perRow = rows.map(row => typeof row.chunk_text === 'string' ? fenceRowLines(row.chunk_text) : []);
-  const keys = rows.flatMap((row, i) => { const src = row.source_id; return src == null ? [] : perRow[i]!.map(l => [src, row.slug, l.rowNum, l.claim, l.partial] as const); });
+  const keys = rows.flatMap((row, i) => { const src = row.source_id; return src == null ? [] : perRow[i]!.map(l => ({ sourceId: src, slug: row.slug, rowNum: l.rowNum, claim: l.claim, partial: l.partial })); });
   let held: Set<string> | null = new Set();
   if (keys.length) try {
-    const found = await engine.executeRaw<{ source_id: string; slug: string; row_num: number; claim: string }>(
-      `SELECT DISTINCT k.source_id, k.slug, k.row_num, k.claim FROM unnest($1::text[], $2::text[], $3::int[], $4::text[], $5::text[]) AS k(source_id, slug, row_num, claim, partial)
-        WHERE ${heldRowSql('k.source_id', 'k.slug', 'k.row_num', 'k.claim', "k.partial = 't'")}`,
-      [keys.map(k => k[0]), keys.map(k => k[1]), keys.map(k => k[2]), keys.map(k => k[3]), keys.map(k => (k[4] ? 't' : 'f'))]);
+    const found = await engine.listHeldFenceCells(keys);
     held = new Set(found.map(f => `${f.source_id}\u0000${f.slug}\u0000${Number(f.row_num)}\u0000${f.claim}`));
   } catch { held = null; }
   return rows.map((row, i) => new Set(perRow[i]!
@@ -147,7 +145,7 @@ export async function heldFenceLines(engine: Exec, rows: readonly PageRef[]): Pr
 }
 
 /** GST-2891: removes from each row's text the fence row lines held from the caller (heldFenceLines), and drops a row left with nothing to read. */
-export async function dropHeldFenceRows<T extends PageRef>(engine: Exec, rows: T[]): Promise<T[]> {
+export async function dropHeldFenceRows<T extends PageRef>(engine: HeldExec, rows: T[]): Promise<T[]> {
   const drops = await heldFenceLines(engine, rows);
   return rows.filter((row, i) => {
     const drop = drops[i]!;
@@ -185,7 +183,8 @@ const FENCE_ROW_SQL = `SELECT DISTINCT ON (f.source_id, f.source_markdown_slug, 
  * proposal), so a chunk cut before a flag, a confirmation or a tier change
  * never reads as more trusted than its rows. A chunk led by a fence trust
  * marker gets the marker rewritten to that state, and an external one has
- * its rows wrapped as data. A failed lookup keeps the stored labels.
+ * its rows wrapped as data. A failed lookup keeps the stored labels; an engine that refuses the read
+ * (`engine_capability_missing`) refuses the caller too.
  */
 async function applyFenceRowTrust<T extends PageRef>(engine: Exec, rows: T[]): Promise<void> {
   const perRow = rows.map(row => fenceRowNumbers(row.chunk_text));
@@ -193,7 +192,7 @@ async function applyFenceRowTrust<T extends PageRef>(engine: Exec, rows: T[]): P
   rows.forEach((row, i) => { for (const n of perRow[i]!) keys.push([row.source_id ?? 'default', row.slug, n]); });
   if (!keys.length) return;
   let found: Array<{ source_id: string; slug: string; row_num: number; trust_tier: string; flagged: boolean; contested: string | null }>;
-  try { found = await engine.executeRaw(FENCE_ROW_SQL, [keys.map(k => k[0]), keys.map(k => k[1]), keys.map(k => k[2])]); } catch { return; }
+  try { found = await engine.executeRaw(FENCE_ROW_SQL, [keys.map(k => k[0]), keys.map(k => k[1]), keys.map(k => k[2])]); } catch (err) { rethrowCapabilityRefusal(err); return; }
   const state = new Map(found.map(f => [`${f.source_id}\u0000${f.slug}\u0000${Number(f.row_num)}`, f]));
   rows.forEach((row, i) => {
     const facts = perRow[i]!.map(n => state.get(`${row.source_id ?? 'default'}\u0000${row.slug}\u0000${n}`)).filter(f => f !== undefined);

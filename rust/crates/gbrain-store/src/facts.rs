@@ -27,6 +27,8 @@
 //! - `F 0x0D page_id`: the `page_facts_reconcile` watermark (`facts/reconcile.rs`), read only.
 //! - `F 0x0E generation_id`: the `derived_generations` ledger with its items
 //!   (`facts/generations.rs`), read only.
+//! - `F 0x0F source visibility subject fact_hash`: the `fact_purges` ledger
+//!   (`facts/purge_ledger.rs`).
 //! - meta `next_facts_id`: the id sequence. An insert that `ON CONFLICT DO NOTHING` skips still
 //!   takes an id, as `nextval` does.
 //!
@@ -44,11 +46,14 @@ pub mod cycle;
 pub mod doctor;
 mod embedding;
 mod fence;
+mod fence_overlay;
 pub mod generations;
+mod held_cells;
 pub mod loops;
 mod page_purges;
 mod privacy;
 pub mod purge;
+pub mod purge_ledger;
 pub mod reconcile;
 pub mod relink;
 pub mod relink_writes;
@@ -56,12 +61,16 @@ pub mod repair;
 pub mod trust;
 pub mod trust_reads;
 
+pub(crate) use crate::owner_only::OwnerOnlySources;
+pub use crate::owner_only::OwnerOnlyForm;
 pub use fence::{FenceContext, FenceTarget};
+pub use fence_overlay::{FenceOverlayIncomingRow, FenceOverlayInput};
+pub use held_cells::{HeldFenceCellKey, HeldFenceCellsInput};
+pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
-pub use privacy::{OwnerOnly, PrivacyPolicy};
 pub(crate) use privacy::{
-    OwnerOnlyCache, OwnerOnlySources, hidden_by_provenance_page, page_hidden, page_hidden_with,
-    version_hidden,
+    OwnerOnlyCache, access_readers, caller_version_hidden, concept_inputs, hidden_by_provenance_page,
+    page_hidden, page_hidden_with, version_hidden,
 };
 
 use crate::chunks::embedding_dimensions;
@@ -223,7 +232,7 @@ impl FactRecord {
     }
 
     /// `onOwnedMemoryPageSql`: the row sits on a member page or the scope page.
-    fn on_owned_memory_page(&self) -> bool {
+    pub(crate) fn on_owned_memory_page(&self) -> bool {
         let slug = self.source_markdown_slug.as_deref().unwrap_or("");
         slug.starts_with(MEMBER_PAGE_PREFIX) || slug == SCOPE_PAGE_SLUG
     }
@@ -516,6 +525,7 @@ pub(crate) fn write_fact(
     new: &FactRecord,
 ) -> Result<()> {
     let new = &stamp_fact(trust, old, new)?;
+    purge_ledger::refuse_purged(tx, old, new)?;
     if let Some(old) = old {
         for (key, _) in index_keys(old) {
             tx.delete(&key)?;
@@ -630,7 +640,8 @@ pub(crate) fn fact_exists(read: &dyn KvRead, id: u64, source_ids: &[String]) -> 
 }
 
 /// Deletes this family's records keyed by a source that is deleted (`cascade::remove_source_rows`):
-/// every fact row of the source, as `facts_source_id_fkey ... ON DELETE CASCADE` does. A row of
+/// every fact row of the source, as `facts_source_id_fkey ... ON DELETE CASCADE` does, and its fact
+/// purge tombstones (`fact_purges_source_id_fkey`, [`purge_ledger::remove_source_rows`]). A row of
 /// another source that named one of them as its successor keeps its row with `superseded_by`
 /// cleared (`ON DELETE SET NULL`).
 ///
@@ -641,7 +652,7 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     for row in source_rows(tx, source_id)? {
         delete_fact(tx, trust, &row)?;
     }
-    Ok(())
+    purge_ledger::remove_source_rows(tx, source_id)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -946,6 +957,13 @@ pub struct FactQuery {
     pub after: Option<KeysetAfter>,
     /// `excludePrivate`: the private-provenance policy (`facts/privacy.rs`).
     pub exclude_private: Option<PrivacyPolicy>,
+    /// The caller passed a read eligibility (`eligibilityClause`): `projectionEligibleSql('facts')`
+    /// replaces the deleted-page clause, so a row whose live provenance page is quarantined is hidden too.
+    pub eligible: bool,
+    /// `eligibility.floor`: `trustFloorSql` over the fact's stored tier; null sets none.
+    pub min_trust: Option<String>,
+    /// `eligibility.suppressFlagged`: drop a fact `activationSuppressedSql('facts')` flags.
+    pub suppress_flagged: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -1267,6 +1285,7 @@ impl FactQuery {
             return Ok(false);
         }
         Ok(!hidden_by_deleted_page(read, row)?
+            && !(self.eligible && hidden_by_quarantine(read, row)?)
             && !hidden_by_policy(read, row, &self.exclude_private)?)
     }
 
@@ -1315,11 +1334,16 @@ impl Store {
     ) -> Result<Vec<Value>> {
         q.check(op)?;
         let limit = count_arg(op, "limit", q.limit)?;
+        let trust = TrustPolicy::parse(q.min_trust.as_deref(), q.suppress_flagged)?;
         let read = self.read()?;
         let now = self.env.now_micros();
         let mut rows = Vec::new();
         for row in q.candidates(&*read)? {
-            if q.source_id == row.source_id && extra(&row) && q.admits(&*read, &row, now)? {
+            if q.source_id == row.source_id
+                && extra(&row)
+                && q.admits(&*read, &row, now)?
+                && trust.admits(&*read, "facts", row.id, row.tier())?
+            {
                 rows.push(row);
             }
         }

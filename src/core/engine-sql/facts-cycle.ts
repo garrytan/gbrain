@@ -242,6 +242,13 @@ export async function maxFenceRowNum(raw: EngineRawRead, sourceId: string, slug:
   return row?.n ?? 0;
 }
 
+/** The id of the facts row that holds `rowNum` at a page coordinate (the oldest when several do), or null for none. */
+export async function readFenceRowOccupant(raw: EngineRawRead, sourceId: string, slug: string, rowNum: number): Promise<number | null> {
+  const [row] = await raw<{ id: number | string }>(
+    'SELECT facts.id FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num=$3 ORDER BY facts.id LIMIT 1', [sourceId, slug, rowNum]);
+  return row ? Number(row.id) : null;
+}
+
 /** One stored fence fact of a page: its row number and claim. */
 export interface StoredFenceFactRow { row_num: number; fact: string }
 

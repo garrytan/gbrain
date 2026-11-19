@@ -27,6 +27,9 @@ import type { WriteAttribution } from '../../src/core/persistence/attribution.ts
 import { testBackends } from '../helpers/test-backends.ts';
 import { CALLER_ENTITIES, CALLER_PROVENANCE, OPEN_PAGE, putCallerPages, readAsCallers } from './fact-callers.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -832,6 +835,37 @@ describe('engine parity: excludePrivate on the chronicle reads', () => {
       return { member, granted, stranger };
     },
   );
+
+  parityTest(
+    'a remote read policy (requireSafeChunks and a takes holder allow-list) leaves getTimeline and the chronicle reads as excludePrivate alone answers them',
+    { methods: ['putPage', 'upsertEventProjection', 'addTimelineEntry', 'getTimeline', 'getTimelineForDate', 'getSince', 'getOnThisDay', 'getLastSeen'] },
+    async (engine, backend) => {
+      await seedPrivacy(engine, backend);
+      // The options `readPolicyOpts` (ops/context.ts) adds for a remote caller. The timeline SQL reads neither.
+      const remote = { excludePrivate: true as const, requireSafeChunks: true, takesHoldersAllowList: ['world'] };
+      const read = async (opts: { excludePrivate: true; requireSafeChunks?: boolean; takesHoldersAllowList?: string[] }) => ({
+        open: (await engine.getTimeline('life/diary/open', opts)).map((e) => `${e.date} ${e.summary}`).sort(),
+        privateDepth: (await engine.getTimeline('life/diary/private', opts)).map((e) => e.summary),
+        hiddenPerson: (await engine.getTimeline('people/hidden-person', opts)).map((e) => e.summary),
+        day: summaries(await engine.getTimelineForDate('2026-06-18', opts)),
+        week: summaries(await engine.getTimelineForDate('2026-06-18', { week: true, ...opts })),
+        since: summaries(await engine.getSince('2026-06-18', opts)),
+        onThisDay: summaries(await engine.getOnThisDay({ date: '2026-06-18', ...opts })),
+        alice: await engine.getLastSeen('people/alice-example', { asof: '2026-06-25', ...opts }),
+        hidden: await engine.getLastSeen('people/hidden-person', { asof: '2026-06-25', ...opts }),
+      });
+      const policy = await read(remote);
+      const plain = await read({ excludePrivate: true });
+      expect(policy).toEqual(plain);
+      // No private row leaks through the extra options.
+      expect(policy.privateDepth).toEqual([]);
+      expect(policy.hiddenPerson).toEqual([]);
+      expect(policy.day).toEqual(['2026-06-18 open plain', '2026-06-18 alt open plain', '2026-06-18 open depth, open event']);
+      expect(policy.open.join('\n')).not.toContain('private event');
+      expect(policy.hidden.last_date).toBeNull();
+      return { policy };
+    },
+  );
 });
 
 describe('engine parity: ontology', () => {
@@ -1020,6 +1054,110 @@ describe('engine parity: ontology', () => {
       expect(conflicts.map((c) => c.dimension)).toEqual(['employer', 'expertise', 'location', 'relation', 'role', 'role']);
       expect(conflictsKept.map((c) => c.dimension)).toEqual(['relation']);
       return { all, kept, hiddenEntity, conflicts, conflictsKept };
+    },
+  );
+});
+
+describe('engine parity: the owner-only test of the timeline reads under excludePrivate', () => {
+  const MEMBER = { identity: ['member:alice-example', 'group:team-a'], hidePrivate: true };
+
+  /** Rows in `default` (a diary page, an unlinked concept and a concept built from a page of the owner-only source). */
+  async function seedDefault(engine: BrainEngine) {
+    const page = (slug: string, type: string) => engine.putPage(slug, { type: type as 'note', title: slug, compiled_truth: `${slug} body`, timeline: '' });
+    await page('life/diary/open', 'note');
+    await page('concepts/tl-lineage', 'concept');
+    await page('concepts/tl-plain', 'concept');
+    await putEvent(engine, 'life/events/open-1', '2026-06-18T09:00:00Z', { kind: 'meeting', who: ['people/alice-example'] });
+    await engine.upsertEventProjection({ depthSlug: 'life/diary/open', eventSlug: 'life/events/open-1', date: '2026-06-18', summary: 'open event' });
+    for (const [slug, date, summary] of [
+      ['life/diary/open', '2026-06-18', 'open plain'], ['life/diary/open', '2025-06-18', 'open last year'],
+      ['concepts/tl-lineage', '2026-06-18', 'lineage plain'], ['concepts/tl-lineage', '2025-06-18', 'lineage last year'],
+      ['concepts/tl-plain', '2026-06-18', 'concept plain'],
+    ] as const) await engine.addTimelineEntry(slug, { date, source: 'diary', summary });
+  }
+
+  /** Rows in an owner-only source, and the concept lineage that reaches them. */
+  async function seedOwnerOnly(engine: BrainEngine, backend: Parameters<typeof createSource>[1]) {
+    await createSource(engine, backend, 'tl-chat', { kind: 'imessage' });
+    await putPlain(engine, 'life/diary/chat', { sourceId: 'tl-chat' });
+    await putEvent(engine, 'life/events/chat-1', '2026-06-19T09:00:00Z', { kind: 'meeting', who: ['people/alice-example'] }, { sourceId: 'tl-chat' });
+    await engine.upsertEventProjection({ depthSlug: 'life/diary/chat', eventSlug: 'life/events/chat-1', date: '2026-06-19', summary: 'chat event', sourceId: 'tl-chat' });
+    await engine.addTimelineEntry('life/diary/chat', { date: '2026-06-18', source: 'diary', summary: 'chat plain' }, { sourceId: 'tl-chat' });
+    await engine.addTimelineEntry('life/diary/chat', { date: '2025-06-18', source: 'diary', summary: 'chat last year' }, { sourceId: 'tl-chat' });
+    await engine.addLink('concepts/tl-lineage', 'life/diary/chat', '', 'synthesized_from', 'concept-provenance', undefined, undefined, { toSourceId: 'tl-chat' });
+  }
+
+  /** The same read under the closed form (no schema version recorded), then the function form (schema version 320 or later). */
+  async function forms<T>(engine: BrainEngine, read: () => Promise<T>) {
+    const closed = await read();
+    const closedMember = await withCallerAccess(MEMBER, read);
+    noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+    const fn = await withEngineScope(engine, read);
+    const fnMember = await withEngineScope(engine, () => withCallerAccess(MEMBER, read));
+    return { closed, closedMember, fn, fnMember };
+  }
+
+  parityTest(
+    'getTimeline under excludePrivate hides every page while a source is owner-only, then only the owner-only source and its concepts',
+    { methods: ['getTimeline', 'putPage', 'addTimelineEntry', 'upsertEventProjection', 'addLink'] },
+    async (engine, backend) => {
+      await seedDefault(engine);
+      const read = async () => {
+        const rows: Record<string, string[]> = {};
+        for (const [slug, sourceId] of [['life/diary/open', 'default'], ['concepts/tl-lineage', 'default'], ['concepts/tl-plain', 'default'], ['life/diary/chat', 'tl-chat']] as const) {
+          rows[`${sourceId}:${slug}`] = (await engine.getTimeline(slug, { sourceId, excludePrivate: true })).map((e) => e.summary);
+        }
+        return rows;
+      };
+      const before = await read();
+      await seedOwnerOnly(engine, backend);
+      const after = await forms(engine, read);
+      expect(before).toEqual({
+        'default:life/diary/open': ['open plain', 'open event', 'open last year'],
+        'default:concepts/tl-lineage': ['lineage plain', 'lineage last year'],
+        'default:concepts/tl-plain': ['concept plain'],
+        'tl-chat:life/diary/chat': [],
+      });
+      const hiddenAll = { 'default:life/diary/open': [], 'default:concepts/tl-lineage': [], 'default:concepts/tl-plain': [], 'tl-chat:life/diary/chat': [] };
+      expect(after.closed).toEqual(hiddenAll);
+      expect(after.closedMember).toEqual(hiddenAll);
+      for (const fn of [after.fn, after.fnMember]) {
+        expect(fn['default:life/diary/open']).toEqual(before['default:life/diary/open']);
+        expect(fn['default:concepts/tl-plain']).toEqual(['concept plain']);
+        expect(fn['default:concepts/tl-lineage']).toEqual([]);
+        expect(fn['tl-chat:life/diary/chat']).toEqual([]);
+      }
+      return { before, after };
+    },
+  );
+
+  parityTest(
+    'the chronicle reads under excludePrivate hide every row while a source is owner-only, then only the owner-only source and its concepts',
+    { methods: ['getTimelineForDate', 'getSince', 'getOnThisDay', 'getLastSeen', 'putPage', 'addTimelineEntry', 'upsertEventProjection', 'addLink'] },
+    async (engine, backend) => {
+      await seedDefault(engine);
+      const read = async () => ({
+        day: chronicle(await engine.getTimelineForDate('2026-06-18', { excludePrivate: true })).map((r) => r.summary),
+        week: chronicle(await engine.getTimelineForDate('2026-06-18', { week: true, excludePrivate: true })).map((r) => r.summary),
+        since: chronicle(await engine.getSince('2026-06-18', { excludePrivate: true })).map((r) => r.summary),
+        onThisDay: chronicle(await engine.getOnThisDay({ date: '2026-06-18', excludePrivate: true })).map((r) => r.summary),
+        lastSeen: await engine.getLastSeen('people/alice-example', { asof: '2026-06-25', excludePrivate: true }),
+      });
+      const before = await read();
+      await seedOwnerOnly(engine, backend);
+      const after = await forms(engine, read);
+      expect(before.day.length).toBe(4);
+      expect(before.lastSeen.last_event_slug).toBe('life/events/open-1');
+      const none = { day: [], week: [], since: [], onThisDay: [], lastSeen: { entity_slug: 'people/alice-example', last_date: null, last_event_slug: null, days_ago: null } };
+      expect(after.closed).toEqual(none);
+      expect(after.closedMember).toEqual(none);
+      for (const fn of [after.fn, after.fnMember]) {
+        expect(sorted(fn.day)).toEqual(['concept plain', 'open event', 'open plain']);
+        expect(sorted(fn.onThisDay)).toEqual(['open last year']);
+        expect(sorted(fn.since)).toEqual(['concept plain', 'open event', 'open plain']);
+        expect(fn.lastSeen.last_event_slug).toBe('life/events/open-1');
+      }
+      return { before, after };
     },
   );
 });

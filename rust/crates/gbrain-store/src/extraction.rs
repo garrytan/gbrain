@@ -186,7 +186,7 @@ fn has_reserved_key(frontmatter: &Map<String, Value>) -> bool {
 
 /// The guest sources among the pages' sources: config `guest` is `true` or `"true"`
 /// (`config->>'guest' = 'true'`).
-fn guest_sources(read: &dyn KvRead, pages: &[PageRecord]) -> Result<BTreeSet<String>> {
+pub(crate) fn guest_sources(read: &dyn KvRead, pages: &[PageRecord]) -> Result<BTreeSet<String>> {
     let ids: BTreeSet<&str> = pages.iter().map(|p| p.source_id.as_str()).collect();
     let mut guests = BTreeSet::new();
     for id in ids {
@@ -212,7 +212,7 @@ fn live_pages(read: &dyn KvRead, source: Option<&str>) -> Result<Vec<PageRecord>
 }
 
 /// `versionTs` as microseconds; absent or empty is no version clause.
-fn version_us(version_ts: Option<&str>) -> Result<Option<i64>> {
+pub(crate) fn version_us(version_ts: Option<&str>) -> Result<Option<i64>> {
     match version_ts.filter(|v| !v.is_empty()) {
         Some(text) => Ok(Some(timestamp(text, "versionTs")?)),
         None => Ok(None),
@@ -234,6 +234,25 @@ fn stale_state(read: &dyn KvRead, page: &PageRecord, version: Option<i64>) -> Re
         record.links_attendance_blocked_revision.as_deref()
             == Some(page.knowledge_revision.to_ascii_lowercase().as_str()),
     ))
+}
+
+/// `staleForExtractionSql` for one live page: its stamp is absent, older than `version` or older
+/// than the page, or it is a wanted-link origin whose target changed (`wanted_origins`), and its
+/// attendance marker is not at its current knowledge revision. No page is held here.
+pub(crate) fn owes_link_extraction(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    version: Option<i64>,
+    wanted_origins: &BTreeSet<u64>,
+) -> Result<bool> {
+    let record = read_record(read, page.id)?;
+    let stale = match record.links_extracted_at_us {
+        None => true,
+        Some(stamp) => version.is_some_and(|v| stamp < v) || page.updated_at_us > stamp,
+    } || wanted_origins.contains(&page.id);
+    Ok(stale
+        && record.links_attendance_blocked_revision.as_deref()
+            != Some(page.knowledge_revision.to_ascii_lowercase().as_str()))
 }
 
 /// The pages `stalePagesWhere(opts)` selects, in page id order.

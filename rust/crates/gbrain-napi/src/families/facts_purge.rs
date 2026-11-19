@@ -15,6 +15,7 @@ use gbrain_store::facts::purge::{
     FactScopeArgs, HeldFenceQuery, PurgeTargetArgs, RelinkQuery, SimilarQuery, SingleFactQuery,
     SourceArgs, UnfencedQuery, WithdrawalExpiry,
 };
+use gbrain_store::facts::purge_ledger::FactPurgeInsert;
 use gbrain_store::facts::reconcile::{BacklogArgs, DrainArgs, LockArgs, SettleArgs};
 
 #[napi]
@@ -212,5 +213,28 @@ impl Brain {
             let a: DrainArgs = required(args, "selectFactsReconcileDrain args")?;
             s.select_facts_reconcile_drain(&a)
         })
+    }
+
+    /// `insertFactPurge(row)`: resolves whether the tombstone was stored.
+    #[napi]
+    pub fn insert_fact_purge<'env>(
+        &self,
+        env: &'env Env,
+        row: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: FactPurgeInsert = required(row, "insertFactPurge row")?;
+            s.insert_fact_purge(&a)
+        })
+    }
+
+    /// `hasFactPurges(sourceId)`: resolves whether the source holds a fact purge tombstone.
+    #[napi]
+    pub fn has_fact_purges<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.has_fact_purges(&source_id))
     }
 }

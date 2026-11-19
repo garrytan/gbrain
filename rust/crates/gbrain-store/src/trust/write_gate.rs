@@ -446,6 +446,23 @@ fn all_holds(read: &dyn KvRead) -> Result<Vec<HoldRecord>> {
     failure.map_or(Ok(out), Err)
 }
 
+/// The fingerprints of the holds with `kind = 'fact'` and `status = 'held'` on page (`source_id`,
+/// `slug`), as the fence overlay (`engine-sql/cli-reads-ops.ts` `readFenceOverlayRows`) matches a
+/// fence row's fingerprint against them.
+pub(crate) fn held_fact_fingerprints(
+    read: &dyn KvRead,
+    source_id: &str,
+    slug: &str,
+) -> Result<std::collections::HashSet<String>> {
+    Ok(all_holds(read)?
+        .into_iter()
+        .filter(|h| {
+            h.kind == "fact" && h.status == "held" && h.source_id == source_id && h.slug == slug
+        })
+        .map(|h| h.fingerprint)
+        .collect())
+}
+
 /// A released fact hold, as `listUnpreviewedTrustFacts` (src/core/engine-sql/facts-doctor.ts) joins
 /// it: the hold id, its source and slug, `payload->>'row_num'` and `request_id::text`.
 pub(crate) struct ReleasedFactHold {

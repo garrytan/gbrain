@@ -15,7 +15,7 @@
 //! source is still owner-only then, so each page goes through `mark_before_delete`.
 
 use crate::Result;
-use crate::facts::OwnerOnlySources;
+use crate::owner_only::OwnerOnlySources;
 use crate::keys;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::in_links;

@@ -3,7 +3,8 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: readSourceState, readAdmissionSource, sharedSkillPackTablePresent,
- *    listSharedSkillPackRoots, getWorktreeBinding, hasExtractedEvents, listActiveAccessMembers, isFolderRestricted, expireMemoryProposals,
+ *    listSharedSkillPackRoots, getWorktreeBinding, isSourceClaimed, hasExtractedEvents, listActiveAccessMembers, isFolderRestricted,
+ *    listAppliedPolicyRevisions, expireMemoryProposals,
  *    listAwaitingMemoryProposals and purgeMemoryProposals return the same observable result on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: a source-state read that differs changes whether page admission, the mirror read-only guard and
@@ -145,6 +146,38 @@ describe('engine parity: write misc', () => {
     return { underRule };
   });
 
+  parityTest('listAppliedPolicyRevisions lists no source on a brain with no folder access state', { methods: ['listAppliedPolicyRevisions'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'work');
+    const revisions = await engine.listAppliedPolicyRevisions();
+    expect(revisions).toEqual([]);
+    return { revisions };
+  });
+
+  // listAppliedPolicyRevisions is constant empty on Rust only because no Rust brain can hold access state: the policy
+  // state write (raw SQL here, the access commands' statements in production) must stop on the typed raw_sql refusal.
+  parityTest('listAppliedPolicyRevisions gives each source with access state its newest applied revision, null when none is applied', { methods: ['listAppliedPolicyRevisions'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'work');
+    await createSource(engine, backend, 'quiet');
+    const write = await restrictFolder(engine, backend, 'work', 'private/', 'rule').then(() => null, (e: unknown) => e);
+    if (backend === 'rust') {
+      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
+      expect(await engine.listAppliedPolicyRevisions()).toEqual([]);
+      throw write;
+    }
+    expect(write).toBeNull();
+    await engine.executeRaw('INSERT INTO access_policy_state (source_id) VALUES ($1)', ['quiet']);
+    const revision = (source: string, rev: number, applied: boolean) => engine.executeRaw(
+      `INSERT INTO access_policy_revisions (source_id, revision, rules, digest, change_kind, origin, applied_at)
+       VALUES ($1, $2, '[]'::jsonb, 'd', 'narrowing', 'parity', ${applied ? 'now()' : 'NULL'})`, [source, rev]);
+    await revision('work', 1, true);
+    await revision('work', 2, true);
+    await revision('work', 3, false);
+    await revision('quiet', 1, false);
+    const revisions = await engine.listAppliedPolicyRevisions();
+    expect(revisions).toEqual([{ source_id: 'quiet', rev: null }, { source_id: 'work', rev: 2 }]);
+    return { revisions };
+  });
+
   parityTest('getWorktreeBinding is null for a source with no writer binding, on any host', { methods: ['getWorktreeBinding'] }, async (engine, backend) => {
     await createSource(engine, backend, 'loose', { canonical: 'git' }, '/var/tmp/loose-root');
     const answers = {
@@ -185,6 +218,32 @@ describe('engine parity: write misc', () => {
       noHost: { ...bound, ...noHostRow },
       unbound: null,
     });
+    return answers;
+  });
+
+  parityTest('isSourceClaimed is false for an unbound source and for an unknown source', { methods: ['isSourceClaimed'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'loose', { canonical: 'git' }, '/var/tmp/loose-root');
+    const answers = { loose: await engine.isSourceClaimed('loose'), unknown: await engine.isSourceClaimed('no-such-source') };
+    expect(answers).toEqual({ loose: false, unknown: false });
+    return answers;
+  });
+
+  // As getWorktreeBinding: false is constant on Rust only because no Rust brain can hold a binding, so the claim's rows
+  // must stop on the typed raw_sql refusal there and leave the source unclaimed.
+  parityTest('isSourceClaimed is true for a source claimed at its current incarnation, false once the incarnation moves', { methods: ['isSourceClaimed'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'work', { canonical: 'git' }, '/var/tmp/work-root');
+    await createSource(engine, backend, 'loose');
+    const seeded = await bindWorktree(engine, 'work').then(() => null, (e: unknown) => e);
+    if (backend === 'rust') {
+      expect(isCapabilityRefusal(seeded, 'raw_sql')).toBe(true);
+      expect(await engine.isSourceClaimed('work')).toBe(false);
+      throw seeded;
+    }
+    expect(seeded).toBeNull();
+    const claimed = { work: await engine.isSourceClaimed('work'), loose: await engine.isSourceClaimed('loose') };
+    await engine.executeRaw('UPDATE sources SET incarnation = gen_random_uuid() WHERE id = $1', ['work']);
+    const answers = { ...claimed, afterIncarnation: await engine.isSourceClaimed('work') };
+    expect(answers).toEqual({ work: true, loose: false, afterIncarnation: false });
     return answers;
   });
 

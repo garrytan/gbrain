@@ -317,7 +317,7 @@ mod tests {
         let mut every = all.map(String::from).to_vec();
         every.sort();
         assert_eq!(sorted(top(json!({ "limit": 5.0 }))), every);
-        let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage" });
+        let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn" });
         assert_eq!(
             sorted(top(json!({ "limit": 5.0, "excludePrivate": policy }))),
             ["notes/a-open", "notes/o-public"]
@@ -333,14 +333,14 @@ mod tests {
         );
         // Without the alias keys only `visibility` (and a derived page's default) hides a page.
         let visibility_only =
-            json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "lineage" });
+            json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn" });
         assert_eq!(
             sorted(top(json!({ "excludePrivate": visibility_only }))),
             ["notes/a-open", "notes/n-access", "notes/o-public"]
         );
         // With the privacy part relaxed only the member-access part applies: nothing here is hidden.
         let relaxed =
-            json!({ "honorAliases": true, "entityPrivacy": false, "ownerOnly": "lineage" });
+            json!({ "honorAliases": true, "entityPrivacy": false, "ownerOnly": "fn" });
         assert_eq!(sorted(top(json!({ "excludePrivate": relaxed }))), every);
         // `null` (excludePrivate off) hides nothing, and the policy composes with the other filters.
         assert_eq!(sorted(top(json!({ "excludePrivate": null }))), every);
@@ -416,7 +416,7 @@ mod tests {
         assert!(top("closed").is_empty());
         // The part belongs to the member-access test: a relaxed privacy part keeps it.
         let relaxed =
-            json!({ "honorAliases": true, "entityPrivacy": false, "ownerOnly": "lineage" });
+            json!({ "honorAliases": true, "entityPrivacy": false, "ownerOnly": "fn" });
         let mut found = slugs(
             &store
                 .search_keyword_arm(

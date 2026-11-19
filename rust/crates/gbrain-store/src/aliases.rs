@@ -1256,13 +1256,13 @@ mod tests {
         assert!(answer(json!({})).is_empty());
         assert_eq!(
             answer(
-                json!({ "excludePrivate": { "honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage" } })
+                json!({ "excludePrivate": { "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn" } })
             ),
             vec![("acme".to_string(), vec!["companies/acme".to_string()])]
         );
         // With the privacy part of the policy off, nothing is hidden by `visibility`, so the title shadows again.
         assert!(
-            answer(json!({ "excludePrivate": { "honorAliases": true, "entityPrivacy": false, "ownerOnly": "lineage" } }))
+            answer(json!({ "excludePrivate": { "honorAliases": true, "entityPrivacy": false, "ownerOnly": "fn" } }))
                 .is_empty()
         );
     }

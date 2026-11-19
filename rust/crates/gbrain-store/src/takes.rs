@@ -24,10 +24,12 @@
 
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
+use crate::facts::PrivacyPolicy;
 use crate::keyword::{TRGM_WORD_SIMILARITY_THRESHOLD, trgm_word_similarity};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::{PageRecord, next_id, read_page_by_id};
+use crate::trust::{RowTrust, TrustTable, stamp_row};
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -143,6 +145,10 @@ pub(crate) struct TakeRecord {
     /// Goes up by one each time the claim changes.
     #[serde(default)]
     pub claim_rev: u64,
+    /// `trust_tier` and `write_origin`, stamped by [`store_take`]. Absent in a record stored before
+    /// them, and omitted while the tier is `unknown` with no origin.
+    #[serde(default, skip_serializing_if = "RowTrust::is_empty")]
+    pub trust: RowTrust,
 }
 
 /// One `synthesis_evidence` row (the key holds the three key columns).
@@ -231,6 +237,8 @@ pub struct ListTakesOptions {
     pub source_ids: Option<Vec<Option<String>>>,
     /// A read-eligibility policy was given: hide the takes `projectionEligibleSql` always hides.
     pub eligible_only: bool,
+    /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`); null reads every page.
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 /// `listActiveTakesForPages(pageIds, { takesHoldersAllowList })`.
@@ -251,6 +259,8 @@ pub struct SearchTakesOptions {
     pub source_ids: Option<Vec<Option<String>>>,
     /// A read-eligibility policy was given: hide the takes `projectionEligibleSql` always hides.
     pub eligible_only: bool,
+    /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`); null reads every page.
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 /// `updateTake(pageId, rowNum, fields)`; `weight` is already normalized.
@@ -312,6 +322,8 @@ pub struct ScorecardOptions {
     pub until: Option<String>,
     pub allow_list: Option<Vec<Option<String>>>,
     pub source_ids: Option<Vec<Option<String>>>,
+    /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`); null reads every page.
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 /// The filters of `getCalibrationCurve`; `bucket_size` is already resolved (0.1 by default).
@@ -322,6 +334,8 @@ pub struct CalibrationOptions {
     pub bucket_size: Option<f64>,
     pub allow_list: Option<Vec<Option<String>>>,
     pub source_ids: Option<Vec<Option<String>>>,
+    /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`); null reads every page.
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 /// One fence row of `matchTakeRows`: the identity fields a stored take is compared with. A null
@@ -479,13 +493,34 @@ pub(crate) fn all_takes(read: &dyn KvRead) -> Result<Vec<TakeRecord>> {
         .collect()
 }
 
-/// Writes a take's record (its row index never changes: `page_id` and `row_num` are fixed).
+/// Writes a take's record as it is (its row index never changes: `page_id` and `row_num` are
+/// fixed). A write that changes no trust column (the embedding) uses it; a takes writer uses
+/// [`store_take`].
 pub(crate) fn write_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
     put_json(tx, &take_key(take.id), take)
 }
 
+/// Writes `take` with the trust tier and write origin PGLite's `trust_tier_stamp` trigger gives it
+/// (`trust::stamp_row`): an insert when no row with its id is stored, else an update of the stored
+/// row, restamped only when `claim`, `kind` or `holder` changed. A refused raise is the trigger's
+/// error; the caller's write then rolls back.
+fn store_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
+    let old: Option<TakeRecord> = get_json(&*tx, &take_key(take.id))?;
+    let content_changed = old
+        .as_ref()
+        .is_some_and(|o| (&o.claim, &o.kind, &o.holder) != (&take.claim, &take.kind, &take.holder));
+    let mut stamped = take.clone();
+    stamped.trust = stamp_row(
+        TrustTable::Takes,
+        old.as_ref().map(|o| &o.trust),
+        &take.trust,
+        content_changed,
+    )?;
+    write_take(tx, &stamped)
+}
+
 fn insert_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
-    write_take(tx, take)?;
+    store_take(tx, take)?;
     tx.put(&row_key(take.page_id, take.row_num), &take.id.to_be_bytes())
 }
 
@@ -613,6 +648,19 @@ impl<'a> PageCache<'a> {
             self.pages.insert(id, page);
         }
         Ok(self.pages.get(&id).and_then(|p| p.as_ref()))
+    }
+}
+
+/// Whether `excludePrivate`'s page policy hides `page` (`privatePagesFilterForCaller` on the
+/// take's page); no policy hides nothing.
+fn private_page(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    policy: &Option<PrivacyPolicy>,
+) -> Result<bool> {
+    match policy {
+        Some(policy) => crate::facts::page_hidden(read, page, policy),
+        None => Ok(false),
     }
 }
 
@@ -852,7 +900,7 @@ impl Store {
                     existing.superseded_by = *superseded_by;
                     existing.active = active;
                     existing.updated_at_us = now;
-                    write_take(tx, &existing)?;
+                    store_take(tx, &existing)?;
                 } else {
                     let source_id = match read_page_by_id(&*tx, page)? {
                         Some(p) => p.source_id,
@@ -887,6 +935,7 @@ impl Store {
                             created_at_us: now,
                             updated_at_us: now,
                             claim_rev: 0,
+                            trust: RowTrust::default(),
                         },
                     )?;
                 }
@@ -946,6 +995,7 @@ impl Store {
             if options.page_slug.as_ref().is_some_and(|s| *s != page.slug)
                 || !in_scope(&options.source_ids, &page.source_id)
                 || (options.eligible_only && !eligible_page(page))
+                || private_page(&*read, page, &options.exclude_private)?
                 || options.holder.as_ref().is_some_and(|h| *h != take.holder)
                 || options.kind.as_ref().is_some_and(|k| *k != take.kind)
                 || options.active.is_some_and(|a| a != take.active)
@@ -1066,6 +1116,7 @@ impl Store {
             };
             if !in_scope(&options.source_ids, &page.source_id)
                 || (options.eligible_only && !eligible_page(page))
+                || private_page(&*read, page, &options.exclude_private)?
             {
                 continue;
             }
@@ -1133,7 +1184,7 @@ impl Store {
                 take.source = Some(s.clone());
             }
             take.updated_at_us = self.env.now_micros();
-            write_take(tx, &take)?;
+            store_take(tx, &take)?;
             Ok(true)
         })
     }
@@ -1222,12 +1273,13 @@ impl Store {
                     created_at_us: now,
                     updated_at_us: now,
                     claim_rev: 0,
+                    trust: RowTrust::default(),
                 },
             )?;
             old.active = false;
             old.superseded_by = Some(new_row);
             old.updated_at_us = now;
-            write_take(tx, &old)?;
+            store_take(tx, &old)?;
             Ok(json!({ "status": "ok", "old_row": old_row, "new_row": new_row }))
         })
     }
@@ -1292,7 +1344,7 @@ impl Store {
             take.resolved_source = resolution.source.clone();
             take.resolved_by = resolution.resolved_by.clone();
             take.updated_at_us = now;
-            write_take(tx, &take)?;
+            store_take(tx, &take)?;
             Ok("ok".into())
         })
     }
@@ -1342,7 +1394,10 @@ impl Store {
             {
                 continue;
             }
-            if pattern.is_some() || options.source_ids.is_some() {
+            if pattern.is_some()
+                || options.source_ids.is_some()
+                || options.exclude_private.is_some()
+            {
                 let Some(page) = pages.get(take.page_id)? else {
                     continue;
                 };
@@ -1351,7 +1406,9 @@ impl Store {
                 {
                     continue;
                 }
-                if !in_scope(&options.source_ids, &page.source_id) {
+                if !in_scope(&options.source_ids, &page.source_id)
+                    || private_page(&*read, page, &options.exclude_private)?
+                {
                     continue;
                 }
             }
@@ -1427,11 +1484,13 @@ impl Store {
             {
                 continue;
             }
-            if options.source_ids.is_some() {
+            if options.source_ids.is_some() || options.exclude_private.is_some() {
                 let Some(page) = pages.get(take.page_id)? else {
                     continue;
                 };
-                if !in_scope(&options.source_ids, &page.source_id) {
+                if !in_scope(&options.source_ids, &page.source_id)
+                    || private_page(&*read, page, &options.exclude_private)?
+                {
                     continue;
                 }
             }

@@ -9,7 +9,8 @@
  * facts embedding column is `halfvec` (the only column type the store keeps).
  *
  * Refused (not exported): `matchSavedFacts`, `readFactForOwnerAction`, `listStandingPreferences`,
- * `listLexicalContestCandidates`, `listRestatedPrivateCopies` and `countDerivedFactTaint`. The store keeps the columns
+ * `listLexicalContestCandidates` and `countDerivedFactTaint` (`listRestatedPrivateCopies` is served by
+ * facts-trust-reads.ts). The store keeps the columns
  * they read (`trust_tier`, `write_origin`, the write-gate receipts), but no store read for them is built yet. The
  * `entity_ended` arm reads the withdrawal ledger through `gbrain_fact_fingerprint`, which no store read joins yet.
  */
