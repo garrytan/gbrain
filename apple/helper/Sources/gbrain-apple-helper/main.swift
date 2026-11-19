@@ -177,7 +177,12 @@ case "send-audit":
 
 case "register":
     let agent = SMAppService.agent(plistName: "\(HelperIdentity.bundleId).plist")
-    if agent.status != .enabled, agent.status != .requiresApproval {
+    if agent.status == .enabled {
+        let unregistered = DispatchSemaphore(value: 0)
+        agent.unregister { _ in unregistered.signal() }
+        unregistered.wait()
+    }
+    if agent.status != .requiresApproval {
         do {
             try agent.register()
         } catch where agent.status != .requiresApproval {
