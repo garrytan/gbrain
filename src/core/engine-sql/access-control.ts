@@ -30,3 +30,34 @@ export async function listAppliedPolicyRevisions(exec: LegacyUnscopedRead): Prom
   const rows = await exec.executeRaw<{ source_id: string; rev: number | string | null }>(APPLIED_POLICY_REVISIONS_SQL);
   return rows.map(r => ({ source_id: r.source_id, rev: r.rev === null ? null : Number(r.rev) }));
 }
+
+/** The engine's own executeRaw, so a statement fault a test injects on the engine reaches the access read. */
+export interface MemberLookupRead {
+  executeRaw<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<R[]>;
+}
+
+/**
+ * Where a caller's may_act_for list is stored: a live legacy token row (id), a live OAuth client row (client id), or the
+ * config value a stdio server reads (config key, mcp.stdio_may_act_for).
+ */
+export type MayActForVia = 'legacy_token' | 'oauth_client' | 'stdio_config';
+
+/** The statements access/caller.ts mayActForOf ran through executeRaw, by where the list is stored. */
+export const MAY_ACT_FOR_SQL: Record<MayActForVia, string> = {
+  legacy_token: 'SELECT may_act_for FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL',
+  oauth_client: 'SELECT may_act_for FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL',
+  stdio_config: 'SELECT value FROM config WHERE key = $1',
+};
+
+/**
+ * The stored may_act_for of one caller: a live token's or client's list (null when the row is revoked, deleted, absent
+ * or holds no list), or the stdio config text as stored (null when the key is unset). The caller parses the text.
+ */
+export async function readMayActFor(exec: MemberLookupRead, via: MayActForVia, key: string): Promise<string[] | string | null> {
+  if (via === 'stdio_config') {
+    const [row] = await exec.executeRaw<{ value: string | null }>(MAY_ACT_FOR_SQL.stdio_config, [key]);
+    return row?.value ?? null;
+  }
+  const [row] = await exec.executeRaw<{ may_act_for: unknown }>(MAY_ACT_FOR_SQL[via], [key]);
+  return Array.isArray(row?.may_act_for) ? row!.may_act_for as string[] : null;
+}

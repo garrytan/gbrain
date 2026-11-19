@@ -546,6 +546,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readLocalWriterRow': OOS.importGuards, 'insertLocalWriterRow': OOS.importGuards, 'readTransactionSettings': OOS.importGuards,
   'applyTransactionSettings': OOS.importGuards, 'beginSnapshotRead': OOS.importGuards, 'readLedgerSource': OOS.importGuards, 'isFolderRestricted': OOS.importGuards,
   'listAppliedPolicyRevisions': OOS.callerRawSql,
+  'readMayActFor': OOS.callerRawSql,
   // the page-write reads and upkeep that belong to no other domain
   'readSourceState': OOS.writeMisc,
   'readAdmissionSource': OOS.writeMisc,
@@ -1297,6 +1298,11 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ]),
   ...variants('isFolderRestricted', [['default', (e) => e.isFolderRestricted(SRC, SLUG)]]),
   ...variants('listAppliedPolicyRevisions', [['default', (e) => e.listAppliedPolicyRevisions()]]),
+  ...variants('readMayActFor', [
+    ['legacy-token', (e) => e.readMayActFor('legacy_token', '00000000-0000-4000-8000-0000000000a1')],
+    ['oauth-client', (e) => e.readMayActFor('oauth_client', 'client-a')],
+    ['stdio-config', (e) => e.readMayActFor('stdio_config', 'mcp.stdio_may_act_for')],
+  ]),
   ...variants('readJournalLimitRows', [['default', (e) => e.readJournalLimitRows()]]),
   ...variants('readHeldPageRows', [['default', (e) => e.readHeldPageRows(['1', '2'])]]),
   ...variants('readHeldCoverageRows', [

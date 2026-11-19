@@ -42,6 +42,7 @@ import { stdioBindRoute } from './stdio-bind-route.ts';
 import { labelledOnlyFor } from './labelled-only.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import { transientDatabaseFailure, transientInterruption } from '../persistence/transient-retry.ts';
+import { readMayActFor as readMayActForOver, type MayActForVia } from '../engine-sql/access-control.ts';
 
 /** Config key binding a local stdio MCP server to one member. */
 export const STDIO_MEMBER_KEY = 'mcp.stdio_member';
@@ -175,6 +176,12 @@ export async function folderAccessForAll(engine: Pick<BrainEngine, 'executeRaw'>
   }
 }
 
+/**
+ * An engine the audience checks read through: an engine (its typed readMayActFor, which a Rust brain serves), or an
+ * executeRaw-only handle (a persistence SqlEngine, a test double), which runs the same statements.
+ */
+export type AudienceEngine = Pick<BrainEngine, 'readMayActFor'> | Pick<BrainEngine, 'executeRaw'>;
+
 /** Who asserts an audience: a verified credential (live call), a stored principal (a queued write or job), or a stdio server. */
 export interface AudienceCaller {
   auth?: Pick<AuthInfo, 'member' | 'mayActFor' | 'clientId' | 'clientName'> & { principal?: { kind: string; id: string } };
@@ -187,23 +194,20 @@ export interface AudienceCaller {
  * lookup from the stored principal (a revoked token or deleted client permits nothing), else for a stdio server
  * config mcp.stdio_may_act_for. Unreadable or ill-formed values permit nothing.
  */
-async function mayActForOf(engine: Pick<BrainEngine, 'executeRaw'>, caller: AudienceCaller): Promise<string[] | null> {
+async function mayActForOf(engine: AudienceEngine, caller: AudienceCaller): Promise<string[] | null> {
   const auth = caller.auth;
   if (auth?.member !== undefined) return auth.mayActFor ?? null;
   const principal = auth?.principal ?? caller.principal;
+  const read = (via: MayActForVia, key: string) => 'readMayActFor' in engine ? engine.readMayActFor(via, key) : readMayActForOver(engine, via, key);
   try {
-    if (principal?.kind === 'legacy_token') {
-      const [row] = await engine.executeRaw<{ may_act_for: unknown }>('SELECT may_act_for FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL', [principal.id]);
-      return Array.isArray(row?.may_act_for) ? row!.may_act_for as string[] : null;
-    }
-    if (principal?.kind === 'oauth_client') {
-      const [row] = await engine.executeRaw<{ may_act_for: unknown }>('SELECT may_act_for FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL', [principal.id]);
-      return Array.isArray(row?.may_act_for) ? row!.may_act_for as string[] : null;
+    if (principal?.kind === 'legacy_token' || principal?.kind === 'oauth_client') {
+      const list = await read(principal.kind, principal.id);
+      return Array.isArray(list) ? list : null;
     }
     if (principal?.kind === 'local_stdio' || (!auth && !principal && caller.transport === 'stdio')) {
-      const [row] = await engine.executeRaw<{ value: string | null }>('SELECT value FROM config WHERE key = $1', [STDIO_MAY_ACT_FOR_KEY]);
-      const raw = row?.value?.trim();
-      return raw ? parseMayActFor(raw) : null;
+      const raw = await read('stdio_config', STDIO_MAY_ACT_FOR_KEY);
+      const text = typeof raw === 'string' ? raw.trim() : '';
+      return text ? parseMayActFor(text) : null;
     }
   } catch { /* unreadable: permits nothing */ }
   return null;

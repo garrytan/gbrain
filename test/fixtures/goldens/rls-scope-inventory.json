@@ -3338,6 +3338,39 @@
         ],
         "flagOnScopes": []
       },
+      "readMayActFor#legacy-token": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readMayActFor#oauth-client": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readMayActFor#stdio-config": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readMentionLastPass#default": {
         "flagOffLanes": [
           "pool"
@@ -5079,6 +5112,7 @@
         "readManagedModeRows": "none",
         "readManifest": "none",
         "readMaxTimelineEntryId": "none",
+        "readMayActFor": "none",
         "readMcpLifetimeUsage": "none",
         "readMcpLogPruneCutoff": "none",
         "readMcpRollupPrunedBefore": "none",

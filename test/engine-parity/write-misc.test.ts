@@ -4,7 +4,7 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: readSourceState, readAdmissionSource, sharedSkillPackTablePresent,
  *    listSharedSkillPackRoots, getWorktreeBinding, isSourceClaimed, hasExtractedEvents, listActiveAccessMembers, isFolderRestricted,
- *    listAppliedPolicyRevisions, expireMemoryProposals,
+ *    listAppliedPolicyRevisions, readMayActFor, expireMemoryProposals,
  *    listAwaitingMemoryProposals and purgeMemoryProposals return the same observable result on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: a source-state read that differs changes whether page admission, the mirror read-only guard and
@@ -176,6 +176,53 @@ describe('engine parity: write misc', () => {
     const revisions = await engine.listAppliedPolicyRevisions();
     expect(revisions).toEqual([{ source_id: 'quiet', rev: null }, { source_id: 'work', rev: 2 }]);
     return { revisions };
+  });
+
+  parityTest('readMayActFor reads a stdio server\'s may_act_for as stored and answers null for an unset key', { methods: ['readMayActFor'] }, async (engine) => {
+    const unset = await engine.readMayActFor('stdio_config', 'mcp.stdio_may_act_for');
+    await engine.setConfig('mcp.stdio_may_act_for', ' member:alice-example,guest ');
+    const stored = await engine.readMayActFor('stdio_config', 'mcp.stdio_may_act_for');
+    const other = await engine.readMayActFor('stdio_config', 'mcp.stdio_member');
+    expect({ unset, stored, other }).toEqual({ unset: null, stored: ' member:alice-example,guest ', other: null });
+    return { unset, stored, other };
+  });
+
+  parityTest('readMayActFor permits nothing for a token or a client with no live row', { methods: ['readMayActFor'] }, async (engine) => {
+    const token = await engine.readMayActFor('legacy_token', '00000000-0000-4000-8000-0000000000aa');
+    const client = await engine.readMayActFor('oauth_client', 'client-absent');
+    expect({ token, client }).toEqual({ token: null, client: null });
+    return { token, client };
+  });
+
+  // Leak case: a revoked token or a deleted client must permit nothing, and one credential's list never answers for
+  // another. The Rust store keeps no tokens or clients (null above), so the token write stops on the raw_sql refusal.
+  parityTest('readMayActFor reads only the live row it names: a revoked token, a deleted client and another credential permit nothing', { methods: ['readMayActFor'] }, async (engine, backend) => {
+    const write = await engine.executeRaw(
+      `INSERT INTO access_tokens (id, name, token_hash, may_act_for, revoked_at) VALUES
+         ('00000000-0000-4000-8000-0000000000a1', 'live', 'h1', ARRAY['member:alice-example'], NULL),
+         ('00000000-0000-4000-8000-0000000000a2', 'revoked', 'h2', ARRAY['member:bob-example'], now()),
+         ('00000000-0000-4000-8000-0000000000a3', 'bare', 'h3', NULL, NULL)`).then(() => null, (e: unknown) => e);
+    if (backend === 'rust') {
+      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
+      expect(await engine.readMayActFor('legacy_token', '00000000-0000-4000-8000-0000000000a1')).toBeNull();
+      throw write;
+    }
+    expect(write).toBeNull();
+    await engine.executeRaw(
+      `INSERT INTO oauth_clients (client_id, client_name, may_act_for, deleted_at) VALUES
+         ('client-live', 'live', ARRAY['group:team-a'], NULL), ('client-gone', 'gone', ARRAY['member:bob-example'], now())`);
+    const read = async (via: 'legacy_token' | 'oauth_client', key: string) => await engine.readMayActFor(via, key);
+    const lists = {
+      live: await read('legacy_token', '00000000-0000-4000-8000-0000000000a1'),
+      revoked: await read('legacy_token', '00000000-0000-4000-8000-0000000000a2'),
+      bare: await read('legacy_token', '00000000-0000-4000-8000-0000000000a3'),
+      tokenAsClient: await read('oauth_client', '00000000-0000-4000-8000-0000000000a1'),
+      clientLive: await read('oauth_client', 'client-live'),
+      clientGone: await read('oauth_client', 'client-gone'),
+      clientAsToken: await read('legacy_token', 'client-live'),
+    };
+    expect(lists).toEqual({ live: ['member:alice-example'], revoked: null, bare: null, tokenAsClient: null, clientLive: ['group:team-a'], clientGone: null, clientAsToken: null });
+    return lists;
   });
 
   parityTest('getWorktreeBinding is null for a source with no writer binding, on any host', { methods: ['getWorktreeBinding'] }, async (engine, backend) => {

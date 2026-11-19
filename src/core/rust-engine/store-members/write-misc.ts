@@ -1,14 +1,14 @@
 /**
  * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
  * purgeMemoryProposals, attachSourcePath and getWorktreeBinding; SQL in engine-sql/write-misc.ts; isSourceClaimed, SQL in engine-sql/sources.ts), and the folder access read beside the
- * access members (isFolderRestricted and listAppliedPolicyRevisions; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
+ * access members (isFolderRestricted, listAppliedPolicyRevisions and readMayActFor; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
  * gbrain-store `write_misc`; the rest answer for state the store does not keep. What each member answers and why:
  * rust/docs/store/write_misc.md.
  */
 import type {
   AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from '../../engine-sql/write-misc.ts';
-import type { AppliedPolicyRevision } from '../../engine-sql/access-control.ts';
+import type { AppliedPolicyRevision, MayActForVia } from '../../engine-sql/access-control.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /**
@@ -76,6 +76,13 @@ export const isFolderRestricted: StoreMember<[sourceId: string, slug: string], b
 
 /** No source holds folder access state on this engine (see isFolderRestricted), so no revision is applied anywhere. */
 export const listAppliedPolicyRevisions: StoreMember<[], AppliedPolicyRevision[]> = async () => [];
+
+/**
+ * A stdio server's may_act_for is a config value, which the store keeps. The store keeps no access tokens and no OAuth
+ * clients, so a token or a client has no live row and permits nothing, as a revoked token or a deleted client does.
+ */
+export const readMayActFor: StoreMember<[via: MayActForVia, key: string], string[] | string | null> = async (brain, via, key) =>
+  via === 'stdio_config' ? storeCall({ member: 'readMayActFor' }, () => brain.getConfig(key)) : null;
 
 /** The store keeps no memory proposals, so upkeep expires nothing. */
 export const expireMemoryProposals: StoreMember<[reason: string], number> = async () => 0;

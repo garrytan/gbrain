@@ -24,6 +24,7 @@ import { PageRevisionConflictError } from '../src/core/page-state/types.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { ENGINE_CAPABILITIES } from '../src/core/engine-capabilities.ts';
 import { withCallerAccess } from '../src/core/search/private-visibility.ts';
+import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 
 const TARGET = detectAddonTarget();
 const BUILT = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
@@ -364,6 +365,33 @@ describe('Rust store members', () => {
     expect(await code(() => count(brain, ['default'], 2, { ...args, labelLine: line('Da.e') }))).toBe('engine_capability_missing');
     for (const contextLike of ['seg%', '%se_g%', '%a%b%', '%a\\b%']) expect(await code(() => count(brain, ['default'], 2, { ...args, contextLike }))).toBe('engine_capability_missing');
     expect(sent).toHaveLength(2);
+  });
+});
+
+// MCP dispatch decides the caller's access before any work (access/caller.ts). On a Rust brain every read it makes must
+// be a typed member: a raw read the engine refuses is swallowed as "permits nothing" and reads as a false refusal.
+describe('MCP dispatch caller access on a Rust brain', () => {
+  const stdio = (header?: string) => ({ remote: true, transport: 'stdio', sourceId: 'default', ...(header ? { onBehalfOf: { header } } : {}) }) as never;
+  const dispatch = async (engine: RustEngine, op: string, opts: never) => {
+    const out = await dispatchToolCall(engine as never, op, {}, opts);
+    const text = out.content.map(c => c.text).join('\n');
+    let code: unknown;
+    try { code = (JSON.parse(text) as { code?: unknown }).code; } catch { /* a result, not an error */ }
+    return { isError: out.isError === true, code };
+  };
+
+  withAddon('a stdio audience its config mcp.stdio_may_act_for lists passes caller access, and one it does not list is refused', async () => {
+    const { engine } = await open();
+    await engine.putPage('notes/a', page);
+    await engine.setConfig('mcp.stdio_may_act_for', 'guest');
+    expect(await dispatch(engine, 'get_stats', stdio('guest'))).toEqual({ isError: false, code: undefined });
+    expect(await dispatch(engine, 'whoami', stdio('guest'))).toEqual({ isError: false, code: undefined });
+    // Leak case: the list bounds the audience on Rust as on PGLite; an unlisted entry reads nothing.
+    await engine.setConfig('mcp.stdio_may_act_for', 'member:alice-example');
+    expect(await dispatch(engine, 'get_stats', stdio('guest'))).toEqual({ isError: true, code: 'on_behalf_of_not_permitted' });
+    await engine.unsetConfig('mcp.stdio_may_act_for');
+    expect(await dispatch(engine, 'get_stats', stdio('guest'))).toEqual({ isError: true, code: 'on_behalf_of_not_permitted' });
+    expect(await dispatch(engine, 'get_stats', stdio())).toEqual({ isError: false, code: undefined });
   });
 });
 

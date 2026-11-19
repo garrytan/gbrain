@@ -7,7 +7,7 @@ import type * as JobsWake from './engine-sql/jobs-wake.ts';
 import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
-import type { AppliedPolicyRevision } from './engine-sql/access-control.ts';
+import type { AppliedPolicyRevision, MayActForVia } from './engine-sql/access-control.ts';
 import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, HeldFenceCellKey, HeldFenceCellRow, RankCoverageRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
 import type * as EmbeddingCatalogSql from './engine-sql/embedding-catalog.ts';
@@ -3486,6 +3486,12 @@ export interface BrainEngine {
 
   /** Each source with folder access state and its newest applied folder-rule revision (null when none is applied), by source id. */
   listAppliedPolicyRevisions(): Promise<AppliedPolicyRevision[]>;
+
+  /**
+   * The stored may_act_for of one caller (`via` names where it is stored; `key` is the token id, the client id or the
+   * config key): a live token's or client's list, null when the row is revoked, deleted or absent; the stdio config text as stored.
+   */
+  readMayActFor(via: MayActForVia, key: string): Promise<string[] | string | null>;
 
   // Entity and mention reads (engine-sql/entity-reads.ts): the statements the CLI ran through executeRaw.
   /** The newest mention pass time (ISO, UTC, whole seconds) over every source or one source; null when no pass ran. */

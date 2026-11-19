@@ -28,6 +28,21 @@ const PINS: Pin[] = [
     texts: [`SELECT s.source_id, (SELECT r.revision FROM access_policy_revisions r WHERE r.source_id = s.source_id AND r.applied_at IS NOT NULL
           ORDER BY r.revision DESC LIMIT 1) AS rev FROM access_policy_state s ORDER BY s.source_id`],
   },
+  {
+    from: 'src/core/access/caller.ts:196 mayActForOf (legacy token)',
+    case: { method: 'readMayActFor', variant: 'legacy-token', run: e => e.readMayActFor('legacy_token', 'tok-1') },
+    texts: ['SELECT may_act_for FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL'],
+  },
+  {
+    from: 'src/core/access/caller.ts:200 mayActForOf (OAuth client)',
+    case: { method: 'readMayActFor', variant: 'oauth-client', run: e => e.readMayActFor('oauth_client', 'client-1') },
+    texts: ['SELECT may_act_for FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL'],
+  },
+  {
+    from: 'src/core/access/caller.ts:204 mayActForOf (stdio config)',
+    case: { method: 'readMayActFor', variant: 'stdio-config', run: e => e.readMayActFor('stdio_config', 'mcp.stdio_may_act_for') },
+    texts: ['SELECT value FROM config WHERE key = $1'],
+  },
 ];
 
 describe('caller raw SQL moved into typed members keeps its Postgres text byte for byte', () => {
