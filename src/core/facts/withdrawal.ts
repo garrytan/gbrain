@@ -148,24 +148,8 @@ export async function recordFactWithdrawal(
   });
 }
 
-// Fingerprint each incoming claim once. Inside the join condition the planner
-// re-evaluates both fingerprint functions for every (claim, withdrawal) pair,
-// so a 28-row fence against 400 withdrawals spent 4 s in this query.
-const FINGERPRINTED_CLAIMS = 'SELECT i.visibility, gbrain_fact_fingerprint(i.claim) AS fp, gbrain_fact_fingerprint_v1(i.claim) AS fp_v1';
-
 async function ambiguousFenceMatchesWithdrawal(engine: BrainEngine, sourceId: string, bodies: readonly string[], subject: string | null): Promise<boolean> {
-  const claims = bodies.flatMap(ambiguousFenceClaims);
-  if (!claims.length) return false;
-  const rows = await engine.executeRaw(`WITH incoming AS MATERIALIZED (${FINGERPRINTED_CLAIMS}
-      FROM jsonb_to_recordset($2::text::jsonb) i(claim text,visibility text))
-    SELECT 1 FROM incoming
-    JOIN (SELECT source_id,visibility,subject,fact_hash FROM fact_withdrawals WHERE source_id=$1
-      UNION ALL SELECT source_id,visibility,subject,fact_hash FROM fact_purges WHERE source_id=$1) w
-      ON w.source_id=$1 AND w.fact_hash IN (incoming.fp,incoming.fp_v1)
-      AND (incoming.visibility IS NULL OR w.visibility=incoming.visibility)
-      AND ($3::text IS NULL OR w.subject = '*' OR w.subject = $3::text) LIMIT 1`,
-  [sourceId, JSON.stringify(claims), subject]);
-  return rows.length > 0;
+  return engine.hasWithdrawnFenceClaim(sourceId, bodies.flatMap(ambiguousFenceClaims), subject);
 }
 
 async function withdrawalDates(engine: BrainEngine, sourceId: string, facts: readonly ParsedFact[], subject: string | null): Promise<Map<number,string>> {

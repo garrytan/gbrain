@@ -199,6 +199,9 @@ export const FAMILIES: Record<string, readonly string[]> = {
   // withdrawal_pages: the page statements a fact withdrawal runs on the pages that carry the claim
   withdrawal_pages: ['listSegmentedPages', 'invalidateWithdrawnPages'],
 
+  // withdrawal_fence: the withdrawal check a prepared import runs on a malformed facts fence
+  withdrawal_fence: ['hasWithdrawnFenceClaim'],
+
   raw_sql: ['runMigration', 'executeRaw', 'executeRawDirect', 'keywordBoundedRead'],
   code_edges: ['addCodeEdges', 'deleteCodeEdgesForChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk',
     // group D (code-edge read)

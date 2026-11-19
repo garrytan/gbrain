@@ -129,6 +129,41 @@ pub(crate) fn withdrawn_claim(
     Ok(false)
 }
 
+/// `EXISTS (SELECT 1 FROM fact_withdrawals WHERE source_id = $source AND visibility = $visibility
+/// AND fact_hash = $hash AND ($subject IS NULL OR subject = '*' OR subject = $subject))`: a withdrawal
+/// at `visibility` with exactly `hash`, under subject `*` or `subject`, any subject when None.
+pub(crate) fn withdrawal_hash_under(
+    read: &dyn KvRead,
+    source_id: &str,
+    visibility: &str,
+    subject: Option<&str>,
+    hash: &str,
+) -> Result<bool> {
+    if let Some(subject) = subject {
+        for who in ["*", subject] {
+            if read
+                .get(&key(&[source_id, visibility, who, hash]))?
+                .is_some()
+            {
+                return Ok(true);
+            }
+        }
+        return Ok(false);
+    }
+    let mut prefix = key(&[source_id, visibility]);
+    prefix.push(0);
+    let mut found = false;
+    scan_prefix(read, &prefix, false, &mut |k, _| {
+        // The rest of the key is `subject \0 fact_hash`.
+        found = k[prefix.len()..]
+            .iter()
+            .position(|b| *b == 0)
+            .is_some_and(|i| &k[prefix.len() + i + 1..] == hash.as_bytes());
+        !found
+    })?;
+    Ok(found)
+}
+
 /// Removes every withdrawal of a source, for the source delete.
 /// Whether a withdrawal of `source_id` covers the page `slug`: its subject is `*` or the slug (the
 /// `withdrawn` column of `listCorePageRows`, src/core/engine-sql/trust-tier-reads.ts).

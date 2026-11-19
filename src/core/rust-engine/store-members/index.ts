@@ -59,6 +59,7 @@ import * as trustTierReads from './trust-tier-reads.ts';
 import * as memoryMutationReads from './memory-mutation-reads.ts';
 import * as withdrawalDiscovery from './withdrawal-discovery.ts';
 import * as withdrawalPages from './withdrawal-pages.ts';
+import * as withdrawalFence from './withdrawal-fence.ts';
 import * as jobs from './jobs.ts';
 import * as housekeeping from './housekeeping.ts';
 import * as effectScans from './effect-scans.ts';
@@ -117,6 +118,8 @@ export const STORE_MEMBERS = {
   ...withdrawalDiscovery,
   // The page statements a fact withdrawal runs on the pages that carry the claim (rust/docs/store/facts.md).
   ...withdrawalPages,
+  // The withdrawal check a prepared import runs on a malformed facts fence (rust/docs/store/facts.md).
+  ...withdrawalFence,
   // The persistence brain identity the store already keeps (rust/docs/store/journal.md).
   ...persistenceIdentity,
   // Search telemetry (rust/docs/store/telemetry.md).

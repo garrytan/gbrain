@@ -4211,6 +4211,8 @@ export interface BrainEngine {
   listSegmentedPages(sourceId: string, slugs: readonly string[]): Promise<Array<{ id: number; slug: string }>>;
   /** A fact withdrawal's page invalidation: a new knowledge revision, no text projection or embedding signature, for the inline pages among `slugs`. */
   invalidateWithdrawnPages(sourceId: string, slugs: readonly string[]): Promise<Array<{ id: number; slug: string; knowledge_revision: string }>>;
+  /** Whether a withdrawal or purge tombstone covers a claim of a malformed fence, for `subject` or any subject when null (engine-sql/withdrawal-fence.ts). */
+  hasWithdrawnFenceClaim(sourceId: string, claims: ReadonlyArray<{ claim: string; visibility: string | null }>, subject: string | null): Promise<boolean>;
 
   // Decide family, group B: calibration profiles (engine-sql/calibration-profiles.ts).
   /** The newest calibration profile (`generated_at DESC`, then `id DESC`) of `holder` (any holder when unset) in `sourceIds` (an empty list matches nothing) or else `sourceId`; null when none. `id` is the BIGSERIAL as text. */

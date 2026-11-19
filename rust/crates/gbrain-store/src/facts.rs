@@ -61,6 +61,7 @@ pub mod repair;
 pub mod trust;
 pub mod trust_reads;
 pub mod withdrawal_discovery;
+pub mod withdrawal_fence;
 pub mod withdrawal_pages;
 
 pub use crate::owner_only::OwnerOnlyForm;

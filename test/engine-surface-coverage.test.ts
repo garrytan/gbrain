@@ -146,6 +146,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'readWithdrawalDiscovery',
   // Withdrawal page statements (engine-sql/withdrawal-pages.ts; covered by test/engine-parity/withdrawal-forget.test.ts)
   'listSegmentedPages', 'invalidateWithdrawnPages',
+  // Withdrawal fence check (engine-sql/withdrawal-fence.ts; covered by test/engine-parity/withdrawal-fence.test.ts)
+  'hasWithdrawnFenceClaim',
   // Timeline site reads (engine-sql/timeline-reads.ts)
   'sampleEffectiveDates', 'sampleEffectiveDateSources', 'readMaxTimelineEntryId', 'listStoredTimelineRowsOrdered',
   'deleteTimelineRows', 'storedTimelineRowsByPageIds', 'countSegmentedTimelinePages', 'countTimelineCommentMarkupRows',
