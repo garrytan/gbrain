@@ -166,6 +166,7 @@ test/engine-parity/title-fuzzy-unicode.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-sql-facts-keyset.test.ts
 test/entity-dedupe-decisions.test.ts
+test/entity-dedupe-person-confirm.test.ts
 test/entity-duplicates-finder.test.ts
 test/eval-log-tables-parity.test.ts
 test/extract-all-stamp-intersection.serial.test.ts
@@ -454,6 +455,8 @@ test/overwritten-edits-6712.test.ts
 test/owner-facts-d1-gst2346.test.ts
 test/owner-label-guard.test.ts
 test/owner-member-boundary.test.ts
+test/owner-private-fact-edits-gst3064.test.ts
+test/owner-private-fact-reads-gst3064.test.ts
 test/owner-reads-restricted.test.ts
 test/owner-refusal.test.ts
 test/owner-remote-private-writes-gst2091.test.ts
