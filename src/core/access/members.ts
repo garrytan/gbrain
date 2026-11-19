@@ -286,11 +286,9 @@ export async function setMemberKind(engine: BrainEngine, rawId: unknown, rawKind
 }
 
 /** GBRA-108 design 2: the enabled audience members, sorted; empty when none or unreadable (nothing widens). */
-export async function audienceMemberIds(engine: Pick<BrainEngine, 'executeRaw'>): Promise<string[]> {
+export async function audienceMemberIds(engine: Pick<BrainEngine, 'listAudienceAccessMembers'>): Promise<string[]> {
   try {
-    const rows = await engine.executeRaw<{ id: string }>(
-      "SELECT id FROM access_members WHERE kind = 'audience' AND disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id");
-    return rows.map(r => r.id).filter(id => ACCESS_ID_RE.test(id));
+    return (await engine.listAudienceAccessMembers()).filter(id => ACCESS_ID_RE.test(id));
   } catch {
     return [];
   }

@@ -163,3 +163,14 @@ export async function readAccessCredentials(exec: MemberLookupRead, by: AccessCr
   const clients = await exec.executeRaw<Row>(ACCESS_CREDENTIAL_SQL.clients_by_member, [by.memberId]);
   return [...tokens.map(t => ({ kind: 'token' as const, id: t.id, name: t.name })), ...clients.map(c => ({ kind: 'client' as const, id: c.id, name: c.name }))];
 }
+
+/** The statement access/members.ts audienceMemberIds ran through executeRaw. */
+export const AUDIENCE_KIND_MEMBERS_SQL = "SELECT id FROM access_members WHERE kind = 'audience' AND disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id";
+
+/**
+ * The ids of the enabled, untombstoned members of kind `audience`, by id. A person, a disabled member and a removed
+ * member are filtered out in the statement. A failure is thrown unchanged; the caller reads it as none.
+ */
+export async function listAudienceAccessMembers(exec: MemberLookupRead): Promise<string[]> {
+  return (await exec.executeRaw<{ id: string }>(AUDIENCE_KIND_MEMBERS_SQL)).map(r => r.id);
+}

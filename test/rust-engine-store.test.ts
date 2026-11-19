@@ -25,7 +25,7 @@ import { OperationError } from '../src/core/ops/contract.ts';
 import { ENGINE_CAPABILITIES } from '../src/core/engine-capabilities.ts';
 import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
-import { boundCredentials, getMember, legacyTokenByName, listMembers, memberByEmail } from '../src/core/access/members.ts';
+import { audienceMemberIds, boundCredentials, getMember, legacyTokenByName, listMembers, memberByEmail } from '../src/core/access/members.ts';
 
 const TARGET = detectAddonTarget();
 const BUILT = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
@@ -441,6 +441,21 @@ describe('access member reads on a Rust brain', () => {
     expect(await code(() => legacyTokenByName(engine as never, 'laptop'))).toBe('invalid_params');
     expect(await boundCredentials(engine as never, 'alice-example')).toEqual([]);
     expect(raw).toEqual([]);
+  });
+
+  withAddon('audienceMemberIds reads no raw SQL and finds no audience member: the store keeps none', async () => {
+    const { engine } = await open();
+    const raw: string[] = [];
+    const executeRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof executeRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      raw.push(sql);
+      return executeRaw(sql as never, params as never);
+    }) as typeof executeRaw;
+    const listed: string[][] = [];
+    const list = engine.listAudienceAccessMembers.bind(engine);
+    (engine as unknown as { listAudienceAccessMembers: typeof list }).listAudienceAccessMembers = async () => { const ids = await list(); listed.push(ids); return ids; };
+    expect(await audienceMemberIds(engine as never)).toEqual([]);
+    expect({ raw, listed }).toEqual({ raw: [], listed: [[]] });
   });
 });
 

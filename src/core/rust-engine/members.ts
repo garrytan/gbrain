@@ -579,6 +579,7 @@ export const RUST_ENGINE_MEMBERS = {
   readAudiencePrincipals: 'access_control',
   readAccessMembers: 'access_control',
   readAccessCredentials: 'access_control',
+  listAudienceAccessMembers: 'access_control',
   listActiveAccessMembers: 'access_control',
   // pages: entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts)
   readMentionLastPass: 'pages',

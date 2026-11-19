@@ -1,7 +1,7 @@
 /**
  * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
  * purgeMemoryProposals, attachSourcePath and getWorktreeBinding; SQL in engine-sql/write-misc.ts; isSourceClaimed, SQL in engine-sql/sources.ts), and the folder access read beside the
- * access members (isFolderRestricted, listAppliedPolicyRevisions, readMayActFor, readAudiencePrincipals, readAccessMembers and readAccessCredentials; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
+ * access members (isFolderRestricted, listAppliedPolicyRevisions, readMayActFor, readAudiencePrincipals, readAccessMembers, readAccessCredentials and listAudienceAccessMembers; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
  * gbrain-store `write_misc`; the rest answer for state the store does not keep. What each member answers and why:
  * rust/docs/store/write_misc.md.
  */
@@ -104,3 +104,6 @@ export const readAccessMembers: StoreMember<[by: AccessMemberLookup], AccessMemb
 
 /** The store keeps no access tokens and no OAuth clients (see readMayActFor), so no name or member binding names a live credential. */
 export const readAccessCredentials: StoreMember<[by: AccessCredentialLookup], AccessCredentialRow[]> = async () => [];
+
+/** The store keeps no access members (see listActiveAccessMembers), so no member is of kind audience. */
+export const listAudienceAccessMembers: StoreMember<[], string[]> = async () => [];

@@ -4,7 +4,8 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: readSourceState, readAdmissionSource, sharedSkillPackTablePresent,
  *    listSharedSkillPackRoots, getWorktreeBinding, isSourceClaimed, hasExtractedEvents, listActiveAccessMembers, isFolderRestricted,
- *    listAppliedPolicyRevisions, readMayActFor, readAudiencePrincipals, readAccessMembers, readAccessCredentials, expireMemoryProposals,
+ *    listAppliedPolicyRevisions, readMayActFor, readAudiencePrincipals, readAccessMembers, readAccessCredentials,
+ *    listAudienceAccessMembers, expireMemoryProposals,
  *    listAwaitingMemoryProposals and purgeMemoryProposals return the same observable result on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: a source-state read that differs changes whether page admission, the mirror read-only guard and
@@ -367,6 +368,30 @@ describe('engine parity: write misc', () => {
       otherCase: [], injected: [], unknown: [],
     });
     return { byName, byMember };
+  });
+
+  parityTest('listAudienceAccessMembers lists no member on a brain with none', { methods: ['listAudienceAccessMembers'] }, async (engine) => {
+    const ids = await engine.listAudienceAccessMembers();
+    expect(ids).toEqual([]);
+    return ids;
+  });
+
+  // Leak case: only enabled, untombstoned members of kind audience answer; a person, a disabled audience member and a
+  // removed one never do. The Rust store keeps no members (empty above), so the member write stops on the raw_sql refusal.
+  parityTest('listAudienceAccessMembers lists only enabled, untombstoned audience members, by id', { methods: ['listAudienceAccessMembers'] }, async (engine, backend) => {
+    const write = await engine.executeRaw(
+      `INSERT INTO access_members (id, kind, disabled_at, tombstoned_at) VALUES
+         ('zed-example', 'audience', NULL, NULL), ('bob-example', 'audience', now(), NULL), ('carol-example', 'audience', NULL, now()),
+         ('dave-example', 'person', NULL, NULL), ('alice-example', 'audience', NULL, NULL)`).then(() => null, (e: unknown) => e);
+    if (backend === 'rust') {
+      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
+      expect(await engine.listAudienceAccessMembers()).toEqual([]);
+      throw write;
+    }
+    expect(write).toBeNull();
+    const ids = await engine.listAudienceAccessMembers();
+    expect(ids).toEqual(['alice-example', 'zed-example']);
+    return ids;
   });
 
   parityTest('getWorktreeBinding is null for a source with no writer binding, on any host', { methods: ['getWorktreeBinding'] }, async (engine, backend) => {

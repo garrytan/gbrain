@@ -3502,6 +3502,9 @@ export interface BrainEngine {
   /** Live credentials (active legacy tokens, clients not deleted): the tokens with one exact name, or those bound to one member. */
   readAccessCredentials(by: AccessCredentialLookup): Promise<AccessCredentialRow[]>;
 
+  /** The ids of the enabled, untombstoned audience-kind members, by id. */
+  listAudienceAccessMembers(): Promise<string[]>;
+
   // Entity and mention reads (engine-sql/entity-reads.ts): the statements the CLI ran through executeRaw.
   /** The newest mention pass time (ISO, UTC, whole seconds) over every source or one source; null when no pass ran. */
   readMentionLastPass(sourceId?: string | null): Promise<string | null>;
