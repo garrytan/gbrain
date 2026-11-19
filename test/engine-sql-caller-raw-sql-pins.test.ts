@@ -16,7 +16,9 @@ import { runCase, withPinnedSqlEnvironment, type SqlCase } from './helpers/postg
 import { edgeTrimSql } from '../src/core/edge-whitespace.ts';
 import { retiredPageSql } from '../src/core/entities/resolve.ts';
 import { boundedBodyPrefixSql } from '../src/core/page-window/bounded-lead.ts';
-import { callerAccessAllowedSql, privateLinkOriginFilterForCaller, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
+import { callerAccessAllowedSql, privateLinkOriginFilterForCaller, privatePagesFilterFastForCaller, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
+import { pageEligibleSql } from '../src/core/eligibility/sql.ts';
+import { quarantineFilterFragment } from '../src/core/quarantine.ts';
 
 /** caller.ts MEMBER_SQL at 7470c703ed: MEMBERS_WHERE_SQL(`m.id = (${member})`), copied verbatim. */
 const memberSql = (member: string) => `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
@@ -318,6 +320,38 @@ const PINS: Pin[] = [
          JOIN pages c ON c.id = ei.page_id AND c.deleted_at IS NULL
         LIMIT 2`],
   },
+  ...([[false, false], [true, true]] as const).map(([excludePrivate, floored]): Pin => ({
+    from: 'src/core/mentions/referrers.ts:233 readReferrerGroups (with referrersCte at :108)',
+    case: {
+      method: 'readReferrerGroupRows', variant: excludePrivate ? 'remote+floor' : 'local',
+      run: e => e.readReferrerGroupRows({ sources: ['default'], slugs: ['companies/acme-example'] }, {
+        referrerSources: ['default'], storedTypes: ['call'], canonicalTypes: ['meeting'], excludePrivate,
+        eligibility: floored ? { floor: 'operator_curated' } : undefined, includeQuarantined: false, perGroup: 10,
+      }),
+    },
+    texts: () => [`WITH tgt AS MATERIALIZED (
+      SELECT t.id FROM pages t JOIN unnest($1::text[], $2::text[]) AS k(s, g) ON t.source_id = k.s AND t.slug = k.g
+       WHERE t.deleted_at IS NULL${excludePrivate ? ` AND ${privatePagesFilterForCaller('t')}` : ''}
+    ),
+    refs AS MATERIALIZED (
+      SELECT DISTINCT l.from_page_id AS id FROM links l WHERE l.to_page_id IN (SELECT id FROM tgt)${excludePrivate ? ` AND ${privateLinkOriginFilterForCaller('l')}` : ''}
+    ),
+    typed AS MATERIALIZED (
+      SELECT f.id, f.slug, f.source_id, f.type,
+             COALESCE(f.effective_date, f.updated_at) AS d,
+             COALESCE(($5::text[])[array_position($4::text[], f.type)], NULLIF(f.type, ''), 'untyped') AS canonical_type
+        FROM pages f
+       WHERE f.id IN (SELECT id FROM refs)
+         AND f.deleted_at IS NULL AND f.source_id = ANY($3::text[])
+         AND f.id NOT IN (SELECT id FROM tgt)${excludePrivate ? ` AND ${privatePagesFilterFastForCaller('f')}` : ''} AND ${pageEligibleSql('f', floored ? { floor: 'operator_curated' } : undefined)} AND ${quarantineFilterFragment('f')}
+    ),
+     counts AS (SELECT canonical_type, count(*)::int AS n FROM typed GROUP BY canonical_type)
+     SELECT x.id, x.slug, x.source_id, x.type, c.canonical_type, to_char(x.d AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS d, c.n AS gtotal
+       FROM counts c CROSS JOIN LATERAL (
+         SELECT * FROM typed t WHERE t.canonical_type = c.canonical_type ORDER BY t.d DESC NULLS LAST, t.source_id, t.slug LIMIT $6
+       ) x
+      ORDER BY c.canonical_type, x.d DESC NULLS LAST, x.source_id, x.slug`],
+  })),
   {
     from: 'src/core/access/owner-only.ts:56 ownerOnlySourcesPresent',
     case: { method: 'readOwnerOnlySourcesPresent', variant: 'default', run: e => e.readOwnerOnlySourcesPresent() },

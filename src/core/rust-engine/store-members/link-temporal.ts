@@ -101,6 +101,17 @@ export const listRecordMetadataRows: StoreMember<[pageIds: readonly number[],
       includeQuarantined: scope.includeQuarantined === true, scope: scope.excludePrivate ? 'world' : 'all' }));
   };
 
+export const readReferrerGroupRows: StoreMember<[target: { sources: readonly string[]; slugs: readonly string[] },
+  scope: LinkTemporalSql.ReferrerGroupScope], LinkTemporalSql.ReferrerGroupRow[]> = async (brain, target, scope) => {
+    const excludePrivate = storePagePolicy('readReferrerGroupRows', scope?.excludePrivate, { callerReaders: true }) ?? null;
+    return storeCall({ member: 'readReferrerGroupRows' }, () => brain.readReferrerGroupRows({
+      targetSources: [...target.sources], targetSlugs: [...target.slugs], referrerSources: [...scope.referrerSources],
+      storedTypes: [...scope.storedTypes], canonicalTypes: [...scope.canonicalTypes], excludePrivate,
+      minTrust: scope.eligibility?.floor ?? null, suppressFlagged: scope.eligibility?.suppressFlagged === true,
+      includeQuarantined: scope.includeQuarantined === true, perGroup: Math.max(0, Math.trunc(scope.perGroup)) }));
+  };
+
+
 // ---------------------------------------------------------------------------------------------------------------------
 // reindex-search-vector: the store keeps one keyword index, built for the language PGLite's default `english` names.
 // Rebuilding it for `english` changes nothing; any other language refuses rather than claiming a rebuild.

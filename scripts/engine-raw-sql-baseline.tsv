@@ -510,7 +510,7 @@ src/core/meetings/meetings-source.ts	execute_raw	3
 src/core/mentions/coverage.ts	execute_raw	4
 src/core/mentions/newer-mentions.ts	execute_raw	1
 src/core/mentions/pass.ts	execute_raw	33
-src/core/mentions/referrers.ts	execute_raw	8
+src/core/mentions/referrers.ts	execute_raw	7
 src/core/mentions/siblings.ts	execute_raw	1
 src/core/migrate.ts	execute_raw	2
 src/core/migration-preludes.ts	execute_raw	12

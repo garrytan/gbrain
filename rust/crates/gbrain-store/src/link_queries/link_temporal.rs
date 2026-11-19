@@ -7,7 +7,7 @@
 //! linkRelationshipKeysForPages, staleLinkRelationshipKeys, linkRelationshipKeysForOrigin,
 //! linkRelationshipKeysTouching, applyLinkTemporalRows, writeManualLinkTransitions,
 //! removeManualLinkTransitions, listRelationshipNoteRows, readEntityInboundEdges, edgeValidityCounts,
-//! listPageStatusByRef, listRecordMetadataRows, countSearchVectorRows.
+//! listPageStatusByRef, listRecordMetadataRows, readReferrerGroupRows, countSearchVectorRows.
 //!
 //! The state itself (stints, status, evidence hash) is built by the pure TypeScript builder in
 //! `src/core/link-relationships.ts` on every engine; the store only keeps rows.
@@ -35,6 +35,7 @@ use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::{LinkRecord, in_links, out_links, put_link};
 use crate::pages::{PageRecord, all_pages, next_id, read_page, read_page_by_id};
 use crate::trust::valid_time::AmendmentsQuery;
+use crate::trust::{TrustPolicy, TrustTier};
 use crate::{Store, keys, put_json};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -525,6 +526,40 @@ pub struct RecordLinkRow {
 pub struct RecordMetadataRows {
     pub status: Vec<IdStatusRow>,
     pub links: Vec<RecordLinkRow>,
+}
+
+/// `readReferrerGroupRows`: the entity card's referrer groups.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ReferrerGroupInput {
+    /// The target pages, `(targetSources[i], targetSlugs[i])`.
+    pub target_sources: Vec<String>,
+    pub target_slugs: Vec<String>,
+    pub referrer_sources: Vec<String>,
+    /// Pack type aliases and the canonical type each maps to, index for index.
+    pub stored_types: Vec<String>,
+    pub canonical_types: Vec<String>,
+    pub exclude_private: Option<PrivacyPolicy>,
+    /// `pageEligibleSql`'s floor over the referrer's stamped tier.
+    pub min_trust: Option<String>,
+    /// Drop a referrer `activationSuppressedSql` flags.
+    pub suppress_flagged: bool,
+    pub include_quarantined: bool,
+    pub per_group: u64,
+}
+
+/// One referring page of `readReferrerGroupRows`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ReferrerGroupRow {
+    pub id: u64,
+    pub slug: String,
+    pub source_id: String,
+    #[serde(rename = "type")]
+    pub page_type: String,
+    pub canonical_type: String,
+    /// `COALESCE(effective_date, updated_at)` as `to_char` UTC microsecond text.
+    pub d: String,
+    pub gtotal: u64,
 }
 
 /// What `countSearchVectorRows` returns.
@@ -1790,6 +1825,111 @@ impl Store {
             status,
             links: links.into_iter().collect(),
         })
+    }
+
+    /// `readReferrerGroupRows`: the live pages in `referrerSources` that link to a live target (other
+    /// than the targets), by canonical type, the newest `perGroup` of each by `(d DESC, source_id,
+    /// slug)` bytewise, each with its group's total; groups by canonical type bytewise. A policy
+    /// leaves out a hidden target, a link whose origin page it hides and a hidden referrer; the trust
+    /// floor, the flagged filter and quarantine apply before the cap.
+    pub fn read_referrer_group_rows(
+        &self,
+        input: &ReferrerGroupInput,
+    ) -> Result<Vec<ReferrerGroupRow>> {
+        let read = self.read()?;
+        let read = &*read;
+        let trust = TrustPolicy::parse(input.min_trust.as_deref(), input.suppress_flagged)?;
+        let mut pages = Pages::new(read);
+        let mut targets = BTreeSet::new();
+        for (source_id, slug) in input.target_sources.iter().zip(&input.target_slugs) {
+            let Some(target) = live_page(read, source_id, slug)? else {
+                continue;
+            };
+            if let Some(policy) = &input.exclude_private
+                && page_hidden(read, &target, policy)?
+            {
+                continue;
+            }
+            targets.insert(target.id);
+        }
+        let mut refs = BTreeSet::new();
+        for target in &targets {
+            for link in in_links(read, *target)? {
+                if let Some(policy) = &input.exclude_private
+                    && !link_origin_shown(&mut pages, &link, policy)?
+                {
+                    continue;
+                }
+                refs.insert(link.from_page_id);
+            }
+        }
+        let mut groups: BTreeMap<String, Vec<(i64, String, String, u64, String)>> = BTreeMap::new();
+        for id in refs {
+            if targets.contains(&id) {
+                continue;
+            }
+            let Some(page) = pages.get(id)?.filter(|p| live(p)) else {
+                continue;
+            };
+            if !input.referrer_sources.contains(&page.source_id) {
+                continue;
+            }
+            if let Some(policy) = &input.exclude_private
+                && page_hidden(read, &page, policy)?
+            {
+                continue;
+            }
+            let tier = TrustTier::stored(page.trust_tier.as_deref());
+            if !trust.admits(read, "pages", page.id, tier)? {
+                continue;
+            }
+            if !input.include_quarantined && page.frontmatter.contains_key(QUARANTINE_KEY) {
+                continue;
+            }
+            let canonical = input
+                .stored_types
+                .iter()
+                .position(|t| *t == page.page_type)
+                .and_then(|i| input.canonical_types.get(i).cloned())
+                .unwrap_or_else(|| {
+                    if page.page_type.is_empty() {
+                        "untyped".to_string()
+                    } else {
+                        page.page_type.clone()
+                    }
+                });
+            let d = page.effective_date_us.unwrap_or(page.updated_at_us);
+            groups.entry(canonical).or_default().push((
+                d,
+                page.source_id.clone(),
+                page.slug.clone(),
+                page.id,
+                page.page_type.clone(),
+            ));
+        }
+        let mut out = Vec::new();
+        for (canonical, mut rows) in groups {
+            rows.sort_by(|a, b| {
+                b.0.cmp(&a.0)
+                    .then_with(|| a.1.cmp(&b.1))
+                    .then_with(|| a.2.cmp(&b.2))
+            });
+            let gtotal = rows.len() as u64;
+            for (d, source_id, slug, id, page_type) in
+                rows.into_iter().take(input.per_group as usize)
+            {
+                out.push(ReferrerGroupRow {
+                    id,
+                    slug,
+                    source_id,
+                    page_type,
+                    canonical_type: canonical.clone(),
+                    d: iso(d),
+                    gtotal,
+                });
+            }
+        }
+        Ok(out)
     }
 
     /// `listAmendmentsNotApplied`: the live pages with an `amends` link to the page whose relationship

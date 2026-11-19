@@ -194,6 +194,21 @@ impl Brain {
         })
     }
 
+    /// `readReferrerGroupRows`: `{ targetSources, targetSlugs, referrerSources, storedTypes, canonicalTypes,
+    /// excludePrivate, minTrust, suppressFlagged, includeQuarantined, perGroup }`: referrer rows.
+    #[napi]
+    pub fn read_referrer_group_rows<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::link_queries::ReferrerGroupInput =
+                arg(input, "readReferrerGroupRows input")?;
+            s.read_referrer_group_rows(&input)
+        })
+    }
+
     /// `countSearchVectorRows`: `{ pages, chunks }`.
     #[napi]
     pub fn count_search_vector_rows<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
