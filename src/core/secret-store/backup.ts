@@ -139,7 +139,7 @@ export async function backupDue(engine: BrainEngine, backend?: string): Promise<
 
 export interface RestoreResult { object: string; key_id: string; inserted: number; existing: number; skipped_no_page: number; unreadable: string[]; occurrences: number }
 
-export const SKIPPED_NO_PAGE_TEXT = 'skipped because their page is not in this brain (purged, or not synced yet)';
+export const SKIPPED_NO_PAGE_TEXT = 'skipped because no page in this brain holds their marker (purged, or not synced yet)';
 export const SKIPPED_NO_PAGE_NEXT = 'Sync the pages, then run the same restore again.';
 
 /**

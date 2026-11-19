@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { currentKey, escrowExported, exportKeyEscrow, keyringStatus, markEscrowExported } from '../src/core/secret-store/keyring.ts';
-import { recordOccurrence, reveal, seal } from '../src/core/secret-store/store.ts';
+import { markerOf, recordOccurrence, reveal, seal } from '../src/core/secret-store/store.ts';
 import { backupDue, backupIfDue, backupStatusFile, backupStore, readBackupStatus, restoreBackup, storageIdentity, BACKUP_OBJECT_PREFIX } from '../src/core/secret-store/backup.ts';
 import { createStorage } from '../src/core/storage.ts';
 import { runSecrets } from '../src/commands/secrets.ts';
@@ -98,10 +98,10 @@ for (const { name, make } of engines) {
           expect(await b.engine.executeRaw('SELECT 1 FROM secret_store')).toEqual([]);
         });
         await expect(restoreBackup(b.engine, storage, out.object)).rejects.toMatchObject({ code: 'invalid_params',
-          message: expect.stringContaining('skipped because their page is not in this brain'), suggestion: 'Sync the pages, then run the same restore again.' });
+          message: expect.stringContaining('skipped because no page in this brain holds their marker'), suggestion: 'Sync the pages, then run the same restore again.' });
         expect(await b.engine.executeRaw('SELECT 1 FROM secret_store')).toEqual([]);
         expect(await b.engine.executeRaw('SELECT 1 FROM secret_store_occurrence')).toEqual([]);
-        await b.engine.putPage('notes/deploy-plan', { type: 'note', title: 'Deploy plan', compiled_truth: 'Deploy notes.', timeline: '', frontmatter: {} }, { sourceId: 'default' });
+        await b.engine.putPage('notes/deploy-plan', { type: 'note', title: 'Deploy plan', compiled_truth: `Deploy notes. ${markerOf('github_token', sealed.id)}`, timeline: '', frontmatter: {} }, { sourceId: 'default' });
         const restored = await restoreBackup(b.engine, storage, out.object);
         expect(restored).toMatchObject({ inserted: out.entries, existing: 0, skipped_no_page: 0, unreadable: [] });
         expect((await reveal(b.engine, sealed.id, 'test')).value).toBe(TOKEN);
