@@ -15,7 +15,7 @@ use gbrain_store::facts::purge::{
     FactScopeArgs, HeldFenceQuery, PurgeTargetArgs, RelinkQuery, SimilarQuery, SingleFactQuery,
     SourceArgs, UnfencedQuery, WithdrawalExpiry,
 };
-use gbrain_store::facts::reconcile::{BacklogArgs, DrainArgs, SettleArgs};
+use gbrain_store::facts::reconcile::{BacklogArgs, DrainArgs, LockArgs, SettleArgs};
 
 #[napi]
 impl Brain {
@@ -185,6 +185,19 @@ impl Brain {
         self.run(env, move |s| {
             let a: SettleArgs = required(args, "settleFactsReconcile args")?;
             s.settle_facts_reconcile(&a)
+        })
+    }
+
+    /// `lockReconcileRevision(args)`: resolves whether the live page is still at `revision`.
+    #[napi]
+    pub fn lock_reconcile_revision<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: LockArgs = required(args, "lockReconcileRevision args")?;
+            s.lock_reconcile_revision(&a)
         })
     }
 

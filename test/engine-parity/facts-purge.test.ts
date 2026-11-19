@@ -3,7 +3,7 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: countFactFingerprintLeftovers, loadPurgeTarget, planFactPurgeIds, listFactsReconcileBacklog,
- *    settleFactsReconcile, selectFactsReconcileDrain, listRelinkCandidateRows, countRelinkCandidates, listSimilarActiveFacts, findActiveSingleFact,
+ *    settleFactsReconcile, lockReconcileRevision, selectFactsReconcileDrain, listRelinkCandidateRows, countRelinkCandidates, listSimilarActiveFacts, findActiveSingleFact,
  *    listSingleFactMetadata, listUnfencedFactRows, listHeldFenceFactRows, listWithdrawalSlugs and
  *    expireFactsByWithdrawal return the same observable result on every engine arm (PGLite always; Postgres with
  *    DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
@@ -14,8 +14,8 @@
  *    (D18), so no case compared them across engines (docs/research/rust-cli-executeraw-map.md).
  *  - Seam: the watermark is written through the typed settleFactsReconcile and selectFactsReconcileDrain, and read back
  *    through listFactsReconcileBacklog. recordFactsReconcile (harness.ts) still writes states settle cannot reach (an
- *    older reconciled revision) with SQL, and the extract_facts commit step's lockReconcileRevision is raw SQL; the Rust
- *    arm stops on the typed raw_sql refusal at both. Every other row is seeded through the typed `insertFact`, `insertFacts`, `putPage`, `softDeletePage`, `expireFact` and
+ *    older reconciled revision) with SQL; the Rust arm stops on the typed raw_sql refusal there. The extract_facts
+ *    commit step (lockReconcileRevision, then the settle, in one transaction) runs through typed members. Every other row is seeded through the typed `insertFact`, `insertFacts`, `putPage`, `softDeletePage`, `expireFact` and
  *    `createSegmentedPageShell`. Generated values (fact ids, timestamps, fingerprints) are compared by relation or
  *    shape, never by value.
  */
@@ -315,8 +315,40 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     return backlog;
   });
 
-  parityTest('the extract_facts commit step locks the page revision, then settles complete; Rust stops at the raw-SQL lock', {
-    methods: ['putPage', 'getPage', 'transaction', 'executeRaw', 'settleFactsReconcile', 'listFactsReconcileBacklog'],
+  parityTest('lockReconcileRevision answers whether the live page is still at the revision the reconcile read, inside a transaction too', {
+    methods: ['putPage', 'getPage', 'softDeletePage', 'transaction', 'lockReconcileRevision'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    await engine.putPage('notes/live', note('live', 'x'));
+    await engine.putPage('notes/gone', note('gone', 'x'));
+    await engine.putPage('notes/elsewhere', note('elsewhere', 'x'), { sourceId: 'other' });
+    const live = (await engine.getPage('notes/live'))!.knowledge_revision!;
+    const gone = (await engine.getPage('notes/gone'))!.knowledge_revision!;
+    const elsewhere = (await engine.getPage('notes/elsewhere', { sourceId: 'other' }))!.knowledge_revision!;
+    await engine.softDeletePage('notes/gone');
+    const lock = (db: BrainEngine, sourceId: string, slug: string, revision: string | null) => db.lockReconcileRevision(sourceId, `notes/${slug}`, revision);
+    const outside = {
+      current: await lock(engine, SRC, 'live', live),
+      otherRevision: await lock(engine, SRC, 'live', '00000000-0000-4000-8000-000000000000'),
+      noRevision: await lock(engine, SRC, 'live', null),
+      softDeleted: await lock(engine, SRC, 'gone', gone),
+      wrongSource: await lock(engine, SRC, 'elsewhere', elsewhere),
+      ownSource: await lock(engine, 'other', 'elsewhere', elsewhere),
+      missing: await lock(engine, SRC, 'missing', null),
+    };
+    const inside = await engine.transaction(async (tx) => {
+      const before = await lock(tx, SRC, 'live', live);
+      await tx.putPage('notes/live', note('live', 'edited'));
+      const edited = (await tx.getPage('notes/live'))!.knowledge_revision!;
+      return { before, stale: await lock(tx, SRC, 'live', live), fresh: await lock(tx, SRC, 'live', edited) };
+    });
+    expect(outside).toEqual({ current: true, otherRevision: false, noRevision: false, softDeleted: false, wrongSource: false, ownSource: true, missing: false });
+    expect(inside).toEqual({ before: true, stale: false, fresh: true });
+    return { outside, inside };
+  });
+
+  parityTest('the extract_facts commit step locks the page revision, then settles complete, in one transaction', {
+    methods: ['putPage', 'getPage', 'transaction', 'lockReconcileRevision', 'settleFactsReconcile', 'listFactsReconcileBacklog'],
   }, async (engine) => {
     const fence = `${FACTS_FENCE_BEGIN}\n| # | fact |\n${FACTS_FENCE_END}`;
     await engine.putPage('notes/fenced', note('Fenced', fence));

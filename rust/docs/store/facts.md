@@ -276,9 +276,12 @@ in page-id order and at most `settleLimit`, the source's due live pages whose bo
 the marker and that own no fence row; then it answers at most `pageLimit` slugs of the source's other due live pages
 that are not `invalid` at their current revision, never-attempted first, then oldest attempt, then page id. A hard
 page delete removes the page's row (`cascade::remove_page_rows` calls `facts::reconcile::remove_page_rows`, the
-`ON DELETE CASCADE`); a soft delete keeps it. The extract_facts phase's commit step locks the page with
-`lockReconcileRevision` (raw SQL) before its in-transaction settle, so on Rust that step stops on the typed `raw_sql`
-refusal; the settle itself runs in a Rust transaction.
+`ON DELETE CASCADE`); a soft delete keeps it. `lockReconcileRevision` answers whether the live page `(sourceId, slug)`
+is at `revision` (`facts/reconcile.rs`); a soft-deleted or missing page, or a null revision, answers false. Postgres
+locks the row `FOR SHARE` for the rest of the transaction. On Rust the read runs inside the caller's store transaction
+and sees its writes; that transaction holds the store's single writer from begin to commit, so no other writer changes
+the page before the settle commits. Outside a transaction it reads the last commit. The extract_facts commit step
+(lock, then the `complete` settle, in one transaction) runs whole on Rust.
 `listSingleFactMetadata` is served by `facts/trust_reads.rs` (below), except under the remote provenance floor.
 
 ## Group 5: repair classifiers and loop retirement (`facts/repair.rs`)

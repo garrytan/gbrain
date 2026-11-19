@@ -144,6 +144,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listFactsForRelevance': OOS.factsTrust,
   'listFactsReconcileBacklog': OOS.factsPurge,
   'settleFactsReconcile': OOS.factsPurge,
+  'lockReconcileRevision': OOS.factsPurge,
   'selectFactsReconcileDrain': OOS.factsPurge,
   'listFenceRowGroups': OOS.factsCycle,
   'listFreshExtractionOutcomes': OOS.factsCycle,

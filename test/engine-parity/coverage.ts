@@ -158,7 +158,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
 
   // facts_purge: purge, withdrawal, relink and fence repair
 
-  facts_purge: ['countFactFingerprintLeftovers', 'loadPurgeTarget', 'planFactPurgeIds', 'listFactsReconcileBacklog', 'settleFactsReconcile', 'selectFactsReconcileDrain', 'listRelinkCandidateRows',
+  facts_purge: ['countFactFingerprintLeftovers', 'loadPurgeTarget', 'planFactPurgeIds', 'listFactsReconcileBacklog', 'settleFactsReconcile', 'lockReconcileRevision', 'selectFactsReconcileDrain', 'listRelinkCandidateRows',
     'countRelinkCandidates', 'listSimilarActiveFacts', 'findActiveSingleFact', 'listSingleFactMetadata', 'listUnfencedFactRows',
     'listHeldFenceFactRows', 'listWithdrawalSlugs', 'expireFactsByWithdrawal'],
 
