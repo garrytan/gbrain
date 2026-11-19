@@ -836,3 +836,65 @@ fn put_page_writes_the_contextual_retrieval_stamp_it_is_given_and_none_keeps_the
         .unwrap();
     assert_eq!(body["page"]["compiled_truth"], json!("Four."));
 }
+
+/// `excludePrivate` on the page reads: a hidden page reads as missing, a scope whose first source
+/// holds a hidden page answers the next source, and `resolveSlugs` never names a hidden exact page
+/// (the member then refuses the trigram half instead of guessing).
+#[test]
+fn exclude_private_hides_a_private_page_from_every_page_read() {
+    let dir = TempDir::new("pages-exclude-private");
+    let store = open(&dir);
+    store
+        .upsert_source(&SourceInput {
+            id: "alt".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    let private: PageInput = serde_json::from_value(json!({
+        "type": "person", "title": "Secret", "compiled_truth": "secret",
+        "frontmatter": { "visibility": "private" },
+    }))
+    .unwrap();
+    store
+        .put_page("people/secret", &private, &PutPageOptions::default())
+        .unwrap();
+    store
+        .put_page("people/ada", &private, &opts(json!({ "sourceId": "alt" })))
+        .unwrap();
+    put(&store, "people/ada", "public");
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true });
+    let hidden = scope(json!({ "excludePrivate": policy }));
+    assert!(
+        store
+            .read_page_snapshot("people/secret", &hidden)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .read_page_snapshot("people/secret", &ReadScope::default())
+            .unwrap()
+            .is_some()
+    );
+    let alt_first = scope(json!({ "excludePrivate": policy, "sourceIds": ["alt", "default"] }));
+    let snapshot = store
+        .read_page_snapshot("people/ada", &alt_first)
+        .unwrap()
+        .unwrap();
+    assert_eq!(snapshot["page"]["source_id"], "default");
+    assert!(
+        store
+            .resolve_slugs("people/secret", &hidden)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        store.resolve_slugs("people/ada", &alt_first).unwrap(),
+        vec!["people/ada".to_string()]
+    );
+    let listed = store
+        .list_pages(&filters(json!({ "excludePrivate": policy })))
+        .unwrap();
+    assert_eq!(slugs(&listed), vec!["people/ada"]);
+    assert_eq!(listed[0]["source_id"], "default");
+}

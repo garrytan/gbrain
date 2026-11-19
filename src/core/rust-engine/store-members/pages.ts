@@ -7,17 +7,28 @@ import { sourceOriginScope } from '../../persistence/origin-guard.ts';
 import { isRevisionRejection, mapStoreError } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { storePagePolicy } from './private-provenance.ts';
 
-const READ_SCOPE = ['sourceId', 'sourceIds', 'includeDeleted'] as const;
+const READ_SCOPE = ['sourceId', 'sourceIds', 'includeDeleted', 'excludePrivate'] as const;
+
+/**
+ * The store scope of a page read: `excludePrivate` becomes the page policy (`privatePagesFilterForCaller('p')`, with the
+ * caller's reader identity and private-readable grant), under which a hidden page reads as missing.
+ */
+function pageScope(member: string, opts: object | undefined, allowed: readonly string[]): Record<string, unknown> {
+  const scope = takeOptions(member, opts, allowed);
+  if ('excludePrivate' in scope) scope.excludePrivate = storePagePolicy(member, scope.excludePrivate, { callerReaders: true }) ?? null;
+  return scope;
+}
 
 export const readPageSnapshot: StoreMember<[slug: string, opts?: PageSnapshotOptions], PageSnapshot | null> = async (brain, slug, opts) => {
-  const scope = takeOptions('readPageSnapshot', opts, READ_SCOPE);
+  const scope = pageScope('readPageSnapshot', opts, READ_SCOPE);
   const snapshot: PageSnapshot | null = await storeCall({ member: 'readPageSnapshot', slug }, () => brain.readPageSnapshot(slug, scope));
   return snapshot === null ? null : { ...snapshot, page: toGetPage(snapshot.page) };
 };
 
 export const getPage: StoreMember<[slug: string, opts?: GetPageOpts], Page | null> = async (brain, slug, opts) => {
-  const scope = takeOptions('getPage', opts, READ_SCOPE);
+  const scope = pageScope('getPage', opts, READ_SCOPE);
   const snapshot: PageSnapshot | null = await storeCall({ member: 'getPage', slug }, () => brain.readPageSnapshot(slug, scope));
   return snapshot === null ? null : toGetPage(snapshot.page);
 };
@@ -63,11 +74,11 @@ export const restorePage: StoreMember<[slug: string, opts?: { sourceId?: string 
   storeCall({ member: 'restorePage', slug }, () => brain.restorePage(slug, takeOptions('restorePage', opts, ['sourceId'])));
 
 const LIST_FILTERS = ['type', 'tag', 'limit', 'offset', 'updated_after', 'updatedAfterKeyset', 'slugAfter', 'slugPrefix',
-  'excludeSlugPrefixes', 'includeDeleted', 'sort', 'sourceId', 'sourceIds'] as const;
+  'excludeSlugPrefixes', 'includeDeleted', 'sort', 'sourceId', 'sourceIds', 'excludePrivate'] as const;
 
 export const listPages: StoreMember<[filters?: PageFilters], Page[]> = async (brain, filters) => {
   // `listColumnsOnly` blanks the body and timeline in PGLite's rows, which the store does not do, so it refuses.
-  const options = takeOptions('listPages', filters, LIST_FILTERS);
+  const options = pageScope('listPages', filters, LIST_FILTERS);
   const pages: Page[] = await storeCall({ member: 'listPages' }, () => brain.listPages(options));
   return pages.map((page) => toListPage(page));
 };
@@ -77,7 +88,7 @@ export const listPages: StoreMember<[filters?: PageFilters], Page[]> = async (br
  * exact half; a name it cannot find exactly is refused, since "no exact page" is not "nothing resembles it".
  */
 export const resolveSlugs: StoreMember<[partial: string, opts?: PageReadScope], string[]> = async (brain, partial, opts) => {
-  const found: string[] = await storeCall({ member: 'resolveSlugs' }, () => brain.resolveSlugs(partial, takeOptions('resolveSlugs', opts, ['sourceId', 'sourceIds'])));
+  const found: string[] = await storeCall({ member: 'resolveSlugs' }, () => brain.resolveSlugs(partial, pageScope('resolveSlugs', opts, ['sourceId', 'sourceIds', 'excludePrivate'])));
   if (found.length === 0) refuseMember('resolveSlugs', 'a name with no exact page needs trigram matching');
   return found;
 };
