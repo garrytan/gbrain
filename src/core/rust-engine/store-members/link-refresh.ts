@@ -1,13 +1,13 @@
 /**
  * Helpers that keep the store's link relationship state current after a Rust link write (links.ts, link-queries.ts):
  * the keys a write touches, a refresh through the shared builder (link-relationships.ts), and the engine-shaped view of
- * the store's temporal members that applyTemporalEvidence and replaceWantedLinks take, and the temporal date check the
- * link and graph reads run. Not a member module: index.ts does not spread it.
+ * the store's temporal members that applyTemporalEvidence and replaceWantedLinks take. Not a member module: index.ts
+ * does not spread it.
  */
 import type { BrainEngine } from '../../engine.ts';
 import { refreshRelationships, type RelationshipKey } from '../../link-relationships.ts';
 import type { TemporalTx } from '../../link-temporal-apply.ts';
-import { isCalendarDate, temporalLinkTypes, type EdgeTemporalOpts } from '../../link-validity.ts';
+import { temporalLinkTypes } from '../../link-validity.ts';
 import type { StoreBrain } from '../store.ts';
 import { storeCall } from './common.ts';
 import * as temporal from './link-temporal.ts';
@@ -38,14 +38,4 @@ export function temporalStore(brain: StoreBrain): TemporalTx & Pick<BrainEngine,
     removeManualLinkTransitions: rel => temporal.removeManualLinkTransitions(brain, rel),
     linkRelationshipKeysForOrigin: pageId => temporal.linkRelationshipKeysForOrigin(brain, pageId),
   };
-}
-
-/** `dateLiteral` of link-validity.ts: the dates `relationshipFilterSql` would inline, checked in the order it renders them. */
-export function checkTemporalDates(policy: EdgeTemporalOpts | undefined): void {
-  if (!policy) return;
-  const status = policy.status ?? 'live';
-  if (policy.disabled || (status === 'all' && !policy.during)) return;
-  for (const date of [policy.asOf, policy.during?.from, policy.during?.until]) {
-    if (date !== undefined && !isCalendarDate(date)) throw new TypeError(`temporal edge filter: invalid date ${JSON.stringify(date)}`);
-  }
 }
