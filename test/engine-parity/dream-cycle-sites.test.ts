@@ -20,9 +20,10 @@
  *  - Seam: none for the jobs, locks, pages, facts, takes and config, which are seeded through the typed members
  *    (admitJob, claimNextJob, completeJob, cancelJobs, acquireCycleLock, putPage, createVersion, insertFacts,
  *    addTakesBatch, getConfig). The three journal reads (readDreamDeferralReceipt, listLaterPersistenceRequests,
- *    listCommittedOutputRequests) read `persistence_requests`, which has no typed writer that can place a request at a
- *    chosen sequence, state and receipt id, so their cases assert the empty answer; the statements' text is pinned
- *    byte for byte by test/dream-cycle-sites-sql-pin.test.ts. Job ids are compared relative to the case's first job and
+ *    listCommittedOutputRequests) read `persistence_requests`, which is seeded through the typed journal members
+ *    (readSourceMembership, lockPersistenceCounters, insertWriteRequest, stampWriteClaim, completeWriteRow): one case
+ *    compares them on queued, failed and committed requests of two slugs, and one asserts the empty answer; the
+ *    statements' text is also pinned byte for byte by test/dream-cycle-sites-sql-pin.test.ts. Job ids are compared relative to the case's first job and
  *    clock readings only as present or absent.
  */
 import { describe, expect } from 'bun:test';
@@ -40,6 +41,10 @@ const TOKEN_B = '22222222-2222-4222-8222-222222222222';
 const UUID = '00000000-0000-4000-8000-000000000001';
 const FUTURE = '2099-01-01T00:00:00.000Z';
 const PAST = '2000-01-01T00:00:00.000Z';
+const DREAMER = { kind: 'local_cli', id: 'parity-dreamer' };
+const DREAM_KEYS = ['principal:local_cli:parity-dreamer', 'brain'];
+const CLAIM = 'c0000000-0000-4000-8000-0000000000c1';
+const req = (n: number) => `b0000000-0000-4000-8000-0000000000${String(n).padStart(2, '0')}`;
 
 function values(name: string, extra: Partial<JobInsertValues> = {}): JobInsertValues {
   return {
@@ -89,6 +94,35 @@ const note = (title: string, body: string, frontmatter: Record<string, unknown> 
 /** Frontmatter as an observable: keys sorted, since jsonb reorders keys and the Rust store keeps them as written. */
 const fm = (frontmatter: unknown) =>
   JSON.stringify(Object.fromEntries(Object.entries((frontmatter ?? {}) as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b))));
+
+/** One request of the dream's journal, queued; returns its journal id. */
+async function admitRequest(engine: BrainEngine, requestId: string, over: { operation?: string; slug?: string } = {}): Promise<string> {
+  const source = await engine.readSourceMembership('default');
+  const slug = over.slug ?? 'notes/a';
+  return engine.transaction(async tx => {
+    await tx.lockPersistenceCounters(DREAM_KEYS);
+    return (await tx.insertWriteRequest({
+      principalKind: DREAMER.kind, principalId: DREAMER.id, requestId, operation: over.operation ?? 'put_page', sourceId: 'default',
+      sourceIncarnation: source!.incarnation, pageId: null, slug, worktreeId: null, topologyGeneration: null,
+      digest: 'd'.repeat(64), intent: { kind: over.operation ?? 'put_page', slug }, authority: { scopes: ['write'] }, intentBytes: 100,
+      terminalReservation: 4096, targetKind: 'page', protocolVersion: 1, admitterVersion: 'parity', admitterHostId: null, counterKeys: DREAM_KEYS,
+      clientRequestId: null, state: 'queued', deferredRefreshId: null,
+    })).id;
+  });
+}
+
+/** Claim a queued request and finish it in `state`. */
+async function settleRequest(engine: BrainEngine, id: string, state: 'committed' | 'failed', errorCode: string | null): Promise<void> {
+  await engine.transaction(async tx => {
+    await tx.lockPersistenceCounters(DREAM_KEYS);
+    await tx.stampWriteClaim(id, CLAIM, 60_000, JSON.stringify({ phase: 'parity' }));
+    await tx.completeWriteRow({
+      id, state, outcome: state === 'committed' ? { written: true } : null, errorCode, errorMessage: errorCode === null ? null : 'the write was deferred',
+      consumerVersion: 'parity', consumerHostId: null, errorDetail: null, resultBytes: 1200, counterKeys: DREAM_KEYS, intentBytes: 100,
+      retainedBytes: 1500, terminalReservation: 4096, probePurges: false,
+    });
+  });
+}
 
 describe('engine parity: dream-cycle statements', () => {
   parityTest('retriage reads the queued dream jobs, their status, and the waiting jobs of one private queue', {
@@ -374,6 +408,55 @@ describe('engine parity: dream-cycle statements', () => {
     const resolved = await engine.findConsolidatedTakes(pageId, 'Prefers email');
     expect(resolved[0]!.resolved_at).not.toBeNull();
     return { emptyMax, max, otherPage, found: found.length, wrongHolder, unknown, byMissingRow, sources, resolved: resolved[0]!.resolved_at != null };
+  });
+
+  parityTest('the journal reads see seeded requests: a deferral receipt, the live requests after a sequence, and the committed outputs, newest first', {
+    methods: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow', 'transaction',
+      'readDreamSourceIncarnation', 'readDreamDeferralReceipt', 'listLaterPersistenceRequests', 'listCommittedOutputRequests'],
+  }, async (engine) => {
+    const first = await admitRequest(engine, req(1));
+    const queued = await admitRequest(engine, req(2));
+    const failed = await admitRequest(engine, req(3));
+    const newest = await admitRequest(engine, req(4));
+    const other = await admitRequest(engine, req(5), { slug: 'notes/other' });
+    const deletion = await admitRequest(engine, req(6), { operation: 'delete_page' });
+    await settleRequest(engine, first, 'committed', null);
+    await settleRequest(engine, failed, 'failed', 'dream_write_deferred');
+    await settleRequest(engine, newest, 'committed', null);
+    await settleRequest(engine, other, 'committed', null);
+    await settleRequest(engine, deletion, 'committed', null);
+    const incarnation = (await engine.readDreamSourceIncarnation('default'))!.incarnation!;
+    const names = new Map([[first, 'first'], [queued, 'queued'], [failed, 'failed'], [newest, 'newest'], [other, 'other'], [deletion, 'deletion']]);
+    const nameOf = (id: string) => names.get(id) ?? `unknown:${id}`;
+    const sequences = (await engine.listLaterPersistenceRequests('default', incarnation, 'notes/a', 0)).map(r => r.sequence);
+    const view = (r: Record<string, unknown>) => ({
+      keys: Object.keys(r).sort(), id: nameOf(String(r.id)), request_id: r.request_id, operation: r.operation, slug: r.slug, state: r.state,
+      error_code: r.error_code, principal_kind: r.principal_kind, source_id: r.source_id, compacted: r.compacted,
+    });
+    const later = async (slug: string, sequence: number | string, inc = incarnation) => (await engine.listLaterPersistenceRequests('default', inc, slug, sequence)).map(view);
+    const committedOf = async (ids: string[], inc = incarnation) => (await engine.listCommittedOutputRequests(ids, 'default', inc)).map(r => ({ request: view(r.request as never) }));
+    const receipt = async (id: string) => engine.readDreamDeferralReceipt(id);
+    const out = {
+      receipts: { queued: await receipt(queued), failed: await receipt(failed), committed: await receipt(first), unknown: await receipt(req(77)) },
+      // Every live request of the slug, in journal order (the failed one is not live); the first one's sequence excludes itself.
+      all: await later('notes/a', 0), afterFirst: await later('notes/a', sequences[0]!), afterLast: await later('notes/a', sequences[sequences.length - 1]!),
+      other: await later('notes/other', 0), none: await later('notes/none', 0), wrongIncarnation: await later('notes/a', 0, UUID),
+      committed: await committedOf([req(1), req(2), req(3), req(4), req(5), req(6)]),
+      committedSome: await committedOf([req(1), req(2)]), committedFailedOnly: await committedOf([req(3)]), committedNone: await committedOf([]),
+      committedWrongIncarnation: await committedOf([req(1)], UUID),
+    };
+    expect(out.receipts.queued).toMatchObject({ state: 'queued', error_code: null });
+    expect(out.receipts.failed).toMatchObject({ state: 'failed', error_code: 'dream_write_deferred', error_message: 'the write was deferred' });
+    expect(out.receipts.committed).toMatchObject({ state: 'committed' });
+    expect(out.receipts.unknown).toBeNull();
+    expect(out.all.map(r => [r.id, r.state])).toEqual([['first', 'committed'], ['queued', 'queued'], ['newest', 'committed'], ['deletion', 'committed']]);
+    expect(out.afterFirst.map(r => r.id)).toEqual(['queued', 'newest', 'deletion']);
+    expect(out.afterLast).toEqual([]);
+    expect(out.other.map(r => r.id)).toEqual(['other']);
+    expect(out.committed.map(r => r.request.id)).toEqual(['other', 'newest', 'first']);
+    expect(out.committedSome.map(r => r.request.id)).toEqual(['first']);
+    expect({ failed: out.committedFailedOnly, none: out.committedNone, wrong: out.committedWrongIncarnation, wrongLater: out.wrongIncarnation }).toEqual({ failed: [], none: [], wrong: [], wrongLater: [] });
+    return out;
   });
 
   parityTest('the journal reads answer empty for a brain with no persisted requests, and the source incarnation for a source', {
