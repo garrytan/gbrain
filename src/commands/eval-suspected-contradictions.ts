@@ -216,10 +216,7 @@ function readQueriesFile(path: string): string[] {
 
 /** Detect non-empty eval_candidates; exit 2 with hint when empty (A4). */
 async function loadFromCapture(engine: BrainEngine, limit?: number): Promise<string[]> {
-  const rows = await engine.executeRaw<{ query: string }>(
-    `SELECT query FROM eval_candidates WHERE query IS NOT NULL ORDER BY id DESC LIMIT $1`,
-    [limit ?? 100],
-  );
+  const rows = await engine.listEvalCandidateQueries(limit ?? 100);
   if (!rows || rows.length === 0) {
     console.error(
       `--from-capture: no rows in eval_candidates. Captures are off by default in v0.25.0+.\n` +
@@ -229,7 +226,7 @@ async function loadFromCapture(engine: BrainEngine, limit?: number): Promise<str
     );
     process.exit(2);
   }
-  return rows.map((r) => r.query);
+  return rows;
 }
 
 function exclusiveOneOf(...flags: Array<unknown>): boolean {

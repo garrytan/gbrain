@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 976/976
+# covered: 1001/1001
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -20,15 +20,15 @@
 # links: 23/23
 # tags: 5/5
 # timeline: 19/19
-# ontology: 4/4
+# ontology: 10/10
 # raw_files: 26/26
 # takes: 23/23
 # dream: 37/37
-# contradictions: 5/5
+# contradictions: 22/22
 # facts: 15/15
 # segmented_body: 16/16
 # versions: 6/6
-# stats_ingest: 5/5
+# stats_ingest: 7/7
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 12/12
@@ -91,10 +91,10 @@ getPage	pages	yes	114	yes	yes	yes	serves
 readPageSnapshot	pages	yes	27	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	479	yes	yes	yes	serves
+putPage	pages	yes	484	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
-deletePage	pages	yes	7	yes	yes	yes	serves
+deletePage	pages	yes	8	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
 softDeletePage	pages	yes	145	yes	yes	yes	serves
@@ -188,8 +188,8 @@ deleteChunksForPages	chunks	yes	2	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	4	no	yes	yes	serves
 upsertChunks	chunks	yes	28	yes	yes	yes	serves
-sealChunks	chunks	yes	51	no	yes	yes	serves
-getChunks	chunks	yes	31	yes	yes	yes	serves
+sealChunks	chunks	yes	52	no	yes	yes	serves
+getChunks	chunks	yes	32	yes	yes	yes	serves
 getChunkPage	chunks	yes	7	no	yes	yes	serves
 getChunkWindows	chunks	yes	4	no	yes	yes	serves
 countStaleChunks	chunks	yes	5	no	yes	yes	serves
@@ -225,7 +225,7 @@ markPagesAttendanceBlocked	extraction	yes	2	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	107	yes	yes	yes	serves
+addLink	links	yes	109	yes	yes	yes	serves
 addLinksBatch	links	yes	14	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	12	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
@@ -272,10 +272,16 @@ getLastSeen	timeline	yes	5	no	yes	yes	serves
 upsertEventProjection	timeline	yes	19	no	yes	yes	serves
 removeTimelineRows	timeline	yes	2	no	yes	yes	serves
 updateTimelineDetails	timeline	yes	2	no	yes	yes	serves
-mergeOntologyFact	ontology	yes	12	no	yes	yes	serves
+mergeOntologyFact	ontology	yes	13	no	yes	yes	serves
 getOntology	ontology	yes	5	no	yes	yes	serves
 discoverOntologyDimensions	ontology	yes	1	no	yes	yes	serves
 findOntologyConflicts	ontology	yes	4	no	yes	yes	serves
+listRekeyLosers	ontology	yes	1	no	yes	yes	refuses:facts
+repointSupersededToKept	ontology	yes	1	no	yes	yes	refuses:facts
+clearOntologySlots	ontology	yes	1	no	yes	yes	refuses:facts
+deleteRekeyLosers	ontology	yes	1	no	yes	yes	refuses:facts
+listOntologyFactCandidates	ontology	yes	1	no	yes	yes	refuses:facts
+restoreOntologyFact	ontology	yes	1	no	yes	yes	refuses:facts
 putRawData	raw_files	yes	5	yes	yes	yes	serves
 getRawData	raw_files	yes	5	yes	yes	yes	serves
 upsertFile	raw_files	yes	3	no	yes	yes	serves
@@ -290,7 +296,7 @@ upsertCliFileRow	raw_files	yes	1	no	yes	yes	refuses:files
 upsertRawFileRow	raw_files	yes	1	no	yes	yes	refuses:files
 upsertSyncFileRow	raw_files	yes	1	no	yes	yes	refuses:files
 sourceIdExists	raw_files	yes	2	no	yes	yes	serves
-readPageIdInSource	raw_files	yes	3	no	yes	yes	refuses:pages
+readPageIdInSource	raw_files	yes	7	no	yes	yes	refuses:pages
 readFileOwner	raw_files	yes	1	no	yes	yes	refuses:files
 claimFilePage	raw_files	yes	1	no	yes	yes	refuses:files
 upsertOpFileRow	raw_files	yes	1	no	yes	yes	refuses:files
@@ -302,9 +308,9 @@ countFilesRegisteredElsewhere	raw_files	yes	1	no	yes	yes	refuses:files
 registerFileRow	raw_files	yes	1	no	yes	yes	refuses:files
 readReadableFileForVerify	raw_files	yes	1	no	yes	yes	refuses:files
 listReadableFilePaths	raw_files	yes	1	no	yes	yes	refuses:files
-addTakesBatch	takes	yes	38	yes	yes	yes	serves
+addTakesBatch	takes	yes	39	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	2	no	yes	yes	serves
-listTakes	takes	yes	17	no	yes	yes	serves
+listTakes	takes	yes	18	no	yes	yes	serves
 searchTakes	takes	yes	3	no	yes	yes	serves
 searchTakesVector	takes	yes	1	no	yes	yes	serves
 getTakeEmbeddings	takes	yes	1	no	yes	yes	serves
@@ -362,16 +368,33 @@ countCoalescibleSynthJobs	dream	yes	1	no	yes	yes	refuses:minion_queue
 listWaitingChildJobIds	dream	yes	1	no	yes	yes	refuses:minion_queue
 listDreamChildJobTimings	dream	yes	1	no	yes	yes	refuses:minion_queue
 countRecentDreamSynthSubmissions	dream	yes	1	no	yes	yes	refuses:minion_queue
-writeContradictionsRun	contradictions	yes	1	no	yes	yes	serves
+writeContradictionsRun	contradictions	yes	2	no	yes	yes	serves
 loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
+listEdgeContradictionCandidates	contradictions	yes	1	no	yes	yes	refuses:links
+listKnownEdgeProposals	contradictions	yes	1	no	yes	yes	refuses:links
+listLinkContexts	contradictions	yes	1	no	yes	yes	refuses:links
+recordEdgeProposal	contradictions	yes	1	no	yes	yes	refuses:links
+readEdgeProposal	contradictions	yes	1	no	yes	yes	refuses:links
+edgeClosureLanded	contradictions	yes	1	no	yes	yes	refuses:links
+readEdgeProposalEvidence	contradictions	yes	1	no	yes	yes	refuses:links
+readEdgeProposalHash	contradictions	yes	1	no	yes	yes	refuses:links
+markEdgeProposalStale	contradictions	yes	1	no	yes	yes	refuses:links
+setEdgeProposalStatus	contradictions	yes	1	no	yes	yes	refuses:links
+rejectOpenEdgeProposal	contradictions	yes	1	no	yes	yes	refuses:links
+markEdgeProposalUndone	contradictions	yes	1	no	yes	yes	refuses:links
+markRevertedEdgeProposals	contradictions	yes	1	no	yes	yes	refuses:links
+listLiveChunksByIds	contradictions	yes	1	no	yes	yes	refuses:chunks
+listLiveTakesByIds	contradictions	yes	1	no	yes	yes	refuses:takes
+readLastContradictionsPromptVersion	contradictions	yes	1	no	yes	yes	refuses:contradictions
+listEvalCandidateQueries	contradictions	yes	1	no	yes	yes	refuses:eval_capture
 insertFact	facts	yes	67	yes	yes	yes	serves
-insertFacts	facts	yes	98	no	yes	yes	serves
+insertFacts	facts	yes	100	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	52	no	yes	yes	serves
-listFactsByEntity	facts	yes	24	yes	yes	yes	serves
+listFactsByEntity	facts	yes	25	yes	yes	yes	serves
 listFactsSince	facts	yes	15	yes	yes	yes	serves
 listFactsKeyset	facts	yes	3	no	yes	yes	serves
 listFactsBySession	facts	yes	5	yes	yes	yes	serves
@@ -407,6 +430,8 @@ revertToVersion	versions	yes	2	no	yes	yes	serves
 countOnboardSignal	stats_ingest	yes	2	no	yes	yes	serves
 getStats	stats_ingest	yes	4	yes	yes	yes	serves
 getHealth	stats_ingest	yes	5	yes	yes	yes	serves
+listVisiblePageSlugs	stats_ingest	yes	1	no	yes	yes	refuses:pages
+readPagesForVersionHistory	stats_ingest	yes	1	no	yes	yes	refuses:pages
 logIngest	stats_ingest	yes	2	no	yes	yes	serves
 getIngestLog	stats_ingest	yes	2	no	yes	yes	serves
 updateSlug	sync_aliases	yes	18	no	yes	yes	serves
@@ -893,7 +918,7 @@ getEdgesByChunk	code_edges	yes	2	no	yes	yes	serves
 getCodeTraversalCache	code_edges	yes	7	no	yes	yes	serves
 putCodeTraversalCache	code_edges	yes	7	no	yes	yes	serves
 clearCodeTraversalCache	code_edges	yes	2	no	yes	yes	serves
-logEvalCandidate	eval_capture	yes	2	no	yes	yes	serves
+logEvalCandidate	eval_capture	yes	3	no	yes	yes	serves
 listEvalCandidates	eval_capture	yes	2	no	yes	yes	serves
 deleteEvalCandidatesBefore	eval_capture	yes	1	no	yes	yes	serves
 logEvalCaptureFailure	eval_capture	yes	1	no	yes	yes	serves

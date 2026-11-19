@@ -103,6 +103,12 @@ const VETTED_BUILDERS: Record<string, string> = {
   fileListFilterSql: 'src/core/engine-sql/files-ops.ts: the literal TRUE or the constant page filter with the hand-numbered $2 slug bound by the caller; the choice is whether a slug was given; no values',
   fileListOrderSql: 'src/core/engine-sql/files-ops.ts: one of two constant ORDER BY column lists chosen by whether a slug was given; no values',
 
+  // contradictions-cycle.ts, ontology-repair.ts builders
+  takeHolderSql: 'src/core/engine-sql/contradictions-cycle.ts: the constant holder allow-list conjunct with one positive integer position (checked by Number.isSafeInteger) spliced as its hand-numbered placeholder; no values',
+  rekeyMoveSql: 'src/core/engine-sql/ontology-repair.ts: a re-key move text, returned only when it is a member of a closed constant list of shapes (anything else throws); no values',
+  rekeyConversationSlotSql: 'src/core/engine-sql/ontology-repair.ts: CONVERSATION_SLOT_SQL, the constant conversation-source prefix test; no values',
+  ontologyConversationSlotSql: 'src/core/engine-sql/ontology-repair.ts: NOT_CONVERSATION_SLOT_SQL, the constant not-a-conversation-source prefix test; no values',
+
   // facts-trust.ts builders
   quarantinedProvenanceFilterFragment: 'src/core/quarantine.ts: constant fact-provenance quarantine predicate over a caller alias; no values',
   factsFtsDocument: 'src/core/fts-language.ts: constant facts full-text document expression over a caller alias; the language passes VALID_CONFIG_NAME or falls back to the default',

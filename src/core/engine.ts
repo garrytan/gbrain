@@ -22,6 +22,9 @@ import type * as FactsCycleSql from './engine-sql/facts-cycle.ts';
 import type * as FactsPurgeSql from './engine-sql/facts-purge.ts';
 import type * as FactsRepairSql from './engine-sql/facts-repair.ts';
 import type * as FilesOpsSql from './engine-sql/files-ops.ts';
+import type * as ContradictionsCycleSql from './engine-sql/contradictions-cycle.ts';
+import type * as OntologyRepairSql from './engine-sql/ontology-repair.ts';
+import type * as AdminReadsSql from './engine-sql/admin-reads.ts';
 import type * as FactsTrustSql from './engine-sql/facts-trust.ts';
 import type * as FactsConversationSql from './engine-sql/facts-conversation.ts';
 import type { EngineCapabilities } from './engine-capabilities.ts';
@@ -2387,6 +2390,20 @@ export interface BrainEngine {
   /** Dimensions with ≥2 distinct current-open values from ≥2 provenances. */
   findOntologyConflicts(opts?: PageReadScope & Pick<OntologyReadOpts, 'minConfidence' | 'visibility' | 'excludeDiary'>): Promise<OntologyConflict[]>;
 
+  // The ontology re-key and repair statements (engine-sql/ontology-repair.ts).
+  /** A re-key's losers: of each set of facts that would share an ontology key once `move` applies, every row but the survivor (`keep`). Reads facts. */
+  listRekeyLosers(sourceId: string, move: OntologyRepairSql.RekeyMove): Promise<Array<{ id: number | string; keep: number | string }>>;
+  /** Repoints supersession links at the dropped rows to their survivors. Writes facts. */
+  repointSupersededToKept(ids: number[], keeps: number[]): Promise<void>;
+  /** A losing conversation fact keeps its row and gives up its ontology slot. Writes facts. */
+  clearOntologySlots(ids: number[]): Promise<void>;
+  /** Deletes the dropped ontology rows. Writes facts. */
+  deleteRekeyLosers(ids: number[]): Promise<void>;
+  /** `repair ontology-facts`: the ontology rows of these sources that carry the fence step's signature, with their class flags. Reads facts. */
+  listOntologyFactCandidates(sourceIds: string[]): Promise<OntologyRepairSql.OntologyFactCandidateRow[]>;
+  /** `repair ontology-facts --apply`: restores one observation only while its row number, page and expiry are as previewed; returns the restored row, none when it changed. Writes facts. */
+  restoreOntologyFact(row: OntologyRepairSql.OntologyFactRestore): Promise<Array<{ id: number | string; expired: boolean }>>;
+
   // Raw data
   /**
    * v0.31.8 (D21): `opts.sourceId` source-scopes the page-id lookup. When
@@ -2769,6 +2786,42 @@ export interface BrainEngine {
    */
   sweepContradictionCache(): Promise<number>;
 
+  // The edge-contradictions phase, the scoped contradiction reader and the eval reads (engine-sql/contradictions-cycle.ts).
+  /** The live state relationships of subjects with two or more targets of one type, newest groups first. Reads link_relationships, pages. */
+  listEdgeContradictionCandidates(query: ContradictionsCycleSql.EdgeCandidateQuery): Promise<ContradictionsCycleSql.EdgeCandidateRow[]>;
+  /** The proposals of one subject and link type whose evidence hash is among these, with whether each was touched in the last 24 hours. Reads link_edge_proposals. */
+  listKnownEdgeProposals(fromPageId: number, linkType: string, evidenceHashes: string[]): Promise<ContradictionsCycleSql.KnownEdgeProposalRow[]>;
+  /** Up to three distinct non-empty contexts of one link. Reads links. */
+  listLinkContexts(fromPageId: number, toPageId: number, linkType: string): Promise<string[]>;
+  /** Records an edge proposal; an existing row of the same evidence is replaced only while it is an error row. Returns the row id, null when the existing row stood. Writes link_edge_proposals. */
+  recordEdgeProposal(proposal: ContradictionsCycleSql.EdgeProposalInput): Promise<number | null>;
+  /** One edge proposal with its subject and ending slugs, null when none. Reads link_edge_proposals, pages. */
+  readEdgeProposal(id: number): Promise<ContradictionsCycleSql.EdgeProposalRow | null>;
+  /** Whether a dream transition ends this relationship on `closeDate`. Reads link_transitions. */
+  edgeClosureLanded(fromPageId: number, endingToPageId: number | null, linkType: string, closeDate: string | null): Promise<boolean>;
+  /** The evidence hashes the two relationships of a proposal carry now, null when either is gone. Reads link_edge_proposals, link_relationships. */
+  readEdgeProposalEvidence(id: number): Promise<{ a: string; b: string } | null>;
+  /** The evidence hash a proposal was judged on, null when none. Reads link_edge_proposals. */
+  readEdgeProposalHash(id: number): Promise<{ evidence_hash: string } | null>;
+  /** Marks a proposal stale. Writes link_edge_proposals. */
+  markEdgeProposalStale(id: number): Promise<void>;
+  /** Sets a proposal's status. Writes link_edge_proposals. */
+  setEdgeProposalStatus(id: number, status: string): Promise<void>;
+  /** Rejects a proposal that is still open; true when it was. Writes link_edge_proposals. */
+  rejectOpenEdgeProposal(id: number): Promise<boolean>;
+  /** Marks an applied proposal undone. Writes link_edge_proposals. */
+  markEdgeProposalUndone(id: number): Promise<void>;
+  /** Applied proposals whose closure transition is gone become reverted_by_user; returns how many. Writes link_edge_proposals. */
+  markRevertedEdgeProposals(): Promise<number>;
+  /** The live chunks with these ids that the caller's read policy (and trust floor) admits, for the scoped contradiction reader. Reads content_chunks, pages. */
+  listLiveChunksByIds(ids: number[], policy: PageReadPolicy, floor: import('./trust/tier.ts').TrustTier | undefined): Promise<ContradictionsCycleSql.LiveChunkRow[]>;
+  /** The active takes with these ids that the caller's read policy (holder allow-list, trust floor) admits. Reads takes, pages. */
+  listLiveTakesByIds(ids: number[], policy: PageReadPolicy, floor: import('./trust/tier.ts').TrustTier | undefined): Promise<ContradictionsCycleSql.LiveTakeRow[]>;
+  /** The prompt version of the most recent persisted contradiction run, null when none ran. Reads eval_contradictions_runs. */
+  readLastContradictionsPromptVersion(): Promise<string | null>;
+  /** The newest captured queries, at most `limit`. Reads eval_candidates. */
+  listEvalCandidateQueries(limit: number): Promise<string[]>;
+
   // ============================================================
   // v0.31 Hot memory — facts table operations
   // ============================================================
@@ -3091,6 +3144,12 @@ export interface BrainEngine {
    */
   getStats(opts?: { sourceId?: string; sourceIds?: string[] }): Promise<BrainStats>;
   getHealth(opts?: { sourceId?: string; sourceIds?: string[] }): Promise<BrainHealth>;
+
+  // The admin operations' statements (engine-sql/admin-reads.ts).
+  /** The slugs among `slugs` that name a live page the policy part admits, within the source scope (`null` admits every source). Reads pages. */
+  listVisiblePageSlugs(slugs: string[], sourceIds: string[] | null, policy: AdminReadsSql.PagePolicyPart): Promise<string[]>;
+  /** The live pages with these ids: slug, source and frontmatter, for the version history. Reads pages. */
+  readPagesForVersionHistory(pageIds: number[]): Promise<AdminReadsSql.VersionPageRow[]>;
 
   // Ingest log
   logIngest(entry: IngestLogInput): Promise<void>;

@@ -623,6 +623,10 @@ export const RUST_ENGINE_MEMBERS = {
   countOnboardSignal: 'health',
   getStats: 'health',
   getHealth: 'health',
+
+  // health: the admin operations' statements (engine-sql/admin-reads.ts)
+  listVisiblePageSlugs: 'pages',
+  readPagesForVersionHistory: 'pages',
   listEnrichCandidates: 'health',
   findAnomalies: 'health',
   // raw_data
@@ -695,11 +699,38 @@ export const RUST_ENGINE_MEMBERS = {
   getContradictionCacheEntry: 'contradictions',
   putContradictionCacheEntry: 'contradictions',
   sweepContradictionCache: 'contradictions',
+
+  // contradictions: the edge-contradictions phase, the scoped reader and the eval reads (engine-sql/contradictions-cycle.ts)
+  listEdgeContradictionCandidates: 'links',
+  listKnownEdgeProposals: 'links',
+  listLinkContexts: 'links',
+  recordEdgeProposal: 'links',
+  readEdgeProposal: 'links',
+  edgeClosureLanded: 'links',
+  readEdgeProposalEvidence: 'links',
+  readEdgeProposalHash: 'links',
+  markEdgeProposalStale: 'links',
+  setEdgeProposalStatus: 'links',
+  rejectOpenEdgeProposal: 'links',
+  markEdgeProposalUndone: 'links',
+  markRevertedEdgeProposals: 'links',
+  listLiveChunksByIds: 'chunks',
+  listLiveTakesByIds: 'takes',
+  readLastContradictionsPromptVersion: 'contradictions',
+  listEvalCandidateQueries: 'eval_capture',
   // ontology
   mergeOntologyFact: 'ontology',
   getOntology: 'ontology',
   discoverOntologyDimensions: 'ontology',
   findOntologyConflicts: 'ontology',
+
+  // ontology: the re-key and repair statements (engine-sql/ontology-repair.ts)
+  listRekeyLosers: 'facts',
+  repointSupersededToKept: 'facts',
+  clearOntologySlots: 'facts',
+  deleteRekeyLosers: 'facts',
+  listOntologyFactCandidates: 'facts',
+  restoreOntologyFact: 'facts',
   // trust: the fact withdrawal ledger (engine-sql/trust-withdrawals.ts)
   hasCoveringFactWithdrawal: 'facts',
   insertFactWithdrawal: 'facts',
