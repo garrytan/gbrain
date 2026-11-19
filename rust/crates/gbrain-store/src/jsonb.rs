@@ -7,7 +7,7 @@
 //! Answers built from a record still in memory (a write's answer, before any re-read) order the
 //! jsonb fields they emit with `order` / `order_map`.
 //!
-//! TODO(lane 5): route `takes.write_origin` through `de_opt_value` when the take record stores it.
+//! A take's `write_origin` is ordered by `RowTrust` (trust/row_trust.rs) when it is read.
 
 use std::cmp::Ordering;
 
