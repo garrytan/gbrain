@@ -24,15 +24,11 @@ is not part of `rust/Cargo.toml`.
 ## Run
 
 ```bash
-# The prototype store (this branch), plus the raw tier:
-cargo build --release --features occ,raw
-./target/release/store-bench --label proto-occ --secs 5 > store-proto.jsonl
+cargo build --release --features raw
+# Today's store (one writer at a time) and the optimistic store (concurrent_writes on):
+./target/release/store-bench --secs 5 > store-today.jsonl
+./target/release/store-bench --concurrent --secs 5 > store-proto.jsonl
 ./target/release/rawkv-bench --secs 3 > raw.jsonl
-
-# Today's store: copy this directory into a checkout of master (and add it to the `exclude`
-# list in its rust/Cargo.toml), then build without features:
-cargo build --release
-./target/release/store-bench --label today --secs 5 > store-today.jsonl
 ```
 
 Flags: `--writers 1,4,16,64`, `--secs N`, `--workloads disjoint,hot`, `--dir DIR` (default
@@ -40,6 +36,6 @@ Flags: `--writers 1,4,16,64`, `--secs N`, `--workloads disjoint,hot`, `--dir DIR
 bench deletes and recreates its own subdirectories there), and for `rawkv-bench`
 `--modes serial/redb,occ/fjall,...`. Each line of output is one JSON result.
 
-The `occ` feature only adds the prototype's conflict counters (`Store::occ_stats`) to the output;
-it is not a runtime switch. Numbers depend on the disk's fsync latency, so compare runs from the
-same machine only.
+`--concurrent` opens each brain with `concurrent_writes` and adds the conflict counters
+(`Store::occ_stats`) to the output. Numbers depend on the disk's fsync latency, so compare runs from
+the same machine only.

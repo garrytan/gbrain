@@ -7,11 +7,12 @@
 //! - `disjoint`: each writer updates its own 16 pages and links to its own 3 target pages.
 //! - `hot`: every writer updates the same page and links to the same 3 targets.
 //!
-//! Built without features it measures today's store (redb, one writer at a time; a writer waits
-//! on redb's write lock, so there are no busy errors). Built with `--features occ` it measures the
-//! optimistic store and also reports conflicts (internal reruns) from `Store::occ_stats`.
+//! By default it measures the store as it opens today (redb, one writer at a time; a writer waits
+//! on redb's write lock, so there are no busy errors). With `--concurrent` it opens the brain with
+//! `concurrent_writes` (the optimistic store) and also reports conflicts (internal reruns) from
+//! `Store::occ_stats`.
 //!
-//! Usage: store-bench --label NAME [--writers 1,4,16,64] [--secs 3] [--dir DIR]
+//! Usage: store-bench [--concurrent] [--label NAME] [--writers 1,4,16,64] [--secs 3] [--dir DIR]
 //! Prints one JSON object per (workload, writers) on stdout.
 
 use gbrain_store::chunks::{ChunkInput, UpsertChunksOptions};
@@ -104,16 +105,10 @@ fn seed_page(store: &Store, slug: &str) {
 /// Commits, conflicts, batches and the hottest conflict keys (prototype store only).
 type OccCounts = (u64, u64, u64, Vec<(String, u64)>);
 
-#[cfg(feature = "occ")]
 fn occ(store: &Store) -> Option<OccCounts> {
     store
         .occ_stats()
         .map(|s| (s.commits, s.conflicts, s.batches, s.hot_keys))
-}
-
-#[cfg(not(feature = "occ"))]
-fn occ(_: &Store) -> Option<OccCounts> {
-    None
 }
 
 fn percentile(sorted: &[f64], p: f64) -> f64 {
@@ -124,10 +119,21 @@ fn percentile(sorted: &[f64], p: f64) -> f64 {
     sorted[i]
 }
 
-fn run(label: &str, workload: &str, writers: usize, secs: f64, root: &Path) -> Value {
+fn run(
+    label: &str,
+    concurrent: bool,
+    workload: &str,
+    writers: usize,
+    secs: f64,
+    root: &Path,
+) -> Value {
     let dir = root.join(format!("{label}-{workload}-w{writers}"));
     let _ = std::fs::remove_dir_all(&dir);
-    let store = Arc::new(Store::open_dir(&dir, OpenOptions::default()).expect("open"));
+    let options = OpenOptions {
+        concurrent_writes: concurrent,
+        ..OpenOptions::default()
+    };
+    let store = Arc::new(Store::open_dir(&dir, options).expect("open"));
     // Setup: target pages (and the pages written) exist before the clock starts.
     let plan: Vec<(Vec<String>, Vec<String>)> = (0..writers)
         .map(|i| {
@@ -228,14 +234,9 @@ fn main() {
             .and_then(|i| args.get(i + 1))
             .cloned()
     };
-    let label = flag("--label").unwrap_or_else(|| {
-        if cfg!(feature = "occ") {
-            "proto-occ"
-        } else {
-            "today"
-        }
-        .to_string()
-    });
+    let concurrent = args.iter().any(|a| a == "--concurrent");
+    let label = flag("--label")
+        .unwrap_or_else(|| if concurrent { "proto-occ" } else { "today" }.to_string());
     let writers: Vec<usize> = flag("--writers")
         .unwrap_or_else(|| "1,4,16,64".into())
         .split(',')
@@ -246,7 +247,7 @@ fn main() {
     let workloads = flag("--workloads").unwrap_or_else(|| "disjoint,hot".into());
     for workload in workloads.split(',') {
         for &w in &writers {
-            println!("{}", run(&label, workload, w, secs, &root));
+            println!("{}", run(&label, concurrent, workload, w, secs, &root));
         }
     }
     let _ = std::fs::remove_dir(&root);

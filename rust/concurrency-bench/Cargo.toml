@@ -11,8 +11,6 @@ publish = false
 [workspace]
 
 [features]
-# Build against the optimistic-transaction store (it has `Store::occ_stats`). Off = today's store.
-occ = []
 # The raw key-value tier needs the bake-off crate (redb, fjall, LMDB under one optimistic layer).
 raw = ["dep:gbrain-bakeoff"]
 

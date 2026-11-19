@@ -267,13 +267,10 @@ deterministic simulation with a history checker.
 
 ```bash
 cd rust/concurrency-bench
-cargo build --release --features occ,raw
-./target/release/store-bench --label proto-occ --secs 5
+cargo build --release --features raw
+./target/release/store-bench --secs 5                # today: one writer at a time
+./target/release/store-bench --concurrent --secs 5   # concurrent_writes on
 ./target/release/rawkv-bench --secs 3
-
-# Today's store: copy rust/concurrency-bench into a master checkout, add "concurrency-bench" to
-# the exclude list in its rust/Cargo.toml, then:
-cargo build --release && ./target/release/store-bench --label today --secs 5
 
 # Owner tier: in a checkout of rust-engine/owner-protocol (e58b0795e8), once as it is and once
 # with this branch's rust/crates copied in:
