@@ -7,7 +7,8 @@
  * `page_facts_reconcile` watermark (facts/reconcile.rs). `lockReconcileRevision` reads the page inside the caller's store
  * transaction, whose single writer is the lock, so the extract_facts commit step (lock, then 'complete' settle) runs whole.
  * `listSingleFactMetadata` is served by facts-trust-reads.ts.
- * `listDerivedRows` answers no rows: the store keeps no `derivation_inputs`.
+ * `recordDerivationInputs` and `listDerivedRows` write and read the store's `derivation_inputs` rows
+ * (generations/derivation_inputs.rs, `h 0x0A` by derived row and `h 0x0B` by input row).
  * `findActiveSingleFact` serves the remote provenance floor for a caller that does not change it (storeFloorPolicy);
  * it and `listSimilarActiveFacts` refuse a caller whose policy the store does not model (private-provenance.ts).
  */
@@ -94,9 +95,22 @@ export const expireFactsByWithdrawal: Member<'expireFactsByWithdrawal'> = (brain
   storeCall({ member: 'expireFactsByWithdrawal' }, () => brain.expireFactsByWithdrawal({ sourceId, visibility, fact, subject }));
 
 /**
- * The store keeps no `derivation_inputs` (its only writer, recordDerivationInputs, goes through `executeRaw`, which this
- * engine refuses), so one hop of the walk reaches no rows (facts/purge.rs list_derived_rows). A limit or id that is not
- * what PGLite binds is refused rather than answered.
+ * Stores each `derived <- input` edge of one derived row once, as PGLite's `ON CONFLICT DO NOTHING` does
+ * (generations/derivation_inputs.rs record_derivation_inputs). A reference that is not text is refused rather than stored.
+ */
+export const recordDerivationInputs: Member<'recordDerivationInputs'> = (brain, derived, sourceId, inputs) => {
+  const member = 'recordDerivationInputs';
+  for (const ref of [derived, ...inputs]) if (typeof ref.table !== 'string' || typeof ref.id !== 'string') refuseMember(member, 'a row reference whose table or id is not text');
+  if (sourceId !== null && typeof sourceId !== 'string') refuseMember(member, 'a source id that is not text');
+  return storeCall({ member }, () => brain.recordDerivationInputs({
+    derived: { table: derived.table, id: derived.id }, sourceId, inputs: inputs.map(r => ({ table: r.table, id: r.id })),
+  })).then(() => undefined);
+};
+
+/**
+ * One hop of the derivation walk over the store's `derivation_inputs` rows (facts/purge.rs list_derived_rows): the rows
+ * derived from any frontier row, in (table, id) byte order, at most `limit`. A limit or id that is not what PGLite binds is
+ * refused rather than answered.
  */
 export const listDerivedRows: Member<'listDerivedRows'> = (brain, frontier, limit) => {
   const member = 'listDerivedRows';

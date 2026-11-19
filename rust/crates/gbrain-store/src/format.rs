@@ -28,9 +28,13 @@ use std::path::Path;
 ///   by every takes writer (`takes::store_take`). Nothing is rewritten: a take stored before reads
 ///   `unknown`, the column default. A build without the field refuses a format-5 brain, as a take it
 ///   rewrote would lose its tier.
-pub const FORMAT_VERSION: u32 = 5;
+/// - 6: the store keeps the `derivation_inputs` rows (`h 0x0A` by derived row, `h 0x0B` by input
+///   row; `generations/derivation_inputs.rs`). Nothing is rewritten: a format-5 brain holds none. A
+///   build without them refuses a format-6 brain, as its owner-only walk would show a non-owner a row
+///   derived from an owner-only input and its source delete would leave stale rows.
+pub const FORMAT_VERSION: u32 = 6;
 /// Every format version this build can open. Addon exports list these as `formatVersions`.
-pub const FORMAT_VERSIONS: &[u32] = &[1, 2, 3, 4, FORMAT_VERSION];
+pub const FORMAT_VERSIONS: &[u32] = &[1, 2, 3, 4, 5, FORMAT_VERSION];
 
 pub const FORMAT_FILE: &str = "FORMAT";
 pub const RECORDS_FILE: &str = "records.redb";

@@ -87,7 +87,7 @@ getPage	pages	yes	113	yes	yes	yes	serves
 readPageSnapshot	pages	yes	29	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	451	yes	yes	yes	serves
+putPage	pages	yes	452	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	10	yes	yes	yes	serves
@@ -694,7 +694,7 @@ listHeldFenceFactRows	facts_purge	yes	1	no	yes	yes	serves
 listWithdrawalSlugs	facts_purge	yes	2	no	yes	yes	serves
 expireFactsByWithdrawal	facts_purge	yes	1	no	yes	yes	serves
 listDerivedRows	facts_purge	yes	1	no	yes	yes	serves
-recordDerivationInputs	facts_purge	yes	1	no	yes	yes	refuses:facts
+recordDerivationInputs	facts_purge	yes	2	no	yes	yes	serves
 loopFactDrift	facts_repair	yes	2	no	yes	yes	serves
 closedLoopWithActiveFact	facts_repair	yes	2	no	yes	yes	serves
 listSessionFactsForClassification	facts_repair	yes	1	no	yes	yes	serves
@@ -835,8 +835,8 @@ readLivePageBody	write_guards	yes	1	no	yes	yes	serves
 readInlinePageRegions	write_guards	yes	1	no	yes	yes	serves
 readStoredPageTier	write_guards	yes	1	no	yes	yes	serves
 readPageIndexingState	write_guards	yes	1	no	yes	yes	serves
-readPageHiddenFromCaller	page_visibility	yes	3	no	yes	yes	serves
-readCallerPageAccess	page_visibility	yes	3	no	yes	yes	serves
+readPageHiddenFromCaller	page_visibility	yes	4	no	yes	yes	serves
+readCallerPageAccess	page_visibility	yes	4	no	yes	yes	serves
 readWriteVisibilityProbe	page_visibility	yes	2	no	yes	yes	serves
 readWriterSlugFence	page_visibility	yes	1	no	yes	yes	serves
 readStoredBodyBytes	large_page	yes	1	no	yes	yes	serves

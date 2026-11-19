@@ -12,10 +12,8 @@
  *  - Why existing coverage misses it: the reads ran through `executeRaw` inside cycle/extract-takes.ts and
  *    trust/fence-guard.ts, which the parity cases cannot call (D18); test/extract-takes*.test.ts run PGLite only.
  *  - Rust: the write publishes a take-fence generation (generations/publish.ts `publishFenceGeneration`) through the
- *    typed generation members, then records the take rows' derivation edges (facts/derivation-inputs.ts
- *    `recordDerivationInputs`, reached from trust/taint.ts `recordTaintEdges`), which still runs through `executeRaw`.
- *    So on the Rust arm both cases end on the typed `raw_sql` refusal, and `atDerivationInputs` pins that the refusal
- *    comes from inside `recordDerivationInputs`: every read and write before it on the path is a typed member.
+ *    typed generation members, then records the take rows' derivation edges through the typed `recordDerivationInputs`
+ *    (reached from trust/taint.ts `recordTaintEdges`), so every read and write on the path is a typed member.
  *  - Seam: `withWriteTrustSettings` stamps the operator-curated take (the transaction-local `gbrain.write_trust_tier`
  *    every arm sets with `applyTransactionSettings`). The FS path reads a markdown checkout in a temp directory.
  */
@@ -73,32 +71,13 @@ async function takeProposals(engine: BrainEngine, claimOf: Map<number, string>) 
     .sort((a, b) => a.target.localeCompare(b.target));
 }
 
-/**
- * On the Rust arm, run `fn` and require it to stop on the typed refusal raised inside `recordDerivationInputs`; the
- * refusal is rethrown so the harness counts the case as stopped. Any other failure, or a finish, fails the case.
- */
-async function atDerivationInputs<T>(backend: string, fn: () => Promise<T>): Promise<T> {
-  if (backend !== 'rust') return fn();
-  let value: T;
-  try {
-    value = await fn();
-  } catch (error) {
-    const e = error as { code?: unknown; stack?: unknown };
-    if (e?.code !== 'engine_capability_missing' || !String(e.stack ?? '').includes('recordDerivationInputs')) {
-      throw new Error(`the takes re-extract stopped outside recordDerivationInputs: ${String(e?.stack ?? error)}`);
-    }
-    throw error;
-  }
-  throw new Error(`the takes re-extract finished, but recordDerivationInputs has no typed member yet (${JSON.stringify(value).slice(0, 200)})`);
-}
-
 const summary = (r: Awaited<ReturnType<typeof extractTakesFromDb>>) => ({ scanned: r.pagesScanned, withTakes: r.pagesWithTakes, upserted: r.takesUpserted,
   warnings: r.warnings, failed: r.failedFiles, gate: r.writeGate ?? null });
 
 describe('engine parity: the takes re-extract write', () => {
   parityTest('extractTakesFromDb projects a page fence, prunes and replaces the rows that left it, and keeps a more trusted take with a contest', {
     methods: ['putPage', 'listAllPageRefs', 'getPage', 'addTakesBatch', 'listActiveTakesForPages', 'readRowTrustRows', 'listTrustProposals'],
-  }, async (engine, backend) => atDerivationInputs(backend, async () => {
+  }, async (engine) => {
     const page = await engine.putPage(SLUG, { type: 'person', title: 'Takes Example', compiled_truth: FIRST, timeline: '' });
     const first = summary(await extractTakesFromDb(engine, {}));
     const afterFirst = await storedTakes(engine, page.id);
@@ -128,11 +107,11 @@ describe('engine parity: the takes re-extract write', () => {
     expect(await storedTakes(engine, page.id)).toEqual(afterSecond);
     expect(await takeProposals(engine, claimOf)).toEqual(proposals);
     return { first, afterFirst, second, afterSecond, proposals, third };
-  }));
+  });
 
   parityTest('extractTakesFromFs projects the checkout\'s fences onto their pages, skips a page not in the brain and a quarantined page', {
     methods: ['putPage', 'listActiveTakesForPages', 'readRowTrustRows'],
-  }, async (engine, backend) => atDerivationInputs(backend, async () => {
+  }, async (engine) => {
     const repo = mkdtempSync(join(tmpdir(), 'gbrain-parity-extract-takes-'));
     try {
       mkdirSync(join(repo, 'people'), { recursive: true });
@@ -149,5 +128,5 @@ describe('engine parity: the takes re-extract write', () => {
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }
-  }));
+  });
 });

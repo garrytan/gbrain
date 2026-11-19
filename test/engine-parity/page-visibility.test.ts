@@ -24,6 +24,7 @@ import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { withEngineScope } from '../../src/core/engine-scope.ts';
 import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
 import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
+import { recordDerivationInputs } from '../../src/core/facts/derivation-inputs.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -234,6 +235,43 @@ describe('engine parity: page visibility guards', () => {
       });
     }
     return answers;
+  });
+
+  parityTest('the function form follows recorded derivation inputs at any depth back to an owner-only source', {
+    methods: ['putPage', 'recordDerivationInputs', 'readPageHiddenFromCaller', 'readCallerPageAccess'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'vis-vault', { kind: 'imessage' });
+    const origin = String((await engine.putPage('notes/vis-vault', NOTE, { sourceId: 'vis-vault' })).id);
+    // A chain of ten derived pages in `default`: chain-1 is built from the vault page, each next one from the one before.
+    const CHAIN = Array.from({ length: 10 }, (_, i) => `notes/vis-chain-${i + 1}`);
+    const ids: string[] = [];
+    for (const slug of CHAIN) ids.push(String((await engine.putPage(slug, NOTE)).id));
+    const open = String((await engine.putPage('notes/vis-open-input', NOTE)).id);
+    const fromOpen = String((await engine.putPage('notes/vis-from-open', NOTE)).id);
+    for (let i = 0; i < ids.length; i++) {
+      await recordDerivationInputs(engine, { table: 'pages', id: ids[i]!, sourceId: 'default' }, [{ table: 'pages', id: i === 0 ? origin : ids[i - 1]! }]);
+    }
+    // A page built from an open page, through a cycle, never reaches the vault.
+    await recordDerivationInputs(engine, { table: 'pages', id: fromOpen, sourceId: 'default' }, [{ table: 'pages', id: open }]);
+    await recordDerivationInputs(engine, { table: 'pages', id: open, sourceId: 'default' }, [{ table: 'pages', id: fromOpen }]);
+    const slugs = [...CHAIN, 'notes/vis-open-input', 'notes/vis-from-open'];
+    const read = async () => {
+      const hidden: Record<string, boolean> = {};
+      for (const slug of slugs) hidden[slug] = await engine.readPageHiddenFromCaller('default', slug, { policy: 'read' });
+      const rows = (await engine.readCallerPageAccess(slugs.map(slug => ({ source_id: 'default', slug })), { policy: 'access' }))
+        .map(a => `${a.slug}:${a.readable}`).sort();
+      return { hidden, rows };
+    };
+    noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+    const fn = await withEngineScope(engine, () => read());
+    const fnMember = await withEngineScope(engine, () => withCallerAccess(MEMBER, () => read()));
+    const expected = Object.fromEntries([...CHAIN.map(slug => [slug, true]), ['notes/vis-open-input', false], ['notes/vis-from-open', false]]);
+    for (const answer of [fn, fnMember]) {
+      // Every page of the chain is hidden, the tenth (ten derivations from the vault page) included.
+      expect(answer.hidden).toEqual(expected);
+      expect(answer.rows).toEqual(slugs.map(slug => `${slug}:${!expected[slug]}`).sort());
+    }
+    return { fn, fnMember };
   });
 
   parityTest('readWriterSlugFence reads a local writer\'s stored slug prefixes, and null for no writer or no fence', {

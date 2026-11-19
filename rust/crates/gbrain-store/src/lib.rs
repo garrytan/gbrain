@@ -557,8 +557,9 @@ pub(crate) struct StoredFormat {
 /// leaves either the old brain or the new one. Format 1 to 2 folds the JSON counter records into
 /// the per-counter records; 2 to 3 rewrites the projection jobs in their compact form
 /// (`format.rs`); an upgrade from format 3 or older starts an empty, incomplete keyword index
-/// (`keyword/index_build.rs`), and 4 to 5 rewrites nothing (a take stored before its trust tier
-/// reads `unknown`), so a format-4 brain keeps its postings. The format record is re-read inside the transaction:
+/// (`keyword/index_build.rs`), 4 to 5 rewrites nothing (a take stored before its trust tier reads
+/// `unknown`), so a format-4 brain keeps its postings, and 5 to 6 rewrites nothing (a format-5
+/// brain holds no `derivation_inputs` rows). The format record is re-read inside the transaction:
 /// another handle on the same records may have upgraded the brain first.
 fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     let mut tx = kv.begin_write_exclusive()?;
@@ -582,6 +583,9 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     // Format 5 stores a take's trust tier in its record. A take stored before reads `unknown`, the
     // column default, so the step rewrites nothing; the number keeps an older build from rewriting
     // a take without its tier.
+    // Format 6 keeps the `derivation_inputs` rows (`generations/derivation_inputs.rs`). A format-5
+    // brain holds none, so the step rewrites nothing; the number keeps an older build, which does
+    // not read them, from opening a brain that has them.
     stored.format_version = FORMAT_VERSION;
     put_json(&mut *tx, &keys::meta("format"), &stored)?;
     tx.commit()?;
@@ -896,6 +900,40 @@ mod older_build_tests {
         let store = Store::open_dir(&dir, OpenOptions::default()).unwrap();
         let kept = store.read().unwrap().get(&keys::meta("test/older-build"));
         assert_eq!(kept.unwrap().as_deref(), Some(&b"kept"[..]));
+        drop(store);
+        let _ = fs::remove_dir_all(dir.parent().unwrap());
+    }
+
+    #[test]
+    fn a_format_5_build_refuses_a_format_6_brain_with_derivation_inputs_and_changes_no_byte() {
+        assert_eq!(FORMAT_VERSION, 6, "derivation inputs are store format 6");
+        let dir = fresh_dir("older-5-vs-6").join("brain");
+        let store = Store::open_dir(&dir, OpenOptions::default()).unwrap();
+        let args: generations::DerivationInputsArgs = serde_json::from_value(serde_json::json!({
+            "derived": {"table": "pages", "id": "2"},
+            "sourceId": "default",
+            "inputs": [{"table": "pages", "id": "1"}],
+        }))
+        .unwrap();
+        store.record_derivation_inputs(&args).unwrap();
+        assert_eq!(store.info().format_version, 6);
+        drop(store);
+        assert_refused(&dir, &[1, 2, 3, 4, 5], 6);
+        // Without FORMAT the format record decides, still before any write.
+        fs::remove_file(dir.join(format::FORMAT_FILE)).unwrap();
+        assert_refused(&dir, &[1, 2, 3, 4, 5], 6);
+        // This build opens it and still reads the edge.
+        let store = Store::open_dir(&dir, OpenOptions::default()).unwrap();
+        let hop = generations::derived_from(
+            &*store.read().unwrap(),
+            &[crate::facts::purge::DerivationRef {
+                table: "pages".into(),
+                id: "1".into(),
+            }],
+            10,
+        )
+        .unwrap();
+        assert_eq!(hop, [("pages".to_string(), "2".to_string())]);
         drop(store);
         let _ = fs::remove_dir_all(dir.parent().unwrap());
     }
