@@ -33,8 +33,8 @@ src/commands/decide/proposals.ts	execute_raw	2
 src/commands/diag.ts	execute_raw	4
 src/commands/doctor/checks/access-lineage.ts	execute_raw	2
 src/commands/doctor/checks/atom-body-recheck.ts	execute_raw	3
-src/commands/doctor/checks/atom-retirements.ts	execute_raw	2
 src/commands/doctor/checks/attest-read-access.ts	execute_raw	1
+src/commands/doctor/checks/atom-retirements.ts	execute_raw	2
 src/commands/doctor/checks/calibration.ts	execute_raw	8
 src/commands/doctor/checks/connectors.ts	execute_raw	1
 src/commands/doctor/checks/consolidation-cycle.ts	execute_raw	2
@@ -46,9 +46,9 @@ src/commands/doctor/checks/data-integrity.ts	execute_raw	3
 src/commands/doctor/checks/database-encoding.ts	execute_raw	1
 src/commands/doctor/checks/db-connection.ts	execute_raw	1
 src/commands/doctor/checks/default-source-path.ts	execute_raw	4
-src/commands/doctor/checks/derivation-pricing.ts	execute_raw	1
 src/commands/doctor/checks/derivation-purge-sweeps.ts	execute_raw	1
 src/commands/doctor/checks/derived-visibility.ts	execute_raw	1
+src/commands/doctor/checks/derivation-pricing.ts	execute_raw	1
 src/commands/doctor/checks/embed-backfill-stalled.ts	execute_raw	1
 src/commands/doctor/checks/embedding-health.ts	execute_raw	4
 src/commands/doctor/checks/embedding-plane.ts	execute_raw	1
@@ -121,8 +121,8 @@ src/commands/doctor/checks/unindexed-files.ts	execute_raw	1
 src/commands/doctor/checks/unlinked-facts.ts	execute_raw	1
 src/commands/doctor/checks/unscoped-multi-user-token.ts	execute_raw	2
 src/commands/doctor/checks/vector-plan.ts	execute_raw	4
-src/commands/doctor/checks/writer-version.ts	execute_raw	1
 src/commands/doctor/last-known.ts	execute_raw	2
+src/commands/doctor/checks/writer-version.ts	execute_raw	1
 src/commands/doctor/report-remote.ts	execute_raw	2
 src/commands/doctor/schema-pack-checks.ts	execute_raw	3
 src/commands/doctor/skill-checks.ts	execute_raw	5
@@ -891,7 +891,7 @@ src/core/repair/loop-facts.ts	execute_raw	2
 src/core/repair/lost-fence-rows.ts	execute_raw	10
 src/core/repair/missing-tables.ts	execute_raw	2
 src/core/repair/moved-pages.ts	execute_raw	4
-src/core/repair/ontology-facts.ts	execute_raw	4
+src/core/repair/ontology-facts.ts	execute_raw	3
 src/core/repair/open-facts.ts	execute_raw	11
 src/core/repair/origin-carry.ts	execute_raw	4
 src/core/repair/origin-twins-heal.ts	execute_raw	4

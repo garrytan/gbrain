@@ -190,6 +190,15 @@ src/core/engine-sql/chunks.ts	getChunkWindows	sql	STREAM	lane 1e file: ships who
 src/core/engine-sql/chunks.ts	listChunklessPagesWithContent	field	STREAM	lane 1e file
 src/core/engine-sql/chunks.ts	listChunklessPagesWithContent	sql	STREAM	lane 1e file
 src/core/engine-sql/chunks.ts	listEmbeddingStateRows	sql	META	lane 1e file: octet_length metadata
+src/core/engine-sql/doctor-derived.ts	ATOM_FENCE_SQL	sql	INLINE	moved from repair/atom-fence-rows.ts findAtomFenceRows unchanged: a segmented source page (compiled_truth NULL) is counted origin_unread and never read
+src/core/engine-sql/doctor-derived.ts	BUDGET_AGE_SQL	sql	META	literal copy of the page-embedding-budget.ts applying-hold predicate for doctor embeddings: octet_length metadata for inline pages, body_bytes for segmented
+src/core/engine-sql/doctor-derived.ts	BUDGET_LIMITED_SOURCE_SQL	sql	META	literal copy of the page-embedding-budget.ts applying-hold predicate for doctor embeddings: octet_length metadata for inline pages, body_bytes for segmented
+src/core/engine-sql/doctor-derived.ts	BUDGET_LIMITED_SQL	sql	META	literal copy of the page-embedding-budget.ts applying-hold predicate for doctor embeddings: octet_length metadata for inline pages, body_bytes for segmented
+src/core/engine-sql/doctor-derived.ts	CREDENTIAL_PENDING_SCOPED_SQL	sql	STREAM	literal copy of credential-reseal.ts PENDING for doctor credential_projection: regex over NULL is false; a segmented page counts by its pem manifest regions
+src/core/engine-sql/doctor-derived.ts	CREDENTIAL_PENDING_SQL	sql	STREAM	literal copy of credential-reseal.ts PENDING for doctor credential_projection: regex over NULL is false; a segmented page counts by its pem manifest regions
+src/core/engine-sql/doctor-derived.ts	DERIVED_VISIBILITY_SQL	sql	NONE	moved from doctor/checks/derived-visibility.ts derivedVisibilityCheck unchanged: not the page body, p.* in a CTE, only metadata columns read
+src/core/engine-sql/doctor-derived.ts	PAGE_COMPILED_TRUTHS_SQL	sql	INLINE	moved from repair/atom-fence-rows.ts findAtomFenceRows unchanged: reads only the origin pages the batch marked readable (inline)
+src/core/engine-sql/doctor-derived.ts	TIMELINE_BATCH_SQL	sql	STREAM	moved from repair/timeline.ts scanTimelineHistory unchanged: inline pages only (body_storage = inline)
 src/core/engine-sql/facts-purge.ts	listFactsReconcileBacklog	sql	STREAM	group 5 facts sites: moved from facts/reconcile-watermark.ts readFactsReconcileBacklog unchanged
 src/core/engine-sql/facts-repair.ts	countLabelFacts	sql	STREAM	group 5 facts sites: moved from repair/conversation-labels.ts countLabelFacts unchanged
 src/core/engine-sql/field-usage.ts	readFieldUsageSamples	field	LEAD	moved from schema-pack/field-usage.ts runFieldUsage unchanged: whole inline bodies of the sampled pages; a segmented page samples a null body, read as empty (TODOS.md)
