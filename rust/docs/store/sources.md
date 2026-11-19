@@ -34,8 +34,8 @@ The source members below behave differently on the Rust engine. Each difference 
 - `listStaleSyncSourceIds` compares `last_sync_at` with the process clock. The SQL engines use
   the database clock (`now()`).
 - `listSourceIds` reads the ids from `listSourceRecords`, archived sources included, and sorts them in
-  byte order. The SQL engines sort `ORDER BY id` in the database collation, which can place an id
-  with a hyphen differently.
+  byte order. The SQL engines sort `ORDER BY id COLLATE "C"`, the same byte order on any server
+  locale.
 - `lockSourceRow` reads the row from `listSourceRecords` and takes no lock. The SQL engines read
   with `FOR UPDATE`; no parity case checks that lock.
 - `readSourceRow` reads from `listSourceRecords`. A caller that needs the incarnation makes one

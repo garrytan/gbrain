@@ -121,9 +121,13 @@ export async function setSourceChunkerVersion(exec: SqlExecutor, sourceId: strin
   await exec.executeRaw('UPDATE sources SET chunker_version = $1 WHERE id = $2', [version, sourceId]);
 }
 
-/** Every source id, archived sources included, by id: the read scope of a caller with no source (ops/backlinks-paged.ts). Unscoped on master. */
+/**
+ * Every source id, archived sources included, in byte order of the id: the read scope of a caller with no source
+ * (ops/backlinks-paged.ts). `COLLATE "C"` keeps a Postgres server with a linguistic locale (en_US.utf8) in the order
+ * PGLite and the Rust engine give. Unscoped on master.
+ */
 export async function listSourceIds(exec: LegacyUnscopedRead): Promise<string[]> {
-  const rows = await exec.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id');
+  const rows = await exec.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id COLLATE "C"');
   return rows.map(r => r.id);
 }
 

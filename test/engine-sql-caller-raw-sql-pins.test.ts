@@ -296,9 +296,11 @@ const PINS: Pin[] = [
     texts: () => [`${pinnedReferrersCte(excludePrivate, floored)} SELECT DISTINCT canonical_type, type FROM typed`],
   })),
   {
-    from: 'src/core/ops/backlinks-paged.ts:46 scopeSources and :149 backlinkTypeFilter (at a4198fc65a)',
+    // Not the caller's text: `COLLATE "C"` was added so a Postgres server with a linguistic locale orders the ids
+    // in byte order, as PGLite and the Rust engine do (test/engine-parity/source-resolver-reads.test.ts).
+    from: 'src/core/ops/backlinks-paged.ts:46 scopeSources and :149 backlinkTypeFilter (at a4198fc65a), plus COLLATE "C"',
     case: { method: 'listSourceIds', variant: 'default', run: e => e.listSourceIds() },
-    texts: ['SELECT id FROM sources ORDER BY id'],
+    texts: ['SELECT id FROM sources ORDER BY id COLLATE "C"'],
   },
   {
     from: 'src/core/mentions/referrers.ts:414 hydrateRecords (at 97bf5544dd)',

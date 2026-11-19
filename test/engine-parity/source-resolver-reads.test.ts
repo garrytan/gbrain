@@ -1,7 +1,7 @@
 /**
  * BrainEngine parity — the source-resolution reads (`listLocalPathSources`, `listSourceRoutingRows`,
  * `countDefaultSourceSplit`, `listAllSources`, `getSource`, `listSourceRecords`, `listStaleSyncSourceIds`, `readSourceRow`,
- * `lockSourceRow`, `readSourceChunkerVersion`, `countSourcePages`, `insertSource`) that `src/core/source-resolver.ts`
+ * `lockSourceRow`, `readSourceChunkerVersion`, `countSourcePages`, `insertSource`, `listSourceIds`) that `src/core/source-resolver.ts`
  * and the other `sources` readers make to pick a source or list the registered ones.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
@@ -297,6 +297,21 @@ describe('engine parity: source-resolution reads', () => {
     ]);
     expect(names).toEqual([['default', 'default'], ['bare', 'bare'], ['wiki', 'Wiki']]);
     return { refused, rows, names };
+  });
+  parityTest('listSourceIds lists every source id, archived ones too, in byte order whatever the server locale', { methods: ['listSourceIds'] }, async (engine, backend) => {
+    // Byte order and en_US.utf8 disagree here: en_US skips the hyphen (a0 < ab < a-c) and folds case (a_b < B);
+    // byte order is '-' < '0' < 'B' < '_' < 'a'. The Rust store keeps `default` first, so its member must sort too.
+    for (const id of ['zz', 'ab', 'a-c', 'a0']) await createSource(engine, backend, id);
+    await archiveSource(engine, backend, 'zz');
+    const common = ['a-c', 'a0', 'ab', 'default', 'zz'];
+    if (backend !== 'rust') {
+      // Ids the Rust store refuses (upper case, underscore) can exist only on a SQL brain.
+      for (const id of ['B', 'a_b']) await createSource(engine, backend, id);
+      expect(await engine.listSourceIds()).toEqual(['B', 'a-c', 'a0', 'a_b', 'ab', 'default', 'zz']);
+    }
+    const ids = (await engine.listSourceIds()).filter(id => common.includes(id));
+    expect(ids).toEqual(common);
+    return ids;
   });
 });
 

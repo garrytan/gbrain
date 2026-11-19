@@ -101,8 +101,8 @@
           {
             "lane": "pool",
             "params": [],
-            "sql": "SELECT id FROM sources ORDER BY id",
-            "textSha256": "7e856b330d2fb81894fb9cd8df8b8a79fc5bbbab1f5c03694ddf378db0671551"
+            "sql": "SELECT id FROM sources ORDER BY id COLLATE \"C\"",
+            "textSha256": "976f7c52754fc64f2abfc1c711385170820222e8fec1e1eb02dfa28c2bd770da"
           }
         ]
       },
