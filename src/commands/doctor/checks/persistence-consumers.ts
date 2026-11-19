@@ -63,7 +63,8 @@ export async function twoConsumersOnHostCheck(engine: BrainEngine, hostId: strin
 }
 
 export async function consumersWithoutHeartbeatCheck(engine: BrainEngine, hostId: string): Promise<Check> {
-  if (engine.kind === 'pglite') return { name: 'consumers_without_heartbeat', status: 'ok', message: 'PGLite admits one process; no consumer heartbeat rows are kept.', details: { count: 0, owners: [], docs: DOCS } };
+  // A Rust brain, like PGLite, keeps no consumer heartbeat rows, so it reports the PGLite wording.
+  if (engine.kind === 'pglite' || engine.kind === 'rust') return { name: 'consumers_without_heartbeat', status: 'ok', message: 'PGLite admits one process; no consumer heartbeat rows are kept.', details: { count: 0, owners: [], docs: DOCS } };
   try {
     const owners = await ownersWithoutHeartbeat(engine, hostId);
     const details = { count: owners.length, owners, docs: DOCS };
