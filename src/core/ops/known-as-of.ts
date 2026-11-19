@@ -84,20 +84,24 @@ type GatedInterval = PageInterval & { quarantined?: QuarantinedView; live?: { so
  * Readable intervals: a remote caller sees an interval only under the ledger's visibility rule and the page's current
  * trust floor. #6259: when the page is quarantined now, or was in the interval, the interval keeps no body, as the
  * current read keeps none (the same view and notice as get_page). GST-2891: each carries the live page's source and slug,
- * where its held rows are looked up (a rename moves a page's facts to its new slug). GST-3252 (R94): the owner reads
- * every interval of a page its current-time read shows, private ones included, except an edition whose own readers
- * close it to the owner, as get_page as_of judges a stored edition.
+ * where its held rows are looked up (a rename moves a page's facts to its new slug). GST-3252 (R94): the owner reads an
+ * interval when its current-time read shows the page of the interval's own lifetime, and the edition's own readers admit
+ * it, as get_page as_of judges a stored edition; an edition whose frontmatter was not loaded must have been world.
  */
 async function readable(ctx: OperationContext, read: PageAtTime, intervals: PageInterval[], minTrust: unknown, owner: string | null): Promise<GatedInterval[]> {
   if (ctx.remote === false) return intervals;
   if (read.page_id == null || !(await pageTrustForRead(ctx, { id: read.page_id }, minTrust))) return [];
-  const [live] = await ctx.engine.executeRaw<{ slug: string; source_id: string; frontmatter: Record<string, unknown>; owner_reads: boolean }>(
-    `SELECT p.slug, p.source_id, p.frontmatter, (p.deleted_at IS NULL AND ${owner ?? 'TRUE'}) AS owner_reads FROM pages p WHERE p.id = $1`, [read.page_id]);
-  if (!live || (owner !== null && live.owner_reads !== true)) return [];
+  const [live] = await ctx.engine.executeRaw<{ slug: string; source_id: string; frontmatter: Record<string, unknown>; owner_lifetimes: string[] | null }>(
+    `SELECT live.slug, live.source_id, live.frontmatter, ARRAY(SELECT l.page_lifetime::text FROM belief_page_lifetimes l JOIN pages p ON p.id = l.page_id
+      WHERE l.page_lifetime = ANY($2::uuid[]) AND p.deleted_at IS NULL AND ${owner ?? 'FALSE'}) AS owner_lifetimes FROM pages live WHERE live.id = $1`,
+    [read.page_id, [...new Set(intervals.map(i => i.lifetime))]]);
+  if (!live) return [];
+  const ownerReads = new Set(live.owner_lifetimes ?? []);
   const quarantine = historyQuarantine(ctx, live);
   const out: GatedInterval[] = [];
   for (const i of intervals) {
-    if (owner !== null ? i.page && !callerReadersAllow(i.page.frontmatter, i.slug) : !(await remoteMayRead(ctx.engine, read.page_id, i))) continue;
+    if (owner !== null ? !ownerReads.has(i.lifetime) || !(i.page ? callerReadersAllow(i.page.frontmatter, i.slug) : i.event.visibility === 'world')
+      : !(await remoteMayRead(ctx.engine, read.page_id, i))) continue;
     const view = quarantine(i.page?.frontmatter);
     const held = { sourceId: live.source_id, slug: live.slug };
     out.push(view?.body_omitted && i.page
@@ -164,7 +168,7 @@ export async function getVersionsKnownAsOf(ctx: OperationContext, p: Record<stri
   const owner = await ownerPageRule(ctx);
   const sourceId = await targetSource(ctx, p, 'get_versions', owner);
   const wantBody = p.include_body === true;
-  const read = await readAsCaller(ctx, { sourceId, slug, at, history: true, withBodies: wantBody || p.diff === true }, true, owner);
+  const read = await readAsCaller(ctx, { sourceId, slug, at, history: true, withBodies: wantBody || p.diff === true || owner !== null }, true, owner);
   const intervals = await readable(ctx, read, read.intervals, p.min_trust, owner);
   if (!intervals.length) throw pageNotFoundError(ctx, slug, { includeDeleted: true, sourceIdParam: sourceId });
   const inlineMax = await inlineBodyBytes(ctx);

@@ -11,6 +11,8 @@
  *    dispatch (remote: true) on a repo-less PGLite brain, and on Postgres when DATABASE_URL is set.
  */
 import { describe, expect, test } from 'bun:test';
+import { renameSync } from 'node:fs';
+import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
@@ -23,6 +25,7 @@ import { bindCredential } from '../src/core/access/members.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
+import { renamePageOntoSlug } from '../src/commands/sync/rename-collision.ts';
 import { beliefBrain, beliefEngineCase, beliefPage, type BeliefBrain } from './helpers/belief-ledger.ts';
 
 const OWNER = 'owner-example';
@@ -60,8 +63,14 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
       await b.put('companies/fenced-example', beliefPage({ prose: 'Fenced profile.', facts: ['Acme sells widgets', { claim: 'Acme payroll canaryprivrow', visibility: 'private' }] }));
       await b.put('companies/bob-example', beliefPage({ prose: 'Bob only notes.', frontmatter: { readable_by: '[bob-example]' } }));
       await b.put('companies/handover-example', beliefPage({ prose: 'Bob era notes.', frontmatter: { readable_by: '[bob-example]' } }));
+      await b.put('companies/moved-example', priv('Lifetime A private.'));
       const t1 = await at(b);
       await b.put('companies/handover-example', beliefPage({ prose: 'Open era notes.' }));
+      // Lifetime A leaves the slug and is closed to the owner; lifetime B, open, takes the slug.
+      await renamePageOntoSlug(b.engine, { sourceId: b.sourceId, oldSlug: 'companies/moved-example', newSlug: 'companies/closed-a-example', to: 'companies/closed-a-example.md' });
+      renameSync(join(b.root, 'companies/moved-example.md'), join(b.root, 'companies/closed-a-example.md'));
+      await b.put('companies/closed-a-example', beliefPage({ prose: 'Lifetime A closed.', frontmatter: { visibility: 'private', readable_by: '[bob-example]' } }));
+      await b.put('companies/moved-example', beliefPage({ prose: 'Lifetime B open.' }));
       await b.put('companies/secret-example', priv('Secret second draft.'));
       await b.put('companies/opening-example', beliefPage({ prose: 'Now public.' }));
       const t2 = await at(b);
@@ -79,6 +88,10 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
       const now = (who: string, slug: string) => call(who, 'get_page', { slug, source_id: b.sourceId });
       const known = (who: string, slug: string, t: string) => call(who, 'get_page', { slug, known_as_of: t, source_id: b.sourceId });
       const history = (who: string, slug: string, t: string) => call(who, 'get_versions', { slug, known_as_of: t, include_body: true, diff: true, source_id: b.sourceId });
+      const listed = async (who: string, slug: string, t: string) => {
+        const out = await call(who, 'get_versions', { slug, known_as_of: t, source_id: b.sourceId });
+        return out.isError ? JSON.parse(out.text).code : (JSON.parse(out.text).versions as Array<{ event: string }>).length;
+      };
 
       // Fixture control: the owner's current-time read shows the private page and the private fence row; nobody else's does.
       expect((await now('owner', 'companies/secret-example')).text).toContain('Secret second draft.');
@@ -98,14 +111,24 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
       expect((await known('owner', 'companies/opening-example', t1)).text).toContain('Private at first.');
       expect((await history('owner', 'companies/opening-example', t2)).text).toContain('Private at first.');
       expect((await known('owner', 'companies/fenced-example', t2)).text).toContain('canaryprivrow');
+      // A metadata-only history lists the same intervals as one with bodies.
+      expect(await listed('owner', 'companies/secret-example', t2)).toBe(2);
+      expect(await listed('owner', 'companies/opening-example', t2)).toBe(2);
 
       // Member access stays mandatory for the owner: a page another member's readable_by closes answers neither read.
-      expect((await now('owner', 'companies/bob-example')).text).not.toContain('Bob only notes.');
-      expect((await known('owner', 'companies/bob-example', t2)).text).not.toContain('Bob only notes.');
+      for (const read of [await now('owner', 'companies/bob-example'), await known('owner', 'companies/bob-example', t2)]) {
+        expect({ error: read.isError, code: read.isError ? JSON.parse(read.text).code : null, shown: read.text.includes('Bob only notes.') }).toEqual({ error: true, code: 'page_not_found', shown: false });
+      }
       // ...and an edition whose own readers closed it to the owner stays closed after the page opens (as get_page as_of judges it).
       expect((await known('owner', 'companies/handover-example', t2)).text).toContain('Open era notes.');
       expect((await known('owner', 'companies/handover-example', t1)).text).not.toContain('Bob era notes.');
-      expect((await history('owner', 'companies/handover-example', t2)).text).not.toContain('Bob era notes.');
+      const handover = await history('owner', 'companies/handover-example', t2);
+      expect({ error: handover.isError, open: handover.text.includes('Open era notes.'), bob: handover.text.includes('Bob era notes.') }).toEqual({ error: false, open: true, bob: false });
+      expect(await listed('owner', 'companies/handover-example', t2)).toBe(1);
+      // ...and an earlier lifetime at the slug answers only while its own page is one the owner reads now.
+      const moved = await history('owner', 'companies/moved-example', t2);
+      expect({ error: moved.isError, b: moved.text.includes('Lifetime B open.'), a: moved.text.includes('Lifetime A') }).toEqual({ error: false, b: true, a: false });
+      expect(await listed('owner', 'companies/moved-example', t2)).toBe(1);
 
       // Every other remote caller reads no more than before: world-only history, no private fence rows.
       for (const who of ['bob', 'unbound']) {
