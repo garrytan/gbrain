@@ -4,7 +4,7 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: readSourceState, readAdmissionSource, sharedSkillPackTablePresent,
  *    listSharedSkillPackRoots, getWorktreeBinding, isSourceClaimed, hasExtractedEvents, listActiveAccessMembers, isFolderRestricted,
- *    listAppliedPolicyRevisions, expireMemoryProposals,
+ *    listAppliedPolicyRevisions, readLiveMember, expireMemoryProposals,
  *    listAwaitingMemoryProposals and purgeMemoryProposals return the same observable result on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: a source-state read that differs changes whether page admission, the mirror read-only guard and
@@ -21,6 +21,7 @@ import { archiveSource, createSource, parityArms, restrictFolder } from './harne
 import { isCapabilityRefusal } from './arm-capabilities.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { memberIdentityFor, stdioMemberIdentity } from '../../src/core/access/caller.ts';
 import type { SourceStateRow, WorktreeBinding } from '../../src/core/engine-sql/write-misc.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -176,6 +177,68 @@ describe('engine parity: write misc', () => {
     const revisions = await engine.listAppliedPolicyRevisions();
     expect(revisions).toEqual([{ source_id: 'quiet', rev: null }, { source_id: 'work', rev: 2 }]);
     return { revisions };
+  });
+
+  parityTest('readLiveMember finds no member through any binding on a brain with no access members', { methods: ['readLiveMember'] }, async (engine) => {
+    const answers = {
+      member: await engine.readLiveMember('member', 'alice-example'),
+      stdioConfig: await engine.readLiveMember('stdio_config', 'mcp.stdio_member'),
+      legacyToken: await engine.readLiveMember('legacy_token', '00000000-0000-4000-8000-0000000000aa'),
+      oauthClient: await engine.readLiveMember('oauth_client', 'client-example'),
+    };
+    expect(answers).toEqual({ member: null, stdioConfig: null, legacyToken: null, oauthClient: null });
+    return answers;
+  });
+
+  // The MCP write tools resolve the writer's member through memberIdentityFor (access/caller.ts liveIdentity); on a
+  // brain with no members every binding reads as unbound, and a Rust brain answers it without raw SQL.
+  parityTest('memberIdentityFor and stdioMemberIdentity read every binding as unbound on a brain with no access members', { methods: ['readLiveMember'] }, async (engine) => {
+    const identities = {
+      legacyToken: await memberIdentityFor(engine, { principal: { kind: 'legacy_token', id: '00000000-0000-4000-8000-0000000000aa' } }),
+      oauthClient: await memberIdentityFor(engine, { principal: { kind: 'oauth_client', id: 'client-example' } }),
+      stdioConfig: await memberIdentityFor(engine, { principal: { kind: 'local_stdio', id: 'stdio' } }),
+      stdioRegistered: await stdioMemberIdentity(engine, 'alice-example'),
+    };
+    expect(identities).toEqual({ legacyToken: [], oauthClient: [], stdioConfig: [], stdioRegistered: [] });
+    return identities;
+  });
+
+  // readLiveMember is constant null on Rust only because no Rust brain can hold an access member: the member write (raw
+  // SQL here, the access member commands' statements in production) must stop on the typed raw_sql refusal there.
+  parityTest('readLiveMember finds a live member with its groups through each binding, and none once it is disabled', { methods: ['readLiveMember'] }, async (engine, backend) => {
+    const write = await engine.executeRaw("INSERT INTO access_members (id) VALUES ('alice-example'), ('bob-example')").then(() => null, (e: unknown) => e);
+    if (backend === 'rust') {
+      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
+      expect(await engine.readLiveMember('member', 'alice-example')).toBeNull();
+      throw write;
+    }
+    expect(write).toBeNull();
+    await engine.executeRaw("INSERT INTO access_groups (id) VALUES ('team-b'), ('team-a')");
+    await engine.executeRaw("INSERT INTO access_group_members (group_id, member_id) VALUES ('team-b', 'alice-example'), ('team-a', 'alice-example')");
+    await engine.setConfig('mcp.stdio_member', ' bob-example\t');
+    const [token] = await engine.executeRaw<{ id: string }>(
+      "INSERT INTO access_tokens (name, token_hash, member_id) VALUES ('t', 'hash-example', 'alice-example') RETURNING id::text AS id");
+    await engine.executeRaw("INSERT INTO oauth_clients (client_id, client_name, member_id) VALUES ('client-example', 'c', 'bob-example')");
+    const alice = { id: 'alice-example', groups: ['team-a', 'team-b'] };
+    const bob = { id: 'bob-example', groups: [] };
+    const live = {
+      member: await engine.readLiveMember('member', 'alice-example'),
+      stdioConfig: await engine.readLiveMember('stdio_config', 'mcp.stdio_member'),
+      legacyToken: await engine.readLiveMember('legacy_token', token!.id),
+      oauthClient: await engine.readLiveMember('oauth_client', 'client-example'),
+      unknown: await engine.readLiveMember('member', 'carol-example'),
+    };
+    expect(live).toEqual({ member: alice, stdioConfig: bob, legacyToken: alice, oauthClient: bob, unknown: null });
+    await engine.executeRaw("UPDATE access_members SET disabled_at = now() WHERE id = 'alice-example'");
+    await engine.executeRaw("UPDATE oauth_clients SET deleted_at = now() WHERE client_id = 'client-example'");
+    const after = {
+      member: await engine.readLiveMember('member', 'alice-example'),
+      legacyToken: await engine.readLiveMember('legacy_token', token!.id),
+      oauthClient: await engine.readLiveMember('oauth_client', 'client-example'),
+      stdioConfig: await engine.readLiveMember('stdio_config', 'mcp.stdio_member'),
+    };
+    expect(after).toEqual({ member: null, legacyToken: null, oauthClient: null, stdioConfig: bob });
+    return { live, after };
   });
 
   parityTest('getWorktreeBinding is null for a source with no writer binding, on any host', { methods: ['getWorktreeBinding'] }, async (engine, backend) => {

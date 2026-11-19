@@ -1,14 +1,14 @@
 /**
  * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
  * purgeMemoryProposals, attachSourcePath and getWorktreeBinding; SQL in engine-sql/write-misc.ts; isSourceClaimed, SQL in engine-sql/sources.ts), and the folder access read beside the
- * access members (isFolderRestricted and listAppliedPolicyRevisions; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
+ * access members (isFolderRestricted, listAppliedPolicyRevisions and readLiveMember; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
  * gbrain-store `write_misc`; the rest answer for state the store does not keep. What each member answers and why:
  * rust/docs/store/write_misc.md.
  */
 import type {
   AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from '../../engine-sql/write-misc.ts';
-import type { AppliedPolicyRevision } from '../../engine-sql/access-control.ts';
+import type { AppliedPolicyRevision, LiveMemberRow, MemberBindingVia } from '../../engine-sql/access-control.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /**
@@ -76,6 +76,12 @@ export const isFolderRestricted: StoreMember<[sourceId: string, slug: string], b
 
 /** No source holds folder access state on this engine (see isFolderRestricted), so no revision is applied anywhere. */
 export const listAppliedPolicyRevisions: StoreMember<[], AppliedPolicyRevision[]> = async () => [];
+
+/**
+ * The store keeps no access members (see listActiveAccessMembers), so no key names a live member through any binding:
+ * the answer is null, as PGLite answers for a brain with no members. access/caller.ts reads that as unbound.
+ */
+export const readLiveMember: StoreMember<[via: MemberBindingVia, key: string], LiveMemberRow | null> = async () => null;
 
 /** The store keeps no memory proposals, so upkeep expires nothing. */
 export const expireMemoryProposals: StoreMember<[reason: string], number> = async () => 0;

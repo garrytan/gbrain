@@ -73,6 +73,9 @@ const VETTED_BUILDERS: Record<string, string> = {
   ownedMemorySubjectSql: 'src/core/facts/withdrawal-schema.ts: constant owned-memory-subject predicate over a caller column expression; engine-sql passes only the constant column q.subject',
   remoteProvenanceFloorSql: 'src/core/search/private-visibility.ts: constant remote provenance floor (private-provenance filter plus labelled-only) over a caller facts alias',
 
+  // access-control.ts builders
+  edgeTrimSql: 'src/core/edge-whitespace.ts: btrim of a code-provided constant expression over the constant EDGE_WHITESPACE set; no values',
+
   // trust-tier-reads.ts builders
   remoteReadFloorSql: 'src/core/search/private-visibility.ts: privatePagesFilterFragment, plus the constant labelledOnlySql conjunct for a labelled-only caller, over a caller page alias; no values',
 

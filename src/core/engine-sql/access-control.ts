@@ -4,6 +4,8 @@
  * to count as restricted catches the error itself (`search/private-visibility.ts`).
  */
 import type { LegacyUnscopedRead } from './brands.ts';
+import { edgeTrimSql } from '../edge-whitespace.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
 /**
  * Whether a page known by its slug sits under an applied folder rule, under a pending or invalid folder prefix, or
@@ -29,4 +31,46 @@ export const APPLIED_POLICY_REVISIONS_SQL = `SELECT s.source_id, (SELECT r.revis
 export async function listAppliedPolicyRevisions(exec: LegacyUnscopedRead): Promise<AppliedPolicyRevision[]> {
   const rows = await exec.executeRaw<{ source_id: string; rev: number | string | null }>(APPLIED_POLICY_REVISIONS_SQL);
   return rows.map(r => ({ source_id: r.source_id, rev: r.rev === null ? null : Number(r.rev) }));
+}
+
+/**
+ * Where a member lookup reads the member id (access/caller.ts memberIdentityFor): the id itself, the trimmed config
+ * value of the key, a live legacy token's member, or a live OAuth client's member.
+ */
+export type MemberBindingVia = 'member' | 'stdio_config' | 'legacy_token' | 'oauth_client';
+
+/** A live (enabled, not tombstoned) access member and its groups, by group id. */
+export interface LiveMemberRow {
+  id: string;
+  groups: string[];
+}
+
+/** The engine's own executeRaw, so a statement fault a test injects on the engine reaches the member lookup. */
+export interface MemberLookupRead {
+  executeRaw<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<R[]>;
+}
+
+/**
+ * The statement access/caller.ts liveIdentity ran through executeRaw for `via`, with `key` bound as its one parameter
+ * ($1); the text is pinned byte for byte by test/engine-sql-caller-raw-sql-pins.test.ts.
+ */
+export function liveMemberStatement(via: MemberBindingVia, key: string): { text: string; params: unknown[] } {
+  const member = via === 'member' ? sqlFragment`${key}`
+    : via === 'stdio_config' ? sqlFragment`SELECT ${trustedSql(edgeTrimSql('value'))} FROM config WHERE key = ${key}`
+    : via === 'legacy_token' ? sqlFragment`SELECT member_id FROM access_tokens WHERE id::text = ${key} AND revoked_at IS NULL`
+    : sqlFragment`SELECT member_id FROM oauth_clients WHERE client_id = ${key} AND deleted_at IS NULL`;
+  return renderFragment(sqlFragment`SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
+  WHERE m.id = (${member}) AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
+  GROUP BY m.id`);
+}
+
+/**
+ * The live member `key` names through `via`, or null when there is none (unknown, disabled, tombstoned, unbound). A
+ * failure is thrown unchanged: the caller tells a schema older than the member tables from a transient failure.
+ */
+export async function readLiveMember(exec: MemberLookupRead, via: MemberBindingVia, key: string): Promise<LiveMemberRow | null> {
+  const { text, params } = liveMemberStatement(via, key);
+  const [row] = await exec.executeRaw<LiveMemberRow>(text, params);
+  return row ?? null;
 }
