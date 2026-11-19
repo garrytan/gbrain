@@ -585,12 +585,18 @@ async function main(): Promise<void> {
   }
   const bases: Bases = { ref, rust, pg, pglite, useMirror };
 
-  // MCP tool list from the reference brain's stdio server (full surface).
-  const list = await mcpCall(ref, 'tools/list', {});
+  // MCP tool list from the reference brain's stdio server (full surface). Each baseline `serve` runs on a throwaway
+  // copy: stdin closes while serve may still be registering its local writers, and a registration cut short there
+  // must not ride into the base brains every case is copied from.
+  const baselineOf = async (b: Brain, name: string, trace?: string) => {
+    const copy = await cloneBrain(b, join(work, `baseline-${name}`));
+    try { return await mcpCall(copy, 'tools/list', {}, trace); } finally { await dropBrain(copy); }
+  };
+  const list = await baselineOf(ref, 'ref');
   const tools: Array<{ name: string; inputSchema?: any }> = list.response?.result?.tools ?? [];
   if (!tools.length) throw new Error(`tools/list returned no tools: ${list.stderr.slice(-500)}`);
   const baseTrace = join(work, 'serve-baseline.jsonl');
-  const rustList = await mcpCall(rust, 'tools/list', {}, baseTrace);
+  const rustList = await baselineOf(rust, 'rust', baseTrace);
   const bt = readTrace(baseTrace);
   for (const x of bt.all) SERVE_BASELINE.add(`${x.member}@${x.site}`);
   for (const x of bt.raw) SERVE_BASELINE_RAW.add(`${x.member}@${x.site}`);
