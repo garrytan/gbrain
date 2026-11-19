@@ -91,4 +91,17 @@ describe('sql-move-check', () => {
     expect(out).toMatch(/^NO-NEW-HOME/m);
     expect(code).toBe(1);
   });
+
+  it('fails a lowercase copy that drops a predicate', () => {
+    baseRepo();
+    put('src/core/caller.ts', 'export const L = `select id from pages where source_id = $1`;\n');
+    commit('lowercase caller');
+    git('tag', '-f', 'base');
+    put('src/core/engine-sql/copy.ts', 'export const L = `select id from pages`;\n');
+    commit('copy');
+    const { code, out } = check('--removed-paths', 'none');
+    expect(out).toMatch(/^NOT-IDENTICAL/m);
+    expect(out).toContain('RESULT: FAIL');
+    expect(code).toBe(1);
+  });
 });

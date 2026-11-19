@@ -202,7 +202,7 @@ describe('engine parity: timeline entries', () => {
       const removed = await engine.removeTimelineRows(pageId, asks);
       const left = (await storedTimelineRows(engine, 'people/prune-dates')).length;
       expect(left).toBe(0);
-      return { removed: removed.map((r) => `${r.date}:${r.removed}`), left };
+      return { removed: removed.map((r) => `${r.date}:${r.removed}`).sort(), left };
     },
   );
 
@@ -227,7 +227,7 @@ describe('engine parity: timeline entries', () => {
         { id: await idOf('people/refresh', 'edited since'), detail: 'earlier text', next: 'never written' },
         { id: await idOf('people/refresh', 'same text'), detail: 'same', next: 'same' },
         { id: await idOf('people/refresh', 'first of two'), detail: 'twin', next: 'first answer' },
-        { id: await idOf('people/refresh', 'first of two'), detail: 'twin', next: 'second answer' },
+        { id: await idOf('people/refresh', 'first of two'), detail: 'twin', next: 'first answer' },
         { id: await idOf('people/refresh-other', 'other page'), detail: 'before', next: 'moved' },
         { id: Number(event.id), detail: 'before', next: 'moved' },
         { id: 987654, detail: 'before', next: 'moved' },

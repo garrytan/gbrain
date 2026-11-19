@@ -9,7 +9,7 @@
 // without removing the originals (the callers still hold their text) has nothing to re-home: pass
 // `--removed-paths none` to skip the removed-statement half.
 //
-// For every SQL statement (backtick literal containing SQL keywords) in the
+// For every SQL statement (backtick literal containing SQL keywords, in any letter case) in the
 // target engine-sql modules at <head>, it reports:
 //   IDENTICAL       byte-identical text to a statement in <base>'s src/ or test/ tree
 //   NOT-IDENTICAL   no byte-identical origin (whitespace-only matches are called out
@@ -112,8 +112,8 @@ function changedPaths(base, head, paths) {
 }
 
 // ---- SQL literal lexer (mirrors the lexer used by the prior scans) ----
-const KW = /\b(SELECT|INSERT|UPDATE|DELETE|WITH|CREATE|ALTER|DROP)\b/;
-const SHAPE = /\b(FROM|INTO|SET|WHERE|VALUES|TABLE|UPDATE|INSERT|SELECT|RETURNING|JOIN|WITH|UNION|DELETE)\b/;
+const KW = /\b(SELECT|INSERT|UPDATE|DELETE|WITH|CREATE|ALTER|DROP)\b/i;
+const SHAPE = /\b(FROM|INTO|SET|WHERE|VALUES|TABLE|UPDATE|INSERT|SELECT|RETURNING|JOIN|WITH|UNION|DELETE)\b/i;
 
 function literals(src) {
   const out = [];
