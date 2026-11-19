@@ -444,6 +444,7 @@ describe('#7619 split rules', () => {
       'src/core/workspace-push.ts': 'git child argv',
       'src/core/access/policy-git.ts': 'git child argv',
       'src/commands/memory-proposals.ts': ['memory-proposals list', 'memory-proposals deny'],
+      'src/commands/access-handover.ts': 'access has no EQUALS_READERS key, so the entry refuses every = form on access member handover; values() also reads it for a direct caller',
       'src/commands/access-rules.ts': 'access has no EQUALS_READERS key, so the entry refuses every = form on access rule; flag() also reads it for a direct caller',
       'src/core/context/session-speaker.ts': 'reads another process\'s argv (claude --print=), not a gbrain flag',
       'src/eval/longmemeval/via-operation.ts': 'git child argv',

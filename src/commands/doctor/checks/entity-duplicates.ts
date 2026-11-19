@@ -172,12 +172,15 @@ async function runEntityDuplicates(ctx: DoctorContext): Promise<Check[]> {
 
 /** What the owner does about drift reconcile cannot clear: missing pages, pages in another group, invalid decision files. */
 function remedies(d: IdentityDrift, read: IdentityDecisionsRead): string {
-  const groupOf = (p: PendingIdentityMember) => read.decisions.find(x => x.decision_id === p.decision_id)?.group_id ?? p.decision_id;
+  const groupOf = (p: PendingIdentityMember) => {
+    const d = read.decisions.find(x => x.decision_id === p.decision_id);
+    return d?.group_id ?? d?.entity_id ?? p.decision_id;
+  };
   const rejects = (reason: PendingIdentityMember['reason']) => [...new Set(d.pending.filter(p => p.reason === reason).map(groupOf))].map(g => `\`gbrain dedupe reject ${g}\``).join(', ');
   const lines: string[] = [];
   if (d.pending.some(p => p.reason === 'page_missing')) lines.push(`A page of a confirmed group is missing: restore or import it and it links on the next sync, or undo the group with ${rejects('page_missing')}.`);
   if (d.pending.some(p => p.reason === 'other_group')) lines.push(`A page of a confirmed group is in another identity group: remove it from that group with \`gbrain entity-identity-unlink\`, or undo the group with ${rejects('other_group')}.`);
-  if (d.invalid_files.length) lines.push(`Fix or delete ${d.invalid_files.join(', ')} in source ${d.home}'s repository and commit it; until then that decision is skipped.`);
+  if (d.invalid_files.length) lines.push(`Fix or delete ${d.invalid_files.join(', ')} in source ${d.home}'s repository and commit it; until then the last valid version of that decision, if one was read, stays applied, and an edit that does not validate is skipped.`);
   return lines.join(' ');
 }
 
