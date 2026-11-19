@@ -334,3 +334,34 @@ fn an_effect_naming_a_worktree_refuses_but_a_duplicate_or_gated_one_does_not() {
             .is_empty()
     );
 }
+
+#[test]
+fn a_completion_whose_bytes_overflow_is_refused_not_wrapped_into_a_fit() {
+    let dir = TempDir::new("effects-completion-overflow");
+    let store = open(&dir);
+    let id = admit(&store, REQ);
+    store
+        .insert_publication_effects(&spec(
+            &store,
+            &id,
+            json!([{ "kind": "embedding", "data": {} }]),
+        ))
+        .unwrap();
+    for (result, retained, reservation, intent) in [
+        (i64::MAX, 0, 4096, 10),
+        (100, 0, i64::MIN, 10),
+        (100, 0, 4096, i64::MIN),
+    ] {
+        let completion: WriteCompletion = serde_json::from_value(json!({
+            "id": id, "state": "committed", "consumerVersion": "v-consumer", "resultBytes": result,
+            "counterKeys": KEYS, "intentBytes": intent, "retainedBytes": retained,
+            "terminalReservation": reservation,
+        }))
+        .unwrap();
+        // refused (None) or an error, never a committed request
+        assert!(
+            !matches!(store.complete_write_row(&completion), Ok(Some(_))),
+            "{result} {retained} {reservation} {intent}"
+        );
+    }
+}
