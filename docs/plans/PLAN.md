@@ -2,10 +2,9 @@
 
 > **The plan of record is [docs/designs/RUST_ENGINE.md](../designs/RUST_ENGINE.md) (PR #9593). This draft is kept as research.**
 
-> **Draft, pending Garry's /autoplan review; no build phase approved yet.**
-
-Status: DRAFT for review with gstack `/autoplan`. Only decisions D1 and D2
-are answered (section 2.1). No build phase starts until Garry approves it.
+Status: superseded. The approved plan of record is
+[docs/designs/RUST_ENGINE.md](../designs/RUST_ENGINE.md), merged in PR #9593;
+its "Delivery decisions (2026-11-18)" section has the current landing model.
 
 Date: 2026-11-16 (America/Los_Angeles). Updated the same day for decisions D1
 and D2, when the plan and the research maps moved into garrytan/gbrain.
