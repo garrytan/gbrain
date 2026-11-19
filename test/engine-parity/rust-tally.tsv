@@ -23,7 +23,7 @@ test/engine-parity/facts-repair.test.ts	10	3
 test/engine-parity/facts-trust.test.ts	4	6
 test/engine-parity/facts.test.ts	36	0
 test/engine-parity/field-usage.test.ts	3	0
-test/engine-parity/held-fence-cells.test.ts	2	0
+test/engine-parity/held-fence-cells.test.ts	5	0
 test/engine-parity/import-members.test.ts	9	0
 test/engine-parity/import-path.test.ts	5	3
 test/engine-parity/import-writes.test.ts	11	0
@@ -51,7 +51,7 @@ test/engine-parity/persistence.test.ts	29	0
 test/engine-parity/private-page-reads.test.ts	23	0
 test/engine-parity/raw-sql.test.ts	0	4
 test/engine-parity/remote-policy.test.ts	2	0
-test/engine-parity/restriction-flag-reads.test.ts	2	0
+test/engine-parity/restriction-flag-reads.test.ts	3	0
 test/engine-parity/retrieval-coverage.test.ts	12	1
 test/engine-parity/search-reads.test.ts	15	1
 test/engine-parity/search.test.ts	17	2
