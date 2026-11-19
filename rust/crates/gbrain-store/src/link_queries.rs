@@ -58,7 +58,7 @@ pub use link_temporal::{
     RecordMetadataInput, RecordMetadataRows, ReferrerGroupInput, ReferrerGroupRow,
     ReferrerPageDetailRow, ReferrerPageDetailsInput, ReferrerRecordCandidateInput,
     ReferrerRecordCandidateRow, ReferrerRecordPageRow, ReferrerRow, ReferrerRowInput,
-    ReferrerTargetCountInput, ReferrerTargetCountRow, ReferrerTargetSourcesInput,
+    ReferrerTargetCountInput, ReferrerTargetCountRow, ReferrerTargetSourcesInput, ReferrerTypeRow,
     RelationshipEvidence, RelationshipKey, SearchVectorCounts, StaleKeysInput, StateWrite,
 };
 mod retrieval_coverage;
