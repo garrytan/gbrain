@@ -117,7 +117,7 @@ describe('CI execution evidence', () => {
   test('E2E aggregate gates nightly full-corpus execution and allows its skip on other events', () => {
     expect(e2e.jobs['e2e-status'].if).toBe("${{ needs.prepare-e2e.outputs.reuse != 'true' && always() }}");
     const needs = e2e.jobs['e2e-status'].needs as string[];
-    const nightly = ['coverage-full-unit', 'coverage-full-serial', 'coverage-full-slow', 'coverage-full-e2e'];
+    const nightly = ['coverage-full-unit', 'coverage-full-serial', 'coverage-full-slow', 'coverage-full-e2e', 'openclaw-skill-resolver'];
     expect(needs).toEqual(['jsonb-parity', 'tier1', 'tier1-graduation', 'tier1-backend-matrix', 'postgres15-compat', 'tier2', 'prepare-e2e', 'selected-e2e', ...nightly]);
     for (const event of ['pull_request', 'push', 'workflow_dispatch']) {
       expect(aggregate(e2e, 'e2e-status', event, Object.fromEntries(nightly.map(job => [job, 'skipped'])))).toBe(0);

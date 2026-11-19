@@ -4,6 +4,9 @@
  * `bun build --compile` executable.
  */
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Addon, Pool } from './addon.ts';
 
 export interface Case {
@@ -44,6 +47,16 @@ async function rejection(promise: Promise<unknown>): Promise<Error & Record<stri
   throw new assert.AssertionError({ message: 'expected the promise to reject' });
 }
 
+/** A fresh brain directory, removed when `body` ends. */
+async function withBrainDir(body: (dir: string) => Promise<void>): Promise<void> {
+  const root = mkdtempSync(join(tmpdir(), 'gbrain-store-smoke-'));
+  try {
+    await body(join(root, 'brain'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 export const cases: Case[] = [
   {
     name: 'metadata: target, abi, build hash, catalog version, format versions',
@@ -52,7 +65,7 @@ export const cases: Case[] = [
       assert.equal(addon.engineAbi, 1);
       assert.match(addon.engineBuild, /^[0-9a-f]{64}$/);
       assert.equal(addon.catalogVersion, 0);
-      assert.deepEqual(addon.formatVersions, []);
+      assert.deepEqual(addon.formatVersions, [1]);
     },
   },
   {
@@ -352,6 +365,229 @@ export const cases: Case[] = [
       assert.equal(sink.emit(9), 'closing');
       assert.deepEqual(await sink.emitFromThread(2), ['closing', 'closing']);
       await sleep(20);
+    },
+  },
+  {
+    name: 'store: open, reopen, a second open is refused, close',
+    async run(addon) {
+      await withBrainDir(async dir => {
+        const pool = new addon.Pool(2);
+        const first = new addon.Brain(pool);
+        assert.equal(first.isOpen, false);
+        const opened = await first.open(dir, { schemaVersion: 319 });
+        assert.equal(opened.created, true);
+        assert.equal(opened.format_version, 1);
+        assert.match(opened.brain_id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+        assert.equal(first.isOpen, true);
+
+        const second = new addon.Brain(pool);
+        const refused = await rejection(second.open(dir));
+        assert.equal(refused.code, 'store_locked');
+        assert.equal(second.isOpen, false);
+        assert.equal((await first.info()).brain_id, opened.brain_id, 'the owner keeps working');
+        assert.equal(await first.getConfig('version'), '319');
+        assert.equal(await first.getConfig('nothing'), null);
+        await first.setConfig('sync.repo', '/work');
+        assert.deepEqual(await first.listConfigKeys('sync.'), ['sync.repo']);
+        assert.equal(await first.unsetConfig('sync.repo'), 1);
+        const sources = await first.listAllSources();
+        assert.deepEqual(sources.map(s => s.id), ['default']);
+        assert.deepEqual(sources[0]!.config, { federated: true });
+        assert.equal(await first.getSourceById('nope'), null);
+
+        await first.close();
+        assert.equal(first.isOpen, false);
+        assert.equal((await rejection(first.info())).code, 'store_closed');
+        await first.close();
+
+        const reopened = await second.open(dir);
+        assert.equal(reopened.created, false);
+        assert.equal(reopened.brain_id, opened.brain_id);
+        await second.close();
+        await pool.shutdown(1000);
+      });
+    },
+  },
+  {
+    name: 'store: a close called while an open is still queued releases the brain',
+    async run(addon) {
+      await withBrainDir(async dir => {
+        const pool = new addon.Pool(1);
+        const busy = pool.blockFor(200);
+        const brain = new addon.Brain(pool);
+        const queued = rejection(brain.open(dir));
+        await brain.close();
+        assert.equal((await queued).code, 'store_closed');
+        await busy;
+        assert.equal(brain.isOpen, false);
+        const other = new addon.Brain(pool);
+        assert.equal((await other.open(dir)).created, true, 'the queued open took no lock and created nothing');
+        await other.close();
+        const reopened = await brain.open(dir);
+        assert.equal(reopened.created, false, 'the handle opens again after the close');
+        await brain.close();
+        await pool.shutdown(1000);
+      });
+    },
+  },
+  {
+    name: 'store: put, get, list, tags, versions and delete a page',
+    async run(addon) {
+      await withBrainDir(async dir => {
+        const pool = new addon.Pool(2);
+        const brain = new addon.Brain(pool);
+        await brain.open(dir);
+        assert.equal(await brain.readPageSnapshot('people/ada'), null);
+        assert.deepEqual(await brain.listPages(), []);
+        const put = await brain.putPage('People/Ada', {
+          type: 'person',
+          title: 'Ada Lovelace',
+          compiled_truth: 'Wrote the first program.',
+          frontmatter: { born: 1815 },
+        });
+        assert.equal(put.slug, 'people/ada');
+        assert.equal(put.source_id, 'default');
+        assert.equal(put.text_projection_revision, put.knowledge_revision, 'put indexes the page');
+        const found = await brain.searchKeyword('first program');
+        assert.deepEqual(found.map(r => r.slug), ['people/ada']);
+        assert.equal(found[0].chunk_source, 'compiled_truth');
+        assert.equal(found[0].stale, false);
+        assert.deepEqual(await brain.searchKeyword('first program', { type: 'company' }), []);
+        assert.equal((await brain.getChunks('people/ada')).length, 1);
+        assert.match(put.updated_at, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/);
+        const snapshot = await brain.readPageSnapshot('people/ada');
+        assert.equal(snapshot!.page.title, 'Ada Lovelace');
+        assert.equal(snapshot!.revision, put.knowledge_revision);
+        assert.deepEqual(snapshot!.page.frontmatter, { born: 1815 });
+        await brain.addTag('people/ada', 'math');
+        assert.deepEqual(await brain.getTags('people/ada'), ['math']);
+        assert.deepEqual((await brain.listPages({ tag: 'math' })).map(p => p.slug), ['people/ada']);
+
+        const stale = await rejection(
+          brain.putPage('people/ada', { type: 'person', title: 'x', compiled_truth: 'y' }, { expectedRevision: put.knowledge_revision }),
+        );
+        assert.equal(stale.code, 'revision_conflict', 'adding a tag moved the revision');
+        const blank = await rejection(brain.putPage('people/ada', { type: 'person', title: 'x', compiled_truth: '' }));
+        assert.equal(blank.code, 'empty_overwrite');
+        assert.equal((await rejection(brain.putPage('../x', { type: 'note', title: 'x', compiled_truth: 'y' }))).code, 'invalid_slug');
+
+        const version = await brain.createVersion('people/ada');
+        assert.equal(version.compiled_truth, 'Wrote the first program.');
+        assert.equal((await brain.getVersions('people/ada')).length, 1);
+        assert.deepEqual(await brain.resolveSlugs('people/ada'), ['people/ada']);
+        assert.deepEqual(await brain.resolveSlugs('ada'), [], 'resolveSlugs is exact only');
+        assert.deepEqual(await brain.softDeletePage('people/ada'), { slug: 'people/ada' });
+        assert.equal(await brain.readPageSnapshot('people/ada'), null);
+        assert.equal(await brain.countPages(), 0);
+        assert.equal(await brain.restorePage('people/ada'), true);
+        assert.equal(await brain.countPages(), 1);
+
+        await brain.close();
+        const again = new addon.Brain(pool);
+        await again.open(dir);
+        assert.equal((await again.readPageSnapshot('people/ada'))!.page.title, 'Ada Lovelace', 'the page survives a reopen');
+        await again.putPage('people/ada', { type: 'person', title: 'Ada Lovelace', compiled_truth: 'Wrote the first program.' });
+        assert.deepEqual((await again.searchKeyword('program')).map(r => r.slug), ['people/ada'], 'search works after a reopen');
+        assert.equal(await again.countChunks(), 1);
+        await again.upsertChunks('people/ada', [{ chunk_index: 0, chunk_text: 'engine notes', chunk_source: 'timeline' }]);
+        await again.deleteChunks('people/ada');
+        assert.equal(await again.countChunks(), 0);
+        await again.deletePage('people/ada');
+        assert.equal(await again.readPageSnapshot('people/ada', { includeDeleted: true }), null);
+        await again.close();
+        await pool.shutdown(1000);
+      });
+    },
+  },
+  {
+    name: 'store: a journaled write is idempotent, conflicts are receipts, a second open refuses',
+    async run(addon) {
+      await withBrainDir(async dir => {
+        const pool = new addon.Pool(2);
+        const brain = new addon.Brain(pool);
+        await brain.open(dir);
+        const principal = { kind: 'local_cli', id: 'smoke' };
+        const request = '11111111-1111-4111-8111-111111111111';
+        const mutation = {
+          principal,
+          requestId: request,
+          slug: 'notes/first',
+          page: { type: 'note', title: 'First note', compiled_truth: 'The journal keeps one receipt per request.' },
+        };
+        const receipt = await brain.submitPageMutation(mutation);
+        assert.equal(receipt.state, 'committed');
+        assert.equal(receipt.status, 'created');
+        assert.deepEqual(await brain.submitPageMutation(mutation), receipt, 'the same request returns the same receipt');
+        const other = await rejection(
+          brain.submitPageMutation({ ...mutation, page: { ...mutation.page, compiled_truth: 'different' } }),
+        );
+        assert.equal(other.code, 'idempotency_conflict');
+        const stale = await brain.submitPageMutation({
+          principal,
+          requestId: '22222222-2222-4222-8222-222222222222',
+          slug: 'notes/first',
+          page: { type: 'note', title: 'x', compiled_truth: 'y' },
+          options: { expectedRevision: '00000000-0000-4000-8000-000000000000' },
+        });
+        assert.equal(stale.state, 'conflict');
+        assert.equal(stale.write_error, 'revision_conflict');
+        assert.deepEqual((await brain.searchKeyword('receipt per request')).map(r => r.slug), ['notes/first']);
+        assert.deepEqual(await brain.journalOutstanding(), { brain: 0, principals: {} });
+        const writer = await brain.registerLocalWriter({
+          id: '33333333-3333-4333-8333-333333333333',
+          lane: 'cli',
+          credentialHash: 'a'.repeat(64),
+        });
+        assert.equal(writer.lane, 'cli');
+        assert.equal((await brain.getBrainIdentity()).brain_id, (await brain.info()).brain_id);
+
+        const second = new addon.Brain(pool);
+        assert.equal((await rejection(second.open(dir))).code, 'store_locked');
+        await brain.close();
+        const again = new addon.Brain(pool);
+        await again.open(dir);
+        assert.deepEqual(await again.submitPageMutation(mutation), receipt, 'the receipt survives a reopen');
+        assert.equal((await again.getWriteRequest(principal, request))!.sequence, 1);
+        await again.close();
+        await pool.shutdown(1000);
+      });
+    },
+  },
+  {
+    name: 'store: links, graph walks, timeline and the stale flag',
+    async run(addon) {
+      await withBrainDir(async dir => {
+        const pool = new addon.Pool(2);
+        const brain = new addon.Brain(pool);
+        await brain.open(dir);
+        for (const slug of ['g/a', 'g/b', 'g/c']) {
+          await brain.putPage(slug, { type: 'note', title: slug, compiled_truth: `${slug} zebra` });
+        }
+        assert.equal(await brain.addLink('g/a', 'g/b', { linkType: 'cites', context: 'ab' }), null);
+        assert.equal(await brain.addLinksBatch([{ from_slug: 'g/b', to_slug: 'g/c', link_type: 'cites' }]), 1);
+        assert.deepEqual((await brain.getLinks('g/a')).map(l => [l.to_slug, l.link_type, l.context]), [['g/b', 'cites', 'ab']]);
+        assert.deepEqual((await brain.getBacklinks('g/c')).map(l => l.from_slug), ['g/b']);
+        assert.deepEqual((await brain.traverseGraph('g/a', 1)).map(n => [n.slug, n.depth]), [['g/a', 0], ['g/b', 1]]);
+        assert.deepEqual((await brain.traverseGraph('g/a')).map(n => n.slug), ['g/a', 'g/b', 'g/c'], 'default depth');
+        const paths = await brain.traversePathsDetailed('g/c', { depth: 2, direction: 'in' });
+        assert.deepEqual(paths.paths.map(p => [p.from_slug, p.to_slug, p.depth]), [['g/b', 'g/c', 1], ['g/a', 'g/b', 2]]);
+        assert.equal(paths.truncated, false);
+        assert.equal((await brain.traversePaths('g/a', { depth: 1 })).length, 1);
+        const refused = await rejection(brain.addLink('g/a', 'g/c', { linkSource: 'Bad_Source' }));
+        assert.equal(refused.code, 'constraint_violation');
+        assert.equal((await rejection(brain.addLink('g/a', 'g/none'))).code, 'page_not_found');
+        assert.equal(await brain.removeLink('g/a', 'g/b', { linkType: 'cites' }), 1);
+
+        assert.equal((await brain.searchKeyword('zebra', { type: 'note' })).find(r => r.slug === 'g/a')!.stale, false);
+        assert.equal(await brain.addTimelineEntry('g/a', { date: '2026-01-02', summary: 'met' }), true);
+        assert.equal(await brain.addTimelineEntry('g/a', { date: '2026-01-02', summary: 'met' }), false);
+        assert.equal(await brain.addTimelineEntriesBatch([{ slug: 'g/a', date: '2026-01-03', summary: 'again' }]), 1);
+        assert.deepEqual((await brain.getTimeline('g/a')).map(e => [e.date, e.summary]), [['2026-01-03', 'again'], ['2026-01-02', 'met']]);
+        assert.equal((await rejection(brain.addTimelineEntry('g/a', { date: 'soon', summary: 'x' }))).code, 'invalid_argument');
+        assert.equal((await brain.searchKeyword('zebra')).find(r => r.slug === 'g/a')!.stale, true, 'an entry after the last write');
+        await brain.close();
+        await pool.shutdown(1000);
+      });
     },
   },
 ];

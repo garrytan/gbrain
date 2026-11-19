@@ -226,7 +226,7 @@ function valuesOf(planned: Planned): string[] {
 async function* once(text: string): AsyncIterable<Uint8Array> { if (text) yield Buffer.from(text, 'utf8'); }
 
 const receiptKey = (hash: string, pageId: number) => `${hash}:${pageId}`;
-const audit = createAuditWriter<{ ts: string } & Json>({ featureName: 'secret-spans', errorLabel: 'secret-spans-audit', errorTrailer: '; repair continues' });
+const audit = createAuditWriter<{ ts: string } & Json>({ featureName: 'secret-spans', errorLabel: 'secret-spans-audit', errorTrailer: '; repair continues', fileMode: 0o600 });
 
 /** Rewrites one page's changed fields in the caller's transaction; `unsealed`: a segmented body whose projection is built after commit. */
 async function writePage(tx: BrainEngine, planned: Planned): Promise<{ unsealed: boolean }> {

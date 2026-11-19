@@ -1,0 +1,36 @@
+[package]
+name = "gbrain-bakeoff"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Record-store bake-off harness for the gbrain Rust engine (redb, Fjall, LMDB under one optimistic transaction layer)"
+license = "MIT"
+publish = false
+
+# Standalone workspace: the main rust/Cargo.toml excludes `bench`.
+[workspace]
+
+[lib]
+name = "gbrain_bakeoff"
+path = "src/lib.rs"
+
+[[bin]]
+name = "gbrain-bakeoff"
+path = "src/main.rs"
+
+[dependencies]
+gbrain-sim = { path = "../crates/gbrain-sim" }
+redb = "4.6"
+fjall = "3.1"
+heed = { version = "0.23", default-features = false }
+rayon = "1.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+sha2 = "0.10"
+
+[profile.release]
+debug = false
+opt-level = 3
+lto = "thin"
+codegen-units = 4

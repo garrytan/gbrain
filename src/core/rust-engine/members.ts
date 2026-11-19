@@ -26,8 +26,13 @@ export const RUST_ENGINE_MEMBERS = {
   runMigration: 'raw_sql',
   // schema
   initSchema: 'schema',
-  holdSchemaMigrationLock: 'schema',
-  ownerOnlyMarkTriggers: 'schema',
+  // Optional on BrainEngine: only Postgres defines it. The Rust engine leaves it undefined, so a migration serializes
+  // in-process (schema-migration-lock.ts), as on PGLite, and `schema` can be reported.
+  holdSchemaMigrationLock: 'implemented',
+  // Creates and reads the SQL delete triggers behind owner_only_marks (migration v322). The Rust store has no SQL
+  // triggers and no owner-only sources, and every caller reaches it through a migration run or a raw-SQL source write,
+  // so it refuses with raw_sql and `schema` stays served.
+  ownerOnlyMarkTriggers: 'raw_sql',
   // transactions
   readTransactionSettings: 'transactions',
   applyTransactionSettings: 'transactions',
@@ -62,6 +67,9 @@ export const RUST_ENGINE_MEMBERS = {
   getAllSlugs: 'pages',
   listAllPageRefs: 'pages',
   listEntityKeyRows: 'pages',
+  listIdentityDecisions: 'pages',
+  listRestrictedIdentityMembers: 'pages',
+  applyIdentityDecisions: 'pages',
   listPrefixSampledPages: 'pages',
   listCorpusSample: 'pages',
   getPageTimestamps: 'pages',
@@ -108,6 +116,7 @@ export const RUST_ENGINE_MEMBERS = {
   stageSegmentChunks: 'page_body',
   createSegmentedPageShell: 'page_body',
   flipBodyGeneration: 'page_body',
+  sealSegmentedPage: 'page_body',
   openBodyStaging: 'page_body',
   setBodyStagingState: 'page_body',
   sweepSegments: 'page_body',

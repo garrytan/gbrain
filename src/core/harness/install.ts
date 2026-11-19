@@ -239,6 +239,7 @@ async function installThinClient(c: HarnessCredentials, opts: InstallOptions, co
     const config = { engine: 'postgres', remote_mcp: { issuer_url: c.issuer_url, mcp_url: c.mcp_url,
       oauth_client_id: c.client_id, oauth_client_secret: c.client_secret } };
     const sourceCli = fileURLToPath(new URL('../../cli.ts', import.meta.url));
+    const sourceTree = dirname(dirname(sourceCli));
     const launcher = join(root, 'bin', 'gbrain');
     const brainFirst = resolveBrainFirstDecision(opts.instructions, prior.brain_first_instructions === 'declined' ? { status: 'declined' } : undefined).value;
     const skillLoading = opts.remove || brainFirst === 'declined' ? 'off' : resolveSkillLoading(opts.skillLoading, isSkillLoading(prior.skill_loading) ? { mode: prior.skill_loading } : undefined).value;
@@ -248,6 +249,7 @@ async function installThinClient(c: HarnessCredentials, opts: InstallOptions, co
     const files = [
       { path: '.gbrain/config.json', text: `${JSON.stringify(config, null, 2)}\n`, mode: 0o600 },
       { path: 'bin/gbrain', text: renderAgentLauncher({ root, bunPath: process.execPath, cliPath: sourceCli.includes('$bunfs') ? undefined : sourceCli, mode: 'thin-client',
+        dependencies: !sourceCli.includes('$bunfs') && existsSync(join(sourceTree, 'bun.lock')) && existsSync(join(sourceTree, 'node_modules')) ? sourceTree : undefined,
         repairHint: `Reinstall GBrain in this environment, then repeat: gbrain connect ${shellQuote(c.mcp_url)} --harness ${shellQuote(opts.harness)} --credentials-file <private-handoff-file> --root ${shellQuote(root)} --install` }), mode: 0o700 },
       { path: 'GBRAIN-INSTRUCTIONS.md', text: `${instructionsHead ? `${instructionsHead}\n` : ''}${GBRAIN_MCP_INSTRUCTIONS}\n\nRun commands with the absolute launcher: ${launcher}\nThis is a hosted connection. The host grant controls sources and permissions.\n`, mode: 0o600 },
     ];

@@ -34,6 +34,16 @@ import { describe, expect } from 'bun:test';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
+/**
+ * The message of the error a case threw on purpose. An engine that cannot run the call at all (the Rust engine, which
+ * refuses `transaction`) raises its typed refusal instead; that is not the case's own error, so it ends the case there
+ * (the Rust arm counts it as a refusal) and is never recorded as if the callback had thrown.
+ */
+function deliberateFailure(error: unknown): string {
+  if ((error as { code?: unknown } | null)?.code === 'engine_capability_missing') throw error;
+  return (error as Error).message.replace(/^\[[a-z]+\]\s*/, '');
+}
+
 const { parityTest } = parityArms(testBackends());
 
 const NOTE = (title: string, body: string) => ({ type: 'note' as const, title, compiled_truth: body, timeline: '' });
@@ -72,7 +82,7 @@ describe('engine parity: lifecycle', () => {
           throw new Error('boom: abort the transaction');
         });
       } catch (error) {
-        caught = (error as Error).message.replace(/^\[[a-z]+\]\s*/, '');
+        caught = deliberateFailure(error);
       }
       expect(caught).toContain('boom: abort the transaction');
       const created = await engine.getPage('notes/tx-new');
@@ -97,7 +107,7 @@ describe('engine parity: lifecycle', () => {
             throw new Error(`fail-${i}`);
           });
         } catch (error) {
-          failures.push((error as Error).message.replace(/^\[[a-z]+\]\s*/, ''));
+          failures.push(deliberateFailure(error));
         }
       }
       await engine.transaction(async (tx) => {
@@ -130,7 +140,7 @@ describe('engine parity: lifecycle', () => {
           throw new Error('direct boom');
         });
       } catch (error) {
-        caught = (error as Error).message.replace(/^\[[a-z]+\]\s*/, '');
+        caught = deliberateFailure(error);
       }
       const committed = await engine.getPage('notes/direct-commit');
       const kept = await engine.getPage('notes/direct-keep');
@@ -160,7 +170,7 @@ describe('engine parity: lifecycle', () => {
           throw new Error('outer abort');
         });
       } catch (error) {
-        caught = (error as Error).message.replace(/^\[[a-z]+\]\s*/, '');
+        caught = deliberateFailure(error);
       }
       expect(caught).toContain('outer abort');
       const outer = await engine.getPage('notes/nest-outer');
@@ -208,7 +218,7 @@ describe('engine parity: lifecycle', () => {
           throw new Error('reserved boom');
         });
       } catch (error) {
-        caught = (error as Error).message.replace(/^\[[a-z]+\]\s*/, '');
+        caught = deliberateFailure(error);
       }
       await engine.putPage('notes/reserved-after', NOTE('After', 'Still works.'));
       const after = await engine.getPage('notes/reserved-after');

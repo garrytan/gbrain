@@ -45,6 +45,7 @@ import { entityDuplicatesEntry } from '../src/commands/doctor/checks/entity-dupl
 import { parseSchemaPackManifest } from '../src/core/schema-pack/manifest-v1.ts';
 import { nameWords } from '../src/core/entities/name-variants.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
+import { GITHUB_RESERVED_NAMES } from '../src/core/entities/github-reserved.ts';
 
 for (const backend of testBackends()) describe(backend, () => {
 let engine: BrainEngine;
@@ -343,6 +344,30 @@ describe('phone numbers', () => {
 });
 
 describe('GitHub URLs', () => {
+  test('every reserved GitHub name is a lowercase login-shaped word, since the github key compares a lowercased login against the set', () => {
+    expect([...GITHUB_RESERVED_NAMES].filter(n => !/^[a-z0-9][a-z0-9-]{0,38}$/.test(n))).toEqual([]);
+  });
+
+  test('route words GitHub serves its own pages at (enterprises, watching, customer-stories) and the deleted-user placeholder give no key', async () => {
+    await page('companies/acme-example', 'company', 'Acme Example', { github: 'https://github.com/enterprises/acme-example' });
+    await page('companies/acme-example', 'company', 'Acme Example', { github: 'github.com/enterprises/acme-example/people' }, 'source-b');
+    await page('people/alice-example', 'person', 'Alice Example', { github: 'https://github.com/watching' });
+    await page('people/alice-example', 'person', 'Alice Example', { github: 'https://github.com/customer-stories/acme-example' }, 'source-b');
+    await page('people/bob-example', 'person', 'Bob Example', { github: 'ghost' });
+    await page('people/bob-example', 'person', 'Bob Example', { github: '@ghost' }, 'source-b');
+    const found = await groups('cross_source');
+    expect(found.map(g => g.class)).toEqual(['weak', 'weak', 'weak']);
+    for (const g of found) expect(g.evidence.filter(e => e.key === 'github')).toEqual([]);
+  });
+
+  test('a login GitHub still serves as a profile stays a key, even when it looks like a route word', async () => {
+    await page('people/alice-example', 'person', 'Alice Example', { github: 'https://github.com/inbox' });
+    await page('people/alice-example', 'person', 'Alice Example', { github: 'inbox' }, 'source-b');
+    const [g] = await groups('cross_source');
+    expect(g!.class).toBe('clean');
+    expect(g!.evidence).toContainEqual({ matcher: 'shared_key', rule: 'shared_key', key: 'github', field: 'github', key_class: 'exclusive' });
+  });
+
   test('a URL under a path GitHub reserves (orgs, sponsors, settings and the like) names no login and gives no key', async () => {
     await page('people/alice-example', 'person', 'Alice Example', { github: 'https://github.com/orgs/acme-example' });
     await page('people/alice-example', 'person', 'Alice Example', { github: 'github.com/orgs/acme-example/people' }, 'source-b');
