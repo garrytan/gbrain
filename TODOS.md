@@ -1,5 +1,9 @@
 # TODOS
 
+## Rust engine prep-deadline follow-ups (filed 2026-11-19)
+
+- [ ] **P3 — segmented-staging-deadline: segmented body staging writes do not stop at the preparation deadline.** **What:** a managed sync that stages a segmented page body calls five engine methods through its bounded preparer view that are writes, not preparation reads: `transaction`, `openBodyStaging`, `setBodyStagingState`, `allocateBodyOccurrenceIds` and `stageSegmentChunks`. They run on the plain pool, so a lock or a dead connection there can hold the preparation past its deadline. `test/e2e/typed-preparation-reads-guard-postgres.test.ts` names them in `UNBOUNDED_ALLOWED` for that reason. **Fix:** bounding them is a separate write design (a deadline for writes, what a cut-off staging leaves behind, and how the next attempt resumes it), not a typed preparation read; once designed, move each method out of the allowlist with a fail-first test. **Effort:** M. **Priority:** P3.
+
 ## Rust engine relink lane follow-ups (filed 2026-11-18)
 
 - [ ] **P3 — timeline-row-delete-dedupe: one SQL helper for the two timeline row deletes.** **What:** `deleteTimelineRows` (`src/core/engine-sql/timeline-reads.ts`) and `removeTimelineRows` (`src/core/engine-sql/timeline.ts`) run the same guarded `DELETE FROM timeline_entries` (a page's non-event rows that still match on id, date, source, summary and detail, returning each date and its `removed` mark) as two copies. **Fix:** make both members call one shared SQL helper, with no change in output on any engine (the parity and engine-sql cases of both members stay green unchanged). **Effort:** S. **Priority:** P3.
