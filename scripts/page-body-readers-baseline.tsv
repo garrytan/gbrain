@@ -24,7 +24,6 @@ src/commands/doctor/checks/calibration.ts	checkLinkResolutionOpportunity	field	L
 src/commands/doctor/checks/calibration.ts	checkLinkResolutionOpportunity	sql	LEAD	
 src/commands/doctor/checks/content-quality.ts	runContentSanity	sql	META	
 src/commands/doctor/checks/data-integrity.ts	runMarkdownBody	sql	META	
-src/commands/doctor/checks/derived-visibility.ts	derivedVisibilityCheck	sql	NONE	not the page body: p.* in a CTE, only metadata columns read
 src/commands/enrich.ts	enrichOneLocked	call:serializeMarkdown	SEGW	
 src/commands/enrich.ts	enrichOneLocked	field	SEGW	
 src/commands/export.ts	runExport	sql	STREAM	
@@ -563,7 +562,6 @@ src/core/repair/agent-session-facts.ts	retireTakes	call:serializePageToMarkdown	
 src/core/repair/agent-session-facts.ts	rewriteFencedFacts	call:serializePageToMarkdown	INLINE	inline pages only: a segmented page returns before the read and its fenced facts are kept (changed_since_preview)
 src/core/repair/agent-session-facts.ts	rewriteFencedFacts	field	INLINE	inline pages only: a segmented page returns before the read and its fenced facts are kept (changed_since_preview)
 src/core/repair/atom-fence-rows.ts	atomFenceRowsRepair	call:serializePageToMarkdown	SEGW	
-src/core/repair/atom-fence-rows.ts	findAtomFenceRows	sql	INLINE	inline source pages only: a segmented source page (compiled_truth NULL) is counted origin_unread and never read
 src/core/repair/captured-facts.ts	strikeFencedRows	call:serializePageToMarkdown	SEGW	
 src/core/repair/captured-facts.ts	strikeFencedRows	field	SEGW	
 src/core/repair/connector-fences.ts	candidates	sql	STREAM	
@@ -627,7 +625,6 @@ src/core/repair/timeline-order.ts	scan	sql	SEGW	SQL exclusion: body_storage='inl
 src/core/repair/timeline.ts	classifyTimelinePage	field	STREAM	
 src/core/repair/timeline.ts	recountTimelinePages	sql	STREAM	
 src/core/repair/timeline.ts	removedRowIds	field	STREAM	
-src/core/repair/timeline.ts	scanTimelineHistory	sql	STREAM	
 src/core/repair/timeline.ts	timelineRepair	call:serializePageToMarkdown	SEGW	
 src/core/repair/timeline.ts	timelineRepair	field	STREAM	
 src/core/repair/unwithdrawn-facts.ts	classifyUnwithdrawnFacts	sql	INLINE	reads compiled_truth and timeline of inline pages only (NULL for a segmented page, whose fence pageFenceRowKeys reads from its segments)

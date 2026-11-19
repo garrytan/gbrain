@@ -423,15 +423,8 @@ interface BacklogAge { oldest_pending_age_s: number; backfilled: boolean }
  */
 async function readBacklogAge(engine: BrainEngine): Promise<BacklogAge | null> {
   try {
-    const column = quoteIdentifier((await resolveActiveEmbeddingColumnFromEngine(engine, { fallbackToLegacy: true })).name);
-    const [row] = await engine.executeRaw<{ age_s: number | null; unaged: number; backfilled: boolean | null }>(
-      `SELECT EXTRACT(EPOCH FROM now() - min(cc.embedding_pending_since))::float8 AS age_s,
-              count(*) FILTER (WHERE cc.embedding_pending_since IS NULL)::int AS unaged,
-              min(cc.embedding_pending_since) <= (SELECT value::timestamptz FROM config
-                WHERE key = 'embedding_pending_since_backfilled_at') AS backfilled
-         FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
-        WHERE cc.${column} IS NULL AND p.deleted_at IS NULL
-          AND NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip')`);
+    const column = (await resolveActiveEmbeddingColumnFromEngine(engine, { fallbackToLegacy: true })).name;
+    const row = await engine.readEmbeddingBacklogAge(column);
     if (!row || row.age_s === null || Number(row.unaged) > 0) return null;
     return { oldest_pending_age_s: Math.max(0, Math.round(Number(row.age_s))), backfilled: row.backfilled === true };
   } catch (e) {

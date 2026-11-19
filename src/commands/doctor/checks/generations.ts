@@ -34,11 +34,7 @@ export async function generationRetirementsCheck(engine: BrainEngine, sourceIds?
   try {
     const sources = await activeSources(engine, sourceIds);
     const { restoreDays } = await readGenerationsConfig(engine);
-    const rows = await engine.executeRaw<{ source_id: string; kind: string; keys: number; items: number; oldest: string | null }>(`
-      SELECT g.source_id, g.kind, count(DISTINCT g.id)::int AS keys, count(*)::int AS items, min(g.created_at)::text AS oldest
-        FROM derived_generations g JOIN derived_generation_items i ON i.generation_id=g.id AND i.action='retired'
-       WHERE g.source_id=ANY($1::text[]) AND g.state='live' AND g.created_at >= now() - interval '1 day' * $2
-       GROUP BY g.source_id, g.kind ORDER BY g.source_id, g.kind`, [sources, restoreDays]);
+    const rows = await engine.listLiveGenerationRetirements(sources, restoreDays);
     const bySource = rows.map(row => ({ ...row, keys: Number(row.keys), items: Number(row.items) }));
     const items = bySource.reduce((sum, row) => sum + row.items, 0);
     const details = { items, keys: bySource.reduce((sum, row) => sum + row.keys, 0), restore_days: restoreDays, by_source: bySource, repair: 'generations', docs: DOCS };
@@ -58,10 +54,7 @@ export async function generationRetirementsCheck(engine: BrainEngine, sourceIds?
 export async function generationHeldCheck(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
   try {
     const sources = await activeSources(engine, sourceIds);
-    const rows = await engine.executeRaw<{ source_id: string; kind: string; held_reason: HeldReason; count: number; oldest: string | null }>(`
-      SELECT source_id, kind, held_reason, count(*)::int AS count, min(created_at)::text AS oldest
-        FROM derived_generations WHERE source_id=ANY($1::text[]) AND state='held'
-       GROUP BY source_id, kind, held_reason ORDER BY source_id, kind, held_reason`, [sources]);
+    const rows = await engine.listHeldGenerations(sources) as Array<{ source_id: string; kind: string; held_reason: HeldReason; count: number; oldest: string | null }>;
     const byReason = rows.map(row => ({ ...row, count: Number(row.count), releasable: RELEASABLE_HELD_REASONS.has(row.held_reason) }));
     const count = byReason.reduce((sum, row) => sum + row.count, 0);
     const details = { count, releasable: byReason.filter(row => row.releasable).reduce((sum, row) => sum + row.count, 0), by_reason: byReason, repair: 'generations', docs: DOCS };
