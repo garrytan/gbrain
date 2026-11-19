@@ -744,6 +744,40 @@ test('a retryable root becomes eligible again after its backoff expires', async 
   }
 }), 15_000);
 
+test('a capability refusal ends the write failed in one attempt; a lock timeout on the next write is released and retried', async () => withEnv(env, async () => {
+  const sources = await fixtures(engine, config);
+  const refused = await admitWrite(engine, admission(config, sources[0], 'capability-refusal/terminal', 'refused body'));
+  const locked = await admitWrite(engine, admission(config, sources[1], 'capability-refusal/transient', 'locked body'));
+  const attempts = new Map<string, number>();
+  const errors: unknown[] = [];
+  const consumer = new PersistenceConsumer(engine, { engine: 'pglite' }, async (_engine, current) => {
+    const n = (attempts.get(current.id) ?? 0) + 1;
+    attempts.set(current.id, n);
+    // A member the engine does not serve refuses the same way on every attempt.
+    if (current.id === refused.id) throw capabilityMissing('raw_sql', 'executeRaw');
+    if (n === 1) throw Object.assign(new Error('canceling statement due to lock timeout'), { code: '55P03' });
+    return prepared(current, sources);
+  }, { hostId: config.hostId, pollMs: 50, onError: error => errors.push(error) });
+  try {
+    consumer.start();
+    await waitFor(async () => (await getWriteRequestById(engine, refused.id))?.state === 'failed'
+      && (await getWriteRequestById(engine, locked.id))?.state === 'committed', { timeoutMs: 8_000 });
+    const failed = (await getWriteRequestById(engine, refused.id))!;
+    // Terminal on the first attempt, with the refusal's code and site on the owner's row.
+    expect(attempts.get(refused.id)).toBe(1);
+    expect(failed).toMatchObject({ state: 'failed', error_code: 'engine_capability_missing',
+      error_detail: { origin: 'engine_capability', member: 'executeRaw', capability: 'raw_sql', stage: 'preparation' } });
+    // The transient failure stayed pending, was released, and committed on its retry.
+    expect(attempts.get(locked.id)).toBe(2);
+    await assertCommittedSnapshot(engine, (await getWriteRequestById(engine, locked.id))!);
+    await assertConservation(engine);
+    expect(errors).toEqual([]);
+  } finally {
+    await consumer.stop();
+    for (const row of [refused, locked]) await cancelWriteRequest(engine, { kind: 'local_cli', id: config.principalIds[0] }, row.request_id);
+  }
+}), 15_000);
+
 // #5373: claim loss during preparation. Every renewal goes through the engine's renewWriteClaim member.
 function interceptRenewals(onRenewal: (id: string, token: string) => Promise<unknown> | undefined): () => void {
   const renew = engine.renewWriteClaim.bind(engine);
