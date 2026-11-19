@@ -29,7 +29,7 @@ the parity tests prove no result changed.
 | Title members (whole, title, complete) | Read every page record, build every page vector, `@@` per page. About 400 ms p50. | Page postings (title at weight A, timeline at C) give the matching pages in page-id order, which the candidate cap already needs. |
 | Fuzzy title | `trgm_similarity` against every title. About 300 ms p50. | Trigram postings give the pages that share enough trigrams to reach the threshold (a rounding-safe bound); exact `similarity` runs on those only. |
 | Write path | `put_postings` keeps legacy unstemmed `T` postings for the BM25 method only. | The same `Store::write` transaction also keeps the new postings. `FlaggingWriter` (from the restricted-flag branch) stays the wrapper that every write handle goes through; the index writer composes with it. |
-| Existing stores | No derived-index rebuild exists (only the format-1 to format-2 counter fold). | Store format 3. Opening a v2 store starts a resumable background build; members use the scan until the build marks the index complete. |
+| Existing stores | No derived-index rebuild exists (only the format-1 to format-2 counter fold). | Store format 4 (format 3 is the compact projection job layout from `rust-engine/projection-coalesce`). Opening a format 1, 2 or 3 store starts a resumable background build; members use the scan until the build marks the index complete. |
 
 ## Why it matters
 
@@ -268,8 +268,10 @@ pinning that code. No second tokenizer exists to drift.
 
 ### D6. Existing stores
 
-- **D6a (rec): format 3 with a resumable build that every open checks.** Format 3 means "this
-  store keeps keyword postings". A build without the index refuses a format-3 store
+- **D6a (rec): format 4 with a resumable build that every open checks.** Format 4 means "this
+  store keeps keyword postings" (format 3 is taken by the compact projection jobs of
+  `rust-engine/projection-coalesce`, which this branch merges first). A build without the index
+  refuses a format-4 store
   (`FORMAT_UNKNOWN`, nothing changed). The format change and an incomplete index-state record
   are written in one transaction. A fresh store is created with a complete, empty index. Every
   open (not only `upgrade_format`) reads the index state: an unknown future index version is
@@ -289,10 +291,10 @@ pinning that code. No second tokenizer exists to drift.
 ### D7. Delivery
 
 - **D7b (rec): one PR with chunk, page and trigram postings, one format, one gate.** One index
-  version covers every family, so no format-3 build can exist that writes a store without
+  version covers every family, so no format-4 build can exist that writes a store without
   maintaining all of it, and the all-member gate runs once on the finished tree.
 - D7a: three PRs (chunk, title, fuzzy). Smaller reviews, but it needs per-family readiness,
-  refusal of a newer index version by every earlier format-3 build, cross-release tests and
+  refusal of a newer index version by every earlier format-4 build, cross-release tests and
   partial gates.
 
 ### Not decisions (findings folded in)
@@ -309,7 +311,7 @@ Files are under `rust/crates/gbrain-store/` unless named otherwise. One PR (D7b)
 `rust-engine/keyword-index`, pushed as four stacked, reviewable commits:
 (1) `FlaggingWriter` (carried from `4507a47b62`, rebased onto the `FnMut` retry loop) and
 `IndexingWriter`; (2) chunk and page postings; (3) trigram postings with the f32-safe fuzzy
-bound; (4) format 3, the resumable build, `verify` and `rebuild`. If `FlaggingWriter` lands on
+bound; (4) format 4, the resumable build, `verify` and `rebuild`. If `FlaggingWriter` lands on
 `rust-engine/main` first, commit (1) carries only `IndexingWriter`.
 
 Accepted at the gate (gate_rev 4, every item `rec`), and where each one lives in this plan:
@@ -354,8 +356,10 @@ Accepted at the gate (gate_rev 4, every item `rec`), and where each one lives in
    candidates with the rounding-safe bound from D5, then the current exact path. The scoped call
    drops soft-deleted pages and the unscoped call keeps them (`title_fuzzy.rs:138,355`; follow-up
    `fuzzy-title-unscoped-deleted` stays open), so trigram postings include soft-deleted pages.
-8. `src/format.rs`, `src/lib.rs`: `FORMAT_VERSION = 3`, `FORMAT_VERSIONS = [1, 2, 3]`; the
-   format change writes the incomplete state; every open reads the state.
+8. `src/format.rs`, `src/lib.rs`: `FORMAT_VERSION = 4`, `FORMAT_VERSIONS = [1, 2, 3, 4]`; the
+   format change writes the incomplete state; every open reads the state. The format registry
+   (`rust/docs/store/format.md`, from `rust-engine/store-format-registry`) turns its reserved
+   row 4 into shipped.
    `src/keyword/index_build.rs` (new): the background builder, `verify` and `rebuild`. The
    builder walks the `I` page-id family in id order, so the cursor is a page id; each batch
    reads the page through `I` and rebuilds its page, chunk and trigram postings.
@@ -381,8 +385,8 @@ Accepted at the gate (gate_rev 4, every item `rec`), and where each one lives in
       sharing words, and wrapper forwarding of `allocate`/counters (check conflict keys);
     - build: format-2 fixture upgrade, crash and reopen before and after the format commit, a
       batch commit and the complete commit, writes during the build (including timeline, lead
-      and seal), rebuild racing a writer, a future index version refused, a format-3 store
-      refused by a format-2 build, fresh store complete;
+      and seal), rebuild racing a writer, a future index version refused, a format-4 store
+      refused by a format-3 build, fresh store complete;
     - `verify` finds an orphan posting and a missing posting;
     - NOT shapes: `a & !b`, `a & (!b | !c)`, `(!a | b) & c`, a phrase with a NOT, and `!a`
       alone (asserts the scan was used);
@@ -450,5 +454,5 @@ Risks:
   items (D1a D2a D3a D4a D5a D6a D7b). This is Ember's ruling, not Garry's, under Garry's
   standing approval for this lane. The gate records it as `--by agent:ember`. The build is one PR
   (D7b), pushed as stacked commits: the writers first, then chunk and page postings, then
-  trigram postings with the f32-safe fuzzy bound, then format 3 with the resumable build, verify
+  trigram postings with the f32-safe fuzzy bound, then format 4 with the resumable build, verify
   and rebuild.
