@@ -105,6 +105,17 @@ export interface WriteCompletion {
   retainedBytes: number; terminalReservation: number; probePurges: boolean;
 }
 
+/**
+ * A cancellation: the completion of a request that is still in `expectState` under `expectExecutionToken`, not
+ * terminal, not publishing and not in recovery. The engine checks that and completes the row in one step.
+ */
+export interface WriteCancellation extends Omit<WriteCompletion, 'state'> { state: 'cancelled'; expectState: string; expectExecutionToken: string | null }
+/**
+ * `cancelled`: the completed row. `kept`: the row was terminal, publishing, in recovery, or no longer the row the
+ * caller read, and nothing changed. `too_large`: the result exceeds the reservation, and nothing changed.
+ */
+export type WriteCancelResult = { status: 'cancelled'; row: CompletedWriteRow } | { status: 'kept' | 'too_large'; row: WriteRequest };
+
 /** The claimed row: the request as stamped, whether it passed a queued sync row, and the newest sequence for a sync row. */
 export type ClaimedWriteRow = WriteRequest & { passed_sync: boolean; seen_sequence: string | null };
 /** A completed row; the purge columns are present only when the completion probed purges. */
@@ -298,4 +309,23 @@ export async function completeWriteRow(exec: SqlExecutor, c: WriteCompletion): P
     JSON.stringify(c.outcome), c.errorCode, c.errorMessage, c.consumerVersion, c.consumerHostId,
     c.errorDetail ? JSON.stringify(c.errorDetail) : null, c.resultBytes, c.counterKeys, c.intentBytes, c.retainedBytes, c.terminalReservation]);
   return done ?? null;
+}
+
+/** Whether a locked request may still be cancelled under the caller's expectation (the same test the Rust store runs). */
+function cancellable(row: WriteRequest, c: WriteCancellation): boolean {
+  return !['committed', 'conflict', 'failed', 'cancelled'].includes(row.state) && row.state === c.expectState
+    && (row.execution_token ?? null) === c.expectExecutionToken && !row.publication_started && row.recovery == null;
+}
+
+/**
+ * Cancels request `c.id`: durable commit on, the row locked FOR UPDATE, the check, then the completion statement.
+ * Null when the row does not exist.
+ */
+export async function cancelWriteRow(exec: SqlExecutor, c: WriteCancellation): Promise<WriteCancelResult | null> {
+  const current = await lockWriteRequest(exec, c.id);
+  if (!current) return null;
+  if (!cancellable(current, c)) return { status: 'kept', row: current };
+  await exec.executeRaw("SELECT set_config('synchronous_commit','on',true)");
+  const done = await completeWriteRow(exec, c);
+  return done ? { status: 'cancelled', row: done } : { status: 'too_large', row: current };
 }
