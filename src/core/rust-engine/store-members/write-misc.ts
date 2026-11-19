@@ -1,14 +1,14 @@
 /**
  * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
  * purgeMemoryProposals, attachSourcePath and getWorktreeBinding; SQL in engine-sql/write-misc.ts; isSourceClaimed, SQL in engine-sql/sources.ts), and the folder access read beside the
- * access members (isFolderRestricted, listAppliedPolicyRevisions and readLiveMember; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
+ * access members (isFolderRestricted, listAppliedPolicyRevisions, readLiveMember and readFolderAccess; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
  * gbrain-store `write_misc`; the rest answer for state the store does not keep. What each member answers and why:
  * rust/docs/store/write_misc.md.
  */
 import type {
   AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from '../../engine-sql/write-misc.ts';
-import type { AppliedPolicyRevision, LiveMemberRow, MemberBindingVia } from '../../engine-sql/access-control.ts';
+import type { AppliedPolicyRevision, FolderAccessRows, LiveMemberRow, MemberBindingVia } from '../../engine-sql/access-control.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /**
@@ -82,6 +82,12 @@ export const listAppliedPolicyRevisions: StoreMember<[], AppliedPolicyRevision[]
  * the answer is null, as PGLite answers for a brain with no members. access/caller.ts reads that as unbound.
  */
 export const readLiveMember: StoreMember<[via: MemberBindingVia, key: string], LiveMemberRow | null> = async () => null;
+
+/**
+ * No folder rule or folder coverage exists on this engine (see isFolderRestricted), so no rule is satisfied and no
+ * prefix reads as nobody; a seed of access_rules or access_pending_coverage refuses as raw SQL.
+ */
+export const readFolderAccess: StoreMember<[readers: readonly string[]], FolderAccessRows> = async () => ({ rules: [], coverage: [] });
 
 /** The store keeps no memory proposals, so upkeep expires nothing. */
 export const expireMemoryProposals: StoreMember<[reason: string], number> = async () => 0;

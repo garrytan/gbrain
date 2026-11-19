@@ -530,6 +530,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'applyTransactionSettings': OOS.importGuards, 'readLedgerSource': OOS.importGuards, 'isFolderRestricted': OOS.importGuards,
   'listAppliedPolicyRevisions': OOS.callerRawSql,
   'readLiveMember': OOS.callerRawSql,
+  'readFolderAccess': OOS.callerRawSql,
   // the page-write reads and upkeep that belong to no other domain
   'readSourceState': OOS.writeMisc,
   'readAdmissionSource': OOS.writeMisc,
@@ -1286,6 +1287,10 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     ['stdio_config', (e) => e.readLiveMember('stdio_config', 'mcp.stdio_member')],
     ['legacy_token', (e) => e.readLiveMember('legacy_token', '00000000-0000-4000-8000-0000000000aa')],
     ['oauth_client', (e) => e.readLiveMember('oauth_client', 'client-example')],
+  ]),
+  ...variants('readFolderAccess', [
+    ['no_readers', (e) => e.readFolderAccess([])],
+    ['readers', (e) => e.readFolderAccess(['alice-example', 'group:team-a'])],
   ]),
   ...variants('readJournalLimitRows', [['default', (e) => e.readJournalLimitRows()]]),
   ...variants('readHeldPageRows', [['default', (e) => e.readHeldPageRows(['1', '2'])]]),

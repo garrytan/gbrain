@@ -42,6 +42,21 @@ const PINS: Pin[] = [
   WHERE m.id = (${member}) AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
   GROUP BY m.id`],
   })),
+  {
+    from: 'src/core/access/caller.ts:170 folderAccessForAll (no readers: the rules read is skipped)',
+    case: { method: 'readFolderAccess', variant: 'no_readers', run: e => e.readFolderAccess([]) },
+    texts: [`SELECT * FROM (SELECT DISTINCT source_id, prefix FROM access_pending_coverage
+      UNION ALL SELECT '!unreadable', '' WHERE gbrain_access_state_unreadable()) c ORDER BY source_id, prefix`],
+  },
+  {
+    from: 'src/core/access/caller.ts:170 folderAccessForAll',
+    case: { method: 'readFolderAccess', variant: 'readers', run: e => e.readFolderAccess(['member:alice-example', 'group:team-a']) },
+    texts: [
+      'SELECT source_id, rule_id, readable_by FROM access_rules WHERE readable_by && $1::text[]',
+      `SELECT * FROM (SELECT DISTINCT source_id, prefix FROM access_pending_coverage
+      UNION ALL SELECT '!unreadable', '' WHERE gbrain_access_state_unreadable()) c ORDER BY source_id, prefix`,
+    ],
+  },
 ];
 
 describe('caller raw SQL moved into typed members keeps its Postgres text byte for byte', () => {

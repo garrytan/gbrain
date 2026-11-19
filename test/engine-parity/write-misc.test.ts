@@ -4,7 +4,7 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: readSourceState, readAdmissionSource, sharedSkillPackTablePresent,
  *    listSharedSkillPackRoots, getWorktreeBinding, isSourceClaimed, hasExtractedEvents, listActiveAccessMembers, isFolderRestricted,
- *    listAppliedPolicyRevisions, readLiveMember, expireMemoryProposals,
+ *    listAppliedPolicyRevisions, readLiveMember, readFolderAccess, expireMemoryProposals,
  *    listAwaitingMemoryProposals and purgeMemoryProposals return the same observable result on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: a source-state read that differs changes whether page admission, the mirror read-only guard and
@@ -17,11 +17,12 @@
  *    compare the empty answer every arm gives on a fresh brain (rust/docs/store/write_misc.md).
  */
 import { describe, expect } from 'bun:test';
+import type { FolderAccessRows } from '../../src/core/engine-sql/access-control.ts';
 import { archiveSource, createSource, parityArms, restrictFolder } from './harness.ts';
 import { isCapabilityRefusal } from './arm-capabilities.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import { memberIdentityFor, stdioMemberIdentity } from '../../src/core/access/caller.ts';
+import { folderAccessFor, folderAccessForAll, memberIdentityFor, stdioMemberIdentity } from '../../src/core/access/caller.ts';
 import type { SourceStateRow, WorktreeBinding } from '../../src/core/engine-sql/write-misc.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -239,6 +240,60 @@ describe('engine parity: write misc', () => {
     };
     expect(after).toEqual({ member: null, legacyToken: null, oauthClient: null, stdioConfig: bob });
     return { live, after };
+  });
+
+  parityTest('readFolderAccess finds no rule and no coverage on a brain with no folder access state', { methods: ['readFolderAccess'] }, async (engine) => {
+    const answers = {
+      noReaders: await engine.readFolderAccess([]),
+      readers: await engine.readFolderAccess(['member:alice-example', 'group:team-a']),
+    };
+    expect(answers).toEqual({ noReaders: { rules: [], coverage: [] }, readers: { rules: [], coverage: [] } });
+    return answers;
+  });
+
+  // On Rust, folderAccessFor used to read a refused statement and fall back to fail closed (`!unreadable` covering
+  // everything); with no folder state anywhere the answer is nothing satisfied and nothing covered, as on PGLite.
+  parityTest('folderAccessFor and folderAccessForAll satisfy no rule and cover no prefix on a brain with no folder access state', { methods: ['readFolderAccess'] }, async (engine) => {
+    const answers = {
+      one: await folderAccessFor(engine, ['member:alice-example']),
+      guest: await folderAccessFor(engine, []),
+      audience: await folderAccessForAll(engine, [['member:alice-example'], ['member:bob-example', 'group:team-a']]),
+    };
+    const none = { satisfiedRuleIds: [], folderCoverage: [] };
+    expect(answers).toEqual({ one: none, guest: none, audience: none });
+    return answers;
+  });
+
+  parityTest('readFolderAccess reads the rules the readers meet and every pending prefix, and folderAccessForAll keeps the rules every identity meets', { methods: ['readFolderAccess'] }, async (engine, backend) => {
+    const seeded = await engine.executeRaw("INSERT INTO access_policy_state (source_id) VALUES ('default') ON CONFLICT (source_id) DO NOTHING").then(() => null, (e: unknown) => e);
+    if (backend === 'rust') {
+      expect(isCapabilityRefusal(seeded, 'raw_sql')).toBe(true);
+      expect(await engine.readFolderAccess(['member:alice-example'])).toEqual({ rules: [], coverage: [] });
+      throw seeded;
+    }
+    expect(seeded).toBeNull();
+    await engine.executeRaw(`INSERT INTO access_rules (source_id, rule_id, prefix, readable_by, revision) VALUES
+      ('default', 'team', 'team/', ARRAY['member:alice-example', 'group:team-a'], 1), ('default', 'bob', 'bob/', ARRAY['member:bob-example'], 1)`);
+    await engine.executeRaw("INSERT INTO access_pending_coverage (source_id, prefix, reason) VALUES ('default', 'drafts/', 'pending'), ('default', 'drafts/', 'invalid')");
+    const byRule = (r: FolderAccessRows): FolderAccessRows => ({ ...r, rules: [...r.rules].sort((a, b) => a.rule_id.localeCompare(b.rule_id)) });
+    const answers = {
+      alice: byRule(await engine.readFolderAccess(['member:alice-example'])),
+      both: byRule(await engine.readFolderAccess(['member:alice-example', 'member:bob-example'])),
+      noReaders: await engine.readFolderAccess([]),
+      audience: await folderAccessForAll(engine, [['member:alice-example'], ['member:bob-example', 'group:team-a']]),
+      bob: await folderAccessFor(engine, ['member:bob-example']),
+    };
+    const team = { source_id: 'default', rule_id: 'team', readable_by: ['member:alice-example', 'group:team-a'] };
+    const bob = { source_id: 'default', rule_id: 'bob', readable_by: ['member:bob-example'] };
+    const coverage = [{ source_id: 'default', prefix: 'drafts/' }];
+    expect(answers).toEqual({
+      alice: { rules: [team], coverage },
+      both: { rules: [bob, team], coverage },
+      noReaders: { rules: [], coverage },
+      audience: { satisfiedRuleIds: ['default:team'], folderCoverage: coverage },
+      bob: { satisfiedRuleIds: ['default:bob'], folderCoverage: coverage },
+    });
+    return answers;
   });
 
   parityTest('getWorktreeBinding is null for a source with no writer binding, on any host', { methods: ['getWorktreeBinding'] }, async (engine, backend) => {

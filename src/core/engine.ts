@@ -7,7 +7,7 @@ import type * as JobsWake from './engine-sql/jobs-wake.ts';
 import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
 import type { RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
-import type { AppliedPolicyRevision, LiveMemberRow, MemberBindingVia } from './engine-sql/access-control.ts';
+import type { AppliedPolicyRevision, FolderAccessRows, LiveMemberRow, MemberBindingVia } from './engine-sql/access-control.ts';
 import type { ExtractionPendingRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
 import type { FactRelinkAttempt, FactRelinkOutcome, FactRelinkUpsertOpts } from './engine-sql/fact-relink-attempts.ts';
@@ -3464,6 +3464,13 @@ export interface BrainEngine {
    * unchanged (access/caller.ts tells a schema older than the member tables from a transient failure).
    */
   readLiveMember(via: MemberBindingVia, key: string): Promise<LiveMemberRow | null>;
+
+  /**
+   * The applied folder rules any of `readers` meets (none read when `readers` is empty) and every folder prefix that
+   * reads as nobody, `!unreadable` included when this database role cannot read the folder access tables. Runs through
+   * this engine's executeRaw; a failure throws (access/caller.ts folderAccessForAll counts it as fail closed).
+   */
+  readFolderAccess(readers: readonly string[]): Promise<FolderAccessRows>;
 
   // Entity and mention reads (engine-sql/entity-reads.ts): the statements the CLI ran through executeRaw.
   /** The newest mention pass time (ISO, UTC, whole seconds) over every source or one source; null when no pass ran. */
