@@ -4,7 +4,7 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: readSourceState, readAdmissionSource, sharedSkillPackTablePresent,
  *    listSharedSkillPackRoots, getWorktreeBinding, isSourceClaimed, hasExtractedEvents, listActiveAccessMembers, isFolderRestricted,
- *    listAppliedPolicyRevisions, readMayActFor, readAudiencePrincipals, expireMemoryProposals,
+ *    listAppliedPolicyRevisions, readMayActFor, readAudiencePrincipals, readAccessMembers, expireMemoryProposals,
  *    listAwaitingMemoryProposals and purgeMemoryProposals return the same observable result on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: a source-state read that differs changes whether page admission, the mirror read-only guard and
@@ -254,6 +254,54 @@ describe('engine parity: write misc', () => {
     const lone = await engine.readAudiencePrincipals(['dave-example'], []);
     expect(lone).toEqual({ members: [{ id: 'dave-example', groups: ['team-c'] }], groups: [] });
     return { view, lone };
+  });
+
+  parityTest('readAccessMembers finds no member by id and lists none on a brain with none', { methods: ['readAccessMembers'] }, async (engine) => {
+    const answers = {
+      byId: await engine.readAccessMembers({ id: 'alice-example' }),
+      live: await engine.readAccessMembers({ includeRemoved: false }),
+      all: await engine.readAccessMembers({ includeRemoved: true }),
+    };
+    expect(answers).toEqual({ byId: [], live: [], all: [] });
+    return answers;
+  });
+
+  // Leak case: a removed (tombstoned) member is filtered out of the list in the statement unless asked for; each row
+  // carries only its own groups; an id matches exactly one member, never a group id, another case or an injected
+  // predicate. The Rust store keeps no members (empty above), so the member write stops on the raw_sql refusal.
+  parityTest('readAccessMembers lists live members with their own groups, removed ones only when asked, and matches ids exactly', { methods: ['readAccessMembers'] }, async (engine, backend) => {
+    const write = await engine.executeRaw(
+      `INSERT INTO access_members (id, display_name, email, kind, labelled_only, disabled_at, tombstoned_at) VALUES
+         ('alice-example', 'Alice', 'alice@example.com', 'audience', true, NULL, NULL), ('bob-example', NULL, NULL, 'person', false, now(), NULL),
+         ('carol-example', NULL, NULL, 'person', false, NULL, now()), ('dave-example', NULL, NULL, 'person', false, NULL, NULL)`).then(() => null, (e: unknown) => e);
+    if (backend === 'rust') {
+      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
+      expect(await engine.readAccessMembers({ includeRemoved: true })).toEqual([]);
+      throw write;
+    }
+    expect(write).toBeNull();
+    await engine.executeRaw(`INSERT INTO access_groups (id) VALUES ('team-a'), ('team-b'), ('team-c')`);
+    await engine.executeRaw(`INSERT INTO access_group_members (group_id, member_id) VALUES
+      ('team-b', 'alice-example'), ('team-a', 'alice-example'), ('team-c', 'carol-example'), ('team-a', 'bob-example')`);
+    const view = (rows: Awaited<ReturnType<BrainEngine['readAccessMembers']>>) => rows.map(r => ({
+      id: r.id, display_name: r.display_name, email: r.email, kind: r.kind, labelled_only: r.labelled_only,
+      disabled: r.disabled_at != null, removed: r.tombstoned_at != null, created: r.created_at != null, groups: r.groups,
+    }));
+    const live = view(await engine.readAccessMembers({ includeRemoved: false }));
+    const all = view(await engine.readAccessMembers({ includeRemoved: true }));
+    expect(live.map(r => [r.id, r.groups])).toEqual([['alice-example', ['team-a', 'team-b']], ['bob-example', ['team-a']], ['dave-example', []]]);
+    expect(all.map(r => [r.id, r.groups])).toEqual([['alice-example', ['team-a', 'team-b']], ['bob-example', ['team-a']], ['carol-example', ['team-c']], ['dave-example', []]]);
+    expect(live[0]).toEqual({ id: 'alice-example', display_name: 'Alice', email: 'alice@example.com', kind: 'audience', labelled_only: true, disabled: false, removed: false, created: true, groups: ['team-a', 'team-b'] });
+    expect(live[1]!.disabled).toBe(true);
+    const byId = {
+      removed: view(await engine.readAccessMembers({ id: 'carol-example' })).map(r => [r.id, r.removed, r.groups]),
+      group: await engine.readAccessMembers({ id: 'team-a' }),
+      otherCase: await engine.readAccessMembers({ id: 'Alice-Example' }),
+      injected: await engine.readAccessMembers({ id: "x' OR '1'='1" }),
+      unknown: await engine.readAccessMembers({ id: 'nobody-example' }),
+    };
+    expect(byId).toEqual({ removed: [['carol-example', true, ['team-c']]], group: [], otherCase: [], injected: [], unknown: [] });
+    return { live, all, byId };
   });
 
   parityTest('getWorktreeBinding is null for a source with no writer binding, on any host', { methods: ['getWorktreeBinding'] }, async (engine, backend) => {

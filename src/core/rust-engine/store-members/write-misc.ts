@@ -8,7 +8,7 @@
 import type {
   AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from '../../engine-sql/write-misc.ts';
-import type { AppliedPolicyRevision, AudiencePrincipalRows, MayActForVia } from '../../engine-sql/access-control.ts';
+import type { AccessMemberLookup, AccessMemberRow, AppliedPolicyRevision, AudiencePrincipalRows, MayActForVia } from '../../engine-sql/access-control.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /**
@@ -98,3 +98,6 @@ export const purgeMemoryProposals: StoreMember<[retentionDays: number], number> 
  * member or an existing group: each reads as unknown, as on a brain with none.
  */
 export const readAudiencePrincipals: StoreMember<[memberIds: readonly string[], groupIds: readonly string[]], AudiencePrincipalRows> = async () => ({ members: [], groups: [] });
+
+/** The store keeps no access members (see listActiveAccessMembers), so no id names a member and the list is empty. */
+export const readAccessMembers: StoreMember<[by: AccessMemberLookup], AccessMemberRow[]> = async () => [];

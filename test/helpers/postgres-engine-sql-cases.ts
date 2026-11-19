@@ -548,6 +548,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listAppliedPolicyRevisions': OOS.callerRawSql,
   'readMayActFor': OOS.callerRawSql,
   'readAudiencePrincipals': OOS.callerRawSql,
+  'readAccessMembers': OOS.callerRawSql,
   // the page-write reads and upkeep that belong to no other domain
   'readSourceState': OOS.writeMisc,
   'readAdmissionSource': OOS.writeMisc,
@@ -1305,6 +1306,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     ['stdio-config', (e) => e.readMayActFor('stdio_config', 'mcp.stdio_may_act_for')],
   ]),
   ...variants('readAudiencePrincipals', [['members-and-groups', (e) => e.readAudiencePrincipals(['alice-example'], ['team-a'])]]),
+  ...variants('readAccessMembers', [['by-id', (e) => e.readAccessMembers({ id: 'alice-example' })], ['live', (e) => e.readAccessMembers({ includeRemoved: false })], ['all', (e) => e.readAccessMembers({ includeRemoved: true })]]),
   ...variants('readJournalLimitRows', [['default', (e) => e.readJournalLimitRows()]]),
   ...variants('readHeldPageRows', [['default', (e) => e.readHeldPageRows(['1', '2'])]]),
   ...variants('readHeldCoverageRows', [

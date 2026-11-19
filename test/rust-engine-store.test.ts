@@ -25,6 +25,7 @@ import { OperationError } from '../src/core/ops/contract.ts';
 import { ENGINE_CAPABILITIES } from '../src/core/engine-capabilities.ts';
 import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { getMember, listMembers } from '../src/core/access/members.ts';
 
 const TARGET = detectAddonTarget();
 const BUILT = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
@@ -407,6 +408,24 @@ describe('MCP dispatch caller access on a Rust brain', () => {
     for (const header of ['member:alice-example', 'group:team-a']) {
       expect(await dispatch(engine, 'get_stats', stdio(header))).toEqual({ isError: true, code: 'on_behalf_of_unknown_member' });
     }
+    expect(raw).toEqual([]);
+  });
+});
+
+// `gbrain access member add|list` and `access owner set` read members first (access/members.ts getMember, listMembers).
+// On a Rust brain that read is a typed member, so it answers "no members" instead of stopping on raw SQL.
+describe('access member reads on a Rust brain', () => {
+  withAddon('getMember and listMembers read no raw SQL and find no member: the store keeps none', async () => {
+    const { engine } = await open();
+    const raw: string[] = [];
+    const executeRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof executeRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      raw.push(sql);
+      return executeRaw(sql as never, params as never);
+    }) as typeof executeRaw;
+    expect(await getMember(engine as never, 'alice-example')).toBeNull();
+    expect(await listMembers(engine as never)).toEqual([]);
+    expect(await listMembers(engine as never, { includeRemoved: true })).toEqual([]);
     expect(raw).toEqual([]);
   });
 });
