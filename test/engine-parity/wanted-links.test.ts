@@ -17,6 +17,7 @@
 import { describe, expect } from 'bun:test';
 import { createSource, parityArms, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { rethrowCapabilityRefusal } from '../../src/core/engine-capability-refusal.ts';
 import type { BrainEngine, WantedLinkRowInput } from '../../src/core/engine.ts';
 import { listWantedPages, type WantedPageRow } from '../../src/core/wanted-links-store.ts';
 
@@ -121,7 +122,7 @@ describe('engine parity: wanted links', () => {
 
   parityTest('replaceWantedLinkRows refuses a repeated reference and a missing origin page', { methods: ['replaceWantedLinkRows'] }, async (engine) => {
     const pageId = await note(engine, 'notes/a');
-    const outcome = async (run: () => Promise<number>) => run().then(n => ({ written: n }), () => ({ threw: true }));
+    const outcome = async (run: () => Promise<number>) => run().then(n => ({ written: n }), (err: unknown) => { rethrowCapabilityRefusal(err); return { threw: true }; });
     const repeated = await outcome(() => engine.replaceWantedLinkRows({ pageId, sourceId: 'default' }, {
       rows: [wanted('body', 'slug', 'missing/x'), wanted('body', 'slug', 'missing/x')], producers: ['body'],
     }));

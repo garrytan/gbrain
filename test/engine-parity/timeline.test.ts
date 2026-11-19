@@ -242,6 +242,7 @@ describe('engine parity: timeline entries', () => {
       expect(answers.own).toContain('refresh me=after');
       expect(answers.own).toContain('edited since=changed');
       expect(answers.event).toEqual(['before']);
+      expect(answers.other).toEqual(['other page=before']);
       return answers;
     },
   );
