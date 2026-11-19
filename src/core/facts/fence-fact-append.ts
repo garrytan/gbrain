@@ -53,7 +53,6 @@ import { fenceRowOf, withHeldFactsFence, type FenceRowInput } from './unfenced-f
 import { rewriteVersionBodies } from './purge.ts';
 import { carriesClaimSql, claimNeedles } from './purge-verify.ts';
 import { withdrawnFact } from './withdrawal-overlay.ts';
-import { pruneHoldingPageVersions } from '../page-state/versions.ts';
 
 export type FenceFactAppendInput = {
   /** The facts row to publish; `row_num` and `source_markdown_slug` are the helper's. kind and visibility default as insertFacts does. */
@@ -88,10 +87,10 @@ export function requestReceiptFix(row: WriteRequest): Action {
 async function insertFenceFactRow(tx: BrainEngine, row: WriteRequest, rowNum: number, indexed: NewFact): Promise<number> {
   const inserted = await tx.insertFacts([{ ...indexed, row_num: rowNum, source_markdown_slug: row.slug }], { source_id: row.source_id }); // gbrain-allow-direct-insert: coordinator publication of a fence row this request's page file holds, after the file
   if (inserted.ids.length === 1) return inserted.ids[0];
-  const [occupant] = await tx.executeRaw<{ id: number }>('SELECT id FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num=$3', [row.source_id, row.slug, rowNum]);
+  const occupant = await tx.readFenceRowOccupant(row.source_id, row.slug, rowNum);
   throw opError('storage_error', 'The new canonical fact row was not indexed.',
     `The fact row for request ${row.request_id} in source ${row.source_id} was not indexed, so its transaction rolled back.`
-    + (occupant ? ` Row ${rowNum} of ${row.slug} is already held by fact ${occupant.id}.` : '')
+    + (occupant !== null ? ` Row ${rowNum} of ${row.slug} is already held by fact ${occupant}.` : '')
     + ' Inspect the request before submitting it again; if it repeats, run gbrain doctor --json and report it to the user.',
     { fix: requestReceiptFix(row) });
 }
@@ -191,7 +190,7 @@ export async function prepareFenceFactAppend(engine: BrainEngine, row: WriteRequ
   }
   return { prepared, rowNum, fencesNormalized, apply: async tx => {
     const pageReceipt = await withPageTierKept(tx, page, () => prepared.apply(tx));
-    if (snapshot && isHoldingSlug(row.slug) && !isSegmentedPage(snapshot.page)) await pruneHoldingPageVersions(tx, snapshot.page.id);
+    if (snapshot && isHoldingSlug(row.slug) && !isSegmentedPage(snapshot.page)) await tx.pruneHoldingPageVersions(snapshot.page.id);
     return { id: await insert(tx, rowNum, input.storedVisibility ? { ...fact, visibility: input.storedVisibility as NewFact['visibility'] } : fact), pageReceipt };
   } };
 }

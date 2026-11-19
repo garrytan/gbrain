@@ -192,6 +192,34 @@ describe('engine parity: versions', () => {
       return { none, latestIsV1, first, second, nothing, latestIsV3, missing, history, created: [v2, v3].map(v => (v as { change_reason?: string | null }).change_reason ?? null) };
     },
   );
+
+  parityTest(
+    'pruneHoldingPageVersions keeps the newest five versions, deletes the older ones and records the history gap',
+    { methods: ['putPage', 'getPage', 'createVersion', 'getVersions', 'pruneHoldingPageVersions', 'pickValidTimeEdition'] },
+    async (engine) => {
+      const slug = 'memory/unattributed';
+      const labels = new Map<string, string>();
+      await engine.putPage(slug, { type: 'note', title: 'Held', compiled_truth: 'Held body.', timeline: '', frontmatter: { valid_from: '2026-01-01' } });
+      for (let i = 1; i <= 8; i++) labels.set(String((await engine.createVersion(slug, { sourceId: 'default' })).id), `v${i}`);
+      const pageId = Number((await engine.getPage(slug, { sourceId: 'default' }))!.id);
+      const gap = async () => (await engine.pickValidTimeEdition({ pageId, asOf: '2026-07-01', excludePrivate: false, pinOrd: null, inlineMaxBytes: 1_000_000 }))?.gap_at instanceof Date;
+      const kept = async () => (await engine.getVersions(slug, { sourceId: 'default', includeBody: false })).map((v) => labels.get(String(v.id)) ?? 'unlabelled');
+      const gapBefore = await gap();
+      const pruned = await engine.pruneHoldingPageVersions(pageId);
+      const afterFirst = await kept();
+      const again = await engine.pruneHoldingPageVersions(pageId);
+      const unknown = await engine.pruneHoldingPageVersions(987_654);
+      await engine.putPage('notes/few', { type: 'note', title: 'Few', compiled_truth: 'Few.', timeline: '' });
+      await engine.createVersion('notes/few');
+      const fewId = Number((await engine.getPage('notes/few'))!.id);
+      const few = await engine.pruneHoldingPageVersions(fewId);
+      const result = { gapBefore, pruned, afterFirst, again, unknown, few, gapAfter: await gap(), fewVersions: (await engine.getVersions('notes/few')).length };
+      expect(result).toEqual({
+        gapBefore: false, pruned: 3, afterFirst: ['v8', 'v7', 'v6', 'v5', 'v4'], again: 0, unknown: 0, few: 0, gapAfter: true, fewVersions: 1,
+      });
+      return result;
+    },
+  );
 });
 
 describe('engine parity: raw data + files', () => {

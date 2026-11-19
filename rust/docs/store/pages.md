@@ -44,8 +44,13 @@ secondary indexes yet.
   the default. After a prune it sweeps the page's segments (`page_body.md`, "The sweep").
 - Each prune marks `successor_pruned` on the newest kept version before each pruned one and sets the page's
   `version_history_gap_at`. That page write leaves the knowledge revision as it was, so nothing is queued.
-- PGLite's holding-page prune (`pruneHoldingPageVersions`) runs only from a fact append's raw SQL, which the store
-  refuses, so it has no store counterpart.
+- `pruneHoldingPageVersions(pageId)` is the holding-page cap a fence fact append runs after its snapshot: it keeps the
+  page's newest `LARGE_PAGE_VERSIONS_KEPT` versions that are not segmented, deletes at most 100 of the older ones,
+  oldest first, marks the history as every prune does and answers how many it deleted (0 for an unknown page).
+- `restorePageTrust({ pageId, trustTier, writeOrigin })` sets back the tier and origin a fence append's page write
+  restamped (`src/core/trust/fence-append.ts`). It goes through the same trust stamp as the PGLite `UPDATE`: a lower
+  always lands, and a raise lands only under a promotion that covers it, else the stored tier stays. `writeOrigin` is
+  JSON text or null; a tier that is not a trust tier is refused.
 
 
 `putPage` follows PGLite:

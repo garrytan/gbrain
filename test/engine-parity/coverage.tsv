@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 630/630
+# covered: 633/633
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -27,7 +27,7 @@
 # contradictions: 5/5
 # facts: 15/15
 # segmented_body: 15/15
-# versions: 5/5
+# versions: 6/6
 # stats_ingest: 5/5
 # sync_aliases: 10/10
 # config: 6/6
@@ -42,7 +42,7 @@
 # cli_reads_ops: 7/7
 # facts_doctor: 10/10
 # fact_relink_attempts: 3/3
-# facts_cycle: 11/11
+# facts_cycle: 12/12
 # facts_purge: 13/13
 # facts_repair: 10/10
 # facts_trust: 8/8
@@ -60,7 +60,7 @@
 # field_usage: 1/1
 # alias_fanout_reads: 4/4
 # write_guards: 7/7
-# trust_fence: 1/1
+# trust_fence: 2/2
 # trust_proposals: 6/6
 # connect_gate: 4/4
 # jobs_wake: 19/19
@@ -70,15 +70,15 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	43	no	yes	yes	serves
+transaction	lifecycle	yes	44	no	yes	yes	serves
 transactionDirect	lifecycle	yes	1	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	75	yes	yes	yes	serves
+getPage	pages	yes	76	yes	yes	yes	serves
 readPageSnapshot	pages	yes	16	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	282	yes	yes	yes	serves
+putPage	pages	yes	284	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
@@ -318,10 +318,11 @@ sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
-createVersion	versions	yes	16	no	yes	yes	serves
-getVersions	versions	yes	7	no	yes	yes	serves
+createVersion	versions	yes	17	no	yes	yes	serves
+getVersions	versions	yes	8	no	yes	yes	serves
 readLatestVersionId	versions	yes	1	no	yes	yes	serves
 stampVersionChangeReason	versions	yes	1	no	yes	yes	serves
+pruneHoldingPageVersions	versions	yes	1	no	yes	yes	serves
 revertToVersion	versions	yes	2	no	yes	yes	serves
 countOnboardSignal	stats_ingest	yes	1	no	yes	yes	serves
 getStats	stats_ingest	yes	4	yes	yes	yes	serves
@@ -350,7 +351,7 @@ readPersistenceBrainId	import_guards	yes	2	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	9	no	yes	yes	serves
-applyTransactionSettings	import_guards	yes	24	no	yes	yes	serves
+applyTransactionSettings	import_guards	yes	25	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readLedgerSource	import_guards	yes	8	no	yes	yes	serves
 isFolderRestricted	import_guards	yes	3	no	yes	yes	serves
@@ -526,11 +527,12 @@ listActiveFactsForEntity	facts_cycle	yes	1	no	yes	yes	serves
 listFreshExtractionOutcomes	facts_cycle	yes	1	no	yes	yes	serves
 listFenceRowGroups	facts_cycle	yes	1	no	yes	yes	serves
 readFactSubject	facts_cycle	yes	1	no	yes	yes	serves
-listFactsForPage	facts_cycle	yes	1	no	yes	yes	serves
+listFactsForPage	facts_cycle	yes	2	no	yes	yes	serves
 countLegacyFactsPending	facts_cycle	yes	1	no	yes	yes	serves
 countUnconsolidatedFactsBySource	facts_cycle	yes	1	no	yes	yes	serves
 findBulkFactDays	facts_cycle	yes	1	no	yes	yes	serves
 maxFenceRowNum	facts_cycle	yes	1	no	yes	yes	serves
+readFenceRowOccupant	facts_cycle	yes	1	no	yes	yes	serves
 listStoredFenceFactRows	facts_cycle	yes	1	no	yes	yes	serves
 countWorldFacts	facts_cycle	yes	4	no	yes	yes	serves
 countFactFingerprintLeftovers	facts_purge	yes	1	no	yes	yes	serves
@@ -572,7 +574,7 @@ listVisibleBeliefLifetimes	trust_tier_reads	yes	1	no	yes	yes	serves
 listVersionTrustTiers	trust_tier_reads	yes	1	no	yes	yes	serves
 listVersionReasonWriters	trust_tier_reads	yes	1	no	yes	yes	serves
 listValidTimeIdentities	trust_tier_reads	yes	2	no	yes	yes	serves
-pickValidTimeEdition	trust_tier_reads	yes	6	no	yes	yes	serves
+pickValidTimeEdition	trust_tier_reads	yes	7	no	yes	yes	serves
 listAmendmentsNotApplied	trust_tier_reads	yes	1	no	yes	yes	serves
 readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
@@ -625,7 +627,7 @@ hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
 readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves
 listGuestSourceIds	cli_reads_import	yes	1	no	yes	yes	serves
 hasGuestSource	cli_reads_import	yes	1	no	yes	yes	serves
-readPageTrustRows	cli_reads_import	yes	8	no	yes	yes	serves
+readPageTrustRows	cli_reads_import	yes	9	no	yes	yes	serves
 readDatabaseClock	cli_reads_import	yes	1	no	yes	yes	serves
 listLinkPageMetadata	cli_reads_import	yes	1	no	yes	yes	serves
 listStoredTimelineRows	cli_reads_import	yes	4	no	yes	yes	serves
@@ -666,6 +668,7 @@ stampPageIngest	write_guards	yes	1	no	yes	yes	serves
 sealImportedPage	write_guards	yes	1	no	yes	yes	serves
 readLivePageBody	write_guards	yes	1	no	yes	yes	serves
 listFenceFactRows	trust_fence	yes	4	no	yes	yes	serves
+restorePageTrust	trust_fence	yes	1	no	yes	yes	serves
 insertTrustProposal	trust_proposals	yes	4	no	yes	yes	serves
 getTrustProposal	trust_proposals	yes	2	no	yes	yes	serves
 listTrustProposals	trust_proposals	yes	2	no	yes	yes	serves

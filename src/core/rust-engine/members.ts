@@ -143,6 +143,7 @@ export const RUST_ENGINE_MEMBERS = {
   getVersions: 'page_versions',
   readLatestVersionId: 'page_versions',
   stampVersionChangeReason: 'page_versions',
+  pruneHoldingPageVersions: 'page_versions',
   revertToVersion: 'page_versions',
   // page_body
   refreshPageBody: 'page_body',
@@ -317,6 +318,7 @@ export const RUST_ENGINE_MEMBERS = {
   countUnconsolidatedFacts: 'facts',
   listFenceRetireCandidates: 'facts',
   listFenceFactRows: 'facts',
+  restorePageTrust: 'pages',
   findCandidateDuplicates: 'facts',
   consolidateFact: 'facts',
   findTrajectory: 'facts',
@@ -349,6 +351,7 @@ export const RUST_ENGINE_MEMBERS = {
   countUnconsolidatedFactsBySource: 'facts',
   findBulkFactDays: 'facts',
   maxFenceRowNum: 'facts',
+  readFenceRowOccupant: 'facts',
   listStoredFenceFactRows: 'facts',
   countWorldFacts: 'facts',
 

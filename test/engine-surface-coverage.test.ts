@@ -117,7 +117,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'countUnlinkedFactsByOrigin', 'countUnlinkedFactStats', 'countFactRelinkOutcomes', 'listUnlinkedConversationSlugs', 'countFactEmbeddingCoverage',
   'upsertFactRelinkAttempt', 'listFactRelinkOutcomes', 'deleteFactRelinkMemos',
   'listActiveFactsForEntity', 'listFreshExtractionOutcomes', 'listFenceRowGroups', 'readFactSubject', 'listFactsForPage', 'countLegacyFactsPending',
-  'countUnconsolidatedFactsBySource', 'findBulkFactDays', 'maxFenceRowNum', 'listStoredFenceFactRows', 'countWorldFacts',
+  'countUnconsolidatedFactsBySource', 'findBulkFactDays', 'maxFenceRowNum', 'readFenceRowOccupant', 'listStoredFenceFactRows', 'countWorldFacts',
   'countFactFingerprintLeftovers', 'loadPurgeTarget', 'planFactPurgeIds', 'listFactsReconcileBacklog', 'listRelinkCandidateRows',
   'countRelinkCandidates', 'listSimilarActiveFacts', 'findActiveSingleFact', 'listSingleFactMetadata', 'listUnfencedFactRows',
   'listHeldFenceFactRows', 'listWithdrawalSlugs', 'expireFactsByWithdrawal', 'loopFactDrift', 'closedLoopWithActiveFact',
@@ -148,7 +148,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // Page write guards (engine-sql/write-guards.ts).
   'readPageOrigin', 'listOriginClaims', 'bindPageOrigin', 'stampPageIngest', 'sealImportedPage', 'readLivePageBody', 'hasSegmentStorage',
   // The fence guard's reads of a page's fact rows (engine-sql/facts.ts, engine-sql/trust-fence.ts).
-  'listFenceRetireCandidates', 'listFenceFactRows',
+  'listFenceRetireCandidates', 'listFenceFactRows', 'restorePageTrust',
   // The trust decision queue (engine-sql/trust-proposals.ts).
   'insertTrustProposal', 'getTrustProposal', 'listTrustProposals', 'pendingTrustProposalsFor', 'updatePendingTrustProposalAfter',
   'transitionTrustProposal',
@@ -193,7 +193,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'listFactsSince', 'listFactsKeyset', 'listFactsBySession', 'listSupersessions', 'countUnconsolidatedFacts',
   'findCandidateDuplicates', 'consolidateFact', 'findTrajectory', 'getFactsHealth',
   // Versions
-  'createVersion', 'getVersions', 'revertToVersion', 'readLatestVersionId', 'stampVersionChangeReason',
+  'createVersion', 'getVersions', 'revertToVersion', 'readLatestVersionId', 'stampVersionChangeReason', 'pruneHoldingPageVersions',
   // Stats + health + ingest log
   'getStats', 'getHealth', 'logIngest', 'getIngestLog',
   // Sync + aliases + narrow updates

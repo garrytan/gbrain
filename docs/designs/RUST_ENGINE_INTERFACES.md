@@ -1739,7 +1739,9 @@ and write provenance on content rows, and the trust records.
     fuzzy `get_page` and export transactions as one `REPEATABLE READ` snapshot; the Rust member sets no isolation level, because a
     store transaction holds the one writer from its start, and it enforces `READ ONLY` with Postgres's `25006` refusal. It refuses the takes and timeline
     scan tables, and the belief history members refuse for the missing belief ledger (TODOS.md `rust-belief-ledger`).
-    The store prunes versions as PGLite does (`version_prune.rs`), so the pick reads the same marks.
+    The store prunes versions as PGLite does (`version_prune.rs`), so the pick reads the same marks, and it serves the
+    fence fact append's holding-page prune (`pruneHoldingPageVersions`), its occupied-row read (`readFenceRowOccupant`)
+    and its page tier restore (`restorePageTrust`, through the same trust stamp as the PGLite `UPDATE`).
   - `resolveAliases` serves the floor, the flagged-page filter and `excludePrivate` on both the alias page and its
     title shadow (`alias-trust.test.ts`); it still refuses `excludePrivate` for a caller whose member pages, grants or
     lineage widen the page policy, and the search fan-out reads that refusal as no aliases.

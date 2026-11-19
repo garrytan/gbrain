@@ -423,7 +423,7 @@ src/core/facts/conversation-relink.ts	execute_raw	5	GBRA-574 F #9674 (opened bef
 src/core/facts/derivation-inputs.ts	execute_raw	6
 src/core/facts/embedding-identity.ts	execute_raw	2
 src/core/facts/facts-home.ts	execute_raw	4
-src/core/facts/fence-fact-append.ts	execute_raw	2
+src/core/facts/fence-fact-append.ts	execute_raw	1
 src/core/facts/fence-write.ts	execute_raw	2
 src/core/facts/file-body-guard.ts	execute_raw	2
 src/core/facts/forget.ts	execute_raw	4
@@ -625,7 +625,7 @@ src/core/page-state/rebuild-estimate.ts	execute_raw	1
 src/core/page-state/rename-alias.ts	execute_raw	10
 src/core/page-state/revision-backfill-schema.ts	execute_raw	12
 src/core/page-state/tags.ts	execute_raw	3
-src/core/page-state/versions.ts	execute_raw	9
+src/core/page-state/versions.ts	execute_raw	6
 src/core/page-window/bounded-lead.ts	execute_raw	2
 src/core/page-window/segmented.ts	execute_raw	5
 src/core/pages-upsert-arbiter.ts	execute_raw	6
@@ -1063,7 +1063,6 @@ src/core/trust/backfill.ts	execute_raw	15
 src/core/trust/channel.ts	execute_raw	1
 src/core/trust/claim.ts	execute_raw	9
 src/core/trust/derived-gate.ts	execute_raw	1
-src/core/trust/fence-append.ts	execute_raw	3
 src/core/trust/fence-guard.ts	execute_raw	8
 src/core/trust/held-removals.ts	execute_raw	4
 src/core/trust/label-lowerings.ts	execute_raw	1

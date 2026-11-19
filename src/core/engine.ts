@@ -41,7 +41,7 @@ import type { TimelineDetailRefresh, TimelineRowRemoval } from './engine-sql/tim
 import type { TakeFenceRow } from './engine-sql/takes.ts';
 import type { CodeTraversalCacheClear, CodeTraversalCacheKey, CodeTraversalCacheRow } from './engine-sql/code-traversal-cache.ts';
 import type { FactPreimage, FenceProjectionTarget } from './engine-sql/facts.ts';
-import type { FenceFactRow, FenceRowsTarget } from './engine-sql/trust-fence.ts';
+import type { FenceFactRow, FenceRowsTarget, PageTrustRestore } from './engine-sql/trust-fence.ts';
 import type { TrustTable } from './trust/schema.ts';
 import type { NewTrustProposal, TrustProposalFilter, TrustProposalRow, TrustProposalStatus, TrustProposalTransition } from './engine-sql/trust-proposals.ts';
 import type { GraduationGateRow, ManagedRootBindingRow, PersistenceTable, RetiredDeactivationRow } from './engine-sql/connect-gate.ts';
@@ -2888,6 +2888,11 @@ export interface BrainEngine {
   /** Sets `change_reason` on the page's versions with an id over `afterVersionId`; answers how many took it. */
   stampVersionChangeReason(spec: { pageId: number; afterVersionId: number; reason: string }): Promise<number>;
   /**
+   * GST-2497 (engine-sql/version-prune.ts): keeps a holding page's newest LARGE_PAGE_VERSIONS_KEPT inline versions, deletes
+   * at most HOLDING_PAGE_VERSIONS_PRUNED_PER_WRITE older ones, marks the history it cut; answers how many it deleted.
+   */
+  pruneHoldingPageVersions(pageId: number): Promise<number>;
+  /**
    * v0.31.8 (D12): `opts.sourceId` source-scopes both the version lookup
    * and the page revert. Without it, multi-source brains can revert the
    * wrong row when the slug exists in 2+ sources.
@@ -3033,6 +3038,11 @@ export interface BrainEngine {
    * fence still asks to widen, or opened by `gbrain repair open-facts`. Each row carries its stored `trust_tier`.
    */
   listFenceFactRows(target: FenceRowsTarget): Promise<FenceFactRow[]>;
+  /**
+   * A fence append's restore (trust/fence-append.ts withPageTierKept, engine-sql/trust-fence.ts): sets the page's
+   * trust_tier and write_origin back. The tier trigger still applies, so a raise needs the caller's promotion.
+   */
+  restorePageTrust(spec: PageTrustRestore): Promise<void>;
   /**
    * Trust decisions (engine-sql/trust-proposals.ts): inserts a pending proposal, or returns the pending one already recorded
    * for the same (action, target, related) with `created: false`. The proposer principal and request come from the
@@ -3229,6 +3239,8 @@ export interface BrainEngine {
   findBulkFactDays(sourceIds: string[] | undefined, rule: FactsCycleSql.BulkDayRule): Promise<FactsCycleSql.BulkDayRow[]>;
   /** The largest `row_num` of a page coordinate's facts, 0 for none. */
   maxFenceRowNum(sourceId: string, slug: string): Promise<number>;
+  /** The id of the facts row that holds `rowNum` at a page coordinate (the oldest when several do), or null. */
+  readFenceRowOccupant(sourceId: string, slug: string, rowNum: number): Promise<number | null>;
   /** The page coordinate's facts that hold a row number, oldest id first. */
   listStoredFenceFactRows(sourceId: string, slug: string): Promise<FactsCycleSql.StoredFenceFactRow[]>;
   /** The entity card's exact active-fact count under its visibility, privacy and read eligibility. */

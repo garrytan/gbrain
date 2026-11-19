@@ -1,6 +1,7 @@
 /**
  * Page version members (BrainEngine createVersion, getVersions, and the change-reason pair readLatestVersionId and
- * stampVersionChangeReason, engine-sql/version-reasons.ts). A segmented page's snapshot references its body
+ * stampVersionChangeReason, engine-sql/version-reasons.ts, and the holding-page cap pruneHoldingPageVersions,
+ * engine-sql/version-prune.ts). A segmented page's snapshot references its body
  * generation and keeps content_hash, as insertSegmentedVersion does. A version keeps the reason a write stamped on it:
  * getVersions reads it as `replaced_because` (the trusted read; `excludePrivate` is refused). `revertToVersion` is not
  * served: it reads pages through raw SQL.
@@ -34,6 +35,13 @@ export const readLatestVersionId: StoreMember<[pageId: number], number | null> =
   const member = 'readLatestVersionId';
   requireInteger(member, 'page id', pageId);
   return storeCall({ member }, () => brain.readLatestVersionId(pageId));
+};
+
+/** GST-2497: the holding-page version cap the fence fact append runs (engine-sql/version-prune.ts); answers how many it deleted. */
+export const pruneHoldingPageVersions: StoreMember<[pageId: number], number> = async (brain, pageId) => {
+  const member = 'pruneHoldingPageVersions';
+  requireInteger(member, 'page id', pageId);
+  return storeCall({ member }, () => brain.pruneHoldingPageVersions(pageId));
 };
 
 export const stampVersionChangeReason: StoreMember<[spec: { pageId: number; afterVersionId: number; reason: string }], number> = async (brain, spec) => {

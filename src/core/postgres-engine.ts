@@ -205,6 +205,7 @@ import * as jobsSubagent from './engine-sql/jobs-subagent.ts';
 import * as takesReads from './engine-sql/takes-reads.ts';
 import * as trustTierReads from './engine-sql/trust-tier-reads.ts';
 import * as versionReasons from './engine-sql/version-reasons.ts';
+import * as versionPrune from './engine-sql/version-prune.ts';
 import type {
   CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobTokenCounts, PruneJobsSpec, RetryJobPolicy,
   SynthesisCompletionPrefix,
@@ -1173,6 +1174,7 @@ export class PostgresEngine implements BrainEngine {
   countUnconsolidatedFactsBySource(opts: { sourceId?: string; worldOnly: boolean; minPerBucket: number }) { return factsCycleImpl.countUnconsolidatedFactsBySource(this.executeRaw.bind(this), opts); }
   findBulkFactDays(sourceIds: string[] | undefined, rule: factsCycleImpl.BulkDayRule) { return factsCycleImpl.findBulkFactDays(this.executeRaw.bind(this), sourceIds, rule); }
   maxFenceRowNum(sourceId: string, slug: string) { return factsCycleImpl.maxFenceRowNum(this.executeRaw.bind(this), sourceId, slug); }
+  readFenceRowOccupant(sourceId: string, slug: string, rowNum: number) { return factsCycleImpl.readFenceRowOccupant(this.executeRaw.bind(this), sourceId, slug, rowNum); }
   listStoredFenceFactRows(sourceId: string, slug: string) { return factsCycleImpl.listStoredFenceFactRows(this.executeRaw.bind(this), sourceId, slug); }
   countWorldFacts(opts: factsCycleImpl.EntityFactCountOpts) { return factsCycleImpl.countWorldFacts(this.executeRaw.bind(this), opts); }
 
@@ -3003,6 +3005,7 @@ export class PostgresEngine implements BrainEngine {
   }
   async readLatestVersionId(pageId: number) { return versionReasons.readLatestVersionId(this, pageId); }
   async stampVersionChangeReason(spec: { pageId: number; afterVersionId: number; reason: string }) { return versionReasons.stampVersionChangeReason(this, spec); }
+  async pruneHoldingPageVersions(pageId: number) { return versionPrune.pruneHoldingPageVersions(this, pageId); }
 
   async revertToVersion(
     slug: string,
@@ -3179,6 +3182,7 @@ export class PostgresEngine implements BrainEngine {
   sealImportedPage(slug: string, seal: writeGuardsImpl.ImportedPageSeal) { return writeGuardsImpl.sealImportedPage(this.autocommitSql, slug, seal); }
   readLivePageBody(slug: string, opts: { sourceId: string }) { return this.preparationRead(exec => writeGuardsImpl.readLivePageBody(unscopedExecutor(exec, 'valid-time advisory: page body read ran unscoped through executeRaw'), slug, opts)); }
   listFenceFactRows(target: trustFenceImpl.FenceRowsTarget) { return trustFenceImpl.listFenceFactRows(unscopedExecutor(this.engineSql, 'fence guard: locking fact read ran unscoped through executeRaw'), target); }
+  async restorePageTrust(spec: trustFenceImpl.PageTrustRestore) { return trustFenceImpl.restorePageTrust(this, spec); }
   insertTrustProposal(input: trustProposalsImpl.NewTrustProposal) { return trustProposalsImpl.insertTrustProposal(this.engineSql, input); }
   getTrustProposal(id: number, lock = false) { return trustProposalsImpl.getTrustProposal(unscopedExecutor(this.engineSql, 'trust: the trust proposal read ran through executeRaw unscoped'), id, lock); }
   listTrustProposals(filter: trustProposalsImpl.TrustProposalFilter = {}) { return trustProposalsImpl.listTrustProposals(unscopedExecutor(this.engineSql, 'trust: the trust proposal read ran through executeRaw unscoped'), filter); }

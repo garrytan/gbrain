@@ -99,7 +99,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   segmented_body: ['allocateBodyOccurrenceIds', 'stageSegmentTexts', 'readSegmentTexts', 'stageManifestRows', 'readManifest',
     'stageSegmentChunks', 'createSegmentedPageShell', 'flipBodyGeneration', 'sealSegmentedPage', 'openBodyStaging', 'setBodyStagingState', 'sweepSegments',
     'readSegmentDerivations', 'upsertSegmentDerivations', 'retireSegmentDerivations'],
-  versions: ['createVersion', 'getVersions', 'revertToVersion', 'readLatestVersionId', 'stampVersionChangeReason'],
+  versions: ['createVersion', 'getVersions', 'revertToVersion', 'readLatestVersionId', 'stampVersionChangeReason', 'pruneHoldingPageVersions'],
   stats_ingest: ['getStats', 'getHealth', 'countOnboardSignal', 'logIngest', 'getIngestLog'],
   sync_aliases: ['updateSlug', 'rewriteLinks', 'resolveSlugWithAlias', 'resolveSlugWithAliasDetailed', 'resolveAliases',
     'setPageAliases', 'replaceDerivedAliases', 'refreshPageBody', 'updatePageContextualRetrievalState', 'migrateFactsToCanonical'],
@@ -151,7 +151,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
 
   // facts_cycle: command, cycle and fence reads
   facts_cycle: ['listActiveFactsForEntity', 'listFreshExtractionOutcomes', 'listFenceRowGroups', 'readFactSubject', 'listFactsForPage', 'countLegacyFactsPending',
-    'countUnconsolidatedFactsBySource', 'findBulkFactDays', 'maxFenceRowNum', 'listStoredFenceFactRows', 'countWorldFacts'],
+    'countUnconsolidatedFactsBySource', 'findBulkFactDays', 'maxFenceRowNum', 'readFenceRowOccupant', 'listStoredFenceFactRows', 'countWorldFacts'],
 
   // facts_purge: purge, withdrawal, relink and fence repair
 
@@ -207,7 +207,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   alias_fanout_reads: ['findPagesByTitles', 'resolveCaseSensitiveAliases', 'readPageTitle', 'readPageAliasRows'],
   write_guards: ['readPageOrigin', 'listOriginClaims', 'bindPageOrigin', 'stampPageIngest', 'sealImportedPage', 'readLivePageBody',
     'hasSegmentStorage'],
-  trust_fence: ['listFenceFactRows'],
+  trust_fence: ['listFenceFactRows', 'restorePageTrust'],
   trust_proposals: ['insertTrustProposal', 'getTrustProposal', 'listTrustProposals', 'pendingTrustProposalsFor',
     'updatePendingTrustProposalAfter', 'transitionTrustProposal'],
   connect_gate: ['hasPersistenceTable', 'listManagedRootBindings', 'readGraduationGateRow', 'listRetiredDeactivations'],
