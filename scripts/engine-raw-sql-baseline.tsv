@@ -459,7 +459,6 @@ src/core/generations/adapters/extracted-facts.ts	execute_raw	4
 src/core/generations/adapters/page.ts	execute_raw	2
 src/core/generations/adapters/single-page.ts	execute_raw	1
 src/core/generations/adapters/synthesis.ts	execute_raw	1
-src/core/generations/adapters/take-rows.ts	execute_raw	2
 src/core/ghost-pages.ts	execute_raw	3
 src/core/git/untrack-admission.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/github-source.ts	execute_raw	3

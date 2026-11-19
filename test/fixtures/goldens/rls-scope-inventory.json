@@ -4180,6 +4180,28 @@
         ],
         "flagOnScopes": []
       },
+      "readTakePreimages#by-id": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readTakePreimages#by-row": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readTopologyChange#default": {
         "flagOffLanes": [
           "pool"
@@ -6140,6 +6162,7 @@
         "readSourceRow": "none",
         "readSourceState": "none",
         "readStoredBodyBytes": "none",
+        "readTakePreimages": "none",
         "readTopologyChange": "none",
         "readTransaction": "none",
         "readTransactionSettings": "none",

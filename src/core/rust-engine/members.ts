@@ -791,6 +791,7 @@ export const RUST_ENGINE_MEMBERS = {
   countTakes: 'takes',
   planFactPurgeTakes: 'takes',
   listTakeRowsForPage: 'takes',
+  readTakePreimages: 'takes',
   countMcpResolvedTakes: 'takes',
   listTakeSupersessionCandidates: 'takes',
   countZeroWeightWithTakes: 'salience',

@@ -4,7 +4,7 @@
  * never heap order), jsonb number text as Postgres keeps it (`1.0`, `1.50`, `1.00` for `100e-2`) in the text scrub, a
  * JSON `null` held context, proposal or fence as a value (not SQL NULL), an activation id that is not a uuid, a
  * `--since` that is not an ISO instant with a zone, the fact before-states the fact rows adapter records and puts back,
- * and the consolidation adapter's restored check and `tie` hold clear.
+ * the consolidation adapter's restored check and `tie` hold clear, and the take rows adapter's before-states.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each case gives the same answer on PGLite, Postgres (en_US collation) and the Rust engine. Source ids
@@ -31,6 +31,7 @@ import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { submissionAuthority } from '../../src/core/persistence/authority.ts';
 import { registerLocalWriter } from '../../src/core/persistence/identity.ts';
 import { admitWrite } from '../../src/core/persistence/journal.ts';
+import { takePreimages } from '../../src/core/generations/adapters/take-rows.ts';
 import { CONSOLIDATION_KIND, clearConsolidationTies, consolidationOwnerKey, consolidationRestored, factPreimages, restoreFactRow }
   from '../../src/core/generations/adapters/fact-rows.ts';
 
@@ -364,6 +365,50 @@ describe('engine parity: generation ledger output', () => {
       'default fact-fence entity:people/tie-example:cluster:7,8 tie',
       'other-ties consolidation entity:people/tie-example:cluster:9,10 tie',
     ] });
+    return answers;
+  });
+
+  parityTest('the take rows adapter reads the full before-state of each gone or replaced take, once per joined row, by row number', {
+    methods: ['putPage', 'addTakesBatch', 'listTakes', 'resolveTake', 'readTakePreimages'],
+  }, async (engine) => {
+    const page = await engine.putPage('people/take-preimage-example', { type: 'person', title: 't', compiled_truth: 'x', timeline: '' });
+    const other = await engine.putPage('people/take-preimage-other', { type: 'person', title: 'o', compiled_truth: 'x', timeline: '' });
+    const take = (page_id: number, row_num: number, claim: string, extra: Record<string, unknown> = {}) => ({ page_id, row_num, claim, kind: 'take', holder: 'garry', ...extra });
+    await engine.addTakesBatch([take(page.id, 3, 'third', { weight: 0.7, since_date: '2026-01-10', source: 'meeting' }), take(page.id, 1, 'first'),
+      take(page.id, 2, 'second', { kind: 'bet', weight: 0.35 }), take(other.id, 1, 'elsewhere')] as never);
+    await engine.resolveTake(page.id, 2, { quality: 'incorrect', value: 0.125, unit: 'pct', source: 'report', resolvedBy: 'garry' });
+    const rows = [...(await engine.listTakes({ page_id: page.id, active: true })), ...(await engine.listTakes({ page_id: page.id, active: false }))];
+    const idOf = new Map(rows.map(row => [row.claim, row.id]));
+    const claimOf = new Map(rows.map(row => [row.id, row.claim]));
+    const shown = (preimage: Record<string, unknown>): Record<string, unknown> => {
+      expect(typeof preimage.resolved_at === 'string' ? /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?\+00:00$/.test(preimage.resolved_at) : preimage.resolved_at === null).toBe(true);
+      return { ...preimage, id: claimOf.get(Number(preimage.id)) ?? '<unknown-id>', page_id: preimage.page_id === page.id ? 'page' : preimage.page_id,
+        resolved_at: preimage.resolved_at === null ? null : 'set' };
+    };
+    const incoming = (row_num: number, claim: string, kind = 'take', holder = 'garry') => ({ rowNum: row_num, claim, kind, holder });
+    const adapter = await takePreimages(engine, page.id, [idOf.get('first')!], [incoming(3, 'changed'), incoming(2, 'second', 'bet'), incoming(9, 'new')]);
+    const byRow = await engine.readTakePreimages({ pageId: page.id, by: 'row_num', gone: [1, 2],
+      incoming: [{ row_num: 1, claim: 'first', kind: 'take', holder: 'garry' }, { row_num: 1, claim: 'x', kind: 'take', holder: 'garry' },
+        { row_num: 3, claim: 'third', kind: 'take', holder: 'someone' }] });
+    const answers = {
+      gone: adapter.gone.map(row => shown(row as unknown as Record<string, unknown>)),
+      replaced: adapter.replaced.map(row => shown(row as unknown as Record<string, unknown>)),
+      byRow: byRow.map(row => ({ claim: row.preimage.claim, gone: row.gone })),
+      resolved: shown(byRow.find(row => row.preimage.row_num === 2)!.preimage as unknown as Record<string, unknown>),
+      none: await takePreimages(engine, page.id, [], []),
+      otherPage: (await engine.readTakePreimages({ pageId: other.id, by: 'id', gone: [idOf.get('first')!], incoming: [] })).length,
+      fraction: await outcome(() => engine.readTakePreimages({ pageId: page.id, by: 'row_num', gone: [1.5], incoming: [] }), /take row numbers must be whole numbers in range: 1\.5/),
+    };
+    expect(answers.gone.map(row => row.claim)).toEqual(['first']);
+    expect(answers.replaced).toEqual([{ id: 'third', page_id: 'page', row_num: 3, claim: 'third', kind: 'take', holder: 'garry', weight: 0.7, since_date: '2026-01-10',
+      until_date: null, source: 'meeting', superseded_by: null, active: true, resolved_at: null, resolved_outcome: null, resolved_value: null, resolved_unit: null,
+      resolved_source: null, resolved_by: null, resolved_quality: null }]);
+    expect(answers.byRow).toEqual([{ claim: 'first', gone: true }, { claim: 'first', gone: true }, { claim: 'second', gone: true }, { claim: 'third', gone: false }]);
+    expect(answers.resolved).toMatchObject({ kind: 'bet', weight: 0.35, resolved_at: 'set', resolved_outcome: false, resolved_value: 0.125, resolved_unit: 'pct',
+      resolved_source: 'report', resolved_by: 'garry', resolved_quality: 'incorrect' });
+    expect(answers.none).toEqual({ gone: [], replaced: [] });
+    expect(answers.otherPage).toBe(0);
+    expect(answers.fraction).toBe('take row numbers must be whole numbers in range: 1.5');
     return answers;
   });
 });
