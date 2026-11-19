@@ -318,6 +318,8 @@ describe('engine parity: spend ledger and client budgets', () => {
       await engine.insertOauthClient(client('e-client', { client_name: 'echo', scope: 'read', bound_tools: ['get_page'], deleted_at: new Date('2024-01-01T00:00:00Z') }));
       await engine.insertOauthClient(client('f-client', { client_name: 'alpha', scope: 'agentic', bound_tools: ['query'] }));
       await engine.insertOauthClient(client('g-client', { client_name: 'golf', scope: 'read agentic' }));
+      // An upper-case name sorts first in byte order and last under a locale collation.
+      await engine.insertOauthClient(client('h-client', { client_name: 'Zulu', scope: 'read', bound_tools: ['get_page'] }));
       await engine.insertSpendLog({ client_id: 'b-client', token_name: null, operation: 'x', spend_cents: 1.25, provider: null, model: null });
       await engine.insertSpendLog({ client_id: 'b-client', token_name: null, operation: 'x', spend_cents: 0.5, provider: null, model: null });
       await engine.insertSpendLog({ client_id: 'd-client', token_name: null, operation: 'x', spend_cents: 4, provider: null, model: null });

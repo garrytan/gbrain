@@ -287,7 +287,7 @@ export interface AgentClientSpendRow {
 
 /**
  * Per live client that holds the `agent` scope or is bound to tools: its cap, today's (UTC) ledger sum, its unresolved
- * holds and how many are of unknown usage, and its open `subagent` jobs. By client name, then client id.
+ * holds and how many are of unknown usage, and its open `subagent` jobs. By client name, then client id, in byte order (`COLLATE "C"`, as the Rust store sorts).
  */
 export async function readAgentClientSpend(tx: Raw): Promise<AgentClientSpendRow[]> {
   const rows = await tx.executeRaw<{
@@ -322,7 +322,7 @@ export async function readAgentClientSpend(tx: Raw): Promise<AgentClientSpendRow
      FROM oauth_clients c
      WHERE c.deleted_at IS NULL
        AND ('agent' = ANY (string_to_array(c.scope, ' ')) OR c.bound_tools IS NOT NULL)
-     ORDER BY c.client_name ASC, c.client_id ASC`);
+     ORDER BY c.client_name COLLATE "C" ASC, c.client_id COLLATE "C" ASC`);
   return rows.map(r => ({
     client_id: String(r.client_id),
     client_name: String(r.client_name ?? r.client_id),
