@@ -130,7 +130,6 @@ src/commands/dream-retriage.ts	execute_raw	3
 src/commands/edge-proposals.ts	execute_raw	6
 src/commands/edges-backfill.ts	execute_raw	1
 src/commands/embed.ts	execute_raw	1
-src/commands/embeddings.ts	execute_raw	1
 src/commands/engine-status.ts	execute_raw	1
 src/commands/eval-suspected-contradictions.ts	execute_raw	1
 src/commands/eval-whoknows.ts	execute_raw	1
@@ -226,20 +225,18 @@ src/commands/trust.ts	execute_raw	1
 src/commands/upgrade.ts	execute_raw	1
 src/core/access/actor.ts	execute_raw	7
 src/core/access/attest-sources.ts	sql_template	8
-src/core/access/caller.ts	execute_raw	5
 src/core/access/federation-exposure.ts	execute_raw	1
 src/core/access/implicit-placement.ts	execute_raw	1	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/core/access/labelled-only.ts	execute_raw	4
 src/core/access/member-facts.ts	execute_raw	2	GST-2897 B (#9670, opened before this ratchet): one access_members lookup to see whether the member a share is about is enabled; no typed engine method exists yet
 src/core/access/member-sources.ts	execute_raw	8
-src/core/access/members.ts	execute_raw	25
+src/core/access/members.ts	execute_raw	23
 src/core/access/members.ts	sql_template	1
 src/core/access/open-pages.ts	execute_raw	8	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/core/access/open-twins.ts	execute_raw	1
 src/core/access/owner.ts	execute_raw	1
 src/core/access/policy-migrate.ts	execute_raw	4
 src/core/access/policy-transfer.ts	execute_raw	1
-src/core/access/policy.ts	execute_raw	31
 src/core/access/requester-scope.ts	execute_raw	4
 src/core/access/room.ts	execute_raw	2
 src/core/access/serves.ts	execute_raw	1
@@ -257,7 +254,6 @@ src/core/attendance-repair.ts	execute_raw	17
 src/core/backfill-base.ts	execute_raw	12
 src/core/backfill-effective-date.ts	execute_raw	3
 src/core/backfill-skips.ts	execute_raw	2
-src/core/backup/coverage.ts	execute_raw	2
 src/core/backup/quarantine.ts	execute_raw	9
 src/core/backup/snapshot.ts	execute_raw	5
 src/core/belief/append.ts	execute_raw	7
@@ -369,7 +365,6 @@ src/core/destructive-guard.ts	execute_raw	17
 src/core/eligibility/activation.ts	execute_raw	1
 src/core/eligibility/explain.ts	execute_raw	3
 src/core/eligibility/fence-overlay.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
-src/core/eligibility/generation.ts	execute_raw	1
 src/core/eligibility/scan.ts	execute_raw	4
 src/core/eligibility/stamp.ts	execute_raw	1
 src/core/embed-backfill-stall.ts	execute_raw	1
@@ -380,7 +375,7 @@ src/core/embed-stale-images.ts	execute_raw	2
 src/core/embed-stale.ts	execute_raw	3
 src/core/embed-takes.ts	execute_raw	1
 src/core/embedding-ann-build.ts	execute_raw	8
-src/core/embedding-dim-check.ts	execute_raw	4
+src/core/embedding-dim-check.ts	execute_raw	2
 src/core/embedding-invalidation.ts	execute_raw	8
 src/core/embedding-migration-budget.ts	execute_raw	2
 src/core/embedding-migration-retention.ts	execute_raw	6
@@ -417,7 +412,7 @@ src/core/facts/conversation-publication.ts	execute_raw	24
 src/core/facts/conversation-relink-carry.ts	execute_raw	1
 src/core/facts/conversation-relink.ts	execute_raw	2	GBRA-574 F #9674 (opened before this ratchet): +1 the relink --unbacked read of name-tag rows
 src/core/facts/derivation-inputs.ts	execute_raw	6
-src/core/facts/embedding-identity.ts	execute_raw	2
+src/core/facts/embedding-identity.ts	execute_raw	1
 src/core/facts/facts-home.ts	execute_raw	4
 src/core/facts/fence-fact-append.ts	execute_raw	2
 src/core/facts/fence-write.ts	execute_raw	2
@@ -426,7 +421,6 @@ src/core/facts/forget.ts	execute_raw	4
 src/core/facts/fts-index.ts	execute_raw	3
 src/core/facts/gone-page-facts.ts	execute_raw	4
 src/core/facts/held-fact-move.ts	execute_raw	12
-src/core/facts/meta-hook.ts	execute_raw	1
 src/core/facts/ontology-rekey.ts	execute_raw	4
 src/core/facts/proposal-review.ts	execute_raw	3
 src/core/facts/proposal-supersede.ts	execute_raw	4
@@ -736,7 +730,7 @@ src/core/persistence/page-mutations.ts	execute_raw	5
 src/core/persistence/page-prepare.ts	execute_raw	10
 src/core/persistence/page-purge.ts	execute_raw	30
 src/core/persistence/page-upload.ts	execute_raw	16
-src/core/persistence/page-visibility.ts	execute_raw	11
+src/core/persistence/page-visibility.ts	execute_raw	10
 src/core/persistence/parked-groups.ts	execute_raw	1
 src/core/persistence/pending-import.ts	execute_raw	1
 src/core/persistence/physical-root.ts	execute_raw	15
@@ -852,7 +846,6 @@ src/core/questions/receipt.ts	execute_raw	1
 src/core/questions/refresh.ts	execute_raw	14
 src/core/questions/service.ts	execute_raw	1
 src/core/questions/store.ts	execute_raw	7
-src/core/readiness.ts	execute_raw	2
 src/core/reason-trailers.ts	execute_raw	2
 src/core/reindex-consent.ts	execute_raw	1
 src/core/remediation/run.ts	execute_raw	1
@@ -964,7 +957,7 @@ src/core/search/feedback-boost.ts	execute_raw	1
 src/core/search/frontmatter-where.ts	execute_raw	1
 src/core/search/ignored-privacy-labels.ts	execute_raw	1
 src/core/search/image-vector-presence.ts	execute_raw	1
-src/core/search/private-visibility.ts	execute_raw	2
+src/core/search/private-visibility.ts	execute_raw	1
 src/core/search/projection-statistics.ts	execute_raw	11
 src/core/search/query-cache-gate.ts	execute_raw	2
 src/core/search/query-cache.ts	execute_raw	8
@@ -1009,7 +1002,6 @@ src/core/sql-query.ts	execute_raw	2
 src/core/storage-manifest/adopt.ts	execute_raw	4
 src/core/storage-manifest/find.ts	execute_raw	4
 src/core/storage-manifest/source.ts	execute_raw	4
-src/core/stored-embedding-identity.ts	execute_raw	3
 src/core/sweep.ts	execute_raw	3
 src/core/sync-anchor.ts	execute_raw	5
 src/core/sync-attempt.ts	execute_raw	1

@@ -56,6 +56,7 @@ export const RUST_ENGINE_MEMBERS = {
   readLivePageBody: 'pages',
   readPageHiddenFromCaller: 'pages',
   readCallerPageAccess: 'pages',
+  readWriteVisibilityProbe: 'pages',
   readStoredBodyBytes: 'pages',
   readAdmittedPageRefs: 'pages',
   readPageSynopses: 'pages',
@@ -115,6 +116,7 @@ export const RUST_ENGINE_MEMBERS = {
   // sources
   getSource: 'sources',
   listSourceLocalPaths: 'sources',
+  countRepoBoundSources: 'sources',
   listLocalPathSources: 'sources',
   readPlainSyncSource: 'sources',
   readOwnerOnlySourcesPresent: 'sources',
@@ -352,6 +354,13 @@ export const RUST_ENGINE_MEMBERS = {
   countFactRelinkOutcomes: 'facts',
   listUnlinkedConversationSlugs: 'facts',
   countFactEmbeddingCoverage: 'facts',
+  countStaleFactEmbeddings: 'facts',
+
+  // embeddings: the vector catalog (engine-sql/embedding-catalog.ts), read from the per-vector records
+  readChunkVectorColumn: 'embeddings',
+  readEmbeddingIdentity: 'embeddings',
+  listEmbeddingStores: 'embeddings',
+  hasStoredVectors: 'embeddings',
 
   // facts: relink attempts (engine-sql/fact-relink-attempts.ts)
   upsertFactRelinkAttempt: 'facts',
@@ -450,6 +459,8 @@ export const RUST_ENGINE_MEMBERS = {
   getRecentSalience: 'salience',
   // health
   countOnboardSignal: 'health',
+  countBrainLivePages: 'health',
+  readBrainMaturity: 'health',
   getStats: 'health',
   getHealth: 'health',
   listEnrichCandidates: 'health',
@@ -501,6 +512,8 @@ export const RUST_ENGINE_MEMBERS = {
   moveFactWithdrawalSubject: 'facts',
   hasFactWithdrawalForSubject: 'facts',
   listFactWithdrawalKeys: 'facts',
+  readFactCacheWatermark: 'facts',
+  readTrustGeneration: 'facts',
   // trust: the write gate's receipts and holds (engine-sql/trust-write-gate.ts)
   upsertWriteGateReceipt: 'facts',
   upsertPageWriteGateReceipt: 'facts',
@@ -595,9 +608,31 @@ export const RUST_ENGINE_MEMBERS = {
   isFolderRestricted: 'access_control',
   listAppliedPolicyRevisions: 'access_control',
   readLiveMember: 'access_control',
+  readMayActFor: 'access_control',
+  readAudiencePrincipals: 'access_control',
   readFolderAccess: 'access_control',
+  readAccessMembers: 'access_control',
   listActiveAccessMembers: 'access_control',
   listAccessTokens: 'access_control',
+  // access_control: the folder-rule policy members access/policy.ts runs (engine-sql/access-policy.ts)
+  readAccessStoreConfig: 'access_control',
+  writeAccessStoreConfig: 'access_control',
+  ensureAccessPolicyState: 'access_control',
+  lockAccessPolicy: 'access_control',
+  listAccessRules: 'access_control',
+  readAccessPolicyRevisions: 'access_control',
+  listAccessCoverage: 'access_control',
+  readAccessStateUnreadable: 'access_control',
+  applyAccessRuleChanges: 'access_control',
+  restampAccessWindow: 'access_control',
+  finishAccessRestamp: 'access_control',
+  insertAccessPolicyRevision: 'access_control',
+  markAccessRevisionsApplied: 'access_control',
+  approveAccessPolicyRevision: 'access_control',
+  hasAccessPolicyState: 'access_control',
+  listAccessPrefixSlugs: 'access_control',
+  readAccessPolicyMarks: 'access_control',
+  replaceAccessInvalidCoverage: 'access_control',
   // pages: entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts)
   readMentionLastPass: 'pages',
   countPagesDueForMentions: 'pages',
@@ -681,6 +716,7 @@ export const RUST_ENGINE_MEMBERS = {
   listPrivateQueueHealth: 'minion_queue',
   readWedgeSignals: 'minion_queue',
   readOldestWaitingAge: 'minion_queue',
+  countWaitingJobs: 'minion_queue',
   listStuckActiveJobsByName: 'minion_queue',
   // Job counts and last-run reads for the status surfaces (engine-sql/jobs-status.ts).
   readLastAutopilotCycles: 'minion_queue',

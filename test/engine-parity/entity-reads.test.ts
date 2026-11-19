@@ -21,6 +21,9 @@ import { ignoredPrivacyLabelRunNotice, sourceHasRepo } from '../../src/core/sear
 import { createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 
 const { parityTest } = parityArms(testBackends());
 const tail = ' tail';
@@ -121,6 +124,42 @@ describe('engine parity: entity and mention reads', () => {
       expect(result.stranger).toEqual(['people/alice-example', 'people/alice-founder', 'people/alice-q']);
       expect(sorted(result.member)).toEqual(sorted([...result.stranger, 'people/alice-readers', 'people/alice-team']));
       expect(sorted(result.granted)).toEqual(sorted([...result.stranger, 'people/alice-private', 'people/alice-readers']));
+      return result;
+    });
+
+  parityTest('readIdentitySiblingCandidates with excludePrivate hides every page while a source is owner-only, then only the owner-only source and its concepts',
+    { methods: ['readIdentitySiblingCandidates', 'putPage', 'addLink'] }, async (engine, backend) => {
+      const put = (slug: string, type: string, sourceId = 'default') =>
+        engine.putPage(slug, { type, title: 'Alice', compiled_truth: 'Alice body.' } as Parameters<BrainEngine['putPage']>[1], { sourceId });
+      await put('people/alice-open', 'person');
+      await put('concepts/alice-lineage', 'concept');
+      await put('concepts/alice-plain', 'concept');
+      const read = async () => {
+        const out: Record<string, string[]> = {};
+        for (const sourceId of ['default', 'oo-chat']) {
+          out[sourceId] = (await engine.readIdentitySiblingCandidates(sourceId, { types: ['person', 'concept'], subject: 'alice', limit: 10, excludePrivate: true })).map(r => r.slug);
+        }
+        return out;
+      };
+      const before = await read();
+      await createSource(engine, backend, 'oo-chat', { kind: 'imessage' });
+      await put('people/alice-chat', 'person', 'oo-chat');
+      // A concept in `default` synthesized from a page of the owner-only source.
+      await engine.addLink('concepts/alice-lineage', 'people/alice-chat', '', 'synthesized_from', 'concept-provenance', undefined, undefined, { toSourceId: 'oo-chat' });
+      const member = { identity: ['member:alice-example', 'group:team-a'], hidePrivate: true };
+      // No schema version is recorded on the harness brain: the closed form hides every page while any source is owner-only.
+      const closed = await read();
+      const closedMember = await withCallerAccess(member, read);
+      noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+      // Schema version 320 or later: only the owner-only source's pages and the concept built from one are hidden.
+      const fn = await withEngineScope(engine, read);
+      const fnMember = await withEngineScope(engine, () => withCallerAccess(member, read));
+      const result = { before, closed, closedMember, fn, fnMember };
+      expect(before).toEqual({ default: ['concepts/alice-lineage', 'concepts/alice-plain', 'people/alice-open'], 'oo-chat': [] });
+      expect(closed).toEqual({ default: [], 'oo-chat': [] });
+      expect(closedMember).toEqual({ default: [], 'oo-chat': [] });
+      expect(fn).toEqual({ default: ['concepts/alice-plain', 'people/alice-open'], 'oo-chat': [] });
+      expect(fnMember).toEqual(fn);
       return result;
     });
 

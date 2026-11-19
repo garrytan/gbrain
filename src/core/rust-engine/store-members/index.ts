@@ -49,6 +49,7 @@ import * as wantedLinks from './wanted-links.ts';
 import * as persistence from './persistence.ts';
 import * as cliEntities from './cli-entities.ts';
 import * as factsDoctor from './facts-doctor.ts';
+import * as embeddingCatalog from './embedding-catalog.ts';
 import * as factsCycle from './facts-cycle.ts';
 import * as factsPurge from './facts-purge.ts';
 import * as factsRepair from './facts-repair.ts';
@@ -60,6 +61,7 @@ import * as housekeeping from './housekeeping.ts';
 import * as effectScans from './effect-scans.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
+import * as accessPolicy from './access-policy.ts';
 import * as linkTemporal from './link-temporal.ts';
 import * as aliasFanoutReads from './alias-fanout-reads.ts';
 import * as entityIdentities from './entity-identities.ts';
@@ -95,7 +97,7 @@ export const STORE_MEMBERS = {
   ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages,
   ...cliEntities,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
-  ...factsDoctor, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust, ...factsTrustReads, ...factRelinkAttempts,
+  ...factsDoctor, ...embeddingCatalog, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust, ...factsTrustReads, ...factRelinkAttempts,
   ...factRelinkWrites,
   // Typed reads of stamped trust tiers (rust/docs/store/trust.md, "Tier reads").
   ...trustTierReads,
@@ -110,6 +112,8 @@ export const STORE_MEMBERS = {
   ...entityIdentities,
   ...persistence, ...housekeeping, ...effectScans,
   ...writeMisc,
+  // The folder-rule policy members access/policy.ts runs (rust/docs/store/access_rules.md).
+  ...accessPolicy,
   // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
   ...writeGuards, ...trustFence, ...trustProposals,
   // The page visibility guards a remote page write runs (rust/docs/store/page-visibility.md).

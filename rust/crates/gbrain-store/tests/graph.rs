@@ -250,39 +250,99 @@ fn a_nul_byte_is_refused_in_a_key_and_stripped_from_free_text() {
 }
 
 #[test]
-fn options_this_engine_does_not_model_are_refused_not_ignored() {
+fn the_page_option_of_a_walk_is_refused_and_a_bad_temporal_date_fails() {
     let dir = TempDir::new("graph-refused");
     let store = open(&dir);
     put(&store, "r/a");
     let refused = |result: Result<Value>, what: &str| {
         let error = result.expect_err(what);
         assert_eq!(error.code, INVALID_ARGUMENT, "{what}: {error}");
+        error.message
     };
-    for options in [
-        json!({"excludePrivate": true}),
-        json!({"temporal": {"asOf": "2026-01-01"}}),
-    ] {
-        let walk: TraverseGraphOptions = serde_json::from_value(options.clone()).unwrap();
-        refused(
-            store.traverse_graph("r/a", Some(1), &walk).map(Value::from),
-            &format!("traverseGraph {options}"),
-        );
-        let path: PathOptions = serde_json::from_value(options.clone()).unwrap();
-        refused(
-            store.traverse_paths_detailed("r/a", &path),
-            &format!("traversePathsDetailed {options}"),
-        );
-    }
     let page: PathOptions = serde_json::from_value(json!({"page": {"after": 1}})).unwrap();
     refused(
         store.traverse_paths_detailed("r/a", &page),
         "traversePathsDetailed page",
     );
-    // excludePrivate: false asks for nothing and is accepted
-    let walk: TraverseGraphOptions =
-        serde_json::from_value(json!({"excludePrivate": false})).unwrap();
+    let bad = json!({"temporal": {"asOf": "2026-02-30"}});
+    let walk: TraverseGraphOptions = serde_json::from_value(bad.clone()).unwrap();
     assert_eq!(
-        store.traverse_graph("r/a", Some(1), &walk).unwrap().len(),
-        1
+        refused(
+            store.traverse_graph("r/a", Some(1), &walk).map(Value::from),
+            "traverseGraph bad asOf",
+        ),
+        "temporal edge filter: invalid date \"2026-02-30\""
     );
+    let path: PathOptions = serde_json::from_value(bad).unwrap();
+    refused(
+        store.traverse_paths_detailed("r/a", &path),
+        "traversePathsDetailed bad asOf",
+    );
+    // status 'all' with no window filters nothing, so its date is never read.
+    let all: TraverseGraphOptions =
+        serde_json::from_value(json!({"temporal": {"status": "all", "asOf": "never"}})).unwrap();
+    assert_eq!(store.traverse_graph("r/a", Some(1), &all).unwrap().len(), 1);
+}
+
+#[test]
+fn a_page_policy_hides_private_seeds_endpoints_and_origins() {
+    let dir = TempDir::new("graph-private");
+    let store = open(&dir);
+    for slug in ["p/open", "p/hub", "p/other"] {
+        put(&store, slug);
+    }
+    let private: PageInput = serde_json::from_value(json!({
+        "type": "note", "title": "private", "compiled_truth": "private body",
+        "frontmatter": {"visibility": "private"},
+    }))
+    .unwrap();
+    store
+        .put_page("p/private", &private, &PutPageOptions::default())
+        .unwrap();
+    link(&store, "p/open", "p/hub", "cites");
+    link(&store, "p/private", "p/hub", "cites");
+    let batch: Vec<LinkBatchInput> = serde_json::from_value(json!([{
+        "from_slug": "p/other", "to_slug": "p/hub", "link_type": "cites",
+        "link_source": "frontmatter", "origin_slug": "p/private", "origin_field": "refs",
+    }]))
+    .unwrap();
+    store.add_links_batch(&batch).unwrap();
+    let policy = json!({"honorAliases": true, "entityPrivacy": true});
+    let scope: LinkScope = serde_json::from_value(json!({"excludePrivate": policy})).unwrap();
+    let from = |rows: Vec<Value>| -> Vec<String> {
+        let mut out: Vec<String> = rows
+            .iter()
+            .map(|r| r["from_slug"].as_str().unwrap().to_string())
+            .collect();
+        out.sort();
+        out
+    };
+    assert_eq!(
+        from(store.get_backlinks("p/hub", &LinkScope::default()).unwrap()),
+        ["p/open", "p/other", "p/private"]
+    );
+    assert_eq!(
+        from(store.get_backlinks("p/hub", &scope).unwrap()),
+        ["p/open"]
+    );
+    assert!(store.get_links("p/private", &scope).unwrap().is_empty());
+    let walk: TraverseGraphOptions =
+        serde_json::from_value(json!({"excludePrivate": policy})).unwrap();
+    assert!(
+        store
+            .traverse_graph("p/private", Some(2), &walk)
+            .unwrap()
+            .is_empty()
+    );
+    let path: PathOptions =
+        serde_json::from_value(json!({"excludePrivate": policy, "direction": "in", "depth": 2}))
+            .unwrap();
+    let edges = store.traverse_paths_detailed("p/hub", &path).unwrap();
+    let froms: Vec<&str> = edges["paths"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["from_slug"].as_str().unwrap())
+        .collect();
+    assert_eq!(froms, ["p/open"]);
 }

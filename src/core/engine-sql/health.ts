@@ -299,3 +299,25 @@ export async function countOnboardSignal(
   const rows = await exec.executeRaw<{ count: string | number }>(text, params, { signal: opts.signal });
   return rows.length > 0 ? Number(rows[0].count) : 0;
 }
+
+/** Live pages brain-wide, no source scope (backup coverage). Null when the row or its count is missing. */
+export async function countBrainLivePages(exec: LegacyUnscopedRead): Promise<number | null> {
+  const rows = await exec.executeRaw<{ n: number }>(
+    'SELECT COUNT(*)::int AS n FROM pages WHERE deleted_at IS NULL',
+  );
+  const n = rows[0]?.n;
+  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+}
+
+/** Backup coverage's young-brain row: live pages, active facts, and the earliest source or page timestamp. */
+export interface BrainMaturityRow { pages: number; facts: number; since: string | Date | null }
+
+/** The young-brain row brain-wide (backup coverage), or null when the read returns no row. */
+export async function readBrainMaturity(exec: LegacyUnscopedRead): Promise<BrainMaturityRow | null> {
+  const [row] = await exec.executeRaw<BrainMaturityRow>(
+      `SELECT (SELECT COUNT(*)::int FROM pages WHERE deleted_at IS NULL) AS pages,
+              (SELECT COUNT(*)::int FROM facts WHERE expired_at IS NULL) AS facts,
+              LEAST((SELECT MIN(created_at) FROM sources), (SELECT MIN(created_at) FROM pages)) AS since`,
+  );
+  return row ?? null;
+}

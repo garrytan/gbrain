@@ -2,18 +2,32 @@
 //! the page it names and which of a list of pages the caller reads (the TypeScript
 //! `engine-sql/page-visibility.ts`).
 //!
-//! Members: readPageHiddenFromCaller, readCallerPageAccess. The TypeScript member turns the
+//! Members: readPageHiddenFromCaller, readCallerPageAccess, readWriteVisibilityProbe. The TypeScript member turns the
 //! caller's rendered page policy into a [`PrivacyPolicy`] (or refuses), so both reads judge a page
 //! with `page_hidden` (facts/privacy.rs): `entity_privacy` false is the member-access part alone.
 //! A soft-deleted page still has its row, so `readPageHiddenFromCaller` judges it too, and
 //! `readCallerPageAccess` names it with `readable` false.
 //!
-//! Keys: this family adds none. It reads page records through `pages.rs`.
+//! `readWriteVisibilityProbe` is the one read a remote page write opens its visibility check with:
+//! whether any access member is labelled-only (never: the store keeps no access members), whether
+//! a reader identity could open the page the empty-identity policy hides (none when no row is
+//! hidden; else whether the row names readers, since the store keeps no folder rules), and whether
+//! the page's source or any source is owner-only (`config ->> 'kind'` is `imessage`, or
+//! `config ->> 'owner_only'` is `true`).
+//!
+//! Every page policy PGLite renders for a caller that is not the owner ends with the owner-only test
+//! (`ownerOnlyAllowedSql`); `page_hidden` applies it in the form the policy names (owner_only.rs):
+//! `fn` hides a page whose source or concept-provenance input is owner-only, `closed` hides every
+//! page while any source is owner-only.
+//!
+//! Keys: this family adds none. It reads page records through `pages.rs` and source records
+//! through `sources.rs`.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::owner_only::{any_owner_only, source_owner_only};
 use crate::pages::read_page;
 use crate::{Result, Store};
 
@@ -33,7 +47,41 @@ pub struct CallerPageAccessRow {
     pub readable: bool,
 }
 
+/// The answer of `readWriteVisibilityProbe`, in the SQL's column names.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct WriteVisibilityProbe {
+    pub any_labelled: bool,
+    pub identity_may_open: Option<bool>,
+    pub owner_only_source: bool,
+    pub owner_only_any: bool,
+}
+
 impl Store {
+    /// `readWriteVisibilityProbe(sourceId, slug, { policy })`: the opening read of a remote page
+    /// write's visibility check, where `policy` is the empty-identity page policy with privacy.
+    pub fn read_write_visibility_probe(
+        &self,
+        source_id: &str,
+        slug: &str,
+        policy: &PrivacyPolicy,
+    ) -> Result<WriteVisibilityProbe> {
+        let read = self.read()?;
+        let owner_only_any = any_owner_only(&*read)?;
+        let identity_may_open = match read_page(&*read, source_id, slug)? {
+            Some(page) if page_hidden(&*read, &page, policy)? => {
+                Some(page.frontmatter.contains_key("readable_by"))
+            }
+            _ => None,
+        };
+        let owner_only_source = source_owner_only(&*read, source_id)?;
+        Ok(WriteVisibilityProbe {
+            any_labelled: false,
+            identity_may_open,
+            owner_only_source,
+            owner_only_any,
+        })
+    }
+
     /// `readPageHiddenFromCaller(sourceId, slug, { policy })`: whether the page row (live or
     /// soft-deleted) fails `policy`. A missing page is not hidden.
     pub fn read_page_hidden_from_caller(

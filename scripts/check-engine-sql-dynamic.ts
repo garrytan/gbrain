@@ -49,7 +49,8 @@ const CONSTANT_ALLOWLIST: Record<string, string> = {
   PAGE_SORT_SQL: 'src/core/types.ts: ORDER BY text keyed by the PageFilters sort union (whitelisted enum)',
   TEMPORAL_LINK_SELECT_SQL: 'src/core/link-validity.ts: constant select list over the lr_t relationship-state join',
   GUEST_SOURCES_HIDDEN_SQL: 'src/core/guests/note.ts: constant row-security probe of guest_sources (no input)',
-  ANY_OWNER_ONLY_SQL: 'src/core/access/owner-only.ts: constant EXISTS probe of sources for an owner-only kind or flag (code-constant OWNER_ONLY_KINDS and flag; no input)',
+  ANY_OWNER_ONLY_SQL: 'src/core/access/owner-only.ts: constant any-owner-only-source EXISTS over sources read_source; the kinds and flag key are module constants (no input)',
+  READ_SOURCE_OWNER_ONLY_SQL: 'src/core/access/owner-only.ts: constant owner-only row test of the sources alias read_source; the kinds and flag key are module constants (no input)',
   RELEASE_STAGED_CTE: 'src/core/persistence/limits.ts: constant CTE releasing upload reservations of a preceding gone CTE (no input)',
 };
 
@@ -107,6 +108,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   pageReadFilter: 'src/core/search/read-policy-sql.ts: binds scope values as params, splices only the caller alias',
   buildHardExcludeClause: 'src/core/search/sql-ranking.ts: LIKE-escaped and SQL-escaped slug prefix literals (buildLikePrefixLiteral), the ranked-search hard-exclude clause',
   buildRecencyComponentSql: 'src/core/search/sql-ranking.ts: inlines LIKE literals + numeric coefficients from the decay map, as master (planner behavior)',
+  readPolicyFragment: 'src/core/search/private-visibility.ts: accessAllowedForAllSql (readers identities checked by validIdentity before they are quoted in) AND the constant privacyPartSql or TRUE over a caller page alias; no values',
   privatePagesFilterFragment: 'src/core/search/private-visibility.ts: constant visibility predicate over a caller alias',
   callerAccessAllowedSql: 'src/core/search/private-visibility.ts: the member-access part of privatePagesFilterForCaller alone (callerAccessSql); readers identities pass validIdentity before they are quoted in, and a satisfied rule id that is not a valid qualified id empties the set (fail closed); no values',
   privatePagesFilterForCaller: 'src/core/search/private-visibility.ts: privatePagesFilterFragment ORed with the private-readable source ids, each checked by isValidSourceId (alphabet [a-z0-9-], no quote) before it is quoted in',

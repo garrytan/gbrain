@@ -742,3 +742,30 @@ fn pages_rows(rows: &[(&str, &str)]) -> Vec<Value> {
         })
         .collect()
 }
+
+#[test]
+fn brain_maturity_counts_unexpired_facts_in_every_source() {
+    let b = brain("facts-maturity");
+    let empty = b.read_brain_maturity().unwrap();
+    assert_eq!(
+        (empty["pages"].clone(), empty["facts"].clone()),
+        (json!(0), json!(0))
+    );
+    insert(
+        &b,
+        json!({ "fact": "Kept", "source": "chat", "valid_from": "2026-01-01T00:00:00.000Z" }),
+    );
+    let gone = insert(
+        &b,
+        json!({ "fact": "Gone", "source": "chat", "valid_from": "2026-01-01T00:00:00.000Z" }),
+    );
+    assert!(
+        b.expire_fact(&args::<ExpireFactArgs>(json!({ "id": gone })))
+            .unwrap()
+    );
+    let after = b.read_brain_maturity().unwrap();
+    assert_eq!(after["facts"], json!(1));
+    // The default source dates the brain before any page exists.
+    assert_eq!(after["since"], empty["since"]);
+    assert!(after["since"].is_string());
+}

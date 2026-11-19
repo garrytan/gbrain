@@ -225,6 +225,36 @@ pub fn scan_take_vectors(
     failure.map_or(Ok(()), Err)
 }
 
+/// Whether a take holds a vector written for its current claim: PGLite's `takes.embedding IS NOT
+/// NULL`. `addTakesBatch` sets the column to NULL when it changes a claim; the store keeps the old
+/// vector record, so only a vector at the take's claim revision counts (embedding_catalog.rs).
+pub(crate) fn any_take_vector(read: &dyn KvRead) -> Result<bool> {
+    let (mut found, mut failure) = (false, None);
+    scan_prefix(
+        read,
+        &[keys::EMBEDDING_STATE, TAKE_VECTOR],
+        false,
+        &mut |k, _| {
+            let exists = k
+                .get(2..10)
+                .and_then(keys::be8)
+                .ok_or_else(|| corrupt("take vector key"))
+                .and_then(|id| take_vector_is_current(read, id));
+            match exists {
+                Ok(current) => {
+                    found = current;
+                    !found
+                }
+                Err(e) => {
+                    failure = Some(e);
+                    false
+                }
+            }
+        },
+    )?;
+    failure.map_or(Ok(found), Err)
+}
+
 /// Whether the take's stored vector was written for its current claim.
 fn take_vector_is_current(read: &dyn KvRead, take_id: u64) -> Result<bool> {
     let Some(take) = read_take(read, take_id)? else {
