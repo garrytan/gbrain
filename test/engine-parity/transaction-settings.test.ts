@@ -197,6 +197,7 @@ describe('engine parity: transaction-local settings', () => {
       later: ['', '', '', '', '', '', ''],
     });
     return answers;
+  });
 
   // beginSnapshotRead starts the transaction as one snapshot. The store transaction is one snapshot already (it holds
   // the one writer from its start), so the Rust member sets nothing; the reads after it answer the same on every arm.
