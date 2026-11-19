@@ -69,6 +69,12 @@ impl Brain {
         self.run(env, move |s| s.get_source(&id))
     }
 
+    /// `countRepoBoundSources()`: live sources with a non-empty local path.
+    #[napi]
+    pub fn count_repo_bound_sources<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, |s| s.count_repo_bound_sources())
+    }
+
     /// `listSourceLocalPaths()`: every non-empty source local path.
     #[napi]
     pub fn list_source_local_paths<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {

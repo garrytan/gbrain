@@ -306,6 +306,17 @@
         ],
         "flagOnScopes": []
       },
+      "countRepoBoundSources#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "countSourcePages#default": {
         "flagOffLanes": [
           "pool"
@@ -4645,6 +4656,7 @@
         "countRecentCompletedJobs": "none",
         "countRedactedFacts": "none",
         "countRelinkCandidates": "none",
+        "countRepoBoundSources": "none",
         "countSearchVectorRows": "none",
         "countSegmentedTimelinePages": "none",
         "countSourcePages": "none",

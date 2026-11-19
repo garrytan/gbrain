@@ -683,8 +683,7 @@ const syncProbe: Prober = {
   capability: 'sync',
   async run(engine) {
     const base = { capability: 'sync' as const, tier: 'probed' as const, http_visible: false };
-    const rows = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM sources WHERE NOT archived AND local_path IS NOT NULL AND local_path <> ''`);
-    const n = Number(rows[0]?.n ?? 0);
+    const n = await engine.countRepoBoundSources();
     if (n === 0) return { ...base, state: 'not_applicable', reason: 'no_repo_sources', why: 'No source is bound to a local repository, so `gbrain sync` has nothing to pull; pages arrive through gbrain writes and imports.' };
     return { ...base, state: 'ok', reason: 'git_sources', why: `${n} source(s) are bound to local repositories that \`gbrain sync\` reads.` };
   },

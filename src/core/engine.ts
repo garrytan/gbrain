@@ -1348,6 +1348,9 @@ export interface BrainEngine {
    */
   listSourceLocalPaths(): Promise<string[]>;
 
+  /** How many sources that are not archived have a non-empty local path (the readiness sync probe). */
+  countRepoBoundSources(): Promise<number>;
+
   /** Source resolution reads (SQL and contracts in engine-sql/sources.ts): sources with a local path and `archived`; every source row with `default`'s emptiness flag; the default-write guard's page split. */
   listLocalPathSources(): Promise<LocalPathSourceRow[]>;
   listSourceRoutingRows(): Promise<SourceRoutingRow[]>;
