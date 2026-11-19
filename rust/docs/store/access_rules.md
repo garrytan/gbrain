@@ -140,9 +140,10 @@ every live token is unbound and no key reads a source; a client registered with 
 | `brain.recordAccessMigrationPhase(id, phase, receipts)` | sets the phase and receipts (`switchAccessMigration` sends `switched`); a missing id changes nothing, a phase the table does not allow refuses | `RECORD_MIGRATION_PHASE_SQL`, `SWITCH_MIGRATION_SQL` |
 
 A migration is a `z 0x06 <source> \0 <id>` record `{ id, source_id, direction, phase, receipts, created_at_us,
-created_seq, updated_at_us }`; `created_seq` orders two migrations made in one microsecond. Postgres sorts
-`ORDER BY source_id` and `ORDER BY 1, 2` in the database collation, so on a server whose collation is not `C` two ids
-that differ only in punctuation or case can come back in another order than PGLite and the store give.
+created_seq, updated_at_us }`; `created_seq` orders two migrations made in one microsecond. The SQL sorts every text
+key of these members, and of the rule, pending-prefix, prefix-slug and applied-revision reads, with `COLLATE "C"`, so
+a Postgres server whose collation is not `C` gives the byte order PGLite and the store give
+(`test/engine-parity/access-sort-order.test.ts`).
 
 ## Tests
 

@@ -25,7 +25,7 @@ export interface AppliedPolicyRevision {
 
 /** The statement whoami and `_meta.access` (access/caller.ts appliedAccessSummary) ran through executeRaw. */
 export const APPLIED_POLICY_REVISIONS_SQL = `SELECT s.source_id, (SELECT r.revision FROM access_policy_revisions r WHERE r.source_id = s.source_id AND r.applied_at IS NOT NULL
-          ORDER BY r.revision DESC LIMIT 1) AS rev FROM access_policy_state s ORDER BY s.source_id`;
+          ORDER BY r.revision DESC LIMIT 1) AS rev FROM access_policy_state s ORDER BY s.source_id COLLATE "C"`;
 
 /** Each source with folder access state and its newest applied revision, by source id. */
 export async function listAppliedPolicyRevisions(exec: LegacyUnscopedRead): Promise<AppliedPolicyRevision[]> {
@@ -84,7 +84,7 @@ export function liveMemberStatement(via: MemberBindingVia, key: string): { text:
     : via === 'stdio_config' ? sqlFragment`SELECT ${trustedSql(edgeTrimSql('value'))} FROM config WHERE key = ${key}`
     : via === 'legacy_token' ? sqlFragment`SELECT member_id FROM access_tokens WHERE id::text = ${key} AND revoked_at IS NULL`
     : sqlFragment`SELECT member_id FROM oauth_clients WHERE client_id = ${key} AND deleted_at IS NULL`;
-  return renderFragment(sqlFragment`SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  return renderFragment(sqlFragment`SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id COLLATE "C") FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
   FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
   WHERE m.id = (${member}) AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
   GROUP BY m.id`);
@@ -127,7 +127,7 @@ export const FOLDER_RULES_READABLE_BY_SQL = 'SELECT source_id, rule_id, readable
  * folder access tables adds `!unreadable` (covers everything). Pinned byte for byte.
  */
 export const FOLDER_COVERAGE_SQL = `SELECT * FROM (SELECT DISTINCT source_id, prefix FROM access_pending_coverage
-      UNION ALL SELECT '!unreadable', '' WHERE gbrain_access_state_unreadable()) c ORDER BY source_id, prefix`;
+      UNION ALL SELECT '!unreadable', '' WHERE gbrain_access_state_unreadable()) c ORDER BY source_id COLLATE "C", prefix COLLATE "C"`;
 
 /**
  * The folder access rows a caller's record is built from (access/caller.ts folderAccessForAll): the applied rules any
@@ -147,7 +147,7 @@ export interface AudiencePrincipalRows {
 }
 
 /** The statements access/caller.ts resolveAudienceIdentities ran through executeRaw: the members, then the groups. */
-export const AUDIENCE_MEMBERS_SQL = `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+export const AUDIENCE_MEMBERS_SQL = `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id COLLATE "C") FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
   FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
   WHERE m.id = ANY($1::text[]) AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
   GROUP BY m.id`;
@@ -188,17 +188,17 @@ export type AccessMemberLookup = { id: string } | { email: string } | { includeR
  */
 export const ACCESS_MEMBER_SQL = {
   by_id: `SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
-  COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  COALESCE(array_agg(g.group_id ORDER BY g.group_id COLLATE "C") FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
   FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id WHERE m.id = $1 GROUP BY m.id`,
   by_email: `SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
-  COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
-  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id WHERE m.email = $1 GROUP BY m.id ORDER BY m.id`,
+  COALESCE(array_agg(g.group_id ORDER BY g.group_id COLLATE "C") FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id WHERE m.email = $1 GROUP BY m.id ORDER BY m.id COLLATE "C"`,
   live: `SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
-  COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
-  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id WHERE m.tombstoned_at IS NULL GROUP BY m.id ORDER BY m.id`,
+  COALESCE(array_agg(g.group_id ORDER BY g.group_id COLLATE "C") FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id WHERE m.tombstoned_at IS NULL GROUP BY m.id ORDER BY m.id COLLATE "C"`,
   all: `SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
-  COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
-  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id GROUP BY m.id ORDER BY m.id`,
+  COALESCE(array_agg(g.group_id ORDER BY g.group_id COLLATE "C") FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id GROUP BY m.id ORDER BY m.id COLLATE "C"`,
 } as const;
 
 /**
@@ -243,7 +243,7 @@ export async function readAccessCredentials(exec: MemberLookupRead, by: AccessCr
 }
 
 /** The statement access/members.ts audienceMemberIds ran through executeRaw. */
-export const AUDIENCE_KIND_MEMBERS_SQL = "SELECT id FROM access_members WHERE kind = 'audience' AND disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id";
+export const AUDIENCE_KIND_MEMBERS_SQL = `SELECT id FROM access_members WHERE kind = 'audience' AND disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id COLLATE "C"`;
 
 /**
  * The ids of the enabled, untombstoned members of kind `audience`, by id. A person, a disabled member and a removed
@@ -261,12 +261,12 @@ export interface AccessGroupRow { id: string; members: string[] }
  * spelled out as one literal (the engine-sql dynamic-SQL guard).
  */
 export const ACCESS_GROUP_SQL = {
-  all: `SELECT g.id, COALESCE(array_agg(gm.member_id ORDER BY gm.member_id) FILTER (WHERE gm.member_id IS NOT NULL), '{}') AS members
+  all: `SELECT g.id, COALESCE(array_agg(gm.member_id ORDER BY gm.member_id COLLATE "C") FILTER (WHERE gm.member_id IS NOT NULL), '{}') AS members
      FROM access_groups g LEFT JOIN access_group_members gm ON gm.group_id = g.id
-      GROUP BY g.id ORDER BY g.id`,
-  by_id: `SELECT g.id, COALESCE(array_agg(gm.member_id ORDER BY gm.member_id) FILTER (WHERE gm.member_id IS NOT NULL), '{}') AS members
+      GROUP BY g.id ORDER BY g.id COLLATE "C"`,
+  by_id: `SELECT g.id, COALESCE(array_agg(gm.member_id ORDER BY gm.member_id COLLATE "C") FILTER (WHERE gm.member_id IS NOT NULL), '{}') AS members
      FROM access_groups g LEFT JOIN access_group_members gm ON gm.group_id = g.id
-     WHERE g.id = $1 GROUP BY g.id ORDER BY g.id`,
+     WHERE g.id = $1 GROUP BY g.id ORDER BY g.id COLLATE "C"`,
 } as const;
 
 /**
@@ -286,7 +286,7 @@ export const PAGES_NAMING_READER_LIMIT = 51;
 
 /** The statement access/members.ts pagesNaming ran through executeRaw, spelled out as one literal (LIMIT is PAGES_NAMING_READER_LIMIT). */
 export const PAGES_NAMING_READER_SQL = `SELECT slug, source_id FROM pages WHERE frontmatter ? 'readable_by' AND gbrain_access_readers(frontmatter) @> ARRAY[$1]::text[]
-     ORDER BY source_id, slug LIMIT 51`;
+     ORDER BY source_id COLLATE "C", slug COLLATE "C" LIMIT 51`;
 
 /**
  * The pages, in every source and by (source, slug), whose normalized readers (`gbrain_access_readers`) name exactly
