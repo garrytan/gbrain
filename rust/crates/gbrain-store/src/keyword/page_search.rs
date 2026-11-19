@@ -18,17 +18,17 @@
 //! engines (Postgres reads no `timeline_entries` here). With `handlesOnly` only the handle arm runs
 //! (`searchHandlePages`, the keyword arm's rows for the pages a slug handle names).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use super::filters::{
-    KeywordOptions, PageFilter, readable_chunk_vector, result_row, row_count, source_factor,
-};
+use super::filters::{KeywordOptions, PageFilter, result_row, row_count, source_factor};
+use super::index::{basename, basename_pages};
 use super::rank::ts_rank;
 use super::tsearch::{TsQuery, phraseto_tsquery, ts_matches, websearch_to_tsquery};
+use super::walk::{Admit, ChunkSource, PageOrder, walk_chunks};
 use crate::Store;
-use crate::chunks::{ChunkRecord, read_chunks, read_segment_view};
+use crate::chunks::ChunkRecord;
 use crate::error::{Result, StoreError};
-use crate::pages::{PageRecord, all_pages};
+use crate::pages::PageRecord;
 use crate::timeline::latest_entry_micros;
 use serde_json::Value;
 
@@ -73,65 +73,73 @@ impl Store {
         };
         let read = self.read()?;
         let mut filter = PageFilter::new(options)?;
-        for page in all_pages(&*read)? {
-            if !filter.keeps(&*read, &page)? {
-                continue;
+        let text_queries: Vec<&TsQuery> = if options.handles_only {
+            Vec::new()
+        } else {
+            vec![&matcher.query]
+        };
+        let mut extra: Vec<&TsQuery> = vec![&matcher.query];
+        extra.extend(matcher.phrase.as_ref());
+        let source = ChunkSource::plan(&*read, &text_queries, &extra, |read| {
+            if options.handles.is_empty() {
+                Ok(Some(BTreeSet::new()))
+            } else {
+                basename_pages(read, &options.handles)
             }
-            let basename = page.slug.rsplit('/').next().unwrap_or(&page.slug);
-            let handle = options.handles.iter().any(|h| h == basename);
-            if options.handles_only && !handle {
-                continue;
-            }
-            let generation = read_segment_view(&*read, page.id)?.generation;
-            let mut factor: Option<f64> = None;
-            let mut best: Option<Best> = None;
-            for chunk in read_chunks(&*read, page.id)? {
-                if !chunk.visible_at(generation)
-                    || chunk.modality != "text"
-                    || !filter.keeps_chunk(&chunk)
-                {
-                    continue;
-                }
-                let Some(vector) = readable_chunk_vector(&chunk) else {
-                    continue;
-                };
-                let text = !options.handles_only && ts_matches(&vector, &matcher.query);
-                if !text && !handle {
-                    continue;
-                }
-                let factor = *factor.get_or_insert_with(|| source_factor(&page, &options.boosts));
-                let phrase = match &matcher.phrase {
-                    Some(p) if ts_matches(&vector, p) => KEYWORD_PHRASE_FACTOR,
-                    _ => 1.0,
-                };
-                let rank = f64::from(ts_rank(&vector, &matcher.query)) * phrase;
-                // A chunk in both arms keeps its higher score: the handle arm's.
-                let score = if handle {
-                    (1.0 + rank) * factor
-                } else {
-                    rank * factor
-                };
-                let better = best
-                    .as_ref()
-                    .is_none_or(|b| score > b.score || (score == b.score && chunk.id < b.chunk.id));
-                if better {
-                    best = Some(Best {
-                        score,
-                        chunk,
-                        stale: false,
+        })?;
+        let mut admit = Admit {
+            filter: Some(&mut filter),
+            text_only: true,
+            basenames: options.handles_only.then_some(&options.handles[..]),
+        };
+        walk_chunks(
+            &*read,
+            &source,
+            PageOrder::Any,
+            &mut admit,
+            &mut |page, chunks| {
+                let handle = options.handles.iter().any(|h| h == basename(&page.slug));
+                let mut factor: Option<f64> = None;
+                let mut best: Option<Best> = None;
+                for (chunk, vector) in chunks {
+                    let text = !options.handles_only && ts_matches(&vector, &matcher.query);
+                    if !text && !handle {
+                        continue;
+                    }
+                    let factor =
+                        *factor.get_or_insert_with(|| source_factor(&page, &options.boosts));
+                    let phrase = match &matcher.phrase {
+                        Some(p) if ts_matches(&vector, p) => KEYWORD_PHRASE_FACTOR,
+                        _ => 1.0,
+                    };
+                    let rank = f64::from(ts_rank(&vector, &matcher.query)) * phrase;
+                    // A chunk in both arms keeps its higher score: the handle arm's.
+                    let score = if handle {
+                        (1.0 + rank) * factor
+                    } else {
+                        rank * factor
+                    };
+                    let better = best.as_ref().is_none_or(|b| {
+                        score > b.score || (score == b.score && chunk.id < b.chunk.id)
                     });
+                    if better {
+                        best = Some(Best {
+                            score,
+                            chunk,
+                            stale: false,
+                        });
+                    }
                 }
-            }
-            if let Some(mut best) = best {
+                let Some(mut best) = best else {
+                    return Ok(true);
+                };
                 if with_stale {
                     best.stale = latest_entry_micros(&*read, page.id)?
                         .is_some_and(|latest| page.updated_at_us < latest);
                 }
-                if !visit(page, best) {
-                    break;
-                }
-            }
-        }
+                Ok(visit(page, best))
+            },
+        )?;
         Ok(())
     }
 

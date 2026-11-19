@@ -88,16 +88,42 @@ keyword arm does; `searchTitles` reads `onKeywordIncomplete`. `searchTitles` ans
 
 ## Keys
 
-The family owns the `R` tag and reads pages, chunks, segment views and sources through their families' readers. Every
-member is a full scan of the live pages (follow-up `keyword-lexeme-index`).
+The family owns the `R` tag and reads pages, chunks, segment views and sources through their families' readers. Each
+chunk-grain member and the title arm scan the live pages, or read the keyword index (below) when it serves.
 
-`R 0x00` is the keyword index state (`keys::keyword_index_state`). No build writes it yet. While it exists, every
+`R 0x00` is the keyword index state (`keys::keyword_index_state`, JSON `version`, `complete`, `cursor`). No build
+writes it yet. While it exists, every
 `Store::write` handle tracks what a write touches (`keyword/index_writer.rs`, `IndexingWriter`, the outer wrapper of the
 write handle chain in `lib.rs` `write_chain`): `K` chunk records mark the chunk; `P` page records mark the page, with
 the record stored before the statement's first write of the key; `M page_search_timeline/<id>`, `b 0x05 page_id` and
 `E page_id ...` mark the page. Other keys mark nothing. The flush at the end of each OCC attempt or bound statement
-resolves the touched set and writes no postings yet. The wrapper forwards `allocate`, `raise_counter`, `add_i64` and
+resolves the touched set and rebuilds each touched document's postings through the inner handle
+(`keyword/index.rs` `reindex_chunk`, `reindex_page`). The wrapper forwards `allocate`, `raise_counter`, `add_i64` and
 `counter_below`, and so must every wrapper inside it.
+
+The postings (`keyword/index.rs`, numbers big-endian, `len` two bytes):
+
+| Key | Value |
+|---|---|
+| `R 0x01 len lexeme page_id chunk_index` | the chunk vector's positions for the lexeme, two bytes each |
+| `R 0x02 len lexeme page_id` | the same for the page vector (`titles.rs`) |
+| `R 0x04 len basename page_id` | empty: the page's slug basename, for the handle arm (a basename over 65,535 bytes has none) |
+| `R 0x05 page_id chunk_index`, `R 0x06 page_id` | the forward record: the postings the document owns, `kind(1) len(2) text` each |
+
+The postings are the output of the same `chunk_vector` and page vector code the scan reads, so the store has one
+tokenizer. A vector past the tsvector size cap has no postings and matches nothing, as in the scan. A reindex deletes
+the postings the forward record lists and the new vector lacks, and writes only the entries that changed.
+
+The postings serve a read when the state in its snapshot is complete and of `INDEX_VERSION`, and
+`GBRAIN_RUST_KEYWORD_SCAN=1` is not set. A member reads the postings of every lexeme of its match, rank and phrase
+queries, takes the candidates from the match query's tree (an AND or phrase intersects its bounded sides, an OR unions
+two bounded sides; a NOT, a stop word or an OR with an unbounded side has no bound and the member scans), and gives
+each candidate a sparse vector of those lexemes. `ts_matches`, `ts_rank` and `ts_rank_cd` read only the query's
+lexemes, so the sparse vector gives the full vector's answer and score bits. `keyword/walk.rs` reads the candidate
+pages, applies each member's page and chunk predicates before it reads a chunk, and reads every chunk of a handle page
+with its full vector. `keyword_rare_term_pages` visits the pages in `P` key order, as its cap counts in that order;
+the other members sort their own results with total tie-breaks. No build writes a complete state yet, so stores in use
+still scan; tests seed a complete state on a fresh store.
 
 ## The vector cache
 

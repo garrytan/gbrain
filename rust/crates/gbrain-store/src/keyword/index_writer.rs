@@ -25,8 +25,9 @@
 //! transaction's statement, so a flush error fails the statement and its writes and postings go
 //! together. `Store::write` makes a fresh wrapper for each OCC attempt and each bound statement.
 //!
-//! The postings themselves are not written yet: until they are, the flush resolves the touched
-//! set and stops. While the index is off the wrapper reads nothing and tracks nothing.
+//! The flush rebuilds the postings of each touched document (`index.rs`) through the inner handle,
+//! so the postings never mark a document themselves. While the index is off the wrapper reads
+//! nothing and tracks nothing.
 
 use crate::error::{INVALID_STATE, Result, StoreError};
 use crate::keys;
@@ -130,14 +131,20 @@ impl<'a> IndexingWriter<'a> {
         Ok(Some(touched))
     }
 
-    /// Ends the statement's index work (see the module docs). The postings are not written yet.
+    /// Ends the statement's index work (see the module docs): rebuilds the postings of every
+    /// touched chunk and page from the records as the statement leaves them.
     pub(crate) fn flush(mut self) -> Result<()> {
-        let touched = self.resolve()?;
+        let Some(touched) = self.resolve()? else {
+            return Ok(());
+        };
         #[cfg(test)]
-        if let Some(t) = &touched {
-            tests::FLUSHED.with(|flushed| flushed.borrow_mut().push(t.clone()));
+        tests::FLUSHED.with(|flushed| flushed.borrow_mut().push(touched.clone()));
+        for &(page_id, index) in &touched.chunks {
+            super::index::reindex_chunk(self.inner, page_id, index)?;
         }
-        let _ = touched;
+        for &page_id in &touched.pages {
+            super::index::reindex_page(self.inner, page_id)?;
+        }
         Ok(())
     }
 }

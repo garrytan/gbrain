@@ -35,13 +35,19 @@
 //! Keys: every record of this family starts with `keys::TRIGRAM` (`R`). The bytes after the tag are
 //! this file's to define; document them here. `R 0x00` is the keyword index state
 //! (`keys::keyword_index_state`): while it exists, every `Store::write` handle tracks the chunks
-//! and pages a write touches (`keyword/index_writer.rs`). The postings are not written yet.
+//! and pages a write touches (`keyword/index_writer.rs`) and rebuilds their postings when the
+//! statement ends. `R 0x01 len term page_id index` is a chunk posting and `R 0x02 len term
+//! page_id` a page posting, each valued with the lexeme's positions and weights; `R 0x04 len
+//! basename page_id` maps a slug basename to its page; `R 0x05 page_id index` and `R 0x06
+//! page_id` are the forward records that list a document's postings (`keyword/index.rs`). The
+//! members read them through `keyword/walk.rs` once the state is complete.
 //!
 //! See docs/designs/RUST_ENGINE_INTERFACES.md.
 
 mod arm;
 mod chunk_search;
 mod filters;
+mod index;
 mod index_writer;
 mod page_search;
 pub(crate) mod parser;
@@ -52,6 +58,7 @@ mod titles;
 mod trgm;
 mod tsearch;
 mod vector_cache;
+mod walk;
 
 pub use filters::{AfterKey, DateBound, KeywordOptions};
 pub(crate) use index_writer::IndexingWriter;

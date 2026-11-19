@@ -17,6 +17,15 @@ thread_local! {
     pub(crate) static FLUSHED: RefCell<Vec<Touched>> = const { RefCell::new(Vec::new()) };
 }
 
+/// A chunk record as `write_chunk` stores it, for the flush to reindex.
+fn chunk_json(page_id: u64, index: u32) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "id": index + 1, "page_id": page_id, "chunk_index": index, "chunk_text": "kingfisher",
+        "chunk_source": "compiled_truth", "modality": "text", "length": 1, "meta": {},
+    }))
+    .unwrap()
+}
+
 fn flushed() -> Vec<Touched> {
     FLUSHED.with(|f| f.borrow_mut().drain(..).collect())
 }
@@ -202,7 +211,7 @@ fn concurrent_counter_writes_through_the_chain_do_not_conflict() {
 fn an_index_that_is_off_tracks_nothing() {
     let mut spy = Spy::default();
     let mut w = IndexingWriter::new(&mut spy);
-    w.put(&keys::chunk(1, 0), b"c").unwrap();
+    w.put(&keys::chunk(1, 0), &chunk_json(1, 0)).unwrap();
     w.put(&keys::page("default", "a"), br#"{"id":1}"#).unwrap();
     w.delete(&keys::page("default", "a")).unwrap();
     assert_eq!(w.resolve().unwrap(), None);
@@ -220,7 +229,7 @@ fn the_wrapper_tracks_by_key_family() {
     spy.data
         .insert(keys::page("default", "old"), br#"{"id":4}"#.to_vec());
     let mut w = IndexingWriter::new(&mut spy);
-    w.put(&keys::chunk(1, 2), b"c").unwrap();
+    w.put(&keys::chunk(1, 2), &chunk_json(1, 2)).unwrap();
     w.delete(&keys::chunk(3, 0)).unwrap();
     w.put(&keys::meta("page_search_timeline/5"), b"{}").unwrap();
     w.put(
@@ -341,12 +350,13 @@ fn a_failed_bound_statement_flushes_nothing() {
     index_on(&store);
     let t = store.begin_transaction(false).unwrap();
     let failed: Result<()> = t.write(|w| {
-        w.put(&keys::chunk(1, 0), b"c")?;
+        w.put(&keys::chunk(1, 0), &chunk_json(1, 0))?;
         Err(StoreError::invalid("the statement fails"))
     });
     assert!(failed.is_err());
     assert!(flushed().is_empty());
-    t.write(|w| w.put(&keys::chunk(1, 1), b"c")).unwrap();
+    t.write(|w| w.put(&keys::chunk(1, 1), &chunk_json(1, 1)))
+        .unwrap();
     assert_eq!(
         flushed(),
         vec![Touched {
@@ -374,9 +384,9 @@ fn each_occ_attempt_tracks_afresh() {
                         .join()
                         .unwrap();
                 });
-                w.put(&keys::chunk(1, 0), b"c")
+                w.put(&keys::chunk(1, 0), &chunk_json(1, 0))
             } else {
-                w.put(&keys::chunk(1, 1), b"c")
+                w.put(&keys::chunk(1, 1), &chunk_json(1, 1))
             }
         })
         .unwrap();
