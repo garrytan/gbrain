@@ -67,6 +67,7 @@ pub mod timeline_queries;
 pub mod transactions;
 pub mod trust;
 pub mod vectors;
+mod version_prune;
 pub mod wanted_links;
 pub mod write_guards;
 pub mod write_misc;

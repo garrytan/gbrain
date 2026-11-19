@@ -1,7 +1,8 @@
 /**
  * Group 5 facts members that read the stamped trust columns, served from the facts store
- * (rust/crates/gbrain-store/src/facts/trust_reads.rs): `listSingleFactMetadata` (src/core/engine-sql/facts-purge.ts)
- * and `listUnpreviewedTrustFacts` (src/core/engine-sql/facts-doctor.ts).
+ * (rust/crates/gbrain-store/src/facts/trust_reads.rs): `listSingleFactMetadata` (src/core/engine-sql/facts-purge.ts),
+ * `listUnpreviewedTrustFacts` (src/core/engine-sql/facts-doctor.ts) and `listRestatedPrivateCopies`
+ * (src/core/engine-sql/facts-trust.ts).
  *
  * `listSingleFactMetadata` refuses the remote provenance floor (`remoteProvenanceFloorSql`), as `findActiveSingleFact`
  * does, and an id that PGLite cannot bind as `int[]` (a fraction or a width past int4). Its SQL has no `ORDER BY`; the
@@ -28,3 +29,7 @@ export const listUnpreviewedTrustFacts: Member<'listUnpreviewedTrustFacts'> = (b
   if (!Number.isInteger(limit) || limit < 0) refuseMember('listUnpreviewedTrustFacts', 'a limit that is not a non-negative integer');
   return storeCall({ member: 'listUnpreviewedTrustFacts' }, () => brain.listUnpreviewedTrustFacts({ limit }));
 };
+
+export const listRestatedPrivateCopies: Member<'listRestatedPrivateCopies'> = (brain, opts) =>
+  storeCall({ member: 'listRestatedPrivateCopies', sourceId: opts.sourceId },
+    () => brain.listRestatedPrivateCopies({ sourceId: opts.sourceId, claim: opts.claim, entity: opts.entity, writer: opts.writer }));

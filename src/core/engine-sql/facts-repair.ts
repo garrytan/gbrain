@@ -242,7 +242,7 @@ export interface UnwithdrawnFactRow {
   page_id: number | string | null; page_deleted: boolean | null; history_gap: boolean | null; withdrawn: boolean; active_duplicate: boolean; fingerprint: string;
 }
 
-/** Facts a facts-fence generation retired that no withdrawal covers, in (source, page, id) order; `fenceKind` is the generation kind (generations/fence.ts FACT_FENCE_KIND). */
+/** Facts a facts-fence generation retired that no withdrawal covers, in (source, page) byte order, then id; `fenceKind` is the generation kind (generations/fence.ts FACT_FENCE_KIND). */
 export async function listUnwithdrawnFacts(raw: EngineRawRead, sourceIds: string[], slug: string | null, fenceKind: string): Promise<UnwithdrawnFactRow[]> {
   const { text, params } = renderFragment(sqlFragment`
     WITH retired AS (
@@ -269,7 +269,7 @@ export async function listUnwithdrawnFacts(raw: EngineRawRead, sourceIds: string
       LEFT JOIN pages p ON p.source_id = r.source_id AND p.slug = r.slug
      WHERE f.expired_at IS NOT NULL AND f.row_num IS NULL AND f.fact = r.preimage->>'fact' AND f.visibility = r.preimage->>'visibility'
        AND COALESCE(f.source, '') NOT LIKE 'cli:extract-conversation-facts%'
-     ORDER BY r.source_id, r.slug, f.id`);
+     ORDER BY r.source_id COLLATE "C", r.slug COLLATE "C", f.id`);
   return raw<UnwithdrawnFactRow>(text, params);
 }
 

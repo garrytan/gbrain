@@ -3,8 +3,9 @@
  *
  * These are the statements `src/core/persistence/journal.ts`, `limits.ts` and `held-reads.ts` sent through
  * `executeRaw`: the journal limit read, the two hold reads, the request reads, the counter lock, the admission
- * insert, the claim stamp and the completion. The text is unchanged, written out in full so this module imports no
- * persistence code (journal.ts pulls in most of the codebase, which an engine must not load).
+ * insert, the claim stamp, the completion and the publication's effects insert (effect-journal.ts). The text is
+ * unchanged, written out in full so this module imports no persistence code (journal.ts pulls in most of the
+ * codebase, which an engine must not load).
  * `test/persistence-journal-statements.test.ts` checks each written-out statement against the journal's builders.
  * Decisions (who may claim, whether a write fits, what a refusal says) stay with the callers.
  */
@@ -13,6 +14,8 @@ import type { SqlExecutor, QueryOpts } from './executor.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { JOURNAL_LIMITS_SQL } from '../persistence/limits.ts';
 import { COMPACTED_RECEIPT_BYTES_SQL, EFFECT_BYTES_SQL } from '../persistence/receipt-bytes.ts';
+import { TOKEN_GRANT_ROW_COLUMNS, type TokenGrantRow } from '../grants/model.ts';
+import { sqlFragment, trustedSql } from './fragment.ts';
 
 /** The op of a held file's checkpoint row (sync-holds.ts re-exports it). */
 export const GIT_HOLD_OP = 'sync-hold';
@@ -184,6 +187,54 @@ export async function ownsSchemaTables(exec: LegacyUnscopedRead): Promise<boolea
   return owner?.owns !== false;
 }
 
+/**
+ * The live grant of the OAuth client that owns a write (persistence/authority.ts `authorizeWrite`): the columns the
+ * write re-check reads. Every value is the stored column as the driver returns it; the caller decides what it permits.
+ */
+export type OAuthClientWriteGrant = {
+  deleted_at: unknown; scope: unknown; source_id: unknown; source_grant: unknown; allowed_operations: unknown;
+  bound_slug_prefixes: unknown; bound_tools: unknown; delegated_namespace: unknown; delegated_slug_prefixes: unknown;
+};
+/** The live grant of the legacy token that owns a write: the token grant columns this brain has, and `revoked_at`. */
+export type AccessTokenWriteGrant = TokenGrantRow & { revoked_at: unknown };
+
+/** The OAuth client grant read `authorizeWrite` has always sent, plain and with `FOR SHARE` (written out: static text only). */
+export const OAUTH_CLIENT_GRANT_SQL = `SELECT deleted_at,scope,source_id,source_grant,allowed_operations,
+      bound_slug_prefixes,bound_tools,delegated_namespace,delegated_slug_prefixes FROM oauth_clients WHERE client_id=$1`;
+export const OAUTH_CLIENT_GRANT_SHARE_SQL = `SELECT deleted_at,scope,source_id,source_grant,allowed_operations,
+      bound_slug_prefixes,bound_tools,delegated_namespace,delegated_slug_prefixes FROM oauth_clients WHERE client_id=$1 FOR SHARE`;
+/** `readOAuthClientWriteGrant(clientId, { lock })`: the client's grant row or null; `lock` holds it `FOR SHARE` so a revocation waits. */
+export async function readOAuthClientWriteGrant(exec: LegacyUnscopedRead, clientId: string, opts: { lock?: boolean } = {}): Promise<OAuthClientWriteGrant | null> {
+  const [row] = await exec.executeRaw<OAuthClientWriteGrant>(opts.lock ? OAUTH_CLIENT_GRANT_SHARE_SQL : OAUTH_CLIENT_GRANT_SQL, [clientId]);
+  return row ?? null;
+}
+
+/** The access_tokens columns this brain has (a column a pending migration adds reads as absent). */
+export const ACCESS_TOKEN_COLUMNS_SQL = "SELECT attname FROM pg_attribute WHERE attrelid=to_regclass('access_tokens') AND attnum>0 AND NOT attisdropped";
+/** The select list of the token grant columns (grants/model.ts `TOKEN_GRANT_ROW_COLUMNS`, constant names) present in `present`. */
+export function tokenGrantSelectList(present: ReadonlySet<string>): string {
+  return TOKEN_GRANT_ROW_COLUMNS.filter(c => present.has(c)).join(',');
+}
+/**
+ * `readAccessTokenWriteGrant(tokenId, { lock })`: the token's grant row or null, named columns only (GST-2314: a
+ * prepared SELECT * cached before a migration added a column fails 0A000 inside the transaction); `lock` holds it
+ * `FOR SHARE`. The same two statements grants/model.ts `tokenGrantRowSelect` and authority.ts sent.
+ */
+export async function readAccessTokenWriteGrant(exec: LegacyUnscopedRead, tokenId: string, opts: { lock?: boolean } = {}): Promise<AccessTokenWriteGrant | null> {
+  const present = new Set((await exec.executeRaw<{ attname: string }>(ACCESS_TOKEN_COLUMNS_SQL)).map(c => c.attname));
+  const { rows: [row] } = await exec.run<AccessTokenWriteGrant>(
+    sqlFragment`SELECT ${trustedSql(tokenGrantSelectList(present))},revoked_at FROM access_tokens WHERE id=${tokenId}${opts.lock ? trustedSql(' FOR SHARE') : sqlFragment``}`);
+  return row ?? null;
+}
+
+/** The credential locks `authorizeWrite` takes before it re-reads an attest right (GST-1113). */
+export const LOCK_OAUTH_CLIENT_SHARE_SQL = 'SELECT 1 FROM oauth_clients WHERE client_id=$1 FOR SHARE';
+export const LOCK_ACCESS_TOKEN_SHARE_SQL = 'SELECT 1 FROM access_tokens WHERE id=$1 FOR SHARE';
+/** `shareLockWriteCredential(kind, id)`: holds the credential row `FOR SHARE` for the caller's transaction, so a concurrent removal commits before or after. */
+export async function shareLockWriteCredential(exec: LegacyUnscopedRead, kind: 'oauth_client' | 'legacy_token', id: string): Promise<void> {
+  await exec.executeRaw(kind === 'oauth_client' ? LOCK_OAUTH_CLIENT_SHARE_SQL : LOCK_ACCESS_TOKEN_SHARE_SQL, [id]);
+}
+
 /** The counter rows of `keys` that exist, unlocked (`readCounterRows`). */
 export const READ_COUNTERS_SQL = 'SELECT * FROM persistence_counters WHERE key=ANY($1::text[]) ORDER BY key COLLATE "C"';
 /** `readCounterRows(keys)`: the existing counter rows of `keys` in key byte order, without a lock; a missing key has no row. */
@@ -265,4 +316,44 @@ export async function completeWriteRow(exec: SqlExecutor, c: WriteCompletion): P
     JSON.stringify(c.outcome), c.errorCode, c.errorMessage, c.consumerVersion, c.consumerHostId,
     c.errorDetail ? JSON.stringify(c.errorDetail) : null, c.resultBytes, c.counterKeys, c.intentBytes, c.retainedBytes, c.terminalReservation]);
   return done ?? null;
+}
+
+/** The config key that turns a remote write's mention links off (effect-model.ts `REMOTE_AUTO_LINKS_KEY`; the statement test pins the two). */
+export const REMOTE_AUTO_LINKS_CONFIG_KEY = 'mcp.remote_auto_links';
+
+/**
+ * #6007: a publication's effects, inserted together in queue order by one statement. A `gated` effect (the mention
+ * `links` effect) inserts nothing while config `auto_link` or `mcp.remote_auto_links` is off; unset is on. An effect
+ * already queued for the request keeps its row. The config value test is edge-whitespace.ts `asciiLowerSql(edgeTrimSql('value'))`
+ * written out; test/persistence-journal-statements.test.ts checks it against that fragment.
+ */
+export const PUBLICATION_EFFECTS_SQL = `INSERT INTO persistence_effects (request_id,kind,revision,data,source_id,source_incarnation,worktree_id)
+    SELECT $1::uuid,t.e->>'kind',$2::uuid,t.e->'data',$3,$4::uuid,$5::uuid FROM jsonb_array_elements($6::text::jsonb) WITH ORDINALITY AS t(e,n)
+    WHERE NOT (COALESCE((t.e->>'gated')::boolean,false) AND EXISTS (SELECT 1 FROM config
+      WHERE key IN ('auto_link',$7) AND translate(btrim(value, (E'\\u0020\\u0009\\u000a\\u000b\\u000c\\u000d' || CASE WHEN current_setting('server_encoding') = 'UTF8' THEN convert_from(decode('c2a0e19a80e28080e28081e28082e28083e28084e28085e28086e28087e28088e28089e2808ae280a8e280a9e280afe2819fe38080efbbbf', 'hex'), 'UTF8') ELSE '' END)), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz') IN ('false','0','no','off')))
+    ORDER BY t.n ON CONFLICT(request_id,kind) DO NOTHING RETURNING kind`;
+
+/** One effect a publication queues: its kind, its data, and whether the auto-link switches gate it. */
+export interface QueuedPublicationEffect { kind: string; data: Record<string, unknown>; gated?: boolean }
+
+/** What `insertPublicationEffects` inserts: the request's identity columns and its effects in queue order (at least one). */
+export interface PublicationEffectsSpec {
+  requestId: string;
+  /** The revision the publication wrote, or null when it wrote none. */
+  revision: string | null;
+  sourceId: string;
+  sourceIncarnation: string;
+  worktreeId: string | null;
+  effects: readonly QueuedPublicationEffect[];
+}
+
+/** The effects insert's parameters for one spec. */
+export function publicationEffectsParams(spec: PublicationEffectsSpec): unknown[] {
+  return [spec.requestId, spec.revision, spec.sourceId, spec.sourceIncarnation, spec.worktreeId, JSON.stringify(spec.effects), REMOTE_AUTO_LINKS_CONFIG_KEY];
+}
+
+/** Inserts a publication's effects; returns the kinds it inserted, in queue order (a gated or already queued kind is missing). */
+export async function insertPublicationEffects(exec: SqlExecutor, spec: PublicationEffectsSpec): Promise<string[]> {
+  const rows = await exec.executeRaw<{ kind: string }>(PUBLICATION_EFFECTS_SQL, publicationEffectsParams(spec));
+  return rows.map(row => row.kind);
 }

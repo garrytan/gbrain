@@ -1,9 +1,9 @@
 //! Group 5 facts reads, purge, withdrawal, relink and fence repair (src/core/engine-sql/facts-purge.ts).
 //!
-//! Eleven of the thirteen members are served from the fact rows and the pages. Two answer nothing:
-//! `listFactsReconcileBacklog` reads `page_facts_reconcile`, a table the store does not have, and
-//! `listSingleFactMetadata` has no store read yet (the store keeps the `trust_tier` it reads;
-//! rust/docs/store/facts.md).
+//! Eleven of the thirteen members are served here from the fact rows and the pages.
+//! `listFactsReconcileBacklog` is served from the `page_facts_reconcile` watermark in
+//! `facts/reconcile.rs`, and `listSingleFactMetadata` from `facts/trust_reads.rs`
+//! (rust/docs/store/facts.md).
 //!
 //! Text comparisons are byte comparisons, as Postgres's deterministic collation makes them, and a
 //! NULL entity or slug never equals anything (`entity_slug = $4` is NULL for a row with no entity).
@@ -612,7 +612,11 @@ impl Store {
 
 /// A withdrawal under `subject` reaches `row`: every subject, the row's entity, an unbacked name
 /// key (unless the subject is an owned memory page), or the owned memory page the row sits on.
-fn withdrawal_covers(read: &dyn KvRead, row: &FactRecord, subject: &str) -> Result<bool> {
+pub(super) fn withdrawal_covers(
+    read: &dyn KvRead,
+    row: &FactRecord,
+    subject: &str,
+) -> Result<bool> {
     Ok(subject == "*"
         || row.entity_slug.as_deref() == Some(subject)
         || (unbacked(read, row)? && !owned_memory_subject(subject))

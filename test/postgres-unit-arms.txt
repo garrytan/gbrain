@@ -72,10 +72,19 @@ test/capture-consent-admission.test.ts
 test/capture-dispatch-provenance-6524.test.ts
 test/chronicle-backfill-max-usd.test.ts
 test/claim-fifo-foreground-waiting.test.ts
+test/claim-head-deferred-decisions.test.ts
 test/claim-lease-holder-only-6712.test.ts
 test/claude-cli-output-cap.test.ts
 test/cli-page-writes.test.ts
 test/code-edges-parity.test.ts
+test/collate-agent-session-takes.test.ts
+test/collate-body-tiling.test.ts
+test/collate-core-memory.test.ts
+test/collate-facts-pages.test.ts
+test/collate-forecast-journal.test.ts
+test/collate-git-holds.test.ts
+test/collate-marker-repair.test.ts
+test/collate-repair-propose.test.ts
 test/colon-slug-windows-5032.test.ts
 test/company-brain-policy.test.ts
 test/company-brain-runtime.test.ts
@@ -126,6 +135,7 @@ test/enforced-member.serial.test.ts
 test/engine-parity/access-flag.test.ts
 test/engine-parity/alias-fanout-reads.test.ts
 test/engine-parity/alias-trust.test.ts
+test/engine-parity/calibration-profiles.test.ts
 test/engine-parity/chunk-reads.test.ts
 test/engine-parity/chunks.test.ts
 test/engine-parity/cli-capabilities.test.ts
@@ -135,6 +145,8 @@ test/engine-parity/code-eval-salience.test.ts
 test/engine-parity/config-ingest.test.ts
 test/engine-parity/connect-gate.test.ts
 test/engine-parity/cycle-locks.test.ts
+test/engine-parity/decide-proposals.test.ts
+test/engine-parity/decide-store.test.ts
 test/engine-parity/effect-scans.test.ts
 test/engine-parity/entity-reads.test.ts
 test/engine-parity/extraction.test.ts
@@ -150,6 +162,7 @@ test/engine-parity/facts.test.ts
 test/engine-parity/fence-overlay.test.ts
 test/engine-parity/field-usage.test.ts
 test/engine-parity/forget-reach-reads.test.ts
+test/engine-parity/forget-remember.test.ts
 test/engine-parity/held-fence-cells.test.ts
 test/engine-parity/import-members.test.ts
 test/engine-parity/import-path.test.ts
@@ -172,12 +185,14 @@ test/engine-parity/link-temporal.test.ts
 test/engine-parity/links.test.ts
 test/engine-parity/memory-mutation-reads.test.ts
 test/engine-parity/open-loops.test.ts
+test/engine-parity/owner-recovery-scans.test.ts
 test/engine-parity/page-visibility.test.ts
 test/engine-parity/pages.test.ts
 test/engine-parity/persistence-declaration.test.ts
 test/engine-parity/persistence.test.ts
 test/engine-parity/private-page-reads.test.ts
 test/engine-parity/raw-sql.test.ts
+test/engine-parity/remember-whole.test.ts
 test/engine-parity/remote-policy.test.ts
 test/engine-parity/restriction-flag-reads.test.ts
 test/engine-parity/retrieval-coverage.test.ts
@@ -185,6 +200,7 @@ test/engine-parity/search-reads.test.ts
 test/engine-parity/search.test.ts
 test/engine-parity/segmented-body.test.ts
 test/engine-parity/source-resolver-reads.test.ts
+test/engine-parity/spend-log.test.ts
 test/engine-parity/stats-vectors.test.ts
 test/engine-parity/stats.test.ts
 test/engine-parity/sync-aliases.test.ts
@@ -206,6 +222,7 @@ test/engine-parity/versions-raw.test.ts
 test/engine-parity/wanted-links.test.ts
 test/engine-parity/write-guards.test.ts
 test/engine-parity/write-misc.test.ts
+test/engine-parity/writer-versions.test.ts
 test/engine-sql-fact-relink-attempts.test.ts
 test/engine-sql-fact-relink-writes.test.ts
 test/engine-sql-facts-keyset.test.ts
@@ -646,6 +663,7 @@ test/persistence-sync-fence-holds.test.ts
 test/persistence-sync-holds.test.ts
 test/persistence-sync-lease.test.ts
 test/persistence-sync-metafile-pages.test.ts
+test/persistence-topology-recovery-unmanaged.test.ts
 test/persistence-write-interrupted.test.ts
 test/persistence-write-stall.test.ts
 test/persistence-writer-fences.test.ts

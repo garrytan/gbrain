@@ -419,9 +419,9 @@ export async function prepareManagedFileRepairMutation(engine: BrainEngine, row:
         applied = movedImport;
       }
       published = applied;
-      const [last] = adopted && snapshot ? await tx.executeRaw<{ id: number | string | null }>('SELECT max(id) AS id FROM page_versions WHERE page_id=$1', [snapshot.page.id]) : [];
+      const last = adopted && snapshot ? await tx.readLatestVersionId(Number(snapshot.page.id)) : null;
       const installed = await applied.apply(tx);
-      if (adopted && snapshot) await tx.executeRaw('UPDATE page_versions SET change_reason=$2 WHERE page_id=$1 AND id>$3', [snapshot.page.id, ADOPTED_CHANGE_REASON, Number(last?.id ?? 0)]);
+      if (adopted && snapshot) await tx.stampVersionChangeReason({ pageId: Number(snapshot.page.id), afterVersionId: last ?? 0, reason: ADOPTED_CHANGE_REASON });
       await bindOrigin(tx, { sourceId: row.source_id, slug: row.slug, sourcePath: p.sourcePath });
       // A body stored in segments was sealed by its import's apply when complete (sealSegmentedPage); the inline text seal reads the whole timeline.
       if (!applied.noop) { await project(tx); if (!installed?.segmented) await sealPageTextProjection(tx, row.slug, row.source_id); }

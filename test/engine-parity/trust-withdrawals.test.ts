@@ -6,7 +6,8 @@
  *    subject move of a rename, the per-subject check, the ledger key listing and the hot-memory cache watermark
  *    (`readFactCacheWatermark`, read by facts/meta-hook.ts on every MCP call), and the trust policy generation that
  *    keys the same cache (`readTrustGeneration`: decimal text, steady with no write, moved by a `trust.%` config
- *    write) return the same observable result on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
+ *    write), and the per-source purge probe (`readSourcePurgeFlags`, read by facts/purge-overlay.ts) return the same
+ *    observable result on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: an engine whose claim fingerprint drifts from `gbrain_fact_fingerprint` /
  *    `gbrain_fact_fingerprint_v1` (case, whitespace, punctuation and sentence-dot folding), that lets a withdrawal leak
  *    across sources, visibilities or subjects, that overwrites an earlier withdrawal time, or that orders the key
@@ -160,6 +161,26 @@ describe('engine parity: fact withdrawal ledger', () => {
         movedAfterTrustWrite: BigInt(moved) > BigInt(first),
       };
       expect(out).toEqual({ decimal: true, steady: true, movedAfterTrustWrite: true });
+      return out;
+    },
+  );
+
+  parityTest(
+    'readSourcePurgeFlags reports a fact purge tombstone of the source and none elsewhere; no engine here holds a take purge',
+    { methods: ['putPage', 'insertFacts', 'loadPurgeTarget', 'insertFactPurge', 'readSourcePurgeFlags'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'work');
+      const before = await engine.readSourcePurgeFlags('default');
+      await engine.putPage('people/purge-flag-example', { type: 'person', title: 'Flag Example', compiled_truth: 'Flag Example.', timeline: '' });
+      const ins = await engine.insertFacts([{ fact: 'Flag keeps bees', entity_slug: 'people/purge-flag-example', source_markdown_slug: 'people/purge-flag-example',
+        row_num: 1, kind: 'fact', visibility: 'world', source: 'fence' }] as never, { source_id: 'default' }) as { ids: number[] };
+      const target = await engine.loadPurgeTarget(ins.ids[0]!, 'default');
+      await engine.insertFactPurge({ sourceId: 'default', visibility: 'world', subject: '*', factHash: target!.fact_hash,
+        requestId: '6f9619ff-8b86-4d01-b42d-00cf4fc964fe', actor: 'owner:local', reason: 'parity' });
+      const out = { before, after: await engine.readSourcePurgeFlags('default'), work: await engine.readSourcePurgeFlags('work'),
+        missing: await engine.readSourcePurgeFlags('missing') };
+      expect(out).toEqual({ before: { facts: false, takes: false }, after: { facts: true, takes: false },
+        work: { facts: false, takes: false }, missing: { facts: false, takes: false } });
       return out;
     },
   );

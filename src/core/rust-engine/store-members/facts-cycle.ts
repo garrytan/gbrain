@@ -56,6 +56,12 @@ export const findBulkFactDays: Member<'findBulkFactDays'> = async (brain, source
 export const maxFenceRowNum: Member<'maxFenceRowNum'> = (brain, sourceId, slug) =>
   storeCall({ member: 'maxFenceRowNum' }, () => brain.maxFenceRowNum({ sourceId, slug }));
 
+export const readFenceRowOccupant: Member<'readFenceRowOccupant'> = async (brain, sourceId, slug, rowNum) => {
+  if (!Number.isSafeInteger(rowNum)) refuseMember('readFenceRowOccupant', 'a row number that is not an integer');
+  const id = await storeCall({ member: 'readFenceRowOccupant' }, () => brain.readFenceRowOccupant({ sourceId, slug, rowNum }));
+  return id == null ? null : Number(id);
+};
+
 export const listStoredFenceFactRows: Member<'listStoredFenceFactRows'> = (brain, sourceId, slug) =>
   storeCall({ member: 'listStoredFenceFactRows' }, () => brain.listStoredFenceFactRows({ sourceId, slug }));
 

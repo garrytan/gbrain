@@ -116,7 +116,8 @@ export function toTimelineEntry<T extends object>(entry: T): T {
 
 /**
  * A version as `getVersions` returns it: the frontmatter's valid-time dates (`validDate`, as the SQL twin reads
- * them), the reason the next write gave (none is kept), and no `content_hash`, which PGLite's list leaves out.
+ * them), the reason the next write gave (the store's `replaced_because`, its stamped `change_reason`), and no
+ * `content_hash`, which PGLite's list leaves out.
  */
 /**
  * The store keeps every snapshot's content_hash; PGLite's page_versions holds it only on a segmented snapshot
@@ -132,7 +133,7 @@ function versionHash(version: object): Row {
 export function toVersion<T extends object>(version: T): T {
   const rest = versionHash(version);
   const frontmatter = (rest.frontmatter ?? {}) as Row;
-  return { ...rest, replaced_because: null, valid_from: validDate(frontmatter.valid_from), valid_until: validDate(frontmatter.valid_until) } as T;
+  return { ...rest, replaced_because: rest.replaced_because ?? null, valid_from: validDate(frontmatter.valid_from), valid_until: validDate(frontmatter.valid_until) } as T;
 }
 
 /**

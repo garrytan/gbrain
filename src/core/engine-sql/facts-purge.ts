@@ -58,7 +58,7 @@ export async function planFactPurgeIds(raw: EngineRawRead, sourceId: string, vis
 
 export interface FactsReconcileBacklogRows { rows: Array<{ source_id: string; slug: string; invalid: boolean }>; segmented: number }
 
-/** doctor: the due pages holding a fence (or fence rows) with whether the latest attempt marked them invalid, and the due segmented pages with no fence rows (0 when the count cannot run). */
+/** doctor: the due pages holding a fence (or fence rows) with whether the latest attempt marked them invalid, in (source, slug) byte order, and the due segmented pages with no fence rows (0 when the count cannot run). */
 export async function listFactsReconcileBacklog(raw: EngineRawRead): Promise<FactsReconcileBacklogRows> {
   const pattern = `%${FACTS_FENCE_BEGIN}%`;
   const backlog = renderFragment(sqlFragment`WITH due AS MATERIALIZED (
@@ -70,12 +70,72 @@ export async function listFactsReconcileBacklog(raw: EngineRawRead): Promise<Fac
             COALESCE(d.outcome = 'invalid' AND d.attempted_revision IS NOT DISTINCT FROM d.knowledge_revision, false) AS invalid
        FROM due d JOIN pages p ON p.id = d.id
       WHERE p.compiled_truth LIKE ${pattern} OR p.timeline LIKE ${pattern} OR ${trustedSql(OWNS_FENCE_ROWS)}
-      ORDER BY d.source_id, d.slug`);
+      ORDER BY d.source_id COLLATE "C", d.slug COLLATE "C"`);
   const rows = await raw<{ source_id: string; slug: string; invalid: boolean }>(backlog.text, backlog.params);
   const count = renderFragment(sqlFragment`SELECT COUNT(*)::int AS n FROM pages p LEFT JOIN page_facts_reconcile r ON r.page_id = p.id
       WHERE p.deleted_at IS NULL AND ${trustedSql(DUE)} AND p.body_storage = 'segmented' AND NOT ${trustedSql(OWNS_FENCE_ROWS)}`);
   const [segmented] = await raw<{ n: number }>(count.text, count.params).catch(() => []);
   return { rows, segmented: Number(segmented?.n ?? 0) };
+}
+
+/** A reconcile attempt's outcome: `complete`, `deferred` (retried next run), `invalid` (retried after the page changes) or `cancelled`. */
+export type FactsReconcileOutcome = 'complete' | 'deferred' | 'invalid' | 'cancelled';
+/** Upper bound on pages one drain settles in bulk as having no fence and no fence rows. */
+export const FACTLESS_SETTLE_LIMIT = 10_000;
+/** `p`'s latest attempt did not mark its current revision invalid. */
+export const RETRYABLE = `NOT COALESCE(r.outcome = 'invalid' AND r.attempted_revision IS NOT DISTINCT FROM p.knowledge_revision, false)`;
+
+/** extract_facts: records one live page's reconcile outcome at `revision` (`undefined`: at the current revision); a moved-on page records nothing. Moved from facts/reconcile-watermark.ts settleFactsReconcile unchanged. */
+export async function settleFactsReconcile(
+  raw: EngineRawRead, sourceId: string, slug: string, outcome: FactsReconcileOutcome, revision?: string | null,
+): Promise<void> {
+  await raw(
+    `INSERT INTO page_facts_reconcile AS r (page_id, reconciled_revision, reconciled_at, outcome, attempted_revision, attempted_at)
+     SELECT p.id, CASE WHEN $3 = 'complete' THEN p.knowledge_revision END, CASE WHEN $3 = 'complete' THEN now() END,
+            $3, p.knowledge_revision, now()
+       FROM pages p
+      WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL
+        AND ($5::boolean OR p.knowledge_revision IS NOT DISTINCT FROM $4::uuid)
+     ON CONFLICT (page_id) DO UPDATE SET
+       reconciled_revision = CASE WHEN EXCLUDED.outcome = 'complete' THEN EXCLUDED.reconciled_revision ELSE r.reconciled_revision END,
+       reconciled_at = CASE WHEN EXCLUDED.outcome = 'complete' THEN EXCLUDED.reconciled_at ELSE r.reconciled_at END,
+       outcome = EXCLUDED.outcome,
+       attempted_revision = EXCLUDED.attempted_revision,
+       attempted_at = EXCLUDED.attempted_at`,
+    [sourceId, slug, outcome, revision ?? null, revision === undefined],
+  );
+}
+
+/** extract_facts' commit step: locks the live page row `FOR SHARE` for the rest of the caller's transaction and reports whether its `knowledge_revision` is still `revision`. Fires no trigger and changes nothing. Moved from facts/reconcile-watermark.ts lockReconcileRevision unchanged. */
+export async function lockReconcileRevision(raw: EngineRawRead, sourceId: string, slug: string, revision: string | null): Promise<boolean> {
+  const rows = await raw<{ knowledge_revision: string | null }>(
+    `SELECT knowledge_revision FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL FOR SHARE`,
+    [sourceId, slug],
+  );
+  return rows.length === 1 && (rows[0]!.knowledge_revision ?? null) === revision;
+}
+
+/** extract_facts: settles up to FACTLESS_SETTLE_LIMIT due fenceless pages of the source as complete, then returns up to `pageLimit` due retryable slugs, never-attempted first, then oldest attempt, then page id. Moved from facts/reconcile-watermark.ts selectFactsReconcileDrain; `sqlFragment` numbers the placeholders, the predicates are the same. */
+export async function selectFactsReconcileDrain(raw: EngineRawRead, sourceId: string, pageLimit: number): Promise<string[]> {
+  const marker = `%${FACTS_FENCE_BEGIN}%`;
+  const settle = renderFragment(sqlFragment`INSERT INTO page_facts_reconcile AS r (page_id, reconciled_revision, reconciled_at, outcome, attempted_revision, attempted_at)
+     SELECT p.id, p.knowledge_revision, now(), 'complete', p.knowledge_revision, now()
+       FROM pages p LEFT JOIN page_facts_reconcile r ON r.page_id = p.id
+      WHERE p.source_id = ${sourceId} AND p.deleted_at IS NULL AND ${trustedSql(DUE)}
+        AND p.compiled_truth NOT LIKE ${marker} AND p.timeline NOT LIKE ${marker}
+        AND NOT ${trustedSql(OWNS_FENCE_ROWS)}
+      ORDER BY p.id
+      LIMIT ${FACTLESS_SETTLE_LIMIT}
+     ON CONFLICT (page_id) DO UPDATE SET
+       reconciled_revision = EXCLUDED.reconciled_revision, reconciled_at = EXCLUDED.reconciled_at,
+       outcome = EXCLUDED.outcome, attempted_revision = EXCLUDED.attempted_revision, attempted_at = EXCLUDED.attempted_at`);
+  await raw(settle.text, settle.params);
+  const due = renderFragment(sqlFragment`SELECT p.slug FROM pages p LEFT JOIN page_facts_reconcile r ON r.page_id = p.id
+      WHERE p.source_id = ${sourceId} AND p.deleted_at IS NULL AND ${trustedSql(DUE)} AND ${trustedSql(RETRYABLE)}
+      ORDER BY r.attempted_at ASC NULLS FIRST, p.id ASC
+      LIMIT ${pageLimit}`);
+  const rows = await raw<{ slug: string }>(due.text, due.params);
+  return rows.map(r => r.slug);
 }
 
 export interface RelinkCandidateRow { id: number | string; fact: string; visibility: 'private' | 'world'; context: string | null; source: string | null; attributed_to: FactAttribution | null }

@@ -15,7 +15,6 @@
  */
 
 import type { BrainEngine } from './engine.ts';
-import { sqlQueryForEngine } from './sql-query.ts';
 
 /** Per-call Voyage multimodal-3 spend estimate (per image), in cents. */
 export const VOYAGE_MULTIMODAL_3_PER_IMAGE_CENTS = 0.12;
@@ -41,14 +40,7 @@ export async function getTodaySpendCents(
   clientId: string,
 ): Promise<number> {
   try {
-    const sql = sqlQueryForEngine(engine);
-    const rows = await sql`
-      SELECT COALESCE(SUM(spend_cents), 0)::text AS total
-      FROM mcp_spend_log
-      WHERE client_id = ${clientId}
-        AND created_at >= ${todayStartIso()}
-    `;
-    const total = parseFloat(String(rows[0]?.total ?? '0'));
+    const total = await engine.sumClientSpendSince(clientId, todayStart());
     return Number.isFinite(total) ? total : 0;
   } catch {
     // Table doesn't exist (pre-v0.36 brain) or DB hiccup — fail-open to 0.
@@ -107,21 +99,19 @@ export async function recordSpend(
   },
 ): Promise<void> {
   try {
-    const sql = sqlQueryForEngine(engine);
-    await sql`
-      INSERT INTO mcp_spend_log (client_id, token_name, operation, spend_cents, provider, model)
-      VALUES (${entry.clientId ?? null}, ${entry.tokenName ?? null}, ${entry.operation}, ${entry.spendCents}, ${entry.provider ?? null}, ${entry.model ?? null})
-    `;
+    await engine.insertSpendLog({
+      client_id: entry.clientId ?? null, token_name: entry.tokenName ?? null, operation: entry.operation,
+      spend_cents: entry.spendCents, provider: entry.provider ?? null, model: entry.model ?? null,
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[spend-log] failed to record spend: ${msg}`);
   }
 }
 
-function todayStartIso(): string {
+function todayStart(): Date {
   const now = new Date();
   // UTC day-start so the cap rolls over deterministically regardless of
   // server timezone. Operators reading dashboards see UTC days.
-  const utcMidnight = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  return utcMidnight.toISOString();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 }

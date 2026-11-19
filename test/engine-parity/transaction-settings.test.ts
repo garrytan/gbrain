@@ -15,6 +15,14 @@
  *    trust context directly.
  *  - Seam: the typed members only (no executeRaw: D18).
  *
+ * `readCurrentWriteTrust` (persistence/context.ts `currentWriteTrust`) reads the two trust settings the tier trigger
+ * reads: the declaration applied in a transaction, none outside one, the outer one again after a savepoint rollback.
+ *
+ * `setWriteContext` (persistence/context.ts `withCoordinatedWrite`) sets a coordinated write's source scope, actor,
+ * trust and git protocol in one call and returns the persistence identity and the values it replaced: a nested call
+ * keeps the outer actor, a declared tier nests as min(outer, inner), an undeclared origin keeps the outer one, and an
+ * undeclared tier leaves both trust settings alone. A Rust engine that refused it stopped every coordinated write.
+ *
  * Null and '' both mean "unset" to every caller (context.ts reads `value ?? ''`). Which one an unset name reads as
  * depends on the connection: Postgres keeps a placeholder for a name once any statement on that connection set it, so
  * it then reads '' where a fresh connection reads null. PGLite has one connection per engine and Postgres a pool, so
@@ -25,6 +33,8 @@ import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { currentWriteTrust } from '../../src/core/persistence/context.ts';
+import { WRITE_CONTEXT_SETTINGS } from '../../src/core/engine-sql/transaction-settings.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -47,7 +57,7 @@ describe('engine parity: transaction-local settings', () => {
     const inside = await engine.transaction(async (tx) => {
       const before = await tx.readTransactionSettings(names);
       if (backend === 'rust') expect(before).toEqual([null, null, null, null, null]);
-      await tx.applyTransactionSettings(names, ['agent_written', '{"kind":"cli"}', 'default,notes', 'req-1', 'on']);
+      await tx.applyTransactionSettings(names, ['agent_written', '{"channel":"cli"}', 'default,notes', 'req-1', 'on']);
       return { before: unset(before), after: await tx.readTransactionSettings(names) };
     });
     const later = await engine.transaction((tx) => tx.readTransactionSettings(names));
@@ -114,6 +124,81 @@ describe('engine parity: transaction-local settings', () => {
     return { outside, inside: { ...inside, tier: unset(inside.tier) } };
   });
 
+  parityTest('readCurrentWriteTrust reads the trust declaration in force on the transaction', {
+    methods: ['transaction', 'applyTransactionSettings', 'readCurrentWriteTrust'],
+  }, async (engine, backend) => {
+    const fold = (row: { tier: string | null; origin: string | null }) => ({ tier: row.tier ?? '', origin: row.origin ?? '' });
+    const outside = fold(await engine.readCurrentWriteTrust());
+    const inside = await engine.transaction(async (tx) => {
+      const before = await tx.readCurrentWriteTrust();
+      if (backend === 'rust') expect(before).toEqual({ tier: null, origin: null });
+      await tx.applyTransactionSettings([TIER, ORIGIN], ['agent_written', '{"channel":"cli"}']);
+      const declared = await tx.readCurrentWriteTrust();
+      const dropped = await tx.transaction(async (inner) => {
+        await inner.applyTransactionSettings([TIER, ORIGIN], ['tool_observed', '']);
+        throw Object.assign(new Error('drop the savepoint'), { seen: await inner.readCurrentWriteTrust() });
+      }).then(() => null, (error: { seen?: unknown }) => error.seen ?? null);
+      return { before: fold(before), declared, parsed: await currentWriteTrust(tx), dropped, restored: await tx.readCurrentWriteTrust() };
+    });
+    const later = await engine.transaction(async (tx) => ({ raw: fold(await tx.readCurrentWriteTrust()), parsed: await currentWriteTrust(tx) }));
+    const answers = { outside, ...inside, later };
+    expect(answers).toEqual({
+      outside: { tier: '', origin: '' },
+      before: { tier: '', origin: '' },
+      declared: { tier: 'agent_written', origin: '{"channel":"cli"}' },
+      parsed: { tier: 'agent_written', origin: { channel: 'cli' } },
+      dropped: { tier: 'tool_observed', origin: '' },
+      restored: { tier: 'agent_written', origin: '{"channel":"cli"}' },
+      later: { raw: { tier: '', origin: '' }, parsed: null },
+    });
+    return answers;
+  });
+
+  parityTest('setWriteContext sets a coordinated write context and nests a second one inside it', {
+    methods: ['transaction', 'setWriteContext', 'readTransactionSettings'],
+  }, async (engine) => {
+    const names = [...WRITE_CONTEXT_SETTINGS];
+    const read = async (tx: BrainEngine) => unset(await tx.readTransactionSettings(names));
+    const input = (over: Partial<Parameters<BrainEngine['setWriteContext']>[0]>) => ({
+      sourceIds: ['default'], requestId: 'req-outer', principalKind: 'agent', principalId: 'agent-1', tier: '', origin: '', ...over });
+    const inside = await engine.transaction(async (tx) => {
+      const outer = await tx.setWriteContext(input({}));
+      const afterOuter = await read(tx);
+      const lowered = await tx.setWriteContext(input({ sourceIds: ['default', 'notes'], requestId: 'req-inner', principalKind: 'cli',
+        principalId: 'cli-1', tier: 'agent_written', origin: '{"channel":"cli"}' }));
+      const afterLowered = await read(tx);
+      // A higher tier does not raise the enclosing one; the declared origin still replaces the enclosing origin.
+      const notRaised = await tx.setWriteContext(input({ tier: 'user_confirmed', origin: '{"kind":"owner"}' }));
+      const afterNotRaised = await read(tx);
+      // A lower tier lowers it; no declared origin keeps the enclosing one.
+      const lower = await tx.setWriteContext(input({ tier: 'external_untrusted' }));
+      const afterLower = await read(tx);
+      // No declared tier leaves both trust settings as they are.
+      const undeclared = await tx.setWriteContext(input({ origin: '{"kind":"ignored"}' }));
+      const afterUndeclared = await read(tx);
+      const strip = (r: { brainId: string | null; previous: string[] }) => ({ identity: typeof r.brainId === 'string' && r.brainId !== '', previous: r.previous });
+      return { outer: strip(outer), afterOuter, lowered: strip(lowered), afterLowered, notRaised: strip(notRaised), afterNotRaised,
+        lower: strip(lower), afterLower, undeclared: strip(undeclared), afterUndeclared };
+    });
+    const later = await engine.transaction((tx) => read(tx));
+    const answers = { ...inside, later };
+    const outerActor = ['req-outer', 'agent', 'agent-1'];
+    expect(answers).toEqual({
+      outer: { identity: true, previous: ['', '', '', '', '', '', ''] },
+      afterOuter: ['["default"]', ...outerActor, '', '', '1'],
+      lowered: { identity: true, previous: ['["default"]', ...outerActor, '', '', '1'] },
+      afterLowered: ['["default","notes"]', ...outerActor, 'agent_written', '{"channel":"cli"}', '1'],
+      notRaised: { identity: true, previous: ['["default","notes"]', ...outerActor, 'agent_written', '{"channel":"cli"}', '1'] },
+      afterNotRaised: ['["default"]', ...outerActor, 'agent_written', '{"kind":"owner"}', '1'],
+      lower: { identity: true, previous: ['["default"]', ...outerActor, 'agent_written', '{"kind":"owner"}', '1'] },
+      afterLower: ['["default"]', ...outerActor, 'external_untrusted', '{"kind":"owner"}', '1'],
+      undeclared: { identity: true, previous: ['["default"]', ...outerActor, 'external_untrusted', '{"kind":"owner"}', '1'] },
+      afterUndeclared: ['["default"]', ...outerActor, 'external_untrusted', '{"kind":"owner"}', '1'],
+      later: ['', '', '', '', '', '', ''],
+    });
+    return answers;
+  });
+
   // beginSnapshotRead starts the transaction as one snapshot. The store transaction is one snapshot already (it holds
   // the one writer from its start), so the Rust member sets nothing; the reads after it answer the same on every arm.
   parityTest('a snapshot read transaction answers its reads and keeps its settings', {
@@ -129,24 +214,16 @@ describe('engine parity: transaction-local settings', () => {
     return { plain: await read(), readOnly: await read(true), readWrite: await read(false) };
   });
 
-  // READ ONLY is a Postgres check: a write in the transaction refuses there. The Rust store does not enforce it, so the
-  // write lands (docs/architecture/key-files/engines-2-continued.md, beginSnapshotRead).
-  parityTest('a write in a READ ONLY snapshot refuses on Postgres engines and lands on Rust', {
+  // READ ONLY refuses a write in the transaction on every engine with Postgres's read_only_sql_transaction error
+  // (SQLSTATE 25006), and the refused write leaves nothing behind.
+  parityTest('a write in a READ ONLY snapshot refuses with read_only_sql_transaction and leaves nothing', {
     methods: ['transaction', 'beginSnapshotRead', 'putPage', 'getPage'],
-  }, async (engine, backend) => {
+  }, async (engine) => {
     const refusal = await engine.transaction(async (tx) => {
       await tx.beginSnapshotRead({ readOnly: true });
       await tx.putPage('snap/ro', { type: 'note', title: 'RO', compiled_truth: 'body' });
-    }).then(() => null, (error: unknown) => String((error as Error)?.message ?? error));
-    const page = await engine.getPage('snap/ro');
-    if (backend === 'rust') {
-      expect(refusal).toBeNull();
-      expect(page?.title).toBe('RO');
-    } else {
-      expect(refusal).toContain('read-only transaction');
-      expect(page).toBeNull();
-    }
-    return 'checked';
+    }).then(() => null, (error: unknown) => error as { code?: unknown; message?: unknown; constructor?: { name?: string } });
+    return { code: refusal?.code ?? null, message: String(refusal?.message ?? '').replace(/^cannot execute .+ in a read-only transaction$/, 'cannot execute <statement> in a read-only transaction'), page: await engine.getPage('snap/ro') };
   });
 
   // The Rust engine keeps only the settings its writers read (the six trust settings in the store, the attribution
