@@ -12,7 +12,7 @@ test/engine-parity/config-ingest.test.ts	8	0
 test/engine-parity/connect-gate.test.ts	6	0
 test/engine-parity/cycle-locks.test.ts	10	0
 test/engine-parity/effect-scans.test.ts	3	0
-test/engine-parity/entity-reads.test.ts	8	0
+test/engine-parity/entity-reads.test.ts	10	1
 test/engine-parity/extraction.test.ts	6	0
 test/engine-parity/fact-relink-attempts.test.ts	3	0
 test/engine-parity/fact-relink-writes.test.ts	4	0
@@ -72,4 +72,4 @@ test/engine-parity/typed-config-reads.test.ts	2	0
 test/engine-parity/versions-raw.test.ts	9	0
 test/engine-parity/wanted-links.test.ts	5	0
 test/engine-parity/write-guards.test.ts	7	0
-test/engine-parity/write-misc.test.ts	18	6
+test/engine-parity/write-misc.test.ts	18	7
