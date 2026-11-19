@@ -23,10 +23,14 @@ if (!addonPath) {
   process.exit(2);
 }
 const dir = mkdtempSync(join(tmpdir(), 'gbrain-bench-rust-owner-'));
+// process.exit skips a pending finally block, so the exit code is decided inside and the exit comes after the folder
+// is removed (test/bench-rust-owner-cleanup.test.ts).
+let code = 1;
 try {
   const result = await runOwnerBench({ addonPath, db: join(dir, 'brain'), clients: flag('clients', 16), ops: flag('ops', 1000) });
   console.log(JSON.stringify({ ...result, roles: undefined, errorCount: result.errors.length, errors: [...new Set(result.errors)] }));
-  process.exit(result.errors.length || result.pagesFound !== result.pagesWritten ? 1 : 0);
+  code = result.errors.length || result.pagesFound !== result.pagesWritten ? 1 : 0;
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }
+process.exit(code);
