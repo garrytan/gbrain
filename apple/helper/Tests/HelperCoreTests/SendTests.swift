@@ -62,11 +62,22 @@ final class FakeMessages: MessagesPort {
     var onSend: ((String, String) -> Void)?
     var preparing: DispatchSemaphore?
     var prepareGate: DispatchSemaphore?
+    var handingOver: DispatchSemaphore?
+    var handOverGate: DispatchSemaphore?
+
+    func handOver<T>(_ body: () -> T) -> T {
+        handingOver?.signal()
+        handOverGate?.wait()
+        return body()
+    }
 
     func prepare(askPermission: Bool) -> PrepareResult {
-        if askPermission { askedPermission = true }
-        preparing?.signal()
-        prepareGate?.wait()
+        if askPermission {
+            askedPermission = true
+        } else {
+            preparing?.signal()
+            prepareGate?.wait()
+        }
         return prepareResult
     }
 
@@ -801,6 +812,80 @@ final class Harness {
         h.messages.prepareGate?.signal()
         #expect(group.wait(timeout: .now() + 10) == .success)
         #expect(reply.json["code"] as? String == (fields["action"] == "off" ? "send_disabled" : "unknown_send_key"))
+        #expect(h.messages.count == 0)
+    }
+
+    @Test(arguments: [[["action": "off"], ["action": "setup"]],
+                      [["action": "remove_key", "name": "box"], ["action": "add_key", "name": "box", "public_key": boxPublic]]])
+    func aStopCancelsASendHeldBeforeMessagesEvenWhenItIsUndoneAtOnce(changes: [[String: String]]) {
+        let h = Harness()
+        h.messages.preparing = DispatchSemaphore(value: 0)
+        h.messages.prepareGate = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        var reply: (status: Int, json: [String: Any]) = (0, [:])
+        group.enter()
+        Thread {
+            reply = h.send(h.request(h.body()))
+            group.leave()
+        }.start()
+        #expect(h.messages.preparing?.wait(timeout: .now() + 10) == .success)
+        for change in changes { #expect(admin(h, change).0 == 200) }
+        #expect(h.store.state?.enabled == true)
+        #expect(h.store.state?.keys == [SendKey(name: "box", publicKey: boxPublic)])
+        h.messages.prepareGate?.signal()
+        #expect(group.wait(timeout: .now() + 10) == .success)
+        #expect(reply.json["code"] as? String == (changes[0]["action"] == "off" ? "send_disabled" : "unknown_send_key"))
+        #expect(h.messages.count == 0)
+        h.messages.preparing = nil
+        h.messages.prepareGate = nil
+        #expect(h.send(h.request(h.body(), key: "owner-msg-0002")).status == 200)
+        #expect(h.messages.count == 1)
+    }
+
+    @Test func removingAnotherKeyLeavesAHeldSendAlone() {
+        let h = Harness()
+        #expect(admin(h, ["action": "add_key", "name": "second", "public_key": boxPublic]).0 == 200)
+        h.messages.preparing = DispatchSemaphore(value: 0)
+        h.messages.prepareGate = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        var reply: (status: Int, json: [String: Any]) = (0, [:])
+        group.enter()
+        Thread {
+            reply = h.send(h.request(h.body()))
+            group.leave()
+        }.start()
+        #expect(h.messages.preparing?.wait(timeout: .now() + 10) == .success)
+        #expect(admin(h, ["action": "remove_key", "name": "second"]).0 == 200)
+        h.messages.prepareGate?.signal()
+        #expect(group.wait(timeout: .now() + 10) == .success)
+        #expect(reply.status == 200)
+        #expect(h.messages.count == 1)
+    }
+
+    @Test func offDoesNotWaitWhileASendWaitsForItsTurnWithMessages() {
+        let h = Harness()
+        h.messages.handingOver = DispatchSemaphore(value: 0)
+        h.messages.handOverGate = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        var reply: (status: Int, json: [String: Any]) = (0, [:])
+        group.enter()
+        Thread {
+            reply = h.send(h.request(h.body()))
+            group.leave()
+        }.start()
+        #expect(h.messages.handingOver?.wait(timeout: .now() + 10) == .success)
+        let off = DispatchGroup()
+        var offStatus = 0
+        off.enter()
+        Thread {
+            offStatus = self.admin(h, ["action": "off"]).0
+            off.leave()
+        }.start()
+        #expect(off.wait(timeout: .now() + 10) == .success)
+        #expect(offStatus == 200)
+        h.messages.handOverGate?.signal()
+        #expect(group.wait(timeout: .now() + 10) == .success)
+        #expect(reply.json["code"] as? String == "send_disabled")
         #expect(h.messages.count == 0)
     }
 
