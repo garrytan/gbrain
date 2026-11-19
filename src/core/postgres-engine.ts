@@ -1769,7 +1769,7 @@ export class PostgresEngine implements BrainEngine {
           })));
         }, { alwaysTransaction: true, jitOff: true, settings: { statement_timeout: statementTimeout } }),
       query,
-      ctx,
+      { ...ctx, staleProbe: await this.timelineStale.reads(this) }, // the stale flag names timeline_entries (timeline-stale-probe.ts)
     );
   }
 

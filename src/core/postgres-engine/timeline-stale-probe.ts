@@ -1,7 +1,7 @@
 /**
  * Whether the Postgres search statements may compute the `stale` flag (search/timeline-stale.ts), which names
  * `timeline_entries`. Postgres checks the privilege on every relation a statement names, matched or not, so a role
- * without SELECT on it (the reader role of docs/ENGINES.md) would fail every keyword, chunk, title and vector search
+ * without SELECT on it (the reader role of docs/ENGINES.md) would fail every keyword, chunk, title, vector and CJK keyword search
  * with 42501. The probe asks `has_table_privilege` before the statement text is built; that role gets `false`.
  */
 import type { BrainEngine } from '../engine.ts';

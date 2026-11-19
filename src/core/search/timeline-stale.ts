@@ -1,7 +1,7 @@
 /**
  * The search `stale` flag (SearchResult.stale, printed as "(stale)" by `gbrain search`): a page is stale when one of
  * its timeline entries is newer than the page row, `pages.updated_at < MAX(timeline_entries.created_at)`. PGLite and
- * the Rust engine apply this rule on keyword, chunk, title and vector search; Postgres applies it too when the role
+ * the Rust engine apply this rule on keyword, chunk, title, vector and CJK keyword search; Postgres applies it too when the role
  * may read `timeline_entries` (postgres-engine/timeline-stale-probe.ts).
  */
 

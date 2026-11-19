@@ -24,6 +24,7 @@ import type { SearchOpts } from '../types.ts';
 import { buildBestPerPagePoolCte } from './sql-ranking.ts';
 import { frontmatterWhereSql } from './frontmatter-where.ts';
 import { escapeLikePattern, cjkMatchTerms } from '../cjk.ts';
+import { timelineStaleSql } from './timeline-stale.ts';
 
 /** Query-shape context shared by both engines' CJK fallback call sites. */
 export interface CjkKeywordCtx {
@@ -38,6 +39,12 @@ export interface CjkKeywordCtx {
   opts: SearchOpts | undefined;
   /** true = page-grain (best chunk per page); false = chunk-grain. */
   dedup: boolean;
+  /**
+   * Whether the rows compute the `stale` flag (search/timeline-stale.ts), which names `timeline_entries`. Postgres
+   * passes `false` for a role without SELECT on it (postgres-engine/timeline-stale-probe.ts), so the statement names no
+   * table that role may not read and every row reads `stale: false`. Unset computes the flag.
+   */
+  staleProbe?: boolean;
 }
 
 export interface CjkKeywordSql {
@@ -139,7 +146,7 @@ export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx, variant: C
       * ${sourceFactorCase})
     `;
   const scoreExpr = any ? `(${MATCHED_TERM_WEIGHT} * (${matchedExpr}) + ${tfScoreExpr})` : tfScoreExpr;
-  return assemble({ dedup, fromClause, scoreExpr, orderExpr, whereLikeClause, detailFilter, extraFilter, hardExcludeClause, visibilityClause, innerLimitIndex, limitIndex, offsetIndex, params });
+  return assemble({ dedup, fromClause, scoreExpr, orderExpr, whereLikeClause, detailFilter, extraFilter, hardExcludeClause, visibilityClause, innerLimitIndex, limitIndex, offsetIndex, params, staleProbe: ctx.staleProbe ?? true });
 }
 
 /**
@@ -241,8 +248,10 @@ function shapeFilters(opts: SearchOpts | undefined, params: unknown[]): string {
 function assemble(a: {
   dedup: boolean; fromClause: string; scoreExpr: string; orderExpr: string; whereLikeClause: string; detailFilter: string; extraFilter: string;
   hardExcludeClause: string; visibilityClause: string; innerLimitIndex: number; limitIndex: number; offsetIndex: number; params: unknown[];
+  staleProbe: boolean;
 }): CjkKeywordSql {
   const { dedup, fromClause, scoreExpr, orderExpr, whereLikeClause, detailFilter, extraFilter, hardExcludeClause, visibilityClause, innerLimitIndex, limitIndex, offsetIndex, params } = a;
+  const stale = timelineStaleSql('p.updated_at', 'p.id', a.staleProbe);
   if (dedup) {
     return {
       sql: `WITH ranked AS (
@@ -255,9 +264,7 @@ function assemble(a: {
                THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
              cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
              ${scoreExpr} AS score,
-             CASE WHEN p.updated_at < (
-               SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
-             ) THEN true ELSE false END AS stale
+             ${stale} AS stale
            FROM ${fromClause}
            JOIN pages p ON p.id = cc.page_id
            JOIN sources s ON s.id = p.source_id
@@ -283,9 +290,7 @@ function assemble(a: {
              THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
            ${scoreExpr} AS score,
-           CASE WHEN p.updated_at < (
-             SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
-           ) THEN true ELSE false END AS stale
+           ${stale} AS stale
          FROM ${fromClause}
          JOIN pages p ON p.id = cc.page_id
          JOIN sources s ON s.id = p.source_id
