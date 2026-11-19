@@ -5399,6 +5399,7 @@
         "rawTransaction": "none",
         "readAdmissionRate": "none",
         "readAdmissionSource": "none",
+        "readAdmittedPageRefs": "none",
         "readBeliefHistoryRows": "none",
         "readCallerPageAccess": "none",
         "readCanonicalTwin": "none",

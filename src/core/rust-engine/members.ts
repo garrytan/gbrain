@@ -57,6 +57,7 @@ export const RUST_ENGINE_MEMBERS = {
   readPageHiddenFromCaller: 'pages',
   readCallerPageAccess: 'pages',
   readStoredBodyBytes: 'pages',
+  readAdmittedPageRefs: 'pages',
   getPage: 'pages',
   readPageSnapshot: 'pages',
   readPageSnapshotsBatch: 'pages',

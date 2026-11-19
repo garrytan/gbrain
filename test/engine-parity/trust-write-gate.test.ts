@@ -188,8 +188,8 @@ describe('engine parity: write gate receipts and holds', () => {
 
   parityTest('listTrustAllowRuleRows lists no allow rule on a fresh brain, removed ones included', { methods: ['listTrustAllowRuleRows'] }, async (engine) => {
     const out = { active: await listTrustAllowRules(engine), withRemoved: await listTrustAllowRules(engine, { includeRemoved: true }),
-      source: await listTrustAllowRules(engine, { sourceIds: ['default'] }) };
-    expect(out).toEqual({ active: [], withRemoved: [], source: [] });
+      source: await listTrustAllowRules(engine, { sourceIds: ['default'] }), rows: await engine.listTrustAllowRuleRows({ includeRemoved: true }) };
+    expect(out).toEqual({ active: [], withRemoved: [], source: [], rows: [] });
     return out;
   });
 

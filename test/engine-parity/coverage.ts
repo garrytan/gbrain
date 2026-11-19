@@ -217,6 +217,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
   page_visibility: ['readPageHiddenFromCaller', 'readCallerPageAccess', 'readWriterSlugFence'],
   // large_page: the remote put_page large-page guard's stored body size read (engine-sql/large-page.ts)
   large_page: ['readStoredBodyBytes'],
+  // relational_reads: the relational recall arm's page reads (engine-sql/relational-reads.ts)
+  relational_reads: ['readAdmittedPageRefs'],
   trust_fence: ['listFenceFactRows'],
   trust_proposals: ['insertTrustProposal', 'getTrustProposal', 'listTrustProposals', 'pendingTrustProposalsFor',
     'updatePendingTrustProposalAfter', 'transitionTrustProposal', 'listPendingContradictions'],

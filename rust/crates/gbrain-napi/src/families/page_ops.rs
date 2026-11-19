@@ -246,6 +246,23 @@ impl Brain {
         })
     }
 
+    /// `readAdmittedPageRefs(refs, { sourceId?, sourceIds?, excludePrivate?, minTrust?, suppressFlagged? })`:
+    /// `[{ source_id, slug }]`.
+    #[napi]
+    pub fn read_admitted_page_refs<'env>(
+        &self,
+        env: &'env Env,
+        refs: Value,
+        scope: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_admitted_page_refs(
+                &required::<Vec<_>>(refs, "readAdmittedPageRefs refs")?,
+                &required(scope, "readAdmittedPageRefs scope")?,
+            )
+        })
+    }
+
     /// `revertToVersion(slug, versionId, { sourceId? }?)`: `null`.
     #[napi]
     pub fn revert_to_version<'env>(

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 676/676
+# covered: 677/677
 # lifecycle: 9/9
 # pages: 40/40
 # search: 7/7
@@ -64,6 +64,7 @@
 # write_guards: 7/7
 # page_visibility: 3/3
 # large_page: 1/1
+# relational_reads: 1/1
 # trust_fence: 1/1
 # trust_proposals: 7/7
 # connect_gate: 4/4
@@ -74,7 +75,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	56	no	yes	yes	serves
+transaction	lifecycle	yes	57	no	yes	yes	serves
 transactionDirect	lifecycle	yes	2	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -82,13 +83,13 @@ getPage	pages	yes	89	yes	yes	yes	serves
 readPageSnapshot	pages	yes	23	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	372	yes	yes	yes	serves
+putPage	pages	yes	373	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	8	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	120	yes	yes	yes	serves
+softDeletePage	pages	yes	121	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -359,7 +360,7 @@ readPersistenceBrainId	import_guards	yes	2	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	2	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	12	no	yes	yes	serves
-applyTransactionSettings	import_guards	yes	33	no	yes	yes	serves
+applyTransactionSettings	import_guards	yes	34	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readLedgerSource	import_guards	yes	8	no	yes	yes	serves
 isFolderRestricted	import_guards	yes	4	no	yes	yes	serves
@@ -714,6 +715,7 @@ readPageHiddenFromCaller	page_visibility	yes	1	no	yes	yes	serves
 readCallerPageAccess	page_visibility	yes	1	no	yes	yes	serves
 readWriterSlugFence	page_visibility	yes	1	no	yes	yes	serves
 readStoredBodyBytes	large_page	yes	1	no	yes	yes	serves
+readAdmittedPageRefs	relational_reads	yes	1	no	yes	yes	serves
 listFenceFactRows	trust_fence	yes	4	no	yes	yes	serves
 insertTrustProposal	trust_proposals	yes	4	no	yes	yes	serves
 getTrustProposal	trust_proposals	yes	2	no	yes	yes	serves

@@ -31,7 +31,7 @@ import { listSources } from '../sources-ops.ts';
 import { ALL_SOURCES } from '../source-id.ts';
 import { resolveEntitySlugWithSource, retiredPageSql } from '../entities/resolve.ts';
 import { buildVisibilityClause } from './sql-ranking.ts';
-import { hasReadPolicy, pageReadFilter } from './read-policy-sql.ts';
+import { hasReadPolicy, pageReadFilter, readPolicyOf } from './read-policy-sql.ts';
 import { boundedProjectedPrefix } from '../page-window/document.ts';
 import { boundedBodyPrefixSql, overlaidBoundedRows } from '../page-window/bounded-lead.ts';
 import { parseRelationalQuery, type RelationalQuery, type RelationVocab } from './relational-intent.ts';
@@ -162,13 +162,8 @@ async function resolveSeedScoped(
     out.push({ source_id: sid, slug: r.slug });
   }
   if (!out.length || !hasReadPolicy(policy)) return out;
-  const params: unknown[] = [out.map(ref => ref.source_id), out.map(ref => ref.slug)];
-  const filter = pageReadFilter('p', policy, params, true);
-  const admitted = await engine.executeRaw<{ source_id: string; slug: string }>(
-    `SELECT p.source_id, p.slug FROM pages p
-     JOIN unnest($1::text[], $2::text[]) AS refs(source_id, slug)
-       ON p.source_id = refs.source_id AND p.slug = refs.slug WHERE ${filter}`, params,
-  );
+  // The arm is handed the whole search options; the member reads the read policy alone.
+  const admitted = await engine.readAdmittedPageRefs(out, readPolicyOf(policy) ?? {});
   const allowed = new Set(admitted.map(ref => `${ref.source_id}:${ref.slug}`));
   return out.filter(ref => allowed.has(`${ref.source_id}:${ref.slug}`));
 }
