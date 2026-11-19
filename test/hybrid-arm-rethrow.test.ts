@@ -23,6 +23,10 @@ import { describe, test, expect } from 'bun:test';
 import { hybridSearch } from '../src/core/search/hybrid.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { SearchResult } from '../src/core/types.ts';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join, relative, sep } from 'node:path';
+import { sqlEngineKind } from '../src/core/sql-engine-kind.ts';
+import { isEngineCapabilityRefusal } from '../src/core/engine-capability-refusal.ts';
 
 function accessError(msg = 'connect ECONNREFUSED 127.0.0.1:5432'): Error & { code: string } {
   const e = new Error(msg) as Error & { code: string };
@@ -167,5 +171,36 @@ describe('a refused lexical option reaches the caller', () => {
     let caught: unknown;
     try { await hybridSearch(engine, QUERY, { limit: 5 }); } catch (e) { caught = e; }
     expect(caught).toBe(err);
+  });
+});
+
+// The rethrow above is a no-op for PGLite and Postgres because neither engine
+// raises engine_capability_missing: outside the Rust engine, the one raiser
+// (`capabilityMissing`) is called only by `sqlEngineKind`, which returns for
+// both SQL kinds and refuses any other kind.
+describe('no PGLite or Postgres path raises engine_capability_missing', () => {
+  test('sqlEngineKind returns for pglite and postgres and refuses anything else', () => {
+    expect(sqlEngineKind('pglite', 'm')).toBe('pglite');
+    expect(sqlEngineKind('postgres', 'm')).toBe('postgres');
+    let caught: unknown;
+    try { sqlEngineKind('rust', 'm'); } catch (e) { caught = e; }
+    expect(isEngineCapabilityRefusal(caught)).toBe(true);
+  });
+
+  test('outside the Rust engine only sqlEngineKind calls capabilityMissing', () => {
+    const root = join(import.meta.dir, '..', 'src');
+    const callers: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) { walk(path); continue; }
+        if (!path.endsWith('.ts')) continue;
+        const rel = relative(root, path).split(sep).join('/');
+        if (rel.startsWith('core/rust-engine/') || rel === 'core/rust-engine.ts') continue;
+        if (/\bcapabilityMissing\s*\(/.test(readFileSync(path, 'utf8'))) callers.push(rel);
+      }
+    };
+    walk(root);
+    expect(callers).toEqual(['core/sql-engine-kind.ts']);
   });
 });
