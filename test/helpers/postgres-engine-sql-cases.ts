@@ -575,12 +575,14 @@ export const DOMAIN_OF: Record<string, string> = {
   'expireMemoryProposals': OOS.writeMisc,
   'attachSourcePath': OOS.writeMisc,
   'listAwaitingMemoryProposals': OOS.writeMisc, 'readMemoryProposal': OOS.writeMisc,
-  'purgeMemoryProposals': OOS.writeMisc,
+  'purgeMemoryProposals': OOS.writeMisc, 'readPendingProposalSummary': OOS.writeMisc,
+  'listMemoryProposalRows': OOS.writeMisc,
+  'listOwnerProposalRows': OOS.writeMisc,
   'writeMiscReads': OOS.helper, 'writeMiscRead': OOS.helper,
   // the write journal (typed admission, claim, completion, limit and hold reads)
   'readJournalLimitRows': OOS.journal, 'readHeldPageRows': OOS.journal, 'readHeldCoverageRows': OOS.journal,
   'readWriteRequest': OOS.journal, 'readWriteRequestById': OOS.journal, 'listWriteRequestRows': OOS.journal, 'readWriteRequestProgress': OOS.journal, 'countOutstandingBySource': OOS.journal, 'ownsSchemaTables': OOS.journal, 'readOAuthClientWriteGrant': OOS.journal, 'readAccessTokenWriteGrant': OOS.journal, 'shareLockWriteCredential': OOS.journal, 'readCounterRows': OOS.journal, 'readAdmissionRate': OOS.journal, 'lockPersistenceCounters': OOS.journal,
-  'insertWriteRequest': OOS.journal, 'stampWriteClaim': OOS.journal, 'lockWriteRequest': OOS.journal, 'completeWriteRow': OOS.journal,
+  'insertWriteRequest': OOS.journal, 'stampWriteClaim': OOS.journal, 'lockWriteRequest': OOS.journal, 'completeWriteRow': OOS.journal, 'cancelWriteRow': OOS.journal,
   'listHostConsumerRows': OOS.journal, 'probeLiveConsumerRows': OOS.journal, 'renewConsumerRow': OOS.journal, 'deleteConsumerRow': OOS.journal,
   'stampWorktreeHeartbeats': OOS.journal,
   // entity and mention reads the CLI made through executeRaw
@@ -593,7 +595,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listCompactableReceipts': OOS.journal, 'listReservationsAfter': OOS.journal, 'listTrueUpRequests': OOS.journal,
   'readCapacityForecastInputs': OOS.journal, 'listPendingSegmentedProjections': OOS.journal, 'selectProjectionWindowJobs': OOS.journal,
   'readWriterVersionCutoff': OOS.writerVersions, 'listWriterVersions': OOS.writerVersions, 'recentWriterVersions': OOS.writerVersions,
-  'listGatedMirrorRequests': OOS.effectScans, 'listEffectRecoveries': OOS.effectScans, 'selectClaimableEffect': OOS.effectScans,
+  'listGatedMirrorRequests': OOS.effectScans, 'listEffectRecoveries': OOS.effectScans, 'selectClaimableEffect': OOS.effectScans, 'listRequestEffects': OOS.effectScans,
   'listOverdueHeldWrites': OOS.ownerScans, 'lockOverdueHold': OOS.ownerScans, 'listOwnerRecoveryHeads': OOS.ownerScans,
   'listResumableRefreshes': OOS.ownerScans, 'listSourceLastCommits': OOS.ownerScans,
   'logIngest': OOS.ingest, 'getIngestLog': OOS.ingest,
@@ -1358,6 +1360,11 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     consumerHostId: null, errorDetail: null, resultBytes: 10, counterKeys: JOURNAL_KEYS, intentBytes: 100, retainedBytes: 110,
     terminalReservation: 4096, probePurges,
   }))])),
+  ...variants('cancelWriteRow', [['default', (e) => e.transaction((tx: any) => tx.cancelWriteRow({
+    id: JOURNAL_REQUEST, state: 'cancelled', outcome: {}, errorCode: 'cancelled', errorMessage: 'Cancelled before publication.',
+    consumerVersion: 'test', consumerHostId: null, errorDetail: null, resultBytes: 10, counterKeys: JOURNAL_KEYS, intentBytes: 100,
+    retainedBytes: 110, terminalReservation: 4096, probePurges: false, expectState: 'queued', expectExecutionToken: null,
+  }))]]),
   ...variants('readMentionLastPass', [['default', (e) => e.readMentionLastPass()], ['sourceId', (e) => e.readMentionLastPass(SRC)]]),
   ...variants('countPagesDueForMentions', [
     ['default', (e) => e.countPagesDueForMentions({ sourceId: null, mentionVersion: 1 })],
@@ -1436,4 +1443,5 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('listOwnerRecoveryHeads', [['default', (e) => e.listOwnerRecoveryHeads(JOURNAL_REQUEST, [])], ['excluded', (e) => e.listOwnerRecoveryHeads(JOURNAL_REQUEST, [JOURNAL_REQUEST])]]),
   ...variants('listResumableRefreshes', [['default', (e) => e.listResumableRefreshes(JOURNAL_REQUEST, 60_000)]]),
   ...variants('listSourceLastCommits', [['default', (e) => e.listSourceLastCommits(['default'])], ['none', (e) => e.listSourceLastCommits([])]]),
+  ...variants('listRequestEffects', [['default', (e) => e.listRequestEffects(JOURNAL_REQUEST)]]),
 ];

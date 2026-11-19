@@ -108,11 +108,11 @@ export const FAMILIES: Record<string, readonly string[]> = {
   import_guards: ['readManagedModeRows', 'getSourceStrictness', 'readPersistenceBrainId', 'readLocalWriterRow', 'insertLocalWriterRow',
     'readTransactionSettings', 'applyTransactionSettings', 'beginSnapshotRead', 'readCurrentWriteTrust', 'setWriteContext', 'readLedgerSource', 'isFolderRestricted'],
   persistence_journal: ['readJournalLimitRows', 'readHeldPageRows', 'readHeldCoverageRows', 'readWriteRequest', 'readWriteRequestById', 'listWriteRequestRows',
-    'readWriteRequestProgress', 'countOutstandingBySource', 'ownsSchemaTables', 'readOAuthClientWriteGrant', 'readAccessTokenWriteGrant', 'shareLockWriteCredential', 'readCounterRows', 'readAdmissionRate', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'lockWriteRequest', 'completeWriteRow', 'readSourceMembership',
+    'readWriteRequestProgress', 'countOutstandingBySource', 'ownsSchemaTables', 'readOAuthClientWriteGrant', 'readAccessTokenWriteGrant', 'shareLockWriteCredential', 'readCounterRows', 'readAdmissionRate', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'lockWriteRequest', 'completeWriteRow', 'cancelWriteRow', 'readSourceMembership',
     'findTopologyChanges', 'renewWriteClaim', 'expireStaleWriteClaims', 'hasClaimableWrite', 'selectClaimableWrite', 'listHostConsumerRows', 'probeLiveConsumerRows',
     'renewConsumerRow', 'deleteConsumerRow', 'stampWorktreeHeartbeats', 'readTopologyChange', 'insertTopologyChange',
     'claimHousekeepingTurn', 'completeHousekeepingTurn', 'readReceiptBudget', 'listCompactableReceipts', 'listReservationsAfter',
-    'listTrueUpRequests', 'readCapacityForecastInputs', 'listPendingSegmentedProjections', 'selectProjectionWindowJobs', 'declarePersistence', 'listGatedMirrorRequests', 'listEffectRecoveries', 'selectClaimableEffect', 'listOverdueHeldWrites', 'lockOverdueHold', 'listOwnerRecoveryHeads', 'listResumableRefreshes', 'listSourceLastCommits', 'readWriterVersionCutoff', 'listWriterVersions', 'recentWriterVersions'],
+    'listTrueUpRequests', 'readCapacityForecastInputs', 'listPendingSegmentedProjections', 'selectProjectionWindowJobs', 'declarePersistence', 'listGatedMirrorRequests', 'listEffectRecoveries', 'selectClaimableEffect', 'listRequestEffects', 'listOverdueHeldWrites', 'lockOverdueHold', 'listOwnerRecoveryHeads', 'listResumableRefreshes', 'listSourceLastCommits', 'readWriterVersionCutoff', 'listWriterVersions', 'recentWriterVersions'],
   entity_reads: ['readMentionLastPass', 'countPagesDueForMentions', 'readIdentitySiblingCandidates', 'findExactSlug', 'readRetirementHop', 'readEntityCardRows',
     'readExtractionLagCounts', 'readIgnoredPrivacyLabelPages'],
   cycle_locks: ['acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'readCycleLocks', 'deleteCycleLock', 'deleteCycleLockIfStale',
@@ -204,7 +204,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   wanted_links: ['lockRegisteredSourceIds', 'replaceWantedLinkRows'],
   write_misc: ['readSourceState', 'readAdmissionSource', 'sharedSkillPackTablePresent', 'listSharedSkillPackRoots', 'getWorktreeBinding', 'isSourceClaimed',
     'hasExtractedEvents', 'listActiveAccessMembers', 'listAccessTokens', 'listAppliedPolicyRevisions', 'readLiveMember', 'hasLabelledOnlyMember', 'readFolderAccess', 'expireMemoryProposals', 'listAwaitingMemoryProposals', 'purgeMemoryProposals',
-    'attachSourcePath', 'readMemoryProposal'],
+    'attachSourcePath', 'readMemoryProposal', 'readPendingProposalSummary', 'listMemoryProposalRows', 'listOwnerProposalRows'],
   // telemetry: search telemetry, MCP usage and the chat usage ledger (engine-sql/telemetry.ts, engine-sql/chat-usage.ts)
   telemetry: [
     'recordSearchTelemetry', 'readSearchStats', 'readClientOpUsage', 'readMcpRollupPrunedBefore', 'logMcpRequest',

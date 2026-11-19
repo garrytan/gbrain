@@ -91,9 +91,9 @@ const proposalNotFound = (requestId: string) => opError('not_found', `No memory 
   'List the proposals awaiting a decision with gbrain memory-proposals list, and pass one of their request ids.');
 
 /** The proposal an owner names by request id. The namespace holds the credential, so two credentials share one only by a uuidv5 collision; that is refused, never guessed. */
-export async function ownerProposal(engine: SqlEngine, requestId: string): Promise<MemoryProposal> {
+export async function ownerProposal(engine: Pick<BrainEngine, 'listOwnerProposalRows'>, requestId: string): Promise<MemoryProposal> {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId)) throw proposalNotFound(requestId);
-  const rows = await engine.executeRaw<Record<string, unknown>>('SELECT * FROM memory_proposals WHERE request_id=$1::uuid LIMIT 2', [requestId]);
+  const rows = await engine.listOwnerProposalRows(requestId);
   if (!rows.length) throw proposalNotFound(requestId);
   if (rows.length > 1) throw opError('invalid_params', `Request id ${requestId} names proposals from two credentials.`,
     'Decide each from its credential\'s list (gbrain memory-proposals list --json shows principal_kind and principal_id).');
@@ -388,19 +388,16 @@ function parseProposalCursor(cursor: string): [string, string] {
 export async function listMemoryProposals(engine: BrainEngine, opts: { sourceId?: string; all?: boolean; limit?: number; after?: string } = {}): Promise<MemoryProposal[]> {
   const [afterAt, afterId] = opts.after === undefined ? [null, null] : parseProposalCursor(opts.after);
   await runMemoryProposalUpkeep(engine);
-  const rows = await engine.executeRaw<Record<string, unknown>>(`SELECT * FROM memory_proposals WHERE ($1::text IS NULL OR source_id=$1)
-    AND ($2::boolean OR state='awaiting_owner')
-    AND ($4::timestamptz IS NULL OR (date_trunc('milliseconds', created_at), request_id) > ($4::timestamptz, $5::uuid))
-    ORDER BY date_trunc('milliseconds', created_at), request_id LIMIT $3`,
-    [opts.sourceId ?? null, opts.all === true, Math.max(1, Math.min(500, opts.limit ?? 50)), afterAt, afterId]);
+  const rows = await engine.listMemoryProposalRows({
+    sourceId: opts.sourceId ?? null, all: opts.all === true, limit: Math.max(1, Math.min(500, opts.limit ?? 50)), afterAt, afterId,
+  });
   return rows.map(normalize);
 }
 
 /** Pending count and the oldest pending proposal's age, for doctor and status; zero on a schema that predates v300. */
-export async function pendingProposalSummary(engine: SqlEngine): Promise<{ pending: number; oldest_hours: number | null }> {
+export async function pendingProposalSummary(engine: Pick<BrainEngine, 'readPendingProposalSummary'>): Promise<{ pending: number; oldest_hours: number | null }> {
   try {
-    const [row] = await engine.executeRaw<{ n: number | string; oldest: number | string | null }>(`SELECT count(*) AS n,
-      EXTRACT(EPOCH FROM now() - min(created_at)) / 3600 AS oldest FROM memory_proposals WHERE state='awaiting_owner' AND expires_at>now()`);
+    const row = await engine.readPendingProposalSummary();
     const pending = Number(row?.n ?? 0);
     return { pending, oldest_hours: pending && row?.oldest !== null && row?.oldest !== undefined ? Math.floor(Number(row.oldest)) : null };
   } catch (error) {

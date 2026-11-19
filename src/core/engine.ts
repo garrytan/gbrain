@@ -35,9 +35,9 @@ import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
 import type { DurablePersistenceSettings } from './engine-sql/persistence-declaration.ts';
-import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, WriteCompletion, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from './engine-sql/persistence-journal.ts';
+import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from './engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimHeadSpec, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from './engine-sql/persistence-claims.ts';
-import type { GatedMirrorRequest } from './engine-sql/persistence-effect-scans.ts';
+import type { GatedMirrorRequest, RequestEffectRow } from './engine-sql/persistence-effect-scans.ts';
 import type { OverdueHold, OverdueHoldKind } from './engine-sql/persistence-owner-scans.ts';
 import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionFilter } from './engine-sql/persistence-housekeeping.ts';
 import type { ProjectionScanCursor } from './page-state/projection-window.ts';
@@ -56,7 +56,7 @@ import type { LedgerSource } from './engine-sql/belief.ts';
 import type { EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
 import type {
-  AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
+  AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from './engine-sql/write-misc.ts';
 import type { AdmitJobPolicy, AdmitJobResult, AdmitJobSpec, ClaimJobSpec, JobRow, ListJobsFilter } from './engine-sql/jobs.ts';
 import type { JobInsightRows, JobInsightSpec } from './engine-sql/jobs-insight.ts';
@@ -1420,6 +1420,12 @@ export interface BrainEngine {
   /** The memory proposal a principal holds under `requestId` (a uuid), as its stored row, or null. */
   readMemoryProposal(principalKind: string, principalId: string, requestId: string): Promise<Record<string, unknown> | null>;
   purgeMemoryProposals(retentionDays: number): Promise<number>;
+  /** How many memory proposals await their owner unexpired, and the oldest one's age in hours; null for no row. */
+  readPendingProposalSummary(): Promise<PendingProposalRow | null>;
+  /** One page of the owner's memory-proposal list, oldest first, as stored rows. */
+  listMemoryProposalRows(query: ProposalListQuery): Promise<Array<Record<string, unknown>>>;
+  /** The stored proposals of any credential with this request id, at most two. */
+  listOwnerProposalRows(requestId: string): Promise<Array<Record<string, unknown>>>;
   /** Attach a working tree to an existing path-less source (`sources add --path`); an unknown id changes nothing. */
   attachSourcePath(sourceId: string, localPath: string, opts?: AttachSourcePathOptions): Promise<void>;
   /** Every live page (of one source when given) with aliases and knowledge revision, by source then slug. */
@@ -3415,6 +3421,8 @@ export interface BrainEngine {
   lockWriteRequest(id: string): Promise<WriteRequest | null>;
   /** Records a request's terminal state and releases its counters; null when the result exceeds its reservation. */
   completeWriteRow(completion: WriteCompletion): Promise<CompletedWriteRow | null>;
+  /** Cancels a request still queued as the caller read it, in one step: lock, check, complete, release its counters; null when it does not exist. */
+  cancelWriteRow(cancel: WriteCancellation): Promise<WriteCancelResult | null>;
   // Write-claim statements (engine-sql/persistence-claims.ts): the text journal.ts, authority.ts and consumer.ts sent through executeRaw.
   /** A source's incarnation and archive flag, or null; `lock` reads it FOR SHARE until the transaction ends. */
   readSourceMembership(sourceId: string, opts?: { lock?: boolean }): Promise<SourceMembership | null>;
@@ -3474,6 +3482,11 @@ export interface BrainEngine {
    * A non-uuid host id refuses.
    */
   selectClaimableEffect<R = Record<string, unknown>>(hostId: string, deadOwners: readonly string[]): Promise<R | null>;
+  /**
+   * Every effect of write request `requestId` (kind, state, error code, outcome, whether a recovery is open), in kind
+   * order (`publicEffectsForRequest`, a write receipt's effects). A non-uuid request id refuses.
+   */
+  listRequestEffects(requestId: string): Promise<RequestEffectRow[]>;
 
   // Owner scans (engine-sql/persistence-owner-scans.ts): the reads the write owner's housekeeping sent through executeRaw.
   /**

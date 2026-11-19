@@ -195,6 +195,33 @@ export async function readMemoryProposal(exec: LegacyUnscopedRead, principalKind
   return row ?? null;
 }
 
+/** The pending-proposal count and the oldest pending proposal's age in hours (null with none), as Postgres returns them. */
+export interface PendingProposalRow { n: number | string; oldest: number | string | null }
+
+/** How many memory proposals still await their owner unexpired, and how old the oldest is (status and doctor). */
+export async function readPendingProposalSummary(exec: LegacyUnscopedRead): Promise<PendingProposalRow | null> {
+  const [row] = await exec.executeRaw<PendingProposalRow>(`SELECT count(*) AS n,
+      EXTRACT(EPOCH FROM now() - min(created_at)) / 3600 AS oldest FROM memory_proposals WHERE state='awaiting_owner' AND expires_at>now()`);
+  return row ?? null;
+}
+
+/** One page of the owner's proposal list: `afterAt`/`afterId` are the previous page's last creation time and request id. */
+export interface ProposalListQuery { sourceId: string | null; all: boolean; limit: number; afterAt: string | null; afterId: string | null }
+
+/** The owner's proposal list, oldest first (creation time to the millisecond, then request id), as stored rows. */
+export function listMemoryProposalRows(exec: LegacyUnscopedRead, q: ProposalListQuery): Promise<Array<Record<string, unknown>>> {
+  return exec.executeRaw<Record<string, unknown>>(`SELECT * FROM memory_proposals WHERE ($1::text IS NULL OR source_id=$1)
+    AND ($2::boolean OR state='awaiting_owner')
+    AND ($4::timestamptz IS NULL OR (date_trunc('milliseconds', created_at), request_id) > ($4::timestamptz, $5::uuid))
+    ORDER BY date_trunc('milliseconds', created_at), request_id LIMIT $3`,
+    [q.sourceId, q.all, q.limit, q.afterAt, q.afterId]);
+}
+
+/** The proposals of any credential that carry this request id (at most two, so a uuidv5 collision is seen, never guessed). */
+export function listOwnerProposalRows(exec: LegacyUnscopedRead, requestId: string): Promise<Array<Record<string, unknown>>> {
+  return exec.executeRaw<Record<string, unknown>>('SELECT * FROM memory_proposals WHERE request_id=$1::uuid LIMIT 2', [requestId]);
+}
+
 /** Deletes every closed memory proposal decided (or last updated) at least `retentionDays` days ago; returns how many. */
 export async function purgeMemoryProposals(exec: SqlExecutor, retentionDays: number): Promise<number> {
   const rows = await exec.executeRaw(`DELETE FROM memory_proposals WHERE state<>'awaiting_owner'

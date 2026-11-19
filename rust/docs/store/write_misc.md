@@ -36,4 +36,7 @@ The link endpoint read (`listLinkEndpointPages`) is in [link_queries.md](link_qu
 | `readFolderAccess(readers)` | `{ rules: [], coverage: [] }` | No folder rule or folder coverage exists on this engine (see `isFolderRestricted`), so no rule is satisfied and no prefix reads as nobody; a seed of `access_rules` or `access_pending_coverage` refuses as raw SQL. On PGLite and Postgres the reads are the two statements `access/caller.ts` `folderAccessForAll` ran through `executeRaw` (`src/core/engine-sql/access-control.ts`), still through the engine's own `executeRaw`. |
 | `expireMemoryProposals(reason)`, `purgeMemoryProposals(days)` | `0` | The store keeps no memory proposals. |
 | `listAwaitingMemoryProposals(limit)` | `[]` | The store keeps no memory proposals. |
+| `readPendingProposalSummary()` | `{ n: 0, oldest: null }` | The store keeps no memory proposals, so `gbrain status` and `gbrain doctor` report none pending. |
+| `listMemoryProposalRows(query)` | `[]` | The store keeps no memory proposals, so `gbrain memory-proposals list` lists none, on every page. |
+| `listOwnerProposalRows(requestId)` | `[]` | No request id names a proposal, so `gbrain memory-proposals show`, `approve` and `deny` answer `not_found`. |
 | `readMemoryProposal(principalKind, principalId, requestId)` | `null` | The store keeps no memory proposals, so `get_write_request` and `cancel_write_request` answer `not_found` for a request id with no write request. |

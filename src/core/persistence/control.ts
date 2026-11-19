@@ -1,7 +1,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { authorizeStoredRequest } from './authority.ts';
-import { completeWrite, getWriteRequest, lockCounters } from './journal.ts';
+import { cancelLockedWrite, getWriteRequest, lockCounters } from './journal.ts';
 import { isTerminal, principalKey, type Principal, type WriteRequest } from './model.ts';
 import { declarePersistenceProtocol } from './protocol.ts';
 
@@ -40,14 +40,16 @@ export async function cancelWriteRequest(engine: BrainEngine, principal: Princip
     await declarePersistenceProtocol(tx);
     await authorizeStoredRequest(tx, row, true);
     await lockCounters(tx, ['brain', principalKey(principal), ...(row.worktree_id ? [`worktree:${row.worktree_id}`] : [])]);
-    const [current] = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid FOR UPDATE', [row.id]);
+    // The row lock through the typed member every engine serves (engine-sql/persistence-journal.ts: the same FOR UPDATE).
+    const current = await tx.lockWriteRequest(row.id);
     if (!current) return null;
     await opts.authorize?.(tx, current);
     if (isTerminal(current)) return current;
     // A persisted recovery record means publication may have begun even when
     // the final transaction's publication_started flag was rolled back.
     if (current.publication_started || current.recovery) return current;
-    return completeWrite(tx, current, 'cancelled', {}, { code: 'cancelled', message: 'Cancelled before publication.' });
+    // The engine re-checks and completes the row in one step (cancelWriteRow): exactly one of two racing cancels ends it.
+    return cancelLockedWrite(tx, current, current);
   });
 }
 export { readWriterDiagnostics as writerDiagnostics } from './diagnostics.ts';

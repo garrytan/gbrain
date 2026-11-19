@@ -644,7 +644,6 @@ src/core/persistence/consumer-diagnostics.ts	execute_raw	3
 src/core/persistence/consumer-lane.ts	execute_raw	2
 src/core/persistence/consumer.ts	execute_raw	4
 src/core/persistence/context.ts	execute_raw	1
-src/core/persistence/control.ts	execute_raw	1
 src/core/persistence/coordination-lock.ts	execute_raw	2
 src/core/persistence/coordinator.ts	execute_raw	9
 src/core/persistence/core-guard.ts	execute_raw	2
@@ -657,7 +656,7 @@ src/core/persistence/diagnostics.ts	execute_raw	7
 src/core/persistence/drift-conflicts.ts	execute_raw	9
 src/core/persistence/effect-catchup.ts	execute_raw	1
 src/core/persistence/effect-facts.ts	execute_raw	7
-src/core/persistence/effect-journal.ts	execute_raw	23
+src/core/persistence/effect-journal.ts	execute_raw	22
 src/core/persistence/effect-links.ts	execute_raw	8
 src/core/persistence/effect-recovery.ts	execute_raw	18
 src/core/persistence/effect-retry.ts	execute_raw	14
@@ -715,7 +714,7 @@ src/core/persistence/managed-sync-orphans.ts	execute_raw	14
 src/core/persistence/manual-links.ts	execute_raw	8
 src/core/persistence/memory-mutations.ts	execute_raw	6	GST-2897 B (#9670, opened before this ratchet): one read of a fact's entity_slug so the member it is about can withdraw it; no typed engine method exists yet
 src/core/persistence/memory-prepare.ts	execute_raw	3
-src/core/persistence/memory-proposals.ts	execute_raw	12
+src/core/persistence/memory-proposals.ts	execute_raw	9
 src/core/persistence/mirror-read-only.ts	execute_raw	3
 src/core/persistence/moved-pages.ts	execute_raw	7
 src/core/persistence/noop-kernel.ts	execute_raw	2

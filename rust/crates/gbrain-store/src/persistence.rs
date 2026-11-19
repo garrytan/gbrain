@@ -804,6 +804,51 @@ pub(crate) fn complete_write_row_in(
     Ok(Some(row))
 }
 
+/// `WriteCancellation` of `src/core/engine-sql/persistence-journal.ts`: a completion plus the state
+/// and execution token the caller read.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteCancellation {
+    #[serde(flatten)]
+    pub completion: WriteCompletion,
+    pub expect_state: String,
+    #[serde(default)]
+    pub expect_execution_token: Option<String>,
+}
+
+/// `cancelWriteRow`: the lock, the check and the completion in one write. `None` when the row does
+/// not exist. `kept` with the row unchanged when it is terminal, publishing, in recovery, or no
+/// longer in the state and claim the caller read; `too_large` when the result does not fit.
+pub(crate) fn cancel_write_row_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    c: &WriteCancellation,
+) -> Result<Option<Value>> {
+    if c.completion.state != "cancelled" {
+        return Err(violation(format!(
+            "cancelWriteRow completes a request as cancelled, not \"{}\"",
+            c.completion.state
+        )));
+    }
+    let Some(record) = request_by_id(&*tx, &c.completion.id)? else {
+        return Ok(None);
+    };
+    let token = json_text(record.extra.get("execution_token"));
+    let cancellable = !["committed", "conflict", "failed", "cancelled"]
+        .contains(&record.state.as_str())
+        && record.state == c.expect_state
+        && token == c.expect_execution_token
+        && !extra_bool(&record, "publication_started")
+        && extra_is_null(&record, "recovery");
+    if !cancellable {
+        return Ok(Some(json!({ "status": "kept", "row": record.to_row() })));
+    }
+    Ok(Some(match complete_write_row_in(tx, env, &c.completion)? {
+        Some(row) => json!({ "status": "cancelled", "row": row }),
+        None => json!({ "status": "too_large", "row": record.to_row() }),
+    }))
+}
+
 /// `renewWriteClaim({ id, token, leaseMs, phaseJson })`: true when the request is still running
 /// under `token`.
 pub(crate) fn renew_write_claim_in(
@@ -1092,6 +1137,11 @@ impl Store {
     /// `completeWriteRow(completion)`: the completed row, or `None` when it does not fit.
     pub fn complete_write_row(&self, completion: &WriteCompletion) -> Result<Option<Value>> {
         self.write(|tx| complete_write_row_in(tx, &*self.env, completion))
+    }
+
+    /// `cancelWriteRow(cancellation)`: `{ status, row }`, or `None` when the row does not exist.
+    pub fn cancel_write_row(&self, cancellation: &WriteCancellation) -> Result<Option<Value>> {
+        self.write(|tx| cancel_write_row_in(tx, &*self.env, cancellation))
     }
 
     /// `renewWriteClaim(id, token, leaseMs, phaseJson)`.

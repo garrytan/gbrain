@@ -256,6 +256,18 @@ impl Brain {
         })
     }
 
+    /// `cancelWriteRow(cancellation)`: `{ status, row }`, or `null` when the row does not exist.
+    #[napi]
+    pub fn cancel_write_row<'env>(
+        &self,
+        env: &'env Env,
+        cancellation: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.cancel_write_row(&required(cancellation, "cancelWriteRow cancellation")?)
+        })
+    }
+
     /// `renewWriteClaim({ id, token, leaseMs, phaseJson })`: `true` while the claim is held.
     #[napi]
     pub fn renew_write_claim<'env>(
@@ -406,6 +418,17 @@ impl Brain {
         ids: Vec<String>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_true_up_requests(&ids))
+    }
+
+    /// `listRequestEffects(requestId)`: the effects a write receipt lists; `[]` (no effect is
+    /// recorded here).
+    #[napi]
+    pub fn list_request_effects<'env>(
+        &self,
+        env: &'env Env,
+        request_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_request_effects(&request_id))
     }
 
     /// `listGatedMirrorRequests(hostId)`: the requests to requeue; `[]` (no worktree here).

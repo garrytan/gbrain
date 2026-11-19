@@ -2,7 +2,7 @@
  * The write-journal members the Rust store answers: the state reads (readManagedModeRows, readLocalWriterRow,
  * insertLocalWriterRow, readJournalLimitRows, readHeldPageRows, readHeldCoverageRows), the request rows the put path
  * reads and writes (readWriteRequest, readWriteRequestById, listWriteRequestRows, readWriteRequestProgress, countOutstandingBySource, ownsSchemaTables, readOAuthClientWriteGrant, readAccessTokenWriteGrant, shareLockWriteCredential, readCounterRows, readAdmissionRate, lockPersistenceCounters, insertWriteRequest,
- * stampWriteClaim, lockWriteRequest, completeWriteRow), the claim upkeep (renewWriteClaim, expireStaleWriteClaims,
+ * stampWriteClaim, lockWriteRequest, completeWriteRow, cancelWriteRow), the claim upkeep (renewWriteClaim, expireStaleWriteClaims,
  * hasClaimableWrite), the consumer rows (listHostConsumerRows, probeLiveConsumerRows, renewConsumerRow,
  * deleteConsumerRow, stampWorktreeHeartbeats), the admission reads (readSourceMembership, findTopologyChanges), the lifecycle receipts
  * (readTopologyChange, insertTopologyChange) and readLedgerSource.
@@ -15,7 +15,7 @@
  * rust/docs/store/persistence.md.
  */
 import type { LocalWriterInsert, LocalWriterRow } from '../../engine-sql/persistence-state.ts';
-import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, WriteCompletion, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
+import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimHeadSpec, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
 import type { LedgerSource } from '../../engine-sql/belief.ts';
 import type { WriteRequest } from '../../persistence/model.ts';
@@ -150,6 +150,12 @@ export const stampWriteClaim: StoreMember<[id: string, token: string, leaseMs: n
 /** The completion; this engine keeps no persistence effects, so the queued effect size is 0. */
 export const completeWriteRow: StoreMember<[completion: WriteCompletion], CompletedWriteRow | null> = async (brain, completion) =>
   requestRow<CompletedWriteRow>(await storeCall({ member: 'completeWriteRow' }, () => brain.completeWriteRow(completion)));
+
+/** The cancellation in one store write: the read, the check and the completion; null when the row does not exist. */
+export const cancelWriteRow: StoreMember<[cancel: WriteCancellation], WriteCancelResult | null> = async (brain, cancel) => {
+  const result = await storeCall({ member: 'cancelWriteRow' }, () => brain.cancelWriteRow(cancel)) as { status: WriteCancelResult['status']; row: unknown } | null;
+  return result ? { status: result.status, row: requestRow<CompletedWriteRow>(result.row)! } as WriteCancelResult : null;
+};
 
 /** Extends a claim's lease; true while request `id` is running under `token`. */
 export const renewWriteClaim: StoreMember<[renewal: ClaimRenewal, opts?: { signal?: AbortSignal }], boolean> = (brain, renewal) =>
