@@ -5,6 +5,7 @@ import { addMember, bindCredential, disableMember, enableMember, listMembers, se
 import { ATTEST_SYSTEMS, linkMember, linkMemberByEmail, listMemberLinks, parseAttestOps, unlinkMember } from '../core/access/actor.ts';
 import { operationsByName } from '../core/operations.ts';
 import { executeRawJsonb } from '../core/sql-query.ts';
+import { rescopeArchiveBefore } from './archive-rescope.ts';
 
 /**
  * GST-1094 gap 4: owner administration of the people a trusted system serves, over the running server: the attest
@@ -16,6 +17,7 @@ import { executeRawJsonb } from '../core/sql-query.ts';
  * instead of its id. Only here and on the brain host: no MCP operation or OAuth scope reads or sets it.
  */
 export function mountAdminAccess(app: Express, requireAdmin: RequestHandler, engine: BrainEngine): void {
+  const rescopeOnShared = async () => (await import('../core/transcripts/archive.ts')).rescopeArchiveOnShared(engine);
   app.get('/admin/api/access/members', requireAdmin, async (req, res) => {
     await answer(res, false, async () => ({ members: await listMembers(engine, { includeRemoved: req.query.all === '1' || req.query.all === 'true' }) }));
   });
@@ -29,18 +31,19 @@ export function mountAdminAccess(app: Express, requireAdmin: RequestHandler, eng
     if (action === 'add' && req.body.groups !== undefined && !(Array.isArray(req.body.groups) && req.body.groups.every((g: unknown) => typeof g === 'string'))) return refuse(res, 'groups must be an array of group ids.');
     await answer(res, true, async () => {
       if (action === 'add') {
-        const result = await addMember(engine, id, { name: req.body.name, email: req.body.email, groups: req.body.groups });
+        const result = await addMember(engine, id, { name: req.body.name, email: req.body.email, groups: req.body.groups, beforeWrite: () => rescopeArchiveBefore(engine, id, 'add') });
         await audit(engine, 'member_add', { member: result.member.id, groups_created: result.groups_created });
-        return { applied: true, ...result };
+        return { applied: true, ...result, archive_rescope: await rescopeOnShared() };
       }
       if (action === 'set') {
         const result = await setMemberEmail(engine, id, req.body.email);
         if (result.changed) await audit(engine, 'member_set', { member: result.member.id, email: result.member.email === null ? 'cleared' : 'declared' });
         return { applied: result.changed, ...result };
       }
+      if (action === 'enable') await rescopeArchiveBefore(engine, id, 'enable');
       const member = await (action === 'disable' ? disableMember : enableMember)(engine, id);
       await audit(engine, `member_${action}`, { member: member.id });
-      return { applied: true, member };
+      return { applied: true, member, ...(action === 'enable' ? { archive_rescope: await rescopeOnShared() } : {}) };
     });
   });
 
