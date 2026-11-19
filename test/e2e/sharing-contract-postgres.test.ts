@@ -3,7 +3,7 @@
  * scenario and caller, four read paths). Keyless. Matrix and pinned cells: test/helpers/sharing-contract.ts.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
-import { SCENARIOS, SAMPLE_PATHS, type EngineFactory, badKeys, expectedBadKeys, installKeylessEmbeddings, runScenario } from '../helpers/sharing-contract.ts';
+import { SCENARIOS, SAMPLE_PATHS, type EngineFactory, badKeys, expectedBadKeys, expectedCellCount, installKeylessEmbeddings, runScenario } from '../helpers/sharing-contract.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { requirePostgresTestDatabase } from '../helpers/test-backends.ts';
 
@@ -18,6 +18,7 @@ for (const s of SCENARIOS) {
   describe('sharing contract on Postgres (sample): ' + s.name, () => {
     test('only the pinned cells break the contract', async () => {
       const r = await runScenario(s, postgresEngine, SAMPLE_PATHS);
+      expect(r.cells.length).toBe(expectedCellCount(s, SAMPLE_PATHS));
       cells += r.cells.length;
       const found = badKeys(r.cells);
       bad += found.length;

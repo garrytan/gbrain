@@ -4,7 +4,7 @@
  * test/sharing-contract-matrix.slow.test.ts (full CI and nightly). PGLite, keyless. Matrix: test/helpers/sharing-contract.ts.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
-import { SCENARIOS, SAMPLE_PATHS, pgliteEngine, badKeys, expectedBadKeys, installKeylessEmbeddings, runScenario } from './helpers/sharing-contract.ts';
+import { SCENARIOS, SAMPLE_PATHS, pgliteEngine, badKeys, expectedBadKeys, expectedCellCount, installKeylessEmbeddings, runScenario } from './helpers/sharing-contract.ts';
 
 const restore = installKeylessEmbeddings();
 afterAll(restore);
@@ -15,6 +15,7 @@ for (const s of SCENARIOS) {
   describe('sharing contract (sample): ' + s.name, () => {
     test('only the pinned cells break the contract', async () => {
       const r = await runScenario(s, pgliteEngine, SAMPLE_PATHS);
+      expect(r.cells.length).toBe(expectedCellCount(s, SAMPLE_PATHS));
       cells += r.cells.length;
       const found = badKeys(r.cells);
       bad += found.length;

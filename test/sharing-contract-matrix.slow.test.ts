@@ -4,7 +4,7 @@
  * this file runs in the full CI run and nightly. Keyless. Matrix and pinned cells: test/helpers/sharing-contract.ts.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
-import { SCENARIOS, pgliteEngine, badKeys, expectedBadKeys, installKeylessEmbeddings, runScenario } from './helpers/sharing-contract.ts';
+import { SCENARIOS, pgliteEngine, badKeys, expectedBadKeys, expectedCellCount, installKeylessEmbeddings, runScenario } from './helpers/sharing-contract.ts';
 
 const restore = installKeylessEmbeddings();
 afterAll(restore);
@@ -15,6 +15,7 @@ for (const s of SCENARIOS) {
   describe('sharing contract (whole matrix): ' + s.name, () => {
     test('only the pinned cells break the contract', async () => {
       const r = await runScenario(s, pgliteEngine);
+      expect(r.cells.length).toBe(expectedCellCount(s));
       cells += r.cells.length;
       const found = badKeys(r.cells);
       bad += found.length;

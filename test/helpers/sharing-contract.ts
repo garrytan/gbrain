@@ -372,6 +372,13 @@ export function expectedBadKeys(scenario: string, only?: ReadonlySet<ReadPath>):
     .flatMap(e => e.callers.flatMap(c => e.paths.filter(p => !only || only.has(p)).map(p => 'after|' + c + '|' + e.item + '|' + p))).sort();
 }
 
+/** Cells a scenario reads: six callers before (no other member yet), seven after when the scenario gives the other member a token. */
+export function expectedCellCount(s: Scenario, only?: ReadonlySet<ReadPath>): number {
+  const perCaller = ITEMS.reduce((n, item) => n + (item.kind === 'page' ? PAGE_PATHS : FACT_PATHS).filter(p => !only || only.has(p)).length, 0);
+  const memberAfter = s.mintOther === true || s.otherEnabledAfter === false;
+  return perCaller * (CALLERS.length - 1) + perCaller * (memberAfter ? CALLERS.length : CALLERS.length - 1);
+}
+
 export function badKeys(cells: Cell[]): string[] {
   return cells.filter(c => c.verdict !== 'ok').map(c => c.phase + '|' + c.caller + '|' + c.item + '|' + c.path).sort();
 }
