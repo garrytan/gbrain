@@ -475,7 +475,8 @@ export const cases: Case[] = [
         assert.equal(version.compiled_truth, 'Wrote the first program.');
         assert.equal((await brain.getVersions('people/ada')).length, 1);
         assert.deepEqual(await brain.resolveSlugs('people/ada'), ['people/ada']);
-        assert.deepEqual(await brain.resolveSlugs('ada'), [], 'resolveSlugs is exact only');
+        assert.deepEqual(await brain.resolveSlugs('ada'), ['people/ada'], 'resolveSlugs falls back to a pg_trgm-style partial match');
+        assert.deepEqual(await brain.resolveSlugs('zzqx'), [], 'resolveSlugs finds nothing for a name no page resembles');
         assert.deepEqual(await brain.softDeletePage('people/ada'), { slug: 'people/ada' });
         assert.equal(await brain.readPageSnapshot('people/ada'), null);
         assert.equal(await brain.countPages(), 0);
