@@ -1,8 +1,9 @@
 /**
  * The page write guards (BrainEngine readPageOrigin, listOriginClaims, bindPageOrigin, stampPageIngest,
- * sealImportedPage, readLivePageBody, readInlinePageRegions, hasSegmentStorage): the reads and writes a page write runs around the page row
- * (engine-sql/write-guards.ts on the SQL engines). The store runs one write transaction at a time, so the advisory
- * locks PGLite takes before it lists origin claims are already held, and `listOriginClaims` takes none.
+ * sealImportedPage, readLivePageBody, readInlinePageRegions, readStoredPageTier, hasSegmentStorage): the reads and
+ * writes a page write runs around the page row (engine-sql/write-guards.ts on the SQL engines). The store runs one
+ * write transaction at a time, so the advisory locks PGLite takes before it lists origin claims are already held,
+ * and `listOriginClaims` takes none.
  *
  * What each member answers and why: rust/docs/store/write-guards.md.
  */
@@ -54,6 +55,9 @@ export const readInlinePageRegions: StoreMember<[pageId: number], InlinePageRegi
   if (pageId < 1) return null;
   return storeCall({ member: 'readInlinePageRegions' }, () => brain.readInlinePageRegions(pageId));
 };
+
+export const readStoredPageTier: StoreMember<[sourceId: string, slug: string], string | null> = (brain, sourceId, slug) =>
+  storeCall({ member: 'readStoredPageTier', slug, sourceId }, () => brain.readStoredPageTier(sourceId, slug));
 
 /** True once a segment text or a body staging is stored; the store keeps neither until the page-body family lands. */
 export const hasSegmentStorage: StoreMember<[], boolean> = (brain) => storeCall({ member: 'hasSegmentStorage' }, () => brain.hasSegmentStorage());

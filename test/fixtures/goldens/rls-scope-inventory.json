@@ -5279,6 +5279,7 @@
         "readSourceRow": "none",
         "readSourceState": "none",
         "readStoredBodyBytes": "none",
+        "readStoredPageTier": "none",
         "readTopologyChange": "none",
         "readTransaction": "none",
         "readTransactionSettings": "none",

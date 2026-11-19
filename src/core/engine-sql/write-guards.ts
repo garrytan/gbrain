@@ -109,6 +109,12 @@ export async function readInlinePageRegions(exec: LegacyUnscopedRead, pageId: nu
   return row ?? null;
 }
 
+/** The stored `trust_tier` of the page `slug` names in the source, live or a tombstone (trust/page-write.ts storedPageTier), or null without one. */
+export async function readStoredPageTier(exec: LegacyUnscopedRead, sourceId: string, slug: string): Promise<string | null> {
+  const [row] = await exec.executeRaw<{ trust_tier: string }>('SELECT trust_tier FROM pages WHERE source_id = $1 AND slug = $2', [sourceId, slug]);
+  return row ? row.trust_tier : null;
+}
+
 /** Whether the brain holds any segment storage: a body staging or a segment text. The vacuum skips its sweep without either. */
 export async function hasSegmentStorage(exec: LegacyUnscopedRead): Promise<boolean> {
   const [row] = await exec.executeRaw<{ present: boolean }>(

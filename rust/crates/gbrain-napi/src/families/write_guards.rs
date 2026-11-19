@@ -106,6 +106,17 @@ impl Brain {
         })
     }
 
+    /// `readStoredPageTier(sourceId, slug)`: the page's stored `trust_tier`, or `null`.
+    #[napi]
+    pub fn read_stored_page_tier<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_stored_page_tier(&source_id, &slug))
+    }
+
     /// `hasSegmentStorage()`: whether any segment text or body staging is stored.
     #[napi]
     pub fn has_segment_storage<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {

@@ -4,7 +4,7 @@
 //! `engine-sql/write-guards.ts`).
 //!
 //! Members: readPageOrigin, listOriginClaims, bindPageOrigin, stampPageIngest, sealImportedPage,
-//! readLivePageBody, readInlinePageRegions, hasSegmentStorage.
+//! readLivePageBody, readInlinePageRegions, readStoredPageTier, hasSegmentStorage.
 //!
 //! Locks: PGLite takes an advisory lock per origin spelling before it lists the claims, so two
 //! writes of one file queue. The store runs one write transaction at a time, so every lock is
@@ -325,6 +325,15 @@ impl Store {
                 timeline: text_of(&page.timeline),
             }),
         )
+    }
+
+    /// `readStoredPageTier(sourceId, slug)`: the page's stored `trust_tier`, live or a tombstone, or
+    /// `None` without a page. A record that stores no tier reads `unknown`, the column default; the
+    /// value is returned as stored, as PGLite's raw column read is.
+    pub fn read_stored_page_tier(&self, source_id: &str, slug: &str) -> Result<Option<String>> {
+        let read = self.read()?;
+        Ok(read_page(&*read, source_id, slug)?
+            .map(|page| page.trust_tier.unwrap_or_else(|| "unknown".to_owned())))
     }
 
     /// `hasSegmentStorage()`: whether any segment text or body staging is stored.
