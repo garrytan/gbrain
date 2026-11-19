@@ -8,7 +8,8 @@
  * transaction, whose single writer is the lock, so the extract_facts commit step (lock, then 'complete' settle) runs whole.
  * `listSingleFactMetadata` is served by facts-trust-reads.ts.
  * `recordDerivationInputs` and `listDerivedRows` write and read the store's `derivation_inputs` rows
- * (generations/derivation_inputs.rs, `h 0x0A` by derived row and `h 0x0B` by input row).
+ * (generations/derivation_inputs.rs, `h 0x0A` by derived row and `h 0x0B` by input row). `hideDerivedRows` and
+ * `releaseHiddenMoment` write the store's `needs_rederive` marks (generations/needs_rederive.rs, `h 0x0C`).
  * `findActiveSingleFact` serves the remote provenance floor for a caller that does not change it (storeFloorPolicy);
  * it and `listSimilarActiveFacts` refuse a caller whose policy the store does not model (private-provenance.ts).
  */
@@ -117,4 +118,38 @@ export const listDerivedRows: Member<'listDerivedRows'> = (brain, frontier, limi
   if (!Number.isSafeInteger(limit)) refuseMember(member, 'a limit that is not an integer');
   for (const ref of frontier) if (typeof ref.table !== 'string' || typeof ref.id !== 'string') refuseMember(member, 'a frontier row whose table or id is not text');
   return storeCall({ member }, () => brain.listDerivedRows({ frontier: frontier.map(f => ({ table: f.table, id: f.id })), limit }));
+};
+
+const UUID = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
+const ID_BOUND: Record<string, number> = { facts: Number.MAX_SAFE_INTEGER, takes: Number.MAX_SAFE_INTEGER, pages: 2147483647 };
+
+/**
+ * Hides each derived row of `mark.sourceId` through its table's own inactive state and marks every row `needs_rederive`
+ * (generations/needs_rederive.rs hide_derived_rows). Refused rather than answered: a row whose table or id is not text, a
+ * row named twice (`ON CONFLICT DO UPDATE` refuses it), a request id that is not a uuid (`::uuid` refuses it), and a
+ * digits-only facts, takes or pages id past what PGLite's `bigint[]` / `integer[]` bind holds or JavaScript reads exactly.
+ */
+export const hideDerivedRows: Member<'hideDerivedRows'> = (brain, rows, mark) => {
+  const member = 'hideDerivedRows';
+  const seen = new Set<string>();
+  for (const r of rows) {
+    if (typeof r.table !== 'string' || typeof r.id !== 'string') refuseMember(member, 'a row whose table or id is not text');
+    const key = `${r.table}\0${r.id}`;
+    if (seen.has(key)) refuseMember(member, 'a row named twice');
+    seen.add(key);
+    const bound = ID_BOUND[r.table];
+    if (bound !== undefined && /^\d+$/.test(r.id) && !(Number(r.id) <= bound)) refuseMember(member, `a ${r.table} id out of range`);
+  }
+  if (typeof mark.sourceId !== 'string' || typeof mark.reason !== 'string') refuseMember(member, 'a source id or reason that is not text');
+  if (mark.requestId !== null && (typeof mark.requestId !== 'string' || !UUID.test(mark.requestId))) refuseMember(member, 'a request id that is not a uuid');
+  return storeCall({ member, sourceId: mark.sourceId }, () => brain.hideDerivedRows({
+    rows: rows.map(r => ({ table: r.table, id: r.id })), sourceId: mark.sourceId, requestId: mark.requestId, reason: mark.reason,
+  }));
+};
+
+/** Moves a hidden page's mark off its delete time (generations/needs_rederive.rs release_hidden_moment). */
+export const releaseHiddenMoment: Member<'releaseHiddenMoment'> = (brain, pageId) => {
+  const member = 'releaseHiddenMoment';
+  if (!Number.isSafeInteger(pageId)) refuseMember(member, 'a page id that is not an integer');
+  return storeCall({ member }, () => brain.releaseHiddenMoment({ pageId })).then(() => undefined);
 };

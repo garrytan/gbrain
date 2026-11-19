@@ -421,6 +421,8 @@ export const RUST_ENGINE_MEMBERS = {
   expireFactsByWithdrawal: 'facts',
   listDerivedRows: 'facts',
   recordDerivationInputs: 'facts',
+  hideDerivedRows: 'facts',
+  releaseHiddenMoment: 'facts',
 
   // facts: repair classifiers and loop retirement (engine-sql/facts-repair.ts)
   loopFactDrift: 'facts',

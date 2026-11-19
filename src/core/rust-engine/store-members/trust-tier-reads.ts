@@ -4,8 +4,8 @@
  * `countUnscannedTrustRows` over pages and facts, `listVersionTrustTiers` and `listVersionReasonWriters`; and the
  * valid-time reads (trust/valid_time.rs) `listValidTimeIdentities` and `pickValidTimeEdition`, and
  * `listAmendmentsNotApplied` (link_queries/link_temporal.rs), `readPageVersionEdition` and
- * `readCursorEdition` (trust/valid_time.rs). `pageAwaitsRederive` answers false: the store keeps no `needs_rederive`
- * queue (only a raw-SQL purge writes one, and `executeRaw` refuses here). `beginSnapshotRead` sets no isolation level: a store transaction is one
+ * `readCursorEdition` (trust/valid_time.rs). `pageAwaitsRederive` reads the store's `needs_rederive` marks
+ * (generations/needs_rederive.rs). `beginSnapshotRead` sets no isolation level: a store transaction is one
  * snapshot already. Its `READ ONLY` is enforced: every later write in the transaction refuses as Postgres refuses it.
  *
  * Refused (`engine_capability_missing`); the members this file does not export refuse as every unserved member does:
@@ -164,10 +164,11 @@ export const readCursorEdition: Member<'readCursorEdition'> = (brain, spec) => {
   return storeCall({ member }, () => brain.readCursorEdition({ pageId: spec.pageId, revision: String(spec.revision) }));
 };
 
-/** No page awaits re-derivation: the store keeps no `needs_rederive` queue (rust/docs/store/takes.md). */
-export const pageAwaitsRederive: Member<'pageAwaitsRederive'> = async (_brain, pageId) => {
-  requireInteger('pageAwaitsRederive', 'page id', pageId);
-  return false;
+/** Whether a purge marked the page `needs_rederive` (generations/needs_rederive.rs page_awaits_rederive). */
+export const pageAwaitsRederive: Member<'pageAwaitsRederive'> = (brain, pageId) => {
+  const member = 'pageAwaitsRederive';
+  requireInteger(member, 'page id', pageId);
+  return storeCall({ member }, () => brain.pageAwaitsRederive({ pageId }));
 };
 
 /**

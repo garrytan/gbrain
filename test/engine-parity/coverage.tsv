@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 836/836
+# covered: 838/838
 # lifecycle: 9/9
 # pages: 44/44
 # search: 7/7
@@ -45,7 +45,7 @@
 # fact_relink_attempts: 3/3
 # fact_relink_writes: 3/3
 # facts_cycle: 11/11
-# facts_purge: 18/18
+# facts_purge: 20/20
 # facts_repair: 10/10
 # facts_trust: 8/8
 # trust_tier_reads: 13/13
@@ -83,17 +83,17 @@ transaction	lifecycle	yes	97	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	113	yes	yes	yes	serves
+getPage	pages	yes	114	yes	yes	yes	serves
 readPageSnapshot	pages	yes	29	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	452	yes	yes	yes	serves
+putPage	pages	yes	453	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	10	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	131	yes	yes	yes	serves
+softDeletePage	pages	yes	132	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -264,9 +264,9 @@ storedTimelineRowsByPageIds	timeline	yes	1	no	yes	yes	serves
 countSegmentedTimelinePages	timeline	yes	1	no	yes	yes	serves
 countTimelineCommentMarkupRows	timeline	yes	1	no	yes	yes	serves
 listTimelineOrphanPages	timeline	yes	1	no	yes	yes	serves
-addTimelineEntry	timeline	yes	40	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	41	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	3	no	yes	yes	serves
-getTimeline	timeline	yes	18	yes	yes	yes	serves
+getTimeline	timeline	yes	19	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	6	no	yes	yes	serves
 getSince	timeline	yes	9	no	yes	yes	serves
 getOnThisDay	timeline	yes	5	no	yes	yes	serves
@@ -284,9 +284,9 @@ getRawData	raw_files	yes	5	yes	yes	yes	serves
 upsertFile	raw_files	yes	2	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
 listFilesForPage	raw_files	yes	1	no	yes	yes	serves
-addTakesBatch	takes	yes	44	yes	yes	yes	serves
+addTakesBatch	takes	yes	45	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	2	no	yes	yes	serves
-listTakes	takes	yes	21	no	yes	yes	serves
+listTakes	takes	yes	22	no	yes	yes	serves
 searchTakes	takes	yes	3	no	yes	yes	serves
 searchTakesVector	takes	yes	1	no	yes	yes	serves
 getTakeEmbeddings	takes	yes	1	no	yes	yes	serves
@@ -320,11 +320,11 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	47	yes	yes	yes	serves
+insertFact	facts	yes	48	yes	yes	yes	serves
 insertFacts	facts	yes	57	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	28	no	yes	yes	serves
-listFactsByEntity	facts	yes	20	yes	yes	yes	serves
+listFactsByEntity	facts	yes	21	yes	yes	yes	serves
 listFactsSince	facts	yes	11	yes	yes	yes	serves
 listFactsKeyset	facts	yes	3	no	yes	yes	serves
 listFactsBySession	facts	yes	5	yes	yes	yes	serves
@@ -351,8 +351,8 @@ sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
-createVersion	versions	yes	22	no	yes	yes	serves
-getVersions	versions	yes	11	no	yes	yes	serves
+createVersion	versions	yes	23	no	yes	yes	serves
+getVersions	versions	yes	12	no	yes	yes	serves
 readLatestVersionId	versions	yes	1	no	yes	yes	serves
 readLatestVersionIdAtTier	versions	yes	1	no	yes	yes	serves
 stampVersionChangeReason	versions	yes	1	no	yes	yes	serves
@@ -676,7 +676,7 @@ countUnconsolidatedFactsBySource	facts_cycle	yes	1	no	yes	yes	serves
 findBulkFactDays	facts_cycle	yes	1	no	yes	yes	serves
 maxFenceRowNum	facts_cycle	yes	1	no	yes	yes	serves
 listStoredFenceFactRows	facts_cycle	yes	1	no	yes	yes	serves
-countWorldFacts	facts_cycle	yes	5	no	yes	yes	serves
+countWorldFacts	facts_cycle	yes	6	no	yes	yes	serves
 countFactFingerprintLeftovers	facts_purge	yes	1	no	yes	yes	serves
 loadPurgeTarget	facts_purge	yes	5	no	yes	yes	serves
 planFactPurgeIds	facts_purge	yes	1	no	yes	yes	serves
@@ -693,8 +693,10 @@ listUnfencedFactRows	facts_purge	yes	1	no	yes	yes	serves
 listHeldFenceFactRows	facts_purge	yes	1	no	yes	yes	serves
 listWithdrawalSlugs	facts_purge	yes	2	no	yes	yes	serves
 expireFactsByWithdrawal	facts_purge	yes	1	no	yes	yes	serves
-listDerivedRows	facts_purge	yes	1	no	yes	yes	serves
-recordDerivationInputs	facts_purge	yes	2	no	yes	yes	serves
+listDerivedRows	facts_purge	yes	2	no	yes	yes	serves
+recordDerivationInputs	facts_purge	yes	3	no	yes	yes	serves
+hideDerivedRows	facts_purge	yes	1	no	yes	yes	serves
+releaseHiddenMoment	facts_purge	yes	1	no	yes	yes	serves
 loopFactDrift	facts_repair	yes	2	no	yes	yes	serves
 closedLoopWithActiveFact	facts_repair	yes	2	no	yes	yes	serves
 listSessionFactsForClassification	facts_repair	yes	1	no	yes	yes	serves
@@ -725,7 +727,7 @@ pickValidTimeEdition	trust_tier_reads	yes	7	no	yes	yes	serves
 listAmendmentsNotApplied	trust_tier_reads	yes	2	no	yes	yes	serves
 readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
-pageAwaitsRederive	trust_tier_reads	yes	3	no	yes	yes	serves
+pageAwaitsRederive	trust_tier_reads	yes	4	no	yes	yes	serves
 readSourceWriteRow	memory_mutation_reads	yes	1	no	yes	yes	serves
 readSourceLocalPath	memory_mutation_reads	yes	1	no	yes	yes	serves
 readFactEntitySlug	memory_mutation_reads	yes	1	no	yes	yes	serves

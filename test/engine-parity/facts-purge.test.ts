@@ -5,7 +5,8 @@
  *  - Contract: countFactFingerprintLeftovers, loadPurgeTarget, planFactPurgeIds, listFactsReconcileBacklog,
  *    settleFactsReconcile, lockReconcileRevision, selectFactsReconcileDrain, listRelinkCandidateRows, countRelinkCandidates, listSimilarActiveFacts, findActiveSingleFact,
  *    listSingleFactMetadata, listUnfencedFactRows, listHeldFenceFactRows, listWithdrawalSlugs,
- *    expireFactsByWithdrawal and listDerivedRows (one hop of the derivation walk) return the same observable result
+ *    expireFactsByWithdrawal, listDerivedRows (one hop of the derivation walk) and hideDerivedRows / releaseHiddenMoment
+ *    (a purge hiding what it derived and marking it `needs_rederive`) return the same observable result
  *    on every engine arm (PGLite always; Postgres with
  *    DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: an engine that answers one of these differently changes which rows `forget --purge` removes and counts
@@ -28,7 +29,7 @@ import { CALLER_ENTITIES, callerFactRows, putCallerPages, readAsCallers } from '
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END } from '../../src/core/facts-fence.ts';
 import { lockReconcileRevision } from '../../src/core/facts/reconcile-watermark.ts';
-import { derivedRowsFrom, recordDerivationInputs } from '../../src/core/facts/derivation-inputs.ts';
+import { derivedRowsFrom, hideDerivedRows, recordDerivationInputs, releaseHiddenMoment } from '../../src/core/facts/derivation-inputs.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -741,6 +742,9 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     await recordDerivationInputs(engine, { table: 'takes', id: '3', sourceId: SRC }, [{ table: 'pages', id: input }]);
     // The same edge again: stored once.
     await recordDerivationInputs(engine, { table: 'pages', id: leaf, sourceId: SRC }, [{ table: 'pages', id: mid }]);
+    // Text ids whose byte order differs from an en_US collation ('B' < '_b' < 'a' in byte order, 'a' < 'B' < '_b'
+    // by locale): the hop sorts in byte order (COLLATE "C") on every arm, so a capped hop keeps the same rows.
+    for (const textId of ['a', '_b', 'B']) await recordDerivationInputs(engine, { table: 'facts', id: textId, sourceId: SRC }, [{ table: 'facts', id: '99' }]);
     const hop = async (frontier: Array<{ table: string; id: string }>, limit: number) =>
       (await engine.listDerivedRows(frontier, limit)).map((r) => `${r.derived_table}:${name(r.derived_table, r.derived_id)}`);
     const fromInput = await hop([{ table: 'pages', id: input }], 10);
@@ -753,11 +757,89 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     expect(fromMid).toEqual(['pages:leaf']);
     expect(walked).toEqual(['pages:mid@1', 'takes:3@1', 'pages:leaf@2']);
     expect(walk.truncated).toBe(false);
+    const byteOrder = await hop([{ table: 'facts', id: '99' }], 10);
+    const byteOrderCapped = await hop([{ table: 'facts', id: '99' }], 2);
+    expect(byteOrder).toEqual(['facts:B', 'facts:_b', 'facts:a']);
+    expect(byteOrderCapped).toEqual(['facts:B', 'facts:_b']);
     return {
-      fromInput, capped, fromMid, walked,
+      fromInput, capped, fromMid, walked, byteOrder, byteOrderCapped,
       unrecorded: await hop([{ table: 'pages', id: alone }], 10),
       emptyFrontier: await hop([], 10),
       unrecordedWalk: await derivedRowsFrom(engine, [{ table: 'pages', id: alone }]),
     };
+  });
+
+  // Fail-first for the derivation hide: before store format 7 the Rust arm refused hideDerivedRows (raw_sql) and
+  // read no `needs_rederive` mark. A purge of `input` hides what was derived from it in its own source (the fact
+  // expires, the take goes inactive, the concept page is soft-deleted) and only marks the rest: a row of another
+  // source, a timeline entry (no inactive state) and an already-deleted page (counted hidden, not hidden again).
+  // The marks then hide the marked-only rows from the reads that apply `rederiveHiddenSql`.
+  parityTest('hideDerivedRows hides the rows a purged input derived and the needs_rederive marks hide the rest from eligible reads', {
+    methods: ['putPage', 'insertFact', 'addTakesBatch', 'addTimelineEntry', 'recordDerivationInputs', 'listDerivedRows', 'hideDerivedRows',
+      'releaseHiddenMoment', 'pageAwaitsRederive', 'getVersions', 'createVersion', 'getTimeline', 'countWorldFacts', 'listFactsByEntity',
+      'listTakes', 'getPage', 'softDeletePage'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const page = async (slug: string, sourceId = SRC) => (await engine.putPage(slug, note(slug, `${slug} body`), { sourceId })).id;
+    const input = await page('derive/input');
+    const concept = await page('concepts/derived');
+    const holder = await page('people/holder');
+    const gone = await page('concepts/gone');
+    const elsewhere = await page('concepts/elsewhere', 'other');
+    await engine.createVersion('concepts/derived');
+    await engine.createVersion('concepts/elsewhere', { sourceId: 'other' });
+    await engine.softDeletePage('concepts/gone');
+    const seed = new Seed(engine);
+    const fact = await seed.one('fact', { fact: 'Derived claim', entity_slug: 'people/holder' });
+    const otherFact = await seed.one('other-fact', { fact: 'Derived elsewhere', entity_slug: 'people/holder' }, 'other');
+    await engine.addTakesBatch([{ page_id: holder, row_num: 1, claim: 'Derived take', kind: 'take', holder: 'people/holder' }]);
+    const take = (await engine.listTakes({ page_id: holder }))[0]!.id;
+    await engine.addTimelineEntry('people/holder', { date: '2026-07-01', summary: 'Derived event' });
+    const event = (await engine.getTimeline('people/holder'))[0]!.id;
+    const derived: Array<{ table: string; id: number }> = [
+      { table: 'facts', id: fact }, { table: 'takes', id: take }, { table: 'pages', id: concept }, { table: 'pages', id: gone },
+      { table: 'pages', id: elsewhere }, { table: 'facts', id: otherFact }, { table: 'timeline_entries', id: event },
+    ];
+    for (const d of derived) await recordDerivationInputs(engine, { table: d.table, id: String(d.id), sourceId: SRC }, [{ table: 'pages', id: String(input) }]);
+    const card = async (sourceId: string) => engine.countWorldFacts({ sourceId, entitySlugs: ['people/holder'], worldOnly: false, excludePrivate: false });
+    const versions = async (slug: string, sourceId: string) => (await engine.getVersions(slug, { sourceId })).length;
+    const events = async (eligible: boolean) => (await engine.getTimeline('people/holder', eligible ? { eligibility: {} } : {})).map((e) => e.summary);
+    const facts = async (sourceId: string) => (await engine.listFactsByEntity(sourceId, 'people/holder', { activeOnly: false, eligibility: {} }))
+      .map((r) => ({ fact: r.fact, expired: r.expired_at instanceof Date }));
+    const before = {
+      card: [await card(SRC), await card('other')], versions: [await versions('concepts/derived', SRC), await versions('concepts/elsewhere', 'other')],
+      events: [await events(true), await events(false)], facts: [await facts(SRC), await facts('other')],
+      awaits: await engine.pageAwaitsRederive(concept),
+    };
+    expect(before.card).toEqual([1, 1]);
+    expect(before.awaits).toBe(false);
+    const counts = await engine.transaction(async (tx) => {
+      const walk = await derivedRowsFrom(tx, [{ table: 'pages', id: String(input) }]);
+      return hideDerivedRows(tx, walk.rows, { sourceId: SRC, requestId: null, reason: 'input purged' });
+    });
+    expect(counts).toEqual({ hidden: { facts: 1, takes: 1, pages: 2 }, markedOnly: { pages: 1, facts: 1, timeline_entries: 1 } });
+    const takes = async (active: boolean) => (await engine.listTakes({ page_id: holder, active })).map((t) => ({ claim: t.claim, active: t.active }));
+    const after = {
+      card: [await card(SRC), await card('other')], versions: [await versions('concepts/derived', SRC), await versions('concepts/elsewhere', 'other')],
+      events: [await events(true), await events(false)], facts: [await facts(SRC), await facts('other')],
+      takes: [await takes(true), await takes(false)],
+      concept: { live: await engine.getPage('concepts/derived') !== null, deleted: (await engine.getPage('concepts/derived', { includeDeleted: true }))?.deleted_at instanceof Date },
+      elsewhereLive: await engine.getPage('concepts/elsewhere', { sourceId: 'other' }) !== null,
+      awaits: { concept: await engine.pageAwaitsRederive(concept), gone: await engine.pageAwaitsRederive(gone), elsewhere: await engine.pageAwaitsRederive(elsewhere), input: await engine.pageAwaitsRederive(input) },
+    };
+    expect(after.card).toEqual([0, 0]);
+    expect(after.versions).toEqual([0, 0]);
+    expect(after.events).toEqual([[], ['Derived event']]);
+    expect(after.facts).toEqual([[], []]);
+    expect(after.concept).toEqual({ live: false, deleted: true });
+    expect(after.elsewhereLive).toBe(true);
+    expect(after.awaits).toEqual({ concept: true, gone: true, elsewhere: true, input: false });
+    // A second purge of the same input marks again and hides nothing new; releasing the hidden moment keeps the mark.
+    const again = await engine.transaction(async (tx) => hideDerivedRows(tx, (await derivedRowsFrom(tx, [{ table: 'pages', id: String(input) }])).rows,
+      { sourceId: SRC, requestId: '00000000-0000-4000-8000-000000000001', reason: 'input purged again' }));
+    await engine.transaction(async (tx) => releaseHiddenMoment(tx, concept));
+    const released = await engine.pageAwaitsRederive(concept);
+    expect(released).toBe(true);
+    return { before, counts, after, again, released };
   });
 });

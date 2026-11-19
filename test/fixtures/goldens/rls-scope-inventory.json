@@ -2046,6 +2046,17 @@
         ],
         "flagOnScopes": []
       },
+      "hideDerivedRows#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "insertFact#default": {
         "flagOffLanes": [
           "pool",
@@ -4400,6 +4411,17 @@
         ],
         "flagOnScopes": []
       },
+      "releaseHiddenMoment#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "releaseUnpublishedClaim#default": {
         "flagOffLanes": [
           "pool"
@@ -5886,6 +5908,7 @@
         "hasWakeCron": "none",
         "hasWakeTermsAcceptance": "none",
         "heldGenerationRowsForInput": "none",
+        "hideDerivedRows": "none",
         "holdSchemaMigrationLock": "none",
         "inboundLinkCoverage": "none",
         "initSchema": "none",
@@ -6338,6 +6361,7 @@
         "relationalChainHop": "none",
         "relationalFanout": "none",
         "releaseCycleLock": "none",
+        "releaseHiddenMoment": "none",
         "releasePageEmbeddingLease": "none",
         "releaseUnpublishedClaim": "none",
         "releaseWatchdogClaim": "none",

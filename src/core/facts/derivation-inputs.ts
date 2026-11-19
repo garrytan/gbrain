@@ -67,18 +67,11 @@ export async function derivedRowsFrom(engine: BrainEngine, inputs: readonly Deri
   return { rows, truncated: false };
 }
 
-/**
- * #9653: a page this function hid keeps `marked_at` equal to its `deleted_at`, so the automatic purge can tell a concept
- * hidden only because an input was purged (purge-deleted.ts readRederiveHeldConcepts) from one a person or sync deleted. A later mark of
- * that page keeps the moment; any other mark is stamped now.
- */
-export const KEEP_HIDDEN_AT = `CASE WHEN needs_rederive.derived_table='pages' AND EXISTS (SELECT 1 FROM pages hp
-  WHERE hp.id::text=needs_rederive.derived_id AND hp.deleted_at=needs_rederive.marked_at) THEN needs_rederive.marked_at ELSE now() END`;
+export { KEEP_HIDDEN_AT } from '../engine-sql/facts-purge.ts';
 
-/** #9653: a delete of a page already hidden this way (a person's or a sync's) ends the automatic purge's hold on it. */
+/** #9653: a delete of a page already hidden by hideDerivedRows (a person's or a sync's) ends the automatic purge's hold on it. */
 export async function releaseHiddenMoment(tx: BrainEngine, pageId: number): Promise<void> {
-  await tx.executeRaw(`UPDATE needs_rederive n SET marked_at=clock_timestamp() FROM pages p
-    WHERE n.derived_table='pages' AND n.derived_id=p.id::text AND p.id=$1 AND n.marked_at=p.deleted_at`, [pageId]);
+  await tx.releaseHiddenMoment(pageId);
 }
 
 /**
@@ -89,29 +82,5 @@ export async function releaseHiddenMoment(tx: BrainEngine, pageId: number): Prom
  */
 export async function hideDerivedRows(tx: BrainEngine, rows: readonly DerivedRow[], mark: { sourceId: string; requestId: string | null; reason: string }):
   Promise<{ hidden: Record<string, number>; markedOnly: Record<string, number> }> {
-  const hidden: Record<string, number> = {}, markedOnly: Record<string, number> = {};
-  const byTable = new Map<string, string[]>();
-  for (const r of rows) byTable.set(r.table, [...(byTable.get(r.table) ?? []), r.id]);
-  for (const [table, ids] of byTable) {
-    const numeric = ids.filter(id => /^\d+$/.test(id)).map(Number);
-    let count = 0;
-    if (table === 'facts') count = (await tx.executeRaw(`UPDATE facts SET expired_at=COALESCE(expired_at,now()) WHERE id=ANY($1::bigint[]) AND source_id=$2 RETURNING id`, [numeric, mark.sourceId])).length;
-    else if (table === 'takes') count = (await tx.executeRaw(`UPDATE takes k SET active=false FROM pages p WHERE k.id=ANY($1::bigint[]) AND p.id=k.page_id AND p.source_id=$2 RETURNING k.id`, [numeric, mark.sourceId])).length;
-    let hiddenNow: string[] = [];
-    if (table === 'pages') {
-      const pages = await tx.executeRaw<{ id: number; now: boolean }>(`WITH gone AS (SELECT id FROM pages WHERE id=ANY($1::integer[]) AND source_id=$2 AND deleted_at IS NOT NULL),
-        hid AS (UPDATE pages SET deleted_at=now() WHERE id=ANY($1::integer[]) AND source_id=$2 AND deleted_at IS NULL RETURNING id)
-        SELECT id, true AS now FROM hid UNION ALL SELECT id, false AS now FROM gone`, [numeric, mark.sourceId]);
-      hiddenNow = pages.filter(row => row.now).map(row => String(row.id));
-      count = pages.length;
-    }
-    if (count) hidden[table] = count;
-    if (count < ids.length) markedOnly[table] = ids.length - count;
-    await tx.executeRaw(`INSERT INTO needs_rederive(derived_table,derived_id,source_id,request_id,reason,marked_at)
-      SELECT $1,d.id,$3,$4::uuid,$5,COALESCE((SELECT p.deleted_at FROM pages p WHERE d.id=ANY($6::text[]) AND p.id::text=d.id),now()) FROM unnest($2::text[]) AS d(id)
-      ON CONFLICT (derived_table,derived_id) DO UPDATE SET reason=EXCLUDED.reason,request_id=EXCLUDED.request_id,
-        marked_at=CASE WHEN EXCLUDED.derived_id=ANY($6::text[]) THEN EXCLUDED.marked_at ELSE ${KEEP_HIDDEN_AT} END`,
-    [table, ids, mark.sourceId, mark.requestId, mark.reason, hiddenNow]);
-  }
-  return { hidden, markedOnly };
+  return tx.hideDerivedRows(rows.map(r => ({ table: r.table, id: r.id })), mark);
 }

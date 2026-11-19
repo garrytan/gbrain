@@ -255,13 +255,13 @@ export async function listWithdrawalSlugs(raw: EngineRawRead, sourceId: string, 
 }
 
 /** One hop of the derivation walk (facts/derivation-inputs.ts derivedRowsFrom): the rows a `derivation_inputs` edge
- * derives from a frontier row, distinct, in (table, id) order, at most `limit`. */
+ * derives from a frontier row, distinct, in byte order of (table, id) (`COLLATE "C"`), at most `limit`. */
 export async function listDerivedRows(raw: EngineRawRead, frontier: ReadonlyArray<{ table: string; id: string }>, limit: number):
   Promise<Array<{ derived_table: string; derived_id: string }>> {
-  return raw<{ derived_table: string; derived_id: string }>(`SELECT DISTINCT d.derived_table,d.derived_id
+  return raw<{ derived_table: string; derived_id: string }>(`SELECT DISTINCT d.derived_table COLLATE "C" AS derived_table,d.derived_id COLLATE "C" AS derived_id
       FROM derivation_inputs d JOIN jsonb_to_recordset($1::text::jsonb) AS f(input_table text,input_id text)
         ON d.input_table=f.input_table AND d.input_id=f.input_id
-      ORDER BY d.derived_table,d.derived_id LIMIT $2`, [JSON.stringify(frontier.map(f => ({ input_table: f.table, input_id: f.id }))), limit]);
+      ORDER BY 1,2 LIMIT $2`, [JSON.stringify(frontier.map(f => ({ input_table: f.table, input_id: f.id }))), limit]);
 }
 
 /** recordDerivationInputs (facts/derivation-inputs.ts): stores each `derived <- input` edge of one derived row once (a
@@ -279,4 +279,52 @@ export async function expireFactsByWithdrawal(raw: EngineRawRead, sourceId: stri
     WHERE facts.source_id=${sourceId} AND facts.visibility=${visibility} AND gbrain_fact_fingerprint(facts.fact)=gbrain_fact_fingerprint(${fact})
       AND (q.subject='*' OR facts.entity_slug=q.subject OR (${trustedSql(unbackedEntitySql('facts'))} AND NOT ${trustedSql(ownedMemorySubjectSql('q.subject'))}) OR (${trustedSql(onOwnedMemoryPageSql('facts'))} AND facts.source_markdown_slug=q.subject)) AND facts.expired_at IS NULL RETURNING facts.id`);
   return raw<{ id: number }>(text, params);
+}
+
+/**
+ * #9653: a page hideDerivedRows hid keeps `marked_at` equal to its `deleted_at`, so the automatic purge can tell a concept
+ * hidden only because an input was purged (purge-deleted.ts readRederiveHeldConcepts) from one a person or sync deleted. A
+ * later mark of that page keeps the moment; any other mark is stamped now. facts/derivation-inputs.ts re-exports it.
+ */
+export const KEEP_HIDDEN_AT = `CASE WHEN needs_rederive.derived_table='pages' AND EXISTS (SELECT 1 FROM pages hp
+  WHERE hp.id::text=needs_rederive.derived_id AND hp.deleted_at=needs_rederive.marked_at) THEN needs_rederive.marked_at ELSE now() END`;
+
+/** releaseHiddenMoment (facts/derivation-inputs.ts): a delete of a page already hidden by hideDerivedRows ends the automatic purge's hold on it. */
+export async function releaseHiddenMoment(raw: EngineRawRead, pageId: number): Promise<void> {
+  await raw(`UPDATE needs_rederive n SET marked_at=clock_timestamp() FROM pages p
+    WHERE n.derived_table='pages' AND n.derived_id=p.id::text AND p.id=$1 AND n.marked_at=p.deleted_at`, [pageId]);
+}
+
+/**
+ * hideDerivedRows (facts/derivation-inputs.ts): hides each derived row through its table's own inactive state (facts
+ * expire, takes deactivate, pages soft-delete) and marks it `needs_rederive`; a row of another table, or of another
+ * source, is only marked. Rows are grouped by table in first-seen order. The counts per table hidden and marked only.
+ */
+export async function hideDerivedRows(raw: EngineRawRead, rows: ReadonlyArray<{ table: string; id: string }>,
+  mark: { sourceId: string; requestId: string | null; reason: string }): Promise<{ hidden: Record<string, number>; markedOnly: Record<string, number> }> {
+  const hidden: Record<string, number> = {}, markedOnly: Record<string, number> = {};
+  const byTable = new Map<string, string[]>();
+  for (const r of rows) byTable.set(r.table, [...(byTable.get(r.table) ?? []), r.id]);
+  for (const [table, ids] of byTable) {
+    const numeric = ids.filter(id => /^\d+$/.test(id)).map(Number);
+    let count = 0;
+    if (table === 'facts') count = (await raw(`UPDATE facts SET expired_at=COALESCE(expired_at,now()) WHERE id=ANY($1::bigint[]) AND source_id=$2 RETURNING id`, [numeric, mark.sourceId])).length;
+    else if (table === 'takes') count = (await raw(`UPDATE takes k SET active=false FROM pages p WHERE k.id=ANY($1::bigint[]) AND p.id=k.page_id AND p.source_id=$2 RETURNING k.id`, [numeric, mark.sourceId])).length;
+    let hiddenNow: string[] = [];
+    if (table === 'pages') {
+      const pages = await raw<{ id: number; now: boolean }>(`WITH gone AS (SELECT id FROM pages WHERE id=ANY($1::integer[]) AND source_id=$2 AND deleted_at IS NOT NULL),
+        hid AS (UPDATE pages SET deleted_at=now() WHERE id=ANY($1::integer[]) AND source_id=$2 AND deleted_at IS NULL RETURNING id)
+        SELECT id, true AS now FROM hid UNION ALL SELECT id, false AS now FROM gone`, [numeric, mark.sourceId]);
+      hiddenNow = pages.filter(row => row.now).map(row => String(row.id));
+      count = pages.length;
+    }
+    if (count) hidden[table] = count;
+    if (count < ids.length) markedOnly[table] = ids.length - count;
+    await raw(`INSERT INTO needs_rederive(derived_table,derived_id,source_id,request_id,reason,marked_at)
+      SELECT $1,d.id,$3,$4::uuid,$5,COALESCE((SELECT p.deleted_at FROM pages p WHERE d.id=ANY($6::text[]) AND p.id::text=d.id),now()) FROM unnest($2::text[]) AS d(id)
+      ON CONFLICT (derived_table,derived_id) DO UPDATE SET reason=EXCLUDED.reason,request_id=EXCLUDED.request_id,
+        marked_at=CASE WHEN EXCLUDED.derived_id=ANY($6::text[]) THEN EXCLUDED.marked_at ELSE ${KEEP_HIDDEN_AT} END`,
+    [table, ids, mark.sourceId, mark.requestId, mark.reason, hiddenNow]);
+  }
+  return { hidden, markedOnly };
 }

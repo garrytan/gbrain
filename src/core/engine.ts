@@ -3410,6 +3410,10 @@ export interface BrainEngine {
   listDerivedRows(frontier: ReadonlyArray<{ table: string; id: string }>, limit: number): Promise<Array<{ derived_table: string; derived_id: string }>>;
   /** Store every `derived <- input` edge of one derived row once (facts/derivation-inputs.ts recordDerivationInputs). */
   recordDerivationInputs(derived: { table: string; id: string }, sourceId: string | null, inputs: ReadonlyArray<{ table: string; id: string }>): Promise<void>;
+  /** Hide each derived row through its table's inactive state and mark it `needs_rederive` (facts/derivation-inputs.ts hideDerivedRows): the counts per table hidden and marked only. */
+  hideDerivedRows(rows: ReadonlyArray<{ table: string; id: string }>, mark: { sourceId: string; requestId: string | null; reason: string }): Promise<{ hidden: Record<string, number>; markedOnly: Record<string, number> }>;
+  /** A delete of a page hideDerivedRows hid ends the automatic purge's hold on it (facts/derivation-inputs.ts releaseHiddenMoment). */
+  releaseHiddenMoment(pageId: number): Promise<void>;
 
   // Facts statements, repair classifiers and loop retirement (engine-sql/facts-repair.ts). Each runs the statement its caller ran through executeRaw.
   /** Closed loops whose commitment fact is still active and retirable (same source, no other open loop references it), in id order; `loopId` null is every loop. Reads open_loops. */
