@@ -55,6 +55,8 @@ const CONSTANT_ALLOWLIST: Record<string, string> = {
 };
 
 const VETTED_BUILDERS: Record<string, string> = {
+  // access-grants.ts builders
+  tokenGrantColumnList: 'src/core/engine-sql/access-grants.ts (from grants/model.ts): joins only TOKEN_GRANT_ROW_COLUMNS constant names, filtered by which ones pg_attribute reports present; no values',
   // facts-doctor.ts builders
   entityLinkableSql: 'src/core/engine-sql/facts-doctor.ts: returns the constant ENTITY_LINKABLE_SQL predicate (attribution.ts) over the facts alias f; no values',
   relinkTriedSql: 'src/core/engine-sql/facts-doctor.ts: the constant conversationTriedSql EXISTS predicate (conversation-memo.ts; code-constant outcome and reason codes) or the literal false; no values',
@@ -75,7 +77,11 @@ const VETTED_BUILDERS: Record<string, string> = {
   ownedMemorySubjectSql: 'src/core/facts/withdrawal-schema.ts: constant owned-memory-subject predicate over a caller column expression; engine-sql passes only the constant column q.subject',
   remoteProvenanceFloorSql: 'src/core/search/private-visibility.ts: constant remote provenance floor (private-provenance filter plus labelled-only) over a caller facts alias',
 
+  // access-control.ts builders
+  edgeTrimSql: 'src/core/edge-whitespace.ts: btrim of a code-provided constant expression over the constant EDGE_WHITESPACE set; no values',
+
   // trust-tier-reads.ts builders
+  versionPrivacySql: 'src/core/engine-sql/pages.ts: the get_versions excludePrivate predicate, built only from the vetted privatePagesFilterForCaller, callerReadersAllowedSql, privacyForCaller and privateSnapshotFilterFragment builders over the constant aliases p and pv, plus one constant pinned_question conjunct; no values',
   remoteReadFloorSql: 'src/core/search/private-visibility.ts: privatePagesFilterFragment, plus the constant labelledOnlySql conjunct for a labelled-only caller, over a caller page alias; no values',
 
   // facts-repair.ts builders
@@ -96,6 +102,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   conversationSlotSql: 'src/core/engine-sql/facts-trust.ts: CONVERSATION_SLOT_SQL, the constant conversation-source prefix test; no values',
   savedFactCollapseColumns: 'src/core/engine-sql/facts-trust.ts: SAVED_FACT_COLLAPSE_COLUMNS, the constant select list the capture-dedup collapse reads; no values',
 
+  tokenGrantSelectList: 'src/core/engine-sql/persistence-journal.ts: the constant TOKEN_GRANT_ROW_COLUMNS names (grants/model.ts) this brain\'s access_tokens has, joined by commas; no values',
   openedFactRowSql: 'src/core/persistence/context.ts: constant opened-row predicate over caller-given constant aliases; the setting name is a module constant, the opened ids are read by the statement itself',
   guestSourceSql: 'src/core/guests/note.ts: constant guest-source predicate over caller-given constant aliases (no input)',
   activationSuppressedSql: 'src/core/eligibility/sql.ts: constant activation-suppression predicate over a caller alias; tier ranks and reason families come from constant tables',

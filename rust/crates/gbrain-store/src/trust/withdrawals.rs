@@ -12,6 +12,7 @@
 use super::fingerprint::{fact_fingerprint, fact_fingerprint_v1};
 use crate::env::{iso, parse_iso};
 use crate::error::{Result, StoreError};
+use crate::facts::purge_ledger::purged_claim;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::sources::require_source;
@@ -182,6 +183,48 @@ impl Store {
                 if at(&*read, &[source_id, visibility, who, hash])?.is_some() {
                     return Ok(true);
                 }
+            }
+        }
+        Ok(false)
+    }
+
+    /// `isFactWithdrawn` (src/core/engine-sql/trust-withdrawals.ts): whether a withdrawal of the
+    /// source (fingerprint or v1 fingerprint of `claim`; subject `*`, `entity_slug` or
+    /// `member_page`) or a purge tombstone (fingerprint; subject `*` or `entity_slug`) covers the
+    /// claim. A None `visibility` matches either visibility; a None subject matches nothing.
+    pub fn is_fact_withdrawn(
+        &self,
+        source_id: &str,
+        visibility: Option<&str>,
+        claim: &str,
+        entity_slug: Option<&str>,
+        member_page: Option<&str>,
+    ) -> Result<bool> {
+        no_nul(
+            "isFactWithdrawn",
+            &[
+                ("sourceId", source_id),
+                ("visibility", visibility.unwrap_or("")),
+                ("claim", claim),
+                ("entitySlug", entity_slug.unwrap_or("")),
+                ("memberPage", member_page.unwrap_or("")),
+            ],
+        )?;
+        let read = self.read()?;
+        let visibilities: Vec<&str> = visibility.map_or(VISIBILITIES.to_vec(), |v| vec![v]);
+        let hashes = [fact_fingerprint(claim), fact_fingerprint_v1(claim)];
+        for vis in &visibilities {
+            for hash in &hashes {
+                for who in std::iter::once("*").chain(entity_slug).chain(member_page) {
+                    if at(&*read, &[source_id, vis, who, hash])?.is_some() {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+        for vis in visibilities {
+            if purged_claim(&*read, source_id, vis, claim, entity_slug)? {
+                return Ok(true);
             }
         }
         Ok(false)

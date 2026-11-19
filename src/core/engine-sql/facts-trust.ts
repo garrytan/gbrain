@@ -332,3 +332,15 @@ export async function countDerivedFactTaint(raw: EngineRawRead): Promise<{ deriv
             count(*) FILTER (WHERE write_origin ? 'taint_inputs' AND trust_tier = 'external_untrusted') AS external FROM facts`);
   return { derived: Number(row?.derived ?? 0), external: Number(row?.external ?? 0) };
 }
+
+/**
+ * The stored provenance (`facts.source`) of each fact of `sourceId` whose id is in `ids`: what context_pack and delta
+ * attach to the facts they deliver (ops/facts.ts `withProvenance`). A repeated id answers once and an id no row of the
+ * source has answers nothing; the statement has no `ORDER BY`.
+ */
+export async function listFactProvenance(raw: EngineRawRead, opts: { sourceId: string; ids: readonly number[] }): Promise<Array<{ id: number; source: string }>> {
+  const rows = await raw<{ id: number | string; source: string }>(
+    'SELECT id, source FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[])', [opts.sourceId, [...opts.ids]],
+  );
+  return rows.map((r) => ({ id: Number(r.id), source: r.source }));
+}

@@ -9,7 +9,7 @@
 //! - the row's provenance page (same source, `source_markdown_slug`) carries no `quarantine` key.
 //!   `quarantinedProvenanceFilterFragment` does not look at `deleted_at`, so a soft-deleted
 //!   quarantined page still hides the row; `hidden_by_quarantine` (live pages only) is not used;
-//! - `worldOnly`: `visibility = 'world'`;
+//! - `worldOnly`: `visibility = 'world'`, or a private row `widen` admits (`facts/widen.rs`);
 //! - `excludePrivate`: the private-provenance policy (`facts/privacy.rs`);
 //! - `projectionEligibleSql('facts')`: a soft-deleted page hides the row. The quarantine clause
 //!   of that predicate is the live-page case of the check above. Its `needs_rederive` clause is
@@ -29,11 +29,12 @@
 //! of the query's model and length whose `embedded_text_hash` is `md5(fact)`), else NULL.
 
 use super::embedding::{cosine_distance, md5_hex, parse_vector, to_halfvec};
+use super::widen::world_admits;
 use super::{
     AUDIT_ROW_SOURCES, FactRecord, count_arg, entity_rows, hidden_by_deleted_page,
     hidden_by_policy, invalid, like, opt_time, source_rows,
 };
-use super::{PrivacyPolicy, QUARANTINE_KEY};
+use super::{PrivacyPolicy, QUARANTINE_KEY, VisibilityWidening};
 use crate::Store;
 use crate::env::iso;
 use crate::error::Result;
@@ -60,6 +61,9 @@ pub struct EntityRef {
 pub struct PoolArgs {
     pub source_ids: Vec<String>,
     pub world_only: bool,
+    /// With `worldOnly`, the private rows the caller's member page or private-facts grant also
+    /// admits (`facts/widen.rs`).
+    pub widen: Option<VisibilityWidening>,
     /// `excludePrivate`: the private-provenance policy (`facts/privacy.rs`).
     pub exclude_private: Option<PrivacyPolicy>,
     /// `minTrust`: `trustFloorSql` over the row's stored tier; null sets none.
@@ -163,7 +167,7 @@ impl<'a> Pool<'a> {
         if quarantined_provenance(read, row)? {
             return Ok(false);
         }
-        if a.world_only && row.visibility != "world" {
+        if a.world_only && !world_admits(read, &a.widen, row)? {
             return Ok(false);
         }
         if hidden_by_policy(read, row, &a.exclude_private)? || hidden_by_deleted_page(read, row)? {

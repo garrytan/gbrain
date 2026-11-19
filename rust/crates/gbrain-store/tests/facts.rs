@@ -769,3 +769,177 @@ fn brain_maturity_counts_unexpired_facts_in_every_source() {
     assert_eq!(after["since"], empty["since"]);
     assert!(after["since"].is_string());
 }
+
+#[test]
+fn a_widening_record_admits_own_member_and_granted_open_private_facts_only() {
+    let b = brain("facts-visibility-widening");
+    let pages = [
+        ("notes/open", json!({})),
+        ("notes/private", json!({ "visibility": "private" })),
+        (
+            "notes/quarantined",
+            json!({ "quarantine": { "reason": "x" } }),
+        ),
+        (
+            "memory/members/alice-example",
+            json!({ "readable_by": ["member:alice-example"] }),
+        ),
+        (
+            "memory/members/bob-example",
+            json!({ "readable_by": ["member:bob-example"] }),
+        ),
+    ];
+    for (slug, frontmatter) in pages {
+        let page: gbrain_store::pages::PageInput = args(json!({
+            "type": "note", "title": slug, "compiled_truth": "x", "frontmatter": frontmatter }));
+        b.put_page(slug, &page, &args(json!({}))).unwrap();
+    }
+    let rows = [
+        ("world", Some("notes/open"), "fence", "world"),
+        (
+            "own member",
+            Some("memory/members/alice-example"),
+            "fence",
+            "private",
+        ),
+        (
+            "other member",
+            Some("memory/members/bob-example"),
+            "fence",
+            "private",
+        ),
+        ("granted", Some("notes/open"), "fence", "private"),
+        ("private holding", Some("notes/private"), "fence", "private"),
+        (
+            "quarantined holding",
+            Some("notes/quarantined"),
+            "fence",
+            "private",
+        ),
+        ("missing holding", Some("notes/gone"), "fence", "private"),
+        ("unpaged", None, "fence", "private"),
+        (
+            "transcript",
+            Some("notes/open"),
+            "transcript:chat",
+            "private",
+        ),
+    ];
+    let rows: Vec<Value> = rows
+        .iter()
+        .enumerate()
+        .map(|(i, (fact, slug, source, visibility))| {
+            json!({ "row_num": i + 1, "fact": fact, "entity_slug": "subject", "source_markdown_slug": slug,
+                    "source": source, "visibility": visibility })
+        })
+        .collect();
+    batch(&b, Value::Array(rows));
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "identity": ["member:alice-example"] });
+    let read = |widen: Value| {
+        let mut kept = facts(&by_entity(
+            &b,
+            "subject",
+            json!({ "visibility": ["world"], "widen": widen }),
+        ))
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+        kept.sort_unstable();
+        kept
+    };
+    assert_eq!(read(Value::Null), ["world"]);
+    assert_eq!(
+        read(json!({ "member": "alice-example", "memberPagePolicy": policy })),
+        ["own member", "world"]
+    );
+    assert_eq!(
+        read(json!({ "privateFactSources": ["default"] })),
+        ["granted", "world"]
+    );
+    assert_eq!(read(json!({ "privateFactSources": ["other"] })), ["world"]);
+    // The member page policy still judges the page: an identity its readers do not name hides it.
+    let stranger = json!({ "honorAliases": true, "entityPrivacy": true, "identity": ["member:carol-example"] });
+    assert_eq!(
+        read(json!({ "member": "alice-example", "memberPagePolicy": stranger })),
+        ["world"]
+    );
+    // A list that names private is never narrowed by the record.
+    let both = by_entity(
+        &b,
+        "subject",
+        json!({ "visibility": ["world", "private"], "widen": { "privateFactSources": [] } }),
+    );
+    assert_eq!(both.len(), 9);
+    // findTrajectory's world-only read widens the same way.
+    let trajectory = |widen: Value| {
+        let points = b
+            .find_trajectory(&args::<TrajectoryQuery>(json!({ "sourceIds": ["default"],
+                "entitySlug": "subject", "worldOnly": true, "widen": widen, "limit": 50 })))
+            .unwrap();
+        let mut kept: Vec<String> = points
+            .iter()
+            .map(|p| p["text"].as_str().unwrap().to_string())
+            .collect();
+        kept.sort_unstable();
+        kept
+    };
+    assert_eq!(trajectory(Value::Null), ["world"]);
+    assert_eq!(
+        trajectory(json!({ "member": "alice-example", "memberPagePolicy": policy })),
+        ["own member", "world"]
+    );
+    assert_eq!(
+        trajectory(json!({ "privateFactSources": ["default"] })),
+        ["granted", "world"]
+    );
+    // The fact relevance pool's world-only rule widens the same way.
+    let pool = |widen: Value| {
+        let rows = b
+            .list_facts_for_relevance(&args::<gbrain_store::facts::trust::RelevanceQuery>(json!({
+                "arm": "entity", "limit": 50,
+                "entity": { "sourceId": "default", "slug": "subject" },
+                "pool": { "sourceIds": ["default"], "worldOnly": true, "widen": widen } })))
+            .unwrap();
+        let mut kept: Vec<String> = rows
+            .iter()
+            .map(|r| r["fact"].as_str().unwrap().to_string())
+            .collect();
+        kept.sort_unstable();
+        kept
+    };
+    assert_eq!(pool(Value::Null), trajectory(Value::Null));
+    assert_eq!(
+        pool(json!({ "member": "alice-example", "memberPagePolicy": policy })),
+        ["own member", "world"]
+    );
+    assert_eq!(
+        pool(json!({ "privateFactSources": ["default"] })),
+        ["granted", "world"]
+    );
+    // listSupersessions widens the same way.
+    batch(
+        &b,
+        json!([
+            { "row_num": 20, "fact": "granted old", "entity_slug": "subject", "source_markdown_slug": "notes/open",
+              "source": "fence", "visibility": "private", "superseded_by_row": 21 },
+            { "row_num": 21, "fact": "granted new", "entity_slug": "subject", "source_markdown_slug": "notes/open",
+              "source": "fence", "visibility": "private" },
+        ]),
+    );
+    let sup = |widen: Value| {
+        let rows = b
+            .list_supersessions(&args::<SupersessionQuery>(
+                json!({ "sourceId": "default", "limit": 50, "visibility": ["world"], "widen": widen }),
+            ))
+            .unwrap();
+        facts(&rows)
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        sup(json!({ "privateFactSources": ["default"] })),
+        ["granted old"]
+    );
+    assert!(sup(Value::Null).is_empty());
+}

@@ -756,6 +756,11 @@ struct WriterRecord {
     revoked_at_us: Option<i64>,
 }
 
+/// The stored id and lane of the local writer `id` (case-folded key), revoked or not.
+pub(crate) fn read_writer_record(read: &dyn KvRead, id: &str) -> Result<Option<(String, String)>> {
+    Ok(get_json::<WriterRecord>(read, &keys::writer(&id.to_lowercase()))?.map(|w| (w.id, w.lane)))
+}
+
 impl WriterRecord {
     fn to_row(&self) -> Value {
         json!({

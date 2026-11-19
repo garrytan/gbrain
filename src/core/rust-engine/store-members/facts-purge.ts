@@ -69,3 +69,6 @@ export const listWithdrawalSlugs: Member<'listWithdrawalSlugs'> = (brain, source
 
 export const expireFactsByWithdrawal: Member<'expireFactsByWithdrawal'> = (brain, sourceId, visibility, fact, subject) =>
   storeCall({ member: 'expireFactsByWithdrawal' }, () => brain.expireFactsByWithdrawal({ sourceId, visibility, fact, subject }));
+
+export const insertFactPurge: Member<'insertFactPurge'> = (brain, row) =>
+  storeCall({ member: 'insertFactPurge', sourceId: row.sourceId }, () => brain.insertFactPurge(row));

@@ -178,7 +178,6 @@ src/core/cycle/transcript-discovery.ts	discoverConversationPages	field	STREAM
 src/core/cycle/transcript-discovery.ts	discoverConversationPages	sql	STREAM	
 src/core/eligibility/fence-overlay.ts	loadFenceChunkOverlay	field	STREAM	
 src/core/eligibility/fence-overlay.ts	worldLinkContexts	field	INLINE	segmented from page: body never read, its link contexts are emptied for world-only callers (fail closed)
-src/core/eligibility/fence-overlay.ts	worldLinkContexts	sql	INLINE	segmented from page: body never read, its link contexts are emptied for world-only callers (fail closed)
 src/core/eligibility/scan.ts	assess	field	STREAM	
 src/core/embed-consent.ts	estimateEmbedBackfillUsd	sql	META	
 src/core/embed-stale-images.ts	embedStaleImages	sql	INLINE	
@@ -190,12 +189,14 @@ src/core/engine-sql/chunks.ts	getChunkWindows	sql	STREAM	lane 1e file: ships who
 src/core/engine-sql/chunks.ts	listChunklessPagesWithContent	field	STREAM	lane 1e file
 src/core/engine-sql/chunks.ts	listChunklessPagesWithContent	sql	STREAM	lane 1e file
 src/core/engine-sql/chunks.ts	listEmbeddingStateRows	sql	META	lane 1e file: octet_length metadata
+src/core/engine-sql/entity-reads.ts	ENTITY_CARD_COLUMNS_SQL	sql	LEAD	boundedBodyPrefixSql AS compiled_truth
 src/core/engine-sql/facts-purge.ts	listFactsReconcileBacklog	sql	STREAM	group 5 facts sites: moved from facts/reconcile-watermark.ts readFactsReconcileBacklog unchanged
 src/core/engine-sql/facts-repair.ts	countLabelFacts	sql	STREAM	group 5 facts sites: moved from repair/conversation-labels.ts countLabelFacts unchanged
 src/core/engine-sql/field-usage.ts	readFieldUsageSamples	field	LEAD	moved from schema-pack/field-usage.ts runFieldUsage unchanged: whole inline bodies of the sampled pages; a segmented page samples a null body, read as empty (TODOS.md)
 src/core/engine-sql/field-usage.ts	readFieldUsageSamples	sql	LEAD	moved from schema-pack/field-usage.ts runFieldUsage unchanged: whole inline bodies of the sampled pages; a segmented page samples a null body, read as empty (TODOS.md)
 src/core/engine-sql/jobs-status.ts	readQueuedPageChars	sql	META	the facts drain's cost estimate, moved from facts/drain.ts estimateBacklogUsd: average capped compiled_truth length
 src/core/engine-sql/large-page.ts	STORED_BODY_BYTES_SQL	sql	META	the large-page guard's stored size read, moved from persistence/large-page-guard.ts assertLargePageAdmission: body_bytes for a segmented page, octet_length of the columns for an inline page
+src/core/engine-sql/link-reads.ts	LINK_CONTEXT_ORIGIN_SQL	sql	INLINE	moved from fence-overlay.ts worldLinkContexts: segmented from page: body never read, its link contexts are emptied for world-only callers (fail closed)
 src/core/engine-sql/page-body.ts	createSegmentedPageShell	sql	NONE	not a reader: the segmented storage writer sets the body columns NULL on the shell row
 src/core/engine-sql/page-body.ts	flipBodyGeneration	sql	NONE	not a reader: the generation flip sets the body columns NULL and the segmented body columns
 src/core/engine-sql/page-body.ts	sealSegmentedPage	field	LEAD	the withdrawal overlay of the stored timeline_lead (a bounded prefix), indexed sanitized
@@ -213,6 +214,7 @@ src/core/engine-sql/salience.ts	listEnrichCandidates	sql	META
 src/core/engine-sql/search-reads.ts	generatedPagesIn	sql	LEAD	moved from search/provenance-demotion.ts readGeneratedPages (same statement, typed engine method)
 src/core/engine-sql/timeline-reads.ts	listTimelineOrphanPages	sql	STREAM	the orphan prune's page list, moved from timeline-extract.ts pruneTimelineOrphans: compiled_truth and timeline of inline pages
 src/core/engine-sql/timeline.ts	getTimeline	sql	NONE	not the page body: SELECT * FROM pages inside a LATERAL used for the page id only
+src/core/engine-sql/write-guards.ts	readInlinePageRegions	sql	INLINE	moved from page-body/tail-digest.ts inlineRegions: callers branch on storage: inline pages only, within the segmented threshold
 src/core/engine-sql/write-guards.ts	readLivePageBody	sql	INLINE	moved from valid-time-advisory.ts withValidTimeAdvisory: reads the written page's body columns, NULL for a segmented page (bodyKey then compares content_hash)
 src/core/enrichment-service.ts	planEntity	call:putPage	INLINE	
 src/core/enrichment-service.ts	planEntity	call:serializeMarkdown	INLINE	
@@ -402,7 +404,6 @@ src/core/page-body/segmenter.ts	Segmenter.piece	field	NONE	not the page body: st
 src/core/page-body/segmenter.ts	cutBlocked	field	NONE	not the page body: st.timeline is the segmenter's timeline-run parser state
 src/core/page-body/streamed-import.ts	importScanned	field	LEAD	bounded heads of the streamed file's regions for the sanity and type checks; the body itself streams to the segmenter
 src/core/page-body/tail-digest.ts	inlineRegions	field	INLINE	callers branch on storage: inline pages only, within the segmented threshold
-src/core/page-body/tail-digest.ts	inlineRegions	sql	INLINE	callers branch on storage: inline pages only, within the segmented threshold
 src/core/page-body/tail-digest.ts	inlineTailDigest	field	INLINE	get_page body:'none' of an inline page; a segmented page uses page-window/segmented.ts tailDigest
 src/core/page-embedding-budget.ts	planPageEmbedding	field	META	lane 1e file: body_bytes for segmented pages
 src/core/page-embedding-budget.ts	readPageSizeStates	sql	META	lane 1e file: body_bytes for segmented pages
@@ -695,7 +696,6 @@ src/core/utils.ts	contentHashLegacy	field	META	legacy formula over an inline pag
 src/core/utils.ts	rowToPage	field	INLINE	installs throwing body getters on a segmented row (guardSegmentedBody); inline rows copy the columns
 src/core/utils.ts	rowToStalePage	field	STREAM	listStalePagesForExtraction lists inline pages only (segmented skipped in SQL, still counted stale)
 src/core/verbs/entity-card-identity.ts	excerptSource	field	LEAD	inline pages only; a segmented page reads truthLead (EXCERPT_LEAD_BYTES)
-src/core/verbs/entity-card.ts	CARD_ROW_COLUMNS	sql	LEAD	boundedBodyPrefixSql AS compiled_truth
 src/core/verbs/entity-names.ts	lookupOne	field	LEAD	bounded prefix rows
 src/core/verbs/entity-names.ts	lookupOne	sql	LEAD	boundedBodyPrefixSql AS compiled_truth
 src/core/write-gate-scan.ts	SPECS	field	STREAM	

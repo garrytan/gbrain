@@ -74,11 +74,9 @@ export const STDIO_REGISTRATION_PRINCIPAL = 'registration';
 /** The subscribing credential still exists and, when it was bound to a member, that member is still live. */
 export async function principalLive(engine: BrainEngine, row: Pick<WakeRow, 'principal_kind' | 'principal_id' | 'member_id'>): Promise<boolean> {
   if (row.principal_kind === 'oauth_client') {
-    const live = await engine.executeRaw('SELECT 1 FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL', [row.principal_id]);
-    if (live.length === 0) return false;
+    if (!await engine.oauthClientLive(row.principal_id)) return false;
   } else if (row.principal_kind === 'legacy_token') {
-    const live = await engine.executeRaw('SELECT 1 FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL', [row.principal_id]);
-    if (live.length === 0) return false;
+    if (!await engine.accessTokenLive(row.principal_id)) return false;
   }
   if (!row.member_id) return true;
   // GST-363: a watch from a stdio server started with --stdio-member re-checks that member, not config mcp.stdio_member.

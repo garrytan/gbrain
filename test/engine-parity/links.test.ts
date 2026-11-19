@@ -328,6 +328,27 @@ describe('engine parity: graph traversal', () => {
   );
 
   parityTest(
+    'traversePaths orders links of one edge pair by link type in byte order, then link id, past the small-sort size',
+    { methods: ['traversePaths', 'traversePathsDetailed', 'addLink', 'putPage'] },
+    async (engine) => {
+      await seedPages(engine, ['tt/a', 'tt/b', ...Array.from({ length: 12 }, (_, k) => `tt/n${String(k).padStart(2, '0')}`)]);
+      for (let k = 0; k < 12; k++) await engine.addLink('tt/a', `tt/n${String(k).padStart(2, '0')}`, 'n', 'mentions', 'manual');
+      for (const t of ['b', 'c', 'a', 'D', 'd']) await engine.addLink('tt/a', 'tt/b', `ctx ${t}`, t, 'manual');
+      await engine.addLink('tt/b', 'tt/a', 'back', 'mentions', 'manual');
+      const pair = (paths: Awaited<ReturnType<BrainEngine['traversePaths']>>) =>
+        edgeShape(paths).filter((e) => e.startsWith('tt/a>tt/b:') || e.startsWith('tt/b>tt/a:'));
+      const out = pair(await engine.traversePaths('tt/a', { depth: 2, direction: 'out' }));
+      const both = pair(await engine.traversePaths('tt/a', { depth: 2, direction: 'both' }));
+      const into = pair(await engine.traversePaths('tt/b', { depth: 2, direction: 'in' }));
+      const detailed = pair((await engine.traversePathsDetailed('tt/a', { depth: 2, direction: 'both' })).paths);
+      expect(out).toEqual(['tt/a>tt/b:D@1', 'tt/a>tt/b:a@1', 'tt/a>tt/b:b@1', 'tt/a>tt/b:c@1', 'tt/a>tt/b:d@1', 'tt/b>tt/a:mentions@2']);
+      expect(both).toEqual(['tt/a>tt/b:D@1', 'tt/a>tt/b:a@1', 'tt/a>tt/b:b@1', 'tt/a>tt/b:c@1', 'tt/a>tt/b:d@1', 'tt/b>tt/a:mentions@1']);
+      expect(detailed).toEqual(both);
+      return { out, both, into, detailed };
+    },
+  );
+
+  parityTest(
     'traverseGraph source scope keeps cross-source nodes out of a scoped walk',
     { methods: ['traverseGraph', 'addLink', 'putPage'] },
     async (engine, backend) => {
@@ -650,6 +671,36 @@ describe('engine parity: backlink and page signal reads', () => {
       expect(sorted(granted.unverified)).toEqual(['pv/open', 'pv/private', 'pv/readers']);
       expect(member.dates).toEqual(['default::pv/open', 'default::pv/readers', 'default::pv/team']);
       return { member, granted, stranger };
+    },
+  );
+
+  // Hybrid search hands its whole option object (limit, offset, detail, type...) to the two stamp reads as the read
+  // policy; the read filter reads only the policy keys, and any object turns on the live filter.
+  parityTest(
+    'getContentFlagsByPageIds and getUnverifiedExtractionPageIds read only the policy keys of a search option object',
+    { methods: ['getContentFlagsByPageIds', 'getUnverifiedExtractionPageIds', 'putPage', 'softDeletePage'] },
+    async (engine) => {
+      const ids = new Map<string, number>();
+      const marks = { content_flag: { reason: 'markup_heavy', detail: 'tags' }, provenance: 'auto-extracted', status: 'unverified' };
+      for (const [slug, frontmatter] of [['so/open', {}], ['so/private', { visibility: 'private' }], ['so/gone', {}]] as const) {
+        ids.set(slug, (await engine.putPage(slug, page(slug, { frontmatter: { ...frontmatter, ...marks } }))).id);
+      }
+      await engine.softDeletePage('so/gone');
+      const all = [...ids.values()];
+      const search = { limit: 10, offset: 0, detail: 'low' as const, type: 'concept' as PageType, exclude_slugs: ['x/y'], walkDepth: 0 };
+      const read = async (opts?: Record<string, unknown>) => ({
+        flags: bySlug(ids, await engine.getContentFlagsByPageIds(all, opts)).map(([slug]) => slug),
+        unverified: bySlug(ids, await engine.getUnverifiedExtractionPageIds(all, opts)).map(([slug]) => slug),
+      });
+      const bare = await read();
+      const paged = await read(search);
+      const hidden = await read({ ...search, excludePrivate: true, sourceId: 'default' });
+      const holders = await read({ ...search, takesHoldersAllowList: [] });
+      expect(sorted(bare.flags)).toEqual(['so/gone', 'so/open', 'so/private']);
+      expect(sorted(paged.flags)).toEqual(['so/open', 'so/private']);
+      expect(hidden.unverified).toEqual(['so/open']);
+      expect(holders).toEqual(paged);
+      return { bare, paged, hidden, holders };
     },
   );
 

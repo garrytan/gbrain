@@ -1,0 +1,401 @@
+/**
+ * BrainEngine parity: the `access_tokens` members the legacy-token mint and the read-floor command use
+ * (engine-sql/access-tokens.ts): `insertAccessToken`, `findActiveAccessTokens`, `setAccessTokenMinTrust`, driven through
+ * `mintLegacyToken` and `setMinTrust` (src/core/token-mint.ts, src/core/trust/min-trust.ts).
+ *
+ * Authoring gate (docs/TESTING.md#authoring-gate):
+ *  - Contract: `setMinTrust` on a name or id that is not an OAuth client finds the one ACTIVE token it names, changes its
+ *    floor and reports the floor before and after; a client of that name wins over a token; two active tokens of one name
+ *    are refused `invalid_params` and neither changes; a revoked token, and a name nobody has, are `not_found`; a tier
+ *    outside the six is refused 23514 (`access_tokens_min_trust_check`) with the floor unchanged. The mint inserts a token at
+ *    grant revision 1 and returns its id; a repeated token hash is 23505 (`access_tokens_token_hash_key`) and a
+ *    `source_grant` outside the list is 23514 (`access_tokens_source_grant_check`), each leaving no row. The same answers
+ *    on every engine arm. The bearer check `serve --http` runs (oauth-provider.ts verifyAccessToken with an engine)
+ *    authenticates an active token with its scopes, source grant and read floor, and refuses a revoked or unknown token.
+ *    The OAuth rung of that check reads the `oauth_tokens` rows the store keeps: a valid OAuth token authenticates with the
+ *    same AuthInfo (grant, sources, surface, floor), an expired one, a refresh token, a token of a deleted client and a
+ *    token of a soft-deleted client are refused the same way, and a repeated hash (23505) or an unknown client (23503) is
+ *    refused on insert. The bearer check stamps `last_used_at` (null before, set after, unchanged by a second check inside
+ *    60 seconds), and the stamp leaves a row with no `source_grant` alone when it is the unified one. A token still on the
+ *    legacy shape (no `source_grant`) authenticates with its permissions grant and its first check converts the row once,
+ *    one more grant revision; a second conversion finds nothing.
+ *  - Regression: a store that finds a revoked token, ignores the id-or-name pair, matches a name partly, lets two tokens
+ *    share a hash, takes a tier it should refuse, or returns the ambiguity as a pick of the first row: a floor set on the
+ *    wrong credential, which widens or narrows what an agent can read.
+ *  - Why existing coverage misses it: test/trust-*.test.ts and test/auth-mint*.test.ts run on PGLite with raw SQL.
+ *  - Seam: none. Real engines, typed members only. Ids are generated per engine, so each is reported as the name of the
+ *    row it belongs to.
+ */
+import { describe } from 'bun:test';
+import type { BrainEngine } from '../../src/core/engine.ts';
+import { setMinTrust } from '../../src/core/trust/min-trust.ts';
+import { mintLegacyToken, readActiveTokenPermissions, readActiveTokenPrivatePages, revokeLegacyTokenById } from '../../src/core/token-mint.ts';
+import { hashToken } from '../../src/core/utils.ts';
+import { GBrainOAuthProvider } from '../../src/core/oauth-provider.ts';
+import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
+import { parityArms } from './harness.ts';
+import type { Server } from 'node:http';
+import express from 'express';
+import { buildServeHttpApp } from '../../src/commands/serve-http.ts';
+import { testBackends } from '../helpers/test-backends.ts';
+
+const { parityTest } = parityArms(testBackends());
+
+/** What a caller sees of a refused call: the SQLSTATE or op code, the constraint, and the message; `null` when accepted. */
+async function refusal(run: () => Promise<unknown>, names: Map<string, string> = new Map()): Promise<{ code: unknown; constraint: unknown; message: string } | null> {
+  try {
+    await run();
+    return null;
+  } catch (error) {
+    const e = error as { code?: unknown; constraint?: unknown; constraint_name?: unknown; message?: unknown };
+    if (e.code === 'engine_capability_missing') throw error;
+    let message = String(e.message);
+    for (const [id, name] of names) message = message.split(id).join(`<id:${name}>`);
+    return { code: e.code, constraint: e.constraint_name ?? e.constraint, message };
+  }
+}
+
+const GRANT = { source_grant: 'default', source_id: null, federated_read: null, allowed_operations: null, takes_holders: null };
+const insert = (engine: BrainEngine, name: string, hash: string, extra: Record<string, unknown> = {}) =>
+  engine.insertAccessToken({ name, token_hash: hashToken(hash), scopes: ['read'], permissions: {}, ...GRANT, ...extra });
+
+describe('engine parity: access_tokens members', () => {
+  parityTest('setMinTrust on a token target finds the one active token by id or name, refuses an ambiguous name, a revoked token and a bad tier',
+    { methods: ['insertOauthClient', 'insertAccessToken', 'findActiveAccessTokens', 'setAccessTokenMinTrust', 'patchOauthClient'] }, async (engine) => {
+      await engine.insertOauthClient({ client_id: 'shared-name', client_name: 'a client' });
+      const solo = await insert(engine, 'solo', 'h-solo');
+      const floored = await insert(engine, 'floored', 'h-floored', { min_trust: 'tool_observed' });
+      await insert(engine, 'twin', 'h-twin-1');
+      await insert(engine, 'twin', 'h-twin-2');
+      await insert(engine, 'shared-name', 'h-shared');
+      await insert(engine, 'retired', 'h-retired', { revoked_at: new Date('2026-01-02T03:04:05Z') });
+      const names = new Map([[solo.id, 'solo'], [floored.id, 'floored']]);
+      const shown = (c: { id: string; name: string; kind: string; before: unknown; after: unknown }) => ({ ...c, id: names.get(c.id) ?? c.id });
+
+      const out: Record<string, unknown> = {};
+      out.byName = shown(await setMinTrust(engine, 'solo', 'agent_written'));
+      out.byId = shown(await setMinTrust(engine, floored.id, 'unknown'));
+      out.cleared = shown(await setMinTrust(engine, 'solo', null));
+      out.client = (await setMinTrust(engine, 'shared-name', 'tool_observed')).kind;
+      out.ambiguous = await refusal(() => setMinTrust(engine, 'twin', 'unknown'), names);
+      out.revoked = await refusal(() => setMinTrust(engine, 'retired', 'unknown'), names);
+      out.nobody = await refusal(() => setMinTrust(engine, 'nobody', 'unknown'), names);
+      out.badTier = await refusal(() => setMinTrust(engine, 'solo', 'bogus' as never), names);
+      out.found = {
+        solo: (await engine.findActiveAccessTokens('solo')).map(r => ({ ...r, id: names.get(r.id) ?? 'id' })),
+        floored: (await engine.findActiveAccessTokens(floored.id)).map(r => ({ ...r, id: names.get(r.id) ?? 'id' })),
+        twin: (await engine.findActiveAccessTokens('twin')).length,
+        retired: (await engine.findActiveAccessTokens('retired')).length,
+        partial: (await engine.findActiveAccessTokens('sol')).length,
+      };
+      // The member itself: it sets a floor, clears it, and an id no token has changes nothing and does not throw.
+      await engine.setAccessTokenMinTrust(solo.id, 'operator_curated');
+      const setTo = (await engine.findActiveAccessTokens(solo.id))[0]?.min_trust;
+      await engine.setAccessTokenMinTrust(solo.id, null);
+      const clearedTo = (await engine.findActiveAccessTokens(solo.id))[0]?.min_trust;
+      await engine.setAccessTokenMinTrust('00000000-0000-4000-8000-000000000000', 'unknown');
+      out.direct = { setTo, clearedTo };
+      return out;
+    });
+
+  parityTest('the mint inserts a token and returns its id; a repeated hash and a bad source grant are refused and leave no row',
+    { methods: ['insertAccessToken', 'findActiveAccessTokens', 'setAccessTokenMinTrust'] }, async (engine) => {
+      const minted = await mintLegacyToken(engine, { name: 'harness', scopes: ['read', 'write'], takesHolders: ['world'] });
+      const second = await mintLegacyToken(engine, { name: 'harness', scopes: ['read'], takesHolders: ['world'] });
+      const floor = await setMinTrust(engine, minted.id, 'operator_curated');
+      const names = new Map([[minted.id, 'harness-1'], [second.id, 'harness-2']]);
+      const dupe = await refusal(() => insert(engine, 'dupe', 'h-dupe'), names);
+      const repeated = await refusal(() => insert(engine, 'dupe-again', 'h-dupe'), names);
+      const badGrant = await refusal(() => insert(engine, 'bad-grant', 'h-bad-grant', { source_grant: 'everything' }), names);
+      const badTier = await refusal(() => insert(engine, 'bad-tier', 'h-bad-tier', { min_trust: 'bogus' }), names);
+      const ambiguousMint = await refusal(() => setMinTrust(engine, 'harness', 'unknown'), names);
+      return {
+        scopes: [minted.scopes, second.scopes], distinctIds: minted.id !== second.id, name: minted.name,
+        floor: { kind: floor.kind, name: floor.name, before: floor.before, after: floor.after },
+        dupe, repeated, badGrant, badTier, ambiguousMint,
+        left: { again: (await engine.findActiveAccessTokens('dupe-again')).length, grant: (await engine.findActiveAccessTokens('bad-grant')).length,
+          tier: (await engine.findActiveAccessTokens('bad-tier')).length, harness: (await engine.findActiveAccessTokens('harness')).length },
+      };
+    });
+
+  parityTest('mint: a minted token reads back its private-pages grant and its permissions while active, and an id no token has reads none',
+    { methods: ['insertAccessToken', 'readActiveAccessTokenGrant'] }, async (engine) => {
+      const minted = await mintLegacyToken(engine, { name: 'minted', scopes: ['read', 'write'], takesHolders: ['world'] });
+      const nobody = '00000000-0000-4000-8000-0000000000e1';
+      return {
+        privatePages: await readActiveTokenPrivatePages(engine, minted.id),
+        permissions: await readActiveTokenPermissions(engine, minted.id),
+        upperCase: (await readActiveTokenPermissions(engine, minted.id.toUpperCase())) !== undefined,
+        nobody: { privatePages: await readActiveTokenPrivatePages(engine, nobody), permissions: await readActiveTokenPermissions(engine, nobody) },
+        notAnId: { privatePages: await readActiveTokenPrivatePages(engine, 'minted'), permissions: await readActiveTokenPermissions(engine, 'minted') },
+        member: await engine.readActiveAccessTokenGrant(nobody, 'permissions'),
+      };
+    });
+
+  parityTest('list: every token newest first, revoked ones included, with its grant columns and never its hash',
+    { methods: ['insertAccessToken', 'listAccessTokens', 'revokeAccessToken'] }, async (engine) => {
+      const empty = await engine.listAccessTokens();
+      const names = new Map<string, string>();
+      for (const name of ['first', 'second', 'third']) {
+        const row = await insert(engine, name, `h-list-${name}`, { scopes: name === 'second' ? ['read', 'write'] : ['read'] });
+        names.set(row.id, name);
+        await Bun.sleep(5);
+      }
+      const second = [...names].find(([, n]) => n === 'second')![0];
+      await engine.revokeAccessToken(second);
+      const rows = await engine.listAccessTokens();
+      return {
+        empty,
+        rows: rows.map(r => ({
+          name: r.name, id: names.get(r.id) ?? 'unknown', scopes: r.scopes, created: r.created_at instanceof Date, lastUsed: r.last_used_at,
+          revoked: r.revoked_at instanceof Date, member: r.member_id, privatePages: r.private_pages ?? 'none',
+          hash: Object.keys(r).filter(k => k.includes('hash')),
+        })),
+      };
+    });
+
+  parityTest('revoke: by name stamps every active token of that name once, by id returns its name once, and a revoked token reads as gone',
+    { methods: ['insertAccessToken', 'revokeAccessTokensNamed', 'revokeAccessToken', 'readActiveAccessTokenGrant', 'accessTokenLive', 'findActiveAccessTokens', 'forgetWakeCredential'] }, async (engine) => {
+      const a = await insert(engine, 'twin', 'h-rv-1');
+      const b = await insert(engine, 'twin', 'h-rv-2');
+      const solo = await insert(engine, 'solo', 'h-rv-3');
+      const keep = await insert(engine, 'keep', 'h-rv-4');
+      const names = new Map([[a.id, 'twin-a'], [b.id, 'twin-b'], [solo.id, 'solo'], [keep.id, 'keep']]);
+      const live = async () => Object.fromEntries(await Promise.all([...names].map(async ([id, n]) => [n, await engine.accessTokenLive(id)] as const)));
+      const before = await live();
+      const byName = (await engine.revokeAccessTokensNamed('twin')).map(id => names.get(id)).sort();
+      const byNameAgain = await engine.revokeAccessTokensNamed('twin');
+      const byId = await revokeLegacyTokenById(engine, solo.id.toUpperCase());
+      const byIdAgain = await revokeLegacyTokenById(engine, solo.id);
+      const member = await engine.revokeAccessToken('00000000-0000-4000-8000-0000000000e2');
+      return {
+        before, byName, byNameAgain, byId, byIdAgain, member, after: await live(),
+        grants: { solo: await engine.readActiveAccessTokenGrant(solo.id, 'permissions'), keep: (await engine.readActiveAccessTokenGrant(keep.id, 'permissions')) !== null },
+        active: { twin: (await engine.findActiveAccessTokens('twin')).length, solo: (await engine.findActiveAccessTokens('solo')).length, keep: (await engine.findActiveAccessTokens('keep')).length },
+      };
+    });
+
+  parityTest('bearer check: serve --http authenticates an active token by its hash with its grant, and refuses a revoked or unknown token',
+    { methods: ['insertAccessToken', 'readOauthAccessTokenRows', 'readActiveAccessTokenByHash', 'touchAccessTokenLastUsed', 'revokeAccessToken'] }, async (engine) => {
+      // The provider serve --http builds (serve-http.ts): `sql` for the rest of OAuth, the engine for the bearer check.
+      const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), engine });
+      const reader = await insert(engine, 'reader', 'tok-reader');
+      const writer = await insert(engine, 'writer', 'tok-writer', { scopes: ['read', 'write'], min_trust: 'tool_observed', source_grant: 'federated', source_id: 'default', federated_read: ['default'] });
+      const gone = await insert(engine, 'gone', 'tok-gone');
+      const names = new Map([[reader.id, 'reader'], [writer.id, 'writer'], [gone.id, 'gone']]);
+      const verify = async (token: string) => {
+        try {
+          const auth = await provider.verifyAccessToken(token) as unknown as Record<string, unknown>;
+          const { expiresAt, createdAt, principal, ...rest } = auth;
+          const p = principal as { kind: string; id: string };
+          return { ...rest, principal: { kind: p.kind, id: names.get(p.id) ?? p.id }, expiresInAYear: Number(expiresAt) > Date.now() / 1000 + 364 * 24 * 3600, hasCreatedAt: createdAt != null };
+        } catch (error) {
+          if ((error as { code?: unknown }).code === 'engine_capability_missing') throw error;
+          return { refused: (error as Error).constructor.name, message: (error as Error).message };
+        }
+      };
+      const out: Record<string, unknown> = {};
+      out.reader = await verify('tok-reader');
+      out.writer = await verify('tok-writer');
+      out.beforeRevoke = await verify('tok-gone');
+      await revokeLegacyTokenById(engine, gone.id);
+      out.revoked = await verify('tok-gone');
+      out.unknown = await verify('tok-nobody');
+      out.hashNotToken = await verify(hashToken('tok-reader'));
+      // Not vacuous: the active tokens authenticate and the revoked and unknown ones are refused on every arm.
+      for (const k of ['reader', 'writer', 'beforeRevoke']) if ('refused' in (out[k] as object)) throw new Error(`${k} refused: ${JSON.stringify(out[k])}`);
+      for (const k of ['revoked', 'unknown', 'hashNotToken']) if (!('refused' in (out[k] as object))) throw new Error(`${k} authenticated`);
+      return out;
+    });
+  parityTest('serve --http end to end: one MCP tool call with a valid access token returns the same result, and an unknown token gets 401',
+    { methods: ['putPage', 'insertAccessToken', 'readActiveAccessTokenByHash'], timeout: 120_000 }, async (engine) => {
+      await engine.putPage('notes/served-example', { type: 'note', title: 'Served example', compiled_truth: 'A page read over serve --http.', timeline: '' });
+      await insert(engine, 'http-reader', 'tok-http-reader');
+      const app = express();
+      const server: Server = await new Promise(resolve => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
+      try {
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('expected a TCP address');
+        const base = `http://127.0.0.1:${address.port}`;
+        await buildServeHttpApp(app, engine, { port: address.port, tokenTtl: 3600, enableDcr: false, publicUrl: base });
+        const call = async (token: string) => {
+          const res = await fetch(`${base}/mcp`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+            body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_page', arguments: { slug: 'notes/served-example' } } }),
+          });
+          const text = await res.text();
+          if (res.status !== 200) return { status: res.status, error: (() => { try { return JSON.parse(text).error; } catch { return text; } })() };
+          const dataLine = text.split('\n').find(l => l.startsWith('data:'));
+          const result = JSON.parse(dataLine ? dataLine.slice('data:'.length) : text).result as { isError?: boolean; content: Array<{ text: string }> };
+          if (result.isError) return { status: res.status, isError: true, error: result.content[0]?.text };
+          const page = JSON.parse(result.content[0]!.text) as Record<string, unknown>;
+          return { status: res.status, isError: result.isError ?? false, page: { slug: page.slug, type: page.type, title: page.title, compiled_truth: page.compiled_truth } };
+        };
+        const ok = await call('tok-http-reader');
+        const unknown = await call('tok-http-nobody');
+        // Not vacuous: the valid token reads the page and the unknown one is refused, on every arm.
+        if (ok.status !== 200 || (ok as { page?: { slug?: unknown } }).page?.slug !== 'notes/served-example') throw new Error(`valid token: ${JSON.stringify(ok)}`);
+        if (unknown.status !== 401) throw new Error(`unknown token: ${JSON.stringify(unknown)}`);
+        return { ok, unknown };
+      } finally {
+        await new Promise<void>(resolve => { server.closeAllConnections?.(); server.close(() => resolve()); });
+      }
+    });
+
+  /** A bearer check as serve --http runs it, as what a caller sees: the AuthInfo (ids by name, times as a flag) or the refusal. */
+  async function bearer(engine: BrainEngine, provider: GBrainOAuthProvider, token: string): Promise<Record<string, unknown>> {
+    try {
+      const auth = await provider.verifyAccessToken(token) as unknown as Record<string, unknown>;
+      const { expiresAt, createdAt, ...rest } = auth;
+      return { ...rest, expiresAtIsStored: typeof expiresAt === 'number', hasCreatedAt: createdAt != null };
+    } catch (error) {
+      if ((error as { code?: unknown }).code === 'engine_capability_missing') throw error;
+      return { refused: (error as Error).constructor.name, message: (error as Error).message };
+    }
+  }
+
+  parityTest('bearer check, OAuth rung: a valid OAuth token authenticates with its client grant, and an expired one, a refresh token, and a deleted or soft-deleted client\'s token are refused',
+    { methods: ['insertOauthClient', 'insertOauthToken', 'readOauthAccessTokenRows', 'readActiveAccessTokenByHash', 'deleteOAuthClient', 'insertSource'] }, async (engine) => {
+      const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), engine });
+      await engine.insertSource({ id: 'wiki', name: 'wiki', local_path: null, config: {} });
+      const now = Math.floor(Date.now() / 1000);
+      const client = (id: string, extra: Record<string, unknown> = {}) => engine.insertOauthClient({
+        client_id: id, client_name: `Client ${id}`, scope: 'read write', source_id: 'default', federated_read: ['default', 'wiki'], client_id_issued_at: 1_700_000_000,
+        token_ttl: 600, bound_slug_prefixes: ['notes/'], surface: 'full', surface_set_by: 'operator', min_trust: 'tool_observed', ...extra,
+      });
+      await client('oc-valid');
+      await client('oc-gone');
+      await client('oc-soft', { deleted_at: new Date('2026-01-02T03:04:05Z') });
+      await client('oc-wiki', { source_id: null, federated_read: [], scope: 'read' });
+      const token = (hash: string, clientId: string, extra: Record<string, unknown> = {}) => engine.insertOauthToken({
+        token_hash: hashToken(hash), token_type: 'access', client_id: clientId, scopes: ['read', 'write'], expires_at: now + 3600,
+        resource: null, created_at: now, grant_type: 'client_credentials', ...extra,
+      });
+      await token('ot-valid', 'oc-valid');
+      await token('ot-plain', 'oc-valid', { grant_type: undefined, scopes: ['read'], resource: 'https://brain.example/mcp' });
+      await token('ot-narrow', 'oc-wiki', { scopes: ['read', 'admin'] });
+      await token('ot-expired', 'oc-valid', { expires_at: now - 10 });
+      await token('ot-refresh', 'oc-valid', { token_type: 'refresh' });
+      await token('ot-gone', 'oc-gone');
+      await token('ot-soft', 'oc-soft');
+
+      const out: Record<string, unknown> = {};
+      for (const name of ['valid', 'plain', 'narrow', 'expired', 'refresh']) out[name] = await bearer(engine, provider, `ot-${name}`);
+      out.beforeDelete = await bearer(engine, provider, 'ot-gone');
+      out.deleted = await engine.deleteOAuthClient('oc-gone');
+      out.afterDelete = await bearer(engine, provider, 'ot-gone');
+      out.soft = await bearer(engine, provider, 'ot-soft');
+      out.hashNotToken = await bearer(engine, provider, hashToken('ot-valid'));
+      out.reread = await bearer(engine, provider, 'ot-valid');
+      // The rung rows the check reads: the same keys on every arm (a degraded rung drops columns), and none for a bad hash.
+      const rungs: Record<string, unknown> = {};
+      for (const rung of [0, 1, 2, 3, 4] as const) rungs[rung] = Object.keys((await engine.readOauthAccessTokenRows(hashToken('ot-valid'), rung))[0] ?? {}).sort();
+      out.rungKeys = rungs;
+      out.noRow = (await engine.readOauthAccessTokenRows(hashToken('ot-nobody'), 0)).length;
+      // Not vacuous: the valid ones authenticate, the others are refused, on every arm.
+      for (const k of ['valid', 'plain', 'narrow', 'beforeDelete', 'reread']) if ('refused' in (out[k] as object)) throw new Error(`${k} refused: ${JSON.stringify(out[k])}`);
+      for (const k of ['expired', 'refresh', 'afterDelete', 'soft', 'hashNotToken']) if (!('refused' in (out[k] as object))) throw new Error(`${k} authenticated`);
+      return out;
+    });
+
+  parityTest('the expired-credential sweep serve --http runs at startup deletes the expired OAuth tokens of any type and keeps the live ones',
+    { methods: ['insertOauthClient', 'insertOauthToken', 'deleteExpiredOauthCredentials', 'readOauthAccessTokenRows'] }, async (engine) => {
+      const now = Math.floor(Date.now() / 1000);
+      await engine.insertOauthClient({ client_id: 'oc-sweep', client_name: 'Client oc-sweep', scope: 'read', client_id_issued_at: 1_700_000_000 });
+      const token = (name: string, extra: Record<string, unknown>) => engine.insertOauthToken({
+        token_hash: hashToken(name), token_type: 'access', client_id: 'oc-sweep', scopes: ['read'], expires_at: now + 3600,
+        resource: null, created_at: now, grant_type: 'client_credentials', ...extra,
+      });
+      await token('ot-sweep-live', {});
+      await token('ot-sweep-old', { expires_at: now - 10 });
+      await token('ot-sweep-old-refresh', { token_type: 'refresh', expires_at: now - 10 });
+      const swept = await new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), engine }).sweepExpiredTokens();
+      const kept = async (name: string) => (await engine.readOauthAccessTokenRows(hashToken(name), 0)).length;
+      const out = { swept, live: await kept('ot-sweep-live'), again: await engine.deleteExpiredOauthCredentials(now) };
+      // Not vacuous: two expired tokens go, the live one stays, and a second sweep finds nothing.
+      if (out.swept !== 2 || out.live !== 1 || out.again !== 0) throw new Error(`sweep: ${JSON.stringify(out)}`);
+      return out;
+    });
+
+  parityTest('insertOauthToken refuses a repeated token hash (23505) and a client with no row (23503) and leaves no row',
+    { methods: ['insertOauthClient', 'insertOauthToken', 'readOauthAccessTokenRows'] }, async (engine) => {
+      await engine.insertOauthClient({ client_id: 'oc-a', client_name: 'A', scope: 'read' });
+      const now = Math.floor(Date.now() / 1000);
+      const row = (hash: string, clientId: string) => ({ token_hash: hashToken(hash), token_type: 'access' as const, client_id: clientId, scopes: ['read'], expires_at: now + 60, resource: null, created_at: now, grant_type: 'client_credentials' as const });
+      const out: Record<string, unknown> = {};
+      out.first = await refusal(() => engine.insertOauthToken(row('t1', 'oc-a')));
+      out.repeated = await refusal(() => engine.insertOauthToken(row('t1', 'oc-a')));
+      out.noClient = await refusal(() => engine.insertOauthToken(row('t2', 'nobody')));
+      out.repeatedNoClient = await refusal(() => engine.insertOauthToken(row('t1', 'nobody')));
+      out.rows = { t1: (await engine.readOauthAccessTokenRows(hashToken('t1'), 0)).length, t2: (await engine.readOauthAccessTokenRows(hashToken('t2'), 0)).length };
+      return out;
+    });
+
+  parityTest('bearer check on a legacy-shape token: serve --http authenticates it with its permissions grant and converts the row once, one more grant revision',
+    { methods: ['insertAccessToken', 'readActiveAccessTokenByHash', 'convertLegacyAccessTokenGrant'] }, async (engine) => {
+      const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), engine });
+      const plain = await insert(engine, 'plain-old', 'tok-plain-old', { source_grant: null, permissions: { source_id: 'default' } });
+      const wide = await insert(engine, 'wide-old', 'tok-wide-old', { source_grant: null, scopes: ['read', 'write'],
+        permissions: { source_id: 'default', federated_read: ['default', 'wiki'], takes_holders: ['world', 'alice-example'] } });
+      const names = new Map([[plain.id, 'plain'], [wide.id, 'wide']]);
+      const row = async (token: string) => {
+        const r = (await engine.readActiveAccessTokenByHash(hashToken(token), 'provider'))!;
+        return { source_grant: r.source_grant, source_id: r.source_id, federated_read: r.federated_read, allowed_operations: r.allowed_operations,
+          takes_holders: r.takes_holders, grant_revision: Number(r.grant_revision), lastUsed: r.last_used_at ? 'set' : 'null' };
+      };
+      const verify = async (token: string) => {
+        const { expiresAt, createdAt, principal, ...rest } = await provider.verifyAccessToken(token) as unknown as Record<string, unknown>;
+        const p = principal as { kind: string; id: string };
+        return { ...rest, principal: { kind: p.kind, id: names.get(p.id) ?? p.id }, hasExpiry: expiresAt != null, hasCreatedAt: createdAt != null };
+      };
+      const out: Record<string, unknown> = {};
+      out.before = { plain: await row('tok-plain-old'), wide: await row('tok-wide-old') };
+      out.firstPlain = await verify('tok-plain-old');
+      out.firstWide = await verify('tok-wide-old');
+      out.converted = { plain: await row('tok-plain-old'), wide: await row('tok-wide-old') };
+      out.secondPlain = await verify('tok-plain-old');
+      out.again = { plain: await row('tok-plain-old'), wide: await row('tok-wide-old') };
+      out.convertsOnce = await engine.convertLegacyAccessTokenGrant(plain.id,
+        { source_grant: 'all', source_id: null, federated_read: null, allowed_operations: null, takes_holders: null });
+      // Not vacuous: each row starts on the legacy shape and the first check converts it with one more revision.
+      const before = out.before as Record<string, { source_grant: unknown; grant_revision: number }>;
+      const converted = out.converted as Record<string, { source_grant: unknown; grant_revision: number }>;
+      for (const k of ['plain', 'wide']) {
+        if (before[k].source_grant !== null || converted[k].source_grant === null || converted[k].grant_revision !== before[k].grant_revision + 1) {
+          throw new Error(`${k} not converted: ${JSON.stringify(out)}`);
+        }
+      }
+      if (JSON.stringify(out.firstPlain) !== JSON.stringify(out.secondPlain)) throw new Error('the converted row authorizes differently');
+      return out;
+    });
+  parityTest('bearer check stamps last_used_at: null before, set after, unchanged by a second check inside 60 seconds; the unified stamp leaves a row with no source_grant alone',
+    { methods: ['insertAccessToken', 'listAccessTokens', 'readActiveAccessTokenByHash', 'touchAccessTokenLastUsed'] }, async (engine) => {
+      const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), engine });
+      const seen = await insert(engine, 'seen', 'tok-seen');
+      const old = await insert(engine, 'old', 'tok-old', { source_grant: null });
+      const lastUsed = async (id: string) => (await engine.listAccessTokens()).find(r => r.id === id)!.last_used_at;
+      const state = (v: Date | null) => (v ? 'set' : 'null');
+      const settle = async () => { for (let i = 0; i < 100 && !(await lastUsed(seen.id)); i++) await new Promise(r => setTimeout(r, 20)); };
+      const out: Record<string, unknown> = {};
+      out.before = state(await lastUsed(seen.id));
+      out.beforeByHash = state((await engine.readActiveAccessTokenByHash(hashToken('tok-seen'), 'transport'))!.last_used_at as Date | null);
+      await provider.verifyAccessToken('tok-seen');
+      await settle();
+      const first = await lastUsed(seen.id);
+      out.afterFirst = state(first);
+      await provider.verifyAccessToken('tok-seen');
+      await new Promise(r => setTimeout(r, 150));
+      const second = await lastUsed(seen.id);
+      out.afterSecond = state(second);
+      out.unchangedBySecond = first?.getTime() === second?.getTime();
+      out.byHash = state((await engine.readActiveAccessTokenByHash(hashToken('tok-seen'), 'provider'))!.last_used_at as Date | null);
+      out.byHashIsDate = (await engine.readActiveAccessTokenByHash(hashToken('tok-seen'), 'provider'))!.last_used_at instanceof Date;
+      await engine.touchAccessTokenLastUsed(old.id, true);
+      out.unifiedLeavesLegacyShape = state(await lastUsed(old.id));
+      await engine.touchAccessTokenLastUsed(old.id, false);
+      out.legacyStamps = state(await lastUsed(old.id));
+      if (out.afterFirst !== 'set' || out.before !== 'null' || out.unchangedBySecond !== true) throw new Error(`last_used_at: ${JSON.stringify(out)}`);
+      return out;
+    });
+});

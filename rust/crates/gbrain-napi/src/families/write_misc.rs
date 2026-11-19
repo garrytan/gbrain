@@ -1,5 +1,6 @@
-//! Page-write reads that belong to no other family: a source's state, and the path attach of
-//! `sources add` (rust/docs/store/write_misc.md).
+//! Page-write reads that belong to no other family: a source's state, the path attach of
+//! `sources add`, and the pages whose readers name a member or a group
+//! (rust/docs/store/write_misc.md).
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 
@@ -35,5 +36,16 @@ impl Brain {
         self.run(env, move |s| {
             s.attach_source_path(&source_id, &local_path, name.as_deref(), federated)
         })
+    }
+
+    /// `listPagesNamingReader(principal, limit)`: `[{ slug, source_id }]` by (source, slug).
+    #[napi]
+    pub fn list_pages_naming_reader<'env>(
+        &self,
+        env: &'env Env,
+        principal: String,
+        limit: u32,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_pages_naming_reader(&principal, limit))
     }
 }

@@ -167,6 +167,10 @@ Reserved tags:
 | trust | `t` | `TRUST` | no (the trust family asks core when it needs the page-delete hook) |
 | telemetry | `a`, one sub-tag per table (below) | `TELEMETRY` | no |
 | jobs, the `dream_synthesis_completions` archive | `f` | `DREAM_SYNTHESIS_COMPLETION` | no |
+| entity_identities | `i` | `ENTITY_IDENTITY` | yes |
+| session_state | `y` | `SESSION_STATE` | no |
+| persistence_journal, the `derived_generations` ledger | `h` | `DERIVED_GENERATION` | no (a source delete removes its rows) |
+| access_members | `x`, sub-tags `0x01` members, `0x02` groups, `0x03` group members | `ACCESS_MEMBERS` | no |
 
 The telemetry family (`telemetry.rs`) holds search telemetry (`src/core/search/telemetry.ts`), MCP usage
 (`src/core/mcp-usage.ts`), retrieval feedback (`src/core/feedback/`) and the budget ledger
@@ -520,9 +524,10 @@ store keeps the same rule in `pages.rs`.
   `store-members/pages.ts` refuses `putPage` with a `source_path` for such a source.
 - **Advisory locks.** PGLite takes a lock per origin so that two writers serialize. The store has one writer at a
   time, so it needs none.
-- **Write guards.** The origin check, the origin bind, the ingest stamp, the import seal and the valid-time body
-  read are typed engine members (`readPageOrigin`, `listOriginClaims`, `bindPageOrigin`, `stampPageIngest`,
-  `sealImportedPage`, `readLivePageBody`; SQL in `engine-sql/write-guards.ts`). The store answers them in
+- **Write guards.** The origin check, the origin bind, the ingest stamp, the import seal, the valid-time body
+  read, the append path's tail-digest body read and the page write gate's stored tier read are typed engine members
+  (`readPageOrigin`, `listOriginClaims`, `bindPageOrigin`, `stampPageIngest`, `sealImportedPage`, `readLivePageBody`,
+  `readInlinePageRegions`, `readStoredPageTier`; SQL in `engine-sql/write-guards.ts`). The store answers them in
   `write_guards.rs`, and `bindPageOrigin` runs the same origin check as `putPage`. See
   [`rust/docs/store/write-guards.md`](../../rust/docs/store/write-guards.md).
 - **Page visibility guards.** A remote page write's reads of whether the caller sees a page, which of a list of
@@ -1209,6 +1214,18 @@ rebuild counts and the retrieval coverage counts. Detail: `rust/docs/store/link_
   the refresh after a link write and the temporal and wanted steps of a derived-link publication run in one store
   transaction, as on PGLite and Postgres.
 
+### entity_identities
+
+Cross-source identity groups (migration v137): manual links, lookups, the canonical twin. Detail: `rust/docs/store/entity_identities.md`.
+
+- **Files:** `gbrain-store/src/entity_identities.rs`, `gbrain-napi/src/families/entity_identities.rs`, `store-members/entity-identities.ts`.
+- **Tag:** `i` (`ENTITY_IDENTITY`). Cascade on page delete: yes (`remove_page_rows` drops the page's membership and its group key).
+- **Keys:** `i 0x01 <page id BE8>` to the membership JSON; `i 0x02 <entity_id> 0x00 <page id BE8>` (empty, the group index).
+- **Members (5), capability:** `entity_identities` (5): `linkEntityIdentityRow`, `unlinkEntityIdentityRow`, `listEntityIdentityRows`, `readEntityIdentityIdsForPages`, `readCanonicalTwin`.
+- **Postgres tables:** `entity_identities`; SQL in `src/core/engine-sql/entity-identities.ts`.
+- **Parity cases:** `test/engine-parity/entity-identities.test.ts`.
+- **Known gap:** the store page policy has no owner-only rule, so the list refuses a policy read typed while an owner-only source exists (TODOS `rust-owner-only-page-policy`).
+
 ### timeline_queries
 
 Timeline reads by date and event projections.
@@ -1382,7 +1399,7 @@ the same rows into one member, so the member counts here are smaller than the si
 
 These four sections are design only. No file, tag, constant or list entry below exists yet. The tags are proposed:
 core adds them to the reserved block in `keys.rs` and to the reserved tag table above in one reviewed change, and
-until then no family writes under them. The free lowercase bytes today are `h i x y z` (`g` is the code traversal cache) (`d`, `m` and `t` are now reserved above, `a` is telemetry and `f` is the dream synthesis completion archive).
+until then no family writes under them. The free lowercase bytes today are `z` (`g` is the code traversal cache) (`d`, `m` and `t` are now reserved above, `a` is telemetry, `f` is the dream synthesis completion archive, `x` is access_members and `h` is the derived generation ledger).
 
 | Family | Proposed tag | Proposed constant | Cascade on page delete | Owner |
 |---|---|---|---|---|
@@ -1643,9 +1660,14 @@ The Minion job queue, cycle locks, spend and rate leases, and wake subscriptions
     `expireSpendReservations`, `settleSpendReservation`, `markSpendUsageUnknown`, `insertLeasePressure`,
     `countLeasePressure`, `listRecentLeasePressure`) serve `describeJobs`, the hold's insert, sweep, settle and
     unknown-usage mark, and the lease-pressure audit, `jobs stats` and the `subagent_health` check
-    (`src/core/engine-sql/jobs-spend.ts`, `rust/docs/store/jobs-spend.md`). The statements that need `mcp_spend_log` or
-    `oauth_clients` (`reserve`, the capped group read, the log insert inside `settle`, `getClientDailyCapCents`) stay raw
-    and the Rust engine refuses them. `parity: test/engine-parity/jobs-spend.test.ts`.
+    (`src/core/engine-sql/jobs-spend.ts`, `rust/docs/store/jobs-spend.md`). `parity: test/engine-parity/jobs-spend.test.ts`.
+  - Spend ledger and client budgets. Ten members (`reserveClientSpend`, `reserveGroupSpend`, `readGroupSpendTotals`,
+    `settleSpendWithLog`, `insertSpendLog`, `sumClientSpendSince`, `readClientBudgetUsd`, `insertOauthClient`,
+    `updateOauthClientBudget`, `readAgentClientSpend`) serve `reserve`, `reserveGroup`, `readGroupSpend`, `settle`,
+    `getClientDailyCapCents`, `getTodaySpendCents`, `recordSpend` and the admin agent spend view
+    (`src/core/engine-sql/spend-log.ts`, `rust/docs/store/spend-log.md`). The other `oauth_clients` statements and the
+    delegated admission's `effectiveDelegation` read stay raw and the Rust engine refuses them; no `oauth_clients`
+    writer call site is switched. `parity: test/engine-parity/spend-log.test.ts`.
   - Subagent transcript and tool ledger. Seventeen members (`listSubagentMessages`, `insertSubagentMessage`, `listSubagentToolExecutions`,
     `recordSubagentToolExecutions`, `startSubagentToolExecution`, `completeSubagentToolExecution`, `failSubagentToolExecution`, the
     write-outcome, oneshot-ledger and byte-sum reads, and the dream cycle's provenance reads) serve `subagent_messages` and
@@ -1808,7 +1830,9 @@ and write provenance on content rows, and the trust records.
     no floor), `findOrphanPages` and `listLinkSources`.
   - Ignored on purpose, as their SQL does: the raw-files, stats, ontology, timeline and chunk-page reads.
   - Built: `listSingleFactMetadata` (refused only under the remote floor) and `listUnpreviewedTrustFacts` read the
-    stamped tier and origin (`facts/trust_reads.rs`), and `listSupersessions` honours a read eligibility.
+    stamped tier and origin (`facts/trust_reads.rs`), and `listSupersessions` and the four fact list reads
+    (`listFactsByEntity`, `listFactsSince`, `listFactsKeyset`, `listFactsBySession`, which hot memory reads with the
+    caller's eligibility) honour a read eligibility.
   - Built: the `executeRaw` reads of `trust_tier` in core memory, the eligibility scan, belief history, page history
     (`get_versions`) and valid time are typed members (`engine-sql/trust-tier-reads.ts`). The Rust store serves
     `listCorePageRows`, the pages and facts arms of `listTrustScanRows` and `countUnscannedTrustRows`,

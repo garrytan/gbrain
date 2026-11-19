@@ -128,11 +128,8 @@ export async function getTrustAllowRule(engine: Pick<BrainEngine, 'executeRaw'>,
   return row ? normalize(row) : null;
 }
 
-export async function listTrustAllowRules(engine: Pick<BrainEngine, 'executeRaw'>, opts: { sourceIds?: string[]; includeRemoved?: boolean } = {}): Promise<TrustAllowRule[]> {
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT * FROM trust_allow_rules WHERE ($1::boolean OR removed_at IS NULL) AND ($2::text[] IS NULL OR source_id = ANY($2::text[])) ORDER BY id`,
-    [opts.includeRemoved === true, opts.sourceIds?.length ? opts.sourceIds : null]);
-  return rows.map(normalize);
+export async function listTrustAllowRules(engine: Pick<BrainEngine, 'listTrustAllowRuleRows'>, opts: { sourceIds?: string[]; includeRemoved?: boolean } = {}): Promise<TrustAllowRule[]> {
+  return (await engine.listTrustAllowRuleRows(opts)).map(normalize);
 }
 
 /** The server-stamped fields of a write the gate assessed. Never frontmatter. */
@@ -172,7 +169,7 @@ export function matchTrustAllowRule(rules: readonly Pick<TrustAllowRule, 'id' | 
  * never allowed (fail-closed stays fail-closed). Rules are read once per write.
  */
 export async function applyTrustAllowRules<T extends { verdict: string; families: readonly string[]; detectorError: boolean }>(
-  engine: Pick<BrainEngine, 'executeRaw'>, assessment: T, write: { sourceId: string; sourceUri: string | null }): Promise<T> {
+  engine: Pick<BrainEngine, 'listTrustAllowRuleRows'>, assessment: T, write: { sourceId: string; sourceUri: string | null }): Promise<T> {
   if (assessment.verdict === 'allow' || assessment.detectorError || assessment.families.length === 0) return assessment;
   let rules: TrustAllowRule[];
   try { rules = await listTrustAllowRules(engine, { sourceIds: [write.sourceId] }); }

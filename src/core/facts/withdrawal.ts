@@ -156,11 +156,7 @@ export async function recordFactWithdrawal(
       const pages = [...inline, ...segmented.length ? await tx.executeRaw<{ id: number; slug: string; knowledge_revision: string }>(
         'SELECT id,slug,knowledge_revision FROM pages WHERE id=ANY($1::int[])', [segmented.map(page => page.id)]) : []];
       if (opts.requestId && !opts.publication) {
-        await tx.executeRaw(`INSERT INTO persistence_effects(request_id,kind,data,source_id,source_incarnation,worktree_id)
-          SELECT $1::uuid,k.kind,$3::text::jsonb,s.id,s.incarnation,b.worktree_id
-          FROM sources s LEFT JOIN persistence_source_bindings b ON b.source_id=s.id AND b.source_incarnation=s.incarnation
-          CROSS JOIN (VALUES ('withdrawal-mirror'),('git'),('embedding')) AS k(kind)
-          WHERE s.id=$2 ON CONFLICT(request_id,kind) DO NOTHING`, [opts.requestId, sourceId, JSON.stringify({ version: 2, targets: pages.map(page => ({ slug: page.slug, page_id: page.id, revision: page.knowledge_revision })).sort((a, b) => a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0) })]);
+        await tx.insertWithdrawalEffects({ requestId: opts.requestId, sourceId, targets: pages.map(page => ({ slug: page.slug, page_id: page.id, revision: page.knowledge_revision })) });
       }
       const committed = pages.map(page => ({ sourceId, slug: page.slug, revision: page.knowledge_revision }));
       for (const invalidate of withdrawalInvalidations) await invalidate(tx, { sourceId, factId: id, subject: row.subject, pages: committed });
@@ -247,19 +243,12 @@ export async function isFactWithdrawn(
   engine: BrainEngine, sourceId: string, visibility: string | null, claim: string, entitySlug: string | null, memberPage: string | null = null,
 ): Promise<boolean> {
   // GST-359 D: `memberPage` (a claim saved on a member page) also matches that page's own withdrawals.
-  const rows = await engine.executeRaw(`SELECT 1 FROM fact_withdrawals
-    WHERE source_id=$1 AND ($2::text IS NULL OR visibility=$2) AND fact_hash IN (gbrain_fact_fingerprint($3),gbrain_fact_fingerprint_v1($3))
-      AND (subject = '*' OR subject = $4::text OR subject = $5::text)
-    UNION ALL SELECT 1 FROM fact_purges WHERE source_id=$1 AND ($2::text IS NULL OR visibility=$2) AND fact_hash=gbrain_fact_fingerprint($3)
-      AND (subject = '*' OR subject = $4::text) LIMIT 1`, [sourceId,visibility,claim,entitySlug,memberPage]);
-  return rows.length > 0;
+  return engine.isFactWithdrawn(sourceId, visibility, claim, entitySlug, memberPage);
 }
 
 /** #5575: the claim matches a purge tombstone (the facts guard raises the same typed code on insert). */
 export async function isFactPurged(engine: BrainEngine, sourceId: string, visibility: string, claim: string, entitySlug: string | null): Promise<boolean> {
-  const rows = await engine.executeRaw(`SELECT 1 FROM fact_purges WHERE source_id=$1 AND visibility=$2 AND fact_hash=gbrain_fact_fingerprint($3)
-    AND (subject = '*' OR subject = $4::text) LIMIT 1`, [sourceId, visibility, claim, entitySlug]);
-  return rows.length > 0;
+  return engine.isFactPurged(sourceId, visibility, claim, entitySlug);
 }
 
 /** Writers check this before isFactWithdrawn so a purged claim refuses with typed purged_content, before any provider work. */

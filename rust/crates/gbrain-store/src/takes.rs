@@ -28,6 +28,7 @@ use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::{PageRecord, next_id, read_page_by_id};
 use crate::trust::{RowTrust, TrustTable, stamp_row};
+use crate::write_receipt::WriteReceipt;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -147,6 +148,61 @@ pub(crate) struct TakeRecord {
     /// them, and omitted while the tier is `unknown` with no origin.
     #[serde(default, skip_serializing_if = "RowTrust::is_empty")]
     pub trust: RowTrust,
+    /// The write receipt (`write_*`, `last_*`). Absent in a record stored before it, and omitted
+    /// while every column is null. [`write_take`] stamps it.
+    #[serde(default, skip_serializing_if = "WriteReceipt::is_empty")]
+    pub receipt: WriteReceipt,
+}
+
+impl TakeRecord {
+    /// The content tuple the attribution trigger compares
+    /// (`WRITE_ATTRIBUTION_CONTENT_COLUMNS.takes`); `updated_at` and the embedding are projection.
+    fn attribution_content_changed(&self, new: &TakeRecord) -> bool {
+        use crate::write_receipt::float_distinct;
+        let (a, b) = (self, new);
+        (
+            a.id,
+            a.page_id,
+            a.row_num,
+            &a.claim,
+            &a.kind,
+            &a.holder,
+            &a.since_date,
+            &a.until_date,
+            &a.source,
+            a.superseded_by,
+            a.active,
+        ) != (
+            b.id,
+            b.page_id,
+            b.row_num,
+            &b.claim,
+            &b.kind,
+            &b.holder,
+            &b.since_date,
+            &b.until_date,
+            &b.source,
+            b.superseded_by,
+            b.active,
+        ) || (
+            a.resolved_at_us,
+            a.resolved_outcome,
+            &a.resolved_unit,
+            &a.resolved_source,
+            &a.resolved_by,
+            a.created_at_us,
+            &a.resolved_quality,
+        ) != (
+            b.resolved_at_us,
+            b.resolved_outcome,
+            &b.resolved_unit,
+            &b.resolved_source,
+            &b.resolved_by,
+            b.created_at_us,
+            &b.resolved_quality,
+        ) || float_distinct(Some(a.weight), Some(b.weight))
+            || float_distinct(a.resolved_value, b.resolved_value)
+    }
 }
 
 /// One `synthesis_evidence` row (the key holds the three key columns).
@@ -491,11 +547,21 @@ pub(crate) fn all_takes(read: &dyn KvRead) -> Result<Vec<TakeRecord>> {
         .collect()
 }
 
-/// Writes a take's record as it is (its row index never changes: `page_id` and `row_num` are
-/// fixed). A write that changes no trust column (the embedding) uses it; a takes writer uses
-/// [`store_take`].
+/// Writes a take's record (its row index never changes: `page_id` and `row_num` are fixed),
+/// stamped with the open write's receipt as the PGLite attribution trigger stamps it
+/// (`write_receipt.rs`): an insert when no record is stored under its id, else an update. A
+/// write that changes no trust column (the embedding) uses it as it is; a takes writer uses
+/// [`store_take`], which stamps the trust columns first.
 pub(crate) fn write_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
-    put_json(tx, &take_key(take.id), take)
+    let old = read_take(&*tx, take.id)?;
+    let mut stamped = take.clone();
+    stamped.receipt = WriteReceipt::stamp(
+        old.as_ref().map(|o| &o.receipt),
+        &take.receipt,
+        old.as_ref()
+            .is_some_and(|o| o.attribution_content_changed(take)),
+    )?;
+    put_json(tx, &take_key(take.id), &stamped)
 }
 
 /// Writes `take` with the trust tier and write origin PGLite's `trust_tier_stamp` trigger gives it
@@ -931,6 +997,7 @@ impl Store {
                             updated_at_us: now,
                             claim_rev: 0,
                             trust: RowTrust::default(),
+                            receipt: WriteReceipt::default(),
                         },
                     )?;
                 }
@@ -1269,6 +1336,7 @@ impl Store {
                     updated_at_us: now,
                     claim_rev: 0,
                     trust: RowTrust::default(),
+                    receipt: WriteReceipt::default(),
                 },
             )?;
             old.active = false;

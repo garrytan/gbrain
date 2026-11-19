@@ -8,9 +8,9 @@ use gbrain_store::error::*;
 use gbrain_store::journal::Principal;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::persistence::{
-    ClaimStamp, ClaimableSpec, ExpireClaims, HousekeepingClaim, HousekeepingTurn,
-    ProjectionWindowCursor, SegmentedProjectionFilter, TopologyChangeInsert, WriteCompletion,
-    WriteRequestInsert,
+    ClaimRelease, ClaimStamp, ClaimableSpec, ExpireClaims, HousekeepingClaim, HousekeepingTurn,
+    ProjectionWindowCursor, SegmentedProjectionFilter, TopologyChangeInsert, WriteCancellation,
+    WriteCompletion, WriteRequestInsert,
 };
 use serde_json::{Value, json};
 
@@ -186,6 +186,48 @@ fn an_inserted_request_has_every_column_and_charges_only_existing_counters() {
 }
 
 #[test]
+fn requests_by_request_id_span_principals_and_stop_at_two() {
+    let dir = TempDir::new("persist-by-request-id");
+    let store = open(&dir);
+    assert!(
+        store
+            .list_write_requests_by_request_id(REQ_1)
+            .unwrap()
+            .is_empty()
+    );
+    let mine = store
+        .insert_write_request(&insert_input(&store, REQ_1, "notes/a", json!({})))
+        .unwrap();
+    let one = store
+        .list_write_requests_by_request_id(&REQ_1.to_uppercase())
+        .unwrap();
+    assert_eq!(one, vec![mine.clone()]);
+    // A second principal admits the same request id: the read is ambiguous and says so.
+    let mut theirs = insert_input(&store, REQ_1, "notes/b", json!({}));
+    theirs.principal_id = "other-writer".into();
+    store.insert_write_request(&theirs).unwrap();
+    let mut third = insert_input(&store, REQ_1, "notes/c", json!({}));
+    third.principal_id = "third-writer".into();
+    store.insert_write_request(&third).unwrap();
+    let rows = store.list_write_requests_by_request_id(REQ_1).unwrap();
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|r| r["request_id"] == REQ_1));
+    assert!(
+        store
+            .list_write_requests_by_request_id(REQ_2)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        store
+            .list_write_requests_by_request_id("nope")
+            .unwrap_err()
+            .code,
+        INVALID_ARGUMENT
+    );
+}
+
+#[test]
 fn an_insert_refuses_what_the_table_constraints_refuse() {
     let dir = TempDir::new("persist-insert-refuse");
     let store = open(&dir);
@@ -339,6 +381,91 @@ fn completion_that_overflows_the_reservation_changes_nothing() {
         "queued"
     );
     assert_eq!(counter(&store, "brain")["outstanding_count"], 1);
+}
+
+fn cancellation(id: &str, expect_state: &str, token: Option<&str>) -> WriteCancellation {
+    let mut completion = completion(id, "cancelled", 0);
+    completion.outcome = json!({});
+    completion.error_code = Some("cancelled".into());
+    completion.error_message = Some("Cancelled before publication.".into());
+    WriteCancellation {
+        completion,
+        expect_state: expect_state.into(),
+        expect_execution_token: token.map(str::to_string),
+    }
+}
+
+#[test]
+fn a_cancel_ends_a_queued_request_once_and_keeps_what_it_may_not_end() {
+    let dir = TempDir::new("persist-cancel");
+    let store = open(&dir);
+    store.lock_persistence_counters(&keys()).unwrap();
+    let row = store
+        .insert_write_request(&insert_input(&store, REQ_1, "notes/a", json!({})))
+        .unwrap();
+    let id = row["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        store
+            .cancel_write_row(&cancellation(REQ_2, "queued", None))
+            .unwrap(),
+        None
+    );
+    let stale = store
+        .cancel_write_row(&cancellation(&id, "running", None))
+        .unwrap()
+        .unwrap();
+    assert_eq!(stale["status"], "kept");
+    assert_eq!(stale["row"]["state"], "queued");
+    assert_eq!(counter(&store, "brain")["outstanding_count"], 1);
+    let done = store
+        .cancel_write_row(&cancellation(&id, "queued", None))
+        .unwrap()
+        .unwrap();
+    assert_eq!(done["status"], "cancelled");
+    assert_eq!(done["row"]["state"], "cancelled");
+    assert_eq!(done["row"]["error_code"], "cancelled");
+    assert_eq!(done["row"]["outcome"], json!({}));
+    for key in keys() {
+        assert_eq!(counter(&store, &key)["outstanding_count"], 0);
+    }
+    let again = store
+        .cancel_write_row(&cancellation(&id, "queued", None))
+        .unwrap()
+        .unwrap();
+    assert_eq!(again["status"], "kept");
+    assert_eq!(again["row"]["state"], "cancelled");
+    assert_eq!(counter(&store, "brain")["outstanding_count"], 0);
+}
+
+#[test]
+fn a_cancel_keeps_a_request_claimed_under_another_token_and_one_too_large_to_record() {
+    let dir = TempDir::new("persist-cancel-kept");
+    let store = open(&dir);
+    store.lock_persistence_counters(&keys()).unwrap();
+    let row = store
+        .insert_write_request(&insert_input(&store, REQ_1, "notes/a", json!({})))
+        .unwrap();
+    let id = row["id"].as_str().unwrap().to_string();
+    store.stamp_write_claim(&stamp(&id, 1000.0, None)).unwrap();
+    let other = store
+        .cancel_write_row(&cancellation(&id, "running", None))
+        .unwrap()
+        .unwrap();
+    assert_eq!(other["status"], "kept");
+    let mut big = cancellation(&id, "running", Some(TOKEN));
+    big.completion.result_bytes = 5000;
+    let too_large = store.cancel_write_row(&big).unwrap().unwrap();
+    assert_eq!(too_large["status"], "too_large");
+    assert_eq!(too_large["row"]["state"], "running");
+    assert_eq!(counter(&store, "brain")["outstanding_count"], 1);
+    let mut wrong = cancellation(&id, "running", Some(TOKEN));
+    wrong.completion.state = "failed".into();
+    assert!(store.cancel_write_row(&wrong).is_err());
+    let done = store
+        .cancel_write_row(&cancellation(&id, "running", Some(TOKEN)))
+        .unwrap()
+        .unwrap();
+    assert_eq!(done["status"], "cancelled");
 }
 
 #[test]
@@ -1143,4 +1270,55 @@ fn admission_rate_samples_the_latest_requests_of_one_principal_or_the_brain() {
     assert_eq!(other["first_request_id"], first["id"]);
     assert_eq!(other["admissions"], json!(0));
     assert!(other["gross"].is_null() && other["age_seconds"].is_null());
+}
+
+#[test]
+fn release_requeues_only_under_the_claim_token() {
+    let dir = TempDir::new("persist-release");
+    let store = open(&dir);
+    let row = store
+        .insert_write_request(&insert_input(&store, REQ_1, "notes/a", json!({})))
+        .unwrap();
+    let id = row["id"].as_str().unwrap();
+    let release = |token: &str, reason: &str, charge: bool| ClaimRelease {
+        id: id.into(),
+        token: Some(token.into()),
+        reason: reason.into(),
+        charge,
+    };
+    assert!(
+        !store
+            .release_unpublished_claim(&release(TOKEN, "claim_lost", false))
+            .unwrap()
+    );
+    store
+        .stamp_write_claim(&stamp(id, 1000.0, Some(json!({"phase": "preparing"}))))
+        .unwrap();
+    let other = "c0000000-0000-4000-8000-0000000000c2";
+    assert!(
+        !store
+            .release_unpublished_claim(&release(other, "claim_lost", false))
+            .unwrap()
+    );
+    assert!(
+        store
+            .release_unpublished_claim(&release(TOKEN, "database_contention", false))
+            .unwrap()
+    );
+    let after = store.read_write_request_by_id(id).unwrap().unwrap();
+    assert_eq!(after["state"], "queued");
+    assert_eq!(after["execution_token"], Value::Null);
+    assert_eq!(after["claim_phase"], Value::Null);
+    assert_eq!(after["blocked_reason"], "database_contention");
+    store
+        .stamp_write_claim(&stamp(id, 1000.0, Some(json!({"phase": "preparing"}))))
+        .unwrap();
+    assert!(
+        store
+            .release_unpublished_claim(&release(TOKEN, "preparation_deadline", true))
+            .unwrap()
+    );
+    let charged = store.read_write_request_by_id(id).unwrap().unwrap();
+    assert_eq!(charged["preparation_attempts"], 1);
+    assert_eq!(charged["claim_phase"], json!({"phase": "preparing"}));
 }

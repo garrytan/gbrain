@@ -35,7 +35,7 @@ import { TOKEN_ID_RE } from '../token-mint.ts';
 import { isUndefinedColumnError } from '../utils.ts';
 import { requiresExplicitApproval } from '../ops/execution-prerequisites.ts';
 import {
-  GrantError, LEGACY_GRANT_AXES, grantFromTokenRow, permissionsMirror, tokenGrantColumnValues, tokenGrantFromColumns,
+  GrantError, LEGACY_GRANT_AXES, grantFromTokenRow, permissionsMirror, tokenGrantColumnArrays, tokenGrantColumnValues, tokenGrantFromColumns,
   tokenGrantFromPermissions, validatePrincipalGrant, TOKEN_GRANT_COLUMNS, type LegacyGrantAxis, type PrincipalGrant, type PrivateFactsGrant, type PrivatePagesGrant,
 } from './model.ts';
 import { parsePrivateFactsFlag, parsePrivatePagesFlag } from './cli.ts';
@@ -380,9 +380,20 @@ export async function migrateLegacyTokens(engine: BrainEngine, opts: { dryRun: b
  * back to the same grant computed in memory. A malformed row is never converted; it
  * stays deny-all.
  */
-export async function resolveTokenGrant(sql: SqlQuery, row: Record<string, unknown>): Promise<PrincipalGrant> {
+export async function resolveTokenGrant(sql: SqlQuery, row: Record<string, unknown>, engine?: Pick<BrainEngine, 'convertLegacyAccessTokenGrant'>): Promise<PrincipalGrant> {
   const grant = grantFromTokenRow(row);
   if (grant.shape !== 'legacy_permissions' || grant.permissionsMalformed || !('source_grant' in row)) return grant;
+  // With an engine the conversion is its member (engine-sql/access-credentials.ts LEGACY_TOKEN_CONVERT_SQL, the same
+  // statement), so a store with no raw SQL (the Rust engine) converts too.
+  if (engine) {
+    try {
+      const converted = await engine.convertLegacyAccessTokenGrant(String(row.id), tokenGrantColumnArrays(grant));
+      if (converted) return grantFromTokenRow(converted);
+    } catch {
+      // As below: authorize with the identical in-memory conversion.
+    }
+    return grant;
+  }
   const [kind, write, reads, ops, holders] = tokenGrantColumnValues(grant);
   try {
     const [converted] = await sql`
@@ -406,9 +417,11 @@ export async function resolveTokenGrant(sql: SqlQuery, row: Record<string, unkno
  * is left to `resolveTokenGrant`, whose conversion records first use itself:
  * a touch holding that row's lock made every concurrent conversion skip it
  * (SKIP LOCKED), so a burst of first reads could leave it unconverted (#6230).
+ * Given an engine it writes through the engine member (BEARER_SQL keeps the two texts equal).
  */
-export function touchTokenLastUsed(sql: SqlQuery, row: Record<string, unknown>): Promise<unknown> {
+export function touchTokenLastUsed(sql: SqlQuery | BrainEngine, row: Record<string, unknown>): Promise<unknown> {
   const id = String(row.id);
+  if (typeof sql !== 'function') return sql.touchAccessTokenLastUsed(id, 'source_grant' in row).catch(() => { /* fire-and-forget */ });
   const touch = 'source_grant' in row
     ? sql`UPDATE access_tokens SET last_used_at = now()
         WHERE id IN (SELECT id FROM access_tokens WHERE id = ${id}::uuid AND source_grant IS NOT NULL

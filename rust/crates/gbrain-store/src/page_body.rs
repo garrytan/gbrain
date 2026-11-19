@@ -362,6 +362,32 @@ pub struct ReadManifestOptions {
     pub last_n: Option<i64>,
 }
 
+/// `readSegmentedEmbedPage(ref)`: a page by id, or by source and slug.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum SegmentedEmbedRef {
+    Id {
+        id: i64,
+    },
+    #[serde(rename_all = "camelCase")]
+    Slug {
+        source_id: String,
+        slug: String,
+    },
+}
+
+/// The page fields a segmented embed reads (`SegmentedEmbedPage`): metadata only, never the body.
+/// `body_bytes` is the stored count, `None` when the shell recorded none (PGLite's NULL column).
+#[derive(Debug, Clone, Serialize)]
+pub struct SegmentedEmbedPage {
+    pub id: u64,
+    pub slug: String,
+    pub source_id: String,
+    pub title: String,
+    pub contextual_retrieval_mode: Option<String>,
+    pub body_bytes: Option<i64>,
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ShellOptions {
@@ -657,6 +683,13 @@ fn read_body_state(read: &dyn KvRead, page_id: u64) -> Result<Option<BodyState>>
 /// `update_page_search_vector` does with `coalesce(timeline, timeline_lead, '')`.
 pub(crate) fn timeline_lead(read: &dyn KvRead, page_id: u64) -> Result<Option<String>> {
     Ok(read_body_state(read, page_id)?.and_then(|state| state.timeline_lead))
+}
+
+/// The stored `truth_lead` of page `page_id`: the lead a flip published, or `None` for an inline
+/// page, a shell no flip has published, or a missing page (PGLite's NULL column). The entity card
+/// reads it for a segmented page, whose `compiled_truth` is NULL (`coalesce(compiled_truth, truth_lead)`).
+pub(crate) fn truth_lead(read: &dyn KvRead, page_id: u64) -> Result<Option<String>> {
+    Ok(read_body_state(read, page_id)?.and_then(|state| state.truth_lead))
 }
 
 fn is_segmented(state: Option<&BodyState>) -> bool {
@@ -1143,6 +1176,47 @@ impl Store {
         })
     }
 
+    /// `readSegmentedEmbedPage(ref)`: the page `ref` names when it is segmented, not deleted, in a
+    /// source that exists and is not archived, and sealed (its text projection is at its knowledge
+    /// revision, `currentTextProjectionFilter`); `None` otherwise, an inline page included. The
+    /// same tests as the `pages JOIN sources` read PGLite sends.
+    pub fn read_segmented_embed_page(
+        &self,
+        reference: &SegmentedEmbedRef,
+    ) -> Result<Option<SegmentedEmbedPage>> {
+        let read = self.read()?;
+        let page = match reference {
+            SegmentedEmbedRef::Id { id } => match page_u64(*id) {
+                Some(id) => read_page_by_id(&*read, id)?,
+                None => None,
+            },
+            SegmentedEmbedRef::Slug { source_id, slug } => read_page(&*read, source_id, slug)?,
+        };
+        let Some(page) = page else {
+            return Ok(None);
+        };
+        let Some((_, body_bytes)) = segmented_reference(&*read, page.id)? else {
+            return Ok(None);
+        };
+        let sealed =
+            page.text_projection_revision.as_deref() == Some(page.knowledge_revision.as_str());
+        if page.deleted_at_us.is_some() || !sealed {
+            return Ok(None);
+        }
+        match crate::sources::read_source(&*read, &page.source_id)? {
+            Some(source) if !source.archived => {}
+            _ => return Ok(None),
+        }
+        Ok(Some(SegmentedEmbedPage {
+            id: page.id,
+            contextual_retrieval_mode: crate::aliases::contextual_retrieval_mode(&*read, page.id)?,
+            slug: page.slug,
+            source_id: page.source_id,
+            title: page.title,
+            body_bytes,
+        }))
+    }
+
     /// `readManifest(pageId, { generation?, stagingId?, region?, lastN? })`: with `stagingId`, that
     /// staging's rows; otherwise the published rows of `generation` (default: the page's body
     /// generation; none for a page that does not exist). By seq; `lastN` keeps the last n.
@@ -1257,6 +1331,7 @@ impl Store {
                 tag_sources: BTreeMap::new(),
                 trust_tier: None,
                 write_origin: None,
+                revision_receipt: Default::default(),
             };
             write_page(tx, &record)?;
             let state = BodyState {

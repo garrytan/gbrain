@@ -61,20 +61,18 @@ const sqlOf = (db: Db): SqlQuery => typeof db === 'function' ? db : sqlQueryForE
  */
 export async function markedScopeSources(db: Db, ids: readonly string[], lock?: 'share' | 'update'): Promise<Set<string>> {
   if (!ids.length) return new Set();
-  if (!lock && typeof db !== 'function') {
-    // An unlocked check on an engine reads each source through the typed source read, so every engine answers it.
-    const unique = [...new Set(ids)];
-    const rows = await Promise.all(unique.map(id => db.getSource(id)));
-    return new Set(rows.filter(r => r && isScopeSourceConfig(r.config)).map(r => String(r!.id)));
-  }
-  const sql = sqlOf(db);
+  const rows = typeof db === 'function' ? await scopeSourceRows(db, ids, lock) : await db.readScopeSourceConfigs(ids, lock);
+  return new Set(rows.filter(r => isScopeSourceConfig(r.config)).map(r => String(r.id)));
+}
+
+/** The same read through a caller's SqlQuery (a transaction handle the grant writes hold). */
+async function scopeSourceRows(sql: SqlQuery, ids: readonly string[], lock?: 'share' | 'update'): Promise<Record<string, unknown>[]> {
   const list = JSON.stringify([...new Set(ids)]);
-  const rows = lock === 'update'
+  return lock === 'update'
     ? await sql`SELECT id, config FROM sources WHERE id IN (SELECT jsonb_array_elements_text(${list}::text::jsonb)) ORDER BY id FOR UPDATE`
     : lock === 'share'
       ? await sql`SELECT id, config FROM sources WHERE id IN (SELECT jsonb_array_elements_text(${list}::text::jsonb)) ORDER BY id FOR SHARE`
       : await sql`SELECT id, config FROM sources WHERE id IN (SELECT jsonb_array_elements_text(${list}::text::jsonb))`;
-  return new Set(rows.filter(r => isScopeSourceConfig(r.config)).map(r => String(r.id)));
 }
 
 export interface CredentialRef { kind: 'token' | 'client'; id: string }
@@ -133,7 +131,7 @@ export async function assertScopeSourceGrant(db: Db, self: CredentialRef | null,
   }
   const candidates = reads.filter(s => s !== 'default');
   if (!candidates.length) return;
-  const marked = await markedScopeSources(sql, candidates, 'share');
+  const marked = await markedScopeSources(db, candidates, 'share');
   if (!marked.size) return;
   const own = self ? (await credentialSources(sql)).find(c => same(c.ref, self))?.attest ?? [] : [];
   const reserved = [...marked].filter(s => !own.includes(s)).sort();

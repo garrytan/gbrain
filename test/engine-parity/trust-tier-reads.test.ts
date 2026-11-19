@@ -31,11 +31,11 @@ import { setPackRelationSemantics } from '../../src/core/link-validity.ts';
 import { EXAMPLE_PACK, useExamplePack } from '../helpers/amends-ranking-scenarios.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { operations } from '../../src/core/operations.ts';
-import { pageTypesById } from '../../src/core/search/transcript-quote.ts';
-import { quoteTimelineRows } from '../../src/core/ops/timeline-quote.ts';
 import { withEngineScope } from '../../src/core/engine-scope.ts';
 import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
 import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
+import { pageTypesById } from '../../src/core/search/transcript-quote.ts';
+import { quoteTimelineRows } from '../../src/core/ops/timeline-quote.ts';
 
 const { parityTest } = parityArms(testBackends());
 

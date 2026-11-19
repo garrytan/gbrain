@@ -15,8 +15,10 @@ use crate::error::{
     PAGE_AMBIGUOUS, PAGE_NOT_FOUND, REVISION_CONFLICT, REVISION_REQUIRED, Result, StoreError,
 };
 use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::keyword::{TRGM_SIMILARITY_THRESHOLD, sql_ilike, trgm_similarity};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::sources::{DEFAULT_SOURCE, all_sources, require_source};
+use crate::write_receipt::{ActorColumns, RevisionReceipt, VersionReceipt};
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value, json};
@@ -174,6 +176,10 @@ pub(crate) struct PageRecord {
     /// NULL. [`write_page`] sets it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub write_origin: Option<Value>,
+    /// The actor that wrote the live revision (`pages.revision_*`). Absent in a record stored
+    /// before it, and omitted while every column is null. [`write_page`] stamps it.
+    #[serde(default, skip_serializing_if = "ActorColumns::is_empty")]
+    pub revision_receipt: RevisionReceipt,
 }
 
 fn opt_iso(us: Option<i64>) -> Value {
@@ -426,6 +432,10 @@ pub(crate) struct VersionRecord {
     /// The page's write origin when the snapshot was taken.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub write_origin: Option<Value>,
+    /// Who wrote the snapshotted revision and who archived it (`page_versions.write_*`,
+    /// `archived_*`). Absent in a record stored before it. [`snapshot_in`] stamps it.
+    #[serde(default, skip_serializing_if = "VersionReceipt::is_empty")]
+    pub receipt: VersionReceipt,
 }
 
 impl VersionRecord {
@@ -578,7 +588,15 @@ pub(crate) fn read_page_by_id(read: &dyn KvRead, id: u64) -> Result<Option<PageR
 /// `trust_tier_stamp` trigger stamps every row written to `pages` (see [`stamp_page_trust`]).
 pub(crate) fn write_page(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()> {
     let before = read_page_by_id(&*tx, record.id)?;
-    let stamped = stamp_page_trust(before.as_ref(), record)?;
+    let mut stamped = stamp_page_trust(before.as_ref(), record)?;
+    // `gbrain_stamp_revision_attribution`: the actor of the write that set the live revision.
+    stamped.revision_receipt = crate::write_receipt::stamp_revision(
+        before
+            .as_ref()
+            .map(|b| (&b.revision_receipt, b.knowledge_revision.as_str())),
+        &record.revision_receipt,
+        &record.knowledge_revision,
+    )?;
     let record = &stamped;
     // A write that changes the title or timeline sets them, so PGLite's search vector trigger fires.
     if before
@@ -1143,6 +1161,7 @@ pub(crate) fn put_page_in(
             tag_sources: BTreeMap::new(),
             trust_tier: None,
             write_origin: None,
+            revision_receipt: RevisionReceipt::default(),
         },
         Some(old) => {
             let canonical_changed = old.page_type != input.page_type
@@ -1460,10 +1479,12 @@ impl Store {
         Ok(())
     }
 
-    /// `resolveSlugs(partial, opts)`, the exact half: the live slug equal to `partial`, as PGLite
-    /// answers first. When no live page has that slug PGLite goes on to a trigram match on titles
-    /// (and an `ILIKE` on slugs), which this store does not have, so the answer is the empty list
-    /// and means only "no exact match": the caller must not take it for "nothing resembles it".
+    /// `resolveSlugs(partial, opts)`: the live slug equal to `partial` when one exists, as PGLite
+    /// answers first. Otherwise the fuzzy half: up to five slugs of live pages whose title is
+    /// trigram-similar to `partial` (`title % partial`) or whose slug contains it
+    /// (`slug ILIKE '%partial%'`), best `similarity(title, partial)` first, then slug, then source
+    /// id, both in byte order (`COLLATE "C"`). Both halves keep to the source scope and hide what
+    /// `excludePrivate` hides. A slug held by pages of two sources is listed once per page.
     pub fn resolve_slugs(&self, partial: &str, scope: &ReadScope) -> Result<Vec<String>> {
         let read = self.read()?;
         let sources: Option<BTreeSet<String>> = match (&scope.source_ids, &scope.source_id) {
@@ -1471,19 +1492,39 @@ impl Store {
             (_, Some(id)) if !id.is_empty() => Some(BTreeSet::from([id.clone()])),
             _ => None,
         };
+        let pattern = format!("%{partial}%");
+        let mut fuzzy: Vec<(f32, String, String)> = Vec::new();
         for page in all_pages(&*read)? {
-            if page.deleted_at_us.is_none()
-                && page.slug == partial
-                && sources.as_ref().is_none_or(|s| s.contains(&page.source_id))
-                && !match &scope.exclude_private {
-                    Some(policy) => page_hidden(&*read, &page, policy)?,
-                    None => false,
-                }
+            if page.deleted_at_us.is_some()
+                || sources
+                    .as_ref()
+                    .is_some_and(|s| !s.contains(&page.source_id))
             {
+                continue;
+            }
+            let exact = page.slug == partial;
+            let sim = trgm_similarity(&page.title, partial);
+            // `title % partial` compares the f32 score, widened, with the f64 threshold.
+            let similar = f64::from(sim) >= TRGM_SIMILARITY_THRESHOLD;
+            if !(exact || similar || sql_ilike(&page.slug, &pattern)) {
+                continue;
+            }
+            if let Some(policy) = &scope.exclude_private
+                && page_hidden(&*read, &page, policy)?
+            {
+                continue;
+            }
+            if exact {
                 return Ok(vec![page.slug]);
             }
+            fuzzy.push((sim, page.slug, page.source_id));
         }
-        Ok(Vec::new())
+        fuzzy.sort_by(|a, b| {
+            b.0.total_cmp(&a.0)
+                .then_with(|| a.1.cmp(&b.1))
+                .then_with(|| a.2.cmp(&b.2))
+        });
+        Ok(fuzzy.into_iter().take(5).map(|(_, slug, _)| slug).collect())
     }
 
     /// `softDeletePage`: hides the page. `None` when no live page matches. With no `source_id` it
@@ -1550,7 +1591,7 @@ impl Store {
         })
     }
 
-    /// `getTags(slug, opts)`, sorted.
+    /// `getTags(slug, opts)`, sorted. A page the `exclude_private` page policy hides has no tags.
     pub fn get_tags(&self, slug: &str, scope: &ReadScope) -> Result<Vec<String>> {
         let read = self.read()?;
         let page = find_in_scope(
@@ -1560,6 +1601,10 @@ impl Store {
             &scope.source_ids,
             true,
         )?;
+        let page = match (page, &scope.exclude_private) {
+            (Some(page), Some(policy)) if page_hidden(&*read, &page, policy)? => None,
+            (page, _) => page,
+        };
         let mut tags = page.map(|p| p.tags).unwrap_or_default();
         tags.sort();
         Ok(tags)
@@ -1805,6 +1850,8 @@ pub(crate) fn snapshot_in(
         body_bytes: segmented.and_then(|(_, bytes)| bytes),
         trust_tier: (tier != crate::trust::TrustTier::Unknown).then(|| tier.as_str().to_owned()),
         write_origin,
+        // `gbrain_stamp_version_attribution`: `page` is the snapshotted revision as stored.
+        receipt: VersionReceipt::stamp(&page.revision_receipt)?,
     };
     put_json(tx, &keys::version(page.id, id), &row)?;
     Ok(row)

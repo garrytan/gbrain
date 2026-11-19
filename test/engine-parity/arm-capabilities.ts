@@ -15,6 +15,8 @@
  *    `holdSchemaMigrationLock` is an optional member only Postgres implements;
  *    PGLite (and Rust) serialize schema migrations in-process instead
  *    (src/core/schema-migration-lock.ts).
+ *  - `managed_persistence` refuses: the Rust engine has no managed worktree, so a write to one refuses naming it
+ *    (src/core/engine-capabilities.ts).
  *
  * When `BrainEngine.capabilities` and `src/core/engine-capabilities.ts` land
  * (plan PR 5), `armCapabilities` reads the engine's own set instead of this
@@ -26,7 +28,7 @@ export const PARITY_ARMS = ['pglite', 'postgres', 'rust'] as const;
 export type ParityArmName = typeof PARITY_ARMS[number];
 
 /** Capabilities a parity case can require (a subset of the planned engine capability set). */
-export type EngineCapability = 'raw_sql' | 'schema_migration_lock';
+export type EngineCapability = 'raw_sql' | 'schema_migration_lock' | 'managed_persistence';
 
 export interface MissingCapability {
   /** `refuses`: the arm throws `engine_capability_missing`; `n/a`: the case does not run on the arm. */
@@ -39,14 +41,15 @@ export function missingCapability(capability: EngineCapability): MissingCapabili
   switch (capability) {
     case 'raw_sql': return { kind: 'refuses', label: 'refuses:raw_sql' };
     case 'schema_migration_lock': return { kind: 'n/a', label: 'n/a:postgres-only' };
+    case 'managed_persistence': return { kind: 'refuses', label: 'refuses:managed_persistence' };
     default: return assertNever(capability);
   }
 }
 
 export function armCapabilities(arm: ParityArmName): ReadonlySet<EngineCapability> {
   switch (arm) {
-    case 'pglite': return new Set<EngineCapability>(['raw_sql']);
-    case 'postgres': return new Set<EngineCapability>(['raw_sql', 'schema_migration_lock']);
+    case 'pglite': return new Set<EngineCapability>(['raw_sql', 'managed_persistence']);
+    case 'postgres': return new Set<EngineCapability>(['raw_sql', 'schema_migration_lock', 'managed_persistence']);
     case 'rust': return new Set<EngineCapability>();
     default: return assertNever(arm);
   }

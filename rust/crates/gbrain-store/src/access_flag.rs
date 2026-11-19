@@ -25,8 +25,9 @@
 //!
 //! The folder triggers `access_rules_mark_restricted` and `access_pending_coverage_mark_restricted`
 //! set it after a rule or a pending prefix is inserted; [`FlaggingWriter`] sets it on the put of
-//! either record (`access_rules.rs`). The trigger `access_members_mark_restricted` has no store
-//! half: the store keeps no access members. See `rust/docs/store/access-flag.md`.
+//! either record (`access_rules.rs`). The trigger `access_members_mark_restricted` has its store
+//! half in `access_members::insert_access_member`, in the same write as the member. See
+//! `rust/docs/store/access-flag.md`.
 
 use crate::error::{INVALID_STATE, Result, StoreError};
 use crate::keys;
@@ -289,8 +290,8 @@ mod tests {
         out
     }
 
-    /// `bumpLastRetrieved` and the hard-delete cascade (`cascade::remove_page_rows`) write through
-    /// the flagging handle: `bump_last_retrieved` writes with `Store::write`, `Store::write` wraps
+    /// `bumpPageRetrievals` and the hard-delete cascade (`cascade::remove_page_rows`) write through
+    /// the flagging handle: `bump_page_retrievals` writes with `Store::write`, `Store::write` wraps
     /// both of its arms in `FlaggingWriter`, and no module outside this list opens a raw write
     /// handle, so the `tx` the cascade gets is always a wrapped one. A new raw `begin_write` fails
     /// here until it is reviewed and listed.
@@ -327,13 +328,13 @@ mod tests {
             2
         );
 
-        // `bump_last_retrieved` writes with `Store::write`, never a raw handle.
-        let ops = code("page_ops.rs");
-        let bump = &ops[ops.find("pub fn bump_last_retrieved").unwrap()..];
+        // `bump_page_retrievals` writes with `Store::write`, never a raw handle.
+        let ops = code("page_ops/retrievals.rs");
+        let bump = &ops[ops.find("pub fn bump_page_retrievals").unwrap()..];
         let bump = &bump[..bump.find("\n    }\n").unwrap()];
         assert!(
             bump.contains("self.write(|tx|"),
-            "bump_last_retrieved left Store::write"
+            "bump_page_retrievals left Store::write"
         );
         assert!(!bump.contains("begin_write"));
 

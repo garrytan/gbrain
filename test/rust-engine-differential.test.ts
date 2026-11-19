@@ -325,7 +325,7 @@ const scenarios: Scenario[] = [
     },
   },
 
-  // 10. listColumnsOnly
+  // 10. listColumnsOnly: the list projection, with content_hash and emotional_weight present and undefined as on PGLite.
   {
     name: 'listPages with listColumnsOnly returns the list columns with a blank body, timeline and frontmatter',
     expect: 'equal',
@@ -357,8 +357,8 @@ const scenarios: Scenario[] = [
     },
   },
   {
-    name: 'resolveSlugs on a partial name (trigram matching is a later step)',
-    expect: 'refused',
+    name: 'resolveSlugs on a partial name: a title typo found by pg_trgm similarity',
+    expect: 'equal',
     run: async ({ engine }) => {
       await engine.putPage('resolve/zulu-note', { ...NOTE, title: 'Alpha Zulu' });
       return engine.resolveSlugs('Zula');

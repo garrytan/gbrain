@@ -99,6 +99,14 @@ pub const DREAM_SYNTHESIS_COMPLETION: u8 = b'f';
 /// Family `access_rules` (`access_rules.rs`): folder rules, pending prefixes, policy state and
 /// revisions. The byte after the tag names the table; the module owns the sub-tags.
 pub const ACCESS_RULES: u8 = b'z';
+/// Family `entity_identities` (`entity_identities.rs`).
+pub const ENTITY_IDENTITY: u8 = b'i';
+/// Family `session_state` (`session_state.rs`).
+pub const SESSION_STATE: u8 = b'y';
+/// Family `persistence_journal`, the `derived_generations` ledger (`generations.rs`).
+pub const DERIVED_GENERATION: u8 = b'h';
+/// Family access_members (access_members.rs): members 0x01, groups 0x02, group members 0x03.
+pub const ACCESS_MEMBERS: u8 = b'x';
 
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];

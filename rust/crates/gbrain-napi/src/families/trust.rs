@@ -31,6 +31,44 @@ impl Brain {
         })
     }
 
+    /// `isFactWithdrawn(sourceId, visibility | null, claim, entitySlug | null, memberPage |
+    /// null)`: resolves a boolean.
+    #[napi]
+    pub fn is_fact_withdrawn<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        visibility: Option<String>,
+        claim: String,
+        entity_slug: Option<String>,
+        member_page: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.is_fact_withdrawn(
+                &source_id,
+                visibility.as_deref(),
+                &claim,
+                entity_slug.as_deref(),
+                member_page.as_deref(),
+            )
+        })
+    }
+
+    /// `isFactPurged(sourceId, visibility, claim, entitySlug | null)`: resolves a boolean.
+    #[napi]
+    pub fn is_fact_purged<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        visibility: String,
+        claim: String,
+        entity_slug: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.is_fact_purged(&source_id, &visibility, &claim, entity_slug.as_deref())
+        })
+    }
+
     /// `insertFactWithdrawal(sourceId, visibility, claim, subject, withdrawnAt | null)`: resolves
     /// true when it recorded the withdrawal, false when it was already recorded.
     #[napi]

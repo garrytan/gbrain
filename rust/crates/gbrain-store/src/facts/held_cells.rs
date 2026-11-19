@@ -209,16 +209,48 @@ struct LiveRow {
     admitted: bool,
 }
 
-/// `heldRowSql` over the page's live rows.
-fn held(rows: &[LiveRow], key: &HeldFenceCellKey, row_num: i32) -> bool {
-    let narrower = |r: &&LiveRow| r.row.visibility != "world" && !r.admitted;
+/// `heldRowSql` over the page's live rows, with each row's caller admission.
+fn held_admitted(rows: &[LiveRow], key: &HeldFenceCellKey, row_num: i32) -> bool {
+    held_where(
+        rows,
+        live_record,
+        |r| r.row.visibility != "world" && !r.admitted,
+        key,
+        row_num,
+    )
+}
+
+/// `heldRowSql` with both caller admissions `FALSE`, over the page's live rows.
+pub(super) fn held(rows: &[FactRecord], key: &HeldFenceCellKey, row_num: i32) -> bool {
+    held_where(rows, fact_record, |r| r.visibility != "world", key, row_num)
+}
+
+fn live_record(r: &LiveRow) -> &FactRecord {
+    &r.row
+}
+
+fn fact_record(r: &FactRecord) -> &FactRecord {
+    r
+}
+
+/// `heldRowSql`: the cell's own row is narrower, or a narrower row states the cell's claim and no world row does.
+fn held_where<T>(
+    rows: &[T],
+    record: fn(&T) -> &FactRecord,
+    narrower: impl Fn(&T) -> bool,
+    key: &HeldFenceCellKey,
+    row_num: i32,
+) -> bool {
     rows.iter()
-        .filter(narrower)
-        .any(|r| r.row.row_num == Some(row_num))
-        || (rows.iter().filter(narrower).any(|r| states(&r.row, key))
+        .filter(|r| narrower(r))
+        .any(|r| record(r).row_num == Some(row_num))
+        || (rows
+            .iter()
+            .filter(|r| narrower(r))
+            .any(|r| states(record(r), key))
             && !rows
                 .iter()
-                .any(|r| r.row.visibility == "world" && states(&r.row, key)))
+                .any(|r| record(r).visibility == "world" && states(record(r), key)))
 }
 
 impl Store {
@@ -270,7 +302,7 @@ impl Store {
                     e.insert(live)
                 }
             };
-            if !held(live, key, row_num) {
+            if !held_admitted(live, key, row_num) {
                 continue;
             }
             if seen.insert((page.0, page.1, row_num, key.claim.as_str())) {

@@ -868,7 +868,7 @@ impl gbrain_store::env::Env for HandClock {
 }
 
 #[test]
-fn bump_last_retrieved_stamps_pages_and_steers_the_stale_bias() {
+fn bump_page_retrievals_records_pages_and_steers_the_stale_bias() {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicI64, Ordering};
     const DAY: i64 = 86_400_000_000;
@@ -896,13 +896,13 @@ fn bump_last_retrieved_stamps_pages_and_steers_the_stale_bias() {
         .unwrap();
 
     // An unknown id is skipped; a known one is stamped once.
-    assert_eq!(store.bump_last_retrieved(&[old, 999_999]).unwrap(), 1);
+    assert_eq!(store.bump_page_retrievals(&[old, 999_999]).unwrap(), 1);
     clock.0.fetch_add(100 * DAY, Ordering::SeqCst);
-    assert_eq!(store.bump_last_retrieved(&[fresh]).unwrap(), 1);
+    assert_eq!(store.bump_page_retrievals(&[fresh]).unwrap(), 1);
     // A second bump inside 5 minutes leaves the stamp alone.
     let stamped = clock.0.load(Ordering::SeqCst);
     clock.0.fetch_add(60_000_000, Ordering::SeqCst);
-    assert_eq!(store.bump_last_retrieved(&[fresh]).unwrap(), 0);
+    assert_eq!(store.bump_page_retrievals(&[fresh]).unwrap(), 0);
 
     let sample = |stale: bool| {
         let rows = store
@@ -939,6 +939,6 @@ fn bump_last_retrieved_stamps_pages_and_steers_the_stale_bias() {
             &de(json!({ "sourceId": "default" })),
         )
         .unwrap();
-    assert_eq!(store.bump_last_retrieved(&[gone]).unwrap(), 0);
-    assert_eq!(store.bump_last_retrieved(&[]).unwrap(), 0);
+    assert_eq!(store.bump_page_retrievals(&[gone]).unwrap(), 0);
+    assert_eq!(store.bump_page_retrievals(&[]).unwrap(), 0);
 }

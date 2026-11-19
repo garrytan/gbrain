@@ -63,6 +63,8 @@ hold `gbrain_fact_fingerprint_v1(claim)`, and every read matches both. Deleting 
 | Member | Store method | PGLite statement |
 | --- | --- | --- |
 | `hasCoveringFactWithdrawal` | `has_covering_fact_withdrawal`: four point reads (`*` and the subject, the hash and the v1 hash of the claim) | `SELECT 1 … fact_hash IN ($3, v1($5)) AND (subject='*' OR subject=$4)` |
+| `isFactWithdrawn` | `is_fact_withdrawn`: point reads for each visibility (the given one, or both when null), the hash and the v1 hash of the claim, and subject `*`, the entity and the member page; then the purge tombstones (hash only; `*` and the entity). A null entity or member page matches nothing | `SELECT 1 FROM fact_withdrawals … UNION ALL SELECT 1 FROM fact_purges … LIMIT 1` |
+| `isFactPurged` | `is_fact_purged` (facts/purge_ledger.rs): point reads for subject `*` and the entity; a visibility outside the CHECK matches nothing | `SELECT 1 FROM fact_purges … AND (subject='*' OR subject=$4) LIMIT 1` |
 | `insertFactWithdrawal` | `insert_fact_withdrawal`: false when the key exists, which keeps its time | `INSERT … COALESCE($5::timestamptz, now()) ON CONFLICT DO NOTHING RETURNING` |
 | `listFactWithdrawalDates` | `list_fact_withdrawal_dates`: per claim, point reads (subject given) or a scan of source and visibility (subject null); the minimum time per row number, sorted by row number | `min(withdrawn_at) … GROUP BY row_num` (no order) |
 | `moveFactWithdrawalSubject` | `move_fact_withdrawal_subject`: same slugs do nothing; otherwise each row moves unless the new subject already has the key | `MOVE_WITHDRAWAL_SUBJECT_SQL` |
@@ -106,7 +108,8 @@ Rust guesses and gaps (1x parity):
 - The guest-source rules are not modelled (there is no `guest_sources` table).
 
 Not built (they still run through `executeRaw`, which the Rust engine refuses): the reads that also read `fact_purges`
-(`isFactWithdrawn`, the ambiguous-fence check, the export snapshot), the reads that join `facts` (the effect-target
+(the store keeps that table now, rust/docs/store/facts.md "The fact purge ledger", but these reads do not read it yet:
+the ambiguous-fence check, the export snapshot), the reads that join `facts` (the effect-target
 request, the single-fact prepare, the repair and review lanes), the meta-hook watermark, and the `facts` insert guard
 `gbrain_preserve_fact_withdrawal` (the facts family's insert calls it once the facts family lands on this line).
 
@@ -120,6 +123,10 @@ Rust guesses and gaps (1x parity):
 - A negative `limit` refuses with `invalid_argument`; Postgres raises `LIMIT must not be negative`.
 - The fingerprint is a copy of the facts family's (facts.rs on the facts-sites line). `pg_lower_char` follows the code
   points probed on PGLite (`LOWER_KEEP`); a Postgres built with a different Unicode table can differ.
+
+`listPendingContradictions` (the `trust review` read of a pending `decide_proposals` pair of two active facts) answers
+`[]` without a store call: the store keeps no `decide_proposals`, because `insertProposal` (ai/decide/proposals-store.ts)
+writes one through `executeRaw`, which the Rust engine refuses.
 
 ## The write gate (`trust::write_gate`)
 
@@ -143,6 +150,10 @@ Postgres, so a source or page delete leaves these rows, and the Rust store does 
 | `listWriteGateHoldRows` | `list_write_gate_hold_rows`: filters on status, kind, source list or source and `beforeId`; sorted by id descending, cut to `limit` | `… ORDER BY id DESC LIMIT $n` |
 | `getWriteGateHoldRow` | `get_write_gate_hold_row`: a point read | `… WHERE id = $1` |
 | `decideWriteGateHold` | `decide_write_gate_hold`: only a `held` hold moves to `released` or `dropped` | `UPDATE … WHERE id = $1 AND status = 'held'` |
+
+`listTrustAllowRuleRows` (the owner's allow rules, `trust_allow_rules`) answers `[]` without a store call: the store
+keeps no allow rule, because `trust allow` writes one through `executeRaw`, which the Rust engine refuses. So
+`trust review` and the write gate's allow check read an empty rule set on Rust instead of a refusal.
 
 Not built (they still run through `executeRaw`, which the Rust engine refuses): the purge paths (`purge.ts`,
 `page-purge.ts`, `purge-slug-stores.ts`, `source-delete.ts`), `owner-actions.ts`, `release-publish.ts`, the
@@ -182,14 +193,24 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
 
 - `beginSnapshotRead` has no store method: a store transaction holds the one writer from its start, so its reads see
   one state. It does not enforce `READ ONLY`; a write in that transaction lands.
-- The TypeScript members refuse a caller page policy that is not the no-caller one, the `takes` and
+- `listCorePageRows` serves a caller with a reader identity or a private-readable grant: with `forCaller` its
+  `excludePrivate` policy carries them (`callerReaders`), and the remote floor is the no-reader policy (`noReaders`).
+  Pinned by `test/engine-parity/core-page-member-reads.test.ts`.
+- `listValidTimeIdentities` serves a caller with a reader identity or a private-readable grant: its `excludePrivate`
+  policy carries them (`callerReaders`), and the `world` mark, which never reads the caller's readers, is the
+  no-reader policy (`noReaders`). `pickValidTimeEdition` serves the same callers when the caller's snapshot policy is
+  the canonical one for those readers: a version that names readers is visible when one of them is in the policy's
+  identity, and a private version when the page's source is a private-readable source and the page is not a pinned
+  question. Both pinned by `test/engine-parity/valid-time-member-reads.test.ts` and `tests/valid_time.rs`.
+- The other TypeScript members refuse a caller page policy that is not the no-caller one, the `takes` and
   `timeline_entries` scan tables, and a cursor, limit or id that is not an integer. The store refuses any other
   table and a NUL byte with `invalid_argument`.
 - The belief history reads (`readBeliefHistoryRows`, `listVisibleBeliefLifetimes`) refuse in their TypeScript
   members before any store call, for every input: the store keeps no belief ledger, so it could only answer an empty
   one (TODOS.md `rust-belief-ledger`).
-- `listAmendmentsNotApplied` refuses a date that is not `YYYY-MM-DD`, a non-integer page id or limit and a caller page
-  policy other than the no-caller one. A failure is an error: the old read answered an empty list for any failure.
+- `listAmendmentsNotApplied` refuses a date that is not `YYYY-MM-DD`, a non-integer page id or limit and a caller
+  whose remote floor is not the page policy of no readers (a labelled-only caller); any other caller reads the floor
+  (`test/engine-parity/valid-time-member-reads.test.ts`). A failure is an error: the old read answered an empty list for any failure.
 - `pickValidTimeEdition` also refuses a date that is not `YYYY-MM-DD` and a history PGLite would have pruned
   (`history_unpruned`: more large inline versions than PGLite keeps, a segmented version, or a holding page over the
   kept count; TODOS.md `rust-version-prune`). The store keeps no change reason, so `reason` and

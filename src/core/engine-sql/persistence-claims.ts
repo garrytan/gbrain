@@ -33,11 +33,12 @@ export function foregroundPriorityText(priority: boolean | null | undefined): st
 }
 
 /**
- * `claimableWriteSql(priority)` (journal.ts) with no lane roots: the rows `claimNextWrite` may claim. `hostId` and
- * `excludeRoots` bind as $1 and $2, the text the journal writes.
+ * `claimableWriteSql(priority, lanes)` (journal.ts): the rows `claimNextWrite` may claim. `hostId` and `excludeRoots`
+ * bind as $1 and $2, the text the journal writes; with no `laneRoots` the lane list is the empty literal, as there.
  */
-export function claimableWriteFragment(priority: boolean | null | undefined, hostId: string, excludeRoots: string[]): SqlFragment {
+export function claimableWriteFragment(priority: boolean | null | undefined, hostId: string, excludeRoots: string[], laneRoots?: string[]): SqlFragment {
   const p = trustedSql(PRIORITY_SQL[priorityKey(priority)]);
+  const lanes = laneRoots === undefined ? sqlFragment`'{}'::text[]` : sqlFragment`${laneRoots}::text[]`;
   return sqlFragment`(r.state='queued' OR (r.state='deferred' AND (r.deferred_refresh_id IS NOT NULL OR r.deferred_import_from IS NOT NULL)
         AND (r.deferred_refresh_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktree_refreshes released
           WHERE released.id=r.deferred_refresh_id AND released.released_at IS NOT NULL))
@@ -56,7 +57,7 @@ export function claimableWriteFragment(priority: boolean | null | undefined, hos
         WHERE r.worktree_id IS NOT NULL AND earlier.worktree_id=r.worktree_id AND earlier.sequence<r.sequence
         AND earlier.state IN ('queued','running','recovering') AND NOT ((${p}) AND NOT COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%'
   AND (earlier.state='queued' OR (earlier.state='running' AND earlier.intent ? 'lane'
-    AND earlier.worktree_id::text=ANY('{}'::text[])))
+    AND earlier.worktree_id::text=ANY(${lanes})))
   AND earlier.recovery IS NULL AND COALESCE(earlier.intent->>'kind','') LIKE 'managed_sync_%' AND NOT (earlier.source_id=r.source_id AND (earlier.slug=r.slug
   OR earlier.page_id=r.page_id OR earlier.intent->'renameFrom'->>'slug'=r.slug))))
       AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier
@@ -64,7 +65,7 @@ export function claimableWriteFragment(priority: boolean | null | undefined, hos
         AND earlier.sequence<r.sequence
         AND earlier.state IN ('queued','running','recovering') AND NOT ((${p}) AND NOT COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%'
   AND (earlier.state='queued' OR (earlier.state='running' AND earlier.intent ? 'lane'
-    AND earlier.worktree_id::text=ANY('{}'::text[])))
+    AND earlier.worktree_id::text=ANY(${lanes})))
   AND earlier.recovery IS NULL AND COALESCE(earlier.intent->>'kind','') LIKE 'managed_sync_%' AND NOT (earlier.source_id=r.source_id AND (earlier.slug=r.slug
   OR earlier.page_id=r.page_id OR earlier.intent->'renameFrom'->>'slug'=r.slug))))
       AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier
@@ -88,6 +89,16 @@ export const RENEW_CLAIM_SQL = `UPDATE persistence_requests SET
     claim_expires_at=now()+($3::double precision*interval '1 millisecond'),updated_at=now(),claim_phase=COALESCE($4::text::jsonb,claim_phase)
     WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND set_config('gbrain.persistence_protocol','2',true)='2' RETURNING id`;
 
+/**
+ * `releaseUnpublishedClaim` (journal.ts; the protocol predicate written out): returns a claim that never began to publish
+ * to queued under its token. $3 = the blocked reason; $4 = charge one preparation attempt (and keep the claim phase).
+ */
+export const RELEASE_CLAIM_SQL = `UPDATE persistence_requests SET state='queued',execution_token=NULL,claim_expires_at=NULL,
+    blocked_reason=$3,updated_at=now(),preparation_attempts=preparation_attempts+CASE WHEN $4::boolean THEN 1 ELSE 0 END,
+    claim_phase=CASE WHEN $4::boolean THEN claim_phase END
+    WHERE id=$1::uuid AND execution_token=$2::uuid
+    AND state='running' AND recovery IS NULL AND publication_started=false AND set_config('gbrain.persistence_protocol','2',true)='2'`;
+
 /** The consumer's `expired_claims` statement (the protocol predicate and `EXPIRED_PREPARING_CHARGE_SQL('r')` written out): $1 = host id, $2 = charge a preparing claim, $3 = dead claim owners. */
 export const EXPIRE_CLAIMS_SQL = `WITH expired AS (
         SELECT r.id FROM persistence_requests r WHERE r.state='running' AND r.recovery IS NULL
@@ -105,6 +116,9 @@ export interface SourceMembership { incarnation: string; archived: boolean }
 
 /** A claim renewal: request `id`, its claim `token`, the new lease and, optionally, the phase to record (claim-phase.ts `claimPhaseStamp`). */
 export interface ClaimRenewal { id: string; token: string; leaseMs: number; phaseJson: string | null }
+
+/** A release of an unpublished claim: request `id`, its claim `token`, the blocked reason, and whether it counts a preparation attempt. */
+export interface ClaimRelease { id: string; token: string | null; reason: string; charge: boolean }
 
 /** An expired-claim release: this consumer's host id, whether a claim that expired while preparing counts an attempt, and the dead owners. */
 export interface ClaimExpiry { hostId: string; charge: boolean; deadOwners: string[] }
@@ -171,6 +185,14 @@ export async function hasClaimableWrite(exec: LegacyUnscopedRead, hostId: string
 export async function renewWriteClaim(exec: SqlExecutor, renewal: ClaimRenewal, opts?: QueryOpts): Promise<boolean> {
   const rows = await exec.executeRaw(RENEW_CLAIM_SQL, [renewal.id, renewal.token, renewal.leaseMs, renewal.phaseJson], opts);
   return rows.length === 1;
+}
+
+/**
+ * Returns a claim that never began to publish to queued. `exec` is the engine itself (its own `executeRaw`, or
+ * `executeRawDirect` on the Postgres direct lane), so the statement reaches the connection it reached before.
+ */
+export async function releaseUnpublishedClaim(exec: { executeRaw(sql: string, params?: unknown[]): Promise<unknown> }, release: ClaimRelease): Promise<void> {
+  await exec.executeRaw(RELEASE_CLAIM_SQL, [release.id, release.token, release.reason, release.charge]);
 }
 
 /** Returns expired claims (and claims of dead owners) to queued, at most 100 per call. */
@@ -246,4 +268,143 @@ export async function deleteConsumerRow(exec: SqlExecutor, key: ConsumerRowKey, 
 
 export async function stampWorktreeHeartbeats(exec: SqlExecutor, hostId: string, opts?: QueryOpts): Promise<void> {
   await exec.executeRaw(STAMP_WORKTREE_HEARTBEATS_SQL, [hostId], opts);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The FIFO head read (persistence/journal.ts claimNextWrite).
+
+/** The FIFO head statement's text between the places the claim-first condition goes (see `claimHeadText`). */
+const CLAIM_HEAD = [
+`WITH waiting AS MATERIALIZED (SELECT f.worktree_id, max(f.sequence) AS last
+        FROM (SELECT f.worktree_id, f.sequence FROM persistence_requests f
+    WHERE TRUE AND (f.state IN ('queued','running','recovering') OR (f.state='deferred' AND (f.deferred_refresh_id IS NOT NULL OR f.deferred_import_from IS NOT NULL)
+        AND (f.deferred_refresh_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktree_refreshes released
+          WHERE released.id=f.deferred_refresh_id AND released.released_at IS NOT NULL))
+        AND (f.deferred_import_from IS NULL OR EXISTS (SELECT 1 FROM sources imported
+          WHERE imported.id=f.source_id AND COALESCE(imported.last_commit,'')<>f.deferred_import_from)))) AND (f.state<>'running' OR (NOT f.publication_started
+      AND f.claim_phase->'owner'->>'nonce' IS DISTINCT FROM $5::text))
+    AND f.recovery IS NULL AND NOT COALESCE(f.intent->>'kind','') LIKE 'managed_sync_%'
+    AND NOT EXISTS (SELECT 1 FROM persistence_requests named WHERE named.worktree_id=f.worktree_id AND named.sequence<f.sequence
+      AND named.state IN ('queued','running','recovering') AND COALESCE(named.intent->>'kind','') LIKE 'managed_sync_%' AND (named.source_id=f.source_id AND (named.slug=f.slug
+  OR named.page_id=f.page_id OR named.intent->'renameFrom'->>'slug'=f.slug)))
+    AND NOT EXISTS (SELECT 1 FROM persistence_requests ahead WHERE ahead.worktree_id=f.worktree_id AND ahead.sequence<f.sequence
+      AND (ahead.state='queued' OR (ahead.state='deferred' AND (ahead.deferred_refresh_id IS NOT NULL OR ahead.deferred_import_from IS NOT NULL)
+        AND (ahead.deferred_refresh_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktree_refreshes released
+          WHERE released.id=ahead.deferred_refresh_id AND released.released_at IS NOT NULL))
+        AND (ahead.deferred_import_from IS NULL OR EXISTS (SELECT 1 FROM sources imported
+          WHERE imported.id=ahead.source_id AND COALESCE(imported.last_commit,'')<>ahead.deferred_import_from)))) AND NOT COALESCE(ahead.intent->>'kind','') LIKE 'managed_sync_%'
+      AND EXISTS (SELECT 1 FROM persistence_requests named WHERE named.worktree_id=ahead.worktree_id AND named.sequence<ahead.sequence
+        AND named.state IN ('queued','running','recovering') AND COALESCE(named.intent->>'kind','') LIKE 'managed_sync_%' AND (named.source_id=ahead.source_id AND (named.slug=ahead.slug
+  OR named.page_id=ahead.page_id OR named.intent->'renameFrom'->>'slug'=ahead.slug))))
+    AND NOT EXISTS (SELECT 1 FROM persistence_requests c WHERE c.sequence>COALESCE(($6::text::jsonb->>f.worktree_id::text)::bigint,0) AND c.worktree_id=f.worktree_id
+      AND c.state='committed' AND NOT COALESCE(c.intent->>'kind','') LIKE 'managed_sync_%')) f GROUP BY f.worktree_id)
+      SELECT r.* FROM persistence_requests r
+      LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id
+      WHERE (r.state='queued' OR (r.state='deferred' AND (r.deferred_refresh_id IS NOT NULL OR r.deferred_import_from IS NOT NULL)
+        AND (r.deferred_refresh_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktree_refreshes released
+          WHERE released.id=r.deferred_refresh_id AND released.released_at IS NOT NULL))
+        AND (r.deferred_import_from IS NULL OR EXISTS (SELECT 1 FROM sources imported
+          WHERE imported.id=r.source_id AND COALESCE(imported.last_commit,'')<>r.deferred_import_from)))) AND (r.worktree_id IS NULL OR (w.owner_host_id=$1::uuid AND w.state='active'))
+      AND (r.worktree_id IS NULL OR NOT EXISTS (SELECT 1 FROM persistence_worktree_refreshes fence WHERE fence.worktree_id=r.worktree_id
+        AND fence.state IN ('fenced','merged','recovery_required')))
+      AND NOT (COALESCE(r.worktree_id::text,'db:'||r.source_incarnation::text)=ANY($2::text[]))
+      AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked WHERE blocked.worktree_id=r.worktree_id AND blocked.recovery IS NOT NULL)
+      AND NOT EXISTS (SELECT 1 FROM persistence_effects mirror WHERE mirror.worktree_id=r.worktree_id
+        AND mirror.kind='withdrawal-mirror' AND mirror.state IN ('queued','running')
+        AND (NOT (mirror.data ? 'targets') OR mirror.data->'targets' @> jsonb_build_array(jsonb_build_object('slug',r.slug))))
+      AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked WHERE blocked.worktree_id=r.worktree_id AND blocked.recovery IS NOT NULL)
+      AND (r.next_attempt_at IS NULL OR r.next_attempt_at<=now())
+      AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier
+        WHERE r.worktree_id IS NOT NULL AND earlier.worktree_id=r.worktree_id AND earlier.sequence<r.sequence
+        AND earlier.state IN ('queued','running','recovering') AND NOT ((((`,
+`) AND NOT (COALESCE(r.worktree_id::text,'db:'||r.source_incarnation::text)=ANY($3::text[])))) AND NOT COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%'
+  AND (earlier.state='queued' OR (earlier.state='running' AND earlier.intent ? 'lane'
+    AND earlier.worktree_id::text=ANY($4::text[])))
+  AND earlier.recovery IS NULL AND COALESCE(earlier.intent->>'kind','') LIKE 'managed_sync_%' AND NOT (earlier.source_id=r.source_id AND (earlier.slug=r.slug
+  OR earlier.page_id=r.page_id OR earlier.intent->'renameFrom'->>'slug'=r.slug))))
+      AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier
+        WHERE r.worktree_id IS NULL AND earlier.worktree_id IS NULL AND earlier.source_incarnation=r.source_incarnation
+        AND earlier.sequence<r.sequence
+        AND earlier.state IN ('queued','running','recovering') AND NOT ((((`,
+`) AND NOT (COALESCE(r.worktree_id::text,'db:'||r.source_incarnation::text)=ANY($3::text[])))) AND NOT COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%'
+  AND (earlier.state='queued' OR (earlier.state='running' AND earlier.intent ? 'lane'
+    AND earlier.worktree_id::text=ANY($4::text[])))
+  AND earlier.recovery IS NULL AND COALESCE(earlier.intent->>'kind','') LIKE 'managed_sync_%' AND NOT (earlier.source_id=r.source_id AND (earlier.slug=r.slug
+  OR earlier.page_id=r.page_id OR earlier.intent->'renameFrom'->>'slug'=r.slug))))
+      AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier
+        WHERE r.worktree_id IS NOT NULL AND earlier.worktree_id=r.worktree_id AND earlier.sequence<r.sequence AND (earlier.state='deferred' AND (earlier.deferred_refresh_id IS NOT NULL OR earlier.deferred_import_from IS NOT NULL)
+        AND (earlier.deferred_refresh_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktree_refreshes released
+          WHERE released.id=earlier.deferred_refresh_id AND released.released_at IS NOT NULL))
+        AND (earlier.deferred_import_from IS NULL OR EXISTS (SELECT 1 FROM sources imported
+          WHERE imported.id=earlier.source_id AND COALESCE(imported.last_commit,'')<>earlier.deferred_import_from))))
+      AND NOT ((((`,
+`) AND NOT (COALESCE(r.worktree_id::text,'db:'||r.source_incarnation::text)=ANY($3::text[])))) AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%' AND EXISTS (SELECT 1 FROM persistence_requests ahead
+        WHERE ahead.worktree_id=r.worktree_id AND ahead.sequence>r.sequence AND ahead.state IN ('running','recovering') AND NOT COALESCE(ahead.intent->>'kind','') LIKE 'managed_sync_%'))
+        -- On a root whose lane groups run in this process only a foreground write is claimed (beside them).
+        AND NOT (r.worktree_id::text=ANY($4::text[]) AND (COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%' OR NOT ((`,
+`) AND NOT (COALESCE(r.worktree_id::text,'db:'||r.source_incarnation::text)=ANY($3::text[])))))
+        AND NOT (COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%' AND (`,
+`) AND NOT (COALESCE(r.worktree_id::text,'db:'||r.source_incarnation::text)=ANY($3::text[])) AND EXISTS (SELECT 1 FROM waiting g WHERE g.worktree_id=r.worktree_id AND g.last>r.sequence))
+      ORDER BY `,
+`(((`,
+`) AND NOT (COALESCE(r.worktree_id::text,'db:'||r.source_incarnation::text)=ANY($3::text[]))) AND NOT COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%') DESC, r.sequence LIMIT 1 FOR UPDATE OF r SKIP LOCKED`,
+] as const;
+
+/**
+ * #6712 PR 2 (Garry, 2026-10-16, via GBRA-40): while a source's drain lease is live, only the lease holder publishes that
+ * source's managed-sync requests. A non-resident consumer (a short-lived command such as `put` or `remember`, waiting on its
+ * own write) ranks a sync row whose source's lease another process holds after every other row and claims it only when that
+ * holder is provably dead (a killed same-host sync whose TTL has not lapsed yet), so it never publishes a live drainer's pages
+ * or breaks up its lane groups. With no live lease nothing changes: a crashed drainer's rows still drain through any consumer.
+ * The holder is read only when the head row is a sync row, so a foreground write's claim costs no extra statement.
+ *
+ * The ordering term ($7 the sync lock id prefix, $8 pid, $9 host) goes first in such a consumer's claim order.
+ */
+const CLAIM_HEAD_LEASE_HELD = `EXISTS (SELECT 1 FROM gbrain_cycle_locks l WHERE COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%' AND l.id=$7::text||r.source_id
+  AND l.ttl_expires_at>now() AND NOT (l.holder_pid=$8::integer AND l.holder_host IS NOT DISTINCT FROM $9::text)), `;
+
+/** What the FIFO head read (`claimNextWrite`) selects by; journal.ts documents each input. */
+export interface ClaimHeadSpec {
+  /** $1: this consumer's host id (a uuid). */
+  hostId: string;
+  /** $2: root keys this consumer does not claim from. */
+  excludeRoots: string[];
+  /** $3: roots where the claim is plain FIFO (this consumer owes the sync side a turn). */
+  fifoRoots: string[];
+  /** $4: worktrees whose lane groups run in this process. */
+  laneRoots: string[];
+  /** $5: this process's consumer nonce. */
+  nonce: string;
+  /** $6: per worktree id, the newest request sequence when this process last claimed a sync head there. */
+  syncSeen: Record<string, string>;
+  /** The `foreground_priority` environment override, or null for the brain config row. */
+  priority: boolean | null;
+  /** A non-resident consumer ranks a sync row whose drain lease another live process holds last: $7 the sync lock id prefix, $8 pid, $9 host. Null for a resident consumer. */
+  leaseHolder: { lockPrefix: string; pid: number; host: string } | null;
+}
+
+/**
+ * The FIFO head statement journal.ts `claimNextWrite` sent through executeRaw, for one `foreground_priority` value and
+ * consumer kind: the claimable test, the lane and sync-wait conditions and the claim order, `LIMIT 1 FOR UPDATE OF r
+ * SKIP LOCKED`. The claim-first condition (the switch, unless the row's root is in $3) is spliced where it goes.
+ */
+export function claimHeadText(priority: boolean | null | undefined, leaseHolder: boolean): string {
+  const p = PRIORITY_SQL[priorityKey(priority)];
+  const lease = leaseHolder ? CLAIM_HEAD_LEASE_HELD : '';
+  return `${CLAIM_HEAD[0]}${p}${CLAIM_HEAD[1]}${p}${CLAIM_HEAD[2]}${p}${CLAIM_HEAD[3]}${p}${CLAIM_HEAD[4]}${p}${CLAIM_HEAD[5]}${lease}${CLAIM_HEAD[6]}${p}${CLAIM_HEAD[7]}`;
+}
+
+/** The FIFO head read's text and parameters for one spec (plan tests run EXPLAIN on exactly this). */
+export function claimHeadStatement(spec: ClaimHeadSpec): { sql: string; params: unknown[] } {
+  const holder = spec.leaseHolder;
+  const params: unknown[] = [spec.hostId, spec.excludeRoots, spec.fifoRoots, spec.laneRoots, spec.nonce, JSON.stringify(spec.syncSeen)];
+  if (holder) params.push(holder.lockPrefix, holder.pid, holder.host);
+  return { sql: claimHeadText(spec.priority, holder !== null), params };
+}
+
+/** The request `claimNextWrite` claims next, locked until the claim's transaction ends, or null. */
+export async function selectClaimableWrite<R = Record<string, unknown>>(exec: LegacyUnscopedRead, spec: ClaimHeadSpec): Promise<R | null> {
+  const { sql, params } = claimHeadStatement(spec);
+  const [row] = await exec.executeRaw<R>(sql, params);
+  return row ?? null;
 }

@@ -1,4 +1,5 @@
 import type { BrainEngine } from '../engine.ts';
+import type { OauthClientGrantInsert } from '../engine-sql/access-credentials.ts';
 import { sqlQueryForEngine, type SqlQuery } from '../sql-query.ts';
 import { GrantError, grantFromRow, normalizeGrantBrain, validateClientGrant, type ClientGrant, type GrantPatch, type GrantValidationContext } from './model.ts';
 import { catalogProvenance, grantCatalog, type CatalogProvenance } from './profiles.ts';
@@ -6,17 +7,24 @@ import { catalogProvenance, grantCatalog, type CatalogProvenance } from './profi
 export type GrantDatabase = BrainEngine | SqlQuery;
 const query = (db: GrantDatabase): SqlQuery => typeof db === 'function' ? db : sqlQueryForEngine(db);
 
+/**
+ * The client's grant row. An engine reads it through the typed `readOauthClient` member (the same `SELECT *` on PGLite and
+ * Postgres, and a store read on the Rust engine); a bare `SqlQuery` keeps the statement.
+ */
 export async function readClientGrant(db: GrantDatabase, clientId: string): Promise<ClientGrant> {
-  const sql = query(db);
-  const rows = await sql`SELECT * FROM oauth_clients WHERE client_id = ${clientId}`;
-  if (!rows.length) throw new GrantError('client_not_found', `No OAuth client found with id "${clientId}"`);
-  return grantFromRow(rows[0]);
+  const row: Record<string, unknown> | null = typeof db === 'function'
+    ? (await db`SELECT * FROM oauth_clients WHERE client_id = ${clientId}`)[0] ?? null
+    : await db.readOauthClient(clientId) as Record<string, unknown> | null;
+  if (!row) throw new GrantError('client_not_found', `No OAuth client found with id "${clientId}"`);
+  return grantFromRow(row);
 }
 
+/** The ids of the sources that are not archived: `listAllSources()` with no options is `archived IS NOT TRUE` (the column is NOT NULL). */
 export async function grantValidationContext(db: GrantDatabase, servingBrainId?: string): Promise<GrantValidationContext> {
-  const sql = query(db);
-  const sources = await sql`SELECT id FROM sources WHERE archived = false`;
-  return { ...grantCatalog(), activeSourceIds: new Set(sources.map(r => String(r.id))), servingBrainId };
+  const ids = typeof db === 'function'
+    ? (await db`SELECT id FROM sources WHERE archived = false`).map(r => String(r.id))
+    : (await db.listAllSources()).map(r => r.id);
+  return { ...grantCatalog(), activeSourceIds: new Set(ids), servingBrainId };
 }
 
 export interface GrantMutationOptions {
@@ -103,6 +111,25 @@ export async function insertClientGrant(sql: SqlQuery, grant: ClientGrant, metad
     ) INSERT INTO oauth_grant_audit (client_id, actor, action, revision, before_grant, after_grant)
       SELECT client_id, ${actor}, 'register', ${grant.revision}, NULL, ${auditDocument(grant, null)}::text::jsonb FROM created
   `;
+}
+
+/**
+ * The engine-neutral row `BrainEngine.insertOauthClientGrant` writes: the same columns and audit row insertClientGrant
+ * sends (engine-sql/access-credentials.ts CREDENTIAL_SQL.client_grant_insert is its text). The caller checks scope
+ * sources first (assertScopeSourceGrant), as insertClientGrant does.
+ */
+export function clientGrantInsert(grant: ClientGrant, metadata: GrantClientMetadata, actor = 'operator'): OauthClientGrantInsert {
+  return {
+    client_id: grant.clientId, client_name: grant.clientName, client_secret_hash: metadata.secretHash,
+    redirect_uris: metadata.redirectUris, grant_types: metadata.grantTypes, token_endpoint_auth_method: metadata.authMethod,
+    client_id_issued_at: metadata.issuedAt, scope: grant.scopes.join(' '), source_id: grant.sourceId, federated_read: grant.federatedRead,
+    bound_slug_prefixes: grant.boundSlugPrefixes, allowed_operations: grant.allowedOperations, bound_tools: grant.boundTools,
+    bound_source_id: grant.boundSourceId, bound_brain_id: grant.boundBrainId, delegated_slug_prefixes: grant.delegatedSlugPrefixes,
+    delegated_namespace: grant.delegatedNamespace, bound_max_concurrent: grant.boundMaxConcurrent, budget_usd_per_day: grant.budgetUsdPerDay,
+    surface: grant.surface, surface_set_by: grant.surfaceSetBy, token_ttl: grant.tokenTtlSeconds, grant_profile: grant.profile,
+    grant_revision: grant.revision, grant_repair_reasons: grant.repairReasons,
+    audit: { actor, after_grant: auditDocument(grant, null) },
+  };
 }
 
 /** Caller may supply a transaction engine; use the InTransaction export there. */

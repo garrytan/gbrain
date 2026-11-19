@@ -3,7 +3,6 @@
  * prototype (rust-engine.ts); a member in `RUST_ENGINE_MEMBERS` that is not here refuses with `engine_capability_missing`.
  */
 import type { BrainEngine } from '../../engine.ts';
-import type { StoreMember } from './common.ts';
 import * as chunks from './chunks.ts';
 import * as config from './config.ts';
 import * as graph from './graph.ts';
@@ -25,6 +24,7 @@ import * as ontology from './ontology.ts';
 import * as takes from './takes.ts';
 import * as contradictions from './contradictions.ts';
 import * as dream from './dream.ts';
+import * as sessionState from './session-state.ts';
 import * as evalCapture from './eval-capture.ts';
 import * as codeEdges from './code-edges.ts';
 import * as salience from './salience.ts';
@@ -50,21 +50,32 @@ import * as persistence from './persistence.ts';
 import * as cliEntities from './cli-entities.ts';
 import * as factsDoctor from './facts-doctor.ts';
 import * as embeddingCatalog from './embedding-catalog.ts';
+import * as fenceHolds from './fence-holds.ts';
+import * as derivedGenerations from './derived-generations.ts';
 import * as factsCycle from './facts-cycle.ts';
 import * as factsPurge from './facts-purge.ts';
 import * as factsRepair from './facts-repair.ts';
 import * as factsTrust from './facts-trust.ts';
 import * as factsTrustReads from './facts-trust-reads.ts';
+import * as factsProvenance from './facts-provenance.ts';
 import * as trustTierReads from './trust-tier-reads.ts';
 import * as jobs from './jobs.ts';
 import * as housekeeping from './housekeeping.ts';
 import * as effectScans from './effect-scans.ts';
+import * as ownerScans from './owner-scans.ts';
+import * as effectWorker from './effect-worker.ts';
+import * as noopSettle from './noop-settle.ts';
+import * as pageEmbeddingBudget from './page-embedding-budget.ts';
+import * as embeddingInstall from './embedding-install.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
 import * as accessPolicy from './access-policy.ts';
 import * as accessSetup from './access-setup.ts';
+import * as writeAttribution from './write-attribution.ts';
+import * as opCheckpoint from './op-checkpoint.ts';
 import * as linkTemporal from './link-temporal.ts';
 import * as aliasFanoutReads from './alias-fanout-reads.ts';
+import * as entityIdentities from './entity-identities.ts';
 import * as writeGuards from './write-guards.ts';
 import * as pageVisibility from './page-visibility.ts';
 import * as largePage from './large-page.ts';
@@ -76,9 +87,11 @@ import * as connectGate from './connect-gate.ts';
 import * as telemetry from './telemetry.ts';
 import * as importMembers from './import-members.ts';
 import * as fieldUsage from './field-usage.ts';
-
-/** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
-const initSchema: StoreMember<[], void> = async () => undefined;
+import * as writeContext from './write-context.ts';
+// The store creates its tables when it opens; initSchema seeds the embedding config rows PGLite's schema text seeds.
+import { initSchema } from './init-schema.ts';
+import * as accessGrants from './access-grants.ts';
+import * as accessMembers from './access-members.ts';
 
 export const STORE_MEMBERS = {
   initSchema,
@@ -88,7 +101,7 @@ export const STORE_MEMBERS = {
   // Planned families: a member is served once its family file exports it.
   ...pageOps, ...extraction, ...aliases, ...pageBody, ...facts, ...ontology, ...takes, ...contradictions, ...dream,
   ...evalCapture, ...codeEdges, ...salience, ...stats, ...rawFiles, ...linkQueries, ...timelineQueries, ...keyword,
-  ...chunkQueries, ...vectors, ...embeddings, ...transactions, ...relations, ...wantedLinks, ...trustWithdrawals, ...trustWriteGate, ...openLoops,
+  ...chunkQueries, ...vectors, ...embeddings, ...transactions, ...writeContext, ...relations, ...wantedLinks, ...trustWithdrawals, ...trustWriteGate, ...openLoops,
   // The minion queue and its cycle locks (rust/crates/gbrain-store/src/jobs.rs).
   ...jobs,
   // Typed reads that replace raw SQL in CLI paths (rust/crates/gbrain-store/src/cli_reads/).
@@ -97,7 +110,7 @@ export const STORE_MEMBERS = {
   ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages,
   ...cliEntities,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
-  ...factsDoctor, ...embeddingCatalog, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust, ...factsTrustReads, ...factRelinkAttempts,
+  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust, ...factsTrustReads, ...factsProvenance, ...factRelinkAttempts,
   ...factRelinkWrites,
   // Typed reads of stamped trust tiers (rust/docs/store/trust.md, "Tier reads").
   ...trustTierReads,
@@ -109,12 +122,19 @@ export const STORE_MEMBERS = {
   ...linkTemporal,
   // Alias fan-out reads (rust/docs/store/alias_fanout_reads.md).
   ...aliasFanoutReads,
-  ...persistence, ...housekeeping, ...effectScans,
+  ...entityIdentities,
+  ...persistence, ...housekeeping, ...effectScans, ...ownerScans, ...effectWorker, ...noopSettle,
+  // The page embedding ledger on the paid path (rust/docs/store/embeddings.md).
+  ...pageEmbeddingBudget,
+  ...embeddingInstall,
   ...writeMisc,
   // The folder-rule policy members access/policy.ts runs (rust/docs/store/access_rules.md).
   ...accessPolicy,
   // The access setup and policy-store members outside access/policy.ts (rust/docs/store/access_rules.md).
   ...accessSetup,
+  // get_write_attribution's receipt and name reads (rust/docs/store/write_attribution.md).
+  ...writeAttribution,
+  ...opCheckpoint,
   // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
   ...writeGuards, ...trustFence, ...trustProposals,
   // The page visibility guards a remote page write runs (rust/docs/store/page-visibility.md).
@@ -127,6 +147,12 @@ export const STORE_MEMBERS = {
   ...importMembers,
   // The field usage sample read of schema detect --fields (rust/docs/store/field-usage.md).
   ...fieldUsage,
+  // The access-grant reads and the request-id lookup of the receipt operations (rust/docs/store/persistence.md).
+  ...accessGrants,
+  // The session cursor and checkpoint manifest of context_pack and delta (rust/docs/store/session_state.md).
+  ...sessionState,
+  // The access member and group writes and the active-member read (rust/docs/store/access-members.md).
+  ...accessMembers,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

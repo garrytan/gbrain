@@ -35,23 +35,17 @@ import type { Action } from '../agent-output.ts';
 import { markNotAdmitted, OperationError, opError } from '../ops/contract.ts';
 import { hostOnlyError } from '../ops/op-fix.ts';
 import { currentCallerAccess } from '../search/private-visibility.ts';
-import { edgeTrimSql } from '../edge-whitespace.ts';
 import { GUEST, STDIO_MAY_ACT_FOR_KEY, mayActForCovers, singleMemberAudience, type AudiencePrincipal } from './audience.ts';
 import { audienceMemberIds, parseMayActFor } from './members.ts';
 import { stdioBindRoute } from './stdio-bind-route.ts';
 import { labelledOnlyFor } from './labelled-only.ts';
 import { isMissingSchemaObject } from '../utils.ts';
+import type { LiveMemberRow, MemberBindingVia } from '../engine-sql/access-control.ts';
 import { transientDatabaseFailure, transientInterruption } from '../persistence/transient-retry.ts';
-import { readAudiencePrincipals as readAudiencePrincipalsOver, readFolderAccess as readFolderAccessOver, readMayActFor as readMayActForOver, type MayActForVia } from '../engine-sql/access-control.ts';
+import { readAudiencePrincipals as readAudiencePrincipalsOver, readMayActFor as readMayActForOver, type MayActForVia } from '../engine-sql/access-control.ts';
 
 /** Config key binding a local stdio MCP server to one member. */
 export const STDIO_MEMBER_KEY = 'mcp.stdio_member';
-
-const MEMBERS_WHERE_SQL = (predicate: string) => `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
-  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
-  WHERE ${predicate} AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
-  GROUP BY m.id`;
-const MEMBER_SQL = (member: string) => MEMBERS_WHERE_SQL(`m.id = (${member})`);
 
 /** The objects v282 added that the lookup reads: a schema without them predates the member tables. */
 const MEMBER_TABLES = ['access_members', 'access_group_members'];
@@ -89,10 +83,16 @@ export function identityLookupUnavailable(error: unknown): OperationError | null
   return null;
 }
 
-async function liveIdentity(engine: Pick<BrainEngine, 'executeRaw'>, memberSql: string, param: string): Promise<string[]> {
-  let row: { id: string; groups: string[] } | undefined;
+/**
+ * An engine the member lookup reads through: its typed readLiveMember, which every engine serves (a Rust brain without
+ * raw SQL) and every persistence SqlEngine view carries.
+ */
+export type MemberLookupEngine = Pick<BrainEngine, 'readLiveMember'>;
+
+async function liveIdentity(engine: MemberLookupEngine, via: MemberBindingVia, param: string): Promise<string[]> {
+  let row: LiveMemberRow | null;
   try {
-    [row] = await engine.executeRaw<{ id: string; groups: string[] }>(MEMBER_SQL(memberSql), [param]);
+    row = await engine.readLiveMember(via, param);
   } catch (error) {
     if (isMissingSchemaObject(error, 'table', MEMBER_TABLES) || isMissingSchemaObject(error, 'column', MEMBER_COLUMN)) return [];
     if (error && typeof error === 'object' && (transientDatabaseFailure(error) || transientInterruption(error))) {
@@ -115,15 +115,13 @@ async function liveIdentity(engine: Pick<BrainEngine, 'executeRaw'>, memberSql: 
  * that fails throws (liveIdentity: a transient database failure unchanged, else access_identity_unavailable). A write's publication passes only its stored
  * principal, so a member disabled or a binding removed after submission takes effect.
  */
-export async function memberIdentityFor(engine: Pick<BrainEngine, 'executeRaw'>, auth: Pick<AuthInfo, 'member'> & { principal?: { kind: string; id: string }; stdioMember?: string } | undefined): Promise<string[]> {
+export async function memberIdentityFor(engine: MemberLookupEngine, auth: Pick<AuthInfo, 'member'> & { principal?: { kind: string; id: string }; stdioMember?: string } | undefined): Promise<string[]> {
   if (auth?.member !== undefined) return auth.member ? identityFor(auth.member.id, auth.member.groups) : [];
   const principal = auth?.principal;
-  if (principal?.kind === 'local_stdio') return auth?.stdioMember !== undefined ? liveIdentity(engine, '$1', auth.stdioMember)
-    : liveIdentity(engine, `SELECT ${edgeTrimSql('value')} FROM config WHERE key = $1`, STDIO_MEMBER_KEY);
+  if (principal?.kind === 'local_stdio') return auth?.stdioMember !== undefined ? liveIdentity(engine, 'member', auth.stdioMember)
+    : liveIdentity(engine, 'stdio_config', STDIO_MEMBER_KEY);
   if (!principal || (principal.kind !== 'legacy_token' && principal.kind !== 'oauth_client')) return [];
-  return liveIdentity(engine, principal.kind === 'legacy_token'
-    ? 'SELECT member_id FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL'
-    : 'SELECT member_id FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL', principal.id);
+  return liveIdentity(engine, principal.kind, principal.id);
 }
 
 /** The member a local stdio server is bound to (config mcp.stdio_member), or null when unset or ill-formed. */
@@ -144,8 +142,14 @@ export async function stdioMemberId(engine: BrainEngine): Promise<string | null>
  */
 export async function stdioMemberIdentity(engine: BrainEngine, registered?: string): Promise<string[]> {
   const member = registered ?? await stdioMemberId(engine);
-  return member ? liveIdentity(engine, '$1', member) : [];
+  return member ? liveIdentity(engine, 'member', member) : [];
 }
+
+/**
+ * An engine the folder access read goes through: its typed readFolderAccess, which every engine serves (a Rust brain
+ * without raw SQL) and every persistence SqlEngine view carries.
+ */
+export type FolderAccessEngine = Pick<BrainEngine, 'readFolderAccess'>;
 
 /**
  * GBRA-218 (A2): the folder-rule part of a caller's record, read live from the applied rulebook: the
@@ -157,9 +161,6 @@ export async function folderAccessFor(engine: FolderAccessEngine, identity: read
   return folderAccessForAll(engine, [identity]);
 }
 
-/** An engine the folder access reads go through: its typed readFolderAccess (a Rust brain serves it), or an executeRaw-only handle. */
-export type FolderAccessEngine = Pick<BrainEngine, 'readFolderAccess'> | Pick<BrainEngine, 'executeRaw'>;
-
 /**
  * GBRA-231: folderAccessFor for an audience. A rule is satisfied only when every identity meets its readers, so the
  * satisfied set is the intersection of each entry's set (empty when any entry, a guest included, meets none).
@@ -168,7 +169,7 @@ export async function folderAccessForAll(engine: FolderAccessEngine, identities:
   try {
     const union = [...new Set(identities.flat())];
     const readers = union.length && identities.length && identities.every(id => id.length > 0) ? union : [];
-    const { rules, coverage } = 'readFolderAccess' in engine ? await engine.readFolderAccess(readers) : await readFolderAccessOver(engine, readers);
+    const { rules, coverage } = await engine.readFolderAccess(readers);
     const satisfied = rules.filter(r => identities.every(id => (r.readable_by ?? []).some(reader => id.includes(reader))));
     return { satisfiedRuleIds: satisfied.map(r => `${r.source_id}:${r.rule_id}`).sort(), folderCoverage: coverage.map(c => ({ source_id: c.source_id, prefix: c.prefix })) };
   } catch {

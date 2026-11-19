@@ -788,6 +788,21 @@ describe('engine parity: takes reads (group D)', () => {
   );
 
   parityTest(
+    'listHeldFenceTakeRows returns nothing for a page whose take fence generation is not held, takes or not',
+    { methods: ['putPage', 'addTakesBatch', 'listHeldFenceTakeRows'] },
+    async (engine) => {
+      const a = await page(engine, 'notes/held-a');
+      await engine.addTakesBatch([take(a.id, 1, 'first'), take(a.id, 2, 'second', { active: false })]);
+      const spec = { sourceId: 'default', kind: 'take_fence', ownerKey: 'page:notes/held-a' };
+      const withTakes = await engine.listHeldFenceTakeRows({ ...spec, pageId: a.id });
+      const unknown = await engine.listHeldFenceTakeRows({ ...spec, pageId: 999_999 });
+      expect(withTakes).toEqual([]);
+      expect(unknown).toEqual([]);
+      return { withTakes, unknown };
+    },
+  );
+
+  parityTest(
     'planFactPurgeTakes plans the takes a purged fact consolidated into and the takes echoing its claim, within one source',
     { methods: ['putPage', 'addTakesBatch', 'insertFact', 'loadPurgeTarget', 'consolidateFact', 'planFactPurgeTakes'] },
     async (engine, backend) => {
@@ -929,15 +944,21 @@ describe('engine parity: takes reads (group D)', () => {
   );
 
   parityTest(
-    'countMcpResolvedTakes under excludePrivate for a caller with a reader identity: SQL arms apply the caller policy, the Rust store refuses',
+    'countMcpResolvedTakes under excludePrivate applies the caller policy: a reader identity reads its readers page, a private-readable grant its source',
     { methods: ['putPage', 'softDeletePage', 'addTakesBatch', 'resolveTake', 'countMcpResolvedTakes'] },
     async (engine, backend) => {
       await mcpPrivacyFixture(engine, backend);
-      const asReader = await withCallerAccess({ identity: ['alice-example'], hidePrivate: true },
-        () => engine.countMcpResolvedTakes({ sourceIds: null, holders: null, excludePrivate: true }));
-      const open = await engine.countMcpResolvedTakes({ sourceIds: null, holders: null, excludePrivate: false });
-      expect(asReader).toBeLessThan(open);
-      return { asReader, open };
+      const hidden = () => engine.countMcpResolvedTakes({ sourceIds: null, holders: null, excludePrivate: true });
+      const out = {
+        plain: await hidden(),
+        reader: await withCallerAccess({ identity: ['member:alice-example'], hidePrivate: true }, hidden),
+        stranger: await withCallerAccess({ identity: ['member:bob-example'], hidePrivate: true }, hidden),
+        granted: await withCallerAccess({ privateReadableSources: ['mcp-priv-other'], hidePrivate: true }, hidden),
+        readerGranted: await withCallerAccess({ identity: ['member:alice-example'], privateReadableSources: ['mcp-priv-other'], hidePrivate: true }, hidden),
+      };
+      // plain sees open and other-open; the reader adds the readers page, the grant adds other-private.
+      expect(out).toEqual({ plain: 3, reader: 4, stranger: 3, granted: 4, readerGranted: 5 });
+      return out;
     },
   );
 
