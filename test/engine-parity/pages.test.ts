@@ -18,7 +18,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { parseFindPattern } from '../../src/core/page-find.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import type { Page, PageInput } from '../../src/core/types.ts';
-import { createSource, parityArms, pick, sorted } from './harness.ts';
+import { archiveSource, createSource, parityArms, pick, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -574,6 +574,101 @@ describe('engine parity: pages', () => {
       expect(member.resolved).toEqual(['people/readers-example']);
       expect(granted.resolved).toEqual(['people/private-example']);
       return { member, granted, grantedAlt };
+    },
+  );
+
+  /**
+   * Rename aliases (`updateSlug` records old -> new in the source's slug_aliases): `people/old-name` is an alias in
+   * default and alt, `people/shadow` is an alias in default and a page in alt, `notes/x` is an alias in default and a
+   * soft-deleted page there, `people/secret-old` names a private page, and `people/gone-old` names a page in an
+   * archived source.
+   */
+  async function seedAliases(engine: BrainEngine, backend: Parameters<typeof createSource>[1]) {
+    await createSource(engine, backend, 'alt');
+    await createSource(engine, backend, 'arch');
+    const page = (slug: string, frontmatter: Record<string, unknown>, opts?: { sourceId?: string }) =>
+      engine.putPage(slug, { type: 'person', title: slug, compiled_truth: `${slug} body`, timeline: '', frontmatter }, opts);
+    const renamed = async (from: string, to: string, frontmatter: Record<string, unknown> = {}, sourceId?: string) => {
+      await page(from, frontmatter, sourceId ? { sourceId } : undefined);
+      expect(await engine.updateSlug(from, to, sourceId ? { sourceId } : undefined)).toBe(1);
+    };
+    await renamed('people/old-name', 'people/new-name');
+    await renamed('people/old-name', 'people/alt-name', {}, 'alt');
+    await renamed('people/shadow', 'people/shadow-new');
+    await page('people/shadow', {}, { sourceId: 'alt' });
+    await renamed('notes/x', 'notes/x-new');
+    await page('notes/x', {});
+    await engine.softDeletePage('notes/x');
+    await renamed('people/secret-old', 'people/secret-new', { visibility: 'private' });
+    await renamed('people/gone-old', 'people/gone-new', {}, 'arch');
+    await archiveSource(engine, backend, 'arch');
+  }
+  const ALIAS_SLUGS = ['people/old-name', 'people/new-name', 'people/shadow', 'notes/x', 'people/secret-old', 'people/gone-old'];
+
+  /** Each alias slug read under `opts`: `source:slug` of the page read, `null`, or `error:PageSnapshotAmbiguousError`. */
+  async function aliasReads(engine: BrainEngine, opts: Parameters<BrainEngine['readPageSnapshot']>[1]) {
+    const out: Record<string, { snapshot: string | null; get: string | null }> = {};
+    const at = (page: Page | null | undefined) => (page ? `${page.source_id}:${page.slug}` : null);
+    const attempt = async (read: () => Promise<Page | null | undefined>) => {
+      try {
+        return at(await read());
+      } catch (error) {
+        // Only the ambiguity is an answer; any other error (a typed refusal on the Rust arm) propagates.
+        if ((error as Error).name !== 'PageSnapshotAmbiguousError') throw error;
+        return `error:${(error as Error).name}`;
+      }
+    };
+    for (const slug of ALIAS_SLUGS) {
+      out[slug] = {
+        snapshot: await attempt(async () => (await engine.readPageSnapshot(slug, opts))?.page),
+        get: await attempt(() => engine.getPage(slug, opts)),
+      };
+    }
+    return out;
+  }
+
+  parityTest(
+    'readPageSnapshot under resolveAlias follows a rename alias, an exact page outranks it, and a private target stays hidden',
+    { methods: ['putPage', 'updateSlug', 'softDeletePage', 'readPageSnapshot', 'getPage'] },
+    async (engine, backend) => {
+      await seedAliases(engine, backend);
+      const out = {
+        plain: await aliasReads(engine, { resolveAlias: true }),
+        altFirst: await aliasReads(engine, { resolveAlias: true, sourceIds: ['alt', 'default'] }),
+        alt: await aliasReads(engine, { resolveAlias: true, sourceId: 'alt' }),
+        deleted: await aliasReads(engine, { resolveAlias: true, includeDeleted: true }),
+        hidden: await aliasReads(engine, { resolveAlias: true, excludePrivate: true }),
+        noAlias: await aliasReads(engine, {}),
+      };
+      expect(out.plain['people/old-name']!.snapshot).toBe('default:people/new-name');
+      expect(out.altFirst['people/old-name']!.snapshot).toBe('alt:people/alt-name');
+      expect(out.plain['people/shadow']!.snapshot).toBe('alt:people/shadow');
+      expect(out.plain['people/secret-old']!.snapshot).toBe('default:people/secret-new');
+      expect(out.hidden['people/secret-old']!.snapshot).toBeNull();
+      expect(out.noAlias['people/old-name']!.snapshot).toBeNull();
+      return out;
+    },
+  );
+
+  parityTest(
+    "readPageSnapshot under fetch's options refuses an ambiguous alias, skips an archived source and keeps an exact identity",
+    { methods: ['putPage', 'updateSlug', 'softDeletePage', 'readPageSnapshot', 'getPage'] },
+    async (engine, backend) => {
+      await seedAliases(engine, backend);
+      const fetchOpts = { resolveAlias: true, requireLiveSource: true, preserveExactIdentity: true } as const;
+      const out = {
+        unambiguous: await aliasReads(engine, { resolveAlias: true, requireUnambiguous: true }),
+        unambiguousAlt: await aliasReads(engine, { resolveAlias: true, requireUnambiguous: true, sourceId: 'alt' }),
+        unambiguousExact: await aliasReads(engine, { requireUnambiguous: true }),
+        live: await aliasReads(engine, { resolveAlias: true, requireLiveSource: true }),
+        fetch: await aliasReads(engine, { ...fetchOpts, requireUnambiguous: true, excludePrivate: true }),
+        fetchScoped: await aliasReads(engine, { ...fetchOpts, sourceId: 'default', excludePrivate: true }),
+        archivedDeleted: await aliasReads(engine, { resolveAlias: true, includeDeleted: true, sourceId: 'arch' }),
+      };
+      expect(out.unambiguous['people/old-name']!.snapshot).toBe('error:PageSnapshotAmbiguousError');
+      expect(out.unambiguousAlt['people/old-name']!.snapshot).toBe('alt:people/alt-name');
+      expect(out.fetch['people/secret-old']!.snapshot).toBeNull();
+      return out;
     },
   );
 

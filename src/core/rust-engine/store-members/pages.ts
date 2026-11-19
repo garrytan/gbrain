@@ -9,7 +9,8 @@ import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
 
-const READ_SCOPE = ['sourceId', 'sourceIds', 'includeDeleted', 'excludePrivate'] as const;
+const READ_SCOPE = ['sourceId', 'sourceIds', 'includeDeleted', 'excludePrivate', 'resolveAlias', 'requireUnambiguous',
+  'requireLiveSource', 'preserveExactIdentity'] as const;
 
 /**
  * The store scope of a page read: `excludePrivate` becomes the page policy (`privatePagesFilterForCaller('p')`, with the

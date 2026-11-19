@@ -898,3 +898,71 @@ fn exclude_private_hides_a_private_page_from_every_page_read() {
     assert_eq!(slugs(&listed), vec!["people/ada"]);
     assert_eq!(listed[0]["source_id"], "default");
 }
+
+#[test]
+fn resolve_alias_follows_a_rename_alias_and_require_unambiguous_refuses_two_candidates() {
+    let dir = TempDir::new("pages-resolve-alias");
+    let store = open(&dir);
+    store
+        .upsert_source(&SourceInput {
+            id: "alt".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    put(&store, "people/old-name", "body");
+    assert_eq!(
+        store
+            .update_slug("people/old-name", "people/new-name", None)
+            .unwrap(),
+        1
+    );
+    store
+        .put_page(
+            "people/old-name",
+            &input("alt", "alt body"),
+            &opts(json!({ "sourceId": "alt" })),
+        )
+        .unwrap();
+    let at = |v: Option<Value>| {
+        v.map(|s| {
+            format!(
+                "{}:{}",
+                s["page"]["source_id"].as_str().unwrap(),
+                s["page"]["slug"].as_str().unwrap()
+            )
+        })
+    };
+    // Without resolveAlias only the exact page in alt answers; with it the exact page still outranks the alias.
+    let read = |v: Value| store.read_page_snapshot("people/old-name", &scope(v));
+    assert_eq!(
+        at(read(json!({})).unwrap()).as_deref(),
+        Some("alt:people/old-name")
+    );
+    assert_eq!(
+        at(read(json!({ "resolveAlias": true })).unwrap()).as_deref(),
+        Some("alt:people/old-name")
+    );
+    assert_eq!(
+        at(read(json!({ "resolveAlias": true, "sourceId": "default" })).unwrap()).as_deref(),
+        Some("default:people/new-name")
+    );
+    assert_eq!(
+        code(read(json!({ "resolveAlias": true, "requireUnambiguous": true })).unwrap_err()),
+        PAGE_AMBIGUOUS
+    );
+    // preserveExactIdentity skips an alias of a source that has a page at the slug.
+    assert_eq!(
+        at(read(
+            json!({ "resolveAlias": true, "preserveExactIdentity": true, "sourceId": "default" })
+        )
+        .unwrap()),
+        Some("default:people/new-name".to_string())
+    );
+    put(&store, "people/old-name", "recreated");
+    store.soft_delete_page("people/old-name", None).unwrap();
+    assert!(
+        read(json!({ "resolveAlias": true, "preserveExactIdentity": true, "sourceId": "default" }))
+            .unwrap()
+            .is_none()
+    );
+}

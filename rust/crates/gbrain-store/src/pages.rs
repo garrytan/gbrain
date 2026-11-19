@@ -12,7 +12,7 @@ use crate::chunks::{ChunkInput, auto_chunks, clear_chunks, replace_chunks};
 use crate::env::{Env, iso, parse_iso};
 use crate::error::{
     CONSTRAINT_VIOLATION, EMPTY_OVERWRITE, INVALID_ARGUMENT, INVALID_SLUG, ORIGIN_CLAIMED,
-    PAGE_NOT_FOUND, REVISION_CONFLICT, REVISION_REQUIRED, Result, StoreError,
+    PAGE_AMBIGUOUS, PAGE_NOT_FOUND, REVISION_CONFLICT, REVISION_REQUIRED, Result, StoreError,
 };
 use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
@@ -276,9 +276,17 @@ pub struct PutPageOptions {
     pub contextual_retrieval: Option<crate::aliases::ContextualRetrievalStamp>,
 }
 
-/// Which pages a read may see. Mirrors `GetPageOpts`: `source_ids` wins when it is not empty.
-/// `exclude_private` is the page policy of `excludePrivate` (`facts/privacy.rs` `page_hidden`);
-/// `read_page_snapshot` and `resolve_slugs` read it, and a hidden page reads as missing.
+/// Which pages a read may see. Mirrors `PageSnapshotOptions`: `source_ids` wins when it is not
+/// empty. `exclude_private` is the page policy of `excludePrivate` (`facts/privacy.rs`
+/// `page_hidden`); `read_page_snapshot` and `resolve_slugs` read it, and a hidden page reads as
+/// missing. The other four fields are read by `read_page_snapshot` only:
+/// - `resolve_alias`: a slug with no readable page follows the slug aliases of each source in
+///   scope to their canonical page; an exact page always outranks an alias.
+/// - `require_unambiguous`: more than one readable candidate (exact or alias) is
+///   `page_ambiguous`.
+/// - `require_live_source`: the page's source must exist and not be archived.
+/// - `preserve_exact_identity`: an alias of a source that has a page at the slug itself, in any
+///   deleted state, is not followed.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ReadScope {
@@ -286,6 +294,10 @@ pub struct ReadScope {
     pub source_ids: Option<Vec<String>>,
     pub include_deleted: bool,
     pub exclude_private: Option<PrivacyPolicy>,
+    pub resolve_alias: bool,
+    pub require_unambiguous: bool,
+    pub require_live_source: bool,
+    pub preserve_exact_identity: bool,
 }
 
 /// Options of `addTag` and `addPageTagsById`: the page's source and who claims the tags.
@@ -795,10 +807,72 @@ fn snapshot_sources(read: &dyn KvRead, scope: &ReadScope) -> Result<Vec<String>>
     Ok(ids)
 }
 
-/// Whether a snapshot read may answer `page`: live unless `include_deleted`, and not hidden by
-/// the `exclude_private` page policy.
+/// The page a snapshot read answers, in PGLite's `readPageSnapshot` order: the exact slug first,
+/// then (under `resolve_alias`) the canonical pages of the slug's aliases; within each, the
+/// first of `source_ids` (else `default`) first, then by source id. Under
+/// `require_unambiguous`, more than one candidate is `page_ambiguous`.
+fn snapshot_page(read: &dyn KvRead, slug: &str, scope: &ReadScope) -> Result<Option<PageRecord>> {
+    let sources = snapshot_sources(read, scope)?;
+    let mut candidates = Vec::new();
+    for id in &sources {
+        if let Some(page) = read_page(read, id, slug)?
+            && snapshot_visible(read, &page, scope)?
+        {
+            candidates.push(page);
+        }
+    }
+    let exact_found = !candidates.is_empty();
+    if scope.resolve_alias && (scope.require_unambiguous || !exact_found) {
+        for id in &sources {
+            if let Some(page) = alias_target(read, id, slug, scope)? {
+                candidates.push(page);
+            }
+        }
+    }
+    if scope.require_unambiguous && candidates.len() > 1 {
+        return Err(StoreError::new(
+            PAGE_AMBIGUOUS,
+            "Multiple readable pages match this identifier.",
+        ));
+    }
+    Ok(candidates.into_iter().next())
+}
+
+/// The readable page the alias `slug` of `source` names, as the alias branch of PGLite's
+/// snapshot statement joins it: the alias's source exists (and, unless `include_deleted`, is not
+/// archived), the canonical slug differs from `slug`, and under `preserve_exact_identity` the
+/// source has no page at `slug` in any deleted state.
+fn alias_target(
+    read: &dyn KvRead,
+    source: &str,
+    slug: &str,
+    scope: &ReadScope,
+) -> Result<Option<PageRecord>> {
+    let Some(alias) = crate::aliases::read_slug_alias(read, source, slug)? else {
+        return Ok(None);
+    };
+    if alias.canonical_slug == slug
+        || crate::sources::read_source(read, source)?
+            .is_none_or(|s| s.archived && !scope.include_deleted)
+        || (scope.preserve_exact_identity && read_page(read, source, slug)?.is_some())
+    {
+        return Ok(None);
+    }
+    match read_page(read, source, &alias.canonical_slug)? {
+        Some(page) if snapshot_visible(read, &page, scope)? => Ok(Some(page)),
+        _ => Ok(None),
+    }
+}
+
+/// Whether a snapshot read may answer `page`: live unless `include_deleted`, in a live source
+/// under `require_live_source`, and not hidden by the `exclude_private` page policy.
 fn snapshot_visible(read: &dyn KvRead, page: &PageRecord, scope: &ReadScope) -> Result<bool> {
     if !scope.include_deleted && page.deleted_at_us.is_some() {
+        return Ok(false);
+    }
+    if scope.require_live_source
+        && crate::sources::read_source(read, &page.source_id)?.is_none_or(|s| s.archived)
+    {
         return Ok(false);
     }
     match &scope.exclude_private {
@@ -1233,16 +1307,7 @@ impl Store {
     pub fn read_page_snapshot(&self, slug: &str, scope: &ReadScope) -> Result<Option<Value>> {
         let read = self.read()?;
         let slug = slug.to_lowercase();
-        let mut found = None;
-        for id in snapshot_sources(&*read, scope)? {
-            if let Some(page) = read_page(&*read, &id, &slug)?
-                && snapshot_visible(&*read, &page, scope)?
-            {
-                found = Some(page);
-                break;
-            }
-        }
-        let Some(page) = found else {
+        let Some(page) = snapshot_page(&*read, &slug, scope)? else {
             return Ok(None);
         };
         let incarnation = crate::sources::read_source(&*read, &page.source_id)?
