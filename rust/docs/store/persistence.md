@@ -58,6 +58,28 @@ Rows have a null `worktree_id`, so the worktree terms of the claim statements ar
 answers them for a null worktree. `select_claimable_write` (the claim head read) exists in the store
 but has no binding.
 
+## Receipt list
+
+The candidate page that `list_write_requests` (`persistence/control.ts` `listWriteRequests`) authorizes and pages
+(`crates/gbrain-store/src/persistence/receipt_list.rs`).
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.listWriteRequestRows({ kind, id }, sourceId, filter)` | the `WriteRequest` rows of the principal in the source, newest sequence first, at most `filter.limit`. A source that is missing or archived, or a request from an earlier incarnation of the source, gives no row | `listWriteRequestRows` |
+
+The filter is `{ before, limit, slugPrefixes, operations, slugAllowList }`. A null list skips its check and an empty
+list matches no row, as the SQL `IS NULL OR EXISTS` terms do.
+
+- `before` is a sequence as decimal text; only lower sequences are listed. Text that is not a `u64` refuses with
+  `invalid`.
+- `slugPrefixes` match the lower-case slug (Postgres `lower`). An empty prefix matches nothing. A prefix that ends
+  in `/` matches the slugs that start with it; any other prefix matches the slug itself or the slugs under it.
+- `operations` match `authority.attestedOp` (a JSON value that is not a string as its JSON text), else `operation`.
+- `slugAllowList` holds exact slugs (case-sensitive) or `<prefix>/*`, which matches the slugs that start with
+  `<prefix>/`.
+
+Lengths count characters, as Postgres `left` and `length` do.
+
 ## Steps that refuse by name
 
 Three coordinator steps need one engine transaction, which this engine does not serve yet (the

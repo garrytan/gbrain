@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 648/648
+# covered: 650/650
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 10/10
-# persistence_journal: 40/40
+# persistence_journal: 41/41
 # entity_reads: 6/6
 # cycle_locks: 7/7
 # minion_jobs: 8/8
@@ -56,7 +56,7 @@
 # open_loops: 3/3
 # cli_reads_import: 12/12
 # wanted_links: 2/2
-# write_misc: 11/11
+# write_misc: 12/12
 # telemetry: 10/10
 # field_usage: 1/1
 # alias_fanout_reads: 4/4
@@ -347,9 +347,9 @@ getAllConfig	config	yes	1	no	yes	yes	serves
 getConfigValues	config	yes	5	no	yes	yes	serves
 readManagedModeRows	import_guards	yes	1	no	yes	yes	serves
 getSourceStrictness	import_guards	yes	2	no	yes	yes	serves
-readPersistenceBrainId	import_guards	yes	4	no	yes	yes	serves
-readLocalWriterRow	import_guards	yes	3	no	yes	yes	serves
-insertLocalWriterRow	import_guards	yes	4	no	yes	yes	serves
+readPersistenceBrainId	import_guards	yes	5	no	yes	yes	serves
+readLocalWriterRow	import_guards	yes	4	no	yes	yes	serves
+insertLocalWriterRow	import_guards	yes	5	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	12	no	yes	yes	serves
 applyTransactionSettings	import_guards	yes	30	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
@@ -359,19 +359,20 @@ declarePersistence	persistence_journal	yes	5	no	yes	yes	serves
 readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldPageRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldCoverageRows	persistence_journal	yes	1	no	yes	yes	serves
-readWriteRequest	persistence_journal	yes	3	no	yes	yes	serves
+readWriteRequest	persistence_journal	yes	4	no	yes	yes	serves
 readWriteRequestById	persistence_journal	yes	5	no	yes	yes	serves
+listWriteRequestRows	persistence_journal	yes	2	no	yes	yes	serves
 readWriteRequestProgress	persistence_journal	yes	1	no	yes	yes	serves
 countOutstandingBySource	persistence_journal	yes	2	no	yes	yes	serves
 ownsSchemaTables	persistence_journal	yes	1	no	yes	yes	serves
 readCounterRows	persistence_journal	yes	2	no	yes	yes	serves
 readAdmissionRate	persistence_journal	yes	2	no	yes	yes	serves
-lockPersistenceCounters	persistence_journal	yes	17	no	yes	yes	serves
-insertWriteRequest	persistence_journal	yes	17	no	yes	yes	serves
+lockPersistenceCounters	persistence_journal	yes	18	no	yes	yes	serves
+insertWriteRequest	persistence_journal	yes	18	no	yes	yes	serves
 stampWriteClaim	persistence_journal	yes	13	no	yes	yes	serves
 lockWriteRequest	persistence_journal	yes	2	no	yes	yes	serves
 completeWriteRow	persistence_journal	yes	10	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	18	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	19	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	2	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	2	no	yes	yes	serves
 insertTopologyChange	persistence_journal	yes	4	no	yes	yes	serves
@@ -657,6 +658,7 @@ hasExtractedEvents	write_misc	yes	1	no	yes	yes	serves
 listActiveAccessMembers	write_misc	yes	1	no	yes	yes	serves
 expireMemoryProposals	write_misc	yes	1	no	yes	yes	serves
 listAwaitingMemoryProposals	write_misc	yes	1	no	yes	yes	serves
+readMemoryProposal	write_misc	yes	2	no	yes	yes	serves
 purgeMemoryProposals	write_misc	yes	1	no	yes	yes	serves
 attachSourcePath	write_misc	yes	1	no	yes	yes	serves
 recordSearchTelemetry	telemetry	yes	3	no	yes	yes	serves
