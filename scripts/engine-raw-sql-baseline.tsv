@@ -51,7 +51,6 @@ src/commands/doctor/checks/derivation-purge-sweeps.ts	execute_raw	1
 src/commands/doctor/checks/derived-visibility.ts	execute_raw	1
 src/commands/doctor/checks/embed-backfill-stalled.ts	execute_raw	1
 src/commands/doctor/checks/embedding-health.ts	execute_raw	4
-src/commands/doctor/checks/embedding-plane.ts	execute_raw	1
 src/commands/doctor/checks/entity-duplicates.ts	execute_raw	2
 src/commands/doctor/checks/extraction-input.ts	execute_raw	2
 src/commands/doctor/checks/extraction-sync.ts	execute_raw	11
@@ -121,7 +120,6 @@ src/commands/doctor/checks/unindexed-files.ts	execute_raw	1
 src/commands/doctor/checks/unlinked-facts.ts	execute_raw	1
 src/commands/doctor/checks/unscoped-multi-user-token.ts	execute_raw	2
 src/commands/doctor/checks/vector-plan.ts	execute_raw	4
-src/commands/doctor/checks/writer-version.ts	execute_raw	1
 src/commands/doctor/last-known.ts	execute_raw	2
 src/commands/doctor/report-remote.ts	execute_raw	2
 src/commands/doctor/schema-pack-checks.ts	execute_raw	3
@@ -130,7 +128,6 @@ src/commands/dream-retriage.ts	execute_raw	3
 src/commands/edge-proposals.ts	execute_raw	6
 src/commands/edges-backfill.ts	execute_raw	1
 src/commands/embed.ts	execute_raw	1
-src/commands/embeddings.ts	execute_raw	1
 src/commands/engine-status.ts	execute_raw	1
 src/commands/eval-suspected-contradictions.ts	execute_raw	1
 src/commands/eval-whoknows.ts	execute_raw	1
@@ -151,9 +148,7 @@ src/commands/google.ts	execute_raw	1
 src/commands/guests.ts	execute_raw	1
 src/commands/import-calls.ts	execute_raw	3	GST-2904 (open before #9641): reads the committed call page's id, frontmatter readers and whether a page_label_guards row exists, locked FOR UPDATE inside the maintenance transaction that raises the guard; no typed engine method exists yet
 src/commands/import.ts	execute_raw	5
-src/commands/init-embedding-plane.ts	execute_raw	1
 src/commands/init-prefer-postgres.ts	execute_raw	5
-src/commands/init.ts	execute_raw	1
 src/commands/init.ts	sql_template	2
 src/commands/integrity.ts	execute_raw	1
 src/commands/jobs-watch.ts	execute_raw	2
@@ -381,7 +376,7 @@ src/core/embed-stale-images.ts	execute_raw	2
 src/core/embed-stale.ts	execute_raw	3
 src/core/embed-takes.ts	execute_raw	1
 src/core/embedding-ann-build.ts	execute_raw	8
-src/core/embedding-dim-check.ts	execute_raw	4
+src/core/embedding-dim-check.ts	execute_raw	2
 src/core/embedding-invalidation.ts	execute_raw	8
 src/core/embedding-migration-budget.ts	execute_raw	2
 src/core/embedding-migration-retention.ts	execute_raw	6
@@ -420,7 +415,7 @@ src/core/facts/conversation-publication.ts	execute_raw	24
 src/core/facts/conversation-relink-carry.ts	execute_raw	1
 src/core/facts/conversation-relink.ts	execute_raw	2	GBRA-574 F #9674 (opened before this ratchet): +1 the relink --unbacked read of name-tag rows
 src/core/facts/derivation-inputs.ts	execute_raw	6
-src/core/facts/embedding-identity.ts	execute_raw	2
+src/core/facts/embedding-identity.ts	execute_raw	1
 src/core/facts/facts-home.ts	execute_raw	4
 src/core/facts/fence-fact-append.ts	execute_raw	2
 src/core/facts/fence-write.ts	execute_raw	2
@@ -468,7 +463,7 @@ src/core/generations/adapters/synthesis.ts	execute_raw	1
 src/core/generations/adapters/take-rows.ts	execute_raw	2
 src/core/generations/fence-evidence.ts	execute_raw	4
 src/core/generations/fence-restore.ts	execute_raw	3
-src/core/generations/fence.ts	execute_raw	5
+src/core/generations/fence.ts	execute_raw	4
 src/core/generations/ledger-scrub.ts	execute_raw	7
 src/core/generations/managed.ts	execute_raw	7
 src/core/generations/publish.ts	execute_raw	19
@@ -579,7 +574,7 @@ src/core/ops/known-as-of.ts	execute_raw	3
 src/core/ops/links.ts	execute_raw	1
 src/core/ops/loops.ts	execute_raw	3
 src/core/ops/page-upload.ts	execute_raw	3
-src/core/ops/persistence.ts	execute_raw	4
+src/core/ops/persistence.ts	execute_raw	3
 src/core/ops/put-page-revision-source.ts	execute_raw	1
 src/core/ops/qm-memory.ts	execute_raw	2
 src/core/ops/request-tools.ts	execute_raw	2
@@ -602,12 +597,12 @@ src/core/page-body/segment-derive.ts	execute_raw	33
 src/core/page-body/segment-facts.ts	execute_raw	1
 src/core/page-body/segment-ledger.ts	execute_raw	1
 src/core/page-body/segment-rewrite.ts	execute_raw	9
-src/core/page-body/segmented-embedding.ts	execute_raw	8
+src/core/page-body/segmented-embedding.ts	execute_raw	7
 src/core/page-body/splice.ts	execute_raw	2
 src/core/page-body/streamed-import.ts	execute_raw	1
 src/core/page-body/tail-digest.ts	execute_raw	1
-src/core/page-embedding-budget.ts	execute_raw	13
-src/core/page-embedding-lease.ts	execute_raw	4
+src/core/page-embedding-budget.ts	execute_raw	6
+src/core/page-embedding-lease.ts	execute_raw	1
 src/core/page-searchability.ts	execute_raw	3
 src/core/page-spend.ts	execute_raw	4
 src/core/page-state/contextual-proof.ts	execute_raw	3
@@ -616,7 +611,7 @@ src/core/page-state/guards.ts	execute_raw	11
 src/core/page-state/image-seal.ts	execute_raw	5
 src/core/page-state/materialize.ts	execute_raw	5
 src/core/page-state/projection-status.ts	execute_raw	1
-src/core/page-state/projections.ts	execute_raw	38
+src/core/page-state/projections.ts	execute_raw	33
 src/core/page-state/rebuild-estimate.ts	execute_raw	1
 src/core/page-state/rename-alias.ts	execute_raw	10
 src/core/page-state/revision-backfill-schema.ts	execute_raw	12
@@ -649,8 +644,8 @@ src/core/persistence/connector-state.ts	execute_raw	7
 src/core/persistence/connector-sync.ts	execute_raw	26
 src/core/persistence/consumer-diagnostics.ts	execute_raw	3
 src/core/persistence/consumer-lane.ts	execute_raw	2
-src/core/persistence/consumer.ts	execute_raw	5
-src/core/persistence/context.ts	execute_raw	3
+src/core/persistence/consumer.ts	execute_raw	4
+src/core/persistence/context.ts	execute_raw	1
 src/core/persistence/control.ts	execute_raw	2
 src/core/persistence/coordination-lock.ts	execute_raw	2
 src/core/persistence/coordinator.ts	execute_raw	9
@@ -664,14 +659,13 @@ src/core/persistence/diagnostics.ts	execute_raw	7
 src/core/persistence/drift-conflicts.ts	execute_raw	9
 src/core/persistence/effect-catchup.ts	execute_raw	1
 src/core/persistence/effect-facts.ts	execute_raw	8
-src/core/persistence/effect-journal.ts	execute_raw	23
+src/core/persistence/effect-journal.ts	execute_raw	9
 src/core/persistence/effect-links.ts	execute_raw	8
-src/core/persistence/effect-recovery.ts	execute_raw	18
+src/core/persistence/effect-recovery.ts	execute_raw	16
 src/core/persistence/effect-retry.ts	execute_raw	14
 src/core/persistence/effect-settle.ts	execute_raw	7
 src/core/persistence/effect-targets.ts	execute_raw	7
-src/core/persistence/effects.ts	execute_raw	19
-src/core/persistence/embedding-noop-settle.ts	execute_raw	5
+src/core/persistence/effects.ts	execute_raw	15
 src/core/persistence/embedding-settlement.ts	execute_raw	7
 src/core/persistence/engine-graduation.ts	execute_raw	18
 src/core/persistence/facts-maintenance.ts	execute_raw	4
@@ -706,7 +700,7 @@ src/core/persistence/import-mutations.ts	execute_raw	3
 src/core/persistence/import-prepare.ts	execute_raw	1
 src/core/persistence/import-reads.ts	execute_raw	7
 src/core/persistence/intent-redaction.ts	execute_raw	10
-src/core/persistence/journal.ts	execute_raw	44
+src/core/persistence/journal.ts	execute_raw	41
 src/core/persistence/landing-gaps.ts	execute_raw	3
 src/core/persistence/legacy-locks.ts	execute_raw	1
 src/core/persistence/legacy-sync-failures.ts	execute_raw	1
@@ -760,7 +754,6 @@ src/core/persistence/purge-slug-stores.ts	execute_raw	4
 src/core/persistence/purged-intent.ts	execute_raw	2
 src/core/persistence/put-page-screen.ts	execute_raw	1
 src/core/persistence/rebuildable-cache.ts	execute_raw	2
-src/core/persistence/receipt-true-up.ts	execute_raw	1
 src/core/persistence/reconcile-audit.ts	execute_raw	2
 src/core/persistence/reconcile-backup.ts	execute_raw	4
 src/core/persistence/reconcile-prepare.ts	execute_raw	1
@@ -845,7 +838,7 @@ src/core/persistence/unindexed-files.ts	execute_raw	8
 src/core/persistence/upload-streamed.ts	execute_raw	1
 src/core/persistence/worktree-refresh.ts	execute_raw	32
 src/core/persistence/write-applied.ts	execute_raw	1
-src/core/persistence/writer-versions.ts	execute_raw	3
+src/core/persistence/writer-versions.ts	execute_raw	1
 src/core/pglite-statements.ts	driver_call	1
 src/core/planner-stats.ts	execute_raw	14
 src/core/post-upgrade-reembed.ts	execute_raw	1
@@ -1016,7 +1009,6 @@ src/core/sql-query.ts	execute_raw	2
 src/core/storage-manifest/adopt.ts	execute_raw	4
 src/core/storage-manifest/find.ts	execute_raw	4
 src/core/storage-manifest/source.ts	execute_raw	4
-src/core/stored-embedding-identity.ts	execute_raw	3
 src/core/sweep.ts	execute_raw	3
 src/core/sync-anchor.ts	execute_raw	5
 src/core/sync-attempt.ts	execute_raw	1

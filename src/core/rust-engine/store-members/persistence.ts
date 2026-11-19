@@ -5,7 +5,8 @@
  * stampWriteClaim, lockWriteRequest, completeWriteRow), the claim upkeep (renewWriteClaim, expireStaleWriteClaims,
  * hasClaimableWrite), the consumer rows (listHostConsumerRows, probeLiveConsumerRows, renewConsumerRow,
  * deleteConsumerRow, stampWorktreeHeartbeats), the admission reads (readSourceMembership, findTopologyChanges), the lifecycle receipts
- * (readTopologyChange, insertTopologyChange) and readLedgerSource.
+ * (readTopologyChange, insertTopologyChange) and readLedgerSource. insertPublicationEffects always refuses: the store
+ * records no effect.
  *
  * Each store call is one store write transaction, so the row locks PGLite takes (FOR SHARE, FOR UPDATE, the counter
  * lock) change nothing here: no other write can run between the read and the write that follows it. The callers that
@@ -15,8 +16,8 @@
  * rust/docs/store/persistence.md.
  */
 import type { LocalWriterInsert, LocalWriterRow } from '../../engine-sql/persistence-state.ts';
-import type { AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OutstandingBySource, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
-import type { ClaimExpiry, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
+import type { AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OutstandingBySource, PublicationEffectsSpec, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
+import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
 import type { LedgerSource } from '../../engine-sql/belief.ts';
 import type { WriteRequest } from '../../persistence/model.ts';
 import { PAGE_BODY_CONFIG_KEYS } from '../../page-body/limits.ts';
@@ -132,9 +133,28 @@ export const stampWriteClaim: StoreMember<[id: string, token: string, leaseMs: n
 export const completeWriteRow: StoreMember<[completion: WriteCompletion], CompletedWriteRow | null> = async (brain, completion) =>
   requestRow<CompletedWriteRow>(await storeCall({ member: 'completeWriteRow' }, () => brain.completeWriteRow(completion)));
 
+/**
+ * Synchronous commit for the current transaction: nothing to set. A store commit makes every write durable before it
+ * returns (gbrain-store kv.rs `commit`), so each commit already waits for the flush.
+ */
+export const requireSynchronousCommit: StoreMember<[], void> = async () => undefined;
+
+/**
+ * Stores a publication's effects (rust/docs/store/persistence.md, "Publication effects"): every kind is stored, a
+ * gated kind is left out while `auto_link` or `mcp.remote_auto_links` is off, and a kind already queued for the
+ * request is kept. Returns the kinds inserted, in queue order.
+ */
+export const insertPublicationEffects: StoreMember<[spec: PublicationEffectsSpec], string[]> = async (brain, spec) =>
+  await storeCall({ member: 'insertPublicationEffects' }, () => brain.insertPublicationEffects(spec)) as string[];
+
 /** Extends a claim's lease; true while request `id` is running under `token`. */
 export const renewWriteClaim: StoreMember<[renewal: ClaimRenewal, opts?: { signal?: AbortSignal }], boolean> = (brain, renewal) =>
   storeCall({ member: 'renewWriteClaim' }, () => brain.renewWriteClaim(renewal));
+
+/** Returns a claim that never began to publish to queued under its token, so the writer retries it. One writer: no direct lane. */
+export const releaseUnpublishedClaim: StoreMember<[release: ClaimRelease, opts?: { direct?: boolean }], void> = async (brain, release) => {
+  await storeCall({ member: 'releaseUnpublishedClaim' }, () => brain.releaseUnpublishedClaim(release));
+};
 
 /** Returns expired claims, and claims of dead owners, to queued (at most 100). Every request here is unbound, so the host check passes. */
 export const expireStaleWriteClaims: StoreMember<[expiry: ClaimExpiry, opts?: { signal?: AbortSignal; direct?: boolean }], void> = async (brain, expiry) => {
@@ -145,6 +165,14 @@ export const expireStaleWriteClaims: StoreMember<[expiry: ClaimExpiry, opts?: { 
 export const hasClaimableWrite: StoreMember<[hostId: string, excludeRoots: string[], opts?: { priority?: boolean | null; signal?: AbortSignal }], boolean> =
   (brain, _hostId, excludeRoots, opts) =>
     storeCall({ member: 'hasClaimableWrite' }, () => brain.hasClaimableWrite({ excludeRoots, priority: opts?.priority ?? null }));
+
+/**
+ * The request a FIFO claim takes next, or null. The host id, nonce, sync-seen map and lease holder select worktree and
+ * managed-sync rows, which this engine never has; one process owns the store, so no row is locked against another.
+ */
+export const selectClaimableWrite: StoreMember<[spec: ClaimHeadSpec], WriteRequest | null> = async (brain, spec) =>
+  requestRow<WriteRequest>(await storeCall({ member: 'selectClaimableWrite' },
+    () => brain.selectClaimableWrite({ excludeRoots: spec.excludeRoots, fifoRoots: spec.fifoRoots, laneRoots: spec.laneRoots, priority: spec.priority })));
 
 // The consumer rows. One process owns this engine's brain, so the store keeps no consumer heartbeat rows and no
 // worktrees: the reads answer none (PGLite's callers answer the same without a read) and the writes change nothing.

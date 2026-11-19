@@ -1,11 +1,13 @@
 //! The held fence cells of a world-only fact read, matched to PGLite (`engine-sql/cli-reads-ops.ts`
-//! `listHeldFenceCells`, `eligibility/fence-overlay.ts` `heldRowSql` with no member page and no
-//! private-facts grant). test/engine-parity/held-fence-cells.test.ts pins the same cells on every arm.
+//! `listHeldFenceCells`, `eligibility/fence-overlay.ts` `heldRowSql`), with no member page, and with a
+//! private-facts grant (`grantSources`). test/engine-parity/held-fence-cells.test.ts pins the same cells on every arm.
 
 mod memory_env;
 
 use gbrain_store::error::INVALID_ARGUMENT;
 use gbrain_store::facts::{ExpireFactArgs, HeldFenceCellsInput, InsertFactsArgs};
+use gbrain_store::pages::{PageInput, PutPageOptions};
+use gbrain_store::trust::proposals::NewProposal;
 use memory_env::{Brain, brain};
 use serde_json::{Value, json};
 
@@ -144,4 +146,101 @@ fn a_nul_or_an_out_of_range_row_number_is_refused() {
             .unwrap_err();
         assert_eq!(err.code, INVALID_ARGUMENT);
     }
+}
+
+fn put(b: &Brain, slug: &str, frontmatter: Value) {
+    let input: PageInput = args(json!({
+        "type": "note", "title": slug, "compiled_truth": "body", "frontmatter": frontmatter
+    }));
+    let opts: PutPageOptions = args(json!({"sourceId": "default"}));
+    b.put_page(slug, &input, &opts).unwrap();
+}
+
+fn granted_cells(b: &Brain, keys: Vec<Value>, sources: &[&str]) -> Vec<(String, i64, String)> {
+    b.list_held_fence_cells(&args::<HeldFenceCellsInput>(
+        json!({ "keys": keys, "grantSources": sources }),
+    ))
+    .unwrap()
+    .iter()
+    .map(|r| {
+        (
+            r["slug"].as_str().unwrap().to_string(),
+            r["row_num"].as_i64().unwrap(),
+            r["claim"].as_str().unwrap().to_string(),
+        )
+    })
+    .collect()
+}
+
+/// `grantedPrivateFactSql` with `heldRowSql`'s visibility-proposal clause: a private fact of a granted source on a
+/// live, open page is admitted, unless a visibility proposal names it and targets a fact the grant does not admit.
+#[test]
+fn a_private_facts_grant_admits_open_page_facts_unless_a_proposal_names_an_unread_copy() {
+    let b = brain("held-cells-grant");
+    put(&b, "notes/open-example", json!({}));
+    put(
+        &b,
+        "notes/closed-example",
+        json!({ "visibility": "private" }),
+    );
+    put(
+        &b,
+        "notes/quarantined-example",
+        json!({ "quarantine": true }),
+    );
+    let out = b
+        .insert_facts(&args::<InsertFactsArgs>(json!({
+            "rows": [
+                fact("notes/open-example", 1, "Ana grows figs", "private"),
+                fact("notes/open-example", 2, "Ana naps daily", "private"),
+                fact("notes/closed-example", 1, "Ana hides gold", "private"),
+                fact("notes/quarantined-example", 1, "Ana sails", "private"),
+                fact("notes/open-example", 3, "Ana knits", "private"),
+            ],
+            "sourceId": "default",
+        })))
+        .unwrap();
+    let id = |i: usize| out["ids"][i].as_i64().unwrap();
+    let keys = || {
+        vec![
+            key("notes/open-example", 1, "Ana grows figs", false),
+            key("notes/open-example", 3, "Ana knits", false),
+            key("notes/closed-example", 1, "Ana hides gold", false),
+            key("notes/quarantined-example", 1, "Ana sails", false),
+        ]
+    };
+    let every = vec![
+        c("notes/open-example", 1, "Ana grows figs"),
+        c("notes/open-example", 3, "Ana knits"),
+        c("notes/closed-example", 1, "Ana hides gold"),
+        c("notes/quarantined-example", 1, "Ana sails"),
+    ];
+    assert_eq!(granted_cells(&b, keys(), &[]), every);
+    assert_eq!(granted_cells(&b, keys(), &["other-source"]), every);
+    assert_eq!(
+        granted_cells(&b, keys(), &["default"]),
+        vec![
+            c("notes/closed-example", 1, "Ana hides gold"),
+            c("notes/quarantined-example", 1, "Ana sails"),
+        ]
+    );
+    // A visibility proposal that names "Ana grows figs" and targets a copy on the private page keeps it held; one that
+    // names "Ana knits" and targets a copy the grant reads does not.
+    for (target, related) in [(id(2), id(0)), (id(1), id(4))] {
+        b.insert_trust_proposal(&args::<NewProposal>(json!({
+            "action": "supersede_fact", "sourceId": "default",
+            "target": { "table": "facts", "id": target },
+            "related": { "table": "facts", "id": related },
+            "before": { "visibility": "private" }, "proposer": "test",
+        })))
+        .unwrap();
+    }
+    assert_eq!(
+        granted_cells(&b, keys(), &["default"]),
+        vec![
+            c("notes/open-example", 1, "Ana grows figs"),
+            c("notes/closed-example", 1, "Ana hides gold"),
+            c("notes/quarantined-example", 1, "Ana sails"),
+        ]
+    );
 }

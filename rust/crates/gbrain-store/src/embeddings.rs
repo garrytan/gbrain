@@ -13,6 +13,7 @@
 //!   vector write or delete, so a reader can tell that its cached vectors are out of date.
 //! - `B 's' <page id>` -> the page's embedding signature (PGLite's `pages.embedding_signature`),
 //!   UTF-8.
+//! - `B 'b' <page id>` -> the page's embedding ledger row (`page_embedding_budget`).
 //! - `B 'k' <take id>` -> the take's `claim_rev` when its vector was written, u64 BE. A take
 //!   vector counts only while this equals the take's current `claim_rev` (PGLite compares
 //!   `embedded_text_hash` with `md5(claim)`); a claim edit makes the vector stale at once.
@@ -225,6 +226,36 @@ pub fn scan_take_vectors(
     failure.map_or(Ok(()), Err)
 }
 
+/// Whether a take holds a vector written for its current claim: PGLite's `takes.embedding IS NOT
+/// NULL`. `addTakesBatch` sets the column to NULL when it changes a claim; the store keeps the old
+/// vector record, so only a vector at the take's claim revision counts (embedding_catalog.rs).
+pub(crate) fn any_take_vector(read: &dyn KvRead) -> Result<bool> {
+    let (mut found, mut failure) = (false, None);
+    scan_prefix(
+        read,
+        &[keys::EMBEDDING_STATE, TAKE_VECTOR],
+        false,
+        &mut |k, _| {
+            let exists = k
+                .get(2..10)
+                .and_then(keys::be8)
+                .ok_or_else(|| corrupt("take vector key"))
+                .and_then(|id| take_vector_is_current(read, id));
+            match exists {
+                Ok(current) => {
+                    found = current;
+                    !found
+                }
+                Err(e) => {
+                    failure = Some(e);
+                    false
+                }
+            }
+        },
+    )?;
+    failure.map_or(Ok(found), Err)
+}
+
 /// Whether the take's stored vector was written for its current claim.
 fn take_vector_is_current(read: &dyn KvRead, take_id: u64) -> Result<bool> {
     let Some(take) = read_take(read, take_id)? else {
@@ -332,6 +363,7 @@ pub(crate) fn remove_chunk_vector(
 /// Deletes this family's records of a page that is deleted for good (`cascade::remove_page_rows`).
 pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()> {
     tx.delete(&signature_key(page.id))?;
+    crate::page_embedding_budget::remove_page_budget(tx, page.id)?;
     let mut prefix = vec![keys::EMBEDDING_STATE, CHUNK_VECTOR];
     prefix.extend_from_slice(&page.id.to_be_bytes());
     let mut doomed = Vec::new();
@@ -492,7 +524,7 @@ fn page_contexts(read: &dyn KvRead) -> Result<Vec<PageCtx>> {
     Ok(out)
 }
 
-fn read_signature(read: &dyn KvRead, page_id: u64) -> Result<Option<String>> {
+pub(crate) fn read_signature(read: &dyn KvRead, page_id: u64) -> Result<Option<String>> {
     read.get(&signature_key(page_id))?
         .map(|bytes| String::from_utf8(bytes).map_err(|_| corrupt("page signature")))
         .transpose()

@@ -3,8 +3,8 @@
  * the origin bind, the ingest stamp, the import seal, the valid-time body read and the segment storage probe.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: readPageOrigin, listOriginClaims, bindPageOrigin, stampPageIngest, sealImportedPage, readLivePageBody
- *    and hasSegmentStorage return the same observable result, and leave the same page columns, on every engine arm
+ *  - Contract: readPageOrigin, listOriginClaims, bindPageOrigin, stampPageIngest, sealImportedPage, readLivePageBody,
+ *    readPageIndexingState and hasSegmentStorage return the same observable result, and leave the same page columns, on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm through test/engine-parity/harness.ts).
  *  - Regression: an engine that answers one of these differently (a tombstone read as absent, a claim from a deleted
  *    page or from the page being written, a bind that overwrites an origin it was told to keep, a seal that moves the
@@ -165,6 +165,28 @@ describe('engine parity: page write guards', () => {
       body: { frontmatter: { valid_from: '2026-01-01' }, compiled_truth: 'An origin example.', timeline: '- 2026-01-02: body', body_storage: 'inline', hashIsPages: true },
       gone: null, otherSource: null,
     });
+    return answers;
+  });
+
+  parityTest('readPageIndexingState reads the chunker version, corpus generation and page kind of a page, tombstones included', {
+    methods: ['putPage', 'getPage', 'softDeletePage', 'readPageIndexingState'],
+  }, async (engine) => {
+    await engine.putPage('notes/index-cr', NOTE, { contextualRetrieval: { mode: 'title', corpusGeneration: 'gen-1' } });
+    await engine.putPage('notes/index-plain', NOTE);
+    await engine.putPage('notes/index-gone', NOTE);
+    const goneId = await idOf(engine, 'notes/index-gone');
+    await engine.softDeletePage('notes/index-gone');
+    const answers = {
+      cr: await engine.readPageIndexingState(await idOf(engine, 'notes/index-cr')),
+      plain: await engine.readPageIndexingState(await idOf(engine, 'notes/index-plain')),
+      gone: await engine.readPageIndexingState(goneId),
+      missing: await engine.readPageIndexingState(987654321),
+    };
+    expect({
+      crGeneration: answers.cr?.corpus_generation, crKind: answers.cr?.page_kind,
+      plainGeneration: answers.plain?.corpus_generation, plainKind: answers.plain?.page_kind,
+      goneKind: answers.gone?.page_kind, missing: answers.missing,
+    }).toEqual({ crGeneration: 'gen-1', crKind: 'markdown', plainGeneration: null, plainKind: 'markdown', goneKind: 'markdown', missing: null });
     return answers;
   });
 

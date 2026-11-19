@@ -21,6 +21,8 @@ Tag `B` (`keys::EMBEDDING_STATE`); ids are u64 BE, chunk indexes u32 BE.
   transaction.
 - `B 's' <page id>` holds the page's embedding signature (`pages.embedding_signature`), UTF-8.
 - `B 'k' <take id>` holds the take's `claim_rev` at the time its vector was written (u64 BE).
+- `B 'b' <page id>` holds the page's embedding ledger row (`page_embedding_budget`), JSON. It goes with the
+  page when the page is deleted for good.
 
 A vector value is: version u8 (1), dims u32 BE, `embedded_at` µs i64 BE, model length u16 BE, the model in
 UTF-8, then dims f32 values, little-endian.
@@ -78,15 +80,68 @@ and otherwise kept. `sealChunks` (replace) writes what it is given.
 | `brain.getTakeEmbeddings(ids)` | `[{ id, embedding }]` for takes with a current vector | `getTakeEmbeddings` |
 | `brain.countStaleTakes(opts)` / `brain.listStaleTakes(opts)` | active takes on live pages with no current vector, or one of another model or width; the list is by id, at most 100000 | `countStaleTakes`, `listStaleTakes` |
 
+## Page embedding ledger
+
+The paid path meters each page's embedding spend on one ledger row (`gbrain_store::page_embedding_budget`;
+the policy is `src/core/page-embedding-budget.ts`, the SQL copy `src/core/engine-sql/page-embedding-budget.ts`).
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.readPageEmbeddingBudget(pageId)` | the hold marker (`transcript_archive.embedding_hold`, else `call_import.embedding_hold`) and the row's state, reason, signature, spent, reserved, cap, unpriced count and reservation window; all null for a missing page | the plan's hold read |
+| `brain.recordPageEmbeddingHold(pageId, reason)` | a held row for a page with no row; a page with a row keeps it | `INSERT ... ON CONFLICT DO NOTHING` |
+| `brain.openPageEmbeddingHold(pageId)` | opens the row; no row is a no-op | the small-page approval |
+| `brain.reservePageEmbedding(pageId, input)` | `held`, `needs_junk` (an open, unapproved page with no junk verdict yet) or a `grant` of the newest chunks that fit the cap | the grant transaction |
+| `brain.settlePageEmbeddingReservation(pageId, settle)` | books the spend and drops the hold, only while the grant's window is still open | `settleLedgerReservation` |
+
+The grant is one store write, so it needs no row lock. A reservation older than an hour counts as spent.
+A new signature starts a new ledger. A window is `reserved_at` in microseconds; a new window is at least one
+millisecond later than the one it replaces. An unlimited cap crosses the addon as `null`.
+
 A take vector counts only while its `B 'k'` row equals the take's `claim_rev`, so a claim edit makes it
 stale at once (PGLite compares `embedded_text_hash` with `md5(claim)`).
 
+## Embedding install
+
+The embedding effect installs a page's vectors through four members (`gbrain_store::embedding_install`;
+the SQL copy is `src/core/engine-sql/embedding-install.ts`, the callers `src/core/persistence/effects.ts`
+and `src/core/page-state/projections.ts`).
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.readEmbeddingCompletion(pageId, { signature, model })` | one row per visible chunk: `{ id, chunk_text, chunk_source, embedding_input_hash, embedded, stamped }`. `embedded` is a vector computed from the current text under `model`; `stamped` is the page's signature equal to `signature` | the completion read |
+| `brain.lockEffectClaimRow(effectId)` | the effect's `{ state, execution_token }`, or null when no effect has the id | `SELECT ... FOR UPDATE` on `persistence_effects` |
+| `lockEmbeddingSwitch()` | nothing: the store write that installs is exclusive, so the switch cannot flip inside it | `SELECT ... FOR SHARE` on the `embedding_disabled` config row |
+| `brain.installChunkEmbeddings(pageId, rows)` | stores each row's vector on the page's chunk with that id while the chunk still holds the row's text; any other row is skipped. A row with no model keeps the chunk's old one | the batch `UPDATE ... FROM jsonb_to_recordset` |
+
+The store has one vector column, `embedding`, and no image vectors. The members refuse another column, an
+image row and a row with no vector, so a vector never lands in the wrong space. The store keeps a sha256
+text hash where PGLite keeps md5; both answer "the text has not changed since the vector was computed".
+
+## Vector catalog
+
+`embedding_catalog.rs` answers what the embedding commands ask Postgres's catalog (TS
+`engine-sql/embedding-catalog.ts`). The store has no column types, so:
+
+| Brain method | Returns | Members |
+|---|---|---|
+| `brain.readChunkVectorColumn({ name })` | `{ exists, dims }` for `embedding`: the width of the first stored chunk vector, else the config `embedding_dimensions`; with neither, or for any other column, `{ exists: false, dims: null }` | `readChunkVectorColumn` |
+| `brain.readEmbeddingIdentity()` | `{ model, dimensions }` with the same width; the model is the first chunk vector's, else the config `embedding_model`; null with no width | `readEmbeddingIdentity` |
+| `brain.hasStoredVectors({ name })` | whether `content_chunks`, `facts` or `takes` holds a vector (a take's only at its current claim revision); `query_cache` is always false | `hasStoredVectors` |
+
+`listEmbeddingStores` is answered in TS (every table of `PRIMARY_EMBEDDING_TABLES`).
+`embedding_image` and `embedding_multimodal` read as absent: the store keeps no such vectors.
+
 ## Known edges
 
-- The page-embedding budget (`budgetLimited`) is not kept: no page leaves the stale queue for it.
+- The stale queue keeps a held or capped page (`budgetLimited` is not kept). The plan then refuses the page
+  from its ledger row, so no money is spent on it, but each embedding run lists it again.
+- `reservePageSpend`'s embedding branch, `listBudgetLimitedPages`, `readPageSizeStates` and
+  `holdPageEmbedding` are still raw SQL, so a Rust brain refuses them (`engine_capability_missing`).
 - PGLite's generation filter (`chunkGenerationFilter`) is read as the chunk view the page shows now
   (`visible_at`).
 - A segmented page counts as having no chunkless content.
 - Segment chunks get no pending stamp.
 - `ops` mode counts `embedded` exactly; `unstamped_created_at_min` is null.
 - `moveDisplacedChunksAndPrune` (PGLite's re-index of displaced chunks) is not done.
+- The install path's zero-norm chunk update (`page-state/projections.ts`) is still raw SQL, so a Rust brain
+  refuses a page with a zero-norm vector (`engine_capability_missing`).
