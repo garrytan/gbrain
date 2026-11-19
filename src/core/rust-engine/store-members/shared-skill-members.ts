@@ -11,9 +11,9 @@
  *
  * The store keeps publication policies (set_skill_policy writes one, with its audit row, in one store write), heads and
  * revisions, so a join binds a source whose policy allows following, and a new batch leases the revisions it names as
- * the Postgres delivery-lease trigger does. A Rust brain cannot activate shared publication (skill bundles stay
- * disabled), so writeSharedSkillRevision refuses as the SQL engines' publication guard refuses on such a brain:
- * `code` 42501, `writer_not_quiesced`. Only fixtures seed heads, through the store directly. The token secret is the
+ * the Postgres delivery-lease trigger does. writeSharedSkillRevision writes a revision and its head only after shared
+ * publication was activated (shared-skills/rust-publication.ts); before that it refuses as the SQL engines'
+ * publication guard does: `code` 42501, `writer_not_quiesced`. The token secret is the
  * one the store seeded at brain creation (minted once for an older brain); the serving epoch is
  * readSharedSkillServingEpoch's (access-grants.ts). The store runs one write transaction at a time, so the FOR UPDATE
  * locks the SQL engines take change nothing here.
@@ -80,9 +80,13 @@ export const writeSharedSkillPolicy: StoreMember<[write: SharedSkillPolicyWrite]
   await call('writeSharedSkillPolicy', () => brain.writeSharedSkillPolicy({ ...write, policy: write.policy ?? null }));
 };
 
-/** Refused: a Rust brain cannot activate shared publication, as the publication guard refuses on a brain without it. */
-export const writeSharedSkillRevision: StoreMember<[write: SharedSkillRevisionWrite], void> = async () => {
-  throw Object.assign(new Error('writer_not_quiesced: shared publication is disabled'), { code: '42501' });
+/** Refused with the publication guard's 42501 until shared publication is activated; then one store write. */
+export const writeSharedSkillRevision: StoreMember<[write: SharedSkillRevisionWrite], void> = async (brain, write) => {
+  const flag = await call('writeSharedSkillRevision', () => brain.readSharedSkillPublication()) as { skill_bundles_enabled: boolean; writer_protocol_floor: number };
+  if (!flag.skill_bundles_enabled || flag.writer_protocol_floor !== 2) {
+    throw Object.assign(new Error('writer_not_quiesced: shared publication is disabled'), { code: '42501' });
+  }
+  await call('writeSharedSkillRevision', () => brain.writeSharedSkillRevision(write));
 };
 
 export const readSharedSkillRevision: StoreMember<[key: SharedSkillRevisionKey], StoredSkillRevision | undefined> = async (brain, key) =>
