@@ -1,6 +1,7 @@
 //! Helpers for the unit tests inside this crate: a store on an in-memory file, so a test can call
 //! the `pub(crate)` helpers and hooks that the integration tests in `tests/` cannot reach.
 
+use crate::env::Env;
 use crate::kv::FileBackend;
 use crate::redb_kv::RedbKv;
 use crate::{OpenOptions, Store, SystemEnv};
@@ -47,4 +48,10 @@ impl FileBackend for MemFile {
 pub(crate) fn store() -> Store {
     let kv = RedbKv::open_backend(Box::<MemFile>::default()).unwrap();
     Store::open_kv(Arc::new(kv), Arc::new(SystemEnv), OpenOptions::default()).unwrap()
+}
+
+/// A fresh brain on an in-memory file whose clock and ids come from `env`.
+pub(crate) fn store_with_env(env: Arc<dyn Env>) -> Store {
+    let kv = RedbKv::open_backend(Box::<MemFile>::default()).unwrap();
+    Store::open_kv(Arc::new(kv), env, OpenOptions::default()).unwrap()
 }

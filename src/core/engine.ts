@@ -12,6 +12,7 @@ import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
 import type { AppliedPolicyRevision, FolderAccessRows, LiveMemberRow, MemberBindingVia } from './engine-sql/access-control.ts';
+import type { DeltaSessionRow, SessionCursorRow, SessionStateWrite } from './engine-sql/session-state.ts';
 import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey, HeldFenceCellRow, RankCoverageRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
 import type * as EmbeddingCatalogSql from './engine-sql/embedding-catalog.ts';
@@ -3434,6 +3435,8 @@ export interface BrainEngine {
   listRestatedPrivateCopies(opts: { sourceId: string; claim: string; entity: string | null; writer: import('./trust/tier.ts').TrustTier }): Promise<Array<{ id: number; visibility: string; trust_tier: string }>>;
   /** How many facts carry taint inputs in their write origin, and how many of those are external_untrusted. */
   countDerivedFactTaint(): Promise<{ derived: number; external: number }>;
+  /** The stored provenance (`facts.source`) of the named facts of one source (ops/facts.ts `withProvenance`). */
+  listFactProvenance(opts: { sourceId: string; ids: readonly number[] }): Promise<Array<{ id: number; source: string }>>;
 
 
   /** True when the source's `config.canonical` is `git` (a git-canonical source); false for anything else, including an unknown id. */
@@ -3741,6 +3744,23 @@ export interface BrainEngine {
    * this engine's executeRaw; a failure throws (access/caller.ts folderAccessForAll counts it as fail closed).
    */
   readFolderAccess(readers: readonly string[]): Promise<FolderAccessRows>;
+
+  // Session state (engine-sql/session-state.ts): the session_context_state statements context/session-state.ts ran
+  // through executeRaw. Keys arrive resolved (client id and session id capped); a failure throws unchanged.
+  /** Inserts or updates one session cursor row in one statement; resolves the row's incomplete-wake counter. */
+  upsertSessionState(sourceId: string, clientId: string, sessionId: string, write: SessionStateWrite): Promise<number>;
+  /** The session cursor row context_pack reads (wake time as microsecond ISO UTC text), or null when there is none. */
+  readSessionCursor(sourceId: string, clientId: string, sessionId: string): Promise<SessionCursorRow | null>;
+  /** delta's session row (both cursors as microsecond ISO UTC text, the counter as a number), or null when there is none. */
+  readDeltaSessionRow(sourceId: string, clientId: string, sessionId: string): Promise<DeltaSessionRow | null>;
+  /** The session's stored checkpoint manifest, or null when the session has no row. */
+  readCheckpointManifestRow(sourceId: string, clientId: string, sessionId: string): Promise<{ checkpoint_manifest: unknown } | null>;
+  /** Replaces the session's checkpoint manifest, creating the row when there is none. */
+  writeCheckpointManifest(sourceId: string, clientId: string, sessionId: string, manifest: readonly unknown[]): Promise<void>;
+  /** Deletes every session row last written more than `olderThanDays` (a whole number >= 1) days ago. */
+  ageOutSessionState(olderThanDays: number): Promise<void>;
+  /** Keeps the newest `maxRowsPerClient` (a whole number >= 1) session rows of each (source_id, client_id). */
+  capSessionStatePerClient(maxRowsPerClient: number): Promise<void>;
 
   // Entity and mention reads (engine-sql/entity-reads.ts): the statements the CLI ran through executeRaw.
   /** The newest mention pass time (ISO, UTC, whole seconds) over every source or one source; null when no pass ran. */

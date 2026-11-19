@@ -24,6 +24,7 @@ import * as ontology from './ontology.ts';
 import * as takes from './takes.ts';
 import * as contradictions from './contradictions.ts';
 import * as dream from './dream.ts';
+import * as sessionState from './session-state.ts';
 import * as evalCapture from './eval-capture.ts';
 import * as codeEdges from './code-edges.ts';
 import * as salience from './salience.ts';
@@ -55,6 +56,7 @@ import * as factsPurge from './facts-purge.ts';
 import * as factsRepair from './facts-repair.ts';
 import * as factsTrust from './facts-trust.ts';
 import * as factsTrustReads from './facts-trust-reads.ts';
+import * as factsProvenance from './facts-provenance.ts';
 import * as trustTierReads from './trust-tier-reads.ts';
 import * as jobs from './jobs.ts';
 import * as housekeeping from './housekeeping.ts';
@@ -102,7 +104,7 @@ export const STORE_MEMBERS = {
   ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages,
   ...cliEntities,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
-  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust, ...factsTrustReads, ...factRelinkAttempts,
+  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust, ...factsTrustReads, ...factsProvenance, ...factRelinkAttempts,
   ...factRelinkWrites,
   // Typed reads of stamped trust tiers (rust/docs/store/trust.md, "Tier reads").
   ...trustTierReads,
@@ -134,6 +136,8 @@ export const STORE_MEMBERS = {
   ...fieldUsage,
   // The access-grant reads and the request-id lookup of the receipt operations (rust/docs/store/persistence.md).
   ...accessGrants,
+  // The session cursor and checkpoint manifest of context_pack and delta (rust/docs/store/session_state.md).
+  ...sessionState,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

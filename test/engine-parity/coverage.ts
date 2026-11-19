@@ -183,7 +183,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
 
   // facts_trust: search relevance and trust reads
   facts_trust: ['listFactsForRelevance', 'countUncomparableFacts', 'matchSavedFacts',
-    'readFactForOwnerAction', 'listStandingPreferences', 'listLexicalContestCandidates', 'listRestatedPrivateCopies', 'countDerivedFactTaint'],
+    'readFactForOwnerAction', 'listStandingPreferences', 'listLexicalContestCandidates', 'listRestatedPrivateCopies', 'countDerivedFactTaint',
+    'listFactProvenance'],
 
   // trust_tier_reads: stamped-tier reads of core memory, the trust scan, belief history, page history and valid time
   trust_tier_reads: ['listCorePageRows', 'listTrustScanRows', 'countUnscannedTrustRows', 'readBeliefHistoryRows', 'listVisibleBeliefLifetimes',
@@ -223,6 +224,16 @@ export const FAMILIES: Record<string, readonly string[]> = {
   ],
   // field_usage: schema detect --fields page samples (engine-sql/field-usage.ts)
   field_usage: ['readFieldUsageSamples'],
+  // session_state: the session cursor, the checkpoint manifest and their garbage collection (engine-sql/session-state.ts)
+  session_state: [
+    'upsertSessionState',
+    'readSessionCursor',
+    'readDeltaSessionRow',
+    'readCheckpointManifestRow',
+    'writeCheckpointManifest',
+    'ageOutSessionState',
+    'capSessionStatePerClient',
+  ],
   // alias_fanout_reads: search's alias fan-out reads (engine-sql/alias-fanout-reads.ts)
   alias_fanout_reads: ['findPagesByTitles', 'resolveCaseSensitiveAliases', 'readPageTitle', 'readPageAliasRows', 'readEntityAliasRows'],
   write_guards: ['readPageOrigin', 'listOriginClaims', 'bindPageOrigin', 'stampPageIngest', 'sealImportedPage', 'readLivePageBody',

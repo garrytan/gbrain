@@ -2456,6 +2456,17 @@
         ],
         "flagOnScopes": []
       },
+      "listFactProvenance#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listFactsByEntity#allFilters": {
         "flagOffLanes": [
           "pool"
@@ -3597,6 +3608,17 @@
         ],
         "flagOnScopes": []
       },
+      "readCheckpointManifestRow#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readCurrentWriteTrust#default": {
         "flagOffLanes": [
           "tx"
@@ -3605,6 +3627,17 @@
         "flagOn": "unscoped",
         "flagOnLanes": [
           "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "readDeltaSessionRow#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
         ],
         "flagOnScopes": []
       },
@@ -4251,6 +4284,17 @@
         "flagOnScopes": []
       },
       "readSegmentedEmbedPage#slug": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readSessionCursor#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -5616,6 +5660,7 @@
         "addWakeCron": "none",
         "admitJob": "none",
         "advanceEffectRow": "none",
+        "ageOutSessionState": "none",
         "aliasCanonicalRefs": "none",
         "aliasFanoutRead": "none",
         "allocateBodyOccurrenceIds": "none",
@@ -5633,6 +5678,7 @@
         "bumpPageRetrievals": "none",
         "cancelJobs": "none",
         "cancelWriteRow": "none",
+        "capSessionStatePerClient": "none",
         "chunkRead": "none",
         "claimHousekeepingTurn": "none",
         "claimNextJob": "none",
@@ -5925,6 +5971,7 @@
         "listExactRescanChunks": "none",
         "listExtractionPendingPages": "none",
         "listExtractorFactsForClassification": "none",
+        "listFactProvenance": "none",
         "listFactRelinkOutcomes": "none",
         "listFactWithdrawalDates": "none",
         "listFactWithdrawalKeys": "none",
@@ -6137,6 +6184,7 @@
         "readCanonicalTwin": "none",
         "readCapacityForecastInputs": "none",
         "readChatUsage": "none",
+        "readCheckpointManifestRow": "none",
         "readChildCompletions": "none",
         "readChunkVectorColumn": "none",
         "readClientBudgetUsd": "none",
@@ -6146,6 +6194,7 @@
         "readCursorEdition": "none",
         "readCycleLocks": "none",
         "readDatabaseClock": "none",
+        "readDeltaSessionRow": "none",
         "readEmbedBackfillBySource": "none",
         "readEmbeddingCompletion": "none",
         "readEmbeddingIdentity": "none",
@@ -6239,6 +6288,7 @@
         "readSegmentDerivations": "none",
         "readSegmentTexts": "none",
         "readSegmentedEmbedPage": "none",
+        "readSessionCursor": "none",
         "readSharedSkillServingEpoch": "none",
         "readSourceChunkerVersion": "none",
         "readSourceIncarnation": "none",
@@ -6412,12 +6462,14 @@
         "upsertOpenLoop": "none",
         "upsertPageWriteGateReceipt": "none",
         "upsertSegmentDerivations": "none",
+        "upsertSessionState": "none",
         "upsertWriteGateHold": "none",
         "upsertWriteGateReceipt": "none",
         "vectorIterativeScanSupported": "none",
         "withReservedConnection": "none",
         "withScopedReadTransaction": "none",
         "wordLexemes": "none",
+        "writeCheckpointManifest": "none",
         "writeContradictionsRun": "none",
         "writeLinkRelationshipState": "none",
         "writeManualLinkTransitions": "none",

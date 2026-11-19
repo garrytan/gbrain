@@ -462,8 +462,22 @@ describe('delta cursor lifecycle', () => {
     // Proxy engine: executeRaw throws ONLY for statements touching
     // session_context_state; everything else hits the real engine (the delta
     // page/fact reads must keep working through the outage).
+    // The session-state statements run inside typed engine members, so those
+    // members fail too.
+    const stateMembers = new Set([
+      'upsertSessionState',
+      'readSessionCursor',
+      'readDeltaSessionRow',
+      'readCheckpointManifestRow',
+      'writeCheckpointManifest',
+      'ageOutSessionState',
+      'capSessionStatePerClient',
+    ]);
     const failing = new Proxy(engine, {
       get(t, k) {
+        if (typeof k === 'string' && stateMembers.has(k)) {
+          return async () => { throw new Error('injected session-state outage'); };
+        }
         if (k === 'executeRaw') {
           return (sql: unknown, params?: unknown[]) => {
             if (typeof sql === 'string' && sql.includes('session_context_state')) {

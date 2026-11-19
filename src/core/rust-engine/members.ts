@@ -437,6 +437,7 @@ export const RUST_ENGINE_MEMBERS = {
   listLexicalContestCandidates: 'facts',
   listRestatedPrivateCopies: 'facts',
   countDerivedFactTaint: 'facts',
+  listFactProvenance: 'facts',
 
   // takes
   addTakesBatch: 'takes',
@@ -507,6 +508,14 @@ export const RUST_ENGINE_MEMBERS = {
   getDreamVerdict: 'dream_verdicts',
   putDreamVerdict: 'dream_verdicts',
   sweepDreamVerdicts: 'dream_verdicts',
+  // session_state (rust/docs/store/session_state.md)
+  upsertSessionState: 'session_state',
+  readSessionCursor: 'session_state',
+  readDeltaSessionRow: 'session_state',
+  readCheckpointManifestRow: 'session_state',
+  writeCheckpointManifest: 'session_state',
+  ageOutSessionState: 'session_state',
+  capSessionStatePerClient: 'session_state',
   // contradictions
   writeContradictionsRun: 'contradictions',
   loadContradictionsTrend: 'contradictions',

@@ -98,6 +98,8 @@ pub const TELEMETRY_CHAT_USAGE: u8 = 0x0B; // chat_usage_log
 pub const DREAM_SYNTHESIS_COMPLETION: u8 = b'f';
 /// Family `entity_identities` (`entity_identities.rs`).
 pub const ENTITY_IDENTITY: u8 = b'i';
+/// Family `session_state` (`session_state.rs`).
+pub const SESSION_STATE: u8 = b'y';
 
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];

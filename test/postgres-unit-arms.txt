@@ -148,6 +148,7 @@ test/engine-parity/entity-identities.test.ts
 test/engine-parity/entity-reads.test.ts
 test/engine-parity/extraction.test.ts
 test/engine-parity/fact-pool-widening.test.ts
+test/engine-parity/fact-provenance.test.ts
 test/engine-parity/fact-purge-ledger.test.ts
 test/engine-parity/fact-relink-attempts.test.ts
 test/engine-parity/fact-relink-writes.test.ts
@@ -201,6 +202,8 @@ test/engine-parity/retrieval-coverage.test.ts
 test/engine-parity/search-reads.test.ts
 test/engine-parity/search.test.ts
 test/engine-parity/segmented-body.test.ts
+test/engine-parity/session-state-cap.test.ts
+test/engine-parity/session-state.test.ts
 test/engine-parity/source-resolver-reads.test.ts
 test/engine-parity/spend-log.test.ts
 test/engine-parity/stats-vectors.test.ts

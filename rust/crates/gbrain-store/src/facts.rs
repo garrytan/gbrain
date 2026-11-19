@@ -44,6 +44,7 @@ mod fence_overlay;
 mod held_cells;
 pub mod loops;
 mod privacy;
+pub mod provenance;
 pub mod purge;
 pub mod purge_ledger;
 pub mod relink;
