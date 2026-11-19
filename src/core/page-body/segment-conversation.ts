@@ -44,8 +44,7 @@ export async function readSegmentedConversationInput(engine: BrainEngine, page: 
   let first = 0;
   let window: ConversationWindow | undefined;
   if (body.bodyBytes > cap) {
-    const forced = new Set((await engine.executeRaw<{ seq: number }>(`SELECT seq FROM page_body_manifest WHERE page_id=$1 AND staging_id IS NULL
-        AND gen_from<=$2 AND (gen_to IS NULL OR gen_to>$2) AND cut_kind='forced'`, [body.pageId, body.generation])).map(row => Number(row.seq)));
+    const forced = new Set(await engine.listForcedCutSeqs(body.pageId, body.generation));
     let bytes = 0;
     first = rows.length;
     for (let i = rows.length - 1; i >= 0; i--) {
@@ -54,8 +53,7 @@ export async function readSegmentedConversationInput(engine: BrainEngine, page: 
       const startsFresh = i === 0 || rows[i - 1]!.region !== rows[i]!.region || !forced.has(rows[i - 1]!.seq);
       if (startsFresh) first = i;
     }
-    const [entry] = first < rows.length ? await engine.executeRaw<{ entry_state: unknown }>(`SELECT entry_state FROM page_body_manifest
-        WHERE page_id=$1 AND seq=$2 AND staging_id IS NULL AND gen_from<=$3 AND (gen_to IS NULL OR gen_to>$3)`, [body.pageId, rows[first]!.seq, body.generation]) : [];
+    const [entry] = first < rows.length ? await engine.readBodyManifestMeta(body.pageId, [rows[first]!.occurrenceId], body.generation) : [];
     const state = readEntryState(typeof entry?.entry_state === 'string' ? JSON.parse(entry.entry_state) : entry?.entry_state);
     window = { totalBytes: body.bodyBytes, fallbackDate: state?.conversation.fallbackDate ?? null };
   }
@@ -89,11 +87,12 @@ type EntryStateConversation = { pattern: string | null; fallbackDate: string | n
  */
 export async function readConversationOccurrences(engine: BrainEngine, pageId: number): Promise<{ body: SegmentedBody; occurrences: ConversationOccurrence[] }> {
   const body = await openSegmentedBody(engine, { pageId });
-  const states = new Map((await engine.executeRaw<{ seq: number; conversation: unknown }>(`SELECT seq, entry_state->'conversation' AS conversation
-      FROM page_body_manifest WHERE page_id=$1 AND staging_id IS NULL AND gen_from<=$2 AND (gen_to IS NULL OR gen_to>$2)`, [body.pageId, body.generation]))
-    .map(row => [Number(row.seq), (typeof row.conversation === 'string' ? JSON.parse(row.conversation) : row.conversation) as EntryStateConversation | null]));
   const rows = [...body.rows.filter(row => row.region === 'truth'), ...body.rows.filter(row => row.region === 'timeline')];
-  return { body, occurrences: rows.map(row => ({ row, conversation: states.get(row.seq) ?? null })) };
+  const states = new Map((await engine.readBodyManifestMeta(body.pageId, rows.map(row => row.occurrenceId), body.generation)).map(row => {
+    const state = (typeof row.entry_state === 'string' ? JSON.parse(row.entry_state) : row.entry_state) as { conversation?: EntryStateConversation | null } | null;
+    return [Number(row.occurrence_id), state?.conversation ?? null] as const;
+  }));
+  return { body, occurrences: rows.map(row => ({ row, conversation: states.get(row.occurrenceId) ?? null })) };
 }
 
 /** Bytes conversation facts read to detect a page's grammar over the whole page (conversation-incremental.ts), apart from segmentedPassWork. */

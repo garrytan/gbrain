@@ -158,15 +158,15 @@ pub struct ManifestRow {
     pub line_start: i64,
     pub line_count: i64,
     pub cut_kind: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::jsonb::de_value")]
     pub entry_state: Value,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::jsonb::de_value")]
     pub protected_regions: Value,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::jsonb::de_value")]
     pub facts_slots: Value,
     pub static_proj_bytes: i64,
     pub static_proj_lines: i64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::jsonb::de_value")]
     pub outline: Value,
     #[serde(default)]
     pub date_min: Option<String>,
@@ -180,27 +180,27 @@ pub struct ManifestRow {
 /// The segmented-body columns of a page. Postgres keeps them on `pages`; the page record does not
 /// hold them, so they live under this family's tag.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct BodyState {
-    body_storage: String,
-    body_generation: i64,
+pub(crate) struct BodyState {
+    pub(crate) body_storage: String,
+    pub(crate) body_generation: i64,
     #[serde(default)]
-    body_bytes: Option<i64>,
+    pub(crate) body_bytes: Option<i64>,
     #[serde(default)]
-    truth_bytes: Option<i64>,
+    pub(crate) truth_bytes: Option<i64>,
     #[serde(default)]
-    body_lines: Option<i64>,
+    pub(crate) body_lines: Option<i64>,
     #[serde(default)]
-    segment_count: Option<i64>,
+    pub(crate) segment_count: Option<i64>,
     #[serde(default)]
-    segmenter_version: Option<i64>,
+    pub(crate) segmenter_version: Option<i64>,
     #[serde(default)]
-    truth_lead: Option<String>,
+    pub(crate) truth_lead: Option<String>,
     #[serde(default)]
-    timeline_lead: Option<String>,
+    pub(crate) timeline_lead: Option<String>,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
+    pub(crate) body_flags: Option<Value>,
     #[serde(default)]
-    body_flags: Option<Value>,
-    #[serde(default)]
-    chunker_version: Option<i64>,
+    pub(crate) chunker_version: Option<i64>,
 }
 
 /// `BodyStagingInput`; dates as ISO strings, `declaredSha256` as hex.
@@ -280,7 +280,9 @@ struct DerivationRecord {
     segment_sha256: String,
     context_hash: String,
     state: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     output: Value,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     receipt: Value,
     created_at_us: i64,
     updated_at_us: i64,
@@ -560,7 +562,7 @@ fn signed(v: i64) -> [u8; 8] {
 }
 
 /// A page id from JavaScript; ids start at 1, so anything else names no page.
-fn page_u64(id: i64) -> Option<u64> {
+pub(crate) fn page_u64(id: i64) -> Option<u64> {
     u64::try_from(id).ok().filter(|v| *v > 0)
 }
 
@@ -666,7 +668,7 @@ fn delete_prefix(tx: &mut dyn KvWrite, prefix: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn read_body_state(read: &dyn KvRead, page_id: u64) -> Result<Option<BodyState>> {
+pub(crate) fn read_body_state(read: &dyn KvRead, page_id: u64) -> Result<Option<BodyState>> {
     get_json(read, &body_key(page_id))
 }
 
@@ -710,7 +712,10 @@ fn is_segmented(state: Option<&BodyState>) -> bool {
     state.is_some_and(|s| s.body_storage == "segmented")
 }
 
-fn manifest_rows(read: &dyn KvRead, page_id: u64) -> Result<Vec<(Vec<u8>, ManifestRow)>> {
+pub(crate) fn manifest_rows(
+    read: &dyn KvRead,
+    page_id: u64,
+) -> Result<Vec<(Vec<u8>, ManifestRow)>> {
     collect(read, &manifest_prefix(page_id))
 }
 
@@ -720,7 +725,7 @@ fn live_published(row: &ManifestRow) -> bool {
 
 /// Rows of generation `g` that are published: Postgres's
 /// `staging_id IS NULL AND gen_from <= g AND (gen_to IS NULL OR gen_to > g)`.
-fn in_generation(row: &ManifestRow, g: i64) -> bool {
+pub(crate) fn in_generation(row: &ManifestRow, g: i64) -> bool {
     row.staging_id.is_none() && row.gen_from <= g && row.gen_to.is_none_or(|to| to > g)
 }
 
@@ -1924,8 +1929,8 @@ impl Store {
                 "segmentSha256": record.segment_sha256,
                 "contextHash": record.context_hash,
                 "state": record.state,
-                "output": record.output,
-                "receipt": record.receipt,
+                "output": crate::jsonb::ordered(&record.output),
+                "receipt": crate::jsonb::ordered(&record.receipt),
                 "createdAt": crate::env::iso(record.created_at_us),
                 "updatedAt": crate::env::iso(record.updated_at_us),
             }));

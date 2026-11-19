@@ -187,7 +187,7 @@ fn jsonb_text(value: &Value) -> String {
         }
         Value::Object(map) => {
             let mut keys: Vec<&String> = map.keys().collect();
-            keys.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
+            keys.sort_by(|a, b| crate::jsonb::key_cmp(a, b));
             let parts: Vec<String> = keys
                 .iter()
                 .map(|k| format!("{}: {}", Value::String((*k).clone()), jsonb_text(&map[*k])))

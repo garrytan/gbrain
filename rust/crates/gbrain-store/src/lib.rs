@@ -19,6 +19,7 @@ pub mod error;
 pub mod fjall_kv;
 pub mod format;
 pub mod journal;
+pub(crate) mod jsonb;
 pub mod keys;
 pub mod kv;
 pub mod links;

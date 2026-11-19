@@ -325,7 +325,7 @@ impl Store {
             .map(|r| {
                 json!({
                     "id": r.id,
-                    "submission_authority": r.submission_authority.as_ref().map(jsonb),
+                    "submission_authority": r.submission_authority.as_ref().map(ordered),
                 })
             })
             .collect())
@@ -335,7 +335,7 @@ impl Store {
     pub fn get_failed_job_for_retry(&self, id: i64) -> Result<Option<Value>> {
         Ok(load(&*self.read()?, id)?
             .filter(|r| r.status == "failed" || r.status == "dead")
-            .map(|r| json!({ "name": r.name, "data": jsonb(&r.data) })))
+            .map(|r| json!({ "name": r.name, "data": ordered(&r.data) })))
     }
 
     /// `countOpenJobsByOwner`: how many `subagent` rows in a non-terminal status carry

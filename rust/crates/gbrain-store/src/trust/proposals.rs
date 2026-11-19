@@ -101,7 +101,9 @@ struct ProposalRecord {
     target_id: i64,
     related_table: Option<String>,
     related_id: Option<i64>,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     before_state: Value,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     after_state: Value,
     proposer: String,
     status: String,
@@ -123,8 +125,8 @@ impl ProposalRecord {
             "target_id": self.target_id,
             "related_table": self.related_table,
             "related_id": self.related_id,
-            "before_state": self.before_state,
-            "after_state": self.after_state,
+            "before_state": crate::jsonb::ordered(&self.before_state),
+            "after_state": crate::jsonb::ordered(&self.after_state),
             "proposer": self.proposer,
             "proposer_principal_kind": Value::Null,
             "proposer_principal_id": Value::Null,

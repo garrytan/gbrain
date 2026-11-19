@@ -110,6 +110,47 @@ pub(super) fn at(read: &dyn KvRead, parts: &[&str]) -> Result<Option<i64>> {
     Ok(get_json::<WithdrawalRecord>(read, &key(parts))?.map(|r| r.withdrawn_at_us))
 }
 
+/// One stored withdrawal of a source (`fact_withdrawals` row).
+pub(crate) struct WithdrawalRow {
+    pub visibility: String,
+    pub subject: String,
+    pub fact_hash: String,
+    pub withdrawn_at_us: i64,
+}
+
+/// Every withdrawal of `source_id`, in key order (visibility, subject, fact_hash).
+pub(crate) fn source_withdrawals(read: &dyn KvRead, source_id: &str) -> Result<Vec<WithdrawalRow>> {
+    let prefix = source_prefix(source_id);
+    let mut rows = Vec::new();
+    let mut failed = None;
+    scan_prefix(read, &prefix, false, &mut |k, v| {
+        let Some((visibility, subject, fact_hash)) = split(k, prefix.len()) else {
+            return true;
+        };
+        match serde_json::from_slice::<WithdrawalRecord>(v) {
+            Ok(r) => {
+                rows.push(WithdrawalRow {
+                    visibility,
+                    subject,
+                    fact_hash,
+                    withdrawn_at_us: r.withdrawn_at_us,
+                });
+                true
+            }
+            Err(e) => {
+                failed = Some(e);
+                false
+            }
+        }
+    })?;
+    match failed {
+        Some(e) => Err(StoreError::invalid(format!(
+            "fact withdrawals: corrupt record: {e}"
+        ))),
+        None => Ok(rows),
+    }
+}
+
 /// `EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = $source AND w.visibility =
 /// $visibility AND w.fact_hash IN (gbrain_fact_fingerprint(claim), gbrain_fact_fingerprint_v1(claim))
 /// AND (w.subject = '*' OR w.subject = entity))`: a NULL entity matches only `*`.

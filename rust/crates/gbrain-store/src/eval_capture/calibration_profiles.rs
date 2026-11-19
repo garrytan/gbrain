@@ -74,6 +74,7 @@ pub(crate) struct ProfileRecord {
     pub accuracy: Option<f32>,
     pub partial_rate: Option<f32>,
     pub grade_completion: f32,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     pub domain_scorecards: Value,
     pub pattern_statements: Vec<String>,
     pub voice_gate_passed: bool,

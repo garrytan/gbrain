@@ -92,6 +92,7 @@ import * as decideStore from './decide-store.ts';
 import * as writeContext from './write-context.ts';
 // The store creates its tables when it opens; initSchema seeds the embedding config rows PGLite's schema text seeds.
 import { initSchema } from './init-schema.ts';
+import * as cliReadsExport from './cli-reads-export.ts';
 
 export const STORE_MEMBERS = {
   initSchema,
@@ -108,6 +109,8 @@ export const STORE_MEMBERS = {
   ...cliSources,
   // Typed reads that CLI paths ran through executeRaw (docs/research/rust-cli-executeraw-map.md).
   ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages,
+  // The reads gbrain export makes (rust/docs/store/cli-reads-export.md).
+  ...cliReadsExport,
   ...cliEntities,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
   ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust, ...factsTrustReads, ...factRelinkAttempts,

@@ -1,3 +1,4 @@
+import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead, BodyManifestRow, BodyManifestMeta, BodyManifestOutline } from './engine-sql/export-reads.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as DecideStoreSql from './engine-sql/decide-store.ts';
 import type * as TrustWithdrawalsSql from './engine-sql/trust-withdrawals.ts';
@@ -3341,6 +3342,32 @@ export interface BrainEngine {
   scanExactBatch(opts: ExactScanOpts, afterPageId: number, batchPages: number, timeoutMs: number): Promise<ExactBatchRow[] | null>;
   /** The first live page after `afterPageId` in id order, in any source, or null. */
   nextLivePageAfter(afterPageId: number): Promise<{ id: number; slug: string; source_id: string } | null>;
+  /** gbrain export: the next 256 live page keys after page id `q.afterId`, in id order, within the filters (engine-sql/export-reads.ts). */
+  listExportPageKeys(q: ExportPageKeyQuery): Promise<ExportPageKey[]>;
+  /** gbrain export: the size in bytes of the source's withdrawal ledger, which the export caps (engine-sql/export-reads.ts). */
+  readExportWithdrawalLedgerBytes(sourceId: string): Promise<number>;
+  /** gbrain export: the source's withdrawals and purge tombstones, by visibility, fact hash and subject (engine-sql/export-reads.ts). */
+  listExportWithdrawals(sourceId: string): Promise<ExportWithdrawalRow[]>;
+  /** gbrain export: the live pages among `ids` with their tags in tag order, in no set order (engine-sql/export-reads.ts). */
+  readExportPageRows(ids: readonly string[]): Promise<ExportPageRow[]>;
+  /** gbrain export: each body and timeline lower-cased with whitespace runs made one space, line by line (engine-sql/export-reads.ts). */
+  normalizeFenceLines(bodies: readonly string[], timelines: readonly string[]): Promise<NormalizedFenceLines[]>;
+  /** A segmented body read: page `pageId`'s body columns and revision, deleted or not, or undefined (engine-sql/export-reads.ts). */
+  readSegmentedPageHead(pageId: number): Promise<SegmentedPageHead | undefined>;
+  /** A segmented body read: a generation's published manifest rows in seq order, `generation` null for the live one (engine-sql/export-reads.ts). */
+  readBodyManifestRows(pageId: number, generation: number | null): Promise<BodyManifestRow[]>;
+  /** A segmented body read: the entry state and protected regions of the named occurrences in one published generation (engine-sql/export-reads.ts). */
+  readBodyManifestMeta(pageId: number, occurrenceIds: readonly number[], generation: number): Promise<BodyManifestMeta[]>;
+  /** A segmented outline read: the facts slots and stored outline of the named occurrences in one published generation (engine-sql/export-reads.ts). */
+  readBodyManifestOutline(pageId: number, occurrenceIds: readonly number[], generation: number): Promise<BodyManifestOutline[]>;
+  /** A segmented body read: the seqs of one published generation's rows that end at a forced cut, in seq order (engine-sql/export-reads.ts). */
+  listForcedCutSeqs(pageId: number, generation: number): Promise<number[]>;
+  /** A segmented body read: the seq of one published generation's row holding stored byte `byteOffset` (the last row starting at or before it), or null (engine-sql/export-reads.ts). */
+  readManifestSeqAt(pageId: number, generation: number, byteOffset: number): Promise<number | null>;
+  /** A segmented body read: body_bytes of the newest segmented version that references `generation` and records a size, or null (engine-sql/export-reads.ts). */
+  readSegmentedVersionBodyBytes(pageId: number, generation: number): Promise<number | null>;
+  /** gbrain export: the sources with an access policy, in id order, whose folder rulebooks an export carries (engine-sql/export-reads.ts). */
+  listAccessPolicySourceIds(): Promise<string[]>;
   /** whois candidates by title, slug basename, alias and email (engine-sql/exact-identity.ts), at most `opts.limit`. */
   listExactIdentityCandidates(opts: ExactIdentityStatementOpts): Promise<ExactIdentityRow[]>;
   /** rank_entities rows (engine-sql/graph-rank.ts); Postgres bounds the statement by `timeoutMs`, and a timeout throws the statement-timeout error. */
@@ -3736,6 +3763,11 @@ export interface BrainEngine {
   applyTransactionSettings(names: readonly string[], values: readonly string[]): Promise<void>;
   /** Starts the current transaction as one snapshot (`REPEATABLE READ`, and `READ ONLY` with `readOnly`); call it first. */
   beginSnapshotRead(opts?: { readOnly?: boolean }): Promise<void>;
+  /**
+   * Bounds every later statement of the current transaction to `ms` milliseconds (`SET LOCAL statement_timeout`).
+   * `ms` is a non-negative integer. On the Rust engine it does nothing: the store has no statement timeout.
+   */
+  setLocalStatementTimeout(ms: number): Promise<void>;
 
   /**
    * The writer's trust declaration in force on this transaction: the raw `gbrain.write_trust_tier` and

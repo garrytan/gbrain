@@ -30,10 +30,12 @@ struct TopologyChangeRecord {
     source_incarnation: Option<String>,
     worktree_ids: Vec<String>,
     state: String,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     recovery: Option<Value>,
     recovery_bytes: i64,
     intent_bytes: i64,
     terminal_bytes: i64,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     outcome: Option<Value>,
     created_at_us: i64,
     updated_at_us: i64,
@@ -91,11 +93,11 @@ fn to_row(r: &TopologyChangeRecord) -> Value {
         "source_incarnation": r.source_incarnation,
         "worktree_ids": r.worktree_ids,
         "state": r.state,
-        "recovery": r.recovery,
+        "recovery": r.recovery.clone().map(crate::jsonb::order),
         "recovery_bytes": r.recovery_bytes,
         "intent_bytes": r.intent_bytes,
         "terminal_bytes": r.terminal_bytes,
-        "outcome": r.outcome,
+        "outcome": r.outcome.clone().map(crate::jsonb::order),
         "created_at": iso(r.created_at_us),
         "updated_at": iso(r.updated_at_us),
     })

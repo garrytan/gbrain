@@ -136,6 +136,7 @@ pub(crate) struct PageRecord {
     pub title: String,
     pub compiled_truth: PageText,
     pub timeline: PageText,
+    #[serde(deserialize_with = "crate::jsonb::de_map")]
     pub frontmatter: Map<String, Value>,
     #[serde(default)]
     pub content_hash: Option<String>,
@@ -176,7 +177,11 @@ pub(crate) struct PageRecord {
     pub trust_tier: Option<String>,
     /// The write origin JSON of the write that stamped the tier (`pages.write_origin`). `None` is
     /// NULL. [`write_page`] sets it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::jsonb::de_opt_value"
+    )]
     pub write_origin: Option<Value>,
     /// When the page last lost version history (`pages.version_history_gap_at`): a version prune
     /// (`version_prune`) or `createVersion` with `historyGap`. `None` is NULL. Not part of `to_page`.
@@ -200,7 +205,7 @@ impl PageRecord {
             "title": self.title,
             "compiled_truth": self.compiled_truth,
             "timeline": self.timeline,
-            "frontmatter": self.frontmatter,
+            "frontmatter": crate::jsonb::order_map(self.frontmatter.clone()),
             "content_hash": self.content_hash,
             "source_path": self.source_path,
             "knowledge_revision": self.knowledge_revision,
@@ -411,6 +416,7 @@ pub(crate) struct VersionRecord {
     #[serde(rename = "type")]
     pub page_type: String,
     pub tags: Vec<String>,
+    #[serde(deserialize_with = "crate::jsonb::de_map")]
     pub frontmatter: Map<String, Value>,
     pub source_path: Option<String>,
     #[serde(default)]
@@ -432,7 +438,11 @@ pub(crate) struct VersionRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trust_tier: Option<String>,
     /// The page's write origin when the snapshot was taken.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::jsonb::de_opt_value"
+    )]
     pub write_origin: Option<Value>,
     /// The reason given for the write that replaced the snapshot (`page_versions.change_reason`),
     /// set by `stamp_version_change_reason`; none when no reason was given.
@@ -451,7 +461,7 @@ impl VersionRecord {
         let mut v = self.to_json(true);
         v["trust_tier"] =
             json!(crate::trust::TrustTier::stored(self.trust_tier.as_deref()).as_str());
-        v["write_origin"] = json!(self.write_origin);
+        v["write_origin"] = json!(self.write_origin.clone().map(crate::jsonb::order));
         v["change_reason"] = json!(self.change_reason);
         v
     }
@@ -463,7 +473,7 @@ impl VersionRecord {
             "title": self.title,
             "type": self.page_type,
             "tags": self.tags,
-            "frontmatter": self.frontmatter,
+            "frontmatter": crate::jsonb::order_map(self.frontmatter.clone()),
             "source_path": self.source_path,
             "content_hash": self.content_hash,
             "knowledge_revision": self.knowledge_revision,
@@ -2025,6 +2035,33 @@ pub(crate) fn version_generations(read: &dyn KvRead, page_id: u64) -> Result<Vec
         failure.is_none()
     })?;
     failure.map_or(Ok(out), Err)
+}
+
+/// The `body_bytes` of the newest segmented snapshot of page `page_id` that references body
+/// generation `generation` and records a size (`page_versions ... ORDER BY id DESC LIMIT 1`).
+pub(crate) fn segmented_version_body_bytes(
+    read: &dyn KvRead,
+    page_id: u64,
+    generation: i64,
+) -> Result<Option<i64>> {
+    let mut best: Option<(u64, i64)> = None;
+    let mut failure = None;
+    scan_prefix(read, &keys::version_prefix(page_id), false, &mut |_, v| {
+        match serde_json::from_slice::<VersionRecord>(v) {
+            Ok(row) => {
+                if row.body_storage.as_deref() == Some("segmented")
+                    && row.body_generation == Some(generation)
+                    && let Some(bytes) = row.body_bytes
+                    && best.is_none_or(|(id, _)| row.id > id)
+                {
+                    best = Some((row.id, bytes));
+                }
+            }
+            Err(e) => failure = Some(StoreError::from(e)),
+        }
+        failure.is_none()
+    })?;
+    failure.map_or(Ok(best.map(|(_, bytes)| bytes)), Err)
 }
 
 /// Saves a version snapshot of `page` (PGLite's `createPageVersion` insert), then prunes the page's

@@ -115,7 +115,12 @@ fn a_put_page_reads_back_with_the_page_shape() {
         .unwrap()
         .keys()
         .collect();
-    assert_eq!(keys, ["zebra", "alpha"], "frontmatter keeps its key order");
+    // jsonb keeps no insertion order: Postgres gives keys shorter first, then by bytes.
+    assert_eq!(
+        keys,
+        ["alpha", "zebra"],
+        "frontmatter reads in Postgres jsonb key order"
+    );
     // An upper-case read finds the page too.
     assert!(
         store

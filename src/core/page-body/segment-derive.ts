@@ -87,22 +87,19 @@ async function ledgerKey(engine: BrainEngine, page: SegmentedDerivationPage): Pr
 
 /** The live runs of a segmented page from its manifest rows (no segment text), or null when it is not segmented. */
 export async function derivationScope(engine: BrainEngine, page: SegmentedDerivationPage): Promise<DerivationScope | null> {
-  const [state] = await engine.executeRaw<{ body_storage: string; body_generation: string; segmenter_version: number | null }>(
-    'SELECT body_storage, body_generation::text AS body_generation, segmenter_version FROM pages WHERE id=$1', [page.id]);
+  const state = await engine.readSegmentedPageHead(page.id);
   if (state?.body_storage !== 'segmented') return null;
   const generation = Number(state.body_generation);
-  const rows = await engine.executeRaw<{ seq: number; occurrence_id: string; region: BodyRegion; sha256: unknown; entry_state: unknown; cut_kind: string; byte_len: number }>(
-    `SELECT seq, occurrence_id::text AS occurrence_id, region, sha256, entry_state, cut_kind, byte_len FROM page_body_manifest
-      WHERE page_id=$1 AND staging_id IS NULL AND gen_from<=$2 AND (gen_to IS NULL OR gen_to>$2) ORDER BY seq`, [page.id, generation]);
+  const rows = await engine.readManifest(page.id, { generation });
   const runs: DeriveRun[] = [];
   for (const region of ['truth', 'timeline'] as const) {
     const own = rows.filter(row => row.region === region);
     for (let i = 0; i < own.length;) {
       let j = i;
-      while (j + 1 < own.length && own[j]!.cut_kind === 'forced') j++;
+      while (j + 1 < own.length && own[j]!.cutKind === 'forced') j++;
       const members = own.slice(i, j + 1);
-      runs.push({ index: runs.length, region, first: i === 0, seqs: members.map(row => Number(row.seq)), occurrences: members.map(row => Number(row.occurrence_id)),
-        shas: members.map(row => bytesOf(row.sha256)), entryStates: members.map(row => toJson(row.entry_state)), bytes: members.reduce((n, row) => n + Number(row.byte_len), 0) });
+      runs.push({ index: runs.length, region, first: i === 0, seqs: members.map(row => Number(row.seq)), occurrences: members.map(row => Number(row.occurrenceId)),
+        shas: members.map(row => bytesOf(row.sha256)), entryStates: members.map(row => toJson(row.entryState)), bytes: members.reduce((n, row) => n + Number(row.byteLen), 0) });
       i = j + 1;
     }
   }
@@ -181,8 +178,7 @@ export async function readRuns(engine: BrainEngine, scope: DerivationScope, want
 
 /** The page still has the scope's generation and ledger. */
 export async function assertScopeCurrent(engine: BrainEngine, scope: DerivationScope): Promise<void> {
-  const [state] = await engine.executeRaw<{ body_generation: string; body_storage: string }>(
-    'SELECT body_generation::text AS body_generation, body_storage FROM pages WHERE id=$1', [scope.pageId]);
+  const state = await engine.readSegmentedPageHead(scope.pageId);
   if (state?.body_storage !== 'segmented' || Number(state.body_generation) !== scope.generation
     || await ledgerKey(engine, { id: scope.pageId, slug: scope.slug, source_id: scope.sourceId }) !== scope.ledgerKey) throw new SegmentDerivationRaced(scope.slug);
 }

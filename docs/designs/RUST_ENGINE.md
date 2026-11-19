@@ -726,7 +726,7 @@ Review findings on the Rust store that block selecting `rust` as an engine, but 
 
 | # | Code | Class | State |
 |---|---|---|---|
-| 7 | Downgrade path for a format-2 or format-3 store (`rust/docs/store/format.md`, "Older builds") | Recovery: a way back before selection | Open. An older build refuses a newer store with `format_unknown` and changes no record, so nothing is lost, but it cannot open the brain. Today a user has no export to go back with: `gbrain export` on a Rust brain refuses with `engine_capability_missing` (it needs `executeRaw`), so the only way back is `gbrain import` of the original Markdown into a brain the older build opens, which loses every page and change that exists only in the Rust brain. |
+| 7 | Downgrade path for a format-2 or format-3 store (`rust/docs/store/format.md`, "Older builds") | Recovery: a way back before selection | Export path built; selection review open. An older build refuses a newer store with `format_unknown` and changes no record, so nothing is lost, but it cannot open the brain. The way back is `gbrain export --dir <dir>` on the Rust brain, then `gbrain import <dir>` into a brain the older build opens. Export reads through typed engine members on every engine and writes the same file tree, byte for byte, as PGLite for the same pages, including private pages, withdrawn facts, raw-data sidecars and segmented pages (`test/rust-export.serial.test.ts`). An import at 4fe3c2e075 reads those pages back the same as from a PGLite export; it does not read the `.raw/` sidecars back from either. Still open: `export --source` and `--restore-only` refuse on Rust (coverage and folder-rule reads), and a Rust store keeps no folder rules or purge records to export. |
 
 ## Open questions
 

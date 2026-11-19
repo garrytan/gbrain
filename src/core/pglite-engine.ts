@@ -192,6 +192,7 @@ import type { ProjectionScanCursor } from './page-state/projection-window.ts';
 import type { TrustTable } from './trust/schema.ts';
 import * as trustProposalsImpl from './engine-sql/trust-proposals.ts';
 import * as cliReadsOpsImpl from './engine-sql/cli-reads-ops.ts';
+import * as exportReadsImpl from './engine-sql/export-reads.ts';
 import * as factsDoctorImpl from './engine-sql/facts-doctor.ts';
 import * as embeddingCatalogImpl from './engine-sql/embedding-catalog.ts';
 import * as factRelinkImpl from './engine-sql/fact-relink-attempts.ts';
@@ -1540,6 +1541,19 @@ export class PGLiteEngine implements BrainEngine {
   private get rawRead(): cliReadsOpsImpl.EngineRawRead { return (sql, params) => this.executeRaw(sql, params); }
   scanExactBatch(opts: ExactScanOpts, afterPageId: number, batchPages: number, timeoutMs: number) { return cliReadsOpsImpl.scanExactBatch(this.rawRead, opts, afterPageId, batchPages, timeoutMs); }
   nextLivePageAfter(afterPageId: number) { return cliReadsOpsImpl.nextLivePageAfter(this.rawRead, afterPageId); }
+  listExportPageKeys(q: exportReadsImpl.ExportPageKeyQuery) { return exportReadsImpl.listExportPageKeys(this, q); }
+  readExportWithdrawalLedgerBytes(sourceId: string) { return exportReadsImpl.readExportWithdrawalLedgerBytes(this, sourceId); }
+  listExportWithdrawals(sourceId: string) { return exportReadsImpl.listExportWithdrawals(this, sourceId); }
+  readExportPageRows(ids: readonly string[]) { return exportReadsImpl.readExportPageRows(this, ids); }
+  normalizeFenceLines(bodies: readonly string[], timelines: readonly string[]) { return exportReadsImpl.normalizeFenceLines(this, bodies, timelines); }
+  readSegmentedPageHead(pageId: number) { return exportReadsImpl.readSegmentedPageHead(this, pageId); }
+  readBodyManifestRows(pageId: number, generation: number | null) { return exportReadsImpl.readBodyManifestRows(this, pageId, generation); }
+  readBodyManifestMeta(pageId: number, occurrenceIds: readonly number[], generation: number) { return exportReadsImpl.readBodyManifestMeta(this, pageId, occurrenceIds, generation); }
+  readBodyManifestOutline(pageId: number, occurrenceIds: readonly number[], generation: number) { return exportReadsImpl.readBodyManifestOutline(this, pageId, occurrenceIds, generation); }
+  listForcedCutSeqs(pageId: number, generation: number) { return exportReadsImpl.listForcedCutSeqs(this, pageId, generation); }
+  readManifestSeqAt(pageId: number, generation: number, byteOffset: number) { return exportReadsImpl.readManifestSeqAt(this, pageId, generation, byteOffset); }
+  readSegmentedVersionBodyBytes(pageId: number, generation: number) { return exportReadsImpl.readSegmentedVersionBodyBytes(this, pageId, generation); }
+  listAccessPolicySourceIds() { return exportReadsImpl.listAccessPolicySourceIds(this); }
   listExactIdentityCandidates(opts: ExactIdentityStatementOpts) { return cliReadsOpsImpl.listExactIdentityCandidates(this.rawRead, opts); }
   rankEntities(opts: RankEntitiesStatementOpts, timeoutMs: number) { return cliReadsOpsImpl.rankEntities(this.rawRead, opts, timeoutMs); }
   readRankCoverage(opts: RankCoverageStatementOpts, timeoutMs: number) { return cliReadsOpsImpl.readRankCoverage(this.rawRead, opts, timeoutMs); }
@@ -1725,6 +1739,7 @@ export class PGLiteEngine implements BrainEngine {
   recentWriterVersions(days: number) { return writerVersionsImpl.recentWriterVersions(unscopedExecutor(this.engineSql, 'writer versions: window read ran unscoped through executeRaw'), days); }
   applyTransactionSettings(names: readonly string[], values: readonly string[]) { return transactionSettingsImpl.applyTransactionSettings(this.engineSql, names, values); }
   beginSnapshotRead(opts?: { readOnly?: boolean }) { return transactionSettingsImpl.beginSnapshotRead(this, opts); }
+  setLocalStatementTimeout(ms: number) { return transactionSettingsImpl.setLocalStatementTimeout(this, ms); }
   hasPersistenceTable(table: connectGateImpl.PersistenceTable) { return connectGateImpl.hasPersistenceTable(unscopedExecutor(this.engineSql, 'connect gate: persistence read ran unscoped through executeRaw'), table); }
   listManagedRootBindings(hostId: string, opts?: { signal?: AbortSignal }) { return connectGateImpl.listManagedRootBindings(unscopedExecutor(this.engineSql, 'connect gate: persistence read ran unscoped through executeRaw'), hostId, opts); }
   readGraduationGateRow(opts?: { withRunSetting?: boolean }) { return connectGateImpl.readGraduationGateRow(unscopedExecutor(this.engineSql, 'connect gate: persistence read ran unscoped through executeRaw'), opts); }

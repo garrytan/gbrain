@@ -34,7 +34,6 @@
 //! no worktree binding exists here), so the worktree terms of the claim statements are answered
 //! as Postgres answers them for a null worktree.
 
-use crate::cli_reads::pg_text::jsonb_value;
 use crate::config::read_config;
 use crate::env::{Env, is_uuid, iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
@@ -127,7 +126,10 @@ pub(crate) fn fill_request_columns(row: &mut Map<String, Value>, extra: &Map<Str
         "transient_interruptions",
     ];
     let mut put = |column: &str, default: Value| {
-        row.insert(column.into(), extra.get(column).cloned().unwrap_or(default));
+        // The jsonb columns (recovery, error_detail, claim_phase) read in jsonb key order; ordering
+        // a scalar changes nothing.
+        let value = extra.get(column).cloned().map(crate::jsonb::order);
+        row.insert(column.into(), value.unwrap_or(default));
     };
     for column in NULLS {
         put(column, Value::Null);
@@ -816,7 +818,7 @@ pub(crate) fn complete_write_row_in(
     let committed = c.state == "committed";
     record.state = c.state.clone();
     // Stored as `jsonb` stores it: keys shorter first, then by bytes, at every depth.
-    record.outcome = (!c.outcome.is_null()).then(|| jsonb_value(&c.outcome));
+    record.outcome = (!c.outcome.is_null()).then(|| crate::jsonb::ordered(&c.outcome));
     record.error_code = c.error_code.clone();
     record.error_message = c.error_message.clone();
     record.blocked_reason = None;
@@ -824,7 +826,7 @@ pub(crate) fn complete_write_row_in(
     record.updated_at_us = now;
     let extra = &mut record.extra;
     if !c.error_detail.is_null() {
-        extra.insert("error_detail".into(), jsonb_value(&c.error_detail));
+        extra.insert("error_detail".into(), crate::jsonb::ordered(&c.error_detail));
     }
     extra.insert("claim_expires_at".into(), Value::Null);
     if committed {

@@ -76,7 +76,7 @@ async function changedUnits(engine: BrainEngine, sourceId: string, rows: readonl
     }
     const overBound = extents.find(e => e.end - e.start > FENCE_MAX_BYTES);
     if (overBound || (extents[0] && extents[0].start < spanStart)) {
-      const [page] = await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE id=$1', [span[0]!.pageId]);
+      const page = await engine.readSegmentedPageHead(span[0]!.pageId);
       if (overBound) throw fenceTooLargeError(page?.slug ?? String(span[0]!.pageId), sourceId, overBound.end - overBound.start);
       throw pageBodySegmentedError({ slug: page?.slug, source_id: sourceId }, 'fence rewrite of a fence whose opener lies before the segments joined for it');
     }

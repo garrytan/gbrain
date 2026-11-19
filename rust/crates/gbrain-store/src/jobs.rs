@@ -101,9 +101,9 @@ pub use wake::{
     CronRunInput, EndSpec, ForgetClaimSpec, ForgetSettle, WatchFilter, WatchInsert, WatchSettle,
 };
 
-use crate::dream::jsonb;
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
+use crate::jsonb::ordered;
 use crate::keys;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::timeline_queries::jsonb_field_text;
@@ -272,8 +272,10 @@ pub struct JobRecord {
     pub queue: String,
     pub status: String,
     pub priority: i32,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub submission_authority: Option<Value>,
     pub claim_generation: i64,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     pub data: Value,
     pub max_attempts: i32,
     pub attempts_made: i32,
@@ -291,9 +293,12 @@ pub struct JobRecord {
     pub tokens_input: i32,
     pub tokens_output: i32,
     pub tokens_cache_read: i32,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub result: Option<Value>,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub progress: Option<Value>,
     pub error_text: Option<String>,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub stacktrace: Option<Value>,
     pub depth: i32,
     pub max_children: Option<i32>,
@@ -310,11 +315,13 @@ pub struct JobRecord {
     pub started_at: Option<i64>,
     pub finished_at: Option<i64>,
     pub updated_at: i64,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub quiet_hours: Option<Value>,
     pub stagger_key: Option<String>,
     pub budget_remaining_cents: Option<i32>,
     pub budget_owner_job_id: Option<i64>,
     pub budget_root_owner_id: Option<i64>,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub spend_authorization: Option<Value>,
     pub spend_claim_token: Option<i64>,
 }
@@ -325,7 +332,7 @@ impl JobRecord {
     /// `jsonb` key order.
     pub fn to_json(&self) -> Value {
         let t = |v: Option<i64>| v.map(iso);
-        let j = |v: &Option<Value>| v.as_ref().map(jsonb);
+        let j = |v: &Option<Value>| v.as_ref().map(ordered);
         // `real` prints its shortest float4 form; read back as a double that is the same text.
         let jitter: f64 = format!("{}", self.backoff_jitter).parse().unwrap_or(0.0);
         let mut m = Map::new();
@@ -339,7 +346,7 @@ impl JobRecord {
         put("priority", json!(self.priority));
         put("submission_authority", json!(j(&self.submission_authority)));
         put("claim_generation", json!(self.claim_generation));
-        put("data", jsonb(&self.data));
+        put("data", ordered(&self.data));
         put("max_attempts", json!(self.max_attempts));
         put("attempts_made", json!(self.attempts_made));
         put("attempts_started", json!(self.attempts_started));
@@ -432,6 +439,7 @@ struct InboxRecord {
     id: i64,
     job_id: i64,
     sender: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     payload: Value,
     sent_at: i64,
     read_at: Option<i64>,
@@ -1702,7 +1710,7 @@ fn legacy_spend_record(row: &JobRecord, spend: &LegacySpend, now: i64) -> Value 
     let at = iso(millis);
     // `YYYY-MM-DDTHH24:MI:SS.MSZ`: millisecond precision.
     let at = format!("{}Z", &at[..23]);
-    jsonb(&json!({
+    ordered(&json!({
         "version": 1,
         "kind": "legacy_default",
         "group_id": spend.group_id,

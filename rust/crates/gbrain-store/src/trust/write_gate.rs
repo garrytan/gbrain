@@ -155,7 +155,9 @@ struct HoldRecord {
     reason_families: Vec<String>,
     reasons: Vec<String>,
     detector_error: bool,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     payload: Value,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     write_origin: Option<Value>,
     request_id: Option<String>,
     status: String,
@@ -178,8 +180,8 @@ impl HoldRecord {
             "detector_error": self.detector_error,
             "reason_families": self.reason_families,
             "reasons": self.reasons,
-            "payload": self.payload,
-            "write_origin": self.write_origin,
+            "payload": crate::jsonb::order(self.payload.clone()),
+            "write_origin": self.write_origin.clone().map(crate::jsonb::order),
             "request_id": self.request_id,
             "status": self.status,
             "seen_count": self.seen_count,

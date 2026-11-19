@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 857/857
+# covered: 871/871
 # lifecycle: 9/9
 # pages: 44/44
 # search: 7/7
@@ -39,6 +39,7 @@
 # minion_queue: 86/86
 # minion_status: 11/11
 # minion_subagent: 17/17
+# cli_reads_export: 14/14
 # cli_reads_ops: 12/12
 # facts_doctor: 11/11
 # embedding_catalog: 5/5
@@ -83,21 +84,21 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	99	no	yes	yes	serves
+transaction	lifecycle	yes	107	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	118	yes	yes	yes	serves
+getPage	pages	yes	121	yes	yes	yes	serves
 readPageSnapshot	pages	yes	30	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	508	yes	yes	yes	serves
+putPage	pages	yes	512	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	21	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	142	yes	yes	yes	serves
+softDeletePage	pages	yes	145	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -258,7 +259,7 @@ getPageTimestamps	links	yes	1	no	yes	yes	serves
 getEffectiveDates	links	yes	10	no	yes	yes	serves
 getSalienceScores	links	yes	12	yes	yes	yes	serves
 findOrphanPages	links	yes	8	yes	yes	yes	serves
-addTag	tags	yes	15	yes	yes	yes	serves
+addTag	tags	yes	17	yes	yes	yes	serves
 removeTag	tags	yes	2	no	yes	yes	serves
 pruneFrontmatterTags	tags	yes	2	no	yes	yes	serves
 addPageTagsById	tags	yes	1	no	yes	yes	serves
@@ -286,7 +287,7 @@ mergeOntologyFact	ontology	yes	10	no	yes	yes	serves
 getOntology	ontology	yes	5	no	yes	yes	serves
 discoverOntologyDimensions	ontology	yes	1	no	yes	yes	serves
 findOntologyConflicts	ontology	yes	4	no	yes	yes	serves
-putRawData	raw_files	yes	5	yes	yes	yes	serves
+putRawData	raw_files	yes	6	yes	yes	yes	serves
 getRawData	raw_files	yes	5	yes	yes	yes	serves
 upsertFile	raw_files	yes	3	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
@@ -339,23 +340,23 @@ findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
 consolidateFact	facts	yes	4	no	yes	yes	serves
 findTrajectory	facts	yes	6	yes	yes	yes	serves
 getFactsHealth	facts	yes	2	yes	yes	yes	serves
-allocateBodyOccurrenceIds	segmented_body	yes	6	no	yes	yes	serves
-stageSegmentTexts	segmented_body	yes	6	no	yes	yes	serves
+allocateBodyOccurrenceIds	segmented_body	yes	13	no	yes	yes	serves
+stageSegmentTexts	segmented_body	yes	13	no	yes	yes	serves
 readSegmentTexts	segmented_body	yes	5	no	yes	yes	serves
-stageManifestRows	segmented_body	yes	8	no	yes	yes	serves
+stageManifestRows	segmented_body	yes	15	no	yes	yes	serves
 readManifest	segmented_body	yes	9	no	yes	yes	serves
 readSegmentedEmbedPage	segmented_body	yes	1	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	9	no	yes	yes	serves
-createSegmentedPageShell	segmented_body	yes	15	no	yes	yes	serves
-flipBodyGeneration	segmented_body	yes	18	no	yes	yes	serves
+createSegmentedPageShell	segmented_body	yes	22	no	yes	yes	serves
+flipBodyGeneration	segmented_body	yes	25	no	yes	yes	serves
 sealSegmentedPage	segmented_body	yes	6	no	yes	yes	serves
-openBodyStaging	segmented_body	yes	9	no	yes	yes	serves
-setBodyStagingState	segmented_body	yes	8	no	yes	yes	serves
+openBodyStaging	segmented_body	yes	16	no	yes	yes	serves
+setBodyStagingState	segmented_body	yes	15	no	yes	yes	serves
 sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
-createVersion	versions	yes	22	no	yes	yes	serves
+createVersion	versions	yes	23	no	yes	yes	serves
 getVersions	versions	yes	14	no	yes	yes	serves
 readLatestVersionId	versions	yes	1	no	yes	yes	serves
 stampVersionChangeReason	versions	yes	1	no	yes	yes	serves
@@ -614,6 +615,20 @@ recordSubagentToolExecutions	minion_subagent	yes	13	no	yes	yes	serves
 startSubagentToolExecution	minion_subagent	yes	3	no	yes	yes	serves
 completeSubagentToolExecution	minion_subagent	yes	7	no	yes	yes	serves
 failSubagentToolExecution	minion_subagent	yes	7	no	yes	yes	serves
+listExportPageKeys	cli_reads_export	yes	1	no	yes	yes	serves
+readExportWithdrawalLedgerBytes	cli_reads_export	yes	1	no	yes	yes	serves
+listExportWithdrawals	cli_reads_export	yes	1	no	yes	yes	serves
+readExportPageRows	cli_reads_export	yes	1	no	yes	yes	serves
+normalizeFenceLines	cli_reads_export	yes	1	no	yes	yes	serves
+readSegmentedPageHead	cli_reads_export	yes	4	no	yes	yes	serves
+readBodyManifestRows	cli_reads_export	yes	4	no	yes	yes	serves
+readBodyManifestMeta	cli_reads_export	yes	1	no	yes	yes	serves
+readBodyManifestOutline	cli_reads_export	yes	1	no	yes	yes	serves
+listForcedCutSeqs	cli_reads_export	yes	1	no	yes	yes	serves
+readManifestSeqAt	cli_reads_export	yes	1	no	yes	yes	serves
+readSegmentedVersionBodyBytes	cli_reads_export	yes	1	no	yes	yes	serves
+listAccessPolicySourceIds	cli_reads_export	yes	2	no	yes	yes	serves
+setLocalStatementTimeout	cli_reads_export	yes	1	no	yes	yes	serves
 scanExactBatch	cli_reads_ops	yes	5	no	yes	yes	serves
 nextLivePageAfter	cli_reads_ops	yes	1	no	yes	yes	serves
 listExactIdentityCandidates	cli_reads_ops	yes	5	no	yes	yes	serves
@@ -757,7 +772,7 @@ getRecentSalience	salience_enrich	yes	8	yes	yes	yes	serves
 listEnrichCandidates	salience_enrich	yes	3	yes	yes	yes	serves
 findAnomalies	salience_enrich	yes	7	yes	yes	yes	serves
 hasCoveringFactWithdrawal	trust	yes	3	no	yes	yes	serves
-insertFactWithdrawal	trust	yes	17	no	yes	yes	serves
+insertFactWithdrawal	trust	yes	19	no	yes	yes	serves
 isFactWithdrawn	trust	yes	3	no	yes	yes	serves
 isFactPurged	trust	yes	3	no	yes	yes	serves
 listFactWithdrawalDates	trust	yes	2	no	yes	yes	serves
