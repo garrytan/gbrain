@@ -21,10 +21,10 @@ import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
-import { submissionAuthority } from '../../src/core/persistence/authority.ts';
+import { authorizeWrite, submissionAuthority } from '../../src/core/persistence/authority.ts';
 import { registerLocalWriter } from '../../src/core/persistence/identity.ts';
 import { admitWrite, assertWriteHeadroom, readOutstandingRoom } from '../../src/core/persistence/journal.ts';
-import { principalKey } from '../../src/core/persistence/model.ts';
+import { principalKey, type WriteAuthority } from '../../src/core/persistence/model.ts';
 import { schemaAdmissionRefusal } from '../../src/core/persistence/schema-admission.ts';
 import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 
@@ -155,5 +155,26 @@ describe('engine parity: persistence declaration', () => {
     } finally {
       await engine.setConfig('version', version ?? String(LATEST_SCHEMA_VERSION));
     }
+  });
+
+  parityTest('a write owned by an OAuth client or legacy token with no live grant refuses permission_denied', {
+    methods: ['readOAuthClientWriteGrant', 'readAccessTokenWriteGrant', 'shareLockWriteCredential', 'readSourceMembership'],
+  }, async (engine) => {
+    const source = await engine.readSourceMembership('default');
+    const ids = { oauth_client: 'parity-unknown-client', legacy_token: 'c0000000-0000-4000-8000-0000000000c1' } as const;
+    const out: unknown[] = [];
+    for (const kind of ['oauth_client', 'legacy_token'] as const) {
+      for (const lock of [false, true]) {
+        const id = ids[kind];
+        const authority: WriteAuthority = { version: 1, principal: { kind, id }, remote: true, sourceId: 'default',
+          sourceIncarnation: source!.incarnation, scopes: ['read', 'write'], operations: null, slugPrefixes: null };
+        await engine.shareLockWriteCredential(kind, id);
+        const grant = kind === 'oauth_client' ? await engine.readOAuthClientWriteGrant(id, { lock }) : await engine.readAccessTokenWriteGrant(id, { lock });
+        const refusal = await authorizeWrite(engine, authority, 'put_page', 'notes/grant-check', lock).then(() => null, (e: { code?: string; message?: string }) => e);
+        expect(refusal?.code).toBe('permission_denied');
+        out.push({ kind, lock, grant, code: refusal?.code, message: refusal?.message });
+      }
+    }
+    return out;
   });
 });

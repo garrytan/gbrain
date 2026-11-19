@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 625/625
+# covered: 628/628
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 9/9
-# persistence_journal: 40/40
+# persistence_journal: 43/43
 # entity_reads: 6/6
 # cycle_locks: 7/7
 # minion_jobs: 8/8
@@ -359,6 +359,9 @@ readWriteRequestById	persistence_journal	yes	5	no	yes	yes	serves
 readWriteRequestProgress	persistence_journal	yes	1	no	yes	yes	serves
 countOutstandingBySource	persistence_journal	yes	2	no	yes	yes	serves
 ownsSchemaTables	persistence_journal	yes	1	no	yes	yes	serves
+readOAuthClientWriteGrant	persistence_journal	yes	1	no	yes	yes	serves
+readAccessTokenWriteGrant	persistence_journal	yes	1	no	yes	yes	serves
+shareLockWriteCredential	persistence_journal	yes	1	no	yes	yes	serves
 readCounterRows	persistence_journal	yes	2	no	yes	yes	serves
 readAdmissionRate	persistence_journal	yes	2	no	yes	yes	serves
 lockPersistenceCounters	persistence_journal	yes	17	no	yes	yes	serves
@@ -366,7 +369,7 @@ insertWriteRequest	persistence_journal	yes	17	no	yes	yes	serves
 stampWriteClaim	persistence_journal	yes	13	no	yes	yes	serves
 lockWriteRequest	persistence_journal	yes	2	no	yes	yes	serves
 completeWriteRow	persistence_journal	yes	10	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	18	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	19	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	2	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	2	no	yes	yes	serves
 insertTopologyChange	persistence_journal	yes	4	no	yes	yes	serves
