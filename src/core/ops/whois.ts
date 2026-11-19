@@ -19,7 +19,7 @@ import { foldNonDecomposingLatin } from '../latin-fold.ts';
 import { normalizeAlias, normalizeAliasList } from '../search/alias-normalize.ts';
 import { slugify } from '../entities/resolve.ts';
 import { slugifySegment } from '../sync.ts';
-import { exactIdentityStatement, type ExactIdentityProbes, type ExactIdentityRow } from '../engine-sql/exact-identity.ts';
+import { type ExactIdentityProbes, type ExactIdentityRow } from '../engine-sql/exact-identity.ts';
 
 export const WHOIS_MAX_QUERY_CHARS = 320;
 export const WHOIS_MAX_TYPES = 20;
@@ -129,14 +129,13 @@ const whois: Operation = {
       : await resolveEntityTypes(ctx.engine, sourceIds);
     const { resolveExcludePrivatePages } = await import('../search/private-visibility.ts');
     const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
-    const { text, params: values } = exactIdentityStatement({
+    const rows = await ctx.engine.listExactIdentityCandidates({
       probes: probesFor(params.raw, params.query),
       sourceIds,
       types: resolution.filter,
       ...(ctx.remote !== false ? { remote: { excludePrivate } } : {}),
       limit: WHOIS_CANDIDATE_CAP + 1,
     });
-    const rows = await ctx.engine.executeRaw<ExactIdentityRow>(text, values);
     const matches = rows.slice(0, WHOIS_CANDIDATE_CAP)
       .map(r => ({ slug: r.slug, source_id: r.source_id, title: r.title, type: r.type, match: identityMatchKind(params.query, r) }))
       .filter((m): m is typeof m & { match: IdentityMatchKind } => m.match !== null)

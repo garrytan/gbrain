@@ -15,6 +15,7 @@ import { consumerIdentity, consumerProvablyDead, probeLiveFullConsumer } from '.
 import { claimOwnerProvablyDead } from '../src/core/persistence/claim-phase.ts';
 import { processStartTime, readBootId } from '../src/core/pglite-lock.ts';
 import { deadPid } from './helpers/dead-pid.ts';
+import { consumerRowsThroughRaw } from './helpers/consumer-rows-through-raw.ts';
 
 const linux = process.platform === 'linux' && readBootId() !== null;
 let live: ChildProcess;
@@ -38,7 +39,8 @@ function row(pid: number, kind: string, startedAt: string, over: Record<string, 
     renewed_at: startedAt, restart_required: false, root_barrier_age_ms: null, pool: null, host_json_path: '/h', persistence_home: '/p',
     minted_under: null, version: '0.0.0', boot_id: o.boot_id, process_start: o.start, renewed_age_ms: '1000', age_ms: '5000' };
 }
-const stub = (rows: unknown[]) => ({ kind: 'postgres' as const, executeRaw: async () => rows }) as never;
+const withRows = <E extends { executeRaw: (sql: string) => Promise<unknown[]> }>(e: E) => Object.assign(e, consumerRowsThroughRaw(e as never));
+const stub = (rows: unknown[]) => withRows({ kind: 'postgres' as const, executeRaw: async () => rows }) as never;
 
 describe.skipIf(!linux)('consumerProvablyDead', () => {
   test('a reaped pid under this boot and pid namespace is dead', () => {
@@ -89,10 +91,10 @@ describe.skipIf(!linux)('the probe skips dead rows before it bounds the rows it 
   test('a live serve behind more than eight dead rows is still the owner', async () => {
     const dead = Array.from({ length: 9 }, (_, i) => row(deadPid(), 'sync', `2026-10-13 10:00:0${i}+00`));
     const rows = [...dead, row(live.pid!, 'serve', '2026-10-13 10:00:30+00', { start: liveStart })];
-    const limited = { kind: 'postgres' as const, executeRaw: async (sql: string) => {
+    const limited = withRows({ kind: 'postgres' as const, executeRaw: async (sql: string) => {
       const limit = /LIMIT (\d+)/.exec(sql);
       return limit ? rows.slice(0, Number(limit[1])) : rows;
-    } } as never;
+    } }) as never;
     expect((await probeLiveFullConsumer(limited, '00000000-0000-0000-0000-000000000001'))?.pid).toBe(live.pid);
   });
 });

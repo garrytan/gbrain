@@ -215,8 +215,8 @@ export async function prepareRemoteJob(
 const toolName = (name: string) => name.replace(/^(?:brain_|mcp__gbrain__)/, '');
 
 async function assertCurrentAgent(engine: BrainEngine, a: RemoteAgentAuthority, data: Record<string, unknown>, jobId?: number): Promise<void> {
-  const [source] = await engine.executeRaw<Record<string, unknown>>('SELECT archived, created_at FROM sources WHERE id = $1', [a.grant.sourceId]);
-  if (!source || source.archived !== false || new Date(source.created_at as string).toISOString() !== a.grant.sourceCreatedAt) deny('agent source is missing, archived, or was replaced',
+  const source = await engine.readJobSourceState(a.grant.sourceId);
+  if (!source || source.archived !== false || new Date(source.created_at).toISOString() !== a.grant.sourceCreatedAt) deny('agent source is missing, archived, or was replaced',
     `Source ${a.grant.sourceId} was archived, removed or recreated after this agent job was accepted. Submit a new agent job against the current source.`);
   if (data.__delegation_grant !== undefined) {
     // Grant profiles reference the complete operation catalog. Filesystem
@@ -266,13 +266,13 @@ export async function prepareRemoteAgent(ctx: OperationContext, data: Record<str
   if (principal?.kind !== 'oauth_client' || principal.id !== ctx.auth?.clientId || !hasScope(ctx.auth?.scopes ?? [], 'agent') ||
       typeof data.source_id !== 'string' || data.source_id !== ctx.auth?.sourceId || !isValidSourceId(data.source_id)) deny('submit_agent requires a verified OAuth principal and scalar source grant',
     'submit_agent needs an OAuth client holding the agent scope and bound to the one source named in source_id. Ask the brain host operator for such a client, or ask the user to run gbrain agent run on the brain host.');
-  const [source] = await ctx.engine.executeRaw<Record<string, unknown>>('SELECT archived, created_at FROM sources WHERE id = $1', [data.source_id]);
+  const source = await ctx.engine.readJobSourceState(data.source_id);
   if (!source || source.archived !== false) deny('agent source must be active', `Source ${data.source_id} is archived or missing. Name an active source in source_id.`);
   const { currentCallerAccess } = await import('../search/private-visibility.ts');
   const { actor, audience: actingFor } = currentCallerAccess();
   const authority: RemoteAgentAuthority = {
     version: 1, kind: 'remote_agent', principal: { kind: 'oauth_client', id: principal.id },
-    grant: { scopes: [...ctx.auth!.scopes], sourceId: data.source_id, sourceCreatedAt: new Date(source.created_at as string).toISOString(),
+    grant: { scopes: [...ctx.auth!.scopes], sourceId: data.source_id, sourceCreatedAt: new Date(source.created_at).toISOString(),
       allowedTools: [...data.allowed_tools as string[]], allowedSlugPrefixes: [...data.allowed_slug_prefixes as string[]],
       ...(actor ? { actor: { ...actor } } : actingFor?.length ? { actingFor: [...actingFor] } : {}), surface: ctx.surface ?? 'full' },
     payloadHash: authorityDigest(data),
@@ -322,12 +322,11 @@ export async function assertRemoteJobControl(ctx: OperationContext, job: MinionJ
 export const LIVE_JOB_STATUSES = ['waiting', 'active', 'delayed', 'waiting-children', 'paused'] as const;
 
 /**
- * The claim gate's population predicate, shared by `assertNoUnreviewedJobs`
- * and the doctor `legacy_job_authority` check so their counts can never drift.
+ * The claim gate's population predicate (engine-sql/jobs-queue.ts, over LIVE_JOB_STATUSES), shared by
+ * `assertNoUnreviewedJobs` and the doctor `legacy_job_authority` check so their counts can never drift.
  * Callers keep the rows `parseSubmissionAuthority` rejects.
  */
-export const UNREVIEWED_LIVE_JOBS_WHERE = `status IN (${LIVE_JOB_STATUSES.map(s => `'${s}'`).join(',')})
-        AND submission_authority IS DISTINCT FROM '{"version":1,"kind":"application"}'::jsonb`;
+export { UNREVIEWED_LIVE_JOBS_WHERE } from '../engine-sql/jobs-queue.ts';
 
 /** Select-list column every coalesce read adds so SQL NULL stays distinguishable from JSONB null. */
 export const LEGACY_AUTHORITY_COLUMN = 'submission_authority IS NULL AS legacy_authority_is_null';
@@ -373,9 +372,7 @@ export function coalesceDecision(row: Record<string, unknown>, authority: Submis
 
 /** Startup and claim gate: do not let sweeps silently destroy unresolved legacy dependency graphs. */
 export async function assertNoUnreviewedJobs(engine: BrainEngine): Promise<void> {
-  const rows = await engine.executeRaw<{ id: number; submission_authority: unknown }>(
-    `SELECT id, submission_authority FROM minion_jobs
-      WHERE ${UNREVIEWED_LIVE_JOBS_WHERE}`);
+  const rows = await engine.listUnreviewedJobs();
   const invalid = rows.filter(row => !parseSubmissionAuthority(row.submission_authority));
   if (!invalid.length) return;
   throw catalogueError('legacy_job_authority',

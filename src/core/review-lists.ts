@@ -12,8 +12,7 @@
 
 import type { BrainEngine } from './engine.ts';
 import type { OperationContext } from './ops/contract.ts';
-import { privateProvenanceFilterUnderPolicy, resolveExcludePrivatePages, worldOnlyFacts } from './search/private-visibility.ts';
-import { deletedPageProjectionHiddenSql } from './eligibility/sql.ts';
+import { resolveExcludePrivatePages, worldOnlyFacts } from './search/private-visibility.ts';
 import { buildNearNameIndex, loadEntityNames, normalizeEntityName, queryNearNames, shardCountFor, type NearNameKind } from './entities/near-name.ts';
 import { quoteFacts } from './search/transcript-quote.ts';
 
@@ -27,16 +26,8 @@ export const REVIEW_LIST_MAX_LIMIT = 500;
 export async function listUnattributedFacts(engine: BrainEngine, ctx: OperationContext, sourceIds: string[], opts: { limit: number; offset: number }):
   Promise<{ count: number; rows: UnattributedRow[]; next_offset: number | null; complete: boolean }> {
   const untrusted = ctx.remote !== false;
-  const provenance = await resolveExcludePrivatePages(engine, ctx.remote) ? ` AND ${privateProvenanceFilterUnderPolicy('facts')}` : '';
-  const rows = await engine.executeRaw<{ id: number | string; fact: string; kind: string | null; visibility: string; source_id: string; created_at: string; source: string | null }>(
-    `SELECT id, fact, kind, visibility, source_id, created_at::text AS created_at, source FROM facts
-      WHERE source_id = ANY($1::text[]) AND entity_slug IS NULL AND expired_at IS NULL
-        AND (valid_until IS NULL OR valid_until > now())
-        AND ($2::boolean = false OR visibility = 'world')${provenance}
-        AND ${deletedPageProjectionHiddenSql('facts', 'facts')}
-      ORDER BY id DESC LIMIT $3 OFFSET $4`,
-    [sourceIds, worldOnlyFacts(ctx.remote), opts.limit + 1, opts.offset],
-  );
+  const rows = await engine.listUnattributedFacts({ sourceIds, worldOnly: worldOnlyFacts(ctx.remote),
+    excludePrivateProvenance: await resolveExcludePrivatePages(engine, ctx.remote), limit: opts.limit + 1, offset: opts.offset });
   // A remote caller reads text below the owner's tier quoted as source material (GST-687), actions included.
   const read = await quoteFacts(engine, rows.slice(0, opts.limit).map(r => ({ ...r, id: Number(r.id) })), untrusted);
   const page = read.map((r): UnattributedRow => {

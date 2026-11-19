@@ -29,6 +29,7 @@ import { existsSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { cliRenderContext, renderAction, type Action, type RenderedAction } from './agent-output.ts';
 import type { BrainEngine } from './engine.ts';
+import { sortSourcesById, sourceRecordsRawConfig } from './source-rows.ts';
 import { GIT_OPERATION_MARKERS } from './git/commit-push.ts';
 import { gitChildEnv } from './git-env.ts';
 import { GIT_ENV } from './git-transport.ts';
@@ -113,8 +114,7 @@ function parseConfig(raw: unknown): Record<string, unknown> {
 }
 
 async function readSourceConfig(engine: BrainEngine, sourceId: string): Promise<Record<string, unknown>> {
-  const [row] = await engine.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id = $1', [sourceId]);
-  return parseConfig(row?.config);
+  return parseConfig((await engine.getSource(sourceId))?.config);
 }
 
 const asDivergence = (value: unknown): UpstreamDivergence | null =>
@@ -180,7 +180,7 @@ export async function settleUpstreamAfterPull(engine: BrainEngine, sourceId: str
 
 /** The standing upstream reports of the given (or every) non-archived source. */
 export async function readUpstreamDivergences(engine: BrainEngine, sourceIds?: string[]): Promise<UpstreamDivergenceReport[]> {
-  const rows = await engine.executeRaw<{ id: string; config: unknown }>('SELECT id, config FROM sources WHERE archived IS NOT TRUE ORDER BY id');
+  const rows = sortSourcesById(await sourceRecordsRawConfig(engine));
   return rows.filter(row => !sourceIds || sourceIds.includes(row.id))
     .map(row => asDivergence(parseConfig(row.config)[UPSTREAM_DIVERGENCE_KEY]))
     .filter((o): o is UpstreamDivergence => o !== null)

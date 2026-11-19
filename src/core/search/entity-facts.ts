@@ -39,8 +39,9 @@ export interface EntityFact { id: number; fact: string; entity_slug: string | nu
 /** Rows read per cap so copies of one claim collapse before the cap (#7043). */
 export const SAVED_FACTS_COLLAPSE_WINDOW = 50;
 /** The columns the collapse reads besides a saved fact's own; `stripCollapseColumns` drops them from the response. */
-export const SAVED_FACT_COLLAPSE_COLUMNS = 'f.source_id, f.visibility, f.created_at, f.attributed_to, gbrain_fact_fingerprint(f.fact) AS fact_fingerprint';
-export type CollapseColumns = { source_id: string; visibility: string; created_at: Date | string; attributed_to: FactAttribution | null; fact_fingerprint: string };
+import { SAVED_FACT_COLLAPSE_COLUMNS, type CollapseColumns } from './saved-fact-collapse.ts';
+
+export { SAVED_FACT_COLLAPSE_COLUMNS, type CollapseColumns };
 
 /** A saved fact as the response carries it, without the collapse columns and member ids. */
 export function stripCollapseColumns<T extends CollapseColumns & { collapsed_ids?: number[] }>({ source_id: _s, visibility: _v, created_at: _c, attributed_to: _a, fact_fingerprint: _f, collapsed_ids: _i, ...rest }: T): Omit<T, keyof CollapseColumns | 'collapsed_ids'> {

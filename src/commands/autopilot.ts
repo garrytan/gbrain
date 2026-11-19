@@ -400,7 +400,7 @@ export function guardAutopilotEngine(engine: BrainEngine, state: OwnerProcessing
   const refuse = (): never => {
     throw new Error('Autopilot processing is configuration-blocked; repair and restart the owner.');
   };
-  return new Proxy(engine, {
+  const guarded: BrainEngine = new Proxy(engine, {
     get(target, property) {
       const value = Reflect.get(target, property);
       if (typeof value !== 'function') return value;
@@ -414,11 +414,16 @@ export function guardAutopilotEngine(engine: BrainEngine, state: OwnerProcessing
             return result;
           }]);
         }
-        return Reflect.apply(value, target, args);
+        // A member that opens its own transaction runs with the guard as `this`, so the block check fences that transaction too.
+        return Reflect.apply(value, SELF_TRANSACTING_MEMBERS.has(property) ? guarded : target, args);
       };
     },
   });
+  return guarded;
 }
+
+/** Engine members that write in their own `this.transaction` (engine-sql/jobs.ts, engine-sql/jobs-queue.ts). */
+const SELF_TRANSACTING_MEMBERS: ReadonlySet<string | symbol> = new Set(['admitJob', 'completeJob', 'failJob', 'reclaimStalledJobs', 'cancelJobs', 'killTimedOutJobs', 'killWallClockJobs', 'retryJob']);
 
 /**
  * The autopilot silent self-upgrade channel. Opt-in (`self_upgrade.mode=auto`).

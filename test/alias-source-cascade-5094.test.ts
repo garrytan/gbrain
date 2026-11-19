@@ -13,7 +13,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { MIGRATIONS, runMigrations } from '../src/core/migrate.ts';
+import { LATEST_VERSION, MIGRATIONS, runMigrations } from '../src/core/migrate.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { runManagedSourceLifecycle } from '../src/core/persistence/source-lifecycle.ts';
 import { mkdirSync } from 'node:fs';
@@ -60,15 +60,14 @@ for (const backend of testBackends()) {
       for (const table of ['page_aliases', 'slug_aliases']) await engine.executeRaw(`ALTER TABLE ${table} DROP CONSTRAINT ${table}_source_fk`);
       await insertAliases(engine, 'removed-source');
       await insertAliases(engine, 'default');
-      const latest = Number(await engine.getConfig('version'));
       const cascade = MIGRATIONS.find(m => m.name === 'alias_source_cascade')!.version;
       await engine.setConfig('version', String(cascade - 1));
 
       const { applied } = await runMigrations(engine);
-      expect(applied).toBe(latest - cascade + 1);
+      expect(applied).toBe(MIGRATIONS.filter(m => m.version >= cascade).length);
       expect(await aliasRows(engine)).toEqual({ page: ['default'], slug: ['default'] });
       expect((await fks(engine)).map(r => [r.conname, r.convalidated])).toEqual([['page_aliases_source_fk', true], ['slug_aliases_source_fk', true]]);
-      expect(await engine.getConfig('version')).toBe(String(latest));
+      expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
     }, { databaseUrl });
   }, 120_000);
 }

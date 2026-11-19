@@ -125,8 +125,7 @@ export function snapshotFromJob(data: Record<string, unknown>): DelegationSnapsh
 export async function effectiveDelegation(engine: BrainEngine, snapshot: DelegationSnapshot, jobId?: number): Promise<DelegationSnapshot> {
   const { grantValidationContext } = await import('../grants/service.ts');
   if (snapshot.legacy && jobId !== undefined) {
-    const rows = await engine.executeRaw<{ data: Record<string, unknown> }>('SELECT data FROM minion_jobs WHERE id=$1', [jobId]);
-    const stored = rows[0]?.data;
+    const stored = (await engine.getJob(jobId))?.data as Record<string, unknown> | undefined;
     if (stored?.__delegation_grant !== undefined) {
       const frozen = snapshotFromJob(stored);
       if (!frozen || frozen.clientId !== snapshot.clientId) throw new DelegationDeniedError(['owner_changed']);

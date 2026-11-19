@@ -8,7 +8,7 @@
  * own timeline closed (stale compiled truth), open contradiction proposals
  * (and undated ones waiting for a date), plus the resolved read policy
  * (graph.edge_validity) and contradiction mode. Every figure is an indexed
- * count; nothing calls a model.
+ * count read through BrainEngine edgeValidityCounts; nothing calls a model.
  */
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
@@ -31,26 +31,9 @@ export interface EdgeValidityStats {
 }
 
 export async function edgeValidityStats(engine: BrainEngine, sourceIds?: readonly string[]): Promise<EdgeValidityStats | null> {
-  const [t] = await engine.executeRaw<{ lr: string | null }>(`SELECT to_regclass('link_relationships')::text AS lr`);
-  if (!t?.lr) return null;
-  const scope = sourceIds?.length ? [...sourceIds] : null;
-  const byStatus = await engine.executeRaw<{ status: string; n: number }>(
-    `SELECT CASE WHEN semantics = 'event' THEN 'event' WHEN disputed THEN 'disputed' ELSE status_now END AS status, COUNT(*)::int AS n
-       FROM link_relationships WHERE scope = 'all' AND ($1::text[] IS NULL OR source_id = ANY($1::text[])) GROUP BY 1`, [scope]);
-  const stale = await engine.executeRaw<{ slug: string; target: string; link_type: string; ended: string | null }>(
-    `SELECT f.slug, t.slug AS target, lr.link_type, lr.last_end::text AS ended
-       FROM link_relationships lr JOIN pages f ON f.id = lr.from_page_id JOIN pages t ON t.id = lr.to_page_id
-      WHERE lr.scope = 'all' AND lr.semantics = 'state' AND lr.last_end IS NOT NULL AND lr.undated_present > 0
-        AND NOT (lr.valid_ranges @> (now() AT TIME ZONE 'UTC')::date)
-        AND ($1::text[] IS NULL OR lr.source_id = ANY($1::text[]))
-        AND EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = lr.from_page_id AND l.to_page_id = lr.to_page_id
-          AND l.link_type = lr.link_type AND COALESCE(l.origin_page_id, l.from_page_id) = lr.from_page_id
-          AND COALESCE(l.assertion_tense, 'present') = 'present')
-      ORDER BY lr.last_end DESC LIMIT ${STALE_ASSERTION_LIMIT + 1}`, [scope]);
-  const [p] = await engine.executeRaw<{ proposed: number; undated: number; applied: number }>(
-    `SELECT COUNT(*) FILTER (WHERE status = 'proposed')::int AS proposed, COUNT(*) FILTER (WHERE status = 'undated_unresolved')::int AS undated,
-            COUNT(*) FILTER (WHERE status = 'applied')::int AS applied
-       FROM link_edge_proposals WHERE $1::text[] IS NULL OR source_id = ANY($1::text[])`, [scope]);
+  const counts = await engine.edgeValidityCounts({ sourceIds, staleLimit: STALE_ASSERTION_LIMIT + 1 });
+  if (!counts) return null;
+  const { byStatus, stale, proposals } = counts;
   const lagging = (await staleRelationshipKeys(engine, 1000)).length;
   return {
     read_policy: (await edgeValidityEnabled(engine)) ? 'on' : 'off',
@@ -59,7 +42,7 @@ export async function edgeValidityStats(engine: BrainEngine, sourceIds?: readonl
     lagging,
     stale_assertions: stale.slice(0, STALE_ASSERTION_LIMIT),
     ...(stale.length > STALE_ASSERTION_LIMIT ? { stale_assertions_capped: true } : {}),
-    proposals: { proposed: Number(p?.proposed ?? 0), undated: Number(p?.undated ?? 0), applied: Number(p?.applied ?? 0) },
+    proposals,
   };
 }
 

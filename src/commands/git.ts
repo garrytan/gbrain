@@ -284,7 +284,7 @@ async function withLocalBrain<T>(fn: (engine: BrainEngine) => Promise<T>, timeou
   if (!config || (isThinClient(config) && !config.database_url)) return null;
   let engine: BrainEngine | null = null, timer: ReturnType<typeof setTimeout> | undefined;
   const work = (async () => {
-    const engineConfig = capabilitiesForEngineKind(config.engine).has('single_owner') ? { ...toEngineConfig(config), pglite_shared_buffers: '32MB' } : { ...toEngineConfig(config), pool_max: 1 };
+    const engineConfig = config.engine !== 'rust' && capabilitiesForEngineKind(config.engine).has('single_owner') ? { ...toEngineConfig(config), pglite_shared_buffers: '32MB' } : { ...toEngineConfig(config), pool_max: 1 };
     engine = await createEngine(engineConfig);
     await engine.connect(engineConfig);
     return fn(engine);

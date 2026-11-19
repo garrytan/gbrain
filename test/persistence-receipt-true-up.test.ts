@@ -184,6 +184,20 @@ for (const kind of testBackends()) {
       expect(await engine.getConfig(COMPACTED_SWEEP_KEY)).toBe('done');
     });
 
+    check('the sweep walks reservations in numeric sequence order when the sequences gain a digit (9, 10, 11)', async engine => {
+      // The window returns sequence::text AS sequence; ORDER BY sequence must sort the bigint column, not the text alias,
+      // or "10" < "11" < "9" and the cursor (the window's last sequence) jumps past rows it never read.
+      await engine.executeRaw("SELECT setval(pg_get_serial_sequence('persistence_requests','sequence'), 8)");
+      const requests = await requestFixture(engine);
+      const ids = [(await requests.admit('a')).id, (await requests.admit('b')).id, (await requests.admit('c')).id];
+      const all = await engine.listReservationsAfter('0', 10);
+      expect(all.map(r => r.sequence)).toEqual(['9', '10', '11']);
+      expect(all.map(r => ids.indexOf(r.id))).toEqual([0, 1, 2]);
+      const firstTwo = await engine.listReservationsAfter('0', 2);
+      const rest = await engine.listReservationsAfter(firstTwo.at(-1)!.sequence, 10);
+      expect([...firstTwo, ...rest].map(r => ids.indexOf(r.id))).toEqual([0, 1, 2]);
+    });
+
     check('a lifecycle change recorded committed is charged its retained bytes, not 16 KiB', async engine => {
       const requests = await requestFixture(engine);
       const [writer] = await engine.executeRaw<{ id: string }>('SELECT id FROM persistence_local_writers LIMIT 1');

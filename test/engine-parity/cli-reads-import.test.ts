@@ -1,0 +1,307 @@
+/**
+ * BrainEngine parity — the typed reads the CLI import and extract paths ran through `executeRaw`.
+ *
+ * Authoring gate (docs/TESTING.md#authoring-gate):
+ *  - Contract: listSourceRecords, readSourceIncarnation, hasCompanyBrainReceipt, readGuestSourceRow, listGuestSourceIds,
+ *    hasGuestSource, readPageTrustRows, readRowTrustRows, readDatabaseClock, listLinkPageMetadata, listStoredTimelineRows and
+ *    filterPagesAtRevision return the same observable result on every engine arm (PGLite always; Postgres with
+ *    DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
+ *  - Regression: an engine that answers one of these differently changes which sources an import loads, which writes a
+ *    guest-source guard refuses, which pages a trust stamp marks, which links reconciliation sees and which extract
+ *    stamps land; the Rust engine has no SQL, so each read has to exist as a typed method it can implement.
+ *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call
+ *    (D18), so no case compared them across engines (docs/research/rust-cli-executeraw-map.md).
+ *  - Seam: none in the cases. Typed methods only (no executeRaw: D18); sources are created through harness.ts behind
+ *    the backend switch. Generated values (serial ids, incarnations, revisions, timestamps) are compared by shape or by
+ *    a relation, never by value; reads with no ORDER BY are sorted before they are compared.
+ */
+import { describe, expect } from 'bun:test';
+import { createSource, parityArms, sorted } from './harness.ts';
+import { testBackends } from '../helpers/test-backends.ts';
+import type { BrainEngine } from '../../src/core/engine.ts';
+
+const { parityTest } = parityArms(testBackends());
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const CLOCK = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
+
+async function note(engine: BrainEngine, slug: string, sourceId = 'default', frontmatter: Record<string, unknown> = {}) {
+  return engine.putPage(slug, { type: 'note', title: slug.toUpperCase(), compiled_truth: `body of ${slug}`, frontmatter }, { sourceId });
+}
+
+/** Run `fn` in a transaction whose write trust context declares `tier` and `origin`. */
+function declaredWrite(engine: BrainEngine, tier: string, origin: Record<string, unknown> | null, fn: (tx: BrainEngine) => Promise<unknown>) {
+  return engine.transaction(async (tx) => {
+    await tx.applyTransactionSettings(['gbrain.write_trust_tier', 'gbrain.write_origin'], [tier, origin ? JSON.stringify(origin) : '']);
+    return fn(tx);
+  });
+}
+
+describe('engine parity: CLI import reads', () => {
+  parityTest('listSourceRecords lists every source, default first then by id, with its import columns', { methods: ['listSourceRecords'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'zeta', { keep: 1 });
+    await createSource(engine, backend, 'alpha', {}, '/var/tmp/parity-alpha');
+    const rows = await engine.listSourceRecords();
+    expect(rows.map(r => r.id)).toEqual(['default', 'alpha', 'zeta']);
+    for (const row of rows) expect(row.created_at).toBeInstanceOf(Date);
+    const view = rows.map(r => ({
+      id: r.id, name: r.name, local_path: r.local_path, last_commit: r.last_commit, last_sync_at: r.last_sync_at,
+      config: typeof r.config === 'string' ? JSON.parse(r.config) : r.config, archived: r.archived ?? false,
+      newest_content_at: r.newest_content_at ?? null,
+    }));
+    expect(view[2]).toEqual({ id: 'zeta', name: 'zeta', local_path: null, last_commit: null, last_sync_at: null, config: { keep: 1 }, archived: false, newest_content_at: null });
+    return view;
+  });
+
+  parityTest('readSourceIncarnation returns the config and a uuid incarnation; an unknown id is null', { methods: ['readSourceIncarnation'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'work', { keep: 2 });
+    const work = await engine.readSourceIncarnation('work');
+    expect(String(work?.incarnation)).toMatch(UUID);
+    const unknown = await engine.readSourceIncarnation('no-such-source');
+    expect(unknown).toBeNull();
+    const config = typeof work?.config === 'string' ? JSON.parse(work.config) : work?.config;
+    return { config, incarnationIsUuid: UUID.test(String(work?.incarnation)), unknown };
+  });
+
+  parityTest('hasCompanyBrainReceipt is false for a source with no ingestion receipt', { methods: ['hasCompanyBrainReceipt'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'work');
+    const work = await engine.hasCompanyBrainReceipt('work');
+    const unknown = await engine.hasCompanyBrainReceipt('no-such-source');
+    expect({ work, unknown }).toEqual({ work: false, unknown: false });
+    return { work, unknown };
+  });
+
+  parityTest('readGuestSourceRow finds no guest_sources row for a config-only guest or a plain source, and is not hidden', { methods: ['readGuestSourceRow'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'visitors', { guest: true });
+    await createSource(engine, backend, 'plain');
+    const none = { hidden: false, source_id: null, writers: null, trust_ceiling: null };
+    const rows = {
+      visitors: await engine.readGuestSourceRow('visitors'),
+      plain: await engine.readGuestSourceRow('plain'),
+      unknown: await engine.readGuestSourceRow('no-such-source'),
+    };
+    expect(rows).toEqual({ visitors: none, plain: none, unknown: none });
+    return rows;
+  });
+
+  parityTest('listGuestSourceIds keeps the named sources whose config says guest, each once; hasGuestSource sees any', { methods: ['listGuestSourceIds', 'hasGuestSource'] }, async (engine, backend) => {
+    const before = await engine.hasGuestSource();
+    expect(before).toBe(false);
+    await createSource(engine, backend, 'visitors', { guest: true });
+    await createSource(engine, backend, 'texty', { guest: 'true' });
+    await createSource(engine, backend, 'plain', { guest: false });
+    const ids = sorted(await engine.listGuestSourceIds(['plain', 'visitors', 'texty', 'visitors', 'no-such-source', 'default']));
+    expect(ids).toEqual(['texty', 'visitors']);
+    const empty = await engine.listGuestSourceIds([]);
+    expect(empty).toEqual([]);
+    const after = await engine.hasGuestSource();
+    expect(after).toBe(true);
+    return { before, ids, empty, after };
+  });
+
+  parityTest('readPageTrustRows reads pages by id (deleted too) and by key (live unless includeDeleted)', { methods: ['putPage', 'softDeletePage', 'readPageTrustRows'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'visitors', { guest: true });
+    const a = await note(engine, 'a');
+    await note(engine, 'b', 'visitors');
+    const gone = await note(engine, 'gone');
+    await engine.softDeletePage('gone', { sourceId: 'default' });
+    const view = (rows: Awaited<ReturnType<BrainEngine['readPageTrustRows']>>) => sorted(
+      rows.map(r => ({ source_id: r.source_id, slug: r.slug, trust_tier: r.trust_tier, write_origin: r.write_origin ?? null, flagged: r.flagged, guest: r.guest, byId: r.byId })),
+      r => `${r.byId}/${r.source_id}/${r.slug}`);
+    const live = view(await engine.readPageTrustRows({
+      ids: [a.id, gone.id, a.id],
+      keys: [{ source_id: 'visitors', slug: 'b' }, { source_id: 'default', slug: 'gone' }, { source_id: 'visitors', slug: 'b' }, { source_id: 'default', slug: 'missing' }],
+    }));
+    expect(live.map(r => `${r.byId}/${r.slug}`)).toEqual(['false/b', 'true/a', 'true/gone']);
+    const withDeleted = view(await engine.readPageTrustRows({ keys: [{ source_id: 'default', slug: 'gone' }], includeDeleted: true }));
+    expect(withDeleted.map(r => r.slug)).toEqual(['gone']);
+    const none = await engine.readPageTrustRows({});
+    expect(none).toEqual([]);
+    return { live, withDeleted, none };
+  });
+
+  parityTest('readPageTrustRows reads the tier and origin the page write stamped under the write trust context', { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'readPageTrustRows'] }, async (engine) => {
+    const TIER = 'gbrain.write_trust_tier';
+    const ORIGIN = 'gbrain.write_origin';
+    const declared = (tier: string, origin: Record<string, unknown> | null, fn: (tx: BrainEngine) => Promise<unknown>) =>
+      engine.transaction(async (tx) => {
+        await tx.applyTransactionSettings([TIER, ORIGIN], [tier, origin ? JSON.stringify(origin) : '']);
+        return fn(tx);
+      });
+    const read = async (slug: string) => {
+      const [row] = await engine.readPageTrustRows({ keys: [{ source_id: 'default', slug }] });
+      const origin = typeof row?.write_origin === 'string' ? JSON.parse(row.write_origin) : row?.write_origin ?? null;
+      return { tier: row?.trust_tier, origin };
+    };
+    const steps: Record<string, unknown> = {};
+    await declared('operator_curated', { channel: 'import' }, tx => note(tx, 'curated'));
+    steps.inserted = await read('curated');
+    expect(steps.inserted).toEqual({ tier: 'operator_curated', origin: { channel: 'import' } });
+    await declared('agent_written', { channel: 'agent' }, tx => note(tx, 'curated', 'default', { captured_at: '2026-01-01' }));
+    steps.ephemeralOnly = await read('curated');
+    expect(steps.ephemeralOnly).toEqual(steps.inserted);
+    await declared('agent_written', { channel: 'agent' }, tx => tx.putPage('curated', { type: 'note', title: 'CURATED', compiled_truth: 'rewritten by an agent' }));
+    steps.agentRewrite = await read('curated');
+    expect(steps.agentRewrite).toEqual({ tier: 'agent_written', origin: { channel: 'agent' } });
+    await declared('operator_curated', { channel: 'owner' }, tx => tx.putPage('curated', { type: 'note', title: 'CURATED', compiled_truth: 'rewritten by the owner' }));
+    steps.ownerRewrite = await read('curated');
+    expect(steps.ownerRewrite).toEqual({ tier: 'operator_curated', origin: { channel: 'owner' } });
+    await engine.putPage('curated', { type: 'note', title: 'CURATED', compiled_truth: 'rewritten undeclared' });
+    steps.undeclaredRewrite = await read('curated');
+    expect(steps.undeclaredRewrite).toEqual({ tier: 'unknown', origin: null });
+    await note(engine, 'plain');
+    steps.undeclaredInsert = await read('plain');
+    expect(steps.undeclaredInsert).toEqual({ tier: 'unknown', origin: null });
+    let refused = false;
+    await declared('user_confirmed', { channel: 'claim' }, tx => note(tx, 'raised')).catch(() => { refused = true; });
+    steps.raiseRefused = { refused, rows: await engine.readPageTrustRows({ keys: [{ source_id: 'default', slug: 'raised' }] }) };
+    expect(steps.raiseRefused).toEqual({ refused: true, rows: [] });
+    return steps;
+  });
+
+  parityTest('readPageTrustRows flags a page at or below agent_written with an instruction-family flag receipt', { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'upsertPageWriteGateReceipt', 'readPageTrustRows'] }, async (engine) => {
+    const receipt = (hash: string, verdict: 'flag' | 'quarantine', families: string[]) => ({
+      content_hash: hash, tier: 'agent_written', detector_version: 1, verdict, reason_families: families,
+      reasons: families.map(f => `${f} found`), detector_error: false, request_id: null,
+    });
+    const agent = (slug: string) => declaredWrite(engine, 'agent_written', { channel: 'agent' }, tx => note(tx, slug));
+    await agent('agent-flagged');
+    await engine.upsertPageWriteGateReceipt('default', 'agent-flagged', receipt('h1', 'flag', ['override']));
+    await note(engine, 'unknown-flagged');
+    await engine.upsertPageWriteGateReceipt('default', 'unknown-flagged', receipt('h1', 'flag', ['credential', 'other']));
+    await declaredWrite(engine, 'tool_observed', { channel: 'tool' }, tx => note(tx, 'tool-flagged'));
+    await engine.upsertPageWriteGateReceipt('default', 'tool-flagged', receipt('h1', 'flag', ['exfiltration']));
+    await agent('other-family');
+    await engine.upsertPageWriteGateReceipt('default', 'other-family', receipt('h1', 'flag', ['other']));
+    await agent('quarantined');
+    await engine.upsertPageWriteGateReceipt('default', 'quarantined', receipt('h1', 'quarantine', ['standing_instruction']));
+    await engine.upsertPageWriteGateReceipt('default', 'quarantined', receipt('h2', 'flag', ['other']));
+    await agent('confirmed');
+    await engine.upsertPageWriteGateReceipt('default', 'confirmed', receipt('h1', 'flag', ['standing_instruction']));
+    await declaredWrite(engine, 'operator_curated', { channel: 'owner' }, tx => tx.putPage('confirmed', { type: 'note', title: 'CONFIRMED', compiled_truth: 'confirmed by the owner' }));
+    await agent('no-receipt');
+    const slugs = ['agent-flagged', 'unknown-flagged', 'tool-flagged', 'other-family', 'quarantined', 'confirmed', 'no-receipt'];
+    const rows = await engine.readPageTrustRows({ keys: slugs.map(slug => ({ source_id: 'default', slug })) });
+    const flags = Object.fromEntries(sorted(rows.map(r => [r.slug, { tier: r.trust_tier, flagged: r.flagged }] as const), ([slug]) => slug));
+    expect(flags).toEqual({
+      'agent-flagged': { tier: 'agent_written', flagged: true },
+      'confirmed': { tier: 'operator_curated', flagged: false },
+      'no-receipt': { tier: 'agent_written', flagged: false },
+      'other-family': { tier: 'agent_written', flagged: false },
+      'quarantined': { tier: 'agent_written', flagged: false },
+      'tool-flagged': { tier: 'tool_observed', flagged: false },
+      'unknown-flagged': { tier: 'unknown', flagged: true },
+    });
+    return flags;
+  });
+
+  parityTest('readRowTrustRows reads the tier, origin and activation flag each timeline write stamped; an unknown id reads none', { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'addTimelineEntry', 'getTimeline', 'upsertWriteGateReceipt', 'readRowTrustRows'] }, async (engine) => {
+    await note(engine, 'people/trust-example');
+    const add = (summary: string, date: string) => (tx: BrainEngine) => tx.addTimelineEntry('people/trust-example', { date, summary });
+    await declaredWrite(engine, 'agent_written', { channel: 'agent' }, add('agent flagged', '2026-07-01'));
+    await engine.addTimelineEntry('people/trust-example', { date: '2026-07-02', summary: 'unknown flagged' });
+    await declaredWrite(engine, 'tool_observed', { channel: 'tool' }, add('tool flagged', '2026-07-03'));
+    await declaredWrite(engine, 'agent_written', { channel: 'agent' }, add('other family', '2026-07-04'));
+    await declaredWrite(engine, 'agent_written', null, add('no receipt', '2026-07-05'));
+    const families: Record<string, string[]> = {
+      'agent flagged': ['override'], 'unknown flagged': ['credential', 'other'], 'tool flagged': ['exfiltration'], 'other family': ['other'],
+    };
+    // Receipt targets and the lookup need the row ids; they are written and read, never returned or compared.
+    const entries = await engine.getTimeline('people/trust-example');
+    for (const row of entries) {
+      const f = families[row.summary];
+      if (!f) continue;
+      await engine.upsertWriteGateReceipt({
+        target_table: 'timeline_entries', target_id: String(row.id), source_id: 'default', content_hash: 'h1', tier: 'agent_written',
+        detector_version: 1, verdict: 'flag', reason_families: f, reasons: f.map(x => `${x} found`), detector_error: false, request_id: null,
+      });
+    }
+    const summaryOf = new Map(entries.map(e => [Number(e.id), e.summary]));
+    const missing = Math.max(...summaryOf.keys()) + 1000;
+    const rows = await engine.readRowTrustRows({ table: 'timeline_entries', ids: [...summaryOf.keys(), missing] });
+    const trust = Object.fromEntries(sorted(rows.map(r => [summaryOf.get(Number(r.id)), {
+      tier: r.trust_tier, origin: r.write_origin, flagged: r.flagged, contested: r.contested,
+    }] as const), ([summary]) => String(summary)));
+    expect(rows.length).toBe(5);
+    expect(trust).toEqual({
+      'agent flagged': { tier: 'agent_written', origin: { channel: 'agent' }, flagged: true, contested: null },
+      'no receipt': { tier: 'agent_written', origin: null, flagged: false, contested: null },
+      'other family': { tier: 'agent_written', origin: { channel: 'agent' }, flagged: false, contested: null },
+      'tool flagged': { tier: 'tool_observed', origin: { channel: 'tool' }, flagged: false, contested: null },
+      'unknown flagged': { tier: 'unknown', origin: null, flagged: true, contested: null },
+    });
+    return { trust, none: await engine.readRowTrustRows({ table: 'timeline_entries', ids: [] }) };
+  });
+
+  // The store keeps no trust tier on a take and no supersede proposals for a fact, so the Rust engine refuses those
+  // tables before it reads anything (store-members/cli-reads-import.ts); PGLite and Postgres answer them.
+  parityTest('readRowTrustRows reads fact and take rows by id', { methods: ['putPage', 'insertFact', 'readRowTrustRows'] }, async (engine) => {
+    await engine.putPage('people/fact-example', { type: 'person', title: 'F', compiled_truth: 'F', timeline: '' });
+    const fact = await engine.insertFact({ fact: 'a fact', entity_slug: 'people/fact-example', visibility: 'world', source: 'test', embedding: null }, { source_id: 'default' });
+    const facts = await engine.readRowTrustRows({ table: 'facts', ids: [fact.id] });
+    const takes = await engine.readRowTrustRows({ table: 'takes', ids: [] });
+    return { facts: facts.map(r => ({ tier: r.trust_tier, flagged: r.flagged, contested: r.contested })), takes };
+  });
+
+  parityTest('readDatabaseClock returns the UTC clock with microseconds', { methods: ['readDatabaseClock'] }, async (engine) => {
+    const at = await engine.readDatabaseClock();
+    expect(at).toMatch(CLOCK);
+    expect(Math.abs(Date.parse(at) - Date.now())).toBeLessThan(10 * 60_000);
+    return { shape: CLOCK.test(at) };
+  });
+
+  parityTest('listLinkPageMetadata lists live pages by source then slug, with aliases and the knowledge revision', { methods: ['putPage', 'softDeletePage', 'listLinkPageMetadata'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'work');
+    await note(engine, 'b', 'default', { aliases: ['Bee'] });
+    await note(engine, 'a', 'work');
+    await note(engine, 'a');
+    await note(engine, 'gone');
+    await engine.softDeletePage('gone', { sourceId: 'default' });
+    const view = (rows: Awaited<ReturnType<BrainEngine['listLinkPageMetadata']>>) => rows.map(r => {
+      expect(String(r.knowledge_revision)).toMatch(UUID);
+      return { slug: r.slug, source_id: r.source_id, type: r.type, title: r.title, aliases: r.aliases ?? null };
+    });
+    const all = view(await engine.listLinkPageMetadata());
+    expect(all.map(r => `${r.source_id}/${r.slug}`)).toEqual(['default/a', 'default/b', 'work/a']);
+    expect(all[1]!.aliases).toEqual(['Bee']);
+    const work = view(await engine.listLinkPageMetadata('work'));
+    expect(work.map(r => r.slug)).toEqual(['a']);
+    return { all, work };
+  });
+
+  parityTest('listStoredTimelineRows returns the stored timeline rows of one page with dates as YYYY-MM-DD', { methods: ['putPage', 'addTimelineEntry', 'listStoredTimelineRows'] }, async (engine) => {
+    await note(engine, 'a');
+    await note(engine, 'other');
+    await engine.addTimelineEntry('a', { date: '2026-02-01', summary: 'second', detail: 'more', source: 'meeting' });
+    await engine.addTimelineEntry('a', { date: '2026-01-01', summary: 'first' });
+    await engine.addTimelineEntry('other', { date: '2026-03-01', summary: 'elsewhere' });
+    const rows = await engine.listStoredTimelineRows('default', 'a');
+    const view = sorted(rows.map(r => ({ date: r.date, source: r.source, summary: r.summary, detail: r.detail ?? '' })), r => r.date);
+    expect(view).toEqual([
+      { date: '2026-01-01', source: '', summary: 'first', detail: '' },
+      { date: '2026-02-01', source: 'meeting', summary: 'second', detail: 'more' },
+    ]);
+    const missing = await engine.listStoredTimelineRows('default', 'missing');
+    expect(missing).toEqual([]);
+    return { view, missing };
+  });
+
+  parityTest('filterPagesAtRevision keeps the live pages still at the named knowledge revision', { methods: ['putPage', 'softDeletePage', 'filterPagesAtRevision'] }, async (engine) => {
+    const a = await note(engine, 'a');
+    const b = await note(engine, 'b');
+    const gone = await note(engine, 'gone');
+    await engine.softDeletePage('gone', { sourceId: 'default' });
+    const revision = (page: { knowledge_revision?: string }) => String(page.knowledge_revision);
+    expect(revision(a)).toMatch(UUID);
+    const found = sorted(await engine.filterPagesAtRevision([
+      { source_id: 'default', slug: 'a', revision: revision(a) },
+      { source_id: 'default', slug: 'b', revision: '00000000-0000-4000-8000-000000000000' },
+      { source_id: 'default', slug: 'gone', revision: revision(gone) },
+      { source_id: 'work', slug: 'b', revision: revision(b) },
+    ]), r => `${r.source_id}/${r.slug}`);
+    expect(found).toEqual([{ slug: 'a', source_id: 'default' }]);
+    const empty = await engine.filterPagesAtRevision([]);
+    expect(empty).toEqual([]);
+    return { found, empty };
+  });
+});

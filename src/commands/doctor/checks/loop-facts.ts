@@ -1,6 +1,7 @@
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { loopFactDrift } from '../../../core/persistence/loop-fact-retirement.ts';
+import { sortSourcesById } from '../../../core/source-rows.ts';
 
 /**
  * #5869: closed commitment loops whose fact is still active (and retirable:
@@ -9,7 +10,7 @@ import { loopFactDrift } from '../../../core/persistence/loop-fact-retirement.ts
  */
 export async function loopFactsDriftCheck(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
   try {
-    const sources = sourceIds ?? (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+    const sources = sourceIds ?? sortSourcesById(await engine.listAllSources()).map(row => row.id);
     const drifted = (await loopFactDrift(engine, sources)).length;
     const details = { drifted, repair: 'loop-facts', docs: 'docs/guides/repair.md#explicit-only-repair-kinds' };
     if (!drifted) return { name: 'loop_facts_drift', status: 'ok', details, message: 'Every closed commitment loop has its fact retired.' };

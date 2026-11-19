@@ -25,6 +25,7 @@ import type { Link, PageInput, PageType } from '../../src/core/types.ts';
 import { linkFamily } from '../../src/core/search/relational-chain.ts';
 import { createSource, parityArms, pick, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -561,6 +562,39 @@ describe('engine parity: backlink and page signal reads', () => {
   );
 
   parityTest(
+    'getContentFlagsByPageIds, getUnverifiedExtractionPageIds and getEffectiveDates under excludePrivate apply a caller\'s reader identity and private-readable grant',
+    { methods: ['getContentFlagsByPageIds', 'getUnverifiedExtractionPageIds', 'getEffectiveDates', 'putPage'] },
+    async (engine) => {
+      const ids = new Map<string, number>();
+      const marks = { content_flag: { reason: 'markup_heavy', detail: 'tags' }, provenance: 'auto-extracted', status: 'unverified' };
+      for (const [slug, frontmatter] of [
+        ['pv/open', {}], ['pv/private', { visibility: 'private' }], ['pv/readers', { readable_by: ['alice-example'] }],
+        ['pv/team', { readable_by: 'group:team-a' }], ['pv/bob-only', { readable_by: ['bob-example'] }],
+        ['pv/pinned', { visibility: 'private', pinned_question: true }],
+      ] as const) {
+        ids.set(slug, (await engine.putPage(slug, page(slug, {
+          frontmatter: { ...frontmatter, ...marks }, effective_date: new Date('2024-03-05T00:00:00Z'), effective_date_source: 'date',
+        }))).id);
+      }
+      const all = [...ids.values()];
+      const refs = [...ids.keys()].map((slug) => ({ slug, source_id: 'default' }));
+      const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess(access, async () => ({
+        flags: bySlug(ids, await engine.getContentFlagsByPageIds(all, { excludePrivate: true })).map(([slug]) => slug),
+        unverified: bySlug(ids, await engine.getUnverifiedExtractionPageIds(all, { excludePrivate: true })).map(([slug]) => slug),
+        dates: sorted([...(await engine.getEffectiveDates(refs, { excludePrivate: true })).keys()]),
+      }));
+      const member = await read({ identity: ['member:alice-example', 'group:team-a'], hidePrivate: true });
+      const granted = await read({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true });
+      const stranger = await read({ identity: ['member:carol-example'], hidePrivate: true });
+      expect(stranger.flags).toEqual(['pv/open']);
+      expect(sorted(member.flags)).toEqual(['pv/open', 'pv/readers', 'pv/team']);
+      expect(sorted(granted.unverified)).toEqual(['pv/open', 'pv/private', 'pv/readers']);
+      expect(member.dates).toEqual(['default::pv/open', 'default::pv/readers', 'default::pv/team']);
+      return { member, granted, stranger };
+    },
+  );
+
+  parityTest(
     'getPageTimestamps and getEffectiveDates return dates only for existing live pages',
     { methods: ['getPageTimestamps', 'getEffectiveDates', 'putPage', 'softDeletePage'] },
     async (engine) => {
@@ -630,6 +664,218 @@ describe('engine parity: backlink and page signal reads', () => {
       expect(islanded).toEqual(['default:people/op-island', 'orphan-src:people/op-alt-island']);
       expect(inbound).toEqual(['default:people/op-island', 'default:people/op-linker', 'orphan-src:people/op-alt-island']);
       return { islanded, inbound, scopedDefault, scopedAlt, federated };
+    },
+  );
+  parityTest(
+    'findByTitleFuzzy: exact float4 scores, slug ties, LIKE wildcards in dirPrefix, soft-deleted pages per arm',
+    { methods: ['findByTitleFuzzy', 'putPage', 'softDeletePage'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'fuzzy-src');
+      await engine.putPage('fz/b-tie', page('Widget Example', { type: 'concept' }));
+      await engine.putPage('fz/a-tie', page('Widget Example', { type: 'concept' }));
+      await engine.putPage('fz_x/odd', page('Gadget Thing', { type: 'concept' }));
+      await engine.putPage('fz/gone', page('Vanished Widget Example', { type: 'concept' }));
+      await engine.putPage('fz/alt', page('Widget Example', { type: 'concept' }), { sourceId: 'fuzzy-src' });
+      await engine.softDeletePage('fz/gone');
+      const tie = await engine.findByTitleFuzzy('Widget Example');
+      const partial = await engine.findByTitleFuzzy('Widget Exampl', 'fz');
+      // The prefix is a LIKE pattern: each `_` matches any one character, so `f__x` matches `fz_x/odd`.
+      const wildcard = await engine.findByTitleFuzzy('Gadget Thing', 'f__x', 0.5);
+      const lowThreshold = await engine.findByTitleFuzzy('Gadget', undefined, 0.1);
+      // 1/3 as a float4 is 0.33333334: the SQL compares in float4.
+      const boundary = await engine.findByTitleFuzzy('abc', undefined, 0.33333334);
+      await engine.putPage('fz/abd', page('abd', { type: 'concept' }));
+      const boundaryHit = await engine.findByTitleFuzzy('abc', 'fz', 0.33333334);
+      const deletedScoped = await engine.findByTitleFuzzy('Vanished Widget Example', undefined, 0.9, 'default');
+      const deletedUnscoped = await engine.findByTitleFuzzy('Vanished Widget Example', undefined, 0.9);
+      const otherSource = await engine.findByTitleFuzzy('Widget Example', undefined, 0.55, 'fuzzy-src');
+      expect(tie?.slug).toBe('fz/a-tie');
+      expect(wildcard?.slug).toBe('fz_x/odd');
+      expect(boundaryHit?.slug).toBe('fz/abd');
+      expect(deletedScoped).toBeNull();
+      return { tie, partial, wildcard, lowThreshold, boundary, boundaryHit, deletedScoped, deletedUnscoped, otherSource };
+    },
+  );
+});
+
+/**
+ * `excludePrivate` on the links-family reads: each read applies the page policy (`privatePagesFilterForCaller`) on
+ * every page its SQL judges (endpoints, contributors, origins, neighbors, orphan candidates), on every engine arm.
+ * A read that ignores the flag returns the hidden pages; one that judges only `visibility` misses readers, aliases,
+ * derived atoms and concepts, lineage and Life Chronicle origins.
+ */
+describe('engine parity: excludePrivate on links reads', () => {
+  /** One hidden page per rule of the page policy, plus open pages. */
+  const HIDDEN: Array<[string, PageType, Record<string, unknown>]> = [
+    ['notes/private', 'note', { visibility: 'private' }],
+    ['notes/readers', 'note', { readable_by: ['alice-example'] }],
+    ['notes/access-alias', 'note', { access: '\u00a0Restricted\u3000' }],
+    ['atoms/no-visibility', 'atom', {}],
+    ['atoms/origin-private', 'atom', { visibility: 'world', source_slug: 'notes/private' }],
+    ['concepts/private-input', 'concept', { visibility: 'world', synthesized_by: 'dream' }],
+    ['notes/lineage-md', 'note', { derived_from: 'notes/private.md' }],
+    ['events/chronicle-private', 'event', { captured_via: 'life-chronicle:test', event: { depth: 'notes/private' } }],
+  ];
+  const OPEN: Array<[string, PageType, Record<string, unknown>]> = [
+    ['notes/open', 'note', {}],
+    ['notes/access-plain', 'note', { access: 'team' }],
+    ['atoms/origin-open', 'atom', { visibility: 'world', source_slug: 'notes/open' }],
+    ['events/plain', 'event', { event: { depth: 'meetings/none' } }],
+    ['people/hub', 'person', {}],
+  ];
+
+  async function fixture(engine: BrainEngine) {
+    const ids = new Map<string, number>();
+    for (const [slug, type, frontmatter] of [...HIDDEN, ...OPEN]) {
+      ids.set(slug, (await engine.putPage(slug, page(slug, { type, frontmatter }))).id);
+    }
+    await engine.addLink('concepts/private-input', 'atoms/no-visibility', '', 'synthesized_from', 'concept-provenance');
+    // Every page but the hub cites the hub; the open note also cites a hidden page.
+    for (const [slug] of [...HIDDEN, ...OPEN]) if (slug !== 'people/hub') await engine.addLink(slug, 'people/hub', '', 'cites', 'manual');
+    await engine.addLink('notes/open', 'notes/private', '', 'cites', 'manual');
+    // An open-to-open edge written on a hidden page: its origin hides it.
+    await engine.addLinksBatch([{ from_slug: 'events/plain', to_slug: 'notes/access-plain', link_type: 'cites', link_source: 'frontmatter', origin_slug: 'notes/private', origin_field: 'refs' }]);
+    return ids;
+  }
+
+  parityTest(
+    'getBacklinkCounts and getAdjacencyBoosts under excludePrivate count only links whose pages and origin the policy keeps',
+    { methods: ['putPage', 'addLink', 'addLinksBatch', 'getBacklinkCounts', 'getAdjacencyBoosts'] },
+    async (engine) => {
+      const ids = await fixture(engine);
+      const all = [...ids.values()];
+      const counts = (m: Map<number, number>) => bySlug(ids, m).filter(([, n]) => n > 0);
+      const backOff = counts(await engine.getBacklinkCounts(all, {}));
+      const backOn = counts(await engine.getBacklinkCounts(all, { excludePrivate: true }));
+      const backScoped = counts(await engine.getBacklinkCounts(all, { sourceId: 'default', excludePrivate: true }));
+      const adjOff = bySlug(ids, await engine.getAdjacencyBoosts(all, {}));
+      const adjOn = bySlug(ids, await engine.getAdjacencyBoosts(all, { excludePrivate: true }));
+      expect(backOff).toContainEqual(['people/hub', HIDDEN.length + OPEN.length - 1]);
+      expect(backOn).toEqual([['people/hub', OPEN.length - 1]]);
+      expect(adjOn.map(([slug]) => slug)).toEqual(['people/hub']);
+      return { backOff, backOn, backScoped, adjOff, adjOn };
+    },
+  );
+
+  parityTest(
+    'relationalFanout and relationalChainHop under excludePrivate never seed, step to, or count a hidden page',
+    { methods: ['putPage', 'addLink', 'addLinksBatch', 'relationalFanout', 'relationalChainHop'] },
+    async (engine) => {
+      const ids = await fixture(engine);
+      const shape = (rows: Awaited<ReturnType<BrainEngine['relationalFanout']>>) =>
+        rows.map((r) => `${r.source_id}:${r.slug}:${r.hop}:${r.edge_count}:${r.path.join('>')}`);
+      const fanOff = shape(await engine.relationalFanout(['people/hub'], { direction: 'in' }));
+      const fanOn = shape(await engine.relationalFanout(['people/hub'], { direction: 'in', excludePrivate: true }));
+      const fanBoth = shape(await engine.relationalFanout(['notes/open'], { direction: 'both', depth: 2, excludePrivate: true }));
+      const hiddenSeed = shape(await engine.relationalFanout(['notes/private'], { direction: 'both', excludePrivate: true }));
+      const slugOf = new Map([...ids].map(([slug, id]) => [id, slug]));
+      const hop = async (excludePrivate?: boolean) => (await engine.relationalChainHop([ids.get('people/hub')!], {
+        linkTypes: ['cites'], toward: 'subject', subjectTypes: ['note', 'atom', 'concept', 'event'], objectTypes: ['person', 'note'],
+        degreeLinkTypes: ['cites'], neighborCap: 100, ...(excludePrivate ? { excludePrivate } : {}),
+      })).map((e) => `${slugOf.get(e.from_page_id)}>${e.to_slug}:${e.orientation}:${e.link_ids.length}:${e.from_degree}`).sort();
+      const hopOff = await hop();
+      const hopOn = await hop(true);
+      expect(fanOn.some((r) => r.includes('notes/private'))).toBe(false);
+      expect(fanOff.some((r) => r.includes('notes/private'))).toBe(true);
+      expect(hiddenSeed).toEqual([]);
+      expect(hopOn.length).toBe(OPEN.length - 1);
+      return { fanOff, fanOn, fanBoth, hiddenSeed, hopOff, hopOn };
+    },
+  );
+
+  parityTest(
+    'supersedingPageSlugs under excludePrivate drops a hidden superseder, a hidden superseded page and a hidden origin',
+    { methods: ['putPage', 'addLink', 'addLinksBatch', 'supersedingPageSlugs'] },
+    async (engine) => {
+      const ids = await fixture(engine);
+      for (const slug of ['notes/stale-a', 'notes/stale-b', 'notes/stale-c']) ids.set(slug, (await engine.putPage(slug, page(slug))).id);
+      await engine.addLink('notes/private', 'notes/stale-a', '', 'supersedes', 'manual');
+      await engine.addLink('notes/open', 'notes/stale-b', '', 'supersedes', 'manual');
+      await engine.addLink('notes/open', 'notes/readers', '', 'supersedes', 'manual');
+      await engine.addLinksBatch([{ from_slug: 'notes/access-plain', to_slug: 'notes/stale-c', link_type: 'supersedes', link_source: 'frontmatter', origin_slug: 'atoms/no-visibility', origin_field: 'supersedes' }]);
+      const slugOf = new Map([...ids].map(([slug, id]) => [id, slug]));
+      const view = (m: Map<number, string>) => sorted([...m].map(([id, by]) => `${slugOf.get(id)}<${by}`));
+      const all = [...ids.values()];
+      const off = view(await engine.supersedingPageSlugs(all, {}));
+      const on = view(await engine.supersedingPageSlugs(all, { excludePrivate: true }));
+      const scoped = view(await engine.supersedingPageSlugs(all, { sourceIds: ['default'], excludePrivate: true }));
+      expect(off).toEqual(['notes/readers<notes/open', 'notes/stale-a<notes/private', 'notes/stale-b<notes/open', 'notes/stale-c<notes/access-plain']);
+      expect(on).toEqual(['notes/stale-b<notes/open']);
+      return { off, on, scoped };
+    },
+  );
+
+  parityTest(
+    'findOrphanPages under excludePrivate hides hidden candidates and ignores links from hidden pages or with hidden origins',
+    { methods: ['putPage', 'addLink', 'addLinksBatch', 'findOrphanPages'] },
+    async (engine) => {
+      await fixture(engine);
+      for (const slug of ['orph/by-private', 'orph/to-private', 'orph/by-origin', 'orph/by-open', 'orph/alone']) await engine.putPage(slug, page(slug));
+      await engine.addLink('notes/private', 'orph/by-private', '', 'cites', 'manual');
+      await engine.addLink('orph/to-private', 'notes/readers', '', 'cites', 'manual');
+      await engine.addLinksBatch([{ from_slug: 'notes/open', to_slug: 'orph/by-origin', link_type: 'cites', link_source: 'frontmatter', origin_slug: 'notes/lineage-md', origin_field: 'refs' }]);
+      await engine.addLink('notes/open', 'orph/by-open', '', 'cites', 'manual');
+      const view = async (opts?: Parameters<BrainEngine['findOrphanPages']>[0]) =>
+        sorted((await engine.findOrphanPages(opts)).map((r) => `${r.source_id ?? 'default'}:${r.slug}`));
+      const off = await view({});
+      const on = await view({ excludePrivate: true });
+      const inbound = await view({ excludePrivate: true, mode: 'inbound' });
+      const scopedInbound = await view({ excludePrivate: true, sourceId: 'default', scopeInbound: true });
+      expect(off).toEqual(['default:orph/alone']);
+      expect(on).toEqual(['default:orph/alone', 'default:orph/by-origin', 'default:orph/by-private', 'default:orph/to-private']);
+      expect(inbound).toContain('default:orph/to-private');
+      return { off, on, inbound, scopedInbound };
+    },
+  );
+
+  parityTest(
+    'the links reads under excludePrivate apply a caller\'s reader identity and private-readable grant',
+    { methods: ['putPage', 'addLink', 'addLinksBatch', 'getBacklinkCounts', 'getAdjacencyBoosts', 'relationalFanout',
+      'relationalChainHop', 'supersedingPageSlugs', 'findOrphanPages'] },
+    async (engine) => {
+      const ids = await fixture(engine);
+      for (const [slug, frontmatter] of [
+        ['notes/team', { readable_by: 'group:team-a' }], ['notes/bob-only', { readable_by: ['bob-example'] }],
+        ['notes/pinned', { visibility: 'private', pinned_question: true }], ['orph/by-readers', {}], ['orph/by-team', {}], ['notes/stale-g', {}],
+      ] as const) ids.set(slug, (await engine.putPage(slug, page(slug, { frontmatter }))).id);
+      for (const slug of ['notes/team', 'notes/bob-only', 'notes/pinned']) await engine.addLink(slug, 'people/hub', '', 'cites', 'manual');
+      await engine.addLink('notes/readers', 'orph/by-readers', '', 'cites', 'manual');
+      await engine.addLink('notes/team', 'orph/by-team', '', 'cites', 'manual');
+      await engine.addLink('notes/open', 'notes/readers', '', 'supersedes', 'manual');
+      await engine.addLink('notes/private', 'notes/stale-g', '', 'supersedes', 'manual');
+      const all = [...ids.values()];
+      const slugOf = new Map([...ids].map(([slug, id]) => [id, slug]));
+      const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess(access, async () => ({
+        back: bySlug(ids, await engine.getBacklinkCounts(all, { excludePrivate: true })).filter(([, n]) => n > 0),
+        adjacency: bySlug(ids, await engine.getAdjacencyBoosts(all, { excludePrivate: true })).map(([slug]) => slug),
+        fanout: sorted((await engine.relationalFanout(['people/hub'], { direction: 'in', excludePrivate: true }))
+          .map((r) => `${r.slug}:${r.hop}:${r.edge_count}`)),
+        hop: (await engine.relationalChainHop([ids.get('people/hub')!], {
+          linkTypes: ['cites'], toward: 'subject', subjectTypes: ['note', 'atom', 'concept', 'event'], objectTypes: ['person', 'note'],
+          degreeLinkTypes: ['cites'], neighborCap: 100, excludePrivate: true,
+        })).map((e) => `${slugOf.get(e.from_page_id)}>${e.to_slug}:${e.from_degree}`).sort(),
+        superseded: sorted([...await engine.supersedingPageSlugs(all, { excludePrivate: true })].map(([id, by]) => `${slugOf.get(id)}<${by}`)),
+        orphans: sorted((await engine.findOrphanPages({ excludePrivate: true })).map((r) => r.slug)),
+      }));
+      const member = await read({ identity: ['member:alice-example', 'group:team-a'], hidePrivate: true });
+      const granted = await read({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true });
+      const stranger = await read({ identity: ['member:carol-example'], hidePrivate: true });
+      const hub = (rows: Array<[string, number]>) => rows.find(([slug]) => slug === 'people/hub')?.[1];
+      expect(hub(stranger.back)).toBe(OPEN.length - 1);
+      expect(hub(member.back)).toBe(OPEN.length + 1);
+      expect(member.back).toContainEqual(['orph/by-readers', 1]);
+      expect(stranger.back.map(([slug]) => slug)).not.toContain('orph/by-readers');
+      expect(member.fanout.some((r) => r.startsWith('notes/readers:'))).toBe(true);
+      expect(member.fanout.some((r) => r.startsWith('notes/bob-only:'))).toBe(false);
+      expect(member.superseded).toContain('notes/readers<notes/open');
+      expect(member.superseded).not.toContain('notes/stale-g<notes/private');
+      expect(granted.superseded).toContain('notes/stale-g<notes/private');
+      expect(stranger.orphans).toContain('orph/by-readers');
+      expect(member.orphans).not.toContain('orph/by-readers');
+      expect(member.orphans).not.toContain('orph/by-team');
+      expect(granted.fanout.some((r) => r.startsWith('notes/private:'))).toBe(true);
+      expect(granted.fanout.some((r) => r.startsWith('notes/pinned:'))).toBe(false);
+      return { member, granted, stranger };
     },
   );
 });

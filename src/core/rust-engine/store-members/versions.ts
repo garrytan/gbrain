@@ -1,4 +1,8 @@
-/** Page version members (BrainEngine createVersion, getVersions). `revertToVersion` is not served: it reads pages through raw SQL. */
+/**
+ * Page version members (BrainEngine createVersion, getVersions). A segmented page's snapshot references its body
+ * generation and keeps content_hash, as insertSegmentedVersion does. `revertToVersion` is not served: it reads pages
+ * through raw SQL.
+ */
 import type { PageVersion, GetVersionsOpts, PageVersionRows } from '../../page-state/version-types.ts';
 import { toCreatedVersion, toVersion } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';

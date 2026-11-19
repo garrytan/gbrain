@@ -72,17 +72,8 @@ export async function readIdentitySiblings(engine: BrainEngine, sourceId: string
     if (!policy.siblingMerge) return { pages: [], capped: false, verdict: 'disabled' };
     const pack = opts.pack !== undefined ? opts.pack : await loadSourcePack(engine, sourceId);
     const types = linkableTypesFor(pack, policy);
-    const { privatePagesFilterForCaller } = await import('../search/private-visibility.ts');
-    const { quarantineFilterFragment } = await import('../quarantine.ts');
-    const privacy = (opts.excludePrivate ? ` AND ${privatePagesFilterForCaller('pages')}` : '')
-      + (opts.excludeQuarantined ? ` AND ${quarantineFilterFragment('pages')}` : '');
-    const like = `%: ${subject.replace(/[\\%_]/g, m => `\\${m}`)}`;
-    const rows = await engine.executeRaw<{ slug: string; title: string | null; type: string | null; identity: unknown }>(
-      `SELECT slug, title, type, frontmatter->>'identity' AS identity FROM pages
-        WHERE source_id = $1 AND deleted_at IS NULL AND type = ANY($2::text[])
-          AND (lower(title) = $3 OR lower(title) LIKE $4)${privacy}
-        ORDER BY slug LIMIT ${SIBLING_GROUP_CAP + 2}`,
-      [sourceId, types, subject, like]);
+    const rows = await engine.readIdentitySiblingCandidates(sourceId, { types, subject, limit: SIBLING_GROUP_CAP + 2,
+      excludePrivate: opts.excludePrivate, excludeQuarantined: opts.excludeQuarantined });
     const members = rows.filter(r => normalizeAlias(titleName(r.title ?? '')) === subject);
     if (!members.some(r => r.slug === page.slug) || members.length < 2) return { pages: [], capped: false };
     const verdict = siblingVerdict(members, pack, policy);
@@ -128,11 +119,11 @@ export async function siblingCanonical(engine: BrainEngine, sourceId: string, sl
  * (`companies/acme-example` -> `acme-example`, what a fact saved before the
  * page existed got, #4828) when no other page claims that basename. The
  * entity card and recall read all of them, so a saved fact shows up whichever
- * sibling a reader asks for.
+ * sibling a reader asks for. A caller that already read the live page passes
+ * its `title`, which skips the page read.
  */
-export async function factEntitySlugs(engine: BrainEngine, sourceId: string, slug: string, opts: { excludePrivate?: boolean } = {}): Promise<string[]> {
-  const [page] = await engine.executeRaw<{ title: string | null }>(
-    'SELECT title FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL', [sourceId, slug]).catch(() => []);
+export async function factEntitySlugs(engine: BrainEngine, sourceId: string, slug: string, opts: { excludePrivate?: boolean; title?: string | null } = {}): Promise<string[]> {
+  const page = opts.title !== undefined ? { title: opts.title } : await engine.getPage(slug, { sourceId }).catch(() => null);
   if (!page) return [slug];
   const siblings = await readIdentitySiblings(engine, sourceId, { slug, title: page.title }, { excludePrivate: opts.excludePrivate ?? true });
   const { slugify } = await import('../entities/resolve.ts');
@@ -149,7 +140,6 @@ async function unclaimedBasename(engine: BrainEngine, sourceId: string, slug: st
   if (!basename) return null;
   const { BASENAME_DIRS } = await import('../entities/resolve.ts');
   const claimants = [basename, ...BASENAME_DIRS.map(dir => `${dir}/${basename}`)].filter(s => s !== slug);
-  const rows = await engine.executeRaw<{ slug: string }>(
-    'SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[]) LIMIT 1', [sourceId, claimants]).catch(() => null);
-  return rows && rows.length === 0 ? basename : null;
+  const claimed = await engine.findExactSlug(sourceId, claimants).then(slug => slug !== null, () => null);
+  return claimed === false ? basename : null;
 }

@@ -22,6 +22,13 @@ describe('image query retains date and readiness contracts outside hybrid search
       getConfig: async () => null,
       getAllConfig: async () => ({}),
       executeRaw: async (sql: string) => sql.includes('AS pending') ? [{ pending: false }] : [],
+      // No page rows in this fake brain: the typed trust read finds nothing.
+      readPageTrustRows: async () => [],
+      readRowTrustRows: async () => [],
+      // Readiness reads through typed members: no generation (never cached), nothing pending, no held pages.
+      readProjectionReadinessGeneration: async () => null,
+      readProjectionReadiness: async () => ({ pending: false }),
+      countEmbeddingHeldPages: async () => null,
       searchVector: async (_vector: Float32Array, opts: SearchOpts) => {
         options = opts;
         opts.onVectorPoolMeta?.({ underfilled: true, incomplete: true, escalations: 3,

@@ -23,6 +23,7 @@
  * (ENG-21). Doctor `trust_scan` reports the unscanned count.
  */
 import type { BrainEngine } from '../engine.ts';
+import type { TrustScanRow } from '../engine-sql/trust-tier-reads.ts';
 import {
   assessFactForGate, assessPageForGate, assessTakeForGate, assessTimelineForGate, WRITE_GATE_DETECTOR_VERSION,
   type WriteGateAssessment, type WriteGateConfig,
@@ -33,6 +34,7 @@ import { storedTrustTier, TRUST_TIER_RANK, TRUST_TIERS, type TrustTier } from '.
 import { ACTIVATION_TIER_CEILING } from './sql.ts';
 import { opError } from '../ops/contract.ts';
 import { claimPendingSql, TRUST_CLAIM_RESUME_COMMAND } from '../trust/claim-state.ts';
+import { readConfigValue, type ConfigReader } from '../config-values.ts';
 
 export type ScanTable = 'pages' | 'facts' | 'takes' | 'timeline_entries';
 export const SCAN_TABLES: readonly ScanTable[] = ['pages', 'facts', 'takes', 'timeline_entries'];
@@ -46,7 +48,6 @@ const SCAN_CONFIG: WriteGateConfig = { externalMode: 'flag', agentMode: 'flag' }
 
 /** Tiers the scan covers: at or below the activation ceiling. */
 export const SCAN_TIERS: readonly TrustTier[] = TRUST_TIERS.filter(t => TRUST_TIER_RANK[t] <= TRUST_TIER_RANK[ACTIVATION_TIER_CEILING]);
-const tierList = SCAN_TIERS.map(t => `'${t}'`).join(',');
 
 /**
  * `until` is each table's max id when the scan (for this detector version)
@@ -74,9 +75,9 @@ async function saveCursor(engine: Pick<BrainEngine, 'executeRaw'>, cursor: Curso
  * the detector version it records): rows above it were assessed by their writers. Only a baseline taken
  * under the current detector bounds the scan; a detector bump rescans all.
  */
-async function readBaseline(engine: Pick<BrainEngine, 'executeRaw'>): Promise<Cursor['until'] | null> {
-  const [row] = await engine.executeRaw<{ value: string }>('SELECT value FROM config WHERE key = $1', [WRITE_GATE_SCAN_BASELINE_KEY]);
-  const parsed = row ? JSON.parse(row.value) as { detector_version?: unknown; until?: unknown } : null;
+async function readBaseline(engine: ConfigReader): Promise<Cursor['until'] | null> {
+  const value = await readConfigValue(engine, WRITE_GATE_SCAN_BASELINE_KEY);
+  const parsed = value !== undefined ? JSON.parse(value) as { detector_version?: unknown; until?: unknown } : null;
   return parsed?.detector_version === WRITE_GATE_DETECTOR_VERSION && parsed.until && typeof parsed.until === 'object'
     ? parsed.until as Cursor['until'] : null;
 }
@@ -89,18 +90,7 @@ async function currentCursor(engine: Pick<BrainEngine, 'executeRaw'>): Promise<C
   return { detector_version: WRITE_GATE_DETECTOR_VERSION, ids: {}, ...(until ? { until } : {}) };
 }
 
-interface Row { id: number | string; source_id: string | null; trust_tier: string; write_origin: unknown; [k: string]: unknown }
-
-const SELECT: Readonly<Record<ScanTable, string>> = {
-  pages: `SELECT p.id, p.source_id, p.trust_tier, p.write_origin, p.title, p.compiled_truth, p.timeline, p.frontmatter FROM pages p
-    WHERE p.id > $1 AND p.deleted_at IS NULL AND p.trust_tier IN (${tierList}) ORDER BY p.id LIMIT $2`,
-  facts: `SELECT f.id, f.source_id, f.trust_tier, f.write_origin, f.fact, f.context, f.value, f.source FROM facts f
-    WHERE f.id > $1 AND f.trust_tier IN (${tierList}) ORDER BY f.id LIMIT $2`,
-  takes: `SELECT t.id, p.source_id, t.trust_tier, t.write_origin, t.claim, t.source FROM takes t JOIN pages p ON p.id = t.page_id
-    WHERE t.id > $1 AND t.trust_tier IN (${tierList}) ORDER BY t.id LIMIT $2`,
-  timeline_entries: `SELECT te.id, p.source_id, te.trust_tier, te.write_origin, te.summary, te.detail, te.source FROM timeline_entries te
-    JOIN pages p ON p.id = te.page_id WHERE te.id > $1 AND te.trust_tier IN (${tierList}) ORDER BY te.id LIMIT $2`,
-};
+type Row = TrustScanRow;
 
 const text = (v: unknown) => (typeof v === 'string' ? v : null);
 const json = (v: unknown): Record<string, unknown> | null => {
@@ -167,7 +157,7 @@ export async function runTrustScan(engine: BrainEngine, opts: TrustScanOptions =
       if (after >= until) { report.done = true; break; }
       // Page bodies are large: their batches stay small whatever the caller asked for.
       const limit = table === 'pages' ? Math.min(batchSize, 100) : batchSize;
-      const rows = (await engine.executeRaw<Row>(SELECT[table], [after, limit])).filter(r => Number(r.id) <= until);
+      const rows = (await engine.listTrustScanRows({ table, afterId: after, limit, tiers: SCAN_TIERS })).filter(r => r.id <= until);
       if (rows.length === 0) { cursor.ids[table] = until; await saveCursor(engine, cursor); report.done = true; break; }
       await engine.transaction(async tx => {
         for (const row of rows) {
@@ -176,7 +166,7 @@ export async function runTrustScan(engine: BrainEngine, opts: TrustScanOptions =
           await recordWriteGateReceipt(tx, { targetTable: table, targetId: row.id, sourceId: row.source_id, assessment });
           report.flagged++;
         }
-        cursor.ids[table] = rows.length === limit ? Number(rows[rows.length - 1].id) : until;
+        cursor.ids[table] = rows.length === limit ? rows[rows.length - 1].id : until;
         await saveCursor(tx, cursor);
       });
       report.scanned += rows.length;
@@ -196,16 +186,13 @@ export interface TrustScanState { detector_version: number; unscanned: Record<Sc
  * scanned (doctor `trust_scan`): everything before the first run, then the
  * rows between the cursor and the run's id ceiling.
  */
-export async function readTrustScanState(engine: Pick<BrainEngine, 'executeRaw'>): Promise<TrustScanState> {
+export async function readTrustScanState(engine: Pick<BrainEngine, 'executeRaw' | 'countUnscannedTrustRows'>): Promise<TrustScanState> {
   const cursor = await currentCursor(engine);
   const unscanned = {} as Record<ScanTable, number>;
   for (const table of SCAN_TABLES) {
-    const alias = { pages: 'pages', facts: 'facts', takes: 'takes', timeline_entries: 'timeline_entries' }[table];
-    const live = table === 'pages' ? ' AND deleted_at IS NULL' : '';
-    const ceiling = cursor.until ? ` AND id <= ${Number(cursor.until[table] ?? 0)}` : '';
-    const [row] = await engine.executeRaw<{ n: number | string }>(
-      `SELECT count(*)::int AS n FROM ${alias} WHERE id > $1 AND trust_tier IN (${tierList})${live}${ceiling}`, [cursor.ids[table] ?? 0]);
-    unscanned[table] = Number(row?.n ?? 0);
+    unscanned[table] = await engine.countUnscannedTrustRows({
+      table, afterId: cursor.ids[table] ?? 0, until: cursor.until ? Number(cursor.until[table] ?? 0) : null, tiers: SCAN_TIERS,
+    });
   }
   return {
     detector_version: WRITE_GATE_DETECTOR_VERSION, unscanned,

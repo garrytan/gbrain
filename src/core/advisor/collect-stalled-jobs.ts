@@ -4,9 +4,9 @@
  * #14: `minion_jobs` may be ABSENT on older/partial brains, and very old
  * brains lack `sources`, `sources.last_sync_at` or `sources.archived`: exactly those missing
  * objects yield no finding. Any other read failure is rethrown so runAdvisor
- * reports `collector_failed:stalled-jobs` instead of a clean check. Engine-agnostic
- * SQL via executeRaw (works on Postgres + PGLite); timestamps compared with
- * `now()` which both engines provide. No PG-only constructs.
+ * reports `collector_failed:stalled-jobs` instead of a clean check. Both reads are
+ * typed engine members: `listStuckActiveJobsByName` (the queue-health reads) and
+ * `listStaleSyncSourceIds` (database clock on PGLite and Postgres).
  */
 
 import type { AdvisorCollector, AdvisorFinding } from './types.ts';
@@ -19,14 +19,7 @@ export const collectStalledJobs: AdvisorCollector = {
 
     // Stuck active jobs: lock lapsed or stalled-counter climbing.
     try {
-      const rows = await ctx.engine.executeRaw<{ name: string; n: number }>(
-        `SELECT name, count(*)::int AS n
-           FROM minion_jobs
-          WHERE status = 'active'
-            AND (lock_until < now() OR stalled_counter >= 2)
-          GROUP BY name
-          ORDER BY n DESC`,
-      );
+      const rows = await ctx.engine.listStuckActiveJobsByName();
       for (const r of rows) {
         findings.push({
           id: `stalled_job:${r.name}`,
@@ -47,21 +40,13 @@ export const collectStalledJobs: AdvisorCollector = {
 
     // Stale federated sources: synced sources that haven't advanced in a week.
     try {
-      const rows = await ctx.engine.executeRaw<{ id: string }>(
-        `SELECT id
-           FROM sources
-          WHERE last_sync_at IS NOT NULL
-            AND last_sync_at < now() - interval '7 days'
-            AND NOT archived
-          ORDER BY id`,
-      );
-      for (const r of rows) {
+      for (const id of await ctx.engine.listStaleSyncSourceIds()) {
         findings.push({
-          id: `stale_sync:${r.id}`,
+          id: `stale_sync:${id}`,
           severity: 'info',
-          title: `Source "${r.id}" hasn't synced in over a week.`,
+          title: `Source "${id}" hasn't synced in over a week.`,
           detail: 'Re-sync to pull in new content the brain has not indexed yet.',
-          fix: { command_argv: ['gbrain', 'sync', '--source', r.id] },
+          fix: { command_argv: ['gbrain', 'sync', '--source', id] },
           collector: 'stalled-jobs',
           ask_user: true,
         });

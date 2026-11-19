@@ -21,7 +21,7 @@ import type {
 } from '../types.ts';
 import { affectsRecall } from '../types.ts';
 export { resolveDateBoundary, resolveSearchDateBounds } from './date-bounds.ts';
-import { hasReadPolicy } from './read-policy-sql.ts';
+import { readPolicyOf } from './read-policy-sql.ts';
 import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { embedQuery } from '../embedding.ts';
 import { loadEmbeddingQueryPrefix } from './query-prefix.ts';
@@ -547,7 +547,7 @@ export async function runPostFusionStages(
   opts: PostFusionOpts,
 ): Promise<void> {
   if (results.length === 0) return;
-  const policy = hasReadPolicy(opts) ? opts : undefined;
+  const policy = readPolicyOf(opts);
 
   // v0.40.4 attribution stamp (D12=A) — capture base_score ONCE at entry,
   // BEFORE any boost mutates r.score. Without this, --explain can't
@@ -594,7 +594,8 @@ export async function runPostFusionStages(
   if (backlinkCounts) {
     try {
       applyBacklinkBoost(results, await backlinkCounts, floorThreshold);
-    } catch {
+    } catch (err) {
+      rethrowCapabilityRefusal(err);
       // Non-fatal; preserves the existing pre-v0.29.1 contract.
     }
   }
@@ -603,7 +604,8 @@ export async function runPostFusionStages(
   if (salienceScores && opts.salience !== 'off') {
     try {
       applySalienceBoost(results, await salienceScores, opts.salience, floorThreshold);
-    } catch {
+    } catch (err) {
+      rethrowCapabilityRefusal(err);
       // Non-fatal.
     }
   }
@@ -628,7 +630,8 @@ export async function runPostFusionStages(
         Date.now(),
         floorThreshold,
       );
-    } catch {
+    } catch (err) {
+      rethrowCapabilityRefusal(err);
       // Non-fatal.
     }
 
@@ -666,7 +669,8 @@ export async function runPostFusionStages(
         onMeta: opts.onGraphMeta,
         onScoreDistribution: opts.onScoreDistribution,
       });
-    } catch {
+    } catch (err) {
+      rethrowCapabilityRefusal(err);
       // Non-fatal; preserves the per-stage contract.
     }
   }

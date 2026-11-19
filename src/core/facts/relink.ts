@@ -90,15 +90,7 @@ function emptyReport(opts: RelinkOptions, runId: string): RelinkReport {
 
 export async function loadRelinkCandidates(engine: BrainEngine, opts: RelinkOptions): Promise<{ rows: Candidate[]; hasMore: boolean }> {
   const limit = opts.limit ?? RELINK_DEFAULT_LIMIT;
-  const rows = await engine.executeRaw<Candidate & { id: number | string }>(
-    `SELECT id, fact, visibility, context, source, attributed_to FROM facts
-      WHERE source_id = $1 AND entity_slug IS NULL AND expired_at IS NULL
-        AND row_num IS NULL AND source_markdown_slug IS NULL
-        AND (valid_until IS NULL OR valid_until > now())
-        AND id > $2 AND ($3::timestamptz IS NULL OR created_at >= $3::timestamptz)
-      ORDER BY id LIMIT $4`,
-    [opts.sourceId, opts.afterId ?? 0, opts.since ? opts.since.toISOString() : null, limit + 1],
-  );
+  const rows = await engine.listRelinkCandidateRows({ sourceId: opts.sourceId, afterId: opts.afterId ?? 0, since: opts.since ?? null, limit: limit + 1 });
   return { rows: rows.slice(0, limit).map(r => ({ ...r, id: Number(r.id) })), hasMore: rows.length > limit };
 }
 
@@ -115,10 +107,7 @@ export async function runFactsRelink(engine: BrainEngine, opts: RelinkOptions): 
     note(reason, c);
   };
 
-  const [owned] = await engine.executeRaw<{ n: number | string }>(
-    `SELECT COUNT(*) AS n FROM facts WHERE source_id = $1 AND entity_slug IS NULL AND expired_at IS NULL
-       AND (row_num IS NOT NULL OR source_markdown_slug IS NOT NULL)`, [opts.sourceId]);
-  report.fence_owned = Number(owned?.n ?? 0);
+  report.fence_owned = await engine.countRelinkCandidates(opts.sourceId);
 
   const { rows, hasMore } = await loadRelinkCandidates(engine, opts);
   report.scanned = rows.length;
@@ -275,19 +264,12 @@ async function runModelTier(engine: BrainEngine, opts: RelinkOptions, report: Re
 
 async function modelVerdicts(engine: BrainEngine, sourceId: string, ids: number[]): Promise<Map<number, string>> {
   const memoized = Object.entries(RELINK_REASONS).filter(([, r]) => r.memoized).map(([code]) => code);
-  const rows = await engine.executeRaw<{ fact_id: number | string; outcome: string }>(
-    `SELECT fact_id, outcome FROM fact_relink_attempts WHERE source_id = $1 AND fact_id = ANY($2::bigint[]) AND outcome = ANY($3::text[])`,
-    [sourceId, ids, memoized]);
-  return new Map(rows.map(r => [Number(r.fact_id), r.outcome]));
+  const rows = await engine.listFactRelinkOutcomes(sourceId, ids, memoized);
+  return new Map(rows.map(r => [r.fact_id, r.outcome]));
 }
 
 async function recordModelVerdict(engine: BrainEngine, sourceId: string, factId: number, outcome: string, model: string, runId: string): Promise<void> {
-  await engine.executeRaw(
-    `INSERT INTO fact_relink_attempts (source_id, fact_id, outcome, reason, tier, model, target_slug, run_id, attempted_at)
-     VALUES ($1, $2, $3, $3, 'model', $4, NULL, $5, now())
-     ON CONFLICT (source_id, fact_id) DO UPDATE SET outcome = EXCLUDED.outcome, reason = EXCLUDED.reason, tier = 'model',
-       model = EXCLUDED.model, target_slug = NULL, run_id = EXCLUDED.run_id, attempted_at = EXCLUDED.attempted_at`,
-    [sourceId, factId, outcome, model, runId]);
+  await engine.upsertFactRelinkAttempt(sourceId, { factId, outcome, reason: outcome, tier: 'model', model, targetSlug: null, runId });
 }
 
 async function conflictSlotOn(engine: BrainEngine): Promise<boolean> {

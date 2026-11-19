@@ -1,6 +1,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { analyzeDeferred, lockTableForAnalyze } from '../analyze-lock.ts';
 import { beginFullAnalyze, maybeRefreshPlannerStats, plannerAutoAnalyzeEnabled } from '../planner-stats.ts';
+import { lacksRawSql } from '../engine-capabilities.ts';
 
 export const PROJECTION_STATISTICS_NAME = 'pages_text_projection_current_stats';
 
@@ -218,6 +219,7 @@ export async function missingSearchStatistics(engine: Pick<BrainEngine, 'execute
 
 /** Whether this role may ANALYZE pages (owner or superuser), as the refresh requires. */
 export async function canAnalyzePages(engine: Pick<BrainEngine, 'executeRaw'>): Promise<boolean> {
+  if (lacksRawSql(engine)) return false;
   const [role] = await engine.executeRaw<{ can_analyze: boolean }>(
     `SELECT pg_has_role(current_user, p.relowner, 'USAGE') OR r.rolsuper AS can_analyze
      FROM pg_class p CROSS JOIN pg_roles r
@@ -290,6 +292,8 @@ export function guardSearchStatistics(engine: BrainEngine & { registerBeforeDisc
  * mark stale.
  */
 export async function refreshProjectionStatistics(engine: BrainEngine, changedPages = Infinity): Promise<boolean> {
+  // An engine without raw SQL (Rust, D18) has no query planner, so there is nothing to analyze.
+  if (lacksRawSql(engine)) return true;
   try {
     if (await statisticsStillCurrent(engine, changedPages)) {
       await maybeRefreshPlannerStats(engine, 'import', { throttle: false });

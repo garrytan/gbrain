@@ -16,26 +16,23 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { resolveSourceId, getDefaultSourcePath, isResolverUserError, SourceTargetError, __testing } from '../src/core/source-resolver.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
 
 // ── Stub engine ────────────────────────────────────────────
 
-function makeStub(registeredSources: string[], paths: Array<{ id: string; local_path: string }>, defaultKey: string | null): BrainEngine {
+function makeStub(
+  registeredSources: string[],
+  paths: Array<{ id: string; local_path: string }>,
+  defaultKey: string | null,
+  opts: { defaultHasPages?: boolean } = {},
+): BrainEngine {
   return {
     kind: 'pglite',
-    executeRaw: async <T>(sql: string, params?: unknown[]): Promise<T[]> => {
-      if (sql.includes('SELECT id FROM sources WHERE id = $1')) {
-        const target = params?.[0];
-        return (registeredSources.includes(target as string)
-          ? [{ id: target } as unknown as T]
-          : []);
-      }
-      // Tier-4 registered-source query — old shape and the #3880 shape
-      // (`SELECT id, local_path, archived FROM sources ...`).
-      if (sql.includes('SELECT id, local_path FROM sources') || sql.includes(', archived FROM sources')) {
-        return paths as unknown as T[];
-      }
-      return [];
-    },
+    // The typed source members answer what the SQL stub did: every registered id exists; the tier-4 paths carry local_path.
+    ...stubSourceMembers([
+      ...registeredSources.map(id => ({ id, local_path: paths.find(p => p.id === id)?.local_path ?? null })),
+      ...paths.filter(p => !registeredSources.includes(p.id)),
+    ], opts),
     getConfig: async (key: string) => (key === 'sources.default' ? defaultKey : null),
   } as unknown as BrainEngine;
 }
@@ -150,9 +147,16 @@ describe('resolveSourceId priority 4 — registered local_path longest-prefix ma
       ['default', 'gstack'],
       [{ id: 'gstack', local_path: '/tmp/gstack' }],
       null,
+      // 'default' holds pages, so the sole-non-default tier (5.5) stays out of the way: this test is about tier 4.
+      { defaultHasPages: true },
     );
-    const id = await resolveSourceId(engine, null, '/some/other/dir');
-    expect(id).toBe('default');
+    process.env.GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE = '1';
+    try {
+      const id = await resolveSourceId(engine, null, '/some/other/dir');
+      expect(id).toBe('default');
+    } finally {
+      delete process.env.GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE;
+    }
   });
 });
 
@@ -186,27 +190,11 @@ describe('getDefaultSourcePath', () => {
   ): BrainEngine {
     return {
       kind: 'pglite',
-      executeRaw: async <T>(sql: string, params?: unknown[]): Promise<T[]> => {
-        if (sql.includes('SELECT id FROM sources WHERE id = $1')) {
-          const target = params?.[0];
-          return (registeredSources.includes(target as string)
-            ? [{ id: target } as unknown as T]
-            : []);
-        }
-        if (sql.includes('SELECT local_path FROM sources WHERE id = $1')) {
-          const target = params?.[0] as string;
-          if (target in sourcePaths) {
-            return [{ local_path: sourcePaths[target] } as unknown as T];
-          }
-          return [];
-        }
-        if (sql.includes('SELECT id, local_path FROM sources') || sql.includes(', archived FROM sources')) {
-          return Object.entries(sourcePaths)
-            .filter(([_, p]) => p !== null)
-            .map(([id, local_path]) => ({ id, local_path }) as unknown as T);
-        }
-        return [];
-      },
+      // Every registered id exists; an id with a sourcePaths entry carries its local_path (null or not).
+      ...stubSourceMembers([
+        ...registeredSources.map(id => ({ id, local_path: sourcePaths[id] ?? null })),
+        ...Object.keys(sourcePaths).filter(id => !registeredSources.includes(id)).map(id => ({ id, local_path: sourcePaths[id] })),
+      ]),
       getConfig: async (key: string) => (key === 'sources.default' ? defaultKey : null),
     } as unknown as BrainEngine;
   }
@@ -226,9 +214,7 @@ describe('getDefaultSourcePath', () => {
   test('throws on DB error (does not silently swallow)', async () => {
     const engine = {
       kind: 'pglite',
-      executeRaw: async () => {
-        throw new Error('connection refused');
-      },
+      ...stubSourceMembers([], { fail: () => new Error('connection refused') }),
       getConfig: async () => null,
     } as unknown as BrainEngine;
     await expect(getDefaultSourcePath(engine, '/random/dir')).rejects.toThrow(/connection refused/);
@@ -239,18 +225,7 @@ describe('getDefaultSourcePath', () => {
     // repo path lives in the global config table under sync.repo_path.
     const engine = {
       kind: 'pglite',
-      executeRaw: async <T>(sql: string, params?: unknown[]): Promise<T[]> => {
-        if (sql.includes('SELECT id FROM sources WHERE id = $1')) {
-          return [{ id: params?.[0] } as unknown as T];
-        }
-        if (sql.includes('SELECT local_path FROM sources WHERE id = $1')) {
-          return [{ local_path: null } as unknown as T];
-        }
-        if (sql.includes('SELECT id, local_path FROM sources')) {
-          return [];
-        }
-        return [];
-      },
+      ...stubSourceMembers([{ id: 'default', local_path: null }]),
       getConfig: async (key: string) => {
         if (key === 'sources.default') return null;
         if (key === 'sync.repo_path') return '/legacy/brain/path';

@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import { runEnrich } from '../src/commands/enrich.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
 import type { SpendAuthorization } from '../src/core/minions/spend-authorization.ts';
 
 class Exit extends Error { constructor(readonly code: number) { super(`exit ${code}`); } }
@@ -21,9 +22,10 @@ function fakePostgres(sourceIds: string[]) {
   return {
     kind: 'postgres',
     getConfig: async () => null,
-    executeRaw: async (sql: string) => sql.includes('FROM sources')
-      ? sourceIds.map(id => ({ id, name: id, local_path: null, last_sync_at: null, config: {} }))
-      : [{ n: 0 }],
+    ...stubSourceMembers(sourceIds.map(id => ({ id }))),
+    // listSources counts each source's pages through the typed countSourcePages member; this brain holds no pages.
+    countSourcePages: async () => 0,
+    executeRaw: async () => [{ n: 0 }],
   } as never;
 }
 

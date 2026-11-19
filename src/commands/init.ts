@@ -24,6 +24,8 @@ import { exitCodeForCode } from '../core/error-catalogue.ts';
 import { promptLineStderr } from '../core/interaction.ts';
 import type { SearchMode as SearchModeName } from '../core/search/mode.ts';
 import type { McpSurface } from '../mcp/surface.ts';
+import { findEnvKeyTypos } from './init-env-keys.ts';
+export { findEnvKeyTypos };
 
 /** D2: `--json` writes exactly one document, after whichever branch ran (see init-json.ts). */
 export async function runInit(args: string[]) {
@@ -558,36 +560,6 @@ export async function groupReadyByProvider(
     }
   }
   return ready;
-}
-
-/** Look at env-vars the user set that look like typos of recipe-required keys.
- *  Exported for unit tests (parameterizable via env arg). */
-export async function findEnvKeyTypos(
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<Array<{ userSet: string; suggested: string }>> {
-  const { suggestNearest } = await import('../core/levenshtein.ts');
-  const { listRecipes } = await import('../core/ai/recipes/index.ts');
-  // Build the canonical name set from every recipe's auth_env.required.
-  const canonical = new Set<string>();
-  for (const r of listRecipes()) {
-    for (const k of r.auth_env?.required ?? []) canonical.add(k);
-  }
-  const out: Array<{ userSet: string; suggested: string }> = [];
-  // Walk user env vars that look API-key-shaped to keep the suggestion noise low.
-  const KEY_SHAPE = /^[A-Z][A-Z0-9_]*_(API_)?KEY$/;
-  for (const userKey of Object.keys(env)) {
-    if (!KEY_SHAPE.test(userKey)) continue;
-    if (canonical.has(userKey)) continue;        // exact match, not a typo
-    if (!env[userKey]) continue;                  // empty string, skip
-    const suggestion = suggestNearest(userKey, [...canonical], /* maxDistance */ 3);
-    if (suggestion && suggestion !== userKey) {
-      // False-positive guard (per plan D13): suggested canonical not ALSO set.
-      if (!env[suggestion]) {
-        out.push({ userSet: userKey, suggested: suggestion });
-      }
-    }
-  }
-  return out;
 }
 
 /** Emit the "no embedding provider" message + paste-ready setup. Keyless

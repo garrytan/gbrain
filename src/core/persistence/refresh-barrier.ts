@@ -12,12 +12,13 @@ import { relative, sep } from 'node:path';
 import { execFileBounded } from '../bounded-child-exec.ts';
 import { gitChildEnv } from '../git-env.ts';
 import { OperationError } from '../ops/contract.ts';
-import { authorizeWrite } from './authority.ts';
+import { type AuthorityEngine, authorizeWrite } from './authority.ts';
 import type { BrainEngine } from '../engine.ts';
 import { completeWrite, SYNC_KIND } from './journal.ts';
 import { PENDING_IMPORT } from './pending-import.ts';
 import { declarePersistenceProtocol } from './protocol.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
+import { readConfigValue } from '../config-values.ts';
 
 const GIT_ENV = { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'Never', LC_ALL: 'C', GIT_OPTIONAL_LOCKS: '0' };
 const DIFF_TIMEOUT_MS = 30_000;
@@ -78,7 +79,7 @@ async function laterWriteRefusal(engine: SqlEngine, row: WriteRequest): Promise<
  * refusal to record. A row that was never deferred is not checked. GST-1623: a write held for an import is checked too, for a
  * later write to its page that committed first.
  */
-export async function deferredReplayRefusal(engine: SqlEngine, row: WriteRequest, files: ReadonlyArray<{ path: string; root: string }>): Promise<DeferredRefusal | null> {
+export async function deferredReplayRefusal(engine: AuthorityEngine, row: WriteRequest, files: ReadonlyArray<{ path: string; root: string }>): Promise<DeferredRefusal | null> {
   const refreshId = row.deferred_refresh_id;
   if (!refreshId && row.deferred_import_from == null) return null;
   const later = await laterWriteRefusal(engine, row);
@@ -105,6 +106,10 @@ export const REFRESH_BARRIER_MAX_WAIT_KEY = 'persistence.refresh_barrier_max_wai
 export const REFRESH_BARRIER_MAX_WAIT_MS = 15 * 60_000;
 /** The wait limit in ms: the configured value when it is a positive integer, else the default. */
 const MAX_WAIT_SQL = `COALESCE((SELECT CASE WHEN value ~ '^[1-9][0-9]{0,14}$' THEN value::double precision END FROM config WHERE key='${REFRESH_BARRIER_MAX_WAIT_KEY}'), ${REFRESH_BARRIER_MAX_WAIT_MS})`;
+/** MAX_WAIT_SQL's rule on a stored value read on its own (undefined when unset). */
+export function refreshBarrierMaxWaitMs(raw: string | undefined): number {
+  return raw !== undefined && /^[1-9][0-9]{0,14}$/.test(raw) ? Number(raw) : REFRESH_BARRIER_MAX_WAIT_MS;
+}
 const overdueDeferredFrom = (host: string, maxWait: string) => `JOIN persistence_worktrees w ON w.id=r.worktree_id
     JOIN persistence_worktree_refreshes f ON f.id=r.deferred_refresh_id
     WHERE w.owner_host_id=${host}::uuid AND r.state='deferred' AND f.released_at IS NULL AND r.created_at<now()-(${maxWait}*interval '1 millisecond')`;
@@ -142,8 +147,7 @@ export const overdueDeferredWorkSql = (host: string) => `(EXISTS (SELECT 1 FROM 
  * the ceiling counted from its admission (holdOverdue). An expired remember says whether a sync will replay it: only one that named its entity is replayed (failed-writes.ts).
  */
 export async function expireDeferredWrites(engine: BrainEngine, hostId: string, signal?: AbortSignal): Promise<WriteRequest[]> {
-  const [config] = await engine.executeRaw<{ ms: number }>(`SELECT ${MAX_WAIT_SQL} AS ms`, undefined, { signal });
-  const maxWaitMs = Number(config?.ms ?? REFRESH_BARRIER_MAX_WAIT_MS);
+  const maxWaitMs = refreshBarrierMaxWaitMs(await readConfigValue(engine, REFRESH_BARRIER_MAX_WAIT_KEY, { signal }));
   const expired = await engine.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r ${overdueDeferredFrom('$1', '$2::double precision')}
     ORDER BY r.sequence LIMIT 100`, [hostId, maxWaitMs], { signal });
   const finished: WriteRequest[] = [];

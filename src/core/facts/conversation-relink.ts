@@ -47,11 +47,11 @@ import { maintenancePreflight, submitDatabaseMaintenanceIntent } from '../persis
 import { writeDerivedFacts } from '../persistence/derived-facts.ts';
 import { AUDIT_ROW_SOURCES } from './audit-sources.ts';
 import { CONVERSATION_UNRESOLVED } from './relink-reasons.ts';
-import { conversationTriedSql } from './conversation-memo.ts';
 import { appendContextNote } from './subject-infer.ts';
-import { ENTITY_LINKABLE_SQL, entityLinkable } from './attribution.ts';
+import { entityLinkable } from './attribution.ts';
 import { inferConversationSubject } from './conversation-subject-infer.ts';
-import { unbackedEntitySql } from './withdrawal-schema.ts';
+import { ACTIVE_UNLINKED_FACT_SQL, UNBACKED_FACT_SQL, derivedConversationRow } from '../engine-sql/fact-relink-writes.ts';
+import { hasRelinkAttemptsTable } from './conversation-memo.ts';
 import { resolveStrictEntityReference } from '../entities/resolve.ts';
 import { dropRekeyDuplicates } from './ontology-rekey.ts';
 
@@ -60,12 +60,12 @@ export const CONVERSATION_RELINK_INTENT = 'managed_maintenance_conversation_reli
 export const CONVERSATION_RELINK_ANCHOR = '.maintenance/conversation-relink';
 /** Pages one run relinks when no `--slugs` are named. */
 export const CONVERSATION_RELINK_PAGES = 50;
-/** The SQL predicate (on alias `f`, audit sources as `$audit`) of a conversation extractor's derived fact row. */
-export const derivedConversationRow = (audit: string) => `f.source LIKE 'cli:extract-conversation-facts%' AND f.source <> ALL(${audit}::text[])`;
-const LIVE = 'f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())';
-const ACTIVE = `f.entity_slug IS NULL AND ${LIVE}`;
+// The derived-row predicate and the live, unlinked and unbacked row tests live with the relink writer (engine-sql/fact-relink-writes.ts),
+// so the planner here and the guarded link read the same text.
+export { derivedConversationRow };
+const ACTIVE = ACTIVE_UNLINKED_FACT_SQL;
 /** GBRA-574: a derived row on an unbacked name key (`--unbacked`). */
-const UNBACKED = `${unbackedEntitySql('f')} AND ${LIVE}`;
+const UNBACKED = UNBACKED_FACT_SQL;
 
 /** A planned link; `from` is the unbacked name key a `--unbacked` row moves off (absent: a row with no entity). */
 export interface ConversationRelinkRow { id: number; fact: string; entity_slug: string; context: string; from?: string }
@@ -86,20 +86,9 @@ export interface ConversationRelinkReport {
   reextract_slugs: string[];
 }
 
-async function hasAttemptsTable(engine: BrainEngine): Promise<boolean> {
-  const [row] = await engine.executeRaw<{ t: string | null }>(`SELECT to_regclass('fact_relink_attempts')::text AS t`);
-  return !!row?.t;
-}
-
 /** The pages with the most unlinked derived rows not yet tried by this relink, up to `limit`. */
 export async function conversationRelinkPages(engine: BrainEngine, sourceId: string, limit = CONVERSATION_RELINK_PAGES, unbacked = false): Promise<string[]> {
-  const untried = !unbacked && await hasAttemptsTable(engine)
-    ? `AND NOT ${conversationTriedSql}` : '';
-  const rows = await engine.executeRaw<{ slug: string }>(
-    `SELECT f.source_markdown_slug AS slug FROM facts f WHERE f.source_id = $1 AND f.source_markdown_slug IS NOT NULL AND ${unbacked ? UNBACKED : ACTIVE} AND ${ENTITY_LINKABLE_SQL}
-        AND ${derivedConversationRow('$2')} ${untried}
-      GROUP BY f.source_markdown_slug ORDER BY COUNT(*) DESC, f.source_markdown_slug LIMIT $3`, [sourceId, [...AUDIT_ROW_SOURCES], limit]);
-  return rows.map(r => r.slug);
+  return engine.listConversationRelinkPages(sourceId, { limit, unbacked, skipTried: !unbacked && await hasRelinkAttemptsTable(engine) });
 }
 
 /** GBRA-574 C1: each page's rows on an unbacked name key, linked when the key now resolves to exactly one readable page. */
@@ -144,24 +133,18 @@ async function planPages(engine: BrainEngine, sourceId: string, slugs: string[])
 /** Under the page's lock: link the planned rows still exactly as planned, recording each link. */
 async function linkRows(tx: BrainEngine, sourceId: string, slug: string, rows: ConversationRelinkRow[]): Promise<number[]> {
   const linked: number[] = [];
-  const attempts = await hasAttemptsTable(tx);
+  const attempts = await hasRelinkAttemptsTable(tx);
   for (const row of rows) {
     // A re-keyed row's slot gives way to one its target already holds on the page (facts/ontology-rekey.ts), so the move never collides.
     if (row.from) await dropRekeyDuplicates(tx, sourceId, { where: `f.id = $2::bigint AND ${UNBACKED}`, entity: '$3::text', sms: 'f.source_markdown_slug',
       params: [row.id, row.entity_slug] });
-    const done = await tx.executeRaw<{ id: number | string }>(
-      `UPDATE facts f SET entity_slug = $4, context = $5 WHERE f.source_id = $1 AND f.id = $2 AND f.source_markdown_slug = $3 AND f.fact = $6
-          AND ${row.from ? `f.entity_slug = $8 AND ${UNBACKED}` : ACTIVE} AND ${ENTITY_LINKABLE_SQL} AND ${derivedConversationRow('$7')}
-          AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id = $1 AND p.slug = $4 AND p.deleted_at IS NULL) RETURNING f.id`,
-      [sourceId, row.id, slug, row.entity_slug, row.context, row.fact, [...AUDIT_ROW_SOURCES], ...(row.from ? [row.from] : [])]);
-    if (!done.length) continue;
+    const done = await tx.linkConversationFact(sourceId,
+      { factId: row.id, pageSlug: slug, fact: row.fact, entitySlug: row.entity_slug, context: row.context, from: row.from ?? null });
+    if (!done) continue;
     linked.push(row.id);
     const tier = row.from ? 'unbacked' : 'mention';
-    if (attempts) await tx.executeRaw(
-      `INSERT INTO fact_relink_attempts (source_id, fact_id, outcome, reason, tier, model, target_slug, run_id, attempted_at)
-       VALUES ($1, $2, 'linked', NULL, $4, NULL, $3, NULL, now())
-       ON CONFLICT (source_id, fact_id) DO UPDATE SET outcome = 'linked', reason = NULL, tier = EXCLUDED.tier, model = NULL,
-         target_slug = EXCLUDED.target_slug, run_id = NULL, attempted_at = EXCLUDED.attempted_at`, [sourceId, row.id, row.entity_slug, tier]);
+    if (attempts) await tx.upsertFactRelinkAttempt(sourceId,
+      { factId: row.id, outcome: 'linked', reason: null, tier, model: null, targetSlug: row.entity_slug, runId: null });
   }
   return linked;
 }
@@ -196,18 +179,15 @@ export async function runConversationRelink(engine: BrainEngine, config: GBrainC
   const report: ConversationRelinkReport = { source_id: opts.sourceId, dry_run: !!opts.dryRun, ...(opts.unbacked ? { unbacked: true } : {}),
     pages: [], linked: 0, unresolved: 0, not_user_attributed: 0, changed: 0, reextract_slugs: [] };
   const authority = opts.dryRun ? null : await maintenancePreflight(engine, opts.sourceId);
-  const memo = !opts.dryRun && !opts.unbacked && await hasAttemptsTable(engine);
+  const memo = !opts.dryRun && !opts.unbacked && await hasRelinkAttemptsTable(engine);
   for (const page of plans) {
     let linked = page.link.length;
     if (!opts.dryRun && page.link.length) {
       linked = (authority ? await publishManaged(engine, config, authority, opts.sourceId, page)
         : await writeDerivedFacts(engine, opts.sourceId, page.slug, db => linkRows(db, opts.sourceId, page.slug, page.link))).length;
     }
-    if (memo) for (const miss of page.misses) await engine.executeRaw(
-      `INSERT INTO fact_relink_attempts (source_id, fact_id, outcome, reason, tier, model, target_slug, run_id, attempted_at)
-       VALUES ($1, $2, $3, $4, 'mention', NULL, NULL, NULL, now())
-       ON CONFLICT (source_id, fact_id) DO UPDATE SET outcome = EXCLUDED.outcome, reason = EXCLUDED.reason, tier = 'mention',
-         model = NULL, target_slug = NULL, run_id = NULL, attempted_at = EXCLUDED.attempted_at`, [opts.sourceId, miss.id, CONVERSATION_UNRESOLVED, miss.reason]);
+    if (memo) for (const miss of page.misses) await engine.upsertFactRelinkAttempt(opts.sourceId,
+      { factId: miss.id, outcome: CONVERSATION_UNRESOLVED, reason: miss.reason, tier: 'mention', model: null, targetSlug: null, runId: null });
     const changed = page.link.length - linked;
     report.pages.push({ slug: page.slug, linked, unresolved: page.misses.length, changed, not_user_attributed: page.notUserAttributed });
     report.linked += linked;

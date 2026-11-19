@@ -18,6 +18,7 @@ import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 import { getWorktreeBinding } from '../persistence/ownership.ts';
 import { assertStrictGitHome } from '../persistence/git-declared.ts';
 import { isConnectionEnd, isStatementTimeout, PreparationDeadlineError } from '../persistence/bounded-reads.ts';
+import { ReadDeadlineError, withReadDeadline } from '../read-deadline.ts';
 import { transientDatabaseFailure, transientInterruption } from '../persistence/transient-retry.ts';
 import { registerEngineView } from '../persistence/switches.ts';
 import { syncPreparationBudgetMs } from '../persistence/sync-waivers.ts';
@@ -248,6 +249,13 @@ function planningView(engine: BrainEngine, deadlineAt: number): BrainEngine {
     const value = Reflect.get(target, key, target);
     // The alias read runs on the engine's own executeRaw: bound to the view, it takes the deadline too.
     if (key === 'resolveAliases') return value.bind(view);
+    // holdingHome's writer-binding read is a typed member: the engine ends it at the same deadline.
+    if (key === 'getWorktreeBinding') return (sourceId: string, hostId: string | null) =>
+      withReadDeadline(deadlineAt, () => target.getWorktreeBinding(sourceId, hostId)).catch((error: unknown) => {
+        if (error instanceof ReadDeadlineError) throw new PreparationDeadlineError('held_move_plan', null, error);
+        if (isStatementTimeout(error)) throw new PreparationDeadlineError('held_move_plan', error.code, error);
+        throw error;
+      });
     if (key === 'getConfig') return async (name: string) => {
       const held = await requestConfigValue(target, name);
       if (held !== undefined) return held;

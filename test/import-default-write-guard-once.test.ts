@@ -23,6 +23,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { runImport } from '../src/commands/import.ts';
 import * as sourceResolver from '../src/core/source-resolver.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { withSourceResolutionReads } from './helpers/source-resolution-reads.ts';
 
 let engine: PGLiteEngine;
 let other: PGLiteEngine;
@@ -34,26 +35,24 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  // Count the guard's aggregate (the only query in the codebase that projects
-  // `non_default_sources`) without changing its behavior.
-  // Import transaction clones inherit this wrapper, so keep their receiver
-  // instead of sending transaction queries through the base engine.
-  const realExecuteRaw = engine.executeRaw;
-  (engine as unknown as { executeRaw: typeof realExecuteRaw }).executeRaw = (async function (this: PGLiteEngine, sql: string, params?: unknown[]) {
-    if (sql.includes('non_default_sources')) aggregateRuns++;
-    return realExecuteRaw.call(this, sql, params);
-  }) as typeof realExecuteRaw;
+  // Count the guard's aggregate (the typed countDefaultSourceSplit read) without changing its behavior.
+  // Import transaction clones inherit this wrapper, so keep their receiver.
+  const realSplit = engine.countDefaultSourceSplit;
+  engine.countDefaultSourceSplit = (async function (this: PGLiteEngine) {
+    aggregateRuns++;
+    return realSplit.call(this);
+  }) as typeof realSplit;
   home = mkdtempSync(join(tmpdir(), 'gbrain-import-guard-once-home-'));
   // Second engine for the per-engine memo test; created here so the isolation
   // guard's lifecycle rule (R3/R4: engines live in beforeAll/afterAll) holds.
   other = new PGLiteEngine();
   await other.connect({});
   await other.initSchema();
-  const realOtherExecuteRaw = other.executeRaw;
-  (other as unknown as { executeRaw: typeof realOtherExecuteRaw }).executeRaw = (async function (this: PGLiteEngine, sql: string, params?: unknown[]) {
-    if (sql.includes('non_default_sources')) otherRuns++;
-    return realOtherExecuteRaw.call(this, sql, params);
-  }) as typeof realOtherExecuteRaw;
+  const realOtherSplit = other.countDefaultSourceSplit;
+  other.countDefaultSourceSplit = (async function (this: PGLiteEngine) {
+    otherRuns++;
+    return realOtherSplit.call(this);
+  }) as typeof realOtherSplit;
 });
 
 afterAll(async () => {
@@ -136,7 +135,7 @@ describe('assessDefaultWriteGuardOnce does not memoize a failed assessment', () 
   test('a failing aggregate is retried on the next call; the first success is what gets memoized', async () => {
     let runs = 0;
     let healthy = false;
-    const stub = {
+    const stub = withSourceResolutionReads({
       kind: 'pglite' as const,
       async executeRaw<T>(sql: string): Promise<T[]> {
         if (sql.includes('non_default_sources')) {
@@ -146,7 +145,7 @@ describe('assessDefaultWriteGuardOnce does not memoize a failed assessment', () 
         }
         return [];
       },
-    } as unknown as BrainEngine;
+    }) as unknown as BrainEngine;
 
     const first = await sourceResolver.assessDefaultWriteGuardOnce(stub);
     expect(first.shouldGuard).toBe(false); // fail-open for THIS caller
@@ -167,13 +166,13 @@ describe('assessDefaultWriteGuardOnce does not memoize a failed assessment', () 
 
   test('concurrent callers share one in-flight attempt, even a failing one', async () => {
     let runs = 0;
-    const stub = {
+    const stub = withSourceResolutionReads({
       kind: 'pglite' as const,
       async executeRaw<T>(sql: string): Promise<T[]> {
         if (sql.includes('non_default_sources')) { runs++; throw new Error('boom'); }
         return [];
       },
-    } as unknown as BrainEngine;
+    }) as unknown as BrainEngine;
     const results = await Promise.all([
       sourceResolver.assessDefaultWriteGuardOnce(stub),
       sourceResolver.assessDefaultWriteGuardOnce(stub),
@@ -192,11 +191,11 @@ describe('assessDefaultWriteGuardOnce does not memoize a failed assessment', () 
     }
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-import-guard-retry-'));
     writeFileSync(join(dir, 'r.md'), '---\ntype: note\ntitle: r\n---\n# r\n\nbody r\n');
-    const wrapped = engine.executeRaw;
+    const wrapped = engine.countDefaultSourceSplit;
     let guardCalls = 0;
-    (engine as unknown as { executeRaw: typeof wrapped }).executeRaw = (async function (this: PGLiteEngine, sql: string, params?: unknown[]) {
-      if (sql.includes('non_default_sources') && ++guardCalls === 1) throw new Error('connection reset by peer');
-      return wrapped.call(this, sql, params);
+    engine.countDefaultSourceSplit = (async function (this: PGLiteEngine) {
+      if (++guardCalls === 1) throw new Error('connection reset by peer');
+      return wrapped.call(this);
     }) as typeof wrapped;
     const stderrLines: string[] = [];
     try {
@@ -217,7 +216,7 @@ describe('assessDefaultWriteGuardOnce does not memoize a failed assessment', () 
       // Pre-fix: the failed first assessment was memoized → no warning ever.
       expect(stderrLines.some(l => l.includes("writing to source 'default' on a multi-source brain"))).toBe(true);
     } finally {
-      (engine as unknown as { executeRaw: typeof wrapped }).executeRaw = wrapped;
+      engine.countDefaultSourceSplit = wrapped;
       rmSync(dir, { recursive: true, force: true });
     }
   });

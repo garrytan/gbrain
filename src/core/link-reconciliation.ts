@@ -1,7 +1,7 @@
 import type { BrainEngine, LinkBatchInput } from './engine.ts';
 import { extractPageLinks, unwrapWikilink, resolvedLinkCandidate,
   isCrossSourceLinksEnabled, type LinkCandidate, type LinkExtractionPack, type PageLinksResult, type SlugResolver } from './link-extraction.ts';
-import { fetchSource, isSourceFederated } from './sources-load.ts';
+import { isSourceFederated } from './sources-load.ts';
 import { parseMarkdown } from './markdown.ts';
 import { isValidSourceId } from './source-id.ts';
 import { buildSourceLocalReferenceIndex } from './source-local-reference-index.ts';
@@ -21,9 +21,8 @@ export interface LinkPageMetadata {
   knowledge_revision: string;
 }
 
-export async function loadLinkPageMetadata(engine: Pick<BrainEngine, 'executeRaw'>, sourceId?: string): Promise<LinkPageMetadata[]> {
-  return engine.executeRaw<LinkPageMetadata>(`SELECT slug, source_id, type, title, frontmatter->'aliases' AS aliases, knowledge_revision FROM pages
-    WHERE deleted_at IS NULL${sourceId ? ' AND source_id=$1' : ''} ORDER BY source_id, slug`, sourceId ? [sourceId] : []);
+export async function loadLinkPageMetadata(engine: Pick<BrainEngine, 'listLinkPageMetadata'>, sourceId?: string): Promise<LinkPageMetadata[]> {
+  return engine.listLinkPageMetadata(sourceId);
 }
 
 export function makeIndexedLinkResolver(pages: readonly LinkPageMetadata[], sourceId: string): SlugResolver {
@@ -250,7 +249,7 @@ export interface LinkSourcePolicy { allowCrossSource: boolean; crossSource: bool
 
 export async function loadLinkSourcePolicy(engine: BrainEngine, sourceId: string): Promise<LinkSourcePolicy> {
   const [source, crossSource, defaultSourceId] = await Promise.all([
-    fetchSource(engine, sourceId), isCrossSourceLinksEnabled(engine), resolveLinkFallbackDefault(engine),
+    engine.readSourceState(sourceId), isCrossSourceLinksEnabled(engine), resolveLinkFallbackDefault(engine),
   ]);
   return { allowCrossSource: source !== null && !source.archived && isSourceFederated(source.config), crossSource, defaultSourceId };
 }

@@ -121,15 +121,16 @@ for (const kind of ['pglite', 'postgres'] as const) {
 
     test('a transient source-policy read retries the same request instead of using global mode', async () => {
       const sourceId = await fixture('none');
-      const original = engine.executeRaw;
+      // The source policy is the source's unlocked state (link-reconciliation.ts loadLinkSourcePolicy).
+      const original = engine.readSourceState;
       let policyReads = 0;
-      engine.executeRaw = async function (this: BrainEngine, sql: string, params?: unknown[]) {
-        if (sql.includes('SELECT id, name, local_path, last_commit') && params?.[0] === sourceId) {
+      engine.readSourceState = async function (this: BrainEngine, id: string, opts?: Parameters<BrainEngine['readSourceState']>[1]) {
+        if (id === sourceId && !opts?.lock) {
           policyReads++;
           if (policyReads === 1) throw Object.assign(new Error('Synthetic source policy serialization failure'), { code: '40001' });
         }
-        return original.call(this, sql, params);
-      } as BrainEngine['executeRaw'];
+        return original.call(this, id, opts);
+      } as BrainEngine['readSourceState'];
       try {
         const requestId = await publish(sourceId, 'Source Policy');
         expect(policyReads).toBeGreaterThanOrEqual(2);
@@ -137,7 +138,7 @@ for (const kind of ['pglite', 'postgres'] as const) {
         const rows = await engine.executeRaw<{ id: string; state: string }>('SELECT id,state FROM persistence_requests WHERE source_id=$1', [sourceId]);
         expect(rows).toEqual([{ id: requestId, state: 'committed' }]);
         expect(unexpectedProviderCalls).toBe(0);
-      } finally { await disposePersistenceConsumer(engine); engine.executeRaw = original; }
+      } finally { await disposePersistenceConsumer(engine); engine.readSourceState = original; }
     });
 
     test('title replacement while provider is running rejects old wrapped vectors', async () => {

@@ -36,11 +36,13 @@ import { canAnalyzePages, missingSearchStatistics, readProjectionStatistics } fr
 import type { Check } from '../../doctor.ts';
 import { doctorVerify } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { answersFromCatalog, catalogSkipCheck } from '../../../core/rust-engine/store-members/catalog.ts';
 
 async function runPlannerStats(ctx: DoctorContext): Promise<Check[]> {
   const engine = connectedEngine(ctx);
   const checks: Check[] = [];
   ctx.progress.heartbeat('planner_stats_stale');
+  if (answersFromCatalog(engine)) return [catalogSkipCheck('planner_stats_stale', 'no_planner')];
   try {
     const tables = await readPlannerTableStates(engine);
     if (!tables) {

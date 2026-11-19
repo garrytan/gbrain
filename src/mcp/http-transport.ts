@@ -345,9 +345,8 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
   }
 
   function logRequest(tokenName: string | null, operation: string, status: string, latencyMs: number) {
-    sql`INSERT INTO mcp_request_log (token_name, operation, latency_ms, status)
-        VALUES (${tokenName}, ${operation}, ${latencyMs}, ${status})`
-      .catch(() => { /* best-effort */ });
+    Promise.resolve().then(() => engine.logMcpRequest({ token_name: tokenName, agent_name: null, operation, latency_ms: latencyMs, status }))
+      .catch(() => { /* best-effort: a failed write, or one thrown before it starts, never fails the request */ });
   }
 
   const server = Bun.serve({

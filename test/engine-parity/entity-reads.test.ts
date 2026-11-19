@@ -1,0 +1,190 @@
+/**
+ * BrainEngine parity — the entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts).
+ *
+ * Authoring gate (docs/TESTING.md#authoring-gate):
+ *  - Contract: the mention pass time, the mention-due count, identity sibling candidates (also under the private-page
+ *    filter), the exact-slug lookup that splits live from retired pages, the extraction lag counts, the pages carrying
+ *    an ignored privacy label and whether that notice names a git checkout return the same observable result on every
+ *    engine arm.
+ *  - Regression: an engine that counts deleted pages as due, matches a title that only contains the subject, reads a
+ *    blank `merged_into` as retired, or returns a page with `readable_by` as an ignored label changes what extract,
+ *    the entity resolver and the import notice report.
+ *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call
+ *    (D18), so no case compared them across engines.
+ *  - Seam: none. Typed methods only (no executeRaw: D18). On a brain where no mention pass ran there is no pass time
+ *    and every live page is due, which is what the Rust store answers. Rows with no defined order are sorted.
+ */
+import { describe, expect } from 'bun:test';
+import type { BrainEngine } from '../../src/core/engine.ts';
+import { ignoredPrivacyLabelRunNotice, sourceHasRepo } from '../../src/core/search/ignored-privacy-labels.ts';
+import { createSource, parityArms, sorted } from './harness.ts';
+import { testBackends } from '../helpers/test-backends.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
+
+const { parityTest } = parityArms(testBackends());
+
+async function seed(engine: BrainEngine, backend: Parameters<typeof createSource>[1]): Promise<void> {
+  await createSource(engine, backend, 'other');
+  const page = (type: string, title: string, frontmatter: Record<string, unknown> = {}) =>
+    ({ type, title, compiled_truth: `${title} body.`, frontmatter }) as Parameters<BrainEngine['putPage']>[1];
+  const pages: Array<[string, Parameters<BrainEngine['putPage']>[1], string?]> = [
+    ['people/alice-example', page('person', 'Alice', { identity: 'alice-1' })],
+    ['people/alice-founder', page('person', 'Founder: alice', { identity: { b: 1, a: [true] } })],
+    ['people/alice-q', page('person', 'Alice', { quarantine: true })],
+    ['people/alice-sis', page('person', 'Alicesis')],
+    ['companies/alice', page('company', 'Alice')],
+    ['people/old', page('person', 'Old', { status: 'Redirect' })],
+    ['people/merged', page('person', 'Merged', { merged_into: 'people/alice-example' })],
+    ['people/blank', page('person', 'Blank', { merged_into: '  ', canonical: true })],
+    ['people/not-canonical', page('person', 'Not canonical', { canonical: 'No' })],
+    ['people/aliases', page('person', 'Aliases', { status: 'aliases' })],
+    ['people/gone', page('person', 'Gone')],
+    ['notes/label', page('note', 'Label', { access: 'team-only' })],
+    ['notes/label-2', page('note', 'Label two', { confidentiality: 'board' })],
+    ['notes/readers', page('note', 'Readers', { access: 'team-only', readable_by: ['alice-example'] })],
+    ['notes/visible', page('note', 'Visible', { access: 'team-only', visibility: 'public' })],
+    ['notes/plain', page('note', 'Plain')],
+    ['people/alice-example', page('person', 'Alice'), 'other'],
+  ];
+  for (const [slug, input, sourceId] of pages) await engine.putPage(slug, input, { sourceId: sourceId ?? 'default' });
+  await engine.softDeletePage('people/gone', { sourceId: 'default' });
+}
+
+describe('engine parity: entity and mention reads', () => {
+  parityTest('readMentionLastPass is null and countPagesDueForMentions counts every live page in scope before any pass',
+    { methods: ['readMentionLastPass', 'countPagesDueForMentions'] }, async (engine, backend) => {
+      await seed(engine, backend);
+      const result = {
+        last: await engine.readMentionLastPass(),
+        lastDefault: await engine.readMentionLastPass('default'),
+        dueAll: await engine.countPagesDueForMentions({ sourceId: null, mentionVersion: 1 }),
+        dueDefault: await engine.countPagesDueForMentions({ sourceId: 'default', mentionVersion: 1 }),
+        dueOther: await engine.countPagesDueForMentions({ sourceId: 'other', mentionVersion: 1, aliases: { types: ['person'], version: 1 } }),
+        dueGhost: await engine.countPagesDueForMentions({ sourceId: 'no-such-source', mentionVersion: 1 }),
+      };
+      expect(result).toEqual({ last: null, lastDefault: null, dueAll: 16, dueDefault: 15, dueOther: 1, dueGhost: 0 });
+      return result;
+    });
+
+  parityTest('readIdentitySiblingCandidates matches the title or its ": subject" suffix by slug, typed and capped',
+    { methods: ['readIdentitySiblingCandidates'] }, async (engine, backend) => {
+      await seed(engine, backend);
+      const read = (limit: number, excludeQuarantined?: boolean) =>
+        engine.readIdentitySiblingCandidates('default', { types: ['person'], subject: 'alice', limit, excludeQuarantined });
+      const all = await read(10);
+      expect(all).toEqual([
+        { slug: 'people/alice-example', title: 'Alice', type: 'person', identity: 'alice-1' },
+        { slug: 'people/alice-founder', title: 'Founder: alice', type: 'person', identity: '{"a": [true], "b": 1}' },
+        { slug: 'people/alice-q', title: 'Alice', type: 'person', identity: null },
+      ]);
+      const unquarantined = (await read(10, true)).map(r => r.slug);
+      expect(unquarantined).toEqual(['people/alice-example', 'people/alice-founder']);
+      const capped = (await read(1)).map(r => r.slug);
+      return { all, unquarantined, capped };
+    });
+
+  parityTest('readIdentitySiblingCandidates with excludePrivate applies the private-page filter',
+    { methods: ['readIdentitySiblingCandidates'] }, async (engine, backend) => {
+      await seed(engine, backend);
+      const person = (frontmatter: Record<string, unknown>) =>
+        ({ type: 'person', title: 'Alice', compiled_truth: 'Alice body.', frontmatter }) as Parameters<BrainEngine['putPage']>[1];
+      await engine.putPage('people/alice-private', person({ visibility: 'private' }), { sourceId: 'default' });
+      await engine.putPage('people/alice-readers', person({ readable_by: ['alice-example'] }), { sourceId: 'default' });
+      await engine.putPage('people/alice-restricted', person({ access: 'restricted' }), { sourceId: 'default' });
+      const read = (excludePrivate: boolean) =>
+        engine.readIdentitySiblingCandidates('default', { types: ['person'], subject: 'alice', limit: 10, excludePrivate }).then(rows => rows.map(r => r.slug));
+      const result = { open: await read(false), kept: await read(true) };
+      expect(result.kept).toEqual(['people/alice-example', 'people/alice-founder', 'people/alice-q']);
+      expect(result.open).toEqual([...result.kept.slice(0, 2), 'people/alice-private', 'people/alice-q', 'people/alice-readers', 'people/alice-restricted']);
+      return result;
+    });
+
+  parityTest('readIdentitySiblingCandidates with excludePrivate applies a caller\'s reader identity and private-readable grant',
+    { methods: ['readIdentitySiblingCandidates'] }, async (engine, backend) => {
+      await seed(engine, backend);
+      const person = (frontmatter: Record<string, unknown>) =>
+        ({ type: 'person', title: 'Alice', compiled_truth: 'Alice body.', frontmatter }) as Parameters<BrainEngine['putPage']>[1];
+      await engine.putPage('people/alice-private', person({ visibility: 'private' }), { sourceId: 'default' });
+      await engine.putPage('people/alice-readers', person({ readable_by: ['alice-example'] }), { sourceId: 'default' });
+      await engine.putPage('people/alice-team', person({ readable_by: 'group:team-a' }), { sourceId: 'default' });
+      await engine.putPage('people/alice-bob-only', person({ readable_by: ['bob-example'] }), { sourceId: 'default' });
+      const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess(access, () =>
+        engine.readIdentitySiblingCandidates('default', { types: ['person'], subject: 'alice', limit: 10, excludePrivate: true })
+          .then(rows => rows.map(r => r.slug)));
+      const result = {
+        member: await read({ identity: ['member:alice-example', 'group:team-a'], hidePrivate: true }),
+        granted: await read({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true }),
+        stranger: await read({ identity: ['member:carol-example'], hidePrivate: true }),
+      };
+      expect(result.stranger).toEqual(['people/alice-example', 'people/alice-founder', 'people/alice-q']);
+      expect(sorted(result.member)).toEqual(sorted([...result.stranger, 'people/alice-readers', 'people/alice-team']));
+      expect(sorted(result.granted)).toEqual(sorted([...result.stranger, 'people/alice-private', 'people/alice-readers']));
+      return result;
+    });
+
+  parityTest('findExactSlug splits live pages from retired ones; deleted and missing pages are null',
+    { methods: ['findExactSlug'] }, async (engine, backend) => {
+      await seed(engine, backend);
+      const out: Record<string, { live: string | null; retired: string | null }> = {};
+      for (const slug of ['people/alice-example', 'people/old', 'people/merged', 'people/blank', 'people/not-canonical', 'people/aliases', 'people/gone', 'people/missing']) {
+        out[slug] = {
+          live: await engine.findExactSlug('default', [slug], { retired: false }),
+          retired: await engine.findExactSlug('default', [slug], { retired: true }),
+        };
+      }
+      expect(out['people/merged']).toEqual({ live: null, retired: 'people/merged' });
+      expect(out['people/blank']).toEqual({ live: 'people/blank', retired: null });
+      expect(out['people/gone']).toEqual({ live: null, retired: null });
+      // A slug list with no filter: the first live page in list order, retired or not.
+      const first = {
+        retiredFirst: await engine.findExactSlug('default', ['people/missing', 'people/gone', 'people/merged', 'people/blank']),
+        liveFirst: await engine.findExactSlug('default', ['people/blank', 'people/merged']),
+        none: await engine.findExactSlug('default', ['people/missing', 'people/gone']),
+        empty: await engine.findExactSlug('default', []),
+      };
+      expect(first).toEqual({ retiredFirst: 'people/merged', liveFirst: 'people/blank', none: null, empty: null });
+      return { out, first };
+    });
+
+  parityTest('readIgnoredPrivacyLabelPages returns labelled pages with no readers or visibility, by slug or since a time',
+    { methods: ['readIgnoredPrivacyLabelPages'] }, async (engine, backend) => {
+      await seed(engine, backend);
+      const view = (rows: Awaited<ReturnType<BrainEngine['readIgnoredPrivacyLabelPages']>>) =>
+        sorted(rows.map(r => ({ type: r.type, frontmatter: r.frontmatter })), r => JSON.stringify(r));
+      const bySlug = view(await engine.readIgnoredPrivacyLabelPages('default',
+        { slugs: ['notes/label', 'notes/readers', 'notes/visible', 'notes/plain', 'notes/label'] }));
+      const since = view(await engine.readIgnoredPrivacyLabelPages('default', { since: '2000-01-01T00:00:00Z' }));
+      const future = view(await engine.readIgnoredPrivacyLabelPages('default', { since: '2999-01-01T00:00:00Z' }));
+      const limited = (await engine.readIgnoredPrivacyLabelPages('default', { since: '2000-01-01T00:00:00Z' }, { limit: 1 })).length;
+      expect(bySlug).toEqual([{ type: 'note', frontmatter: { access: 'team-only' } }]);
+      expect(since.length).toBe(2);
+      return { bySlug, since, future, limited };
+    });
+
+  parityTest('the ignored-label notice says whether the source keeps a git checkout',
+    { methods: ['readIgnoredPrivacyLabelPages', 'getSource', 'getConfig'] }, async (engine, backend) => {
+      await seed(engine, backend);
+      await createSource(engine, backend, 'checkout', {}, '/var/tmp/parity-checkout');
+      await createSource(engine, backend, 'canonical', { canonical: 'git' });
+      await createSource(engine, backend, 'plain', { canonical: 'db' });
+      const repo = async () => Object.fromEntries(await Promise.all(['default', 'checkout', 'canonical', 'plain', 'missing']
+        .map(async id => [id, await sourceHasRepo(engine, id)] as const)));
+      const notice = () => ignoredPrivacyLabelRunNotice(engine, 'default', { slugs: ['notes/label'] }, 'import').then(n => n?.user_message);
+      const before = { repo: await repo(), notice: await notice() };
+      await engine.setConfig('sync.repo_path', '/var/tmp/parity-repo');
+      const after = { repo: await repo(), notice: await notice() };
+      expect(before.repo).toEqual({ default: false, checkout: true, canonical: true, plain: false, missing: false });
+      expect(after.repo.default).toBe(true);
+      expect(before.notice).not.toContain('git');
+      expect(after.notice).toContain('pushed to git');
+      return { before, after };
+    });
+
+  parityTest('readExtractionLagCounts returns one row of counts for the source',
+    { methods: ['readExtractionLagCounts'] }, async (engine, backend) => {
+      await seed(engine, backend);
+      const row = await engine.readExtractionLagCounts({ sourceId: 'default', versionTs: '2000-01-01T00:00:00Z', attendance: true, held: true });
+      expect(row).toBeDefined();
+      return Object.fromEntries(Object.entries(row ?? {}).map(([k, v]) => [k, v === null ? null : Number(v)]));
+    });
+});

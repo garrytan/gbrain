@@ -36,6 +36,6 @@ export async function withDefaultSearchChoice(engine: BrainEngine, opts: AddSour
   const accepted = await acceptedChoice(engine, opts);
   if (accepted) return accepted;
   const joins = await newSourceJoinsDefaultSearch(engine);
-  if (opts.localPath && (await engine.executeRaw('SELECT 1 FROM sources WHERE id = $1 AND local_path IS NULL', [opts.id])).length > 0) return opts;
+  if (opts.localPath && (await engine.getSource(opts.id))?.local_path === null) return opts;
   return joins ? { ...opts, federated: true } : opts;
 }

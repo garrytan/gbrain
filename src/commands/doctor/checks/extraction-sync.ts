@@ -298,20 +298,12 @@ export async function checkContentHashDuplicates(engine: BrainEngine): Promise<C
  * `query --lang/--symbol-kind` silently miss them. A plain sync or
  * `reindex-code` never heals them (importCodeFile's content_hash
  * short-circuit skips unchanged pages), so the cure is
- * `gbrain reindex-code --force`. Raw SQL only (works on both engines).
+ * `gbrain reindex-code --force`. An engine member (works on every engine).
  */
 export async function checkCodeChunkMetadata(engine: BrainEngine): Promise<Check> {
   const name = 'code_chunk_metadata';
   try {
-    const rows = await engine.executeRaw<{ chunks: string | number; pages: string | number }>(
-      `SELECT COUNT(*)::text AS chunks, COUNT(DISTINCT c.page_id)::text AS pages
-         FROM content_chunks c
-         JOIN pages p ON p.id = c.page_id
-        WHERE p.type = 'code' AND p.deleted_at IS NULL
-          AND c.symbol_name IS NULL AND c.language IS NULL`,
-    );
-    const chunks = Number(rows[0]?.chunks ?? 0);
-    const pages = Number(rows[0]?.pages ?? 0);
+    const { chunks, pages } = await engine.countCodeChunkPages();
     if (chunks === 0) {
       return { name, status: 'ok', message: 'All code-page chunks carry symbol metadata' };
     }

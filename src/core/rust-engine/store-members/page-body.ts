@@ -5,10 +5,8 @@
  *
  * Served: allocateBodyOccurrenceIds, stageSegmentTexts, readSegmentTexts, stageManifestRows, readManifest,
  * stageSegmentChunks, createSegmentedPageShell, flipBodyGeneration, sealSegmentedPage, openBodyStaging, setBodyStagingState,
- * readSegmentDerivations, upsertSegmentDerivations, retireSegmentDerivations, refreshPageBody. stageSegmentChunks
- * refuses a chunk that carries a vector (vectors are not stored), as upsertChunks does.
- *
- * Refused with `engine_capability_missing` (not exported): sweepSegments (needs page_versions and journal roots).
+ * sweepSegments, readSegmentDerivations, upsertSegmentDerivations, retireSegmentDerivations, refreshPageBody.
+ * stageSegmentChunks refuses a chunk that carries a vector (vectors are not stored), as upsertChunks does.
  *
  * The flip and the staging members refuse as PGLite does: the store reports the refusal as an `invalid_state` error
  * whose message is `page_body:<json>`, and `bodyError` rebuilds the error PGLite's engine throws from that JSON.
@@ -18,12 +16,12 @@
  * unexported.
  */
 import type { BodyFlipInput, BodyFlipResult, BodyRegion, BodyStagingInput, BodyStagingState, ManifestRow, ManifestRowInput,
-  SegmentChunkInput, SegmentedPageMeta, SegmentTextInput } from '../../page-body/types.ts';
+  SegmentChunkInput, SegmentedPageMeta, SegmentSweepOptions, SegmentSweepResult, SegmentTextInput } from '../../page-body/types.ts';
 import type { SegmentDerivationInput, SegmentDerivationKind, SegmentDerivationRow } from '../../page-body/derivations.ts';
 import { bodyGenerationIncompleteError, bodyStagingGoneError } from '../../engine-sql/page-body.ts';
 import { opError } from '../../ops/contract.ts';
 import { readFix } from '../../ops/op-fix.ts';
-import { prepareChunks } from '../chunk-input.ts';
+import { prepareChunks, textColumnModel } from '../chunk-input.ts';
 import { sanitizeRemoteBody } from '../../remote-body.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
@@ -142,17 +140,19 @@ export const readManifest: StoreMember<[pageId: number, opts?: { generation?: nu
 
 /**
  * The chunks get PGLite's normalisation (`prepareChunks`: model default, empty values to null, scrubbed text) plus
- * their place in the occurrence; `chunk_index` is the store's to pick. `opts.embeddingColumn` is refused: PGLite takes
- * the default model label from it, and the store has no embedding columns.
+ * their place in the occurrence; `chunk_index` is the store's to pick. `opts.embeddingColumn` only picks the default
+ * model label (PGLite's `column.embeddingModel || ...`); it is served for the store's one vector column and refused
+ * for any other (`textColumnModel`).
  */
 export const stageSegmentChunks: StoreMember<[pageId: number, generation: number, chunks: readonly SegmentChunkInput[], opts?: { embeddingColumn?: unknown }], number[]> =
   async (brain, pageId, generation, chunks, opts) => {
-    takeOptions('stageSegmentChunks', opts, []);
+    const { embeddingColumn } = takeOptions('stageSegmentChunks', opts, ['embeddingColumn']);
     if (chunks.length === 0) return [];
     for (const chunk of chunks) {
       if (chunk.embedding !== undefined || chunk.embedding_image !== undefined) refuseMember('stageSegmentChunks', 'chunk vectors are not stored');
     }
-    const prepared = await prepareChunks(brain, chunks.map(chunk => ({ ...chunk, chunk_index: 0 })));
+    const columnModel = textColumnModel('stageSegmentChunks', embeddingColumn);
+    const prepared = await prepareChunks(brain, chunks.map(chunk => ({ ...chunk, chunk_index: 0 })), columnModel);
     const sent = prepared.map((row, i) => {
       const { chunk_index: _index, ...rest } = row;
       const c = chunks[i]!;
@@ -203,6 +203,12 @@ export const setBodyStagingState: StoreMember<[id: string, state: BodyStagingSta
     const o = takeOptions('setBodyStagingState', opts, ['commitRequestId']);
     await bodyCall('setBodyStagingState', () => brain.setBodyStagingState(id, state, o));
   };
+
+export const sweepSegments: StoreMember<[opts?: SegmentSweepOptions], SegmentSweepResult> = async (brain, opts) => {
+  const o = takeOptions('sweepSegments', opts, ['sourceId', 'pageId', 'graceMs', 'expireStagings', 'now']);
+  if (o.now instanceof Date) o.now = o.now.toISOString();
+  return storeCall({ member: 'sweepSegments' }, () => brain.sweepSegments(o));
+};
 
 export const readSegmentDerivations: StoreMember<[pageId: number, opts?: { kind?: SegmentDerivationKind; occurrenceIds?: readonly number[] }], SegmentDerivationRow[]> =
   async (brain, pageId, opts) => {

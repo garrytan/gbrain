@@ -60,7 +60,15 @@ function recordClaims(e: BrainEngine): { claims: Map<string, number>; restore: (
     if (/^UPDATE persistence_requests( r)? SET state='running'/.test(sql.trim())) for (const row of out) if (row.id && row.state === 'running') claims.set(String(row.id), chose.get(this) ?? sent);
     return out as never;
   } as BrainEngine['executeRaw'];
-  return { claims, restore: () => { e.executeRaw = execute; } };
+  // claimNextWrite stamps its claim through the typed stampWriteClaim member (engine-sql/persistence-journal.ts), not executeRaw.
+  const stamp = e.stampWriteClaim;
+  e.stampWriteClaim = async function (this: BrainEngine, id: string, token: string, leaseMs: number, phaseJson: string) {
+    const sent = Date.now();
+    const row = await stamp.call(this, id, token, leaseMs, phaseJson);
+    if (row?.id && row.state === 'running') claims.set(String(row.id), chose.get(this) ?? sent);
+    return row;
+  } as BrainEngine['stampWriteClaim'];
+  return { claims, restore: () => { e.executeRaw = execute; e.stampWriteClaim = stamp; } };
 }
 function writer(source: string, slugs: string[], intervalMs = 0, go?: string, preparingHoldMs = 0, ready?: string) {
   const out = join(home, `worker-${randomUUID()}.json`);

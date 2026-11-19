@@ -19,13 +19,27 @@
  *    maps ids back to slugs before it returns. Seeded chunks go through
  *    sealChunks, so the text projection is sealed.
  */
-import { describe, expect } from 'bun:test';
+import { afterAll, describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import { basisEmbedding, createSource, parityArms, sorted } from './harness.ts';
+import { archiveSource, basisEmbedding, createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { chunk, seedPage } from './chunk-fixtures.ts';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { withEnv } from '../helpers/with-env.ts';
+import { PACKS, SRC_X, SRC_Y, putTyped, writeEntityTypePacks } from '../helpers/entity-types-pack-fixture.ts';
+import { resolveEntityTypes } from '../../src/core/schema-pack/entity-types.ts';
+import { _resetPackCacheForTests } from '../../src/core/schema-pack/registry.ts';
+import { collectOnboardOpportunities } from '../../src/core/onboard/mcp-onboarding.ts';
 
 const { parityTest } = parityArms(testBackends());
+
+/** Schema packs for the entity-type case, under a GBRAIN_HOME of its own. */
+const packHome = mkdtempSync(join(tmpdir(), 'gbrain-parity-packs-'));
+writeEntityTypePacks(packHome);
+afterAll(() => rmSync(packHome, { recursive: true, force: true }));
 
 async function put(engine: BrainEngine, slug: string, extra: Record<string, unknown> = {}, opts?: { sourceId?: string }) {
   const type = slug.startsWith('people/') ? 'person' : slug.startsWith('companies/') ? 'company' : 'note';
@@ -94,6 +108,109 @@ describe('engine parity: search reads', () => {
       const empty = key(await engine.aliasCanonicalRefs([]));
       expect(open).toEqual(['default::concepts/after']);
       return { open, scoped, elsewhere, empty };
+    },
+  );
+
+  parityTest(
+    'aliasCanonicalRefs: a policy reads only live pages the caller may see; no policy reads every page row',
+    { methods: ['putPage', 'updateSlug', 'softDeletePage', 'aliasCanonicalRefs'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'arch');
+      for (const slug of ['c/open', 'c/private', 'c/gone', 'c/quiet', 'c/aliased-priv']) {
+        await put(engine, `${slug}-old`);
+        await engine.updateSlug(`${slug}-old`, slug);
+      }
+      await put(engine, 'c/away-old', {}, { sourceId: 'arch' });
+      await engine.updateSlug('c/away-old', 'c/away', { sourceId: 'arch' });
+      await put(engine, 'c/private', { frontmatter: { visibility: 'private' } });
+      await put(engine, 'c/aliased-priv', { frontmatter: { access: 'private' } });
+      await put(engine, 'c/quiet', { frontmatter: { quarantine: { reason: 'test' } } });
+      await engine.softDeletePage('c/gone');
+      await put(engine, 'c/plain');
+      const refs = [
+        { slug: 'c/quiet', source_id: 'default' }, { slug: 'c/open', source_id: 'default' },
+        { slug: 'c/private', source_id: 'default' }, { slug: 'c/gone', source_id: 'default' },
+        { slug: 'c/plain', source_id: 'default' }, { slug: 'c/away', source_id: 'arch' },
+        { slug: 'c/open', source_id: 'default' }, { slug: 'c/open-old', source_id: 'default' },
+        { slug: 'c/aliased-priv', source_id: 'default' }, { slug: 'c/away', source_id: 'default' },
+      ];
+      const key = (rows: Array<{ source_id: string; canonical_slug: string }>) => sorted(rows.map(r => `${r.source_id}::${r.canonical_slug}`));
+      const raw = await engine.aliasCanonicalRefs(refs);
+      const types = sorted(raw.map(r => Object.entries(r).map(([k, v]) => `${k}:${typeof v}`).sort().join(',')));
+      const open = key(raw);
+      const live = key(await engine.aliasCanonicalRefs(refs, { sourceIds: [] }));
+      const hidden = key(await engine.aliasCanonicalRefs(refs, { excludePrivate: true }));
+      // Hybrid search passes its whole option bag; keys the SQL does not read change nothing.
+      const bag = key(await engine.aliasCanonicalRefs(refs, { excludePrivate: true, limit: 5, requireSafeChunks: true, sourceId: 'default' } as never));
+      const federated = key(await engine.aliasCanonicalRefs(refs, { sourceIds: ['arch', 'nowhere'], sourceId: 'default' }));
+      await archiveSource(engine, backend, 'arch');
+      const archivedOpen = key(await engine.aliasCanonicalRefs(refs));
+      const archivedLive = key(await engine.aliasCanonicalRefs(refs, { sourceId: 'arch' }));
+      expect(open).toEqual(['arch::c/away', 'default::c/aliased-priv', 'default::c/gone', 'default::c/open', 'default::c/private', 'default::c/quiet']);
+      expect(live).toEqual(['arch::c/away', 'default::c/aliased-priv', 'default::c/open', 'default::c/private']);
+      expect(hidden).not.toContain('default::c/private');
+      expect(federated).toEqual(['arch::c/away']);
+      expect(archivedOpen).toEqual(open);
+      expect(archivedLive).toEqual([]);
+      return { types, open, live, hidden, bag, federated, archivedOpen, archivedLive };
+    },
+  );
+
+  parityTest(
+    'aliasCanonicalRefs under excludePrivate applies a caller\'s reader identity and private-readable grant',
+    { methods: ['putPage', 'updateSlug', 'aliasCanonicalRefs'] },
+    async (engine) => {
+      const pages: Array<[string, Record<string, unknown>]> = [
+        ['c/open', {}], ['c/private', { visibility: 'private' }], ['c/readers', { readable_by: ['alice-example'] }],
+        ['c/team', { readable_by: 'group:team-a' }], ['c/bob-only', { readable_by: ['bob-example'] }],
+        ['c/pinned', { visibility: 'private', pinned_question: true }],
+      ];
+      for (const [slug, frontmatter] of pages) {
+        await put(engine, `${slug}-old`, { frontmatter });
+        await engine.updateSlug(`${slug}-old`, slug);
+      }
+      const refs = pages.map(([slug]) => ({ slug, source_id: 'default' }));
+      const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess(access, async () =>
+        sorted((await engine.aliasCanonicalRefs(refs, { excludePrivate: true })).map(r => r.canonical_slug)));
+      const member = await read({ identity: ['member:alice-example', 'group:team-a'], hidePrivate: true });
+      const granted = await read({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true });
+      const stranger = await read({ identity: ['member:carol-example'], hidePrivate: true });
+      expect(stranger).toEqual(['c/open']);
+      expect(member).toEqual(['c/open', 'c/readers', 'c/team']);
+      expect(granted).toEqual(['c/open', 'c/private', 'c/readers']);
+      return { member, granted, stranger };
+    },
+  );
+
+  parityTest(
+    'pageCollapseFacts: every page row answers by id, any source or deletion, with text-cast frontmatter and code-point bounds',
+    { methods: ['putPage', 'softDeletePage', 'pageCollapseFacts'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      const body = `  ${'é'.repeat(230)}\u{1F600}  `;
+      const pages = [
+        await put(engine, 'notes/numeric', { frontmatter: { redirect_to: '   ', redirect: 7, merged_into: 'notes/t' } }),
+        await put(engine, 'notes/re', { compiled_truth: '\tlead ', frontmatter: { status: 'Re-Redirected', superseded_by: ' notes/s ' } }, { sourceId: 'other' }),
+        await put(engine, 'notes/aliased', { compiled_truth: body, frontmatter: { status: 'aliased', superseded_by: 'notes/s' } }),
+        await put(engine, 'notes/alias-x', { frontmatter: { status: 'alias-x', superseded_by: 'notes/s', merged_into: { slug: 'x' } } }),
+        await put(engine, 'notes/gone', { compiled_truth: body }),
+        await put(engine, 'notes/empty-status', { frontmatter: { status: null, redirect: '', superseded_by: 'notes/s' } }),
+      ];
+      await engine.softDeletePage('notes/gone');
+      const name = slugsOf(pages);
+      const ids = pages.map(p => p.id);
+      const byName = (slug: string) => pages.find(p => p.slug === slug)!.id;
+      const bodyIds = [byName('notes/re'), byName('notes/aliased'), byName('notes/gone')];
+      const rows = await engine.pageCollapseFacts([...ids, ids[0]!, 2_000_000_000], bodyIds);
+      const view = sorted(rows.map(r => ({
+        slug: name([r.id])[0], idType: typeof r.id, target: r.target, body_chars: r.body_chars === null ? null : Number(r.body_chars),
+        body: r.body, lead: r.lead,
+      })), r => r.slug!);
+      expect(view.map(r => r.slug)).toEqual(['notes/alias-x', 'notes/aliased', 'notes/empty-status', 'notes/gone', 'notes/numeric', 'notes/re']);
+      expect(view.find(r => r.slug === 'notes/numeric')!.target).toBe('7');
+      expect(view.find(r => r.slug === 'notes/aliased')).toMatchObject({ target: null, body_chars: 231 });
+      expect(view.find(r => r.slug === 'notes/gone')!.body).toBe(view.find(r => r.slug === 'notes/aliased')!.body);
+      return { view, unbodied: (await engine.pageCollapseFacts(ids, [])).map(r => r.lead) };
     },
   );
 
@@ -180,6 +297,104 @@ describe('engine parity: search reads', () => {
   );
 
   parityTest(
+    'slugsEndingIn: case-sensitive literal suffix after a slash, whole-slug match, exact source, restored pages',
+    { methods: ['putPage', 'softDeletePage', 'restorePage', 'slugsEndingIn'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      for (const slug of ['notes/widget', 'archive/notes/widget', 'notes/a-b', 'notes/back', 'notes/idget-not']) await put(engine, slug);
+      await engine.softDeletePage('notes/back');
+      const whileDeleted = await engine.slugsEndingIn('default', 'back');
+      await engine.restorePage('notes/back');
+      const out = {
+        twoExact: sorted(await engine.slugsEndingIn('default', 'widget')),
+        withSlash: sorted(await engine.slugsEndingIn('default', 'notes/widget')),
+        noSlash: await engine.slugsEndingIn('default', 'idget'),
+        upper: await engine.slugsEndingIn('default', 'WIDGET'),
+        percent: await engine.slugsEndingIn('default', 'a%b'),
+        underscore: await engine.slugsEndingIn('default', 'a_b'),
+        backslash: await engine.slugsEndingIn('default', 'a\\b'),
+        empty: await engine.slugsEndingIn('default', ''),
+        whileDeleted,
+        restored: await engine.slugsEndingIn('default', 'back'),
+        sourcePrefix: await engine.slugsEndingIn('oth', 'widget'),
+        unknownSource: await engine.slugsEndingIn('nowhere', 'widget'),
+      };
+      expect(out.twoExact).toEqual(['archive/notes/widget', 'notes/widget']);
+      expect(out.withSlash).toEqual(['archive/notes/widget', 'notes/widget']);
+      expect(out.restored).toEqual(['notes/back']);
+      return out;
+    },
+  );
+
+  parityTest(
+    'generatedPagesIn: soft-deleted and other-source pages count, a JSON true or the text "true" at the top level only',
+    { methods: ['putPage', 'softDeletePage', 'generatedPagesIn'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      const pages = [
+        await put(engine, 'notes/dream-bool', { frontmatter: { dream_generated: true, topic: 'a' }, compiled_truth: 'bool body' }),
+        await put(engine, 'notes/dream-text', { frontmatter: { dream_generated: 'true' } }),
+        await put(engine, 'notes/dream-false', { frontmatter: { dream_generated: false } }),
+        await put(engine, 'notes/dream-upper', { frontmatter: { dream_generated: 'TRUE' } }),
+        await put(engine, 'notes/dream-one', { frontmatter: { dream_generated: 1 } }),
+        await put(engine, 'notes/dream-nested', { frontmatter: { meta: { dream_generated: true } } }),
+        await put(engine, 'notes/receipt-gone', { type: 'extract_receipt' }),
+        await put(engine, 'notes/dream-gone', { frontmatter: { dream_generated: true } }),
+        await put(engine, 'notes/dream-other', { frontmatter: { dream_generated: true } }, { sourceId: 'other' }),
+        await put(engine, 'notes/human'),
+      ];
+      await engine.softDeletePage('notes/receipt-gone');
+      await engine.softDeletePage('notes/dream-gone');
+      const name = slugsOf(pages);
+      const ids = pages.map(p => Number(p.id));
+      const view = (rows: Array<{ id: number; frontmatter: Record<string, unknown> | null; compiled_truth: string | null }>) =>
+        sorted(rows.map(r => ({ slug: name([r.id])[0], frontmatter: r.frontmatter, compiled_truth: r.compiled_truth })), r => r.slug!);
+      const all = view(await engine.generatedPagesIn([...ids, ...ids, 2147483647, 0, -1]));
+      const one = view(await engine.generatedPagesIn([ids[1]!]));
+      const none = await engine.generatedPagesIn([ids[9]!]);
+      const empty = await engine.generatedPagesIn([]);
+      const refused: Record<string, boolean> = {};
+      for (const [label, bad] of [['above int4', 2147483648], ['below int4', -2147483649], ['fraction', 1.5]] as const) {
+        refused[label] = await engine.generatedPagesIn([ids[0]!, bad]).then(() => false, () => true);
+      }
+      expect(all.map(r => r.slug)).toEqual(['notes/dream-bool', 'notes/dream-gone', 'notes/dream-other', 'notes/dream-text', 'notes/receipt-gone']);
+      expect(all.length).toBe(5);
+      return { all, one, none, empty, refused };
+    },
+  );
+
+  parityTest(
+    'livePageIdsAt: one id per live page however often its ref repeats, source and slug together, restored pages',
+    { methods: ['putPage', 'softDeletePage', 'restorePage', 'livePageIdsAt'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      const pages = [
+        await put(engine, 'notes/a'), await put(engine, 'notes/b'), await put(engine, 'notes/gone'), await put(engine, 'notes/back'),
+        await put(engine, 'notes/a', {}, { sourceId: 'other' }), await put(engine, 'notes/only-other', {}, { sourceId: 'other' }),
+      ];
+      const key = new Map(pages.map(p => [Number(p.id), `${p.source_id}:${p.slug}`]));
+      const name = (ids: number[]) => ({ count: ids.length, pages: sorted(ids.map(id => key.get(Number(id)) ?? `unknown:${id}`)) });
+      await engine.softDeletePage('notes/gone');
+      await engine.softDeletePage('notes/back');
+      const ref = (source_id: string, slug: string) => ({ source_id, slug });
+      const whileDeleted = name(await engine.livePageIdsAt([ref('default', 'notes/back')]));
+      await engine.restorePage('notes/back');
+      const out = {
+        repeated: name(await engine.livePageIdsAt([ref('default', 'notes/a'), ref('default', 'notes/a'), ref('other', 'notes/a'), ref('default', 'notes/a')])),
+        crossed: name(await engine.livePageIdsAt([ref('default', 'notes/only-other'), ref('other', 'notes/b'), ref('missing', 'notes/a')])),
+        deleted: name(await engine.livePageIdsAt([ref('default', 'notes/gone'), ref('default', 'notes/b')])),
+        whileDeleted,
+        restored: name(await engine.livePageIdsAt([ref('default', 'notes/back')])),
+        empty: await engine.livePageIdsAt([]),
+      };
+      expect(out.repeated).toEqual({ count: 2, pages: ['default:notes/a', 'other:notes/a'] });
+      expect(out.crossed.count).toBe(0);
+      expect(out.restored.count).toBe(1);
+      return out;
+    },
+  );
+
+  parityTest(
     'cosinesByChunkIds: text-space cosine per visible embedded chunk; unembedded and deleted chunks are absent',
     { methods: ['putPage', 'sealChunks', 'getChunks', 'softDeletePage', 'cosinesByChunkIds'] },
     async (engine) => {
@@ -227,6 +442,112 @@ describe('engine parity: search reads', () => {
       }
       expect(counts).toEqual({ stale_chunks: 1, entities: 3, linked_entities: 1, timeline_entities: 1, takes: 1, pages: 6 });
       return counts;
+    },
+  );
+  parityTest(
+    'resolveEntityTypes brain-wide reads each source override, so the MCP onboarding coach counts entities',
+    { methods: ['putPage', 'setConfig', 'countOnboardSignal'] },
+    async (engine, backend) => withEnv({ GBRAIN_HOME: packHome, GBRAIN_SCHEMA_PACK: undefined }, async () => {
+      _resetPackCacheForTests();
+      try {
+        await createSource(engine, backend, SRC_X);
+        await createSource(engine, backend, SRC_Y);
+        // `widget` is an entity in X and a concept in Y; `gadget` the other way round.
+        await engine.setConfig(`schema_pack.source.${SRC_X}`, PACKS.widgetEntity);
+        await engine.setConfig(`schema_pack.source.${SRC_Y}`, PACKS.widgetConcept);
+        for (const src of [SRC_X, SRC_Y]) {
+          await putTyped(engine, 'widgets/one', 'widget', src);
+          await putTyped(engine, 'widgets/two', 'widget', src);
+          await putTyped(engine, 'gadgets/one', 'gadget', src);
+        }
+        await putTyped(engine, 'people/alice-example', 'person');
+        await engine.addLink('widgets/one', 'people/alice-example', 'mention', 'mentions', 'manual', undefined, undefined, { fromSourceId: SRC_X, toSourceId: 'default' });
+        const resolution = await resolveEntityTypes(engine, null);
+        const counts = await collectOnboardOpportunities(engine, new AbortController().signal);
+        const out = {
+          status: resolution.status,
+          overrides: resolution.filter.per_source.map(b => b.source_id),
+          entities: counts.entities, linkedEntities: counts.linkedEntities, pages: counts.pages,
+          partial: counts.partial, entityTypesStatus: counts.entityTypesStatus,
+        };
+        // X: two widgets; Y: one gadget; default: alice. A union of names would count 7.
+        expect(out).toEqual({
+          status: 'resolved', overrides: [SRC_X, SRC_Y], entities: 4, linkedEntities: 1, pages: 7,
+          partial: false, entityTypesStatus: 'resolved',
+        });
+        return out;
+      } finally {
+        _resetPackCacheForTests();
+      }
+    }),
+  );
+  parityTest(
+    'supersedingPageSlugs: a policy adds the live filter on both pages and the origin page; the source rule always holds',
+    { methods: ['putPage', 'addLink', 'softDeletePage', 'supersedingPageSlugs'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      await createSource(engine, backend, 'old');
+      const pages = [
+        await put(engine, 'notes/stale'), await put(engine, 'notes/canon'),
+        await put(engine, 'notes/stale-deleted'), await put(engine, 'notes/stale-quarantined'),
+        await put(engine, 'notes/canon-quarantined', { frontmatter: { quarantine: { reason: 'test' } } }),
+        await put(engine, 'notes/stale-origin'), await put(engine, 'notes/origin-gone'),
+        await put(engine, 'notes/stale-cross'),
+        await put(engine, 'notes/old-stale', {}, { sourceId: 'old' }), await put(engine, 'notes/old-canon', {}, { sourceId: 'old' }),
+      ];
+      await put(engine, 'notes/canon', {}, { sourceId: 'other' });
+      await engine.addLink('notes/canon', 'notes/stale', '', 'supersedes', 'manual');
+      await engine.addLink('notes/canon', 'notes/stale-deleted', '', 'supersedes', 'manual');
+      await engine.addLink('notes/canon-quarantined', 'notes/stale-quarantined', '', 'supersedes', 'manual');
+      await engine.addLink('notes/canon', 'notes/stale-origin', '', 'supersedes', 'frontmatter', 'notes/origin-gone', 'supersedes');
+      await engine.addLink('notes/canon', 'notes/stale-cross', '', 'supersedes', 'manual', undefined, undefined, { fromSourceId: 'other' });
+      await engine.addLink('notes/old-canon', 'notes/old-stale', '', 'supersedes', 'manual', undefined, undefined, { fromSourceId: 'old', toSourceId: 'old' });
+      await engine.softDeletePage('notes/stale-deleted');
+      await engine.softDeletePage('notes/origin-gone');
+      await archiveSource(engine, backend, 'old');
+      const name = slugsOf(pages);
+      const ids = pages.map(p => p.id);
+      const view = (m: Map<number, string>) => sorted([...m].map(([id, by]) => `${name([id])[0]}<${by}`));
+      const open = view(await engine.supersedingPageSlugs(ids));
+      const live = view(await engine.supersedingPageSlugs(ids, {}));
+      const scoped = view(await engine.supersedingPageSlugs(ids, { sourceIds: ['old'] }));
+      const unread = view(await engine.supersedingPageSlugs(ids, { takesHoldersAllowList: [], requireSafeChunks: true }));
+      expect(open).toEqual(['notes/old-stale<notes/old-canon', 'notes/stale-deleted<notes/canon', 'notes/stale-origin<notes/canon',
+        'notes/stale-quarantined<notes/canon-quarantined', 'notes/stale<notes/canon']);
+      expect(live).toEqual(['notes/stale<notes/canon']);
+      expect(scoped).toEqual([]);
+      expect(unread).toEqual(live);
+      return { open, live, scoped, unread };
+    },
+  );
+
+  parityTest(
+    'pagesLinkingTo: ranking links from the listed pages to the targets, deleted linkers included, amends excluded',
+    { methods: ['putPage', 'addLink', 'softDeletePage', 'pagesLinkingTo'] },
+    async (engine) => {
+      const pages = [
+        await put(engine, 'people/alice-example'), await put(engine, 'companies/acme-example'),
+        await put(engine, 'notes/linker'), await put(engine, 'notes/gone-linker'), await put(engine, 'notes/amender'),
+        await put(engine, 'notes/elsewhere'), await put(engine, 'notes/unlisted'), await put(engine, 'notes/both'),
+      ];
+      await engine.addLink('notes/linker', 'people/alice-example', '', 'mentions', 'manual');
+      await engine.addLink('notes/gone-linker', 'companies/acme-example', '', 'works_at', 'manual');
+      await engine.addLink('notes/amender', 'people/alice-example', '', 'amends', 'manual');
+      await engine.addLink('notes/elsewhere', 'notes/linker', '', 'mentions', 'manual');
+      await engine.addLink('notes/unlisted', 'people/alice-example', '', 'mentions', 'manual');
+      await engine.addLink('notes/both', 'people/alice-example', '', 'mentions', 'manual');
+      await engine.addLink('notes/both', 'companies/acme-example', '', 'mentions', 'manual');
+      await engine.softDeletePage('notes/gone-linker');
+      const name = slugsOf(pages);
+      const id = (slug: string) => pages.find(p => p.slug === slug)!.id;
+      const from = pages.filter(p => p.slug !== 'notes/unlisted').map(p => p.id);
+      const targets = [id('people/alice-example'), id('companies/acme-example')];
+      const linking = name(await engine.pagesLinkingTo(from, targets));
+      const noTargets = await engine.pagesLinkingTo(from, []);
+      const noSources = await engine.pagesLinkingTo([], targets);
+      const self = name(await engine.pagesLinkingTo([id('notes/linker')], [id('notes/linker'), id('people/alice-example')]));
+      expect(linking).toEqual(['notes/both', 'notes/gone-linker', 'notes/linker']);
+      return { linking, noTargets, noSources, self };
     },
   );
 });

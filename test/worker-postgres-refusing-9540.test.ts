@@ -11,6 +11,7 @@ import postgres from '#postgres';
 import { MinionWorker } from '../src/core/minions/worker.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { isRetryableConnError, isServerRefusingConnections } from '../src/core/retry-matcher.ts';
+import { withQueueMembers } from './helpers/queue-engine-members.ts';
 
 const refusing = createServer(socket => {
   socket.on('error', () => {});
@@ -47,7 +48,7 @@ async function freePort(): Promise<number> {
 
 async function pollAfterClaimError(error: unknown): Promise<string[]> {
   const events: string[] = [];
-  const engine = {
+  const engine = withQueueMembers({
     kind: 'postgres',
     executeRaw: async (sql: string) => {
       if (sql.trim() === 'SELECT 1') return [];
@@ -55,7 +56,7 @@ async function pollAfterClaimError(error: unknown): Promise<string[]> {
       throw new Error('Unexpected SQL in worker refusal fixture');
     },
     reconnect: async () => { events.push('reconnect'); },
-  } as unknown as BrainEngine;
+  }) as unknown as BrainEngine;
   const worker = new MinionWorker(engine, { pollInterval: 1, stalledInterval: 60_000, healthCheckInterval: 0 });
   worker.register('noop', async () => ({}));
   let claims = 0;

@@ -1,0 +1,191 @@
+/**
+ * The write-journal members the Rust store answers: the state reads (readManagedModeRows, readLocalWriterRow,
+ * insertLocalWriterRow, readJournalLimitRows, readHeldPageRows, readHeldCoverageRows), the request rows the put path
+ * reads and writes (readWriteRequest, readWriteRequestById, readWriteRequestProgress, countOutstandingBySource, ownsSchemaTables, readCounterRows, readAdmissionRate, lockPersistenceCounters, insertWriteRequest,
+ * stampWriteClaim, lockWriteRequest, completeWriteRow), the claim upkeep (renewWriteClaim, expireStaleWriteClaims,
+ * hasClaimableWrite), the consumer rows (listHostConsumerRows, probeLiveConsumerRows, renewConsumerRow,
+ * deleteConsumerRow, stampWorktreeHeartbeats), the admission reads (readSourceMembership, findTopologyChanges), the lifecycle receipts
+ * (readTopologyChange, insertTopologyChange) and readLedgerSource.
+ *
+ * Each store call is one store write transaction, so the row locks PGLite takes (FOR SHARE, FOR UPDATE, the counter
+ * lock) change nothing here: no other write can run between the read and the write that follows it. The callers that
+ * run these members inside `transaction` still refuse until this engine serves transactions.
+ *
+ * What each member answers and why: rust/docs/store/journal.md ("TypeScript journal members") and
+ * rust/docs/store/persistence.md.
+ */
+import type { LocalWriterInsert, LocalWriterRow } from '../../engine-sql/persistence-state.ts';
+import type { AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OutstandingBySource, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
+import type { ClaimExpiry, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
+import type { LedgerSource } from '../../engine-sql/belief.ts';
+import type { WriteRequest } from '../../persistence/model.ts';
+import { PAGE_BODY_CONFIG_KEYS } from '../../page-body/limits.ts';
+import { requestRow, topologyRow } from '../store-codec.ts';
+import { storeCall, type StoreMember } from './common.ts';
+
+/** The store keeps no managed brains: a brain on this engine is always unmanaged, one singleton row. */
+export const readManagedModeRows: StoreMember<[], Array<{ enabled: unknown }>> = async () => [{ enabled: false }];
+
+/**
+ * The registration row of a local writer, or undefined. `lock` asks PGLite for FOR SHARE so a revocation waits; the
+ * store runs one write transaction at a time, so a read never overlaps a revocation and the option changes nothing.
+ * `revoked_at` comes back as a Date, as PGLite returns a timestamptz.
+ */
+export const readLocalWriterRow: StoreMember<[id: string, opts?: { lock?: boolean }], LocalWriterRow | undefined> =
+  async (brain, id) => {
+    const row = await storeCall({ member: 'readLocalWriterRow' }, () => brain.readLocalWriter(id)) as
+      { lane: string; credential_hash: string; grant_ceiling: LocalWriterRow['grant_ceiling']; revoked_at: string | null } | null;
+    if (!row) return undefined;
+    return { lane: row.lane, credential_hash: row.credential_hash, grant_ceiling: row.grant_ceiling, revoked_at: row.revoked_at === null ? null : new Date(row.revoked_at) };
+  };
+
+/** Stores a local writer unless its id or credential hash is registered already; true when this call stored it. */
+export const insertLocalWriterRow: StoreMember<[row: LocalWriterInsert], boolean> = (brain, row) =>
+  storeCall({ member: 'insertLocalWriterRow' }, () => brain.insertLocalWriterRow({
+    id: row.id, lane: row.lane, credentialHash: row.credentialHash, grantCeiling: row.grant,
+  }));
+
+/** `config` keys `LIKE 'persistence.limits.%'`: the prefix, then anything (no `_` in it, so no single-character wildcard). */
+const LIMITS_PREFIX = 'persistence.limits.';
+
+/**
+ * The journal's config rows, then the largest page stored in segments (key null). The store keeps no segmented pages
+ * (createSegmentedPageShell refuses on this engine), so that value is null, as PGLite's `max(body_bytes)` over no rows.
+ * Rows are in key order; the caller reads them into a map.
+ */
+export const readJournalLimitRows: StoreMember<[], Array<{ key: string | null; value: string | null }>> = async (brain) => {
+  const all = await storeCall({ member: 'readJournalLimitRows' }, () => brain.getAllConfig()) as Record<string, string>;
+  const exact = new Set<string>([PAGE_BODY_CONFIG_KEYS.segmentedStorage, PAGE_BODY_CONFIG_KEYS.maxBytes]);
+  const rows: Array<{ key: string | null; value: string | null }> = Object.keys(all)
+    .filter(key => key.startsWith(LIMITS_PREFIX) || exact.has(key))
+    .sort()
+    .map(key => ({ key, value: all[key] }));
+  rows.push({ key: null, value: null });
+  return rows;
+};
+
+/** Sync holds are written only by the git sync path, which this engine refuses: no page is ever held. */
+export const readHeldPageRows: StoreMember<[pageIds: string[]], Array<{ record: never; revision: string | null }>> = async () => [];
+
+/** No hold rows exist on this engine (see readHeldPageRows), so no source has held coverage. */
+export const readHeldCoverageRows: StoreMember<[sourceIds: string[] | null], HeldCoverageRow[]> = async () => [];
+
+
+/** The request a principal admitted under `requestId`, or null. */
+export const readWriteRequest: StoreMember<[principalKind: string, principalId: string, requestId: string], WriteRequest | null> =
+  async (brain, kind, id, requestId) => requestRow(await storeCall({ member: 'readWriteRequest' }, () => brain.readWriteRequest({ kind, id }, requestId)));
+
+/** The request with journal id `id`, or null. `signal` changes nothing: the read does not wait on anything. */
+export const readWriteRequestById: StoreMember<[id: string, opts?: { signal?: AbortSignal }], WriteRequest | null> =
+  async (brain, id) => requestRow(await storeCall({ member: 'readWriteRequestById' }, () => brain.readWriteRequestById(id)));
+
+/**
+ * The progress columns of request `id`, or null: the columns PGLite's WRITE_PROGRESS_SQL selects, taken from the
+ * stored row. `signal` changes nothing, as for readWriteRequestById.
+ */
+export const readWriteRequestProgress: StoreMember<[id: string, opts?: { signal?: AbortSignal }], WriteRequestProgress | null> = async (brain, id) => {
+  const row = requestRow<WriteRequest>(await storeCall({ member: 'readWriteRequestProgress' }, () => brain.readWriteRequestById(id)));
+  if (!row) return null;
+  return { state: row.state, error_code: row.error_code, error_message: row.error_message, completed_at: row.completed_at, updated_at: row.updated_at,
+    blocked_reason: row.blocked_reason, outcome: row.outcome, deferred_refresh_id: row.deferred_refresh_id, deferred_import_from: row.deferred_import_from };
+};
+
+/** The sources holding outstanding requests of one principal, most first; a tie in byte order of the source id, as Postgres sorts `COLLATE "C"`. */
+export const countOutstandingBySource: StoreMember<[principalKind: string, principalId: string], OutstandingBySource[]> = (brain, principalKind, principalId) =>
+  storeCall({ member: 'countOutstandingBySource' }, () => brain.countOutstandingBySource(principalKind, principalId));
+
+/** The brain's one process opens its store file, so it owns every table and may apply migrations. */
+export const ownsSchemaTables: StoreMember<[], boolean> = async () => true;
+
+/** The existing counter rows of `keys` in key byte order (`COLLATE "C"`), unlocked; a missing key has no row. */
+export const readCounterRows: StoreMember<[keys: readonly string[]], CounterRow[]> = (brain, keys) =>
+  storeCall({ member: 'readCounterRows' }, () => brain.readCounterRows([...keys]));
+
+/** The brain's first request id and the latest 1,000 admissions' sample. This engine records no effect row, so `net` counts none. */
+export const readAdmissionRate: StoreMember<[principal: { kind: string; id: string } | null, opts?: { sample?: boolean }], AdmissionRate> = async (brain, principal, opts) => {
+  const rate = await storeCall({ member: 'readAdmissionRate' }, () => brain.readAdmissionRate(principal?.kind ?? null, principal?.id ?? null)) as AdmissionRate;
+  // `{ sample: false }` saves the sample statement on Postgres; the store answers both from its rows, so only the first id is kept.
+  return opts?.sample === false ? { first_request_id: rate.first_request_id, admissions: 0, age_seconds: null, gross: null, net: null } : rate;
+};
+
+/** Request `id`, or null. FOR UPDATE changes nothing in one store write (see the header). */
+export const lockWriteRequest: StoreMember<[id: string], WriteRequest | null> =
+  async (brain, id) => requestRow(await storeCall({ member: 'lockWriteRequest' }, () => brain.readWriteRequestById(id)));
+
+/** The named counter rows, created at zero, in key order (bytewise, as COLLATE "C"). */
+export const lockPersistenceCounters: StoreMember<[keys: readonly string[]], CounterRow[]> = (brain, keys) =>
+  storeCall({ member: 'lockPersistenceCounters' }, () => brain.lockPersistenceCounters([...keys]));
+
+/**
+ * The admitted request row with its counter charge. A worktree or a refresh id refuses with the foreign-key violation
+ * PGLite gives: this engine keeps no persistence worktrees.
+ */
+export const insertWriteRequest: StoreMember<[row: WriteRequestInsert], WriteRequest> = async (brain, row) =>
+  requestRow<WriteRequest>(await storeCall({ member: 'insertWriteRequest' }, () => brain.insertWriteRequest(row)))!;
+
+/** The claim stamp; `passed_sync` is false and the refresh barrier never refuses (this engine has no worktrees). */
+export const stampWriteClaim: StoreMember<[id: string, token: string, leaseMs: number, phaseJson: string], ClaimedWriteRow | null> =
+  async (brain, id, token, leaseMs, phaseJson) =>
+    requestRow<ClaimedWriteRow>(await storeCall({ member: 'stampWriteClaim' }, () => brain.stampWriteClaim({ id, token, leaseMs, phaseJson })));
+
+/** The completion; this engine keeps no persistence effects, so the queued effect size is 0. */
+export const completeWriteRow: StoreMember<[completion: WriteCompletion], CompletedWriteRow | null> = async (brain, completion) =>
+  requestRow<CompletedWriteRow>(await storeCall({ member: 'completeWriteRow' }, () => brain.completeWriteRow(completion)));
+
+/** Extends a claim's lease; true while request `id` is running under `token`. */
+export const renewWriteClaim: StoreMember<[renewal: ClaimRenewal, opts?: { signal?: AbortSignal }], boolean> = (brain, renewal) =>
+  storeCall({ member: 'renewWriteClaim' }, () => brain.renewWriteClaim(renewal));
+
+/** Returns expired claims, and claims of dead owners, to queued (at most 100). Every request here is unbound, so the host check passes. */
+export const expireStaleWriteClaims: StoreMember<[expiry: ClaimExpiry, opts?: { signal?: AbortSignal; direct?: boolean }], void> = async (brain, expiry) => {
+  await storeCall({ member: 'expireStaleWriteClaims' }, () => brain.expireStaleWriteClaims(expiry));
+};
+
+/** Whether a claim would find a row now. The host id selects worktree rows, which this engine never has. */
+export const hasClaimableWrite: StoreMember<[hostId: string, excludeRoots: string[], opts?: { priority?: boolean | null; signal?: AbortSignal }], boolean> =
+  (brain, _hostId, excludeRoots, opts) =>
+    storeCall({ member: 'hasClaimableWrite' }, () => brain.hasClaimableWrite({ excludeRoots, priority: opts?.priority ?? null }));
+
+// The consumer rows. One process owns this engine's brain, so the store keeps no consumer heartbeat rows and no
+// worktrees: the reads answer none (PGLite's callers answer the same without a read) and the writes change nothing.
+/** The host's consumer rows; none here. */
+export const listHostConsumerRows: StoreMember<[hostId: string, opts?: { signal?: AbortSignal; direct?: boolean }], ConsumerRowRead[]> = async () => [];
+/** The host's live full consumers other than the caller; none here. */
+export const probeLiveConsumerRows: StoreMember<[probe: ConsumerProbe, opts?: { signal?: AbortSignal; direct?: boolean }], ConsumerRowRead[]> = async () => [];
+/** The heartbeat renewal; no row is kept. */
+export const renewConsumerRow: StoreMember<[renewal: ConsumerRenewal, opts?: { signal?: AbortSignal }], void> = async () => undefined;
+/** The heartbeat's row delete; there is no row. */
+export const deleteConsumerRow: StoreMember<[key: ConsumerRowKey, opts?: { signal?: AbortSignal }], void> = async () => undefined;
+/** The worktree heartbeat stamp; this engine has no worktrees. */
+export const stampWorktreeHeartbeats: StoreMember<[hostId: string, opts?: { signal?: AbortSignal }], void> = async () => undefined;
+
+/** A source's incarnation and archive flag, or null. FOR SHARE changes nothing in one store write. */
+export const readSourceMembership: StoreMember<[sourceId: string, opts?: { lock?: boolean }], SourceMembership | null> = (brain, sourceId) =>
+  storeCall({ member: 'readSourceMembership' }, () => brain.readSourceMembership(sourceId));
+
+/** The first of `requestIds` a lifecycle change of local writer `principalId` used, as `[{ request_id }]`, or []. */
+export const findTopologyChanges: StoreMember<[principalId: string, requestIds: string[]], Array<{ request_id: string }>> = (brain, principalId, requestIds) =>
+  storeCall({ member: 'findTopologyChanges' }, () => brain.findTopologyChanges(principalId, [...requestIds]));
+
+/** The lifecycle receipt of (principal, request id), or null; its two timestamps as Dates, as PGLite returns them. */
+export const readTopologyChange: StoreMember<[principalId: string, requestId: string], TopologyChange | null> = async (brain, principalId, requestId) =>
+  topologyRow(await storeCall({ member: 'readTopologyChange' }, () => brain.readTopologyChange(principalId, requestId)));
+
+/** Records a lifecycle receipt; a reused (principal, request id) refuses with the unique violation PGLite gives. */
+export const insertTopologyChange: StoreMember<[row: TopologyChangeInsert], TopologyChange> = async (brain, row) =>
+  topologyRow(await storeCall({ member: 'insertTopologyChange' }, () => brain.insertTopologyChange(row)))!;
+
+/**
+ * The belief ledger's view of a source. Belief events and fact, take and page purges are written only through
+ * `executeRaw`, which this engine refuses, so the epoch is 0, coverage is null and no purge is possible. A batch also
+ * returns the one unmanaged brain row and the plan-cache mode PGLite reports, which it never changes here.
+ */
+export const readLedgerSource: StoreMember<[sourceId: string, opts?: { batch?: boolean }], LedgerSource | null> = async (brain, sourceId, opts) => {
+  const membership = await storeCall({ member: 'readLedgerSource' }, () => brain.readSourceMembership(sourceId)) as SourceMembership | null;
+  if (!membership) return null;
+  return { incarnation: String(membership.incarnation), purgeEpoch: 0, coverage: null, purgesPossible: false,
+    ...(opts?.batch ? { managedRows: [{ enabled: false }], planModePrev: PLAN_CACHE_MODE } : {}) };
+};
+
+/** `current_setting('plan_cache_mode')` on a PGLite brain that never set it. */
+const PLAN_CACHE_MODE = 'auto';

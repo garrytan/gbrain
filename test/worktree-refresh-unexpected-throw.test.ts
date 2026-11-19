@@ -25,6 +25,7 @@ import { tryAcquireNativeLock } from '../src/core/persistence/native-lock.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { page, withRefreshFixture } from './helpers/worktree-refresh-fixture.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { readDeadline, readDeadlineSignal } from '../src/core/read-deadline.ts';
 
 let engine: BrainEngine;
 const asRedacted = (frame: string) => frame.replace(new RegExp(`${homedir().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w.-])`, 'g'), '~');
@@ -127,12 +128,18 @@ test('a refresh-row lookup that never answers still yields the refusal, and the 
   const statement = Object.assign(new Error('canceling statement due to user request'), { code: '57014' });
   const reads: Array<{ signal?: AbortSignal; timeoutMs?: number }> = [];
   const fake = { kind: 'postgres', getConfig: async () => { throw statement; },
-    executeRaw: (_sql: string, _params?: unknown[], opts?: { signal?: AbortSignal; timeoutMs?: number }) => { reads.push(opts ?? {}); return new Promise(() => {}); } } as unknown as BrainEngine;
+    executeRaw: (_sql: string, _params?: unknown[], opts?: { signal?: AbortSignal; timeoutMs?: number }) => { reads.push(opts ?? {}); return new Promise(() => {}); },
+    // The first lookup is the typed writer-binding read: it runs under the lookup's read deadline and signal.
+    getWorktreeBinding: () => {
+      reads.push({ signal: readDeadlineSignal(), timeoutMs: (readDeadline() ?? Number.POSITIVE_INFINITY) - Date.now() });
+      return new Promise(() => {});
+    } } as unknown as BrainEngine;
   const failure = await withEnv({ GBRAIN_REFRESH_SYNC_BUDGET_MS: undefined }, () => refreshWorktree(fake, 'source-a').then(() => null, error => error));
   expect(reads.length).toBeGreaterThan(0);
   expect(failure.code).toBe('internal_error');
   expect(failure.suggestion).toContain('The refresh row could not be read');
-  expect(reads[0]!.timeoutMs).toBe(3_000);
+  expect(reads[0]!.timeoutMs).toBeGreaterThan(2_000);
+  expect(reads[0]!.timeoutMs).toBeLessThanOrEqual(3_000);
   expect(reads[0]!.signal?.aborted).toBe(true);
 }, 15_000);
 

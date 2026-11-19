@@ -19,6 +19,7 @@
  */
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
+import { answersFromCatalog, catalogTableExists } from '../rust-engine/store-members/catalog.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { opError } from '../ops/contract.ts';
@@ -134,9 +135,7 @@ function notFound(ref: string, what: string): Error {
 interface RowTarget { table: 'facts' | 'takes'; id: number; sourceId: string; tier: TrustTier; text: string; binding: string; live: boolean }
 
 async function readFactTarget(engine: BrainEngine, id: number): Promise<RowTarget | null> {
-  const [row] = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT id, source_id, trust_tier, fact, entity_slug, kind, claim_metric, claim_value, claim_unit, claim_period, value, event_type, dimension, context,
-            expired_at, superseded_by FROM facts WHERE id = $1`, [id]);
+  const row = await engine.readFactForOwnerAction(id);
   if (!row) return null;
   return { table: 'facts', id, sourceId: String(row.source_id), tier: storedTrustTier(row.trust_tier), text: String(row.fact ?? ''),
     binding: bindingOf({ ...row, expired_at: row.expired_at ? String(row.expired_at) : null }), live: !row.expired_at };
@@ -166,6 +165,7 @@ export interface HoldStoreAdapter {
   publish?(engine: BrainEngine, id: number, by: string, config?: GBrainConfig, approved?: string): Promise<boolean | null>;
 }
 async function holdTableExists(engine: BrainEngine): Promise<boolean> {
+  if (answersFromCatalog(engine)) return catalogTableExists(engine, 'write_gate_holds');
   const [row] = await engine.executeRaw<{ t: string | null }>(`SELECT to_regclass('write_gate_holds')::text AS t`);
   return !!row?.t;
 }

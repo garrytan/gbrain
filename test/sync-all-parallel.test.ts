@@ -140,10 +140,11 @@ describe('buildSyncStatusReport', () => {
   }): BrainEngine {
     return {
       kind: 'postgres',
+      // The source rows come from the typed listSourceRecords member (every source; the report filters to its ids).
+      listSourceRecords: async () => (scripts.sourceRows ?? []).map((r) => ({
+        name: r.id, local_path: null, config: {}, created_at: new Date(0), ...r,
+      })),
       executeRaw: async (sql: string) => {
-        if (/FROM sources WHERE id = ANY/i.test(sql)) {
-          return scripts.sourceRows ?? [];
-        }
         // Codex P0 #1 regression: must match the CORRECT SQL shape
         // (content_chunks + page_id), not the broken PR shape.
         if (/content_chunks cc[\s\S]*JOIN pages pg ON pg\.id = cc\.page_id/.test(sql)) {
@@ -325,10 +326,8 @@ describe('buildSyncStatusReport', () => {
     ];
     const engine = {
       kind: 'postgres',
-      executeRaw: async (sql: string) => {
-        if (/FROM sources WHERE id = ANY/i.test(sql)) {
-          return [{ id: 'a', last_commit: null, last_sync_at: null }];
-        }
+      listSourceRecords: async () => [{ id: 'a', name: 'a', local_path: null, last_commit: null, last_sync_at: null, config: {}, created_at: new Date(0) }],
+      executeRaw: async () => {
         throw new Error('canceling statement due to statement timeout');
       },
     } as unknown as BrainEngine;

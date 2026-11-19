@@ -12,7 +12,7 @@
  *
  * All filesystem probes (pause marker, worker registry) run under a scratch
  * GBRAIN_HOME so a dev machine's real ~/.gbrain state can't flake assertions.
- * PGLite only; the probe's SQL is engine-neutral executeRaw (the wedge-signal
+ * PGLite only; the probe's reads are typed engine members (the wedge-signal
  * query is already parity-pinned by test/supervisor-wedge.test.ts).
  */
 
@@ -22,6 +22,7 @@ import { dirname } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv, emptyHome } from './helpers/with-env.ts';
+import { withQueueMembers } from './helpers/queue-engine-members.ts';
 import { probeQueueState } from '../src/core/minions/supervisor.ts';
 import { autopilotPausedMarkerPath } from '../src/core/autopilot-paths.ts';
 import { operationsByName } from '../src/core/operations.ts';
@@ -128,21 +129,21 @@ describe('probeQueueState — dead/degraded lane signals', () => {
   });
 
   it('probe throw → {probe_failed: true} (fail-open, amendment 24)', async () => {
-    const throwing: any = {
+    const throwing: any = withQueueMembers({
       kind: 'pglite',
       executeRaw: async () => {
         throw new Error('db exploded');
       },
-    };
+    });
     const state = await probeQueueState(throwing, 'default', ['embed']);
     expect(state).toEqual({ probe_failed: true });
   });
 
   it('probe hang → {probe_failed: true} within the time bound', async () => {
-    const hanging: any = {
+    const hanging: any = withQueueMembers({
       kind: 'pglite',
       executeRaw: () => new Promise(() => {}), // never resolves
-    };
+    });
     const started = Date.now();
     const state = await probeQueueState(hanging, 'default', ['embed'], { timeoutMs: 60 });
     expect(state).toEqual({ probe_failed: true });
@@ -177,17 +178,13 @@ describe('submit_job wiring — probe never blocks a successful enqueue', () => 
   });
 
   it('a throwing probe degrades to queue_state {probe_failed: true} — the enqueue still succeeds', async () => {
-    // Delegate everything to the real engine EXCEPT the wedge-signal query
-    // (identified by its waiting_claimable alias), which the probe — and only
-    // the probe — runs.
+    // Delegate everything to the real engine EXCEPT the wedge-signal read
+    // (the readWedgeSignals member), which the probe — and only the probe — runs.
     const throwOnWedge: any = new Proxy(engine, {
       get(target, prop) {
-        if (prop === 'executeRaw') {
-          return async (sql: string, ...rest: unknown[]) => {
-            if (typeof sql === 'string' && sql.includes('waiting_claimable')) {
-              throw new Error('probe-only failure');
-            }
-            return (target as any).executeRaw(sql, ...rest);
+        if (prop === 'readWedgeSignals') {
+          return async () => {
+            throw new Error('probe-only failure');
           };
         }
         const v = Reflect.get(target as object, prop, target);

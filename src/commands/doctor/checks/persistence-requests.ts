@@ -7,6 +7,7 @@ import { preparationBudgetMs } from '../../../core/persistence/preparation-budge
 import { readPreparationPolicy } from '../../../core/persistence/switches.ts';
 import { resolvePrepare, resolveSessionTimeouts } from '../../../core/db.ts';
 import { agentFix, checkError, doctorVerify } from '../check-fix.ts';
+import { answersFromCatalog, catalogSkipCheck } from '../../../core/rust-engine/store-members/catalog.ts';
 import { lostCallerWrites } from '../../../core/repair/failed-writes.ts';
 import { readCapacityThresholds } from '../../../core/persistence/capacity-forecast.ts';
 import { doctorCapacityForecast, forecastOrNull } from '../capacity-memo.ts';
@@ -14,6 +15,7 @@ import { withStatementDeadline } from '../../../core/statement-deadline.ts';
 import { DEFERRED_READ_LABEL, repeatedPostprocessDeferrals } from '../../../core/cycle/synthesize-postprocess-deferral.ts';
 import { PERSISTENCE_REQUEST_ID_INDEX } from '../../../core/persistence/schema.ts';
 import type { TerminalSourceSummary } from '../../../core/persistence/terminal-failures.ts';
+import { sortSourcesById } from '../../../core/source-rows.ts';
 
 const WINDOW_DAYS = 7;
 const SAMPLE = 10_000;
@@ -31,6 +33,7 @@ const HORIZON_DAYS = 3650;
  */
 export async function requestIndexesCheck(engine: BrainEngine): Promise<Check> {
   const docs = 'docs/guides/repair.md#request-indexes';
+  if (answersFromCatalog(engine)) return catalogSkipCheck('persistence_request_indexes', 'no_planner');
   try {
     const indexes = await readRequestIndexStates(engine);
     const broken = indexes.filter(index => index.state === 'missing' || index.state === 'invalid');
@@ -248,7 +251,7 @@ export async function sessionTimeoutsCheck(engine: BrainEngine): Promise<Check> 
 export async function lostCallerWritesCheck(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
   const docs = 'docs/guides/repair.md#failed-writes';
   try {
-    const sources = sourceIds ?? (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+    const sources = sourceIds ?? sortSourcesById(await engine.listAllSources()).map(row => row.id);
     const { lost, compacted, not_replayable } = await lostCallerWrites(engine, sources);
     const count = lost.reduce((sum, row) => sum + row.count, 0);
     const kept = not_replayable.unpinned_target + not_replayable.revision_superseded;

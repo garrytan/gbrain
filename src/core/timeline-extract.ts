@@ -300,11 +300,8 @@ export async function segmentedTimelineText(engine: Pick<BrainEngine, 'executeRa
 /** A page's stored non-event timeline row as reconciliation reads it (`date` is `YYYY-MM-DD`). */
 export type StoredTimelineTuple = TimelineTuple & { id: number; detail: string | null };
 
-function storedTimelineRows(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string): Promise<StoredTimelineTuple[]> {
-  return engine.executeRaw<StoredTimelineTuple>(
-    `SELECT t.id, to_char(t.date, 'YYYY-MM-DD') AS date, t.source, t.summary, t.detail FROM timeline_entries t
-      JOIN pages p ON p.id = t.page_id
-      WHERE p.source_id = $1 AND p.slug = $2 AND t.event_page_id IS NULL`, [sourceId, slug]);
+function storedTimelineRows(engine: Pick<BrainEngine, 'listStoredTimelineRows'>, sourceId: string, slug: string): Promise<StoredTimelineTuple[]> {
+  return engine.listStoredTimelineRows(sourceId, slug);
 }
 
 const STORED_ROWS_PAGE = 5_000;
@@ -375,7 +372,7 @@ export const versionTimelineScan = (): VersionTimelineScan => ({ done: false, pr
  * row locked and only while the page is still at that revision; a page that moved deletes nothing and returns no rows.
  */
 export async function retractRemovedTimelineEntries(
-  engine: Pick<BrainEngine, 'executeRaw' | 'readManifest' | 'readSegmentTexts'>,
+  engine: Pick<BrainEngine, 'executeRaw' | 'readManifest' | 'readSegmentTexts' | 'listStoredTimelineRows'>,
   slug: string,
   sourceId: string,
   current: string | TimelineTextKeys,
@@ -547,13 +544,7 @@ export async function pruneTimelineOrphans(
   for (;;) {
     const pageSize = Math.min(200, (opts.limit ?? Infinity) - result.pagesScanned);
     if (pageSize <= 0) break;
-    const params: unknown[] = [afterId, pageSize];
-    if (opts.sourceId) params.push(opts.sourceId);
-    const pages = await engine.executeRaw<{ id: number; slug: string; source_id: string; compiled_truth: string; timeline: string | null; body_storage: string; revision: string }>(
-      `SELECT p.id, p.slug, p.source_id, p.compiled_truth, p.timeline, p.body_storage, p.knowledge_revision::text AS revision FROM pages p
-        WHERE p.id > $1 AND p.deleted_at IS NULL${opts.sourceId ? ' AND p.source_id = $3' : ''}
-          AND EXISTS (SELECT 1 FROM timeline_entries t WHERE t.page_id = p.id AND t.event_page_id IS NULL)
-        ORDER BY p.id LIMIT $2`, params);
+    const pages = await engine.listTimelineOrphanPages({ afterId, limit: pageSize, ...(opts.sourceId ? { sourceId: opts.sourceId } : {}) });
     if (!pages.length) break;
     for (const page of pages) {
       const orphans = opts.coordinated && !opts.dryRun

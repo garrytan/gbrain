@@ -13,6 +13,7 @@ import { computeQueueHealthCheck } from './queue-jobs.ts';
 import { checkSubagentCapability } from './search-eval.ts';
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { answersFromCatalog, catalogTableExists } from '../../../core/rust-engine/store-members/catalog.ts';
 
 async function runQueueHealth(ctx: DoctorContext): Promise<Check[]> {
   const { progress } = ctx;
@@ -42,9 +43,11 @@ async function runQueueHealth(ctx: DoctorContext): Promise<Check[]> {
   // probe is a no-op.
   progress.heartbeat('facts_health');
   try {
-    const factsExists = await engine.executeRaw<{ exists: boolean }>(
-      `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'facts') AS exists`,
-    );
+    const factsExists = answersFromCatalog(engine)
+      ? [{ exists: catalogTableExists(engine, 'facts') }]
+      : await engine.executeRaw<{ exists: boolean }>(
+        `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'facts') AS exists`,
+      );
     if (factsExists[0]?.exists) {
       const health = await engine.getFactsHealth('default');
       const status: 'ok' | 'warn' = health.total_active >= 0 ? 'ok' : 'warn';
@@ -54,10 +57,7 @@ async function runQueueHealth(ctx: DoctorContext): Promise<Check[]> {
         .join(', ') || '—';
       // #5831: atom pages are no longer a fact source; name what earlier extraction left behind.
       // Fenced rows name their page in source_markdown_slug; DB-only rows lead their context with it.
-      const [atoms] = await engine.executeRaw<{ n: number }>(
-        `SELECT count(*)::int AS n FROM facts
-          WHERE expired_at IS NULL AND (source_markdown_slug LIKE 'atoms/%' OR context LIKE 'atoms/%')`);
-      const atomFacts = Number(atoms?.n ?? 0);
+      const atomFacts = await engine.countAtomFacts();
       checks.push({
         name: 'facts_health',
         status,

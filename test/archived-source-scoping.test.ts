@@ -21,30 +21,15 @@ import {
 } from '../src/core/source-resolver.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
 
 type StubSource = { id: string; local_path: string | null; archived?: boolean };
 
 function stubEngine(sources: StubSource[]): BrainEngine {
+  // Tier 4 reads the local-path rows (archived flag included); assertSourceExists reads the active sources. The
+  // sole-non-default tier (5.5) is not the tier under test: both cases resolve or throw at tier 4 before it runs.
   return {
-    executeRaw: async (sql: string, params?: unknown[]) => {
-      if (sql.includes('archived FROM sources WHERE local_path IS NOT NULL')) {
-        return sources
-          .filter((s) => s.local_path !== null)
-          .map((s) => ({ id: s.id, local_path: s.local_path, archived: s.archived === true }));
-      }
-      if (sql.includes('WHERE id = $1 AND archived = false')) {
-        return sources
-          .filter((s) => s.id === params?.[0] && s.archived !== true)
-          .map((s) => ({ id: s.id }));
-      }
-      if (sql.includes("id != 'default'")) {
-        // pickSoleNonDefaultSource — not the tier under test; return 2 rows
-        // so it never fires.
-        return [{ id: 'a' }, { id: 'b' }];
-      }
-      if (sql.includes('FROM pages')) return [];
-      return [];
-    },
+    ...stubSourceMembers(sources),
     getConfig: async () => null,
   } as unknown as BrainEngine;
 }
@@ -118,8 +103,11 @@ describe('#3880 structural pins — all-source local_path selections filter arch
     // The resolver keeps archived rows in the SELECT (JS tiering) so a cwd
     // landing ONLY in an archived tree still throws the deliberate
     // SourceTargetError instead of silently falling through.
+    // The statement is the typed listLocalPathSources read (SQL in engine-sql/sources.ts).
+    // test-reads-source-ok[structural]: pins the resolver's call to the typed read and the statement that read runs.
     const src = readFileSync('src/core/source-resolver.ts', 'utf-8');
-    expect(src).toContain('SELECT id, local_path, archived FROM sources WHERE local_path IS NOT NULL');
+    expect(src).toContain('engine.listLocalPathSources()');
+    expect(readFileSync('src/core/engine-sql/sources.ts', 'utf-8')).toContain('SELECT id, local_path, archived FROM sources WHERE local_path IS NOT NULL');
     // #4411: tier-4 realpath resolution was parallelized and the two
     // active/archived filter passes were consolidated into one indexed loop
     // over both tiers — same active-over-archived behavior (see the two

@@ -9,14 +9,14 @@
  * embed there, and keyword search keeps working.
  */
 import { loadConfig } from '../../../core/config.ts';
-import { AUDIT_ROW_SOURCES } from '../../../core/facts/audit-sources.ts';
-import { eligibleFactEmbedding, partiallyEmbeddedFact, staleFactEmbedding, readOversizedStaleFacts, oversizedFactLine, OVERSIZED_FACT_FIX } from '../../../core/facts/embedding-identity.ts';
+import { readOversizedStaleFacts, oversizedFactLine, OVERSIZED_FACT_FIX } from '../../../core/facts/embedding-identity.ts';
 import { resolveMaxChunkTokens } from '../../../core/embedding-input-limit.ts';
 import { EMBED_MAX_CHARS } from '../../../core/ai/embed-batch-plan.ts';
 import { takesAutoEmbedEnabled } from '../../../core/embed-takes.ts';
 import type { Check } from '../../doctor.ts';
 import { agentFix } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { sortSourcesById } from '../../../core/source-rows.ts';
 
 export const VECTOR_COVERAGE_DOCS = 'docs/GBRAIN_VERIFY.md#5a-fact-and-take-vectors';
 
@@ -40,15 +40,9 @@ async function runFactTakeVectors(ctx: DoctorContext): Promise<Check[]> {
     return checks;
   }
   try {
-    const sources = (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE NOT archived ORDER BY id'))
+    const sources = sortSourcesById(await engine.listAllSources())
       .filter(s => !ctx.orphanRatioSourceId || s.id === ctx.orphanRatioSourceId);
-    const factRows = await engine.executeRaw<{ source_id: string; missing: number; stale: number; partial: number }>(
-      `SELECT f.source_id, count(*) FILTER (WHERE f.embedding IS NULL)::int AS missing,
-              count(*) FILTER (WHERE ${staleFactEmbedding})::int AS stale,
-              count(*) FILTER (WHERE NOT ${staleFactEmbedding} AND ${partiallyEmbeddedFact})::int AS partial
-         FROM facts f WHERE ($1::text IS NULL OR f.source_id = $1) AND ${eligibleFactEmbedding}
-        GROUP BY f.source_id`,
-      [ctx.orphanRatioSourceId ?? null, [...AUDIT_ROW_SOURCES], model, dims]);
+    const factRows = await engine.countFactEmbeddingCoverage({ sourceId: ctx.orphanRatioSourceId ?? null, model, dims });
     const bySource: SourceVectors[] = [];
     for (const source of sources) {
       const fact = factRows.find(r => r.source_id === source.id);

@@ -12,7 +12,7 @@ import { assertPageRevision, PageRevisionConflictError, type PageSnapshot } from
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { digest } from '../persistence/digest.ts';
 import { quoteIdentifier, resolveWriteColumnFromConfigRows, vectorCastSuffix } from '../search/embedding-column.ts';
-import { getFtsLanguage, pageSearchVectorSql } from '../fts-language.ts';
+import { getFtsLanguage } from '../fts-language.ts';
 import { getEmbeddingModel } from '../ai/gateway.ts';
 import { jsonRowBatches } from '../batch-rows.ts';
 import { refreshProjectionStatistics } from '../search/projection-statistics.ts';
@@ -23,7 +23,7 @@ import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { pageReadFilter } from '../search/read-policy-sql.ts';
 import type { PageReadScope } from '../types.ts';
 import { projectionClassSql, sealableImageSql } from './projection-class.ts';
-import { advanceProjectionCursor, ineligibleKey, rememberIneligible, residentWindowCtes, type ProjectionScanCursor } from './projection-window.ts';
+import { advanceProjectionCursor, ineligibleKey, rememberIneligible, type ProjectionScanCursor } from './projection-window.ts';
 import { acceptedEmbeddingInputHashes, embeddingInputHash, plainEmbeddingTier, synopsisBodyHash,
   type EmbeddingInputContext, type EmbeddingTier } from '../embedding-input-hash.ts';
 import { chunkModelMatchesSql } from '../embedding-invalidation.ts';
@@ -41,13 +41,9 @@ import { sealPageTextProjection } from './text-seal.ts';
  */
 export async function sealImportedPage(engine: BrainEngine, slug: string, sourceId: string, live: PageSnapshot | null,
   chunkerSeal: number, pageId?: number): Promise<void> {
-  const rows = await engine.executeRaw<{ id: number }>(`UPDATE pages SET chunker_version=$5,
-    text_projection_revision=CASE WHEN knowledge_revision=$4::uuid THEN knowledge_revision ELSE text_projection_revision END,
-    search_vector=CASE WHEN knowledge_revision=$4::uuid THEN ${pageSearchVectorSql('title', '$3')} ELSE search_vector END
-    WHERE source_id=$1 AND slug=$2 RETURNING id`,
-  [sourceId, slug, live ? sanitizeRemoteBody(live.page.timeline) : '', live?.revision ?? null, chunkerSeal]);
-  if (rows.length === 0) throw new Error(`Page not found: ${slug} (source=${sourceId})`);
-  if (pageId !== undefined && Number(rows[0]!.id) !== Number(pageId)) throw new Error(`Page ${slug} (source=${sourceId}) is not the page this transaction wrote`);
+  const sealed = await engine.sealImportedPage(slug, { sourceId, revision: live?.revision ?? null, timelineText: live ? sanitizeRemoteBody(live.page.timeline) : '', chunkerVersion: chunkerSeal });
+  if (!sealed) throw new Error(`Page not found: ${slug} (source=${sourceId})`);
+  if (pageId !== undefined && sealed.id !== Number(pageId)) throw new Error(`Page ${slug} (source=${sourceId}) is not the page this transaction wrote`);
 }
 
 export interface ProjectionSnapshot {
@@ -346,7 +342,7 @@ export async function installPageProjection(engine: BrainEngine, prepared: Proje
     if (opts.seal && opts.preserveEmbeddings) {
       const { kept, current: currentIds, provenanceModel, column } = await planProjectionKeep(tx, current!, context, stored, chunks);
       const col = quoteIdentifier(column.name);
-      await tx.executeRaw(`DELETE FROM content_chunks WHERE page_id=$1 AND NOT(id=ANY($2::int[]))`, [snapshot.page.id, kept.map(chunk => chunk.id)]);
+      await tx.deleteChunksExcept(slug, kept.map(chunk => chunk.id), { sourceId });
       await tx.executeRaw(`UPDATE content_chunks SET ${col}=NULL,
         embedded_at=NULL,embedded_text_hash=NULL,embedding_input_hash=NULL,
         embedding_pending_since=COALESCE(embedding_pending_since,now()) WHERE page_id=$1 AND
@@ -663,13 +659,10 @@ type WindowKey = { source_incarnation: string; slug: string };
  */
 async function selectWindowJobs(engine: BrainEngine, cursor: ProjectionScanCursor, retryCooldown: boolean):
   Promise<{ jobs: Array<QueuedJob & { ord: number }>; window: WindowKey[]; highWater: string | null }> {
-  const params: unknown[] = [];
-  const ctes = residentWindowCtes(cursor, params, retryCooldown ? PROJECTION_RETRY_READY_SQL : 'TRUE');
-  const rows = await engine.executeRaw<WindowKey & { lane: string | null; ord: number; revision: string; high_water: string | null }>(`WITH ${ctes}
-    SELECT r.lane,r.ord,r.source_incarnation::text AS source_incarnation,r.slug,r.revision::text AS revision,h.at AS high_water
-    FROM high_water h LEFT JOIN (SELECT source_incarnation,slug,revision,updated_at,lane,ord FROM recent
-      UNION ALL SELECT source_incarnation,slug,revision,updated_at,lane,ord FROM win) r ON true
-    ORDER BY r.lane,r.ord`, params);
+  // engine-sql/persistence-housekeeping.ts holds the statement; on an empty queue it returns one row of nulls that carries the high water.
+  const all = await engine.selectProjectionWindowJobs(cursor, retryCooldown);
+  const rows = all.filter((row): row is typeof row & WindowKey & { lane: string; ord: number; revision: string } =>
+    row.lane !== null && row.source_incarnation !== null && row.slug !== null && row.revision !== null);
   const window = rows.filter(row => row.lane === 'window').sort((a, b) => Number(a.ord) - Number(b.ord));
   const seen = new Set<string>();
   const candidates = [...rows.filter(row => row.lane === 'recent'), ...window].filter(row => {
@@ -693,7 +686,7 @@ async function selectWindowJobs(engine: BrainEngine, cursor: ProjectionScanCurso
     jobs.push({ source_id: probe.source_id, source_incarnation: row.source_incarnation, slug: row.slug, revision: row.revision,
       page_kind: probe.page_kind, ord: row.lane === 'window' ? Number(row.ord) : 0 });
   }
-  return { jobs, window, highWater: rows[0]?.high_water ?? null };
+  return { jobs, window, highWater: all[0]?.high_water ?? null };
 }
 
 /**
@@ -760,7 +753,7 @@ export async function previewProjectionDrain(engine: Pick<BrainEngine, 'executeR
     FROM page_projection_jobs j ${projectionJobProbes({ media: true })}
     ORDER BY CASE WHEN p.page_kind NOT IN ('markdown','code') THEN 1
       WHEN EXISTS (SELECT 1 FROM pages q WHERE q.source_id=s.id AND q.slug=j.slug AND q.text_projection_revision='${ACTIVATION_SERVED_REVISION}'::uuid) THEN 2
-      ELSE 0 END,j.updated_at,j.source_incarnation,j.slug LIMIT $1`, [Math.max(1, limit)]);
+      ELSE 0 END,j.updated_at,j.source_incarnation,j.slug COLLATE "C" LIMIT $1`, [Math.max(1, limit)]);
   return { ...backlog, rows };
 }
 
@@ -790,7 +783,7 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
   const after = opts.window ? undefined : opts.walk?.after;
   if (after) {
     params.push(after.updated_at, after.source_incarnation, after.slug);
-    filters.push(`(j.updated_at,j.source_incarnation,j.slug)>($${params.length - 2}::text::timestamptz,$${params.length - 1}::uuid,$${params.length})`);
+    filters.push(`(j.updated_at,j.source_incarnation,j.slug COLLATE "C")>($${params.length - 2}::text::timestamptz,$${params.length - 1}::uuid,$${params.length} COLLATE "C")`);
   }
   const outer: string[] = [];
   if (opts.pages) outer.push(`s.id=$${params.push(opts.pages.sourceId)}`);
@@ -803,9 +796,9 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
   const jobs = selected ? selected.jobs.slice(0, Number(params[0])) : await engine.executeRaw<QueuedJob>(`SELECT s.id AS source_id,j.source_incarnation,j.slug,j.revision,p.page_kind,j.updated_at::text AS updated_at
     FROM (SELECT source_incarnation,slug,revision,updated_at FROM page_projection_jobs j
       ${filters.length ? `WHERE ${filters.join(' AND ')}` : ''}
-      ORDER BY updated_at,source_incarnation,slug OFFSET 0) j
+      ORDER BY updated_at,source_incarnation,slug COLLATE "C" OFFSET 0) j
     ${PROJECTION_JOB_PROBES} ${sourceFilter}
-    ORDER BY j.updated_at,j.source_incarnation,j.slug LIMIT $1`, params);
+    ORDER BY j.updated_at,j.source_incarnation,j.slug COLLATE "C" LIMIT $1`, params);
   let rebuilt = 0;
   let superseded = 0;
   let attempted = 0;

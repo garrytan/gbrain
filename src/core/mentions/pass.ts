@@ -70,10 +70,9 @@ import { withCoordinatedWrite } from '../persistence/context.ts';
 import { maintenanceAttribution } from '../persistence/attribution.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 
-/** Bump to rescan every page's mentions once (gazetteer or scanner behavior change). */
-export const MENTION_EXTRACTOR_VERSION = 7;
-/** Bump to re-derive every entity page's declared aliases and title subject once. */
-export const ALIAS_DERIVATION_VERSION = 4;
+import { ALIAS_DERIVATION_VERSION, MENTION_EXTRACTOR_VERSION } from './versions.ts';
+
+export { ALIAS_DERIVATION_VERSION, MENTION_EXTRACTOR_VERSION };
 
 const RECONCILE_BATCH = 200;
 const ALIAS_BATCH = 200;
@@ -116,12 +115,8 @@ export interface MentionPassOpts {
 const DUE_PREDICATE = `(s.page_id IS NULL OR s.mention_revision IS DISTINCT FROM p.knowledge_revision OR s.mention_version IS DISTINCT FROM $2)`;
 
 /** Mention-due live pages, per source (or one source). */
-export async function countMentionDuePages(engine: Pick<BrainEngine, 'executeRaw'>, sourceId?: string): Promise<number> {
-  const rows = await engine.executeRaw<{ n: number }>(
-    `SELECT count(*)::int AS n FROM pages p LEFT JOIN page_mention_state s ON s.page_id = p.id
-      WHERE p.deleted_at IS NULL AND ($1::text IS NULL OR p.source_id = $1) AND ${DUE_PREDICATE}`,
-    [sourceId ?? null, MENTION_EXTRACTOR_VERSION]);
-  return Number(rows[0]?.n ?? 0);
+export async function countMentionDuePages(engine: Pick<BrainEngine, 'countPagesDueForMentions'>, sourceId?: string): Promise<number> {
+  return engine.countPagesDueForMentions({ sourceId: sourceId ?? null, mentionVersion: MENTION_EXTRACTOR_VERSION });
 }
 
 /**
@@ -129,13 +124,9 @@ export async function countMentionDuePages(engine: Pick<BrainEngine, 'executeRaw
  * pages (`types`) whose derived aliases are behind their content or
  * ALIAS_DERIVATION_VERSION. The status row's `pending` holds this count.
  */
-export async function countIndexDuePages(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, types: string[]): Promise<number> {
-  const rows = await engine.executeRaw<{ n: number }>(
-    `SELECT count(*)::int AS n FROM pages p LEFT JOIN page_mention_state s ON s.page_id = p.id
-      WHERE p.deleted_at IS NULL AND p.source_id = $1 AND (${DUE_PREDICATE}
-        OR (p.type = ANY($3::text[]) AND (s.alias_revision IS DISTINCT FROM p.knowledge_revision OR s.alias_version IS DISTINCT FROM $4)))`,
-    [sourceId, MENTION_EXTRACTOR_VERSION, types, ALIAS_DERIVATION_VERSION]);
-  return Number(rows[0]?.n ?? 0);
+export async function countIndexDuePages(engine: Pick<BrainEngine, 'countPagesDueForMentions'>, sourceId: string, types: string[]): Promise<number> {
+  return engine.countPagesDueForMentions({ sourceId, mentionVersion: MENTION_EXTRACTOR_VERSION,
+    aliases: { types, version: ALIAS_DERIVATION_VERSION } });
 }
 
 /**

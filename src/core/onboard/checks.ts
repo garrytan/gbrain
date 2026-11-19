@@ -31,6 +31,7 @@ import { MIN_ENTITY_PAGES_FOR_COVERAGE } from '../types.ts';
 import { ORPHANED_ALIAS_COUNTS_SQL, SOFT_DELETED_ALIAS_COUNT_SQL } from '../repair/aliases.ts';
 import { repairPreviewCommand } from '../repair/registry.ts';
 import { isMissingSchemaObject } from '../utils.ts';
+import { isEngineCapabilityRefusal, rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 /** Shared shape returned by all four checks. */
 export interface OnboardCheckResult {
@@ -487,10 +488,12 @@ export async function checkTimelineCoverage(
 export async function checkTakesCount(
   engine: BrainEngine,
 ): Promise<OnboardCheckResult> {
-  const takesCount = await safeCount(
-    engine,
-    `SELECT COUNT(*) AS count FROM takes`,
-  );
+  let takesCount = 0;
+  try {
+    takesCount = await engine.countTakes();
+  } catch (e) {
+    rethrowCapabilityRefusal(e);
+  }
 
   let bootstrapEnabled = false;
   try {
@@ -653,6 +656,17 @@ export async function checkPackUpgradeAvailable(
       ],
     };
   } catch (e) {
+    // An engine that refuses a read this check needs (the Rust engine): health unknown, the same warning doctor gives
+    // every other refused check (commands/doctor/budget.ts capabilityUnknownCheck), never ok.
+    if (isEngineCapabilityRefusal(e)) {
+      return {
+        check: {
+          name: 'pack_upgrade_available', status: 'warn', message: `Health unknown: ${(e as Error).message}`,
+          details: { health: 'unknown', reason: 'engine_capability_missing', capability: (e as { reason?: string }).reason ?? null },
+        },
+        remediations: [],
+      };
+    }
     return {
       check: {
         name: 'pack_upgrade_available',

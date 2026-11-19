@@ -730,15 +730,16 @@ describe('doctor command', () => {
 
   test('takes_weight_grid: takes table missing → warn (graceful)', async () => {
     const { takesWeightGridCheck } = await import('../src/commands/doctor.ts');
-    // Stub engine: executeRaw throws like a "relation does not exist" error.
+    // Stub engine: the typed takes-grid read throws like a "relation does not exist" error.
     const stubEngine = {
-      executeRaw: async () => {
+      countOffGridTakeWeights: async () => {
         throw new Error('relation "takes" does not exist');
       },
     } as any;
     const result = await takesWeightGridCheck(stubEngine);
     expect(result.status).toBe('warn');
     expect(result.message).toContain('Could not check takes weight grid');
+    expect(result.message).toContain('relation "takes" does not exist');
   });
 });
 

@@ -1076,18 +1076,8 @@ async function collectChildPutPageSlugs(
   // children write there via SubagentHandlerData.source_id — so reverseWriteRefs
   // can pass it through getPage and pick the correct (source_id, slug) row
   // instead of whatever the DB happens to return. Unset → legacy 'default'.
-  const rows = await engine.executeRaw<{ slug: string }>(
-    `SELECT DISTINCT
-            COALESCE(input->>'slug', (input #>> '{}')::jsonb->>'slug') AS slug
-       FROM subagent_tool_executions
-      WHERE job_id = ANY($1::int[])
-        AND tool_name = 'brain_put_page'
-        AND status = 'complete'
-      ORDER BY 1`,
-    [childIds],
-  );
+  const rows = await engine.listSubagentPutPageSlugs(childIds);
   return rows
-    .map(r => r.slug)
     .filter((s): s is string => typeof s === 'string' && s.length > 0)
     .map(slug => ({ slug, source_id: sourceId }));
 }
@@ -1099,11 +1089,7 @@ async function collectChildPutPageSlugs(
 async function collectPatternOutputs(engine: BrainEngine, jobId: number, sourceId: string, outputSlugPrefix: string) {
   const putPageRefs = await collectChildPutPageSlugs(engine, [jobId], sourceId);
   // GBRA-60: a staging child's pages, the last staged markdown per page (minions/tools/staged-put-page.ts).
-  const staged = new Map((await engine.executeRaw<{ slug: string; content: string }>(
-    `SELECT DISTINCT ON (output->>'slug') output->>'slug' AS slug, COALESCE(output->>'content', input->>'content') AS content
-       FROM subagent_tool_executions
-      WHERE job_id = $1 AND tool_name = 'brain_put_page' AND status = 'complete' AND output->>'status' = 'staged'
-      ORDER BY output->>'slug', id DESC`, [jobId])).map(row => [row.slug, row.content]));
+  const staged = new Map((await engine.listSubagentStagedPages(jobId)).map(row => [row.slug, row.content] as [string, string]));
   const appends = (await collectChildTimelineAppends(engine, [jobId], sourceId))
     .filter(a => a.slug.startsWith(`${outputSlugPrefix}/`) && !putPageRefs.some(ref => ref.slug === a.slug));
   const writtenRefs = [...putPageRefs, ...[...new Set(appends.map(a => a.slug))].map(slug => ({ slug, source_id: sourceId }))];
@@ -1121,15 +1107,7 @@ export interface TimelineAppend { slug: string; requestId: string; block: string
  */
 async function collectChildTimelineAppends(engine: BrainEngine, childIds: number[], sourceId = 'default'): Promise<TimelineAppend[]> {
   if (childIds.length === 0) return [];
-  const rows = await engine.executeRaw<{ request_id: string; slug: string; input: unknown }>(
-    `SELECT r.request_id::text AS request_id, r.slug, e.input
-       FROM subagent_tool_executions e
-       JOIN persistence_requests r ON r.request_id::text = COALESCE(e.input->>'request_id', (e.input #>> '{}')::jsonb->>'request_id')
-      WHERE e.job_id = ANY($1::int[]) AND e.tool_name = 'brain_add_timeline_entry'
-        AND r.operation = 'add_timeline_entry' AND r.source_id = $2 AND r.state = 'committed' AND r.outcome->>'status' = 'ok'
-      ORDER BY e.id`,
-    [childIds, sourceId],
-  );
+  const rows = await engine.listSubagentTimelineAppendCalls(childIds, sourceId);
   const out: TimelineAppend[] = [];
   const seen = new Set<string>();
   for (const row of rows) {
@@ -1149,12 +1127,7 @@ async function collectChildTimelineAppends(engine: BrainEngine, childIds: number
 /** Completed `brain_add_timeline_entry` calls of the given children: the deprecated `appended_unverified` alias (#6302). */
 async function countChildTimelineAppends(engine: BrainEngine, childIds: number[]): Promise<number> {
   if (childIds.length === 0) return 0;
-  const [row] = await engine.executeRaw<{ n: number }>(
-    `SELECT count(*)::int AS n FROM subagent_tool_executions
-      WHERE job_id = ANY($1::int[]) AND tool_name = 'brain_add_timeline_entry' AND status = 'complete'`,
-    [childIds],
-  );
-  return Number(row?.n ?? 0);
+  return (await engine.summarizeSubagentToolExecutions(childIds, { toolName: 'brain_add_timeline_entry', status: 'complete' })).count;
 }
 
 // ── Reverse-write ────────────────────────────────────────────────────

@@ -19,17 +19,25 @@
  * following test/dispatch-response-meta.serial.test.ts).
  */
 
-import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, mock, beforeEach, afterEach, afterAll } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import * as realHybrid from '../src/core/search/hybrid.ts';
+import * as realReadiness from '../src/core/search/projection-readiness.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { encodeDeepResearchId } from '../src/core/deep-research-id.ts';
 import { fenceTranscriptText } from '../src/core/search/transcript-quote.ts';
 
 let nextResults: unknown[] = [{ id: encodeDeepResearchId('default', 'a'), page_id: 1, source_id: 'default', slug: 'a', chunk_text: 'x' }];
+
+// mock.module patches a loaded module's exports in place (the namespace
+// imports above included), and mock.restore() does not undo it. Snapshot the
+// real exports BEFORE mocking so afterAll can put them back; otherwise the
+// mocks leak into every later file in the same bun process.
+const realHybridExports = { ...realHybrid };
+const realReadinessExports = { ...realReadiness };
 
 // Mock BEFORE importing dispatch (operations.ts binds hybridSearchCached at
 // import time; the spread keeps every other export live).
@@ -40,6 +48,11 @@ mock.module('../src/core/search/hybrid.ts', () => ({
 mock.module('../src/core/search/projection-readiness.ts', () => ({
   probeProjectionReadiness: async () => ({ status: 'ready', ready: true }),
 }));
+
+afterAll(() => {
+  mock.module('../src/core/search/hybrid.ts', () => realHybridExports);
+  mock.module('../src/core/search/projection-readiness.ts', () => realReadinessExports);
+});
 
 const { dispatchToolCall, __resetBackupNoticeForTests } = await import('../src/mcp/dispatch.ts');
 const {
@@ -61,9 +74,23 @@ let rawCalls: string[] = [];
 // A source listing. Search's own live read policy (the safe-chunk probe runs on
 // every remote result) references `FROM sources read_source`; that is not one.
 const BACKUP_SOURCES_QUERY = /\bfrom\s+sources\b(?!\s+read_source)/i;
+// The backup compute lists sources through the typed `listSourceRecords` member.
+let sourceListings = 0;
+const sourceReads = () => sourceListings + rawCalls.filter((sql) => BACKUP_SOURCES_QUERY.test(sql)).length;
 const engineStub = {
   kind: 'pglite',
   getConfig: async () => null,
+  // Search reads result trust through this typed member; the stub has no pages.
+  readPageTrustRows: async () => [],
+  readRowTrustRows: async () => [],
+  countEmbeddingHeldPages: async () => null,
+  // Alias fan-out reads titles and aliases through typed members; the stub has no pages, so each finds nothing.
+  findPagesByTitles: async () => [],
+  resolveAliases: async () => new Map(),
+  resolveCaseSensitiveAliases: async () => [],
+  readPageTitle: async () => null,
+  readPageAliasRows: async () => [],
+  listSourceRecords: async () => { sourceListings++; return []; },
   executeRaw: async (sql: string) => {
     rawCalls.push(String(sql));
     // countLivePages treats an EMPTY rowset as UNESTABLISHED (null → degraded
@@ -171,6 +198,7 @@ beforeEach(() => {
   __resetBackupNoticeForTests();
   __resetBackupRefreshForTests();
   rawCalls = [];
+  sourceListings = 0;
   nextResults = [Object.freeze({ id: encodeDeepResearchId('default', 'a'), page_id: 1, source_id: 'default', slug: 'a', chunk_text: 'x' })];
 });
 
@@ -309,7 +337,7 @@ describe('stdio-gated refresher (TRUST PIN)', () => {
     // to land before asserting it never did.
     await new Promise((r) => setTimeout(r, 300));
     expect(existsSync(backupStatusPath())).toBe(false);
-    expect(rawCalls.filter((sql) => BACKUP_SOURCES_QUERY.test(sql))).toEqual([]);
+    expect(sourceReads()).toBe(0);
   });
 
   test('transport UNSET is fail-closed: no compute, no sources query', async () => {
@@ -317,7 +345,7 @@ describe('stdio-gated refresher (TRUST PIN)', () => {
     await callSearch({ remote: true, transport: undefined });
     await new Promise((r) => setTimeout(r, 300));
     expect(existsSync(backupStatusPath())).toBe(false);
-    expect(rawCalls.filter((sql) => BACKUP_SOURCES_QUERY.test(sql))).toEqual([]);
+    expect(sourceReads()).toBe(0);
   });
 
   test("transport 'stdio' kicks the in-process refresher: absent cache gets computed + persisted", async () => {
@@ -333,7 +361,7 @@ describe('stdio-gated refresher (TRUST PIN)', () => {
     expect(s!.overall).toBe('ok'); // zero sources, zero pages → nothing at risk
     expect(s!.totals.assets).toBe(0);
     // The refresher DID walk the sources table on the stdio path.
-    expect(rawCalls.some((sql) => BACKUP_SOURCES_QUERY.test(sql))).toBe(true);
+    expect(sourceReads()).toBeGreaterThan(0);
   });
 
   test('attempt floor arms on the fresh-cache no-op path: a deleted cache is NOT recomputed within the hour', async () => {
@@ -342,7 +370,7 @@ describe('stdio-gated refresher (TRUST PIN)', () => {
     saveBackupStatus(okStatus());
     await callSearch({ remote: true, transport: 'stdio' });
     await new Promise((r) => setTimeout(r, 100));
-    expect(rawCalls.filter((sql) => BACKUP_SOURCES_QUERY.test(sql))).toEqual([]);
+    expect(sourceReads()).toBe(0);
 
     // Delete the cache. A second stdio call within the hour is still a no-op
     // — the floor, not the cache, gates the attempt.
@@ -350,13 +378,13 @@ describe('stdio-gated refresher (TRUST PIN)', () => {
     await callSearch({ remote: true, transport: 'stdio' });
     await new Promise((r) => setTimeout(r, 300));
     expect(existsSync(backupStatusPath())).toBe(false);
-    expect(rawCalls.filter((sql) => BACKUP_SOURCES_QUERY.test(sql))).toEqual([]);
+    expect(sourceReads()).toBe(0);
 
     // __resetBackupRefreshForTests clears the floor → the compute runs.
     __resetBackupRefreshForTests();
     await callSearch({ remote: true, transport: 'stdio' });
     const appeared = await waitFor(() => existsSync(backupStatusPath()), 2000);
     expect(appeared).toBe(true);
-    expect(rawCalls.some((sql) => BACKUP_SOURCES_QUERY.test(sql))).toBe(true);
+    expect(sourceReads()).toBeGreaterThan(0);
   });
 });

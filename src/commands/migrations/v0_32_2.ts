@@ -244,14 +244,7 @@ async function phaseCVerify(
     // (chat-log shape is the source of truth). Same cli: exclusion as
     // extract_facts reconciliation. Counting them here fails every brain
     // that ran extract-conversation-facts.
-    const groups = await engine.executeRaw<{ source_id: string; source_markdown_slug: string; row_nums: number[]; all_expired: boolean }>(
-      `SELECT source_id, source_markdown_slug, array_agg(row_num ORDER BY row_num) AS row_nums,
-              bool_and(expired_at IS NOT NULL) AS all_expired
-         FROM facts
-        WHERE row_num IS NOT NULL
-          AND COALESCE(source, '') NOT LIKE 'cli:%'
-        GROUP BY source_id, source_markdown_slug`,
-    );
+    const groups = await engine.listFenceRowGroups();
 
     const mismatches: string[] = [];
     let pagesChecked = 0;

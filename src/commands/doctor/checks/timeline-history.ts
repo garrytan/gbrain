@@ -70,10 +70,9 @@ async function saveState(engine: BrainEngine, key: string, state: ScanState): Pr
 export async function timelineHistoryCheck(engine: BrainEngine, sourceId?: string, opts: { pageCap?: number; foundCap?: number; timeBudgetMs?: number } = {}): Promise<Check> {
   const name = 'timeline_history';
   try {
-    const sources = sourceId ? [sourceId] : (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE')).map(r => r.id);
+    const sources = sourceId ? [sourceId] : (await engine.listAllSources()).map(r => r.id);
     const key = `${STATE_KEY}:${[...sources].sort().join(',')}`;
-    const [{ max_entry }] = await engine.executeRaw<{ max_entry: number | string }>('SELECT COALESCE(max(id), 0) AS max_entry FROM timeline_entries');
-    const maxEntry = Number(max_entry);
+    const maxEntry = await engine.readMaxTimelineEntryId();
     const prior = await loadState(engine, key);
     const state: ScanState = prior ?? { ...emptyTotals(), cursor: 0, started_max_entry: maxEntry };
     const foundCap = opts.foundCap ?? FOUND_CAP;

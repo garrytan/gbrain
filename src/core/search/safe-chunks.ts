@@ -87,6 +87,16 @@ export function servedTextProjectionFilter(alias: string): string {
 }
 
 /**
+ * A page out of search and waiting for indexing: neither the current projection nor the pre-activation index (#9192).
+ * The text is idx_pages_projection_waiting's predicate (v317), so a LIMIT 1 walk in that index's order reads its first
+ * row. Aliases are internal SQL.
+ */
+export function waitingTextProjectionFilter(alias: string): string {
+  return `${alias}.text_projection_revision IS DISTINCT FROM ${alias}.knowledge_revision
+          AND ${alias}.text_projection_revision IS DISTINCT FROM '${ACTIVATION_SERVED_REVISION}'::uuid`;
+}
+
+/**
  * Wave B: the chunk row belongs to its page's live body: an inline row
  * (`body_generation IS NULL`) of a page that is not segmented, or a segmented
  * row at or below the page's generation whose occurrence has a live manifest

@@ -14,8 +14,7 @@ import type { Action } from '../agent-output.ts';
 import { hostOnlyError, paramUse, readFix } from './op-fix.ts';
 import { sourceScopeOpts } from './context.ts';
 import { randomUUID } from 'node:crypto';
-import { unverifiedExtractionFragment, isUnverifiedExtraction, EXTRACTION_STATUS_KEY, STATUS_VERIFIED } from '../extraction-review.ts';
-import { buildVisibilityClause } from '../search/sql-ranking.ts';
+import { isUnverifiedExtraction, EXTRACTION_STATUS_KEY, STATUS_VERIFIED } from '../extraction-review.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { withoutBody } from '../page-body/page-shape.ts';
 import type { Page } from '../types.ts';
@@ -136,32 +135,7 @@ const extraction_pending: Operation = {
     // Read-side source isolation: route through sourceScopeOpts (federated
     // array > scalar > nothing), applied in SQL below.
     const scope = sourceScopeOpts(ctx);
-    const params: unknown[] = [];
-    let srcClause = '';
-    if (scope.sourceIds && scope.sourceIds.length > 0) {
-      params.push(scope.sourceIds);
-      srcClause = `AND p.source_id = ANY($${params.length}::text[])`;
-    } else if (scope.sourceId) {
-      params.push(scope.sourceId);
-      srcClause = `AND p.source_id = $${params.length}`;
-    }
-    params.push(limit, offset);
-    const rows = await ctx.engine.executeRaw<{
-      slug: string; title: string; type: string; source_id: string;
-      extracted_from: string | null; created_at: string;
-    }>(
-      `SELECT p.slug, p.title, p.type, p.source_id,
-              p.frontmatter ->> 'source' AS extracted_from,
-              p.created_at::text AS created_at
-       FROM pages p
-       JOIN sources s ON s.id = p.source_id
-       WHERE ${unverifiedExtractionFragment('p')}
-         ${buildVisibilityClause('p', 's')}
-         ${srcClause}
-       ORDER BY p.created_at DESC
-       LIMIT $${params.length - 1} OFFSET $${params.length}`,
-      params,
-    );
+    const rows = await ctx.engine.listExtractionPendingPages({ ...(scope.sourceIds ? { sourceIds: scope.sourceIds } : {}), ...(scope.sourceId ? { sourceId: scope.sourceId } : {}), limit, offset });
     const out: Record<string, unknown> = { count: rows.length, pending: include.has('pending') ? rows : [], include: [...include] };
     const lists = await import('../review-lists.ts');
     const listLimit = Math.min(Math.max(Number(p.limit ?? lists.UNATTRIBUTED_DEFAULT_LIMIT) || lists.UNATTRIBUTED_DEFAULT_LIMIT, 1), lists.REVIEW_LIST_MAX_LIMIT);

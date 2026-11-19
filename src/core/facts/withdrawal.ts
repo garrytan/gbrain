@@ -10,8 +10,7 @@ import { outcomeMarkerSql } from './audit-sources.ts';
 import { coverageActive, noteBelief, readLedgerSource, withBeliefBatch } from '../belief/ledger.ts';
 import { createPageVersion } from '../page-state/versions.ts';
 import { validateSlug } from '../utils.ts';
-import { factWithdrawalSubjectSql, onOwnedMemoryPageSql } from '../access/member-facts.ts';
-import { ownedMemorySubjectSql, unbackedEntitySql } from './withdrawal-schema.ts';
+import { factWithdrawalSubjectSql } from '../access/member-facts.ts';
 
 export interface WithdrawalCommit {
   withdrawn: boolean;
@@ -76,14 +75,10 @@ export async function planFactWithdrawal(engine: BrainEngine, id: number, source
   // Discovery is keyed on the claim and its subject: a subject-scoped
   // withdrawal changes only that entity's pages and its facts' provenance.
   // Only an existing withdrawal covering this subject makes it a no-op.
-  const existing = (await engine.executeRaw(`SELECT 1 FROM fact_withdrawals
-    WHERE source_id=$1 AND visibility=$2 AND fact_hash IN ($3,gbrain_fact_fingerprint_v1($5)) AND (subject='*' OR subject=$4) LIMIT 1`,
-  [sourceId, visibility, fact_hash, subject, fact])).length > 0;
+  const existing = await engine.hasCoveringFactWithdrawal(sourceId, visibility, fact_hash, fact, subject);
   const affected = existing ? [] : await discoverWithdrawalTargets(engine, sourceId, [{ visibility, fact_hash, subject, claim: fact }]).catch(withdrawalDiscoveryFailure);
   // The belief ledger's streams of the facts this withdrawal expires (fence pages and database-only subjects), locked with the pages.
-  const streams = (await engine.executeRaw<{ slug: string }>(`SELECT DISTINCT COALESCE(source_markdown_slug, entity_slug) AS slug FROM facts
-    WHERE source_id=$1 AND visibility=$2 AND gbrain_fact_fingerprint(fact)=$3 AND ($4='*' OR entity_slug=$4 OR (${unbackedEntitySql('facts')} AND NOT ${ownedMemorySubjectSql('$4::text')}) OR (${onOwnedMemoryPageSql('facts')} AND source_markdown_slug=$4)) AND expired_at IS NULL
-      AND COALESCE(source_markdown_slug, entity_slug) IS NOT NULL`, [sourceId, visibility, fact_hash, subject]))
+  const streams = (await engine.listWithdrawalSlugs(sourceId, visibility, fact_hash, subject))
     .map(r => r.slug).filter(slug => { try { validateSlug(slug); return true; } catch { return false; } });
   const slugs = [...new Set([...affected.map(page => page.slug), ...streams])].sort();
   return { visibility, fact, fact_hash, subject, expired: expired === true, existing, affected, slugs };
@@ -101,7 +96,6 @@ export async function recordFactWithdrawal(
     publication?: { withdrawnAt: string; expectedSlugs: readonly string[] } } = {},
 ): Promise<WithdrawalCommit> {
   const admit = withdrawalAdmitSql(opts.excludePrivate);
-  const pageScoped = `(${onOwnedMemoryPageSql('facts')} AND source_markdown_slug=$4)`;
   return engine.transaction(async tx => {
     // A managed caller takes this EXCLUSIVE source lock before authority,
     // counters and request rows. Repeating an already-held lock is safe.
@@ -136,13 +130,10 @@ export async function recordFactWithdrawal(
       // entity stays active and rememberable. A subjectless fact withdraws
       // source-wide ('*'), and so does one on an unbacked name key (GBRA-574),
       // whose rows every withdrawal of the claim reaches, except one on an owned memory page.
-      const inserted = await tx.executeRaw(`INSERT INTO fact_withdrawals(source_id,visibility,subject,fact_hash,withdrawn_at)
-        VALUES ($1,$2,$4,gbrain_fact_fingerprint($3),COALESCE($5::timestamptz,now())) ON CONFLICT DO NOTHING RETURNING fact_hash`, [sourceId,row.visibility,row.fact,row.subject,opts.publication?.withdrawnAt ?? null]);
-      const expired = await tx.executeRaw<{ id: number }>(`UPDATE facts SET expired_at=now(),valid_until=LEAST(COALESCE(valid_until,now()),now())
-        WHERE source_id=$1 AND visibility=$2 AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint($3)
-          AND ($4='*' OR entity_slug=$4 OR (${unbackedEntitySql('facts')} AND NOT ${ownedMemorySubjectSql('$4::text')}) OR ${pageScoped}) AND expired_at IS NULL RETURNING id`, [sourceId,row.visibility,row.fact,row.subject]);
+      const inserted = await tx.insertFactWithdrawal(sourceId, row.visibility, row.fact, row.subject, opts.publication?.withdrawnAt ?? null);
+      const expired = await tx.expireFactsByWithdrawal(sourceId, row.visibility, row.fact, row.subject);
       noteBelief({ kind: 'withdrawn', factIds: expired.map(r => Number(r.id)) });
-      if (!inserted.length) return { withdrawn: false, pages: [] };
+      if (!inserted) return { withdrawn: false, pages: [] };
       // Overnight semantic review (decide review lane): queued with the ledger row so a late commit is never skipped.
       // Not queued when the caller opted out (`semantic_review: false`, also used by review-accepted withdrawals).
       if (opts.semanticReview !== false && reviewWithdrawOn(await tx.getConfig(REVIEW_WITHDRAW_KEY))) {
@@ -161,7 +152,7 @@ export async function recordFactWithdrawal(
       const inline = affected.length ? await tx.executeRaw<{ id: number; slug: string; knowledge_revision: string }>(
         `UPDATE pages SET knowledge_revision=gen_random_uuid(),text_projection_revision=NULL,embedding_signature=NULL
           WHERE source_id=$1 AND slug=ANY($2::text[]) AND body_storage<>'segmented' RETURNING id,slug,knowledge_revision`, [sourceId, affected.map(page => page.slug)]) : [];
-      if (inline.length) await tx.executeRaw('DELETE FROM content_chunks WHERE page_id=ANY($1::integer[])', [inline.map(page => page.id)]);
+      if (inline.length) await tx.deleteChunksForPages(inline.map(page => Number(page.id)));
       const pages = [...inline, ...segmented.length ? await tx.executeRaw<{ id: number; slug: string; knowledge_revision: string }>(
         'SELECT id,slug,knowledge_revision FROM pages WHERE id=ANY($1::int[])', [segmented.map(page => page.id)]) : []];
       if (opts.requestId && !opts.publication) {
@@ -200,17 +191,8 @@ async function ambiguousFenceMatchesWithdrawal(engine: BrainEngine, sourceId: st
 
 async function withdrawalDates(engine: BrainEngine, sourceId: string, facts: readonly ParsedFact[], subject: string | null): Promise<Map<number,string>> {
   if (!facts.length) return new Map();
-  const rows = await engine.executeRaw<{ row_num: number; withdrawn_at: string }>(
-    `WITH incoming AS MATERIALIZED (${FINGERPRINTED_CLAIMS}, i.row_num
-        FROM jsonb_to_recordset($2::text::jsonb) AS i(row_num integer,claim text,visibility text))
-      SELECT incoming.row_num, min(w.withdrawn_at)::text AS withdrawn_at FROM incoming
-      JOIN fact_withdrawals w ON w.source_id=$1 AND w.visibility=incoming.visibility
-        AND w.fact_hash IN (incoming.fp,incoming.fp_v1)
-        AND ($3::text IS NULL OR w.subject = '*' OR w.subject = $3::text)
-      GROUP BY incoming.row_num`,
-    [sourceId, JSON.stringify(facts.map(f => ({ row_num:f.rowNum, claim:f.claim, visibility:f.visibility }))), subject],
-  );
-  return new Map(rows.map(r => [r.row_num, new Date(r.withdrawn_at).toISOString().slice(0,10)]));
+  const rows = await engine.listFactWithdrawalDates(sourceId, facts.map(f => ({ row_num: f.rowNum, claim: f.claim, visibility: f.visibility })), subject);
+  return new Map(rows.map(r => [r.row_num, r.withdrawn_at.toISOString().slice(0,10)]));
 }
 
 /**

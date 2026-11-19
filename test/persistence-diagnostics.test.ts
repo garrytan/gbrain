@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { LATEST_VERSION, runMigrations } from '../src/core/migrate.ts';
+import { LATEST_VERSION, MIGRATIONS, runMigrations } from '../src/core/migrate.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { initializeLocalPersistence, submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { submissionAuthority } from '../src/core/persistence/authority.ts';
@@ -63,7 +63,7 @@ for (const reason of ['writer_busy', 'database_contention']) test.each([0, 18000
   const row = { request_id: randomUUID(), state: 'queued', blocked_reason: reason, error_code: null,
     worktree_id: null, created_at: new Date(Date.now() - age) };
   const engine = { kind: 'pglite', executeRaw: async (sql: string) =>
-    sql.startsWith('SELECT request_id,worktree_id,source_id,state,blocked_reason') ? [row] : [] } as unknown as BrainEngine;
+    sql.startsWith('SELECT request_id,worktree_id,source_id,state,blocked_reason') ? [row] : [], readJournalLimitRows: async () => [] } as unknown as BrainEngine;
   const [blocker] = (await readWriterDiagnostics(engine)).blockers;
   expect(blocker.diagnostic?.next_action).toBe(age >= 120000 ? 'inspect_owner' : 'poll');
   expect(blocker.next_action).toContain(WRITER_NEXT_ACTIONS[reason]);
@@ -97,7 +97,7 @@ test('fresh and upgraded engines agree on the database-only pending index', asyn
       } finally { abort.abort(); release.resolve(); await holding; await interrupted; }
     }
     await engine.setConfig('version', '164');
-    expect(await runMigrations(engine)).toEqual({ applied: LATEST_VERSION - 164, current: LATEST_VERSION });
+    expect(await runMigrations(engine)).toEqual({ applied: MIGRATIONS.filter(m => m.version > 164).length, current: LATEST_VERSION });
     const [upgraded] = await engine.executeRaw<{ indexdef: string }>(
       "SELECT indexdef FROM pg_indexes WHERE indexname='persistence_requests_database_pending'");
     expect(upgraded.indexdef).toBe(fresh.indexdef);

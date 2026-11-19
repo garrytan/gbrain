@@ -15,6 +15,8 @@ import type { ProgressReporter } from '../../../core/progress.ts';
 import type { Check } from '../../doctor.ts';
 import { PAGE_CHILD_FK_TARGETS, orphanPredicate } from '../../../core/repair/orphan-children.ts';
 import { checkError } from '../check-fix.ts';
+import { capabilityRefusal, capabilityUnknownCheck } from '../budget.ts';
+import { answersFromCatalog, catalogSkipCheck, reportsCapability } from '../../../core/rust-engine/store-members/catalog.ts';
 import { isMissingSchemaObject } from '../../../core/utils.ts';
 
 /**
@@ -139,6 +141,12 @@ export async function whoknowsHealthCheck(_engine: BrainEngine): Promise<Check> 
  * healthy PGLite brain into a false warning.
  */
 export async function pgvectorCheck(engine: BrainEngine): Promise<Check> {
+  // Rust: no pgvector extension; vector search is the store's vector_search capability.
+  if (answersFromCatalog(engine)) {
+    return reportsCapability(engine, 'vector_search')
+      ? { name: 'pgvector', status: 'ok', message: 'Vector search is served by the engine store (no pgvector extension)' }
+      : catalogSkipCheck('pgvector', 'capability_not_reported', 'vector_search');
+  }
   try {
     const ext = await engine.executeRaw<{ extname: string }>(
       `SELECT extname FROM pg_extension WHERE extname = 'vector'`,
@@ -162,6 +170,7 @@ export async function pgvectorCheck(engine: BrainEngine): Promise<Check> {
  * off the actual index shape via checkPagesUpsertArbiter.
  */
 export async function pagesUpsertArbiterCheck(engine: BrainEngine): Promise<Check> {
+  if (answersFromCatalog(engine)) return catalogSkipCheck('pages_upsert_arbiter', 'store_keyed_pages');
   try {
     const { checkPagesUpsertArbiter } = await import('../../../core/pages-upsert-arbiter.ts');
     const status = await checkPagesUpsertArbiter(engine);
@@ -244,6 +253,7 @@ export async function jsonbIntegrityCheck(
   engine: BrainEngine,
   progress?: Pick<ProgressReporter, 'heartbeat'>,
 ): Promise<Check> {
+  if (answersFromCatalog(engine)) return catalogSkipCheck('jsonb_integrity', 'no_jsonb_storage');
   try {
     const targets: Array<{ table: string; col: string; expected: 'object' | 'array'; jsonPayloadOnly?: boolean }> = [
       { table: 'pages',                    col: 'frontmatter',    expected: 'object' },
@@ -394,6 +404,11 @@ export async function checkVolunteerChannels(
     // Discriminate table-absent (pre-v117 brain) from transient failures —
     // a connection blip on a fully-migrated brain must not be misreported
     // as an old schema. Info-only either way; never block doctor.
+    const refusal = capabilityRefusal(e);
+    if (refusal) {
+      const unknown = capabilityUnknownCheck(name, refusal);
+      return { ...unknown, details: { ...unknown.details, window_days: 7, channels: {} } };
+    }
     const msg = e instanceof Error ? e.message : String(e);
     const tableAbsent = isMissingSchemaObject(e, 'table', 'context_volunteer_events');
     return {
@@ -409,15 +424,7 @@ export async function checkVolunteerChannels(
 
 export async function takesWeightGridCheck(engine: BrainEngine): Promise<Check> {
   try {
-    const rows = await engine.executeRaw<{ off_grid: string | number; total: string | number }>(
-      `SELECT
-         count(*) FILTER (WHERE weight IS NOT NULL
-                          AND abs(weight::numeric - ROUND(weight::numeric * 20) / 20) > 0.001)::int AS off_grid,
-         count(*)::int AS total
-       FROM takes`,
-    );
-    const total = Number(rows[0]?.total ?? 0);
-    const offGrid = Number(rows[0]?.off_grid ?? 0);
+    const { off_grid: offGrid, total } = await engine.countOffGridTakeWeights();
     if (total === 0) {
       return { name: 'takes_weight_grid', status: 'ok', message: 'No takes yet' };
     }
@@ -479,10 +486,12 @@ export async function childTableOrphansCheck(engine: BrainEngine): Promise<Check
   const errors: string[] = [];
   for (const target of PAGE_CHILD_FK_TARGETS) {
     try {
-      const rows = await engine.executeRaw<{ n: string | number }>(
-        `SELECT COUNT(*)::int AS n FROM ${target.table} WHERE ${orphanPredicate(target)}`,
-      );
-      const n = Number(rows[0]?.n ?? 0);
+      // The chunk target is an engine member, so an engine without raw SQL can still answer it.
+      const n = target.table === 'content_chunks' && target.col === 'page_id'
+        ? await engine.countOrphanChunks()
+        : Number((await engine.executeRaw<{ n: string | number }>(
+          `SELECT COUNT(*)::int AS n FROM ${target.table} WHERE ${orphanPredicate(target)}`,
+        ))[0]?.n ?? 0);
       if (n > 0) {
         totalOrphans += n;
         breakdown.push(`${target.table}.${target.col}=${n}`);

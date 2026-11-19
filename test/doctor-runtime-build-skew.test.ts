@@ -18,6 +18,7 @@ import { MinionQueue } from '../src/core/minions/queue.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { VERSION } from '../src/version.ts';
 import { consumerIdentity } from '../src/core/persistence/consumer-heartbeat.ts';
+import { consumerRowsThroughRaw } from './helpers/consumer-rows-through-raw.ts';
 
 const OLD = '0.60.1.0';
 const OLDER = '0.60.0.9';
@@ -37,10 +38,14 @@ const childLine = (workerPid: number, workerVersion: string) => jobChildBuildVer
 
 function stub(heartbeats: unknown[], children: Array<{ id: number; line: string }> = []) {
   const sql: string[] = [];
-  const engine = { kind: 'postgres', executeRaw: async (statement: string) => {
-    sql.push(statement);
-    return statement.includes('persistence_consumers') ? heartbeats : statement.includes('minion_jobs') ? children : [];
-  } } as unknown as BrainEngine;
+  const engine = { kind: 'postgres',
+    executeRaw: async (statement: string) => {
+      sql.push(statement);
+      return statement.includes('persistence_consumers') ? heartbeats : [];
+    },
+    listBuildSkewStacktraceLines: async () => children,
+  } as unknown as BrainEngine;
+  Object.assign(engine, consumerRowsThroughRaw(engine as never));
   return { engine, sql };
 }
 function sources(over: Partial<{ workers: Array<{ pid: number; version?: string; install_root?: string | null }>; supervisor: { pid: number; version: string | null; install_root: string | null } | null; installed: string | null }> = {}): RuntimeBuildSources {

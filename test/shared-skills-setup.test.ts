@@ -10,6 +10,7 @@ import { packagedSharedSkills } from '../src/core/shared-skills/setup-bundle.ts'
 import { inventorySkillpack, setupHash } from '../src/core/shared-skills/setup-files.ts';
 import { legacyPublication, migrationCheckpointKey, runSharedSkillsMigration } from '../src/core/shared-skills/migration.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
 
 const directories: string[] = [];
 afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
@@ -21,6 +22,8 @@ function fixture(root: string | null = null) {
   let hasPages = false;
   const calls: string[] = [];
   const engine = {
+    // The typed source reads answer the fixture's one source, as the raw `FROM sources` branch below does.
+    ...stubSourceMembers(() => [source], { defaultHasPages: () => hasPages }),
     getConfig: async (key: string) => config.get(key) ?? null,
     setConfig: async (key: string, value: string) => { config.set(key, value); },
     executeRaw: async (sql: string) => {
@@ -172,9 +175,10 @@ describe('staged skill migration', () => {
     const base = f.ctx.engine.executeRaw.bind(f.ctx.engine);
     (f.ctx.engine as { executeRaw: unknown }).executeRaw = async (sql: string, params?: unknown[]) => {
       if (sql.includes('FROM persistence_brain')) return [{ brain_id: f.brainId, enabled: true, skill_bundles_enabled: true }];
-      if (sql.includes('FROM persistence_source_bindings')) return [{ source_id: 'default', state: 'active', owner_host_id: 'host-a', local_path: root, relative_path: '' }];
       return base(sql, params as never);
     };
+    (f.ctx.engine as { getWorktreeBinding: unknown }).getWorktreeBinding = async () =>
+      ({ source_id: 'default', state: 'active', owner_host_id: 'host-a', local_path: root, relative_path: '' });
     const report = await withEnv({ GBRAIN_HOME: temp() }, () => runSharedSkillsMigration(f.ctx, { dryRun: true }));
     expect(report.status).toBe('conflict');
     expect(report.sources[0].stages.at(-1)).toMatchObject({ stage: 'projection', status: 'conflict', code: 'shared_skills_unmanifested' });

@@ -24,6 +24,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { classifyRunStop, haltReasonsWithUnknown, HALT_REASONS, providerHaltReason, topHaltReason, upsertExtractRollup } from '../src/core/extract/rollup-writer.ts';
 import { computeExtractHealthCheck } from '../src/commands/doctor/checks/extraction-sync.ts';
@@ -194,6 +195,12 @@ test('extract_atoms records a credentials abort as provider_auth; an extract_fac
       if (sql.includes('FROM persistence_brain')) return [{ enabled: false }];
       return [];
     },
+    ...stubSourceMembers([]), // the typed source and guest reads answer an empty sources table, as the raw stub did
+    // The empty-fence guard reads its per-page count through the typed member: one guard-held page with three
+    // unfenced rows (the bigint count arrives as text, as on Postgres), as the raw stub's COUNT(*) AS n answer did.
+    async countLegacyFactsPending() { return [{ entity_slug: 'people/held', n: '3' }]; },
+    // The fence step lists unfenced rows through the typed member; the raw stub answered that read with no rows.
+    async listUnfencedFactRows() { return []; },
     async getAllSlugs() { return []; }, async getPage() { return null; },
     async deleteFactsForPage() { return { deleted: 0 }; }, async insertFacts() { return { inserted: 0, ids: [], warnings: [], deleted: 0 }; },
     async transaction<T>(fn: (tx: BrainEngine) => Promise<T>): Promise<T> { return fn(stub); },

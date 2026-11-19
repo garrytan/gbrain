@@ -19,6 +19,7 @@ import { censusGitGap, GIT_GAP_DOCS, type GitGapCensus } from '../../sources-git
 import { isGitCheckout } from '../../../core/persistence/git-gap.ts';
 import { currentStatementDeadline } from '../../../core/statement-deadline.ts';
 import type { BrainEngine } from '../../../core/engine.ts';
+import { sortSourcesById } from '../../../core/source-rows.ts';
 
 /** `GBRAIN_DOCTOR_GIT_GAP_TIMEOUT_MS` (default 10 s): the wall-clock bound of the census across every source. */
 export function gitGapScanTimeoutMs(): number {
@@ -64,7 +65,7 @@ async function runDbAheadOfGit(ctx: DoctorContext): Promise<Check[]> {
   ctx.progress.heartbeat('db_ahead_of_git');
   const deadlineAt = scanDeadline(ctx, gitGapScanTimeoutMs());
   try {
-    const rows = await engine.executeRaw<{ id: string; local_path: string | null }>('SELECT id, local_path FROM sources WHERE NOT archived ORDER BY id');
+    const rows = sortSourcesById(await engine.listAllSources());
     const withCheckout = rows.filter(row => row.local_path && existsSync(row.local_path) && isGitCheckout(row.local_path));
     const sources: SourceTotals[] = [], unread: string[] = [], errors: Array<{ source_id: string; message: string }> = [];
     for (const row of withCheckout) {

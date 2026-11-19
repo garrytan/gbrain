@@ -24,3 +24,28 @@ export function capabilityMissing(capability: Capability, member: string, outcom
     'Run it on a pglite or postgres brain, or wait for a gbrain release whose Rust engine supports it.',
     { reason: capability, detail: `member=${member} capability=${capability} outcome=${outcome} written=${nothingRan ? 'nothing' : outcome}` });
 }
+
+/**
+ * True when `e` is a capability refusal (`engine_capability_missing`). Fail-soft reads that turn other errors into an
+ * empty answer rethrow this one, so a brain whose engine cannot serve the read refuses instead of answering. PGLite and
+ * Postgres never raise it.
+ */
+export function isCapabilityMissing(e: unknown): e is OperationError {
+  return e instanceof Error && (e as { code?: unknown }).code === 'engine_capability_missing';
+}
+
+/** Rethrow a capability refusal; any other error returns so the caller's fail-soft path runs. */
+export function rethrowCapabilityMissing(e: unknown): void {
+  if (isCapabilityMissing(e)) throw e;
+}
+
+/**
+ * The named refusal of a persistence step that must run as one transaction, on an engine that serves none (the Rust
+ * engine until its transaction API lands: docs/designs/RUST_ENGINE.md, "transaction(fn) keeps its shape"). The step
+ * calls it before it opens its transaction, so the refusal names the step and why it needs one, not only the
+ * `transaction` member, and nothing of the step ran. PGLite, Postgres and transaction handles (no capability set) pass.
+ */
+export function requireTransactions(engine: object, step: string, why: string): void {
+  const caps = (engine as { capabilities?: ReadonlySet<Capability> }).capabilities;
+  if (caps && !caps.has('transactions')) throw capabilityMissing('transactions', `${step} (${why})`);
+}

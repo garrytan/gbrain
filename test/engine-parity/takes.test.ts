@@ -21,6 +21,7 @@
 import { describe, expect } from 'bun:test';
 import type { BrainEngine, Take, TakeBatchInput, TakeHit } from '../../src/core/engine.ts';
 import { basisEmbedding, createSource, parityArms, pick, sorted } from './harness.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -541,6 +542,75 @@ describe('engine parity: takes', () => {
       return { beforeAll, written, storedView, stale, nearest, nearestOne, allow, sideScoped, noOne, afterEdit, rejectsDuplicateIds: dupErr !== null };
     },
   );
+
+  parityTest(
+    'matchTakeRows lists the stored takes a fence row would collide with, null-safe, ascending, limited, for one page only',
+    { methods: ['putPage', 'addTakesBatch', 'matchTakeRows'] },
+    async (engine) => {
+      const alice = await page(engine, 'people/match-alice');
+      const bob = await page(engine, 'people/match-bob');
+      await engine.addTakesBatch([
+        take(alice.id, 1, 'Same claim'), take(alice.id, 2, 'Original claim'), take(alice.id, 3, 'Holder moves'),
+        take(alice.id, 4, 'Kind moves', { kind: 'bet' }), take(alice.id, 6, 'Unlisted by the fence'),
+        take(bob.id, 2, 'Bob has row two too'),
+      ]);
+      const fence = (row_num: number, claim: string, extra: { kind?: string; holder?: string | null } = {}) =>
+        ({ row_num, claim, kind: 'take', holder: 'garry', ...extra }) as never;
+      const rows = [
+        fence(4, 'Kind moves', { kind: 'take' }), fence(2, 'Edited claim'), fence(5, 'No stored row five'), fence(3, 'Holder moves', { holder: null }),
+        fence(1, 'Same claim'), fence(6, 'Unlisted by the fence', { holder: 'someone-else' }),
+      ];
+      const all = await engine.matchTakeRows(alice.id, rows, 50);
+      const limited = await engine.matchTakeRows(alice.id, rows, 2);
+      const none = await engine.matchTakeRows(alice.id, [fence(1, 'Same claim'), fence(7, 'New row')], 50);
+      const empty = await engine.matchTakeRows(alice.id, [], 50);
+      const zero = await engine.matchTakeRows(alice.id, rows, 0);
+      const otherPage = await engine.matchTakeRows(bob.id, rows, 50);
+      const noPage = await engine.matchTakeRows(987654, rows, 50);
+      // A stored take that two fence rows of its number both differ from is listed once for each, as the join lists it.
+      const twice = await engine.matchTakeRows(alice.id, [fence(2, 'First edit'), fence(2, 'Second edit'), fence(2, 'Original claim')], 50);
+      const answers = { all, limited, none, empty, zero, otherPage, noPage, twice };
+      expect(answers).toEqual({ all: [2, 3, 4, 6], limited: [2, 3], none: [], empty: [], zero: [], otherPage: [2], noPage: [], twice: [2, 2] });
+      return answers;
+    },
+  );
+
+  parityTest(
+    'deleteTakeRows deletes the page takes at the listed row numbers with their evidence, and an empty list deletes nothing',
+    { methods: ['putPage', 'addTakesBatch', 'addSynthesisEvidence', 'listTakes', 'deleteTakeRows'] },
+    async (engine) => {
+      const alice = await page(engine, 'people/drop-alice');
+      const bob = await page(engine, 'people/drop-bob');
+      const synthesis = await page(engine, 'notes/drop-synthesis');
+      await engine.addTakesBatch([
+        take(alice.id, 1, 'Keep one'), take(alice.id, 2, 'Drop two'), take(alice.id, 3, 'Drop three', { active: false }), take(alice.id, 4, 'Keep four'),
+        take(bob.id, 2, 'Bob row two stays'),
+      ]);
+      expect(await engine.addSynthesisEvidence([
+        { synthesis_page_id: synthesis.id, take_page_id: alice.id, take_row_num: 2, citation_index: 1 },
+        { synthesis_page_id: synthesis.id, take_page_id: alice.id, take_row_num: 4, citation_index: 2 },
+      ])).toBe(2);
+      const rows = async (pageId: number) => (await allTakes(engine, pageId)).map((t) => `${t.row_num}:${t.claim}`).sort();
+      await engine.deleteTakeRows(alice.id, []);
+      const afterEmpty = await rows(alice.id);
+      await engine.deleteTakeRows(alice.id, [2, 3, 99, 2]);
+      const afterDelete = { alice: await rows(alice.id), bob: await rows(bob.id) };
+      await engine.deleteTakeRows(987654, [1, 2]);
+      // The evidence went with its take: the same evidence row inserts again once the take is back; the kept take's row is still there.
+      await engine.addTakesBatch([take(alice.id, 2, 'Back again')]);
+      const evidenceAgain = await engine.addSynthesisEvidence([
+        { synthesis_page_id: synthesis.id, take_page_id: alice.id, take_row_num: 2, citation_index: 1 },
+        { synthesis_page_id: synthesis.id, take_page_id: alice.id, take_row_num: 4, citation_index: 2 },
+      ]);
+      const answers = { afterEmpty, afterDelete, evidenceAgain };
+      expect(answers).toEqual({
+        afterEmpty: ['1:Keep one', '2:Drop two', '3:Drop three', '4:Keep four'],
+        afterDelete: { alice: ['1:Keep one', '4:Keep four'], bob: ['2:Bob row two stays'] },
+        evidenceAgain: 1,
+      });
+      return answers;
+    },
+  );
 });
 
 describe('engine parity: contradiction probe runs and judge cache', () => {
@@ -657,6 +727,252 @@ describe('engine parity: dream verdict cache', () => {
       expect(swept).toBe(0);
       expect(afterSweep).not.toBeNull();
       return { miss, hit: strip(hit), replaced: strip(replaced), backoff: strip(backoff), otherHash, otherFile, swept, afterSweep: strip(afterSweep) };
+    },
+  );
+});
+
+describe('engine parity: takes reads (group D)', () => {
+  const NOTE = (slug: string) => ({ type: 'note' as const, title: slug, compiled_truth: `Page ${slug}.`, timeline: '' });
+
+  parityTest(
+    'countTakes and countOffGridTakeWeights count every take: inactive, resolved and soft-deleted-page takes included',
+    { methods: ['putPage', 'addTakesBatch', 'softDeletePage', 'countTakes', 'countOffGridTakeWeights'] },
+    async (engine) => {
+      const empty = { takes: await engine.countTakes(), grid: await engine.countOffGridTakeWeights() };
+      const a = await page(engine, 'notes/count-a');
+      const gone = await page(engine, 'notes/count-gone');
+      // every weight the typed API stores is on the 0.05 grid: it rounds them (the off-grid boundary is covered in
+      // test/engine-sql-takes-reads.test.ts and the Rust store's own test)
+      await engine.addTakesBatch([
+        take(a.id, 1, 'on grid low', { weight: 0.05 }),
+        take(a.id, 2, 'rounded down', { weight: 0.052 }),
+        take(a.id, 3, 'rounded up', { weight: 0.074 }),
+        take(a.id, 4, 'whole', { weight: 1 }),
+        take(a.id, 5, 'zero', { weight: 0 }),
+        take(a.id, 6, 'retired', { weight: 0.5, active: false }),
+        take(gone.id, 1, 'on a deleted page', { weight: 0.35 }),
+      ]);
+      const live = { takes: await engine.countTakes(), grid: await engine.countOffGridTakeWeights() };
+      await engine.softDeletePage('notes/count-gone');
+      const afterDelete = { takes: await engine.countTakes(), grid: await engine.countOffGridTakeWeights() };
+      expect(empty).toEqual({ takes: 0, grid: { off_grid: 0, total: 0 } });
+      expect(live).toEqual({ takes: 7, grid: { off_grid: 0, total: 7 } });
+      expect(afterDelete).toEqual(live);
+      return { empty, live, afterDelete };
+    },
+  );
+
+  parityTest(
+    'listTakeRowsForPage returns the page takes by row number, active or not, and nothing for another page or an unknown id',
+    { methods: ['putPage', 'addTakesBatch', 'listTakeRowsForPage'] },
+    async (engine) => {
+      const a = await page(engine, 'notes/rows-a');
+      const b = await page(engine, 'notes/rows-b');
+      await engine.addTakesBatch([
+        take(a.id, 3, 'third'),
+        take(a.id, 1, 'first', { active: false }),
+        take(a.id, 2, 'second'),
+        take(b.id, 1, 'elsewhere'),
+      ]);
+      const rows = await engine.listTakeRowsForPage(a.id);
+      const other = await engine.listTakeRowsForPage(b.id);
+      const unknown = await engine.listTakeRowsForPage(999_999);
+      expect(rows.map((r) => [r.row_num, r.claim])).toEqual([[1, 'first'], [2, 'second'], [3, 'third']]);
+      expect(other).toEqual([{ row_num: 1, claim: 'elsewhere' }]);
+      expect(unknown).toEqual([]);
+      return { rows, other, unknown };
+    },
+  );
+
+  parityTest(
+    'planFactPurgeTakes plans the takes a purged fact consolidated into and the takes echoing its claim, within one source',
+    { methods: ['putPage', 'addTakesBatch', 'insertFact', 'loadPurgeTarget', 'consolidateFact', 'planFactPurgeTakes'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'purge-other');
+      const alice = await page(engine, 'people/purge-alice');
+      const bob = await page(engine, 'people/purge-bob');
+      const carol = await page(engine, 'people/purge-carol', { sourceId: 'purge-other' });
+      const claim = 'Alice moved to Berlin';
+      await engine.addTakesBatch([
+        take(alice.id, 1, claim),
+        take(alice.id, 2, 'Unrelated claim'),
+        take(bob.id, 1, 'alice  MOVED to berlin.'),
+        take(carol.id, 1, claim),
+      ]);
+      const fact = (text: string) => engine.insertFact({ fact: text, entity_slug: null, visibility: 'world', source: 'chat', embedding: null }, { source_id: 'default' });
+      const hash = (await engine.loadPurgeTarget((await fact(claim)).id, 'default'))!.fact_hash;
+      const none = (await engine.loadPurgeTarget((await fact('A claim no take makes')).id, 'default'))!.fact_hash;
+      const named = await fact('Consolidated fact');
+      const loose = await fact('Loose fact');
+      const ids = { a1: (await takeIds(engine, alice.id)).get(claim)!, a2: (await takeIds(engine, alice.id)).get('Unrelated claim')!,
+        b1: (await takeIds(engine, bob.id)).get('alice  MOVED to berlin.')!, c1: (await takeIds(engine, carol.id)).get(claim)! };
+      await engine.consolidateFact(named.id, ids.a2);
+      const label = new Map<number, string>([[ids.a1, 'alice#1'], [ids.a2, 'alice#2'], [ids.b1, 'bob#1'], [ids.c1, 'carol#1']]);
+      const plan = async (sourceId: string, factIds: number[], factHash: string, subject: string) =>
+        (await engine.planFactPurgeTakes({ sourceId, factIds, factHash, subject })).map((t) => `${label.get(t.id)}@${t.page_id === alice.id ? 'alice' : t.page_id === bob.id ? 'bob' : 'carol'}`);
+      const out = {
+        echoOnSubject: await plan('default', [], hash, 'people/purge-alice'),
+        echoEverywhere: await plan('default', [], hash, '*'),
+        echoOtherSource: await plan('purge-other', [], hash, '*'),
+        echoUnknownSubject: await plan('default', [], hash, 'people/nobody'),
+        noEcho: await plan('default', [], none, '*'),
+        consolidated: await plan('default', [named.id], none, '*'),
+        unconsolidated: await plan('default', [loose.id], none, '*'),
+        consolidatedOtherSource: await plan('purge-other', [named.id], none, '*'),
+        both: await plan('default', [named.id], hash, 'people/purge-alice'),
+      };
+      expect(out.echoOnSubject).toEqual(['alice#1@alice']);
+      expect(out.echoEverywhere).toEqual(['alice#1@alice', 'bob#1@bob']);
+      expect(out.echoOtherSource).toEqual(['carol#1@carol']);
+      expect(out.consolidated).toEqual(['alice#2@alice']);
+      expect(out.both).toEqual(['alice#1@alice', 'alice#2@alice']);
+      expect([out.echoUnknownSubject, out.noEcho, out.unconsolidated, out.consolidatedOtherSource]).toEqual([[], [], [], []]);
+      return out;
+    },
+  );
+
+  parityTest(
+    'countMcpResolvedTakes counts resolved takes stamped mcp: in the source and holder scope it is given',
+    { methods: ['putPage', 'addTakesBatch', 'resolveTake', 'countMcpResolvedTakes'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'mcp-other');
+      const a = await page(engine, 'notes/mcp-a');
+      const o = await page(engine, 'notes/mcp-o', { sourceId: 'mcp-other' });
+      await engine.addTakesBatch([
+        take(a.id, 1, 'mcp by garry'),
+        take(a.id, 2, 'mcp by alice', { holder: 'alice' }),
+        take(a.id, 3, 'human'),
+        take(a.id, 4, 'unresolved'),
+        take(a.id, 5, 'stamp mid-string'),
+        take(a.id, 6, 'capital stamp'),
+        take(o.id, 1, 'mcp elsewhere'),
+      ]);
+      const done = { quality: 'correct' as const, outcome: true };
+      await engine.resolveTake(a.id, 1, { ...done, resolvedBy: 'mcp:client-1' });
+      await engine.resolveTake(a.id, 2, { ...done, resolvedBy: 'mcp:client-2' });
+      await engine.resolveTake(a.id, 3, { ...done, resolvedBy: 'human:garry' });
+      await engine.resolveTake(a.id, 5, { ...done, resolvedBy: 'not-mcp:x' });
+      await engine.resolveTake(a.id, 6, { ...done, resolvedBy: 'MCP:client' });
+      await engine.resolveTake(o.id, 1, { ...done, resolvedBy: 'mcp:client-3' });
+      const count = (sourceIds: string[] | null, holders: string[] | null) => engine.countMcpResolvedTakes({ sourceIds, holders, excludePrivate: false });
+      const out = {
+        everything: await count(null, null),
+        defaultSource: await count(['default'], null),
+        otherSource: await count(['mcp-other'], null),
+        bothSources: await count(['default', 'mcp-other'], null),
+        noSuchSource: await count(['nowhere'], null),
+        emptySources: await count([], null),
+        garry: await count(null, ['garry']),
+        garryAndAlice: await count(null, ['alice', 'garry']),
+        emptyHolders: await count(null, []),
+        defaultGarry: await count(['default'], ['garry']),
+      };
+      expect(out).toEqual({ everything: 3, defaultSource: 2, otherSource: 1, bothSources: 3, noSuchSource: 0, emptySources: 0, garry: 2, garryAndAlice: 3, emptyHolders: 0, defaultGarry: 1 });
+      return out;
+    },
+  );
+
+  /** Pages that differ by privacy state, each with one resolved `mcp:` take; the soft-deleted ones keep their rows. */
+  async function mcpPrivacyFixture(engine: BrainEngine, backend: Parameters<typeof createSource>[1]) {
+    await createSource(engine, backend, 'mcp-priv-other');
+    const put = async (slug: string, frontmatter: Record<string, unknown>, sourceId?: string) =>
+      engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `Page ${slug}.`, timeline: '', frontmatter }, sourceId ? { sourceId } : undefined);
+    const pages = {
+      open: await put('notes/mcp-open', {}),
+      private: await put('notes/mcp-private', { visibility: 'private' }),
+      readers: await put('notes/mcp-readers', { readable_by: ['alice-example'] }),
+      alias: await put('notes/mcp-alias', { access: 'restricted' }),
+      gone: await put('notes/mcp-gone', {}),
+      otherOpen: await put('notes/mcp-other-open', {}, 'mcp-priv-other'),
+      otherPrivate: await put('notes/mcp-other-private', { visibility: 'private' }, 'mcp-priv-other'),
+    };
+    await engine.softDeletePage('notes/mcp-gone');
+    const done = { quality: 'correct' as const, outcome: true };
+    let n = 0;
+    for (const p of Object.values(pages)) {
+      n += 1;
+      await engine.addTakesBatch([take(p.id, 1, `resolved ${n}`, { holder: n % 2 ? 'garry' : 'alice' }), take(p.id, 2, `open ${n}`)]);
+      await engine.resolveTake(p.id, 1, { ...done, resolvedBy: `mcp:client-${n}` });
+    }
+    return pages;
+  }
+
+  parityTest(
+    'countMcpResolvedTakes under excludePrivate drops the takes of pages the page policy hides, in every source and holder scope',
+    { methods: ['putPage', 'softDeletePage', 'addTakesBatch', 'resolveTake', 'countMcpResolvedTakes'] },
+    async (engine, backend) => {
+      await mcpPrivacyFixture(engine, backend);
+      const count = (sourceIds: string[] | null, holders: string[] | null, excludePrivate: boolean) =>
+        engine.countMcpResolvedTakes({ sourceIds, holders, excludePrivate });
+      const out = {
+        everythingOpen: await count(null, null, false),
+        everythingHidden: await count(null, null, true),
+        defaultOpen: await count(['default'], null, false),
+        defaultHidden: await count(['default'], null, true),
+        otherOpen: await count(['mcp-priv-other'], null, false),
+        otherHidden: await count(['mcp-priv-other'], null, true),
+        garryHidden: await count(null, ['garry'], true),
+        aliceHidden: await count(null, ['alice'], true),
+        noSourceHidden: await count([], null, true),
+        noHolderHidden: await count(null, [], true),
+      };
+      // open, private, readers, alias, gone (default) and open, private (other): the live policy hides private, readers, alias, other-private.
+      expect(out).toEqual({
+        everythingOpen: 7, everythingHidden: 3, defaultOpen: 5, defaultHidden: 2, otherOpen: 2, otherHidden: 1,
+        garryHidden: 2, aliceHidden: 1, noSourceHidden: 0, noHolderHidden: 0,
+      });
+      return out;
+    },
+  );
+
+  parityTest(
+    'countMcpResolvedTakes under excludePrivate for a caller with a reader identity: SQL arms apply the caller policy, the Rust store refuses',
+    { methods: ['putPage', 'softDeletePage', 'addTakesBatch', 'resolveTake', 'countMcpResolvedTakes'] },
+    async (engine, backend) => {
+      await mcpPrivacyFixture(engine, backend);
+      const asReader = await withCallerAccess({ identity: ['alice-example'], hidePrivate: true },
+        () => engine.countMcpResolvedTakes({ sourceIds: null, holders: null, excludePrivate: true }));
+      const open = await engine.countMcpResolvedTakes({ sourceIds: null, holders: null, excludePrivate: false });
+      expect(asReader).toBeLessThan(open);
+      return { asReader, open };
+    },
+  );
+
+  parityTest(
+    'listTakeSupersessionCandidates lists the live pages of the given sources that hold an inactive or superseded-by take, by page',
+    { methods: ['putPage', 'addTakesBatch', 'softDeletePage', 'listTakeSupersessionCandidates'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'sup-other');
+      const mk = (slug: string, sourceId?: string) => engine.putPage(slug, NOTE(slug), sourceId ? { sourceId } : undefined);
+      const inactive = await mk('notes/sup-inactive');
+      const named = await mk('notes/sup-named');
+      const shouted = await mk('notes/sup-shouted');
+      const plain = await mk('notes/sup-plain');
+      const gone = await mk('notes/sup-gone');
+      const elsewhere = await mk('notes/sup-elsewhere', 'sup-other');
+      const blank = await mk('notes/sup-blank');
+      await engine.addTakesBatch([
+        take(inactive.id, 1, 'a', { active: false }),
+        take(named.id, 1, 'b', { source: 'meeting; superseded by #2' }),
+        take(shouted.id, 1, 'c', { source: 'SUPERSEDED BY #7' }),
+        take(plain.id, 1, 'd', { source: 'superseded by 2' }),
+        take(plain.id, 2, 'e'),
+        take(gone.id, 1, 'f', { active: false }),
+        take(elsewhere.id, 1, 'g', { active: false }),
+        take(blank.id, 1, 'h', { source: '' }),
+      ]);
+      await engine.softDeletePage('notes/sup-gone');
+      const view = (rows: Array<{ id: number; source_id: string; slug: string }>) => rows.map((r) => `${r.source_id}:${r.slug}`);
+      const out = {
+        defaultOnly: view(await engine.listTakeSupersessionCandidates(['default'])),
+        both: view(await engine.listTakeSupersessionCandidates(['sup-other', 'default'])),
+        none: view(await engine.listTakeSupersessionCandidates([])),
+        unknown: view(await engine.listTakeSupersessionCandidates(['nowhere'])),
+      };
+      expect(out.defaultOnly).toEqual(['default:notes/sup-inactive', 'default:notes/sup-named', 'default:notes/sup-shouted']);
+      expect(out.both).toHaveLength(4);
+      expect([out.none, out.unknown]).toEqual([[], []]);
+      return out;
     },
   );
 });

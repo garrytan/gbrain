@@ -7,6 +7,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { countIndexDuePages, countMentionDuePages, type MentionPassResult } from './pass.ts';
 import { linkableTypesFor, loadSourcePack, readMentionPolicy } from './policy.ts';
+import { sortSourcesById } from '../source-rows.ts';
 
 export interface MentionPreview {
   due: number;
@@ -21,19 +22,17 @@ export interface MentionPreview {
  */
 export async function previewMentionPass(engine: BrainEngine, sourceId?: string): Promise<MentionPreview> {
   // GBRA-133: the newest pass time does not depend on the policy or the due counts, so it is issued with them.
-  const [[row], { policy, due }] = await Promise.all([
-    engine.executeRaw<{ last: string | null }>(
-      `SELECT to_char(max(last_pass_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last FROM mention_index_status
-        WHERE ($1::text IS NULL OR source_id = $1)`, [sourceId ?? null]),
+  const [last, { policy, due }] = await Promise.all([
+    engine.readMentionLastPass(sourceId),
     readMentionPolicy(engine).then(async policy => {
       let due = 0;
       if (policy.enabled) {
-        const sources = sourceId ? [sourceId] : (await engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id')).map(r => r.id);
+        const sources = sourceId ? [sourceId] : sortSourcesById(await engine.listAllSources({ includeArchived: true })).map(r => r.id);
         for (const id of sources) due += await countIndexDuePages(engine, id, linkableTypesFor(await loadSourcePack(engine, id), policy));
       }
       return { policy, due };
     })]);
-  return { due, last_pass_at: row?.last ?? null, enabled: policy.enabled };
+  return { due, last_pass_at: last, enabled: policy.enabled };
 }
 
 /**

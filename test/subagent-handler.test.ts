@@ -1324,7 +1324,7 @@ describe('oneshot mode dispatch (#4216)', () => {
 describe('finalizeWriteAccounting read-error posture (CX-A3)', () => {
   const { finalizeWriteAccounting } = require('../src/core/minions/handlers/subagent-persistence.ts');
   const explodingEngine = {
-    executeRaw: async () => { throw new Error('pool reaped mid-read'); },
+    listSubagentWriteOutcomes: async () => { throw new Error('pool reaped mid-read'); },
   } as unknown as import('../src/core/engine.ts').BrainEngine;
   const result = { result: 'done', turns_count: 3, stop_reason: 'end_turn', tokens: { in: 1, out: 1, cache_read: 0, cache_create: 0 } };
 
@@ -1342,7 +1342,8 @@ describe('finalizeWriteAccounting read-error posture (CX-A3)', () => {
 
   test('zero attempts + dirty stop_reason + require_writes → UnrecoverableError (CX-A4)', async () => {
     const okEngine = {
-      executeRaw: async () => [],
+      listSubagentWriteOutcomes: async () => [],
+      hasSubagentToolExecution: async () => false,
     } as unknown as import('../src/core/engine.ts').BrainEngine;
     const truncated = { ...result, stop_reason: 'max_tokens' };
     await expect(finalizeWriteAccounting(okEngine, 999, truncated, { requireWrites: true }))

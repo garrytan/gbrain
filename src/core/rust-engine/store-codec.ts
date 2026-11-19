@@ -20,6 +20,19 @@ export function withDates<T extends object>(row: T, fields: readonly string[]): 
   return out as T;
 }
 
+/** The write-journal request columns PGLite returns as a Date (timestamptz). */
+const REQUEST_DATES = ['claim_expires_at', 'created_at', 'updated_at', 'completed_at', 'published_at', 'next_attempt_at'];
+
+/** A stored write-journal request row as PGLite returns it: the timestamps as Dates, every other column as stored. */
+export function requestRow<R extends object>(row: unknown): R | null {
+  return row === null || row === undefined ? null : withDates(row as R, REQUEST_DATES);
+}
+
+/** A stored topology change row as PGLite returns it: created_at and updated_at as Dates. */
+export function topologyRow<R extends object>(row: unknown): R | null {
+  return row === null || row === undefined ? null : withDates(row as R, ['created_at', 'updated_at']);
+}
+
 /** A `PageInput` or any write body with its `Date` values as ISO strings, which is what the store reads. */
 export function withIsoDates<T extends object>(row: T): T {
   const out: Row = { ...(row as Row) };
@@ -80,21 +93,23 @@ const CHUNK_DEFAULTS = {
   doc_comment: null, symbol_name_qualified: null, projected_byte_start: null, projected_byte_end: null, token_count: null,
 } as const;
 
-/** A chunk as PGLite's `getChunks` returns it: every nullable column present, and no vector (the store keeps none). */
+/**
+ * A chunk as PGLite's `getChunks` returns it: every nullable column present, `embedded_at` a Date, and the vector a
+ * Float32Array when the read asked for it (null otherwise).
+ */
 export function toChunk<T extends object>(chunk: T): T {
-  const { has_embedding: _has, ...rest } = chunk as Row;
-  return { embedding: null, ...CHUNK_DEFAULTS, ...rest, embedded_at: null, embedding_is_null: true } as T;
+  const row = { embedding: null, ...CHUNK_DEFAULTS, ...withDates(chunk, ['embedded_at']) } as Row;
+  row.embedding = Array.isArray(row.embedding) ? new Float32Array(row.embedding as number[]) : null;
+  return row as T;
 }
 
-/** The provenance columns PGLite's timeline rows carry and the store does not keep. */
-const TIMELINE_DEFAULTS = {
-  write_request_id: null, write_principal_kind: null, write_principal_id: null, last_write_request_id: null,
-  last_write_principal_kind: null, last_write_principal_id: null, last_written_at: null, trust_tier: 'unknown', write_origin: null,
-} as const;
-
-/** A timeline row. The entry's `date` (a calendar day, "2026-03-04") reads back as the Date at that day's midnight UTC, as PGLite's DATE column does. */
+/**
+ * A timeline row. The store returns its trust columns and write receipt. The entry's `date` (a calendar day,
+ * "2026-03-04") reads back as the Date at that day's midnight UTC, as PGLite's DATE column does; `created_at` and the
+ * receipt's `last_written_at` read back as Dates.
+ */
 export function toTimelineEntry<T extends object>(entry: T): T {
-  const row = { ...TIMELINE_DEFAULTS, ...withDates(entry, ['created_at']) } as Record<string, unknown>;
+  const row = withDates(entry, ['created_at', 'last_written_at']) as Record<string, unknown>;
   if (typeof row.date === 'string') row.date = new Date(`${row.date.slice(0, 10)}T00:00:00.000Z`);
   return row as T;
 }
@@ -103,15 +118,30 @@ export function toTimelineEntry<T extends object>(entry: T): T {
  * A version as `getVersions` returns it: the frontmatter's valid-time dates (`validDate`, as the SQL twin reads
  * them), the reason the next write gave (none is kept), and no `content_hash`, which PGLite's list leaves out.
  */
+/**
+ * The store keeps every snapshot's content_hash; PGLite's page_versions holds it only on a segmented snapshot
+ * (insertSegmentedVersion), so an inline snapshot's goes.
+ */
+function versionHash(version: object): Row {
+  const row = withDates(version, ['snapshot_at']) as Row;
+  if (row.body_storage === 'segmented') return row;
+  const { content_hash: _hash, ...rest } = row;
+  return rest;
+}
+
 export function toVersion<T extends object>(version: T): T {
-  const { content_hash: _hash, ...rest } = withDates(version, ['snapshot_at']) as Row;
+  const rest = versionHash(version);
   const frontmatter = (rest.frontmatter ?? {}) as Row;
   return { ...rest, replaced_because: null, valid_from: validDate(frontmatter.valid_from), valid_until: validDate(frontmatter.valid_until) } as T;
 }
 
-/** The row `createVersion` returns: PGLite hands back the whole inserted row, columns and defaults included. */
+/**
+ * The row `createVersion` returns: PGLite hands back the whole inserted row, columns and defaults included. The store
+ * sends the snapshot's `trust_tier` and `write_origin` (copied from the page, as `snapshot_version_trust` does), which
+ * replace the defaults here.
+ */
 export function toCreatedVersion<T extends object>(version: T): T {
-  const { content_hash: _hash, ...rest } = withDates(version, ['snapshot_at']) as Row;
+  const rest = versionHash(version);
   return {
     archived_principal_id: null, archived_principal_kind: null, archived_write_request_id: null, body_bytes: null,
     body_generation: null, body_storage: 'inline', change_reason: null, content_hash: null, successor_pruned: null,

@@ -91,6 +91,33 @@ impl Brain {
             })
         })
     }
+
+    /// The open store, taken now on the calling thread; `None` when the handle is closed.
+    pub(crate) fn current(&self) -> Option<Arc<Store>> {
+        self.slot.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Runs `open` on this handle's pool and makes the store it returns this handle's store: how a
+    /// handle comes to run on a store bound to a transaction (`families/transactions.rs`). Rejects
+    /// `invalid_state` when this handle is already open. `run` then works unchanged.
+    pub(crate) fn bind<'env>(
+        &self,
+        env: &'env Env,
+        open: impl FnOnce() -> Result<Store, StoreError> + Send + 'static,
+    ) -> napi::Result<Object<'env>> {
+        let slot = self.slot.clone();
+        spawn(env, &self.pool, move || {
+            let mut guard = slot.lock().unwrap_or_else(|e| e.into_inner());
+            if guard.is_some() {
+                return Err(TaskError::new(
+                    gbrain_store::error::INVALID_STATE,
+                    "this handle already has a brain open; close it first",
+                ));
+            }
+            *guard = Some(Arc::new(open().map_err(task_error)?));
+            Ok(Value::Null)
+        })
+    }
 }
 
 #[napi]

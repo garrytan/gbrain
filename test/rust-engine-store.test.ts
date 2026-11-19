@@ -22,6 +22,7 @@ import { toGetPage, toListPage } from '../src/core/rust-engine/store-codec.ts';
 import { PageRevisionConflictError } from '../src/core/page-state/types.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { ENGINE_CAPABILITIES } from '../src/core/engine-capabilities.ts';
+import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 
 const TARGET = detectAddonTarget();
 const BUILT = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
@@ -137,17 +138,143 @@ describe('Rust engine on the store', () => {
   withAddon('an option the store does not keep refuses engine_capability_missing instead of being dropped', async () => {
     const { engine } = await open();
     await engine.putPage('notes/a', page);
-    const refused = await code(() => engine.getChunks('notes/a', { includeEmbedding: true } as never));
+    // findOrphanPages takes no trust floor on Rust: no production caller sends one, so it refuses.
+    const refused = await code(() => engine.findOrphanPages({ minTrust: 'agent_written' }));
     expect(refused).toBe('engine_capability_missing');
   });
 
-  withAddon('a chunk that carries a vector refuses chunks, and writes nothing', async () => {
+  withAddon('excludePrivate on the salience and anomaly reads hides a private page the plain read returns', async () => {
+    const { engine } = await open();
+    await engine.putPage('notes/a', page);
+    for (const slug of ['notes/secret', 'notes/readers', 'atoms/bare']) {
+      const frontmatter = slug === 'notes/secret' ? { visibility: 'private' } : slug === 'notes/readers' ? { readable_by: ['alice-example'] } : {};
+      await engine.putPage(slug, { ...page, type: (slug.startsWith('atoms/') ? 'atom' : 'note') as never, frontmatter });
+      await engine.addTag(slug, 'hidden-only');
+    }
+    await engine.setEmotionalWeightBatch([{ slug: 'notes/secret', source_id: 'default', weight: 1 }]);
+    const slugs = (rows: Array<{ slug: string }>) => rows.map((r) => r.slug).sort();
+    expect((await engine.getRecentSalience({ days: 7 }))[0]!.slug).toBe('notes/secret');
+    expect(slugs(await engine.getRecentSalience({ days: 7, excludePrivate: true }))).toEqual(['notes/a']);
+    const refs = ['notes/a', 'notes/secret', 'notes/readers', 'atoms/bare'].map((slug) => ({ slug, source_id: 'default' }));
+    expect((await engine.getSalienceScores(refs, {})).get('default::notes/secret')).toBe(5);
+    expect([...(await engine.getSalienceScores(refs, { excludePrivate: true })).keys()]).toEqual(['default::notes/a']);
+    const today = new Date((await engine.getPage('notes/secret'))!.updated_at).toISOString().slice(0, 10);
+    const tag = async (excludePrivate: boolean) =>
+      (await engine.findAnomalies({ since: today, lookback_days: 1, excludePrivate })).find((r) => r.cohort_value === 'hidden-only');
+    expect((await tag(false))?.page_slugs.sort()).toEqual(['atoms/bare', 'notes/readers', 'notes/secret']);
+    expect(await tag(true)).toBeUndefined();
+  });
+
+  withAddon('excludePrivate refuses for a caller whose folder-rule grants change the page policy PGLite renders', async () => {
+    const { engine } = await open();
+    await engine.putPage('notes/a', page);
+    // A reader identity alone is served (the callerReaders opt-in); a satisfied folder rule still refuses.
+    const asReader = <T>(fn: () => Promise<T>) => withCallerAccess({ identity: ['member:alice-example'] }, fn);
+    expect(await code(() => asReader(() => engine.getRecentSalience({ days: 7, excludePrivate: true })))).toBeUndefined();
+    const asMember = <T>(fn: () => Promise<T>) =>
+      withCallerAccess({ identity: ['member:alice-example'], satisfiedRuleIds: ['default:team-notes'] }, fn);
+    const refs = [{ slug: 'notes/a', source_id: 'default' }];
+    expect(await code(() => asMember(() => engine.getRecentSalience({ days: 7, excludePrivate: true })))).toBe('engine_capability_missing');
+    expect(await code(() => asMember(() => engine.getSalienceScores(refs, { excludePrivate: true })))).toBe('engine_capability_missing');
+    expect(await code(() => asMember(() => engine.findAnomalies({ since: '2026-01-02', excludePrivate: true })))).toBe('engine_capability_missing');
+    // Without excludePrivate the caller's record does not matter: the read applies no page policy.
+    expect(await code(() => asMember(() => engine.getRecentSalience({ days: 7 })))).toBeUndefined();
+  });
+
+  withAddon('excludePrivate on the fact reads serves a reader identity and grant but refuses folder rules, audiences, lineage and labelled-only', async () => {
+    const { engine } = await open();
+    await engine.putPage('notes/a', page);
+    await engine.insertFacts([{ fact: 'f', entity_slug: 'people/a-example', source_markdown_slug: 'notes/a', row_num: 1, kind: 'fact', visibility: 'world', source: 'fence' }] as never, { source_id: 'default' });
+    const reads: Record<string, () => Promise<unknown>> = {
+      listFactsSince: () => engine.listFactsSince('default', new Date('2020-01-01T00:00:00Z'), { excludePrivate: true }),
+      countWorldFacts: () => engine.countWorldFacts({ sourceId: 'default', entitySlugs: ['people/a-example'], worldOnly: false, excludePrivate: true }),
+      getOntology: () => engine.getOntology('people/a-example', { excludePrivate: true }),
+    };
+    const reader = { identity: ['member:alice-example'], privateReadableSources: ['default'] };
+    // Option C scope: each of these changes the fact policy text, and the store has no form for it.
+    const refused = {
+      folderRule: { ...reader, satisfiedRuleIds: ['default:team-notes'] },
+      audience: { audience: ['member:alice-example', 'member:bob-example'], audienceIdentities: [['member:alice-example'], ['member:bob-example']] },
+      lineage: { ...reader, lineage: true },
+      labelledOnly: { ...reader, labelledOnly: true },
+    };
+    for (const [name, read] of Object.entries(reads)) {
+      expect([name, await code(() => withCallerAccess(reader, read))]).toEqual([name, undefined]);
+      for (const [kind, access] of Object.entries(refused)) {
+        expect([name, kind, await code(() => withCallerAccess(access, read))]).toEqual([name, kind, 'engine_capability_missing']);
+      }
+    }
+  });
+
+  withAddon('a chunk vector of the wrong width is refused, and writes nothing', async () => {
     const { engine } = await open();
     await engine.putPage('notes/a', page);
     const before = await engine.getChunks('notes/a');
     const chunk = { chunk_index: 0, chunk_text: 'Replaced.', chunk_source: 'compiled_truth', embedding: new Float32Array(4) } as never;
-    expect(await code(() => engine.upsertChunks('notes/a', [chunk]))).toBe('engine_capability_missing');
+    expect(await code(() => engine.upsertChunks('notes/a', [chunk]))).toBe('invalid_argument');
     expect(await engine.getChunks('notes/a')).toEqual(before);
+  });
+
+  withAddon('upsertChunks serves embeddingColumn for the store column at any descriptor width; another column or type refuses and writes nothing', async () => {
+    const { engine } = await open();
+    await engine.putPage('notes/a', page);
+    const chunk = (text: string) => ({ chunk_index: 0, chunk_text: text, chunk_source: 'compiled_truth', embedding: new Float32Array(1536).fill(0.5), model: 'm:one' }) as never;
+    const column = (over: object) => ({ name: 'embedding', type: 'vector', dimensions: 1536, embeddingModel: '', ...over }) as never;
+    // upsertChunks writes unsealed chunks (a write's seal publishes them), so each read asks for them.
+    await engine.upsertChunks('notes/a', [chunk('Kept.')], { embeddingColumn: column({}) });
+    const kept = await engine.getChunks('notes/a', { includeEmbedding: true, includeUnsealed: true });
+    expect(kept.map((c) => [c.chunk_text, c.model, c.embedding?.length])).toEqual([['Kept.', 'm:one', 1536]]);
+    for (const over of [{ name: 'embedding_image', dimensions: 1024 }, { name: 'embedding_voyage', embeddingModel: 'voyage:v' }, { type: 'halfvec' }]) {
+      expect(await code(() => engine.upsertChunks('notes/a', [chunk('Replaced.')], { embeddingColumn: column(over) }))).toBe('engine_capability_missing');
+    }
+    expect(await code(() => engine.upsertChunks('notes/a', [chunk('Replaced.')], { embeddingColumn: 'embedding_image' as never }))).toBe('engine_capability_missing');
+    expect(await engine.getChunks('notes/a', { includeEmbedding: true, includeUnsealed: true })).toEqual(kept);
+    // The descriptor's width is not read (PGLite's `::vector` cast never reads it); the store's width check on the
+    // vector still refuses a vector of another width, and writes nothing.
+    const narrow = { chunk_index: 0, chunk_text: 'Narrow.', chunk_source: 'compiled_truth', embedding: new Float32Array(768).fill(0.5), model: 'm:one' } as never;
+    expect(await code(() => engine.upsertChunks('notes/a', [narrow], { embeddingColumn: column({ dimensions: 768 }) }))).toBe('invalid_argument');
+    expect(await engine.getChunks('notes/a', { includeEmbedding: true, includeUnsealed: true })).toEqual(kept);
+    await engine.upsertChunks('notes/a', [chunk('Wide.')], { embeddingColumn: column({ dimensions: 768 }) });
+    expect((await engine.getChunks('notes/a', { includeEmbedding: true, includeUnsealed: true })).map((c) => [c.chunk_text, c.embedding?.length])).toEqual([['Wide.', 1536]]);
+    // A column with a model labels a chunk that names none, as PGLite's `writeCol.embeddingModel || ...` does.
+    const unlabeled = { chunk_index: 0, chunk_text: 'Labeled.', chunk_source: 'compiled_truth', embedding: new Float32Array(1536).fill(0.25) } as never;
+    await engine.upsertChunks('notes/a', [unlabeled], { embeddingColumn: column({ embeddingModel: 'm:column' }) });
+    expect((await engine.getChunks('notes/a', { includeUnsealed: true })).map((c) => [c.chunk_text, c.model])).toEqual([['Labeled.', 'm:column']]);
+  });
+
+  withAddon('getStats and getHealth refuse a brain whose config selects another embedding column', async () => {
+    const { engine } = await open();
+    await engine.putPage('notes/a', page);
+    expect((await engine.getStats()).page_count).toBe(1);
+    await engine.setConfig('search_embedding_column', 'embedding_other');
+    expect(await code(() => engine.getStats())).toBe('engine_capability_missing');
+    expect(await code(() => engine.getHealth())).toBe('engine_capability_missing');
+    await engine.unsetConfig('search_embedding_column');
+    expect((await engine.getHealth()).page_count).toBe(1);
+  });
+
+  withAddon('raw data and files cross the binding as PGLite returns them', async () => {
+    const { engine } = await open();
+    const created = await engine.putPage('notes/a', page);
+    // A missing page throws PGLite's plain Error, not a typed one.
+    const missing = await engine.putRawData('notes/none', 's', {}).catch((e: unknown) => e);
+    expect(missing).toBeInstanceOf(Error);
+    expect((missing as Error).message).toBe('putRawData failed: page "notes/none" not found');
+    expect((missing as { code?: unknown }).code).toBeUndefined();
+    // JSON.stringify drops undefined members and calls toJSON, as PGLite's binding does.
+    await engine.putRawData('notes/a', 's', { keep: 1, drop: undefined, at: new Date(0) });
+    const [row] = await engine.getRawData('notes/a');
+    expect(row!.data).toEqual({ keep: 1, at: '1970-01-01T00:00:00.000Z' });
+    expect(row!.fetched_at).toBeInstanceOf(Date);
+    expect(await code(() => engine.getRawData('notes/a', undefined, { excludePrivate: true }))).toBe('engine_capability_missing');
+    // A size past 2^31 crosses N-API as a double and comes back whole.
+    const spec = { page_id: created.id, filename: 'a.png', storage_path: 'f/a.png', content_hash: 'h', size_bytes: 5_000_000_000 };
+    expect((await engine.upsertFile(spec)).created).toBe(true);
+    const [file] = await engine.listFilesForPage(created.id);
+    expect(file!.size_bytes).toBe(5_000_000_000);
+    expect(file!.metadata).toEqual({});
+    expect(file!.created_at).toBeInstanceOf(Date);
+    expect((await engine.getFile('default', 'f/a.png'))?.page_id).toBe(created.id);
   });
 
   withAddon('a brain on a partial capability set reports exactly what the store serves', async () => {
@@ -168,6 +295,53 @@ describe('Rust store members', () => {
       expect(needed.length).toBeGreaterThan(0);
       for (const member of needed) expect(Object.hasOwn(STORE_MEMBERS, member)).toBe(true);
     }
+  });
+
+  test('keyword date bounds reach the store as the microseconds Postgres reads for each ISO shape', async () => {
+    let sent: Record<string, unknown> = {};
+    const brain = { searchKeywordPages: async (_query: string, options: Record<string, unknown>) => { sent = options; return []; } };
+    const search = STORE_MEMBERS.searchKeywordPages as (brain: unknown, query: string, opts: unknown, page: unknown) => Promise<unknown>;
+    const micros = async (afterDate: string) => {
+      await search(brain, 'nebula', { afterDate }, { limit: 1 });
+      return (sent.afterDate as { micros: string }).micros;
+    };
+    const at = (iso: string, extra: number) => (BigInt(Date.parse(iso)) * 1000n + BigInt(extra)).toString();
+    // Each expected value is what `SET TimeZone='UTC'; SELECT $1::text::timestamptz` returns on Postgres 17.
+    expect({
+      sixDigits: await micros('2026-01-05T10:00:00.123456Z'),
+      roundsDown: await micros('2026-01-05T10:00:00.1234565Z'),
+      roundsUp: await micros('2026-01-05T10:00:00.1234575Z'),
+      tieToEvenZero: await micros('2026-01-05T10:00:00.0000005Z'),
+      tieToEvenTwo: await micros('2026-01-05T10:00:00.0000025Z'),
+      tieToEvenFour: await micros('2026-01-05T10:00:00.0000035Z'),
+      carry: await micros('2026-12-31T23:59:59.9999999Z'),
+      nineDigitsOffset: await micros('2026-01-05 10:00:00.123456789+05:30'),
+      lowercase: await micros('2026-01-05t10:00:00.123456789z'),
+      midnight: await micros('2026-05-10T24:00:00.0000005Z'),
+    }).toEqual({
+      sixDigits: at('2026-01-05T10:00:00Z', 123456),
+      roundsDown: at('2026-01-05T10:00:00Z', 123456),
+      roundsUp: at('2026-01-05T10:00:00Z', 123458),
+      tieToEvenZero: at('2026-01-05T10:00:00Z', 0),
+      tieToEvenTwo: at('2026-01-05T10:00:00Z', 2),
+      tieToEvenFour: at('2026-01-05T10:00:00Z', 4),
+      carry: at('2027-01-01T00:00:00Z', 0),
+      nineDigitsOffset: at('2026-01-05T04:30:00Z', 123457),
+      lowercase: at('2026-01-05T10:00:00Z', 123457),
+      midnight: at('2026-05-11T00:00:00Z', 0),
+    });
+    // 24:00:00.0000006 rounds to one microsecond past midnight, which Postgres rejects as out of range.
+    expect(await micros('2026-05-10T24:00:00.0000006Z').catch((e: unknown) => (e as { code?: string }).code)).toBe('engine_capability_missing');
+  });
+
+  test("revertToVersion turns the store's page_body_segmented refusal into PGLite's segmentedRevertRefusal", async () => {
+    const refusal = Object.assign(new Error('segmented'), { code: 'page_body_segmented' });
+    const brain = { revertToVersion: async () => { throw refusal; } };
+    const revert = STORE_MEMBERS.revertToVersion as (brain: unknown, slug: string, versionId: number) => Promise<void>;
+    const error = await revert(brain, 'notes/a', 7).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(OperationError);
+    expect((error as OperationError).code).toBe('page_body_segmented');
+    expect((error as Error).message).toBe('Page notes/a or its version 7 is stored in segments, so revert_version cannot restore it yet; nothing was changed.');
   });
 });
 

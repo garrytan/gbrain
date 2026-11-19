@@ -417,3 +417,72 @@ describe('engine parity: salience + enrich + anomalies', () => {
     },
   );
 });
+
+describe('engine parity: salience and code-edge reads (group D)', () => {
+  parityTest(
+    'countZeroWeightWithTakes counts pages with an active take and no emotional weight beside the weighed pages',
+    { methods: ['putPage', 'addTakesBatch', 'setEmotionalWeightBatch', 'countZeroWeightWithTakes'] },
+    async (engine) => {
+      const mk = (slug: string) => engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `Page ${slug}.`, timeline: '' });
+      const empty = await engine.countZeroWeightWithTakes();
+      const lagging = await mk('notes/zw-lagging');
+      const twice = await mk('notes/zw-twice');
+      const weighed = await mk('notes/zw-weighed');
+      const zeroed = await mk('notes/zw-zeroed');
+      const retired = await mk('notes/zw-retired');
+      await mk('notes/zw-bare');
+      const t = (page_id: number, row_num: number, claim: string, active = true) => ({ page_id, row_num, claim, kind: 'take' as const, holder: 'garry', weight: 0.5, active });
+      await engine.addTakesBatch([
+        t(lagging.id, 1, 'a'), t(twice.id, 1, 'b'), t(twice.id, 2, 'c'), t(weighed.id, 1, 'd'), t(zeroed.id, 1, 'e'), t(retired.id, 1, 'f', false),
+      ]);
+      await engine.setEmotionalWeightBatch([
+        { slug: 'notes/zw-weighed', source_id: 'default', weight: 0.4 },
+        { slug: 'notes/zw-zeroed', source_id: 'default', weight: 0.3 },
+      ]);
+      // weighed, then set back to 0: the page keeps a stored weight of 0, which is no weight
+      await engine.setEmotionalWeightBatch([{ slug: 'notes/zw-zeroed', source_id: 'default', weight: 0 }]);
+      // a page counts once however many active takes it has; an inactive take counts for nothing; a weight of 0 is no weight
+      const lag = await engine.countZeroWeightWithTakes();
+      await engine.setEmotionalWeightBatch([
+        { slug: 'notes/zw-lagging', source_id: 'default', weight: 0.2 },
+        { slug: 'notes/zw-bare', source_id: 'default', weight: 0.9 },
+      ]);
+      const caught = await engine.countZeroWeightWithTakes();
+      expect(empty).toEqual({ zero_weight_with_takes: 0, nonzero_weight: 0 });
+      expect(lag).toEqual({ zero_weight_with_takes: 3, nonzero_weight: 1 });
+      expect(caught).toEqual({ zero_weight_with_takes: 2, nonzero_weight: 3 });
+      return { empty, lag, caught };
+    },
+  );
+
+  parityTest(
+    'hasCodeEdgesSymbol is true only for a source that owns an unresolved edge',
+    { methods: ['putPage', 'upsertChunks', 'getChunks', 'addCodeEdges', 'hasCodeEdgesSymbol'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'sym-other');
+      await createSource(engine, backend, 'sym-empty');
+      const run = await seedCodePage(engine, 'sym-a-ts', ['run']);
+      const helper = await seedCodePage(engine, 'sym-b-ts', ['helper']);
+      const far = await seedCodePage(engine, 'sym-c-ts', ['far'], { sourceId: 'sym-other' });
+      const near = await seedCodePage(engine, 'sym-d-ts', ['near'], { sourceId: 'sym-other' });
+      const id = (m: Map<number, string>) => [...m.keys()][0];
+      const edge = (from: number, to: number | null, source_id: string) => ({
+        from_chunk_id: from, to_chunk_id: to, from_symbol_qualified: 'run', to_symbol_qualified: 'ext.log', edge_type: 'calls', source_id,
+      });
+      const before = await engine.hasCodeEdgesSymbol('default');
+      // a resolved edge lives in the chunk table, not the symbol table
+      await engine.addCodeEdges([edge(id(far), id(near), 'sym-other')]);
+      const resolvedOnly = await engine.hasCodeEdgesSymbol('sym-other');
+      await engine.addCodeEdges([edge(id(run), id(helper), 'default'), edge(id(run), null, 'default')]);
+      const out = {
+        before, resolvedOnly,
+        owner: await engine.hasCodeEdgesSymbol('default'),
+        otherSource: await engine.hasCodeEdgesSymbol('sym-other'),
+        emptySource: await engine.hasCodeEdgesSymbol('sym-empty'),
+        unknownSource: await engine.hasCodeEdgesSymbol('nowhere'),
+      };
+      expect(out).toEqual({ before: false, resolvedOnly: false, owner: true, otherSource: false, emptySource: false, unknownSource: false });
+      return out;
+    },
+  );
+});

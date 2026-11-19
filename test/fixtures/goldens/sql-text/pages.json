@@ -216,8 +216,8 @@
               "number",
               "string"
             ],
-            "sql": "SELECT slug, similarity(title, $1) AS sim FROM pages WHERE title % $2 AND similarity(title, $3) >= $4 AND slug LIKE $5 ORDER BY sim DESC, slug ASC LIMIT 1",
-            "textSha256": "0ebdc574ef796fcd7f3ccc561aabff37f8adfa9fd1484415562f33034f3d4b80"
+            "sql": "SELECT slug, similarity(title, $1) AS sim FROM pages WHERE title % $2 AND similarity(title, $3) >= $4 AND slug LIKE $5 ORDER BY sim DESC, slug COLLATE \"C\" ASC LIMIT 1",
+            "textSha256": "6c518900a1004dc4ef46be113510d244950e477f406f732d61212fab62477c7d"
           }
         ],
         "lowSimilarity": [
@@ -229,8 +229,8 @@
               "number",
               "string"
             ],
-            "sql": "SELECT slug, similarity(title, $1) AS sim FROM pages WHERE similarity(title, $2) >= $3 AND slug LIKE $4 ORDER BY sim DESC, slug ASC LIMIT 1",
-            "textSha256": "8d42752fa3b8e51d769ea5176d147e5e5575ba82ba4291e9b9992f943f4feda0"
+            "sql": "SELECT slug, similarity(title, $1) AS sim FROM pages WHERE similarity(title, $2) >= $3 AND slug LIKE $4 ORDER BY sim DESC, slug COLLATE \"C\" ASC LIMIT 1",
+            "textSha256": "166ca5f026ca290f09d811fb81b3b0921e141c3b4e8300eed7af11932fa0cee7"
           }
         ],
         "sourceId": [
@@ -244,8 +244,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT slug, similarity(title, $1) AS sim FROM pages WHERE title % $2 AND similarity(title, $3) >= $4 AND slug LIKE $5 AND source_id = $6 AND deleted_at IS NULL ORDER BY sim DESC, slug ASC LIMIT 1",
-            "textSha256": "d1f169944810ebb7cef47f4edec043029df48aa9f9b085c89e16bd457dbf35d9"
+            "sql": "SELECT slug, similarity(title, $1) AS sim FROM pages WHERE title % $2 AND similarity(title, $3) >= $4 AND slug LIKE $5 AND source_id = $6 AND deleted_at IS NULL ORDER BY sim DESC, slug COLLATE \"C\" ASC LIMIT 1",
+            "textSha256": "110652d5a1b77de3bb7813fd84f8d27ee40849d2222351ab44dfec56400da880"
           }
         ]
       },

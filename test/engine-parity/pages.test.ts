@@ -251,6 +251,32 @@ describe('engine parity: pages', () => {
     return { result, outside };
   });
 
+  parityTest('lockPageKeys refuses a missing source and a recreated one, and holds a key whose source matches',
+    { methods: ['lockPageKeys', 'transaction', 'readSourceIncarnation'] }, async (engine) => {
+      await seed(engine, [['people/alice-example', ALICE]]);
+      const incarnation = (await engine.readSourceIncarnation('default'))!.incarnation;
+      const attempt = async (keys: Array<{ sourceId: string; slug: string; incarnation?: string }>) => {
+        try {
+          await engine.transaction(async (tx) => { await tx.lockPageKeys(keys); });
+          return 'ok';
+        } catch (error) {
+          const e = error as Error & { sourceId?: string };
+          return { name: e.name, message: e.message, ...(e.sourceId !== undefined ? { sourceId: e.sourceId } : {}) };
+        }
+      };
+      // One unhinted key, two unhinted keys, then hinted keys with the stale and the current incarnation.
+      const missing = await attempt([{ sourceId: 'no-such-source', slug: 'people/alice-example' }]);
+      const missingOfTwo = await attempt([{ sourceId: 'default', slug: 'people/alice-example' }, { sourceId: 'no-such-source', slug: 'notes/a' }]);
+      const stale = '00000000-0000-4000-8000-000000000000';
+      const recreated = await attempt([{ sourceId: 'default', slug: 'people/alice-example', incarnation: stale }]);
+      const matching = await attempt([{ sourceId: 'default', slug: 'people/alice-example', incarnation }, { sourceId: 'default', slug: 'people/absent', incarnation }]);
+      expect(missing).toEqual({ name: 'PageSourceMissingError', message: 'Page source does not exist: no-such-source', sourceId: 'no-such-source' });
+      expect(missingOfTwo).toEqual(missing);
+      expect(recreated).toMatchObject({ name: 'Error', message: 'Page source was recreated: default' });
+      expect(matching).toBe('ok');
+      return { missing, missingOfTwo, recreated, matching };
+    });
+
   parityTest(
     'findDuplicatePage(s) match by content hash or frontmatter id, never the page itself',
     { methods: ['findDuplicatePage', 'findDuplicatePages'] },
@@ -303,6 +329,74 @@ describe('engine parity: pages', () => {
       dry: { slugs: dry.slugs, count: dry.count, pages: dry.pages?.map((p) => ({ slug: p.slug, source_id: p.source_id })) },
       stillThere,
       real: { slugs: real.slugs, count: real.count },
+    };
+  });
+
+  // `purgeDeletedPages(0)` takes tombstones strictly older than the statement clock, and PGLite's clock can stamp the
+  // last soft delete with the same instant as the next statement. Waiting a few milliseconds moves the clock past it.
+  const tombstonesSettle = () => new Promise((resolve) => setTimeout(resolve, 5));
+
+  // The retirement holds (src/core/persistence/{atom,derived}-retirement-hold.ts). Neither arm can stand a tombstone days
+  // in the past here, so every stamped page is inside its window; the store unit tests in
+  // rust/crates/gbrain-store/src/page_ops.rs cover the windows closing and the atom "still restorable" rules.
+  parityTest(
+    'purgeDeletedPages keeps retired pages inside their hold windows',
+    { methods: ['purgeDeletedPages', 'softDeletePage', 'setConfig'] },
+    async (engine) => {
+      const atom: PageInput = {
+        type: 'atom' as PageInput['type'], title: 'An atom', compiled_truth: 'A claim.', timeline: '',
+        frontmatter: { retired_by: 'managed-reextract', source_slug: 'notes/origin', source_hash: 'pending:h1', retired_at: '2026-01-01' },
+      };
+      await seed(engine, [
+        ['notes/origin', NOTE],
+        ['atoms/held', atom],
+        ['notes/derived', { ...NOTE, frontmatter: { retired_by: 'extract-atoms' } }],
+        ['notes/chronicle', { ...NOTE, frontmatter: { retired_by: 'life-chronicle' } }],
+        ['notes/plain', NOTE],
+        ['notes/other', { ...NOTE, frontmatter: { retired_by: 'someone-else' } }],
+      ]);
+      for (const slug of ['atoms/held', 'notes/derived', 'notes/chronicle', 'notes/plain', 'notes/other']) await engine.softDeletePage(slug);
+      await tombstonesSettle();
+      const dryRuns: Record<string, string[]> = {};
+      for (const restoreDays of ['unset', '3', '365', 'abc', '2']) {
+        if (restoreDays !== 'unset') await engine.setConfig('generations.restore_days', restoreDays);
+        const dry = await engine.purgeDeletedPages(0, { dryRun: true });
+        expect(dry.count).toBe(dry.slugs.length);
+        dryRuns[restoreDays] = dry.slugs;
+      }
+      for (const slugs of Object.values(dryRuns)) expect(sorted(slugs)).toEqual(['notes/other', 'notes/plain']);
+      const real = await engine.purgeDeletedPages(0);
+      const purged = sorted(real.slugs);
+      expect(purged).toEqual(['notes/other', 'notes/plain']);
+      const kept: string[] = [];
+      for (const slug of ['atoms/held', 'notes/derived', 'notes/chronicle', 'notes/origin']) {
+        if (await engine.getPage(slug, { includeDeleted: true })) kept.push(slug);
+      }
+      expect(kept).toEqual(['atoms/held', 'notes/derived', 'notes/chronicle', 'notes/origin']);
+      const again = await engine.purgeDeletedPages(0, { dryRun: true });
+      return { dryRuns: Object.fromEntries(Object.entries(dryRuns).map(([k, v]) => [k, sorted(v)])), purged, count: real.count, kept, again: again.slugs };
+    },
+  );
+
+  parityTest('purgeDeletedPages skips excludeIds and treats an empty list as no filter', { methods: ['purgeDeletedPages', 'softDeletePage'] }, async (engine) => {
+    await seed(engine, [['notes/a', NOTE], ['notes/b', NOTE], ['notes/c', NOTE]]);
+    for (const slug of ['notes/a', 'notes/b', 'notes/c']) await engine.softDeletePage(slug);
+    await tombstonesSettle();
+    const idOf = async (slug: string) => (await engine.getPage(slug, { includeDeleted: true }))!.id;
+    const excludeIds = [await idOf('notes/b'), 987654321];
+    const dry = await engine.purgeDeletedPages(0, { dryRun: true, excludeIds });
+    const dryEmpty = await engine.purgeDeletedPages(0, { dryRun: true, excludeIds: [] });
+    const real = await engine.purgeDeletedPages(0, { excludeIds });
+    expect(sorted(real.slugs)).toEqual(['notes/a', 'notes/c']);
+    const rest = await engine.purgeDeletedPages(0, { excludeIds: [] });
+    expect(rest.slugs).toEqual(['notes/b']);
+    return {
+      dry: sorted(dry.slugs),
+      dryPages: sorted((dry.pages ?? []).map((p) => `${p.source_id}:${p.slug}:${p.deleted_at instanceof Date}`)),
+      dryEmpty: sorted(dryEmpty.slugs),
+      real: sorted(real.slugs),
+      realHasPages: 'pages' in real && real.pages !== undefined,
+      rest: rest.slugs,
     };
   });
 

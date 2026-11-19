@@ -21,10 +21,21 @@ import { describe, expect } from 'bun:test';
 import { createSource, parityArms, pick } from './harness.ts';
 import { chunk, installChunks } from './chunk-fixtures.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../../src/core/ai/gateway.ts';
+import { importFromContent } from '../../src/core/import-file.ts';
+import postgres from '#postgres';
+import { randomUUID } from 'node:crypto';
+import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 
 const { parityTest } = parityArms(testBackends());
 
 const NOTE = { type: 'note' as const, title: 'Import note', compiled_truth: 'alpha beta gamma', timeline: '' };
+
+/** A deterministic stub vector per input text: the import embeds without a provider request. */
+const DIMS = 1536;
+const vectorFor = (text: string, dims = DIMS) => Array.from({ length: dims }, (_, i) => Math.sin((text.length + 1) * (i + 1)));
+/** A brain whose embedding column is narrower than the 1536 placeholder the default write descriptor carries. */
+const NARROW = 768;
 
 describe('engine parity: import-path writes', () => {
   parityTest(
@@ -71,6 +82,86 @@ describe('engine parity: import-path writes', () => {
       expect(deleted).toBeNull();
       expect(unknown).toBeNull();
       return { stamped, deleted, unknown, otherUnchanged: true };
+    },
+  );
+
+  parityTest(
+    'upsertChunks with sealChunkerVersion writes over the rows it names, keeps the others and the text seal, and stamps the version; a bad version or another page refuses',
+    { methods: ['putPage', 'getPage', 'sealChunks', 'deleteChunksExcept', 'upsertChunks', 'getChunks', 'getPageSealState', 'transaction'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'work');
+      await engine.putPage('notes/sealv', NOTE);
+      await engine.putPage('notes/sealv', NOTE, { sourceId: 'work' });
+      const page = (await engine.getPage('notes/sealv'))!;
+      const other = (await engine.getPage('notes/sealv', { sourceId: 'work' }))!;
+      await installChunks(engine, 'notes/sealv', [chunk(0, 'zero'), chunk(1, 'one'), chunk(2, 'two')]);
+      await installChunks(engine, 'notes/sealv', [chunk(0, 'work zero')], { sourceId: 'work' });
+      const rows = async (sourceId = 'default', includeUnsealed = false) =>
+        (await engine.getChunks('notes/sealv', { sourceId, includeUnsealed })).map((c) => `${c.chunk_index}:${c.chunk_text}`);
+      const version = async (id: number) => (await engine.getPageSealState(id))?.chunker_version ?? null;
+      // The import's replacement: delete every row but the kept one, then write the fresh rows sealed.
+      const keep = (await engine.getChunks('notes/sealv')).filter((c) => c.chunk_text === 'one').map((c) => c.id);
+      await engine.deleteChunksExcept('notes/sealv', keep, { sourceId: 'default' });
+      await engine.upsertChunks('notes/sealv', [chunk(0, 'new zero'), chunk(2, 'new two'), chunk(3, 'three')], { sourceId: 'default', sealChunkerVersion: 5 });
+      const replaced = await rows();
+      expect(replaced).toEqual(['0:new zero', '1:one', '2:new two', '3:three']);
+      expect(await version(page.id)).toBe(5);
+      // A seal with no chunks only stamps the version: no row goes and the text seal stays.
+      await engine.upsertChunks('notes/sealv', [], { sealChunkerVersion: 6 });
+      const emptySeal = await rows();
+      expect(emptySeal).toEqual(replaced);
+      expect(await version(page.id)).toBe(6);
+      // A seal writes over a row it names and keeps every row it does not name.
+      await engine.upsertChunks('NOTES/SEALV', [chunk(1, 'one again')], { sealChunkerVersion: 7 });
+      const overwritten = await rows();
+      expect(overwritten).toEqual(['0:new zero', '1:one again', '2:new two', '3:three']);
+      // With the page id of the caller's own page write the seal checks it; deferSeal leaves the version to the caller.
+      await engine.upsertChunks('notes/sealv', [chunk(4, 'four')], { sealChunkerVersion: 8, pageId: page.id });
+      expect(await version(page.id)).toBe(8);
+      await engine.upsertChunks('notes/sealv', [chunk(5, 'five')], { sealChunkerVersion: 9, pageId: page.id, deferSeal: true });
+      const deferred = await rows();
+      expect(deferred).toEqual([...overwritten, '4:four', '5:five']);
+      expect(await version(page.id)).toBe(8);
+      // The page id of another page refuses the write, and nothing changes on either page.
+      await expect(engine.upsertChunks('notes/sealv', [chunk(6, 'six')], { sealChunkerVersion: 10, pageId: other.id }))
+        .rejects.toThrow('is not the page this transaction wrote');
+      // A version Postgres cannot store as a smallint refuses the write: a fraction, out of range, NaN, a NUL.
+      const refused: string[] = [];
+      for (const bad of [3.5, 40000, Number.NaN, '5\0' as unknown as number]) {
+        await expect(engine.upsertChunks('notes/sealv', [chunk(6, 'six')], { sealChunkerVersion: bad })).rejects.toThrow();
+        refused.push(String(bad).replace('\0', '\\0'));
+      }
+      // A page that does not exist refuses too.
+      await expect(engine.upsertChunks('notes/missing', [chunk(0, 'none')], { sealChunkerVersion: 5 })).rejects.toThrow(/not found/i);
+      // A later failure in the caller's transaction rolls the sealed write back.
+      await expect(engine.transaction(async (tx) => {
+        await tx.upsertChunks('notes/sealv', [chunk(6, 'six')], { sealChunkerVersion: 11 });
+        throw new Error('roll back');
+      })).rejects.toThrow('roll back');
+      const afterRefusals = await rows();
+      expect(afterRefusals).toEqual(deferred);
+      expect(await version(page.id)).toBe(8);
+      expect(await rows('work')).toEqual(['0:work zero']);
+      // The seal stays in the source it names.
+      const otherBefore = await version(other.id);
+      await engine.upsertChunks('notes/sealv', [chunk(1, 'work one')], { sourceId: 'work', sealChunkerVersion: 4 });
+      const work = await rows('work');
+      expect(work).toEqual(['0:work zero', '1:work one']);
+      expect(await version(other.id)).toBe(4);
+      expect(await version(page.id)).toBe(8);
+      // A page id with no chunks is not checked, and deferSeal without a page id still stamps.
+      await engine.upsertChunks('notes/sealv', [], { sourceId: 'work', sealChunkerVersion: 12, pageId: page.id });
+      const emptyPinned = await version(other.id);
+      await engine.upsertChunks('notes/sealv', [chunk(2, 'work two')], { sourceId: 'work', sealChunkerVersion: 13, deferSeal: true });
+      const deferredUnpinned = await version(other.id);
+      expect([emptyPinned, deferredUnpinned]).toEqual([12, 13]);
+      expect(await version(page.id)).toBe(8);
+      // Without the seal, upsertChunks replaces: the rows it does not name go.
+      await engine.upsertChunks('notes/sealv', [chunk(0, 'plain')]);
+      const hidden = await rows();
+      const unsealed = await rows('default', true);
+      expect(unsealed).toEqual(['0:plain']);
+      return { replaced, emptySeal, overwritten, deferred, refused, afterRefusals, otherBefore, work, emptyPinned, deferredUnpinned, hidden, unsealed, version: await version(page.id) };
     },
   );
 
@@ -219,6 +310,89 @@ describe('engine parity: import-path writes', () => {
       const gone = pick((await engine.getPage('notes/gone', { includeDeleted: true }))!, ['source_path'] as const);
       expect(gone.source_path ?? null).toBeNull();
       return { first, second, gone: gone.source_path ?? null };
+    },
+  );
+
+  parityTest(
+    'an embedded importFromContent stores each chunk with its vector, input hash and model label, under the resolved write column',
+    { methods: ['upsertChunks', 'getChunks', 'getChunkReuseRows'] },
+    async (engine) => {
+      // Import stamps the input hash and passes the resolved column (`embedding`) to upsertChunks as `embeddingColumn`.
+      configureGateway({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: DIMS, env: { OPENAI_API_KEY: 'test' } });
+      __setEmbedTransportForTests((async ({ values }: { values: string[] }) => ({ embeddings: values.map((v) => vectorFor(v)) })) as never);
+      try {
+        const result = await importFromContent(engine, 'concepts/example',
+          '---\ntype: concept\ntitle: Example\n---\n\n# Example\n\nA short body about latency budgets.');
+        const stored = await engine.getChunks('concepts/example', { includeEmbedding: true });
+        // getChunks carries no input hash; the import's reuse read does.
+        const hashes = new Map((await engine.getChunkReuseRows('concepts/example')).map((row) => [row.chunk_index, row.embedding_input_hash]));
+        expect(result.status).toBe('imported');
+        expect(stored.length).toBeGreaterThan(0);
+        const chunks = stored.map((c) => ({
+          index: c.chunk_index, text: c.chunk_text, source: c.chunk_source, model: c.model,
+          inputHash: hashes.get(c.chunk_index) ?? null, embedding: c.embedding ? Array.from(c.embedding) : null,
+        }));
+        for (const c of chunks) {
+          expect(c.embedding?.length).toBe(DIMS);
+          expect(c.inputHash).toMatch(/^[0-9a-f]{64}$/);
+          expect(c.model).toBe('openai:text-embedding-3-large');
+        }
+        return { status: result.status, chunks };
+      } finally {
+        __setEmbedTransportForTests(null);
+        resetGateway();
+      }
+    },
+  );
+  parityTest(
+    'an embedded importFromContent on a brain of another embedding width stores each chunk at that width',
+    { methods: ['setConfig', 'upsertChunks', 'getChunks', 'getChunkReuseRows'] },
+    async (_engine, backend, ctx) => {
+      // A new brain made while the gateway says NARROW dimensions: PGLite and Postgres create vector(NARROW) and record
+      // it in embedding_dimensions; the Rust store reads its width from that config key. Import still passes the
+      // default write descriptor, whose `dimensions` is the 1536 placeholder that the SQL engines never read.
+      configureGateway({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: NARROW, env: { OPENAI_API_KEY: 'test' } });
+      __setEmbedTransportForTests((async ({ values }: { values: string[] }) => ({ embeddings: values.map((v) => vectorFor(v, NARROW)) })) as never);
+      const { engine, config } = ctx.unconnectedEngine();
+      let dropDatabase: (() => Promise<void>) | undefined;
+      try {
+        if (backend === 'postgres') {
+          // The arm's own database is vector(1536): this case needs a database created at the narrow width.
+          const url = process.env.DATABASE_URL!;
+          assertSafeE2eDatabaseUrl(url);
+          const name = `gbrain_test_narrow_${randomUUID().replace(/-/g, '')}`;
+          const admin = postgres(url, { max: 1, prepare: false });
+          await admin.unsafe(`CREATE DATABASE ${name}`);
+          dropDatabase = async () => { await admin.unsafe(`DROP DATABASE ${name} WITH (FORCE)`); await admin.end(); };
+          const narrowUrl = new URL(url);
+          narrowUrl.pathname = `/${name}`;
+          await engine.connect({ ...config, database_url: narrowUrl.toString() } as never);
+        } else {
+          await engine.connect(config);
+        }
+        if (backend !== 'rust') await engine.initSchema();
+        await engine.setConfig('embedding_dimensions', String(NARROW));
+        const result = await importFromContent(engine, 'concepts/example',
+          '---\ntype: concept\ntitle: Example\n---\n\n# Example\n\nA short body about latency budgets.');
+        const stored = await engine.getChunks('concepts/example', { includeEmbedding: true });
+        const hashes = new Map((await engine.getChunkReuseRows('concepts/example')).map((row) => [row.chunk_index, row.embedding_input_hash]));
+        expect(result.status).toBe('imported');
+        expect(stored.length).toBeGreaterThan(0);
+        const chunks = stored.map((c) => ({
+          index: c.chunk_index, text: c.chunk_text, model: c.model,
+          inputHash: hashes.get(c.chunk_index) ?? null, embedding: c.embedding ? Array.from(c.embedding) : null,
+        }));
+        for (const c of chunks) {
+          expect(c.embedding?.length).toBe(NARROW);
+          expect(c.inputHash).toMatch(/^[0-9a-f]{64}$/);
+        }
+        return { status: result.status, chunks };
+      } finally {
+        await engine.disconnect().catch(() => undefined);
+        await dropDatabase?.();
+        __setEmbedTransportForTests(null);
+        resetGateway();
+      }
     },
   );
 });

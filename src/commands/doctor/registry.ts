@@ -196,6 +196,7 @@ import {
 import { STOP_DOCTOR, cheapTier, type DoctorContext, type DoctorEntry, type DoctorTier } from './context.ts';
 import {
   BUDGET_EXPIRED, DoctorBudgetError, budgetExpired, type BudgetExpired, ENTRY_BUDGET_KEY, ENTRY_BUDGET_MS_DEFAULT, budgetUnknownCheck, entryRunsAt,
+  capabilityRefusal, capabilityUnknownCheck,
   isBudgetUnknown, opsNotApplicableCheck, raceBudget, startDeferredDeadline,
 } from './budget.ts';
 import { StatementDeadlineError, deadlineBoundEngine, withStatementDeadline, type StatementDeadline } from '../../core/statement-deadline.ts';
@@ -204,6 +205,7 @@ import { infoCheck } from './check-fix.ts';
 import { withGitListingCache } from '../../core/git-visible-files.ts';
 import type { BrainEngine } from '../../core/engine.ts';
 import { applyLastKnown, lastKnownMode, queueRefresh, readLastKnown, unmeasuredCheck, writeLastKnown, type EntryOutcome, type LastKnownMode } from './last-known.ts';
+import { readConfigValue } from '../../core/config-values.ts';
 
 export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   resolverHealthEntry,
@@ -526,7 +528,13 @@ export function runDoctorRegistry(ctx: DoctorContext, entries: readonly DoctorEn
       const scope: StatementDeadline = { startedAt: started, deadlineAt: budgetMs === null ? null : started + budgetMs, expired: false, memo, runDeadlineAt: ctx.deadline?.deadlineAt ?? null };
       ctx.entryDeadlineAt = scope.deadlineAt ?? undefined;
       const run = withStatementDeadline(scope, () => entry.run(ctx))
-        .catch((error: unknown): BudgetExpired => { if (error instanceof StatementDeadlineError || scope.expired) return BUDGET_EXPIRED; throw error; });
+        .catch((error: unknown): BudgetExpired | Check[] => {
+          if (error instanceof StatementDeadlineError || scope.expired) return BUDGET_EXPIRED;
+          // An engine that refuses a capability this check reads (the Rust engine): each emitted check is unknown.
+          const refusal = capabilityRefusal(error);
+          if (refusal) return emitted.map((n) => capabilityUnknownCheck(n, refusal));
+          throw error;
+        });
       const result = budgetMs === null ? await run : await raceBudget(run, budgetMs);
       ctx.entryDeadlineAt = undefined;
       const elapsed = Date.now() - started;
@@ -596,10 +604,10 @@ async function readEntryBudget(ctx: DoctorContext): Promise<number> {
   const deadlineAt = Math.min(startedAt + SETUP_READ_MS, ctx.deadline?.deadlineAt ?? Infinity);
   try {
     const read = withStatementDeadline({ startedAt, deadlineAt, expired: false }, () =>
-      ctx.engine!.executeRaw<{ value: string }>('SELECT value FROM config WHERE key=$1', [ENTRY_BUDGET_KEY]));
-    const rows = await raceBudget(read, deadlineAt - startedAt);
-    if (budgetExpired(rows)) { read.catch(() => undefined); return ENTRY_BUDGET_MS_DEFAULT; }
-    const n = rows[0] === undefined ? NaN : Number(rows[0].value);
+      readConfigValue(ctx.engine!, ENTRY_BUDGET_KEY));
+    const value = await raceBudget(read, deadlineAt - startedAt);
+    if (budgetExpired(value)) { read.catch(() => undefined); return ENTRY_BUDGET_MS_DEFAULT; }
+    const n = value === undefined ? NaN : Number(value);
     return Number.isSafeInteger(n) && n > 0 ? n : ENTRY_BUDGET_MS_DEFAULT;
   } catch {
     return ENTRY_BUDGET_MS_DEFAULT;

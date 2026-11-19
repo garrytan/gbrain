@@ -37,8 +37,9 @@ import { resetPgliteState, truncateCascade } from '../helpers/reset-pglite.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import type { TestBackend } from '../helpers/test-backends.ts';
 import { armHas, isCapabilityRefusal, missingCapability, type EngineCapability } from './arm-capabilities.ts';
+import { checkRustTally } from './rust-tally.ts';
 import {
-  createRustSource, newRustBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
+  archiveRustSource, createRustSource, newRustBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
 } from './rust-arm.ts';
 
 /** The backends a parity arm can run on: the SQL ones every suite selects, and the opt-in Rust engine. */
@@ -200,6 +201,21 @@ export async function createSource(engine: BrainEngine, backend: ParityBackend, 
   }
 }
 
+/** Fixture: archive a source (BrainEngine has no typed "archive source"). Harness-only SQL, as in `createSource`. */
+export async function archiveSource(engine: BrainEngine, backend: ParityBackend, id: string): Promise<void> {
+  switch (backend) {
+    case 'rust':
+      await archiveRustSource(engine, id);
+      return;
+    case 'pglite':
+    case 'postgres':
+      await engine.executeRaw(`UPDATE sources SET archived = true WHERE id = $1`, [id]);
+      return;
+    default:
+      return assertNever(backend);
+  }
+}
+
 /**
  * Fixture: start belief-ledger coverage on a source, so its ledger probe reports a coverage event. The ledger has no
  * typed enable method; this runs the production enable path behind the backend switch, as `createSource` does.
@@ -248,7 +264,7 @@ function recordingEngine(engine: BrainEngine, calls: Set<string>, refusals: unkn
       return (...args: unknown[]) => {
         calls.add(prop);
         // The transaction handle is an engine too: record the calls made on it.
-        if (prop === 'transaction' && typeof args[0] === 'function') {
+        if ((prop === 'transaction' || prop === 'transactionDirect') && typeof args[0] === 'function') {
           const fn = args[0] as (tx: BrainEngine) => unknown;
           args = [(tx: BrainEngine) => fn(recordingEngine(tx, calls, refusals)), ...args.slice(1)];
         }
@@ -285,6 +301,9 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
   const selected: ParityBackend[] = [...backends, ...(rustArmRequested() ? ['rust' as const] : [])];
   const testFile = callerTestFile(new Error().stack);
   const tally: RustTally = { compared: 0, refused: 0, diverged: 0 };
+  // Cases this file declared, and the ones the Rust arm skipped on an `n/a` capability (rust-tally.ts).
+  let registered = 0;
+  let skipped = 0;
   beforeAll(async () => {
     const opened: ParityArm[] = [];
     try {
@@ -301,10 +320,13 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
     for (const arm of closing) await arm.close();
     if (closing.some((arm) => arm.backend === 'rust')) {
       console.log(`[rust arm] ${testFile}: ${tally.compared} equal to PGLite, ${tally.refused} stopped on a typed refusal, ${tally.diverged} expected divergences`);
+      const better = checkRustTally(testFile, { ...tally, skipped }, registered);
+      if (better !== null) console.log(better);
     }
   }, 60_000);
 
   function parityTest<T>(name: string, opts: ParityCaseOpts, scenario: ParityScenario<T>): void {
+    registered++;
     test(name, async () => {
       expect(arms.length).toBeGreaterThan(0);
       const results: Array<{ backend: ParityBackend; value: T }> = [];
@@ -321,7 +343,10 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
           },
         };
         const runs = armHas(arm.backend, opts.requires);
-        if (!runs && missingCapability(opts.requires!).kind === 'n/a') continue;
+        if (!runs && missingCapability(opts.requires!).kind === 'n/a') {
+          if (arm.backend === 'rust') skipped++;
+          continue;
+        }
         if (arm.backend === 'rust') {
           const divergence = readDivergences().find((row) => row.file === testFile && row.name === name);
           try {

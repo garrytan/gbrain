@@ -6,6 +6,7 @@
 import { opError, type OperationContext } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import type { BrainEngine } from '../engine.ts';
+import { sourceConfigText } from '../source-rows.ts';
 
 export const STORAGE_SOURCE_ID = 'storage';
 export const STORAGE_ROLE = 'storage_manifest';
@@ -32,6 +33,6 @@ export function assertStorageSourceWriter(ctx: OperationContext, sourceId: strin
 
 
 /** Derived writers (dream's phases, enrichment) skip the storage shelf: only the storage verbs change a card. */
-export async function isStorageManifestSource(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<boolean> {
-  return (await engine.executeRaw('SELECT 1 FROM sources WHERE id = $1 AND config->>\'role\' = $2', [sourceId, STORAGE_ROLE])).length > 0;
+export async function isStorageManifestSource(engine: Pick<BrainEngine, 'getSource'>, sourceId: string): Promise<boolean> {
+  return sourceConfigText((await engine.getSource(sourceId))?.config, 'role') === STORAGE_ROLE;
 }

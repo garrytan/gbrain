@@ -23,11 +23,26 @@
     "addTimelineEntry#default": {},
     "batchLoadEmotionalInputs#default": {},
     "batchLoadEmotionalInputs#slugs": {},
+    "clearCodeTraversalCache#allSources": {
+      "raw": 1
+    },
+    "clearCodeTraversalCache#sourceId": {
+      "raw": 1
+    },
     "consolidateFact#default": {},
     "countChunklessPagesWithContent#default": {},
     "countChunklessPagesWithContent#sourceId": {},
+    "countDefaultSourceSplit#default": {
+      "raw": 1
+    },
     "countPagesBy#grouped+since+remote": {},
     "countPagesBy#totals": {},
+    "countSourcePages#default": {
+      "raw": 1
+    },
+    "countSourcePages#includeDeleted": {
+      "raw": 1
+    },
     "countStaleChunks#default": {
       "raw": 1
     },
@@ -127,6 +142,9 @@
     },
     "getChunksWithEmbeddings#default": {},
     "getChunksWithEmbeddings#sourceId+includeUnsealed": {},
+    "getCodeTraversalCache#default": {
+      "raw": 1
+    },
     "getContradictionCacheEntry#default": {},
     "getEdgesByChunk#default": {},
     "getEdgesByChunk#in+edgeType": {},
@@ -184,6 +202,7 @@
     "insertFact#supersedeId+embedding": {},
     "insertFacts#default": {},
     "insertFacts#deleteForPageFirst": {},
+    "insertSource#default": {},
     "invalidateContentDriftEmbeddings#default": {
       "raw": 3,
       "tx": 1
@@ -234,6 +253,9 @@
     "listLinkSources#default": {},
     "listLinkSources#sourceId": {},
     "listLinkSources#sourceIds": {},
+    "listLocalPathSources#default": {
+      "raw": 1
+    },
     "listPages#default": {},
     "listPages#effective_after": {},
     "listPages#effective_before": {},
@@ -250,6 +272,9 @@
     "listPrefixSampledPages#default": {},
     "listPrefixSampledPages#sourceIds": {},
     "listSourceLocalPaths#default": {},
+    "listSourceRoutingRows#default": {
+      "raw": 1
+    },
     "listStaleChunks#default": {
       "raw": 1
     },
@@ -271,6 +296,9 @@
     "listStaleFrontmatterKeyPages#default": {},
     "listStalePagesForExtraction#afterPageId+versionTs+sourceId": {},
     "listStalePagesForExtraction#default": {},
+    "listStaleSyncSourceIds#default": {
+      "raw": 1
+    },
     "listStaleTakes#default": {},
     "listSupersessions#default": {},
     "listSupersessions#since+visibility": {},
@@ -282,6 +310,9 @@
       "raw": 4,
       "tx": 1
     },
+    "lockSourceRow#default": {
+      "raw": 1
+    },
     "markPagesAttendanceBlocked#default": {},
     "markPagesExtractedBatch#default": {},
     "mergeOntologyFact#corroborate": {},
@@ -292,6 +323,9 @@
     },
     "purgeDeletedPages#default": {},
     "purgeDeletedPages#dryRun": {},
+    "putCodeTraversalCache#default": {
+      "raw": 1
+    },
     "putContradictionCacheEntry#default": {},
     "putPage#blankBody": {
       "raw": 5,
@@ -317,6 +351,12 @@
     "readPageSnapshot#default": {},
     "readPageSnapshot#sourceId": {},
     "readPageSnapshotsBatch#default": {},
+    "readSourceChunkerVersion#default": {
+      "raw": 1
+    },
+    "readSourceRow#default": {
+      "raw": 1
+    },
     "refreshPageBody#default": {},
     "removeLink#default": {},
     "removeLink#linkSource": {},
@@ -398,6 +438,9 @@
       "tx": 1
     },
     "setPageEmbeddingSignature#default": {},
+    "setSourceChunkerVersion#default": {
+      "raw": 1
+    },
     "softDeletePage#default": {},
     "softDeletePage#sourceId": {},
     "softDeletePages#default": {},

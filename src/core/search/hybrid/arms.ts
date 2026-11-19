@@ -14,6 +14,7 @@ import { type VectorArm, pushVectorList } from '../fusion-lists.ts';
 import { buildRelationalArm } from '../relational-recall.ts';
 import { isAmbiguousModalityQuery } from '../query-intent.ts';
 import { isDbAccessFailure } from '../../pg-access-classify.ts';
+import { rethrowCapabilityMissing } from '../../rust-engine/errors.ts';
 import { isKeywordSkippedAfterTimeout } from '../../postgres-engine/keyword-timeout-cache.ts';
 import { isTimeoutError, pushDegraded } from './degraded.ts';
 import { markKeywordHits } from '../evidence.ts';
@@ -80,6 +81,8 @@ export async function runLexicalArms(req: HybridRequest, earlyModality: Modality
       : await Promise.all([
           req.timer.overlap('keyword_arm', engine.searchKeyword(query, opts?.useCache === false ? searchOpts : { ...searchOpts, keywordTimeoutCache: true })).catch((err: unknown) => {
             if (isDatetimeInputError(err)) throw err;
+            // An engine that cannot serve the arm refuses the search; a skipped arm would read as "no matches".
+            rethrowCapabilityMissing(err);
             if (isKeywordSkippedAfterTimeout(err)) {
               pushDegraded(degraded, 'keyword_arm_failed', 'skipped_after_timeout');
               warnOncePerProcess('search-keyword-arm-skipped', `[gbrain] searchKeyword arm skipped (fail-open): ${err.message}`);
@@ -96,6 +99,7 @@ export async function runLexicalArms(req: HybridRequest, earlyModality: Modality
           }),
           req.timer.overlap('title_arm', engine.searchTitles(query, searchOpts)).catch((err: unknown) => {
             if (isDatetimeInputError(err)) throw err;
+            rethrowCapabilityMissing(err);
             if (isDbAccessFailure(err)) titleAccessError = err;
             pushDegraded(degraded, 'title_arm_failed', isTimeoutError(err) ? 'timeout' : 'provider_error');
             warnOncePerProcess(

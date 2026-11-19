@@ -130,9 +130,7 @@ export async function resolveSymbolEdgesIncremental(
     ms: 0,
   };
 
-  const [owned] = await engine.executeRaw<{ e: boolean }>(
-    'SELECT EXISTS(SELECT 1 FROM code_edges_symbol WHERE source_id = $1) AS e', [opts.sourceId]);
-  if (!owned?.e) {
+  if (!(await engine.hasCodeEdgesSymbol(opts.sourceId))) {
     stats.ms = Date.now() - start;
     return stats;
   }

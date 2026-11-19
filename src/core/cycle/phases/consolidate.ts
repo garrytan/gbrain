@@ -204,22 +204,7 @@ export async function runPhaseConsolidate(
   // GBRA-574: an unbacked name key has none, so its bucket is never read). Uses the partial idx_facts_unconsolidated index.
   let buckets: Array<{ source_id: string; entity_slug: string; count: number }>;
   try {
-    buckets = await engine.executeRaw<{
-      source_id: string; entity_slug: string; count: number;
-    }>(`
-      SELECT source_id, entity_slug, COUNT(*)::int AS count
-      FROM facts
-      WHERE consolidated_at IS NULL
-        AND expired_at IS NULL
-        AND (valid_until IS NULL OR valid_until > now())
-        AND entity_slug IS NOT NULL
-        AND EXISTS (SELECT 1 FROM pages bucket_page WHERE bucket_page.source_id = facts.source_id AND bucket_page.slug = facts.entity_slug AND bucket_page.deleted_at IS NULL)
-        AND (attributed_to IS NULL OR attributed_to = 'user')
-        AND ($2::boolean=false OR visibility='world')
-        AND ($1::text IS NULL OR source_id=$1) AND NOT ${readersSourcedFactSql('facts')}
-      GROUP BY source_id, entity_slug
-      HAVING COUNT(*) >= $3
-    `, [opts.sourceId ?? null, managed, minPerBucket]);
+    buckets = await engine.countUnconsolidatedFactsBySource({ sourceId: opts.sourceId, worldOnly: managed, minPerBucket });
   } catch (err) {
     return {
       phase: 'consolidate',

@@ -42,6 +42,7 @@ import { hybridSearch } from '../core/search/hybrid.ts';
 import { INTERNAL_BREADTH_SEARCH_OPTS } from '../core/search/internal-breadth.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
+import { rethrowCapabilityMissing } from '../core/rust-engine/errors.ts';
 
 export interface WhoknowsOpts extends PageReadPolicy {
   topic: string;
@@ -227,7 +228,10 @@ export async function findExperts(
     slug: c.slug,
     source_id: c.source_id ?? 'default',
   }));
-  const salienceMap = await engine.getSalienceScores(refs, opts).catch(() => new Map<string, number>());
+  const salienceMap = await engine.getSalienceScores(refs, opts).catch((e: unknown) => {
+    rethrowCapabilityMissing(e);
+    return new Map<string, number>();
+  });
   // Admission must happen AFTER optional work: that work can race a source or
   // visibility edit. This read is required for trusted local callers too.
   const dateMap = await engine.getEffectiveDates(refs, opts);
@@ -351,7 +355,8 @@ export async function runWhoknows(
     // CLI: ctx.remote=false so the trust gate accepts the resolution.
     const { loadActivePackBestEffort, expertTypesFromPack } = await import('../core/schema-pack/index.ts');
     const fakeCtx = { engine, config: {}, logger: console, dryRun: false, remote: false, sourceId: undefined } as unknown as import('../core/operations.ts').OperationContext;
-    const pack = await loadActivePackBestEffort(fakeCtx);
+    // An engine that cannot read the pack refuses: an empty filter would print [].
+    const pack = await loadActivePackBestEffort(fakeCtx, { rethrowRefusal: true });
     const types = pack ? (expertTypesFromPack(pack.manifest) as PageType[]) : [];
     results = await findExperts(engine, {
       topic: parsed.topic,

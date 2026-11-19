@@ -59,7 +59,7 @@ test/budget/no-pricing-registration.test.ts	explicit cap + unpriced model: refus
 test/budget/no-pricing-registration.test.ts	trust boundary: a remote caller cannot register a price	3	readFileSync
 test/build-llms.test.ts	CLAUDE.md restructure content contracts	5	readFileSync
 test/build-llms.test.ts	build-llms generator	7	readFileSync
-test/canonical-writer-inventory.test.ts	(file-level)	4	readFileSync
+test/canonical-writer-inventory.test.ts	(file-level)	5	readFileSync
 test/chat-key-plane.test.ts	#3944 both planner surfaces share the helper (source guard)	2	readFileSync,source-surface-helper
 test/check-bootstrap-guards.test.ts	check-grok-pin.sh	9	readFileSync
 test/check-bootstrap-guards.test.ts	check-opencode-pin.sh	6	readFileSync
@@ -160,6 +160,7 @@ test/e2e/workspace-generic-compat.test.ts	generic agent-workspace compat (INSTAL
 test/embedding-dim-check-facts.test.ts	doctor checkFactsEmbeddingWidthConsistency wiring (T6)	4	doctor-source-helper
 test/embedding-dim-check-facts.test.ts	postgres-engine fact insert cast (T6, codex #20)	1	source-surface-helper
 test/enforced-member-classes.test.ts	enforced member allow-list	6	readFileSync
+test/engine-sql-jobs.test.ts	(file-level)	7	readFileSync
 test/env-trust-protected-keys.test.ts	CWD_DOTENV_PROTECTED_KEYS covers every suspicious GBRAIN_* env read in src/	3	readFileSync
 test/error-catalogue.test.ts	error code registry (agent contract v1)	5	readFileSync
 test/error-registry-6317-contract.test.ts	#6317 codes are registered with a full envelope	3	readFileSync
@@ -462,6 +463,7 @@ test/sync.test.ts	resolveSlugByPathOrSourcePath (CJK wave v0.32.7, codex F4)	3	s
 test/sync.test.ts	sync auto-embed arguments	2	source-surface-helper
 test/sync.test.ts	sync regression — #132 nested transaction deadlock	3	source-surface-helper
 test/takes-reservation-callers.test.ts	(file-level)	1	readFileSync
+test/telemetry-capability-refusal.test.ts	a refused telemetry read refuses instead of reporting invented values	7	readFileSync
 test/template-repo-generator.test.ts	generateTemplateTree	0	readFileSync
 test/template-repo-generator.test.ts	renderTemplateReadme	5	readFileSync
 test/think-embed-question-wiring.serial.test.ts	#3734 — CRAG think escalation wires embedQuestion (source pin)	1	readFileSync

@@ -35,11 +35,12 @@
  */
 import { relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
+import type { SourceStateOptions } from '../engine-sql/write-misc.ts';
 import { OperationError } from '../ops/contract.ts';
 import { withoutReadDeadline } from '../read-deadline.ts';
-import { authorizeStoredRequest, storedAuthorizationReads } from './authority.ts';
+import { authorizeStoredRequest, sharedWriterRow, storedAuthorizationReads } from './authority.ts';
 import { hostIdFor } from './identity.ts';
-import { acquireWorktree, acquireWorktreeShared, getWorktreeBinding, guardOwnership, joinWorktreeLease, MANAGED_MODE_SQL } from './ownership.ts';
+import { acquireWorktree, acquireWorktreeShared, getWorktreeBinding, guardOwnership, joinWorktreeLease, MANAGED_MODE_SQL, sharedWorktreeBinding } from './ownership.ts';
 import { isLockOpenFailure, type NativeLockHandle } from './native-lock.ts';
 import { awaitLaneBegin, awaitLaneTurn, LaneAbort, laneApplyBegin, laneClaimed, laneFinished, lanePolicy, stepDownLanes, type LaneState } from './sync-lanes.ts';
 import { laneFaultBlockedReason, windowPredecessor } from './sync-window.ts';
@@ -140,16 +141,13 @@ const flat = (sql: string) => {
 };
 /**
  * Reads a group transaction repeats for every member and whose answer cannot
- * change before it commits: the source's local path (its source row is held
+ * change before it commits: the source's state (`readSourceState` unlocked; its source row is held
  * FOR SHARE by authorization, whose own reads `transactionMemo` answers) and
  * the owner's host binding (its worktree row is held FOR SHARE by the
  * ownership guard). Nothing in a page publication writes them.
  */
 const HOST_BINDING_SQL = 'SELECT h.local_path FROM persistence_host_bindings h JOIN persistence_worktrees w ON w.id=h.worktree_id AND w.owner_host_id=h.host_id WHERE w.id=$1::uuid';
-const STABLE_IN_GROUP = new Set([
-  'SELECT local_path FROM sources WHERE id=$1 AND incarnation=$2::uuid',
-  HOST_BINDING_SQL,
-]);
+const STABLE_IN_GROUP = new Set([HOST_BINDING_SQL]);
 /**
  * #6007: the group transaction seen through a per-transaction read snapshot.
  * The stable reads above and config values (`getConfig`, one consistent value
@@ -168,6 +166,8 @@ function groupReads(tx: BrainEngine): BrainEngine {
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) =>
       STABLE_IN_GROUP.has(flat(sql)) ? once(JSON.stringify([flat(sql), params ?? null]), () => target.executeRaw(sql, params, opts)) : target.executeRaw(sql, params, opts);
     if (key === 'getConfig') return (name: string) => once(`config:${name}`, () => target.getConfig(name));
+    if (key === 'readSourceState') return (sourceId: string, opts?: SourceStateOptions) =>
+      opts?.lock ? target.readSourceState(sourceId, opts) : once(JSON.stringify([key, sourceId]), () => target.readSourceState(sourceId));
     const value = Reflect.get(target, key, target);
     return typeof value === 'function' ? value.bind(target) : value;
   } });
@@ -176,20 +176,19 @@ function groupReads(tx: BrainEngine): BrainEngine {
 /**
  * #5984: reads a claimed group's preparation repeats for every member and that
  * publication checks again inside the group transaction (the local writer, the
- * source binding and root, the coordinator switch, the shared skill packs); the
- * source's own row is `getSource`, below. Plain reads only; a locking read is never answered here.
+ * source root, the coordinator switch); the source's own row (`getSource`,
+ * `readSourceState`), its worktree binding (`getWorktreeBinding`) and the shared
+ * skill packs are typed reads, below.
+ * Plain reads only; a locking read is never answered here.
  */
 const STABLE_IN_PREPARATION = new Set([
   'SELECT lane,revoked_at,grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid',
-  'SELECT s.source_id,s.source_incarnation,s.worktree_id,s.relative_path, s.topology_generation::text AS topology_generation,w.owner_host_id,w.owner_epoch::text AS owner_epoch,w.state, h.local_path,h.coordination_path FROM persistence_source_bindings s JOIN persistence_worktrees w ON w.id=s.worktree_id LEFT JOIN persistence_host_bindings h ON h.worktree_id=w.id AND h.host_id=$2::uuid WHERE s.source_id=$1',
   'SELECT local_path FROM sources WHERE id=$1',
   MANAGED_MODE_SQL,
-  "SELECT to_regclass('shared_skill_packs') IS NOT NULL AS present",
-  'SELECT p.source_id,p.source_incarnation,s.local_path AS source_root, h.local_path AS worktree_root,b.relative_path FROM shared_skill_packs p JOIN sources s ON s.id=p.source_id AND s.incarnation=p.source_incarnation LEFT JOIN persistence_source_bindings b ON b.source_id=p.source_id AND b.source_incarnation=p.source_incarnation LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid',
 ]);
 /**
  * #5984: the engine a claimed group's members are prepared with. The reads
- * above, source rows (`getSource`) and config values (`getConfig`, `getAllConfig`) are answered once for
+ * above, source rows (`getSource`), worktree bindings (`getWorktreeBinding`) and config values (`getConfig`, `getAllConfig`) are answered once for
  * the whole preparation, as if every member were prepared at the same moment;
  * publication re-checks what it relies on under its locks. It lives only for
  * one group's preparation; a failed read is not kept. `also` adds plain reads a
@@ -213,9 +212,17 @@ export function preparationReads(engine: BrainEngine, imports?: ImportGroupReads
         ? once(JSON.stringify([flat(sql), params ?? null]), () => target.executeRaw(sql, params)) : target.executeRaw(sql, params, opts);
     // GBRA-75 wave 10: every config key a member reads comes from one config read for the group (the same value per key).
     if (key === 'getConfig') return (name: string) => once('config:*', () => target.getAllConfig()).then(all => Object.hasOwn(all, name) ? all[name]! : null);
+    if (key === 'readLocalWriterRow') return sharedWriterRow(target, reads, once);
     if (key === 'getAllConfig') return () => once('config:*', () => target.getAllConfig()).then(all => ({ ...all }));
     // The source row (contextual retrieval policy) is one read per source for the group, taking no member's deadline or signal.
     if (key === 'getSource') return (sourceId: string) => once(`source:${sourceId}`, () => withoutReadDeadline(() => target.getSource(sourceId)));
+    // The source's unlocked state and the shared skill packs (engine-sql/write-misc.ts), once for the group.
+    if (key === 'readSourceState') return (sourceId: string, opts?: SourceStateOptions) =>
+      opts?.lock ? target.readSourceState(sourceId, opts) : once(JSON.stringify([key, sourceId]), () => target.readSourceState(sourceId));
+    if (key === 'sharedSkillPackTablePresent') return () => once(key, () => target.sharedSkillPackTablePresent());
+    if (key === 'listSharedSkillPackRoots') return (hostId: string) => once(JSON.stringify([key, hostId]), () => target.listSharedSkillPackRoots(hostId));
+    // The worktree binding, once per source and host for the group, taking no member's deadline or signal (an absence is read again).
+    if (key === 'getWorktreeBinding') return sharedWorktreeBinding(reads, once, (sourceId, hostId) => withoutReadDeadline(() => target.getWorktreeBinding(sourceId, hostId)));
     if (imports && key === 'readPageSnapshot') return (slug: string, opts?: Parameters<BrainEngine['readPageSnapshot']>[1]) =>
       imports.snapshot(slug, opts) ?? target.readPageSnapshot(slug, opts);
     if (imports && key === 'findDuplicatePage') return (sourceId: string, opts: Parameters<NonNullable<BrainEngine['findDuplicatePage']>>[1]) => imports.findDuplicate(sourceId, opts);
