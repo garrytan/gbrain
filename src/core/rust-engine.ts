@@ -161,6 +161,10 @@ export class RustEngine {
     for (const stop of stops) {
       try { await stop(); } catch { /* a stop barrier never blocks shutdown */ }
     }
+    // An open still in flight owns its role until it settles: it sees the new generation, closes the store it made and
+    // leaves the role itself. Reading `_owner` before that would release the owner lock while the store is still
+    // opening, and another process could then open the same brain.
+    await opening?.catch(() => undefined);
     const owner = this._owner;
     this._owner = null;
     const leave = this._leaveOwner;
@@ -173,11 +177,17 @@ export class RustEngine {
     const store = this._store;
     this._store = null;
     this._connected = false;
-    // The owner stops taking calls before its store closes, and gives up the lock last.
-    if (owner?.role === 'owner') await owner.server.close();
-    await store?.close();
-    if (owner?.role === 'owner') await owner.lock.release();
-    await opening?.catch(() => undefined);
+    // The owner stops taking calls before its store closes, and gives up the lock last. The lock is released even when
+    // a close fails, and the close error is rethrown after it, so a failed close never strands the brain.
+    try {
+      try {
+        if (owner?.role === 'owner') await owner.server.close();
+      } finally {
+        await store?.close();
+      }
+    } finally {
+      if (owner?.role === 'owner') await owner.lock.release();
+    }
   }
 
   /** The open store a served member runs on, waiting for an open in progress; rejects `engine_closed` otherwise. */

@@ -108,3 +108,29 @@ export function ownerResponseTooLarge(member: string, maxBytes: number): Operati
     'Narrow the call (a smaller limit or one page at a time) and run it again.',
     { detail: `member=${member} via=owner_ipc max_bytes=${maxBytes}` });
 }
+
+export type OwnerIpcProtocolReason = 'version_mismatch' | 'hello_missing' | 'duplicate_id' | 'args_not_array' | 'result_undecodable';
+
+/**
+ * A frame broke the owner protocol (`owner_ipc_protocol`). `member` is the call it refused, or null for the
+ * connection's hello. Only `result_undecodable` may follow a call the owner ran; every other reason refuses before any
+ * work.
+ */
+export function ownerIpcProtocol(reason: OwnerIpcProtocolReason, member: string | null, detail: string): OperationError {
+  const what = member ?? 'The connection to the brain owner';
+  const messages: Record<OwnerIpcProtocolReason, string> = {
+    version_mismatch: `${what} was refused: this process and the brain owner speak different owner protocol versions (${detail}), so nothing was sent.`,
+    hello_missing: `${what} came before the connection's hello, so the owner did not run it.`,
+    duplicate_id: `${what} reused the id of a call still running on this connection, so the owner did not run it.`,
+    args_not_array: `${what} sent arguments that are not a list, so the owner did not run it.`,
+    result_undecodable: `The brain owner's answer to ${what} could not be read in this process; the owner may have run it.`,
+  };
+  return opError('owner_ipc_protocol', messages[reason],
+    reason === 'version_mismatch'
+      ? 'Run the same gbrain version in every process on this brain: upgrade, then restart the older process or gbrain serve.'
+      : reason === 'result_undecodable'
+        ? 'Read the data again before you retry a write, and report this as a gbrain bug with the code, reason and detail.'
+        : 'Report this as a gbrain bug with the code, reason and detail; the call did not run.',
+    { reason, retryable: false,
+      detail: `${member === null ? '' : `member=${member} `}via=owner_ipc reason=${reason} ${detail}`.trim() });
+}

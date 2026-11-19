@@ -20,7 +20,8 @@ import { CODES } from '../src/core/error-registry.ts';
 import { ENGINE_CAPABILITIES } from '../src/core/engine-capabilities.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { connectOwner, installOwnerClient } from '../src/core/rust-engine/owner-ipc/client.ts';
-import { ownerSocketPath } from '../src/core/rust-engine/owner-ipc/protocol.ts';
+import { ownerLockPath, ownerSocketPath } from '../src/core/rust-engine/owner-ipc/protocol.ts';
+import { tryAcquireNativeLock } from '../src/core/persistence/native-lock.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
 /** A store that opens and closes and does nothing else: the lifecycle tests need no real brain. */
@@ -261,6 +262,54 @@ describe('openRustEngine', () => {
       }
     }, 30_000);
   }
+
+  test('a disconnect during a pending open keeps the owner lock until the open has settled', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-rust-shell-lock-'));
+    const db = join(dir, 'brain.rust');
+    const gate = deferredAddon();
+    const engine = openRustEngine({ addon: gate.addon, databasePath: db });
+    const settled = engine.connect({ engine: 'pglite', database_path: db }).then(() => 'resolved', (error: { code?: string }) => error.code);
+    try {
+      await gate.opening();
+      const disconnecting = engine.disconnect();
+      await Bun.sleep(50);
+      // The store open is still running, so no other process may take the brain yet.
+      const early = await tryAcquireNativeLock(ownerLockPath(db));
+      await early?.release();
+      expect(early).toBeNull();
+      gate.finishOpen();
+      await disconnecting;
+      expect(await settled).toBe('engine_closed');
+      expect(gate.brains.map((brain) => brain.isOpen)).toEqual([false]);
+      const after = await tryAcquireNativeLock(ownerLockPath(db));
+      expect(after).not.toBeNull();
+      await after?.release();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a store close that rejects still releases the owner lock, and disconnect rethrows the close error', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-rust-shell-close-'));
+    const db = join(dir, 'brain.rust');
+    class BrokenCloseBrain extends FakeBrain {
+      async close() { this.isOpen = false; throw Object.assign(new Error('store close failed'), { code: 'store_io' }); }
+    }
+    const engine = openRustEngine({ addon: { ...addon, Brain: BrokenCloseBrain }, databasePath: db });
+    try {
+      await engine.connect({ engine: 'pglite', database_path: db });
+      expect(engine.ownerRole).toBe('owner');
+      const outcome = await engine.disconnect().then(() => 'resolved', (error: unknown) => error);
+      expect(outcome).not.toBe('resolved');
+      expect(engine.connected).toBe(false);
+      expect(engine.ownerRole).toBeNull();
+      const lock = await tryAcquireNativeLock(ownerLockPath(db));
+      expect(lock).not.toBeNull();
+      await lock?.release();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 
   test('a partial or unknown outcome says what may have been written', () => {
     expect(capabilityMissing('raw_sql', 'x', 'partial').detail).toContain('written=partial');

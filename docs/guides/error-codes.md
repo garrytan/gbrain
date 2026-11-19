@@ -3856,6 +3856,16 @@ More: [docs/guides/repair.md#origin-twins](../../docs/guides/repair.md#origin-tw
 |---|---|---|---|---|---|---|
 | Sources cannot claim overlapping canonical directories. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### owner_ipc_protocol
+
+<a id="owner_ipc_protocol"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A frame on a Rust brain's owner socket broke the owner protocol, so the call or the connection it came on was refused; `reason` says which rule. | Processes on one Rust brain reach its owner over `<database_path>/.gbrain-owner.sock` and must speak one protocol version. `version_mismatch`: the two processes run gbrain builds with different owner protocol versions, so neither reads the other's frames. `hello_missing`: a call came before the connection's hello, so its version was never checked; it did not run. `duplicate_id`: a call reused the id of a call still running on that connection; the new call did not run and the first one keeps running. `args_not_array`: a call's arguments were not a list; it did not run. `result_undecodable`: this process could not read the owner's answer to one call; that call fails, the owner may have run it, and other calls on the connection go on. | version_mismatch: run the same gbrain version in every process on the brain (upgrade, then restart the older process or gbrain serve). Any other reason is a gbrain bug: report it with the code, reason and detail; for result_undecodable read the data again before you retry a write. | host_admin | `gbrain doctor --json` | 1 | no |
+
+Reasons: `version_mismatch`, `hello_missing`, `duplicate_id`, `args_not_array`, `result_undecodable`.
+
 ### owner_marker_missing
 
 <a id="owner_marker_missing"></a>

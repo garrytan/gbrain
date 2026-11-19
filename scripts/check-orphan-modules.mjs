@@ -64,6 +64,7 @@ const PERMITTED_TEST_ONLY = [
   { path: 'src/core/rust-engine/owner-ipc/codec.ts', reason: 'held: the Rust engine owner socket (rust-owner-ipc); reached through src/core/rust-engine.ts connect once the addon loader wires openRustEngine' },
   { path: 'src/core/rust-engine/owner-ipc/protocol.ts', reason: 'held: the Rust engine owner socket (rust-owner-ipc); reached through src/core/rust-engine.ts connect once the addon loader wires openRustEngine' },
   { path: 'src/core/rust-engine/owner-ipc/routes.ts', reason: 'held: the Rust engine owner socket (rust-owner-ipc); reached through src/core/rust-engine.ts connect once the addon loader wires openRustEngine' },
+  { path: 'src/core/rust-engine/owner-ipc/timer.ts', reason: 'held: the Rust engine owner socket (rust-owner-ipc); reached through server.ts and client.ts once the addon loader wires openRustEngine' },
   { path: 'src/core/rust-engine/owner-ipc/whole-op.ts', reason: 'held: the Rust engine owner socket (rust-owner-ipc); reached through src/core/rust-engine.ts connect once the addon loader wires openRustEngine' },
   { path: 'src/core/rust-engine/addon-errors.ts', reason: 'held: the Rust engine addon loader (loadRustEngineAddon); the addon release PR wires it into engine construction with the rust config value' },
   { path: 'src/core/rust-engine/addon-loader.ts', reason: 'held: the Rust engine addon loader (loadRustEngineAddon); the addon release PR wires it into engine construction with the rust config value' },

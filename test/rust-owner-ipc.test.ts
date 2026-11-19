@@ -28,7 +28,7 @@ import { forwardWholeOperation } from '../src/core/rust-engine/owner-ipc/whole-o
 import { importFromContent, type ImportResult } from '../src/core/import-file.ts';
 import { connectOwner, installOwnerClient } from '../src/core/rust-engine/owner-ipc/client.ts';
 import { serveOwnerEngine } from '../src/core/rust-engine/owner-ipc/server.ts';
-import { ownerLockPath, ownerSocketPath, readFrames } from '../src/core/rust-engine/owner-ipc/protocol.ts';
+import { OWNER_IPC_VERSION, ownerLockPath, ownerSocketPath, readFrames } from '../src/core/rust-engine/owner-ipc/protocol.ts';
 import { EventEmitter } from 'node:events';
 import { decodeError, decodeValue, encodeValue } from '../src/core/rust-engine/owner-ipc/codec.ts';
 import { withRequestSignal } from '../src/core/request-signal.ts';
@@ -333,7 +333,7 @@ describe('deadlines, cancel and permits', () => {
         }
         buf = buf.slice(buf.lastIndexOf('\n') + 1);
       });
-      socket.on('connect', () => socket.write(JSON.stringify({
+      socket.on('connect', () => socket.write(JSON.stringify({ t: 'hello', version: OWNER_IPC_VERSION }) + '\n' + JSON.stringify({
         t: 'call', id: 1, member: 'putPage', deadline_at: Date.now() - 1_000,
         args: encodeValue(['ipc/expired', { type: 'note', title: 'Expired', compiled_truth: 'must not be written' }]),
       }) + '\n'));

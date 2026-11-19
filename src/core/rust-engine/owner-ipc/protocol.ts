@@ -17,6 +17,9 @@
  *   owner -> client  { t: 'cb', id, key, args }                     a void notification callback of call `id`
  *   owner -> client  { t: 'result', id, ok, value | error }         the call's end; exactly one per call
  *
+ * Each call needs a hello of OWNER_IPC_VERSION first, an id not open on its connection, and a list as `args`; the owner
+ * refuses anything else with `owner_ipc_protocol` and runs nothing. A hello of another version gets the owner's hello
+ * (so the client can name both versions) and then the connection closes.
  * A closed connection ends every call on it: the owner aborts them, and the client rejects them with
  * `owner_unavailable`. Frames over OWNER_IPC_MAX_FRAME_BYTES are refused (`response_too_large` for a reply).
  */

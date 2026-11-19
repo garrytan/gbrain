@@ -13,7 +13,12 @@
  * - A permit is released only when the engine call itself settles, never when its reply is sent early (a timeout or
  *   a cancel), so the pool never runs more work than its size. `stats()` shows the pool for leak checks.
  * - A connection that closes aborts every call it started. Calls from other connections keep running.
- * - A request already past its `deadline_at` never starts, on arrival or when it leaves the queue.
+ * - A request already past its `deadline_at` never starts, on arrival or when it leaves the queue. A deadline more
+ *   than 2^31-1 ms away waits on a re-armed timer (timer.ts), never ends at once.
+ * - Frame rules, each refused with `owner_ipc_protocol`: a client hello of another version gets the owner hello and
+ *   then the connection closes, before any later frame runs; a call before the hello is `hello_missing`; a call that
+ *   reuses an id still open on its connection is `duplicate_id` (the first call keeps its id, its cancel and its
+ *   abort on close); arguments that are not a list are `args_not_array`. None of them runs.
  * - `close()` aborts every call and resolves only after all engine work that started has settled, so the owner lock
  *   (released by RustEngine.disconnect after close) never frees while the old owner still runs a call.
  */
@@ -28,7 +33,8 @@ import { decodeValue, encodeError, encodeValue, type Wire } from './codec.ts';
 import {
   OWNER_IPC_DEFAULT_PERMITS, OWNER_IPC_MAX_FRAME_BYTES, OWNER_IPC_VERSION, frameLine, readFrames, type OwnerHello,
 } from './protocol.ts';
-import { OWNER_IPC_ROUTES, ownerCallTimeout, ownerIpcRefusal, ownerResponseTooLarge } from './routes.ts';
+import { OWNER_IPC_ROUTES, ownerCallTimeout, ownerIpcProtocol, ownerIpcRefusal, ownerResponseTooLarge } from './routes.ts';
+import { setDeadlineTimer, type DeadlineTimer } from './timer.ts';
 
 /** A whole operation the owner runs for a client in one request (whole-op.ts); it may open its own transaction. */
 export type OwnerWholeOperation = (engine: BrainEngine, ...args: unknown[]) => Promise<unknown>;
@@ -58,7 +64,7 @@ interface PendingCall {
   controller: AbortController;
   done: boolean;
   queued: boolean;
-  timer?: ReturnType<typeof setTimeout>;
+  timer?: DeadlineTimer;
   /** Epoch ms after which the call must not start; a call past it ends with `timeout` and never runs. */
   deadlineAt?: number;
   reply(frame: object): void;
@@ -124,7 +130,7 @@ export async function serveOwnerEngine(
   const running = new Set<Promise<unknown>>();
 
   const expire = (call: PendingCall, queued: boolean) => {
-    if (call.timer) clearTimeout(call.timer);
+    call.timer?.clear();
     call.reply({ t: 'result', id: call.id, ok: false, error: encodeError(ownerCallTimeout(call.member, 0, queued ? 'queued' : 'sent')) });
     call.controller.abort(timeoutReason());
   };
@@ -155,7 +161,7 @@ export async function serveOwnerEngine(
       ).finally(() => {
         active--;
         call.done = true;
-        if (call.timer) clearTimeout(call.timer);
+        call.timer?.clear();
         running.delete(tracked);
         pump();
       });
@@ -174,6 +180,9 @@ export async function serveOwnerEngine(
     if (closing) { socket.destroy(); return; }
     sockets.add(socket);
     const calls = new Map<number, PendingCall>();
+    // `helloed` turns on with a hello of this version. `refused` turns on with a hello of another version: the owner
+    // answers with its own hello so the client can name both versions, then reads nothing more from the connection.
+    const conn = { helloed: false, refused: false };
     // `member` names the call a result answers; `reply` passes it because it drops the call from `calls` first.
     const send = (frame: object, member?: string) => {
       if (socket.destroyed) return;
@@ -191,26 +200,44 @@ export async function serveOwnerEngine(
       calls.clear();
     });
     readFrames(socket, frame => {
+      if (conn.refused) return;
       switch (frame.t) {
-        case 'hello': send(hello); return;
+        case 'hello':
+          if (frame.version !== OWNER_IPC_VERSION) {
+            conn.refused = true;
+            send(hello);
+            socket.end();
+            return;
+          }
+          conn.helloed = true;
+          send(hello);
+          return;
         case 'cancel': {
           const call = calls.get(Number(frame.id));
           if (!call) return;
           calls.delete(call.id);
           call.done = true;
-          if (call.timer) clearTimeout(call.timer);
+          call.timer?.clear();
           call.controller.abort(new DOMException('The caller cancelled the call.', 'AbortError'));
           return;
         }
-        case 'call': case 'fn': admit(frame, calls, send); return;
+        case 'call': case 'fn': admit(frame, calls, send, conn.helloed); return;
         default: socket.destroy();
       }
     }, () => { /* the close handler ends this connection's calls */ }, maxFrameBytes);
   };
 
-  const admit = (frame: Record<string, unknown>, calls: Map<number, PendingCall>, send: (frame: object, member?: string) => void) => {
+  const admit = (
+    frame: Record<string, unknown>, calls: Map<number, PendingCall>, send: (frame: object, member?: string) => void, helloed: boolean,
+  ) => {
     const id = Number(frame.id);
     const member = String(frame.t === 'fn' ? frame.name : frame.member);
+    // These refusals never touch `calls`: a duplicate id must not take the first call's entry, its cancel or its abort.
+    const protocolRefusal = (reason: Parameters<typeof ownerIpcProtocol>[0], detail: string) =>
+      send({ t: 'result', id, ok: false, error: encodeError(ownerIpcProtocol(reason, member, detail)) }, member);
+    if (!helloed) { protocolRefusal('hello_missing', 'the call came before a hello of this protocol version'); return; }
+    if (calls.has(id)) { protocolRefusal('duplicate_id', `id=${id} is still open on this connection`); return; }
+    if (frame.args === undefined) { protocolRefusal('args_not_array', 'the call has no argument list'); return; }
     const controller = new AbortController();
     const call: PendingCall = {
       id, member, controller, done: false, queued: true, run: () => Promise.resolve(),
@@ -231,11 +258,15 @@ export async function serveOwnerEngine(
     }
     let args: unknown[];
     try {
-      const decoded = decodeValue((frame.args ?? []) as Wire, {
+      const decoded = decodeValue(frame.args as Wire, {
         onFunction: wire => rebuildFunction(wire, call, send),
         onSignal: () => controller.signal,
       });
-      args = Array.isArray(decoded) ? decoded : [];
+      if (!Array.isArray(decoded)) {
+        refuse(ownerIpcProtocol('args_not_array', member, `the arguments decoded to ${decoded === null ? 'null' : typeof decoded}`));
+        return;
+      }
+      args = decoded;
     } catch (error) { refuse(error); return; }
     const deadlineAt = typeof frame.deadline_at === 'number' ? frame.deadline_at : undefined;
     const readDeadlineAt = typeof frame.read_deadline_at === 'number' ? frame.read_deadline_at : undefined;
@@ -250,13 +281,12 @@ export async function serveOwnerEngine(
       // A request that arrives after its deadline never starts: a fast write would otherwise commit before the timer.
       if (Date.now() >= deadlineAt) { expire(call, true); return; }
       const ms = Math.max(0, deadlineAt - Date.now());
-      call.timer = setTimeout(() => {
+      call.timer = setDeadlineTimer(() => {
         if (call.done) return;
         const queued = call.queued;
         call.reply({ t: 'result', id, ok: false, error: encodeError(ownerCallTimeout(member, ms, queued ? 'queued' : 'sent')) });
         controller.abort(timeoutReason());
-      }, ms);
-      call.timer.unref?.();
+      }, ms, { unref: true });
     }
     queue.push(call);
     pump();

@@ -5,7 +5,10 @@
  *
  * - A call carries the caller's deadline (the read deadline and the statement deadline of its async context) as
  *   `deadline_at`; the owner ends it there with `timeout`, queued (`not_started`) or running (`outcome_unknown`: a
- *   running write is not interrupted). The client keeps a short grace timer of its own in case the owner is stuck.
+ *   running write is not interrupted). The client keeps a short grace timer of its own in case the owner is stuck;
+ *   it re-arms past 2^31-1 ms (timer.ts), so a deadline weeks away never ends the call at once.
+ * - An owner hello of another protocol version fails the connect with `owner_ipc_protocol` (`version_mismatch`), which
+ *   the election does not retry. An answer this process cannot decode fails only its call (`result_undecodable`).
  * - The caller's AbortSignals (the request signal of request-signal.ts and any signal argument) end the call at once
  *   with `cancelled`, or `timeout` when the signal's reason is a TimeoutError, and tell the owner to stop it.
  * - When the owner goes away, every call in flight ends with `owner_unavailable` (`outcome_unknown`) and every later
@@ -28,8 +31,9 @@ import {
   OWNER_IPC_MAX_FRAME_BYTES, OWNER_IPC_VERSION, frameLine, ownerSocketPath, readFrames, type OwnerHello,
 } from './protocol.ts';
 import {
-  OWNER_IPC_CALLBACK_KEYS, OWNER_IPC_ROUTES, ownerCallCancelled, ownerCallTimeout, ownerGone, ownerIpcRefusal,
+  OWNER_IPC_CALLBACK_KEYS, OWNER_IPC_ROUTES, ownerCallCancelled, ownerCallTimeout, ownerGone, ownerIpcProtocol, ownerIpcRefusal,
 } from './routes.ts';
+import { setDeadlineTimer, type DeadlineTimer } from './timer.ts';
 
 /** How long past `deadline_at` the client waits for the owner's own timeout before it ends the call itself. */
 const CLIENT_DEADLINE_GRACE_MS = 2_000;
@@ -104,6 +108,14 @@ export function connectOwner(legacySocketPath: string, opts: { timeoutMs?: numbe
     readFrames(socket, frame => {
       if (frame.t === 'hello') {
         if (hello) return;
+        if (frame.version !== OWNER_IPC_VERSION) {
+          // Another protocol version reads frames differently: no call is sent, and the election does not retry it.
+          clearTimeout(timer);
+          socket.destroy();
+          reject(ownerIpcProtocol('version_mismatch', null,
+            `client_version=${OWNER_IPC_VERSION} owner_version=${String(frame.version)} owner_pid=${String(frame.pid)}`));
+          return;
+        }
         hello = frame as unknown as OwnerHello;
         clearTimeout(timer);
         socket.on('error', () => { /* close ends the calls */ });
@@ -122,8 +134,15 @@ export function connectOwner(legacySocketPath: string, opts: { timeoutMs?: numbe
       pending.delete(Number(frame.id));
       call.cleanup();
       refresh();
-      if (frame.ok === true) call.resolve(decodeValue(frame.value as Wire));
-      else call.reject(decodeError(frame.error as Wire));
+      // An answer this process cannot read fails only its own call; the connection and other calls go on.
+      let decoded: unknown;
+      try { decoded = frame.ok === true ? decodeValue(frame.value as Wire) : decodeError(frame.error as Wire); }
+      catch (error) {
+        call.reject(ownerIpcProtocol('result_undecodable', call.member, `id=${String(frame.id)} ${error instanceof Error ? error.message : String(error)}`));
+        return;
+      }
+      if (frame.ok === true) call.resolve(decoded);
+      else call.reject(decoded);
     }, () => {}, OWNER_IPC_MAX_FRAME_BYTES);
     socket.once('close', () => {
       clearTimeout(timer);
@@ -172,10 +191,10 @@ export function connectOwner(legacySocketPath: string, opts: { timeoutMs?: numbe
         ...(access ? { access } : {}) });
       if (line === null) return Promise.reject(ownerIpcRefusal(member, `its arguments are larger than ${OWNER_IPC_MAX_FRAME_BYTES} bytes, the most the owner socket carries`));
       return new Promise((resolveCall, rejectCall) => {
-        let grace: ReturnType<typeof setTimeout> | undefined;
+        let grace: DeadlineTimer | undefined;
         const listeners: Array<[AbortSignal, () => void]> = [];
         const cleanup = () => {
-          if (grace) clearTimeout(grace);
+          grace?.clear();
           for (const [signal, listener] of listeners) signal.removeEventListener('abort', listener);
         };
         const endLocally = (error: unknown) => {
@@ -192,7 +211,7 @@ export function connectOwner(legacySocketPath: string, opts: { timeoutMs?: numbe
         }
         if (deadlineAt !== undefined) {
           const ms = Math.max(0, deadlineAt - Date.now());
-          grace = setTimeout(() => endLocally(ownerCallTimeout(member, ms, 'sent')), ms + CLIENT_DEADLINE_GRACE_MS);
+          grace = setDeadlineTimer(() => endLocally(ownerCallTimeout(member, ms, 'sent')), ms + CLIENT_DEADLINE_GRACE_MS);
         }
         pending.set(id, { member, resolve: resolveCall, reject: rejectCall, callbacks, cleanup });
         refresh();
