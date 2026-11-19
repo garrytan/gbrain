@@ -1,7 +1,7 @@
 //! The fence guard's read of a page's fact rows with their trust tier (`gbrain_store::facts`,
-//! `list_fence_fact_rows`), and the fence append's restore of its page's trust
-//! (`gbrain_store::pages`, `restore_page_trust`), and the fence chunk overlay's read
-//! (`read_fence_overlay_rows`).
+//! `list_fence_fact_rows`), the held fence cells of a world-only fact read (`list_held_fence_cells`), the fence
+//! overlay's read of one page (`read_fence_overlay_rows`), and the fence append's restore of its page's trust
+//! (`gbrain_store::pages`, `restore_page_trust`).
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 //! The method decodes its argument, runs one `Store` call on the pool through `Brain::run`, and
@@ -13,7 +13,7 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
-use gbrain_store::facts::{FenceOverlayTarget, FenceTarget};
+use gbrain_store::facts::{FenceOverlayInput, FenceTarget, HeldFenceCellsInput};
 
 #[napi]
 impl Brain {
@@ -32,18 +32,32 @@ impl Brain {
         })
     }
 
-    /// `readFenceOverlayRows({ sourceId, slug, incoming, holds })`: `[{ row_num, page_tier,
-    /// row_tier, row_flagged, purged, held, narrower }]`, one per incoming cell (the fence chunk
-    /// overlay's read).
+    /// `listHeldFenceCells({ keys })`: `[{ source_id, slug, row_num, claim }]`, the cells held from a
+    /// caller whose fact reads are world-only and who has no member page or private-facts grant.
+    #[napi]
+    pub fn list_held_fence_cells<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: HeldFenceCellsInput = required(input, "listHeldFenceCells input")?;
+            s.list_held_fence_cells(&input)
+        })
+    }
+
+    /// `readFenceOverlayRows({ sourceId, slug, incoming, hideHeld })`: `[{ row_num, page_tier,
+    /// row_tier, row_flagged, purged, held, narrower }]`, one row per incoming row in incoming
+    /// order, for a caller with no member page or private-facts grant when `hideHeld` is set.
     #[napi]
     pub fn read_fence_overlay_rows<'env>(
         &self,
         env: &'env Env,
-        target: Value,
+        input: Value,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            let t: FenceOverlayTarget = required(target, "readFenceOverlayRows target")?;
-            s.read_fence_overlay_rows(&t)
+            let input: FenceOverlayInput = required(input, "readFenceOverlayRows input")?;
+            s.read_fence_overlay_rows(&input)
         })
     }
 

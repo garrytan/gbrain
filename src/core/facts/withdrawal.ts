@@ -247,12 +247,12 @@ export async function isFactWithdrawn(
   engine: BrainEngine, sourceId: string, visibility: string | null, claim: string, entitySlug: string | null, memberPage: string | null = null,
 ): Promise<boolean> {
   // GST-359 D: `memberPage` (a claim saved on a member page) also matches that page's own withdrawals.
-  return engine.isFactClaimWithdrawn(sourceId, visibility, claim, entitySlug, memberPage);
+  return engine.isFactWithdrawn(sourceId, visibility, claim, entitySlug, memberPage);
 }
 
 /** #5575: the claim matches a purge tombstone (the facts guard raises the same typed code on insert). */
 export async function isFactPurged(engine: BrainEngine, sourceId: string, visibility: string, claim: string, entitySlug: string | null): Promise<boolean> {
-  return engine.isFactClaimPurged(sourceId, visibility, claim, entitySlug);
+  return engine.isFactPurged(sourceId, visibility, claim, entitySlug);
 }
 
 /** Writers check this before isFactWithdrawn so a purged claim refuses with typed purged_content, before any provider work. */

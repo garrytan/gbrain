@@ -47,7 +47,7 @@ type R = Record<string, unknown>;
 
 describe('engine parity: a whole remember on the holding page', () => {
   parityTest('seven remembers without an entity save every claim on memory/unattributed and keep its newest five versions', {
-    methods: ['getPage', 'listFenceFactRows', 'readFenceOverlayRows', 'isFactClaimWithdrawn', 'isFactClaimPurged', 'readSourcePurgeFlags',
+    methods: ['getPage', 'listFenceFactRows', 'readFenceOverlayRows', 'isFactWithdrawn', 'isFactPurged', 'readSourcePurgeFlags',
       'listFactsForPage', 'readPageTrustRows', 'getVersions'],
     timeout: 180_000,
   }, async (engine) => {

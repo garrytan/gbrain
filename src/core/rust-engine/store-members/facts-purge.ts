@@ -7,8 +7,9 @@
  * `page_facts_reconcile` watermark (facts/reconcile.rs). `lockReconcileRevision` reads the page inside the caller's store
  * transaction, whose single writer is the lock, so the extract_facts commit step (lock, then 'complete' settle) runs whole.
  * `listSingleFactMetadata` is served by facts-trust-reads.ts.
- * `findActiveSingleFact` serves the remote provenance floor for a caller that does not change it (storeFloorPolicy);
- * it and `listSimilarActiveFacts` refuse a caller whose policy the store does not model (private-provenance.ts).
+ * `findActiveSingleFact` serves the remote provenance floor for a caller that does not change it (storeFloorPolicy) and
+ * `listSimilarActiveFacts` serves `excludePrivate`; each refuses a caller whose policy the store does not model
+ * (private-provenance.ts).
  */
 import type { BrainEngine } from '../../engine.ts';
 import { privateProvenanceFilterUnderPolicy } from '../../search/private-visibility.ts';
@@ -91,3 +92,6 @@ export const listWithdrawalSlugs: Member<'listWithdrawalSlugs'> = (brain, source
 
 export const expireFactsByWithdrawal: Member<'expireFactsByWithdrawal'> = (brain, sourceId, visibility, fact, subject) =>
   storeCall({ member: 'expireFactsByWithdrawal' }, () => brain.expireFactsByWithdrawal({ sourceId, visibility, fact, subject }));
+
+export const insertFactPurge: Member<'insertFactPurge'> = (brain, row) =>
+  storeCall({ member: 'insertFactPurge', sourceId: row.sourceId }, () => brain.insertFactPurge(row));

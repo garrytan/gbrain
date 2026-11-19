@@ -18,6 +18,30 @@ function sourceHasPurges(engine: BrainEngine, sourceId: string): Promise<{ facts
   return engine.readSourcePurgeFlags(sourceId);
 }
 
+type FenceFactRow = { rowNum: number; claim: string; visibility: string };
+
+/**
+ * The fence rows a fact tombstone names: same visibility and fingerprint, subject '*' or `subject` (without a subject,
+ * any subject's tombstone applies). One statement on an engine with raw SQL; an engine without it (Rust) answers a
+ * page's rows with one typed `isFactPurged` probe each, the same predicate with the subject bound, from its fact purge
+ * ledger. The Rust engine has no subjectless caller to serve, so that case keeps the statement.
+ */
+async function purgedFenceRows(engine: BrainEngine, sourceId: string, facts: readonly FenceFactRow[], subject: string | undefined): Promise<Set<number>> {
+  if (subject !== undefined && engine.capabilities?.has('raw_sql') === false) {
+    const drop = new Set<number>();
+    for (const f of facts) if (await engine.isFactPurged(sourceId, f.visibility, f.claim, subject)) drop.add(f.rowNum);
+    return drop;
+  }
+  const rows = await engine.executeRaw<{ row_num: number }>(`WITH incoming AS MATERIALIZED (
+      SELECT i.row_num, i.visibility, gbrain_fact_fingerprint(i.claim) AS fp
+      FROM jsonb_to_recordset($2::text::jsonb) AS i(row_num integer, claim text, visibility text))
+    SELECT DISTINCT incoming.row_num FROM incoming JOIN fact_purges p ON p.source_id=$1
+      AND p.visibility=incoming.visibility AND p.fact_hash=incoming.fp
+      AND ($3::text IS NULL OR p.subject='*' OR p.subject=$3::text)`,
+  [sourceId, JSON.stringify(facts.map(f => ({ row_num: f.rowNum, claim: f.claim, visibility: f.visibility }))), subject ?? null]);
+  return new Set(rows.map(r => Number(r.row_num)));
+}
+
 /** Drop every fence row naming a purged claim. `subject` is the page slug; without it every subject's tombstone applies. */
 export async function dropPurgedFenceRows(engine: BrainEngine, sourceId: string, body: string, subject?: string): Promise<string> {
   const hasFacts = body.includes('gbrain:facts:begin'), hasTakes = body.includes(TAKES_FENCE_BEGIN);
@@ -26,15 +50,8 @@ export async function dropPurgedFenceRows(engine: BrainEngine, sourceId: string,
   if (hasFacts && purges.facts) {
     for (const block of withdrawalFenceBlocks(body).reverse()) {
       if (block.parsed.warnings.length || !block.parsed.facts.length) continue;
-      const rows = await engine.executeRaw<{ row_num: number }>(`WITH incoming AS MATERIALIZED (
-          SELECT i.row_num, i.visibility, gbrain_fact_fingerprint(i.claim) AS fp
-          FROM jsonb_to_recordset($2::text::jsonb) AS i(row_num integer, claim text, visibility text))
-        SELECT DISTINCT incoming.row_num FROM incoming JOIN fact_purges p ON p.source_id=$1
-          AND p.visibility=incoming.visibility AND p.fact_hash=incoming.fp
-          AND ($3::text IS NULL OR p.subject='*' OR p.subject=$3::text)`,
-      [sourceId, JSON.stringify(block.parsed.facts.map(f => ({ row_num: f.rowNum, claim: f.claim, visibility: f.visibility }))), subject ?? null]);
-      if (!rows.length) continue;
-      const drop = new Set(rows.map(r => Number(r.row_num)));
+      const drop = await purgedFenceRows(engine, sourceId, block.parsed.facts, subject);
+      if (!drop.size) continue;
       body = body.slice(0, block.start) + renderFactsTable(block.parsed.facts.filter(f => !drop.has(f.rowNum))) + body.slice(block.end);
     }
   }

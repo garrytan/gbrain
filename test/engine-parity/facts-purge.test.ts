@@ -27,6 +27,9 @@ import { CALLER_ENTITIES, callerFactRows, putCallerPages, readAsCallers } from '
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END } from '../../src/core/facts-fence.ts';
 import { lockReconcileRevision } from '../../src/core/facts/reconcile-watermark.ts';
+import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -578,6 +581,32 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
       'none:open': 'readers-page', 'none:floor': 'open-page',
     });
     return found;
+  });
+
+  parityTest('findActiveSingleFact under the remote provenance floor hides a fact of an owner-only source, closed with no schema version and per source with one', { methods: ['findActiveSingleFact'] }, async (engine, backend) => {
+    const seed = new Seed(engine);
+    const find = async (sourceId: string, remoteFloor: boolean) => {
+      const row = await engine.findActiveSingleFact({ sourceId, entitySlug: 'people/a', visibility: 'private', fact: 'likes tea', attributedTo: null, pageSlug: null, remoteFloor });
+      return row === null ? null : seed.name(row.id);
+    };
+    const read = async () => ({
+      open: await find(SRC, false), openFloor: await find(SRC, true),
+      chat: await find('fact-chat', false), chatFloor: await find('fact-chat', true),
+    });
+    await seed.one('default-row', { fact: 'Likes tea', entity_slug: 'people/a' });
+    // Before any owner-only source exists the floor keeps the default-source fact, so the case is not vacuous.
+    const before = { openFloor: await find(SRC, true) };
+    await createSource(engine, backend, 'fact-chat', { kind: 'imessage' });
+    await seed.one('chat-row', { fact: 'Likes tea', entity_slug: 'people/a' }, 'fact-chat');
+    // The harness brain records no schema version: the closed form hides every fact while any source is owner-only.
+    const closed = await read();
+    noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+    // Schema version 320 or later: only a fact of the owner-only source is hidden.
+    const fn = await withEngineScope(engine, read);
+    expect(before).toEqual({ openFloor: 'default-row' });
+    expect(closed).toEqual({ open: 'default-row', openFloor: null, chat: 'chat-row', chatFloor: null });
+    expect(fn).toEqual({ open: 'default-row', openFloor: 'default-row', chat: 'chat-row', chatFloor: null });
+    return { before, closed, fn };
   });
 
   parityTest('listSingleFactMetadata reads the fence position, trust tier and claim slot of the named facts', { methods: ['listSingleFactMetadata'] }, async (engine) => {

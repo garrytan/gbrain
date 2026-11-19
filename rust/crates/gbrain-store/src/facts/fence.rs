@@ -21,12 +21,9 @@ use crate::Store;
 use crate::error::{INVALID_ARGUMENT, Result, StoreError};
 use crate::kv::KvRead;
 use crate::links::no_nul;
-use crate::pages::read_page;
 use crate::timeline_queries::timestamptz_text;
 use crate::trust::TrustTier;
-use crate::trust::activation_suppressed;
 use crate::trust::proposals::held_narrower;
-use crate::trust::write_gate::held_fact_fingerprints;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -38,31 +35,6 @@ pub struct FenceTarget {
     pub source_id: String,
     pub slug: String,
     pub incoming: String,
-}
-
-/// What the fence chunk overlay asks of a page (`readFenceOverlayRows`): `incoming` is the JSON text
-/// of its world cells (`[{ "row_num": 1, "claim": "...", "visibility": "world", "fp": "..." }]`), and
-/// `holds` turns the held-hold lookup on. The held-from-a-world-only-reader check (`hideHeld`) is
-/// not modelled: the TypeScript member refuses it.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct FenceOverlayTarget {
-    pub source_id: String,
-    pub slug: String,
-    pub incoming: String,
-    pub holds: bool,
-}
-
-/// One overlay cell: `jsonb_to_recordset(...) AS i(row_num integer, claim text, visibility text, fp text)`.
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
-struct OverlayCell {
-    row_num: Option<f64>,
-    #[allow(dead_code)]
-    claim: Option<String>,
-    #[allow(dead_code)]
-    visibility: Option<String>,
-    fp: Option<String>,
 }
 
 /// What the SQL reads from the transaction: the writer's declared tier by name (`None` or empty:
@@ -258,75 +230,6 @@ impl Store {
                 "trust_tier": stored.as_str(),
                 "above": above,
                 "opened": is_opened,
-            }));
-        }
-        Ok(out)
-    }
-
-    /// `readFenceOverlayRows({ sourceId, slug, incoming, holds })`: one row per incoming cell, in
-    /// cell order: the live page's `trust_tier` (`unknown` when none is stored; null with no live
-    /// page), the stored tier and activation flag (`activationSuppressedSql`) of the page's newest
-    /// facts row (highest id, any state) at the cell's row number, `purged` false (the store keeps
-    /// no purge ledger: every `fact_purges` writer is raw SQL it refuses), `held` when a held fact
-    /// hold of the page has the cell's fingerprint (`holds` on), and `narrower` false.
-    pub fn read_fence_overlay_rows(&self, target: &FenceOverlayTarget) -> Result<Vec<Value>> {
-        no_nul(
-            "readFenceOverlayRows",
-            &[("sourceId", &target.source_id), ("slug", &target.slug)],
-        )?;
-        let bad =
-            |what: &str| StoreError::new(INVALID_ARGUMENT, format!("incoming overlay: {what}"));
-        let Value::Array(items) = serde_json::from_str::<Value>(&target.incoming)
-            .map_err(|_| bad("not a JSON document"))?
-        else {
-            return Err(bad("not an array"));
-        };
-        let mut cells = Vec::with_capacity(items.len());
-        for item in items {
-            if !item.is_object() {
-                return Err(bad("a cell is not an object"));
-            }
-            let cell: OverlayCell =
-                serde_json::from_value(item).map_err(|_| bad("a cell field has the wrong type"))?;
-            if let Some(n) = cell.row_num
-                && (n.fract() != 0.0 || n.abs() > f64::from(i32::MAX))
-            {
-                return Err(bad("row_num is not an integer"));
-            }
-            cells.push(cell);
-        }
-        let read = self.read()?;
-        let page_tier = read_page(&*read, &target.source_id, &target.slug)?
-            .filter(|p| p.deleted_at_us.is_none())
-            .map(|p| {
-                p.trust_tier
-                    .unwrap_or_else(|| TrustTier::Unknown.as_str().to_string())
-            });
-        let rows = page_rows(&*read, &target.source_id, &target.slug)?;
-        let held = if target.holds {
-            held_fact_fingerprints(&*read, &target.source_id, &target.slug)?
-        } else {
-            std::collections::BTreeSet::new()
-        };
-        let mut out = Vec::with_capacity(cells.len());
-        for cell in &cells {
-            let newest = cell.row_num.and_then(|n| {
-                rows.iter()
-                    .filter(|r| r.row_num.map(f64::from) == Some(n))
-                    .max_by_key(|r| r.id)
-            });
-            let flagged = match newest {
-                Some(r) => Some(activation_suppressed(&*read, "facts", r.id, r.tier())?),
-                None => None,
-            };
-            out.push(json!({
-                "row_num": cell.row_num.map(|n| n as i64),
-                "page_tier": page_tier,
-                "row_tier": newest.map(|r| r.tier().as_str()),
-                "row_flagged": flagged,
-                "purged": false,
-                "held": cell.fp.as_ref().is_some_and(|fp| held.contains(fp)),
-                "narrower": false,
             }));
         }
         Ok(out)

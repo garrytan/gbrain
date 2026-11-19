@@ -525,6 +525,22 @@ store keeps the same rule in `pages.rs`.
   `sealImportedPage`, `readLivePageBody`; SQL in `engine-sql/write-guards.ts`). The store answers them in
   `write_guards.rs`, and `bindPageOrigin` runs the same origin check as `putPage`. See
   [`rust/docs/store/write-guards.md`](../../rust/docs/store/write-guards.md).
+- **Page visibility guards.** A remote page write's reads of whether the caller sees a page, which of a list of
+  pages it reads, the opening probe of its visibility check, and a stored writer's slug fence are typed engine members
+  (`readPageHiddenFromCaller`, `readCallerPageAccess`, `readWriteVisibilityProbe`, capability `pages`;
+  `readWriterSlugFence`, capability `persistence_journal`; SQL in
+  `engine-sql/page-visibility.ts`). The store answers the page reads in `page_visibility.rs` and the fence from
+  its local writer registration; an OAuth client's fence and an unrendered caller policy refuse. See
+  [`rust/docs/store/page-visibility.md`](../../rust/docs/store/page-visibility.md).
+- **Large-page guard.** A remote put_page's read of the stored body size of the page it replaces is a typed engine
+  member (`readStoredBodyBytes`, capability `pages`, SQL in `engine-sql/large-page.ts`). The store answers it in
+  `large_page.rs`: a segmented page's `body_bytes`, else the UTF-8 bytes of its body columns. See
+  [`rust/docs/store/large-page.md`](../../rust/docs/store/large-page.md).
+- **Member-access flag.** The store sets config `access.restrictions_present` to `'1'` when it writes a page whose
+  frontmatter has a top-level `readable_by` key, as the v282 trigger `pages_access_mark_restricted` does on PGLite and
+  Postgres (`access_flag.rs`, called from the page write hook). The store keeps no access members, so the
+  `access_members` trigger has no store half. See
+  [`rust/docs/store/access-flag.md`](../../rust/docs/store/access-flag.md).
 - **Fence reads.** The fence projection's retire read and the fence guard's trust read are typed engine members
   (`listFenceRetireCandidates`, capability `facts`, SQL in `engine-sql/facts.ts`; `listFenceFactRows`, capability
   `facts`, SQL in `engine-sql/trust-fence.ts`). The store answers them in `facts/fence.rs` in the default write
@@ -877,6 +893,14 @@ Facts and their supersession chains.
     The store serves them from the source, `F 0x01` and page records (`memory_mutation_reads.rs`, no new key prefix;
     rust/docs/store/memory_mutation_reads.md). The member refuses a non-integer fact id and a caller whose world rule
     a member page or a private-facts grant widens, and a remote provenance floor that is not the no-caller one. Pinned by `test/engine-parity/memory-mutation-reads.test.ts`.
+  - Held fence cells. The world-only fact read's check of which facts-fence row lines a caller may not see
+    (`eligibility/stamp.ts` `heldFenceLines`, under get_page, get_chunks, think and search_exact) is the typed member
+    `listHeldFenceCells` (capability `facts`, SQL in `engine-sql/cli-reads-ops.ts`, one statement for PGLite and
+    Postgres pinned by `test/fixtures/goldens/remote-reads/statements.json`). The store answers it in
+    `facts/held_cells.rs` for the caller with no member page and no private-facts grant; the TypeScript member refuses
+    any other caller, and `heldFenceLines` then holds every fence line (fail closed). Before the member existed the
+    check ran through `executeRaw`, which the Rust engine refuses, so a Rust brain held every fence line. Parity:
+    `held-fence-cells.test.ts`.
 - **Depends on:** None for the core members. Three cases also read takes (`countUnconsolidatedFacts`, `getFactsHealth`, the `listFactsByEntity` consolidation filter) and one needs the transactions family (keyset across a shared timestamp inside `transaction`). `findCandidateDuplicates` with an embedding refuses until vectors land; the keyword arm uses the keyword family's ranker. Source delete is not served yet (see "Page delete cascade"). A page rename moves facts and withdrawals keyed by the old slug: fill in `facts::rename_slug_rows` ("Rename slug rows").
 - **Estimate:** about 4 days.
 - **Notes:** `listFactsKeyset` cursors are microsecond ISO text; `grep` is ILIKE with wildcards treated literally. `migrateFactsToCanonical` rewrites `entity_slug`, `source_markdown_slug` and `row_num` only.
@@ -903,6 +927,48 @@ Facts and their supersession chains.
   - `facts.test.ts`: findTrajectory returns the typed-claim history chronologically, world-only unless local
   - `facts.test.ts`: getFactsHealth partitions active/expired/consolidated and ranks top entities
   - `sync-aliases.test.ts`: migrateFactsToCanonical moves active phantom facts, leaves expired ones, and is idempotent
+
+#### Design note: the short member-access form (not built)
+
+A remote read on a brain whose config `access.restrictions_present` was unset when the request began
+(`CallerAccess.restricted` false) renders the member-access part of every page and fact policy as the short form
+`p.page_readers IS NULL AND p.folder_rule_ids IS NULL` (plus the owner-only part, the same in both forms;
+`accessAllowedForAllSql` in `search/private-visibility.ts`). The store implements only the full form, so
+`store-members/private-provenance.ts` renders the caller's policy with `restricted` set to true before it compares the
+text, and the store judges the caller by the full form. This note lists what the store needs to judge the short form
+itself, so that mapping can go.
+
+- **The premise.** The short form equals the full form only when no page names readers, no access member exists, and
+  no folder rule or pending folder prefix exists: Postgres sets the flag in the same transaction as the first of each
+  (triggers of v282 and v283), and the flag is sticky. Under the premise, `readersAllowedSql`, `folderRulesAllowedSql`
+  and `originAllowedSql` pass every page, so the short form skips them, the lineage read included.
+- **Derived `page_readers`.** No new store state. The column is `gbrain_access_readers(frontmatter)`, recomputed by a
+  trigger on every write of `frontmatter` or `page_readers`, so it is NULL exactly when the frontmatter has no
+  top-level `readable_by` key. The store already reads that as `names_readers` (`facts/privacy.rs`); an invalid value
+  derives `['!nobody']`, which is not NULL, so the page stays hidden in both.
+- **Derived `folder_rule_ids`.** The column is `gbrain_access_folder_rules(source_id, slug)` from the applied rulebook
+  (`access_rules`, `access_policy_state`), stamped at insert, rename and policy apply. The store keeps no access tables,
+  so the value is NULL on every Rust page by construction. A later rulebook family must stamp it on the same writes and
+  set the flag as v283 does, or the short form would show a folder-restricted page.
+- **Where the premise can fail on a Rust brain.** The store sets the flag only from `pages::write_page`
+  (`access_flag.rs`). A page record with `readable_by` that reached the store another way (a build before
+  `access_flag.rs`, or a future restore or import path that skips `write_page`) leaves the flag unset. The short form
+  still hides that page (its `page_readers` is not NULL), but it shows an atom, question, concept or event page
+  derived from it, which the full form's origin test hides. The store must close that gap first: one scan at open
+  (or a store migration) that sets the flag when any live page has `readable_by`, and a `mark_restricted` call on every
+  path that writes a page record outside `write_page`.
+- **The change.** `PrivacyPolicy` gains `restricted: bool` (default true). When false, the member-access part is
+  `!names_readers(page)` (the folder test is always true) and `origin_restricted` is not read. The TypeScript members
+  (`storePrivacyPolicy`, `storePagePolicy`) render their no-caller comparison texts with the caller's own `restricted`
+  value and send it as the flag, instead of forcing true. The store reads live page state for each row, as the short
+  form reads live columns, so a page that gains readers during the request is still hidden.
+- **Parity.** `restriction-flag-reads.test.ts` runs both forms; a new case pins that an unflagged brain serves the
+  short form without the mapping, and that a flagged brain still hides a page derived from a `readable_by` origin.
+  Postgres cannot seed the failed-premise brain (its trigger sets the flag), so the open-time scan needs a store test.
+- **Size.** About one day for one lane: about 40 lines in `facts/privacy.rs` and the flag field, about 30 lines in
+  `private-provenance.ts`, the open-time scan with its store test, and the parity cases. The gain is honest text
+  equality (no mapped caller) and no origin reads on unflagged Rust brains; the risk is the premise gap above, which
+  is why the mapping stays until the scan lands.
 
 ### ontology
 
@@ -1644,7 +1710,9 @@ Trust tiers, the write gate, trust review, fact withdrawal and the belief ledger
   `ENGINE_CAPABILITIES`) for the policy, tier, gate, withdrawal and review members, and the existing
   `belief_ledger` for the belief members, so the belief part can ship later without holding the rest.
 - **Store and binding:** the Rust method is the member name in snake_case.
-  - Policy and gate: `readTrustGeneration`, `readWriteGateReceipt`, `clearStalePageGateReceipts`,
+  - Policy and gate: `readTrustGeneration` (the other half of the hot-memory cache identity; the store keeps no
+    `trust_policy_state` and answers its commit sequence, which moves on every commit, a superset of the SQL
+    generation's trigger events, so a Rust cache rebuilds after any write), `readWriteGateReceipt`, `clearStalePageGateReceipts`,
     `listWriteGateHolds`, `listTrustAllowRules`, `insertTrustProposal`, `listTrustProposals`.
   - Page tiers: `readPageTrustRows` (one read for the four sites that read page tiers), `readTrustTierCounts`,
     `lowerPageTrustTiers`, `relowerClaimedRows`, `readTaintInputPages`, `findPageVersionByTier`, `listFlaggedPages`,
@@ -1652,7 +1720,10 @@ Trust tiers, the write gate, trust review, fact withdrawal and the belief ledger
     `guardFenceFactRows`.
   - Withdrawal: `insertFactWithdrawal`, `isFactWithdrawn` (one member for the current and v1 forms), `isFactPurged`,
     `planFactWithdrawal`, `listWithdrawals` (one filtered list for the discovery, dates and export readers),
-    `hasSourcePurges`.
+    `hasSourcePurges`, `readFactCacheWatermark` (the hot-memory cache watermark: the source's withdrawal count, the
+    newest withdrawal in UTC with microseconds, and the folder access digest, which the store reports as the digest of
+    two empty tables because it keeps no folder rules; the newest withdrawal is UTC ISO text, not `::text`, which
+    followed the session time zone; the text is a cache key only, so no answer changed).
   - Review: `insertWithdrawReviewItem`, `countPurgeReviewQueueRefs`.
   - Beliefs (`belief_ledger`): `readCoverageIntervals`, `listCoveredSources`, `readOpenLifetimes`,
     `mintBeliefLifetime`, `resolveBeliefLifetimes`, `readBeliefRedactions`, `readBeliefState`.

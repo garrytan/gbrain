@@ -35,8 +35,11 @@ export const ANY_OWNER_ONLY_SQL = `EXISTS (SELECT 1 FROM sources read_source WHE
 
 /** The source whose id is the SQL expression `sourceId` is owner-only (the SQL twin of sourceIsOwnerOnly). */
 export function ownerOnlySourceSql(sourceId: string): string {
-  return `EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = ${sourceId} AND ${ownerOnlySourceRowSql('read_source')})`;
+  return `EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = ${sourceId} AND ${READ_SOURCE_OWNER_ONLY_SQL})`;
 }
+
+/** The `sources` row `read_source` is owner-only (the row test ownerOnlySourceSql and ANY_OWNER_ONLY_SQL apply). */
+export const READ_SOURCE_OWNER_ONLY_SQL = ownerOnlySourceRowSql('read_source');
 
 /** A parsed `sources.config` is owner-only. */
 export function isOwnerOnlySourceConfig(config: unknown): boolean {
