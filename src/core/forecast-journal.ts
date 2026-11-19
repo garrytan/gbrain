@@ -71,7 +71,7 @@ async function readPredictions(engine: BrainEngine, q: JournalQuery): Promise<Ta
         AND ($3::text IS NULL OR left(p.slug, length($3)) = $3)
         AND ($4::text IS NULL OR t.since_date >= $4)
         AND ($5::text IS NULL OR t.since_date <= $5)
-      ORDER BY p.source_id, p.slug, t.row_num`,
+      ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C", t.row_num`,
     [sources, q.holder ?? null, q.about ?? null, q.since ?? null, q.until ?? null]);
 }
 
