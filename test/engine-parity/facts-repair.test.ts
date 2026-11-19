@@ -65,6 +65,60 @@ describe('engine parity: group 5 facts repair statements', () => {
     return { all, one, none };
   });
 
+  parityTest('loopFactDrift lists the closed loops of the sources whose fact is active and held by no open loop, in id order', {
+    methods: ['insertFact', 'insertFacts', 'expireFact', 'upsertOpenLoop', 'closeOpenLoop', 'loopFactDrift'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const live = await fenced(engine, 'send the deck', { kind: 'commitment', source_markdown_slug: 'notes/deck' });
+    const held = await fact(engine, 'call back', { kind: 'commitment' });
+    const gone = await fact(engine, 'book the room', { kind: 'commitment' });
+    const elsewhere = await fact(engine, 'pay the invoice', { kind: 'commitment' }, 'other');
+    const at = '2026-03-01T10:00:00.000Z';
+    const open = async (dedupKey: string, factId: number | null, sourceId = 'default') => Number((await engine.upsertOpenLoop({ sourceId, dedupKey,
+      loopType: 'commitment_owed_by_me', counterpartyEmail: 'a@example.com', summary: dedupKey, evidence: [], detector: 'manual',
+      factId, lastActivityAt: at, openedAt: at })).id);
+    const ids: Record<string, string> = {};
+    const name = async (key: string, factId: number | null, sourceId = 'default') => { const id = await open(key, factId, sourceId); ids[id] = key; return id; };
+    const done = await name('done', live);
+    const dropped = await name('dropped', live);
+    const heldClosed = await name('held-closed', held);
+    await name('held-open', held);
+    const expired = await name('expired', gone);
+    const stale = await name('stale', live);
+    const noFact = await name('no-fact', null);
+    const other = await name('other', elsewhere, 'other');
+    const crossed = await name('crossed', elsewhere);
+    await engine.closeOpenLoop('default', done, 'done', 'manual');
+    await engine.closeOpenLoop('default', dropped, 'dropped', 'manual');
+    await engine.closeOpenLoop('default', heldClosed, 'done', 'manual');
+    await engine.closeOpenLoop('default', expired, 'done', 'manual');
+    await engine.closeOpenLoop('default', stale, 'stale', 'manual');
+    await engine.closeOpenLoop('default', noFact, 'done', 'manual');
+    await engine.closeOpenLoop('other', other, 'dropped', 'manual');
+    await engine.closeOpenLoop('default', crossed, 'done', 'manual');
+    expect(await engine.expireFact(gone)).toBe(true);
+    const facts: Record<string, string> = { [live]: 'live', [held]: 'held', [gone]: 'gone', [elsewhere]: 'elsewhere' };
+    const view = (rows: Awaited<ReturnType<BrainEngine['loopFactDrift']>>) =>
+      rows.map(r => ({ loop: ids[Number(r.loop_id)] ?? String(r.loop_id), source_id: r.source_id, fact: facts[Number(r.fact_id)] ?? String(r.fact_id), status: r.status, slug: r.slug }));
+    const out = {
+      both: view(await engine.loopFactDrift(['other', 'default'], null)),
+      one: view(await engine.loopFactDrift(['default'], dropped)),
+      notInSource: view(await engine.loopFactDrift(['other'], done)),
+      held: view(await engine.loopFactDrift(['default'], heldClosed)),
+    };
+    expect(out).toEqual({
+      both: [
+        { loop: 'done', source_id: 'default', fact: 'live', status: 'done', slug: 'notes/deck' },
+        { loop: 'dropped', source_id: 'default', fact: 'live', status: 'dropped', slug: 'notes/deck' },
+        { loop: 'other', source_id: 'other', fact: 'elsewhere', status: 'dropped', slug: null },
+      ],
+      one: [{ loop: 'dropped', source_id: 'default', fact: 'live', status: 'dropped', slug: 'notes/deck' }],
+      notInSource: [],
+      held: [],
+    });
+    return out;
+  });
+
   parityTest('closedLoopWithActiveFact finds no loop that does not exist, scoped or not', { methods: ['closedLoopWithActiveFact'] }, async (engine) => {
     const scoped = await engine.closedLoopWithActiveFact('default', 1);
     const unscoped = await engine.closedLoopWithActiveFact(null, 1);
