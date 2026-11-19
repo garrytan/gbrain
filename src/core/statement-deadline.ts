@@ -29,6 +29,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadDeadlineError, withReadDeadline } from './read-deadline.ts';
 import { DOCTOR_READ_MEMBERS } from './engine-sql/doctor-reads.ts';
+import { DOCTOR_DERIVED_MEMBERS } from './engine-sql/doctor-derived.ts';
 
 export interface StatementDeadline {
   startedAt: number;
@@ -91,7 +92,7 @@ function refuse(scope: StatementDeadline): never {
 const JOURNAL_TYPED_READS: ReadonlySet<string> = new Set(['readJournalLimitRows', 'readWriteRequest', 'readWriteRequestById', 'readWriteRequestProgress', 'countOutstandingBySource', 'ownsSchemaTables', 'readCounterRows', 'readAdmissionRate', 'readHeldPageRows', 'readHeldCoverageRows',
   'readSourceMembership', 'getConfigValues', 'readReceiptBudget', 'readCapacityForecastInputs', 'listHostConsumerRows', 'probeLiveConsumerRows']);
 /** Those reads, the writer-binding read (engine-sql/write-misc.ts `getWorktreeBinding`) and the doctor reads (engine-sql/doctor-reads.ts), which also replaced bounded statements. */
-const BOUNDED_TYPED_READS: ReadonlySet<string> = new Set([...JOURNAL_TYPED_READS, 'getWorktreeBinding', ...DOCTOR_READ_MEMBERS]);
+const BOUNDED_TYPED_READS: ReadonlySet<string> = new Set([...JOURNAL_TYPED_READS, 'getWorktreeBinding', ...DOCTOR_READ_MEMBERS, ...DOCTOR_DERIVED_MEMBERS]);
 
 type RawCall = (sql: string, params?: unknown[], opts?: Record<string, unknown> & { signal?: AbortSignal; timeoutMs?: number }) => Promise<unknown[]>;
 

@@ -164,11 +164,7 @@ async function runImageAssets(ctx: DoctorContext): Promise<Check[]> {
   if (engine) {
     progress.heartbeat('image_assets');
     try {
-      const rows = await engine.executeRaw<{ storage_path: string; source_local_path: string | null; page_source_path: string | null; metadata: unknown }>(
-        `SELECT f.storage_path, f.metadata, s.local_path AS source_local_path, p.source_path AS page_source_path FROM files f
-           LEFT JOIN sources s ON s.id = COALESCE(f.source_id, 'default') LEFT JOIN pages p ON p.id = f.page_id
-          WHERE f.mime_type LIKE 'image/%' ORDER BY f.id LIMIT 1000`
-      );
+      const rows = await engine.listImageAssetFiles();
       let vanished = 0;
       let foreign = 0;
       let remote = 0;

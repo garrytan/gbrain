@@ -3,6 +3,7 @@
 //! same rows the PGLite and Postgres engines answer, so each lane edits only its own file.
 
 pub mod doctor;
+pub mod doctor_derived;
 pub mod entities;
 pub mod import;
 mod pg_case;

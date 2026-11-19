@@ -74,10 +74,7 @@ export async function scanTimelineHistory(engine: BrainEngine, sourceIds: string
   const pages: Array<TimelinePage & { materializable: number; unrenderable: number }> = [];
   let cursor = afterId, inspected = 0, truncated = false;
   for (;;) {
-    const batch = await engine.executeRaw<TimelinePage>(`SELECT p.id,p.source_id,p.slug,p.compiled_truth,p.timeline FROM pages p
-      WHERE p.source_id=ANY($1::text[]) AND p.deleted_at IS NULL AND p.id>$2 AND p.body_storage='inline'
-        AND EXISTS (SELECT 1 FROM timeline_entries t WHERE t.page_id=p.id AND t.event_page_id IS NULL)
-      ORDER BY p.id LIMIT ${BATCH}`, [sourceIds, cursor]);
+    const batch: TimelinePage[] = await engine.listTimelineHistoryBatch(sourceIds, cursor);
     const stored = await storedRowsByPage(engine, batch);
     for (const page of batch) {
       if ((budget.pages !== undefined && inspected >= budget.pages) || (budget.deadline !== undefined && Date.now() > budget.deadline)) {

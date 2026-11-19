@@ -12,8 +12,7 @@
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { agentFix } from '../check-fix.ts';
-import { displayLabelValue, ignoredPrivacyLabelSql, PLAINLY_PRIVATE_RE, PRIVACY_LABEL_KEYS, privacyLabelKeySql, SCAN_CAP } from '../../../core/search/ignored-privacy-labels.ts';
-import { edgeTrimSql } from '../../../core/edge-whitespace.ts';
+import { displayLabelValue, PLAINLY_PRIVATE_RE, SCAN_CAP } from '../../../core/search/ignored-privacy-labels.ts';
 
 export const VALUE_ROWS = 50;
 export const STATEMENT_MS = 15_000;
@@ -21,23 +20,10 @@ const MESSAGE_VALUES = 10;
 /** `gbrain list --where` takes a string value of at most this many characters, and a comma splits it into a list. */
 const WHERE_VALUE_CHARS = 256;
 
-interface LabelRow { key: string; raw: string; is_string: boolean; pages: number; scanned: number; groups: number }
-
 export async function privacyLabelIgnoredCheck(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
   const name = 'privacy_label_ignored';
   try {
-    const values = PRIVACY_LABEL_KEYS.map(key => `('${key}', p.frontmatter->>'${key}', jsonb_typeof(p.frontmatter->'${key}') = 'string')`).join(', ');
-    const rows = await engine.executeRaw<LabelRow>(
-      `WITH hits AS (SELECT p.frontmatter FROM pages p
-          WHERE p.deleted_at IS NULL ${sourceIds ? 'AND p.source_id = ANY($1::text[])' : ''}
-            AND ${privacyLabelKeySql('p')} AND ${ignoredPrivacyLabelSql('p')}
-          LIMIT ${SCAN_CAP + 1})
-       SELECT l.key, l.raw, l.is_string, count(*)::int AS pages, (SELECT count(*)::int FROM hits) AS scanned, (count(*) OVER ())::int AS groups
-       FROM hits p CROSS JOIN LATERAL (VALUES ${values}) AS l(key, raw, is_string)
-       WHERE NULLIF(${edgeTrimSql('l.raw')}, '') IS NOT NULL
-       GROUP BY l.key, l.raw, l.is_string
-       ORDER BY pages DESC, l.key, l.raw
-       LIMIT ${VALUE_ROWS}`, sourceIds ? [sourceIds] : [], { timeoutMs: STATEMENT_MS });
+    const rows = await engine.readIgnoredPrivacyLabelCounts({ ...(sourceIds ? { sourceIds } : {}), timeoutMs: STATEMENT_MS });
     const scanned = Math.min(rows[0]?.scanned ?? 0, SCAN_CAP);
     const capped = (rows[0]?.scanned ?? 0) > SCAN_CAP;
     const labels = rows.map(r => ({ key: r.key, value: r.raw.trim(), pages: r.pages, plainly_private: PLAINLY_PRIVATE_RE.test(r.raw),

@@ -36,13 +36,8 @@ const PENDING = `p.deleted_at IS NULL AND p.page_kind IN ('markdown','code')
 export interface CredentialPending { rebuildable: number; kept: number }
 
 /** Pending pages in active sources; `kept` cannot be rebuilt here (code without a recorded source path). */
-export async function credentialProjectionPending(engine: Pick<BrainEngine, 'executeRaw'>, sourceIds?: string[]): Promise<CredentialPending> {
-  const [row] = await engine.executeRaw<{ rebuildable: number; kept: number }>(`SELECT
-      COUNT(*) FILTER (WHERE ${REBUILDABLE})::int AS rebuildable,
-      COUNT(*) FILTER (WHERE NOT ${REBUILDABLE})::int AS kept
-    FROM pages p JOIN sources s ON s.id=p.source_id AND s.archived IS NOT TRUE
-    WHERE ${PENDING} ${sourceIds ? 'AND p.source_id=ANY($1::text[])' : ''}`, sourceIds ? [sourceIds] : []);
-  return { rebuildable: Number(row?.rebuildable ?? 0), kept: Number(row?.kept ?? 0) };
+export function credentialProjectionPending(engine: Pick<BrainEngine, 'countCredentialProjectionPending'>, sourceIds?: string[]): Promise<CredentialPending> {
+  return engine.countCredentialProjectionPending(sourceIds);
 }
 
 /** GBRA-130 A-27: one page whose re-chunk failed item-scoped, recorded under op_checkpoints `credential-reseal-hold` keyed by page id. */

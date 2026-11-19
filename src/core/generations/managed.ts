@@ -218,11 +218,7 @@ export interface PendingMember { source_id: string; kind: string; owner_key: str
 
 /** Items live generations still wait on a member request for (retire_pending and pending overwrites). */
 export async function listPendingMembers(db: BrainEngine, sourceIds: readonly string[], kind?: string): Promise<PendingMember[]> {
-  const rows = await db.executeRaw<PendingMember & { item_action: string }>(
-    `SELECT g.source_id, g.kind, g.owner_key, g.id AS generation_id, g.activation_id, i.item_key AS slug, i.action AS item_action, i.identity_hash AS identity
-       FROM derived_generation_items i JOIN derived_generations g ON g.id=i.generation_id
-      WHERE i.pending AND g.state='live' AND g.source_id=ANY($1::text[]) AND ($2::text IS NULL OR g.kind=$2) ORDER BY g.source_id, g.kind, g.owner_key, i.item_key`,
-    [[...sourceIds], kind ?? null]);
+  const rows = await db.listPendingGenerationMembers(sourceIds, kind ?? null);
   return rows.map(row => ({ source_id: row.source_id, kind: row.kind, owner_key: row.owner_key, generation_id: Number(row.generation_id), activation_id: row.activation_id,
     slug: row.slug, action: row.item_action === 'retired' ? 'retire' as const : 'overwrite' as const, identity: row.identity }));
 }
@@ -234,14 +230,6 @@ export interface OrphanCandidate { source_id: string; kind: string; owner_key: s
  * never journaled) that no live generation owns. Listed for the operator; never retired automatically.
  */
 export async function listOrphanCandidates(db: BrainEngine, sourceIds: readonly string[], kind?: string): Promise<OrphanCandidate[]> {
-  const rows = await db.executeRaw<OrphanCandidate>(
-    `SELECT a.source_id, a.kind, a.owner_key, a.id AS activation_id, m->>'slug' AS slug, a.created_at::text AS created_at
-       FROM derived_generation_activations a CROSS JOIN LATERAL jsonb_array_elements(a.members) m
-      WHERE a.state='pending' AND a.source_id=ANY($1::text[]) AND ($2::text IS NULL OR a.kind=$2) AND m->>'action'='create'
-        AND NOT EXISTS (SELECT 1 FROM persistence_requests r WHERE r.request_id=a.id::uuid AND r.state IN ('queued','deferred','running','recovering'))
-        AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id=a.source_id AND p.slug=m->>'slug' AND p.deleted_at IS NULL)
-        AND NOT EXISTS (SELECT 1 FROM derived_generation_items i JOIN derived_generations g ON g.id=i.generation_id
-          WHERE g.source_id=a.source_id AND g.kind=a.kind AND g.state='live' AND i.item_key=m->>'slug' AND i.action<>'retired')
-      ORDER BY a.source_id, a.kind, a.owner_key, slug`, [[...sourceIds], kind ?? null]);
+  const rows = await db.listOrphanGenerationCandidates(sourceIds, kind ?? null);
   return rows;
 }
