@@ -5,6 +5,8 @@
 - The purge scrub on a Rust brain now finds a purged number in stored generation history as Postgres prints it (`1.0`, `1.50`), and treats a stored JSON `null` as a value, as Postgres does. Before, it read `1.0` as `1` and could miss or over-count rows.
 - `gbrain repair generations --since` takes an instant with a time zone (for example `2026-10-01T00:00:00Z`) on every engine. A bare date, a time with no zone or a word like `yesterday` now refuses with one clear message everywhere, instead of being read in the session time zone on Postgres and refused only on a Rust brain. The CLI already sends an instant, so CLI use does not change.
 - Every engine now refuses a managed activation id that is not a UUID before it writes it. Before, one such row made the list of left-behind pages fail for every caller on Postgres.
+- A Rust brain now reads the before-state of facts for a fact rows generation, as Postgres and PGLite do. Before, that read sent raw SQL and stopped on a Rust brain. A fact id that is not a whole number now refuses with one clear message on every engine.
+- Every engine now refuses a generation context, proposal or completeness whose JSON holds a number past the double range (for example `1e400`), with one clear message. Before, Postgres and PGLite stored it and read it back as `Infinity`, and a Rust brain refused it with a different error. gbrain itself never writes such a number.
 
 ### Changed
-- A `gbrain repair generations` preview taken before this upgrade on a brain with several sources may refuse as changed after it. Take the preview again.
+- On Postgres, an empty `gbrain repair generations` preview (nothing to apply) taken before this upgrade, for several sources whose ids sort differently by language rules and by bytes, may refuse its apply as `preview_changed` after it. Preview again and use the new hash; the refusal says so.

@@ -2814,6 +2814,13 @@ export interface BrainEngine {
   listFenceRetireCandidates(target: FenceProjectionTarget): Promise<FactPreimage[]>;
 
   /**
+   * The before-state of the facts `ids` of `sourceId` (engine-sql/facts.ts `readFactPreimages`, `FACT_PREIMAGE_SQL`),
+   * in id order; an id that is no fact of the source is left out, and an id that is not a whole number is refused. The
+   * generation adapters (generations/adapters/fact-rows.ts `factPreimages`) record it before rows change.
+   */
+  readFactPreimages(sourceId: string, ids: readonly number[]): Promise<FactPreimage[]>;
+
+  /**
    * Find candidate duplicates for a new fact within a source+entity bucket.
    * Entity-prefilter is mandatory (bounds the contradiction-classifier blast
    * radius). Hard cap k=5 by default. Embedding-cosine when both sides have

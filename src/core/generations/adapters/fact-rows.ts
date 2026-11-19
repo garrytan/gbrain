@@ -20,7 +20,7 @@ import type { GenerationAdapter, GenerationKey, ItemRow } from '../contract.ts';
 import { factRowIdentity, fenceRowKey, FACT_FENCE_KIND, publishFenceGeneration, type FenceGenerationOutcome, type FenceItem, type FenceRead } from '../fence.ts';
 import { activateGeneration, generationKeyLock, itemSetHash, readLiveGeneration, recordHeld } from '../publish.ts';
 import { factsFenceHeld } from '../fence-evidence.ts';
-import { FACT_PREIMAGE_SQL, type FactPreimage } from '../../engine-sql/facts.ts';
+import type { FactPreimage } from '../../engine-sql/facts.ts';
 
 export type { FactPreimage };
 
@@ -46,9 +46,7 @@ export function factRetireItem(preimage: FactPreimage): FenceItem {
 
 /** Before-states of the facts `ids` of `sourceId`. */
 export async function factPreimages(db: BrainEngine, sourceId: string, ids: readonly number[]): Promise<FactPreimage[]> {
-  if (!ids.length) return [];
-  return (await db.executeRaw<{ preimage: FactPreimage }>(`SELECT ${FACT_PREIMAGE_SQL} AS preimage FROM facts f WHERE f.source_id=$1 AND f.id = ANY($2::bigint[]) ORDER BY f.id`,
-    [sourceId, [...ids]])).map(row => row.preimage);
+  return db.readFactPreimages(sourceId, ids);
 }
 
 /**

@@ -9,6 +9,7 @@ import type {
   GenerationActivationRow, GenerationAttemptCount, GenerationLedgerRow, GenerationRowKey, GenerationValveRow, HeldGenerationRow,
   HeldInputRow, LiveGenerationRow,
 } from '../../engine-sql/derived-generations.ts';
+import { checkGenerationJsonNumbers, checkHeldGenerationRow } from '../../engine-sql/derived-generations.ts';
 import type { LedgerScrubCounts } from '../../engine-sql/generation-ledger.ts';
 import {
   checkActivationId, type GenerationActivationRecord, type GenerationActivationState, type GenerationOrphanRow, type PendingGenerationMemberRow,
@@ -27,11 +28,14 @@ export const readLiveGenerationRow: StoreMember<[key: GenerationRowKey], LiveGen
 
 /** Supersedes `liveId`, activates `row` with `items` and deletes the key's held row; resolves the new id. */
 export const activateGenerationRows: StoreMember<[key: GenerationRowKey, liveId: number | null, row: GenerationActivationRow,
-  items: readonly GenerationLedgerRow[]], number> = async (brain, key, liveId, row, items) =>
-  storeCall({ member: 'activateGenerationRows', sourceId: key.sourceId }, () => brain.activateGenerationRows(key, liveId, row, [...items]));
+  items: readonly GenerationLedgerRow[]], number> = async (brain, key, liveId, row, items) => {
+  checkGenerationJsonNumbers('activateGenerationRows', 'completeness', row.completeness);
+  return storeCall({ member: 'activateGenerationRows', sourceId: key.sourceId }, () => brain.activateGenerationRows(key, liveId, row, [...items]));
+};
 
 /** Records `row` as the key's held row: the same hold counts one more attempt, another hold replaces it. */
 export const recordHeldGenerationRow: StoreMember<[key: GenerationRowKey, row: HeldGenerationRow], void> = async (brain, key, row) => {
+  checkHeldGenerationRow(row);
   await storeCall({ member: 'recordHeldGenerationRow', sourceId: key.sourceId }, () => brain.recordHeldGenerationRow(key, row));
 };
 

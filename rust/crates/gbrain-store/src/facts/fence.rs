@@ -16,7 +16,7 @@
 //! the held arm reads the widening proposals of `trust_proposals` (`trust::proposals`). See
 //! rust/docs/store/facts.md, "The fence guard's reads".
 
-use super::{FactRecord, page_rows};
+use super::{FactRecord, page_rows, read_fact};
 use crate::Store;
 use crate::error::{INVALID_ARGUMENT, Result, StoreError};
 use crate::kv::KvRead;
@@ -192,6 +192,26 @@ impl Store {
             })
             .map(|(_, row)| preimage(row))
             .collect())
+    }
+
+    /// `readFactPreimages(sourceId, ids)`: the before-state (`FACT_PREIMAGE_SQL`) of each fact of `ids`
+    /// that exists in `source_id`, in id order, once per id. The generation adapters record it before
+    /// rows change. A negative id is no fact, as `f.id = ANY($2::bigint[])` matches none.
+    pub fn read_fact_preimages(&self, source_id: &str, ids: &[i64]) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let ids: std::collections::BTreeSet<u64> = ids
+            .iter()
+            .filter_map(|id| u64::try_from(*id).ok())
+            .collect();
+        let mut out = Vec::new();
+        for id in ids {
+            if let Some(row) = read_fact(&*read, id)?
+                && row.source_id == source_id
+            {
+                out.push(preimage(&row));
+            }
+        }
+        Ok(out)
     }
 
     /// `listFenceFactRows({ sourceId, slug, incoming })`: the page's live fence rows, by row number,

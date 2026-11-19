@@ -2,8 +2,8 @@
  * BrainEngine parity — the generation ledger reads and writes answer PGLite's output on Postgres and on a Rust brain:
  * row order (source, kind, owner and item keys in byte order, never the database collation; generations in id order,
  * never heap order), jsonb number text as Postgres keeps it (`1.0`, `1.50`, `1.00` for `100e-2`) in the text scrub, a
- * JSON `null` held context, proposal or fence as a value (not SQL NULL), an activation id that is not a uuid, and a
- * `--since` that is not an ISO instant with a zone.
+ * JSON `null` held context, proposal or fence as a value (not SQL NULL), an activation id that is not a uuid, a
+ * `--since` that is not an ISO instant with a zone, and the fact before-states the fact rows adapter records.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each case gives the same answer on PGLite, Postgres (en_US collation) and the Rust engine. Source ids
@@ -30,6 +30,7 @@ import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { submissionAuthority } from '../../src/core/persistence/authority.ts';
 import { registerLocalWriter } from '../../src/core/persistence/identity.ts';
 import { admitWrite } from '../../src/core/persistence/journal.ts';
+import { factPreimages } from '../../src/core/generations/adapters/fact-rows.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -225,6 +226,64 @@ describe('engine parity: generation ledger output', () => {
       '0001-01-01T00:30:00+01:00': refused('0001-01-01T00:30:00+01:00'), '2026-01-01T00:00:00.000Z': one, '2026-01-01T00:00:00Z': one,
       '2026-01-01 00:00:00+00': one, '2026-01-01T02:00:00+02:00': one, '2026-01-01': refused('2026-01-01'), '2026-01-01 10:00': refused('2026-01-01 10:00'),
       yesterday: refused('yesterday'), garbage: refused('garbage'), '2026-02-30T00:00:00Z': refused('2026-02-30T00:00:00Z') });
+    return answers;
+  });
+
+  parityTest('a generation JSON number past the double range refuses on every engine, before anything is written', {
+    methods: ['transaction', 'recordHeldGenerationRow', 'activateGenerationRows', 'listHeldGenerationRows', 'readHeldGenerationContext',
+      'readLiveGenerationRow'],
+  }, async (engine) => {
+    const key = (kind: string, ownerKey: string) => ({ sourceId: 'default', kind, ownerKey });
+    const refused = /[^:]*: a JSON number in [a-z_]+ is past the double range/;
+    const hold = (kind: string, context: string, proposal: string | null) =>
+      outcome(() => engine.transaction(tx => tx.recordHeldGenerationRow(key(kind, 'input:h'), held(`h-${kind}`, context, proposal))), refused);
+    const written = {
+      context: await hold('huge_context', '{"n":1e400}', null),
+      proposal: await hold('huge_proposal', '{}', '[1, -1e400]'),
+      completeness: await outcome(() => engine.transaction(tx =>
+        tx.activateGenerationRows(key('huge_completeness', 'page:notes/h'), null, activation(1, 'huge-op', '{"fence":1e309}'), [])), refused),
+      largest: await hold('largest_context', '{"n":1.7976931348623157e308,"tiny":1e-400}', null),
+    };
+    const kept = {
+      held: await Promise.all(['huge_context', 'huge_proposal'].map(async kind => (await engine.listHeldGenerationRows(['default'], kind, {})).length)),
+      live: await engine.readLiveGenerationRow(key('huge_completeness', 'page:notes/h')),
+      largest: await engine.readHeldGenerationContext(key('largest_context', 'input:h'), 'h-largest_context'),
+    };
+    const answers = { written, kept };
+    expect(answers).toEqual({
+      written: { context: 'recordHeldGenerationRow: a JSON number in held_context is past the double range',
+        proposal: 'recordHeldGenerationRow: a JSON number in proposal is past the double range',
+        completeness: 'activateGenerationRows: a JSON number in completeness is past the double range', largest: undefined },
+      kept: { held: [0, 0], live: null, largest: { held_context: { n: 1.7976931348623157e308, tiny: 0 } } },
+    });
+    return answers;
+  });
+
+  parityTest('the fact rows adapter reads the before-state of the facts of one source, by id, once each', {
+    methods: ['insertFacts', 'expireFact', 'readFactPreimages'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other-facts');
+    const mk = (fact: string, extra: Record<string, unknown> = {}) => ({ fact, entity_slug: 'people/preimage-example', source: 'fence',
+      source_markdown_slug: 'people/preimage-example', kind: 'fact' as const, visibility: 'world' as const, valid_from: new Date('2026-02-01T01:02:03.250Z'), ...extra });
+    const { ids } = await engine.insertFacts([mk('Alpha', { row_num: 1 }), mk('Beta', { row_num: 2, attributed_to: 'user' }),
+      mk('Gamma', { visibility: 'private', kind: 'event' })] as never, { source_id: 'default' });
+    const { ids: [elsewhere] } = await engine.insertFacts([mk('Elsewhere', { row_num: 1 })] as never, { source_id: 'other-facts' });
+    expect(await engine.expireFact(ids[1]!, { supersededBy: ids[0]!, at: new Date('2026-04-05T06:07:08.125Z') })).toBe(true);
+    const names = new Map<number, string>([[ids[0]!, 'Alpha'], [ids[1]!, 'Beta'], [ids[2]!, 'Gamma'], [elsewhere!, 'Elsewhere']]);
+    const name = (id: number | null) => (id == null ? null : names.get(id) ?? '<unknown-id>');
+    const named = (rows: Awaited<ReturnType<typeof factPreimages>>) => rows.map(row => ({ ...row, id: name(row.id), superseded_by: name(row.superseded_by),
+      consolidated_into: name(row.consolidated_into) }));
+    const answers = {
+      rows: named(await factPreimages(engine, 'default', [ids[2]!, ids[1]!, elsewhere!, ids[2]!, 2 ** 52])),
+      other: named(await factPreimages(engine, 'other-facts', [ids[0]!, elsewhere!])),
+      none: await factPreimages(engine, 'default', []),
+      fraction: await outcome(() => engine.readFactPreimages('default', [1.5]), /fact ids must be whole numbers: 1\.5/),
+    };
+    expect(answers.rows.map(row => [row.id, row.fact])).toEqual([['Beta', 'Beta'], ['Gamma', 'Gamma']]);
+    expect(answers.rows[0]).toMatchObject({ row_num: 2, superseded_by: 'Alpha', attributed_to: 'user', expired_at: '2026-04-05T06:07:08.125+00:00' });
+    expect(answers.other.map(row => row.fact)).toEqual(['Elsewhere']);
+    expect(answers.none).toEqual([]);
+    expect(answers.fraction).toBe('fact ids must be whole numbers: 1.5');
     return answers;
   });
 });

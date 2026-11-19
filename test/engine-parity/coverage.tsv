@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 740/740
+# covered: 741/741
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -25,7 +25,7 @@
 # takes: 23/23
 # dream: 3/3
 # contradictions: 5/5
-# facts: 15/15
+# facts: 16/16
 # segmented_body: 16/16
 # versions: 3/3
 # stats_ingest: 5/5
@@ -74,7 +74,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	77	no	yes	yes	serves
+transaction	lifecycle	yes	78	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -302,9 +302,9 @@ getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
 insertFact	facts	yes	42	yes	yes	yes	serves
-insertFacts	facts	yes	49	no	yes	yes	serves
+insertFacts	facts	yes	50	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
-expireFact	facts	yes	26	no	yes	yes	serves
+expireFact	facts	yes	27	no	yes	yes	serves
 listFactsByEntity	facts	yes	19	yes	yes	yes	serves
 listFactsSince	facts	yes	11	yes	yes	yes	serves
 listFactsKeyset	facts	yes	3	no	yes	yes	serves
@@ -312,6 +312,7 @@ listFactsBySession	facts	yes	5	yes	yes	yes	serves
 listSupersessions	facts	yes	6	yes	yes	yes	serves
 countUnconsolidatedFacts	facts	yes	2	yes	yes	yes	serves
 listFenceRetireCandidates	facts	yes	3	no	yes	yes	serves
+readFactPreimages	facts	yes	1	no	yes	yes	serves
 findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
 consolidateFact	facts	yes	4	no	yes	yes	serves
 findTrajectory	facts	yes	3	yes	yes	yes	serves
@@ -378,11 +379,11 @@ readFenceOriginGone	persistence_journal	yes	1	no	yes	yes	serves
 lockGenerationKey	persistence_journal	yes	2	no	yes	yes	serves
 clearFenceHoldRows	persistence_journal	yes	1	no	yes	yes	serves
 readFenceHoldFiles	persistence_journal	yes	1	no	yes	yes	serves
-readLiveGenerationRow	persistence_journal	yes	2	no	yes	yes	serves
-activateGenerationRows	persistence_journal	yes	10	no	yes	yes	serves
-recordHeldGenerationRow	persistence_journal	yes	7	no	yes	yes	serves
+readLiveGenerationRow	persistence_journal	yes	3	no	yes	yes	serves
+activateGenerationRows	persistence_journal	yes	11	no	yes	yes	serves
+recordHeldGenerationRow	persistence_journal	yes	8	no	yes	yes	serves
 heldGenerationRowsForInput	persistence_journal	yes	1	no	yes	yes	serves
-readHeldGenerationContext	persistence_journal	yes	4	no	yes	yes	serves
+readHeldGenerationContext	persistence_journal	yes	5	no	yes	yes	serves
 liveGenerationForOperation	persistence_journal	yes	1	no	yes	yes	serves
 countGenerationAttempt	persistence_journal	yes	1	no	yes	yes	serves
 clearGenerationAttempts	persistence_journal	yes	1	no	yes	yes	serves
@@ -399,7 +400,7 @@ listGenerationOrphanCandidates	persistence_journal	yes	3	no	yes	yes	serves
 readGenerationItemsByIds	persistence_journal	yes	2	no	yes	yes	serves
 listUnmatchedGenerationRows	persistence_journal	yes	2	no	yes	yes	serves
 listRestorableGenerationRows	persistence_journal	yes	2	no	yes	yes	serves
-listHeldGenerationRows	persistence_journal	yes	3	no	yes	yes	serves
+listHeldGenerationRows	persistence_journal	yes	4	no	yes	yes	serves
 readHeldGenerationProposal	persistence_journal	yes	1	no	yes	yes	serves
 listSourceIncarnations	persistence_journal	yes	2	no	yes	yes	serves
 listRecordedFenceItemKeys	persistence_journal	yes	2	no	yes	yes	serves

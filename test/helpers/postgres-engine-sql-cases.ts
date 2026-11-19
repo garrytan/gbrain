@@ -340,6 +340,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'matchTakeRows': OOS.pageWriteRows,
   'deleteTakeRows': OOS.pageWriteRows,
   'listFenceRetireCandidates': OOS.trustFence,
+  'readFactPreimages': OOS.callerRawSql,
   'listFenceFactRows': OOS.trustFence,
   'insertTrustProposal': OOS.trustProposals,
   'getTrustProposal': OOS.trustProposals,
@@ -1328,6 +1329,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ]),
   ...variants('isFolderRestricted', [['default', (e) => e.isFolderRestricted(SRC, SLUG)]]),
   ...variants('listAppliedPolicyRevisions', [['default', (e) => e.listAppliedPolicyRevisions()]]),
+  ...variants('readFactPreimages', [['default', (e) => e.readFactPreimages(SRC, [3, 1])]]),
   ...variants('readJournalLimitRows', [['default', (e) => e.readJournalLimitRows()]]),
   ...variants('readHeldPageRows', [['default', (e) => e.readHeldPageRows(['1', '2'])]]),
   ...variants('readHeldCoverageRows', [

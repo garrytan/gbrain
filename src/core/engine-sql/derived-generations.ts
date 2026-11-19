@@ -6,6 +6,7 @@
  * attempt counter (`recordAttempt`) and the retirement valve (`readValve`, `bumpValve`). One SQL implementation for both engines; each statement is the text publish.ts
  * sent through `executeRaw`, with the same parameters and a total row order that sorts text by bytes (`COLLATE "C"`, as PGLite and the Rust engine sort it), on the engine's own `executeRaw`.
  * The Rust engine serves them from its `derived_generations` family (rust/crates/gbrain-store/src/generations.rs).
+ * Every engine refuses a JSON number past the double range in the written JSON text first (`checkGenerationJsonNumbers`).
  */
 import type { EngineRawRead } from './cli-reads-ops.ts';
 
@@ -129,11 +130,38 @@ export async function readLiveGenerationRow(raw: EngineRawRead, key: GenerationR
 }
 
 /**
+ * Refuses JSON text that holds a number past the double range (such as `1e400`) on every engine, before anything is
+ * written. Postgres stores it as `numeric`, but every gbrain reader parses it to `Infinity`, which `JSON.stringify`
+ * writes back as `null`; the Rust store cannot parse it. gbrain's own writers build this text with `JSON.stringify`,
+ * which never writes such a number. Text that is not JSON is left to the engine's own refusal.
+ */
+export function checkGenerationJsonNumbers(op: string, column: string, text: string | null): void {
+  if (text === null) return;
+  let huge = false;
+  try {
+    JSON.parse(text, (_key, value: unknown) => {
+      if (typeof value === 'number' && !Number.isFinite(value)) huge = true;
+      return value;
+    });
+  } catch {
+    return;
+  }
+  if (huge) throw new Error(`${op}: a JSON number in ${column} is past the double range`);
+}
+
+/** The JSON text checks of `recordHeldGenerationRow`. */
+export function checkHeldGenerationRow(row: HeldGenerationRow): void {
+  checkGenerationJsonNumbers('recordHeldGenerationRow', 'held_context', row.context);
+  checkGenerationJsonNumbers('recordHeldGenerationRow', 'proposal', row.proposal);
+}
+
+/**
  * Supersedes the live row `liveId` (when not null), inserts `row` as the key's live generation with `items`, and deletes
  * the key's held row and attempt counters. Resolves the new row's id. Runs in the caller's transaction.
  */
 export async function activateGenerationRows(raw: EngineRawRead, key: GenerationRowKey, liveId: number | null, row: GenerationActivationRow,
   items: readonly GenerationLedgerRow[]): Promise<number> {
+  checkGenerationJsonNumbers('activateGenerationRows', 'completeness', row.completeness);
   if (liveId !== null) await raw(SUPERSEDE_SQL, [liveId]);
   const [created] = await raw<{ id: number }>(ACTIVATE_SQL,
     [key.sourceId, key.kind, key.ownerKey, row.generation, row.runId, row.operationId, row.inputPin, row.inputSize,
@@ -150,6 +178,7 @@ export async function activateGenerationRows(raw: EngineRawRead, key: Generation
  * caller's transaction.
  */
 export async function recordHeldGenerationRow(raw: EngineRawRead, key: GenerationRowKey, row: HeldGenerationRow): Promise<void> {
+  checkHeldGenerationRow(row);
   const [existing] = await raw<{ id: number; hold_id: string }>(HELD_ROW_SQL, [key.sourceId, key.kind, key.ownerKey]);
   if (existing?.hold_id === row.holdId) {
     await raw(BUMP_ATTEMPTS_SQL, [existing.id]);

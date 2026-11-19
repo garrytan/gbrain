@@ -445,3 +445,26 @@ fn the_write_trust_settings_reach_both_fence_reads_and_clear_with_the_context() 
         5
     );
 }
+
+#[test]
+fn fact_preimages_read_the_source_rows_by_id_once_in_id_order() {
+    let b = brain("fact-preimages");
+    let ids = page(&b);
+    let id = |n: usize| i64::try_from(ids[n]).unwrap();
+    let asked = [id(4), id(0), id(4), -1, i64::MAX];
+    let rows = b.read_fact_preimages("default", &asked).unwrap();
+    let got: Vec<(u64, &str)> = rows
+        .iter()
+        .map(|r| (r["id"].as_u64().unwrap(), r["fact"].as_str().unwrap()))
+        .collect();
+    assert_eq!(got, vec![(ids[0], "Zeta struck"), (ids[4], "Beta")]);
+    // Beta's before-state keeps its strike and its successor, as `FACT_PREIMAGE_SQL` does.
+    assert_eq!(
+        rows[1]["expired_at"],
+        json!("2026-04-05T06:07:08.125+00:00")
+    );
+    assert_eq!(rows[1]["superseded_by"], json!(ids[6]));
+    assert_eq!(rows[1]["attributed_to"], json!("user"));
+    assert!(b.read_fact_preimages("default", &[]).unwrap().is_empty());
+    assert!(b.read_fact_preimages("missing", &asked).unwrap().is_empty());
+}

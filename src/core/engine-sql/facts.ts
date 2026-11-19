@@ -948,3 +948,20 @@ export async function listFenceRetireCandidates(exec: LegacyUnscopedRead, target
         AND NOT ${opened}
       ORDER BY f.row_num, f.id`)).rows.map(row => row.preimage);
 }
+
+/** Refuses fact ids that are not whole numbers in the safe integer range, before any engine reads them. */
+export function checkFactIds(op: string, ids: readonly number[]): void {
+  const bad = ids.find(id => !Number.isSafeInteger(id));
+  if (bad !== undefined) throw new Error(`${op}: fact ids must be whole numbers: ${JSON.stringify(bad)}`);
+}
+
+/**
+ * The before-state of the facts `ids` of `sourceId` (`FACT_PREIMAGE_SQL`), in id order. An id that is not a fact of
+ * the source is left out. The generation adapters record it before a writer retires, consolidates or restores rows.
+ */
+export async function readFactPreimages(exec: LegacyUnscopedRead, sourceId: string, ids: readonly number[]): Promise<FactPreimage[]> {
+  checkFactIds('readFactPreimages', ids);
+  if (!ids.length) return [];
+  return (await exec.run<{ preimage: FactPreimage }>(sqlFragment`SELECT ${trustedSql(FACT_PREIMAGE_SQL)} AS preimage FROM facts f WHERE f.source_id=${sourceId} AND f.id = ANY(${[...ids]}::bigint[]) ORDER BY f.id`))
+    .rows.map(row => row.preimage);
+}

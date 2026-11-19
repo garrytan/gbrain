@@ -11,6 +11,7 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
+use gbrain_store::error::StoreError;
 use gbrain_store::facts::{
     DuplicateQuery, ExpireFactArgs, FactQuery, FenceTarget, InsertFactArgs, InsertFactsArgs,
     PageDeleteArgs, SupersessionQuery, TrajectoryQuery, UnattributedQuery,
@@ -172,6 +173,33 @@ impl Brain {
         self.run(env, move |s| {
             let t: FenceTarget = required(target, "listFenceRetireCandidates target")?;
             s.list_fence_retire_candidates(&t, &s.fence_context())
+        })
+    }
+
+    /// `readFactPreimages(sourceId, ids)`: resolves the before-state of each fact of `ids` in the source,
+    /// in id order.
+    #[napi]
+    pub fn read_fact_preimages<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        ids: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            // A JS number past 2^31 reaches serde as a float, so each id is checked as a whole number here.
+            let ids = ids
+                .iter()
+                .map(|id| {
+                    if id.fract() == 0.0 && id.abs() <= 9_007_199_254_740_991.0 {
+                        Ok(*id as i64)
+                    } else {
+                        Err(StoreError::invalid(format!(
+                            "readFactPreimages: fact ids must be whole numbers: {id}"
+                        )))
+                    }
+                })
+                .collect::<Result<Vec<i64>, StoreError>>()?;
+            s.read_fact_preimages(&source_id, &ids)
         })
     }
 

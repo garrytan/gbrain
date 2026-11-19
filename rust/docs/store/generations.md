@@ -62,8 +62,10 @@ C.UTF-8 ctype. A ledger row keeps that text for `held_context`, `proposal` and `
 (`held_context_text`, `proposal_text`, `fence_text`), read from the written JSON text by `cli_reads::pg_jsonb`: a number
 keeps the digits and scale `numeric` keeps (`1.0`, `1.50`, `100e-2` reads `1.00`, `1e2` reads `100`, `-0.0` reads
 `0.0`), and a JSON `null` stays a value apart from SQL NULL (`proposal IS NOT NULL` holds, `jsonb_array_length` of it
-is a scalar error). A row written before these fields renders its text from the value. One difference stays: a number
-`serde_json` does not parse (`1e400`, which `numeric` takes) is `invalid_argument` at write.
+is a scalar error). A row written before these fields renders its text from the value. A number past the double range
+(`1e400`, which `numeric` takes) never reaches the store: every engine's member refuses it first
+(`engine-sql/derived-generations.ts` `checkGenerationJsonNumbers`), and the store's own parse refuses it with
+`invalid_argument` as a backstop.
 
 The activation rows live under `h 0x08 id` with a reverse index `h 0x09 generation_id id`, so a deleted generation
 row sets its activations' `generation_id` to null (`ON DELETE SET NULL`). The orphan list reads the write journal and
