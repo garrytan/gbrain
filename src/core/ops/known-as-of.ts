@@ -84,24 +84,22 @@ type GatedInterval = PageInterval & { quarantined?: QuarantinedView; live?: { so
  * Readable intervals: a remote caller sees an interval only under the ledger's visibility rule and the page's current
  * trust floor. #6259: when the page is quarantined now, or was in the interval, the interval keeps no body, as the
  * current read keeps none (the same view and notice as get_page). GST-2891: each carries the live page's source and slug,
- * where its held rows are looked up (a rename moves a page's facts to its new slug). GST-3252 (R94): the owner reads an
- * interval when its current-time read shows the page of the interval's own lifetime, and the edition's own readers admit
- * it, as get_page as_of judges a stored edition (an edition whose frontmatter was not loaded must have been world), and
- * never less than the world-only rule shows every remote caller.
+ * where its held rows are looked up (a rename moves a page's facts to its new slug). GST-3252 (R94): the owner also reads
+ * an interval of the live page's own lifetime when its current-time read shows that page and the edition's own readers
+ * admit it, as get_page as_of judges a stored edition (an edition whose frontmatter was not loaded must have been world).
+ * An earlier lifetime at the slug keeps the world-only rule, since the live page's quarantine and held rows are not its.
  */
 async function readable(ctx: OperationContext, read: PageAtTime, intervals: PageInterval[], minTrust: unknown, owner: string | null): Promise<GatedInterval[]> {
   if (ctx.remote === false) return intervals;
   if (read.page_id == null || !(await pageTrustForRead(ctx, { id: read.page_id }, minTrust))) return [];
-  const [live] = await ctx.engine.executeRaw<{ slug: string; source_id: string; frontmatter: Record<string, unknown>; owner_lifetimes: string[] | null }>(
-    `SELECT live.slug, live.source_id, live.frontmatter, ARRAY(SELECT l.page_lifetime::text FROM belief_page_lifetimes l JOIN pages p ON p.id = l.page_id
-      WHERE l.page_lifetime = ANY($2::uuid[]) AND p.deleted_at IS NULL AND ${owner ?? 'FALSE'}) AS owner_lifetimes FROM pages live WHERE live.id = $1`,
-    [read.page_id, [...new Set(intervals.map(i => i.lifetime))]]);
+  const [live] = await ctx.engine.executeRaw<{ slug: string; source_id: string; frontmatter: Record<string, unknown>; owner_reads: boolean }>(
+    `SELECT p.slug, p.source_id, p.frontmatter, (p.deleted_at IS NULL AND ${owner ?? 'FALSE'}) AS owner_reads FROM pages p WHERE p.id = $1`, [read.page_id]);
   if (!live) return [];
-  const ownerReads = new Set(live.owner_lifetimes ?? []);
+  const ownerLifetime = live.owner_reads === true ? read.current?.lifetime : undefined;
   const quarantine = historyQuarantine(ctx, live);
   const out: GatedInterval[] = [];
   for (const i of intervals) {
-    const ownerSees = owner !== null && ownerReads.has(i.lifetime) && (i.page ? callerReadersAllow(i.page.frontmatter, i.slug) : i.event.visibility === 'world');
+    const ownerSees = ownerLifetime !== undefined && i.lifetime === ownerLifetime && (i.page ? callerReadersAllow(i.page.frontmatter, i.slug) : i.event.visibility === 'world');
     if (!ownerSees && !(await remoteMayRead(ctx.engine, read.page_id, i))) continue;
     const view = quarantine(i.page?.frontmatter);
     const held = { sourceId: live.source_id, slug: live.slug };

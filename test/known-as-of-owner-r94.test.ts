@@ -71,6 +71,11 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
       renameSync(join(b.root, 'companies/moved-example.md'), join(b.root, 'companies/closed-a-example.md'));
       await b.put('companies/closed-a-example', beliefPage({ prose: 'Lifetime A closed.', frontmatter: { visibility: 'private', readable_by: '[bob-example]' } }));
       await b.put('companies/moved-example', beliefPage({ prose: 'Lifetime B open.' }));
+      // Lifetime C leaves the slug and stays the owner's to read; lifetime D, open, takes the slug.
+      await b.put('companies/reused-example', priv('Reused C private.'));
+      await renamePageOntoSlug(b.engine, { sourceId: b.sourceId, oldSlug: 'companies/reused-example', newSlug: 'companies/reused-c-example', to: 'companies/reused-c-example.md' });
+      renameSync(join(b.root, 'companies/reused-example.md'), join(b.root, 'companies/reused-c-example.md'));
+      await b.put('companies/reused-example', beliefPage({ prose: 'Reused D open.' }));
       // A purged lifetime and the one recreated at its slug: world history the other callers list.
       await b.put('companies/purged-example', beliefPage({ prose: 'Before the purge.' }));
       const purgedRevision = (await b.engine.executeRaw<{ r: string }>('SELECT knowledge_revision::text AS r FROM pages WHERE source_id = $1 AND slug = $2', [b.sourceId, 'companies/purged-example']))[0]!.r;
@@ -134,6 +139,10 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
       const moved = await history('owner', 'companies/moved-example', t2);
       expect({ error: moved.isError, b: moved.text.includes('Lifetime B open.'), a: moved.text.includes('Lifetime A') }).toEqual({ error: false, b: true, a: false });
       expect(await listed('owner', 'companies/moved-example', t2)).toBe(1);
+      // An earlier lifetime keeps the world-only rule even while the owner reads its page: the live page's quarantine and held rows are not its own.
+      expect((await now('owner', 'companies/reused-c-example')).text).toContain('Reused C private.');
+      const reused = await history('owner', 'companies/reused-example', t2);
+      expect({ error: reused.isError, d: reused.text.includes('Reused D open.'), c: reused.text.includes('Reused C') }).toEqual({ error: false, d: true, c: false });
       // The owner never lists less than the world-only rule lists every other remote caller.
       for (const slug of ['companies/purged-example', 'companies/opening-example', 'companies/handover-example', 'companies/moved-example']) {
         const [ownerCount, bobCount, unboundCount] = [await listed('owner', slug, t2), await listed('bob', slug, t2), await listed('unbound', slug, t2)];
