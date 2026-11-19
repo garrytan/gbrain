@@ -7,6 +7,7 @@
  *   bun scripts/rust-census/census.ts [--only cli|mcp] [--filter <substring>] [--concurrency N] [--work-dir DIR]
  *        [--out docs/research/rust-census.md] [--json docs/research/rust-census.json]
  *   bun scripts/rust-census/census.ts --from-json docs/research/rust-census.json   (re-render the report and packages only)
+ *  The report also counts hidden refusals: equal rows that log a refusal a fail-soft path caught (see hiddenRefusals).
  *   GBRAIN_CENSUS_PG_URL=postgres://postgres:postgres@127.0.0.1:5439/postgres  (optional Postgres arm)
  *
  * How it works:
@@ -456,6 +457,32 @@ async function runMcpTool(tool: { name: string; inputSchema?: any }, i: number, 
 
 const esc = (s: string) => s.replace(/\|/g, '\\|').replace(/\n/g, ' ');
 
+/**
+ * Hidden refusals: rows that show equal but log one or more refusal sites. A fail-soft path caught each refusal, so
+ * the answer matched, but the Rust arm took a fallback there. MCP rows leave out the refusals every `serve` builds at
+ * startup (Setup lists them once). Sites rank by impact as packages.ts scores a package (10 per hot case, 1 per other case).
+ */
+interface HiddenSite { site: string; score: number; rows: number; hot: string[]; cases: string[] }
+function hiddenRefusals(rows: Row[]): { rows: Row[]; sites: HiddenSite[] } {
+  const sitesOf = (r: Row) => [...new Set((r.sites ?? []).filter((x) => r.surface !== 'mcp' || !SERVE_BASELINE.has(x)))];
+  const hidden = rows.filter((r) => r.status === 'equal' && sitesOf(r).length > 0);
+  const bySite = new Map<string, Row[]>();
+  for (const r of hidden) for (const x of sitesOf(r)) bySite.set(x, [...(bySite.get(x) ?? []), r]);
+  const sites = [...bySite].map(([site, rs]): HiddenSite => {
+    const at = site.lastIndexOf('@');
+    const asRefused = rs.map((r) => ({ ...r, status: 'refused' as const, decisive: site.slice(0, at), endSite: site.slice(at + 1), sites: undefined }));
+    const pkg = buildPackages(asRefused, ROOT)[0]!;
+    return { site, score: pkg.score, rows: rs.length, hot: pkg.hot, cases: pkg.cases };
+  }).sort((a, b) => b.score - a.score || b.rows - a.rows || a.site.localeCompare(b.site));
+  return { rows: hidden, sites };
+}
+
+/** The one-line summary (also the line other lanes quote): rows, rows per surface, distinct sites. */
+function hiddenLine(h: { rows: Row[]; sites: HiddenSite[] }): string {
+  const by = (surface: string) => h.rows.filter((r) => r.surface === surface).length;
+  return `Hidden refusals: ${h.rows.length} equal rows (cli ${by('cli')}, mcp ${by('mcp')}) log ${h.sites.length} distinct refusal sites; serve startup refusals are not counted.`;
+}
+
 function report(rows: Row[], setup: string[], meta: Record<string, string>, tools: number, cliCommands: string[]): string {
   const count = (surface: string, s: Status) => rows.filter((r) => r.surface === surface && r.status === s).length;
   const lines: string[] = [];
@@ -469,6 +496,8 @@ function report(rows: Row[], setup: string[], meta: Record<string, string>, tool
   lines.push('', `CLI commands covered: ${new Set(rows.filter((r) => r.surface === 'cli').map((r) => r.name)).size} of ${cliCommands.length}. MCP tools covered: ${rows.filter((r) => r.surface === 'mcp').length} of ${tools}.`, '');
   const uncovered = cliCommands.filter((c) => !rows.some((r) => r.surface === 'cli' && r.name === c));
   if (uncovered.length) lines.push(`CLI commands with no case: ${uncovered.join(', ')}`, '');
+  const hidden = hiddenRefusals(rows);
+  lines.push(hiddenLine(hidden), '');
 
   lines.push(renderPackages(buildPackages(rows, ROOT)));
 
@@ -483,6 +512,11 @@ function report(rows: Row[], setup: string[], meta: Record<string, string>, tool
     const sites = [...new Set(rs.map((r) => r.first?.site).filter(Boolean))].slice(0, 4).join(', ');
     lines.push(`| ${esc(k)} | ${rs.length} | ${caps} | ${esc(sites)} | ${esc(rs.map((r) => `${r.surface}:${r.name}`).filter((v, i, a) => a.indexOf(v) === i).join(', '))} |`);
   }
+  lines.push('');
+  lines.push('## Hidden refusals (equal rows that log a refusal site, by impact)', '',
+    'A fail-soft path caught the refusal, so the answer matched, but Rust took a fallback there. Score: 10 per hot case, 1 per other case.', '',
+    '| refusal site | score | equal rows | hot cases | cases (surface:name) |', '|---|---|---|---|---|');
+  for (const h of hidden.sites) lines.push(`| ${esc(h.site)} | ${h.score} | ${h.rows} | ${h.hot.length} | ${esc(h.cases.join(', '))} |`);
   lines.push('');
   for (const s of ['cli', 'mcp'] as const) {
     lines.push(`## ${s === 'cli' ? 'CLI commands' : 'MCP tools'}`, '', `| ${s === 'cli' ? 'invocation' : 'tool (params)'} | status | pg | first refusal (capability, member, site) | ended on | members / raw SQL hit | note |`, '|---|---|---|---|---|---|---|');
@@ -514,7 +548,9 @@ async function main(): Promise<void> {
   const from = flag('--from-json');
   if (from) {
     const d = JSON.parse(readFileSync(resolve(from), 'utf8'));
+    for (const x of d.serveBaseline ?? []) SERVE_BASELINE.add(x);
     d.packages = buildPackages(d.rows, ROOT);
+    d.hidden = hiddenRefusals(d.rows).sites;
     writeFileSync(OUT_JSON, JSON.stringify(d, null, 1) + '\n');
     writeReport(report(d.rows, d.setup, d.meta, d.tools.length, d.cliCommands));
     if (!flag('--work-dir')) rmSync(work, { recursive: true, force: true });
@@ -593,7 +629,7 @@ async function main(): Promise<void> {
     'reference': useMirror ? 'mirror (PGLite with the Rust-completed setup steps)' : 'PGLite', 'postgres arm': pg ? 'on (pgvector, a template database per case)' : 'off (set GBRAIN_CENSUS_PG_URL)',
     'filter': FILTER ?? 'none', 'only': ONLY ?? 'cli and mcp', 'wall time': `${Math.round((Date.now() - t0) / 1000)} s`,
   };
-  writeFileSync(OUT_JSON, JSON.stringify({ meta, setup, cliCommands, tools: tools.map((t) => t.name), packages: buildPackages(rows, ROOT), rows }, null, 1) + '\n');
+  writeFileSync(OUT_JSON, JSON.stringify({ meta, setup, cliCommands, tools: tools.map((t) => t.name), serveBaseline: [...SERVE_BASELINE], packages: buildPackages(rows, ROOT), hidden: hiddenRefusals(rows).sites, rows }, null, 1) + '\n');
   writeReport(report(rows, setup, meta, tools.length, cliCommands));
   for (const b of [pglite, rust, ...(pg ? [pg] : []), ...(useMirror ? [ref] : [])]) await dropBrain(b);
   if (!flag('--work-dir')) rmSync(work, { recursive: true, force: true });
