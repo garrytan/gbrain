@@ -47,6 +47,7 @@ test/engine-parity/persistence-declaration.test.ts	6	0
 test/engine-parity/persistence.test.ts	29	0
 test/engine-parity/private-page-reads.test.ts	7	0
 test/engine-parity/raw-sql.test.ts	0	4
+test/engine-parity/request-tools-persist.test.ts	1	0
 test/engine-parity/retrieval-coverage.test.ts	11	1
 test/engine-parity/search-reads.test.ts	15	1
 test/engine-parity/search.test.ts	17	2
