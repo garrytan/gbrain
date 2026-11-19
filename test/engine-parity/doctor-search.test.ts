@@ -211,4 +211,32 @@ describe('doctor search reads', () => {
       return { empty, counts };
     },
   );
+
+  parityTest(
+    'listGitImageHoldCounts lists the unsupported-image holds of each source in the list, by the incarnation it has now',
+    { methods: ['readSourceIncarnation', 'writeDoctorLastKnown', 'listGitImageHoldCounts'] },
+    async (engine, backend) => {
+      for (const id of ['other', 'quiet']) await createSource(engine, backend, id);
+      const empty = await engine.listGitImageHoldCounts(['default']);
+      const fingerprint = async (id: string) => `${id}:${(await engine.readSourceIncarnation(id))!.incarnation}`;
+      await engine.writeDoctorLastKnown('sync-hold-summary', [
+        { entry: await fingerprint('default'), value: { count: 3, images: 2 } },
+        { entry: await fingerprint('other'), value: { count: 1, images: '4' } },
+        { entry: await fingerprint('quiet'), value: { count: 1, images: 0 } },
+        // The summary of a past incarnation of a source does not count.
+        { entry: 'default:00000000-0000-0000-0000-00000000dead', value: { images: 9 } },
+      ]);
+      const sort = (rows: Array<{ source_id: string; images: number }>) => [...rows].sort((a, b) => (a.source_id < b.source_id ? -1 : 1));
+      const all = sort(await engine.listGitImageHoldCounts(['default', 'other', 'quiet', 'absent']));
+      const one = await engine.listGitImageHoldCounts(['other']);
+      const none = await engine.listGitImageHoldCounts([]);
+      expect({ empty, all, one, none }).toEqual({
+        empty: [],
+        all: [{ source_id: 'default', images: 2 }, { source_id: 'other', images: 4 }],
+        one: [{ source_id: 'other', images: 4 }],
+        none: [],
+      });
+      return { empty, all, one, none };
+    },
+  );
 });

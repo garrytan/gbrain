@@ -85,4 +85,14 @@ impl Brain {
             s.count_pages_hidden_by_prefix(pattern, source_ids)
         })
     }
+
+    /// `listGitImageHoldCounts`.
+    #[napi]
+    pub fn list_git_image_hold_counts<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_git_image_hold_counts(source_ids))
+    }
 }

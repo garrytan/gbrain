@@ -32,3 +32,8 @@ export const countSegmentedRecentPages: Member<'countSegmentedRecentPages'> = as
 
 export const countPagesHiddenByPrefix: Member<'countPagesHiddenByPrefix'> = async (brain, pattern, sourceIds) =>
   storeCall({ member: 'countPagesHiddenByPrefix' }, async () => Number(await brain.countPagesHiddenByPrefix(pattern, sourceIds)));
+
+export const listGitImageHoldCounts: Member<'listGitImageHoldCounts'> = async (brain, sourceIds) =>
+  storeCall({ member: 'listGitImageHoldCounts' }, async () =>
+    (await brain.listGitImageHoldCounts(sourceIds)).map((row: { source_id: string; images: unknown }) => ({ source_id: row.source_id, images: Number(row.images) })));
+

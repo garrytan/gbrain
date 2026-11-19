@@ -1616,6 +1616,7 @@ export class PGLiteEngine implements BrainEngine {
   listFactsPageBodies() { return doctorPagesImpl.listFactsPageBodies(this.rawRead); }
   listBracketPathPages() { return doctorPagesImpl.listBracketPathPages(this.rawRead); }
   listSlugPathCandidates(sourceIds: string[] | null) { return doctorPagesImpl.listSlugPathCandidates(this.rawRead, sourceIds); }
+  listGitImageHoldCounts(sourceIds: string[]) { return doctorSearchImpl.listGitImageHoldCounts(this.rawRead, sourceIds); }
   listTruncatedMarkdownBodies() { return doctorSearchImpl.listTruncatedMarkdownBodies(this.rawRead); }
   countSegmentedMarkdownBodies() { return doctorSearchImpl.countSegmentedMarkdownBodies(this.rawRead); }
   listRecentPageBodies(sourceIds: string[] | null) { return doctorSearchImpl.listRecentPageBodies(this.rawRead, sourceIds); }

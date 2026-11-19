@@ -273,3 +273,57 @@ fn hidden_by_prefix_counts_served_chunked_pages_under_the_pattern() {
     s.set_source_archived("default", true).unwrap();
     assert_eq!(count("test/%", None), 0);
 }
+
+#[test]
+fn git_image_hold_counts_read_the_summary_checkpoint_of_each_current_incarnation() {
+    use gbrain_store::cli_reads::doctor_checkpoints::LastKnownWrite;
+    let s = brain("image-holds");
+    let ids = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+    // No checkpoint, and no source ids: nothing is listed.
+    assert_eq!(
+        s.list_git_image_hold_counts(ids(&["default"])).unwrap(),
+        Vec::<Value>::new()
+    );
+    assert_eq!(
+        s.list_git_image_hold_counts(vec![]).unwrap(),
+        Vec::<Value>::new()
+    );
+    for id in ["other", "quiet"] {
+        s.upsert_source(&args(json!({ "id": id, "name": id })))
+            .unwrap();
+    }
+    let fingerprint = |id: &str| {
+        format!(
+            "{id}:{}",
+            s.get_source_by_id(id).unwrap().unwrap().incarnation
+        )
+    };
+    let write = |entry: String, value: Value| {
+        s.write_doctor_last_known(&args::<LastKnownWrite>(
+            json!({ "op": "sync-hold-summary", "rows": [{ "entry": entry, "value": value }] }),
+        ))
+        .unwrap();
+    };
+    write(fingerprint("default"), json!({ "count": 3, "images": 2 }));
+    write(fingerprint("other"), json!({ "count": 1, "images": "4" }));
+    write(fingerprint("quiet"), json!({ "count": 1, "images": 0 }));
+    // A summary of a past incarnation of the source does not count.
+    write(
+        "default:00000000-0000-0000-0000-00000000dead".into(),
+        json!({ "images": 9 }),
+    );
+    let rows = s
+        .list_git_image_hold_counts(ids(&["default", "other", "quiet", "absent"]))
+        .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            json!({ "source_id": "default", "images": 2 }),
+            json!({ "source_id": "other", "images": 4 }),
+        ]
+    );
+    assert_eq!(
+        s.list_git_image_hold_counts(ids(&["other"])).unwrap(),
+        vec![json!({ "source_id": "other", "images": 4 })]
+    );
+}

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 812/812
+# covered: 813/813
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -46,7 +46,7 @@
 # doctor_derived: 27/27
 # doctor_persistence: 38/38
 # doctor_pages: 19/19
-# doctor_search: 8/8
+# doctor_search: 9/9
 # doctor_reads_acc: 33/33
 # doctor_checkpoints: 18/18
 # doctor_sources: 6/6
@@ -635,6 +635,7 @@ readImagePageCoverage	doctor_pages	yes	1	no	yes	yes	serves
 listFactsPageBodies	doctor_pages	yes	1	no	yes	yes	serves
 listBracketPathPages	doctor_pages	yes	1	no	yes	yes	serves
 listSlugPathCandidates	doctor_pages	yes	1	no	yes	yes	serves
+listGitImageHoldCounts	doctor_search	yes	1	no	yes	yes	serves
 listTruncatedMarkdownBodies	doctor_search	yes	1	no	yes	yes	serves
 countSegmentedMarkdownBodies	doctor_search	yes	1	no	yes	yes	serves
 listRecentPageBodies	doctor_search	yes	1	no	yes	yes	serves
@@ -690,7 +691,7 @@ listCheckpointBlockedSources	doctor_checkpoints	yes	1	no	yes	yes	serves
 listOpenIdentityDowngrades	doctor_checkpoints	yes	1	no	yes	yes	serves
 listHeldManagedAtomRows	doctor_checkpoints	yes	1	no	yes	yes	serves
 readDoctorLastKnown	doctor_checkpoints	yes	2	no	yes	yes	serves
-writeDoctorLastKnown	doctor_checkpoints	yes	1	no	yes	yes	serves
+writeDoctorLastKnown	doctor_checkpoints	yes	2	no	yes	yes	serves
 readSyncAdmissionSettingRow	doctor_checkpoints	yes	1	no	yes	yes	serves
 readLatestConnectorReceipt	doctor_checkpoints	yes	1	no	yes	yes	serves
 listFactsAbsorbFailureGroups	doctor_checkpoints	yes	1	no	yes	yes	serves
@@ -806,7 +807,7 @@ upsertOpenLoop	open_loops	yes	7	no	yes	yes	serves
 closeOpenLoop	open_loops	yes	6	no	yes	yes	serves
 listOpenLoops	open_loops	yes	3	no	yes	yes	serves
 listSourceRecords	cli_reads_import	yes	3	no	yes	yes	serves
-readSourceIncarnation	cli_reads_import	yes	3	no	yes	yes	serves
+readSourceIncarnation	cli_reads_import	yes	4	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
 readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves
 listGuestSourceIds	cli_reads_import	yes	1	no	yes	yes	serves

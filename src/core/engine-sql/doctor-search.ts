@@ -9,6 +9,7 @@
  * (rust/crates/gbrain-store/src/cli_reads/doctor_search.rs, rust/docs/store/cli-reads-doctor-search.md).
  */
 import type { EngineRawRead } from './cli-reads-ops.ts';
+import { GIT_HOLD_SUMMARY_OP } from './sync-hold-op.ts';
 
 export type { EngineRawRead } from './cli-reads-ops.ts';
 
@@ -19,7 +20,7 @@ export type { EngineRawRead } from './cli-reads-ops.ts';
 export const DOCTOR_SEARCH_MEMBERS: readonly string[] = [
   'listOrphanedAliasCounts', 'readSoftDeletedAliasCounts', 'listPageTypePairs',
   'listTruncatedMarkdownBodies', 'countSegmentedMarkdownBodies', 'listRecentPageBodies', 'countSegmentedRecentPages',
-  'countPagesHiddenByPrefix',
+  'countPagesHiddenByPrefix', 'listGitImageHoldCounts',
 ];
 
 /** Rows `listTruncatedMarkdownBodies` reads: the list limit of the markdown_body_completeness check plus one (a full list means a floor). */
@@ -32,6 +33,7 @@ export interface SoftDeletedAliasCounts { slug_redirects: number; page_aliases: 
 export interface PageTypePair { source_id: string; type: string }
 export interface TruncatedMarkdownBody { slug: string; body_len: number; raw_len: number }
 export interface RecentPageBody { compiled_truth: string | null; timeline: string | null }
+export interface GitImageHoldCount { source_id: string; images: number }
 
 // moved from core/repair/aliases.ts ORPHANED_ALIAS_COUNTS_SQL unchanged (MISSING('sa', 'canonical_slug') and MISSING('pa', 'slug') written out)
 const ORPHANED_ALIAS_COUNTS_SQL = `SELECT source_id,sum(slug_redirects)::int AS slug_redirects,sum(page_aliases)::int AS page_aliases FROM (
@@ -81,6 +83,11 @@ const RECENT_PAGE_BODIES_IN_SOURCES_SQL = `SELECT compiled_truth, timeline FROM 
 const SEGMENTED_RECENT_PAGES_SQL = `SELECT COUNT(*)::int AS n FROM (SELECT body_storage FROM pages WHERE deleted_at IS NULL ORDER BY id DESC LIMIT 1000) s WHERE s.body_storage = 'segmented'`;
 const SEGMENTED_RECENT_PAGES_IN_SOURCES_SQL = `SELECT COUNT(*)::int AS n FROM (SELECT body_storage FROM pages WHERE deleted_at IS NULL AND source_id = ANY($1::text[]) ORDER BY id DESC LIMIT 1000) s WHERE s.body_storage = 'segmented'`;
 
+// moved from core/persistence/sync-holds.ts readGitImageHoldCounts unchanged ($1 is GIT_HOLD_SUMMARY_OP, $2 the source ids)
+const GIT_IMAGE_HOLD_COUNTS_SQL = `SELECT s.id AS source_id, COALESCE((h.completed_keys->0->>'images')::int,0) AS images
+    FROM op_checkpoints h JOIN sources s ON h.fingerprint=s.id||':'||s.incarnation::text
+    WHERE h.op=$1 AND s.id=ANY($2::text[]) AND COALESCE((h.completed_keys->0->>'images')::int,0)>0`;
+
 // moved from doctor/checks/calibration.ts checkHiddenBySearchPolicy: its one statement counted every prefix with a FILTER; this counts one
 // (the LIKE pattern is $1), with buildVisibilityClause('p', 's') written out.
 // chunk-visibility-ok: counts pages that have a chunk (the EXISTS), for the exclude-policy audit
@@ -112,6 +119,7 @@ export const DOCTOR_SEARCH_SQL = {
   segmentedRecentPagesInSources: SEGMENTED_RECENT_PAGES_IN_SOURCES_SQL,
   pagesHiddenByPrefix: PAGES_HIDDEN_BY_PREFIX_SQL,
   pagesHiddenByPrefixInSources: PAGES_HIDDEN_BY_PREFIX_IN_SOURCES_SQL,
+  gitImageHoldCounts: GIT_IMAGE_HOLD_COUNTS_SQL,
 } as const;
 
 /** Alias rows (both tables) whose target page row is absent, per source, in source order. */
@@ -164,4 +172,10 @@ export async function countPagesHiddenByPrefix(raw: EngineRawRead, pattern: stri
     ? await raw<{ n: string | number }>(PAGES_HIDDEN_BY_PREFIX_IN_SOURCES_SQL, [pattern, sourceIds])
     : await raw<{ n: string | number }>(PAGES_HIDDEN_BY_PREFIX_SQL, [pattern]);
   return Number(row?.n ?? 0);
+}
+
+/** Unsupported-image holds per source's current incarnation among `sourceIds` (sources with none are not listed). */
+export async function listGitImageHoldCounts(raw: EngineRawRead, sourceIds: string[]): Promise<GitImageHoldCount[]> {
+  const rows = await raw<{ source_id: string; images: string | number }>(GIT_IMAGE_HOLD_COUNTS_SQL, [GIT_HOLD_SUMMARY_OP, sourceIds]);
+  return rows.map((row) => ({ source_id: row.source_id, images: Number(row.images) }));
 }

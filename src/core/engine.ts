@@ -4352,6 +4352,8 @@ export interface BrainEngine {
   listBracketPathPages(): Promise<DoctorPagesSql.BracketPathPage[]>;
   /** Live pages of an unarchived source whose slug matches the slug-change pattern (in `sourceIds` when given), in id order. */
   listSlugPathCandidates(sourceIds: string[] | null): Promise<DoctorPagesSql.SlugPathCandidate[]>;
+  /** Unsupported-image holds (managed_image_sync_unsupported) per source's current incarnation among sourceIds; sources with none are not listed. */
+  listGitImageHoldCounts(sourceIds: string[]): Promise<DoctorSearchSql.GitImageHoldCount[]>;
   /** Pages whose body is under 30% of their raw content (over 1000 characters, with H2/H3 headings), at most 101. */
   listTruncatedMarkdownBodies(): Promise<DoctorSearchSql.TruncatedMarkdownBody[]>;
   /** Segmented pages whose raw content is over 1000 characters with H2/H3 headings (the length comparison skips them). */

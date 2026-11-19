@@ -4934,6 +4934,7 @@
         "listFilesForPage": "none",
         "listFreshExtractionOutcomes": "none",
         "listGatedMirrorRequests": "none",
+        "listGitImageHoldCounts": "none",
         "listGitPushHoldRows": "none",
         "listGuestSourceIds": "none",
         "listGuestSourceRows": "none",

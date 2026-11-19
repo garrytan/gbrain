@@ -77,4 +77,10 @@ SELECT source_id, type FROM pairs`);
     expect<string>(DOCTOR_SEARCH_SQL.pagesHiddenByPrefix).toBe(one(''));
     expect<string>(DOCTOR_SEARCH_SQL.pagesHiddenByPrefixInSources).toBe(one(`\n         AND p.source_id = ANY($2::text[])`));
   });
+
+  test('image hold counts keep the statement readGitImageHoldCounts ran', () => {
+    expect<string>(DOCTOR_SEARCH_SQL.gitImageHoldCounts).toBe(`SELECT s.id AS source_id, COALESCE((h.completed_keys->0->>'images')::int,0) AS images
+    FROM op_checkpoints h JOIN sources s ON h.fingerprint=s.id||':'||s.incarnation::text
+    WHERE h.op=$1 AND s.id=ANY($2::text[]) AND COALESCE((h.completed_keys->0->>'images')::int,0)>0`);
+  });
 });
