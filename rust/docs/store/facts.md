@@ -249,7 +249,7 @@ plan row or leftover. An unbacked entity is an entity slug with no `/` and no li
 | `listRelinkCandidateRows` | Active rows of the source with no entity and no fence key (`row_num`, `source_markdown_slug`) after `afterId`, from `since` when set, in id order, at most `limit`. |
 | `countRelinkCandidates` | Active no-entity rows of the source that hold a fence key. |
 | `listSimilarActiveFacts` | `{ anchor, rows }`: the anchor's `has_embedding` and entity (null for an unknown id), then, when it has a vector, the other active rows of its entity and visibility with the same `embedding_model` and cosine at least `minCosine`, nearest first then by id, at most `limit`. `remote` keeps world rows. `excludePrivate` takes the store's privacy policy, serves a caller with a reader identity and a private-readable grant (`callerReaders`, with the member-page CASE) and refuses any other caller whose policy widens it. A NaN similarity goes out as the string `NaN`; vectors of different lengths are `invalid_argument`. |
-| `findActiveSingleFact` | The lowest-id active row with the same entity (null matches null), visibility, fingerprint and speaker slot (a null speaker on either side matches) on `pageSlug`, or, with a null `pageSlug`, on no owned memory page; an empty `pageSlug` matches nothing. The row has every column of `SELECT *`. Refuses with `remoteFloor`. |
+| `findActiveSingleFact` | The lowest-id active row with the same entity (null matches null), visibility, fingerprint and speaker slot (a null speaker on either side matches) on `pageSlug`, or, with a null `pageSlug`, on no owned memory page; an empty `pageSlug` matches nothing. The row has every column of `SELECT *`. `remoteFloor` takes the store's privacy policy with `provenanceOnly` (`remoteProvenanceFloorSql`: the provenance page, `source_markdown_slug`, alone, judged with the empty identity, and no entity or holding-page gate); a labelled-only caller or an owner read, whose floor differs, refuses. |
 | `listUnfencedFactRows` | Active rows with no fence key and no `dimension`, of one source or all, by source, entity (bytewise, no entity last) and id, with `page_exists` (a live page of the entity). |
 | `listHeldFenceFactRows` | A page's active fence rows by `row_num` then id, less rows whose `source` starts with `cli:extract-conversation-facts`. |
 | `listWithdrawalSlugs` | Sorted distinct `COALESCE(source_markdown_slug, entity_slug)` of the active rows with the fingerprint and visibility that the subject covers: `*`, the subject's entity, an unbacked-entity row unless the subject is an owned memory page, or a row on that page. |
@@ -265,9 +265,10 @@ Refused with `engine_capability_missing`: `listFactsReconcileBacklog` (its recon
 
 ## Group 5: repair classifiers and loop retirement (`facts/repair.rs`)
 
-Ten members (`src/core/engine-sql/facts-repair.ts`). Four read only `facts` and `pages` and are served; six read a
-table the store does not hold and refuse with `engine_capability_missing` (they are absent from
-`store-members/facts-repair.ts`, so the capability named in `members.ts` is `facts`).
+Ten members (`src/core/engine-sql/facts-repair.ts`). Seven are served: four read only `facts` and `pages`, the two loop
+reads come from `facts/loops.rs`, and `countLabelFacts` reads facts, pages, loops and withdrawals. Three read a table the
+store does not hold and refuse with `engine_capability_missing` (they are absent from `store-members/facts-repair.ts`,
+so the capability named in `members.ts` is `facts`).
 
 | Member | What it answers | Rust |
 | --- | --- | --- |
@@ -275,12 +276,12 @@ table the store does not hold and refuse with `engine_capability_missing` (they 
 | `listSessionFactTwins` | For each named fact: whether an owner twin exists outside the lanes and the sessions of its lane twins (`twin_sessions`: distinct, `''` for no session, in text order). By id. | Served |
 | `listCapturedFactsForClassification` | The same lane facts with their fingerprint and `legit_twin` (another non-expired fact of the source with the same visibility, entity and fingerprint outside the lanes). By (source, id). | Served |
 | `listWorldFactsFromPrivateSources` | Active `world` facts held in, or extracted from, a page that is private by `visibility`, a privacy alias or `readable_by`, with `readable`. By id. | Served |
-| `loopFactDrift` | Closed loops whose commitment fact is still active. | Refused: needs `open_loops` |
+| `loopFactDrift` | Closed loops whose commitment fact is still active. | Served from `facts/loops.rs`: a `done` or `dropped` loop of the named sources whose fact is in its own source with no `expired_at` and no `open` loop references it, by id |
 | `closedLoopWithActiveFact` | One closed loop whose commitment fact is still active. | Served from `facts/loops.rs`: a `done` or `dropped` loop whose fact exists with no `expired_at` |
-| `countLabelFacts` | The bounded count of evidenced label facts. | Refused: needs `open_loops` and `fact_withdrawals` (it also matches a regular expression with `~*` over page text) |
-| `listExtractorFactsForClassification` | Expired fenceless extractor facts with page, withdrawal, duplicate, fence and receipt evidence. | Refused: needs `persistence_requests` and `fact_withdrawals` |
-| `countPurgedPageFacts` | The bounded count of facts of a purged page, by class. | Refused: needs `page_purges`, `fact_withdrawals` and `open_loops` |
-| `listUnwithdrawnFacts` | Facts a facts-fence generation retired that no withdrawal covers. | Refused: needs `derived_generations`, `derived_generation_items` and `fact_withdrawals` |
+| `countLabelFacts` | The bounded count of evidenced label facts. | Served: the active facts of `segmentSource` whose context holds the `%text%` of `contextLike`, on a live page whose body or timeline has a line that opens with `**`, a label, any `[[:space:]]` and `:**` (ASCII case folding; `[[:space:]]` is the musl `iswspace` set PGLite reads, where Postgres on glibc also counts U+1680), on a page no active `extractor_version=N`-stamped audit fact decided, unsuperseded and no row's successor, named by no loop and covered by no withdrawal. The store counts up to `cap + 1` and the member caps it. `store-members/label-line.ts` reads the label line into its literal labels; any other pattern, a context pattern other than `%text%` and a cap that is not an integer refuse |
+| `listExtractorFactsForClassification` | Expired fenceless extractor facts with page, withdrawal, duplicate, fence and receipt evidence. | Refused: needs the `persistence_requests` receipts of the write journal |
+| `countPurgedPageFacts` | The bounded count of facts of a purged page, by class. | Refused: needs `page_purges` |
+| `listUnwithdrawnFacts` | Facts a facts-fence generation retired that no withdrawal covers. | Refused: needs `derived_generations` and `derived_generation_items` |
 
 Rules of the four served members:
 
@@ -349,9 +350,9 @@ provenance page hides the row; then the entity, session, `since` (on `valid_from
 ## Open loops (`facts/loops.rs`)
 
 The `open_loops` table, for the three members loops-store.ts calls through the engine and the
-`loops_close` retry read `closedLoopWithActiveFact`. The other loop statements (thread auto-close,
-the staleness pass, mutes and the other loop-fact reads) still run through `executeRaw`, so they
-refuse on this engine.
+`loops_close` retry read `closedLoopWithActiveFact` and the retirement scan `loopFactDrift` (doctor
+`loop_facts_drift`, `gbrain repair loop-facts`). The other loop statements (thread auto-close, the
+staleness pass and mutes) still run through `executeRaw`, so they refuse on this engine.
 
 | Member | What it does |
 |---|---|
@@ -359,6 +360,7 @@ refuse on this engine.
 | `listOpenLoops` | The rows that pass the source list, status, type, counterparty (slug in the counterparty source, or email) and id filters, by `last_activity_at` descending, then id descending, at most the clamped limit. |
 | `closeOpenLoop` | Closes an open row (in the named source when one is given) with a status, `closed_by` and now. NULL when no open row matches. |
 | `closedLoopWithActiveFact` | `{ id, status, fact_id }` of a `done` or `dropped` row (in the named source when one is given) whose fact exists with no `expired_at`; NULL otherwise, also for a row with no fact. |
+| `loopFactDrift` | `{ loop_id, source_id, fact_id, status, slug }` of each `done` or `dropped` row of the named sources (only `loopId` when given) whose fact is in the row's own source, has no `expired_at`, and no `open` row references; `slug` is the fact's `source_markdown_slug`. By id. |
 
 - Every upsert takes an id from the counter, also one that lands on an existing row, as `nextval`
   does before `ON CONFLICT`. A refused upsert (a CHECK value, an unknown source) rolls back and takes
