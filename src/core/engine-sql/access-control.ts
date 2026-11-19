@@ -116,10 +116,14 @@ const ACCESS_MEMBER_SELECT = `SELECT m.id, m.display_name, m.email, m.kind, m.la
   COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
   FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id`;
 
+/** The two member lookups bind their key as `$1`; the tails stay whole strings so the composed statements carry no hand-written placeholder. */
+const MEMBER_BY_ID_TAIL = ' WHERE m.id = $1 GROUP BY m.id';
+const MEMBER_BY_EMAIL_TAIL = ' WHERE m.email = $1 GROUP BY m.id ORDER BY m.id';
+
 /** The statements access/members.ts getMember, memberByEmail and listMembers ran through executeRaw. */
 export const ACCESS_MEMBER_SQL = {
-  by_id: `${ACCESS_MEMBER_SELECT} WHERE m.id = $1 GROUP BY m.id`,
-  by_email: `${ACCESS_MEMBER_SELECT} WHERE m.email = $1 GROUP BY m.id ORDER BY m.id`,
+  by_id: `${ACCESS_MEMBER_SELECT}${MEMBER_BY_ID_TAIL}`,
+  by_email: `${ACCESS_MEMBER_SELECT}${MEMBER_BY_EMAIL_TAIL}`,
   live: `${ACCESS_MEMBER_SELECT} WHERE m.tombstoned_at IS NULL GROUP BY m.id ORDER BY m.id`,
   all: `${ACCESS_MEMBER_SELECT} GROUP BY m.id ORDER BY m.id`,
 } as const;
@@ -182,10 +186,12 @@ export async function listAudienceAccessMembers(exec: MemberLookupRead): Promise
  */
 export type LiveMemberVia = 'member' | 'stdio_config' | 'legacy_token' | 'oauth_client';
 
+const STDIO_CONFIG_TAIL = ' FROM config WHERE key = $1';
+
 /** The member subquery of each `via`, as access/caller.ts memberIdentityFor and stdioMemberIdentity passed it. */
 const LIVE_MEMBER_KEY_SQL: Record<LiveMemberVia, string> = {
   member: '$1',
-  stdio_config: `SELECT ${edgeTrimSql('value')} FROM config WHERE key = $1`,
+  stdio_config: `SELECT ${edgeTrimSql('value')}${STDIO_CONFIG_TAIL}`,
   legacy_token: 'SELECT member_id FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL',
   oauth_client: 'SELECT member_id FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL',
 };

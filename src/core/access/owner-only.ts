@@ -64,10 +64,10 @@ function safeParse(text: string): unknown {
   try { return JSON.parse(text); } catch { return null; }
 }
 
-/** The SQL test behind ownerOnlySourcesPresent, for a statement that folds it into other work. */
-export function ownerOnlyPresentSql(engine: object): string {
+/** Does the engine's schema carry the lineage function (v320)? Unknown counts as yes; below it only the source test answers. */
+export function ownerOnlyLineageReadable(engine: object): boolean {
   const version = schemaVersionSeen(engine);
-  return version !== undefined && version < OWNER_ONLY_LINEAGE_SINCE ? ANY_OWNER_ONLY_SQL : `${OWNER_ONLY_LINEAGE_FN}()`;
+  return !(version !== undefined && version < OWNER_ONLY_LINEAGE_SINCE);
 }
 
 /**
@@ -77,7 +77,7 @@ export function ownerOnlyPresentSql(engine: object): string {
  */
 export async function ownerOnlySourcesPresent(engine: OwnerOnlyEngine): Promise<boolean> {
   try {
-    return 'readOwnerOnlySourcesPresent' in engine ? await engine.readOwnerOnlySourcesPresent() : await readOwnerOnlySourcesPresentOver(engine, ownerOnlyPresentSql(engine));
+    return 'readOwnerOnlySourcesPresent' in engine ? await engine.readOwnerOnlySourcesPresent() : await readOwnerOnlySourcesPresentOver(engine, ownerOnlyLineageReadable(engine));
   } catch {
     return true;
   }
@@ -95,6 +95,9 @@ export async function sourceIsOwnerOnly(engine: OwnerOnlyEngine, sourceId: strin
 
 /** The read-time function (schema migration v320) that answers whether a page or fact row is owner-only. */
 export const OWNER_ONLY_LINEAGE_FN = 'gbrain_owner_only_lineage';
+
+/** The lineage test of an owner-only row: the v320 function, called with no arguments (no input). */
+export const OWNER_ONLY_LINEAGE_PRESENT_SQL = `${OWNER_ONLY_LINEAGE_FN}()`;
 /** The schema version (migration v320) that creates it; a literal so a read never loads a migration module. */
 export const OWNER_ONLY_LINEAGE_SINCE = 320;
 

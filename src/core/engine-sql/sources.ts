@@ -10,7 +10,7 @@ import { SOURCE_CONFIG_OBJECT_SQL } from '../source-config-sql.ts';
 import { jsonbParam, type SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
-import { ANY_OWNER_ONLY_SQL } from '../access/owner-only.ts';
+import { ANY_OWNER_ONLY_SQL, OWNER_ONLY_LINEAGE_PRESENT_SQL } from '../access/owner-only.ts';
 
 export async function listAllSources(exec: LegacyUnscopedRead, opts?: {
   includeArchived?: boolean;
@@ -175,11 +175,11 @@ export interface OwnerOnlyRead {
 }
 
 /**
- * Does the brain hold an owner-only source, archived ones included, or (with the lineage test `presentSql`, from
- * access/owner-only.ts `ownerOnlyPresentSql`) a row derived from a removed one? No row counts as yes (fail closed).
+ * Does the brain hold an owner-only source, archived ones included, or (with `lineage` on, the v320 lineage function
+ * the schema carries, see access/owner-only.ts `ownerOnlyLineageReadable`) a row derived from a removed one? No row counts as yes (fail closed).
  */
-export async function readOwnerOnlySourcesPresent(exec: OwnerOnlyRead, presentSql: string = ANY_OWNER_ONLY_SQL): Promise<boolean> {
-  const { text, params } = renderFragment(sqlFragment`SELECT ${trustedSql(presentSql)} AS present`);
+export async function readOwnerOnlySourcesPresent(exec: OwnerOnlyRead, lineage: boolean = false): Promise<boolean> {
+  const { text, params } = renderFragment(sqlFragment`SELECT ${trustedSql(lineage ? OWNER_ONLY_LINEAGE_PRESENT_SQL : ANY_OWNER_ONLY_SQL)} AS present`);
   const [row] = await exec.executeRaw<{ present: boolean }>(text, params);
   return row?.present !== false;
 }

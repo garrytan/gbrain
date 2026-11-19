@@ -50,6 +50,7 @@ const CONSTANT_ALLOWLIST: Record<string, string> = {
   TEMPORAL_LINK_SELECT_SQL: 'src/core/link-validity.ts: constant select list over the lr_t relationship-state join',
   GUEST_SOURCES_HIDDEN_SQL: 'src/core/guests/note.ts: constant row-security probe of guest_sources (no input)',
   ANY_OWNER_ONLY_SQL: 'src/core/access/owner-only.ts: constant any-owner-only-source EXISTS over sources read_source; the kinds and flag key are module constants (no input)',
+  OWNER_ONLY_LINEAGE_PRESENT_SQL: 'src/core/access/owner-only.ts: the constant v320 lineage function call `gbrain_owner_only_lineage()` (no input)',
   READ_SOURCE_OWNER_ONLY_SQL: 'src/core/access/owner-only.ts: constant owner-only row test of the sources alias read_source; the kinds and flag key are module constants (no input)',
   RELEASE_STAGED_CTE: 'src/core/persistence/limits.ts: constant CTE releasing upload reservations of a preceding gone CTE (no input)',
 };

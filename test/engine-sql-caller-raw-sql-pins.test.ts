@@ -321,7 +321,7 @@ const PINS: Pin[] = [
   {
     from: 'src/core/access/owner-only.ts:56 ownerOnlySourcesPresent',
     case: { method: 'readOwnerOnlySourcesPresent', variant: 'default', run: e => e.readOwnerOnlySourcesPresent() },
-    // The version-aware test (ownerOnlyPresentSql): a current schema reads the lineage function; below v320 the source test alone.
+    // The version-aware test (ownerOnlyLineageReadable): a current schema reads the lineage function; below v320 the source test alone.
     texts: ['SELECT gbrain_owner_only_lineage() AS present'],
   },
   {
