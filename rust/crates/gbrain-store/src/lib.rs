@@ -37,6 +37,7 @@ pub mod chunk_queries;
 pub mod code_edges;
 pub mod contradictions;
 pub mod dream;
+pub mod effects;
 pub mod embeddings;
 pub mod eval_capture;
 pub mod extraction;

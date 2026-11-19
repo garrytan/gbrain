@@ -48,6 +48,7 @@ const OOS = {
   cliReads: 'out-of-scope:cli-reads (born in engine-sql/cli-reads-ops.ts and cli-reads-import.ts; pinned by test/engine-parity/cli-reads-ops.test.ts and cli-reads-import.test.ts)',
   wantedLinks: 'out-of-scope:wanted-links (born in engine-sql/wanted-links.ts; pinned by test/engine-parity/wanted-links.test.ts)',
   journal: 'out-of-scope:persistence-journal (born in engine-sql/persistence-journal.ts; pinned by test/engine-parity/persistence.test.ts and test/persistence-journal-statements.test.ts)',
+  effects: 'out-of-scope:persistence-effects (born in engine-sql/persistence-effects.ts; pinned by test/engine-parity/persistence-effects.test.ts and test/persistence-effects-statements.test.ts)',
   pageBody: 'out-of-scope:page-body (Wave B segmented storage, born in engine-sql/page-body.ts; pinned by test/engine-sql-page-body.test.ts)',
   cycleLocks: 'out-of-scope:cycle-locks (gbrain_cycle_locks leases, born in engine-sql/cycle-locks.ts; pinned by test/engine-parity/cycle-locks.test.ts)',
 } as const;
@@ -216,6 +217,9 @@ export const DOMAIN_OF: Record<string, string> = {
   'readJournalLimitRows': OOS.journal, 'readHeldPageRows': OOS.journal, 'readHeldCoverageRows': OOS.journal,
   'readWriteRequest': OOS.journal, 'readWriteRequestById': OOS.journal, 'lockPersistenceCounters': OOS.journal,
   'insertWriteRequest': OOS.journal, 'stampWriteClaim': OOS.journal, 'lockWriteRequest': OOS.journal, 'completeWriteRow': OOS.journal,
+  // the effect journal (queue, claim, completion, release, mirror gate and re-arm reads)
+  'selectClaimableEffect': OOS.effects, 'claimEffect': OOS.effects, 'queueEffects': OOS.effects, 'releaseAbandonedEffectClaims': OOS.effects, 'lockPersistenceBrainShare': OOS.effects,
+  'requestsStillPublishing': OOS.effects, 'listMirrorGates': OOS.effects, 'completeEffect': OOS.effects, 'completeEffects': OOS.effects, 'hasRearmableEffects': OOS.effects,
   'logIngest': OOS.ingest, 'getIngestLog': OOS.ingest,
   'logEvalCandidate': OOS.eval, 'listEvalCandidates': OOS.eval, 'deleteEvalCandidatesBefore': OOS.eval,
   'logEvalCaptureFailure': OOS.eval, 'listEvalCaptureFailures': OOS.eval,

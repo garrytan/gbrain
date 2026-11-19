@@ -38,11 +38,12 @@ pub struct SourceRecordRow {
     pub newest_content_at: Option<String>,
 }
 
-/// A source's config and incarnation (`readSourceIncarnation`).
+/// A source's config, incarnation and archived flag (`readSourceIncarnation`).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SourceIncarnationRow {
     pub config: Map<String, Value>,
     pub incarnation: String,
+    pub archived: bool,
 }
 
 /// `readGuestSourceRow`: the source's guest_sources row and whether it is hidden from the reader.
@@ -177,13 +178,16 @@ impl Store {
         Ok(sources.into_iter().map(record_row).collect())
     }
 
-    /// A source's config and incarnation, or `None` for an unknown id.
+    /// A source's config, incarnation and archived flag, or `None` for an unknown id. The
+    /// TypeScript `lock: 'share'` option has no counterpart: the store runs one write transaction
+    /// at a time, so no archive can land between this read and the caller's write.
     pub fn read_source_incarnation(&self, source_id: &str) -> Result<Option<SourceIncarnationRow>> {
         let read = self.read()?;
         Ok(
             read_source(&*read, source_id)?.map(|s| SourceIncarnationRow {
                 config: s.config,
                 incarnation: s.incarnation,
+                archived: s.archived,
             }),
         )
     }

@@ -18,7 +18,7 @@ impl Brain {
         self.run(env, move |s| s.list_source_records())
     }
 
-    /// `readSourceIncarnation(sourceId)`: `{ config, incarnation }` or `null`.
+    /// `readSourceIncarnation(sourceId)`: `{ config, incarnation, archived }` or `null`.
     #[napi]
     pub fn read_source_incarnation<'env>(
         &self,

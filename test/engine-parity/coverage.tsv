@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 269/269
+# covered: 279/279
 # lifecycle: 9/9
 # pages: 31/31
 # search: 7/7
@@ -28,7 +28,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 9/9
-# persistence_journal: 10/10
+# persistence_journal: 20/20
 # cycle_locks: 6/6
 # cli_reads_ops: 7/7
 # raw_sql: 4/4
@@ -238,7 +238,7 @@ refreshPageBody	sync_aliases	yes	1	no	yes	yes	refuses:page_body
 updatePageContextualRetrievalState	sync_aliases	yes	1	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	4	no	yes	yes	serves
-setConfig	config	yes	11	no	yes	yes	serves
+setConfig	config	yes	12	no	yes	yes	serves
 unsetConfig	config	yes	2	no	yes	yes	serves
 listConfigKeys	config	yes	2	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
@@ -262,6 +262,16 @@ insertWriteRequest	persistence_journal	yes	1	no	yes	yes	refuses:persistence_jour
 stampWriteClaim	persistence_journal	yes	1	no	yes	yes	refuses:persistence_journal
 lockWriteRequest	persistence_journal	yes	1	no	yes	yes	refuses:persistence_journal
 completeWriteRow	persistence_journal	yes	1	no	yes	yes	refuses:persistence_journal
+selectClaimableEffect	persistence_journal	yes	5	no	yes	yes	serves
+claimEffect	persistence_journal	yes	5	no	yes	yes	serves
+queueEffects	persistence_journal	yes	7	no	yes	yes	serves
+releaseAbandonedEffectClaims	persistence_journal	yes	1	no	yes	yes	serves
+lockPersistenceBrainShare	persistence_journal	yes	1	no	yes	yes	serves
+requestsStillPublishing	persistence_journal	yes	1	no	yes	yes	serves
+listMirrorGates	persistence_journal	yes	1	no	yes	yes	serves
+completeEffect	persistence_journal	yes	2	no	yes	yes	serves
+completeEffects	persistence_journal	yes	1	no	yes	yes	serves
+hasRearmableEffects	persistence_journal	yes	2	no	yes	yes	serves
 acquireCycleLock	cycle_locks	yes	8	no	yes	yes	refuses:minion_queue
 refreshCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
 releaseCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
@@ -295,7 +305,7 @@ getRecentSalience	salience_enrich	yes	2	yes	yes	yes	serves
 listEnrichCandidates	salience_enrich	yes	3	yes	yes	yes	serves
 findAnomalies	salience_enrich	yes	3	yes	yes	yes	serves
 listSourceRecords	cli_reads_import	yes	2	no	yes	yes	serves
-readSourceIncarnation	cli_reads_import	yes	1	no	yes	yes	serves
+readSourceIncarnation	cli_reads_import	yes	10	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
 readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves
 listGuestSourceIds	cli_reads_import	yes	1	no	yes	yes	serves

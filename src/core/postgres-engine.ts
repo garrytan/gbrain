@@ -157,6 +157,7 @@ import * as sourcesImpl from './engine-sql/sources.ts';
 import * as cliReadsImpl from './engine-sql/cli-reads-import.ts';
 import * as persistenceStateImpl from './engine-sql/persistence-state.ts';
 import * as persistenceJournalImpl from './engine-sql/persistence-journal.ts';
+import * as persistenceEffectsImpl from './engine-sql/persistence-effects.ts';
 import * as cliReadsOpsImpl from './engine-sql/cli-reads-ops.ts';
 import type { ExactScanOpts } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts } from './engine-sql/exact-identity.ts';
@@ -1100,6 +1101,16 @@ export class PostgresEngine implements BrainEngine {
   stampWriteClaim(id: string, token: string, leaseMs: number, phaseJson: string) { return persistenceJournalImpl.stampWriteClaim(this.autocommitSql, id, token, leaseMs, phaseJson); }
   lockWriteRequest(id: string) { return persistenceJournalImpl.lockWriteRequest(this.autocommitSql, id); }
   completeWriteRow(completion: persistenceJournalImpl.WriteCompletion) { return persistenceJournalImpl.completeWriteRow(this.autocommitSql, completion); }
+  selectClaimableEffect(hostId: string, deadOwners: readonly string[]) { return persistenceEffectsImpl.selectClaimableEffect(this.autocommitSql, hostId, deadOwners); }
+  claimEffect(id: string | number, token: string, claimOwnerJson: string) { return persistenceEffectsImpl.claimEffect(this.autocommitSql, id, token, claimOwnerJson); }
+  queueEffects(queue: persistenceEffectsImpl.EffectQueue) { return persistenceEffectsImpl.queueEffects(this.autocommitSql, queue); }
+  releaseAbandonedEffectClaims(cutoff: Date) { return persistenceEffectsImpl.releaseAbandonedEffectClaims(this.autocommitSql, cutoff); }
+  lockPersistenceBrainShare() { return persistenceEffectsImpl.lockPersistenceBrainShare(this.autocommitSql); }
+  requestsStillPublishing(worktreeId: string) { return this.preparationRead(exec => persistenceEffectsImpl.requestsStillPublishing(unscopedExecutor(exec, 'persistence: publishing-recovery read ran unscoped through executeRaw'), worktreeId)); }
+  listMirrorGates(requestIds: readonly string[]) { return this.preparationRead(exec => persistenceEffectsImpl.listMirrorGates(unscopedExecutor(exec, 'persistence: withdrawal-mirror gate read ran unscoped through executeRaw'), requestIds)); }
+  completeEffect(id: string | number, token: string | null, outcome: Record<string, unknown>) { return persistenceEffectsImpl.completeEffect(this.autocommitSql, id, token, outcome); }
+  completeEffects(rows: readonly persistenceEffectsImpl.EffectClaimRef[], outcome: Record<string, unknown>) { return persistenceEffectsImpl.completeEffects(this.autocommitSql, rows, outcome); }
+  hasRearmableEffects(requestIds: readonly string[]) { return this.preparationRead(exec => persistenceEffectsImpl.hasRearmableEffects(unscopedExecutor(exec, 'persistence: re-arm probe ran unscoped through executeRaw'), requestIds)); }
   readTransactionSettings(names: readonly string[]) { return transactionSettingsImpl.readTransactionSettings(unscopedExecutor(this.engineSql, 'transaction settings: read ran through the transaction executeRaw'), names); }
   applyTransactionSettings(names: readonly string[], values: readonly string[]) { return transactionSettingsImpl.applyTransactionSettings(this.autocommitSql, names, values); }
   readLedgerSource(sourceId: string, opts?: { batch?: boolean }) { return this.preparationRead(exec => beliefImpl.readLedgerSource(unscopedExecutor(exec, 'belief: ledger source probe ran unscoped through executeRaw'), sourceId, opts), opts?.batch); }
@@ -1114,7 +1125,7 @@ export class PostgresEngine implements BrainEngine {
   // The CLI import and extract reads that ran unscoped through executeRaw (engine-sql/cli-reads-import.ts), on the current connection.
   private get cliReads() { return unscopedExecutor(this.engineSql, 'cli reads: the import and extract paths ran these unscoped through executeRaw'); }
   listSourceRecords() { return cliReadsImpl.listSourceRecords(this.cliReads); }
-  readSourceIncarnation(sourceId: string) { return cliReadsImpl.readSourceIncarnation(this.cliReads, sourceId); }
+  readSourceIncarnation(sourceId: string, opts?: { lock?: 'share' }) { return cliReadsImpl.readSourceIncarnation(this.cliReads, sourceId, opts); }
   hasCompanyBrainReceipt(sourceId: string) { return cliReadsImpl.hasCompanyBrainReceipt(this.cliReads, sourceId); }
   readGuestSourceRow(sourceId: string) { return cliReadsImpl.readGuestSourceRow(this.cliReads, sourceId); }
   listGuestSourceIds(sourceIds: readonly string[]) { return cliReadsImpl.listGuestSourceIds(this.cliReads, sourceIds); }

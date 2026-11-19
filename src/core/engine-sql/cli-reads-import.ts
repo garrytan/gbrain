@@ -43,10 +43,21 @@ export async function listSourceRecords(exec: LegacyUnscopedRead): Promise<Sourc
   }
 }
 
-/** One source's config and incarnation, or null for an unknown id (the company-brain profile read). */
-export async function readSourceIncarnation(exec: LegacyUnscopedRead, sourceId: string): Promise<SourceIncarnationRow | null> {
-  const [row] = await exec.executeRaw<SourceIncarnationRow>('SELECT config,incarnation FROM sources WHERE id=$1', [sourceId]);
-  return row ?? null;
+/**
+ * One source's config, incarnation and archived flag, or null for an unknown id (the company-brain profile read and
+ * the effect source guard). `lock: 'share'` holds the row FOR SHARE until the transaction ends (effect-recovery.ts
+ * guardEffectSource). A schema without `archived` reads it as false.
+ */
+export async function readSourceIncarnation(exec: LegacyUnscopedRead, sourceId: string, opts?: { lock?: 'share' }): Promise<SourceIncarnationRow | null> {
+  const lock = opts?.lock === 'share' ? ' FOR SHARE' : '';
+  try {
+    const [row] = await exec.executeRaw<SourceIncarnationRow>(`SELECT config,incarnation,archived FROM sources WHERE id=$1${lock}`, [sourceId]);
+    return row ? { ...row, archived: row.archived === true } : null;
+  } catch (err) {
+    if (!isUndefinedColumnError(err)) throw err;
+    const [row] = await exec.executeRaw<Omit<SourceIncarnationRow, 'archived'>>(`SELECT config,incarnation FROM sources WHERE id=$1${lock}`, [sourceId]);
+    return row ? { ...row, archived: false } : null;
+  }
 }
 
 /** Whether the source's current incarnation has a company-brain ingestion receipt. */

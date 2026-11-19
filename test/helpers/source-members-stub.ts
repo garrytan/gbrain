@@ -88,7 +88,7 @@ export function stubSourceMembers(sources: readonly StubSourceRow[] | (() => rea
     async readSourceIncarnation(id: string): Promise<SourceIncarnationRow | null> {
       enter('readSourceIncarnation');
       const r = rows().find(row => row.id === id);
-      return r ? { config: r.config, incarnation: r.incarnation } : null;
+      return r ? { config: r.config, incarnation: r.incarnation, archived: r.archived === true } : null;
     },
     /** The guest_sources lookup (readGuestSourceRow) for a brain with no guest sources: every source answers "not a guest". */
     async readGuestSourceRow(_id: string): Promise<GuestSourceLookupRow> {

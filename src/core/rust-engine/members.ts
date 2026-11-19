@@ -307,6 +307,16 @@ export const RUST_ENGINE_MEMBERS = {
   lockWriteRequest: 'persistence_journal',
   completeWriteRow: 'persistence_journal',
   readLedgerSource: 'persistence_journal',
+  selectClaimableEffect: 'persistence_journal',
+  claimEffect: 'persistence_journal',
+  queueEffects: 'persistence_journal',
+  releaseAbandonedEffectClaims: 'persistence_journal',
+  lockPersistenceBrainShare: 'persistence_journal',
+  requestsStillPublishing: 'persistence_journal',
+  listMirrorGates: 'persistence_journal',
+  completeEffect: 'persistence_journal',
+  completeEffects: 'persistence_journal',
+  hasRearmableEffects: 'persistence_journal',
   // access_control
   isFolderRestricted: 'access_control',
   // minion_queue (the Rust plan ships cycle locks with the minion queue: docs/designs/RUST_ENGINE.md, "Cycle locks")

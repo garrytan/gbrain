@@ -54,6 +54,14 @@ fn source_records_list_default_first_with_archived_and_no_commit_columns() {
 
     let found = store.read_source_incarnation("alpha").unwrap().unwrap();
     assert_eq!(found.incarnation.len(), 36);
+    assert!(!found.archived);
+    assert!(
+        store
+            .read_source_incarnation("zeta")
+            .unwrap()
+            .unwrap()
+            .archived
+    );
     assert!(store.read_source_incarnation("nope").unwrap().is_none());
     assert!(!store.has_company_brain_receipt("alpha").unwrap());
 }

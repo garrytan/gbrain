@@ -17,10 +17,10 @@ gives the same split for the page write path, so the statements can go to severa
 | Raw SQL calls | 177 | 176 `executeRaw` and 1 `executeRawDirect`. |
 | Distinct statements | 112 | Distinct pairs of call site and SQL text. 109 distinct SQL texts: three texts run from two sites each. |
 | Call sites | 108 | After the real caller replaces the helper frame (see "Method"). |
-| Served now | 3 | The persistence brain row (slice 1) and the page snapshot (inside the served `readPageSnapshot`). |
-| Existing typed member | 17 | A member on this branch returns the same rows; the call site switches with no new store code. |
-| No stored state needed | 36 | Empty lists, `false`, `null`, a no-op setting or a no-op lock: a Rust brain is never managed today, and one store write has one writer. |
-| New member with real records | 56 | Real reads and writes of journal, page, link and projection records. |
+| Served now | 14 | The persistence brain row (slice 1), the page snapshot (inside the served `readPageSnapshot`) and the 11 effect-journal statements (typed members; see "Effect journal"). |
+| Existing typed member | 16 | A member on this branch returns the same rows; the call site switches with no new store code. |
+| No stored state needed | 34 | Empty lists, `false`, `null`, a no-op setting or a no-op lock: a Rust brain is never managed today, and one store write has one writer. |
+| New member with real records | 48 | Real reads and writes of journal, page, link and projection records. |
 
 An earlier count of 118 statements came from a trace without call sites (196 raw SQL calls). This trace runs on a
 newer branch with the slice 1 changes, which moved some reads to typed members. Use the numbers above.
@@ -92,7 +92,7 @@ Counts are statements from the tables below: new member, existing member, no sto
 | persistence: transactions (`transaction`, `transactionDirect`, `lockPageKeys`, `readTransactionSettings`, `applyTransactionSettings`) | typed members only | | | L, about 3 days |
 | persistence: trust hook (`setWriteContext`, the `trust::stamp` calls) | 1 | 0 | 0 | M, about 1 day |
 | persistence: write journal (the 7 typed journal members above, plus these statements) | 10 | 3 | 3 | L, about 4 days |
-| persistence: effect journal | 8 | 0 | 2 | L, about 2.5 days |
+| persistence: effect journal | 8 | 0 | 2 | done |
 | persistence: managed-only state | 0 | 0 | 17 | S to M (decision A) |
 | persistence: housekeeping (receipts, compaction, capacity, checkpoints, projection jobs) | 13 | 3 | 2 | L, about 3 days (decision B) |
 | core: page write guard, origin guard, ingest stamp, seal | 7 | 2 | 4 | M, about 1.5 days |
@@ -282,17 +282,17 @@ without stored records.
 
 | # | Call site | Calls | Phase | Kind | Statement | Proposed member | Owner | Size | Rust can answer with no state? |
 |---:|---|---:|---|---|---|---|---|---|---|
-| 28 | `persistence/effect-journal.ts:157` | 5 | claim, after | read, in tx | `SELECT e.* FROM persistence_effects e LEFT JOIN persistence_worktrees …` | `selectClaimableEffect` | persistence | M | No: real queue read |
-| 67 | `persistence/effect-journal.ts:69` | 1 | publish | write, in tx | `INSERT INTO persistence_effects (request_id,kind,revision,data,source_…` | `queueEffects` | persistence | M | No: real write |
-| 73 | `persistence/effect-journal.ts:314` | 1 | after | write, sets protocol, outside | `UPDATE persistence_effects SET state='queued',execution_token=NULL,cla…` | `releaseAbandonedEffectClaims` | persistence | S | No: real write |
-| 79 | `persistence/effect-journal.ts:170` | 2 | after | write, in tx | `UPDATE persistence_effects SET state='running',execution_token=$2::uui…` | `claimEffect` | persistence | S | No: real write |
-| 85 | `persistence/effect-recovery.ts:37` | 2 | after | read, row lock, in tx | `SELECT singleton FROM persistence_brain WHERE singleton=1 FOR SHARE…` | none: FOR SHARE on the brain row | persistence | S | Yes inside a store write |
-| 87 | `persistence/effect-recovery.ts:44` | 2 | after | read, row lock, in tx | `SELECT incarnation,archived FROM sources WHERE id=$1 FOR SHARE…` | existing: `readSourceIncarnation` | sources (CLI members) | S | No: real row |
-| 88 | `persistence/effects.ts:898` | 1 | after | read, in tx | `SELECT bool_and(state='running' AND claim_expires_at>now() OR state IN…` | `requestsStillPublishing` | persistence | S | No: real rows |
-| 89 | `persistence/effect-journal.ts:202` | 2 | after | read, outside | `SELECT request_id::text AS request_id,state,data FROM persistence_effe…` | `listMirrorGates` | persistence | S | Yes: empty, mirrors need a worktree |
-| 90 | `persistence/effect-journal.ts:373` | 1 | after | write, sets protocol, outside | `UPDATE persistence_effects SET state=CASE WHEN jsonb_array_length(COAL…` | `completeEffect` | persistence | S | No: real write |
-| 92 | `persistence/effects.ts:1056` | 1 | after | write, outside | `UPDATE persistence_effects e SET state=CASE WHEN jsonb_array_length(CO…` | `completeEffects` | persistence | S | No: real write |
-| 93 | `persistence/effect-journal.ts:231` | 1 | after | read, outside | `SELECT 1 FROM persistence_effects e WHERE e.request_id=ANY($1::uuid[])…` | `hasRearmableEffects` | persistence | S | No: real rows |
+| 28 | `persistence/effect-journal.ts:157` | 5 | claim, after | read, in tx | `SELECT e.* FROM persistence_effects e LEFT JOIN persistence_worktrees …` | served: `selectClaimableEffect` | persistence | done | No: real queue read |
+| 67 | `persistence/effect-journal.ts:69` | 1 | publish | write, in tx | `INSERT INTO persistence_effects (request_id,kind,revision,data,source_…` | served: `queueEffects` | persistence | done | No: real write |
+| 73 | `persistence/effect-journal.ts:314` | 1 | after | write, sets protocol, outside | `UPDATE persistence_effects SET state='queued',execution_token=NULL,cla…` | served: `releaseAbandonedEffectClaims` | persistence | done | No: real write |
+| 79 | `persistence/effect-journal.ts:170` | 2 | after | write, in tx | `UPDATE persistence_effects SET state='running',execution_token=$2::uui…` | served: `claimEffect` | persistence | done | No: real write |
+| 85 | `persistence/effect-recovery.ts:37` | 2 | after | read, row lock, in tx | `SELECT singleton FROM persistence_brain WHERE singleton=1 FOR SHARE…` | served: `lockPersistenceBrainShare` (no-op) | persistence | done | Yes inside a store write |
+| 87 | `persistence/effect-recovery.ts:44` | 2 | after | read, row lock, in tx | `SELECT incarnation,archived FROM sources WHERE id=$1 FOR SHARE…` | served: `readSourceIncarnation` (`lock: 'share'`, `archived`) | sources (CLI members) | done | No: real row |
+| 88 | `persistence/effects.ts:898` | 1 | after | read, in tx | `SELECT bool_and(state='running' AND claim_expires_at>now() OR state IN…` | served: `requestsStillPublishing` (null on Rust: no recovery records) | persistence | done | No: real rows |
+| 89 | `persistence/effect-journal.ts:202` | 2 | after | read, outside | `SELECT request_id::text AS request_id,state,data FROM persistence_effe…` | served: `listMirrorGates` | persistence | done | Yes: empty, mirrors need a worktree |
+| 90 | `persistence/effect-journal.ts:373` | 1 | after | write, sets protocol, outside | `UPDATE persistence_effects SET state=CASE WHEN jsonb_array_length(COAL…` | served: `completeEffect` | persistence | done | No: real write |
+| 92 | `persistence/effects.ts:1056` | 1 | after | write, outside | `UPDATE persistence_effects e SET state=CASE WHEN jsonb_array_length(CO…` | served: `completeEffects` | persistence | done | No: real write |
+| 93 | `persistence/effect-journal.ts:231` | 1 | after | read, outside | `SELECT 1 FROM persistence_effects e WHERE e.request_id=ANY($1::uuid[])…` | served: `hasRearmableEffects` | persistence | done | No: real rows |
 
 ### Housekeeping after the write (23)
 

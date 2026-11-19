@@ -15,7 +15,8 @@ export const listSourceRecords: StoreMember<[], SourceRecordRow[]> = async (brai
   return rows.map(row => withDates(row, ['last_sync_at', 'created_at']));
 };
 
-export const readSourceIncarnation: StoreMember<[sourceId: string], SourceIncarnationRow | null> = (brain, sourceId) =>
+/** `lock: 'share'` needs nothing here: the store runs one write transaction at a time (rust/docs/store/effects.md). */
+export const readSourceIncarnation: StoreMember<[sourceId: string, opts?: { lock?: 'share' }], SourceIncarnationRow | null> = (brain, sourceId) =>
   storeCall({ member: 'readSourceIncarnation', sourceId }, () => brain.readSourceIncarnation(sourceId));
 
 export const hasCompanyBrainReceipt: StoreMember<[sourceId: string], boolean> = (brain, sourceId) =>

@@ -20,6 +20,8 @@ import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
 import type { ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, WriteCompletion, WriteRequestInsert } from './engine-sql/persistence-journal.ts';
+import type { EffectClaimRef, EffectQueue, MirrorGateRow } from './engine-sql/persistence-effects.ts';
+import type { PersistenceEffect } from './persistence/effect-model.ts';
 import type { WriteRequest } from './persistence/model.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, SourceRoutingRow } from './engine-sql/sources.ts';
@@ -100,8 +102,8 @@ export interface SourceRecordRow {
   config: Record<string, unknown> | string;
   created_at: Date; archived?: boolean; newest_content_at?: Date | null;
 }
-/** A source's config and incarnation (`readSourceIncarnation`). */
-export interface SourceIncarnationRow { config: unknown; incarnation: string }
+/** A source's config, incarnation and archived flag (`readSourceIncarnation`). */
+export interface SourceIncarnationRow { config: unknown; incarnation: string; archived: boolean }
 /** `readGuestSourceRow`: the source's guest_sources row (null fields without one) and whether row-level security hides guest_sources. */
 export interface GuestSourceLookupRow { hidden: boolean; source_id: string | null; writers: string[] | null; trust_ceiling: string | null }
 /** `readPageTrustRows` input: page ids, and (source_id, slug) keys read live unless `includeDeleted`. */
@@ -1274,8 +1276,8 @@ export interface BrainEngine {
   countDefaultSourceSplit(): Promise<DefaultSourceSplit>;
   /** Every source with the columns `loadAllSources` reads, `default` first then by id; a schema without `archived`/`newest_content_at` omits them. */
   listSourceRecords(): Promise<SourceRecordRow[]>;
-  /** A source's config and incarnation, or null for an unknown id. */
-  readSourceIncarnation(sourceId: string): Promise<SourceIncarnationRow | null>;
+  /** A source's config, incarnation and archived flag, or null for an unknown id. `lock: 'share'` holds the row FOR SHARE until the transaction ends. */
+  readSourceIncarnation(sourceId: string, opts?: { lock?: 'share' }): Promise<SourceIncarnationRow | null>;
   /** Whether the source's current incarnation has a company-brain ingestion receipt. */
   hasCompanyBrainReceipt(sourceId: string): Promise<boolean>;
   /** The source's guest_sources row and whether row-level security hides guest_sources; throws the missing-table error on an old schema. */
@@ -2950,6 +2952,29 @@ export interface BrainEngine {
   lockWriteRequest(id: string): Promise<WriteRequest | null>;
   /** Records a request's terminal state and releases its counters; null when the result exceeds its reservation. */
   completeWriteRow(completion: WriteCompletion): Promise<CompletedWriteRow | null>;
+
+  // Effect-journal statements (engine-sql/persistence-effects.ts): the text effect-journal.ts, effects.ts and
+  // effect-recovery.ts sent through executeRaw on a page write's path. Rust: rust/docs/store/effects.md.
+  /** The next claimable effect for host `hostId` (queued, lease-expired or held by an owner in `deadOwners`), row-locked until the transaction ends, or null. */
+  selectClaimableEffect(hostId: string, deadOwners: readonly string[]): Promise<PersistenceEffect | null>;
+  /** Stamps the claim minting `token` on effect `id` (running, owner stamp `claimOwnerJson`, a 2-minute lease, one more attempt); the claimed row, or null for an unknown id. */
+  claimEffect(id: string | number, token: string, claimOwnerJson: string): Promise<PersistenceEffect | null>;
+  /** Inserts a publication's effects in order, keeping an existing kind of the request and skipping gated ones while mention auto-linking is off; the kinds inserted. */
+  queueEffects(queue: EffectQueue): Promise<string[]>;
+  /** Releases the running effect claims with no recovery record last written before `cutoff`; how many. */
+  releaseAbandonedEffectClaims(cutoff: Date): Promise<number>;
+  /** Share-locks the brain row until the transaction ends (guardEffectSource's lock order); a no-op where one writer owns the brain. */
+  lockPersistenceBrainShare(): Promise<void>;
+  /** Whether every request of the worktree holding a recovery record is still publishing; null when none holds one. */
+  requestsStillPublishing(worktreeId: string): Promise<boolean | null>;
+  /** The withdrawal-mirror effects of these requests that have not committed, or committed with recorded publications. */
+  listMirrorGates(requestIds: readonly string[]): Promise<MirrorGateRow[]>;
+  /** Completes the effect claimed with `token` (failed `targets_parked` with parked targets, else committed); false when the claim moved or recovery holds it. */
+  completeEffect(id: string | number, token: string | null, outcome: Record<string, unknown>): Promise<boolean>;
+  /** completeEffect over a batch with one outcome; how many rows still held their claim. */
+  completeEffects(rows: readonly EffectClaimRef[], outcome: Record<string, unknown>): Promise<number>;
+  /** Whether any of these requests has an unclaimed Git or embedding target parked behind a committed withdrawal mirror. */
+  hasRearmableEffects(requestIds: readonly string[]): Promise<boolean>;
 
   /**
    * The current value of each named transaction-local setting (`current_setting(name, true)`), in `names` order, null

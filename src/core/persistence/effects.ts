@@ -895,10 +895,9 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
         if (effect.worktree_id) {
           // GST-1644: an effect that runs without the worktree lock can meet another writer's publication in flight (its
           // claim live, or committed with its record not yet cleared); that is contention, not a recovery.
-          const [blocked] = await tx.executeRaw<{ publishing: boolean | null }>(`SELECT bool_and(state='running' AND claim_expires_at>now()
-            OR state IN ('committed','conflict','failed','cancelled')) AS publishing FROM persistence_requests WHERE worktree_id=$1::uuid AND recovery IS NOT NULL`, [effect.worktree_id]);
-          if (blocked?.publishing === true && !lock) throw writerBusy(effect);
-          if (blocked && blocked.publishing !== null) throw recoveryFirst(effect);
+          const publishing = await tx.requestsStillPublishing(effect.worktree_id);
+          if (publishing === true && !lock) throw writerBusy(effect);
+          if (publishing !== null) throw recoveryFirst(effect);
         }
       }, { pipelineFirst: isPersistenceDeclaration });
       effect = await upgradeWithdrawalEffect(engine, effect, opts.hostId);
@@ -1053,14 +1052,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
     if (!recorded.length) return;
     try {
       for (const { effect } of recorded) await faultPoint(EFFECT_FAULT_POINTS.git, { effectId: effect.id, requestId: effect.request_id, sourceId: effect.source_id });
-      await engine.executeRaw(`UPDATE persistence_effects e SET
-        state=CASE WHEN jsonb_array_length(COALESCE(e.data->'parked','[]'::jsonb))>0 THEN 'failed' ELSE 'committed' END,
-        error_code=CASE WHEN jsonb_array_length(COALESCE(e.data->'parked','[]'::jsonb))>0 THEN 'targets_parked' END,
-        data=e.data-'retry_slugs'-'target_failures'-'failing_target'-'busy_retries'-'busy_since'-'busy_at',execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,
-        outcome=$2::text::jsonb,updated_at=now()
-        FROM jsonb_to_recordset($1::text::jsonb) AS t(id bigint,token uuid)
-        WHERE e.id=t.id AND e.execution_token=t.token AND e.recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE}`,
-      [JSON.stringify(recorded.map(({ effect }) => ({ id: String(effect.id), token: effect.execution_token }))), JSON.stringify(DURABILITY_NOT_ENABLED)]);
+      await engine.completeEffects(recorded.map(({ effect }) => ({ id: effect.id, token: effect.execution_token })), DURABILITY_NOT_ENABLED);
     } catch (error) { for (const { effect, target } of recorded) await recordFailure(engine, effect, error, opts.signal, target); }
   };
   // A deferred effect that requeues itself (a page walk advancing its cursor,
