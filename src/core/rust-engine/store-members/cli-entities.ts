@@ -6,7 +6,7 @@
  * refuses for a caller whose members, grants or lineage change it. `readRetirementHop` applies the hop's page policy
  * the same way (retirementHopPolicy).
  */
-import type { EntityCardMatch, EntityCardRow, IgnoredLabelPageRow, LivePageTypeRow, MentionDueQuery, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow } from '../../engine-sql/entity-reads.ts';
+import type { EntityCardMatch, EntityCardRow, IgnoredLabelPageRow, LivePageTypeRow, MentionDueQuery, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, TrigramCandidateQuery, TrigramCandidateRow, SiblingCandidateQuery, SiblingCandidateRow } from '../../engine-sql/entity-reads.ts';
 import { ignoredPrivacyLabels, SCAN_CAP } from '../../search/ignored-privacy-labels.ts';
 import { callerAccessAllowedSql, currentCallerAccess, privatePagesFilterForCaller, remoteReadFloorSql, withCallerAccess, withoutCallerAccess } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
@@ -71,6 +71,16 @@ export const readLivePageTypes: StoreMember<[sourceId: string, slugs: readonly s
     const policy = retirementHopPolicy(privacy, 'readLivePageTypes');
     return storeCall({ member: 'readLivePageTypes', sourceId }, () => brain.readLivePageTypes(sourceId, [...slugs], policy ?? null)) as Promise<LivePageTypeRow[]>;
   };
+
+/** entities/resolve.ts: the title-similarity candidates of one resolver arm, under its privacy (retirementHopPolicy). */
+export const readTrigramCandidates: StoreMember<[sourceId: string, q: TrigramCandidateQuery], TrigramCandidateRow[]> = (brain, sourceId, q) => {
+  const taken = takeOptions('readTrigramCandidates', q, ['arm', 'titleLc', 'slugFragment', 'privacy']);
+  if (taken.arm !== 'same_name' && taken.arm !== 'near' && taken.arm !== 'fuzzy') refuseMember('readTrigramCandidates', `arm ${String(taken.arm)}`);
+  if (taken.arm === 'fuzzy' && taken.privacy !== undefined) refuseMember('readTrigramCandidates', 'privacy on the fuzzy arm');
+  const policy = q.arm === 'fuzzy' ? undefined : retirementHopPolicy(q.privacy, 'readTrigramCandidates');
+  return storeCall({ member: 'readTrigramCandidates', sourceId }, () =>
+    brain.readTrigramCandidates(sourceId, q.arm, q.titleLc, q.slugFragment, policy ?? null)) as Promise<TrigramCandidateRow[]>;
+};
 
 /** The store reads the page policy as readIdentitySiblingCandidates does; a widening caller refuses typed. */
 export const readEntityCardRows: StoreMember<[sourceId: string, match: EntityCardMatch, opts?: { excludePrivate?: boolean }], EntityCardRow[]> =

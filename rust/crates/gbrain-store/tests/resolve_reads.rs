@@ -169,3 +169,71 @@ fn the_live_page_type_read_applies_the_page_policy() {
         [("organizations/acme".to_string(), company)]
     );
 }
+
+#[test]
+fn the_trigram_candidate_read_ranks_live_non_retired_pages_and_scores_only_the_fuzzy_arm() {
+    let dir = TempDir::new("resolve-trigram");
+    let store = seeded(&dir);
+    put(
+        &store,
+        "default",
+        "people/hidden-alice-example",
+        page("person", "Alice Example", json!({"visibility": "private"})),
+    );
+    put(
+        &store,
+        "default",
+        "people/alice-examples",
+        page("person", "Alice Example", json!({"canonical": "false"})),
+    );
+    let slugs = |arm: &str, policy: Option<PrivacyPolicy>| -> Vec<String> {
+        store
+            .read_trigram_candidates(
+                "default",
+                arm,
+                "alice example",
+                "alice-example",
+                policy.as_ref(),
+            )
+            .unwrap()
+            .into_iter()
+            .map(|r| r.slug)
+            .collect()
+    };
+    // Exact-title pages tie at similarity 1 and sort by slug ahead of "Alice Example Co"; the
+    // retired duplicate, the deleted page and the other source never appear; a policy hides the
+    // private page.
+    assert_eq!(
+        slugs("near", None),
+        strings(&[
+            "people/alice-example",
+            "people/hidden-alice-example",
+            "companies/alice-example",
+        ])
+    );
+    let policy = PrivacyPolicy {
+        honor_aliases: true,
+        entity_privacy: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        slugs("same_name", Some(policy)),
+        strings(&["people/alice-example", "companies/alice-example"])
+    );
+    let fuzzy = store
+        .read_trigram_candidates("default", "fuzzy", "alice example", "alice-example", None)
+        .unwrap();
+    assert!(fuzzy.iter().all(|r| r.score.is_some()));
+    assert!(
+        store
+            .read_trigram_candidates("default", "near", "alice example", "x", None)
+            .unwrap()
+            .iter()
+            .all(|r| r.score.is_none())
+    );
+    assert!(
+        store
+            .read_trigram_candidates("default", "sideways", "a", "a", None)
+            .is_err()
+    );
+}

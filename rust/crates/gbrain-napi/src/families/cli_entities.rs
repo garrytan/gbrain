@@ -97,6 +97,31 @@ impl Brain {
         })
     }
 
+    /// `readTrigramCandidates(sourceId, arm, titleLc, slugFragment, policy)`: one resolver arm's
+    /// title-similarity candidates, best first; a `null` policy reads every page.
+    #[napi]
+    pub fn read_trigram_candidates<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        arm: String,
+        title_lc: String,
+        slug_fragment: String,
+        policy: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let policy = policy
+                .map(|v| {
+                    required::<gbrain_store::facts::PrivacyPolicy>(
+                        v,
+                        "readTrigramCandidates policy",
+                    )
+                })
+                .transpose()?;
+            s.read_trigram_candidates(&source_id, &arm, &title_lc, &slug_fragment, policy.as_ref())
+        })
+    }
+
     /// `readRetirementHop(sourceId, slug, policy)`: the live page with its retirement and redirect
     /// target, or `null`; a `null` policy reads every page.
     #[napi]

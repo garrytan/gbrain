@@ -238,3 +238,55 @@ export async function readLivePageTypes(exec: LegacyUnscopedRead, sourceId: stri
       WHERE p.source_id = ${sourceId} AND p.deleted_at IS NULL AND p.slug = ANY(${[...slugs]}::text[]) ${retirementPrivacySql(privacy)}`);
   return exec.executeRaw<LivePageTypeRow>(text, params);
 }
+
+/**
+ * Which title-similarity read of the entity resolver: `same_name` (the strict resolver's same-name arm, five pages),
+ * `near` (the refusal's nearest entity pages, twenty) or `fuzzy` (`tryFuzzyMatch`, five, with the score, no privacy).
+ */
+export type TrigramCandidateQuery =
+  | { arm: 'same_name' | 'near'; titleLc: string; slugFragment: string; privacy: ResolverPrivacy }
+  | { arm: 'fuzzy'; titleLc: string; slugFragment: string };
+
+/** A title-similarity candidate; `score` (the larger of the title and slug trigram similarity) only on the `fuzzy` arm. */
+export interface TrigramCandidateRow { slug: string; title: string; type: string | null; score?: number }
+
+/**
+ * The live, non-retired pages of the source whose lowered title is trigram-similar (`%`) to `titleLc` or whose slug
+ * contains `slugFragment` (ILIKE, so `%` and `_` stay wildcards), best similarity first, then by slug. The statements
+ * name `$1` the source, `$2` the lowered title and `$3` the slug fragment by hand, as entities/resolve.ts sent them,
+ * because the title and fragment appear twice; no interpolated value is bound. Throws pg_trgm's error where the
+ * extension is missing (the callers catch it).
+ */
+export async function readTrigramCandidates(exec: LegacyUnscopedRead, sourceId: string, q: TrigramCandidateQuery): Promise<TrigramCandidateRow[]> {
+  const retired = trustedSql(retiredPageSql(q.arm === 'fuzzy' ? 'pages' : 'p'));
+  const fragment = q.arm === 'fuzzy'
+    ? sqlFragment`${trustedSql(`SELECT slug, title, type,
+         GREATEST(
+           similarity(lower(title), $2),
+           similarity(slug, $3)
+         ) AS score
+       FROM pages
+       WHERE source_id = $1
+         AND deleted_at IS NULL
+         AND NOT `)}${retired}${trustedSql(`
+         AND (
+           lower(title) % $2
+           OR slug ILIKE '%' || $3 || '%'
+         )
+       ORDER BY score DESC, slug ASC
+       LIMIT 5`)}`
+    : q.arm === 'same_name'
+      ? sqlFragment`${trustedSql(`SELECT p.slug, p.title, p.type FROM pages p
+          WHERE p.source_id = $1 AND p.deleted_at IS NULL `)}${retirementPrivacySql(q.privacy)} AND NOT ${retired}${trustedSql(`
+            AND (lower(p.title) % $2 OR p.slug ILIKE '%' || $3 || '%')
+          ORDER BY GREATEST(similarity(lower(p.title), $2), similarity(p.slug, $3)) DESC, p.slug ASC
+          LIMIT 5`)}`
+      : sqlFragment`${trustedSql(`SELECT p.slug, p.title, p.type FROM pages p
+      WHERE p.source_id = $1 AND p.deleted_at IS NULL AND NOT `)}${retired} ${retirementPrivacySql(q.privacy)}${trustedSql(`
+        AND (lower(p.title) % $2 OR p.slug ILIKE '%' || $3 || '%')
+      ORDER BY GREATEST(similarity(lower(p.title), $2), similarity(p.slug, $3)) DESC, p.slug ASC
+      LIMIT 20`)}`;
+  const { text, params } = renderFragment(fragment);
+  if (params.length !== 0) throw new Error('readTrigramCandidates: a fragment bound a value ahead of the hand-numbered parameters');
+  return exec.executeRaw<TrigramCandidateRow>(text, [sourceId, q.titleLc, q.slugFragment]);
+}

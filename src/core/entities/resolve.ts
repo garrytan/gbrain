@@ -473,7 +473,6 @@ export async function resolveStrictEntityReference(
 ): Promise<StrictResolution> {
   const trimmed = raw.trim();
   if (!trimmed) return { slug: null, miss: 'no_page' };
-  const privacy = opts.excludePrivate ? `AND ${opts.forCaller ? privatePagesFilterForCaller('p') : remoteReadFloorSql('p')}` : '';
   const retirementPrivacy: ResolverPrivacy = opts.excludePrivate ? (opts.forCaller ? 'caller' : 'floor') : 'none';
   const live = async (slugs: string[]) => slugs.length === 0 ? [] : engine.readLivePageTypes(source_id, [...new Set(slugs)], retirementPrivacy);
   // The source pack's linkable entity types (accounts, CRM records, ...) are fact entities too.
@@ -514,14 +513,8 @@ export async function resolveStrictEntityReference(
   }
   if (opts.sameName && !isBareName(trimmed)) {
     try {
-      const rows = await engine.executeRaw<{ slug: string; title: string; type: string | null }>(
-        `SELECT p.slug, p.title, p.type FROM pages p
-          WHERE p.source_id = $1 AND p.deleted_at IS NULL ${privacy} AND NOT ${retiredPageSql('p')}
-            AND (lower(p.title) % $2 OR p.slug ILIKE '%' || $3 || '%')
-          ORDER BY GREATEST(similarity(lower(p.title), $2), similarity(p.slug, $3)) DESC, p.slug ASC
-          LIMIT 5`,
-        [source_id, trimmed.toLowerCase(), token],
-      );
+      const rows = await engine.readTrigramCandidates(source_id,
+        { arm: 'same_name', titleLc: trimmed.toLowerCase(), slugFragment: token, privacy: retirementPrivacy });
       const named = await pick(rows.filter(row => isFactEntityPage(row.slug, row.type) && sameEntityName(trimmed, row.title, row.slug)), 'same_name');
       if (named) return named;
     } catch (err) {
@@ -553,6 +546,7 @@ export async function entityReferenceCandidates(
   const token = slugify(trimmed);
   if (!token) return [];
   const privacy = opts.excludePrivate ? `AND ${opts.forCaller ? privatePagesFilterForCaller('p') : remoteReadFloorSql('p')}` : '';
+  const resolverPrivacy: ResolverPrivacy = opts.excludePrivate ? (opts.forCaller ? 'caller' : 'floor') : 'none';
   const aliases = await aliasHitSlugs(engine, source_id, trimmed).catch(() => [] as string[]);
   const prefixed = (await findPrefixCandidates(engine, source_id, token)).map(c => c.slug);
   const named = await engine.executeRaw<{ slug: string }>(
@@ -562,13 +556,8 @@ export async function entityReferenceCandidates(
     [source_id, [...new Set([...BASENAME_DIRS.map(dir => `${dir}/${token}`), ...orgDirVariants(trimmed), ...aliases, ...prefixed])]],
   );
   if (named.length) return named.map(r => r.slug);
-  const near = await engine.executeRaw<{ slug: string; title: string; type: string | null }>(
-    `SELECT p.slug, p.title, p.type FROM pages p
-      WHERE p.source_id = $1 AND p.deleted_at IS NULL AND NOT ${retiredPageSql('p')} ${privacy}
-        AND (lower(p.title) % $2 OR p.slug ILIKE '%' || $3 || '%')
-      ORDER BY GREATEST(similarity(lower(p.title), $2), similarity(p.slug, $3)) DESC, p.slug ASC
-      LIMIT 20`,
-    [source_id, trimmed.toLowerCase(), token],
+  const near = await engine.readTrigramCandidates(source_id,
+    { arm: 'near', titleLc: trimmed.toLowerCase(), slugFragment: token, privacy: resolverPrivacy },
   ).catch(err => { if (isMissingTrigramError(err)) return []; throw err; });
   const lead = token.split('-')[0]!;
   const sharesLead = (r: { slug: string; title: string }) => slugify(r.title).split('-')[0] === lead || (r.slug.split('/').pop() ?? '').split('-')[0] === lead;
@@ -850,24 +839,7 @@ async function tryFuzzyMatch(
   // tends to be display-name-shaped ("Alice Example" vs "alice-example"). Cap at
   // 3 candidates; pick the first deterministic one.
   try {
-    const rows = await engine.executeRaw<{ slug: string; title: string; type: string | null; score: number }>(
-      `SELECT slug, title, type,
-         GREATEST(
-           similarity(lower(title), $2),
-           similarity(slug, $3)
-         ) AS score
-       FROM pages
-       WHERE source_id = $1
-         AND deleted_at IS NULL
-         AND NOT ${retiredPageSql('pages')}
-         AND (
-           lower(title) % $2
-           OR slug ILIKE '%' || $3 || '%'
-         )
-       ORDER BY score DESC, slug ASC
-       LIMIT 5`,
-      [source_id, lc, fragment],
-    );
+    const rows = await engine.readTrigramCandidates(source_id, { arm: 'fuzzy', titleLc: lc, slugFragment: fragment });
     // A trigram score alone attributes facts about "Alicia Example" to Alice,
     // and facts about a person with no page to a meeting page that carries
     // their name. Entity resolution takes a candidate only when it names the
@@ -880,7 +852,8 @@ async function tryFuzzyMatch(
       return named.length === 1 ? named[0].slug : null;
     }
     // Phantom canonicals: a clear winner only, with a margin over the runner-up.
-    if (rows.length > 0 && rows[0].score >= 0.7 && (rows.length === 1 || rows[0].score - rows[1].score >= 0.1)) return rows[0].slug;
+    const score = (i: number) => rows[i]?.score ?? 0;
+    if (rows.length > 0 && score(0) >= 0.7 && (rows.length === 1 || score(0) - score(1) >= 0.1)) return rows[0].slug;
   } catch (err) {
     // pg_trgm might not be installed on every engine config: that brain has
     // no fuzzy arm and falls through to slugify. Any other database error

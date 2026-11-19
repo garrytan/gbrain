@@ -3,9 +3,12 @@
 //! `->>` reads them (`cli_reads::reads::retired`).
 
 use crate::Store;
-use crate::error::Result;
+use crate::cli_reads::pg_text::pg_lower;
+use crate::cli_reads::reads::retired;
+use crate::error::{Result, StoreError};
 use crate::facts::{PrivacyPolicy, page_hidden};
-use crate::pages::read_page;
+use crate::keyword::{TRGM_SIMILARITY_THRESHOLD, real_to_js, sql_ilike, trgm_similarity};
+use crate::pages::{all_pages, read_page};
 use serde::Serialize;
 use std::collections::BTreeSet;
 
@@ -15,6 +18,17 @@ pub struct LivePageTypeRow {
     pub slug: String,
     #[serde(rename = "type")]
     pub page_type: String,
+}
+
+/// One `readTrigramCandidates` row; `score` only on the `fuzzy` arm, as only its SQL selects one.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TrigramCandidateRow {
+    pub slug: String,
+    pub title: String,
+    #[serde(rename = "type")]
+    pub page_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score: Option<f64>,
 }
 
 impl Store {
@@ -78,5 +92,67 @@ impl Store {
             });
         }
         Ok(out)
+    }
+
+    /// `readTrigramCandidates(sourceId, { arm, titleLc, slugFragment, privacy })`: the live,
+    /// non-retired pages of the source whose lowered title is trigram-similar to `title_lc`
+    /// (`lower(title) % $2`, the f32 similarity widened against the f64 threshold) or whose slug
+    /// contains `slug_fragment` (`slug ILIKE '%' || $3 || '%'`, wildcards kept), that the page
+    /// policy (when given) does not hide; best `GREATEST` of the two real similarities first, ties
+    /// by slug bytes; five rows (`same_name`, `fuzzy`) or twenty (`near`). Only `fuzzy` returns
+    /// the score.
+    pub fn read_trigram_candidates(
+        &self,
+        source_id: &str,
+        arm: &str,
+        title_lc: &str,
+        slug_fragment: &str,
+        policy: Option<&PrivacyPolicy>,
+    ) -> Result<Vec<TrigramCandidateRow>> {
+        let limit = match arm {
+            "same_name" | "fuzzy" => 5,
+            "near" => 20,
+            other => {
+                return Err(StoreError::invalid(format!(
+                    "readTrigramCandidates: unknown arm {other}"
+                )));
+            }
+        };
+        let read = self.read()?;
+        let pattern = format!("%{slug_fragment}%");
+        let mut rows: Vec<(f32, TrigramCandidateRow)> = Vec::new();
+        for page in all_pages(&*read)? {
+            if page.source_id != source_id
+                || page.deleted_at_us.is_some()
+                || retired(&page.frontmatter)
+            {
+                continue;
+            }
+            let title_sim = trgm_similarity(&pg_lower(&page.title), title_lc);
+            if f64::from(title_sim) < TRGM_SIMILARITY_THRESHOLD && !sql_ilike(&page.slug, &pattern)
+            {
+                continue;
+            }
+            if let Some(policy) = policy
+                && page_hidden(&*read, &page, policy)?
+            {
+                continue;
+            }
+            let score = title_sim.max(trgm_similarity(&page.slug, slug_fragment));
+            rows.push((
+                score,
+                TrigramCandidateRow {
+                    score: (arm == "fuzzy").then(|| real_to_js(score)),
+                    slug: page.slug,
+                    title: page.title,
+                    page_type: page.page_type,
+                },
+            ));
+        }
+        rows.sort_by(|a, b| {
+            b.0.total_cmp(&a.0)
+                .then_with(|| a.1.slug.as_bytes().cmp(b.1.slug.as_bytes()))
+        });
+        Ok(rows.into_iter().take(limit).map(|(_, row)| row).collect())
     }
 }

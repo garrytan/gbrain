@@ -90,4 +90,42 @@ describe('engine parity: entity resolver reads', () => {
       expect(result.granted.map(r => r.slug)).toContain('people/hidden-example');
       return result;
     });
+
+  parityTest('readTrigramCandidates ranks live, non-retired pages by title or slug similarity under each resolver arm',
+    { methods: ['readTrigramCandidates'] }, async (engine, backend) => {
+      await seed(engine, backend);
+      const more: Array<[string, PageInput]> = [
+        ['people/alicia-example', page('person', 'Alicia Example')],
+        ['people/alice-examples', page('person', 'Alice Examples', { canonical: false })],
+        ['meetings/alice-example-sync', page('meeting', 'Alice Example sync')],
+        ['people/hidden-alice-example', page('person', 'Alice Example', { visibility: 'private' })],
+        ['people/bob-other', page('person', 'Bob Other')],
+        ['people/pct_example', page('person', 'Zed')],
+      ];
+      for (const [slug, input] of more) await engine.putPage(slug, input, { sourceId: 'default' });
+      const read = (arm: 'same_name' | 'near', privacy: 'none' | 'caller' | 'floor', titleLc: string, slugFragment: string) =>
+        engine.readTrigramCandidates('default', { arm, titleLc, slugFragment, privacy });
+      const result = {
+        sameName: await read('same_name', 'none', 'alice example', 'alice-example'),
+        sameNameCaller: await read('same_name', 'caller', 'alice example', 'alice-example'),
+        near: await read('near', 'none', 'alice example', 'alice-example'),
+        nearFloor: await read('near', 'floor', 'alice example', 'alice-example'),
+        // `_` in the fragment is a LIKE wildcard.
+        wildcard: await read('near', 'none', 'nobody', 'pct_'),
+        other: await read('near', 'none', 'widget', 'widget'),
+        fuzzy: await engine.readTrigramCandidates('default', { arm: 'fuzzy', titleLc: 'alice example', slugFragment: 'alice-example' }),
+        none: await engine.readTrigramCandidates('default', { arm: 'fuzzy', titleLc: 'qqqq', slugFragment: 'qqqq' }),
+      };
+      expect(result.sameName.length).toBe(5);
+      expect(result.sameName[0]).toEqual({ slug: 'people/alice-example', title: 'Alice Example', type: 'person' });
+      expect(result.sameName.map(r => r.slug)).not.toContain('people/alice-examples');
+      expect(result.sameNameCaller.map(r => r.slug)).not.toContain('people/hidden-alice-example');
+      expect(result.near.map(r => r.slug)).toContain('people/hidden-alice-example');
+      expect(result.nearFloor.map(r => r.slug)).not.toContain('people/hidden-alice-example');
+      expect(result.wildcard.map(r => r.slug)).toEqual(['people/pct_example']);
+      expect(result.other).toEqual([]);
+      expect(result.fuzzy[0]).toMatchObject({ slug: 'people/alice-example', score: 1 });
+      expect(result.none).toEqual([]);
+      return result;
+    });
 });
