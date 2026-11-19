@@ -2,7 +2,7 @@ file	equal	stopped
 test/engine-parity/alias-fanout-reads.test.ts	9	0
 test/engine-parity/alias-trust.test.ts	6	0
 test/engine-parity/chunk-reads.test.ts	9	0
-test/engine-parity/chunks.test.ts	13	1
+test/engine-parity/chunks.test.ts	14	1
 test/engine-parity/cli-capabilities.test.ts	2	0
 test/engine-parity/cli-reads-import.test.ts	13	1
 test/engine-parity/cli-reads-ops.test.ts	14	4
@@ -49,7 +49,7 @@ test/engine-parity/retrieval-coverage.test.ts	11	1
 test/engine-parity/search-reads.test.ts	15	1
 test/engine-parity/search.test.ts	17	2
 test/engine-parity/segmented-body.test.ts	15	0
-test/engine-parity/source-resolver-reads.test.ts	11	0
+test/engine-parity/source-resolver-reads.test.ts	12	0
 test/engine-parity/stats-vectors.test.ts	2	0
 test/engine-parity/stats.test.ts	6	0
 test/engine-parity/sync-aliases.test.ts	9	0
@@ -66,7 +66,7 @@ test/engine-parity/trust-tier-reads.test.ts	12	4
 test/engine-parity/trust-withdrawals.test.ts	4	0
 test/engine-parity/trust-write-gate.test.ts	4	0
 test/engine-parity/typed-config-reads.test.ts	2	0
-test/engine-parity/versions-raw.test.ts	9	0
+test/engine-parity/versions-raw.test.ts	10	0
 test/engine-parity/wanted-links.test.ts	5	0
 test/engine-parity/write-guards.test.ts	7	0
-test/engine-parity/write-misc.test.ts	12	2
+test/engine-parity/write-misc.test.ts	13	3

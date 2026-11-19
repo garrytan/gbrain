@@ -2375,6 +2375,28 @@
         ],
         "flagOnScopes": []
       },
+      "listFiles#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listFiles#page_slug": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listFilesForPage#default": {
         "flagOffLanes": [
           "pool"
@@ -4806,6 +4828,7 @@
         "linkRelationshipKeysForOrigin": "none",
         "linkRelationshipKeysForPages": "none",
         "linkTemporal": "none",
+        "listAccessTokens": "none",
         "listActiveAccessMembers": "none",
         "listActiveFactsForEntity": "none",
         "listActiveTakesForPages": "none",
@@ -4848,6 +4871,7 @@
         "listFenceFactRows": "none",
         "listFenceRetireCandidates": "none",
         "listFenceRowGroups": "none",
+        "listFiles": "none",
         "listFilesForPage": "none",
         "listFreshExtractionOutcomes": "none",
         "listGatedMirrorRequests": "none",

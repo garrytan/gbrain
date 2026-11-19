@@ -78,4 +78,16 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_files_for_page(&page_id))
     }
+
+    /// `listFiles({ pageSlug?, limit })`: `FileRow[]` of one page slug by filename, or of every
+    /// file by page slug then filename; at most `limit`.
+    #[napi]
+    pub fn list_files<'env>(
+        &self,
+        env: &'env Env,
+        page_slug: Option<String>,
+        limit: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_files(page_slug.as_deref(), &limit))
+    }
 }

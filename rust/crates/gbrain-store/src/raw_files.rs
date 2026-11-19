@@ -593,6 +593,41 @@ impl Store {
         files.sort_by_key(|f| (f.created_at_us, f.id));
         Ok(files.iter().map(FileRecord::to_json).collect())
     }
+
+    /// `listFiles({ pageSlug?, limit })`: with a `page_slug`, the files of that slug in any source,
+    /// by `filename`; without one, every file, by `page_slug` (files with no slug last), then
+    /// `filename`. Ties go by id, and text sorts by bytes. At most `limit` rows. `limit` must be a
+    /// whole number in the `integer` range and not negative (`invalid_argument` otherwise).
+    pub fn list_files(&self, page_slug: Option<&str>, limit: &Value) -> Result<Vec<Value>> {
+        if let Some(slug) = page_slug {
+            no_nul("listFiles", &[("pageSlug", slug)])?;
+        }
+        let limit = int4("listFiles", "limit", limit)?;
+        if limit < 0 {
+            return Err(StoreError::invalid(
+                "listFiles: limit must not be negative".to_string(),
+            ));
+        }
+        let read = self.read()?;
+        let all: Vec<(Vec<u8>, FileRecord)> = collect_values(&*read, &[keys::RAW_FILES, FILE])?;
+        let mut files: Vec<FileRecord> = all
+            .into_iter()
+            .map(|(_, f)| f)
+            .filter(|f| page_slug.is_none_or(|slug| f.page_slug.as_deref() == Some(slug)))
+            .collect();
+        files.sort_by(|a, b| {
+            let slug = match (&a.page_slug, &b.page_slug) {
+                (Some(x), Some(y)) => x.as_bytes().cmp(y.as_bytes()),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            };
+            slug.then_with(|| a.filename.as_bytes().cmp(b.filename.as_bytes()))
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        files.truncate(limit as usize);
+        Ok(files.iter().map(FileRecord::to_json).collect())
+    }
 }
 
 #[cfg(test)]
