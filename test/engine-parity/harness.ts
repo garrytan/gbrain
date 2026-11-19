@@ -274,6 +274,32 @@ export async function recordPagePurge(engine: BrainEngine, backend: ParityBacken
   }
 }
 
+/**
+ * Fixture: a `page_facts_reconcile` watermark row, as the extract_facts phase writes it (`settleFactsReconcile` and
+ * `selectFactsReconcileDrain` in facts/reconcile-watermark.ts). Neither has a typed writer, so this is harness-only SQL
+ * behind the backend switch. `reconciled` and `attempted` name the revision each column holds: the page's `current`
+ * `knowledge_revision`, an `older` one, or null.
+ */
+export async function recordFactsReconcile(
+  engine: BrainEngine, backend: ParityBackend, sourceId: string, slug: string,
+  outcome: 'complete' | 'deferred' | 'invalid' | 'cancelled', reconciled: 'current' | 'older' | null, attempted: 'current' | 'older' | null,
+): Promise<void> {
+  switch (backend) {
+    // The Rust store reads the watermark but has no writer for it: the same SQL stops on the engine's typed raw_sql refusal.
+    case 'rust':
+    case 'pglite':
+    case 'postgres':
+      await engine.executeRaw(`INSERT INTO page_facts_reconcile (page_id, reconciled_revision, reconciled_at, outcome, attempted_revision, attempted_at)
+        SELECT p.id, CASE $3 WHEN 'current' THEN p.knowledge_revision WHEN 'older' THEN $6::uuid END, now(), $5,
+               CASE $4 WHEN 'current' THEN p.knowledge_revision WHEN 'older' THEN $6::uuid END, now()
+          FROM pages p WHERE p.source_id = $1 AND p.slug = $2`,
+        [sourceId, slug, reconciled, attempted, outcome, '00000000-0000-4000-8000-000000000000']);
+      return;
+    default:
+      return assertNever(backend);
+  }
+}
+
 /** Wrap an engine so every direct method call on the handle is recorded. */
 function recordingEngine(engine: BrainEngine, calls: Set<string>, refusals: unknown[] = []): BrainEngine {
   return new Proxy(engine, {

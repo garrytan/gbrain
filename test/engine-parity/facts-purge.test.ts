@@ -16,7 +16,8 @@
  *    `expireFact`. Generated values (fact ids, timestamps, fingerprints) are compared by relation or shape, never by value.
  */
 import { describe, expect } from 'bun:test';
-import { createSource, parityArms, sorted } from './harness.ts';
+import { createSource, parityArms, recordFactsReconcile, sorted } from './harness.ts';
+import { pageMeta } from '../helpers/page-body-fixtures.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { CALLER_ENTITIES, callerFactRows, putCallerPages, readAsCallers } from './fact-callers.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -165,6 +166,65 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     expect(backlog.rows.map((r) => r.slug)).toEqual(['notes/fenced', 'notes/rows']);
     expect(backlog.rows.every((r) => r.source_id === SRC && r.invalid === false)).toBe(true);
     expect(backlog.segmented).toBe(0);
+    return backlog;
+  });
+
+  parityTest('listFactsReconcileBacklog finds a fence in the body or timeline or owned rows, per source in C order, and counts due segmented pages', {
+    methods: ['putPage', 'insertFacts', 'softDeletePage', 'createSegmentedPageShell', 'listFactsReconcileBacklog'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const fence = `${FACTS_FENCE_BEGIN}\n| # | fact |\n${FACTS_FENCE_END}`;
+    await engine.putPage('notes/alpha', note('Alpha', `intro ${fence}`));
+    await engine.putPage('notes/b-c', note('B c', fence));
+    await engine.putPage('notes/bb', note('Bb', fence));
+    await engine.putPage('notes/_under', note('Under', fence));
+    await engine.putPage('notes/timeline', { ...note('Timeline', 'body'), timeline: `- entry\n${fence}` });
+    await engine.putPage('notes/half', note('Half', `<!--- gbrain:facts:begi -->`));
+    await engine.putPage('notes/upper', note('Upper', FACTS_FENCE_BEGIN.toUpperCase()));
+    await engine.putPage('notes/other', note('Other', fence), { sourceId: 'other' });
+    await engine.putPage('notes/rows-elsewhere', note('Rows elsewhere', 'no fence'));
+    await engine.insertFacts([{ fact: 'a row', source: 'fence', entity_slug: 'notes/rows-elsewhere', source_markdown_slug: 'notes/rows-elsewhere', row_num: 1 }] as never, { source_id: 'other' });
+    await engine.putPage('notes/expired-row', note('Expired row', 'no fence'));
+    const [expired] = (await engine.insertFacts([{ fact: 'old row', source: 'fence', entity_slug: 'notes/expired-row', source_markdown_slug: 'notes/expired-row', row_num: 1 }] as never, { source_id: SRC })).ids;
+    await engine.expireFact(expired!);
+    await engine.putPage('notes/unnumbered', note('Unnumbered', 'no fence'));
+    await engine.insertFacts([{ fact: 'filed, no row', source: 'fence', entity_slug: 'notes/unnumbered', source_markdown_slug: 'notes/unnumbered' }] as never, { source_id: SRC });
+    await engine.createSegmentedPageShell('notes/seg', pageMeta('Seg'), { sourceId: SRC });
+    await engine.createSegmentedPageShell('notes/seg-other', pageMeta('Seg other'), { sourceId: 'other' });
+    await engine.createSegmentedPageShell('notes/seg-rows', pageMeta('Seg rows'), { sourceId: SRC });
+    await engine.insertFacts([{ fact: 'seg row', source: 'fence', entity_slug: 'notes/seg-rows', source_markdown_slug: 'notes/seg-rows', row_num: 1 }] as never, { source_id: SRC });
+    await engine.createSegmentedPageShell('notes/seg-gone', pageMeta('Seg gone'), { sourceId: SRC });
+    await engine.softDeletePage('notes/seg-gone');
+    const backlog = await engine.listFactsReconcileBacklog();
+    expect(backlog.rows.map((r) => `${r.source_id}:${r.slug}`)).toEqual([
+      'default:notes/_under', 'default:notes/alpha', 'default:notes/b-c', 'default:notes/bb', 'default:notes/expired-row', 'default:notes/seg-rows',
+      'default:notes/timeline', 'other:notes/other',
+    ]);
+    expect(backlog.rows.every((r) => r.invalid === false)).toBe(true);
+    expect(backlog.segmented).toBe(2);
+    return backlog;
+  });
+
+  parityTest('listFactsReconcileBacklog leaves out a page reconciled at its revision and marks an invalid attempt at it', {
+    methods: ['putPage', 'createSegmentedPageShell', 'listFactsReconcileBacklog'],
+  }, async (engine, backend) => {
+    const fence = `${FACTS_FENCE_BEGIN}\n| # | fact |\n${FACTS_FENCE_END}`;
+    for (const slug of ['done', 'stale', 'invalid-now', 'invalid-before', 'deferred', 'cancelled']) await engine.putPage(`notes/${slug}`, note(slug, fence));
+    await engine.createSegmentedPageShell('notes/seg-done', pageMeta('Seg done'), { sourceId: SRC });
+    await engine.createSegmentedPageShell('notes/seg-stale', pageMeta('Seg stale'), { sourceId: SRC });
+    await recordFactsReconcile(engine, backend, SRC, 'notes/done', 'complete', 'current', 'current');
+    await recordFactsReconcile(engine, backend, SRC, 'notes/stale', 'complete', 'older', 'older');
+    await recordFactsReconcile(engine, backend, SRC, 'notes/invalid-now', 'invalid', null, 'current');
+    await recordFactsReconcile(engine, backend, SRC, 'notes/invalid-before', 'invalid', 'older', 'older');
+    await recordFactsReconcile(engine, backend, SRC, 'notes/deferred', 'deferred', null, 'current');
+    await recordFactsReconcile(engine, backend, SRC, 'notes/cancelled', 'cancelled', 'current', 'older');
+    await recordFactsReconcile(engine, backend, SRC, 'notes/seg-done', 'complete', 'current', 'current');
+    await recordFactsReconcile(engine, backend, SRC, 'notes/seg-stale', 'deferred', 'older', 'current');
+    const backlog = await engine.listFactsReconcileBacklog();
+    expect(backlog.rows.map((r) => [r.slug, r.invalid])).toEqual([
+      ['notes/deferred', false], ['notes/invalid-before', false], ['notes/invalid-now', true], ['notes/stale', false],
+    ]);
+    expect(backlog.segmented).toBe(1);
     return backlog;
   });
 
