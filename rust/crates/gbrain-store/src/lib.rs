@@ -541,8 +541,9 @@ pub(crate) struct StoredFormat {
 /// Upgrades a brain in an older format to `FORMAT_VERSION` in one write transaction, so a crash
 /// leaves either the old brain or the new one. Format 1 to 2 folds the JSON counter records into
 /// the per-counter records; 2 to 3 rewrites the projection jobs in their compact form
-/// (`format.rs`); every upgrade to format 4 starts an empty, incomplete keyword index
-/// (`keyword/index_build.rs`). The format record is re-read inside the transaction:
+/// (`format.rs`); an upgrade from format 3 or older starts an empty, incomplete keyword index
+/// (`keyword/index_build.rs`), and 4 to 5 rewrites nothing (a take stored before its trust tier
+/// reads `unknown`), so a format-4 brain keeps its postings. The format record is re-read inside the transaction:
 /// another handle on the same records may have upgraded the brain first.
 fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     let mut tx = kv.begin_write_exclusive()?;
@@ -559,8 +560,13 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     if stored.format_version <= 2 {
         persistence::projection_queue::compact_format_2_jobs(&mut *tx)?;
     }
-    // Format 4 keeps keyword postings: the build starts from an empty, incomplete index.
-    keyword::reset_index(&mut *tx)?;
+    if stored.format_version <= 3 {
+        // Format 4 keeps keyword postings: the build starts from an empty, incomplete index.
+        keyword::reset_index(&mut *tx)?;
+    }
+    // Format 5 stores a take's trust tier in its record. A take stored before reads `unknown`, the
+    // column default, so the step rewrites nothing; the number keeps an older build from rewriting
+    // a take without its tier.
     stored.format_version = FORMAT_VERSION;
     put_json(&mut *tx, &keys::meta("format"), &stored)?;
     tx.commit()?;

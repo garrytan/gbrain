@@ -24,9 +24,13 @@ use std::path::Path;
 ///   The upgrade clears them and marks the index incomplete in the same transaction; a background
 ///   build fills them (`keyword/index_build.rs`). A build without the index refuses a format-4
 ///   brain, as its writes would leave the postings stale.
-pub const FORMAT_VERSION: u32 = 4;
+/// - 5: a take record carries its `trust_tier` and `write_origin` (`trust/row_trust.rs`), stamped
+///   by every takes writer (`takes::store_take`). Nothing is rewritten: a take stored before reads
+///   `unknown`, the column default. A build without the field refuses a format-5 brain, as a take it
+///   rewrote would lose its tier.
+pub const FORMAT_VERSION: u32 = 5;
 /// Every format version this build can open. Addon exports list these as `formatVersions`.
-pub const FORMAT_VERSIONS: &[u32] = &[1, 2, 3, FORMAT_VERSION];
+pub const FORMAT_VERSIONS: &[u32] = &[1, 2, 3, 4, FORMAT_VERSION];
 
 pub const FORMAT_FILE: &str = "FORMAT";
 pub const RECORDS_FILE: &str = "records.redb";

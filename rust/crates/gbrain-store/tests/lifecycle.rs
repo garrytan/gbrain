@@ -385,7 +385,7 @@ fn a_format_1_brain_is_upgraded_on_open_and_keeps_its_counts() {
 fn an_older_build_refuses_a_brain_in_the_new_format() {
     // What an older build does with this build's brains: `check_version` refuses any version it
     // does not list. This build lists 1 to 4; the oldest one is 1.
-    assert_eq!(gbrain_store::FORMAT_VERSIONS, &[1, 2, 3, 4]);
+    assert_eq!(gbrain_store::FORMAT_VERSIONS, &[1, 2, 3, 4, 5]);
     assert_eq!(gbrain_store::FORMAT_VERSIONS.first(), Some(&1));
     assert_eq!(gbrain_store::FORMAT_VERSIONS.last(), Some(&FORMAT_VERSION));
 }
@@ -715,4 +715,90 @@ fn the_upgrade_does_not_trust_index_records_in_a_format_3_brain() {
         [keys::keyword_index_state()],
         "only the new state is left"
     );
+}
+
+/// Rewrites a brain's format record and `FORMAT` to `version`, leaving every other record as it is.
+fn stamp_format(brain: &std::path::Path, version: u32) {
+    use gbrain_store::keys;
+    let kv = RedbKv::open_path(&brain.join("records.redb")).unwrap();
+    let mut tx = kv.begin_write().unwrap();
+    let mut format: serde_json::Value =
+        serde_json::from_slice(&tx.get(&keys::meta("format")).unwrap().unwrap()).unwrap();
+    format["format_version"] = version.into();
+    tx.put(&keys::meta("format"), &serde_json::to_vec(&format).unwrap())
+        .unwrap();
+    tx.commit().unwrap();
+    let path = brain.join("FORMAT");
+    let mut file: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    file["format_version"] = version.into();
+    std::fs::write(&path, serde_json::to_vec_pretty(&file).unwrap()).unwrap();
+}
+
+#[test]
+fn a_format_4_brain_upgrades_to_format_5_and_keeps_its_takes_and_its_keyword_index() {
+    use gbrain_store::cli_reads::import::RowTrustLookup;
+    use gbrain_store::pages::{PageInput, PutPageOptions};
+    use gbrain_store::takes::{ListTakesOptions, TakeInput};
+    let dir = TempDir::new("format-4-upgrade");
+    let brain = dir.path().join("brain");
+    let take = |store: &Store, page_id: u64, row: i32, claim: &str| {
+        let rows: Vec<TakeInput> = serde_json::from_value(serde_json::json!([{
+            "page_id": page_id, "row_num": row, "claim": claim, "kind": "take", "holder": "h",
+            "weight": 0.5, "active": true,
+        }]))
+        .unwrap();
+        store.add_takes_batch(&rows).unwrap();
+    };
+    let (answers, ids) = {
+        let store = open_without_builder(&dir);
+        let page: PageInput = serde_json::from_value(serde_json::json!({
+            "type": "note", "title": "Apple", "compiled_truth": "apple body with pear words",
+        }))
+        .unwrap();
+        let page = store
+            .put_page("notes/apple", &page, &PutPageOptions::default())
+            .unwrap();
+        let page_id = page["id"].as_u64().unwrap();
+        // An undeclared take is stored with no trust field, byte for byte as format 4 stored it.
+        take(&store, page_id, 1, "plain");
+        let names = ["gbrain.write_trust_tier", "gbrain.write_trust_promotion"].map(String::from);
+        let tier = ["operator_curated", "operator_curated"].map(String::from);
+        store.apply_write_trust(&names, &tier).unwrap();
+        take(&store, page_id, 2, "curated");
+        store.clear_write_trust();
+        let options: ListTakesOptions =
+            serde_json::from_value(serde_json::json!({ "page_id": page_id, "limit": 10 })).unwrap();
+        let mut rows = store.list_takes(&options).unwrap();
+        rows.sort_by_key(|r| r["row_num"].as_i64());
+        let ids: Vec<u64> = rows.iter().map(|r| r["id"].as_u64().unwrap()).collect();
+        assert!(store.keyword_index_state().unwrap().unwrap().complete);
+        let answers = keyword_answers(&store);
+        store.close();
+        (answers, ids)
+    };
+    stamp_format(&brain, 4);
+
+    let store = open_without_builder(&dir);
+    assert_eq!(store.info().format_version, 5);
+    assert_eq!(FORMAT_VERSION, 5, "take trust tiers are store format 5");
+    // 4 to 5 rewrites nothing: the keyword index stays complete, with no rebuild to wait for.
+    let state = store.keyword_index_state().unwrap().unwrap();
+    assert!(state.complete, "{state:?}");
+    assert_eq!(keyword_answers(&store), answers);
+    // The take stored with no tier reads `unknown`; the stamped take keeps its tier.
+    let tiers: Vec<String> = store
+        .read_row_trust_rows(&RowTrustLookup {
+            table: "takes".into(),
+            ids: ids.clone(),
+        })
+        .unwrap()
+        .into_iter()
+        .map(|r| r.trust_tier)
+        .collect();
+    assert_eq!(tiers, ["unknown", "operator_curated"]);
+    store.close();
+    let file: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(brain.join("FORMAT")).unwrap()).unwrap();
+    assert_eq!(file["format_version"], 5);
 }
