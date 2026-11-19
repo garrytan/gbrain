@@ -189,6 +189,7 @@ fi
 rm -rf "$app.previous"
 say "Installed $app, signed by certificate $leaf."
 
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app"
 "$app/Contents/MacOS/$program" register
 label="gui/$(id -u)/$bundle_id"
 if launchctl print "$label" >/dev/null 2>&1; then
