@@ -5,8 +5,8 @@
  *
  * The keyword members resolve every engine default here (the hard-exclude list, the source-boost map, the slug
  * handles, the dash-run collapse, the date bounds) and send the store only predicates; rust/docs/store/keyword.md
- * lists what each member reads, ignores and refuses. `searchKeyword` also serves `excludePrivate` (the page policy of
- * private-provenance.ts); the other members and `searchTitles` refuse it.
+ * lists what each member reads, ignores and refuses. `searchKeyword` and `searchTitles` also serve `excludePrivate` (the
+ * page policy of private-provenance.ts); the other members refuse it.
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
@@ -66,8 +66,8 @@ const SHARED = new Set([
 const PAGE_FILTERS = ['type', 'types', 'where', 'exclude_slugs'] as const;
 /** Visibility options the store cannot apply (safe chunks on their own, the trust floor, flag suppression). */
 const VISIBILITY = ['requireSafeChunks', 'minTrust', 'suppressFlagged'] as const;
-/** The one member that serves `excludePrivate` (as the page policy of private-provenance.ts, with the safe-chunks rule it turns on). */
-const PRIVATE_PAGES_MEMBER: Member = 'searchKeyword';
+/** The members that serve `excludePrivate` (as the page policy of private-provenance.ts, with the safe-chunks rule it turns on). */
+const PRIVATE_PAGES_MEMBERS: readonly Member[] = ['searchKeyword', 'searchTitles'];
 
 type Member = 'searchKeyword' | 'searchKeywordChunks' | 'countKeywordPages' | 'searchKeywordPages' | 'searchTitles';
 
@@ -92,7 +92,7 @@ function keywordOptions(member: Member, query: string, opts: (SearchOpts & { tim
     }
     // `excludePrivate` turns on the safe-chunks rule (`requiresSafeChunks`: `requireSafeChunks ?? excludePrivate`), so a
     // `requireSafeChunks` beside it is the same rule when true, and switches it off when false (read below).
-    if (member === PRIVATE_PAGES_MEMBER && o.excludePrivate && (key === 'excludePrivate' || key === 'requireSafeChunks')) continue;
+    if (PRIVATE_PAGES_MEMBERS.includes(member) && o.excludePrivate && (key === 'excludePrivate' || key === 'requireSafeChunks')) continue;
     if ((VISIBILITY as readonly string[]).includes(key) || key === 'excludePrivate') {
       if (!value) continue;
       refuseMember(member, `option ${key}`);
@@ -101,7 +101,7 @@ function keywordOptions(member: Member, query: string, opts: (SearchOpts & { tim
   }
 
   const out: Record<string, unknown> = {};
-  if (member === PRIVATE_PAGES_MEMBER && o.excludePrivate) {
+  if (PRIVATE_PAGES_MEMBERS.includes(member) && o.excludePrivate) {
     // `buildVisibilityClause`: the page policy, and the safe-chunks rule unless `requireSafeChunks` says otherwise. A caller
     // whose policy is wider than the store's refuses (private-provenance.ts).
     out.excludePrivate = storePagePolicy(member, o.excludePrivate);
@@ -288,7 +288,9 @@ type TitleAttempt = { text: string; kind: TitleKind; limit: number; offset: numb
  * engine-sql/titles.ts `searchTitles`: the strict attempt over the whole vector (completed by the title-only attempt
  * when more pages match than `titleWholeVectorCandidates()`), then the any-word retry with per-word rarity and the
  * identifier lead. Each store call runs its attempts over one read, as each scoped read of the SQL engines does.
- * `requireSafeChunks` and `excludePrivate` refuse (keywordOptions), so the arm is never the safe-chunks one.
+ * `excludePrivate` serves as the page policy with the safe-chunks rule it turns on (`requireSafeChunks ?? excludePrivate`).
+ * That rule makes the SQL statement match and rank the title lexemes alone, uncapped (`titleOnly` in title-statement.ts),
+ * so every attempt reads the title vector and none is cut. A `requireSafeChunks` of true without `excludePrivate` refuses.
  */
 export const searchTitles: StoreMember<[query: string, opts?: SearchOpts], SearchResult[]> = async (brain, query, opts) => {
   // Chunk-grain code filters have no page-grain meaning: the SQL engines answer nothing.
@@ -304,9 +306,10 @@ export const searchTitles: StoreMember<[query: string, opts?: SearchOpts], Searc
   const exactKey = normalizeAlias(query);
   // The given-name variants are ORed into every attempt; the OR retry rebinds only the first text.
   const variants = titleNameVariants(query);
+  const titleOnly = options.requireSafeChunks === true;
   const run = async (attempts: TitleAttempt[]): Promise<{ rows: Row[]; cut: boolean }[]> =>
     storeCall({ member: 'searchTitles' }, () => brain.searchTitlesAttempts(
-      attempts.map(a => ({ texts: [a.text, ...variants], kind: a.kind, limit: a.limit, offset: a.offset })),
+      attempts.map(a => ({ texts: [a.text, ...variants], kind: titleOnly ? 'title' : a.kind, limit: a.limit, offset: a.offset })),
       exactKey, titleWholeVectorCandidates(), options,
     ));
 
