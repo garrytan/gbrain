@@ -25,7 +25,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
-import { formatFenceDate, parseFactsFence, upsertFactRow } from '../facts-fence.ts';
+import { factsFenceSection, formatFenceDate, parseFactsFence, upsertFactRow } from '../facts-fence.ts';
 import { withHeldFactsFence } from './unfenced-facts.ts';
 import { digest } from '../persistence/digest.ts';
 import type { PreparedMutation } from '../persistence/coordinator.ts';
@@ -38,6 +38,7 @@ import { appendContextNote } from './subject-infer.ts';
 import { normalizeTargetFences } from '../fence-repair/import-step.ts';
 import { refuseUnparsedRewrite } from '../fence-repair/refusal.ts';
 import { pageFencesNormalized } from '../fence-repair/report.ts';
+import { segmentedOverCeiling, wholeBodySnapshot } from '../persistence/segmented-apply.ts';
 
 export const RELINK_OPERATION = 'relink_facts';
 
@@ -187,7 +188,7 @@ export async function prepareRelinkMutation(engine: BrainEngine, row: WriteReque
     throw opError('permission_denied', 'Unsupported relink intent.',
       `Request ${row.request_id} is not a trusted local relink this gbrain version can publish, so nothing was written. Facts relink runs only from gbrain facts relink on the brain host.`);
   }
-  const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
+  const snapshot = await wholeBodySnapshot(engine, await engine.readPageSnapshot(row.slug, { sourceId: row.source_id }), 'relink facts fence write');
   if (!snapshot || snapshot.page.id !== row.page_id) {
     throw opError('page_identity_changed', 'The relink target page changed.',
       `${row.slug} in ${row.source_id} was deleted or replaced after relink request ${row.request_id} was accepted, so nothing was written. ${rerun}`);
@@ -207,18 +208,20 @@ export async function prepareRelinkMutation(engine: BrainEngine, row: WriteReque
     ({ compiled_truth: body, timeline } = await withHeldFactsFence(engine, row.source_id, row.slug, { compiled_truth: target.page.compiled_truth, timeline: target.page.timeline }));
     if (target.fixes.length) normalized = { fences_normalized: pageFencesNormalized({ sourceId: row.source_id, slug: row.slug, fixes: target.fixes,
       writer: row.principal_kind, path: snapshot.page.source_path ?? null, remote: row.authority.remote }) };
-    const parsed = parseFactsFence(body);
+    const section = factsFenceSection({ compiled_truth: body, timeline });
+    const fenced = { compiled_truth: body, timeline: timeline ?? '' };
     const [max] = await engine.executeRaw<{ n: number }>(
       'SELECT COALESCE(MAX(row_num),0)::int AS n FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [row.source_id, row.slug]);
-    let next = Math.max(Number(max?.n ?? 0), 0, ...parsed.facts.map(f => f.rowNum)) + 1;
+    let next = Math.max(Number(max?.n ?? 0), 0, ...[fenced.compiled_truth, fenced.timeline].flatMap(text => parseFactsFence(text).facts.map(f => f.rowNum))) + 1;
     for (const link of links) {
       const v = link.value;
       const rowNum = next++;
       rowNums.set(link.id, rowNum);
       // #6385 R12: a fence that does not parse cleanly refuses typed (`fence_malformed` below) instead of losing rows.
-      body = refuseUnparsedRewrite({ compiled_truth: body, timeline }, row.slug, row.source_id,
-        () => upsertFactRow(body, fenceRow(v, rowNum, appendContextNote(v.context as string | null, byId.get(link.id)!.note))).body);
+      fenced[section] = refuseUnparsedRewrite(fenced, row.slug, row.source_id,
+        () => upsertFactRow(fenced[section], fenceRow(v, rowNum, appendContextNote(v.context as string | null, byId.get(link.id)!.note))).body);
     }
+    ({ compiled_truth: body, timeline } = fenced);
   }
   const page = links.length ? await (await import('../persistence/page-prepare.ts')).preparePageMutation(engine, { ...row, intent: {
     content: serializePageToMarkdown({ ...snapshot.page, compiled_truth: body, timeline }, snapshot.tags), expected_revision: observedRevision, force: false,
@@ -277,7 +280,7 @@ export async function prepareRelinkMutation(engine: BrainEngine, row: WriteReque
 
 export type RelinkGroupResult =
   | { ok: true; outcome: RelinkGroupOutcome }
-  | { ok: false; reason: 'revision_conflict' | 'fence_malformed' | 'page_file_missing' | 'unfenceable' | 'no_page'; message: string };
+  | { ok: false; reason: 'revision_conflict' | 'fence_malformed' | 'page_file_missing' | 'unfenceable' | 'no_page' | 'page_too_large'; message: string };
 
 /**
  * Admit and wait for one entity page's relink request. Local and trusted
@@ -303,6 +306,7 @@ export async function submitRelinkGroup(engine: BrainEngine, config: GBrainConfi
   }
   const snapshot = await engine.readPageSnapshot(slug, { sourceId });
   if (!snapshot) return { ok: false, reason: 'no_page', message: `${slug} no longer exists` };
+  if (segmentedOverCeiling(snapshot.page)) return { ok: false, reason: 'page_too_large', message: `${slug} exceeds the whole-body relink limit` };
   let target: Awaited<ReturnType<typeof resolveFactWriteTarget>>;
   try {
     target = await resolveFactWriteTarget(engine, sourceId, source, { fileBacked: Boolean(snapshot.page.source_path), remote: false });
@@ -327,6 +331,10 @@ export async function submitRelinkGroup(engine: BrainEngine, config: GBrainConfi
   } catch (error) {
     if (!(error instanceof OperationError)) throw error;
     const message = error.message;
+    if (error.code === 'page_body_segmented') {
+      const current = await engine.readPageSnapshot(slug, { sourceId });
+      if (current && segmentedOverCeiling(current.page)) return { ok: false, reason: 'page_too_large', message };
+    }
     if (error.canonicalCode === 'invalid_fence' || /fence_malformed/.test(message)) return { ok: false, reason: 'fence_malformed', message };
     if (error.code === 'owner_unavailable') return { ok: false, reason: 'unfenceable', message };
     if (error.code === 'source_changed' && /removed outside/.test(message)) return { ok: false, reason: 'page_file_missing', message };
