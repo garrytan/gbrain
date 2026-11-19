@@ -106,6 +106,8 @@ export interface ImportResult {
   parsedPage?: ParsedPage;
   /** Content-quality gate (#1699): the page landed with a `quarantine` marker (hidden from search). */
   quarantined?: boolean;
+  /** GST-3064: private fact rows a remote write left out or reworded, kept as stored, and its reworded rows stored beside them. */
+  privateRowsKept?: { count: number; renumbered: number };
   /** True when the page landed with a `content_flag` marker (fuzzy
    *  markup-heavy or oversize — stays searchable, agent warned). */
   flagged?: boolean;
@@ -433,7 +435,8 @@ export async function importFromContent(
     // #6188 (E7): Tier 1 in place before the hidden-row merge and withdrawal preservation; the hash covers the normalized body.
     const fences = await applyImportFences({ engine, sourceId: sourceId ?? 'default', slug, mode: opts.fences ?? 'lenient', screened: opts.fenceScreen, screen, parsed, activePack: opts.activePack, remote: opts.remote === true, existing });
     if (fences.refused) return fences.refused;
-    if (opts.remote === true && existing) await mergeHiddenFactRows(engine, slug, parsed, existing, opts.restoreHeldRows);
+    const kept = opts.remote === true && existing ? await mergeHiddenFactRows(engine, slug, parsed, existing, opts.restoreHeldRows) : null;
+    const fenceFields = { ...fences.fields, ...(kept?.count ? { privateRowsKept: kept } : {}) };
     const { assertPreparedFactWithdrawals, preserveWithdrawnFenceRows } = await import('./facts/withdrawal.ts');
     parsed.compiled_truth = (await preserveWithdrawnFenceRows(engine, sourceId ?? 'default', parsed.compiled_truth, slug)).trim();
     parsed.timeline = (await preserveWithdrawnFenceRows(engine, sourceId ?? 'default', parsed.timeline, slug)).trim();
@@ -534,20 +537,20 @@ export async function importFromContent(
       // projection-only; the canonical write stays a no-op.
       const reseal = await projectionBelowSafeFence(engine, existing.id);
       if (opts.prepare) {
-        const result: ImportResult = { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}), ...fences.fields };
+        const result: ImportResult = { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}), ...fenceFields };
         return opts.prepare({ slug, parsedPage, observedRevision: (existing as typeof existing & { knowledge_revision?: string }).knowledge_revision ?? null,
           noop: true, result, validate: async () => {},
           apply: async tx => { if (reseal) await queuePageProjection(tx, sourceId ?? 'default', slug, 'safe_chunk_reseal'); } });
       }
       await persistUnchanged();
       const resealed = reseal ? await resealSafeChunks(engine, slug, sourceId ?? 'default') : null;
-      return { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}), ...(resealed ? { resealed } : {}), ...fences.fields };
+      return { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}), ...(resealed ? { resealed } : {}), ...fenceFields };
     }
 
     if (existing && legacyHashMatch && bodyStorageOf(existing) === 'segmented') throw pageBodySegmentedError(existing, 'legacy hash reconciliation');
     if (existing && legacyHashMatch && fileBodyMatchesStored(content, slug, existing) && await persistUnchanged(true)) {
       const resealed = await projectionBelowSafeFence(engine, existing.id) ? await resealSafeChunks(engine, slug, sourceId ?? 'default') : null;
-      return { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}), ...(resealed ? { resealed } : {}), ...fences.fields };
+      return { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}), ...(resealed ? { resealed } : {}), ...fenceFields };
     }
 
     // Identity dedup (#1309): move, skip a true duplicate, or index both.
@@ -568,7 +571,7 @@ export async function importFromContent(
     }
     if (identity.kind === 'duplicate') {
       if (opts.prepare) {
-        const result: ImportResult = { slug: identity.dupSlug, status: 'skipped', chunks: 0, parsedPage, ...fences.fields };
+        const result: ImportResult = { slug: identity.dupSlug, status: 'skipped', chunks: 0, parsedPage, ...fenceFields };
         return opts.prepare({ slug: identity.dupSlug, parsedPage, observedRevision: (existing as (typeof existing & { knowledge_revision?: string }) | null)?.knowledge_revision ?? null,
           noop: true, result, validate: async () => {}, apply: async () => {} });
       }
@@ -577,7 +580,7 @@ export async function importFromContent(
         `(frontmatter.id=${fmIdStr}) in source ${sourceId ?? 'default'}. ` +
         `Pass --force-rechunk to override.\n`
       );
-      return { slug: identity.dupSlug, status: 'skipped', chunks: 0, parsedPage, ...fences.fields };
+      return { slug: identity.dupSlug, status: 'skipped', chunks: 0, parsedPage, ...fenceFields };
     }
     if (identity.kind === 'shared_id') {
       process.stderr.write(
@@ -850,7 +853,7 @@ export async function importFromContent(
     if (opts.prepare) return opts.prepare({
       slug, parsedPage, observedRevision: (existing as (typeof existing & { knowledge_revision?: string }) | null)?.knowledge_revision ?? null,
       noop: false, contentHash: hash, result: { slug, status: 'imported', chunks: segmented ? segmented.prepared.rows.chunks : chunks.length, parsedPage,
-        ...(pageQuarantined ? { quarantined: true } : {}), ...(pageFlagged ? { flagged: true, flag_reason: pageFlagReason } : {}), ...(disposition.gate ? { gate: disposition.gate } : {}), ...fences.fields },
+        ...(pageQuarantined ? { quarantined: true } : {}), ...(pageFlagged ? { flagged: true, flag_reason: pageFlagReason } : {}), ...(disposition.gate ? { gate: disposition.gate } : {}), ...fenceFields },
       validate: tx => assertPreparedFactWithdrawals(tx, txOpts.sourceId, parsed.compiled_truth, parsed.timeline || '', slug),
       apply: applyPrepared, ...(segmented ? { afterCommit: async (target: BrainEngine) => { await segmented.afterCommit(target); }, segmented }
         : opts.boundedChunkWrites ? { afterCommit: async (target: BrainEngine) => { if (chunkReplacementDeferred) await continueDeferredProjection(target, txOpts.sourceId, slug); } } : {}),
@@ -897,7 +900,7 @@ export async function importFromContent(
       ...(pageQuarantined ? { quarantined: true } : {}),
       ...(pageFlagged ? { flagged: true, flag_reason: pageFlagReason } : {}),
       ...(typeWarning ? { type_warning: typeWarning } : {}),
-      ...(embeddingDeferred ? { embedding_deferred: true } : {}), ...fences.fields, ...(searchable !== undefined ? { searchable } : {}),
+      ...(embeddingDeferred ? { embedding_deferred: true } : {}), ...fenceFields, ...(searchable !== undefined ? { searchable } : {}),
     };
   };
   return await (needsEngineScope(engine) ? withEngineScope(engine, importScreened) : importScreened());
