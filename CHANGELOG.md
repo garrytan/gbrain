@@ -10,6 +10,23 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.745.0] - 2026-11-19
+
+**Brains with page titles longer than about 2,700 bytes upgrade again, and pages with long titles save instead of being refused (#9779).**
+
+### Fixed
+- The index behind exact-title lookups (`entity`, `whois`, context cards, search's alias check) was a btree on the lowercased title, and a btree entry must fit in 2,704 bytes. Upgrading a brain that already held a longer title stopped with "index row requires N bytes, maximum size is 8191", and on an upgraded brain saving such a page failed with `storage_error` ("index row size N exceeds btree version 4 maximum 2704"). The index is now a hash index on the lowercased title, which indexes a title of any length; the lookups are unchanged and still use it. Brains that already built the old index get the new one built online, then the old one dropped online, on the next upgrade. Reported by @mweber82.
+- Transcript imports cap the title of a new page at 200 characters, ending in an ellipsis when cut. Some harnesses report a session's opening text as its title, which ran to over 100 KB. Pages already imported keep their titles.
+
+<!-- behavior-change: transcript_title_cap_9779 -->
+
+**Turning GBrain Helper's sending off now wins over a text in progress and over a Touch ID dialog still open.**
+
+### Fixed
+- Each send checks the kill switch and its key again right before it hands the text to Messages, under the lock the settings are saved under. Once `send-setup --off` or `send-key remove` has returned, no new text is handed to Messages; a text Messages has already accepted may still be delivered. Both commands now say so when they succeed.
+- `send-setup --off` no longer waits for an earlier `send-setup` that is still showing its Touch ID dialog, and an approval given after the switch went off answers `send_disabled` instead of turning sending back on. `--off` keeps the config file locked until the helper has answered, so a `send-setup` started meanwhile waits for it instead of writing sending back on in between.
+- `send-setup --off` says what happened when the helper doesn't confirm: if the helper isn't running it says so and exits 0, because the config switch alone stops every send; if it doesn't answer within 40 seconds it exits 69; and if it answers with an error, it names the error (for example that the helper was busy) instead of blaming the keychain.
+
 ## [0.60.744.0] - 2026-11-19
 
 **Archiving a source now hides its pages from every API token, not just from search.**
