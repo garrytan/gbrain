@@ -351,14 +351,10 @@ async function stageBody(engine: BrainEngine, input: SegmentedBodyInput, staging
  * index probe per occurrence (content_chunks_occurrence_generation_idx), never a
  * scan of the page's chunk rows.
  */
-export async function occurrencesWithoutChunks(engine: Pick<BrainEngine, 'executeRaw'>, pageId: number, generation: number,
+export async function occurrencesWithoutChunks(engine: Pick<BrainEngine, 'listChunkedOccurrences'>, pageId: number, generation: number,
   rows: readonly ManifestRowInput[]): Promise<ManifestRowInput[]> {
   if (!rows.length) return [];
-  const chunked = new Set((await engine.executeRaw<{ occurrence_id: number }>(`SELECT o AS occurrence_id FROM unnest($2::bigint[]) AS o
-    WHERE EXISTS (SELECT 1 FROM content_chunks c
-      -- chunk-visibility-ok: write path; the generation predicate is explicit, at the generation the caller diffed against
-      WHERE c.page_id=$1 AND c.occurrence_id=o AND c.body_generation<=$3::bigint)`,
-  [pageId, rows.map(row => row.occurrenceId), generation])).map(row => Number(row.occurrence_id)));
+  const chunked = new Set(await engine.listChunkedOccurrences(pageId, rows.map(row => row.occurrenceId), generation));
   return rows.filter(row => !chunked.has(row.occurrenceId));
 }
 

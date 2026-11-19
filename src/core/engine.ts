@@ -1,3 +1,4 @@
+import type { OccurrenceChunkRow, PageTrustRef, PageTrustStamp, RechunkCandidateScope, RetiredChunkVectorRow, SegmentedLivePageRow, SegmentedProjectionPage, SegmentedRechunkPageRow } from './engine-sql/segmented-writes.ts';
 import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead, BodyManifestRow, BodyManifestMeta, BodyManifestOutline } from './engine-sql/export-reads.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as DecideStoreSql from './engine-sql/decide-store.ts';
@@ -3237,6 +3238,38 @@ export interface BrainEngine {
   readManifestSeqAt(pageId: number, generation: number, byteOffset: number): Promise<number | null>;
   /** A segmented body read: body_bytes of the newest segmented version that references `generation` and records a size, or null (engine-sql/export-reads.ts). */
   readSegmentedVersionBodyBytes(pageId: number, generation: number): Promise<number | null>;
+  /** A segmented write: the state of body staging `stagingId`, row-locked for the rest of the transaction, or null (engine-sql/segmented-writes.ts). */
+  lockBodyStagingState(stagingId: string): Promise<string | null>;
+  /** A segmented write: delete page `pageId`'s chunk rows at `generation` whose chunk_index is not in `keepIndexes` (engine-sql/segmented-writes.ts). */
+  deleteUnstagedSegmentChunks(pageId: number, generation: number, keepIndexes: readonly number[]): Promise<void>;
+  /** A segmented write: page `pageId`'s storage class, generation, title, type and body flags, deleted or not, or null (engine-sql/segmented-writes.ts). */
+  readSegmentedLivePage(pageId: number): Promise<SegmentedLivePageRow | null>;
+  /** A segmented write: whether the live page at `sourceId`/`slug` is sealed at its knowledge revision (engine-sql/segmented-writes.ts). */
+  readSegmentedSealed(sourceId: string, slug: string): Promise<boolean>;
+  /** A segmented write: the members of `occurrenceIds`, in order, with a chunk row at or below `generation` (engine-sql/segmented-writes.ts). */
+  listChunkedOccurrences(pageId: number, occurrenceIds: readonly number[], generation: number): Promise<number[]>;
+  /** A segmented write: the stored vectors in `column` of the visible chunks of `occurrences`, in chunk_index order, for reuse (engine-sql/segmented-writes.ts). */
+  readRetiredChunkVectors(pageId: number, occurrences: readonly number[], column: string): Promise<RetiredChunkVectorRow[]>;
+  /** A segmented projection: whether the page stores a chunk row generation `generation` (live occurrences `live`) does not hold (engine-sql/segmented-writes.ts). */
+  hasStaleSegmentChunks(pageId: number, generation: number, live: readonly number[]): Promise<boolean>;
+  /** A segmented projection: delete up to `maxRows` of those stale chunk rows; returns how many it deleted (engine-sql/segmented-writes.ts). */
+  retireStaleSegmentChunks(pageId: number, generation: number, live: readonly number[], maxRows: number): Promise<number>;
+  /** A segmented projection: the live segmented page at `sourceId`/`slug` it builds, or null (engine-sql/segmented-writes.ts). */
+  readSegmentedProjectionPage(sourceId: string, slug: string): Promise<SegmentedProjectionPage | null>;
+  /** gbrain reindex --segmented: ids of sealed, live segmented pages below `chunkerVersion` in the scope, in (source_id, slug) order (engine-sql/segmented-writes.ts). */
+  listSegmentedRechunkCandidates(chunkerVersion: number, scope?: RechunkCandidateScope): Promise<number[]>;
+  /** gbrain reindex --segmented: segmented page `pageId` with its revision, seal and updated_at in microseconds, deleted or not, or null (engine-sql/segmented-writes.ts). */
+  readSegmentedRechunkPage(pageId: number): Promise<SegmentedRechunkPageRow | null>;
+  /** gbrain reindex --segmented: the visible chunk rows of `occurrences`, by occurrence then local ordinal (engine-sql/segmented-writes.ts). */
+  listOccurrenceChunks(pageId: number, occurrences: readonly number[]): Promise<OccurrenceChunkRow[]>;
+  /** gbrain reindex --segmented: the transaction's gbrain.materializing_revision setting (null never set, '' cleared) (engine-sql/segmented-writes.ts). */
+  readMaterializingRevision(): Promise<string | null>;
+  /** gbrain reindex --segmented: set gbrain.materializing_revision for the transaction; a flip of the page at that revision keeps it and its seal (engine-sql/segmented-writes.ts). */
+  setMaterializingRevision(revision: string): Promise<void>;
+  /** gbrain reindex --segmented: set page `pageId`'s updated_at to `updatedUs` microseconds after the epoch, exactly (engine-sql/segmented-writes.ts). */
+  restorePageUpdatedAt(pageId: number, updatedUs: string): Promise<void>;
+  /** A fence append: the trust tier and write origin of the live page at a source and slug, or of a page by id, or null (engine-sql/segmented-writes.ts). */
+  readPageTrustStamp(page: PageTrustRef): Promise<PageTrustStamp | null>;
   /** gbrain export: the sources with an access policy, in id order, whose folder rulebooks an export carries (engine-sql/export-reads.ts). */
   listAccessPolicySourceIds(): Promise<string[]>;
   /** whois candidates by title, slug basename, alias and email (engine-sql/exact-identity.ts), at most `opts.limit`. */

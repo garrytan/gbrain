@@ -1,0 +1,220 @@
+/**
+ * The statements a segmented write and a segmented re-chunk ran through executeRaw (persistence/segmented-apply.ts,
+ * persistence/searchable.ts, page-body/ingest.ts, page-body/projection.ts, page-body/rechunk.ts,
+ * import-chunk-reuse.ts and trust/fence-append.ts), one function per BrainEngine member. PGLite and Postgres run the
+ * same text the callers ran before; the Rust engine answers from its store (rust/docs/store/page_body.md). Each runs on
+ * the engine it is given, so a call on a transaction engine reads and writes inside that transaction.
+ */
+import type { BrainEngine } from '../engine.ts';
+import type { JsonObject } from '../page-body/types.ts';
+import { quoteIdentifier } from '../search/embedding-column.ts';
+import { chunkGenerationFilter } from '../search/safe-chunks.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
+
+type Raw = Pick<BrainEngine, 'executeRaw'>;
+
+/** The live page a segmented write diffs against, read by id (metadata only). */
+export interface SegmentedLivePageRow {
+  id: number; body_generation: number | string; body_storage: string; title: string; type: string; body_flags: JsonObject | null;
+}
+
+/** The live segmented page a projection builds, by source and slug. */
+export interface SegmentedProjectionPage {
+  id: number; body_generation: number | string; body_bytes: number | string; knowledge_revision: string; text_projection_revision: string | null;
+  title: string; frontmatter: JsonObject | null; body_flags: JsonObject | null; timeline_lead: string | null;
+}
+
+/** The segmented page a re-chunk reads, deleted or not: its body columns, revision, seal and updated_at in microseconds. */
+export interface SegmentedRechunkPageRow {
+  id: number; slug: string; source_id: string; title: string; type: string; page_kind: string; frontmatter: JsonObject | null;
+  body_generation: number | string; body_flags: JsonObject | null; chunker_version: number | null; contextual_retrieval_mode: string | null;
+  corpus_generation: string | null; knowledge_revision: string; sealed: boolean; updated_us: string; deleted_at: string | null;
+  content_hash: string; body_bytes: number | string; truth_bytes: number | string; body_lines: number | string; segment_count: number;
+  segmenter_version: number; truth_lead: string | null; timeline_lead: string | null;
+}
+
+/** One visible chunk row of an occurrence, as a re-chunk compares it with today's chunker. */
+export interface OccurrenceChunkRow {
+  occurrence_id: unknown; chunk_source: string; chunk_text: string; raw_byte_start: unknown; raw_byte_end: unknown;
+  projected_byte_start: unknown; projected_byte_end: unknown;
+}
+
+/** A stored vector of a retired occurrence's visible chunk, with what reuse checks it against. */
+export interface RetiredChunkVectorRow {
+  chunk_text: string; chunk_source: string; embedding: unknown; token_count: number | null; model: string | null;
+  embedding_input_hash: string | null; contextual_retrieval_mode: string | null; slug: string; source_id: string; corpus_generation: string | null;
+}
+
+/** A page's trust tier and write origin, as a fence append keeps them. */
+export interface PageTrustStamp { id: number; trust_tier: string; write_origin: unknown }
+
+/** Which page a trust stamp reads: the live page at a source and slug, or a page by id. */
+export type PageTrustRef = { sourceId: string; slug: string } | { id: number };
+
+/** The scope of a re-chunk run: one source, one slug, both or neither. */
+export interface RechunkCandidateScope { sourceId?: string; slug?: string }
+
+/** The state of body staging `stagingId`, row-locked for the rest of the transaction; null when there is none. */
+export async function lockBodyStagingState(tx: Raw, stagingId: string): Promise<string | null> {
+  const [staging] = await tx.executeRaw<{ state: string }>('SELECT state FROM page_body_stagings WHERE id=$1::uuid FOR UPDATE', [stagingId]);
+  return staging?.state ?? null;
+}
+
+/** Delete page `pageId`'s chunk rows at `generation` whose chunk_index is not among `keepIndexes` (a dead preparation's rows). */
+export async function deleteUnstagedSegmentChunks(tx: Raw, pageId: number, generation: number, keepIndexes: readonly number[]): Promise<void> {
+  await tx.executeRaw('DELETE FROM content_chunks WHERE page_id=$1 AND body_generation=$2 AND NOT (chunk_index = ANY($3::int[]))',
+    [pageId, generation, keepIndexes]);
+}
+
+/** Page `pageId`'s storage class, generation, title, type and body flags, deleted or not; null when there is no such page. */
+export async function readSegmentedLivePage(tx: Raw, pageId: number): Promise<SegmentedLivePageRow | null> {
+  const [row] = await tx.executeRaw<SegmentedLivePageRow>(
+    'SELECT id, body_generation, body_storage, title, type, body_flags FROM pages WHERE id=$1', [pageId]);
+  return row ?? null;
+}
+
+/** Whether the live page at `sourceId`/`slug` has its text projection sealed at its knowledge revision. */
+export async function readSegmentedSealed(tx: Raw, sourceId: string, slug: string): Promise<boolean> {
+  const [page] = await tx.executeRaw<{ sealed: boolean }>(`SELECT text_projection_revision=knowledge_revision AS sealed FROM pages
+    WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL`, [sourceId, slug]);
+  return page?.sealed === true;
+}
+
+/** The members of `occurrenceIds`, in their order, that have a chunk row of page `pageId` at or below `generation`. */
+export async function listChunkedOccurrences(tx: Raw, pageId: number, occurrenceIds: readonly number[], generation: number): Promise<number[]> {
+  return (await tx.executeRaw<{ occurrence_id: number }>(`SELECT o AS occurrence_id FROM unnest($2::bigint[]) AS o
+    WHERE EXISTS (SELECT 1 FROM content_chunks c
+      -- chunk-visibility-ok: write path; the generation predicate is explicit, at the generation the caller diffed against
+      WHERE c.page_id=$1 AND c.occurrence_id=o AND c.body_generation<=$3::bigint)`,
+  [pageId, occurrenceIds, generation])).map(row => Number(row.occurrence_id));
+}
+
+/**
+ * The visible chunk rows of `occurrences` on page `pageId` that store a vector in `column` (an embedding column name),
+ * in chunk_index order, with the page fields vector reuse checks.
+ */
+export async function readRetiredChunkVectors(tx: Raw, pageId: number, occurrences: readonly number[], column: string): Promise<RetiredChunkVectorRow[]> {
+  const col = quoteIdentifier(column);
+  const { text, params } = renderFragment(sqlFragment`SELECT c.chunk_text, c.chunk_source, c.${trustedSql(col)} AS embedding, c.token_count, c.model, c.embedding_input_hash, p.contextual_retrieval_mode,
+            p.slug, p.source_id, p.corpus_generation
+       FROM content_chunks c JOIN pages p ON p.id = c.page_id
+      WHERE c.page_id = ${pageId} AND c.occurrence_id = ANY(${[...occurrences]}::bigint[]) AND c.${trustedSql(col)} IS NOT NULL AND ${trustedSql(chunkGenerationFilter('p', 'c'))}
+      ORDER BY c.chunk_index`);
+  return tx.executeRaw<RetiredChunkVectorRow>(text, params);
+}
+
+/**
+ * Chunk rows of page $1 that generation $2 (live occurrences $3) does not hold: inline rows, rows of other occurrences,
+ * and older duplicates of a live occurrence (any row of it below its newest generation at or below $2). Walks the page's
+ * occurrences on content_chunks_occurrence_generation_idx (v256), one index probe per occurrence plus the stale rows it
+ * returns, so the work is the page's occurrence count and the rows it retires, never its chunk count times anything: the
+ * earlier form tested each row for a newer duplicate with a per-row subquery, which scanned every newer row of the page.
+ */
+export const STALE_CHUNKS_SQL = `WITH RECURSIVE occ(o) AS (
+    SELECT (SELECT c.occurrence_id FROM content_chunks c WHERE c.page_id=$1 AND c.occurrence_id IS NOT NULL ORDER BY c.occurrence_id LIMIT 1)
+    UNION ALL
+    SELECT (SELECT c.occurrence_id FROM content_chunks c WHERE c.page_id=$1 AND c.occurrence_id>occ.o ORDER BY c.occurrence_id LIMIT 1)
+    FROM occ WHERE occ.o IS NOT NULL)
+  SELECT s.id FROM occ CROSS JOIN LATERAL (SELECT CASE WHEN occ.o=ANY($3::bigint[])
+      THEN (SELECT max(n.body_generation) FROM content_chunks n WHERE n.page_id=$1 AND n.occurrence_id=occ.o AND n.body_generation<=$2::bigint)
+      ELSE $2::bigint+1 END AS bound) b
+    CROSS JOIN LATERAL (SELECT c.id FROM content_chunks c WHERE c.page_id=$1 AND c.occurrence_id=occ.o AND c.body_generation<b.bound
+      UNION ALL SELECT c.id FROM content_chunks c WHERE c.page_id=$1 AND c.occurrence_id=occ.o AND c.body_generation IS NULL) s
+  WHERE occ.o IS NOT NULL
+  UNION ALL
+  SELECT c.id FROM content_chunks c -- chunk-visibility-ok: retirement selects the rows the live generation does not hold
+  WHERE c.page_id=$1 AND c.occurrence_id IS NULL AND (c.body_generation IS NULL OR (cardinality($3::bigint[])=0 AND c.body_generation<=$2::bigint))`;
+
+/**
+ * STALE_CHUNKS_SQL bounded to $4 rows and deleted, written out whole: engine-sql splices no text holding a placeholder
+ * (check-engine-sql-dynamic). test/segmented-writes-sql.test.ts pins it to `DELETE … ARRAY(${STALE_CHUNKS_SQL} LIMIT $4) …`.
+ */
+const RETIRE_STALE_CHUNKS_SQL = `DELETE FROM content_chunks c WHERE c.id=ANY(ARRAY(WITH RECURSIVE occ(o) AS (
+    SELECT (SELECT c.occurrence_id FROM content_chunks c WHERE c.page_id=$1 AND c.occurrence_id IS NOT NULL ORDER BY c.occurrence_id LIMIT 1)
+    UNION ALL
+    SELECT (SELECT c.occurrence_id FROM content_chunks c WHERE c.page_id=$1 AND c.occurrence_id>occ.o ORDER BY c.occurrence_id LIMIT 1)
+    FROM occ WHERE occ.o IS NOT NULL)
+  SELECT s.id FROM occ CROSS JOIN LATERAL (SELECT CASE WHEN occ.o=ANY($3::bigint[])
+      THEN (SELECT max(n.body_generation) FROM content_chunks n WHERE n.page_id=$1 AND n.occurrence_id=occ.o AND n.body_generation<=$2::bigint)
+      ELSE $2::bigint+1 END AS bound) b
+    CROSS JOIN LATERAL (SELECT c.id FROM content_chunks c WHERE c.page_id=$1 AND c.occurrence_id=occ.o AND c.body_generation<b.bound
+      UNION ALL SELECT c.id FROM content_chunks c WHERE c.page_id=$1 AND c.occurrence_id=occ.o AND c.body_generation IS NULL) s
+  WHERE occ.o IS NOT NULL
+  UNION ALL
+  SELECT c.id FROM content_chunks c -- chunk-visibility-ok: retirement selects the rows the live generation does not hold
+  WHERE c.page_id=$1 AND c.occurrence_id IS NULL AND (c.body_generation IS NULL OR (cardinality($3::bigint[])=0 AND c.body_generation<=$2::bigint)) LIMIT $4)) RETURNING c.id`;
+
+/** Whether page `pageId` stores a chunk row that generation `generation` (live occurrences `live`) does not hold. */
+export async function hasStaleSegmentChunks(tx: Raw, pageId: number, generation: number, live: readonly number[]): Promise<boolean> {
+  return (await tx.executeRaw(`${STALE_CHUNKS_SQL} LIMIT 1`, [pageId, generation, live])).length > 0;
+}
+
+/** Delete up to `maxRows` of the chunk rows `hasStaleSegmentChunks` finds; returns how many it deleted. */
+export async function retireStaleSegmentChunks(tx: Raw, pageId: number, generation: number, live: readonly number[], maxRows: number): Promise<number> {
+  return (await tx.executeRaw<{ id: number }>(RETIRE_STALE_CHUNKS_SQL, [pageId, generation, live, maxRows])).length;
+}
+
+/** The live segmented page at `sourceId`/`slug` a projection builds; null when there is none. */
+export async function readSegmentedProjectionPage(tx: Raw, sourceId: string, slug: string): Promise<SegmentedProjectionPage | null> {
+  const [page] = await tx.executeRaw<SegmentedProjectionPage>(`SELECT id, body_generation, body_bytes, knowledge_revision::text AS knowledge_revision,
+      text_projection_revision::text AS text_projection_revision, title, frontmatter, body_flags, timeline_lead
+    FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL AND body_storage='segmented'`, [sourceId, slug]);
+  return page ?? null;
+}
+
+/** The ids of sealed, live segmented pages below `chunkerVersion` within the scope, in (source_id, slug) order. */
+export async function listSegmentedRechunkCandidates(tx: Raw, chunkerVersion: number, scope: RechunkCandidateScope = {}): Promise<number[]> {
+  const bySource = scope.sourceId ? sqlFragment` AND source_id=${scope.sourceId}` : sqlFragment``;
+  const bySlug = scope.slug ? sqlFragment` AND slug=${scope.slug}` : sqlFragment``;
+  const { text, params } = renderFragment(sqlFragment`SELECT id FROM pages WHERE body_storage='segmented' AND deleted_at IS NULL
+    AND chunker_version < ${chunkerVersion} AND (text_projection_revision = knowledge_revision) IS TRUE${bySource}${bySlug} ORDER BY source_id, slug`);
+  return (await tx.executeRaw<{ id: number }>(text, params)).map(row => Number(row.id));
+}
+
+const RECHUNK_PAGE_SQL = `SELECT id, slug, source_id, title, type, page_kind, frontmatter, body_generation, body_flags, chunker_version,
+    contextual_retrieval_mode, corpus_generation, knowledge_revision::text AS knowledge_revision,
+    (text_projection_revision = knowledge_revision) IS TRUE AS sealed, (extract(epoch FROM updated_at) * 1000000)::bigint::text AS updated_us, deleted_at, content_hash, body_bytes, truth_bytes,
+    body_lines, segment_count, segmenter_version, truth_lead, timeline_lead
+  FROM pages WHERE id=$1 AND body_storage='segmented'`;
+
+/** Segmented page `pageId` as a re-chunk reads it, deleted or not; null when there is no such segmented page. */
+export async function readSegmentedRechunkPage(tx: Raw, pageId: number): Promise<SegmentedRechunkPageRow | null> {
+  return (await tx.executeRaw<SegmentedRechunkPageRow>(RECHUNK_PAGE_SQL, [pageId]))[0] ?? null;
+}
+
+/** The visible chunk rows of `occurrences` on page `pageId`, by occurrence then local ordinal. */
+export async function listOccurrenceChunks(tx: Raw, pageId: number, occurrences: readonly number[]): Promise<OccurrenceChunkRow[]> {
+  const { text, params } = renderFragment(sqlFragment`SELECT c.occurrence_id, c.chunk_source, c.chunk_text, c.raw_byte_start, c.raw_byte_end,
+      c.projected_byte_start, c.projected_byte_end FROM content_chunks c JOIN pages p ON p.id = c.page_id
+     WHERE c.page_id = ${pageId} AND c.occurrence_id = ANY(${occurrences}::bigint[]) AND ${trustedSql(chunkGenerationFilter('p', 'c'))}
+     ORDER BY c.occurrence_id, c.local_ordinal`);
+  return tx.executeRaw<OccurrenceChunkRow>(text, params);
+}
+
+/** The transaction's `gbrain.materializing_revision` setting: null when never set, '' once cleared. */
+export async function readMaterializingRevision(tx: Raw): Promise<string | null> {
+  const [prior] = await tx.executeRaw<{ revision: string | null }>("SELECT current_setting('gbrain.materializing_revision', true) AS revision");
+  return prior?.revision ?? null;
+}
+
+/**
+ * Set `gbrain.materializing_revision` for the rest of the transaction: a body flip of the page at that revision keeps
+ * the revision (and so its seal), as a materialization does. '' clears it.
+ */
+export async function setMaterializingRevision(tx: Raw, revision: string): Promise<void> {
+  await tx.executeRaw("SELECT set_config('gbrain.materializing_revision', $1, true)", [revision]);
+}
+
+/** Set page `pageId`'s updated_at to `updatedUs` microseconds after the epoch, exactly. */
+export async function restorePageUpdatedAt(tx: Raw, pageId: number, updatedUs: string): Promise<void> {
+  await tx.executeRaw(`UPDATE pages SET updated_at = 'epoch'::timestamptz + $2::bigint * interval '1 microsecond' WHERE id=$1`, [pageId, updatedUs]);
+}
+
+/** The trust tier and write origin of the live page at a source and slug, or of a page by id; null when there is none. */
+export async function readPageTrustStamp(tx: Raw, page: PageTrustRef): Promise<PageTrustStamp | null> {
+  const [row] = 'id' in page
+    ? await tx.executeRaw<PageTrustStamp>('SELECT id, trust_tier, write_origin FROM pages WHERE id=$1', [page.id])
+    : await tx.executeRaw<PageTrustStamp>(
+      'SELECT id, trust_tier, write_origin FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [page.sourceId, page.slug]);
+  return row ?? null;
+}

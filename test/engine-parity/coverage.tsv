@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 747/747
+# covered: 763/763
 # lifecycle: 9/9
 # pages: 40/40
 # search: 7/7
@@ -26,7 +26,7 @@
 # dream: 3/3
 # contradictions: 5/5
 # facts: 15/15
-# segmented_body: 15/15
+# segmented_body: 31/31
 # versions: 5/5
 # stats_ingest: 5/5
 # sync_aliases: 10/10
@@ -81,7 +81,7 @@ transaction	lifecycle	yes	77	no	yes	yes	serves
 transactionDirect	lifecycle	yes	5	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	86	yes	yes	yes	serves
+getPage	pages	yes	88	yes	yes	yes	serves
 readPageSnapshot	pages	yes	19	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
@@ -185,7 +185,7 @@ listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	3	no	yes	yes	serves
 upsertChunks	chunks	yes	28	yes	yes	yes	serves
 sealChunks	chunks	yes	47	no	yes	yes	serves
-getChunks	chunks	yes	29	yes	yes	yes	serves
+getChunks	chunks	yes	31	yes	yes	yes	serves
 getChunkPage	chunks	yes	11	no	yes	yes	serves
 getChunkWindows	chunks	yes	11	no	yes	yes	serves
 countStaleChunks	chunks	yes	5	no	yes	yes	serves
@@ -198,9 +198,9 @@ countChunklessPagesWithContent	chunks	yes	5	yes	yes	yes	serves
 listChunklessPagesWithContent	chunks	yes	3	yes	yes	yes	serves
 readEmbeddingStateCounts	chunks	yes	1	no	yes	yes	serves
 listEmbeddingStateRows	chunks	yes	1	no	yes	yes	serves
-deleteChunks	chunks	yes	3	no	yes	yes	serves
+deleteChunks	chunks	yes	4	no	yes	yes	serves
 deleteChunksExcept	chunks	yes	3	no	yes	yes	serves
-setChunkerVersion	chunks	yes	9	no	yes	yes	serves
+setChunkerVersion	chunks	yes	10	no	yes	yes	serves
 writeTextProjectionSeal	chunks	yes	2	no	yes	yes	serves
 moveChunkIndexes	chunks	yes	2	no	yes	yes	serves
 getChunkReuseRows	chunks	yes	4	no	yes	yes	serves
@@ -316,19 +316,35 @@ findTrajectory	facts	yes	3	yes	yes	yes	serves
 getFactsHealth	facts	yes	2	yes	yes	yes	serves
 allocateBodyOccurrenceIds	segmented_body	yes	10	no	yes	yes	serves
 stageSegmentTexts	segmented_body	yes	11	no	yes	yes	serves
-readSegmentTexts	segmented_body	yes	5	no	yes	yes	serves
+readSegmentTexts	segmented_body	yes	6	no	yes	yes	serves
 stageManifestRows	segmented_body	yes	12	no	yes	yes	serves
-readManifest	segmented_body	yes	9	no	yes	yes	serves
-stageSegmentChunks	segmented_body	yes	9	no	yes	yes	serves
+readManifest	segmented_body	yes	10	no	yes	yes	serves
+stageSegmentChunks	segmented_body	yes	10	no	yes	yes	serves
 createSegmentedPageShell	segmented_body	yes	19	no	yes	yes	serves
 flipBodyGeneration	segmented_body	yes	20	no	yes	yes	serves
-sealSegmentedPage	segmented_body	yes	5	no	yes	yes	serves
+sealSegmentedPage	segmented_body	yes	6	no	yes	yes	serves
 openBodyStaging	segmented_body	yes	14	no	yes	yes	serves
 setBodyStagingState	segmented_body	yes	13	no	yes	yes	serves
 sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
+lockBodyStagingState	segmented_body	yes	1	no	yes	yes	serves
+deleteUnstagedSegmentChunks	segmented_body	yes	1	no	yes	yes	serves
+readSegmentedLivePage	segmented_body	yes	1	no	yes	yes	serves
+readSegmentedSealed	segmented_body	yes	1	no	yes	yes	serves
+listChunkedOccurrences	segmented_body	yes	1	no	yes	yes	serves
+readRetiredChunkVectors	segmented_body	yes	1	no	yes	yes	serves
+hasStaleSegmentChunks	segmented_body	yes	1	no	yes	yes	serves
+retireStaleSegmentChunks	segmented_body	yes	1	no	yes	yes	serves
+readSegmentedProjectionPage	segmented_body	yes	1	no	yes	yes	serves
+listSegmentedRechunkCandidates	segmented_body	yes	1	no	yes	yes	serves
+readSegmentedRechunkPage	segmented_body	yes	1	no	yes	yes	serves
+listOccurrenceChunks	segmented_body	yes	1	no	yes	yes	serves
+readMaterializingRevision	segmented_body	yes	1	no	yes	yes	serves
+setMaterializingRevision	segmented_body	yes	1	no	yes	yes	serves
+restorePageUpdatedAt	segmented_body	yes	1	no	yes	yes	serves
+readPageTrustStamp	segmented_body	yes	1	no	yes	yes	serves
 createVersion	versions	yes	18	no	yes	yes	serves
 getVersions	versions	yes	8	no	yes	yes	serves
 readLatestVersionId	versions	yes	1	no	yes	yes	serves
@@ -350,7 +366,7 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	10	no	yes	yes	serves
-setConfig	config	yes	23	no	yes	yes	serves
+setConfig	config	yes	25	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
@@ -562,7 +578,7 @@ readExportWithdrawalLedgerBytes	cli_reads_export	yes	1	no	yes	yes	serves
 listExportWithdrawals	cli_reads_export	yes	1	no	yes	yes	serves
 readExportPageRows	cli_reads_export	yes	1	no	yes	yes	serves
 normalizeFenceLines	cli_reads_export	yes	1	no	yes	yes	serves
-readSegmentedPageHead	cli_reads_export	yes	4	no	yes	yes	serves
+readSegmentedPageHead	cli_reads_export	yes	5	no	yes	yes	serves
 readBodyManifestRows	cli_reads_export	yes	4	no	yes	yes	serves
 readBodyManifestMeta	cli_reads_export	yes	1	no	yes	yes	serves
 readBodyManifestOutline	cli_reads_export	yes	1	no	yes	yes	serves

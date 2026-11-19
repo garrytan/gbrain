@@ -32,6 +32,7 @@ import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { withCoordinatedWrite } from '../../src/core/persistence/context.ts';
 import { TEST_WRITE_ATTRIBUTION } from '../helpers/write-attribution.ts';
+import { segmentedWriteThrough } from '../helpers/segmented-writes-proxy.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-restore-deferred-'));
 const env = { GBRAIN_HOME: home, OPENAI_API_KEY: undefined, VOYAGE_API_KEY: undefined, ANTHROPIC_API_KEY: undefined };
@@ -45,11 +46,13 @@ const PROJECTION_PAGE_READ = "FROM pages WHERE source_id=$1 AND slug=$2 AND dele
 /** The engine with the segmented projection's page read failing: the post-commit projection is lost. */
 function projectionLost(engine: BrainEngine): BrainEngine {
   return new Proxy(engine, {
-    get(target, prop) {
+    get(target, prop, receiver) {
       if (prop === 'executeRaw') {
         return (sql: string, params?: unknown[]) => sql.includes(PROJECTION_PAGE_READ)
           ? Promise.reject(new Error('projection lost (probe)')) : target.executeRaw(sql, params);
       }
+      const through = segmentedWriteThrough(prop, receiver);
+      if (through) return through;
       const value = Reflect.get(target, prop, target);
       return typeof value === 'function' ? value.bind(target) : value;
     },

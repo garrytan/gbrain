@@ -31,51 +31,26 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
+import { STALE_CHUNKS_SQL, type SegmentedProjectionPage } from '../engine-sql/segmented-writes.ts';
 import { isQuarantined } from '../quarantine.ts';
 import { faultPoint } from '../persistence/fault-points.ts';
 import { sealSegmentedPage } from '../persistence/segmented-apply.ts';
 import { SEGMENTED_PROJECTION_CLAIM, type ProjectionRebuildFailure } from '../page-state/projections.ts';
 import { occurrencesWithoutChunks, stageOccurrenceChunks } from './ingest.ts';
 import { PROJECTION_RETIRE_MAX_ROWS } from './limits.ts';
-import type { JsonObject } from './types.ts';
 import { assertGenerationTiles } from './body-tiling.ts';
 
 /** `claimLost`: another process took the page's claim over (or a write re-queued the page) during the build, which stopped unsealed. */
 export interface SegmentedProjectionResult { chunks: number; retired: number; sealed: boolean; claimLost?: true }
 
-interface ProjectionPage {
-  id: number; body_generation: number | string; body_bytes: number | string; knowledge_revision: string; text_projection_revision: string | null;
-  title: string; frontmatter: JsonObject | null; body_flags: JsonObject | null; timeline_lead: string | null;
+type ProjectionPage = SegmentedProjectionPage;
+
+function readProjectionPage(engine: Pick<BrainEngine, 'readSegmentedProjectionPage'>, ref: { sourceId: string; slug: string }): Promise<ProjectionPage | null> {
+  return engine.readSegmentedProjectionPage(ref.sourceId, ref.slug);
 }
 
-async function readProjectionPage(engine: Pick<BrainEngine, 'executeRaw'>, ref: { sourceId: string; slug: string }): Promise<ProjectionPage | null> {
-  const [page] = await engine.executeRaw<ProjectionPage>(`SELECT id, body_generation, body_bytes, knowledge_revision::text AS knowledge_revision,
-      text_projection_revision::text AS text_projection_revision, title, frontmatter, body_flags, timeline_lead
-    FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL AND body_storage='segmented'`, [ref.sourceId, ref.slug]);
-  return page ?? null;
-}
-
-/**
- * Chunk rows of page $1 that generation $2 (live occurrences $3) does not hold: inline rows, rows of other occurrences,
- * and older duplicates of a live occurrence (any row of it below its newest generation at or below $2). Walks the page's
- * occurrences on content_chunks_occurrence_generation_idx (v256), one index probe per occurrence plus the stale rows it
- * returns, so the work is the page's occurrence count and the rows it retires, never its chunk count times anything: the
- * earlier form tested each row for a newer duplicate with a per-row subquery, which scanned every newer row of the page.
- */
-export const STALE_CHUNKS_SQL = `WITH RECURSIVE occ(o) AS (
-    SELECT (SELECT c.occurrence_id FROM content_chunks c WHERE c.page_id=$1 AND c.occurrence_id IS NOT NULL ORDER BY c.occurrence_id LIMIT 1)
-    UNION ALL
-    SELECT (SELECT c.occurrence_id FROM content_chunks c WHERE c.page_id=$1 AND c.occurrence_id>occ.o ORDER BY c.occurrence_id LIMIT 1)
-    FROM occ WHERE occ.o IS NOT NULL)
-  SELECT s.id FROM occ CROSS JOIN LATERAL (SELECT CASE WHEN occ.o=ANY($3::bigint[])
-      THEN (SELECT max(n.body_generation) FROM content_chunks n WHERE n.page_id=$1 AND n.occurrence_id=occ.o AND n.body_generation<=$2::bigint)
-      ELSE $2::bigint+1 END AS bound) b
-    CROSS JOIN LATERAL (SELECT c.id FROM content_chunks c WHERE c.page_id=$1 AND c.occurrence_id=occ.o AND c.body_generation<b.bound
-      UNION ALL SELECT c.id FROM content_chunks c WHERE c.page_id=$1 AND c.occurrence_id=occ.o AND c.body_generation IS NULL) s
-  WHERE occ.o IS NOT NULL
-  UNION ALL
-  SELECT c.id FROM content_chunks c -- chunk-visibility-ok: retirement selects the rows the live generation does not hold
-  WHERE c.page_id=$1 AND c.occurrence_id IS NULL AND (c.body_generation IS NULL OR (cardinality($3::bigint[])=0 AND c.body_generation<=$2::bigint))`;
+/** The statement the stale-chunk probe and retirement run on PGLite and Postgres (engine-sql/segmented-writes.ts). */
+export { STALE_CHUNKS_SQL };
 
 /** The occurrence ids of page $1's manifest at generation $2. */
 export async function liveOccurrenceIds(engine: Pick<BrainEngine, 'readBodyManifestRows'>, pageId: number, generation: number): Promise<number[]> {
@@ -83,8 +58,8 @@ export async function liveOccurrenceIds(engine: Pick<BrainEngine, 'readBodyManif
 }
 
 /** The page still stores a chunk row its live generation does not hold (a deferred retirement): sealing it would show the row. */
-export async function hasStaleChunks(engine: Pick<BrainEngine, 'executeRaw'>, pageId: number, generation: number, live: readonly number[]): Promise<boolean> {
-  return (await engine.executeRaw(`${STALE_CHUNKS_SQL} LIMIT 1`, [pageId, generation, live])).length > 0;
+export async function hasStaleChunks(engine: Pick<BrainEngine, 'hasStaleSegmentChunks'>, pageId: number, generation: number, live: readonly number[]): Promise<boolean> {
+  return engine.hasStaleSegmentChunks(pageId, generation, live);
 }
 
 /**
@@ -100,8 +75,7 @@ async function retireStaleChunks(engine: BrainEngine, ref: { sourceId: string; s
       await tx.lockPageKeys([ref]);
       const page = await tx.readSegmentedPageHead(pageId);
       if (page?.body_storage !== 'segmented' || Number(page.body_generation) !== generation) return null;
-      return (await tx.executeRaw<{ id: number }>(`DELETE FROM content_chunks c WHERE c.id=ANY(ARRAY(${STALE_CHUNKS_SQL} LIMIT $4)) RETURNING c.id`,
-        [pageId, generation, live, PROJECTION_RETIRE_MAX_ROWS])).length;
+      return tx.retireStaleSegmentChunks(pageId, generation, live, PROJECTION_RETIRE_MAX_ROWS);
     });
     if (deleted === null) return { retired, moved: true };
     retired += deleted;

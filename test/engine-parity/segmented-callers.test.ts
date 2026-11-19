@@ -95,7 +95,9 @@ const receiptView = (r: Awaited<ReturnType<typeof runSegmentedRechunk>>) => ({
 
 describe('engine parity: segmented callers', () => {
   parityTest('a streamed segmented import creates a sealed page, replaces it and creates a page over the seal limit whose projection builds its chunks',
-    { methods: ['setConfig', 'getPage', 'getChunks'], timeout: 600_000 }, async (engine, backend) => {
+    { methods: ['setConfig', 'getPage', 'getChunks', 'lockBodyStagingState', 'deleteUnstagedSegmentChunks', 'readSegmentedLivePage',
+      'readSegmentedSealed', 'listChunkedOccurrences', 'readRetiredChunkVectors', 'hasStaleSegmentChunks', 'retireStaleSegmentChunks',
+      'readSegmentedProjectionPage'], timeout: 600_000 }, async (engine, backend) => {
       await engine.setConfig('pages.segmented_storage', 'on');
       const first = conversationBody(256 * 1024, { seed: 5 });
       const created = await streamed(engine, backend, 'notes/streamed', first);
@@ -115,7 +117,8 @@ describe('engine parity: segmented callers', () => {
 
   parityTest('an applied segmented re-chunk flips the changed occurrences of a page sealed at an older chunker and stamps the current version',
     { methods: ['setConfig', 'getPage', 'getChunks', 'readSegmentedPageHead', 'readManifest', 'readSegmentTexts', 'deleteChunks',
-      'stageSegmentChunks', 'sealSegmentedPage', 'setChunkerVersion'], timeout: 600_000 },
+      'stageSegmentChunks', 'sealSegmentedPage', 'setChunkerVersion', 'listSegmentedRechunkCandidates', 'readSegmentedRechunkPage',
+      'listOccurrenceChunks', 'readMaterializingRevision', 'setMaterializingRevision', 'restorePageUpdatedAt', 'readPageTrustStamp'], timeout: 600_000 },
     async (engine, backend) => {
       await engine.setConfig('pages.segmented_storage', 'on');
       expect((await streamed(engine, backend, 'chats/rechunk', needleBody(200_000))).status).toBe('imported');
