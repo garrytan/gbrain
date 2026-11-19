@@ -2090,6 +2090,17 @@
         ],
         "flagOnScopes": []
       },
+      "holdPageEmbedding#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "holdsNotifierLease#default": {
         "flagOffLanes": [
           "pool"
@@ -4382,6 +4393,28 @@
         ],
         "flagOnScopes": []
       },
+      "readReasonPurgeTombstones#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readReasonPurgeTombstones#pair": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readReceiptBudget#default": {
         "flagOffLanes": [
           "pool"
@@ -5743,6 +5776,17 @@
           "pool"
         ],
         "flagOnScopes": []
+      },
+      "writeReasonPurgeTombstones#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
       }
     },
     "static": {
@@ -6049,6 +6093,7 @@
         "hasUnsealedPages": "none",
         "hasWakeCron": "none",
         "hasWakeTermsAcceptance": "none",
+        "holdPageEmbedding": "none",
         "holdSchemaMigrationLock": "none",
         "holdsNotifierLease": "none",
         "inboundLinkCoverage": "none",
@@ -6416,6 +6461,7 @@
         "readQueuedPageChars": "none",
         "readQueuedSpendRows": "none",
         "readRankCoverage": "none",
+        "readReasonPurgeTombstones": "none",
         "readReceiptBudget": "none",
         "readRenameIdentityRows": "none",
         "readRetirementHop": "none",
@@ -6603,6 +6649,7 @@
         "writeNotifierCoverage": "none",
         "writeNotifierState": "none",
         "writeOpCheckpointKeys": "none",
+        "writeReasonPurgeTombstones": "none",
         "writeTextProjectionSeal": "none"
       }
     }

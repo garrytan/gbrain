@@ -47,6 +47,46 @@ read when a version is written (`page-state/versions.ts:28`). The Rust store has
 and the tombstone writer (`facts/purge-reasons.ts:63`) is raw SQL that refuses on Rust, so a typed read can answer
 from an empty key range. Until the hold store is typed, step 2 on Rust would write no hold for the bad file.
 
+## Update after the lane 13 merge and the purged-reason reads (`a061e8bed5` and the next commit)
+
+The branch merged the notifier work and lane 13 (`86fb7ef5db`, `a061e8bed5`), and the trace ran again with no stub in
+place of `access/policy.ts`. Neither `policy.ts:92` nor `:139` refuses now. The notifier and backup-coverage refusals
+of step 1 are gone too.
+
+The next commit types the purged change-reason record and the embedding hold:
+
+| Site | Now calls |
+|---|---|
+| `reason-trailers.ts:151` `scanSyncReasons` | `readReasonPurgeTombstones` (new) |
+| `repair/purged-change-reasons.ts:66` `findLeakedChangeReasons` | `readReasonPurgeTombstones` |
+| `page-state/versions.ts:28` `stampableReason` | `readReasonPurgeTombstones` with a (commit, path) pair |
+| `facts/purge-reasons.ts:63` `recordReasonTombstones` | `writeReasonPurgeTombstones` (new) |
+| `page-embedding-budget.ts:141` `holdPageEmbedding` | `holdPageEmbedding` (new); Rust `readPageSizeRows` reports the hold |
+
+`purged-change-reasons.ts:52` `checkoutRoot` (`SELECT local_path FROM sources`) is still raw SQL, so
+`gbrain repair purged-change-reasons` still stops on Rust after the typed tombstone read.
+
+Trace with these changes:
+
+| Step | Rust exit | First stop |
+|---|---:|---|
+| 1. first `sync` | 0 | none |
+| 2. incremental `sync` | 1 | the sync ends `blocked_by_failures`: three files fail (below) |
+| 3. `sync status` | 1 | `sync-status.ts:361` |
+| 4. `sources status` | 1 | `source-health.ts:384` |
+
+Step 2 now reads past the reason scan. The three failed files of step 2:
+
+- the renamed file: `sync/rename-reconcile.ts:46` (`SELECT slug, source_path FROM pages WHERE source_path = ANY($1)`)
+  refuses and the rename is not reconciled;
+- the file with broken frontmatter: `sync/holds.ts:203` (the page read of `recordLegacyHold`) refuses, so no hold is
+  written (the hold store is the next step);
+- the changed file: `createVersion` with a change reason refuses with capability `page_versions`, because the Rust
+  store does not keep a version's change reason (TODOS.md `rust-version-change-reason`).
+
+Hidden refusals that step 1 still makes (caught by the caller): `sync-holds.ts:573` (from
+`applied-watermark.ts:110`) and `sync-pass-row.ts:185` (from `applied-watermark.ts:112`).
+
 ## Counts
 
 | Class | Sites | Meaning |

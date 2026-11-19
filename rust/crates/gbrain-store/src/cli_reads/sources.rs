@@ -180,9 +180,9 @@ fn scan_live_origins(
 impl Store {
     /// `readPageSizeRows(sourceId, maxBytes, slugs)`: the live pages of one source (only the listed
     /// slugs when `slugs` is Some) that carry `embed_skip`, have a body over `max_bytes` or are
-    /// segmented, in slug order. `bytes` is a segmented page's `body_bytes`, else the UTF-8 length
-    /// of its compiled truth plus its timeline. The SQL engines also list a page with a
-    /// `page_embedding_budget` row; this store keeps none.
+    /// segmented or have an embedding hold (`embedding_holds.rs`, the `page_embedding_budget` row),
+    /// in slug order. `bytes` is a segmented page's `body_bytes`, else the UTF-8 length of its
+    /// compiled truth plus its timeline; `state` and `reason` are the hold's, else null.
     pub fn read_page_size_rows(
         &self,
         source_id: &str,
@@ -229,14 +229,16 @@ impl Store {
                 None => i64::try_from(page.compiled_truth.len() + page.timeline.len()).ok(),
             };
             let skip = page.frontmatter.contains_key("embed_skip");
-            if skip || segmented || bytes.is_some_and(|b| b > max_bytes) {
+            let hold = crate::embedding_holds::read_hold(&*read, page.id)?;
+            if skip || segmented || bytes.is_some_and(|b| b > max_bytes) || hold.is_some() {
+                let (state, reason) = hold.map_or((None, None), |h| (Some(h.state), h.reason));
                 rows.push(PageSizeRow {
                     slug: page.slug,
                     bytes,
                     segmented,
                     frontmatter: page.frontmatter,
-                    state: None,
-                    reason: None,
+                    state,
+                    reason,
                 });
             }
         }

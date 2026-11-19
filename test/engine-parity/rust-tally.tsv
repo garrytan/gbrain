@@ -60,6 +60,7 @@ test/engine-parity/persistence-declaration.test.ts	6	0
 test/engine-parity/persistence.test.ts	35	0
 test/engine-parity/private-page-reads.test.ts	23	0
 test/engine-parity/raw-sql.test.ts	0	4
+test/engine-parity/reason-tombstones.test.ts	2	0
 test/engine-parity/relational-reads.test.ts	4	0
 test/engine-parity/remote-policy.test.ts	2	0
 test/engine-parity/resolve-reads.test.ts	7	0
@@ -72,7 +73,7 @@ test/engine-parity/source-resolver-reads.test.ts	15	0
 test/engine-parity/stats-vectors.test.ts	2	0
 test/engine-parity/stats.test.ts	9	0
 test/engine-parity/sync-aliases.test.ts	10	0
-test/engine-parity/sync-route.test.ts	5	0
+test/engine-parity/sync-route.test.ts	6	0
 test/engine-parity/takes.test.ts	24	2
 test/engine-parity/telemetry.test.ts	10	0
 test/engine-parity/timeline-reads.test.ts	4	0

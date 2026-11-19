@@ -184,6 +184,7 @@ test/engine-parity/persistence-declaration.test.ts
 test/engine-parity/persistence.test.ts
 test/engine-parity/private-page-reads.test.ts
 test/engine-parity/raw-sql.test.ts
+test/engine-parity/reason-tombstones.test.ts
 test/engine-parity/relational-reads.test.ts
 test/engine-parity/remote-policy.test.ts
 test/engine-parity/resolve-reads.test.ts

@@ -527,7 +527,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listStaleSyncSourceIds': 'sources', 'readSourceRow': 'sources', 'lockSourceRow': 'sources', 'readSourceChunkerVersion': 'sources',
   'setSourceChunkerVersion': 'sources', 'isSourceClaimed': 'sources',
   'countSourcePages': 'sources', 'insertSource': 'sources',
-  'advanceSourceCommit': 'sources', 'listSourcePathPages': 'sources', 'readRenameIdentityRows': 'sources', 'readLiveIdentityHolders': 'sources', 'readPageSizeRows': 'sources',
+  'advanceSourceCommit': 'sources', 'listSourcePathPages': 'sources', 'readRenameIdentityRows': 'sources', 'readLiveIdentityHolders': 'sources', 'readPageSizeRows': 'sources', 'holdPageEmbedding': 'sources', 'readReasonPurgeTombstones': 'sources', 'writeReasonPurgeTombstones': 'sources',
   // files
   'upsertFile': 'files', 'getFile': 'files', 'listFilesForPage': 'files', 'listFiles': 'files',
   // chunks
@@ -1069,6 +1069,9 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('readRenameIdentityRows', [['default', (e) => e.readRenameIdentityRows(SRC, ['a.md'], ['a'])]]),
   ...variants('readLiveIdentityHolders', [['default', (e) => e.readLiveIdentityHolders(SRC, ['doc-1'], ['A title'])]]),
   ...variants('readPageSizeRows', [['default', (e) => e.readPageSizeRows(SRC, 1048576, null)], ['slugs', (e) => e.readPageSizeRows(SRC, 1048576, ['notes/a'])]]),
+  ...variants('holdPageEmbedding', [['default', (e) => e.holdPageEmbedding(1, 'awaiting_approval')]]),
+  ...variants('readReasonPurgeTombstones', [['default', (e) => e.readReasonPurgeTombstones(SRC)], ['pair', (e) => e.readReasonPurgeTombstones(SRC, { commit_sha: 'abc', path: 'notes/a.md' })]]),
+  ...variants('writeReasonPurgeTombstones', [['default', (e) => e.writeReasonPurgeTombstones(SRC, [{ commit_sha: 'abc', path: 'notes/a.md' }])]]),
 
   // ── files ──
   ...variants('upsertFile', [

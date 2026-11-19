@@ -66,7 +66,7 @@
       "out-of-scope:write-misc (born in engine-sql/write-misc.ts; pinned by test/engine-parity/write-misc.test.ts)": 20,
       "pages": 41,
       "salience": 5,
-      "sources": 21,
+      "sources": 24,
       "tags": 3,
       "takes": 20,
       "timeline": 8
@@ -336,6 +336,7 @@
       "hasUnsealedPages": "out-of-scope:chunk-reads (born in engine-sql/chunk-reads.ts; pinned by test/engine-parity/chunk-reads.test.ts)",
       "hasWakeCron": "out-of-scope:minion-jobs (born in engine-sql/jobs.ts and engine-sql/jobs-queue.ts; pinned by test/engine-parity/jobs.test.ts and jobs-queue.test.ts)",
       "hasWakeTermsAcceptance": "out-of-scope:minion-jobs (born in engine-sql/jobs.ts and engine-sql/jobs-queue.ts; pinned by test/engine-parity/jobs.test.ts and jobs-queue.test.ts)",
+      "holdPageEmbedding": "sources",
       "holdSchemaMigrationLock": "out-of-scope:lifecycle (connection, pool, transaction, raw seams)",
       "holdsNotifierLease": "out-of-scope:notifier (born in engine-sql/notifier.ts; pinned by test/engine-parity/notifier.test.ts and test/engine-sql-caller-raw-sql-pins.test.ts)",
       "inboundLinkCoverage": "out-of-scope:link-reads (born in engine-sql/link-reads.ts; pinned by test/engine-parity/link-reads.test.ts)",
@@ -703,6 +704,7 @@
       "readQueuedPageChars": "out-of-scope:minion-jobs (born in engine-sql/jobs.ts and engine-sql/jobs-queue.ts; pinned by test/engine-parity/jobs.test.ts and jobs-queue.test.ts)",
       "readQueuedSpendRows": "out-of-scope:minion-jobs (born in engine-sql/jobs.ts and engine-sql/jobs-queue.ts; pinned by test/engine-parity/jobs.test.ts and jobs-queue.test.ts)",
       "readRankCoverage": "out-of-scope:cli-reads (born in engine-sql/cli-reads-ops.ts; pinned by test/engine-parity/cli-reads-ops.test.ts)",
+      "readReasonPurgeTombstones": "sources",
       "readReceiptBudget": "out-of-scope:persistence-journal (born in engine-sql/persistence-journal.ts, persistence-claims.ts and persistence-housekeeping.ts; pinned by test/engine-parity/persistence.test.ts and test/persistence-journal-statements.test.ts)",
       "readRenameIdentityRows": "sources",
       "readRetirementHop": "out-of-scope:caller-raw-sql (statements callers ran through executeRaw, now typed members; pinned byte-identical by test/engine-sql-caller-raw-sql-pins.test.ts)",
@@ -890,6 +892,7 @@
       "writeNotifierCoverage": "out-of-scope:notifier (born in engine-sql/notifier.ts; pinned by test/engine-parity/notifier.test.ts and test/engine-sql-caller-raw-sql-pins.test.ts)",
       "writeNotifierState": "out-of-scope:notifier (born in engine-sql/notifier.ts; pinned by test/engine-parity/notifier.test.ts and test/engine-sql-caller-raw-sql-pins.test.ts)",
       "writeOpCheckpointKeys": "out-of-scope:write-misc (born in engine-sql/write-misc.ts; pinned by test/engine-parity/write-misc.test.ts)",
+      "writeReasonPurgeTombstones": "sources",
       "writeTextProjectionSeal": "out-of-scope:import-writes (born in engine-sql/chunks.ts, tags.ts, pages.ts; pinned by test/engine-parity/import-writes.test.ts)"
     }
   },

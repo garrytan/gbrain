@@ -1,6 +1,6 @@
 /**
  * BrainEngine parity — the git-sync route members (`advanceSourceCommit`, `listSourcePathPages`,
- * `readRenameIdentityRows`, `readLiveIdentityHolders`, `readPageSizeRows`) that `src/core/sync-anchor.ts`,
+ * `readRenameIdentityRows`, `readLiveIdentityHolders`, `readPageSizeRows`, `holdPageEmbedding`) that `src/core/sync-anchor.ts`,
  * `src/commands/sync/full.ts`, `src/core/sync-rename-identity.ts` and `src/core/page-embedding-budget.ts` call instead
  * of raw SQL, so a git sync runs on every engine.
  *
@@ -10,8 +10,8 @@
  *    source is a no-op. The path-page list holds the live pages of one source that have a source path. The rename
  *    read returns the live pages of one source whose path or slug is listed, with their title. The live-identity read
  *    returns the live pages of one source whose frontmatter id or title is listed, with the id as text. The size read
- *    returns the live pages of one source (only the listed slugs when given) that carry embed_skip or a body over the
- *    limit, with the body bytes.
+ *    returns the live pages of one source (only the listed slugs when given) that carry embed_skip, a body over the
+ *    limit or an embedding hold, with the body bytes and the hold's state and reason.
  *  - Regression: an engine that never stores the commit (every sync then runs as a first sync and rewrites the whole
  *    checkout), clears the newest-content time on a plain advance, lists soft-deleted pages or pages of another source
  *    (a full sync then deletes or keeps the wrong pages), or matches a rename against a deleted page.
@@ -134,5 +134,26 @@ describe('engine parity: git-sync route members', () => {
     expect(listed).toEqual([all[1]]);
     expect(none).toEqual([]);
     return { all, listed, none };
+  });
+
+  parityTest('readPageSizeRows reports a held page with its hold state and reason, a small held page included', { methods: ['readPageSizeRows', 'holdPageEmbedding'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'repo', {}, '/srv/brain/repo');
+    await engine.putPage('notes/big', { type: 'note', title: 'Big', compiled_truth: 'x'.repeat(120), source_path: null, frontmatter: {} }, { sourceId: 'repo' });
+    await engine.putPage('notes/small', page('Small', 'notes/small.md'), { sourceId: 'repo' });
+    await engine.putPage('notes/plain', page('Plain', 'notes/plain.md'), { sourceId: 'repo' });
+    const id = async (slug: string) => (await engine.getPage(slug, { sourceId: 'repo' }))!.id;
+    await engine.holdPageEmbedding(await id('notes/big'), 'awaiting_approval');
+    await engine.holdPageEmbedding(await id('notes/small'), 'archive_backfill');
+    await engine.holdPageEmbedding(await id('notes/small'), 'archive_open_day');
+    const shape = (rows: Awaited<ReturnType<typeof engine.readPageSizeRows>>) =>
+      sorted(rows, r => r.slug).map(r => ({ slug: r.slug, bytes: Number(r.bytes), state: r.state ?? null, reason: r.reason ?? null }));
+    const all = shape(await engine.readPageSizeRows('repo', 64, null));
+    const listed = shape(await engine.readPageSizeRows('repo', 64, ['notes/small', 'notes/plain']));
+    expect(all).toEqual([
+      { slug: 'notes/big', bytes: 120, state: 'held', reason: 'awaiting_approval' },
+      { slug: 'notes/small', bytes: 'The Small note.'.length, state: 'held', reason: 'archive_open_day' },
+    ]);
+    expect(listed).toEqual([all[1]]);
+    return { all, listed };
   });
 });

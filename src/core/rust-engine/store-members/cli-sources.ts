@@ -8,7 +8,7 @@
  * cli_reads/sources.rs, and sources.rs for advanceSourceCommit).
  */
 import type { SourceRecordRow } from '../../engine.ts';
-import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PageSizeRow, PlainSyncSourceRow, RenameIdentityRow, SourceCheckRow, SourceInsert, SourcePathPageRow, SourceRoutingRow } from '../../engine-sql/sources.ts';
+import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PageSizeRow, PlainSyncSourceRow, ReasonPurgeTombstone, RenameIdentityRow, SourceCheckRow, SourceInsert, SourcePathPageRow, SourceRoutingRow } from '../../engine-sql/sources.ts';
 import type { StoreBrain } from '../store.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { isOwnerOnlySourceConfig } from '../../access/owner-only.ts';
@@ -65,9 +65,19 @@ export const lockSourceRow: StoreMember<[sourceId: string], SourceCheckRow | nul
 export const countSourcePages: StoreMember<[sourceId: string, opts?: { includeDeleted?: boolean }], number> = async (brain, sourceId, opts) =>
   Number(await storeCall({ member: 'countSourcePages', sourceId }, () => brain.countSourcePages(sourceId, opts?.includeDeleted === true)));
 
-/** The store keeps no page_embedding_budget rows, so `state` and `reason` are always null (rust/docs/store/sources.md). */
+/** `state` and `reason` are the page's embedding hold (rust/docs/store/sources.md), else null. */
 export const readPageSizeRows: StoreMember<[sourceId: string, maxBytes: number, slugs: readonly string[] | null], PageSizeRow[]> = async (brain, sourceId, maxBytes, slugs) =>
   (await storeCall({ member: 'readPageSizeRows', sourceId }, () => brain.readPageSizeRows(sourceId, maxBytes, slugs ? [...slugs] : null))) as PageSizeRow[];
+
+export const holdPageEmbedding: StoreMember<[pageId: number, reason: string], void> = async (brain, pageId, reason) => {
+  await storeCall({ member: 'holdPageEmbedding' }, () => brain.holdPageEmbedding(pageId, reason));
+};
+
+export const readReasonPurgeTombstones: StoreMember<[sourceId: string, pair?: ReasonPurgeTombstone], ReasonPurgeTombstone[]> = async (brain, sourceId, pair) =>
+  (await storeCall({ member: 'readReasonPurgeTombstones', sourceId }, () => brain.readReasonPurgeTombstones(sourceId, pair ?? null))) as ReasonPurgeTombstone[];
+
+export const writeReasonPurgeTombstones: StoreMember<[sourceId: string, pairs: readonly ReasonPurgeTombstone[]], number> = async (brain, sourceId, pairs) =>
+  Number(await storeCall({ member: 'writeReasonPurgeTombstones', sourceId }, () => brain.writeReasonPurgeTombstones(sourceId, pairs.map(pair => ({ commit_sha: pair.commit_sha, path: pair.path })))));
 
 export const listSourcePathPages: StoreMember<[sourceId: string], SourcePathPageRow[]> = async (brain, sourceId) =>
   (await storeCall({ member: 'listSourcePathPages', sourceId }, () => brain.listSourcePathPages(sourceId))) as SourcePathPageRow[];

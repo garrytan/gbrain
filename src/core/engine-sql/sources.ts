@@ -290,6 +290,37 @@ export async function readPageSizeRows(exec: LegacyUnscopedRead, sourceId: strin
     : exec.executeRaw<PageSizeRow>(PAGE_SIZE_ROWS_SQL, [sourceId, maxBytes]);
 }
 
+/** A text-free purged change-reason pair (`reason_purge_tombstones`): the commit and repository path a purge found it under. */
+export interface ReasonPurgeTombstone { commit_sha: string; path: string }
+
+/**
+ * The source's tombstoned (commit, path) pairs, by commit then path; with `pair`, that pair when it is stored, else
+ * none: the reads a sync's reason scan, the purged-reason repair and a version snapshot check (reason-trailers.ts,
+ * repair/purged-change-reasons.ts, page-state/versions.ts).
+ */
+export async function readReasonPurgeTombstones(exec: LegacyUnscopedRead, sourceId: string, pair?: ReasonPurgeTombstone): Promise<ReasonPurgeTombstone[]> {
+  return pair
+    ? exec.executeRaw<ReasonPurgeTombstone>('SELECT commit_sha, path FROM reason_purge_tombstones WHERE source_id = $1 AND commit_sha = $2 AND path = $3', [sourceId, pair.commit_sha, pair.path])
+    : exec.executeRaw<ReasonPurgeTombstone>('SELECT commit_sha, path FROM reason_purge_tombstones WHERE source_id = $1 ORDER BY commit_sha, path', [sourceId]);
+}
+
+/**
+ * Stores each pair not stored yet and returns how many it added (facts/purge-reasons.ts `recordReasonTombstones`). No
+ * pairs add nothing; an unknown source throws (the `sources` foreign key) and stores nothing.
+ */
+export async function writeReasonPurgeTombstones(exec: SqlExecutor, sourceId: string, pairs: readonly ReasonPurgeTombstone[]): Promise<number> {
+  if (!pairs.length) return 0;
+  return (await exec.executeRaw(`INSERT INTO reason_purge_tombstones(source_id, commit_sha, path)
+    SELECT $1, t.c, t.p FROM unnest($2::text[], $3::text[]) AS t(c, p) ON CONFLICT DO NOTHING RETURNING 1`,
+  [sourceId, pairs.map(pair => pair.commit_sha), pairs.map(pair => pair.path)])).length;
+}
+
+/** Sets the page's embedding hold to `held` with `reason`, adding its page_embedding_budget row when it has none (page-embedding-budget.ts). */
+export async function holdPageEmbedding(exec: SqlExecutor, pageId: number, reason: string): Promise<void> {
+  await exec.executeRaw(`INSERT INTO page_embedding_budget (page_id, state, reason) VALUES ($1, 'held', $2)
+    ON CONFLICT (page_id) DO UPDATE SET state = 'held', reason = EXCLUDED.reason, updated_at = now()`, [pageId, reason]);
+}
+
 /** A live page with a file origin (`listSourcePathPages`). */
 export interface SourcePathPageRow { slug: string; source_path: string }
 

@@ -59,7 +59,7 @@ import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from '
 import type { PageRefRow, RelationalPageRow } from './engine-sql/relational-reads.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, LivePageTypeRow, MentionDueQuery, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, TrigramCandidateQuery, TrigramCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow } from './engine-sql/entity-reads.ts';
-import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PlainSyncSourceRow, RenameIdentityRow, SourceCheckRow, SourceInsert, PageSizeRow, SourcePathPageRow, SourceRoutingRow } from './engine-sql/sources.ts';
+import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PlainSyncSourceRow, RenameIdentityRow, SourceCheckRow, SourceInsert, PageSizeRow, ReasonPurgeTombstone, SourcePathPageRow, SourceRoutingRow } from './engine-sql/sources.ts';
 import type {
   Coverage as NotifierCoverage, MarkerIntent, NotifierHostSourceRow, NotifierLeaseClaim, NotifierLeaseClaimInput, NotifierLeaseHolder, NotifierSourceRow, NotifierStatusRow,
   PendingWantedMarker, StatePatch as NotifierStatePatch, WantedMarker, WantedMarkerInput,
@@ -1465,9 +1465,15 @@ export interface BrainEngine {
   countSourcePages(sourceId: string, opts?: { includeDeleted?: boolean }): Promise<number>;
   /** Inserts one source row (id, name, local_path, config); a taken id or name throws and writes nothing. */
   insertSource(row: SourceInsert): Promise<void>;
-  /** The live pages of one source that have a source_path, in no set order (engine-sql/sources.ts). */
   /** The live pages of one source (only `slugs` when given) a sync size-state read reports, by slug (engine-sql/sources.ts). */
   readPageSizeRows(sourceId: string, maxBytes: number, slugs: readonly string[] | null): Promise<PageSizeRow[]>;
+  /** Sets the page's embedding hold to `held` with `reason` (engine-sql/sources.ts). */
+  holdPageEmbedding(pageId: number, reason: string): Promise<void>;
+  /** The source's purged change-reason pairs by commit then path, or only `pair` when stored (engine-sql/sources.ts). */
+  readReasonPurgeTombstones(sourceId: string, pair?: ReasonPurgeTombstone): Promise<ReasonPurgeTombstone[]>;
+  /** Stores the pairs not stored yet and returns how many it added; an unknown source throws (engine-sql/sources.ts). */
+  writeReasonPurgeTombstones(sourceId: string, pairs: readonly ReasonPurgeTombstone[]): Promise<number>;
+  /** The live pages of one source that have a source_path, in no set order (engine-sql/sources.ts). */
   listSourcePathPages(sourceId: string): Promise<SourcePathPageRow[]>;
   /** The live pages of one source whose source_path is in `paths` or whose slug is in `slugs`, in no set order (engine-sql/sources.ts). */
   readRenameIdentityRows(sourceId: string, paths: readonly string[], slugs: readonly string[]): Promise<RenameIdentityRow[]>;

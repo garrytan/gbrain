@@ -138,9 +138,8 @@ async function readHolds(engine: BrainEngine, pageId: number): Promise<{ marker:
 }
 
 /** Hold a large page's embedding until the user approves it (`reason` names why). Idempotent; never touches open spend. */
-export async function holdPageEmbedding(engine: Pick<BrainEngine, 'executeRaw'>, pageId: number, reason: string): Promise<void> {
-  await engine.executeRaw(`INSERT INTO page_embedding_budget (page_id, state, reason) VALUES ($1, 'held', $2)
-    ON CONFLICT (page_id) DO UPDATE SET state = 'held', reason = EXCLUDED.reason, updated_at = now()`, [pageId, reason]);
+export async function holdPageEmbedding(engine: Pick<BrainEngine, 'holdPageEmbedding'>, pageId: number, reason: string): Promise<void> {
+  await engine.holdPageEmbedding(pageId, reason);
 }
 
 /**
