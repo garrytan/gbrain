@@ -303,6 +303,20 @@ describe('Rust engine on the store', () => {
     expect(notifier).toBeNull();
     expect(lines).toEqual(['[notifier:serve] off (Rust brain: the store has no notifier tables); commits on this host are not synced by this process']);
   });
+
+  withAddon('a withdrawal on a Rust brain moves the hot-memory withdrawal watermark of its source only', async () => {
+    const { engine } = await open();
+    await engine.openStore('test').brain.upsertSource({ id: 'work', name: 'work', config: {} });
+    const before = await engine.readFactCacheWatermark('default');
+    const otherBefore = await engine.readFactCacheWatermark('work');
+    await engine.insertFactWithdrawal('default', 'private', 'claim one', 'people/x', '2026-03-09T10:00:00.000Z');
+    const after = await engine.readFactCacheWatermark('default');
+    // facts/meta-hook.ts keys the hot-memory cache on these fields; a watermark that stays put serves a forgotten fact.
+    expect(after).not.toEqual(before);
+    expect(after.withdrawals).toBe(before.withdrawals + 1);
+    expect(after.latest_withdrawn_at).toBe('2026-03-09T10:00:00.000000Z');
+    expect(await engine.readFactCacheWatermark('work')).toEqual(otherBefore);
+  });
 });
 
 describe('Rust store members', () => {
