@@ -1843,8 +1843,8 @@ impl Store {
                 "segmentSha256": record.segment_sha256,
                 "contextHash": record.context_hash,
                 "state": record.state,
-                "output": record.output,
-                "receipt": record.receipt,
+                "output": crate::jsonb::ordered(&record.output),
+                "receipt": crate::jsonb::ordered(&record.receipt),
                 "createdAt": crate::env::iso(record.created_at_us),
                 "updatedAt": crate::env::iso(record.updated_at_us),
             }));

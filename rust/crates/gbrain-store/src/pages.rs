@@ -175,7 +175,11 @@ pub(crate) struct PageRecord {
     pub trust_tier: Option<String>,
     /// The write origin JSON of the write that stamped the tier (`pages.write_origin`). `None` is
     /// NULL. [`write_page`] sets it.
-    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::jsonb::de_opt_value")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::jsonb::de_opt_value"
+    )]
     pub write_origin: Option<Value>,
     /// When the page last lost version history (`pages.version_history_gap_at`): a version prune
     /// (`version_prune`) or `createVersion` with `historyGap`. `None` is NULL. Not part of `to_page`.
@@ -400,7 +404,11 @@ pub(crate) struct VersionRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trust_tier: Option<String>,
     /// The page's write origin when the snapshot was taken.
-    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::jsonb::de_opt_value")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::jsonb::de_opt_value"
+    )]
     pub write_origin: Option<Value>,
     /// The reason given for the write that replaced the snapshot (`page_versions.change_reason`),
     /// set by `stamp_version_change_reason`; none when no reason was given.

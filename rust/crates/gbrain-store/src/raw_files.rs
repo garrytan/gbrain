@@ -84,7 +84,7 @@ pub(crate) struct RawRecord {
 
 impl RawRecord {
     fn to_json(&self) -> Value {
-        json!({ "source": self.source, "data": self.data, "fetched_at": iso(self.fetched_at_us) })
+        json!({ "source": self.source, "data": crate::jsonb::ordered(&self.data), "fetched_at": iso(self.fetched_at_us) })
     }
 }
 
@@ -122,7 +122,7 @@ impl FileRecord {
             "mime_type": self.mime_type,
             "size_bytes": self.size_bytes,
             "content_hash": self.content_hash,
-            "metadata": self.metadata,
+            "metadata": crate::jsonb::ordered(&self.metadata),
             "created_at": iso(self.created_at_us),
         })
     }

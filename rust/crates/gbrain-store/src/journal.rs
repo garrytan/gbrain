@@ -285,11 +285,11 @@ impl RequestRecord {
             "page_id": self.page_id,
             "slug": self.slug,
             "digest": self.digest,
-            "intent": self.intent,
-            "authority": self.authority,
+            "intent": crate::jsonb::order(self.intent.clone()),
+            "authority": crate::jsonb::order(self.authority.clone()),
             "sequence": self.sequence,
             "state": self.state,
-            "outcome": self.outcome,
+            "outcome": self.outcome.clone().map(crate::jsonb::order),
             "error_code": self.error_code,
             "error_message": self.error_message,
             "blocked_reason": self.blocked_reason,
@@ -314,11 +314,12 @@ impl RequestRecord {
             &self.state
         };
         let mut out = Map::new();
-        if let Some(Value::Object(fields)) = &self.outcome {
+        let outcome = self.outcome.clone().map(crate::jsonb::order);
+        if let Some(Value::Object(fields)) = &outcome {
             out.extend(fields.clone());
         }
-        if let Some(outcome) = &self.outcome {
-            out.insert("outcome".into(), outcome.clone());
+        if let Some(outcome) = outcome {
+            out.insert("outcome".into(), outcome);
         }
         out.insert("request_id".into(), json!(self.request_id));
         if let Some(client) = self.client_request_id.as_ref().filter(|c| !c.is_empty()) {
@@ -813,7 +814,7 @@ impl WriterRecord {
             "id": self.id,
             "lane": self.lane,
             "credential_hash": self.credential_hash,
-            "grant_ceiling": self.grant_ceiling,
+            "grant_ceiling": crate::jsonb::ordered(&self.grant_ceiling),
             "created_at": iso(self.created_at_us),
             "revoked_at": self.revoked_at_us.map(iso),
         })

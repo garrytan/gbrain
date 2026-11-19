@@ -68,7 +68,7 @@ impl EffectRecord {
             "request_id": self.request_id,
             "kind": self.kind,
             "revision": self.revision,
-            "data": self.data,
+            "data": crate::jsonb::order(self.data.clone()),
             "state": self.state,
             "execution_token": self.execution_token,
             "updated_at": iso(self.updated_at_us),
@@ -79,10 +79,10 @@ impl EffectRecord {
             "next_attempt_at": iso(self.next_attempt_at_us),
             "attempts": self.attempts,
             "error_code": self.error_code,
-            "outcome": self.outcome,
-            "recovery": self.recovery,
+            "outcome": self.outcome.clone().map(crate::jsonb::order),
+            "recovery": self.recovery.clone().map(crate::jsonb::order),
             "recovery_bytes": self.recovery_bytes.to_string(),
-            "claim_owner": self.claim_owner,
+            "claim_owner": self.claim_owner.clone().map(crate::jsonb::order),
         })
     }
 
@@ -346,7 +346,7 @@ impl crate::Store {
                     "kind": e.kind,
                     "state": e.state,
                     "error_code": e.error_code,
-                    "outcome": e.outcome,
+                    "outcome": e.outcome.clone().map(crate::jsonb::order),
                     "recovering": e.recovery.is_some(),
                 })
             })

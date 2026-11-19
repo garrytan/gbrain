@@ -93,11 +93,11 @@ fn to_row(r: &TopologyChangeRecord) -> Value {
         "source_incarnation": r.source_incarnation,
         "worktree_ids": r.worktree_ids,
         "state": r.state,
-        "recovery": r.recovery,
+        "recovery": r.recovery.clone().map(crate::jsonb::order),
         "recovery_bytes": r.recovery_bytes,
         "intent_bytes": r.intent_bytes,
         "terminal_bytes": r.terminal_bytes,
-        "outcome": r.outcome,
+        "outcome": r.outcome.clone().map(crate::jsonb::order),
         "created_at": iso(r.created_at_us),
         "updated_at": iso(r.updated_at_us),
     })

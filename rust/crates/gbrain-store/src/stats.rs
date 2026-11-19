@@ -61,7 +61,7 @@ impl IngestRecord {
             "source_id": self.source_id,
             "source_type": self.source_type,
             "source_ref": self.source_ref,
-            "pages_updated": self.pages_updated,
+            "pages_updated": crate::jsonb::ordered(&self.pages_updated),
             "summary": self.summary,
             "created_at": iso(self.created_at_us),
         })

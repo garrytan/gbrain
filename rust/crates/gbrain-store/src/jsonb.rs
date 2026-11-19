@@ -44,6 +44,11 @@ pub(crate) fn order(value: Value) -> Value {
     }
 }
 
+/// A copy of the value with every object's keys in jsonb order, at every depth.
+pub(crate) fn ordered(value: &Value) -> Value {
+    order(value.clone())
+}
+
 /// `deserialize_with` for a `Value` jsonb field.
 pub(crate) fn de_value<'de, D: Deserializer<'de>>(d: D) -> Result<Value, D::Error> {
     Value::deserialize(d).map(order)
@@ -104,10 +109,7 @@ mod tests {
         assert_eq!(row.v.to_string(), r#"{"a":{"x":2,"y":1},"zz":1}"#);
         assert_eq!(row.o.unwrap().to_string(), r#"{"b":2,"mm":1}"#);
         assert!(row.missing.is_none());
-        assert_eq!(
-            serde_json::to_string(&row.m).unwrap(),
-            r#"{"a":2,"zz":1}"#
-        );
+        assert_eq!(serde_json::to_string(&row.m).unwrap(), r#"{"a":2,"zz":1}"#);
     }
 
     #[test]

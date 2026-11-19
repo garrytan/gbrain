@@ -97,9 +97,9 @@ pub use wake::{
     CronRunInput, EndSpec, ForgetClaimSpec, ForgetSettle, WatchFilter, WatchInsert, WatchSettle,
 };
 
-use crate::dream::jsonb;
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
+use crate::jsonb::ordered;
 use crate::keys;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::timeline_queries::jsonb_field_text;
@@ -325,7 +325,7 @@ impl JobRecord {
     /// `jsonb` key order.
     pub fn to_json(&self) -> Value {
         let t = |v: Option<i64>| v.map(iso);
-        let j = |v: &Option<Value>| v.as_ref().map(jsonb);
+        let j = |v: &Option<Value>| v.as_ref().map(ordered);
         // `real` prints its shortest float4 form; read back as a double that is the same text.
         let jitter: f64 = format!("{}", self.backoff_jitter).parse().unwrap_or(0.0);
         let mut m = Map::new();
@@ -339,7 +339,7 @@ impl JobRecord {
         put("priority", json!(self.priority));
         put("submission_authority", json!(j(&self.submission_authority)));
         put("claim_generation", json!(self.claim_generation));
-        put("data", jsonb(&self.data));
+        put("data", ordered(&self.data));
         put("max_attempts", json!(self.max_attempts));
         put("attempts_made", json!(self.attempts_made));
         put("attempts_started", json!(self.attempts_started));
@@ -1602,7 +1602,7 @@ fn legacy_spend_record(row: &JobRecord, spend: &LegacySpend, now: i64) -> Value 
     let at = iso(millis);
     // `YYYY-MM-DDTHH24:MI:SS.MSZ`: millisecond precision.
     let at = format!("{}Z", &at[..23]);
-    jsonb(&json!({
+    ordered(&json!({
         "version": 1,
         "kind": "legacy_default",
         "group_id": spend.group_id,

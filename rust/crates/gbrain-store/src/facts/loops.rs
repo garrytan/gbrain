@@ -17,10 +17,10 @@
 
 use crate::env::{iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
+use crate::jsonb;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::next_id;
-use crate::jsonb;
 use crate::sources::require_source;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
@@ -179,7 +179,7 @@ fn row_json(id: u64, r: &LoopRecord) -> Value {
     m.insert("counterparty_slug".into(), json!(r.counterparty_slug));
     m.insert("counterparty_email".into(), json!(r.counterparty_email));
     m.insert("summary".into(), json!(r.summary));
-    m.insert("evidence".into(), r.evidence.clone());
+    m.insert("evidence".into(), jsonb::ordered(&r.evidence));
     m.insert("thread_id".into(), json!(r.thread_id));
     m.insert("page_slug".into(), json!(r.page_slug));
     m.insert("due_at".into(), json!(r.due_at_us.map(iso)));
