@@ -108,7 +108,7 @@ impl Brain {
         self.run(env, move |s| s.delete_access_group(&id))
     }
 
-    /// `readAccessMembers({ id? , includeRemoved? })`: `AccessMemberRow[]`.
+    /// `readAccessMembers({ id } | { email } | { includeRemoved })`: `AccessMemberRow[]`.
     #[napi]
     pub fn read_access_members<'env>(
         &self,

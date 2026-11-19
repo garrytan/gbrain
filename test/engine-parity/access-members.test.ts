@@ -32,7 +32,7 @@ import { parityArms, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { AccessMemberInsert, CredentialBindingRow } from '../../src/core/engine-sql/access-members.ts';
-import { addMember, disableMember, enableMember, getMember, listMembers, setMemberEmail, setMemberKind, type MemberRecord } from '../../src/core/access/members.ts';
+import { addMember, disableMember, enableMember, getMember, listMembers, memberByEmail, setMemberEmail, setMemberKind, type MemberRecord } from '../../src/core/access/members.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -372,4 +372,57 @@ describe('access member and group reads after the typed writes', () => {
     });
     return out;
   });
+});
+
+describe('access member reads by email', () => {
+  /** Five members across groups: an audience member with an email and two groups, a disabled one, a removed one. */
+  async function seedMembers(engine: BrainEngine) {
+    await engine.insertAccessMember(member('zed-example', { kind: 'audience', email: 'z@example.com', groups: ['team-b', 'team-a'] }));
+    await engine.insertAccessMember(member('alice-example', { kind: 'audience', groups: ['team-a'] }));
+    await engine.insertAccessMember(member('bob-example', { kind: 'audience', email: 'b@example.com', groups: ['team-a'] }));
+    await engine.insertAccessMember(member('carol-example', { kind: 'audience', email: 'c@example.com', groups: ['team-c'] }));
+    await engine.insertAccessMember(member('dave-example', { groups: ['team-c'] }));
+    await engine.setAccessMemberDisabled('bob-example', true);
+    await engine.tombstoneAccessMember('carol-example');
+  }
+  const ids = (rows: Awaited<ReturnType<BrainEngine['readAccessMembers']>>) => rows.map(r => [r.id, r.groups]);
+
+  parityTest('readAccessMembers by email names the declaring member, disabled or not, and exactly that email', {
+    methods: ['insertAccessMember', 'setAccessMemberDisabled', 'tombstoneAccessMember', 'readAccessMembers'],
+  }, async (engine) => {
+    await seedMembers(engine);
+    const out = {
+      declared: ids(await engine.readAccessMembers({ email: 'z@example.com' })),
+      disabled: ids(await engine.readAccessMembers({ email: 'b@example.com' })),
+      removed: ids(await engine.readAccessMembers({ email: 'c@example.com' })),
+      otherCase: ids(await engine.readAccessMembers({ email: 'Z@example.com' })),
+      undeclared: ids(await engine.readAccessMembers({ email: 'nobody@example.com' })),
+    };
+    expect(out).toEqual({ declared: [['zed-example', ['team-a', 'team-b']]], disabled: [['bob-example', ['team-a']]], removed: [], otherCase: [], undeclared: [] });
+    return out;
+  });
+
+  // The email index refuses a second declaring member through every typed write, so the fixture drops it for the
+  // case (raw SQL; a Rust brain refuses it). The Rust store's every-match read is pinned in gbrain-store
+  // access_members.rs `read_access_members_by_email_lists_every_member_that_declares_it`.
+  parityTest('two members that share an email both read back, so memberByEmail refuses email_ambiguous', {
+    methods: ['executeRaw', 'insertAccessMember', 'readAccessMembers'], requires: 'raw_sql',
+  }, async (engine) => {
+    await engine.executeRaw('DROP INDEX IF EXISTS access_members_email_key');
+    try {
+      await engine.insertAccessMember(member('bob-example', { email: 'shared@example.com' }));
+      await engine.insertAccessMember(member('alice-example', { email: 'shared@example.com' }));
+      await engine.insertAccessMember(member('carol-example', { email: 'other@example.com' }));
+      const out = {
+        rows: ids(await engine.readAccessMembers({ email: 'shared@example.com' })),
+        byEmail: await memberByEmail(engine, 'shared@example.com').then(m => m.id, (e: { code?: string; reason?: string }) => ({ code: e.code, reason: e.reason })),
+      };
+      expect(out).toEqual({ rows: [['alice-example', []], ['bob-example', []]], byEmail: { code: 'access_member_invalid', reason: 'email_ambiguous' } });
+      return out;
+    } finally {
+      await engine.executeRaw('DELETE FROM access_members');
+      await engine.executeRaw('CREATE UNIQUE INDEX IF NOT EXISTS access_members_email_key ON access_members (email)');
+    }
+  });
+
 });

@@ -27,6 +27,7 @@ fn email_owner(store: &Store, email: &str) -> Option<String> {
 fn rows(store: &Store, include_removed: bool) -> Vec<Value> {
     let lookup = AccessMemberLookup {
         id: None,
+        email: None,
         include_removed,
     };
     store
@@ -40,6 +41,7 @@ fn rows(store: &Store, include_removed: bool) -> Vec<Value> {
 fn one(store: &Store, id: &str) -> Value {
     let lookup = AccessMemberLookup {
         id: Some(id.into()),
+        email: None,
         include_removed: false,
     };
     store.read_access_members(&lookup).unwrap()[0].clone()

@@ -83,7 +83,7 @@ export const listActiveAccessMembers: StoreMember<[], string[]> = async (brain) 
 
 const MEMBER_DATES = ['disabled_at', 'tombstoned_at', 'created_at'];
 
-async function memberRows(brain: StoreBrain, member: string, lookup: { id: string } | { includeRemoved: boolean }): Promise<AccessMemberRow[]> {
+async function memberRows(brain: StoreBrain, member: string, lookup: AccessMemberLookup): Promise<AccessMemberRow[]> {
   const rows = await storeCall({ member }, () => brain.readAccessMembers(lookup)) as AccessMemberRow[];
   return rows.map(row => withDates(row, MEMBER_DATES));
 }
@@ -96,7 +96,7 @@ const isLive = (row: AccessMemberRow) => row.disabled_at === null && row.tombsto
  */
 export const readAccessMembers: StoreMember<[by: AccessMemberLookup], AccessMemberRow[]> = async (brain, by) => {
   if ('id' in by) return memberRows(brain, 'readAccessMembers', { id: by.id });
-  if ('email' in by) return (await memberRows(brain, 'readAccessMembers', { includeRemoved: true })).filter(row => row.email === by.email);
+  if ('email' in by) return memberRows(brain, 'readAccessMembers', { email: by.email });
   return memberRows(brain, 'readAccessMembers', { includeRemoved: by.includeRemoved });
 };
 
