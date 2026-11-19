@@ -2,6 +2,7 @@ import AppKit
 import Darwin
 import Foundation
 import HelperCore
+import ServiceManagement
 
 let arguments = Array(CommandLine.arguments.dropFirst())
 let name = HelperIdentity.executable
@@ -79,7 +80,7 @@ let usage = """
 usage: \(name) serve | init --port <n> [--enable <source>] [--db <path>] | validate-config | check [--db <path>]
        | token add --name <name> --verifier <sha256> [--scope <scope>]... | token remove --name <name>
        | send-setup [--off] | send-key add --name <name> --public-key-file <path or -> | send-key remove --name <name>
-       | send-limits set <limit>=<n>... | send-audit show --redacted [--since <n>d] | --version
+       | send-limits set <limit>=<n>... | send-audit show --redacted [--since <n>d] | register | --version
 """
 
 switch arguments.first {
@@ -172,6 +173,26 @@ case "send-audit":
         for record in audit.read(path, repair: false) where (record.date ?? .distantPast) >= since {
             printJSON(record.redacted)
         }
+    }
+
+case "register":
+    let agent = SMAppService.agent(plistName: "\(HelperIdentity.bundleId).plist")
+    if agent.status != .enabled {
+        do {
+            try agent.register()
+        } catch {
+            fail("macOS didn't register the background agent: \(error.localizedDescription)", code: 1)
+        }
+    }
+    switch agent.status {
+    case .enabled:
+        print("background agent registered and on")
+    case .requiresApproval:
+        print("background agent registered but switched off: turn on \(HelperIdentity.appName) in System Settings > General > Login Items & Extensions")
+    case .notFound:
+        fail("this app has no Contents/Library/LaunchAgents/\(HelperIdentity.bundleId).plist", code: 1)
+    default:
+        fail("background agent not registered", code: 1)
     }
 
 case "check":

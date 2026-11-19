@@ -2,7 +2,7 @@
 
 A small macOS program that reads the Messages database on your own Mac and answers gbrain over `127.0.0.1`. It never writes to the database and never shows a macOS dialog while it answers a request. When the owner turns sending on, it also sends one-to-one iMessages for the owner's own agent over Tailscale (see [Sending](#sending)); it never sends on its own.
 
-This folder is Swift source only. On Linux and Windows nothing in gbrain's install, upgrade, doctor or test suite builds or loads it. A later `gbrain apple-setup` builds it on your Mac; until then, `.github/workflows/apple-helper.yml` builds and tests it on a macOS runner.
+This folder is Swift source only. On Linux and Windows nothing in gbrain's install, upgrade, doctor or test suite builds or loads it. On a Mac, `scripts/install.sh` builds, signs and starts it (see [Install on a Mac](#install-on-a-mac)); a later `gbrain apple-setup` will run the same steps for you. `.github/workflows/apple-helper.yml` builds, tests and installs it on a macOS runner.
 
 ## Build and test on a Mac
 
@@ -14,11 +14,28 @@ swift test
 
 The helper runs on macOS 13 or newer. Building it needs the Xcode Command Line Tools (`xcode-select --install`), and `swift test` needs Swift 6 (Xcode 16 or its Command Line Tools, macOS 14.5 or newer) because the tests use Swift Testing.
 
+## Install on a Mac
+
+```bash
+apple/helper/scripts/install.sh
+```
+
+It builds the helper, signs it with a certificate made on this Mac, installs `~/Applications/GBrain Helper.app` and registers its background agent. It shows no dialog. The first run makes the signing keychain `~/Library/Keychains/gbrain-helper-signing.keychain-db`, with its random password in a 0600 file in `~/Library/Application Support/GBrain Helper/`. Every later run signs with that same certificate, so macOS keeps the helper's Full Disk Access, Automation and keychain access across rebuilds. If the app is installed but its signing keychain is gone, the script stops and changes nothing, because a new certificate would make macOS treat the helper as a different app. `install.sh --repair` re-signs the installed app with the same certificate and registers it again, without rebuilding.
+
+After it runs:
+
+- macOS may show "Background Items Added". If System Settings > General > Login Items & Extensions lists GBrain Helper as off, switch it on.
+- Until a config exists, the helper restarts every 10 seconds. Write one with `"$HOME/Applications/GBrain Helper.app/Contents/MacOS/gbrain-apple-helper" init --port <port>`, then run the helper's other commands from that same path.
+- Turn on GBrain Helper in System Settings > Privacy & Security > Full Disk Access.
+
+Any program already running as you can read the signing keychain's password and sign itself as the helper, inheriting its grants. That is the cost of signing on the Mac with no Apple developer account.
+
 ## Layout
 
 - `Sources/HelperCore/`: the Messages reader, the HTTP server, tokens, config, source modules and the send door (`Send*.swift`, `MessagesApp.swift`, `DeliveryLedger.swift`).
 - `Sources/gbrain-apple-helper/`: the command-line program.
 - `Bundle/`: `Info.plist`, the background agent's property list and the entitlements for `GBrain Helper.app`.
+- `scripts/install.sh`: builds, signs, installs and registers the app (above).
 - `scripts/signing-probe.sh`: CI probe that asks whether a self-signed certificate made on the machine signs the app with no dialog, or first needs a one-time Always Trust step. Its answer goes to the job summary.
 - `Tests/HelperCoreTests/`: tests against a synthetic Messages database.
 
