@@ -213,7 +213,7 @@ jobs:
   # largest to 546.7 s. Later that day gbrain#9641's list reached 568.8 s on 23
   # shards, 1.2 s inside the budget, with more arm files queued behind it; 24
   # shards bring that list's largest to 545.0 s. On 2026-11-19 a re-mine from the
-  # arms jobs of five complete full runs measured 26,487 s of file time, which
+  # arms jobs of five complete full runs measured 26,527 s of file time, which
   # filled 24 shards to 554.9 s (97.4%) with arm files still queued; 28 shards
   # bring the largest to 476.3 s (83.6%). The job runs both arms of
   # every listed file: the unit shards skip *.slow.test.ts, so this lane is the
