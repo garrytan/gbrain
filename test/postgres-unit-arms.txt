@@ -72,6 +72,7 @@ test/capture-consent-admission.test.ts
 test/capture-dispatch-provenance-6524.test.ts
 test/chronicle-backfill-max-usd.test.ts
 test/claim-fifo-foreground-waiting.test.ts
+test/claim-head-deferred-decisions.test.ts
 test/claim-lease-holder-only-6712.test.ts
 test/claude-cli-output-cap.test.ts
 test/cli-page-writes.test.ts
@@ -139,6 +140,7 @@ test/engine-parity/connect-gate.test.ts
 test/engine-parity/cycle-locks.test.ts
 test/engine-parity/effect-scans.test.ts
 test/engine-parity/embedding-catalog.test.ts
+test/engine-parity/embedding-install.test.ts
 test/engine-parity/entity-anchor-reads.test.ts
 test/engine-parity/entity-reads.test.ts
 test/engine-parity/extraction.test.ts
@@ -151,6 +153,7 @@ test/engine-parity/facts-repair.test.ts
 test/engine-parity/facts-trust.test.ts
 test/engine-parity/facts.test.ts
 test/engine-parity/field-usage.test.ts
+test/engine-parity/generation-output-parity.test.ts
 test/engine-parity/held-fence-cells.test.ts
 test/engine-parity/hot-memory-watermark.test.ts
 test/engine-parity/import-members.test.ts
@@ -174,6 +177,7 @@ test/engine-parity/link-temporal.test.ts
 test/engine-parity/links.test.ts
 test/engine-parity/memory-proposal-reads.test.ts
 test/engine-parity/open-loops.test.ts
+test/engine-parity/page-embedding-budget.test.ts
 test/engine-parity/page-snapshot-alias.test.ts
 test/engine-parity/page-visibility.test.ts
 test/engine-parity/pages.test.ts
@@ -213,6 +217,7 @@ test/engine-parity/write-misc.test.ts
 test/engine-parity/write-request-cancel.test.ts
 test/engine-parity/write-request-reads.test.ts
 test/engine-parity/writer-registration.test.ts
+test/engine-parity/writer-versions.test.ts
 test/engine-sql-fact-relink-attempts.test.ts
 test/engine-sql-fact-relink-writes.test.ts
 test/engine-sql-facts-keyset.test.ts
@@ -739,6 +744,14 @@ test/request-tools-combined-gbra449.test.ts
 test/requester-scope.test.ts
 test/restated-private-cross-entity-2891.test.ts
 test/retrieval-coverage-notices.test.ts
+test/rust-derived-generations.test.ts
+test/rust-fence-generations.test.ts
+test/rust-generation-fence-evidence.test.ts
+test/rust-generation-fence-restore.test.ts
+test/rust-generation-managed.test.ts
+test/rust-generation-publish.test.ts
+test/rust-generation-repair.test.ts
+test/rust-generation-scrub.test.ts
 test/salience-enrich-parity.test.ts
 test/schema-missing-tables.test.ts
 test/schema-replay-deadlock-6143.test.ts

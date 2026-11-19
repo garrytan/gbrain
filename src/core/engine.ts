@@ -5,6 +5,8 @@ import type * as AccessGrantsSql from './engine-sql/access-grants.ts';
 import type * as AccessMembersSql from './engine-sql/access-members.ts';
 import type * as SharedSkillMembersSql from './engine-sql/shared-skill-members.ts';
 import type { StoredSkillRevision } from './shared-skills/model.ts';
+import type { WriteContextInput, WriteContextResult } from './engine-sql/transaction-settings.ts';
+import type { RecentWriterVersionRow, WriterVersionRow } from './engine-sql/writer-versions.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
 import type * as JobsWake from './engine-sql/jobs-wake.ts';
@@ -39,10 +41,13 @@ import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
 import type { DurablePersistenceSettings } from './engine-sql/persistence-declaration.ts';
-import type { AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OutstandingBySource, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from './engine-sql/persistence-journal.ts';
-import type { ClaimExpiry, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from './engine-sql/persistence-claims.ts';
-import type { GatedMirrorRequest, RequestEffectRow } from './engine-sql/persistence-effect-scans.ts';
-import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionFilter } from './engine-sql/persistence-housekeeping.ts';
+import type { AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from './engine-sql/persistence-journal.ts';
+import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from './engine-sql/persistence-claims.ts';
+import type { GatedMirrorRequest, RequestEffectState } from './engine-sql/persistence-effect-scans.ts';
+import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionFilter, TrueUpReservation } from './engine-sql/persistence-housekeeping.ts';
+import type { EffectClaim, EffectClaimRef, EffectWorktreeOwner, MirrorGateRow } from './engine-sql/persistence-effect-worker.ts';
+import type { IdleProbeRow, IdleProbeSpec } from './engine-sql/persistence-idle-probe.ts';
+import type { NoopSettleCandidate, NoopSettleCandidateSpec, NoopSettledRow, NoopSettleWindow } from './engine-sql/persistence-embedding-noop-settle.ts';
 import type { ProjectionScanCursor } from './page-state/projection-window.ts';
 import type { WriteRequest } from './persistence/model.ts';
 import type { TimelineDetailRefresh, TimelineRowRemoval } from './engine-sql/timeline.ts';
@@ -50,10 +55,20 @@ import type { TakeFenceRow } from './engine-sql/takes.ts';
 import type { CodeTraversalCacheClear, CodeTraversalCacheKey, CodeTraversalCacheRow } from './engine-sql/code-traversal-cache.ts';
 import type { FactPreimage, FenceProjectionTarget } from './engine-sql/facts.ts';
 import type { FenceFactRow, FenceRowsTarget } from './engine-sql/trust-fence.ts';
+import type { FenceHoldFileRow, FenceHoldKey, FenceHoldRow } from './engine-sql/fence-holds.ts';
+import type { GenerationActivationRow, GenerationAttemptCount, GenerationLedgerRow, GenerationRowKey, GenerationValveRow, HeldGenerationRow, HeldInputRow, LiveGenerationRow } from './engine-sql/derived-generations.ts';
+import type { LedgerScrubCounts } from './engine-sql/generation-ledger.ts';
+import type { GenerationActivationRecord, GenerationActivationState, GenerationOrphanRow, PendingGenerationMemberRow } from './engine-sql/generation-activations.ts';
+import type { GenerationRepairFilter, GenerationRepairItemRow, HeldGenerationListRow, HeldGenerationProposalRow, RestorableGenerationRow, SourceIncarnationListRow,
+  UnmatchedGenerationRow } from './engine-sql/generation-repair.ts';
+import type { FenceVersionBodyRow } from './engine-sql/generation-fence-evidence.ts';
+import type { GenerationFenceBlockRow, GenerationOwnedItemRow } from './engine-sql/generation-fence-restore.ts';
 import type { TrustTable } from './trust/schema.ts';
 import type { NewTrustProposal, TrustProposalFilter, TrustProposalRow, TrustProposalStatus, TrustProposalTransition } from './engine-sql/trust-proposals.ts';
 import type { GraduationGateRow, ManagedRootBindingRow, PersistenceTable, RetiredDeactivationRow } from './engine-sql/connect-gate.ts';
-import type { ImportedPageSeal, LivePageBodyRow, OriginClaimRow, PageIngestStamp, PageOriginRow, PageOriginTarget } from './engine-sql/write-guards.ts';
+import type { ImportedPageSeal, LivePageBodyRow, OriginClaimRow, PageIndexingState, PageIngestStamp, PageOriginRow, PageOriginTarget } from './engine-sql/write-guards.ts';
+import type { PageEmbeddingBudgetRow, PageEmbeddingReservation, PageEmbeddingReserveInput } from './engine-sql/page-embedding-budget.ts';
+import type { EmbeddingCompletionOpts, EmbeddingCompletionRow } from './engine-sql/embedding-install.ts';
 import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from './engine-sql/page-visibility.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
@@ -557,7 +572,7 @@ export interface TakeHit {
 
 import type { StaleTakeOpts, StaleTakeRow, TakeEmbeddingInput } from './takes-row-types.ts';
 import type { BodyFlipInput, BodyFlipResult, BodyRegion, BodyStagingInput, BodyStagingState, ManifestRow, ManifestRowInput, SegmentChunkInput,
-  SegmentedPageMeta, SegmentSweepOptions, SegmentSweepResult, SegmentTextInput } from './page-body/types.ts';
+  SegmentedEmbedPage, SegmentedEmbedRef, SegmentedPageMeta, SegmentSweepOptions, SegmentSweepResult, SegmentTextInput } from './page-body/types.ts';
 import type { SegmentDerivationInput, SegmentDerivationKind, SegmentDerivationRow } from './page-body/derivations.ts';
 export type { StaleTakeOpts, StaleTakeRow, TakeEmbeddingInput } from './takes-row-types.ts';
 
@@ -2889,6 +2904,8 @@ export interface BrainEngine {
   stageManifestRows(rows: readonly ManifestRowInput[]): Promise<void>;
   /** Manifest metadata (never text) of generation `generation` (default: the page's live body_generation), or of a staging, in seq order; `lastN` returns the tail rows of `region` (or the page). */
   readManifest(pageId: number, opts?: { generation?: number; stagingId?: string; region?: BodyRegion; lastN?: number }): Promise<ManifestRow[]>;
+  /** A segmented page that is live, sealed and in a live source, by id or by source and slug; null otherwise, an inline page included (`readSegmentedEmbedPage`). */
+  readSegmentedEmbedPage(ref: SegmentedEmbedRef): Promise<SegmentedEmbedPage | null>;
   /** Insert chunk rows of new occurrences under `generation` (invisible until the flip); chunk_index continues past the page's maximum under a per-page transaction advisory lock. Returns the assigned chunk indexes in input order. */
   stageSegmentChunks(pageId: number, generation: number, chunks: readonly SegmentChunkInput[], opts?: { embeddingColumn?: ResolvedColumn }): Promise<number[]>;
   /** Insert the row of a new segmented page at body_generation 0 (never visible outside the transaction that flips it to 1). */
@@ -3072,6 +3089,26 @@ export interface BrainEngine {
   sealImportedPage(slug: string, seal: ImportedPageSeal): Promise<{ id: number } | null>;
   /** A live page's frontmatter, body columns, body storage and content hash (the valid-time advisory's after image), or null. */
   readLivePageBody(slug: string, opts: { sourceId: string }): Promise<LivePageBodyRow | null>;
+  /** Page `pageId`'s chunker version, corpus generation and page kind (a text projection's indexing context), live or a tombstone; null for no such page. */
+  readPageIndexingState(pageId: number): Promise<PageIndexingState | null>;
+  /**
+   * The page embedding ledger on the paid path (engine-sql/page-embedding-budget.ts; page-embedding-budget.ts owns the
+   * policy): the page's hold marker and ledger row, the hold record, the approval that opens a hold, the grant under the
+   * row lock and the settle inside the grant's reservation window.
+   */
+  readPageEmbeddingBudget(pageId: number): Promise<PageEmbeddingBudgetRow>;
+  recordPageEmbeddingHold(pageId: number, reason: string): Promise<void>;
+  openPageEmbeddingHold(pageId: number): Promise<void>;
+  reservePageEmbedding(pageId: number, input: PageEmbeddingReserveInput): Promise<PageEmbeddingReservation>;
+  settlePageEmbeddingReservation(pageId: number, settle: { window: string | null; reservedUsd: number; bookedUsd: number; unpricedCalls: number }): Promise<void>;
+  /**
+   * The embedding effect's install path (engine-sql/embedding-install.ts): the page's visible chunks and which carry a
+   * current vector, the effect claim under its row lock, the embedding switch's share lock and one batch of the install.
+   */
+  readEmbeddingCompletion(pageId: number, opts: EmbeddingCompletionOpts): Promise<EmbeddingCompletionRow[]>;
+  lockEffectClaimRow(effectId: number | string): Promise<{ state: string; execution_token: string | null } | null>;
+  lockEmbeddingSwitch(): Promise<void>;
+  installChunkEmbeddings(pageId: number, column: ResolvedColumn, batch: string): Promise<void>;
   // Page visibility guards (engine-sql/page-visibility.ts): the current caller's page policy, rendered in its access record.
   /** Whether a row of the page (live or soft-deleted) fails the current caller's policy: `read` (access, then privacy) or `access` alone. */
   readPageHiddenFromCaller(sourceId: string, slug: string, opts: { policy: PagePolicyPart }): Promise<boolean>;
@@ -3391,6 +3428,8 @@ export interface BrainEngine {
    * row is missing). Outside a transaction the declaration ends with its statement. engine-sql/persistence-declaration.ts.
    */
   declarePersistence(opts?: { durable?: DurablePersistenceSettings }): Promise<string | null>;
+  /** Synchronous commit for the rest of the current transaction (engine-sql/persistence-declaration.ts); nothing outside one. */
+  requireSynchronousCommit(): Promise<void>;
 
   /** One local writer registration row (lane, credential hash, grant ceiling, revoked_at), or undefined; `lock` reads it `FOR SHARE`. */
   readLocalWriterRow(id: string, opts?: { lock?: boolean }): Promise<LocalWriterRow | undefined>;
@@ -3451,6 +3490,52 @@ export interface BrainEngine {
   readHeldPageRows<R = Record<string, unknown>>(pageIds: string[]): Promise<Array<{ record: R; revision: string | null }>>;
   /** The held-file summary rows of live sources with at least one held file, in source order; null reads every source. */
   readHeldCoverageRows(sourceIds: string[] | null): Promise<HeldCoverageRow[]>;
+  /** The held fence results of `kinds` in `sourceIds` (one owner with `ownerKey`), oldest first (`listFenceHolds`, engine-sql/fence-holds.ts). */
+  listFenceHoldRows(sourceIds: readonly string[], kinds: readonly string[], ownerKey?: string): Promise<FenceHoldRow[]>;
+  /** A fence publish's statements (generations/fence.ts, engine-sql/fence-holds.ts): whether the page is deleted or gone, the generation key lock, the held rows a readable fence clears, and the held pages' file state. */
+  readFenceOriginGone(sourceId: string, slug: string): Promise<boolean>;
+  lockGenerationKey(lockKey: string): Promise<void>;
+  clearFenceHoldRows(key: FenceHoldKey): Promise<void>;
+  readFenceHoldFiles(sourceIds: readonly string[], slugs: readonly string[]): Promise<FenceHoldFileRow[]>;
+  /** The generation ledger statements of generations/publish.ts (engine-sql/derived-generations.ts): the live generation with its items, a new generation's activation, and a held result. */
+  readLiveGenerationRow(key: GenerationRowKey): Promise<LiveGenerationRow | null>;
+  activateGenerationRows(key: GenerationRowKey, liveId: number | null, row: GenerationActivationRow, items: readonly GenerationLedgerRow[]): Promise<number>;
+  recordHeldGenerationRow(key: GenerationRowKey, row: HeldGenerationRow): Promise<void>;
+  /** publishGeneration's producer-path statements: held rows of one input, a held row's context, the identical replay, the attempt counter and the valve. */
+  heldGenerationRowsForInput(key: GenerationRowKey, pin: string): Promise<HeldInputRow[]>;
+  readHeldGenerationContext(key: GenerationRowKey, holdId: string): Promise<{ held_context: Record<string, unknown> | null } | null>;
+  liveGenerationForOperation(operationId: string): Promise<number | null>;
+  countGenerationAttempt(key: GenerationRowKey, holdId: string, code: string): Promise<GenerationAttemptCount>;
+  clearGenerationAttempts(holdId: string): Promise<void>;
+  readGenerationValve(key: GenerationRowKey, windowKey: string): Promise<GenerationValveRow>;
+  bumpGenerationValve(key: GenerationRowKey, windowKey: string, retired: number): Promise<void>;
+  /** The purge scrub of the generation ledger (generations/ledger-scrub.ts, engine-sql/generation-ledger.ts): one page's rows, or every row whose text carries a needle. */
+  scrubGenerationPageRows(sourceId: string, fenceKinds: readonly string[], slug: string): Promise<LedgerScrubCounts>;
+  scrubGenerationTextRows(sourceId: string, needles: readonly string[]): Promise<LedgerScrubCounts>;
+  /** The managed activation rows of generations/managed.ts (engine-sql/generation-activations.ts): record, flip, member gate, settle and the two operator lists. */
+  recordGenerationActivation(key: GenerationRowKey, row: GenerationActivationRecord): Promise<void>;
+  markGenerationActivated(activationId: string, generationId: number): Promise<void>;
+  readGenerationActivationState(activationId: string, slug: string, sourceId: string): Promise<GenerationActivationState | null>;
+  settleGenerationMember(activationId: string, slug: string): Promise<void>;
+  listPendingGenerationMembers(sourceIds: readonly string[], kind: string | null): Promise<PendingGenerationMemberRow[]>;
+  listGenerationOrphanCandidates(sourceIds: readonly string[], kind: string | null): Promise<GenerationOrphanRow[]>;
+  /** The reads of gbrain repair generations (engine-sql/generation-repair.ts); the three lists take the typed selector filter. */
+  readGenerationItemsByIds(generationIds: readonly number[]): Promise<GenerationRepairItemRow[]>;
+  listUnmatchedGenerationRows(sourceIds: readonly string[], kind: string, filter: GenerationRepairFilter): Promise<UnmatchedGenerationRow[]>;
+  listRestorableGenerationRows(sourceIds: readonly string[], kind: string, filter: GenerationRepairFilter): Promise<RestorableGenerationRow[]>;
+  listHeldGenerationRows(sourceIds: readonly string[], kind: string, filter: GenerationRepairFilter): Promise<HeldGenerationListRow[]>;
+  readHeldGenerationProposal(id: number): Promise<HeldGenerationProposalRow | null>;
+  /** The incarnation of each known source of `sourceIds` as text, in id order (the preview hash of a repair binds it). */
+  listSourceIncarnations(sourceIds: readonly string[]): Promise<SourceIncarnationListRow[]>;
+  /** The fence evidence statements of generations/fence-evidence.ts (engine-sql/generation-fence-evidence.ts, #8819). */
+  listRecordedFenceItemKeys(key: GenerationRowKey, itemKeys: readonly string[]): Promise<Array<{ item_key: string }>>;
+  hasBodylessPageVersion(sourceId: string, slug: string): Promise<boolean>;
+  listFenceVersionBodies(sourceId: string, slug: string, before: number | null, limit: number): Promise<FenceVersionBodyRow[]>;
+  moveKeptFactRows(sourceId: string, slug: string, ids: readonly number[], claimed: readonly number[]): Promise<void>;
+  /** The fence restore reads of generations/fence-restore.ts (engine-sql/generation-fence-restore.ts). */
+  readGenerationFenceBlocks(generationIds: readonly number[]): Promise<GenerationFenceBlockRow[]>;
+  listOwnedGenerationItems(generationIds: readonly number[]): Promise<GenerationOwnedItemRow[]>;
+  readLiveGenerationId(key: GenerationRowKey): Promise<{ id: number | string } | null>;
   /** The request a principal admitted under `requestId` (a uuid), or null. */
   readWriteRequest(principalKind: string, principalId: string, requestId: string): Promise<WriteRequest | null>;
   /** At most two requests with this request_id (a uuid), from any principal, in no set order. */
@@ -3481,6 +3566,10 @@ export interface BrainEngine {
   completeWriteRow(completion: WriteCompletion): Promise<CompletedWriteRow | null>;
   /** Cancels a request still queued as the caller read it, in one step: lock, check, complete, release its counters; null when it does not exist. */
   cancelWriteRow(cancel: WriteCancellation): Promise<WriteCancelResult | null>;
+  /** Inserts a publication's effects in queue order (a gated one only while auto-linking is on); returns the kinds inserted. */
+  insertPublicationEffects(spec: PublicationEffectsSpec): Promise<string[]>;
+  /** Queues a managed-request withdrawal's three effects for its source; an unknown source queues none, a kind already queued is kept. */
+  insertWithdrawalEffects(spec: WithdrawalEffectsSpec): Promise<void>;
   // Write-claim statements (engine-sql/persistence-claims.ts): the text journal.ts, authority.ts and consumer.ts sent through executeRaw.
   /** A source's incarnation and archive flag, or null; `lock` reads it FOR SHARE (`'update'`: FOR UPDATE) until the transaction ends. */
   readSourceMembership(sourceId: string, opts?: { lock?: boolean | 'update' }): Promise<SourceMembership | null>;
@@ -3490,10 +3579,14 @@ export interface BrainEngine {
   insertTopologyChange(row: TopologyChangeInsert): Promise<TopologyChange>;
   /** Extends a claim's lease (and records its phase); true while the request is running under the token. Postgres sends it on the direct pool. */
   renewWriteClaim(renewal: ClaimRenewal, opts?: { signal?: AbortSignal }): Promise<boolean>;
+  /** Returns a claim that never began to publish to queued under its token; `direct` sends it on the Postgres direct pool. */
+  releaseUnpublishedClaim(release: ClaimRelease, opts?: { direct?: boolean }): Promise<void>;
   /** Returns expired claims and claims of dead owners to queued, at most 100; `direct` sends it on the Postgres direct pool. */
   expireStaleWriteClaims(expiry: ClaimExpiry, opts?: { signal?: AbortSignal; direct?: boolean }): Promise<void>;
   /** Whether a claim would find a row now; `priority` overrides the foreground-priority config row when set. */
   hasClaimableWrite(hostId: string, excludeRoots: string[], opts?: { priority?: boolean | null; signal?: AbortSignal }): Promise<boolean>;
+  /** The request a FIFO claim takes next, locked FOR UPDATE SKIP LOCKED until the transaction ends, or null (journal.ts `claimNextWrite`). */
+  selectClaimableWrite<R = Record<string, unknown>>(spec: ClaimHeadSpec): Promise<R | null>;
   /** Consumer rows (persistence/consumer-heartbeat.ts): the host's rows oldest first, and its live full rows other than the caller's. `direct`: the Postgres direct pool. */
   listHostConsumerRows(hostId: string, opts?: { signal?: AbortSignal; direct?: boolean }): Promise<ConsumerRowRead[]>;
   probeLiveConsumerRows(probe: ConsumerProbe, opts?: { signal?: AbortSignal; direct?: boolean }): Promise<ConsumerRowRead[]>;
@@ -3515,6 +3608,8 @@ export interface BrainEngine {
   listReservationsAfter(after: string, limit: number): Promise<Array<{ id: string; sequence: string; compacted: boolean }>>;
   /** The terminal requests among `ids` with their effect bytes and whether an effect is unfinished, in sequence order. */
   listTrueUpRequests<R = Record<string, unknown>>(ids: readonly string[]): Promise<R[]>;
+  /** Inside the true-up's transaction, after its counter locks: shrinks each unchanged settled request to what its receipt keeps and releases the freed bytes from the counters; returns the bytes given back. */
+  trueUpReservations(rows: readonly TrueUpReservation[]): Promise<number>;
   /** The capacity forecast's reads: counters, per-day principal and topology rows, history, reclaimable bytes and the table size. */
   readCapacityForecastInputs(opts?: { light?: boolean }): Promise<CapacityForecastInputs>;
   /** Pending segmented-page projection jobs ready to rebuild, oldest first. */
@@ -3539,10 +3634,62 @@ export interface BrainEngine {
    */
   selectClaimableEffect<R = Record<string, unknown>>(hostId: string, deadOwners: readonly string[]): Promise<R | null>;
   /**
-   * Every effect of write request `requestId` (kind, state, error code, outcome, whether a recovery is open), in kind
-   * order (`publicEffectsForRequest`, a write receipt's effects). A non-uuid request id refuses.
+   * The effects of journal request `requestId` as its receipt reads them (state, error code, outcome, whether a recovery
+   * is open), in kind order, or only its Git effect when `kind` is `'git'`. A non-uuid request id refuses.
    */
-  listRequestEffects(requestId: string): Promise<RequestEffectRow[]>;
+  readRequestEffects(requestId: string, kind?: 'git'): Promise<RequestEffectState[]>;
+
+  // Effect worker (engine-sql/persistence-effect-worker.ts): the claim stamp and the statements that settle a claim,
+  // which effect-journal.ts sent through executeRaw. Each settle statement matches only effect `id` still claimed under
+  // `token` (a null token matches none), so a claim that moved changes nothing.
+  /** Claims effect `id` under `token` (running, a 2-minute lease, one more attempt): the claimed row, or null when no effect has the id. */
+  stampEffectClaim<R = Record<string, unknown>>(claim: EffectClaim): Promise<R | null>;
+  /**
+   * Extends an effect claim's lease by 2 minutes; true while it is running under the token with no recovery. `direct`
+   * runs it on the Postgres direct lane (`executeRawDirect`), outside any pooled transaction.
+   */
+  renewEffectClaim(claim: EffectClaimRef, opts?: { direct?: boolean }): Promise<boolean>;
+  /** Requeues a claimed effect (no recovery) due now with its scan cursor at `slug` (`advanceEffectCursor`). */
+  advanceEffectRow(claim: EffectClaimRef & { slug: string }): Promise<void>;
+  /** Finishes a claimed effect (no recovery) with `outcomeJson`: committed, or failed `targets_parked` when it parked targets. */
+  completeEffectRow(claim: EffectClaimRef & { outcomeJson: string }): Promise<void>;
+  /** Requeues a claimed effect after `delayMs` with error code `reason`, a claim under recovery included. */
+  retryEffectRow(claim: EffectClaimRef & { reason: string; delayMs: number }): Promise<void>;
+  /** Requeues a claimed effect as `writer_busy` after `delayMs`, merging `dataJson` (the busy streak) into its data. */
+  retryBusyEffectRow(claim: EffectClaimRef & { dataJson: string; delayMs: number }): Promise<void>;
+  /** Requeues a claimed effect (no recovery) with data `dataJson`, error code `reason`, after `delayMs`. */
+  requeueEffectRow(claim: EffectClaimRef & { dataJson: string; reason: string | null; delayMs: number }): Promise<void>;
+  /** Fails a claimed effect (no recovery) as `targets_parked` with data `dataJson`. */
+  parkEffectRow(claim: EffectClaimRef & { dataJson: string }): Promise<void>;
+  /** Fails a claimed effect (no recovery) with error code `reason`. */
+  failEffectRow(claim: EffectClaimRef & { reason: string }): Promise<void>;
+  /** The withdrawal mirrors that gate these requests (`mirrorGates`): each not committed, or committed with its publications. */
+  readMirrorGateRows(requestIds: readonly string[]): Promise<MirrorGateRow[]>;
+  /**
+   * The effect guard's locks (`guardEffectSource`): share-locks the brain row, then the effect's worktree row, and
+   * returns that worktree's owner and state; null without a worktree id or when the worktree row is gone.
+   */
+  lockEffectGuard(worktreeId: string | null): Promise<EffectWorktreeOwner | null>;
+  /** Whether one of these requests has a target parked under `code` that its committed withdrawal mirror re-arms (`hasRearmableTargets`). */
+  hasRearmableTargets(requestIds: readonly string[], code: string): Promise<boolean>;
+  /**
+   * The persistence consumer's idle probe (`persistence-idle-probe.ts`): whether any worker a full tick fans out to has
+   * work now, and where the resident projection window stands. Runs on `opts.lane` (the consumer's reserved idle lane)
+   * when given, else on the Postgres direct lane when `opts.direct`, else on the engine; `opts.signal` cancels it.
+   */
+  probeIdleWork(spec: IdleProbeSpec, opts?: { signal?: AbortSignal; lane?: ReservedConnection; direct?: boolean }): Promise<IdleProbeRow | null>;
+
+  // No-op embedding settle (engine-sql/persistence-embedding-noop-settle.ts): the statements embedding-noop-settle.ts
+  // sends to settle, in bulk, queued page embedding effects whose chunks already carry current vectors. The caller
+  // runs the last three in one transaction and keeps the source guard, the cursor and the true-up.
+  /** Whether an unattempted queued embedding effect lies past effect id `from` (`probeNoopEmbeddingSettle`). */
+  probeNoopEmbeddingSettle(from: string): Promise<boolean>;
+  /** The newest effect id, then the next `limit` unattempted embedding effects past `from`, locked skip-locked (`lockNoopEmbeddingWindow`). */
+  lockNoopEmbeddingWindow(spec: { from: string; limit: number }): Promise<NoopSettleWindow>;
+  /** The window effects the runner would find nothing to embed for, before their source guard; share-locks their pages (`readNoopEmbeddingCandidates`). */
+  readNoopEmbeddingCandidates(spec: NoopSettleCandidateSpec): Promise<NoopSettleCandidate[]>;
+  /** Settles these queued effects as the runner's claim and completion of a no-op leave them (`settleNoopEmbeddingRows`). */
+  settleNoopEmbeddingRows(ids: readonly string[]): Promise<NoopSettledRow[]>;
 
   /**
    * The current value of each named transaction-local setting (`current_setting(name, true)`), in `names` order, null
@@ -3554,6 +3701,28 @@ export interface BrainEngine {
   applyTransactionSettings(names: readonly string[], values: readonly string[]): Promise<void>;
   /** Starts the current transaction as one snapshot (`REPEATABLE READ`, and `READ ONLY` with `readOnly`); call it first. */
   beginSnapshotRead(opts?: { readOnly?: boolean }): Promise<void>;
+
+  /**
+   * The writer's trust declaration in force on this transaction: the raw `gbrain.write_trust_tier` and
+   * `gbrain.write_origin` settings, each null (or '') where unset (persistence/context.ts `currentWriteTrust` parses them).
+   */
+  readCurrentWriteTrust(): Promise<{ tier: string | null; origin: string | null }>;
+
+  /**
+   * Establishes a coordinated write's context on the current transaction in one statement (persistence/context.ts
+   * `withCoordinatedWrite`): source scope, actor (an enclosing actor is kept), trust (nests as min(outer, inner)) and the
+   * git protocol. Sets nothing when the persistence identity row is missing (`brainId` null). `previous` holds the values
+   * it replaced, '' where unset, in engine-sql/transaction-settings.ts WRITE_CONTEXT_SETTINGS order.
+   */
+  setWriteContext(input: WriteContextInput): Promise<WriteContextResult>;
+
+  // The writer-version reads (engine-sql/writer-versions.ts): which binaries admitted and published the retained requests.
+  /** When the brain started stamping writer versions (migration 178), as ISO text; null when not recorded. */
+  readWriterVersionCutoff(): Promise<string | null>;
+  /** The latest admitter and consumer version per host and principal across all retained requests, newest first, at most `limit`. */
+  listWriterVersions(limit: number): Promise<WriterVersionRow[]>;
+  /** Committed requests published in the last `days`, grouped per role, host, principal and version, stamped after the cutoff. */
+  recentWriterVersions(days: number): Promise<RecentWriterVersionRow[]>;
 
   // The connect gate's persistence reads (engine-sql/connect-gate.ts): table probes, managed roots, graduation, retired epochs.
   /** Whether persistence table `table` exists (a brain before the persistence migrations has none). */
@@ -3752,6 +3921,16 @@ export interface BrainEngine {
     acquisitionToken: string;
     maxAgeSeconds: number;
   }): Promise<{ deleted: boolean; lastRefreshedAt: Date | null }>;
+
+  /**
+   * Page embedding leases (`embed-page:<page id>`, page-embedding-lease.ts owns the policy). Take: insert the row, or
+   * take over an expired one (no steal grace); false while another holder's unexpired row stands. Renew: push the
+   * expiry out when the row still carries `acquisitionToken`, false when the lease was lost; a holder renews inside its
+   * install transaction. Release: delete this holder's row and every expired `embed-page:` row. Database clock.
+   */
+  takePageEmbeddingLease(leaseId: string, opts: { holderPid: number; holderHost: string; acquisitionToken: string; ttlMinutes: number }): Promise<boolean>;
+  renewPageEmbeddingLease(leaseId: string, opts: { acquisitionToken: string; ttlMinutes: number }): Promise<boolean>;
+  releasePageEmbeddingLease(leaseId: string, opts: { acquisitionToken: string }): Promise<void>;
 
   /**
    * The lease fence: true when `lockId` is still held under `acquisitionToken` and unexpired. Inside a transaction it

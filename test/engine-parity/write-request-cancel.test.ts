@@ -85,7 +85,7 @@ async function outstanding(engine: BrainEngine, keys: string[]): Promise<number[
 const CANCELLED = expect.objectContaining({ request_id: REQUEST, state: 'cancelled', write_error: 'cancelled', outcome: {}, effects: [] });
 
 describe('engine parity: cancelling a write request', () => {
-  parityTest('a remote caller cancels its own queued request, and a second cancel answers the same receipt', { methods: ['readLocalWriterRow', 'readWriteRequest', 'lockWriteRequest', 'cancelWriteRow', 'listRequestEffects', 'lockPersistenceCounters'] },
+  parityTest('a remote caller cancels its own queued request, and a second cancel answers the same receipt', { methods: ['readLocalWriterRow', 'readWriteRequest', 'lockWriteRequest', 'cancelWriteRow', 'readRequestEffects', 'lockPersistenceCounters'] },
     (engine) => inFreshHome(async () => {
       const keys = await admitOwn(engine);
       const before = await outstanding(engine, keys);
@@ -103,7 +103,7 @@ describe('engine parity: cancelling a write request', () => {
       return result;
     }));
 
-  parityTest('two cancels of one request at the same time: exactly one ends it, and the counters are released once', { methods: ['readLocalWriterRow', 'readWriteRequest', 'lockWriteRequest', 'cancelWriteRow', 'listRequestEffects', 'lockPersistenceCounters'] },
+  parityTest('two cancels of one request at the same time: exactly one ends it, and the counters are released once', { methods: ['readLocalWriterRow', 'readWriteRequest', 'lockWriteRequest', 'cancelWriteRow', 'readRequestEffects', 'lockPersistenceCounters'] },
     (engine) => inFreshHome(async () => {
       const keys = await admitOwn(engine);
       const answers = await Promise.all([cancel(engine, REQUEST), cancel(engine, REQUEST)]);

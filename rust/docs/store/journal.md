@@ -47,6 +47,11 @@ Each returns what PGLite returns for a brain with the same contents.
 | `insertLocalWriterRow(row)` | `brain.insertLocalWriterRow` | The same two unique keys as PGLite's table. |
 | `readJournalLimitRows()` | the config keys that start with `persistence.limits.`, the page-body keys, then `{ key: null, value: null }` | The store keeps no segmented pages, so the largest one has no size. |
 | `readHeldPageRows(pageIds)`, `readHeldCoverageRows(sourceIds)` | `[]` | The store holds no files from a sync, so nothing is held. |
+| `listFenceHoldRows(sourceIds, kinds, ownerKey?)` (`src/core/rust-engine/store-members/fence-holds.ts`) | `brain.listFenceHoldRows` | The held facts and takes fence rows of the derived generation family ([generations.md](generations.md)), oldest first, with `created_at` as Postgres `timestamptz` text. |
+| `readFenceOriginGone(sourceId, slug)` (same file) | page read | Whether the page is deleted or gone, from `readPageSnapshot` with deleted pages, by exact slug. |
+| `lockGenerationKey(lockKey)` (same file) | no-op | A transaction holds the store's writer gate from open to commit, so the store's write is the generation key lock. |
+| `clearFenceHoldRows(key)` (same file) | `brain.clearFenceHoldRows` | Deletes the key's held row when its reason is `fence_absent` or `no_proof`. |
+| `readFenceHoldFiles(sourceIds, slugs)` (same file) | page reads | One `readPageSnapshot` per source and slug; `database_only` when the page records no `source_path`. |
 | `ownsSchemaTables()` | `true` | The process that opens the store owns all of it, so the schema owner of a schema-behind refusal is this caller (fix actor `agent`). |
 
 `src/core/rust-engine/store-members/connect-gate.ts` answers the connect gate's persistence reads the same way
@@ -71,7 +76,7 @@ connect during a graduation.
 
 The request members (`readWriteRequest`, `readWriteRequestById`, `readWriteRequestProgress`, `countOutstandingBySource`, `readCounterRows`, `readAdmissionRate`, `lockPersistenceCounters`,
 `insertWriteRequest`, `stampWriteClaim`, `lockWriteRequest`, `completeWriteRow`), the claim upkeep
-(`renewWriteClaim`, `expireStaleWriteClaims`, `hasClaimableWrite`) and the admission reads
+(`renewWriteClaim`, `releaseUnpublishedClaim`, `expireStaleWriteClaims`, `hasClaimableWrite`, the FIFO head read `selectClaimableWrite`) and the admission reads
 (`readSourceMembership`, `findTopologyChanges`, `readLedgerSource`) are served from the persistence
 rows in [persistence.md](persistence.md). The journal calls most of them inside `transaction`. The consumer row
 members (`listHostConsumerRows`, `probeLiveConsumerRows`, `renewConsumerRow`, `deleteConsumerRow`,

@@ -61,7 +61,7 @@ import { sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { isLockOpenFailure, type NativeLockHandle } from './native-lock.ts';
 import { planPageEmbedding } from '../page-embedding-budget.ts';
 import { acquirePageEmbeddingLease, pageEmbeddingLeaseUnavailable } from '../page-embedding-lease.ts';
-import { chunkGenerationFilter, chunkManifestReads } from '../search/safe-chunks.ts';
+import { chunkManifestReads } from '../search/safe-chunks.ts';
 import { classifyItemFailure, ItemRun } from '../item-failure.ts';
 
 const effectStatusFix = (effect: Pick<PersistenceEffect, 'source_id'>): Action => readFix(
@@ -432,13 +432,8 @@ export async function readEmbeddingEffectProjection(engine: BrainEngine, effect:
         { fix: effectStatusFix(effect) });
     }
     const column = prepared.embeddingColumn;
-    const completion = await tx.executeRaw<{ id: number; chunk_text: string; chunk_source: string | null; embedding_input_hash: string | null; embedded: boolean; stamped: boolean }>(`SELECT cc.id,
-      cc.chunk_text, cc.chunk_source, cc.embedding_input_hash,
-      cc.${quoteIdentifier(column.name)} IS NOT NULL AND cc.embedded_at IS NOT NULL AND cc.embedded_text_hash=md5(cc.chunk_text)
-        AND cc.model IS NOT DISTINCT FROM $3 AS embedded,
-      p.embedding_signature=$2 AS stamped
-      FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE p.id=$1 AND ${chunkGenerationFilter('p', 'cc', await chunkManifestReads(engine, tx))}`,
-    [snapshot.page.id, signature, embeddingCompletionModel(column, signature, model)]);
+    const completion = await tx.readEmbeddingCompletion(snapshot.page.id, { signature, model: embeddingCompletionModel(column, signature, model),
+      column, manifest: await chunkManifestReads(engine, tx) });
     // #7172: a vector whose recorded input (#5553: column, model, dimensions, wrapper tier and exact input) is one the
     // current page accepts is current, whatever the page-level signature says; only the stamp is missing, so it is
     // restamped (embedPage) rather than paid for again.
@@ -472,7 +467,7 @@ async function embedPage(engine: BrainEngine, config: GBrainConfig, effect: Pers
   await faultPoint('effect:embedding:page_read', { effectId: effect.id, requestId: effect.request_id, sourceId: effect.source_id });
   // A stale drain or another worker embedding this page finishes first; the projection read below then finds its chunks complete.
   await using pageLease = await acquirePageEmbeddingLease(engine, snapshot.page.id, { signal: opts.signal, whileWaiting: async () => {
-    if (!await renewPersistenceEffectClaim({ executeRaw: engine.executeRawDirect.bind(engine) }, effect)) throw opError('write_claim_lost', 'The embedding claim changed.',
+    if (!await renewPersistenceEffectClaim(engine, effect, { direct: true })) throw opError('write_claim_lost', 'The embedding claim changed.',
       `Another worker took over the embedding of ${snapshot.page.slug} in source ${effect.source_id}; this attempt stops without installing vectors and the owning claim finishes it.`,
       { fix: effectStatusFix(effect) });
   } });
@@ -504,7 +499,7 @@ async function embedPage(engine: BrainEngine, config: GBrainConfig, effect: Pers
     const lease = new AbortController();
     const signal = opts.signal ? AbortSignal.any([opts.signal, lease.signal]) : lease.signal;
     let renewing: Promise<void> | undefined;
-    const renew = () => renewPersistenceEffectClaim({ executeRaw: engine.executeRawDirect.bind(engine) }, effect).then(live => {
+    const renew = () => renewPersistenceEffectClaim(engine, effect, { direct: true }).then(live => {
       if (!live) lease.abort(opError('write_claim_lost', 'The embedding claim changed.',
         `Another worker took over the embedding of ${snapshot.page.slug} in source ${effect.source_id}; this attempt stops without installing vectors and the owning claim finishes it.`,
         { fix: effectStatusFix(effect) }));
@@ -543,11 +538,11 @@ async function embedPage(engine: BrainEngine, config: GBrainConfig, effect: Pers
     }
     const installed = await engine.transaction(async tx => {
       await guardEffectSource(tx, effect, opts.hostId);
-      const [claim] = await tx.executeRaw<PersistenceEffect>('SELECT state,execution_token FROM persistence_effects WHERE id=$1 FOR UPDATE', [effect.id]);
+      const claim = await tx.lockEffectClaimRow(effect.id);
       if (claim?.state !== 'running' || claim.execution_token !== effect.execution_token) throw opError('write_claim_lost', 'The embedding claim changed.',
         `Another worker took over the embedding of ${snapshot.page.slug} in source ${effect.source_id}; this attempt installed nothing and the owning claim finishes it.`,
         { fix: effectStatusFix(effect) });
-      await tx.executeRaw("SELECT key FROM config WHERE key='embedding_disabled' FOR SHARE");
+      await tx.lockEmbeddingSwitch();
       await assertEmbeddingEffectEnabled(tx, config);
       signal.throwIfAborted();
       await pageLease.assertHeld(tx);
@@ -609,15 +604,15 @@ async function embedSegmentedEffect(engine: BrainEngine, config: GBrainConfig, e
     { fix: effectStatusFix(effect) });
   const embed = opts.embedding?.embed ?? embedBatch;
   const result = await embedSegmentedPage(engine, page, { signature, signal: opts.signal, occurrenceIds: effect.data.occurrence_ids,
-    whileWaiting: async () => { if (!await renewPersistenceEffectClaim({ executeRaw: engine.executeRawDirect.bind(engine) }, effect)) throw claimLost(); },
+    whileWaiting: async () => { if (!await renewPersistenceEffectClaim(engine, effect, { direct: true })) throw claimLost(); },
     embedFn: (texts, o) => withAIInvocationPreflight(async () => {
       opts.signal?.throwIfAborted();
-      if (!await renewPersistenceEffectClaim({ executeRaw: engine.executeRawDirect.bind(engine) }, effect)) throw claimLost();
+      if (!await renewPersistenceEffectClaim(engine, effect, { direct: true })) throw claimLost();
       await assertEmbeddingEffectEnabled(engine, config);
     }, async () => (await embed(texts, { abortSignal: o.abortSignal, maxRetries: 0 })) as Float32Array[]),
     beforeInstall: async tx => {
       await guardEffectSource(tx, effect, opts.hostId);
-      const [claim] = await tx.executeRaw<PersistenceEffect>('SELECT state,execution_token FROM persistence_effects WHERE id=$1 FOR UPDATE', [effect.id]);
+      const claim = await tx.lockEffectClaimRow(effect.id);
       if (claim?.state !== 'running' || claim.execution_token !== effect.execution_token) throw claimLost();
       await assertEmbeddingEffectEnabled(tx, config);
     } });

@@ -16,26 +16,8 @@ export interface LedgerScrub { derived_generation_items: number; derived_generat
  * purge also drops the page's fence holds: it deletes every row they would retire, so no fence write can settle them.
  */
 export async function scrubGenerationLedger(tx: BrainEngine, sourceId: string, target: { slug: string } | { needles: readonly string[] }): Promise<LedgerScrub> {
-  if ('slug' in target) {
-    const fenceHolds = await tx.executeRaw(`DELETE FROM derived_generations WHERE source_id=$1 AND kind=ANY($2::text[]) AND owner_key='page:' || $3::text
-      AND state='held' RETURNING 1`, [sourceId, [...FENCE_GENERATION_KINDS], target.slug]);
-    const items = await tx.executeRaw(`UPDATE derived_generation_items i SET preimage=NULL FROM derived_generations g
-      WHERE g.id=i.generation_id AND g.source_id=$1 AND i.item_key=$2 AND i.preimage IS NOT NULL RETURNING 1`, [sourceId, target.slug]);
-    const held = await tx.executeRaw(`UPDATE derived_generations SET proposal=NULL, updated_at=now()
-      WHERE source_id=$1 AND proposal IS NOT NULL AND (right(owner_key, length($2) + 1) = ':' || $2 OR proposal @> jsonb_build_array(jsonb_build_object('key', $2::text)))
-      RETURNING 1`, [sourceId, target.slug]);
-    const fences = await tx.executeRaw(`UPDATE derived_generations SET completeness=completeness - 'fence'::text, updated_at=now()
-      WHERE source_id=$1 AND owner_key='page:' || $2::text AND completeness->'fence' IS NOT NULL RETURNING 1`, [sourceId, target.slug]);
-    return { derived_generation_items: items.length, derived_generations: fenceHolds.length + held.length + fences.length };
-  }
+  if ('slug' in target) return tx.scrubGenerationPageRows(sourceId, FENCE_GENERATION_KINDS, target.slug);
   const needles = target.needles.filter(Boolean).flatMap(needle => [needle.toLowerCase(), JSON.stringify(needle).slice(1, -1).toLowerCase()]);
   if (!needles.length) return { derived_generation_items: 0, derived_generations: 0 };
-  const carries = (column: string) => `EXISTS (SELECT 1 FROM unnest($2::text[]) n WHERE strpos(lower(${column}::text), n) > 0)`;
-  const items = await tx.executeRaw(`UPDATE derived_generation_items i SET preimage=NULL FROM derived_generations g
-    WHERE g.id=i.generation_id AND g.source_id=$1 AND i.preimage IS NOT NULL AND ${carries('i.preimage')} RETURNING 1`, [sourceId, needles]);
-  const held = await tx.executeRaw(`UPDATE derived_generations SET proposal=NULL, held_context=NULL, updated_at=now()
-    WHERE source_id=$1 AND (proposal IS NOT NULL AND ${carries('proposal')} OR held_context IS NOT NULL AND ${carries('held_context')}) RETURNING 1`, [sourceId, needles]);
-  const fences = await tx.executeRaw(`UPDATE derived_generations SET completeness=completeness - 'fence'::text, updated_at=now()
-    WHERE source_id=$1 AND completeness->'fence' IS NOT NULL AND ${carries("(completeness->'fence')")} RETURNING 1`, [sourceId, needles]);
-  return { derived_generation_items: items.length, derived_generations: held.length + fences.length };
+  return tx.scrubGenerationTextRows(sourceId, needles);
 }

@@ -98,6 +98,8 @@ pub const TELEMETRY_CHAT_USAGE: u8 = 0x0B; // chat_usage_log
 pub const DREAM_SYNTHESIS_COMPLETION: u8 = b'f';
 /// Family access_members (access_members.rs): members 0x01, groups 0x02, group members 0x03.
 pub const ACCESS_MEMBERS: u8 = b'x';
+/// Family `persistence_journal`, the `derived_generations` ledger (`generations.rs`).
+pub const DERIVED_GENERATION: u8 = b'h';
 
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];

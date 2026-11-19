@@ -4,7 +4,8 @@
 //! listFactsSince, listFactsKeyset, listFactsBySession, listSupersessions,
 //! countUnconsolidatedFacts, findCandidateDuplicates, consolidateFact, findTrajectory,
 //! getFactsHealth, migrateFactsToCanonical, the `listUnattributedFacts` review-list read and
-//! the `pageCollapseFacts` search read (`facts/collapse.rs`). Other families read the rows
+//! the `pageCollapseFacts` search read (`facts/collapse.rs`) and the `moveKeptFactRows` fence
+//! row move (`facts/kept_rows.rs`). Other families read the rows
 //! through `fact_exists`
 //! (eval capture) and write them through `write_fact` / `delete_fact` (ontology).
 //!
@@ -41,6 +42,7 @@ pub mod doctor;
 mod embedding;
 mod fence;
 mod held_cells;
+mod kept_rows;
 pub mod loops;
 pub(crate) mod privacy;
 pub mod purge;

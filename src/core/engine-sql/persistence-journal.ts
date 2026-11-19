@@ -3,8 +3,9 @@
  *
  * These are the statements `src/core/persistence/journal.ts`, `limits.ts` and `held-reads.ts` sent through
  * `executeRaw`: the journal limit read, the two hold reads, the request reads, the counter lock, the admission
- * insert, the claim stamp and the completion. The text is unchanged, written out in full so this module imports no
- * persistence code (journal.ts pulls in most of the codebase, which an engine must not load).
+ * insert, the claim stamp, the completion and the publication's effects insert (effect-journal.ts). The text is
+ * unchanged, written out in full so this module imports no persistence code (journal.ts pulls in most of the
+ * codebase, which an engine must not load).
  * `test/persistence-journal-statements.test.ts` checks each written-out statement against the journal's builders.
  * Decisions (who may claim, whether a write fits, what a refusal says) stay with the callers.
  */
@@ -336,4 +337,76 @@ export async function cancelWriteRow(exec: SqlExecutor, c: WriteCancellation): P
   await exec.executeRaw("SELECT set_config('synchronous_commit','on',true)");
   const done = await completeWriteRow(exec, c);
   return done ? { status: 'cancelled', row: done } : { status: 'too_large', row: current };
+}
+
+/** The config key that turns a remote write's mention links off (effect-model.ts `REMOTE_AUTO_LINKS_KEY`; the statement test pins the two). */
+export const REMOTE_AUTO_LINKS_CONFIG_KEY = 'mcp.remote_auto_links';
+
+/**
+ * #6007: a publication's effects, inserted together in queue order by one statement. A `gated` effect (the mention
+ * `links` effect) inserts nothing while config `auto_link` or `mcp.remote_auto_links` is off; unset is on. An effect
+ * already queued for the request keeps its row. The config value test is edge-whitespace.ts `asciiLowerSql(edgeTrimSql('value'))`
+ * written out; test/persistence-journal-statements.test.ts checks it against that fragment.
+ */
+export const PUBLICATION_EFFECTS_SQL = `INSERT INTO persistence_effects (request_id,kind,revision,data,source_id,source_incarnation,worktree_id)
+    SELECT $1::uuid,t.e->>'kind',$2::uuid,t.e->'data',$3,$4::uuid,$5::uuid FROM jsonb_array_elements($6::text::jsonb) WITH ORDINALITY AS t(e,n)
+    WHERE NOT (COALESCE((t.e->>'gated')::boolean,false) AND EXISTS (SELECT 1 FROM config
+      WHERE key IN ('auto_link',$7) AND translate(btrim(value, (E'\\u0020\\u0009\\u000a\\u000b\\u000c\\u000d' || CASE WHEN current_setting('server_encoding') = 'UTF8' THEN convert_from(decode('c2a0e19a80e28080e28081e28082e28083e28084e28085e28086e28087e28088e28089e2808ae280a8e280a9e280afe2819fe38080efbbbf', 'hex'), 'UTF8') ELSE '' END)), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz') IN ('false','0','no','off')))
+    ORDER BY t.n ON CONFLICT(request_id,kind) DO NOTHING RETURNING kind`;
+
+/** One effect a publication queues: its kind, its data, and whether the auto-link switches gate it. */
+export interface QueuedPublicationEffect { kind: string; data: Record<string, unknown>; gated?: boolean }
+
+/** What `insertPublicationEffects` inserts: the request's identity columns and its effects in queue order (at least one). */
+export interface PublicationEffectsSpec {
+  requestId: string;
+  /** The revision the publication wrote, or null when it wrote none. */
+  revision: string | null;
+  sourceId: string;
+  sourceIncarnation: string;
+  worktreeId: string | null;
+  effects: readonly QueuedPublicationEffect[];
+}
+
+/** The effects insert's parameters for one spec. */
+export function publicationEffectsParams(spec: PublicationEffectsSpec): unknown[] {
+  return [spec.requestId, spec.revision, spec.sourceId, spec.sourceIncarnation, spec.worktreeId, JSON.stringify(spec.effects), REMOTE_AUTO_LINKS_CONFIG_KEY];
+}
+
+/** Inserts a publication's effects; returns the kinds it inserted, in queue order (a gated or already queued kind is missing). */
+export async function insertPublicationEffects(exec: SqlExecutor, spec: PublicationEffectsSpec): Promise<string[]> {
+  const rows = await exec.executeRaw<{ kind: string }>(PUBLICATION_EFFECTS_SQL, publicationEffectsParams(spec));
+  return rows.map(row => row.kind);
+}
+
+/**
+ * The effects a managed-request withdrawal queues (facts/withdrawal.ts `recordFactWithdrawal`): the text it sent
+ * through `executeRaw`, byte for byte. One row per kind, stamped with the source's incarnation and its bound worktree;
+ * an unknown source inserts nothing and a kind already queued for the request is kept.
+ */
+export const WITHDRAWAL_EFFECTS_SQL = `INSERT INTO persistence_effects(request_id,kind,data,source_id,source_incarnation,worktree_id)
+          SELECT $1::uuid,k.kind,$3::text::jsonb,s.id,s.incarnation,b.worktree_id
+          FROM sources s LEFT JOIN persistence_source_bindings b ON b.source_id=s.id AND b.source_incarnation=s.incarnation
+          CROSS JOIN (VALUES ('withdrawal-mirror'),('git'),('embedding')) AS k(kind)
+          WHERE s.id=$2 ON CONFLICT(request_id,kind) DO NOTHING`;
+
+/** One page a withdrawal changed, as its effects name it. */
+export interface WithdrawalEffectTarget { slug: string; page_id: number; revision: string }
+
+/** What `insertWithdrawalEffects` inserts for a withdrawal under write request `requestId`. */
+export interface WithdrawalEffectsSpec { requestId: string; sourceId: string; targets: readonly WithdrawalEffectTarget[] }
+
+/** The data every effect of a withdrawal carries: version 2, its targets in slug order. */
+export function withdrawalEffectsData(spec: WithdrawalEffectsSpec): { version: 2; targets: WithdrawalEffectTarget[] } {
+  return { version: 2, targets: [...spec.targets].sort((a, b) => a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0) };
+}
+
+/** The withdrawal effects insert's parameters; the data binds as one text parameter, so postgres.js does not double-encode it. */
+export function withdrawalEffectsParams(spec: WithdrawalEffectsSpec): unknown[] {
+  return [spec.requestId, spec.sourceId, JSON.stringify(withdrawalEffectsData(spec))];
+}
+
+/** Queues a withdrawal's `withdrawal-mirror`, `git` and `embedding` effects (see `WITHDRAWAL_EFFECTS_SQL`). */
+export async function insertWithdrawalEffects(exec: SqlExecutor, spec: WithdrawalEffectsSpec): Promise<void> {
+  await exec.executeRaw(WITHDRAWAL_EFFECTS_SQL, withdrawalEffectsParams(spec));
 }

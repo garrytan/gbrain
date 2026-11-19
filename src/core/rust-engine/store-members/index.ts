@@ -3,7 +3,6 @@
  * prototype (rust-engine.ts); a member in `RUST_ENGINE_MEMBERS` that is not here refuses with `engine_capability_missing`.
  */
 import type { BrainEngine } from '../../engine.ts';
-import type { StoreMember } from './common.ts';
 import * as chunks from './chunks.ts';
 import * as config from './config.ts';
 import * as graph from './graph.ts';
@@ -50,6 +49,8 @@ import * as persistence from './persistence.ts';
 import * as cliEntities from './cli-entities.ts';
 import * as factsDoctor from './facts-doctor.ts';
 import * as embeddingCatalog from './embedding-catalog.ts';
+import * as fenceHolds from './fence-holds.ts';
+import * as derivedGenerations from './derived-generations.ts';
 import * as factsCycle from './facts-cycle.ts';
 import * as factsPurge from './facts-purge.ts';
 import * as factsRepair from './facts-repair.ts';
@@ -59,6 +60,10 @@ import * as trustTierReads from './trust-tier-reads.ts';
 import * as jobs from './jobs.ts';
 import * as housekeeping from './housekeeping.ts';
 import * as effectScans from './effect-scans.ts';
+import * as effectWorker from './effect-worker.ts';
+import * as noopSettle from './noop-settle.ts';
+import * as pageEmbeddingBudget from './page-embedding-budget.ts';
+import * as embeddingInstall from './embedding-install.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
 import * as linkTemporal from './link-temporal.ts';
@@ -77,9 +82,9 @@ import * as fieldUsage from './field-usage.ts';
 import * as accessGrants from './access-grants.ts';
 import * as accessMembers from './access-members.ts';
 import * as sharedSkillMembers from './shared-skill-members.ts';
-
-/** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
-const initSchema: StoreMember<[], void> = async () => undefined;
+import * as writeContext from './write-context.ts';
+// The store creates its tables when it opens; initSchema seeds the embedding config rows PGLite's schema text seeds.
+import { initSchema } from './init-schema.ts';
 
 export const STORE_MEMBERS = {
   initSchema,
@@ -89,7 +94,7 @@ export const STORE_MEMBERS = {
   // Planned families: a member is served once its family file exports it.
   ...pageOps, ...extraction, ...aliases, ...pageBody, ...facts, ...ontology, ...takes, ...contradictions, ...dream,
   ...evalCapture, ...codeEdges, ...salience, ...stats, ...rawFiles, ...linkQueries, ...timelineQueries, ...keyword,
-  ...chunkQueries, ...vectors, ...embeddings, ...transactions, ...relations, ...wantedLinks, ...trustWithdrawals, ...trustWriteGate, ...openLoops,
+  ...chunkQueries, ...vectors, ...embeddings, ...transactions, ...writeContext, ...relations, ...wantedLinks, ...trustWithdrawals, ...trustWriteGate, ...openLoops,
   // The minion queue and its cycle locks (rust/crates/gbrain-store/src/jobs.rs).
   ...jobs,
   // Typed reads that replace raw SQL in CLI paths (rust/crates/gbrain-store/src/cli_reads/).
@@ -98,7 +103,7 @@ export const STORE_MEMBERS = {
   ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages,
   ...cliEntities,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
-  ...factsDoctor, ...embeddingCatalog, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust, ...factsTrustReads, ...factRelinkAttempts,
+  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust, ...factsTrustReads, ...factRelinkAttempts,
   ...factRelinkWrites,
   // Typed reads of stamped trust tiers (rust/docs/store/trust.md, "Tier reads").
   ...trustTierReads,
@@ -110,7 +115,10 @@ export const STORE_MEMBERS = {
   ...linkTemporal,
   // Alias fan-out reads (rust/docs/store/alias_fanout_reads.md).
   ...aliasFanoutReads,
-  ...persistence, ...housekeeping, ...effectScans,
+  ...persistence, ...housekeeping, ...effectScans, ...effectWorker, ...noopSettle,
+  // The page embedding ledger on the paid path (rust/docs/store/embeddings.md).
+  ...pageEmbeddingBudget,
+  ...embeddingInstall,
   ...writeMisc,
   // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
   ...writeGuards, ...trustFence, ...trustProposals,
