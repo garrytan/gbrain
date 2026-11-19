@@ -101,6 +101,8 @@ export const searchVector: StoreMember<[embedding: Float32Array, opts?: SearchOp
   if (o.limit && o.limit > cap) {
     console.warn(`[gbrain] Warning: search limit clamped from ${o.limit} to ${cap}`);
   }
+  // `excludePrivate` is the page policy `buildVisibilityClause` adds; a caller whose policy is wider refuses.
+  const policy = storePagePolicy('searchVector', o.excludePrivate);
   const options = {
     limit,
     offset: jsNumber(Number(o.offset || 0)),
@@ -115,8 +117,7 @@ export const searchVector: StoreMember<[embedding: Float32Array, opts?: SearchOp
     model,
     source_factors: sourceFactors(o.source_boosts ?? resolveBoostMap(), o.detail),
     require_safe_chunks: requiresSafeChunks(o),
-    // `excludePrivate` is the page policy `buildVisibilityClause` adds; a caller whose policy is wider refuses.
-    exclude_private: storePagePolicy('searchVector', o.excludePrivate) ?? null,
+    exclude_private: policy ?? null,
   };
   const query = Array.from(embedding);
   const rows: Record<string, unknown>[] = await storeCall({ member: 'searchVector' }, () => brain.searchVector(query, options));
