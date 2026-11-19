@@ -196,6 +196,11 @@ impl Store {
         let (stored, created) = match stored {
             Some(stored) => {
                 format::check_version(stored.format_version)?;
+                let stored = if stored.format_version < FORMAT_VERSION {
+                    upgrade_format(&*kv)?
+                } else {
+                    stored
+                };
                 (stored, false)
             }
             None => {
@@ -362,6 +367,28 @@ pub(crate) struct StoredFormat {
 
 /// Records a fresh brain starts with, written in the same transaction as its format record: the
 /// schema version config (`getConfig('version')`) and the `default` source.
+/// Upgrades a brain in an older format to `FORMAT_VERSION` in one write transaction, so a crash
+/// leaves either the old brain or the new one. Format 1 to 2 folds the JSON counter records into
+/// the per-counter records (`format.rs`). The format record is re-read inside the transaction:
+/// another handle on the same records may have upgraded the brain first.
+fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
+    let mut tx = kv.begin_write_exclusive()?;
+    let mut stored: StoredFormat = get_json(&*tx, &keys::meta("format"))?
+        .ok_or_else(|| StoreError::new(error::STORE_CORRUPT, "the format record went missing"))?;
+    format::check_version(stored.format_version)?;
+    if stored.format_version >= FORMAT_VERSION {
+        return Ok(stored);
+    }
+    if stored.format_version == 1 {
+        chunks::fold_format_1_stats(&mut *tx)?;
+        journal::fold_format_1_counters(&mut *tx)?;
+    }
+    stored.format_version = FORMAT_VERSION;
+    put_json(&mut *tx, &keys::meta("format"), &stored)?;
+    tx.commit()?;
+    Ok(stored)
+}
+
 fn seed(tx: &mut dyn KvWrite, env: &dyn Env, options: &OpenOptions) -> Result<()> {
     tx.put(
         &keys::text(keys::CONFIG, &["version"]),

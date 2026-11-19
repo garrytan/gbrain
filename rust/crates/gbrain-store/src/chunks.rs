@@ -146,14 +146,12 @@ pub(crate) struct ChunkStats {
     pub total_length: u64,
 }
 
-/// The chunk count and total length. Brains written before the per-counter layout keep a JSON
-/// `chunk_stats` record, read as a base and never written again; every write since adds to two
-/// counter records (`chunk_stats/chunks`, `chunk_stats/total_length`) without reading them, so
-/// concurrent chunk writes never conflict on the stats.
+/// The chunk count and total length: two counter records (`chunk_stats/chunks`,
+/// `chunk_stats/total_length`) that every write adds to without reading them, so concurrent
+/// chunk writes never conflict on the stats.
 pub(crate) fn read_stats(read: &dyn KvRead) -> Result<ChunkStats> {
-    let legacy: ChunkStats = get_json(read, &keys::meta(STATS))?.unwrap_or_default();
-    let chunks = legacy.chunks as i64 + crate::kv::read_i64(read, &keys::meta(STATS_CHUNKS))?;
-    let total = legacy.total_length as i64 + crate::kv::read_i64(read, &keys::meta(STATS_LENGTH))?;
+    let chunks = crate::kv::read_i64(read, &keys::meta(STATS_CHUNKS))?;
+    let total = crate::kv::read_i64(read, &keys::meta(STATS_LENGTH))?;
     Ok(ChunkStats {
         chunks: chunks.max(0) as u64,
         total_length: total.max(0) as u64,
@@ -165,6 +163,22 @@ pub(crate) fn read_stats(read: &dyn KvRead) -> Result<ChunkStats> {
 pub(crate) struct StatsDelta {
     pub chunks: i64,
     pub total_length: i64,
+}
+
+/// Format 1 kept the chunk stats as one JSON `chunk_stats` record; the format-2 upgrade
+/// (`Store::open_kv`) adds it to the counter records and deletes it.
+pub(crate) fn fold_format_1_stats(tx: &mut dyn KvWrite) -> Result<()> {
+    if let Some(legacy) = get_json::<ChunkStats>(&*tx, &keys::meta(STATS))? {
+        add_stats(
+            tx,
+            &StatsDelta {
+                chunks: legacy.chunks as i64,
+                total_length: legacy.total_length as i64,
+            },
+        )?;
+        tx.delete(&keys::meta(STATS))?;
+    }
+    Ok(())
 }
 
 fn add_stats(tx: &mut dyn KvWrite, delta: &StatsDelta) -> Result<()> {

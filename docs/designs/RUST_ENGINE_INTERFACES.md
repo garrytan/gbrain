@@ -129,9 +129,11 @@ Rules:
   the family's `page_columns` hook ("Core hooks"). The family keeps the value under its own tag; until it adds the
   column, the page read returns the fixed default in `PAGE_ROW_DEFAULTS` (`store-codec.ts`). No family edits
   `PAGE_ROW_DEFAULTS`, `store-codec.ts` or `pages.rs`.
-- **Format.** `FORMAT_VERSION` 1, `engineAbi` 1, a `FORMAT` file plus `records.redb`. New tags and new records under
+- **Format.** `FORMAT_VERSION` 2, `engineAbi` 1, a `FORMAT` file plus `records.redb`. New tags and new records under
   them do not change the format version: an older build never reads a tag it does not know, and a newer build reads
   an absent tag as "no rows". A family that changes the encoding of records that already exist on disk asks core.
+  Format 2 keeps each chunk-stats and unfinished-request counter in its own record; a format-1 brain is upgraded in
+  one write transaction when it opens, and a format-1-only build refuses a format-2 brain.
 
 Reserved tags:
 
@@ -556,8 +558,8 @@ PGLite lets four `pages` columns hold NULL. The page record holds NULL in the sa
   unless `allowEmptyOverwrite`, as PGLite does.
 - **Versions.** A version snapshot copies the page's NULLs.
 - **Format.** Records written before these fields were nullable hold strings and read unchanged. A record without
-  `chunker_version` reads it as NULL, and the store writes `chunker_version` only when it is set. `FORMAT_VERSION`
-  stays 1.
+  `chunker_version` reads it as NULL, and the store writes `chunker_version` only when it is set. This needs no
+  format version of its own.
 
 #### Segmented guard (`putPage` over a segmented page)
 

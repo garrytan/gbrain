@@ -9,9 +9,15 @@ use std::io::Write;
 use std::path::Path;
 
 /// The store format this build reads and writes.
-pub const FORMAT_VERSION: u32 = 1;
+///
+/// - 1: the chunk stats and the unfinished-request counters are one JSON record each.
+/// - 2: each counter is its own record, so concurrent writers add to it without conflict
+///   (`chunks::STATS_CHUNKS`, `journal::OUTSTANDING`). A format-1 brain is upgraded in one
+///   write transaction when it opens (`Store::open_kv`); a build that reads only format 1
+///   refuses a format-2 brain instead of missing its counts.
+pub const FORMAT_VERSION: u32 = 2;
 /// Every format version this build can open. Addon exports list these as `formatVersions`.
-pub const FORMAT_VERSIONS: &[u32] = &[FORMAT_VERSION];
+pub const FORMAT_VERSIONS: &[u32] = &[1, FORMAT_VERSION];
 
 pub const FORMAT_FILE: &str = "FORMAT";
 pub const RECORDS_FILE: &str = "records.redb";

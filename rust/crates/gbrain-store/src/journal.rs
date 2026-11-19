@@ -37,8 +37,8 @@ use sha2::{Digest, Sha256};
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashSet};
 
-/// The single JSON counter record of brains written before the per-counter layout below. It is
-/// read as a base and never written again.
+/// The single JSON counter record of format-1 brains, folded into the records below by the
+/// format-2 upgrade (`fold_format_1_counters`).
 const COUNTERS: &str = "journal_counters";
 /// Unfinished-request counters, one record each (8-byte little-endian), so that admissions never
 /// all touch one key: `journal_outstanding` for the brain and `journal_outstanding/<principal>`.
@@ -149,12 +149,29 @@ fn outstanding_key(principal: Option<&str>) -> Vec<u8> {
     }
 }
 
-/// The unfinished-request counters: the legacy record plus the per-counter records. A principal
-/// whose count is 0 is left out.
+/// Format 1 kept the unfinished-request counters as one JSON `journal_counters` record; the
+/// format-2 upgrade (`Store::open_kv`) adds it to the per-counter records and deletes it.
+pub(crate) fn fold_format_1_counters(tx: &mut dyn KvWrite) -> Result<()> {
+    let Some(legacy) = get_json::<Counters>(&*tx, &keys::meta(COUNTERS))? else {
+        return Ok(());
+    };
+    if legacy.brain != 0 {
+        tx.add_i64(&outstanding_key(None), legacy.brain as i64)?;
+    }
+    for (principal, n) in &legacy.principals {
+        if *n != 0 {
+            tx.add_i64(&outstanding_key(Some(principal)), *n as i64)?;
+        }
+    }
+    tx.delete(&keys::meta(COUNTERS))
+}
+
+/// The unfinished-request counters, one record each. A principal whose count is 0 is left out.
 fn read_counters(read: &dyn KvRead) -> Result<Counters> {
-    let mut counters: Counters = get_json(read, &keys::meta(COUNTERS))?.unwrap_or_default();
-    let brain = counters.brain as i64 + crate::kv::read_i64(read, &outstanding_key(None))?;
-    counters.brain = brain.max(0) as u64;
+    let mut counters = Counters {
+        brain: crate::kv::read_i64(read, &outstanding_key(None))?.max(0) as u64,
+        principals: BTreeMap::new(),
+    };
     let prefix = keys::meta(&format!("{OUTSTANDING}/"));
     let mut failure = None;
     scan_prefix(read, &prefix, false, &mut |k, v| {
@@ -169,8 +186,8 @@ fn read_counters(read: &dyn KvRead) -> Result<Counters> {
             failure = Some(StoreError::new(STORE_CORRUPT, "bad outstanding counter"));
             return false;
         };
-        let entry = counters.principals.entry(name.to_string()).or_insert(0);
-        *entry = (*entry as i64 + i64::from_le_bytes(bytes)).max(0) as u64;
+        let n = i64::from_le_bytes(bytes).max(0) as u64;
+        counters.principals.insert(name.to_string(), n);
         true
     })?;
     if let Some(e) = failure {
@@ -461,27 +478,25 @@ fn admit_in(
     // Postgres counts unfinished requests under a row lock; here each counter is its own record
     // and the check is re-run at commit (`counter_below`), so admissions do not conflict with
     // each other unless one of them would cross a limit.
-    let legacy: Counters = get_json(&*tx, &keys::meta(COUNTERS))?.unwrap_or_default();
     let pkey = principal_key(&admission.principal.kind, &admission.principal.id);
-    let legacy_mine = legacy.principals.get(&pkey).copied().unwrap_or(0) as i64;
-    let cap = limits.principal_outstanding as i64 - legacy_mine;
+    let cap = limits.principal_outstanding as i64;
     if let Some(n) = tx.counter_below(&outstanding_key(Some(&pkey)), cap)? {
-        let mine = (n + legacy_mine).max(0);
         return Err(StoreError::new(
             ADMISSION_REFUSED,
             format!(
-                "this principal already has {mine} unfinished writes (limit {})",
+                "this principal already has {} unfinished writes (limit {})",
+                n.max(0),
                 limits.principal_outstanding
             ),
         ));
     }
-    let cap = limits.brain_outstanding as i64 - legacy.brain as i64;
+    let cap = limits.brain_outstanding as i64;
     if let Some(n) = tx.counter_below(&outstanding_key(None), cap)? {
         return Err(StoreError::new(
             ADMISSION_REFUSED,
             format!(
                 "this brain already has {} unfinished writes (limit {})",
-                (n + legacy.brain as i64).max(0),
+                n.max(0),
                 limits.brain_outstanding
             ),
         ));
