@@ -39,7 +39,6 @@
       "PAGES_SEGMENTED_BODY_BYTES_INDEX": "c904a4f68cf190cce6bc68c03219c7b62d05b77eeb557db946a4f58a4f965e57",
       "PAGES_SOURCE_CREATED_INDEX": "33411b4d6fc2287ee8fa37b1ebf2cc36a076101dbd3f3f6ac492aed06288513a",
       "PAGES_TITLE_SEARCH_INDEX": "27e8e1a6c9a2069ee6c6af6fa99b9a7e9e9c118c7a933ffa80ba1864bf68baa3",
-      "PAGE_PROJECTION_JOBS_BYTE_ORDER_INDEX": "92ba3b31896201b4f1cd61fafe7035d84020efb904d14b95531528e212325d22",
       "PAGE_TIMELINE_FTS_MAX_CHARS": "f7d29264f4144976bbe2e1ded0251095b638175f8e1d711c36f1e80d2263e172",
       "PERSISTENCE_COMMITTED_WATERMARK_INDEX": "f472fa0acb542c1caebaaa3bc69fb2da1647e5e201239429fc02ccef0d669533",
       "PERSISTENCE_COMPACTABLE_INDEX": "25ee657878efb41ba9ea3a7624464ddcf66407d861659456c230366e57f230a0",
@@ -5346,31 +5345,15 @@
         "version": 326
       },
       {
-        "handler": {
-          "form": "arrow",
-          "helpers": [
-            "PAGE_PROJECTION_JOBS_BYTE_ORDER_INDEX",
-            "PLANNER_REPAIR_TABLES",
-            "analyzeAfterIndexBuild",
-            "analyzeDeferred",
-            "analyzeYieldingToVacuum",
-            "buildIndexOnline",
-            "dropInvalidConcurrentIndex",
-            "lockTableForAnalyze",
-            "migrationNotice",
-            "quietMigrationNotices",
-            "tableRows"
-          ],
-          "sha256": "84c73a522679965d39f11bfbd6bf7c0bea97fa36337799619ad6b7376fd23db7"
-        },
+        "handler": "absent",
         "idempotent": true,
-        "name": "projection_jobs_byte_order_index",
+        "name": "access_handovers",
         "sql": {
-          "length": 0,
-          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          "length": 936,
+          "sha256": "6fabcd3509232e6cadf252a3b5797f72a3835f71b5cb7a68db8389b1deb52fe8"
         },
         "sqlFor": "absent",
-        "transaction": false,
+        "transaction": "absent",
         "verify": "absent",
         "version": 327
       }

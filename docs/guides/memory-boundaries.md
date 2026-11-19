@@ -82,6 +82,20 @@ returns the rendered bullet, and editing or deleting that bullet in the page's
 Timeline section through `edit_page` (with `expected_revision`) refreshes or
 removes its row, because the page is the system of record for timeline rows.
 
+<a id="remote-writes-private-facts"></a>
+## Remote writes and private fact rows
+
+A remote `put_page` never deletes a page's private Facts rows or rewords their claims, the brain owner's included:
+a stored private row its content leaves out comes back, a row it rewords is kept beside the new text, and a row written
+with the same number and claim takes the other cells it writes. So a writer that cannot see those rows cannot lose them,
+whichever view it read, unless either Facts fence fails to parse cleanly: then nothing is merged, rows the content leaves
+out can be lost, and the server logs a warning. The owner withdraws or replaces a claim by naming its row: `recall`
+with `entity: <slug>` and `source_id` looks up the facts filed under that entity with their ids,
+`forget_fact` withdraws one along with every row of that entity stating the same claim, and a `put_page` that
+adds a new `private` row with a different statement adds its replacement. `forget_fact` refuses a fact on or
+about a private page and a row more trusted than remote writes; for those, use the local CLI (`gbrain forget <id>`),
+which also writes a page as given.
+
 <a id="large-pages"></a>
 ## Large pages
 
