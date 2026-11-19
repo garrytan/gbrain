@@ -58,8 +58,10 @@ describe('#9735 slug move census', () => {
   const files = [...new Bun.Glob('src/**/*.ts').scanSync('.')].filter(file => !file.includes('.generated.')).sort();
 
   test('every updateSlug caller is listed, and both engines move through the one implementation that keeps the tier', () => {
-    const callers = files.filter(file => !['src/core/pglite-engine.ts', 'src/core/postgres-engine.ts', 'src/core/engine-sql/pages.ts'].includes(file)
-      && /\.updateSlug\(/.test(source(file)));
+    // The Rust engine's updateSlug member calls the store's own move, which keeps the tier the same way
+    // (test/engine-parity/trust-tier-reads.test.ts pins it on the Rust arm).
+    const engines = ['src/core/pglite-engine.ts', 'src/core/postgres-engine.ts', 'src/core/engine-sql/pages.ts', 'src/core/rust-engine/store-members/aliases.ts'];
+    const callers = files.filter(file => !engines.includes(file) && /\.updateSlug\(/.test(source(file)));
     expect(callers).toEqual(UPDATE_SLUG_CALLERS);
     for (const engine of ['src/core/pglite-engine.ts', 'src/core/postgres-engine.ts']) {
       expect(source(engine)).toMatch(/async updateSlug\([^)]*\)[^{]*\{[^}]*pagesImpl\.updateSlug\(/);

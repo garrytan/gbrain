@@ -51,7 +51,7 @@ use crate::pages::{
     write_page,
 };
 use crate::sources::{read_source, require_source};
-use crate::trust::{TrustPolicy, TrustTier};
+use crate::trust::{TrustPolicy, TrustTable, TrustTier};
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -917,8 +917,17 @@ impl Store {
     ) -> Result<u64> {
         let new_slug = validate_slug(new_slug)?;
         let source = source_id.unwrap_or(DEFAULT_SOURCE);
-        let trust = &self.write_trust()?;
+        // #9735: a move only re-keys the page and the facts that name it, so both keep their tier
+        // (`withTrustKeep(tx, ['pages', 'facts'])` in `engine-sql/pages.ts` `updateSlug`).
+        let mut trust = self.write_trust()?;
+        for table in [TrustTable::Pages, TrustTable::Facts] {
+            if !trust.keep.contains(&table) {
+                trust.keep.push(table);
+            }
+        }
+        let trust = &trust;
         self.write(|tx| {
+            let _keep = crate::write_trust::stamp_context::open(trust.clone());
             let Some(page) = read_page(&*tx, source, old_slug)? else {
                 return Ok(0);
             };
@@ -1137,6 +1146,37 @@ mod tests {
             rows_with_values(&store, "b"),
             vec![("fm".into(), FRONTMATTER.into(), None)]
         );
+    }
+
+    #[test]
+    fn a_slug_move_keeps_the_page_tier_whatever_the_mover_declares() {
+        let store = crate::test_support::store();
+        let declare = |tier: &str| {
+            let names = ["gbrain.write_trust_tier", "gbrain.write_trust_promotion"].map(String::from);
+            store.apply_write_trust(&names, &[tier.to_string(), tier.to_string()]).unwrap();
+        };
+        let tier = |slug: &str| {
+            let read = store.read().unwrap();
+            read_page(&*read, "default", slug).unwrap().unwrap().trust_tier
+        };
+        let input = crate::pages::PageInput {
+            page_type: "note".into(),
+            title: "A".into(),
+            compiled_truth: "body".into(),
+            ..crate::pages::PageInput::default()
+        };
+        declare("agent_written");
+        store
+            .put_page("a", &input, &crate::pages::PutPageOptions::default())
+            .unwrap();
+        assert_eq!(tier("a").as_deref(), Some("agent_written"));
+        // An owner-tier mover does not raise the page; a mover with no declared tier does not lower it.
+        declare("operator_curated");
+        assert_eq!(store.update_slug("a", "b", None).unwrap(), 1);
+        assert_eq!(tier("b").as_deref(), Some("agent_written"));
+        store.clear_write_trust();
+        assert_eq!(store.update_slug("b", "c", None).unwrap(), 1);
+        assert_eq!(tier("c").as_deref(), Some("agent_written"));
     }
 
     #[test]

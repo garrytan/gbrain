@@ -524,4 +524,32 @@ describe('engine parity: typed trust tier reads', () => {
     };
     return { before: await read('2026-03-01'), after: await read('2026-07-01') };
   });
+
+  parityTest(
+    'updateSlug keeps the trust tier of the moved page and the facts it re-keys, whatever tier the mover declares (#9735)',
+    { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'insertFacts', 'updateSlug', 'readPageTrustRows', 'listFactsByEntity'] },
+    async (engine) => {
+      await declared(engine, 'agent_written', async (tx) => {
+        await tx.putPage('people/mover-example', { type: 'person', title: 'Mover Example', compiled_truth: 'A founder.', timeline: '' });
+        await tx.insertFacts([
+          { fact: 'founded acme-example', entity_slug: 'people/mover-example', source_markdown_slug: 'people/mover-example', row_num: 1,
+            kind: 'fact', visibility: 'world', source: 'fence' },
+        ] as never, { source_id: 'default' });
+      });
+      const tiers = async (slug: string) => ({
+        page: (await engine.readPageTrustRows({ keys: [{ source_id: 'default', slug }] })).map(r => r.trust_tier),
+        facts: (await engine.listFactsByEntity('default', slug, { limit: 10 })).map(f => f.trust_tier),
+      });
+      const seeded = await tiers('people/mover-example');
+      expect(seeded).toEqual({ page: ['agent_written'], facts: ['agent_written'] });
+      // An owner-tier mover does not raise the page or its facts, and a mover with no declared tier does not lower them.
+      expect(await declared(engine, 'operator_curated', tx => tx.updateSlug('people/mover-example', 'people/moved-example'))).toBe(1);
+      const raisedMover = await tiers('people/moved-example');
+      expect(await declared(engine, null, tx => tx.updateSlug('people/moved-example', 'people/moved-again-example'))).toBe(1);
+      const plainMover = await tiers('people/moved-again-example');
+      expect(raisedMover).toEqual(seeded);
+      expect(plainMover).toEqual(seeded);
+      return { seeded, raisedMover, plainMover };
+    },
+  );
 });
