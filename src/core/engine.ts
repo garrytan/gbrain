@@ -2,6 +2,7 @@ import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } fro
 import type * as TrustWithdrawalsSql from './engine-sql/trust-withdrawals.ts';
 import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
 import type * as AccessGrantsSql from './engine-sql/access-grants.ts';
+import type * as AccessMembersSql from './engine-sql/access-members.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
 import type * as JobsWake from './engine-sql/jobs-wake.ts';
@@ -1393,6 +1394,30 @@ export interface BrainEngine {
   getWorktreeBinding(sourceId: string, hostId: string | null): Promise<WorktreeBinding | null>;
   hasExtractedEvents(sourceId: string, pageId: number): Promise<boolean>;
   listActiveAccessMembers(): Promise<string[]>;
+  /** Inserts an access member, creates its missing groups, adds it to each and binds the token, in one transaction (engine-sql/access-members.ts). */
+  insertAccessMember(spec: AccessMembersSql.AccessMemberInsert): Promise<{ groupsCreated: string[] }>;
+  /** Disables an access member (an earlier disable time is kept) or enables it. */
+  setAccessMemberDisabled(id: string, disabled: boolean): Promise<void>;
+  /** Sets (or, with null, clears) the email of a member that is not removed; true when a row changed. */
+  setAccessMemberEmail(id: string, email: string | null): Promise<boolean>;
+  /** Sets the kind of a member that is not removed. */
+  setAccessMemberKind(id: string, kind: AccessMembersSql.AccessMemberKind): Promise<void>;
+  /** Marks a member removed (and disabled), clears its email and drops its group memberships, in one transaction. */
+  tombstoneAccessMember(id: string): Promise<void>;
+  /** Creates the group when missing and adds each member, in one transaction; true when the group was created. */
+  addAccessGroupMembers(groupId: string, memberIds: readonly string[]): Promise<boolean>;
+  /** Drops each named member from the group. */
+  removeAccessGroupMembers(groupId: string, memberIds: readonly string[]): Promise<void>;
+  /** Deletes the group and its memberships. */
+  deleteAccessGroup(id: string): Promise<void>;
+  /** The id of the member that declares `email`, or null. */
+  readAccessMemberIdByEmail(email: string): Promise<string | null>;
+  /** A credential's binding columns locked FOR UPDATE (inside the binding's transaction), or undefined. */
+  readCredentialBindingForUpdate(target: AccessMembersSql.CredentialTarget, opts: { readsUnscoped: boolean }): Promise<AccessMembersSql.CredentialBindingRow | undefined>;
+  /** Writes a credential's member, may_act_for and attest columns. */
+  writeCredentialBinding(target: AccessMembersSql.CredentialTarget, binding: AccessMembersSql.CredentialBinding): Promise<void>;
+  /** Sets a credential's reads_unscoped to now() (true) or clears it (false). */
+  writeCredentialReadsUnscoped(target: AccessMembersSql.CredentialTarget, readsUnscoped: boolean): Promise<void>;
   expireMemoryProposals(reason: string): Promise<number>;
   listAwaitingMemoryProposals(limit: number): Promise<Array<Record<string, unknown>>>;
   /** The memory proposal a principal holds under `requestId` (a uuid), as its stored row, or null. */

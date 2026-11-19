@@ -48,6 +48,7 @@ const OOS = {
   importWrites: 'out-of-scope:import-writes (born in engine-sql/chunks.ts, tags.ts, pages.ts; pinned by test/engine-parity/import-writes.test.ts)',
   writeMisc: 'out-of-scope:write-misc (born in engine-sql/write-misc.ts; pinned by test/engine-parity/write-misc.test.ts)',
   accessGrants: 'out-of-scope:access-grants (born in engine-sql/access-grants.ts; pinned by test/engine-parity/access-grants.test.ts)',
+  accessMembers: 'out-of-scope:access-members (born in engine-sql/access-members.ts; pinned by test/engine-parity/access-members.test.ts)',
   journal: 'out-of-scope:persistence-journal (born in engine-sql/persistence-journal.ts, persistence-claims.ts and persistence-housekeeping.ts; pinned by test/engine-parity/persistence.test.ts and test/persistence-journal-statements.test.ts)',
   writeGuards: 'out-of-scope:write-guards (born in engine-sql/write-guards.ts; pinned by test/engine-parity/write-guards.test.ts and test/fold-hook-noop-6712.test.ts)',
   pageVisibility: 'out-of-scope:page-visibility (born in engine-sql/page-visibility.ts; pinned by test/engine-parity/page-visibility.test.ts and test/page-visibility-sql-pin.test.ts)',
@@ -532,7 +533,9 @@ export const DOMAIN_OF: Record<string, string> = {
   'declarePersistence': OOS.persistenceDeclaration,
   'readManagedModeRows': OOS.importGuards, 'getSourceStrictness': OOS.importGuards, 'readPersistenceBrainId': OOS.importGuards,
   'readLocalWriterRow': OOS.importGuards, 'insertLocalWriterRow': OOS.importGuards,
-  'readOAuthClientReceiptGrant': OOS.accessGrants, 'readAccessTokenReceiptGrant': OOS.accessGrants, 'readOAuthClientMemberGrant': OOS.accessGrants, 'readAccessTokenMemberGrant': OOS.accessGrants, 'readLocalWriterMemberGrant': OOS.accessGrants, 'readSharedSkillServingEpoch': OOS.accessGrants, 'readTrustGeneration': OOS.accessGrants, 'readTransactionSettings': OOS.importGuards,
+  'readOAuthClientReceiptGrant': OOS.accessGrants, 'readAccessTokenReceiptGrant': OOS.accessGrants, 'readOAuthClientMemberGrant': OOS.accessGrants, 'readAccessTokenMemberGrant': OOS.accessGrants, 'readLocalWriterMemberGrant': OOS.accessGrants, 'readSharedSkillServingEpoch': OOS.accessGrants, 'readTrustGeneration': OOS.accessGrants, 
+  'insertAccessMember': OOS.accessMembers, 'setAccessMemberDisabled': OOS.accessMembers, 'setAccessMemberEmail': OOS.accessMembers, 'setAccessMemberKind': OOS.accessMembers, 'tombstoneAccessMember': OOS.accessMembers, 'addAccessGroupMembers': OOS.accessMembers, 'removeAccessGroupMembers': OOS.accessMembers, 'deleteAccessGroup': OOS.accessMembers, 'readAccessMemberIdByEmail': OOS.accessMembers, 'readCredentialBindingForUpdate': OOS.accessMembers, 'writeCredentialBinding': OOS.accessMembers, 'writeCredentialReadsUnscoped': OOS.accessMembers,
+  'readTransactionSettings': OOS.importGuards,
   'applyTransactionSettings': OOS.importGuards, 'beginSnapshotRead': OOS.importGuards, 'readLedgerSource': OOS.importGuards, 'isFolderRestricted': OOS.importGuards,
   // the page-write reads and upkeep that belong to no other domain
   'readSourceState': OOS.writeMisc,
@@ -1289,6 +1292,11 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('readLocalWriterMemberGrant', [['default', (e) => e.transaction((tx: any) => tx.readLocalWriterMemberGrant(JOURNAL_REQUEST))]]),
   ...variants('readSharedSkillServingEpoch', [['default', (e) => e.readSharedSkillServingEpoch()]]),
   ...variants('readTrustGeneration', [['default', (e) => e.readTrustGeneration()]]),
+  ...variants('readAccessMemberIdByEmail', [['default', (e) => e.readAccessMemberIdByEmail('a@example.com')]]),
+  ...variants('readCredentialBindingForUpdate', [
+    ['token', (e) => e.transaction((tx: any) => tx.readCredentialBindingForUpdate({ kind: 'token', id: 'token-1' }, { readsUnscoped: false }))],
+    ['client+readsUnscoped', (e) => e.transaction((tx: any) => tx.readCredentialBindingForUpdate({ kind: 'client', id: 'client-1' }, { readsUnscoped: true }))],
+  ]),
   ...variants('insertLocalWriterRow', [
     ['default', (e) => e.insertLocalWriterRow({ id: 'writer-1', lane: 'maintenance', credentialHash: 'hash', grant: { sourceIds: ['default'], operations: null, scopes: [], slugPrefixes: null } })],
   ]),

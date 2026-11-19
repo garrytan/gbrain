@@ -169,6 +169,8 @@ import * as cliReadsImpl from './engine-sql/cli-reads-import.ts';
 import * as writeMiscImpl from './engine-sql/write-misc.ts';
 import * as persistenceStateImpl from './engine-sql/persistence-state.ts';
 import * as accessGrantsImpl from './engine-sql/access-grants.ts';
+import * as accessMembersImpl from './engine-sql/access-members.ts';
+import type * as AccessMembersSql from './engine-sql/access-members.ts';
 import * as persistenceDeclarationImpl from './engine-sql/persistence-declaration.ts';
 import type { DurablePersistenceSettings } from './engine-sql/persistence-declaration.ts';
 import * as persistenceJournalImpl from './engine-sql/persistence-journal.ts';
@@ -1679,6 +1681,18 @@ export class PGLiteEngine implements BrainEngine {
   getWorktreeBinding(sourceId: string, hostId: string | null) { return writeMiscImpl.getWorktreeBinding(this.writeMiscReads, sourceId, hostId); }
   hasExtractedEvents(sourceId: string, pageId: number) { return writeMiscImpl.hasExtractedEvents(this.writeMiscReads, sourceId, pageId); }
   listActiveAccessMembers() { return writeMiscImpl.listActiveAccessMembers(this.writeMiscReads); }
+  insertAccessMember(spec: AccessMembersSql.AccessMemberInsert) { return accessMembersImpl.insertAccessMember(this.engineSql, spec); }
+  setAccessMemberDisabled(id: string, disabled: boolean) { return accessMembersImpl.setAccessMemberDisabled(this.engineSql, id, disabled); }
+  setAccessMemberEmail(id: string, email: string | null) { return accessMembersImpl.setAccessMemberEmail(this.engineSql, id, email); }
+  setAccessMemberKind(id: string, kind: AccessMembersSql.AccessMemberKind) { return accessMembersImpl.setAccessMemberKind(this.engineSql, id, kind); }
+  tombstoneAccessMember(id: string) { return accessMembersImpl.tombstoneAccessMember(this.engineSql, id); }
+  addAccessGroupMembers(groupId: string, memberIds: readonly string[]) { return accessMembersImpl.addAccessGroupMembers(this.engineSql, groupId, memberIds); }
+  removeAccessGroupMembers(groupId: string, memberIds: readonly string[]) { return accessMembersImpl.removeAccessGroupMembers(this.engineSql, groupId, memberIds); }
+  deleteAccessGroup(id: string) { return accessMembersImpl.deleteAccessGroup(this.engineSql, id); }
+  readCredentialBindingForUpdate(target: AccessMembersSql.CredentialTarget, opts: { readsUnscoped: boolean }) { return accessMembersImpl.readCredentialBindingForUpdate(this.engineSql, target, opts); }
+  writeCredentialBinding(target: AccessMembersSql.CredentialTarget, binding: AccessMembersSql.CredentialBinding) { return accessMembersImpl.writeCredentialBinding(this.engineSql, target, binding); }
+  writeCredentialReadsUnscoped(target: AccessMembersSql.CredentialTarget, readsUnscoped: boolean) { return accessMembersImpl.writeCredentialReadsUnscoped(this.engineSql, target, readsUnscoped); }
+  readAccessMemberIdByEmail(email: string) { return accessMembersImpl.readAccessMemberIdByEmail(unscopedExecutor(this.engineSql, 'access members: the email owner read ran unscoped through executeRaw'), email); }
   expireMemoryProposals(reason: string) { return writeMiscImpl.expireMemoryProposals(this.engineSql, reason); }
   listAwaitingMemoryProposals(limit: number) { return writeMiscImpl.listAwaitingMemoryProposals(this.writeMiscReads, limit); }
   readMemoryProposal(principalKind: string, principalId: string, requestId: string) { return writeMiscImpl.readMemoryProposal(this.writeMiscReads, principalKind, principalId, requestId); }

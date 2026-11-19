@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 664/664
+# covered: 676/676
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -33,6 +33,7 @@
 # config: 6/6
 # import_guards: 10/10
 # access_grants: 7/7
+# access_members: 12/12
 # persistence_journal: 44/44
 # entity_reads: 6/6
 # cycle_locks: 7/7
@@ -74,7 +75,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	56	no	yes	yes	serves
+transaction	lifecycle	yes	57	no	yes	yes	serves
 transactionDirect	lifecycle	yes	2	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -341,7 +342,7 @@ replaceDerivedAliases	sync_aliases	yes	11	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
-getConfig	config	yes	10	no	yes	yes	serves
+getConfig	config	yes	14	no	yes	yes	serves
 setConfig	config	yes	24	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
@@ -364,6 +365,18 @@ readAccessTokenMemberGrant	access_grants	yes	1	no	yes	yes	serves
 readLocalWriterMemberGrant	access_grants	yes	4	no	yes	yes	serves
 readSharedSkillServingEpoch	access_grants	yes	2	no	yes	yes	serves
 readTrustGeneration	access_grants	yes	2	no	yes	yes	serves
+insertAccessMember	access_members	yes	7	no	yes	yes	serves
+setAccessMemberDisabled	access_members	yes	1	no	yes	yes	serves
+setAccessMemberEmail	access_members	yes	1	no	yes	yes	serves
+setAccessMemberKind	access_members	yes	1	no	yes	yes	serves
+tombstoneAccessMember	access_members	yes	2	no	yes	yes	serves
+addAccessGroupMembers	access_members	yes	1	no	yes	yes	serves
+removeAccessGroupMembers	access_members	yes	1	no	yes	yes	serves
+deleteAccessGroup	access_members	yes	1	no	yes	yes	serves
+readAccessMemberIdByEmail	access_members	yes	3	no	yes	yes	serves
+readCredentialBindingForUpdate	access_members	yes	1	no	yes	yes	serves
+writeCredentialBinding	access_members	yes	1	no	yes	yes	serves
+writeCredentialReadsUnscoped	access_members	yes	1	no	yes	yes	serves
 declarePersistence	persistence_journal	yes	5	no	yes	yes	serves
 readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldPageRows	persistence_journal	yes	1	no	yes	yes	serves
@@ -667,7 +680,7 @@ sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
 getWorktreeBinding	write_misc	yes	2	no	yes	yes	serves
 hasExtractedEvents	write_misc	yes	1	no	yes	yes	serves
-listActiveAccessMembers	write_misc	yes	1	no	yes	yes	serves
+listActiveAccessMembers	write_misc	yes	5	no	yes	yes	serves
 expireMemoryProposals	write_misc	yes	1	no	yes	yes	serves
 listAwaitingMemoryProposals	write_misc	yes	1	no	yes	yes	serves
 readMemoryProposal	write_misc	yes	2	no	yes	yes	serves

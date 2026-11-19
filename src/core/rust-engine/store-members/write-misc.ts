@@ -60,9 +60,6 @@ export const getWorktreeBinding: StoreMember<[sourceId: string, hostId: string |
 /** The store keeps no chronicle extraction state, so no page has events. */
 export const hasExtractedEvents: StoreMember<[sourceId: string, pageId: number], boolean> = async () => false;
 
-/** The store keeps no access members, so none is active. */
-export const listActiveAccessMembers: StoreMember<[], string[]> = async () => [];
-
 /**
  * The store keeps no access state: no folder rules, no pending coverage and no row-level security (every write of that
  * state is raw SQL, which this engine refuses). A slug is restricted under none of them, so the answer is false, as

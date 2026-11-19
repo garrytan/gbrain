@@ -577,6 +577,18 @@ export const RUST_ENGINE_MEMBERS = {
   // access_control
   isFolderRestricted: 'access_control',
   listActiveAccessMembers: 'access_control',
+  insertAccessMember: 'access_control',
+  setAccessMemberDisabled: 'access_control',
+  setAccessMemberEmail: 'access_control',
+  setAccessMemberKind: 'access_control',
+  tombstoneAccessMember: 'access_control',
+  addAccessGroupMembers: 'access_control',
+  removeAccessGroupMembers: 'access_control',
+  deleteAccessGroup: 'access_control',
+  readAccessMemberIdByEmail: 'access_control',
+  readCredentialBindingForUpdate: 'access_control',
+  writeCredentialBinding: 'access_control',
+  writeCredentialReadsUnscoped: 'access_control',
   // pages: entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts)
   readMentionLastPass: 'pages',
   countPagesDueForMentions: 'pages',

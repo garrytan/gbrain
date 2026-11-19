@@ -74,6 +74,7 @@ import * as telemetry from './telemetry.ts';
 import * as importMembers from './import-members.ts';
 import * as fieldUsage from './field-usage.ts';
 import * as accessGrants from './access-grants.ts';
+import * as accessMembers from './access-members.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -123,6 +124,8 @@ export const STORE_MEMBERS = {
   ...fieldUsage,
   // The access-grant reads and the request-id lookup of the receipt operations (rust/docs/store/persistence.md).
   ...accessGrants,
+  // The access member and group writes and the active-member read (rust/docs/store/access-members.md).
+  ...accessMembers,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;
