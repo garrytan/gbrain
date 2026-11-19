@@ -367,6 +367,31 @@ pub(crate) fn held_narrower(read: &dyn KvRead, fact_id: u64) -> Result<bool> {
     Ok(false)
 }
 
+/// The contested reference of one fact or take row (eligibility/sql.ts `contestedRefSql`): the
+/// lowest-id pending `supersede_fact` or `supersede_take` proposal naming it, as `tp<id>:challenger`
+/// when the row is the proposal's related row and `tp<id>:challenged` otherwise; `None` when no
+/// such proposal names it.
+pub(crate) fn contested_ref(read: &dyn KvRead, table: &str, row_id: i64) -> Result<Option<String>> {
+    for id in ids_naming(read, table, row_id)? {
+        let Some(p) = read_record(read, id)? else {
+            return Err(corrupt("row index entry without its row"));
+        };
+        if p.status == "pending"
+            && matches!(p.action.as_str(), "supersede_fact" | "supersede_take")
+            && p.names(table, row_id)
+        {
+            let side = if p.related_table.as_deref() == Some(table) && p.related_id == Some(row_id)
+            {
+                "challenger"
+            } else {
+                "challenged"
+            };
+            return Ok(Some(format!("tp{}:{side}", p.id)));
+        }
+    }
+    Ok(None)
+}
+
 impl Store {
     /// `insertTrustProposal(input)`: inserts a pending proposal and returns `{ id, created: true }`,
     /// or returns the pending proposal already recorded for the same action, target and related
