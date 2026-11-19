@@ -5,11 +5,11 @@
  * page policy, the temporal annotation and the keyset page of `LinkReadScope`.
  */
 import type { LinkBatchInput } from '../../engine.ts';
-import { annotateTemporalRow, isCalendarDate, isTemporalLinkType, type EdgeTemporalOpts, type LinkReadPage, type LinkReadScope } from '../../link-validity.ts';
+import { annotateTemporalRow, isTemporalLinkType, type EdgeTemporalOpts, type LinkReadPage, type LinkReadScope } from '../../link-validity.ts';
 import type { Link } from '../../types.ts';
 import type { StoreBrain } from '../store.ts';
 import { storeCall, takeOptions, throwIfAborted, type StoreMember } from './common.ts';
-import { linkRelationshipKeysTouching, refreshOnStore } from './link-refresh.ts';
+import { checkTemporalDates, linkRelationshipKeysTouching, refreshOnStore } from './link-refresh.ts';
 import { storePagePolicy } from './private-provenance.ts';
 
 type EndpointSources = { fromSourceId?: string; toSourceId?: string; originSourceId?: string };
@@ -51,16 +51,6 @@ export const removeLink: StoreMember<[from: string, to: string, linkType?: strin
     if (removed) await refreshOnStore(brain, before);
     return removed;
   };
-
-/** `dateLiteral` of link-validity.ts: the dates `relationshipFilterSql` would inline, checked in the order it renders them. */
-export function checkTemporalDates(policy: EdgeTemporalOpts | undefined): void {
-  if (!policy) return;
-  const status = policy.status ?? 'live';
-  if (policy.disabled || (status === 'all' && !policy.during)) return;
-  for (const date of [policy.asOf, policy.during?.from, policy.during?.until]) {
-    if (date !== undefined && !isCalendarDate(date)) throw new TypeError(`temporal edge filter: invalid date ${JSON.stringify(date)}`);
-  }
-}
 
 /**
  * `getLinks` / `getBacklinks`: the store applies the page policy, the keyset page and the temporal match, and returns
