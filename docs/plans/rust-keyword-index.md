@@ -62,16 +62,20 @@ Baseline on this plan's base (`4fe3c2e075`), same harness and corpus, this sandb
 
 | Member | 10k chunks p50 / p99 | 200k chunks p50 / p99 | Peak RSS at 200k (MiB) |
 |---|---|---|---|
-| arm | 43.8 / 48.7 | pending | pending |
-| chunks | 40.3 / 42.5 | pending | pending |
-| pages_count | 41.3 / 47.2 | pending | pending |
-| pages_search | 42.3 / 53.6 | pending | pending |
-| titles | 15.9 / 16.4 | pending | pending |
-| titles_complete | 14.1 / 19.5 | pending | pending |
-| fuzzy | 13.2 / 19.9 | pending | pending |
+| arm | 43.8 / 48.7 | 8,121 / 8,868 | 650 |
+| chunks | 40.3 / 42.5 | 7,764 / 8,182 | 667 |
+| pages_count | 41.3 / 47.2 | 7,649 / 7,738 | 648 |
+| pages_search | 42.3 / 53.6 | 7,774 / 8,145 | 648 |
+| titles | 15.9 / 16.4 | 540 / 663 | 454 |
+| titles_complete | 14.1 / 19.5 | 497 / 508 | 435 |
+| fuzzy | 13.2 / 19.9 | 394 / 469 | 359 |
 
 The 10k run shared the CPU with a test gate, so it is slower than core's 13 to 27 ms. The 200k
-load took 131 s here (core: about 93 s) and the store is 824 MiB.
+run had the machine to itself (30 queries, fuzzy 35, last of 2 passes). It is about 11 to 35%
+slower than core's numbers, the same shape: the four page and chunk keyword members are 15 to 18
+times over the 500 ms p99 bound, and the title members are over the 100 ms p50 bound and near or
+over the p99 bound. The 200k load took 131 s here (core: about 93 s) and the store is 824 MiB.
+Peak RSS is 359 to 667 MiB against the 824 MiB store.
 
 ## Owner's words
 
