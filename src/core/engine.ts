@@ -181,6 +181,14 @@ export interface FactReadableSpec {
   id: number; sourceId: string; anyVisibility: boolean;
   eligibility: import('./eligibility/policy.ts').ReadEligibility | undefined; excludePrivate: boolean;
 }
+/**
+ * `readForgetTarget`: the fact a forget names. `ownPage` (a member's own member page) reads only a private fact on that
+ * page while the live page names the member; otherwise `worldOnly` keeps world facts and `remoteFloor` adds the remote
+ * provenance floor. `lock` takes the row FOR UPDATE.
+ */
+export interface ForgetTargetSpec { id: number; sourceId: string; worldOnly: boolean; remoteFloor: boolean; lock: boolean; ownPage: string | null }
+/** The fact row `readForgetTarget` answers. */
+export interface ForgetTargetRow { id: number; entity_slug: string | null; source_markdown_slug: string | null; row_num: number | null; expired_at: Date | null; trust_tier: string | null }
 /** `readGuestSourceRow`: the source's guest_sources row (null fields without one) and whether row-level security hides guest_sources. */
 export interface GuestSourceLookupRow { hidden: boolean; source_id: string | null; writers: string[] | null; trust_ceiling: string | null }
 /** `readPageTrustRows` input: page ids, and (source_id, slug) keys read live unless `includeDeleted`. */
@@ -3905,6 +3913,8 @@ export interface BrainEngine {
   factReadableUnder(spec: FactReadableSpec): Promise<boolean>;
   /** The stored tier of a world fact of the source a remote forget targets, under the remote provenance floor with `remoteFloor`; null when none. */
   readRemoteForgetTier(spec: { factId: number; sourceId: string; remoteFloor: boolean }): Promise<string | null>;
+  /** The fact a forget names under the caller's visibility (ForgetTargetSpec); null when the caller does not see it. */
+  readForgetTarget(spec: ForgetTargetSpec): Promise<ForgetTargetRow | null>;
 
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 5 populates, Layer 7 consumes)

@@ -513,6 +513,7 @@
           "readFactForOwnerAction: (id: number) => Promise<OwnerActionFactRow | null>",
           "readFactSubject: (id: number) => Promise<FactSubjectRow | null>",
           "readFieldUsageSamples: (query: FieldUsageQuery) => Promise<FieldUsageTypeSample[]>",
+          "readForgetTarget: (spec: ForgetTargetSpec) => Promise<ForgetTargetRow | null>",
           "readGlobalMaintenanceDeaths: (spec: { deaths: number; }) => Promise<GlobalMaintenanceDeaths>",
           "readGraduationGateRow: (opts?: { withRunSetting?: boolean; }) => Promise<GraduationGateRow | null>",
           "readGuestSourceRow: (sourceId: string) => Promise<GuestSourceLookupRow>",
@@ -2053,6 +2054,7 @@
           "readFactForOwnerAction: (id: number) => Promise<OwnerActionFactRow | null>",
           "readFactSubject: (id: number) => Promise<FactSubjectRow | null>",
           "readFieldUsageSamples: (query: FieldUsageQuery) => Promise<FieldUsageTypeSample[]>",
+          "readForgetTarget: (spec: ForgetTargetSpec) => Promise<ForgetTargetRow | null>",
           "readGlobalMaintenanceDeaths: (spec: { deaths: number; }) => Promise<GlobalMaintenanceDeaths>",
           "readGraduationGateRow: (opts?: { withRunSetting?: boolean; }) => Promise<GraduationGateRow | null>",
           "readGuestSourceRow: (sourceId: string) => Promise<GuestSourceLookupRow>",
@@ -5019,6 +5021,7 @@
           "readFactForOwnerAction: (id: number) => Promise<FactsTrustSql.OwnerActionFactRow | null>",
           "readFactSubject: (id: number) => Promise<FactsCycleSql.FactSubjectRow | null>",
           "readFieldUsageSamples: (query: FieldUsageQuery) => Promise<FieldUsageTypeSample[]>",
+          "readForgetTarget: (spec: ForgetTargetSpec) => Promise<ForgetTargetRow | null>",
           "readGlobalMaintenanceDeaths: (spec: { deaths: number; }) => Promise<GlobalMaintenanceDeaths>",
           "readGraduationGateRow: (opts?: { withRunSetting?: boolean; }) => Promise<GraduationGateRow | null>",
           "readGuestSourceRow: (sourceId: string) => Promise<GuestSourceLookupRow>",
@@ -5439,6 +5442,30 @@
           "storage_path: string"
         ],
         "name": "FileSpec"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "entity_slug: string | null",
+          "expired_at: Date | null",
+          "id: number",
+          "row_num: number | null",
+          "source_markdown_slug: string | null",
+          "trust_tier: string | null"
+        ],
+        "name": "ForgetTargetRow"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "id: number",
+          "lock: boolean",
+          "ownPage: string | null",
+          "remoteFloor: boolean",
+          "sourceId: string",
+          "worldOnly: boolean"
+        ],
+        "name": "ForgetTargetSpec"
       },
       {
         "kind": "interface",
@@ -9169,6 +9196,7 @@
           "readFactForOwnerAction: (id: number) => Promise<factsTrustImpl.OwnerActionFactRow | null>",
           "readFactSubject: (id: number) => Promise<factsCycleImpl.FactSubjectRow | null>",
           "readFieldUsageSamples: (query: fieldUsageImpl.FieldUsageQuery) => Promise<fieldUsageImpl.FieldUsageTypeSample[]>",
+          "readForgetTarget: (spec: ForgetTargetSpec) => Promise<ForgetTargetRow | null>",
           "readGlobalMaintenanceDeaths: (spec: { deaths: number; }) => Promise<jobsChecks.GlobalMaintenanceDeaths>",
           "readGraduationGateRow: (opts?: { withRunSetting?: boolean; }) => Promise<connectGateImpl.GraduationGateRow | null>",
           "readGuestSourceRow: (sourceId: string) => Promise<GuestSourceLookupRow>",

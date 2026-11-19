@@ -104,6 +104,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'hasLiveFileBackedPage': OOS.memoryMutationReads,
   'factReadableUnder': OOS.memoryMutationReads,
   'readRemoteForgetTier': OOS.memoryMutationReads,
+  'readForgetTarget': OOS.memoryMutationReads,
   'closeOpenLoop': OOS.openLoops,
   'listOpenLoops': OOS.openLoops,
   'upsertOpenLoop': OOS.openLoops,

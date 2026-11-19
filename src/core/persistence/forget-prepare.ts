@@ -105,12 +105,7 @@ export async function ownerReachesFact(engine: BrainEngine, id: number, sourceId
  * the page names the member among its readers; the coordinator checks the page's visibility to the stored writer.
  */
 export async function readForgetTarget(engine: BrainEngine, id: number, sourceId: string, remote: boolean, excludePrivate: boolean, lock = false, ownPage: string | null = null) {
-  const [fact] = await engine.executeRaw<ForgetTarget & { source_markdown_slug: string | null; row_num: number | null; expired_at: Date | null }>(`SELECT id,entity_slug,source_markdown_slug,row_num,expired_at,trust_tier FROM facts
-    WHERE id=$1 AND source_id=$2 AND ${ownPage ? `visibility='private' AND source_markdown_slug=$3 AND EXISTS (SELECT 1 FROM pages member_page
-      WHERE member_page.source_id=facts.source_id AND member_page.slug=$3 AND member_page.deleted_at IS NULL AND member_page.page_readers && ARRAY[$4::text])`
-    : `($3::boolean=false OR visibility='world')${excludePrivate ? ` AND ${remoteProvenanceFloorSql('facts')}` : ''}`}${lock ? ' FOR UPDATE' : ''}`,
-  ownPage ? [id, sourceId, ownPage, `member:${ownPage.slice(MEMBER_PAGE_PREFIX.length)}`] : [id, sourceId, remote]);
-  return fact ?? null;
+  return engine.readForgetTarget({ id, sourceId, worldOnly: remote, remoteFloor: excludePrivate, lock, ownPage });
 }
 
 export async function prepareForgetMutation(engine: BrainEngine, row: WriteRequest, _config: GBrainConfig, signal?: AbortSignal): Promise<PreparedMutation> {

@@ -736,6 +736,7 @@ export const RUST_ENGINE_MEMBERS = {
   hasLiveFileBackedPage: 'pages',
   factReadableUnder: 'facts',
   readRemoteForgetTier: 'facts',
+  readForgetTarget: 'facts',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

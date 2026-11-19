@@ -1,11 +1,13 @@
 //! The reads `remember` and `forget` make before admission (`memory_mutation_reads.rs`): the source write row and
 //! checkout, a fact's entity, a live file-backed page among slugs, whether a caller reads a fact, and the tier of the
-//! world fact a remote forget targets.
+//! world fact a remote forget targets, and the fact a forget names.
 
 mod memory_env;
 
 use gbrain_store::facts::InsertFactsArgs;
-use gbrain_store::memory_mutation_reads::{FactReadableQuery, RemoteFloor, RemoteForgetTierQuery};
+use gbrain_store::memory_mutation_reads::{
+    FactReadableQuery, ForgetTargetQuery, OwnPage, RemoteFloor, RemoteForgetTierQuery,
+};
 use gbrain_store::sources::SourceInput;
 use memory_env::{Brain, brain};
 use serde_json::{Value, json};
@@ -240,4 +242,73 @@ fn a_remote_forget_reads_the_tier_of_a_world_fact_under_the_remote_floor() {
     };
     assert_eq!(named(true), None);
     assert_eq!(named(false), None);
+}
+
+#[test]
+fn the_forget_target_reads_under_visibility_the_floor_and_a_member_page() {
+    let b = brain("memory-mutation-reads-forget-target");
+    source(&b, "other", None, json!({}));
+    page(&b, "notes/open", json!({}), None);
+    page(
+        &b,
+        "notes/private",
+        json!({ "visibility": "private" }),
+        None,
+    );
+    page(
+        &b,
+        "memory/members/alice-example",
+        json!({ "readable_by": ["member:alice-example"] }),
+        None,
+    );
+    let world = fact(&b, "default", "open world", "notes/open", "world", 1);
+    let private = fact(&b, "default", "open private", "notes/open", "private", 2);
+    let hidden = fact(
+        &b,
+        "default",
+        "on private page",
+        "notes/private",
+        "world",
+        3,
+    );
+    let mine = fact(
+        &b,
+        "default",
+        "alice private",
+        "memory/members/alice-example",
+        "private",
+        4,
+    );
+    let read = |id: u64, world_only: bool, floor: bool, own: Option<&str>| {
+        b.read_forget_target(&ForgetTargetQuery {
+            id: id as i64,
+            source_id: "default".into(),
+            world_only,
+            remote_floor: floor.then_some(RemoteFloor {
+                honor_aliases: true,
+                restricted: true,
+            }),
+            own_page: own.map(|slug| OwnPage {
+                slug: slug.into(),
+                reader: "member:alice-example".into(),
+            }),
+        })
+        .unwrap()
+    };
+    let row = read(world, false, false, None).expect("the owner reads a world fact");
+    assert_eq!(row["id"], json!(world));
+    assert_eq!(row["entity_slug"], json!("people/e-example"));
+    assert_eq!(row["source_markdown_slug"], json!("notes/open"));
+    assert_eq!(row["row_num"], json!(1));
+    assert_eq!(row["expired_at"], Value::Null);
+    assert!(read(private, false, false, None).is_some());
+    assert!(read(private, true, false, None).is_none());
+    assert!(read(hidden, true, false, None).is_some());
+    assert!(read(hidden, true, true, None).is_none());
+    assert!(read(world, true, true, None).is_some());
+    let own = Some("memory/members/alice-example");
+    assert!(read(mine, true, false, own).is_some());
+    assert!(read(world, true, false, own).is_none());
+    assert!(read(mine, true, false, Some("notes/open")).is_none());
+    assert!(read(world + 100, false, false, None).is_none());
 }

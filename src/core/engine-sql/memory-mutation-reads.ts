@@ -12,9 +12,11 @@
  *   read eligibility and, optionally, the private-provenance policy.
  * - `readRemoteForgetTier`: the stored tier of the world fact a remote forget targets
  *   (guardRemoteForget, src/core/trust/supersede-handlers.ts), optionally under the remote provenance floor.
+ * - `readForgetTarget`: the fact a forget names (src/core/persistence/forget-prepare.ts) under the caller's visibility,
+ *   optionally under the remote provenance floor, or on a member's own page; locked FOR UPDATE with `lock`.
  */
-import type { BrainEngine, FactReadableSpec, SourceWriteRow } from '../engine.ts';
-import { factVisibilitySql } from '../access/member-facts.ts';
+import type { BrainEngine, FactReadableSpec, ForgetTargetRow, ForgetTargetSpec, SourceWriteRow } from '../engine.ts';
+import { MEMBER_PAGE_PREFIX, factVisibilitySql } from '../access/member-facts.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { privateProvenanceFilterUnderPolicy, remoteProvenanceFloorSql } from '../search/private-visibility.ts';
 import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
@@ -75,4 +77,21 @@ export async function readRemoteForgetTier(exec: Raw, spec: { factId: number; so
   const [row] = await rows<{ trust_tier: string }>(exec,
     sqlFragment`SELECT trust_tier FROM facts WHERE id = ${spec.factId} AND source_id = ${spec.sourceId} AND visibility = 'world'${trustedSql(floor)}`);
   return row?.trust_tier ?? null;
+}
+
+/**
+ * The fact `id` of `sourceId` a forget names, or null when the caller does not see it. With `ownPage` (a member's
+ * withdrawal on its own member page) only a private fact on that page while the live page names the member among its
+ * readers; otherwise any fact, only a world one with `worldOnly`, and with `remoteFloor` only one that passes the
+ * remote provenance floor (remoteProvenanceFloorSql, rendered for the caller in context). `lock` adds FOR UPDATE.
+ * The text is the one forget-prepare.ts ran, except that the member page's slug binds twice ($3 and $4), not once.
+ */
+export async function readForgetTarget(exec: Raw, spec: ForgetTargetSpec): Promise<ForgetTargetRow | null> {
+  const own = spec.ownPage;
+  const scope = own
+    ? sqlFragment`visibility='private' AND source_markdown_slug=${own} AND EXISTS (SELECT 1 FROM pages member_page\n      WHERE member_page.source_id=facts.source_id AND member_page.slug=${own} AND member_page.deleted_at IS NULL AND member_page.page_readers && ARRAY[${`member:${own.slice(MEMBER_PAGE_PREFIX.length)}`}::text])`
+    : sqlFragment`(${spec.worldOnly}::boolean=false OR visibility='world')${trustedSql(spec.remoteFloor ? ` AND ${remoteProvenanceFloorSql('facts')}` : '')}`;
+  const [row] = await rows<ForgetTargetRow>(exec,
+    sqlFragment`SELECT id,entity_slug,source_markdown_slug,row_num,expired_at,trust_tier FROM facts\n    WHERE id=${spec.id} AND source_id=${spec.sourceId} AND ${scope}${trustedSql(spec.lock ? ' FOR UPDATE' : '')}`);
+  return row ?? null;
 }

@@ -1,5 +1,5 @@
 //! The reads `remember` and `forget` make before admission: `readSourceWriteRow`, `readSourceLocalPath`,
-//! `readFactEntitySlug`, `hasLiveFileBackedPage`, `factReadableUnder` and `readRemoteForgetTier`.
+//! `readFactEntitySlug`, `hasLiveFileBackedPage`, `factReadableUnder`, `readRemoteForgetTier` and `readForgetTarget`.
 //!
 //! One `#[napi] impl Brain` block; each method runs one `gbrain_store::memory_mutation_reads` call on the pool through
 //! `Brain::run` and resolves plain JSON. The TypeScript members
@@ -11,7 +11,9 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
-use gbrain_store::memory_mutation_reads::{FactReadableQuery, RemoteForgetTierQuery};
+use gbrain_store::memory_mutation_reads::{
+    FactReadableQuery, ForgetTargetQuery, RemoteForgetTierQuery,
+};
 
 #[napi]
 impl Brain {
@@ -82,6 +84,19 @@ impl Brain {
         self.run(env, move |s| {
             let q: RemoteForgetTierQuery = required(spec, "readRemoteForgetTier spec")?;
             s.read_remote_forget_tier(&q)
+        })
+    }
+
+    /// `readForgetTarget(spec)`: resolves the fact row a forget names, or `null`.
+    #[napi]
+    pub fn read_forget_target<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: ForgetTargetQuery = required(spec, "readForgetTarget spec")?;
+            s.read_forget_target(&q)
         })
     }
 }

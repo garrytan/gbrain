@@ -1,8 +1,9 @@
 /**
  * The reads `remember` and `forget` make before admission (src/core/engine-sql/memory-mutation-reads.ts), served from
  * the store (rust/crates/gbrain-store/src/memory_mutation_reads.rs): `readSourceWriteRow` and `readSourceLocalPath`
- * over the source record, `readFactEntitySlug`, `factReadableUnder` and `readRemoteForgetTier` over the fact rows,
- * and `hasLiveFileBackedPage` over the page records.
+ * over the source record, `readFactEntitySlug`, `factReadableUnder`, `readRemoteForgetTier` and `readForgetTarget`
+ * over the fact rows, and `hasLiveFileBackedPage` over the page records. `readForgetTarget`'s `lock` (FOR UPDATE)
+ * changes nothing here: one store call reads under the store's own lock.
  *
  * Refused (`engine_capability_missing`):
  *  - a fact id that is not an integer, rather than guess at Postgres's bind error;
@@ -12,10 +13,11 @@
  *  - `readRemoteForgetTier` under `remoteFloor` for a caller whose remote provenance floor (remoteProvenanceFloorSql)
  *    is none of the forms the store models: the floor with no caller record, or a caller record on a brain with or
  *    without member-access restrictions, for the owner or not, at the caller's schema version. A labelled-only caller,
- *    folder coverage or a relaxed privacy setting renders other text.
+ *    folder coverage or a relaxed privacy setting renders other text. `readForgetTarget` under `remoteFloor` refuses the same.
  */
-import type { BrainEngine } from '../../engine.ts';
-import { factVisibilitySql } from '../../access/member-facts.ts';
+import type { BrainEngine, ForgetTargetRow } from '../../engine.ts';
+import { MEMBER_PAGE_PREFIX, factVisibilitySql } from '../../access/member-facts.ts';
+import { withDates } from '../store-codec.ts';
 import {
   currentCallerAccess, privacyAliasSql, privateProvenanceFilterUnderPolicy, remoteProvenanceFloorSql, withCallerAccess, withoutCallerAccess,
 } from '../../search/private-visibility.ts';
@@ -87,4 +89,19 @@ export const readRemoteForgetTier: Member<'readRemoteForgetTier'> = (brain, spec
   requireInteger(member, spec.factId);
   const remoteFloor = spec.remoteFloor ? storeRemoteFloor(member) : null;
   return storeCall({ member }, () => brain.readRemoteForgetTier({ factId: spec.factId, sourceId: spec.sourceId, remoteFloor }));
+};
+
+export const readForgetTarget: Member<'readForgetTarget'> = async (brain, spec) => {
+  const member = 'readForgetTarget';
+  requireInteger(member, spec.id);
+  const own = spec.ownPage;
+  const remoteFloor = !own && spec.remoteFloor ? storeRemoteFloor(member) : null;
+  const row = await storeCall({ member }, () => brain.readForgetTarget({
+    id: spec.id,
+    sourceId: spec.sourceId,
+    worldOnly: spec.worldOnly,
+    remoteFloor,
+    ownPage: own ? { slug: own, reader: `member:${own.slice(MEMBER_PAGE_PREFIX.length)}` } : null,
+  }));
+  return row ? withDates(row as ForgetTargetRow, ['expired_at']) : null;
 };

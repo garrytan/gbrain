@@ -6,7 +6,9 @@
  * Protects: each member's recorded text and params equal the old raw statement byte for byte, including the
  * factReadableUnder text with and without the private-provenance clause and under the owner's any-visibility rule, and
  * the remote forget guard's tier read (guardRemoteForget, src/core/trust/supersede-handlers.ts) with and without the
- * remote provenance floor.
+ * remote provenance floor, and the forget target read (src/core/persistence/forget-prepare.ts) in each form: any or world
+ * visibility, the remote floor, a member's own page (whose slug now binds twice, $3 and $4, where the raw text reused $3)
+ * and FOR UPDATE.
  * Fails when a member reorders a clause, renumbers a placeholder or binds a value as text.
  * No database: the engine runs on the recording fake.
  */
@@ -74,4 +76,23 @@ test('readRemoteForgetTier sends the old remote forget guard read, with and with
   expect(last()).toEqual({ text: old(''), params: [9, 'src-a'] });
   await engine.readRemoteForgetTier({ factId: 9, sourceId: 'src-a', remoteFloor: true });
   expect(last()).toEqual({ text: old(` AND ${remoteProvenanceFloorSql('facts')}`), params: [9, 'src-a'] });
+});
+
+test('readForgetTarget sends the forget target read, under the floor, on a member page and locked', async () => {
+  const { engine, last } = recordingEngine();
+  const head = 'SELECT id,entity_slug,source_markdown_slug,row_num,expired_at,trust_tier FROM facts\n    WHERE id=$1 AND source_id=$2 AND ';
+  const base = { id: 5, sourceId: 'src-a', worldOnly: true, remoteFloor: false, lock: false, ownPage: null };
+  await engine.readForgetTarget(base);
+  expect(last()).toEqual({ text: `${head}($3::boolean=false OR visibility='world')`, params: [5, 'src-a', true] });
+  await engine.readForgetTarget({ ...base, worldOnly: false, remoteFloor: true, lock: true });
+  expect(last()).toEqual({
+    text: `${head}($3::boolean=false OR visibility='world') AND ${remoteProvenanceFloorSql('facts')} FOR UPDATE`,
+    params: [5, 'src-a', false],
+  });
+  const own = 'memory/members/alice-example';
+  await engine.readForgetTarget({ ...base, remoteFloor: true, ownPage: own });
+  expect(last()).toEqual({
+    text: `${head}visibility='private' AND source_markdown_slug=$3 AND EXISTS (SELECT 1 FROM pages member_page\n      WHERE member_page.source_id=facts.source_id AND member_page.slug=$4 AND member_page.deleted_at IS NULL AND member_page.page_readers && ARRAY[$5::text])`,
+    params: [5, 'src-a', own, own, 'member:alice-example'],
+  });
 });

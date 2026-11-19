@@ -1,19 +1,21 @@
 //! The reads `remember` and `forget` make before admission (src/core/engine-sql/memory-mutation-reads.ts):
 //! `readSourceWriteRow`, `readSourceLocalPath`, `readFactEntitySlug`, `hasLiveFileBackedPage`,
-//! `factReadableUnder` and `readRemoteForgetTier`. Each answers from the source, fact and page records the other families write.
+//! `factReadableUnder`, `readRemoteForgetTier` and `readForgetTarget`. Each answers from the source, fact and page records the other families write.
 //!
 //! The TypeScript member (src/core/rust-engine/store-members/memory-mutation-reads.ts) refuses what the store does not
 //! model: a fact id that is not an integer, and a `factReadableUnder` read whose visibility rule a member page or a
 //! private-facts grant widens for the caller, and a `readRemoteForgetTier` read whose remote provenance floor is not
-//! the no-caller one.
+//! the no-caller one or a caller record's restricted, unrestricted or owner one (the same refusal covers
+//! `readForgetTarget` under its floor).
 
 use crate::Store;
 use crate::cli_reads::pg_text::fm_text;
+use crate::env::iso;
 use crate::error::Result;
 use crate::facts::PrivacyPolicy;
 use crate::facts::{
-    hidden_by_deleted_page, hidden_by_policy, hidden_by_provenance_page, hidden_by_quarantine,
-    read_fact,
+    access_readers, hidden_by_deleted_page, hidden_by_policy, hidden_by_provenance_page,
+    hidden_by_quarantine, read_fact,
 };
 use crate::links::no_nul;
 use crate::pages::read_page;
@@ -57,6 +59,29 @@ pub struct RemoteFloor {
     pub honor_aliases: bool,
     /// The caller record's `restricted` flag: whether the brain holds member-access restrictions.
     pub restricted: bool,
+}
+
+/// `readForgetTarget(spec)`; `lock` (FOR UPDATE) is dropped by the TypeScript member: one store
+/// call reads under the store's own lock.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ForgetTargetQuery {
+    pub id: i64,
+    pub source_id: String,
+    /// `worldOnly`: only a `world` fact (a remote caller that is not the owner).
+    pub world_only: bool,
+    /// `remoteFloor`: the remote provenance floor, as [`RemoteForgetTierQuery::remote_floor`].
+    pub remote_floor: Option<RemoteFloor>,
+    /// `ownPage`: a member's withdrawal on its own member page.
+    pub own_page: Option<OwnPage>,
+}
+
+/// A member's own member page and the principal (`member:<id>`) its readers must name.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OwnPage {
+    pub slug: String,
+    pub reader: String,
 }
 
 impl Store {
@@ -161,5 +186,63 @@ impl Store {
             }
         }
         Ok(Some(row.tier().as_str().to_owned()))
+    }
+
+    /// `readForgetTarget`: fact `id` of `source_id` as a forget reads it (id, entity_slug,
+    /// source_markdown_slug, row_num, expired_at, trust_tier), or `None` when the caller does not
+    /// see it. With `own_page`: a `private` fact whose `source_markdown_slug` is that page while the
+    /// live page's readers (`page_readers`, [`access_readers`]) name the member. Otherwise a fact of
+    /// any visibility, only a `world` one with `world_only`, and with `remote_floor` one whose
+    /// provenance page passes the floor as [`Store::read_remote_forget_tier`] judges it.
+    pub fn read_forget_target(&self, q: &ForgetTargetQuery) -> Result<Option<Value>> {
+        const OP: &str = "readForgetTarget";
+        no_nul(OP, &[("sourceId", &q.source_id)])?;
+        if let Some(own) = &q.own_page {
+            no_nul(OP, &[("ownPage", &own.slug), ("reader", &own.reader)])?;
+        }
+        let Ok(id) = u64::try_from(q.id) else {
+            return Ok(None);
+        };
+        let read = self.read()?;
+        let Some(row) = read_fact(&*read, id)? else {
+            return Ok(None);
+        };
+        if row.source_id != q.source_id {
+            return Ok(None);
+        }
+        let seen = match &q.own_page {
+            Some(own) => {
+                row.visibility == "private"
+                    && row.source_markdown_slug.as_deref() == Some(own.slug.as_str())
+                    && read_page(&*read, &q.source_id, &own.slug)?.is_some_and(|p| {
+                        p.deleted_at_us.is_none()
+                            && access_readers(&p.frontmatter)
+                                .is_some_and(|readers| readers.contains(&own.reader))
+                    })
+            }
+            None => {
+                (!q.world_only || row.visibility == "world")
+                    && match &q.remote_floor {
+                        Some(floor) => {
+                            let policy = PrivacyPolicy {
+                                honor_aliases: floor.honor_aliases,
+                                ..PrivacyPolicy::default()
+                            };
+                            !hidden_by_provenance_page(&*read, &row, &policy, floor.restricted)?
+                        }
+                        None => true,
+                    }
+            }
+        };
+        Ok(seen.then(|| {
+            json!({
+                "id": row.id,
+                "entity_slug": row.entity_slug,
+                "source_markdown_slug": row.source_markdown_slug,
+                "row_num": row.row_num,
+                "expired_at": row.expired_at_us.map(iso),
+                "trust_tier": row.tier().as_str(),
+            })
+        }))
     }
 }

@@ -873,7 +873,8 @@ Facts and their supersession chains.
     conversation relink's page pick, reads the source's `F 0x01` rows and the tried memos.
   - The reads `remember` and `forget` make before admission are typed members (`engine-sql/memory-mutation-reads.ts`:
     `readSourceWriteRow`, `readSourceLocalPath`, `readFactEntitySlug`, `hasLiveFileBackedPage`, `factReadableUnder`,
-    and `readRemoteForgetTier` for the remote forget guard in `trust/supersede-handlers.ts`).
+    `readRemoteForgetTier` for the remote forget guard in `trust/supersede-handlers.ts`, and `readForgetTarget` for the
+    fact a forget names in `persistence/forget-prepare.ts`).
     The store serves them from the source, `F 0x01` and page records (`memory_mutation_reads.rs`, no new key prefix;
     rust/docs/store/memory_mutation_reads.md). The member refuses a non-integer fact id and a caller whose world rule
     a member page or a private-facts grant widens, and a remote provenance floor that is not the no-caller one. Pinned by `test/engine-parity/memory-mutation-reads.test.ts`.
