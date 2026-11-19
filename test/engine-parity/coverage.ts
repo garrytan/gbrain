@@ -181,6 +181,10 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listSegmentedPurgeBodies', 'countLegacyDerivedPages', 'listPageSourcePaths', 'listFactNeighbours', 'setPurgeProbeTimeout',
     'countPurgeProbe', 'listPurgeProbeItems'],
 
+  // projection_rebuild: a page projection rebuild's queue listing, job reason and delete, keep plan and drained probe
+  projection_rebuild: ['listQueuedPageProjections', 'readProjectionJobReason', 'deleteProjectionJob', 'readChunkKeepState',
+    'clearUnkeptChunkVectors', 'setProjectionChunkerVersion', 'hasDrainableProjectionJob'],
+
   // facts_repair: repair classifiers and loop retirement
   facts_repair: ['loopFactDrift', 'closedLoopWithActiveFact', 'listSessionFactsForClassification', 'listSessionFactTwins',
     'listCapturedFactsForClassification', 'countLabelFacts', 'listExtractorFactsForClassification', 'countPurgedPageFacts', 'listUnwithdrawnFacts',

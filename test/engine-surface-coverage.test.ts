@@ -248,6 +248,9 @@ const INTERFACE_METHODS: readonly string[] = [
   'renewConsumerRow', 'deleteConsumerRow', 'stampWorktreeHeartbeats', 'readTopologyChange', 'insertTopologyChange', 'claimHousekeepingTurn',
   'completeHousekeepingTurn', 'readReceiptBudget', 'listCompactableReceipts', 'listReservationsAfter', 'listTrueUpRequests', 'trueUpReservations', 'readCapacityForecastInputs', 'listPendingSegmentedProjections', 'selectProjectionWindowJobs',
   'readWriterVersionCutoff', 'listWriterVersions', 'recentWriterVersions',
+  // A page projection rebuild's queue listing, job reason and delete, keep plan and drained probe (engine-sql/projection-rebuild.ts).
+  'listQueuedPageProjections', 'readProjectionJobReason', 'deleteProjectionJob', 'readChunkKeepState', 'clearUnkeptChunkVectors',
+  'setProjectionChunkerVersion', 'hasDrainableProjectionJob',
   // The effect worker's recovery scans (engine-sql/persistence-effect-scans.ts).
   'listGatedMirrorRequests', 'listEffectRecoveries', 'selectClaimableEffect', 'readRequestEffects',
   // The write owner's housekeeping scans (engine-sql/persistence-owner-scans.ts).

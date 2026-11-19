@@ -20,6 +20,7 @@ import type { ConversationFactLink, ConversationRelinkPagesQuery, RelinkPlacemen
 import type * as FactsCycleSql from './engine-sql/facts-cycle.ts';
 import type * as FactsPurgeSql from './engine-sql/facts-purge.ts';
 import type * as FactsPurgePlanSql from './engine-sql/facts-purge-plan.ts';
+import type * as ProjectionRebuildSql from './engine-sql/projection-rebuild.ts';
 import type * as FactsRepairSql from './engine-sql/facts-repair.ts';
 import type * as FactsTrustSql from './engine-sql/facts-trust.ts';
 import type { EngineCapabilities } from './engine-capabilities.ts';
@@ -3435,6 +3436,22 @@ export interface BrainEngine {
   countPurgeProbe(probe: FactsPurgePlanSql.PurgeProbe, rows: number): Promise<number>;
   /** The first 20 rows a named purge probe lists (link, timeline and raw data rows still carrying the claim). */
   listPurgeProbeItems(probe: FactsPurgePlanSql.PurgeProbe & { kind: 'named' }): Promise<string[]>;
+
+  // A projection rebuild's queue, keep-plan and seal statements (engine-sql/projection-rebuild.ts). Each runs the statement its caller ran through executeRaw.
+  /** The queue rows of live inline pages of active sources, filtered, in walk order (updated_at, incarnation, slug in the C collation), at most `limit`. */
+  listQueuedPageProjections(filter: ProjectionRebuildSql.QueuedProjectionFilter): Promise<ProjectionRebuildSql.QueuedPageProjection[]>;
+  /** The reason of the queue row `key`, or null when it is no longer queued. */
+  readProjectionJobReason(key: ProjectionRebuildSql.ProjectionJobKey): Promise<string | null>;
+  /** Deletes the queue row `key`; a row of another revision stays. */
+  deleteProjectionJob(key: ProjectionRebuildSql.ProjectionJobKey): Promise<void>;
+  /** Each chunk of the page with its recorded embedding input and whether its vector in `column` is current under `provenanceModel`. */
+  readChunkKeepState(pageId: number, provenanceModel: string | null, column: ProjectionRebuildSql.KeepColumn): Promise<ProjectionRebuildSql.ChunkKeepState[]>;
+  /** Clears and marks pending the vector in `column` of each chunk of the page that is of another model, embedded from other text, or not in `currentIds`. */
+  clearUnkeptChunkVectors(pageId: number, provenanceModel: string | null, column: ProjectionRebuildSql.KeepColumn, currentIds: readonly number[]): Promise<void>;
+  /** Stamps the chunker version a sealed projection was built with on the page. */
+  setProjectionChunkerVersion(sourceId: string, slug: string, version: number): Promise<void>;
+  /** Whether a queue row of a live inline page (with `media`, or a sealable image) is queued and not marked failed. */
+  hasDrainableProjectionJob(opts?: { media?: boolean }): Promise<boolean>;
 
   // Facts statements, repair classifiers and loop retirement (engine-sql/facts-repair.ts). Each runs the statement its caller ran through executeRaw.
   /** Closed loops whose commitment fact is still active and retirable (same source, no other open loop references it), in id order; `loopId` null is every loop. Reads open_loops. */

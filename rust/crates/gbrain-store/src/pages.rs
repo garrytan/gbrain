@@ -1371,7 +1371,8 @@ fn cmp_updated(a: &PageRecord, b: &PageRecord) -> Ordering {
 
 impl Store {
     /// `readPageSnapshot(slug, opts)`: `{page, tags, revision, sourceIncarnation, withdrawals}`
-    /// or `None` when the page is not visible in the scope.
+    /// (with `globalPurges` and `globalPurgeRows` when the source has a `*` tombstone,
+    /// `page_withdrawals.rs`) or `None` when the page is not visible in the scope.
     pub fn read_page_snapshot(&self, slug: &str, scope: &ReadScope) -> Result<Option<Value>> {
         let read = self.read()?;
         let slug = slug.to_lowercase();
@@ -1383,13 +1384,21 @@ impl Store {
             .unwrap_or_default();
         let mut tags = page.tags.clone();
         tags.sort();
-        Ok(Some(json!({
+        let mut snapshot = json!({
             "page": page.to_page_with_columns(&*read)?,
             "tags": tags,
             "revision": page.knowledge_revision,
             "sourceIncarnation": incarnation,
-            "withdrawals": [],
-        })))
+        });
+        if let Value::Object(fields) = &mut snapshot {
+            fields.extend(crate::page_withdrawals::snapshot_withdrawals(
+                &*read,
+                &page.source_id,
+                &page.slug,
+                scope.exclude_private.is_some(),
+            )?);
+        }
+        Ok(Some(snapshot))
     }
 
     /// `putPage(slug, page, opts)`: the stored `Page`.

@@ -188,8 +188,8 @@ export const flipBodyGeneration: StoreMember<[input: BodyFlipInput], BodyFlipRes
  * sanitizes the lead (`timelineLead` when given) with `sanitizeRemoteBody` as engine-sql/page-body.ts does, and the
  * store seals the page at that revision and records the text (`pages::record_search_timeline`). A page that moved in
  * between refuses `revision_conflict`; a missing page is a no-op. PGLite overlays the page's withdrawals and global
- * purges on the lead first; here that overlay is the identity, because the store keeps no withdrawal ledger or purge
- * markers (its readPageSnapshot reports no withdrawals), so the stored lead is the overlaid lead.
+ * purges on the lead first; this member does not yet (TODOS "rust-segmented-seal-lead-overlay"): the snapshot overlay
+ * (snapshot-overlay.ts) covers unsegmented pages only, as PGLite's does.
  */
 export const sealSegmentedPage: StoreMember<[pageId: number, opts?: { timelineLead?: string }], void> = async (brain, pageId, opts) => {
   const o = takeOptions('sealSegmentedPage', opts, ['timelineLead']);

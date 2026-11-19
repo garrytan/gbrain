@@ -54,6 +54,7 @@ mod idle_probe;
 mod noop_settle;
 mod owner_scans;
 mod projection_queue;
+mod projection_rebuild;
 mod topology;
 pub(crate) use topology::purge_probe_rows as purge_probe_topology_rows;
 mod writer_versions;
@@ -66,6 +67,9 @@ pub use projection_queue::{
     ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };
 pub(crate) use projection_queue::{activation_started_us, queue_page_projection};
+pub use projection_rebuild::{
+    ProjectionJobKey, QueuedProjectionFilter, QueuedProjectionKey, QueuedProjectionPages,
+};
 pub use topology::TopologyChangeInsert;
 
 /// The byte after `keys::PERSISTENCE` of a counter row.

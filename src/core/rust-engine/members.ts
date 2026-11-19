@@ -663,6 +663,13 @@ export const RUST_ENGINE_MEMBERS = {
   recentWriterVersions: 'persistence_journal',
   listPendingSegmentedProjections: 'persistence_journal',
   selectProjectionWindowJobs: 'persistence_journal',
+  listQueuedPageProjections: 'persistence_journal',
+  readProjectionJobReason: 'persistence_journal',
+  deleteProjectionJob: 'persistence_journal',
+  readChunkKeepState: 'persistence_journal',
+  clearUnkeptChunkVectors: 'persistence_journal',
+  setProjectionChunkerVersion: 'persistence_journal',
+  hasDrainableProjectionJob: 'persistence_journal',
   // access_control
   isFolderRestricted: 'access_control',
   listAppliedPolicyRevisions: 'access_control',
