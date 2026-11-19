@@ -5056,6 +5056,7 @@
         "hasSupersedeEdges": "none",
         "hasWakeCron": "none",
         "hasWakeTermsAcceptance": "none",
+        "hasWithdrawnFenceClaim": "none",
         "holdSchemaMigrationLock": "none",
         "inboundLinkCoverage": "none",
         "initSchema": "none",

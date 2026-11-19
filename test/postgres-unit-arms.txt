@@ -257,6 +257,7 @@ test/engine-parity/valid-time-member-reads.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-parity/wanted-links.test.ts
 test/engine-parity/withdrawal-discovery-reads.test.ts
+test/engine-parity/withdrawal-fence.test.ts
 test/engine-parity/withdrawal-forget.test.ts
 test/engine-parity/write-guards.test.ts
 test/engine-parity/write-misc.test.ts

@@ -922,6 +922,12 @@ Facts and their supersession chains.
     `invalidateWithdrawnPages(sourceId, slugs)`. PGLite and Postgres run the statement text the call site ran. The
     store reads and rewrites page records (`facts/withdrawal_pages.rs`, no new key prefix; rust/docs/store/facts.md)
     and clears the page's embedding signature. Pinned by `test/engine-parity/withdrawal-forget.test.ts`.
+  - The withdrawal check a prepared import runs on a malformed facts fence (`assertPreparedFactWithdrawals`,
+    `facts/withdrawal.ts`) is one typed member (capability `facts`, `engine-sql/withdrawal-fence.ts`):
+    `hasWithdrawnFenceClaim(sourceId, claims, subject)`. PGLite and Postgres run the statement text the call site
+    ran. The store reads the withdrawal ledger (`t 0x01`) and the purge ledger (`F 0x0F`) with both fingerprints
+    (`facts/withdrawal_fence.rs`, no new key prefix; rust/docs/store/facts.md). Pinned by
+    `test/engine-parity/withdrawal-fence.test.ts`.
   - Held fence cells. The world-only fact read's check of which facts-fence row lines a caller may not see
     (`eligibility/stamp.ts` `heldFenceLines`, under get_page, get_chunks, think and search_exact) is the typed member
     `listHeldFenceCells` (capability `facts`, SQL in `engine-sql/cli-reads-ops.ts`, one statement for PGLite and

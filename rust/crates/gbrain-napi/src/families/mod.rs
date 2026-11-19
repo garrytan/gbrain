@@ -76,6 +76,7 @@ mod vectors;
 mod wanted_links;
 mod withdrawal_commit;
 mod withdrawal_discovery;
+mod withdrawal_fence;
 mod withdrawal_pages;
 // Group C: decide proposals and review proposals (rust/docs/store/decide-proposals.md).
 mod decide_proposals;

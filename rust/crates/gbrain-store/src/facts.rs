@@ -61,8 +61,9 @@ pub mod repair;
 pub mod saved_match;
 pub mod trust;
 pub mod trust_reads;
-pub mod withdrawal_discovery;
 mod widen;
+pub mod withdrawal_discovery;
+pub mod withdrawal_fence;
 pub mod withdrawal_pages;
 
 pub(crate) use crate::owner_only::OwnerOnlySources;

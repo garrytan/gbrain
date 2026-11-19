@@ -953,6 +953,7 @@ export const RUST_ENGINE_MEMBERS = {
   readWithdrawalDiscovery: 'facts',
   listSegmentedPages: 'facts',
   invalidateWithdrawnPages: 'facts',
+  hasWithdrawnFenceClaim: 'facts',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;
