@@ -615,6 +615,11 @@ on the redacted default.
 
 ## If a secret reached the brain
 
+A value redacted by `gbrain repair secret-spans` or by a publish is kept, encrypted, in the secret store, under a key
+that stays on the host (never in the database, the repository or a backup bucket); see
+[docs/guides/secret-store.md](docs/guides/secret-store.md). Export that key with `gbrain secrets key export`;
+`gbrain doctor` warns until you do.
+
 Transcript ingest, captures and syncs redact credential-shaped strings before
 anything is written: vendor key prefixes, JWTs, cloud/API key shapes, `Bearer`
 headers, connection strings carrying inline passwords, PEM private keys, and

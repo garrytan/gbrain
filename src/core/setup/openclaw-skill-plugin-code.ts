@@ -8,7 +8,7 @@
  * changes the plugin code itself.
  */
 
-export const OPENCLAW_SKILL_PLUGIN_CODE_VERSION = 1;
+export const OPENCLAW_SKILL_PLUGIN_CODE_VERSION = 2;
 
 export interface LoaderConstants { home: string; libDir: string; statePath: string; logDir: string; gbrainBin: string; gbrainHomeEnv: string | null }
 
@@ -215,6 +215,7 @@ function textOf(content) {
 }
 
 function turnText(event) {
+  if (event && typeof event.prompt === 'string' && event.prompt.trim()) return event.prompt.trim();
   if (event && typeof event.currentUserMessage === 'string') return event.currentUserMessage.trim();
   const msgs = event && Array.isArray(event.messages) ? event.messages : [];
   for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i] && msgs[i].role === 'user') return textOf(msgs[i].content).trim();
@@ -328,7 +329,8 @@ async function resolveTurn(event, ctx, opts) {
   const outcome = names.length ? 'suggested' : reply.no_skill_reason || (reply.budget_exhausted ? 'budget' : reply.deduped ? 'deduped' : 'no_match');
   const deliver = arm === 'live' && reply.block ? reply.block : '';
   let active = true;
-  try { if (ctx && typeof ctx.assertActive === 'function') ctx.assertActive(); } catch { active = false; }
+  const invocation = ctx && typeof ctx.assertActive === 'function' ? ctx : ctx && ctx.hookInvocation;
+  try { if (invocation && typeof invocation.assertActive === 'function') invocation.assertActive(); } catch { active = false; }
   if (active && !opts.selfTest) w.postMessage({ type: 'commit', id: reply.id }); else w.postMessage({ type: 'discard', id: reply.id });
   if (deliver) remember(memo, memoKey, deliver, MEMO_MAX);
   return finish({ outcome: arm === 'live' || !names.length ? outcome : 'would_suggest', suggested: names, strengths: reply.strengths, code: reply.code || null }, deliver);
