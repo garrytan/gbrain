@@ -37,6 +37,7 @@ export const RUST_ENGINE_MEMBERS = {
   readTransactionSettings: 'transactions',
   applyTransactionSettings: 'transactions',
   beginSnapshotRead: 'transactions',
+  setLocalStatementTimeout: 'transactions',
   readCurrentWriteTrust: 'transactions',
   transaction: 'transactions',
   transactionDirect: 'transactions',

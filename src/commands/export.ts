@@ -111,7 +111,7 @@ a fresh directory. See docs/storage-tiering.md#safe-export.`);
     };
     await engine.transaction(async tx => {
       await tx.beginSnapshotRead({ readOnly: true });
-      await tx.executeRaw('SET LOCAL statement_timeout = 60000');
+      await tx.setLocalStatementTimeout(60000);
       let source = requested ? await resolveSourceId(tx, requested) : undefined;
       let repo = explicitRepo;
       if (restoreOnly) ({ source, repo } = await resolveRestoreTarget(tx, source, repo));

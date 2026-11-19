@@ -133,7 +133,7 @@ src/commands/embeddings.ts	execute_raw	1
 src/commands/engine-status.ts	execute_raw	1
 src/commands/eval-suspected-contradictions.ts	execute_raw	1
 src/commands/eval-whoknows.ts	execute_raw	1
-src/commands/export.ts	execute_raw	2
+src/commands/export.ts	execute_raw	1
 src/commands/extract-conversation-facts.ts	execute_raw	1
 src/commands/extract-explain.ts	execute_raw	1
 src/commands/extract-mentions-explain.ts	execute_raw	6

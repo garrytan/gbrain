@@ -3509,6 +3509,11 @@ export interface BrainEngine {
   applyTransactionSettings(names: readonly string[], values: readonly string[]): Promise<void>;
   /** Starts the current transaction as one snapshot (`REPEATABLE READ`, and `READ ONLY` with `readOnly`); call it first. */
   beginSnapshotRead(opts?: { readOnly?: boolean }): Promise<void>;
+  /**
+   * Bounds every later statement of the current transaction to `ms` milliseconds (`SET LOCAL statement_timeout`).
+   * `ms` is a non-negative integer. On the Rust engine it does nothing: the store has no statement timeout.
+   */
+  setLocalStatementTimeout(ms: number): Promise<void>;
 
   /**
    * The writer's trust declaration in force on this transaction: the raw `gbrain.write_trust_tier` and

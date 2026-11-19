@@ -144,6 +144,7 @@ test/engine-parity/chunk-safe-fence.test.ts
 test/engine-parity/chunk-vector-overflow.test.ts
 test/engine-parity/chunks.test.ts
 test/engine-parity/cli-capabilities.test.ts
+test/engine-parity/cli-reads-export.test.ts
 test/engine-parity/cli-reads-import.test.ts
 test/engine-parity/cli-reads-ops.test.ts
 test/engine-parity/code-eval-salience.test.ts
