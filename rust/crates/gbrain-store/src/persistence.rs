@@ -51,15 +51,17 @@ mod effect_worker;
 mod effects;
 mod housekeeping;
 mod idle_probe;
+mod noop_settle;
 mod owner_scans;
 mod projection_queue;
 mod receipt_list;
 mod topology;
 mod writer_versions;
 pub use effect_worker::{EffectClaim, EffectSettle, Settle};
-pub use effects::{PublicationEffectsSpec, QueuedEffect};
-pub use housekeeping::{HousekeepingClaim, HousekeepingTurn};
+pub use effects::{PublicationEffectsSpec, QueuedEffect, WithdrawalEffectsSpec};
+pub use housekeeping::{HousekeepingClaim, HousekeepingTurn, TrueUpReservation};
 pub use idle_probe::IdleProbeSpec;
+pub use noop_settle::NoopSettleCandidateSpec;
 pub use projection_queue::{
     ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };
@@ -753,6 +755,20 @@ pub struct WriteCompletion {
     pub probe_purges: bool,
 }
 
+/// `TRUE_UP_CLAMP_SQL`: adds `clamped` counters to `persistence.true_up.clamped` (a value that is
+/// not digits counts as 0); nothing is written when none clamped.
+fn add_true_up_clamped(tx: &mut dyn KvWrite, clamped: u64) -> Result<()> {
+    if clamped == 0 {
+        return Ok(());
+    }
+    let config = keys::text(keys::CONFIG, &[TRUE_UP_CLAMPED_KEY]);
+    let old = read_config(&*tx, TRUE_UP_CLAMPED_KEY)?
+        .filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()))
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(0);
+    tx.put(&config, (old + clamped).to_string().as_bytes())
+}
+
 /// `COMPLETE_WRITE_SQL`: the terminal state, the counter release and the true-up clamp count.
 /// The request's effect rows (`effects.rs`) add their bytes to the result; while one is not
 /// committed the reservation is kept whole. `None`, with nothing changed, when the result does not fit the
@@ -794,14 +810,7 @@ pub(crate) fn complete_write_row_in(
         counter.terminal_bytes -= released.min(counter.terminal_bytes);
         write_counter(tx, &key, &counter)?;
     }
-    if clamped > 0 {
-        let config = keys::text(keys::CONFIG, &[TRUE_UP_CLAMPED_KEY]);
-        let old = read_config(&*tx, TRUE_UP_CLAMPED_KEY)?
-            .filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()))
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(0);
-        tx.put(&config, (old + clamped).to_string().as_bytes())?;
-    }
+    add_true_up_clamped(tx, clamped)?;
     let now = env.now_micros();
     let committed = c.state == "committed";
     record.state = c.state.clone();

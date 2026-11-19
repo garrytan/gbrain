@@ -42,7 +42,7 @@ const COMPLETED_DROPS: [&str; 6] = [
 ];
 
 /// `$1` as Postgres casts an effect id to bigint: surrounding whitespace and a sign are accepted.
-fn effect_id(text: &str) -> Result<i64> {
+pub(super) fn effect_id(text: &str) -> Result<i64> {
     text.trim().parse::<i64>().map_err(|_| {
         StoreError::invalid(format!("invalid input syntax for type bigint: \"{text}\""))
     })
@@ -73,7 +73,7 @@ fn has_parked(data: &Value) -> Result<bool> {
 
 /// `data - key - key ...` on an object; any other value is returned as it is (`-` on a scalar
 /// refuses on Postgres, and the worker stores objects only).
-fn without(data: &Value, drop: &[&str]) -> Value {
+pub(super) fn without(data: &Value, drop: &[&str]) -> Value {
     match data {
         Value::Object(map) => Value::Object(
             map.iter()
@@ -455,6 +455,15 @@ impl Store {
             select_claimable_effect_in(&*self.read()?, now, host_id, dead_owners)?
                 .map_or(Value::Null, |e| e.to_row()),
         )
+    }
+
+    /// `lockEffectClaimRow(effectId)`: the effect's `{ state, execution_token }`, or null when no
+    /// effect has the id. The store write is exclusive, so the row lock PGLite takes is the read.
+    pub fn lock_effect_claim_row(&self, effect_id: i64) -> Result<Value> {
+        Ok(effect_by_id(&*self.read()?, effect_id)?.map_or(
+            Value::Null,
+            |e| json!({ "state": e.state, "execution_token": e.execution_token }),
+        ))
     }
 
     /// `stampEffectClaim(claim)`: the claimed row, or null when no effect has the id.

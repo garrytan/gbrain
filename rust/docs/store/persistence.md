@@ -85,21 +85,21 @@ list matches no row, as the SQL `IS NULL OR EXISTS` terms do.
 
 Lengths count characters, as Postgres `left` and `length` do.
 
-## Steps that refuse by name
+## Steps that need one transaction
 
-Three coordinator steps need one engine transaction, which this engine does not serve yet (the
-`transactions` capability). Each refuses before it opens one, with `engine_capability_missing`,
-`capability=transactions` and the step's name and reason in the detail, and writes nothing:
+Three coordinator steps run as one engine transaction. Each calls `requireTransactions`
+(`src/core/rust-engine/errors.ts`) before it opens one: an engine whose capability set lacks
+`transactions` refuses with `engine_capability_missing`, `capability=transactions` and the step's name
+and reason in the detail, and writes nothing. This engine serves `transactions`, so the check passes;
+an engine without a capability set (Postgres, PGLite, a transaction handle) passes too.
 
 | Step | Why it needs a transaction |
 | --- | --- |
 | `claimNextWrite` (journal.ts) | it selects the head under `FOR UPDATE SKIP LOCKED` and stamps the claim in one transaction |
 | `compactReceipt` (journal.ts) | it rechecks the receipt under its row lock and releases the counters in one transaction |
-| `trueUpRequests` (receipt-true-up.ts) | it locks the counters and compare-and-sets the reservations in one transaction |
+| `trueUpRequests` (receipt-true-up.ts) | it locks the counters, then `trueUpReservations` compare-and-sets the reservations and releases the freed bytes |
 
-The check is `requireTransactions` in `src/core/rust-engine/errors.ts`; an engine without a
-capability set (Postgres, PGLite, a transaction handle) passes. A true-up with nothing to shrink returns
-`0` before the check.
+A true-up with nothing to shrink returns `0` before the check.
 
 ## Topology changes
 
@@ -128,7 +128,8 @@ The consumer's housekeeping after a write (`persistence-housekeeping.ts`).
 | `brain.readReceiptBudget(retentionKey, floorDays)` | `{ retention, used, cutoff }`: the config value, the brain counter's terminal bytes, and now minus `floorDays` | `readReceiptBudget` |
 | `brain.listCompactableReceipts(retentionDays)` | compactable receipts completed more than `retentionDays` ago that are not an unresolved caller refusal, oldest first, at most 100. The open-sync-cursor and newest-sync-receipt exclusions never match (no managed-sync rows, no worktree) | `listCompactableReceipts` |
 | `brain.listReservationsAfter(after, limit)` | `{ id, sequence, compacted }` past `after`, in sequence order | `listReservationsAfter` |
-| `brain.listTrueUpRequests(ids)` | the true-up candidates; effect bytes are `0` and no effect is unfinished (no `persistence_effects` rows) | `listTrueUpRequests` |
+| `brain.listTrueUpRequests(ids)` | the terminal requests among `ids`, in no set order, with `effect_bytes` (the request's effect rows summed as `EFFECT_BYTES_SQL` sums them, as text) and `unfinished` (an effect is `queued` or `running`) | `listTrueUpRequests` |
+| `brain.trueUpReservations(rows)` | the bytes given back, as text. Each `{ id, old, kept, effects }` whose request still reserves `old`, still has `effects` effect bytes and has no `queued` or `running` effect now reserves `kept`. The freed bytes, summed per counter (the brain and the request's principal), leave the counters that exist, clamped at zero; each clamped counter adds one to config `persistence.true_up.clamped`. A changed or unknown request changes nothing. `invalid` for a malformed id or effect byte count | `trueUpReservations` |
 | `brain.readCapacityForecastInputs(light)` | the counters, the per-day rows (the principal rows, then the lifecycle receipts grouped by writer and UTC day), the history and, unless `light`, the reclaim rows. `tableBytes` is `null` (no relation size) | `readCapacityForecastInputs` |
 | `brain.listPendingSegmentedProjections(filter)` | the queued jobs of segmented pages that a projector can take now, as `listPendingSegmentedProjections` returns them | `listPendingSegmentedProjections` |
 | `brain.selectProjectionWindowJobs(cursor, retryCooldown)` | the window rows (the recency lane, then the wrapped key-order lane), with `high_water` as Postgres prints a `timestamptz`; the one row of nulls for an empty queue | `selectProjectionWindowJobs` |
@@ -198,6 +199,17 @@ the reads a write receipt makes). A request id that is not a uuid refuses with t
 The effect worker claims and settles these rows (see "Effect worker"). The receipt names a row that
 exists, and the write's reservation stays charged until the effect ends.
 
+## Withdrawal effects
+
+`brain.insertWithdrawalEffects({ requestId, sourceId, data })` queues the effects a forget under a write
+request leaves (`insertWithdrawalEffects`, the statement `recordFactWithdrawal` sent through `executeRaw`):
+one `withdrawal-mirror`, `git` and `embedding` row, in that order, each `queued` with `data`, a null
+revision, the source's incarnation and a null worktree (no worktree binds a source here). It resolves the
+kinds it inserted. An unknown source inserts nothing, as the statement's `FROM sources` yields no row; a
+kind already stored for the request is kept. A request id that is not a uuid refuses with the uuid syntax
+message, and a request with no row refuses `constraint_violation` (the foreign key). Inside `transaction`
+it is one more write of the withdrawal's store write, so the effects commit with the withdrawal.
+
 ## Effect worker
 
 The statements the effect worker sends to claim one effect and to settle its claim
@@ -254,6 +266,28 @@ The worktree recovery, effect recovery on a worktree, topology recovery and over
 a worktree, and a Rust brain has none, so they find no row. `projection_last` is the last key window row
 (`null` when the window is empty) and `high_water` is the newest job's `updated_at` text. A host id that
 is not a uuid refuses with the uuid cast message.
+
+## No-op embedding settle
+
+`settleNoopEmbeddingEffects` (`persistence/embedding-noop-settle.ts`) settles, in bulk, queued page
+embedding effects whose chunks already carry current vectors. Its four members:
+
+- `brain.probeNoopEmbeddingSettle(from)`: whether a `queued` embedding effect with no attempts and no
+  recovery has an id past `from`.
+- `brain.lockNoopEmbeddingWindow({ from, limit })`: `{ newest, rows }`, the newest effect id as text,
+  then the next `limit` such effects by id as `{ id, page_id }`. `page_id` reads `data.page_id` as
+  `::int` does: a value that is not an integer, or one out of the integer range, refuses with the
+  Postgres message. The store is single-writer, so the lock has nothing to skip.
+- `brain.readNoopEmbeddingCandidates(spec)`: the window effects whose page id is in `spec.pageIds`, due
+  now, with none of the data keys `targets`, `source_scan`, `retry_slugs` or `parked`, on no worktree,
+  with no withdrawal mirror of the request left to commit, whose page is in the effect's source, live,
+  at the effect's revision with its text projection sealed there and stamped with `spec.signature`, and
+  whose every chunk has a vector, `embedded_at`, an embedded text hash equal to the md5 of its text and
+  the model `spec.expectedModel` (`null` matches a chunk with no model). Only the `embedding` column is
+  served; another column refuses as a missing member.
+- `brain.settleNoopEmbeddingRows(ids)`: each `queued` effect with no recovery among `ids` becomes
+  `committed` with no error, one more attempt, no claim, outcome `{}` and the data keys `retry_slugs`,
+  `target_failures` and `failing_target` removed; it returns `{ id, request_id }` for each.
 
 ## Projection queue
 

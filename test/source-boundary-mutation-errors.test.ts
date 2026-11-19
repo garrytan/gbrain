@@ -322,6 +322,10 @@ describe('mutation-time deletion race reclassification (#4109)', () => {
       async readGuestSourceRow() {
         return { hidden: false, source_id: null, writers: null, trust_ceiling: null };
       },
+      // The typed hidden-page read answers "not hidden", as the raw stub's empty rows did for the old SELECT.
+      async readPageHiddenFromCaller() {
+        return false;
+      },
     } as unknown as BrainEngine;
   }
 
@@ -385,6 +389,8 @@ describe('mutation-time deletion race reclassification (#4109)', () => {
       async executeRaw(sql: string) { return sql.includes('FROM persistence_brain') ? [{ enabled: false }] : []; }, // explicitly unmanaged fixture (#6482: one well-formed row)
       // The guest admission check reads the write source's guest row; WRITE_SRC is not a guest source.
       async readGuestSourceRow() { return { hidden: false, source_id: null, writers: null, trust_ceiling: null }; },
+      // The typed hidden-page read answers "not hidden", as the raw stub's empty rows did for the old SELECT.
+      async readPageHiddenFromCaller() { return false; },
     } as unknown as BrainEngine;
     const result = await dispatchToolCall(eng, 'add_link', {
       from: 'topics/race-from',

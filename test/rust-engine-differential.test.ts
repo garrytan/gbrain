@@ -325,7 +325,7 @@ const scenarios: Scenario[] = [
     },
   },
 
-  // 10. listColumnsOnly
+  // 10. listColumnsOnly: the list projection, with content_hash and emotional_weight present and undefined as on PGLite.
   {
     name: 'listPages with listColumnsOnly',
     expect: 'equal',

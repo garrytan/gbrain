@@ -156,11 +156,7 @@ export async function recordFactWithdrawal(
       const pages = [...inline, ...segmented.length ? await tx.executeRaw<{ id: number; slug: string; knowledge_revision: string }>(
         'SELECT id,slug,knowledge_revision FROM pages WHERE id=ANY($1::int[])', [segmented.map(page => page.id)]) : []];
       if (opts.requestId && !opts.publication) {
-        await tx.executeRaw(`INSERT INTO persistence_effects(request_id,kind,data,source_id,source_incarnation,worktree_id)
-          SELECT $1::uuid,k.kind,$3::text::jsonb,s.id,s.incarnation,b.worktree_id
-          FROM sources s LEFT JOIN persistence_source_bindings b ON b.source_id=s.id AND b.source_incarnation=s.incarnation
-          CROSS JOIN (VALUES ('withdrawal-mirror'),('git'),('embedding')) AS k(kind)
-          WHERE s.id=$2 ON CONFLICT(request_id,kind) DO NOTHING`, [opts.requestId, sourceId, JSON.stringify({ version: 2, targets: pages.map(page => ({ slug: page.slug, page_id: page.id, revision: page.knowledge_revision })).sort((a, b) => a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0) })]);
+        await tx.insertWithdrawalEffects({ requestId: opts.requestId, sourceId, targets: pages.map(page => ({ slug: page.slug, page_id: page.id, revision: page.knowledge_revision })) });
       }
       const committed = pages.map(page => ({ sourceId, slug: page.slug, revision: page.knowledge_revision }));
       for (const invalidate of withdrawalInvalidations) await invalidate(tx, { sourceId, factId: id, subject: row.subject, pages: committed });

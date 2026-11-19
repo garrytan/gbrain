@@ -9,7 +9,7 @@ use napi::bindgen_prelude::Object;
 use napi_derive::napi;
 use serde_json::Value;
 
-use gbrain_store::persistence::Settle;
+use gbrain_store::persistence::{Settle, TrueUpReservation};
 
 use crate::store_binding::{Brain, required};
 
@@ -294,6 +294,18 @@ impl Brain {
         })
     }
 
+    /// `insertWithdrawalEffects({ requestId, sourceId, data })`: the kinds inserted, in insert order.
+    #[napi]
+    pub fn insert_withdrawal_effects<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.insert_withdrawal_effects(&required(spec, "insertWithdrawalEffects spec")?)
+        })
+    }
+
     /// `releaseUnpublishedClaim({ id, token, reason, charge })`: `true` when the claim was released.
     #[napi]
     pub fn release_unpublished_claim<'env>(
@@ -446,6 +458,21 @@ impl Brain {
         self.run(env, move |s| s.list_true_up_requests(&ids))
     }
 
+    /// `trueUpReservations(rows)`: the bytes the true-up gave back, as text.
+    #[napi]
+    pub fn true_up_reservations<'env>(
+        &self,
+        env: &'env Env,
+        rows: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.true_up_reservations(&required::<Vec<TrueUpReservation>>(
+                rows,
+                "trueUpReservations rows",
+            )?)
+        })
+    }
+
     /// `listGatedMirrorRequests(hostId)`: the requests to requeue; `[]` (no worktree here).
     #[napi]
     pub fn list_gated_mirror_requests<'env>(
@@ -539,6 +566,51 @@ impl Brain {
         self.run(env, move |s| {
             s.probe_idle_work(&required(spec, "probeIdleWork spec")?)
         })
+    }
+
+    /// `probeNoopEmbeddingSettle(from)`: whether an unattempted queued embedding effect lies past
+    /// effect id `from`.
+    #[napi]
+    pub fn probe_noop_embedding_settle<'env>(
+        &self,
+        env: &'env Env,
+        from: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.probe_noop_embedding_settle(&from))
+    }
+
+    /// `lockNoopEmbeddingWindow({ from, limit })`: the newest effect id and the next `limit`
+    /// unattempted embedding effects past `from` (`{ newest, rows }`).
+    #[napi]
+    pub fn lock_noop_embedding_window<'env>(
+        &self,
+        env: &'env Env,
+        from: String,
+        limit: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.lock_noop_embedding_window(&from, limit))
+    }
+
+    /// `readNoopEmbeddingCandidates(spec)`: the window effects with nothing left to embed.
+    #[napi]
+    pub fn read_noop_embedding_candidates<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_noop_embedding_candidates(&required(spec, "readNoopEmbeddingCandidates spec")?)
+        })
+    }
+
+    /// `settleNoopEmbeddingRows(ids)`: settles these queued effects; `[{ id, request_id }]`.
+    #[napi]
+    pub fn settle_noop_embedding_rows<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.settle_noop_embedding_rows(&ids))
     }
 
     /// One effect settle statement, `action` naming the member (`renewEffectClaim`,

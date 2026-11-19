@@ -13,6 +13,10 @@ entries. The TypeScript engine passes the same identity PGLite seeds (`seedEmbed
 `src/core/rust-engine/store.ts`: the schema settings, then the gateway, then the defaults), so a chunk
 written with no model of its own carries the brain's model, as on PGLite. In Rust the rows come from
 `OpenOptions::initial_config`; an empty key or the key `version` is `invalid_argument`.
+The engine's `initSchema` (`src/core/rust-engine/store-members/init-schema.ts`) then writes the
+`embedding_model` and `embedding_dimensions` entries PGLite's schema seeds, each only when the brain
+has none: the stored embedding identity when there is one, else the gateway's model and width, else
+the install defaults (`voyage:voyage-4`, 1024). A stored width with no known model writes no model.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |

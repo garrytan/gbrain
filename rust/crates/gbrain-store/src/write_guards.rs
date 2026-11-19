@@ -4,7 +4,7 @@
 //! `engine-sql/write-guards.ts`).
 //!
 //! Members: readPageOrigin, listOriginClaims, bindPageOrigin, stampPageIngest, sealImportedPage,
-//! readLivePageBody, readInlinePageRegions, readStoredPageTier, hasSegmentStorage.
+//! readLivePageBody, readInlinePageRegions, readStoredPageTier, readPageIndexingState, hasSegmentStorage.
 //!
 //! Locks: PGLite takes an advisory lock per origin spelling before it lists the claims, so two
 //! writes of one file queue. The store runs one write transaction at a time, so every lock is
@@ -116,6 +116,15 @@ pub struct LivePageBodyRow {
 pub struct InlinePageRegions {
     pub compiled_truth: Option<String>,
     pub timeline: Option<String>,
+}
+
+/// What a text projection is keyed on, as PGLite's `SELECT chunker_version,corpus_generation`
+/// and `SELECT page_kind` of one page row.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PageIndexingState {
+    pub chunker_version: Option<i16>,
+    pub corpus_generation: Option<String>,
+    pub page_kind: String,
 }
 
 /// The id and the sealed page of `sealImportedPage`.
@@ -334,6 +343,20 @@ impl Store {
         let read = self.read()?;
         Ok(read_page(&*read, source_id, slug)?
             .map(|page| page.trust_tier.unwrap_or_else(|| "unknown".to_owned())))
+    }
+
+    /// `readPageIndexingState(pageId)`: the page's stored chunker version, corpus generation and
+    /// page kind, live or a tombstone, or `None` when no page has the id.
+    pub fn read_page_indexing_state(&self, page_id: u64) -> Result<Option<PageIndexingState>> {
+        let read = self.read()?;
+        let Some(page) = read_page_by_id(&*read, page_id)? else {
+            return Ok(None);
+        };
+        Ok(Some(PageIndexingState {
+            chunker_version: page.chunker_version,
+            corpus_generation: crate::aliases::corpus_generation(&*read, page.id)?,
+            page_kind: page.page_kind,
+        }))
     }
 
     /// `hasSegmentStorage()`: whether any segment text or body staging is stored.

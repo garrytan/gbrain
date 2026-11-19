@@ -87,8 +87,8 @@ type Fail = string | ((sql: string) => string);
  * Makes the next `times` statements on `engine` that contain `marker` fail, in every transaction it opens too (a
  * transaction engine is Object.create(engine)): a SQLSTATE raises an error with that code without reaching the
  * database; a function sends its rewrite of the statement instead, which the database rejects with a real SQLSTATE
- * (and which aborts an open transaction). The first `skip` matching statements run untouched. Returns how many failed
- * and a restore.
+ * (and which aborts an open transaction). The first `skip` matching statements run untouched. The combined probe's
+ * marker fails the typed probe read the same way. Returns how many failed and a restore.
  */
 function failStatements(engine: BrainEngine, marker: string, times: number, fail: Fail, skip = 0) {
   const original = engine.executeRaw as (...a: unknown[]) => Promise<unknown[]>;
