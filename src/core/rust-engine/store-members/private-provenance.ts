@@ -36,6 +36,7 @@ import {
   remoteProvenanceFloorSql,
 } from '../../search/private-visibility.ts';
 import { MEMBER_PAGE_PREFIX } from '../../access/principals.ts';
+import { ANY_OWNER_ONLY_SQL, ownerOnlyFactSql, ownerOnlyPageSql } from '../../access/owner-only.ts';
 import { refuseMember } from './common.ts';
 
 /** The policy flags the store reads (`PrivacyPolicy` in rust/crates/gbrain-store/src/facts/privacy.rs). */
@@ -50,7 +51,22 @@ export interface StorePrivacyPolicy {
   memberPage?: string;
   /** The remote floor (`remoteProvenanceFloorSql`): the provenance page only, with no entity or holding-page gate. */
   provenanceOnly?: boolean;
+  /**
+   * The owner-only conjunct the text carries (`ownerOnlyAllowedSql`): `lineage` for the v320 function form, `closed` for
+   * the fail-closed form (every row hidden while the brain holds an owner-only source). Absent when the text has none.
+   */
+  ownerOnly?: 'lineage' | 'closed';
 }
+
+/** The owner-only form a rendered policy carries over the row `alias` of `table`, judged by its text. */
+export function ownerOnlyFormOf(sql: string, table: 'pages' | 'facts', alias: string): StorePrivacyPolicy['ownerOnly'] {
+  const lineage = table === 'pages' ? ownerOnlyPageSql(alias, 'fn') : ownerOnlyFactSql(alias, 'fn');
+  if (sql.includes(`NOT ${lineage}`)) return 'lineage';
+  return sql.includes(`NOT ${ANY_OWNER_ONLY_SQL}`) ? 'closed' : undefined;
+}
+
+const withOwnerOnly = (flags: StorePrivacyPolicy, form: StorePrivacyPolicy['ownerOnly']): StorePrivacyPolicy =>
+  form ? { ...flags, ownerOnly: form } : flags;
 
 /** The page aliases the policies judge: the fact policy's two, and `p` of a page read. */
 const PAGE_ALIASES = ['pp', 'entity_pp', 'p'] as const;
@@ -138,10 +154,10 @@ export function storeFloorPolicy(member: string): StorePrivacyPolicy {
 
 /** The process-setting flags of a rendered fact policy. */
 function factPolicyFlags(sql: string): StorePrivacyPolicy {
-  return {
+  return withOwnerOnly({
     honorAliases: sql.includes(privacyAliasSql('pp')),
     entityPrivacy: sql.includes(privateSnapshotFilterFragment('entity_pp')),
-  };
+  }, ownerOnlyFormOf(sql, 'facts', 'facts'));
 }
 
 /**
@@ -193,9 +209,9 @@ export function storePageTextPolicy(
 }
 
 /** The process-setting flags of a rendered page policy. */
-function pagePolicyFlags(sql: string): StorePrivacyPolicy {
-  return {
+export function pagePolicyFlags(sql: string): StorePrivacyPolicy {
+  return withOwnerOnly({
     honorAliases: sql.includes(privacyAliasSql('p')),
     entityPrivacy: sql.includes(privateSnapshotFilterFragment('p')),
-  };
+  }, ownerOnlyFormOf(sql, 'pages', 'p'));
 }

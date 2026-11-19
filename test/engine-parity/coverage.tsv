@@ -79,7 +79,7 @@ getPage	pages	yes	82	yes	yes	yes	serves
 readPageSnapshot	pages	yes	23	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	321	yes	yes	yes	serves
+putPage	pages	yes	324	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
@@ -89,7 +89,7 @@ softDeletePage	pages	yes	107	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
-listPages	pages	yes	8	yes	yes	yes	serves
+listPages	pages	yes	11	yes	yes	yes	serves
 findPages	pages	yes	4	no	yes	yes	serves
 countPagesBy	pages	yes	1	no	yes	yes	serves
 resolveSlugs	pages	yes	6	no	yes	yes	serves
@@ -203,7 +203,7 @@ markPagesAttendanceBlocked	extraction	yes	2	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	51	yes	yes	yes	serves
+addLink	links	yes	53	yes	yes	yes	serves
 addLinksBatch	links	yes	9	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	8	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
@@ -290,12 +290,12 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	41	yes	yes	yes	serves
+insertFact	facts	yes	44	yes	yes	yes	serves
 insertFacts	facts	yes	39	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	23	no	yes	yes	serves
 listFactsByEntity	facts	yes	18	yes	yes	yes	serves
-listFactsSince	facts	yes	10	yes	yes	yes	serves
+listFactsSince	facts	yes	13	yes	yes	yes	serves
 listFactsKeyset	facts	yes	3	no	yes	yes	serves
 listFactsBySession	facts	yes	4	yes	yes	yes	serves
 listSupersessions	facts	yes	6	yes	yes	yes	serves
