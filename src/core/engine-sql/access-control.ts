@@ -4,7 +4,6 @@
  * to count as restricted catches the error itself (`search/private-visibility.ts`).
  */
 import type { LegacyUnscopedRead } from './brands.ts';
-import { edgeTrimSql } from '../edge-whitespace.ts';
 
 /**
  * Whether a page known by its slug sits under an applied folder rule, under a pending or invalid folder prefix, or
@@ -111,17 +110,23 @@ export interface AccessMemberRow {
  */
 export type AccessMemberLookup = { id: string } | { email: string } | { includeRemoved: boolean };
 
-/** The member columns and groups access/members.ts reads. */
-const ACCESS_MEMBER_SELECT = `SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
-  COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
-  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id`;
-
-/** The statements access/members.ts getMember, memberByEmail and listMembers ran through executeRaw. */
+/**
+ * The statements access/members.ts getMember, memberByEmail and listMembers ran through executeRaw, each spelled out
+ * as one literal (the engine-sql dynamic-SQL guard): the member columns and groups, then the filter.
+ */
 export const ACCESS_MEMBER_SQL = {
-  by_id: `${ACCESS_MEMBER_SELECT} WHERE m.id = $1 GROUP BY m.id`,
-  by_email: `${ACCESS_MEMBER_SELECT} WHERE m.email = $1 GROUP BY m.id ORDER BY m.id`,
-  live: `${ACCESS_MEMBER_SELECT} WHERE m.tombstoned_at IS NULL GROUP BY m.id ORDER BY m.id`,
-  all: `${ACCESS_MEMBER_SELECT} GROUP BY m.id ORDER BY m.id`,
+  by_id: `SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
+  COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id WHERE m.id = $1 GROUP BY m.id`,
+  by_email: `SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
+  COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id WHERE m.email = $1 GROUP BY m.id ORDER BY m.id`,
+  live: `SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
+  COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id WHERE m.tombstoned_at IS NULL GROUP BY m.id ORDER BY m.id`,
+  all: `SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
+  COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id GROUP BY m.id ORDER BY m.id`,
 } as const;
 
 /**
@@ -182,20 +187,28 @@ export async function listAudienceAccessMembers(exec: MemberLookupRead): Promise
  */
 export type LiveMemberVia = 'member' | 'stdio_config' | 'legacy_token' | 'oauth_client';
 
-/** The member subquery of each `via`, as access/caller.ts memberIdentityFor and stdioMemberIdentity passed it. */
-const LIVE_MEMBER_KEY_SQL: Record<LiveMemberVia, string> = {
-  member: '$1',
-  stdio_config: `SELECT ${edgeTrimSql('value')} FROM config WHERE key = $1`,
-  legacy_token: 'SELECT member_id FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL',
-  oauth_client: 'SELECT member_id FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL',
-};
-
-/** The statements access/caller.ts liveIdentity ran through executeRaw, one per `via`. */
-export const LIVE_MEMBER_SQL = Object.fromEntries((Object.keys(LIVE_MEMBER_KEY_SQL) as LiveMemberVia[]).map(via => [via,
-  `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+/**
+ * The statements access/caller.ts liveIdentity ran through executeRaw, one per `via`, each spelled out as one literal
+ * (the engine-sql dynamic-SQL guard). The stdio config route trims the value with edgeTrimSql('value') (edge-whitespace.ts).
+ */
+export const LIVE_MEMBER_SQL: Record<LiveMemberVia, string> = {
+  member: `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
   FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
-  WHERE m.id = (${LIVE_MEMBER_KEY_SQL[via]}) AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
-  GROUP BY m.id`])) as Record<LiveMemberVia, string>;
+  WHERE m.id = ($1) AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
+  GROUP BY m.id`,
+  stdio_config: `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
+  WHERE m.id = (SELECT btrim(value, (E'\\u0020\\u0009\\u000a\\u000b\\u000c\\u000d' || CASE WHEN current_setting('server_encoding') = 'UTF8' THEN convert_from(decode('c2a0e19a80e28080e28081e28082e28083e28084e28085e28086e28087e28088e28089e2808ae280a8e280a9e280afe2819fe38080efbbbf', 'hex'), 'UTF8') ELSE '' END)) FROM config WHERE key = $1) AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
+  GROUP BY m.id`,
+  legacy_token: `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
+  WHERE m.id = (SELECT member_id FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL) AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
+  GROUP BY m.id`,
+  oauth_client: `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
+  WHERE m.id = (SELECT member_id FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL) AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
+  GROUP BY m.id`,
+};
 
 /**
  * The enabled, untombstoned member `via` and `key` name, with its own groups; null when none does (an unknown, disabled
@@ -210,11 +223,18 @@ export async function readLiveMember(exec: MemberLookupRead, via: LiveMemberVia,
 /** A group and its member ids, by member id. */
 export interface AccessGroupRow { id: string; members: string[] }
 
-/** The statements access/members.ts listGroups ran through executeRaw: every group, or the one group `$1` names. */
-const accessGroupSql = (id: boolean) => `SELECT g.id, COALESCE(array_agg(gm.member_id ORDER BY gm.member_id) FILTER (WHERE gm.member_id IS NOT NULL), '{}') AS members
+/**
+ * The statements access/members.ts listGroups ran through executeRaw: every group, or the one group `$1` names, each
+ * spelled out as one literal (the engine-sql dynamic-SQL guard).
+ */
+export const ACCESS_GROUP_SQL = {
+  all: `SELECT g.id, COALESCE(array_agg(gm.member_id ORDER BY gm.member_id) FILTER (WHERE gm.member_id IS NOT NULL), '{}') AS members
      FROM access_groups g LEFT JOIN access_group_members gm ON gm.group_id = g.id
-     ${id ? 'WHERE g.id = $1' : ''} GROUP BY g.id ORDER BY g.id`;
-export const ACCESS_GROUP_SQL = { all: accessGroupSql(false), by_id: accessGroupSql(true) } as const;
+      GROUP BY g.id ORDER BY g.id`,
+  by_id: `SELECT g.id, COALESCE(array_agg(gm.member_id ORDER BY gm.member_id) FILTER (WHERE gm.member_id IS NOT NULL), '{}') AS members
+     FROM access_groups g LEFT JOIN access_group_members gm ON gm.group_id = g.id
+     WHERE g.id = $1 GROUP BY g.id ORDER BY g.id`,
+} as const;
 
 /**
  * Every access group with its member ids, by id; or, given an id, the one group with exactly that id (never a member
