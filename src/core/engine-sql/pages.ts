@@ -772,12 +772,13 @@ export async function resolveSlugs(
     const exact = await exec.run<{ slug: string }>(sqlFragment`SELECT slug FROM pages WHERE slug = ${partial} AND deleted_at IS NULL${scopeFragment}${privacy}`);
     if (exact.rows.length > 0) return [exact.rows[0].slug];
 
-    // Fuzzy match via pg_trgm
+    // Fuzzy match via pg_trgm. Equal similarity sorts by slug, then source, in byte order, so the
+    // five rows kept are the same on every engine (the Rust store sorts the same way).
     const fuzzy = await exec.run<{ slug: string }>(sqlFragment`
       SELECT slug, similarity(title, ${partial}) AS sim
       FROM pages
       WHERE deleted_at IS NULL AND (title % ${partial} OR slug ILIKE ${'%' + partial + '%'})${scopeFragment}${privacy}
-      ORDER BY sim DESC
+      ORDER BY sim DESC, slug COLLATE "C", source_id COLLATE "C"
       LIMIT 5
     `);
     return fuzzy.rows.map((r) => r.slug);
