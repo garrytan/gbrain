@@ -79,8 +79,9 @@ function readFilters(member: string, o: OntologyReadOpts): Record<string, unknow
     minConfidence: floor(o.minConfidence ?? 0),
     visibility: o.visibility == null ? undefined : [...o.visibility],
     excludeDiary: o.excludeDiary === true,
-    // pglite-engine.ts getOntology / findOntologyConflicts: `privateFactFilterForReader('facts')`.
-    excludePrivate: storePrivacyPolicy(member, o.excludePrivate, () => privateFactFilterForReader('facts')),
+    // pglite-engine.ts getOntology / findOntologyConflicts: `privateFactFilterForReader('facts')`. A caller with a
+    // reader identity and a private-readable grant is served (`callerReaders`).
+    excludePrivate: storePrivacyPolicy(member, o.excludePrivate, () => privateFactFilterForReader('facts'), { callerReaders: true }),
   };
 }
 

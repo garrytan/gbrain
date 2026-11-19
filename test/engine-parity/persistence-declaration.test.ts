@@ -17,14 +17,16 @@
  *    the local writer's id, journal ids) are compared by shape or against another member's answer.
  */
 import { describe, expect } from 'bun:test';
-import { parityArms } from './harness.ts';
+import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { submissionAuthority } from '../../src/core/persistence/authority.ts';
 import { registerLocalWriter } from '../../src/core/persistence/identity.ts';
-import { admitWrite } from '../../src/core/persistence/journal.ts';
+import { admitWrite, assertWriteHeadroom, readOutstandingRoom } from '../../src/core/persistence/journal.ts';
 import { principalKey } from '../../src/core/persistence/model.ts';
+import { schemaAdmissionRefusal } from '../../src/core/persistence/schema-admission.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -32,13 +34,13 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PROTOCOL = 'gbrain.persistence_protocol';
 const REQUESTS = ['b0000000-0000-4000-8000-0000000000b1', 'b0000000-0000-4000-8000-0000000000b2'];
 
-/** Admits one put_page request for `slug` through the real admission path, as a CLI put does. */
-async function admitPut(engine: BrainEngine, slug: string, requestId: string) {
-  const source = await engine.readSourceMembership('default');
-  const ctx: OperationContext = { engine, config: { engine: engine.kind }, remote: false, dryRun: false, sourceId: 'default',
+/** Admits one put_page request for `slug` on `sourceId` through the real admission path, as a CLI put does. */
+async function admitPut(engine: BrainEngine, slug: string, requestId: string, sourceId = 'default') {
+  const source = await engine.readSourceMembership(sourceId);
+  const ctx: OperationContext = { engine, config: { engine: engine.kind }, remote: false, dryRun: false, sourceId,
     logger: { info() {}, warn() {}, error() {} } } as OperationContext;
-  const authority = await submissionAuthority(ctx, 'put_page', 'default', source!.incarnation, slug);
-  return admitWrite(engine, { principal: authority.principal, authority, operation: 'put_page', sourceId: 'default',
+  const authority = await submissionAuthority(ctx, 'put_page', sourceId, source!.incarnation, slug);
+  return admitWrite(engine, { principal: authority.principal, authority, operation: 'put_page', sourceId,
     sourceIncarnation: source!.incarnation, slug, requestId, callerIntent: { body: slug }, intent: { body: slug } });
 }
 
@@ -95,5 +97,63 @@ describe('engine parity: persistence declaration', () => {
     };
     for (const key of Object.keys(afterSecond)) expect(afterSecond[key]).toBe(afterFirst[key]! + 1);
     return { first: view(first), second: view(second), stored: view(stored), afterFirst, afterSecond };
+  });
+
+  parityTest('a local writer at its outstanding cap still admits a write for a source under its share, and refuses one naming the fullest source', {
+    methods: ['declarePersistence', 'transaction', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'countOutstandingBySource'],
+    timeout: 60_000,
+  }, async (engine, backend) => {
+    await registerLocalWriter(engine, 'cli');
+    await createSource(engine, backend, 'ab');
+    await engine.setConfig('persistence.limits.principal_outstanding', '2');
+    await admitPut(engine, 'notes/parity-cap-a', REQUESTS[0]!);
+    await admitPut(engine, 'notes/parity-cap-b', REQUESTS[1]!);
+    // The cap is full, but `ab` holds none of the two slots: its share (2 sources, 1 slot each) admits it.
+    const shared = await admitPut(engine, 'notes/parity-cap-c', 'b0000000-0000-4000-8000-0000000000b3', 'ab');
+    const refused = await admitPut(engine, 'notes/parity-cap-d', 'b0000000-0000-4000-8000-0000000000b4').then(
+      () => null, (err: { code?: string; message?: string }) => ({ code: err.code, message: err.message }));
+    expect(shared.state).toBe('queued');
+    expect(refused).toEqual({ code: 'queue_capacity', message: 'Write capacity exhausted: principal outstanding requests (source default holds 2).' });
+    return { shared: { source: shared.source_id, state: shared.state }, refused };
+  });
+
+  parityTest('a run past the request-id and receipt-byte caps refuses with the same one-year value, and the outstanding room reads the counters', {
+    methods: ['declarePersistence', 'transaction', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'readCounterRows', 'readAdmissionRate'],
+    timeout: 60_000,
+  }, async (engine) => {
+    await registerLocalWriter(engine, 'cli');
+    await engine.setConfig('persistence.limits.principal_outstanding', '5');
+    const first = await admitPut(engine, 'notes/parity-quota-a', REQUESTS[0]!);
+    await admitPut(engine, 'notes/parity-quota-b', REQUESTS[1]!);
+    const principal = { kind: first.principal_kind, id: first.principal_id } as Parameters<typeof readOutstandingRoom>[1];
+    const room = await readOutstandingRoom(engine, principal);
+    const key = principalKey(principal);
+    const [own] = (await engine.transaction((tx) => tx.lockPersistenceCounters([key])));
+    const usedBytes = Number(own!.terminal_bytes);
+    await engine.setConfig('persistence.limits.principal_lifetime_ids', '3');
+    await engine.setConfig('persistence.limits.principal_terminal_bytes', String(usedBytes + 20_000));
+    const refusal = (needed: { ids: number; bytes?: number }) => assertWriteHeadroom(engine, principal, needed).then(
+      () => null, (err: { code?: string; message?: string; fix?: { argv?: string[] } }) => ({ code: err.code, message: err.message, argv: err.fix?.argv }));
+    const ids = await refusal({ ids: 5 });
+    const bytes = await refusal({ ids: 0, bytes: 50_000 });
+    expect(room).toEqual({ room: 3, scope: 'principal', used: 2, limit: 5 });
+    expect(ids?.code).toBe('write_quota_insufficient');
+    expect(bytes?.code).toBe('write_quota_insufficient');
+    return { room, ids, bytes: bytes && { ...bytes, message: bytes.message?.replace(String(usedBytes), '<used>') } };
+  });
+
+  parityTest('a write while the schema is behind refuses migrations_pending with the schema owner as the actor', {
+    methods: ['ownsSchemaTables', 'getConfig', 'setConfig'],
+  }, async (engine) => {
+    const owns = await engine.ownsSchemaTables();
+    const version = await engine.getConfig('version');
+    await engine.setConfig('version', String(LATEST_SCHEMA_VERSION - 1));
+    try {
+      const refusal = await schemaAdmissionRefusal(engine);
+      expect(refusal?.code).toBe('migrations_pending');
+      return { owns, code: refusal?.code, reason: refusal?.reason, actor: refusal?.fix?.actor, argv: refusal?.fix?.argv };
+    } finally {
+      await engine.setConfig('version', version ?? String(LATEST_SCHEMA_VERSION));
+    }
   });
 });

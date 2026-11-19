@@ -20,7 +20,7 @@
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { PageReadPolicy, SearchOpts } from '../../src/core/types.ts';
-import { parityArms, sorted } from './harness.ts';
+import { createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { chunk } from './chunk-fixtures.ts';
 
@@ -31,6 +31,14 @@ function declared<T>(engine: BrainEngine, tier: string | null, fn: (tx: BrainEng
   if (tier === null) return fn(engine);
   return engine.transaction(async (tx) => {
     await tx.applyTransactionSettings(['gbrain.write_trust_tier', 'gbrain.write_origin'], [tier, JSON.stringify({ channel: tier })]);
+    return fn(tx);
+  });
+}
+
+/** Run `fn` in a transaction whose write trust settings declare `tier`, the owner's promotion to it and the write origin `origin`. */
+function declaredOrigin<T>(engine: BrainEngine, tier: string, origin: Record<string, unknown>, fn: (tx: BrainEngine) => Promise<T>): Promise<T> {
+  return engine.transaction(async (tx) => {
+    await tx.applyTransactionSettings(['gbrain.write_trust_tier', 'gbrain.write_trust_promotion', 'gbrain.write_origin'], [tier, tier, JSON.stringify(origin)]);
     return fn(tx);
   });
 }
@@ -289,6 +297,169 @@ describe('engine parity: trust floor and flag suppression on reads', () => {
         .toEqual(['agent fact', 'agent other-flag fact', 'curated fact', 'observed fact']);
       expect((out.confirmedOnly as { world: number }).world).toBe(0);
       return out;
+    },
+  );
+  parityTest(
+    'listSupersessions under a read eligibility drops a superseded fact below the floor, a flagged agent-written one and one from a quarantined page',
+    { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'insertFact', 'insertFacts', 'upsertWriteGateReceipt', 'listSupersessions'] },
+    async (engine) => {
+      await engine.putPage('people/a-example', { type: 'person', title: 'A', compiled_truth: 'A', timeline: '' });
+      await engine.putPage('notes/held', { type: 'note', title: 'Held', compiled_truth: 'held', timeline: '' });
+      const facts: Array<{ fact: string; tier: string | null; flag?: string[] }> = [
+        { fact: 'curated fact', tier: 'operator_curated' },
+        { fact: 'observed fact', tier: 'tool_observed' },
+        { fact: 'agent fact', tier: 'agent_written' },
+        { fact: 'agent flagged fact', tier: 'agent_written', flag: ['exfiltration'] },
+        { fact: 'agent other-flag fact', tier: 'agent_written', flag: ['other'] },
+        { fact: 'unknown flagged fact', tier: null, flag: ['override'] },
+        { fact: 'outside fact', tier: 'external_untrusted' },
+      ];
+      const supersede = async (id: number, i: number) => {
+        await engine.insertFact({
+          fact: `successor ${i}`, entity_slug: 'people/a-example', visibility: 'world', source: 'mcp:remember', embedding: null,
+          valid_from: new Date(Date.UTC(2026, 5, 1 + i)),
+        } as never, { source_id: 'default', supersedeId: id });
+      };
+      for (const [i, f] of facts.entries()) {
+        const { id } = await declared(engine, f.tier, tx => tx.insertFact({
+          fact: f.fact, entity_slug: 'people/a-example', visibility: 'world', source: 'mcp:remember', embedding: null,
+          valid_from: new Date(Date.UTC(2026, 4, 1 + i)),
+        } as never, { source_id: 'default' }));
+        if (f.flag) await engine.upsertWriteGateReceipt({ target_table: 'facts', target_id: String(id), source_id: 'default', ...receipt(f.flag) });
+        await supersede(id, i);
+      }
+      // A curated fact whose provenance page is quarantined: only a read with an eligibility policy hides it.
+      const { ids: [held = 0] } = await declared(engine, 'operator_curated', tx => tx.insertFacts([{
+        fact: 'held page fact', entity_slug: 'people/a-example', source_markdown_slug: 'notes/held', row_num: 1, kind: 'fact',
+        visibility: 'world', source: 'fence', valid_from: new Date(Date.UTC(2026, 4, 20)),
+      }] as never, { source_id: 'default' }));
+      await supersede(held, 20);
+      await engine.putPage('notes/held', { type: 'note', title: 'Held', compiled_truth: 'held', timeline: '', frontmatter: { quarantine: { reason: 'test' } } });
+      const texts = async (opts?: Parameters<BrainEngine['listSupersessions']>[1]) =>
+        sorted((await engine.listSupersessions('default', opts)).map(r => r.fact));
+      const out: Record<string, unknown> = { none: await texts() };
+      for (const [name, policy] of Object.entries(POLICIES)) {
+        const floor = policy.minTrust || undefined;
+        out[name] = await texts({ eligibility: { ...(floor ? { floor } : {}), ...(policy.suppressFlagged ? { suppressFlagged: true } : {}) } });
+      }
+      expect(out.none).toContain('held page fact');
+      expect(out.scoped).not.toContain('held page fact');
+      expect(out.agentSuppressed).toEqual(['agent fact', 'agent other-flag fact', 'curated fact', 'observed fact']);
+      expect(out.confirmedOnly).toEqual([]);
+      return out;
+    },
+  );
+  parityTest(
+    'listSingleFactMetadata reads the stored trust tier, fence position and claim slot of the named facts of one source',
+    { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'insertFact', 'insertFacts', 'listSingleFactMetadata'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      await engine.putPage('notes/open', { type: 'note', title: 'Open', compiled_truth: 'open', timeline: '' });
+      const names = new Map<number, string>();
+      const one = async (name: string, tier: string | null, extra: Record<string, unknown> = {}, source = 'default') => {
+        const { id } = await declared(engine, tier, tx => tx.insertFact({
+          fact: name, entity_slug: 'people/a-example', visibility: 'world', source: 'mcp:remember', embedding: null, ...extra,
+        } as never, { source_id: source }));
+        names.set(id, name);
+        return id;
+      };
+      const curated = await one('curated', 'operator_curated', { claim_metric: 'arr', claim_value: 3, claim_unit: 'usd', claim_period: 'q3' });
+      const agent = await one('agent', 'agent_written');
+      const unknown = await one('unknown', null);
+      const outside = await one('outside', 'external_untrusted');
+      const elsewhere = await one('elsewhere', 'operator_curated', {}, 'other');
+      const { ids: [fenced = 0] } = await declared(engine, 'tool_observed', tx => tx.insertFacts([{
+        fact: 'fenced', entity_slug: 'people/a-example', source_markdown_slug: 'notes/open', row_num: 2, kind: 'fact',
+        visibility: 'world', source: 'fence', valid_from: new Date(Date.UTC(2026, 4, 1)),
+      }] as never, { source_id: 'default' }));
+      names.set(fenced, 'fenced');
+      const read = async (sourceId: string, ids: number[]) =>
+        sorted((await engine.listSingleFactMetadata({ sourceId, ids, remoteFloor: false })).map(({ id, ...row }) => ({ ...row, id: names.get(Number(id)) ?? `?${id}` })), r => r.id);
+      const all = await read('default', [curated, agent, unknown, outside, elsewhere, fenced, curated, 0, -1, fenced + 100_000]);
+      const other = await read('other', [curated, elsewhere]);
+      const empty = await read('default', []);
+      expect(all.map(r => r.id)).toEqual(['agent', 'curated', 'fenced', 'outside', 'unknown']);
+      expect(all.find(r => r.id === 'curated')).toMatchObject({ trust_tier: 'operator_curated', row_num: null, source_markdown_slug: null, claim_metric: 'arr', claim_unit: 'usd', claim_period: 'q3' });
+      expect(all.find(r => r.id === 'fenced')).toMatchObject({ trust_tier: 'tool_observed', row_num: 2, source_markdown_slug: 'notes/open' });
+      expect(all.find(r => r.id === 'unknown')?.trust_tier).toBe('unknown');
+      expect(other.map(r => r.id)).toEqual(['elsewhere']);
+      expect(empty).toEqual([]);
+      return { all, other, empty };
+    },
+  );
+
+  parityTest(
+    'listUnpreviewedTrustFacts lists the user-confirmed trust-release fence facts with no field preview, joined to their newest released hold',
+    { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'insertFacts', 'expireFact', 'upsertWriteGateHold', 'decideWriteGateHold', 'listUnpreviewedTrustFacts'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      await engine.putPage('notes/conf', { type: 'note', title: 'Conf', compiled_truth: 'conf', timeline: '' });
+      const facts = new Map<number, string>();
+      const holds = new Map<number, string>();
+      const fact = async (name: string, rowNum: number, tier: string, origin: Record<string, unknown>, slug = 'notes/conf') => {
+        const { ids: [id = 0] } = await declaredOrigin(engine, tier, origin, tx => tx.insertFacts([{
+          fact: name, entity_slug: 'people/a-example', source_markdown_slug: slug, row_num: rowNum, kind: 'fact',
+          visibility: 'world', source: 'fence', valid_from: new Date(Date.UTC(2026, 4, rowNum)),
+        }] as never, { source_id: 'default' }));
+        facts.set(id, name);
+        return id;
+      };
+      const hold = async (name: string, rowNum: unknown, requestId: string | null, status: 'released' | 'dropped' | 'held' = 'released', source = 'default', slug = 'notes/conf') => {
+        const id = await engine.upsertWriteGateHold({
+          kind: 'fact', source_id: source, slug, fingerprint: `fp-${name}`, detector_version: 1, tier: 'agent_written',
+          reason_families: ['override'], reasons: ['override found'], detector_error: false,
+          payload: { row_num: rowNum, fact: name }, write_origin: null, request_id: requestId,
+        } as never);
+        if (status !== 'held') await engine.decideWriteGateHold(id, status, 'owner');
+        holds.set(id, name);
+        return id;
+      };
+      const release = (request?: string, extra: Record<string, unknown> = {}) =>
+        ({ channel: 'trust_release', ...(request === undefined ? {} : { request_id: request }), ...extra });
+      await fact('plain', 1, 'user_confirmed', release('r1'));
+      await hold('plain', 1, 'r1');
+      await fact('previewed', 2, 'user_confirmed', release('r2', { fields_previewed: true }));
+      await hold('previewed', 2, 'r2');
+      await fact('text row', 3, 'user_confirmed', release('r3'));
+      await hold('text row', '3', 'r3');
+      await fact('only held', 4, 'user_confirmed', release('r4'));
+      await hold('only held', 4, 'r4', 'held');
+      await hold('only dropped', 4, 'r4', 'dropped');
+      await fact('no request', 5, 'user_confirmed', release());
+      await hold('no request', 5, null);
+      await fact('other request', 6, 'user_confirmed', release('r6'));
+      await hold('other request', 6, 'r-other');
+      await fact('two holds', 7, 'user_confirmed', release('r7'));
+      await hold('two holds old', 7, 'r7');
+      await hold('two holds new', 7, 'r7');
+      await fact('agent tier', 8, 'agent_written', release('r8'));
+      await hold('agent tier', 8, 'r8');
+      const expired = await fact('expired', 9, 'user_confirmed', release('r9'));
+      await hold('expired', 9, 'r9');
+      await engine.expireFact(expired);
+      await fact('null preview', 10, 'user_confirmed', release('r10', { fields_previewed: null }));
+      await hold('null preview', 10, 'r10');
+      await fact('other channel', 11, 'user_confirmed', { channel: 'cli', request_id: 'r11' });
+      await hold('other channel', 11, 'r11');
+      await fact('other source hold', 12, 'user_confirmed', release('r12'));
+      await hold('other source hold', 12, 'r12', 'released', 'other');
+      await fact('fraction row', 13, 'user_confirmed', release('r13'));
+      await hold('fraction row', 13.0, 'r13');
+      await fact('wrong row', 14, 'user_confirmed', release('r14'));
+      await hold('wrong row', 15, 'r14');
+      const read = async (limit: number) => (await engine.listUnpreviewedTrustFacts(limit)).map(r => ({
+        fact: facts.get(Number(r.id)) ?? `?${r.id}`, source_id: r.source_id, slug: r.slug, row_num: Number(r.row_num),
+        hold: holds.get(Number(r.hold_id)) ?? `?${r.hold_id}`, total: Number(r.total),
+      }));
+      const wide = await read(50);
+      const narrow = await read(2);
+      const none = await read(0);
+      expect(wide.map(r => r.fact)).toEqual(['plain', 'text row', 'no request', 'two holds', 'null preview', 'fraction row']);
+      expect(wide.find(r => r.fact === 'two holds')?.hold).toBe('two holds new');
+      expect(wide.every(r => r.total === 6)).toBe(true);
+      expect(narrow.map(r => r.fact)).toEqual(['plain', 'text row']);
+      expect(none).toEqual([]);
+      return { wide, narrow, none };
     },
   );
 });

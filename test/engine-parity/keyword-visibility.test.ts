@@ -18,6 +18,8 @@
  *    a flag receipt outside the activation families, or suppresses a flagged page above `agent_written`.
  *  - Why existing coverage misses it: search.test.ts never passes `excludePrivate` or `requireSafeChunks`, and
  *    private-page-reads.test.ts covers the salience, anomaly and chunk reads, not keyword search.
+ *  - Caller policy: the last case reads as a member whose identity a page's readers name, then with a private-readable
+ *    grant on the source; the Rust store reads both from the policy the TypeScript member sends.
  *  - Seam: none. Real engines, typed methods only.
  */
 import { describe, expect } from 'bun:test';
@@ -26,6 +28,7 @@ import type { SearchOpts, SearchResult } from '../../src/core/types.ts';
 import { parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { chunk, installChunks } from './chunk-fixtures.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -207,6 +210,39 @@ describe('engine parity: excludePrivate and the safe-chunk fence on keyword sear
       expect(out.agentSuppressed!.count).toBe(5);
       expect(out.suppressed!.keyword).toEqual(['notes/outside:0', 'notes/agent-other-flag:0']);
       return out;
+    },
+  );
+});
+
+describe('engine parity: excludePrivate on keyword search for a caller with a reader identity and a private-readable grant', () => {
+  parityTest(
+    'every keyword member under excludePrivate applies a caller\'s reader identity and private-readable grant',
+    { methods: ['putPage', 'sealChunks', 'setChunkerVersion', 'searchKeyword', 'searchKeywordChunks', 'countKeywordPages',
+      'searchKeywordPages', 'searchTitles'] },
+    async (engine) => {
+      await fixture(engine);
+      const slugs = (rows: SearchResult[]) => sorted(rows.map((r) => r.slug));
+      const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess(access, async () => ({
+        keyword: slugs(await engine.searchKeyword('zephyr', { limit: 20, excludePrivate: true })),
+        top: view(await engine.searchKeyword('zephyr', { limit: 2, excludePrivate: true })),
+        chunks: slugs(await engine.searchKeywordChunks('zephyr', { limit: 20, excludePrivate: true })),
+        count: await engine.countKeywordPages('zephyr', { excludePrivate: true }),
+        pages: view(await engine.searchKeywordPages('zephyr', { excludePrivate: true }, { limit: 2, offset: 1 })),
+        titles: slugs(await engine.searchTitles('zephyr', { limit: 20, excludePrivate: true })),
+      }));
+      const member = await read({ identity: ['member:alice-example', 'group:team-a'], hidePrivate: true });
+      const granted = await read({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true });
+      const stranger = await read({ identity: ['member:bob-example'], hidePrivate: true });
+      // The fence-short page fails the safe-chunk fence excludePrivate implies, for every caller.
+      const memberKept = sorted([...KEPT.filter((s) => s !== 'notes/fence-short'), 'notes/readers']);
+      expect(member.keyword).toEqual(memberKept);
+      expect(member.count).toBe(memberKept.length);
+      expect(member.top).toEqual(['notes/readers:0', 'notes/open:0']);
+      expect(stranger.keyword).toEqual(KEPT.filter((s) => s !== 'notes/fence-short'));
+      expect(granted.keyword).toEqual(sorted([...PAGES.map(([slug]) => slug), 'notes/timeline-only'].filter((s) => s !== 'notes/fence-short')));
+      expect(granted.top).toEqual(['notes/private:0', 'notes/readers:0']);
+      expect(granted.titles).not.toContain('notes/timeline-only');
+      return { member, granted, stranger };
     },
   );
 });

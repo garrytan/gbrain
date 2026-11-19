@@ -1030,3 +1030,117 @@ fn the_capacity_forecast_counts_topology_changes_per_writer_and_day() {
     assert_eq!(day["recent_gross"], "8192");
     assert_eq!(day["recent_net"], "8192");
 }
+
+#[test]
+fn outstanding_requests_are_counted_per_source_for_one_principal() {
+    let dir = TempDir::new("persist-outstanding-by-source");
+    let store = open(&dir);
+    store.lock_persistence_counters(&keys()).unwrap();
+    assert!(
+        store
+            .count_outstanding_by_source("local_cli", "parity-writer")
+            .unwrap()
+            .is_empty()
+    );
+    for request in [REQ_1, REQ_2] {
+        store
+            .insert_write_request(&insert_input(&store, request, "notes/a", json!({})))
+            .unwrap();
+    }
+    let done = store
+        .insert_write_request(&insert_input(
+            &store,
+            "b0000000-0000-4000-8000-0000000000b3",
+            "notes/b",
+            json!({}),
+        ))
+        .unwrap();
+    let id = done["id"].as_str().unwrap();
+    store.stamp_write_claim(&stamp(id, 1000.0, None)).unwrap();
+    store
+        .complete_write_row(&completion(id, "committed", 512))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        store
+            .count_outstanding_by_source("local_cli", "parity-writer")
+            .unwrap(),
+        vec![json!({ "source_id": "default", "n": 2 })]
+    );
+    assert!(
+        store
+            .count_outstanding_by_source("local_cli", "other-writer")
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        store
+            .count_outstanding_by_source("mcp_client", "parity-writer")
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn counter_rows_are_read_without_creating_any() {
+    let dir = TempDir::new("persist-read-counters");
+    let store = open(&dir);
+    assert!(store.read_counter_rows(&keys()).unwrap().is_empty());
+    store.lock_persistence_counters(&keys()).unwrap();
+    store
+        .insert_write_request(&insert_input(&store, REQ_1, "notes/a", json!({})))
+        .unwrap();
+    let rows = store
+        .read_counter_rows(&[
+            PRINCIPAL_KEY.into(),
+            "brain".into(),
+            "brain".into(),
+            "missing".into(),
+        ])
+        .unwrap();
+    let names: Vec<&str> = rows.iter().map(|r| r["key"].as_str().unwrap()).collect();
+    assert_eq!(names, vec!["brain", PRINCIPAL_KEY]);
+    assert_eq!(rows[0]["outstanding_count"], json!(1));
+    assert_eq!(rows[0]["terminal_bytes"], json!(4096));
+    assert!(
+        store
+            .read_counter_rows(&["missing".into()])
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn admission_rate_samples_the_latest_requests_of_one_principal_or_the_brain() {
+    let dir = TempDir::new("persist-admission-rate");
+    let store = open(&dir);
+    let empty = store.read_admission_rate(None).unwrap();
+    assert_eq!(
+        empty,
+        json!({ "first_request_id": null, "admissions": 0, "age_seconds": null, "gross": null, "net": null })
+    );
+    store.lock_persistence_counters(&keys()).unwrap();
+    let first = store
+        .insert_write_request(&insert_input(&store, REQ_1, "notes/a", json!({})))
+        .unwrap();
+    store
+        .insert_write_request(&insert_input(&store, REQ_2, "notes/b", json!({})))
+        .unwrap();
+    let brain = store.read_admission_rate(None).unwrap();
+    assert_eq!(brain["first_request_id"], first["id"]);
+    assert_eq!(brain["admissions"], json!(2));
+    assert!(brain["age_seconds"].as_f64().unwrap() >= 0.0);
+    assert_eq!(brain["gross"], json!(4096.0));
+    // `{}` is 2 bytes of authority, plus the 1 KiB compaction headroom; no outcome, detail or client id.
+    assert_eq!(brain["net"], json!(1026.0));
+    let own = store
+        .read_admission_rate(Some(("local_cli", "parity-writer")))
+        .unwrap();
+    assert_eq!(own["admissions"], json!(2));
+    let other = store
+        .read_admission_rate(Some(("local_cli", "other-writer")))
+        .unwrap();
+    assert_eq!(other["first_request_id"], first["id"]);
+    assert_eq!(other["admissions"], json!(0));
+    assert!(other["gross"].is_null() && other["age_seconds"].is_null());
+}

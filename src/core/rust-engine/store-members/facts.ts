@@ -5,7 +5,8 @@
  * pageCollapseFacts, listFenceRetireCandidates).
  *
  * Each member applies the defaults and clamps of src/core/engine-sql/facts.ts, then makes one store call. What the
- * store cannot answer exactly refuses with `engine_capability_missing`: a read eligibility policy, `excludePrivate` for a
+ * store cannot answer exactly refuses with `engine_capability_missing`: a read eligibility policy (except on
+ * `listSupersessions`, which sends it to the store), `excludePrivate` for a
  * caller other than the one the store's policy models (private-provenance.ts), the keyword arm in an FTS language other
  * than `english`, a visibility list that the member-page or grant rules widen, and inputs whose PGLite outcome the store cannot reproduce (a non-finite
  * `claim_value`, `row_num` or `superseded_by_row`, a fractional offset, a keyset time in another text form).
@@ -42,9 +43,12 @@ const vectorLiteral = (v: Float32Array | number[]): string => '[' + Array.from(v
 const LIST_OPTIONS = ['activeOnly', 'unconsolidatedOnly', 'limit', 'offset', 'kinds', 'visibility', 'grep', 'sessionId',
   'eventTime', 'excludeAuditRows', 'fingerprint', 'excludePrivate'] as const;
 
-/** `privacyClause` (engine-sql/facts.ts): the policy as the store reads it, or undefined without `excludePrivate`. */
+/**
+ * `privacyClause` (engine-sql/facts.ts): the policy as the store reads it, or undefined without `excludePrivate`. A
+ * caller with a reader identity and a private-readable grant is served (`callerReaders`).
+ */
 const factPolicy = (member: string, excludePrivate: unknown) =>
-  storePrivacyPolicy(member, excludePrivate, () => privateProvenanceFilterUnderPolicy('facts'));
+  storePrivacyPolicy(member, excludePrivate, () => privateProvenanceFilterUnderPolicy('facts'), { callerReaders: true });
 const RECALL_OPTIONS = [...LIST_OPTIONS, 'entitySlug', 'sourceMarkdownSlug'] as const;
 
 /** A string the SQL path binds inside a JSONB document: a lone surrogate becomes U+FFFD. */
@@ -205,11 +209,15 @@ export const listFactsBySession: Member<'listFactsBySession'> = async (brain, so
 };
 
 export const listSupersessions: Member<'listSupersessions'> = async (brain, sourceId, opts) => {
-  const o = takeOptions('listSupersessions', opts, ['since', 'limit', 'visibility', 'excludePrivate']) as NonNullable<typeof opts>;
+  const o = takeOptions('listSupersessions', opts, ['since', 'limit', 'visibility', 'excludePrivate', 'eligibility']) as NonNullable<typeof opts>;
   const rows: Row[] = await storeCall({ member: 'listSupersessions' }, () => brain.listSupersessions({
     sourceId, since: o.since ? o.since.toISOString() : undefined, limit: clampSearchLimit(o.limit, 50, MAX_SEARCH_LIMIT),
     visibility: visibilityFilter('listSupersessions', o.visibility),
     excludePrivate: factPolicy('listSupersessions', o.excludePrivate),
+    // projectionEligibleSql('facts') (engine-sql/facts.ts eligibilityClause): any policy adds the quarantine clause.
+    eligible: o.eligibility !== undefined,
+    minTrust: o.eligibility?.floor || null,
+    suppressFlagged: o.eligibility?.suppressFlagged === true,
   }));
   return facts(rows);
 };

@@ -45,9 +45,7 @@ export async function schemaAdmissionRefusal(tx: BrainEngine): Promise<Operation
   if (!Number.isSafeInteger(current) || current >= LATEST_SCHEMA_VERSION) return null;
   // Loaded only when behind: the lock module pulls in the engine factory.
   if ((await import('../migration-orchestration-lock.ts')).migrationOrchestrationHeldHere()) return null;
-  const [owner] = await tx.executeRaw<{ owns: boolean | null }>(
-    `SELECT pg_has_role(current_user, c.relowner, 'USAGE') AS owns FROM pg_class c WHERE c.oid = to_regclass('sources')`);
-  const ownsSchema = owner?.owns !== false;
+  const ownsSchema = await tx.ownsSchemaTables();
   return opError('migrations_pending', `The brain schema is at v${current} and this gbrain build needs v${LATEST_SCHEMA_VERSION}, so the write was not admitted.`,
     `Not retryable as is: the same write refuses until the schema is migrated. Apply the pending migrations with \`gbrain apply-migrations --yes\`${ownsSchema ? '' : ' as the database role that owns the gbrain tables (this connection\'s role does not)'}, then resubmit; nothing was admitted, so the same request_id commits.`,
     { reason: SCHEMA_BEHIND_REASON, why: 'The write path of this build reads tables or columns that only the pending migrations add, so publishing now would fail on the missing schema and spend the request id.',

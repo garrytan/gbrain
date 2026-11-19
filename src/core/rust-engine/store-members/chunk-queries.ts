@@ -11,10 +11,11 @@
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
  * unexported.
  *
- * getChunkPage and getChunkWindows model the page privacy policy (storePagePolicy) and the chunker-version fence of a
+ * getChunkPage and getChunkWindows model the page privacy policy (storePagePolicy, caller readers included) and the chunker-version fence of a
  * safe-chunk read (`requiresSafeChunks`, which an `excludePrivate` read asks for unless it says otherwise).
  *
- * The chunk-reads members model the source filter, the page privacy policy (storePagePolicy) and the live test of the
+ * The chunk-reads members model the source filter, the page privacy policy (storePagePolicy, a caller's reader identity
+ * and private-readable grant included) and the live test of the
  * read policy (src/core/search/read-policy-sql.ts); resolveFrozenHits also models the trust floor and flag suppression
  * (`minTrust`, `suppressFlagged`). A safe-chunk policy on a chunk-reads member refuses with `engine_capability_missing`.
  * The other chunk-reads members refuse a trust or flag option: no production caller passes one, so no store read was
@@ -51,7 +52,7 @@ export const getChunkPage: StoreMember<[slug: string, opts: PageReadScope & { fr
     if (named.length > 1) refuseMember('getChunkPage', 'a read over several sources');
     const options = {
       sourceId: named[0]!, fromIndex, limit,
-      excludePrivate: storePagePolicy('getChunkPage', excludePrivate) ?? null,
+      excludePrivate: storePagePolicy('getChunkPage', excludePrivate, { callerReaders: true }) ?? null,
       requireSafeChunks: requiresSafeChunks(opts),
     };
     const page: ChunkPage = await storeCall({ member: 'getChunkPage', slug }, () => brain.getChunkPage(slug, options));
@@ -74,7 +75,7 @@ export const getChunkWindows: StoreMember<[requests: ChunkWindowRequest[], opts:
     const rows: Record<string, unknown>[] =
       await storeCall({ member: 'getChunkWindows' }, () => brain.getChunkWindows(wire, {
         ...options, maxRows,
-        excludePrivate: storePagePolicy('getChunkWindows', opts.excludePrivate) ?? null,
+        excludePrivate: storePagePolicy('getChunkWindows', opts.excludePrivate, { callerReaders: true }) ?? null,
         requireSafeChunks: requiresSafeChunks(opts),
       }));
     return mapChunkWindowRows(rows, maxRows);
@@ -124,7 +125,7 @@ function wireScope(member: string, o: Record<string, unknown>, code: boolean) {
   return {
     sourceId: dropSource ? undefined : o.sourceId,
     sourceIds: o.sourceIds,
-    excludePrivate: storePagePolicy(member, o.excludePrivate) ?? null,
+    excludePrivate: storePagePolicy(member, o.excludePrivate, { callerReaders: true }) ?? null,
     minTrust: (o.minTrust as string | undefined) || null,
     suppressFlagged: o.suppressFlagged === true,
   };
@@ -191,7 +192,7 @@ export const codeChunksExist: StoreMember<[sourceId: string | undefined, policy?
     const o = takeOptions('codeChunksExist', { ...policy, sourceId }, POLICY_KEYS.filter(k => k !== 'allSources'), UNREAD_BY_FILTER);
     if (namesNoSource(o)) return false;
     // pageReadFilter reads no safe-chunk key; only codeReadFilter does.
-    const scope = { sourceId: o.sourceId, sourceIds: o.sourceIds, excludePrivate: storePagePolicy('codeChunksExist', o.excludePrivate) ?? null };
+    const scope = { sourceId: o.sourceId, sourceIds: o.sourceIds, excludePrivate: storePagePolicy('codeChunksExist', o.excludePrivate, { callerReaders: true }) ?? null };
     return !!(await storeCall({ member: 'codeChunksExist' }, () => brain.codeChunksExist({ served: false, withSymbol: false, scope })));
   };
 

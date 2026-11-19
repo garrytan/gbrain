@@ -47,6 +47,7 @@ const TYPED_SQL_READS = new Set<PropertyKey>([
   'readExtractionLagCounts', // links_extraction_lag (src/core/extraction-lag.ts)
   'sampleEffectiveDates', 'sampleEffectiveDateSources', // effective_date_health
   'countZeroWeightWithTakes', // the salience count
+  'listTrustScanRows', 'countUnscannedTrustRows', // trust_scan (src/core/eligibility/scan.ts)
 ]);
 
 /** The real engine, except every SQL read (executeRaw, the raw PGLite handle, the typed reads above) throws `error`. */
