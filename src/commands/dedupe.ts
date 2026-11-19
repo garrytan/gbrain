@@ -351,16 +351,19 @@ async function runConfirm(engine: BrainEngine, args: string[]): Promise<void> {
     decisions.push({ verdict: 'same', members: g.members, group_id: g.id, entity_id: entityFor(g), canonical: await canonicalOf(engine, g.members, home?.sourceId ?? null), decided_by: DECIDED_BY });
   }
   const r = await recordDecisions(engine, decisions, `dedupe: confirm ${decisions.length} duplicate group(s) as one person or company`);
-  await sweepAfter(engine);
+  const sweep = await sweepAfter(engine);
+  const leftover = await leftoverAutoLinks(engine, sweep, decisions, 'replace it with the one you confirmed');
   const pending = (await engine.listIdentityDecisions()).pending;
   if (f.json) {
     console.log(JSON.stringify({ confirmed: decisions.map(d => ({ group_id: d.group_id, entity_id: d.entity_id, canonical: d.canonical, members: d.members })), store: r.store,
-      ...(r.receipt ? { commit: r.receipt.commit, outcome: r.receipt.outcome, ...(r.receipt.note ? { note: r.receipt.note } : {}) } : {}), pending }, null, 2));
+      ...(r.receipt ? { commit: r.receipt.commit, outcome: r.receipt.outcome, ...(r.receipt.note ? { note: r.receipt.note } : {}) } : {}), pending,
+      ...(leftover ? { auto_links: { ...sweep, ...leftover } } : {}) }, null, 2));
     return;
   }
   for (const d of decisions) console.log(`Confirmed ${d.group_id} as one: ${d.members.map(memberText).join(', ')} (identity ${d.entity_id}, canonical ${memberText(d.canonical!)}).`);
   console.log(storedText(r));
   if (pending.length) console.log(`${pending.length} member page(s) are not linked yet (page missing or in another group); gbrain doctor lists them.`);
+  if (leftover) console.log(leftover.message);
 }
 
 async function runReject(engine: BrainEngine, args: string[]): Promise<void> {
@@ -400,15 +403,17 @@ async function runReject(engine: BrainEngine, args: string[]): Promise<void> {
   }
   const r = await recordDecisions(engine, decisions, `dedupe: record ${decisions.length} group(s) as different people`);
   const sweep = await sweepAfter(engine);
+  const leftover = await leftoverAutoLinks(engine, sweep, decisions, 'remove it');
   const sameSource = await markDistinct(engine, decisions);
   if (f.json) {
     console.log(JSON.stringify({ rejected: decisions.map(d => ({ group_id: d.group_id, members: d.members })), store: r.store,
       ...(r.receipt ? { commit: r.receipt.commit, outcome: r.receipt.outcome, ...(r.receipt.note ? { note: r.receipt.note } : {}) } : {}), distinct_from: sameSource,
-      auto_links: sweep }, null, 2));
+      auto_links: { ...sweep, ...leftover } }, null, 2));
   } else {
     for (const d of decisions) console.log(`Recorded ${d.group_id} as different people: ${d.members.map(memberText).join(', ')}. It will not be proposed or linked again.`);
     console.log(storedText(r));
     if ('unlinked' in sweep && sweep.unlinked) console.log(`Removed ${sweep.unlinked} automatic company link(s).`);
+    if (leftover) console.log(leftover.message);
     for (const s of sameSource) console.log(`  ${s.source_id}:${s.slug} distinct_from: ${s.status}`);
   }
   const changed = sameSource.filter(s => s.status === 'changed');
@@ -450,13 +455,33 @@ async function sweepAfter(engine: BrainEngine): Promise<CompanySweepResult | { e
   try { return await sweepCompanyLinks(engine); } catch (e) { return { error: e instanceof Error ? e.message : String(e) }; }
 }
 
+const RECONCILE_FIX = { next: 'run', argv: ['gbrain', 'dedupe', 'reconcile'], command: 'gbrain dedupe reconcile', actor: 'agent', consent: [], requires_exclusive: false,
+  why: 'Recomputes the automatic company links from the recorded decisions; the decisions themselves are already saved.' } as const;
+
+/**
+ * When the sweep after a decision gave up (decisions kept changing for five tries) or failed, the automatic links of the
+ * decided pages that are still in place, said in one sentence with the command that finishes the job.
+ */
+async function leftoverAutoLinks(engine: BrainEngine, sweep: CompanySweepResult | { error: string }, decisions: DecisionInput[], todo: string):
+  Promise<{ message: string; fix: typeof RECONCILE_FIX } | undefined> {
+  if (!('error' in sweep) && !sweep.stale) return undefined;
+  const auto = await listAutoLinks(engine).catch(() => null);
+  const kept = decisions.filter(d => !auto || d.members.some(m => auto.some(a => a.source_id === m.source_id && a.slug === m.slug)));
+  if (!kept.length) return undefined;
+  const ids = kept.map(d => d.group_id ?? d.members.map(memberText).join(' and ')).join(', ');
+  const cause = 'error' in sweep ? `the update failed (${sweep.error})` : 'other decisions kept changing while it was being updated';
+  return { message: `The automatic link for ${ids} is still in place because ${cause}; run \`gbrain dedupe reconcile\` to ${todo}.`, fix: RECONCILE_FIX };
+}
+
 async function runReconcile(engine: BrainEngine, args: string[]): Promise<void> {
   const f = parseFlags('reconcile', args, new Set());
   if (!f) return;
   const r = await reconcileDecisions(engine);
   const auto = await sweepCompanyLinks(engine);
-  if (f.json) { console.log(JSON.stringify({ ...r, auto_links: auto }, null, 2)); return; }
-  console.log(`Automatic company links: ${auto.groups} group(s) linked (${auto.linked} page(s) newly linked, ${auto.unlinked} unlinked)${auto.skipped.length ? `; ${auto.skipped.length} left for you to confirm because a page is in another identity group or is not trusted` : ''}.`);
+  const again = auto.stale ? { message: 'The automatic company links were not updated because other decisions kept changing while they were being computed; run `gbrain dedupe reconcile` again.', fix: RECONCILE_FIX } : undefined;
+  if (f.json) { console.log(JSON.stringify({ ...r, auto_links: { ...auto, ...again } }, null, 2)); return; }
+  if (again) console.log(again.message);
+  else console.log(`Automatic company links: ${auto.groups} group(s) linked (${auto.linked} page(s) newly linked, ${auto.unlinked} unlinked)${auto.skipped.length ? `; ${auto.skipped.length} left for you to confirm because a page is in another identity group or is not trusted` : ''}.`);
   if (r.store === 'database') console.log(`Duplicate decisions are kept in the database (no repository). Linked ${r.applied?.linked ?? 0} page(s), unlinked ${r.applied?.unlinked ?? 0}.`);
   else console.log(`Wrote ${r.written} decision(s) into git and re-read the committed decisions of source ${r.projection?.source_id} (${r.projection?.upserted ?? 0} updated, ${r.projection?.removed ?? 0} removed, ${r.projection?.linked ?? 0} page(s) linked).`
     + (r.projection?.invalid.length ? ` ${r.projection.invalid.length} file(s) did not validate: ${r.projection.invalid.join(', ')}.` : ''));

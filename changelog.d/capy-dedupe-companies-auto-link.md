@@ -2,7 +2,7 @@
 
 ### Added
 - After each sync, company pages in different sources that share a LinkedIn company page, a GitHub login or a declared id and have exactly the same name are linked as one identity, so `rank_entities` and enrichment tiering count the company once. `gbrain dedupe --preview --kind auto` lists every automatic link with the command that undoes it, and `gbrain dedupe reconcile` runs the same sweep on demand. A company is left out when one of its pages is already linked by hand or confirmed, quarantined, an unverified auto-extracted stub or flagged, when a person page carries the same id, or, where decisions are kept in git, when a page sits in an owner-only source or not every reader may read it, since `gbrain dedupe reject` could not undo that link there.
-- `gbrain dedupe reject <group-id>` on an automatic link removes it and records that the pages are different, so no later sync links them again.
+- `gbrain dedupe reject <group-id>` on an automatic link removes it and records that the pages are different, so no later sync links them again. If other decisions keep changing while the link is being removed, the reject says the link is still in place and tells you to run `gbrain dedupe reconcile`.
 
 ### Changed
 - A person's pages are never linked without you. A person pair that shares a LinkedIn profile, GitHub login or declared id and exactly the same name stays on the `gbrain dedupe confirm` list with a hint line naming the shared id, to be confirmed on its own, and `gbrain dedupe confirm --clean` now covers company groups only.

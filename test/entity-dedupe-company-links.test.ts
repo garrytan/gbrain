@@ -169,6 +169,81 @@ test('a reject removes the automatic rows even when another decision lands while
   expect((await identities()).map(r => r.slug)).toEqual(['companies/beta-example', 'companies/beta-example']);
 });
 
+test('a reject whose sweep stays stale on every try says the automatic link is still in place and names reconcile', async () => {
+  await seed();
+  await sweep();
+  const acme = await groupOf('companies/acme-example');
+  const replace = engine.replaceAutoLinks.bind(engine);
+  engine.replaceAutoLinks = async () => ({ stale: true });
+  let text: string;
+  let json: any;
+  try {
+    text = await cli(['reject', acme]);
+    await engine.applyIdentityDecisions({ remove: (await engine.listIdentityDecisions()).decisions.map(d => d.decision_id) });
+    json = await cliJson(['reject', acme]);
+  } finally {
+    engine.replaceAutoLinks = replace;
+  }
+  const line = `The automatic link for ${acme} is still in place because other decisions kept changing while it was being updated; run \`gbrain dedupe reconcile\` to remove it.`;
+  expect(text).toContain(line);
+  expect(json.auto_links).toMatchObject({ stale: true, message: line, fix: { next: 'run', argv: ['gbrain', 'dedupe', 'reconcile'], command: 'gbrain dedupe reconcile' } });
+  expect((await identities()).map(r => r.established_by)).toEqual(['dedupe:auto', 'dedupe:auto']);
+  await cli(['reconcile']);
+  expect(await identities()).toEqual([]);
+});
+
+test('a reject whose sweep throws says the automatic link is still in place and names reconcile', async () => {
+  await seed();
+  await sweep();
+  const acme = await groupOf('companies/acme-example');
+  const replace = engine.replaceAutoLinks.bind(engine);
+  engine.replaceAutoLinks = async () => { throw new Error('connection reset'); };
+  let text: string;
+  let json: any;
+  try {
+    text = await cli(['reject', acme]);
+    await engine.applyIdentityDecisions({ remove: (await engine.listIdentityDecisions()).decisions.map(d => d.decision_id) });
+    json = await cliJson(['reject', acme]);
+  } finally {
+    engine.replaceAutoLinks = replace;
+  }
+  const line = `The automatic link for ${acme} is still in place because the update failed (connection reset); run \`gbrain dedupe reconcile\` to remove it.`;
+  expect(text).toContain(line);
+  expect(json.auto_links).toMatchObject({ error: 'connection reset', message: line, fix: { argv: ['gbrain', 'dedupe', 'reconcile'] } });
+});
+
+test('five stale tries through the real retry loop end in the same sentence, and reconcile and the sync hook say so too', async () => {
+  await seed();
+  await sweep();
+  const acme = await groupOf('companies/acme-example');
+  const replace = engine.replaceAutoLinks.bind(engine);
+  let calls = 0;
+  const bump = async () => {
+    calls++;
+    const members = [{ source_id: 'default', slug: `people/bob-sample-${calls}` }, { source_id: 'source-b', slug: `people/bob-sample-${calls}` }];
+    await engine.applyIdentityDecisions({ upsert: [{ decision_id: decisionId(members), verdict: 'different', members, group_id: null, entity_id: null, canonical: null,
+      decided_by: 'owner', decided_at: '2026-11-18T00:00:00Z', origin: 'database', home_source_id: null, git_blob: null }] });
+  };
+  engine.replaceAutoLinks = async (input) => { await bump(); return replace(input); };
+  const logs: string[] = [];
+  let text: string;
+  let reconciled: string;
+  try {
+    text = await cli(['reject', acme]);
+    expect(calls).toBe(5);
+    reconciled = await cli(['reconcile']);
+    await syncIdentityDecisions(engine, 'default', l => logs.push(l));
+  } finally {
+    engine.replaceAutoLinks = replace;
+  }
+  expect(text).toContain(`The automatic link for ${acme} is still in place because other decisions kept changing while it was being updated; run \`gbrain dedupe reconcile\` to remove it.`);
+  expect(reconciled).toContain('The automatic company links were not updated because other decisions kept changing while they were being computed; run `gbrain dedupe reconcile` again.');
+  expect(logs.some(l => l.includes('automatic company links were not updated after this sync because other decisions kept changing'))).toBe(true);
+  expect(calls).toBe(15);
+  await cli(['reconcile']);
+  expect(await identities()).toEqual([]);
+});
+
 test('a page linked by hand, an unverified stub, a quarantined or a flagged page keeps its company group out of the sweep', async () => {
   await seed();
   await linkEntityIdentity(engine, { entityId: 'acme-by-hand', slug: 'companies/acme-example', sourceId: 'default', canonical: true });
