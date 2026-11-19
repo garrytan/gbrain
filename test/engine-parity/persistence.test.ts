@@ -24,7 +24,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import type { WriteRequest } from '../../src/core/persistence/model.ts';
 import type { ClaimHeadSpec, TopologyChange } from '../../src/core/engine-sql/persistence-claims.ts';
 import type { QueuedPublicationEffect } from '../../src/core/engine-sql/persistence-journal.ts';
-import { assertPageRequestIdentity } from '../../src/core/persistence/journal.ts';
+import { assertPageRequestIdentity, completeWrite } from '../../src/core/persistence/journal.ts';
 import { CONSUMER_LIVE_MS, listHostConsumers, probeLiveFullConsumer, RESIDENT_CONSUMER_KINDS, startConsumerHeartbeat } from '../../src/core/persistence/consumer-heartbeat.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -496,6 +496,23 @@ describe('engine parity: write journal', () => {
     const answers = { queued, again, remoteOff, autoLinkOff, switchesOn };
     expect(answers).toEqual({ queued: ['embedding', 'facts-backstop', 'links'], again: [], remoteOff: ['embedding'], autoLinkOff: ['git'], switchesOn: ['links'] });
     return answers;
+  });
+
+  parityTest('completeWrite with no lock held asks for synchronous commit, declares, locks and ends the claimed request', {
+    methods: ['requireSynchronousCommit', 'declarePersistence', 'transaction', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest',
+      'stampWriteClaim', 'lockWriteRequest', 'completeWriteRow', 'readWriteRequestById'],
+  }, async (engine) => {
+    const id = await admitDirect(engine);
+    const claimed = await engine.stampWriteClaim(id, TOKEN, 60_000, JSON.stringify({ phase: 'parity' }));
+    const done = await engine.transaction((tx) => completeWrite(tx, claimed as WriteRequest, 'failed', { status: 'parity' }, { code: 'parity_error', message: 'parity' }));
+    const outside = await engine.requireSynchronousCommit();
+    const stored = view(await engine.readWriteRequestById(id));
+    const released = counters(await engine.lockPersistenceCounters(KEYS));
+    const result = { done: view(done), stored, outside: outside ?? null, released: released.brain };
+    expect(result.done).toMatchObject({ state: 'failed', errorCode: 'parity_error', completed: true });
+    expect(result.stored).toEqual(result.done);
+    expect(result.released).toMatchObject({ outstanding: 0, intentBytes: 0, lifetimeIds: 1 });
+    return result;
   });
 
   parityTest('renewWriteClaim extends a claim held under its token and refuses any other token', { methods: ['renewWriteClaim', 'stampWriteClaim', 'readWriteRequestById'] }, async (engine) => {

@@ -134,6 +134,12 @@ export const completeWriteRow: StoreMember<[completion: WriteCompletion], Comple
   requestRow<CompletedWriteRow>(await storeCall({ member: 'completeWriteRow' }, () => brain.completeWriteRow(completion)));
 
 /**
+ * Synchronous commit for the current transaction: nothing to set. A store commit makes every write durable before it
+ * returns (gbrain-store kv.rs `commit`), so each commit already waits for the flush.
+ */
+export const requireSynchronousCommit: StoreMember<[], void> = async () => undefined;
+
+/**
  * This engine records no persistence effect (rust/docs/store/persistence.md, "Effect scans"), so a publication's
  * effects are refused, never dropped: a receipt that says an embedding is queued needs an effect that runs.
  */

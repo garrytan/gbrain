@@ -37,6 +37,7 @@ export const RUST_ENGINE_MEMBERS = {
   transactionDirect: 'transactions',
   lockPageKeys: 'transactions',
   declarePersistence: 'transactions',
+  requireSynchronousCommit: 'transactions',
   // pages
   aliasCanonicalRefs: 'pages',
   nextLivePageAfter: 'pages',

@@ -3316,6 +3316,8 @@ export interface BrainEngine {
    * row is missing). Outside a transaction the declaration ends with its statement. engine-sql/persistence-declaration.ts.
    */
   declarePersistence(opts?: { durable?: DurablePersistenceSettings }): Promise<string | null>;
+  /** Synchronous commit for the rest of the current transaction (engine-sql/persistence-declaration.ts); nothing outside one. */
+  requireSynchronousCommit(): Promise<void>;
 
   /** One local writer registration row (lane, credential hash, grant ceiling, revoked_at), or undefined; `lock` reads it `FOR SHARE`. */
   readLocalWriterRow(id: string, opts?: { lock?: boolean }): Promise<LocalWriterRow | undefined>;

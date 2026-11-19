@@ -22,6 +22,7 @@
  * The effect claim's candidate read in src/core/engine-sql/persistence-effect-scans.ts does too: its dead-owner test and
  * refresh fence are pinned below against the effect-journal and worktree-refresh fragments. So does the publication's
  * effects insert in persistence-journal.ts: its text and its auto-link gate key are pinned against effect-journal.ts.
+ * The completion's synchronous-commit statement in persistence-declaration.ts is pinned against journal.ts `completeWrite`.
  */
 import { describe, expect, test } from 'bun:test';
 import { CLAIM_STAMP_SQL, COMPLETE_WRITE_PURGE_PROBE_SQL, COMPLETE_WRITE_SQL, PUBLICATION_EFFECTS_SQL, publicationEffectsParams,
@@ -46,6 +47,7 @@ import { NEWEST_SYNC_RECEIPT_EXCLUSION, OPEN_SYNC_CURSOR_EXCLUSION } from '../sr
 import { UNRESOLVED_CALLER_REFUSAL_SQL } from '../src/core/persistence/terminal-classify.ts';
 import { COMPACTED_RECEIPT_BYTES_SQL } from '../src/core/persistence/receipt-bytes.ts';
 import { CLAIMABLE_EFFECT_SQL } from '../src/core/engine-sql/persistence-effect-scans.ts';
+import { requireSynchronousCommit, SYNCHRONOUS_COMMIT_SQL } from '../src/core/engine-sql/persistence-declaration.ts';
 import { claimHeadStatement, claimHeadText } from '../src/core/engine-sql/persistence-claims.ts';
 import { CLAIM_ORDER, FOREGROUND_WAITING_ON } from '../src/core/persistence/journal.ts';
 import { DEAD_OWNER_EFFECT_SQL } from '../src/core/persistence/effect-journal.ts';
@@ -212,5 +214,18 @@ describe('the publication effects insert copies the effect journal statement', (
     const effects = [{ kind: 'embedding', data: { slug: 'notes/a', page_id: 1 } }, { kind: 'links', data: { slug: 'notes/a' }, gated: true }];
     expect(publicationEffectsParams({ requestId: 'r', revision: null, sourceId: 'default', sourceIncarnation: 'i', worktreeId: null, effects }))
       .toEqual(['r', null, 'default', 'i', null, JSON.stringify(effects), 'mcp.remote_auto_links']);
+  });
+});
+
+describe('the completion synchronous-commit statement copies the journal statement', () => {
+  // The statement journal.ts completeWrite sent through executeRaw before it called requireSynchronousCommit.
+  const journalText = "SELECT set_config('synchronous_commit','on',true)";
+
+  test('requireSynchronousCommit sends the journal text alone, with no parameters', async () => {
+    expect(SYNCHRONOUS_COMMIT_SQL).toBe(journalText);
+    const sent: unknown[][] = [];
+    const engine = { executeRaw: async (...args: unknown[]) => { sent.push(args); return []; } };
+    await requireSynchronousCommit(engine as never);
+    expect(sent).toEqual([[journalText]]);
   });
 });

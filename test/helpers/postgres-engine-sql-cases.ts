@@ -51,7 +51,7 @@ const OOS = {
   writeGuards: 'out-of-scope:write-guards (born in engine-sql/write-guards.ts; pinned by test/engine-parity/write-guards.test.ts and test/fold-hook-noop-6712.test.ts)',
   effectScans: 'out-of-scope:persistence-effect-scans (born in engine-sql/persistence-effect-scans.ts; pinned by test/engine-parity/effect-scans.test.ts)',
   writerVersions: 'out-of-scope:writer-versions (born in engine-sql/writer-versions.ts; pinned by test/engine-parity/writer-versions.test.ts)',
-  persistenceDeclaration: 'out-of-scope:persistence-declaration (born in engine-sql/persistence-declaration.ts; pinned by test/engine-parity/persistence-declaration.test.ts)',
+  persistenceDeclaration: 'out-of-scope:persistence-declaration (born in engine-sql/persistence-declaration.ts; pinned by test/engine-parity/persistence-declaration.test.ts and, for requireSynchronousCommit, test/engine-parity/persistence.test.ts)',
   pageWriteRows: 'out-of-scope:page-write-rows (born in engine-sql/timeline.ts and takes.ts; pinned by test/engine-parity/timeline.test.ts, takes.test.ts and test/fold-hook-noop-6712.test.ts)',
   trustFence: 'out-of-scope:trust-fence (born in engine-sql/facts.ts and engine-sql/trust-fence.ts; pinned by test/engine-parity/facts.test.ts, test/engine-parity/trust-fence.test.ts and test/fold-hook-noop-6712.test.ts)',
   trustProposals: 'out-of-scope:trust-proposals (born in engine-sql/trust-proposals.ts; pinned by test/engine-parity/trust-proposals.test.ts and test/engine-parity/trust-fence.test.ts)',
@@ -519,6 +519,7 @@ export const DOMAIN_OF: Record<string, string> = {
   // import guards (typed reads and writes the default import path runs)
   // persistence declaration (the typed protocol-2 declaration every managed write transaction runs first)
   'declarePersistence': OOS.persistenceDeclaration,
+  'requireSynchronousCommit': OOS.persistenceDeclaration,
   'readManagedModeRows': OOS.importGuards, 'getSourceStrictness': OOS.importGuards, 'readPersistenceBrainId': OOS.importGuards,
   'readLocalWriterRow': OOS.importGuards, 'insertLocalWriterRow': OOS.importGuards, 'readTransactionSettings': OOS.importGuards,
   'applyTransactionSettings': OOS.importGuards, 'readCurrentWriteTrust': OOS.importGuards, 'setWriteContext': OOS.importGuards, 'readLedgerSource': OOS.importGuards, 'isFolderRestricted': OOS.importGuards,
@@ -1293,6 +1294,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   }))]]),
   ...variants('stampWriteClaim', [['default', (e) => e.transaction((tx: any) => tx.stampWriteClaim(JOURNAL_REQUEST, JOURNAL_REQUEST, 60_000, '{}'))]]),
   ...variants('lockWriteRequest', [['default', (e) => e.transaction((tx: any) => tx.lockWriteRequest(JOURNAL_REQUEST))]]),
+  ...variants('requireSynchronousCommit', [['default', (e) => e.transaction((tx: any) => tx.requireSynchronousCommit())]]),
   ...variants('completeWriteRow', ([false, true] as const).map((probePurges) => [probePurges ? 'purge-probe' : 'default', (e: any) => e.transaction((tx: any) => tx.completeWriteRow({
     id: JOURNAL_REQUEST, state: 'committed', outcome: { status: 'ok' }, errorCode: null, errorMessage: null, consumerVersion: 'test',
     consumerHostId: null, errorDetail: null, resultBytes: 10, counterKeys: JOURNAL_KEYS, intentBytes: 100, retainedBytes: 110,
