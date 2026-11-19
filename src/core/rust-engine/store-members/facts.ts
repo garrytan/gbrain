@@ -2,7 +2,7 @@
  * Facts and their supersession chains (BrainEngine insertFact, insertFacts, deleteFactsForPage, expireFact,
  * listFactsByEntity, listFactsSince, listFactsKeyset, listFactsBySession, listSupersessions, countUnconsolidatedFacts,
  * findCandidateDuplicates, consolidateFact, findTrajectory, getFactsHealth, migrateFactsToCanonical, listUnattributedFacts,
- * pageCollapseFacts, listFenceRetireCandidates, readFactPreimages).
+ * pageCollapseFacts, listFenceRetireCandidates, readFactPreimages, restoreFactPreimage).
  *
  * Each member applies the defaults and clamps of src/core/engine-sql/facts.ts, then makes one store call. What the
  * store cannot answer exactly refuses with `engine_capability_missing`: a read eligibility policy (except on the four
@@ -274,6 +274,10 @@ export const readFactPreimages: Member<'readFactPreimages'> = async (brain, sour
   if (!ids.length) return [];
   return preimageRows(await storeCall({ member: 'readFactPreimages', sourceId }, () => brain.readFactPreimages(sourceId, [...ids])) as Row[]);
 };
+
+/** The store checks every argument as Postgres casts it, then rewrites the row when its source, claim and visibility match. */
+export const restoreFactPreimage: Member<'restoreFactPreimage'> = (brain, sourceId, preimage) =>
+  storeCall({ member: 'restoreFactPreimage', sourceId }, () => brain.restoreFactPreimage(sourceId, preimage));
 
 export const findCandidateDuplicates: Member<'findCandidateDuplicates'> = async (brain, sourceId, entitySlug, factText, opts) => {
   const o = takeOptions('findCandidateDuplicates', opts,

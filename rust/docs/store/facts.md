@@ -409,6 +409,13 @@ raises).
 expired rows included. An id of another source, or no row, is left out. The member refuses an id that
 is not a whole number before it reads, on every engine.
 
+`restore_fact_preimage` (`engine-sql/facts.ts` `restoreFactPreimage`, for `restoreFactRow`) writes such a
+before-state back: `expired_at`, `valid_until`, `superseded_by`, `consolidated_at` and `consolidated_into`, and
+`row_num` only when no other row of the page holds that number. It changes only the row of that id and source
+whose claim and visibility still match, and returns whether it did. Every argument is checked first, as Postgres
+casts the parameters before it reads a row, and a `superseded_by` that names no fact is the
+`facts_superseded_by_fkey` refusal.
+
 What PGLite reads from the transaction, the store takes as a `FenceContext`: the writer's tier
 (`gbrain.write_trust_tier`, undeclared reads as `unknown`, a name that is no tier ranks 0) and the
 opened ids (`gbrain.write_open_facts`). Both napi members take it from the store's write trust context

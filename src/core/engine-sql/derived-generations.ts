@@ -119,6 +119,12 @@ const VALVE_READ_SQL = `SELECT (SELECT retired FROM derived_generation_valve WHE
 const VALVE_BUMP_SQL = `INSERT INTO derived_generation_valve (source_id, kind, window_key, retired) VALUES ($1,$2,$3,$4)
     ON CONFLICT (source_id, kind, window_key) DO UPDATE SET retired=derived_generation_valve.retired+EXCLUDED.retired, updated_at=now()`;
 
+/** Whether the key's live row is a restore (generations/adapters/fact-rows.ts `consolidationRestored`). */
+const RESTORED_SQL = `SELECT restore_of IS NOT NULL AS restored FROM derived_generations
+    WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='live'`;
+/** Deletes the `tie` held rows of $1/$2 whose owner key starts with $4 ($3 is its length; fact-rows.ts `clearConsolidationTies`). */
+const CLEAR_TIES_SQL = `DELETE FROM derived_generations WHERE source_id=$1 AND kind=$2 AND state='held' AND held_reason='tie' AND left(owner_key, $3)=$4`;
+
 /** The live generation of `key` with its owned items, or null. */
 export async function readLiveGenerationRow(raw: EngineRawRead, key: GenerationRowKey): Promise<LiveGenerationRow | null> {
   const [row] = await raw<{ id: number; generation: number; input_pin: string | null; input_size: number | null; locator: string | null }>(
@@ -226,4 +232,18 @@ export async function readGenerationValve(raw: EngineRawRead, key: GenerationRow
 /** Adds `retired` retirements to the valve window `windowKey` of the key's source and kind. Runs in the caller's transaction. */
 export async function bumpGenerationValve(raw: EngineRawRead, key: GenerationRowKey, windowKey: string, retired: number): Promise<void> {
   await raw(VALVE_BUMP_SQL, [key.sourceId, key.kind, windowKey, retired]);
+}
+
+/** Whether the live row of `key` is a restore (`restore_of` set); false when the key has no live row. */
+export async function readGenerationRestored(raw: EngineRawRead, key: GenerationRowKey): Promise<boolean> {
+  const [row] = await raw<{ restored: boolean }>(RESTORED_SQL, [key.sourceId, key.kind, key.ownerKey]);
+  return row?.restored === true;
+}
+
+/**
+ * Deletes the held rows of `kind` in `sourceId` held `tie` whose owner key starts with `ownerPrefix`, with their items,
+ * in the caller's transaction. The prefix length is its JavaScript length, as the caller sent it.
+ */
+export async function clearTieHeldGenerationRows(raw: EngineRawRead, sourceId: string, kind: string, ownerPrefix: string): Promise<void> {
+  await raw(CLEAR_TIES_SQL, [sourceId, kind, ownerPrefix.length, ownerPrefix]);
 }

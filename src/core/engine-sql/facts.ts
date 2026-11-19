@@ -25,6 +25,7 @@ import { escapeLikePattern } from '../cjk.ts';
 import { getFtsLanguage } from '../fts-language.ts';
 import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
+import type { EngineRawRead } from './cli-reads-ops.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
 import { compileRowNormalizer } from './normalize.ts';
 import { deletedPageProjectionHiddenSql, projectionEligibleSql } from '../eligibility/sql.ts';
@@ -964,4 +965,24 @@ export async function readFactPreimages(exec: LegacyUnscopedRead, sourceId: stri
   if (!ids.length) return [];
   return (await exec.run<{ preimage: FactPreimage }>(sqlFragment`SELECT ${trustedSql(FACT_PREIMAGE_SQL)} AS preimage FROM facts f WHERE f.source_id=${sourceId} AND f.id = ANY(${[...ids]}::bigint[]) ORDER BY f.id`))
     .rows.map(row => row.preimage);
+}
+
+/**
+ * Puts a fact's recorded before-state back (generations/adapters/fact-rows.ts `restoreFactRow`): lifecycle
+ * (`expired_at`, `valid_until`, `superseded_by`), consolidation marks, and its fence position when no other row of the
+ * page holds that number. Only the row of the source whose claim and visibility still match is changed.
+ */
+const RESTORE_FACT_PREIMAGE_SQL = `UPDATE facts f SET expired_at=$4::timestamptz, valid_until=$5::timestamptz, superseded_by=$6::bigint,
+      consolidated_at=$7::timestamptz, consolidated_into=$8::bigint,
+      row_num=CASE WHEN $9::integer IS NULL OR f.row_num IS NOT DISTINCT FROM $9::integer THEN f.row_num
+        WHEN NOT EXISTS (SELECT 1 FROM facts o WHERE o.source_id=f.source_id AND o.source_markdown_slug=f.source_markdown_slug AND o.row_num=$9::integer AND o.id<>f.id)
+        THEN $9::integer ELSE f.row_num END
+    WHERE f.source_id=$1 AND f.id=$2::bigint AND f.fact=$3 AND f.visibility=$10 RETURNING f.id`;
+
+/** Writes `preimage` back onto its fact (`RESTORE_FACT_PREIMAGE_SQL`) in the caller's transaction; resolves whether it did. */
+export async function restoreFactPreimage(raw: EngineRawRead, sourceId: string, preimage: Record<string, unknown>): Promise<boolean> {
+  const p = preimage as unknown as FactPreimage;
+  const rows = await raw<{ id: number }>(RESTORE_FACT_PREIMAGE_SQL,
+    [sourceId, p.id, p.fact, p.expired_at, p.valid_until, p.superseded_by, p.consolidated_at, p.consolidated_into, p.row_num, p.visibility]);
+  return rows.length === 1;
 }

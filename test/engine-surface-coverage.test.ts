@@ -157,8 +157,9 @@ const INTERFACE_METHODS: readonly string[] = [
   'readStoredBodyBytes',
   // The fence guard's reads of a page's fact rows (engine-sql/facts.ts, engine-sql/trust-fence.ts).
   'listFenceRetireCandidates', 'listFenceFactRows',
-  // The fact rows adapter's before-state read (engine-sql/facts.ts).
-  'readFactPreimages',
+  // The fact rows adapter's before-state read and restore (engine-sql/facts.ts) and its consolidation ledger reads
+  // (engine-sql/derived-generations.ts).
+  'readFactPreimages', 'restoreFactPreimage', 'readGenerationRestored', 'clearTieHeldGenerationRows',
   // The trust decision queue (engine-sql/trust-proposals.ts).
   'insertTrustProposal', 'getTrustProposal', 'listTrustProposals', 'pendingTrustProposalsFor', 'updatePendingTrustProposalAfter',
   'transitionTrustProposal',

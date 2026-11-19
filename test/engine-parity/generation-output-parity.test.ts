@@ -3,7 +3,8 @@
  * row order (source, kind, owner and item keys in byte order, never the database collation; generations in id order,
  * never heap order), jsonb number text as Postgres keeps it (`1.0`, `1.50`, `1.00` for `100e-2`) in the text scrub, a
  * JSON `null` held context, proposal or fence as a value (not SQL NULL), an activation id that is not a uuid, a
- * `--since` that is not an ISO instant with a zone, and the fact before-states the fact rows adapter records.
+ * `--since` that is not an ISO instant with a zone, the fact before-states the fact rows adapter records and puts back,
+ * and the consolidation adapter's restored check and `tie` hold clear.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each case gives the same answer on PGLite, Postgres (en_US collation) and the Rust engine. Source ids
@@ -30,7 +31,8 @@ import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { submissionAuthority } from '../../src/core/persistence/authority.ts';
 import { registerLocalWriter } from '../../src/core/persistence/identity.ts';
 import { admitWrite } from '../../src/core/persistence/journal.ts';
-import { factPreimages } from '../../src/core/generations/adapters/fact-rows.ts';
+import { CONSOLIDATION_KIND, clearConsolidationTies, consolidationOwnerKey, consolidationRestored, factPreimages, restoreFactRow }
+  from '../../src/core/generations/adapters/fact-rows.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -284,6 +286,84 @@ describe('engine parity: generation ledger output', () => {
     expect(answers.other.map(row => row.fact)).toEqual(['Elsewhere']);
     expect(answers.none).toEqual([]);
     expect(answers.fraction).toBe('fact ids must be whole numbers: 1.5');
+    return answers;
+  });
+
+  parityTest('the fact rows adapter puts a before-state back only on the same claim and visibility, and moves only to a free fence number', {
+    methods: ['insertFacts', 'expireFact', 'consolidateFact', 'readFactPreimages', 'restoreFactPreimage'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other-restore');
+    const mk = (fact: string, row_num: number) => ({ fact, entity_slug: 'people/restore-example', source: 'fence', source_markdown_slug: 'people/restore-example',
+      kind: 'fact' as const, visibility: 'world' as const, valid_from: new Date('2026-02-01T01:02:03.250Z'), row_num });
+    const { ids: [alpha, beta] } = await engine.insertFacts([mk('Alpha', 1), mk('Beta', 2)] as never, { source_id: 'default' });
+    const [before] = await factPreimages(engine, 'default', [alpha!]);
+    expect(await engine.expireFact(alpha!, { supersededBy: beta!, at: new Date('2026-04-05T06:07:08.125Z') })).toBe(true);
+    await engine.consolidateFact(alpha!, 77);
+    const state = async () => {
+      const [row] = await factPreimages(engine, 'default', [alpha!]);
+      return { row_num: row!.row_num, expired_at: row!.expired_at, valid_until: row!.valid_until, superseded_by: row!.superseded_by === beta ? 'Beta' : row!.superseded_by,
+        consolidated_at: row!.consolidated_at === null ? null : 'set', consolidated_into: row!.consolidated_into };
+    };
+    const base = before as unknown as Record<string, unknown>;
+    const refused = async (run: () => Promise<unknown>) => outcome(run, /violates foreign key constraint "facts_superseded_by_fkey"/);
+    const answers = {
+      changed: await state(),
+      otherClaim: await restoreFactRow(engine, 'default', { ...base, fact: 'Changed' }),
+      otherVisibility: await restoreFactRow(engine, 'default', { ...base, visibility: 'private' }),
+      otherSource: await restoreFactRow(engine, 'other-restore', base),
+      missingSuccessor: await refused(() => restoreFactRow(engine, 'default', { ...base, superseded_by: 2 ** 40 })),
+      afterRefusals: await state(),
+      restored: await restoreFactRow(engine, 'default', base),
+      back: await state(),
+      takenNumber: await restoreFactRow(engine, 'default', { ...base, row_num: 2, valid_until: '2026-05-01T10:00:00.5+02:00' }),
+      keptNumber: await state(),
+      freeNumber: await restoreFactRow(engine, 'default', { ...base, row_num: 9 }),
+      moved: await state(),
+    };
+    expect(answers.changed).toEqual({ row_num: 1, expired_at: '2026-04-05T06:07:08.125+00:00', valid_until: null, superseded_by: 'Beta', consolidated_at: 'set', consolidated_into: 77 });
+    expect([answers.otherClaim, answers.otherVisibility, answers.otherSource]).toEqual([false, false, false]);
+    expect(answers.missingSuccessor).toBe('violates foreign key constraint "facts_superseded_by_fkey"');
+    expect(answers.afterRefusals).toEqual(answers.changed);
+    expect(answers.restored).toBe(true);
+    expect(answers.back).toEqual({ row_num: 1, expired_at: null, valid_until: null, superseded_by: null, consolidated_at: null, consolidated_into: null });
+    expect(answers.takenNumber).toBe(true);
+    expect(answers.keptNumber).toEqual({ ...answers.back, valid_until: '2026-05-01T08:00:00.5+00:00' });
+    expect(answers.moved).toEqual({ ...answers.back, row_num: 9 });
+    return answers;
+  });
+
+  parityTest('the consolidation adapter reads a restored live row and clears only its entity\'s tie holds', {
+    methods: ['transaction', 'activateGenerationRows', 'readGenerationRestored', 'recordHeldGenerationRow', 'clearTieHeldGenerationRows', 'listFenceHoldRows'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other-ties');
+    const key = { sourceId: 'default', kind: CONSOLIDATION_KIND, ownerKey: consolidationOwnerKey('people/tie-example', [2, 1]) };
+    const restored = () => consolidationRestored(engine, 'default', 'people/tie-example', [1, 2]);
+    const answers: Record<string, unknown> = { none: await restored() };
+    const first = await engine.transaction(tx => tx.activateGenerationRows(key, null, activation(1, 'restore-first', '{}'), []));
+    answers.plain = await restored();
+    await engine.transaction(tx => tx.activateGenerationRows(key, first, { ...activation(2, 'restore-second', '{}'), restoreOf: first }, []));
+    answers.restore = await restored();
+    const hold = async (sourceId: string, kind: string, entity: string, ids: number[], reason: string) =>
+      engine.transaction(tx => tx.recordHeldGenerationRow({ sourceId, kind, ownerKey: consolidationOwnerKey(entity, ids) },
+        { ...held(`h-${sourceId}-${kind}-${entity}-${reason}`, '{}', null), reason }));
+    await hold('default', CONSOLIDATION_KIND, 'people/tie-example', [1, 2], 'tie');
+    await hold('default', CONSOLIDATION_KIND, 'people/tie-example', [3, 4], 'no_proof');
+    await hold('default', CONSOLIDATION_KIND, 'people/tie-example-2', [5, 6], 'tie');
+    await hold('default', 'fact-fence', 'people/tie-example', [7, 8], 'tie');
+    await hold('other-ties', CONSOLIDATION_KIND, 'people/tie-example', [9, 10], 'tie');
+    // Postgres compares left(owner_key, <JavaScript length>): a slug past the BMP counts 2 there and 1 in Postgres, so its tie stays.
+    await hold('default', CONSOLIDATION_KIND, 'people/\u{1F600}', [11, 12], 'tie');
+    await clearConsolidationTies(engine, 'default', 'people/tie-example');
+    await clearConsolidationTies(engine, 'default', 'people/\u{1F600}');
+    answers.left = (await engine.listFenceHoldRows(['default', 'other-ties'], [CONSOLIDATION_KIND, 'fact-fence']))
+      .map(row => `${row.source_id} ${row.kind} ${row.owner_key} ${row.held_reason}`).sort();
+    expect(answers).toEqual({ none: false, plain: false, restore: true, left: [
+      'default consolidation entity:people/tie-example-2:cluster:5,6 tie',
+      'default consolidation entity:people/tie-example:cluster:3,4 no_proof',
+      'default consolidation entity:people/\u{1F600}:cluster:11,12 tie',
+      'default fact-fence entity:people/tie-example:cluster:7,8 tie',
+      'other-ties consolidation entity:people/tie-example:cluster:9,10 tie',
+    ] });
     return answers;
   });
 });

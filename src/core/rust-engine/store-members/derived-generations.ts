@@ -62,6 +62,15 @@ export const clearGenerationAttempts: StoreMember<[holdId: string], void> = asyn
   await storeCall({ member: 'clearGenerationAttempts' }, () => brain.clearGenerationAttempts(holdId));
 };
 
+/** Whether the key's live row is a restore. */
+export const readGenerationRestored: StoreMember<[key: GenerationRowKey], boolean> = async (brain, key) =>
+  storeCall({ member: 'readGenerationRestored', sourceId: key.sourceId }, () => brain.readGenerationRestored(key));
+
+/** Deletes the `tie` held rows of `kind` in `sourceId` whose owner key starts with `ownerPrefix`. */
+export const clearTieHeldGenerationRows: StoreMember<[sourceId: string, kind: string, ownerPrefix: string], void> = async (brain, sourceId, kind, ownerPrefix) => {
+  await storeCall({ member: 'clearTieHeldGenerationRows', sourceId }, () => brain.clearTieHeldGenerationRows(sourceId, kind, ownerPrefix));
+};
+
 /** The valve window `windowKey` of the key's source and kind. */
 export const readGenerationValve: StoreMember<[key: GenerationRowKey, windowKey: string], GenerationValveRow> = async (brain, key, windowKey) =>
   storeCall({ member: 'readGenerationValve', sourceId: key.sourceId }, () => brain.readGenerationValve(key, windowKey));

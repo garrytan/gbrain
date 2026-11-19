@@ -16,11 +16,13 @@
 //! the held arm reads the widening proposals of `trust_proposals` (`trust::proposals`). See
 //! rust/docs/store/facts.md, "The fence guard's reads".
 
-use super::{FactRecord, page_rows, read_fact};
+use super::{FactRecord, bigint, fence_row, foreign_key, page_rows, read_fact, write_fact};
 use crate::Store;
+use crate::dream::int4;
 use crate::error::{INVALID_ARGUMENT, Result, StoreError};
 use crate::kv::KvRead;
 use crate::links::no_nul;
+use crate::persistence::parse_timestamptz;
 use crate::timeline_queries::timestamptz_text;
 use crate::trust::TrustTier;
 use crate::trust::proposals::held_narrower;
@@ -151,6 +153,22 @@ fn opt_time(micros: Option<i64>) -> Value {
     micros.map_or(Value::Null, |us| json!(jsonb_time(us)))
 }
 
+/// The before-state `restoreFactPreimage` puts back (`FACT_PREIMAGE_SQL` as the generation ledger
+/// recorded it; other keys are ignored). Times are `timestamptz` text.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct FactRestore {
+    pub id: Option<f64>,
+    pub fact: Option<String>,
+    pub visibility: Option<String>,
+    pub expired_at: Option<String>,
+    pub valid_until: Option<String>,
+    pub superseded_by: Option<f64>,
+    pub consolidated_at: Option<String>,
+    pub consolidated_into: Option<f64>,
+    pub row_num: Option<f64>,
+}
+
 /// `FACT_PREIMAGE_SQL`: a fact's before-state.
 fn preimage(row: &FactRecord) -> Value {
     json!({
@@ -212,6 +230,71 @@ impl Store {
             }
         }
         Ok(out)
+    }
+
+    /// `restoreFactPreimage(sourceId, preimage)`: puts a fact's recorded before-state back. Sets
+    /// `expired_at`, `valid_until`, `superseded_by`, `consolidated_at` and `consolidated_into`, and
+    /// the fence position `row_num` when no other row of the page holds it. Only the row of the
+    /// source whose claim and visibility still match is changed; returns whether it was. Every
+    /// argument is checked first, as Postgres casts the parameters before it reads a row.
+    pub fn restore_fact_preimage(&self, source_id: &str, p: &FactRestore) -> Result<bool> {
+        const OP: &str = "restoreFactPreimage";
+        let time = |what: &str, t: &Option<String>| {
+            t.as_deref()
+                .map(|t| parse_timestamptz(t, &format!("{OP}: {what}")))
+                .transpose()
+        };
+        let num = |what: &str, v: Option<f64>| v.map(|v| bigint(OP, what, v)).transpose();
+        let id = num("id", p.id)?;
+        let expired_at = time("expired_at", &p.expired_at)?;
+        let valid_until = time("valid_until", &p.valid_until)?;
+        let superseded_by = num("superseded_by", p.superseded_by)?;
+        let consolidated_at = time("consolidated_at", &p.consolidated_at)?;
+        let consolidated_into = num("consolidated_into", p.consolidated_into)?;
+        let row_num = p.row_num.map(|v| int4(OP, "row_num", v)).transpose()?;
+        let (Some(id), Some(fact), Some(visibility)) = (id, &p.fact, &p.visibility) else {
+            return Ok(false);
+        };
+        let Ok(id) = u64::try_from(id) else {
+            return Ok(false);
+        };
+        let trust = &self.write_trust()?;
+        self.write(|tx| {
+            let Some(old) = read_fact(&*tx, id)? else {
+                return Ok(false);
+            };
+            if old.source_id != source_id || &old.fact != fact || &old.visibility != visibility {
+                return Ok(false);
+            }
+            let mut new = old.clone();
+            new.expired_at_us = expired_at;
+            new.valid_until_us = valid_until;
+            new.consolidated_at_us = consolidated_at;
+            new.consolidated_into = consolidated_into;
+            new.superseded_by = match superseded_by {
+                None => None,
+                Some(by) if old.superseded_by == u64::try_from(by).ok() => old.superseded_by,
+                Some(by) => match u64::try_from(by) {
+                    Ok(by) if read_fact(&*tx, by)?.is_some() => Some(by),
+                    _ => return Err(foreign_key("facts_superseded_by_fkey")),
+                },
+            };
+            if let Some(n) = row_num
+                && old.row_num != Some(n)
+            {
+                let taken = match &old.source_markdown_slug {
+                    Some(slug) => {
+                        fence_row(&*tx, &old.source_id, slug, n)?.is_some_and(|o| o.id != old.id)
+                    }
+                    None => false,
+                };
+                if !taken {
+                    new.row_num = Some(n);
+                }
+            }
+            write_fact(tx, trust, Some(&old), &new)?;
+            Ok(true)
+        })
     }
 
     /// `listFenceFactRows({ sourceId, slug, incoming })`: the page's live fence rows, by row number,

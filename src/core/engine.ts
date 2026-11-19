@@ -2821,6 +2821,13 @@ export interface BrainEngine {
   readFactPreimages(sourceId: string, ids: readonly number[]): Promise<FactPreimage[]>;
 
   /**
+   * Puts the recorded before-state `preimage` (`FACT_PREIMAGE_SQL`) back onto its fact of `sourceId` in the caller's
+   * transaction (engine-sql/facts.ts `restoreFactPreimage`): lifecycle, consolidation marks, and the fence position
+   * when no other row of the page holds it. Only a row whose claim and visibility still match changes; resolves whether it did.
+   */
+  restoreFactPreimage(sourceId: string, preimage: Record<string, unknown>): Promise<boolean>;
+
+  /**
    * Find candidate duplicates for a new fact within a source+entity bucket.
    * Entity-prefilter is mandatory (bounds the contradiction-classifier blast
    * radius). Hard cap k=5 by default. Embedding-cosine when both sides have
@@ -3431,6 +3438,9 @@ export interface BrainEngine {
   liveGenerationForOperation(operationId: string): Promise<number | null>;
   countGenerationAttempt(key: GenerationRowKey, holdId: string, code: string): Promise<GenerationAttemptCount>;
   clearGenerationAttempts(holdId: string): Promise<void>;
+  /** The consolidation ledger statements of generations/adapters/fact-rows.ts: whether a key's live row is a restore, and the clear of one entity's `tie` holds (`ownerPrefix` is compared over its JavaScript length). */
+  readGenerationRestored(key: GenerationRowKey): Promise<boolean>;
+  clearTieHeldGenerationRows(sourceId: string, kind: string, ownerPrefix: string): Promise<void>;
   readGenerationValve(key: GenerationRowKey, windowKey: string): Promise<GenerationValveRow>;
   bumpGenerationValve(key: GenerationRowKey, windowKey: string, retired: number): Promise<void>;
   /** The purge scrub of the generation ledger (generations/ledger-scrub.ts, engine-sql/generation-ledger.ts): one page's rows, or every row whose text carries a needle. */

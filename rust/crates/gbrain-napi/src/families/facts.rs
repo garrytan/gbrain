@@ -13,8 +13,8 @@ use serde_json::Value;
 use crate::store_binding::{Brain, required};
 use gbrain_store::error::StoreError;
 use gbrain_store::facts::{
-    DuplicateQuery, ExpireFactArgs, FactQuery, FenceTarget, InsertFactArgs, InsertFactsArgs,
-    PageDeleteArgs, SupersessionQuery, TrajectoryQuery, UnattributedQuery,
+    DuplicateQuery, ExpireFactArgs, FactQuery, FactRestore, FenceTarget, InsertFactArgs,
+    InsertFactsArgs, PageDeleteArgs, SupersessionQuery, TrajectoryQuery, UnattributedQuery,
 };
 
 #[napi]
@@ -200,6 +200,21 @@ impl Brain {
                 })
                 .collect::<Result<Vec<i64>, StoreError>>()?;
             s.read_fact_preimages(&source_id, &ids)
+        })
+    }
+
+    /// `restoreFactPreimage(sourceId, preimage)`: resolves whether the fact's before-state was put
+    /// back.
+    #[napi]
+    pub fn restore_fact_preimage<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        preimage: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let preimage: FactRestore = required(preimage, "restoreFactPreimage preimage")?;
+            s.restore_fact_preimage(&source_id, &preimage)
         })
     }
 

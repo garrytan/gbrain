@@ -26,7 +26,7 @@ test/engine-parity/facts-repair.test.ts	10	3
 test/engine-parity/facts-trust.test.ts	4	6
 test/engine-parity/facts.test.ts	36	0
 test/engine-parity/field-usage.test.ts	3	0
-test/engine-parity/generation-output-parity.test.ts	9	0
+test/engine-parity/generation-output-parity.test.ts	11	0
 test/engine-parity/held-fence-cells.test.ts	5	0
 test/engine-parity/import-members.test.ts	9	0
 test/engine-parity/import-path.test.ts	5	3

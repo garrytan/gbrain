@@ -243,6 +243,17 @@
         ],
         "flagOnScopes": []
       },
+      "clearTieHeldGenerationRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "completeEffectRow#default": {
         "flagOffLanes": [
           "pool"
@@ -3745,6 +3756,17 @@
         ],
         "flagOnScopes": []
       },
+      "readGenerationRestored#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readGenerationValve#default": {
         "flagOffLanes": [
           "pool"
@@ -4530,6 +4552,17 @@
         "flagOnScopes": []
       },
       "resolveTake#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "restoreFactPreimage#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -5538,6 +5571,7 @@
         "clearCodeTraversalCache": "none",
         "clearFenceHoldRows": "none",
         "clearGenerationAttempts": "none",
+        "clearTieHeldGenerationRows": "none",
         "cliReads": "none",
         "closeOpenLoop": "none",
         "closedLoopWithActiveFact": "none",
@@ -6035,6 +6069,7 @@
         "readGenerationActivationState": "none",
         "readGenerationFenceBlocks": "none",
         "readGenerationItemsByIds": "none",
+        "readGenerationRestored": "none",
         "readGenerationValve": "none",
         "readGlobalMaintenanceDeaths": "none",
         "readGraduationGateRow": "none",
@@ -6170,6 +6205,7 @@
         "resolveSlugsByPaths": "none",
         "resolveStrandedParents": "none",
         "resolveTake": "none",
+        "restoreFactPreimage": "none",
         "restorePage": "none",
         "resumeJob": "none",
         "retireSegmentDerivations": "none",

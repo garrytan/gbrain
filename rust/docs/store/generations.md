@@ -42,6 +42,8 @@ The key layout is in the module header of `rust/crates/gbrain-store/src/generati
 | `brain.readLiveGenerationId(key)` | `{ id }` of the key's live row, or `null` | `readLiveGenerationId` |
 | `brain.listFenceHoldRows(sourceIds, kinds, ownerKey?)` | the held rows of those sources and kinds (one owner when given), `{ source_id, kind, owner_key, held_reason, held_context, created_at }`, oldest first; `created_at` is Postgres `timestamptz` text | `listFenceHoldRows` |
 | `brain.clearFenceHoldRows(key)` | `null`. Deletes the key's held row when its reason is `fence_absent` or `no_proof` | `clearFenceHoldRows` |
+| `brain.readGenerationRestored(key)` | `true` when the key's live row restores another (`restore_of` set), else `false`, also with no live row | `readGenerationRestored` (for `generations/adapters/fact-rows.ts` `consolidationRestored`) |
+| `brain.clearTieHeldGenerationRows(sourceId, kind, ownerPrefix)` | `null`. Deletes the held rows of `sourceId` and `kind` whose reason is `tie` and whose owner key starts with `ownerPrefix`. As Postgres `left(owner_key, length)` counts code points and JavaScript sends the UTF-16 length, a prefix with a character past U+FFFF compares one character too many there, and the store does the same | `clearTieHeldGenerationRows` (for `clearConsolidationTies`) |
 
 `key` is `{ sourceId, kind, ownerKey }`. Errors, and nothing is written:
 

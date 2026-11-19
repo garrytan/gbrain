@@ -341,6 +341,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'deleteTakeRows': OOS.pageWriteRows,
   'listFenceRetireCandidates': OOS.trustFence,
   'readFactPreimages': OOS.callerRawSql,
+  'restoreFactPreimage': OOS.callerRawSql, 'readGenerationRestored': OOS.callerRawSql, 'clearTieHeldGenerationRows': OOS.callerRawSql,
   'listFenceFactRows': OOS.trustFence,
   'insertTrustProposal': OOS.trustProposals,
   'getTrustProposal': OOS.trustProposals,
@@ -1330,6 +1331,9 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('isFolderRestricted', [['default', (e) => e.isFolderRestricted(SRC, SLUG)]]),
   ...variants('listAppliedPolicyRevisions', [['default', (e) => e.listAppliedPolicyRevisions()]]),
   ...variants('readFactPreimages', [['default', (e) => e.readFactPreimages(SRC, [3, 1])]]),
+  ...variants('restoreFactPreimage', [['default', (e) => e.restoreFactPreimage(SRC, { id: 3, fact: 'f', visibility: 'private', expired_at: null, valid_until: null, superseded_by: null, consolidated_at: null, consolidated_into: null, row_num: 1 })]]),
+  ...variants('readGenerationRestored', [['default', (e) => e.readGenerationRestored({ sourceId: SRC, kind: 'consolidation', ownerKey: 'entity:a:cluster:1' })]]),
+  ...variants('clearTieHeldGenerationRows', [['default', (e) => e.clearTieHeldGenerationRows(SRC, 'consolidation', 'entity:a:cluster:')]]),
   ...variants('readJournalLimitRows', [['default', (e) => e.readJournalLimitRows()]]),
   ...variants('readHeldPageRows', [['default', (e) => e.readHeldPageRows(['1', '2'])]]),
   ...variants('readHeldCoverageRows', [

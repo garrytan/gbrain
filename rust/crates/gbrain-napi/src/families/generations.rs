@@ -89,6 +89,33 @@ impl Brain {
         })
     }
 
+    /// `readGenerationRestored(key)`: resolves whether the key's live row is a restore.
+    #[napi]
+    pub fn read_generation_restored<'env>(
+        &self,
+        env: &'env Env,
+        key: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let key: GenerationKey = required(key, "readGenerationRestored key")?;
+            s.read_generation_restored(&key)
+        })
+    }
+
+    /// `clearTieHeldGenerationRows(sourceId, kind, ownerPrefix)`: resolves null.
+    #[napi]
+    pub fn clear_tie_held_generation_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        kind: String,
+        owner_prefix: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.clear_tie_held_generation_rows(&source_id, &kind, &owner_prefix)
+        })
+    }
+
     /// `heldGenerationRowsForInput(key, pin)`: resolves the held rows of that input.
     #[napi]
     pub fn held_generation_rows_for_input<'env>(
