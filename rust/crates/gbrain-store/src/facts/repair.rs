@@ -6,10 +6,12 @@
 //! - `listCapturedFactsForClassification` (repair/captured-facts.ts),
 //! - `listWorldFactsFromPrivateSources` (repair/visibility.ts).
 //!
-//! The other five members of the file read a table the store does not hold (`open_loops`,
-//! `fact_withdrawals`, `persistence_requests`, `page_purges`, `derived_generations` and
-//! `derived_generation_items`), so the TypeScript engine leaves them out of its member table and they
-//! refuse with `engine_capability_missing`. rust/docs/store/facts.md names each one.
+//! The two loop reads, `closedLoopWithActiveFact` and `loopFactDrift`, are served from
+//! `facts/loops.rs`. The other four members of the file refuse with `engine_capability_missing`:
+//! `countLabelFacts` matches a POSIX regular expression the store does not evaluate,
+//! `listExtractorFactsForClassification` joins the persistence journal, and the other two read a
+//! table the store does not hold (`page_purges`, `derived_generations` and
+//! `derived_generation_items`). rust/docs/store/facts.md names each one.
 //!
 //! Shared reading rules. A source's rows come back in id order ([`source_rows`]); the sources are
 //! visited in byte order of their id, which is `ORDER BY f.source_id, f.id` under the C collation

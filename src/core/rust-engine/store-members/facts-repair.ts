@@ -3,9 +3,9 @@
  * (rust/crates/gbrain-store/src/facts/repair.rs). A member not exported here refuses with `engine_capability_missing`.
  *
  * Served: listSessionFactsForClassification, listSessionFactTwins, listCapturedFactsForClassification and
- * listWorldFactsFromPrivateSources, which read only `facts` and `pages`. Refused, because the store holds no such table:
- * loopFactDrift (`open_loops`; closedLoopWithActiveFact is served from open-loops.ts), countLabelFacts (`open_loops`, `fact_withdrawals`),
- * listExtractorFactsForClassification (`persistence_requests`, `fact_withdrawals`), countPurgedPageFacts (`page_purges`,
+ * listWorldFactsFromPrivateSources, which read only `facts` and `pages`. loopFactDrift and closedLoopWithActiveFact are served
+ * from open-loops.ts. Refused: countLabelFacts (a POSIX regular expression the store does not evaluate), and, because the
+ * store holds no such table, listExtractorFactsForClassification (`persistence_requests`, `fact_withdrawals`), countPurgedPageFacts (`page_purges`,
  * `fact_withdrawals`, `open_loops`) and listUnwithdrawnFacts (`derived_generations`, `derived_generation_items`,
  * `fact_withdrawals`).
  *
