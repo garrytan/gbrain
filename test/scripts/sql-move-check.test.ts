@@ -106,6 +106,37 @@ describe('sql-move-check', () => {
     expect(out).toContain('RESULT: FAIL');
     expect(code).toBe(1);
   });
+
+  // The lexer must not mistake the slashes inside a regular expression for a comment: the SQL after it on the same
+  // line would go unchecked and a changed copy would pass with nothing compared.
+  for (const [name, prefix] of [
+    ['an escaped slash', 'const slash = /\\//;'],
+    ['a slash inside a character class', 'const slash = /[//]x/g;'],
+    ['a regular expression after return', 'function f(s: string) { return /\\//.test(s); }'],
+  ] as const) {
+    it(`still checks a statement written after ${name} on the same line`, () => {
+      baseRepo();
+      put('src/core/caller.ts', `export const A = \`SELECT id FROM pages WHERE source_id = $1\`;\n`);
+      commit('caller');
+      git('tag', '-f', 'base');
+      put('src/core/engine-sql/copy.ts', `${prefix} export const COPY_A = \`SELECT id FROM pages\`;\n`);
+      commit('copy');
+      const { code, out } = check('--removed-paths', 'none');
+      expect(out).toMatch(/^NOT-IDENTICAL/m);
+      expect(out).toContain('RESULT: FAIL');
+      expect(code).toBe(1);
+    });
+  }
+
+  it('still skips a real line comment that follows a division', () => {
+    baseRepo();
+    put('src/core/engine-sql/copy.ts', 'const half = total / 2; // "SELECT nothing FROM nowhere"\nexport const A = `SELECT id, slug FROM pages WHERE source_id = $1`;\n');
+    commit('copy');
+    const { code, out } = check('--removed-paths', 'none');
+    expect(out).toContain('IDENTICAL (byte-identical): 1');
+    expect(out).toContain('RESULT: PASS');
+    expect(code).toBe(0);
+  });
 });
 
 // The eleven statements copied into engine-sql, each found by the text it starts with, and the file whose inline text

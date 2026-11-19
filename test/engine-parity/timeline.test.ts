@@ -178,7 +178,8 @@ describe('engine parity: timeline entries', () => {
       // A removed row frees its dedup slot: the same entry can be added again.
       const readded = await engine.addTimelineEntry('people/prune', { date: '2026-01-02', source: 'cal', summary: 'drop me', detail: 'd1' });
       const duplicated = await engine.removeTimelineRows(pageId, [await row('keep me', { removed: true }), await row('keep me', { removed: true })]);
-      const answers = { attempt, afterAttempt, none, wrongPage, readded, duplicated, final: await left() };
+      // DELETE ... RETURNING has no row order: compare the returned rows in a fixed order.
+      const answers = { attempt: [...attempt].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))), afterAttempt, none, wrongPage, readded, duplicated, final: await left() };
       expect(attempt.map((r) => r.date).sort()).toEqual(['2026-01-02', '2026-03-04']);
       expect(afterAttempt.event).toBe(1);
       expect(duplicated).toHaveLength(1);
