@@ -50,6 +50,7 @@ mod trgm;
 mod tsearch;
 mod vector_cache;
 
+pub(crate) use filters::served;
 pub use filters::{AfterKey, DateBound, KeywordOptions};
 pub use titles::{TitleAttempt, TitleAttemptKind};
 pub(crate) use titles::{check_page_vector, check_sealed_page_vector};
