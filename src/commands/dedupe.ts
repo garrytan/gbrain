@@ -10,7 +10,7 @@
  * repository, in the database otherwise. confirm links cross-source groups as one identity, which rank_entities and
  * enrichment then count once; a bulk confirm covers only clean company groups and is bound to the hash it printed; a person
  * group that shares an account or registry id, and a group whose only shared keys are contact or handle keys, is confirmed
- * alone. reject records "different people" and undoes a confirm.
+ * alone. reject records "different people or companies" and undoes a confirm.
  * Nothing here merges, renames or deletes a page; nothing is linked without the owner.
  */
 import { createHash } from 'node:crypto';
@@ -32,8 +32,8 @@ const HELP = `Usage: gbrain dedupe --preview [--json] [--kind cross-source|in-so
 
 List groups of person and company pages that are likely the same person or company, with the evidence
 (shared keys by type, never their values) and a class: clean, likely, weak, thin or conflict.
-clean: the pages share an account or registry id (LinkedIn, GitHub or a declared id) and exactly the same name;
-it is a strong hint for review, not proof they are one person.
+clean: the pages share an account or registry id (LinkedIn, GitHub or a declared id) and exactly the same name,
+and no two of them list different domains; it is a strong hint for review, not proof they are one person or company.
 The preview is read-only; groups you confirmed or rejected are not listed again.
 
   --preview         list the groups (the default)
@@ -50,7 +50,7 @@ confirm <id>...     record that each group is one person or company; rankings an
   --join <entity>   a page of the group is already in this identity group: add the other pages to it
 confirm --clean     list the clean company groups a bulk confirm covers and print their hash; changes nothing
   --expect <hash>   confirm exactly those groups; refuses (preview_changed) if the list changed since
-reject <id>...      record that the pages are different people: the pair is never proposed again, and a
+reject <id>...      record that the pages are different people or companies: the pair is never proposed again, and a
                     confirmed group is unlinked; two pages in one source also get distinct_from
 reconcile           write decisions the database holds alone into git, re-read the committed decisions and
                     link pages that arrived since; run it after doctor reports a drift
@@ -310,7 +310,7 @@ async function runConfirm(engine: BrainEngine, args: string[]): Promise<void> {
       const rejected = read.decisions.find(d => d.verdict === 'different' && d.members.filter(m => joined.includes(memberText(m))).length > 1);
       if (rejected) {
         const pair = rejected.members.filter(m => joined.includes(memberText(m))).slice(0, 2).map(memberText);
-        throw notConfirmable(chosen[0]!, 'rejected_pair', `with --join ${f.join} would put ${pair.join(' and ')} in one identity, but they are recorded as different people (decision ${rejected.decision_id})`);
+        throw notConfirmable(chosen[0]!, 'rejected_pair', `with --join ${f.join} would put ${pair.join(' and ')} in one identity, but they are recorded as different people or companies (decision ${rejected.decision_id})`);
       }
       entityFor = () => f.join!;
     }
@@ -358,17 +358,17 @@ async function runReject(engine: BrainEngine, args: string[]): Promise<void> {
       `gbrain dedupe reject: ${memberText(member)} of ${d.group_id} is in the group you confirmed as one person (${other.entity_id}); nothing was written.`,
       `To undo that confirm too, reject them together: gbrain dedupe reject ${both.join(' ')}.`,
       { fix: { ask_user: true, argv: ['gbrain', 'dedupe', 'reject', ...both], consent: [], actor: 'user', requires_exclusive: false,
-        why: 'Records the groups as different people in one command and removes the confirmed links.',
+        why: 'Records the groups as different people or companies in one command and removes the confirmed links.',
         user_message: `${memberText(member)} is in the group you confirmed as one person (${other.entity_id}). Should I undo that confirm as well?`,
         verify: { argv: ['gbrain', 'doctor', '--only', 'entity_duplicates', '--json'] } } });
   }
-  const r = await recordDecisions(engine, decisions, `dedupe: record ${decisions.length} group(s) as different people`);
+  const r = await recordDecisions(engine, decisions, `dedupe: record ${decisions.length} group(s) as different people or companies`);
   const sameSource = await markDistinct(engine, decisions);
   if (f.json) {
     console.log(JSON.stringify({ rejected: decisions.map(d => ({ group_id: d.group_id, members: d.members })), store: r.store,
       ...(r.receipt ? { commit: r.receipt.commit, outcome: r.receipt.outcome, ...(r.receipt.note ? { note: r.receipt.note } : {}) } : {}), distinct_from: sameSource }, null, 2));
   } else {
-    for (const d of decisions) console.log(`Recorded ${d.group_id} as different people: ${d.members.map(memberText).join(', ')}. It will not be proposed again.`);
+    for (const d of decisions) console.log(`Recorded ${d.group_id} as different people or companies: ${d.members.map(memberText).join(', ')}. It will not be proposed again.`);
     console.log(storedText(r));
     for (const s of sameSource) console.log(`  ${s.source_id}:${s.slug} distinct_from: ${s.status}`);
   }
