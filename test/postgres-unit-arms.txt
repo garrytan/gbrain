@@ -54,6 +54,7 @@ test/backstop-same-page-shadow-managed-6333.test.ts
 test/behavior-change-notice.test.ts
 test/belief-ledger-append-owner.test.ts
 test/belief-ledger-coverage.test.ts
+test/belief-ledger-fingerprint-v3.test.ts
 test/belief-ledger-group.test.ts
 test/belief-ledger-identity.test.ts
 test/belief-ledger-lifecycle.test.ts
