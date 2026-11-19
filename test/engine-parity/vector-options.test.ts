@@ -1,6 +1,7 @@
 /**
  * BrainEngine parity — the page filters `searchVector` takes beside type, slug and source scope: the frontmatter
- * `where` filter, the `afterDate` / `beforeDate` bounds and the trust floor (`minTrust`).
+ * `where` filter, the `afterDate` / `beforeDate` bounds, the trust floor (`minTrust`) and the flagged-page filter
+ * (`suppressFlagged`).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: `searchVector` drops the pages a filter rejects inside its candidate scan, before it ranks and before
@@ -8,12 +9,14 @@
  *    field equals one of a key's values or is a list holding one, with a numeric or boolean reading of a string value
  *    (`frontmatterWhereClauses`). A date bound compares the page's `effective_date`, else its `updated_at`, with the
  *    bound read as `timestamptz`, strictly unless its `*Inclusive` flag is set. Under `minTrust` it drops the pages
- *    whose stamped trust tier ranks below the floor (`pageEligibleSql`, applied by `buildVisibilityClause` in the
+ *    whose stamped trust tier ranks below the floor, and under `suppressFlagged` the pages at or below `agent_written`
+ *    with a flag receipt in an activation reason family (`pageEligibleSql`, applied by `buildVisibilityClause` in the
  *    inner CTE). Every engine arm returns the same rows and scores.
  *  - Regression: an engine that refuses the option, ignores it, applies it after LIMIT (a limited read comes back
  *    short), misses list containment or the numeric and boolean readings, ORs two keys, compares a bound off by its
  *    inclusive flag or its zone, or drops an undated page instead of reading its `updated_at`; one that ignores the
- *    trust floor, reads an empty floor as a tier, or applies the floor after LIMIT.
+ *    trust floor, reads an empty floor as a tier, or applies the floor after LIMIT; one that ignores the flag, reads a
+ *    flag receipt outside the activation families, or suppresses a flagged page above `agent_written`.
  *  - Why existing coverage misses it: search.test.ts passes `where` and the date bounds to the keyword members and to
  *    hybrid search only, and keyword-visibility.test.ts passes the trust options to the keyword members only; no case
  *    passes them to `searchVector`, so the Rust arm's refusal of them never ran.
@@ -218,6 +221,32 @@ describe('engine parity: searchVector page filters', () => {
       expect(slugs('agent')).toEqual(['notes/agent', 'notes/agent-flagged', 'notes/agent-other-flag', 'notes/curated',
         'notes/curated-flagged', 'notes/observed']);
       expect(out.curated!.top.map((r) => r.split(':')[0])).toEqual(['notes/curated-flagged', 'notes/curated']);
+      return out;
+    },
+  );
+
+  parityTest(
+    'searchVector drops flagged pages before it ranks and limits',
+    { methods: TRUST_METHODS },
+    async (engine) => {
+      await trustFixture(engine);
+      const scopes: Record<string, SearchOpts> = {
+        none: {},
+        suppressed: { suppressFlagged: true },
+        agentSuppressed: { minTrust: 'agent_written', suppressFlagged: true },
+      };
+      const out: Record<string, { top: string[]; all: string[] }> = {};
+      for (const [name, scope] of Object.entries(scopes)) {
+        out[name] = { top: await search(engine, { limit: 2, ...scope }), all: await search(engine, scope) };
+      }
+      const slugs = (name: string) => out[name]!.all.map((r) => r.split(':')[0]!).sort();
+      expect(out.none!.all.length).toBe(TRUSTED.length);
+      // A flag outside the activation families, or on a page above agent_written, suppresses nothing.
+      expect(slugs('suppressed')).toEqual(['notes/agent', 'notes/agent-other-flag', 'notes/curated', 'notes/curated-flagged',
+        'notes/observed', 'notes/outside']);
+      expect(slugs('agentSuppressed')).toEqual(['notes/agent', 'notes/agent-other-flag', 'notes/curated',
+        'notes/curated-flagged', 'notes/observed']);
+      expect(out.suppressed!.top.map((r) => r.split(':')[0])).toEqual(['notes/outside', 'notes/agent-other-flag']);
       return out;
     },
   );

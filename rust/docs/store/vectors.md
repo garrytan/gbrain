@@ -76,9 +76,11 @@ the shape `searchTakes` returns, with the cosine as `score`.
 - **`minTrust`.** A page whose stamped trust tier ranks below the floor drops per page before ranking
   (`trustFloorSql`, the floor `buildVisibilityClause` adds), so a limit counts only kept pages. An unset or empty
   floor keeps every tier; a name that is no tier refuses with `invalid_argument` (`keyword::parse_trust_floor`).
-- **Refused options.** The store does not apply `suppressFlagged`, so a set one refuses with
-  `engine_capability_missing` and nothing runs, even beside `excludePrivate`. `searchTakesVector` refuses `excludePrivate`,
-  `eligibility.floor` and `eligibility.suppressFlagged` the same way.
+- **`suppressFlagged`.** A page at or below `agent_written` with a `flag` receipt in an activation reason family
+  drops per page before ranking (`activationSuppressedSql`, `trust::activation_suppressed`), so a limit counts only
+  kept pages. A flag in another family, or on a page above `agent_written`, suppresses nothing.
+- **Refused options.** `searchTakesVector` refuses `excludePrivate`, `eligibility.floor` and
+  `eligibility.suppressFlagged` with `engine_capability_missing`, and nothing runs.
 - **One vector column.** The store keeps only the text column `embedding`, as the embedding members do.
   An `embeddingColumn` that names another column (`embedding_image`, a registered column), and a brain
   whose config sets `search_embedding_column` or `embedding_columns`, refuse with

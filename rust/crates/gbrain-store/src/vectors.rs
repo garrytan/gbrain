@@ -34,7 +34,7 @@ use crate::kv::{KvRead, KvWrite};
 use crate::pages::{PageRecord, read_page_by_id};
 use crate::sources::read_source;
 use crate::takes::{TakeRecord, all_takes, real_out};
-use crate::trust::TrustTier;
+use crate::trust::{TrustTier, activation_suppressed};
 use crate::{Store, env::iso};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -101,6 +101,9 @@ pub struct VectorSearchOptions {
     /// `minTrust`: the trust floor (`trustFloorSql(p)`), a page's stamped tier at or above it.
     /// `None` or empty keeps every tier; a name that is no tier refuses.
     pub min_trust: Option<String>,
+    /// `suppressFlagged`: drop a page at or below `agent_written` that holds a `flag` receipt in an
+    /// activation reason family (`activationSuppressedSql`).
+    pub suppress_flagged: bool,
     /// `resolveHardExcludes(exclude_slug_prefixes, include_slug_prefixes)`. Absent: the defaults.
     pub hard_excludes: Option<Vec<String>>,
     pub detail: Option<String>,
@@ -467,13 +470,16 @@ fn page_passes(
     {
         return Ok(false);
     }
-    // `pageEligibleSql(p)`: the trust floor.
+    // `pageEligibleSql(p)`: the trust floor, then the flagged-page filter.
     let tier = TrustTier::stored(page.trust_tier.as_deref());
     if bounds
         .floor
         .as_ref()
         .is_some_and(|floor| tier.rank() < floor.rank())
     {
+        return Ok(false);
+    }
+    if options.suppress_flagged && activation_suppressed(read, "pages", page.id, tier)? {
         return Ok(false);
     }
     let is_archived = match archived.get(&page.source_id) {
@@ -1408,6 +1414,68 @@ mod tests {
             .search_vector(&q(&axis(0, 4)), &opts(json!({"min_trust": "trusted"})))
             .unwrap_err();
         assert!(err.to_string().contains("names no trust tier"), "{err}");
+    }
+
+    /// A `flag` receipt on a page, in the given reason families.
+    fn flag(s: &Store, slug: &str, families: &[&str]) {
+        let families: Vec<String> = families.iter().map(|f| f.to_string()).collect();
+        let fields = crate::trust::write_gate::ReceiptFields {
+            content_hash: "h1".into(),
+            tier: "agent_written".into(),
+            detector_version: 1,
+            verdict: "flag".into(),
+            reason_families: families.clone(),
+            reasons: families,
+            detector_error: false,
+            request_id: None,
+        };
+        assert!(
+            s.upsert_page_write_gate_receipt("default", slug, fields)
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    /// `suppressFlagged` (`activationSuppressedSql`): a page at or below `agent_written` with a flag
+    /// receipt in an activation family drops before the limit; a flag in another family, or on a
+    /// page above `agent_written`, suppresses nothing.
+    #[test]
+    fn suppress_flagged_drops_the_flagged_pages_at_or_below_agent_written() {
+        let s = corpus();
+        page_at(&s, "operator_curated", "m-curated-flagged");
+        page_at(&s, "agent_written", "n-agent-flagged");
+        page_at(&s, "agent_written", "o-agent-other");
+        page_at(&s, "agent_written", "p-agent");
+        flag(&s, "m-curated-flagged", &["override"]);
+        flag(&s, "n-agent-flagged", &["exfiltration"]);
+        flag(&s, "o-agent-other", &["other"]);
+        let top = |o: Value| -> Vec<String> {
+            let rows = s.search_vector(&q(&axis(0, 4)), &opts(o)).unwrap();
+            rows.iter()
+                .map(|r| r["slug"].as_str().unwrap().to_string())
+                .collect()
+        };
+        let exclude = json!(["a-exact", "b-tie1", "c-tie2", "d-multi", "e-opposite"]);
+        assert_eq!(
+            top(json!({"exclude_slugs": exclude})),
+            [
+                "m-curated-flagged",
+                "n-agent-flagged",
+                "o-agent-other",
+                "p-agent"
+            ]
+        );
+        assert_eq!(
+            top(json!({"exclude_slugs": exclude, "suppress_flagged": true})),
+            ["m-curated-flagged", "o-agent-other", "p-agent"]
+        );
+        // The limit counts kept pages only: the suppressed page takes no slot.
+        assert_eq!(
+            top(
+                json!({"limit": 1, "exclude_slugs": ["a-exact", "m-curated-flagged"], "suppress_flagged": true})
+            ),
+            ["o-agent-other"]
+        );
     }
 
     /// The feeder's guard cases that edit `content_chunks` with SQL: a chunk's model label and its
