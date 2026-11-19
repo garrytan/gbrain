@@ -9,8 +9,11 @@
  * the delivery-lease `revision_unavailable` refusal) with `constraint_name`. An id that is not a UUID leaves as
  * Postgres' 22P02.
  *
- * The store keeps no shared-skill heads and no shared-skill policies: the catalog snapshot is empty and every source
- * reads the legacy policy (allow_follow false), so a join on a Rust brain binds no source. The token secret is the
+ * The store keeps publication policies (set_skill_policy writes one, with its audit row, in one store write), heads and
+ * revisions, so a join binds a source whose policy allows following, and a new batch leases the revisions it names as
+ * the Postgres delivery-lease trigger does. A Rust brain cannot activate shared publication (skill bundles stay
+ * disabled), so writeSharedSkillRevision refuses as the SQL engines' publication guard refuses on such a brain:
+ * `code` 42501, `writer_not_quiesced`. Only fixtures seed heads, through the store directly. The token secret is the
  * one the store seeded at brain creation (minted once for an older brain); the serving epoch is
  * readSharedSkillServingEpoch's (access-grants.ts). The store runs one write transaction at a time, so the FOR UPDATE
  * locks the SQL engines take change nothing here.
@@ -18,7 +21,9 @@
 import type {
   SharedSkillBatchAcknowledge, SharedSkillBatchIssue, SharedSkillBatchIssued, SharedSkillBatchRow, SharedSkillCatalogIdentity,
   SharedSkillHeadQuery, SharedSkillHeadRow, SharedSkillMemberEnroll, SharedSkillMemberLookup, SharedSkillMemberRow,
+  SharedSkillPolicyWrite, SharedSkillRevisionKey, SharedSkillRevisionWrite,
 } from '../../engine-sql/shared-skill-members.ts';
+import type { StoredSkillRevision } from '../../shared-skills/model.ts';
 import { withDates } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import { readSharedSkillServingEpoch } from './access-grants.ts';
@@ -51,6 +56,7 @@ async function call<T>(member: string, run: () => Promise<T>): Promise<T> {
 
 const MEMBER_DATES = ['joined_at', 'last_seen_at', 'join_window'];
 const BATCH_DATES = ['issued_at', 'acknowledged_at'];
+const HEAD_DATES = ['updated_at'];
 
 export const readSharedSkillCatalogIdentity: StoreMember<[], SharedSkillCatalogIdentity | undefined> = async (brain) => {
   const brainId = await readPersistenceBrainId(brain);
@@ -60,12 +66,27 @@ export const readSharedSkillCatalogIdentity: StoreMember<[], SharedSkillCatalogI
   return servingEpoch === null ? undefined : { brain_id: brainId, token_secret: tokenSecret, serving_epoch: servingEpoch };
 };
 
-/** The store keeps no shared-skill heads. */
-export const listSharedSkillCatalogHeads: StoreMember<[q: SharedSkillHeadQuery], SharedSkillHeadRow[]> = async () => [];
+export const listSharedSkillCatalogHeads: StoreMember<[q: SharedSkillHeadQuery], SharedSkillHeadRow[]> = async (brain, q) => {
+  const rows = await call('listSharedSkillCatalogHeads', () => brain.listSharedSkillCatalogHeads(q)) as SharedSkillHeadRow[];
+  return rows.map(row => withDates(row, HEAD_DATES));
+};
 
-/** The store keeps no shared-skill policies, so every source reads the legacy policy. */
+/** The store runs one write at a time, so `lock` takes no row lock. */
 export const readSharedSkillPolicyRow: StoreMember<[sourceId: string, incarnation: string, lock: boolean], { epoch: string; policy: unknown } | undefined> =
-  async () => undefined;
+  async (brain, sourceId, incarnation) =>
+    (await call('readSharedSkillPolicyRow', () => brain.readSharedSkillPolicyRow(sourceId, incarnation)) as { epoch: string; policy: unknown } | null) ?? undefined;
+
+export const writeSharedSkillPolicy: StoreMember<[write: SharedSkillPolicyWrite], void> = async (brain, write) => {
+  await call('writeSharedSkillPolicy', () => brain.writeSharedSkillPolicy({ ...write, policy: write.policy ?? null }));
+};
+
+/** Refused: a Rust brain cannot activate shared publication, as the publication guard refuses on a brain without it. */
+export const writeSharedSkillRevision: StoreMember<[write: SharedSkillRevisionWrite], void> = async () => {
+  throw Object.assign(new Error('writer_not_quiesced: shared publication is disabled'), { code: '42501' });
+};
+
+export const readSharedSkillRevision: StoreMember<[key: SharedSkillRevisionKey], StoredSkillRevision | undefined> = async (brain, key) =>
+  (await call('readSharedSkillRevision', () => brain.readSharedSkillRevision(key)) as StoredSkillRevision | null) ?? undefined;
 
 export const listSharedSkillFollowSources: StoreMember<[allowed: string[] | null, sourceIds: string[] | null], Array<{ id: string; incarnation: string }>> =
   async (brain, allowed, sourceIds) =>

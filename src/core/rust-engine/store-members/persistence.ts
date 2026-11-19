@@ -176,7 +176,7 @@ export const deleteConsumerRow: StoreMember<[key: ConsumerRowKey, opts?: { signa
 export const stampWorktreeHeartbeats: StoreMember<[hostId: string, opts?: { signal?: AbortSignal }], void> = async () => undefined;
 
 /** A source's incarnation and archive flag, or null. FOR SHARE changes nothing in one store write. */
-export const readSourceMembership: StoreMember<[sourceId: string, opts?: { lock?: boolean }], SourceMembership | null> = (brain, sourceId) =>
+export const readSourceMembership: StoreMember<[sourceId: string, opts?: { lock?: boolean | 'update' }], SourceMembership | null> = (brain, sourceId) =>
   storeCall({ member: 'readSourceMembership' }, () => brain.readSourceMembership(sourceId));
 
 /** The first of `requestIds` a lifecycle change of local writer `principalId` used, as `[{ request_id }]`, or []. */

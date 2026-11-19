@@ -27,10 +27,10 @@ export const readOAuthClientReceiptGrant: StoreMember<[clientId: string, opts?: 
 export const readAccessTokenReceiptGrant: StoreMember<[tokenId: string, opts?: { lock?: boolean }], ReceiptTokenGrant | undefined> =
   async () => refuseMember('readAccessTokenReceiptGrant', NO_TOKENS);
 
-export const readOAuthClientMemberGrant: StoreMember<[clientId: string], MemberClientGrant | undefined> =
+export const readOAuthClientMemberGrant: StoreMember<[clientId: string, opts?: { lock?: boolean }], MemberClientGrant | undefined> =
   async () => refuseMember('readOAuthClientMemberGrant', NO_CLIENTS);
 
-export const readAccessTokenMemberGrant: StoreMember<[tokenId: string], MemberTokenGrant | undefined> =
+export const readAccessTokenMemberGrant: StoreMember<[tokenId: string, opts?: { lock?: boolean }], MemberTokenGrant | undefined> =
   async () => refuseMember('readAccessTokenMemberGrant', NO_TOKENS);
 
 /** The local writer's grant ceiling and revoked_at, revoked or not (the caller refuses a revoked writer). */
