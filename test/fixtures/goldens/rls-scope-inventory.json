@@ -1990,6 +1990,17 @@
         ],
         "flagOnScopes": []
       },
+      "insertPublicationEffects#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "insertSource#default": {
         "flagOffLanes": [
           "pool"
@@ -3542,6 +3553,17 @@
         ],
         "flagOnScopes": []
       },
+      "releaseUnpublishedClaim#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "removeLink#default": {
         "flagOffLanes": [
           "pool"
@@ -3648,6 +3670,17 @@
         "flagOnScopes": [
           "src-a"
         ]
+      },
+      "requireSynchronousCommit#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
       },
       "resolveSlugWithAlias#default": {
         "flagOffLanes": [
@@ -4892,6 +4925,7 @@
         "insertJobAttachment": "none",
         "insertLeasePressure": "none",
         "insertLocalWriterRow": "none",
+        "insertPublicationEffects": "none",
         "insertSource": "none",
         "insertSpendReservation": "none",
         "insertSubagentMessage": "none",
@@ -5231,6 +5265,7 @@
         "relationalChainHop": "none",
         "relationalFanout": "none",
         "releaseCycleLock": "none",
+        "releaseUnpublishedClaim": "none",
         "releaseWatchdogClaim": "none",
         "removeLink": "none",
         "removeLinksByPagesAndSource": "none",
@@ -5247,6 +5282,7 @@
         "replaceDerivedLinksBatch": "none",
         "replaceSearchVectorTriggerFunction": "none",
         "replaceWantedLinkRows": "none",
+        "requireSynchronousCommit": "none",
         "resolveAliases": "none",
         "resolveCaseSensitiveAliases": "none",
         "resolveFactsEmbeddingCast": "none",

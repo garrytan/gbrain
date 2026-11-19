@@ -38,6 +38,7 @@ export const RUST_ENGINE_MEMBERS = {
   transactionDirect: 'transactions',
   lockPageKeys: 'transactions',
   declarePersistence: 'transactions',
+  requireSynchronousCommit: 'transactions',
   // pages
   aliasCanonicalRefs: 'pages',
   nextLivePageAfter: 'pages',
@@ -532,6 +533,7 @@ export const RUST_ENGINE_MEMBERS = {
   stampWriteClaim: 'persistence_journal',
   lockWriteRequest: 'persistence_journal',
   completeWriteRow: 'persistence_journal',
+  insertPublicationEffects: 'persistence_journal',
   readLedgerSource: 'persistence_journal',
   expireMemoryProposals: 'persistence_journal',
   listAwaitingMemoryProposals: 'persistence_journal',
@@ -541,6 +543,7 @@ export const RUST_ENGINE_MEMBERS = {
   readTopologyChange: 'persistence_journal',
   insertTopologyChange: 'persistence_journal',
   renewWriteClaim: 'persistence_journal',
+  releaseUnpublishedClaim: 'persistence_journal',
   expireStaleWriteClaims: 'persistence_journal',
   hasClaimableWrite: 'persistence_journal',
   selectClaimableWrite: 'persistence_journal',

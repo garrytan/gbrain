@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 695/695
+# covered: 698/698
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 12/12
-# persistence_journal: 47/47
+# persistence_journal: 50/50
 # entity_reads: 6/6
 # cycle_locks: 7/7
 # minion_jobs: 8/8
@@ -74,8 +74,8 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	59	no	yes	yes	serves
-transactionDirect	lifecycle	yes	3	no	yes	yes	serves
+transaction	lifecycle	yes	60	no	yes	yes	serves
+transactionDirect	lifecycle	yes	4	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 getPage	pages	yes	77	yes	yes	yes	serves
@@ -343,7 +343,7 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	9	no	yes	yes	serves
-setConfig	config	yes	22	no	yes	yes	serves
+setConfig	config	yes	23	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
@@ -360,12 +360,13 @@ readCurrentWriteTrust	import_guards	yes	1	no	yes	yes	serves
 setWriteContext	import_guards	yes	1	no	yes	yes	serves
 readLedgerSource	import_guards	yes	8	no	yes	yes	serves
 isFolderRestricted	import_guards	yes	3	no	yes	yes	serves
-declarePersistence	persistence_journal	yes	10	no	yes	yes	serves
+declarePersistence	persistence_journal	yes	12	no	yes	yes	serves
+requireSynchronousCommit	persistence_journal	yes	1	no	yes	yes	serves
 readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldPageRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldCoverageRows	persistence_journal	yes	1	no	yes	yes	serves
 readWriteRequest	persistence_journal	yes	5	no	yes	yes	serves
-readWriteRequestById	persistence_journal	yes	6	no	yes	yes	serves
+readWriteRequestById	persistence_journal	yes	8	no	yes	yes	serves
 readWriteRequestProgress	persistence_journal	yes	1	no	yes	yes	serves
 countOutstandingBySource	persistence_journal	yes	2	no	yes	yes	serves
 ownsSchemaTables	persistence_journal	yes	1	no	yes	yes	serves
@@ -374,16 +375,18 @@ readAccessTokenWriteGrant	persistence_journal	yes	1	no	yes	yes	serves
 shareLockWriteCredential	persistence_journal	yes	1	no	yes	yes	serves
 readCounterRows	persistence_journal	yes	2	no	yes	yes	serves
 readAdmissionRate	persistence_journal	yes	3	no	yes	yes	serves
-lockPersistenceCounters	persistence_journal	yes	22	no	yes	yes	serves
-insertWriteRequest	persistence_journal	yes	24	no	yes	yes	serves
-stampWriteClaim	persistence_journal	yes	16	no	yes	yes	serves
-lockWriteRequest	persistence_journal	yes	2	no	yes	yes	serves
-completeWriteRow	persistence_journal	yes	12	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	28	no	yes	yes	serves
+lockPersistenceCounters	persistence_journal	yes	24	no	yes	yes	serves
+insertWriteRequest	persistence_journal	yes	26	no	yes	yes	serves
+stampWriteClaim	persistence_journal	yes	18	no	yes	yes	serves
+lockWriteRequest	persistence_journal	yes	3	no	yes	yes	serves
+completeWriteRow	persistence_journal	yes	13	no	yes	yes	serves
+insertPublicationEffects	persistence_journal	yes	1	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	30	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	2	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	2	no	yes	yes	serves
 insertTopologyChange	persistence_journal	yes	4	no	yes	yes	serves
 renewWriteClaim	persistence_journal	yes	1	no	yes	yes	serves
+releaseUnpublishedClaim	persistence_journal	yes	1	no	yes	yes	serves
 expireStaleWriteClaims	persistence_journal	yes	1	no	yes	yes	serves
 hasClaimableWrite	persistence_journal	yes	1	no	yes	yes	serves
 selectClaimableWrite	persistence_journal	yes	1	no	yes	yes	serves

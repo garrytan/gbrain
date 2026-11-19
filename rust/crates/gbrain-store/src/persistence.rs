@@ -830,6 +830,59 @@ pub(crate) fn renew_write_claim_in(
     Ok(true)
 }
 
+/// `releaseUnpublishedClaim({ id, token, reason, charge })` (journal.ts).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaimRelease {
+    pub id: String,
+    #[serde(default)]
+    pub token: Option<String>,
+    pub reason: String,
+    #[serde(default)]
+    pub charge: bool,
+}
+
+/// `RELEASE_CLAIM_SQL`: a request still `running` under `token`, with no recovery record, that
+/// never began to publish goes back to `queued` with `reason` as its blocked reason. `charge`
+/// counts one preparation attempt and keeps the claim phase; otherwise the phase is cleared.
+/// Returns whether a request was released.
+pub(crate) fn release_unpublished_claim_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    release: &ClaimRelease,
+) -> Result<bool> {
+    let Some(token) = release.token.as_deref() else {
+        return Ok(false);
+    };
+    let token = uuid_param(token, "token")?;
+    uuid_param(&release.id, "id")?;
+    let Some(mut record) = request_by_id(&*tx, &release.id)? else {
+        return Ok(false);
+    };
+    let holds = record.state == "running"
+        && record.extra.get("execution_token").and_then(Value::as_str) == Some(token.as_str())
+        && extra_is_null(&record, "recovery")
+        && !extra_bool(&record, "publication_started");
+    if !holds {
+        return Ok(false);
+    }
+    record.state = "queued".into();
+    record.extra.insert("execution_token".into(), Value::Null);
+    record.extra.insert("claim_expires_at".into(), Value::Null);
+    record.blocked_reason = Some(release.reason.clone());
+    record.updated_at_us = env.now_micros();
+    if release.charge {
+        let attempts = extra_i64(&record, "preparation_attempts") + 1;
+        record
+            .extra
+            .insert("preparation_attempts".into(), json!(attempts));
+    } else {
+        record.extra.insert("claim_phase".into(), Value::Null);
+    }
+    write_request(tx, &record)?;
+    Ok(true)
+}
+
 /// `expireStaleWriteClaims({ hostId, charge, deadOwners })`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1093,6 +1146,11 @@ impl Store {
     /// `renewWriteClaim(id, token, leaseMs, phaseJson)`.
     pub fn renew_write_claim(&self, stamp: &ClaimStamp) -> Result<bool> {
         self.write(|tx| renew_write_claim_in(tx, &*self.env, stamp))
+    }
+
+    /// `releaseUnpublishedClaim({ id, token, reason, charge })`: whether the claim was released.
+    pub fn release_unpublished_claim(&self, release: &ClaimRelease) -> Result<bool> {
+        self.write(|tx| release_unpublished_claim_in(tx, &*self.env, release))
     }
 
     /// `expireStaleWriteClaims({ hostId, charge, deadOwners })`: how many claims were released.

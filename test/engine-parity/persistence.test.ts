@@ -1,7 +1,7 @@
 /**
  * BrainEngine parity — the write-journal members (engine-sql/persistence-journal.ts and persistence-claims.ts): the
  * limit read, the hold reads, one request's admission, claim and completion (in a transaction and member by member),
- * the claim upkeep (renewal, expiry, the claimable probe, the FIFO head read) and the admission reads (source membership, topology changes,
+ * the publication's effects insert, the claim upkeep (renewal, expiry, the claimable probe, the FIFO head read) and the admission reads (source membership, topology changes,
  * the ledger's source view).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
@@ -23,7 +23,8 @@ import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { WriteRequest } from '../../src/core/persistence/model.ts';
 import type { ClaimHeadSpec, TopologyChange } from '../../src/core/engine-sql/persistence-claims.ts';
-import { assertPageRequestIdentity } from '../../src/core/persistence/journal.ts';
+import type { QueuedPublicationEffect } from '../../src/core/engine-sql/persistence-journal.ts';
+import { assertPageRequestIdentity, completeWrite, releaseUnpublishedClaim } from '../../src/core/persistence/journal.ts';
 import { CONSUMER_LIVE_MS, listHostConsumers, probeLiveFullConsumer, RESIDENT_CONSUMER_KINDS, startConsumerHeartbeat } from '../../src/core/persistence/consumer-heartbeat.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -468,6 +469,52 @@ describe('engine parity: write journal', () => {
     return answers;
   });
 
+  parityTest('insertPublicationEffects inserts in queue order, skips a gated effect while auto-linking is off and keeps a kind already queued', {
+    methods: ['insertPublicationEffects', 'transactionDirect', 'declarePersistence', 'setConfig', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest'],
+  }, async (engine) => {
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    const revision = 'e0000000-0000-4000-8000-0000000000e1';
+    const insert = (requestId: string, effects: QueuedPublicationEffect[], rev: string | null = revision) => engine.transactionDirect(async tx => {
+      await tx.declarePersistence();
+      return tx.insertPublicationEffects({ requestId, revision: rev, sourceId: 'default', sourceIncarnation: incarnation, worktreeId: null, effects });
+    });
+    const page = { slug: 'notes/parity', page_id: 1 };
+    const first = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b1');
+    const queued = await insert(first, [{ kind: 'embedding', data: page }, { kind: 'facts-backstop', data: { ...page, visibility: 'private' } },
+      { kind: 'links', data: { ...page, range: { from: 0, to: 4 } }, gated: true }]);
+    const again = await insert(first, [{ kind: 'embedding', data: { ...page, retry: true } }]);
+    await engine.setConfig('mcp.remote_auto_links', ' OFF ');
+    const second = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b2');
+    const remoteOff = await insert(second, [{ kind: 'links', data: page, gated: true }, { kind: 'embedding', data: page }], null);
+    await engine.setConfig('mcp.remote_auto_links', 'true');
+    await engine.setConfig('auto_link', 'No');
+    const third = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b3');
+    const autoLinkOff = await insert(third, [{ kind: 'links', data: page, gated: true }, { kind: 'git', data: page }]);
+    await engine.setConfig('auto_link', 'yes');
+    const fourth = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b4');
+    const switchesOn = await insert(fourth, [{ kind: 'links', data: page, gated: true }]);
+    const answers = { queued, again, remoteOff, autoLinkOff, switchesOn };
+    expect(answers).toEqual({ queued: ['embedding', 'facts-backstop', 'links'], again: [], remoteOff: ['embedding'], autoLinkOff: ['git'], switchesOn: ['links'] });
+    return answers;
+  });
+
+  parityTest('completeWrite with no lock held asks for synchronous commit, declares, locks and ends the claimed request', {
+    methods: ['requireSynchronousCommit', 'declarePersistence', 'transaction', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest',
+      'stampWriteClaim', 'lockWriteRequest', 'completeWriteRow', 'readWriteRequestById'],
+  }, async (engine) => {
+    const id = await admitDirect(engine);
+    const claimed = await engine.stampWriteClaim(id, TOKEN, 60_000, JSON.stringify({ phase: 'parity' }));
+    const done = await engine.transaction((tx) => completeWrite(tx, claimed as WriteRequest, 'failed', { status: 'parity' }, { code: 'parity_error', message: 'parity' }));
+    const outside = await engine.requireSynchronousCommit();
+    const stored = view(await engine.readWriteRequestById(id));
+    const released = counters(await engine.lockPersistenceCounters(KEYS));
+    const result = { done: view(done), stored, outside: outside ?? null, released: released.brain };
+    expect(result.done).toMatchObject({ state: 'failed', errorCode: 'parity_error', completed: true });
+    expect(result.stored).toEqual(result.done);
+    expect(result.released).toMatchObject({ outstanding: 0, intentBytes: 0, lifetimeIds: 1 });
+    return result;
+  });
+
   parityTest('renewWriteClaim extends a claim held under its token and refuses any other token', { methods: ['renewWriteClaim', 'stampWriteClaim', 'readWriteRequestById'] }, async (engine) => {
     const id = await admitDirect(engine);
     await engine.stampWriteClaim(id, TOKEN, 1_000, JSON.stringify({ phase: 'preparing', token: TOKEN }));
@@ -482,6 +529,32 @@ describe('engine parity: write journal', () => {
     const answers = { held, phase: renewed?.claim_phase, keptPhase, keptPhaseValue: kept?.claim_phase, stranger, unknown, extended };
     expect(answers).toMatchObject({ held: true, phase: { phase: 'publishing' }, keptPhase: true, keptPhaseValue: { phase: 'publishing' }, stranger: false, unknown: false, extended: true });
     return answers;
+  });
+
+  parityTest('releaseUnpublishedClaim returns a claim to queued under its token so the writer claims it again', { methods: ['releaseUnpublishedClaim', 'stampWriteClaim', 'readWriteRequestById'] }, async (engine) => {
+    const id = await admitDirect(engine);
+    const pick = (row: Record<string, unknown> | null) => row && ({ state: row.state, token: row.execution_token ?? null, lease: row.claim_expires_at ?? null,
+      blocked: row.blocked_reason ?? null, attempts: Number(row.preparation_attempts), phase: row.claim_phase ?? null });
+    const first = await engine.stampWriteClaim(id, TOKEN, 60_000, JSON.stringify({ phase: 'preparing', token: TOKEN }));
+    // A release under another token changes nothing: the claim is still this writer's.
+    await releaseUnpublishedClaim(engine, { ...(first as WriteRequest), execution_token: OTHER_TOKEN }, 'claim_lost');
+    const strangerRow = pick(await engine.readWriteRequestById(id) as Record<string, unknown> | null);
+    const stranger = strangerRow && { state: strangerRow.state, token: strangerRow.token, leased: strangerRow.lease !== null };
+    // A transient failure (a lock timeout) releases the claim uncharged: queued, no token, no lease, no phase.
+    await releaseUnpublishedClaim(engine, first as WriteRequest, 'database_contention');
+    const released = pick(await engine.readWriteRequestById(id) as Record<string, unknown> | null);
+    // The writer retries it: a second claim takes it, and a charged release counts one attempt and keeps the phase.
+    const retry = await engine.stampWriteClaim(id, OTHER_TOKEN, 60_000, JSON.stringify({ phase: 'preparing', token: OTHER_TOKEN }));
+    await releaseUnpublishedClaim(engine, retry as WriteRequest, 'preparation_deadline', { charge: true });
+    const charged = pick(await engine.readWriteRequestById(id) as Record<string, unknown> | null);
+    const result = { stranger, released, retried: (retry as WriteRequest | null)?.state ?? null, charged };
+    expect(result).toEqual({
+      stranger: { state: 'running', token: TOKEN, leased: true },
+      released: { state: 'queued', token: null, lease: null, blocked: 'database_contention', attempts: 0, phase: null },
+      retried: 'running',
+      charged: { state: 'queued', token: null, lease: null, blocked: 'preparation_deadline', attempts: 1, phase: { phase: 'preparing', token: OTHER_TOKEN } },
+    });
+    return result;
   });
 
   parityTest('expireStaleWriteClaims returns an expired claim to queued, charges a preparing one when asked, and frees a dead owner\'s claim', {

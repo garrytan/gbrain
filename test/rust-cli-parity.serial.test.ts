@@ -254,17 +254,14 @@ const COMMANDS: string[][] = [
  * typed refusal that names the member given here, the next engine member the write path needs. When a later change
  * serves that member, this case fails and names the new next member, so the record stays current.
  */
-/**
- * A write stops on Rust with a typed refusal that names `member`, or is accepted and stays pending behind `member`:
- * `queued` when no background writer claims it, `running` when the writer claims it and then stops at `member`.
- */
-const RECORDED_WRITES: Array<{ args: string[]; rust: 'refused' | 'queued' | 'running'; member: string }> = [
-  { args: ['put', 'notes/parity-put', '--content', '---\ntype: note\ntitle: Parity put\n---\nBody text.\n', '--json'], rust: 'running', member: 'executeRaw' },
+/** A write stops on Rust with a typed refusal that names `member`, or is accepted and stays queued behind `member`. */
+const RECORDED_WRITES: Array<{ args: string[]; rust: 'refused' | 'queued'; member: string }> = [
+  { args: ['put', 'notes/parity-put', '--content', '---\ntype: note\ntitle: Parity put\n---\nBody text.\n', '--json'], rust: 'queued', member: 'insertPublicationEffects' },
 ];
-// `put` passes the persistence declaration and write admission, so the request is recorded. The background writer
-// claims it (state running) and then stops at the raw publication-effect insert (executeRaw in
-// src/core/persistence/effect-journal.ts queuePublicationEffects), so the reply is write_pending (exit 10) and
-// nothing is applied.
+// `put` passes the persistence declaration and write admission, so the request is recorded and claimed. Publication
+// then stops at insertPublicationEffects (the Rust store records no publication effect yet), and the writer returns
+// the claim (src/core/persistence/coordinator.ts finishUnpublishedFailure), so the reply is write_pending (exit 10),
+// nothing is applied, and the stored request is queued again, never left running under a claim nobody holds.
 
 type State = 'equal' | 'refused' | 'queued' | 'running' | 'diverged' | 'no-engine' | 'runs';
 interface Row { command: string; state: State; note: string }
@@ -358,9 +355,10 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       if (outcome !== 'refused') {
         // Accepted, never applied: the reply is the typed pending receipt, not a refusal or a success.
         const body = parseJson(rust.stdout) as { code?: string; state?: string } | undefined;
-        const pending = rust.exitCode === 10 && body?.code === 'write_pending' && body?.state === outcome;
-        table.push({ command: label(args), state: pending ? outcome : 'diverged', note: pending ? `behind ${next}` : `exit ${rust.exitCode}` });
-        expect({ exitCode: rust.exitCode, code: body?.code, state: body?.state, member }).toEqual({ exitCode: 10, code: 'write_pending', state: outcome, member: null });
+        const queued = rust.exitCode === 10 && body?.code === 'write_pending' && body?.state === 'queued';
+        table.push({ command: label(args), state: queued ? 'queued' : 'diverged', note: queued ? `behind ${next}` : `exit ${rust.exitCode}` });
+        expect({ exitCode: rust.exitCode, code: body?.code, state: body?.state, member }).toEqual({ exitCode: 10, code: 'write_pending', state: 'queued', member: null });
+        // The receipt's state is the stored row read after the writer returned its claim (finishUnpublishedFailure).
         return;
       }
       table.push({ command: label(args), state: member ? 'refused' : 'diverged', note: member ?? `exit ${rust.exitCode}` });
