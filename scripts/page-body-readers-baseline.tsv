@@ -195,6 +195,7 @@ src/core/engine-sql/facts-repair.ts	countLabelFacts	sql	STREAM	group 5 facts sit
 src/core/engine-sql/field-usage.ts	readFieldUsageSamples	field	LEAD	moved from schema-pack/field-usage.ts runFieldUsage unchanged: whole inline bodies of the sampled pages; a segmented page samples a null body, read as empty (TODOS.md)
 src/core/engine-sql/field-usage.ts	readFieldUsageSamples	sql	LEAD	moved from schema-pack/field-usage.ts runFieldUsage unchanged: whole inline bodies of the sampled pages; a segmented page samples a null body, read as empty (TODOS.md)
 src/core/engine-sql/jobs-status.ts	readQueuedPageChars	sql	META	the facts drain's cost estimate, moved from facts/drain.ts estimateBacklogUsd: average capped compiled_truth length
+src/core/engine-sql/large-page.ts	STORED_BODY_BYTES_SQL	sql	META	the large-page guard's stored size read, moved from persistence/large-page-guard.ts assertLargePageAdmission: body_bytes for a segmented page, octet_length of the columns for an inline page
 src/core/engine-sql/page-body.ts	createSegmentedPageShell	sql	NONE	not a reader: the segmented storage writer sets the body columns NULL on the shell row
 src/core/engine-sql/page-body.ts	flipBodyGeneration	sql	NONE	not a reader: the generation flip sets the body columns NULL and the segmented body columns
 src/core/engine-sql/page-body.ts	sealSegmentedPage	field	LEAD	the withdrawal overlay of the stored timeline_lead (a bounded prefix), indexed sanitized
@@ -465,7 +466,6 @@ src/core/persistence/forget-prepare.ts	prepareForgetMutation	field	INLINE	the in
 src/core/persistence/git-gap.ts	readDirectionEvidence	field	INLINE	direction evidence (d4) compares inline page_versions bodies only: segmented versions are skipped, and a segmented page is compared by its streamed export blob id (no_evidence otherwise)
 src/core/persistence/git-gap.ts	readDirectionEvidence	sql	INLINE	direction evidence (d4) compares inline page_versions bodies only: segmented versions are skipped, and a segmented page is compared by its streamed export blob id (no_evidence otherwise)
 src/core/persistence/import-prepare.ts	prepareManagedImportMutation	call:serializePageToMarkdown	SEGW	
-src/core/persistence/large-page-guard.ts	assertLargePageAdmission	sql	META	stored size = body_bytes for a segmented page, octet_length of the columns for an inline page
 src/core/persistence/links-maintenance.ts	extractManagedStaleLinks	field	NONE	not the page body: result.timeline counter
 src/core/persistence/links-maintenance.ts	formatManagedStaleExtraction	field	NONE	not the page body: result.timeline counter
 src/core/persistence/links-preparation.ts	prepareAutomaticLinks	field	STREAM	reads the incoming parsed page, not a stored body

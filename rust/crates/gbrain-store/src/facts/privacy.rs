@@ -22,7 +22,9 @@
 
 use super::FactRecord;
 use crate::Result;
+use crate::access_flag::RESTRICTIONS_PRESENT_KEY;
 use crate::aliases::{read_slug_alias, renamed_to};
+use crate::keys;
 use crate::kv::KvRead;
 use crate::links::out_links;
 use crate::pages::{PageRecord, read_page, read_page_by_id};
@@ -59,6 +61,13 @@ pub struct PrivacyPolicy {
     /// (`privateProvenanceFilterFragment`), with no entity or holding-page gate.
     #[serde(default)]
     pub provenance_only: bool,
+    /// The caller renders the short member-access form (`CallerAccess.restricted` false:
+    /// `page_readers IS NULL AND folder_rule_ids IS NULL`), so a page that names readers fails
+    /// whatever the identity. The store's own flag (`access.restrictions_present`) decides the
+    /// rest: unset, nothing else applies, as the short form says; set (the caller's flag read was
+    /// stale), the full form's origin walk applies too. See [`readers_allowed`].
+    #[serde(default)]
+    pub open: bool,
 }
 
 /// `PRIVACY_ALIASES`: the keys a page may carry instead of `visibility`, with their private values.
@@ -87,7 +96,7 @@ pub(crate) fn hidden_by_private_provenance(
 ) -> Result<bool> {
     if let Some(slug) = &row.source_markdown_slug
         && let Some(page) = read_page(read, &row.source_id, slug)?
-        && !(readers_allowed(read, &page, provenance_identity(policy, slug))?
+        && !(readers_allowed(read, &page, provenance_identity(policy, slug), policy.open)?
             && privacy_allows(read, &page, policy.honor_aliases)?)
     {
         return Ok(true);
@@ -130,7 +139,7 @@ pub(crate) fn page_hidden(
     page: &PageRecord,
     policy: &PrivacyPolicy,
 ) -> Result<bool> {
-    let allowed = readers_allowed(read, page, &policy.identity)?
+    let allowed = readers_allowed(read, page, &policy.identity, policy.open)?
         && (!policy.entity_privacy
             || private_source_open(page, policy)
             || privacy_allows(read, page, policy.honor_aliases)?);
@@ -342,8 +351,18 @@ pub(crate) fn access_readers(frontmatter: &Map<String, Value>) -> Option<Vec<Str
 }
 
 /// The member-access part (`accessAllowedSql`) for `identity`: no readers of its own or readers
-/// that name one of its principals (`readersAllowedSql`), and no origin that names readers.
-fn readers_allowed(read: &dyn KvRead, page: &PageRecord, identity: &[String]) -> Result<bool> {
+/// that name one of its principals (`readersAllowedSql`), and no origin that names readers. With
+/// `open` (the short form) a page that names readers fails for any identity, and the origin walk
+/// runs only when the store's flag is set: unset, no stored page names readers.
+fn readers_allowed(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    identity: &[String],
+    open: bool,
+) -> Result<bool> {
+    if open && (names_readers(page) || !restrictions_present(read)?) {
+        return Ok(!names_readers(page));
+    }
     if names_readers(page)
         && !access_readers(&page.frontmatter)
             .is_some_and(|readers| readers.iter().any(|r| identity.contains(r)))
@@ -355,6 +374,12 @@ fn readers_allowed(read: &dyn KvRead, page: &PageRecord, identity: &[String]) ->
         "atom" | "question" | "concept" | "event"
     ) && !page.frontmatter.contains_key("derived_from");
     Ok(plain || !origin_restricted(read, page)?)
+}
+
+/// Whether the store's member-access flag (`access.restrictions_present`) is `'1'`.
+fn restrictions_present(read: &dyn KvRead) -> Result<bool> {
+    let key = keys::text(keys::CONFIG, &[RESTRICTIONS_PRESENT_KEY]);
+    Ok(read.get(&key)?.as_deref() == Some(b"1".as_slice()))
 }
 
 /// `gbrain_access_origin_restricted(id, source_id, type, frontmatter)`.

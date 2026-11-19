@@ -40,6 +40,7 @@ pub mod cycle;
 pub mod doctor;
 mod embedding;
 mod fence;
+mod held_cells;
 pub mod loops;
 mod privacy;
 pub mod purge;
@@ -50,6 +51,7 @@ pub mod trust;
 pub mod trust_reads;
 
 pub use fence::{FenceContext, FenceTarget};
+pub use held_cells::{HeldFenceCellKey, HeldFenceCellsInput, HeldFenceMember};
 pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
 pub(crate) use privacy::{caller_version_hidden, page_hidden, version_hidden};

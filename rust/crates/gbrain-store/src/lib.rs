@@ -8,6 +8,7 @@
 //! This crate has no JavaScript types. `gbrain-napi` turns each `Store` method into an async
 //! addon method and each `StoreError::code` into a JavaScript `Error.code`.
 
+mod access_flag;
 mod cascade;
 pub mod chunks;
 pub mod cli_reads;
@@ -47,10 +48,12 @@ pub mod field_usage;
 pub mod import_members;
 pub mod jobs;
 pub mod keyword;
+pub mod large_page;
 pub mod link_queries;
 pub mod ontology;
 pub mod page_body;
 pub mod page_ops;
+pub mod page_visibility;
 pub mod persistence;
 pub mod raw_files;
 pub mod relations;
@@ -135,6 +138,9 @@ pub struct Store {
     /// The open transaction this store runs on (`transactions.rs`); `None` for the brain's own
     /// store, whose writes each commit on their own.
     pub(crate) bound: Option<Arc<transactions::Transaction>>,
+    /// True when the open-time scan could not store the member-access flag and this process reads
+    /// it as `'1'` (`access_flag::scan_at_open`).
+    pub(crate) flag_assumed: bool,
 }
 
 pub(crate) fn get_json<T: DeserializeOwned>(read: &dyn KvRead, key: &[u8]) -> Result<Option<T>> {
@@ -207,6 +213,7 @@ impl Store {
                 }
             }
         };
+        let flag_assumed = !created && access_flag::scan_at_open(&*kv)?;
         // The schema version is the config the TypeScript migrations keep; a brain that has none
         // (it never was seeded) reports 0.
         let schema_version = config::read_config(&*kv.snapshot()?, "version")?
@@ -224,6 +231,7 @@ impl Store {
                 created,
             },
             bound: None,
+            flag_assumed,
         })
     }
 
@@ -243,6 +251,7 @@ impl Store {
             write_context: write_trust::WriteContextSlot::default(),
             info: self.info.clone(),
             bound: Some(tx),
+            flag_assumed: self.flag_assumed,
         }
     }
 
@@ -274,18 +283,20 @@ impl Store {
 
     /// Runs `f` in the write transaction and commits when it returns `Ok`. An `Err` rolls back.
     /// On a store bound to a transaction, `f` is one statement of it: kept when it returns `Ok`,
-    /// dropped when it returns `Err`, committed with the transaction.
+    /// dropped when it returns `Err`, committed with the transaction. Either way `f` writes
+    /// through `access_flag::FlaggingWriter`, so a put of a page record that names readers sets the
+    /// member-access flag in the same write.
     pub(crate) fn write<T>(&self, f: impl FnOnce(&mut dyn KvWrite) -> Result<T>) -> Result<T> {
         if let Some(tx) = &self.bound {
             // A bound store's env is the transaction's clock (`transactions.rs`, "Time").
             let _clock = crate::env::transaction_clock::open(self.env.clone());
             let _trust = crate::write_trust::stamp_context::open(self.write_trust()?);
-            return tx.statement(f);
+            return tx.statement(|w| f(&mut access_flag::FlaggingWriter(w)));
         }
         let mut tx = self.kv.begin_write()?;
         let _clock = crate::env::transaction_clock::open(self.env.clone());
         let _trust = crate::write_trust::stamp_context::open(self.write_trust()?);
-        let value = f(&mut *tx)?;
+        let value = f(&mut access_flag::FlaggingWriter(&mut *tx))?;
         tx.commit()?;
         Ok(value)
     }
@@ -326,5 +337,6 @@ fn seed(tx: &mut dyn KvWrite, env: &dyn Env, options: &OpenOptions) -> Result<()
         }
         tx.put(&keys::text(keys::CONFIG, &[key.as_str()]), value.as_bytes())?;
     }
+    access_flag::record_scan_done(tx)?;
     sources::seed_default_source(tx, env)
 }

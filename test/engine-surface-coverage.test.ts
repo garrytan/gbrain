@@ -105,7 +105,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'deleteChunksForPages', 'listContextualModeCandidates', 'resolveFrozenHits',
   // CLI reads (engine-sql/cli-reads-ops.ts; covered by test/engine-parity/cli-reads-ops.test.ts)
   'scanExactBatch', 'nextLivePageAfter', 'listExactIdentityCandidates', 'rankEntities', 'listExtractionPendingPages',
-  'listUnattributedFacts', 'listWantedPages',
+  'listUnattributedFacts', 'listWantedPages', 'readRankCoverage', 'readExactSnippetChunks', 'listExactRescanChunks', 'listHeldFenceCells',
   // CLI import and extract reads (engine-sql/cli-reads-import.ts; covered by test/engine-parity/cli-reads-import.test.ts)
   'listSourceRecords', 'readSourceIncarnation', 'hasCompanyBrainReceipt', 'readGuestSourceRow', 'listGuestSourceIds',
   'hasGuestSource', 'readPageTrustRows', 'readRowTrustRows', 'readDatabaseClock', 'listLinkPageMetadata', 'listStoredTimelineRows',
@@ -148,6 +148,10 @@ const INTERFACE_METHODS: readonly string[] = [
   'addPageTagsById', 'replaceDerivedAliases', 'getPageSealState', 'refreshPageOrigin',
   // Page write guards (engine-sql/write-guards.ts).
   'readPageOrigin', 'listOriginClaims', 'bindPageOrigin', 'stampPageIngest', 'sealImportedPage', 'readLivePageBody', 'hasSegmentStorage',
+  // Page visibility guards of a remote page write (engine-sql/page-visibility.ts).
+  'readPageHiddenFromCaller', 'readCallerPageAccess', 'readWriterSlugFence',
+  // The large-page write guard's stored body size read (engine-sql/large-page.ts).
+  'readStoredBodyBytes',
   // The fence guard's reads of a page's fact rows (engine-sql/facts.ts, engine-sql/trust-fence.ts).
   'listFenceRetireCandidates', 'listFenceFactRows',
   // The trust decision queue (engine-sql/trust-proposals.ts).

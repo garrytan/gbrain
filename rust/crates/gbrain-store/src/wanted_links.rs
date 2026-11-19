@@ -248,7 +248,6 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
 /// The origin page ids whose wanted target now exists and changed after the origin last resolved
 /// it: the store's answer to `wantedOriginIsStale` in `src/core/engine-sql/pages.ts`, for the
 /// family that serves stale extraction. `producers` limits the rows to those producers.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn stale_origin_page_ids(
     read: &dyn KvRead,
     producers: Option<&[String]>,
