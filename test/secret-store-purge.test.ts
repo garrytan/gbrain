@@ -337,6 +337,23 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
       });
     }, 120_000);
 
+    test('a rename moves only the renamed page\'s own occurrences, never another page\'s still under that slug', async () => {
+      await brain(async b => {
+        const owner = 'notes/owner-' + randomUUID().slice(0, 6), reused = 'notes/reused-' + randomUUID().slice(0, 6), moved = 'notes/moved-' + randomUUID().slice(0, 6);
+        await b.put(owner, beliefPage({ prose: 'Owner, renamed long ago.' }));
+        await b.put(reused, beliefPage({ prose: 'Took the old slug.' }));
+        const ids = await b.engine.executeRaw<{ id: number; slug: string }>('SELECT id, slug FROM pages WHERE source_id = $1 AND slug = ANY($2::text[])', [b.sourceId, [owner, reused]]);
+        const o = ids.find(r => r.slug === owner)!, u = ids.find(r => r.slug === reused)!;
+        const theirs = (await seal(b.engine, { sourceId: b.sourceId, rule: 'github_token', value: value('th' + randomUUID().slice(0, 6)) })).id;
+        const mine = (await seal(b.engine, { sourceId: b.sourceId, rule: 'github_token', value: value('mi' + randomUUID().slice(0, 6)) })).id;
+        await recordOccurrence(b.engine, { entryId: theirs, sourceId: b.sourceId, pageId: o.id, slug: reused, field: 'compiled_truth', origin: 'repair' });
+        await recordOccurrence(b.engine, { entryId: mine, sourceId: b.sourceId, pageId: u.id, slug: reused, field: 'compiled_truth', origin: 'repair' });
+        await b.engine.updateSlug(reused, moved, { sourceId: b.sourceId });
+        const at = async (id: string) => b.engine.executeRaw('SELECT slug, page_id FROM secret_store_occurrence WHERE entry_id = $1', [id]);
+        expect({ theirs: await at(theirs), mine: await at(mine) }).toEqual({ theirs: [{ slug: reused, page_id: o.id }], mine: [{ slug: moved, page_id: u.id }] });
+      });
+    }, 120_000);
+
     test('a rename that fails partway leaves the page and its secret occurrences where they were', async () => {
       await brain(async b => {
         const foo = `notes/foo-${randomUUID().slice(0, 6)}`, bar = `notes/bar-${randomUUID().slice(0, 6)}`;
