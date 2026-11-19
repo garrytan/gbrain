@@ -12,6 +12,7 @@ import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, re
 import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { resolveGbrainHome } from '../gbrain-home.ts';
+import { anthropic } from '../ai/recipes/anthropic.ts';
 
 export const PRESSURE_CONFIG_KEYS = {
   enabled: 'memory.pressure.enabled',
@@ -134,6 +135,9 @@ export function resolveContextWindow(opts: { configured: number | null; model: s
   if (opts.configured) return opts.configured;
   const marker = /\[1m\]|-1m\b|1m-context/i;
   if ((opts.model && marker.test(opts.model)) || (opts.configuredModel && marker.test(opts.configuredModel))) return PRESSURE_LARGE_WINDOW;
+  // Claude Code records the bare API id (no [1m] suffix); the Anthropic recipe knows its window.
+  const declared = opts.model ? anthropic.touchpoints.chat?.model_context_tokens?.[opts.model] : undefined;
+  if (declared) return declared;
   return opts.maxSeen > PRESSURE_DEFAULT_WINDOW ? PRESSURE_LARGE_WINDOW : PRESSURE_DEFAULT_WINDOW;
 }
 
