@@ -255,6 +255,8 @@ const INTERFACE_METHODS: readonly string[] = [
   // Trust: the fact withdrawal ledger (engine-sql/trust-withdrawals.ts)
   'hasCoveringFactWithdrawal', 'insertFactWithdrawal', 'isFactWithdrawn', 'isFactPurged', 'listFactWithdrawalDates', 'moveFactWithdrawalSubject',
   'hasFactWithdrawalForSubject', 'listFactWithdrawalKeys', 'readFactCacheWatermark', 'readTrustGeneration', 'readSourcePurgeFlags',
+  // Trust: the forget commit and the fact_withdrawn refusal (same SQL module; covered by test/engine-parity/forget-commit.test.ts)
+  'lockFactForWithdrawal', 'queueWithdrawalReview', 'listSegmentedPagesBySlug', 'bumpWithdrawnPageRevisions', 'readPageRevisions', 'appendFactForgetReason', 'readFactWithdrawnRow', 'readFactWithdrawnBacking',
   // Trust: the write gate's receipts and holds (engine-sql/trust-write-gate.ts)
   'upsertWriteGateReceipt', 'upsertPageWriteGateReceipt', 'deleteStalePageWriteGateReceipts', 'listWriteGateReceiptsFor',
   'deleteStaleWriteGateReceipts', 'upsertWriteGateHold', 'listWriteGateHoldRows', 'getWriteGateHoldRow', 'decideWriteGateHold',

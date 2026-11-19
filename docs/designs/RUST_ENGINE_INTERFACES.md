@@ -898,6 +898,13 @@ Facts and their supersession chains.
     a member page or a private-facts grant widens, a remote provenance floor that is not the no-caller one, and
     `ownerReachesFact` for an owner bound to a member. Pinned by `test/engine-parity/memory-mutation-reads.test.ts`
     and `test/engine-parity/forget-reach-reads.test.ts`.
+  - The forget commit is typed too (`engine-sql/trust-withdrawals.ts`): `lockFactForWithdrawal`, `queueWithdrawalReview`,
+    `listSegmentedPagesBySlug`, `bumpWithdrawnPageRevisions`, `readPageRevisions` and `appendFactForgetReason`, and
+    `readFactWithdrawnRow` and `readFactWithdrawnBacking` for the `fact_withdrawn` refusal of a remember. The store
+    serves them in `trust/withdrawal_commit.rs` (rust/docs/store/trust.md "The forget commit"). Pinned by
+    `test/engine-parity/forget-commit.test.ts` and `test/engine-parity/forget-remember.test.ts`. Still raw on Rust:
+    `discoverWithdrawalTargets`, the purge sweep (`facts/purge.ts`), `memberPageWithdrawal` and the non-publication
+    statements of `recordFactWithdrawal`.
   - Held fence cells. The world-only fact read's check of which facts-fence row lines a caller may not see
     (`eligibility/stamp.ts` `heldFenceLines`, under get_page, get_chunks, think and search_exact) is the typed member
     `listHeldFenceCells` (capability `facts`, SQL in `engine-sql/cli-reads-ops.ts`, one statement for PGLite and

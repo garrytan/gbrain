@@ -74,6 +74,23 @@ hold `gbrain_fact_fingerprint_v1(claim)`, and every read matches both. Deleting 
 | `readTrustGeneration` | `read_trust_generation`: the store's commit sequence as decimal text; it moves on every commit, a superset of the trigger events that bump the SQL generation, so a cache keyed on it rebuilds after any write | `SELECT generation::text AS generation FROM trust_policy_state WHERE id = 1`, bumped by deferred WHEN-guarded triggers (eligibility/generation-schema.ts) |
 | `readSourcePurgeFlags` | `read_source_purge_flags`: `facts` from the fact purge ledger (any tombstone of the source, [facts.md](facts.md) "The fact purge ledger"); `takes` false, because the store keeps no take purge ledger | `EXISTS (… fact_purges …), EXISTS (… take_purges …)` |
 
+### The forget commit (`trust::withdrawal_commit`)
+
+The statements a `forget` commits around the ledger writes (`recordFactWithdrawal` in publication mode,
+`persistence/forget-prepare.ts`) and the read a `fact_withdrawn` refusal names (`factWithdrawnRefusal`,
+`facts/single-prepare.ts`). They read and write the `F 0x01`, page and withdrawal records; no new key prefix.
+
+| Member | Store method | PGLite statement |
+| --- | --- | --- |
+| `lockFactForWithdrawal` | `lock_fact_for_withdrawal`: a point read of the source's fact (the store's one writer is the lock); `worldOnly` admits a world fact or a private one on `memberPage`, the floor drops a hidden row; no outcome-marker filter | `SELECT visibility, fact, <subject> … FOR UPDATE` |
+| `queueWithdrawalReview` | `queue_withdrawal_review`: the decide review queue's enqueue, kind `withdraw`, `b_ref` `*` | `INSERT INTO decide_review_queue … ON CONFLICT DO NOTHING` |
+| `listSegmentedPagesBySlug` | `list_segmented_pages_by_slug`: a page whose `compiled_truth` and `timeline` are both null, by id | `SELECT id, slug … body_storage = 'segmented'` |
+| `bumpWithdrawnPageRevisions` | `bump_withdrawn_page_revisions`: a new knowledge revision for each inline page, its projection revision and embedding signature cleared | `UPDATE pages SET knowledge_revision = gen_random_uuid() … RETURNING` |
+| `readPageRevisions` | `read_page_revisions`: point reads by id, by id | `SELECT id, slug, knowledge_revision … id = ANY($1)` |
+| `appendFactForgetReason` | `append_fact_forget_reason`: the `concat_ws(' \| ', NULLIF(context, ''), note)` rule through `write_fact` | `UPDATE facts SET context = concat_ws(…)` |
+| `readFactWithdrawnRow` | `read_fact_withdrawn_row`: point reads for subject `*`, the entity and the owned page and both fingerprints; the most specific subject first, then the newest; under the floor only a withdrawal some row of which the caller sees, or that no row backs | `SELECT subject, visibility, withdrawn_at … GROUP BY … ORDER BY` |
+| `readFactWithdrawnBacking` | `read_fact_withdrawn_backing`: whether the caller sees one (`visible`) and fails to see one (`hidden`) of the expired rows the withdrawal reached; requires the floor | `SELECT bool_or(…) AS visible, bool_or(NOT …) AS hidden …` |
+
 ## Trust proposals (`trust::proposals`)
 
 The `trust_proposals` queue (src/core/trust/schema.ts): the decisions a guard files for the owner (a contested

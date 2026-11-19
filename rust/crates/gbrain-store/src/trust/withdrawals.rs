@@ -95,7 +95,7 @@ fn split(key: &[u8], prefix_len: usize) -> Option<(String, String, String)> {
 }
 
 /// The table's CHECK: Postgres refuses any other visibility with a check violation.
-fn check_visibility(op: &str, visibility: &str) -> Result<()> {
+pub(super) fn check_visibility(op: &str, visibility: &str) -> Result<()> {
     if VISIBILITIES.contains(&visibility) {
         Ok(())
     } else {
@@ -105,7 +105,8 @@ fn check_visibility(op: &str, visibility: &str) -> Result<()> {
     }
 }
 
-fn at(read: &dyn KvRead, parts: &[&str]) -> Result<Option<i64>> {
+/// The time (micros) of the withdrawal `[source, visibility, subject, fact_hash]`, if any.
+pub(super) fn at(read: &dyn KvRead, parts: &[&str]) -> Result<Option<i64>> {
     Ok(get_json::<WithdrawalRecord>(read, &key(parts))?.map(|r| r.withdrawn_at_us))
 }
 

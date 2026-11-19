@@ -4281,6 +4281,22 @@ export interface BrainEngine {
   readTrustGeneration(): Promise<string>;
   /** Whether the source has any fact purge tombstone (`facts`) and any take purge tombstone (`takes`). */
   readSourcePurgeFlags(sourceId: string): Promise<{ facts: boolean; takes: boolean }>;
+  /** The fact a withdrawal admits (id and source; world facts only when worldOnly unless it is on memberPage; the remote provenance floor when remoteFloor), locked for the withdrawal; null when none. */
+  lockFactForWithdrawal(spec: TrustWithdrawalsSql.WithdrawalLockSpec): Promise<TrustWithdrawalsSql.WithdrawalLockRow | null>;
+  /** Queues the overnight review of withdrawn fact `factRef`; a queued review stays. */
+  queueWithdrawalReview(sourceId: string, factRef: string): Promise<void>;
+  /** The segmented pages among `slugs` in the source (id, slug). */
+  listSegmentedPagesBySlug(sourceId: string, slugs: readonly string[]): Promise<Array<{ id: number; slug: string }>>;
+  /** Gives the inline pages among `slugs` a new knowledge revision and clears their text projection revision and embedding signature. Returns them with the new revision. */
+  bumpWithdrawnPageRevisions(sourceId: string, slugs: readonly string[]): Promise<TrustWithdrawalsSql.WithdrawnPageRevision[]>;
+  /** The pages with these ids and their knowledge revisions. */
+  readPageRevisions(ids: readonly number[]): Promise<TrustWithdrawalsSql.WithdrawnPageRevision[]>;
+  /** Appends `note` to fact `id`'s context, after ' | ' when the context has text. */
+  appendFactForgetReason(id: number, sourceId: string, note: string): Promise<void>;
+  /** The withdrawal a save of this claim meets (the refusal's `fact_withdrawn`); entity, owned-page and source-wide withdrawals, the entity's first; null when none. Remote callers see only withdrawals they can see a backing row of, or that none backs. */
+  readFactWithdrawnRow(spec: TrustWithdrawalsSql.FactWithdrawnSpec): Promise<TrustWithdrawalsSql.FactWithdrawnRow | null>;
+  /** For a remote caller: whether the withdrawn rows backing this claim include one it can see (`visible`) and one it cannot (`hidden`). */
+  readFactWithdrawnBacking(spec: TrustWithdrawalsSql.FactWithdrawnSpec): Promise<{ visible: boolean; hidden: boolean }>;
 
   // Open loops (engine-sql/open-loops.ts). Each runs the statement loops-store.ts ran through executeRaw and returns
   // the raw rows; loops-store.ts normalizes them.

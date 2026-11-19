@@ -508,6 +508,15 @@ export const RUST_ENGINE_MEMBERS = {
   readFactCacheWatermark: 'facts',
   readTrustGeneration: 'facts',
   readSourcePurgeFlags: 'facts',
+  // trust: the forget commit and the fact_withdrawn refusal (engine-sql/trust-withdrawals.ts)
+  lockFactForWithdrawal: 'facts',
+  queueWithdrawalReview: 'facts',
+  listSegmentedPagesBySlug: 'facts',
+  bumpWithdrawnPageRevisions: 'facts',
+  readPageRevisions: 'facts',
+  appendFactForgetReason: 'facts',
+  readFactWithdrawnRow: 'facts',
+  readFactWithdrawnBacking: 'facts',
   // trust: the write gate's receipts and holds (engine-sql/trust-write-gate.ts)
   upsertWriteGateReceipt: 'facts',
   upsertPageWriteGateReceipt: 'facts',

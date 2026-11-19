@@ -140,7 +140,11 @@ pub struct WithdrawalClaimQuery {
 
 /// Whether `floor` hides `row` (`privateProvenanceFilterFragment`): its provenance page fails the
 /// page policy for the empty identity, or the fact is owner-only in the floor's form.
-fn floor_hides(read: &dyn KvRead, row: &FactRecord, floor: &RemoteFloor) -> Result<bool> {
+pub(crate) fn floor_hides(
+    read: &dyn KvRead,
+    row: &FactRecord,
+    floor: &RemoteFloor,
+) -> Result<bool> {
     if fact_owner_only(read, &row.source_id, floor.owner_only)? {
         return Ok(true);
     }
@@ -154,7 +158,11 @@ fn floor_hides(read: &dyn KvRead, row: &FactRecord, floor: &RemoteFloor) -> Resu
 }
 
 /// Fact `id` when it belongs to `source_id`.
-fn source_fact(read: &dyn KvRead, id: i64, source_id: &str) -> Result<Option<FactRecord>> {
+pub(crate) fn source_fact(
+    read: &dyn KvRead,
+    id: i64,
+    source_id: &str,
+) -> Result<Option<FactRecord>> {
     let Ok(id) = u64::try_from(id) else {
         return Ok(None);
     };

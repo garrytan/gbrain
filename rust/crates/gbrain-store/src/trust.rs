@@ -42,6 +42,7 @@ pub mod proposals;
 mod row_trust;
 pub mod tier_reads;
 pub mod valid_time;
+pub mod withdrawal_commit;
 pub mod withdrawals;
 pub mod write_gate;
 

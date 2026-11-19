@@ -74,7 +74,7 @@ fn generation_key() -> [u8; 2] {
     [keys::EMBEDDING_STATE, GENERATION]
 }
 
-fn signature_key(page_id: u64) -> Vec<u8> {
+pub(crate) fn signature_key(page_id: u64) -> Vec<u8> {
     let mut key = vec![keys::EMBEDDING_STATE, PAGE_SIGNATURE];
     key.extend_from_slice(&page_id.to_be_bytes());
     key

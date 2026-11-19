@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 752/752
+# covered: 760/760
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -54,7 +54,7 @@
 # eval_capture: 5/5
 # calibration_profiles: 5/5
 # salience_enrich: 6/6
-# trust: 20/20
+# trust: 28/28
 # open_loops: 3/3
 # cli_reads_import: 12/12
 # wanted_links: 2/2
@@ -77,15 +77,15 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	82	no	yes	yes	serves
+transaction	lifecycle	yes	85	no	yes	yes	serves
 transactionDirect	lifecycle	yes	5	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	102	yes	yes	yes	serves
+getPage	pages	yes	103	yes	yes	yes	serves
 readPageSnapshot	pages	yes	27	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	422	yes	yes	yes	serves
+putPage	pages	yes	425	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
@@ -298,7 +298,7 @@ getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
 insertFact	facts	yes	47	yes	yes	yes	serves
-insertFacts	facts	yes	62	no	yes	yes	serves
+insertFacts	facts	yes	65	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	32	no	yes	yes	serves
 listFactsByEntity	facts	yes	20	yes	yes	yes	serves
@@ -360,7 +360,7 @@ readPersistenceBrainId	import_guards	yes	2	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	2	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	13	no	yes	yes	serves
-applyTransactionSettings	import_guards	yes	46	no	yes	yes	serves
+applyTransactionSettings	import_guards	yes	49	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readCurrentWriteTrust	import_guards	yes	1	no	yes	yes	serves
 setWriteContext	import_guards	yes	1	no	yes	yes	serves
@@ -583,7 +583,7 @@ listActiveFactsForEntity	facts_cycle	yes	1	no	yes	yes	serves
 listFreshExtractionOutcomes	facts_cycle	yes	1	no	yes	yes	serves
 listFenceRowGroups	facts_cycle	yes	1	no	yes	yes	serves
 readFactSubject	facts_cycle	yes	1	no	yes	yes	serves
-listFactsForPage	facts_cycle	yes	7	no	yes	yes	serves
+listFactsForPage	facts_cycle	yes	8	no	yes	yes	serves
 countLegacyFactsPending	facts_cycle	yes	1	no	yes	yes	serves
 countUnconsolidatedFactsBySource	facts_cycle	yes	1	no	yes	yes	serves
 findBulkFactDays	facts_cycle	yes	1	no	yes	yes	serves
@@ -606,7 +606,7 @@ listSingleFactMetadata	facts_purge	yes	2	no	yes	yes	serves
 listUnfencedFactRows	facts_purge	yes	1	no	yes	yes	serves
 listHeldFenceFactRows	facts_purge	yes	1	no	yes	yes	serves
 listWithdrawalSlugs	facts_purge	yes	2	no	yes	yes	serves
-expireFactsByWithdrawal	facts_purge	yes	2	no	yes	yes	serves
+expireFactsByWithdrawal	facts_purge	yes	3	no	yes	yes	serves
 insertFactPurge	facts_purge	yes	5	no	yes	yes	serves
 loopFactDrift	facts_repair	yes	2	no	yes	yes	serves
 closedLoopWithActiveFact	facts_repair	yes	2	no	yes	yes	serves
@@ -681,7 +681,7 @@ getRecentSalience	salience_enrich	yes	7	yes	yes	yes	serves
 listEnrichCandidates	salience_enrich	yes	3	yes	yes	yes	serves
 findAnomalies	salience_enrich	yes	7	yes	yes	yes	serves
 hasCoveringFactWithdrawal	trust	yes	1	no	yes	yes	serves
-insertFactWithdrawal	trust	yes	11	no	yes	yes	serves
+insertFactWithdrawal	trust	yes	12	no	yes	yes	serves
 isFactWithdrawn	trust	yes	3	no	yes	yes	serves
 isFactPurged	trust	yes	3	no	yes	yes	serves
 listFactWithdrawalDates	trust	yes	2	no	yes	yes	serves
@@ -691,6 +691,14 @@ listFactWithdrawalKeys	trust	yes	3	no	yes	yes	serves
 readFactCacheWatermark	trust	yes	1	no	yes	yes	serves
 readTrustGeneration	trust	yes	1	no	yes	yes	serves
 readSourcePurgeFlags	trust	yes	3	no	yes	yes	serves
+lockFactForWithdrawal	trust	yes	1	no	yes	yes	serves
+queueWithdrawalReview	trust	yes	1	no	yes	yes	serves
+listSegmentedPagesBySlug	trust	yes	1	no	yes	yes	serves
+bumpWithdrawnPageRevisions	trust	yes	1	no	yes	yes	serves
+readPageRevisions	trust	yes	1	no	yes	yes	serves
+appendFactForgetReason	trust	yes	1	no	yes	yes	serves
+readFactWithdrawnRow	trust	yes	2	no	yes	yes	serves
+readFactWithdrawnBacking	trust	yes	1	no	yes	yes	serves
 upsertWriteGateReceipt	trust	yes	11	no	yes	yes	serves
 upsertPageWriteGateReceipt	trust	yes	13	no	yes	yes	serves
 deleteStalePageWriteGateReceipts	trust	yes	1	no	yes	yes	serves
@@ -781,7 +789,7 @@ getDecideReviewProposal	decide_proposals	yes	1	no	yes	yes	serves
 transitionDecideReviewProposal	decide_proposals	yes	2	no	yes	yes	serves
 listDecideReviewProposalIds	decide_proposals	yes	1	no	yes	yes	serves
 readProposalReviewRates	decide_proposals	yes	1	no	yes	yes	serves
-listDueDecideReviewQueue	decide_proposals	yes	1	no	yes	yes	serves
+listDueDecideReviewQueue	decide_proposals	yes	2	no	yes	yes	serves
 applyDecideReviewQueue	decide_proposals	yes	1	no	yes	yes	serves
 listDueDecideSweepDeferred	decide_proposals	yes	1	no	yes	yes	serves
 applyDecideSweepDeferred	decide_proposals	yes	1	no	yes	yes	serves

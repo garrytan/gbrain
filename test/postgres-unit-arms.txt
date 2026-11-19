@@ -161,6 +161,7 @@ test/engine-parity/facts-trust.test.ts
 test/engine-parity/facts.test.ts
 test/engine-parity/fence-overlay.test.ts
 test/engine-parity/field-usage.test.ts
+test/engine-parity/forget-commit.test.ts
 test/engine-parity/forget-reach-reads.test.ts
 test/engine-parity/forget-remember.test.ts
 test/engine-parity/held-fence-cells.test.ts
