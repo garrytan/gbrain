@@ -15,9 +15,10 @@
 //! check constraint "..."`); the TypeScript member gives it the SQLSTATE and constraint name PGLite and Postgres raise.
 //! Not kept: the `trust_generation_update` trigger, the secondary indexes (a read scans the table) and the
 //! `ON DELETE RESTRICT` of `sources` (deleting a source a client names is not refused here). The store keeps the
-//! client's `oauth_tokens` (`oauth_tokens.rs`) and removes them with the client, as the `ON DELETE CASCADE` does; it keeps
-//! no `oauth_codes`, so that cascade has nothing to remove there.
+//! client's `oauth_tokens` (`oauth_tokens.rs`) and removes them with the client, as the `ON DELETE CASCADE` does, and so it does
+//! the client's `oauth_codes` (`oauth_codes.rs`).
 
+use super::oauth_codes::delete_client_codes;
 use super::oauth_tokens::delete_client_tokens;
 use super::spend::numeric_fixed;
 use super::*;
@@ -653,6 +654,7 @@ impl Store {
             };
             tx.delete(&client_key(client_id))?;
             delete_client_tokens(tx, client_id)?;
+            delete_client_codes(tx, client_id)?;
             Ok(Some((record.client_id, record.client_name)))
         })
     }

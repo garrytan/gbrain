@@ -2,7 +2,7 @@
 //! `oauth_clients` (the token list and revokes, the client delete, the liveness checks, the token lifetime write)
 //! and the OAuth token insert and bearer read (rust/docs/store/access-tokens.md, oauth-clients.md, oauth-tokens.md).
 
-use gbrain_store::jobs::{OauthTokenInsert, TokenGrantColumns};
+use gbrain_store::jobs::{OauthCodeInsert, OauthTokenInsert, TokenGrantColumns};
 use napi::Env;
 use napi::bindgen_prelude::Object;
 use napi_derive::napi;
@@ -162,5 +162,89 @@ impl Brain {
         now: i64,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.delete_expired_oauth_tokens(now))
+    }
+
+    /// `issueOauthTokens(rows)`: null. The tokens of one grant in one write; a refused row leaves none.
+    #[napi]
+    pub fn issue_oauth_tokens<'env>(
+        &self,
+        env: &'env Env,
+        rows: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let rows: Vec<OauthTokenInsert> = required(rows, "issueOauthTokens rows")?;
+            s.issue_oauth_tokens(&rows)
+        })
+    }
+
+    /// `insertOauthCode(row)`: null.
+    #[napi]
+    pub fn insert_oauth_code<'env>(
+        &self,
+        env: &'env Env,
+        row: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let row: OauthCodeInsert = required(row, "insertOauthCode row")?;
+            s.insert_oauth_code(&row)
+        })
+    }
+
+    /// `readOauthCodeForUpdate(hash, clientId)`: the code's whole row, or null.
+    #[napi]
+    pub fn read_oauth_code_for_update<'env>(
+        &self,
+        env: &'env Env,
+        hash: String,
+        client_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_oauth_code_for_update(&hash, &client_id)
+        })
+    }
+
+    /// `deleteOauthCode(hash, clientId)`: null.
+    #[napi]
+    pub fn delete_oauth_code<'env>(
+        &self,
+        env: &'env Env,
+        hash: String,
+        client_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.delete_oauth_code(&hash, &client_id))
+    }
+
+    /// `readOauthCodeChallenge(hash, clientId, now)`: the PKCE challenge of an unexpired code of a live client, or null.
+    #[napi]
+    pub fn read_oauth_code_challenge<'env>(
+        &self,
+        env: &'env Env,
+        hash: String,
+        client_id: String,
+        now: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_oauth_code_challenge(&hash, &client_id, now)
+        })
+    }
+
+    /// `clientHoldsOauthCode(clientId)`: whether the client holds an authorization code (expired ones count).
+    #[napi]
+    pub fn client_holds_oauth_code<'env>(
+        &self,
+        env: &'env Env,
+        client_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.client_holds_oauth_code(&client_id))
+    }
+
+    /// `deleteExpiredOauthCredentials(now)`: how many OAuth tokens and codes with `expires_at` before `now` it deleted, in one write.
+    #[napi]
+    pub fn delete_expired_oauth_credentials<'env>(
+        &self,
+        env: &'env Env,
+        now: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.delete_expired_oauth_credentials(now))
     }
 }

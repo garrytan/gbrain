@@ -89,6 +89,35 @@ pub(super) fn delete_client_tokens(tx: &mut dyn KvWrite, client_id: &str) -> Res
     Ok(())
 }
 
+/// The sweep of `delete_expired_oauth_tokens`, inside the caller's write (also run by the credential sweep).
+pub(super) fn delete_expired_tokens(tx: &mut dyn KvWrite, now_epoch_seconds: i64) -> Result<u32> {
+    let mut expired = Vec::new();
+    let mut bad = None;
+    scan_prefix(&*tx, &prefix(OAUTH_TOKEN), false, &mut |k, v| {
+        match serde_json::from_slice::<OauthTokenRecord>(v) {
+            Ok(r) => {
+                if r.expires_at.is_some_and(|e| e < now_epoch_seconds) {
+                    expired.push(k.to_vec());
+                }
+            }
+            Err(e) => {
+                bad = Some(StoreError::invalid(format!(
+                    "unreadable OAuth token record: {e}"
+                )));
+                return false;
+            }
+        }
+        true
+    })?;
+    if let Some(e) = bad {
+        return Err(e);
+    }
+    for key in &expired {
+        tx.delete(key)?;
+    }
+    Ok(u32::try_from(expired.len()).unwrap_or(u32::MAX))
+}
+
 /// The names the bearer check's projection drops at each rung of its degrade ladder (a brain missing newer
 /// `oauth_clients` columns): rung 1 has no `grant_type`, `surface`, `surface_set_by`; rung 2 also no
 /// `bound_slug_prefixes`; rung 3 also no `federated_read`; rung 4 also no `source_id`.
@@ -124,35 +153,49 @@ impl Store {
     /// `insertOauthToken(row)`. `constraint_violation` for a token hash already taken (`oauth_tokens_pkey`) and for a
     /// client the store has none of (`oauth_tokens_client_id_fkey`: a deleted client still counts, as its row stays).
     pub fn insert_oauth_token(&self, row: &OauthTokenInsert) -> Result<()> {
+        self.write(|tx| self.put_oauth_token(tx, row))
+    }
+
+    /// `issueOauthTokens(rows)`: the tokens of one grant (an access token and its refresh token), each checked as
+    /// `insert_oauth_token` checks it, in the one write: the client's row is read in the same write the tokens land in,
+    /// so no second connection waits on it, and a refusal of any row (`constraint_violation`) leaves none of them.
+    pub fn issue_oauth_tokens(&self, rows: &[OauthTokenInsert]) -> Result<()> {
         self.write(|tx| {
-            if get_json::<OauthTokenRecord>(&*tx, &token_key(&row.token_hash))?.is_some() {
-                return Err(StoreError::new(
-                    CONSTRAINT_VIOLATION,
-                    "duplicate key value violates unique constraint \"oauth_tokens_pkey\"",
-                ));
+            for row in rows {
+                self.put_oauth_token(tx, row)?;
             }
-            if load_client(&*tx, &row.client_id)?.is_none() {
-                return Err(StoreError::new(
-                    CONSTRAINT_VIOLATION,
-                    format!(
-                        "insert or update on table \"{TABLE}\" violates foreign key constraint \"oauth_tokens_client_id_fkey\""
-                    ),
-                ));
-            }
-            let record = OauthTokenRecord {
-                token_hash: row.token_hash.clone(),
-                token_type: row.token_type.clone(),
-                client_id: row.client_id.clone(),
-                scopes: row.scopes.clone(),
-                expires_at: row.expires_at,
-                resource: row.resource.clone(),
-                created_at: row
-                    .created_at
-                    .map_or_else(|| self.env.now_micros(), |s| s.saturating_mul(1_000_000)),
-                grant_type: row.grant_type.clone(),
-            };
-            put_json(tx, &token_key(&record.token_hash), &record)
+            Ok(())
         })
+    }
+
+    fn put_oauth_token(&self, tx: &mut dyn KvWrite, row: &OauthTokenInsert) -> Result<()> {
+        if get_json::<OauthTokenRecord>(&*tx, &token_key(&row.token_hash))?.is_some() {
+            return Err(StoreError::new(
+                CONSTRAINT_VIOLATION,
+                "duplicate key value violates unique constraint \"oauth_tokens_pkey\"",
+            ));
+        }
+        if load_client(&*tx, &row.client_id)?.is_none() {
+            return Err(StoreError::new(
+                CONSTRAINT_VIOLATION,
+                format!(
+                    "insert or update on table \"{TABLE}\" violates foreign key constraint \"oauth_tokens_client_id_fkey\""
+                ),
+            ));
+        }
+        let record = OauthTokenRecord {
+            token_hash: row.token_hash.clone(),
+            token_type: row.token_type.clone(),
+            client_id: row.client_id.clone(),
+            scopes: row.scopes.clone(),
+            expires_at: row.expires_at,
+            resource: row.resource.clone(),
+            created_at: row
+                .created_at
+                .map_or_else(|| self.env.now_micros(), |s| s.saturating_mul(1_000_000)),
+            grant_type: row.grant_type.clone(),
+        };
+        put_json(tx, &token_key(&record.token_hash), &record)
     }
 
     /// `readOauthAccessTokenRows(hash, rung)`: `[row]` for the access token with this hash joined to its client, which
@@ -210,32 +253,6 @@ impl Store {
     /// is before `now_epoch_seconds`, in one write, and returns how many went. A token with a NULL `expires_at` stays
     /// (`NULL < $1` is not true). For the sweep of expired credentials (`deleteExpiredOauthCredentials`).
     pub fn delete_expired_oauth_tokens(&self, now_epoch_seconds: i64) -> Result<u32> {
-        self.write(|tx| {
-            let mut expired = Vec::new();
-            let mut bad = None;
-            scan_prefix(&*tx, &prefix(OAUTH_TOKEN), false, &mut |k, v| {
-                match serde_json::from_slice::<OauthTokenRecord>(v) {
-                    Ok(r) => {
-                        if r.expires_at.is_some_and(|e| e < now_epoch_seconds) {
-                            expired.push(k.to_vec());
-                        }
-                    }
-                    Err(e) => {
-                        bad = Some(StoreError::invalid(format!(
-                            "unreadable OAuth token record: {e}"
-                        )));
-                        return false;
-                    }
-                }
-                true
-            })?;
-            if let Some(e) = bad {
-                return Err(e);
-            }
-            for key in &expired {
-                tx.delete(key)?;
-            }
-            Ok(u32::try_from(expired.len()).unwrap_or(u32::MAX))
-        })
+        self.write(|tx| delete_expired_tokens(tx, now_epoch_seconds))
     }
 }
