@@ -10,6 +10,7 @@ import type { RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/grap
 import type { ExtractionPendingRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
 import type { FactRelinkAttempt, FactRelinkOutcome, FactRelinkUpsertOpts } from './engine-sql/fact-relink-attempts.ts';
+import type { ConversationFactLink, ConversationRelinkPagesQuery, RelinkPlacement } from './engine-sql/fact-relink-writes.ts';
 import type * as FactsCycleSql from './engine-sql/facts-cycle.ts';
 import type * as FactsPurgeSql from './engine-sql/facts-purge.ts';
 import type * as FactsRepairSql from './engine-sql/facts-repair.ts';
@@ -3211,6 +3212,14 @@ export interface BrainEngine {
   listFactRelinkOutcomes(sourceId: string, factIds: number[], outcomes: string[]): Promise<FactRelinkOutcome[]>;
   /** Deletes the source's relink attempts of `tier` that name `targetSlug`. */
   deleteFactRelinkMemos(sourceId: string, tier: string, targetSlug: string): Promise<void>;
+
+  // Facts relink writes (engine-sql/fact-relink-writes.ts): the guarded facts update statements relink ran through executeRaw.
+  /** Places a pinned fact that still has no entity, page, row number or expiry (link onto `slug`'s fence, or retire as a duplicate); true when it moved. */
+  placeRelinkedFact(sourceId: string, placement: RelinkPlacement): Promise<boolean>;
+  /** Links a conversation page's derived row still exactly as planned onto a live page; true when it was linked. */
+  linkConversationFact(sourceId: string, link: ConversationFactLink): Promise<boolean>;
+  /** The conversation relink's page pick: the pages with the most derived rows it would link, most rows first, then by slug in byte order. */
+  listConversationRelinkPages(sourceId: string, q: ConversationRelinkPagesQuery): Promise<string[]>;
 
   // Facts statements, command, cycle and fence reads (engine-sql/facts-cycle.ts). Each runs the statement its caller ran through executeRaw.
   /** enrich's grounding read: an entity's unexpired, unlapsed facts, highest confidence first (newest id breaks a tie), at most `limit`. */

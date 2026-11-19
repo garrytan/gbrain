@@ -337,6 +337,11 @@ export const RUST_ENGINE_MEMBERS = {
   listFactRelinkOutcomes: 'facts',
   deleteFactRelinkMemos: 'facts',
 
+  // facts: relink writes and the conversation relink's page pick (engine-sql/fact-relink-writes.ts)
+  placeRelinkedFact: 'facts',
+  linkConversationFact: 'facts',
+  listConversationRelinkPages: 'facts',
+
   // facts: command, cycle and fence reads (engine-sql/facts-cycle.ts)
   listActiveFactsForEntity: 'facts',
   listFreshExtractionOutcomes: 'facts',

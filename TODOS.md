@@ -1,5 +1,9 @@
 # TODOS
 
+## Rust engine relink lane follow-ups (filed 2026-11-18)
+
+- [ ] **P3 — timeline-row-delete-dedupe: one SQL helper for the two timeline row deletes.** **What:** `deleteTimelineRows` (`src/core/engine-sql/timeline-reads.ts`) and `removeTimelineRows` (`src/core/engine-sql/timeline.ts`) run the same guarded `DELETE FROM timeline_entries` (a page's non-event rows that still match on id, date, source, summary and detail, returning each date and its `removed` mark) as two copies. **Fix:** make both members call one shared SQL helper, with no change in output on any engine (the parity and engine-sql cases of both members stay green unchanged). **Effort:** S. **Priority:** P3.
+
 ## Rust engine alias-trust follow-ups (filed 2026-11-18)
 
 - [x] **P3 — alias-order-collate: pin `COLLATE "C"` on the alias read order.** **Done (rust-engine/alias-trust-2):** `readAliases` sorts `alias_norm`, `source_id` and `slug` `COLLATE "C"`; the byte-order case in `test/engine-parity/alias-trust.test.ts` failed on an en_US.utf8 Postgres before the change and passes on every engine after it. **What (as filed):** `readAliases` (`src/core/search/read-enrichment.ts`) orders by `a.alias_norm, a.source_id, a.rank, a.slug` with no collation, so on a Postgres whose default collation is not C the pages of one alias can come back in another order than PGLite and the Rust store (byte order) give, and a caller that takes the first page picks another one. **Fix:** order by each text column `COLLATE "C"`, with a parity case whose slugs sort differently under a locale collation. **Effort:** S. **Priority:** P3.

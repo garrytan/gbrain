@@ -61,7 +61,7 @@ export type RelinkSkipReason = 'revision_conflict' | 'withdrawn' | 'claim_unfenc
 
 type Classified =
   | { id: number; action: 'link'; value: Record<string, unknown> }
-  | { id: number; action: 'retire'; duplicateOf: number }
+  | { id: number; action: 'retire'; duplicateOf: number; context: string | null }
   | { id: number; action: 'skip'; reason: RelinkSkipReason };
 
 /** The fence cell a relinked row renders as. */
@@ -139,7 +139,7 @@ async function classify(db: BrainEngine, row: WriteRequest, intent: RelinkIntent
          AND expired_at IS NULL AND fact=$3 AND source IS NOT DISTINCT FROM $4 ORDER BY id LIMIT 1`,
       [row.source_id, row.slug, String(v.fact), v.source ?? null]);
     if (same) {
-      out.push(same.visibility === visibility ? { id: f.id, action: 'retire', duplicateOf: Number(same.id) }
+      out.push(same.visibility === visibility ? { id: f.id, action: 'retire', duplicateOf: Number(same.id), context: v.context as string | null }
         : { id: f.id, action: 'skip', reason: 'visibility_conflict' });
       continue;
     }
@@ -152,20 +152,20 @@ async function classify(db: BrainEngine, row: WriteRequest, intent: RelinkIntent
            WHERE m.source_id=$1 AND m.id=$3 AND t.entity_slug=$2 AND t.source_markdown_slug=$2
            ORDER BY (t.expired_at IS NULL) DESC, t.id LIMIT 1`, [row.source_id, row.slug, f.id]);
       if (held) {
-        out.push({ id: f.id, action: 'retire', duplicateOf: Number(held.id) });
+        out.push({ id: f.id, action: 'retire', duplicateOf: Number(held.id), context: v.context as string | null });
         continue;
       }
     }
     const exact = await decideSingleFact(db, row.source_id,
       { entity_slug: row.slug, fact: String(v.fact), kind: v.kind as never, visibility }, null);
     if (exact.status === 'duplicate' && exact.candidate) {
-      out.push({ id: f.id, action: 'retire', duplicateOf: Number(exact.candidate.id) });
+      out.push({ id: f.id, action: 'retire', duplicateOf: Number(exact.candidate.id), context: v.context as string | null });
       continue;
     }
     const key = JSON.stringify([String(v.fact), v.source ?? null]);
     const earlier = seen.get(key);
     if (earlier !== undefined) {
-      out.push(earlier.visibility === visibility ? { id: f.id, action: 'retire', duplicateOf: earlier.id }
+      out.push(earlier.visibility === visibility ? { id: f.id, action: 'retire', duplicateOf: earlier.id, context: v.context as string | null }
         : { id: f.id, action: 'skip', reason: 'visibility_conflict' });
       continue;
     }
@@ -234,22 +234,21 @@ export async function prepareRelinkMutation(engine: BrainEngine, row: WriteReque
   // Linking places a fact; it does not author it, so its rows keep the tier and write origin they were written with.
   const apply = (tx: BrainEngine): Promise<Record<string, unknown>> => withTrustKeep(tx, ['facts'], async () => {
     const outcome: RelinkGroupOutcome = { linked: [], deduped: [], skipped: [], queued: 0 };
-    const guard = 'WHERE source_id=$1 AND id=$2 AND entity_slug IS NULL AND row_num IS NULL AND source_markdown_slug IS NULL AND expired_at IS NULL RETURNING id';
     // Rows take their fence positions before the page projection runs, so the
     // projection matches them by (source, page, row_num) instead of inserting twins.
     for (const c of planned) {
       const f = byId.get(c.id)!;
       if (c.action === 'link') {
         const rowNum = rowNums.get(c.id)!;
-        const moved = await tx.executeRaw(`UPDATE facts SET entity_slug=$3, source_markdown_slug=$3, row_num=$4::integer, context=$5 ${guard}`,
-          [row.source_id, c.id, row.slug, rowNum, appendContextNote(c.value.context as string | null, f.note)]);
-        if (moved.length !== 1) throw changed('A relinked fact was moved by another writer.');
+        const moved = await tx.placeRelinkedFact(row.source_id,
+          { factId: c.id, action: 'link', slug: row.slug, rowNum, context: appendContextNote(c.value.context as string | null, f.note) });
+        if (!moved) throw changed('A relinked fact was moved by another writer.');
         outcome.linked.push({ id: c.id, row_num: rowNum });
       } else if (c.action === 'retire') {
-        const [current] = await tx.executeRaw<{ context: string | null }>('SELECT context FROM facts WHERE source_id=$1 AND id=$2', [row.source_id, c.id]);
-        const retired = await tx.executeRaw(`UPDATE facts SET entity_slug=$3, expired_at=now(), context=$4 ${guard}`,
-          [row.source_id, c.id, row.slug, appendContextNote(current?.context ?? null, `${f.note} (duplicate of #${c.duplicateOf})`)]);
-        if (retired.length !== 1) throw changed('A relinked fact was moved by another writer.');
+        // The row's context is the one its pinned hash covered; validate re-checked that hash under the lock.
+        const retired = await tx.placeRelinkedFact(row.source_id,
+          { factId: c.id, action: 'retire', slug: row.slug, context: appendContextNote(c.context, `${f.note} (duplicate of #${c.duplicateOf})`) });
+        if (!retired) throw changed('A relinked fact was moved by another writer.');
         outcome.deduped.push({ id: c.id, duplicate_of: c.duplicateOf });
       } else {
         outcome.skipped.push({ id: c.id, reason: c.reason });

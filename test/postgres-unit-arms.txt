@@ -138,6 +138,7 @@ test/engine-parity/effect-scans.test.ts
 test/engine-parity/entity-reads.test.ts
 test/engine-parity/extraction.test.ts
 test/engine-parity/fact-relink-attempts.test.ts
+test/engine-parity/fact-relink-writes.test.ts
 test/engine-parity/facts-cycle.test.ts
 test/engine-parity/facts-doctor.test.ts
 test/engine-parity/facts-purge.test.ts
@@ -194,6 +195,7 @@ test/engine-parity/wanted-links.test.ts
 test/engine-parity/write-guards.test.ts
 test/engine-parity/write-misc.test.ts
 test/engine-sql-fact-relink-attempts.test.ts
+test/engine-sql-fact-relink-writes.test.ts
 test/engine-sql-facts-keyset.test.ts
 test/eval-log-tables-parity.test.ts
 test/extract-all-stamp-intersection.serial.test.ts

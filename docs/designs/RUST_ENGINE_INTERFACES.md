@@ -868,6 +868,9 @@ Facts and their supersession chains.
     open loops, `F 0x0A` and `F 0x0B` the `fact_relink_attempts` record (`upsertFactRelinkAttempt`,
     `listFactRelinkOutcomes`, `deleteFactRelinkMemos`, and the tried, paid and no-subject memos the doctor's unlinked
     reads use). The attempts have no foreign key, so a fact or page delete leaves them, as in Postgres.
+    The relink writes `placeRelinkedFact` and `linkConversationFact` change `F 0x01` rows through `write_fact`, so
+    the fence key `F 0x05` refuses a held position as the unique index does. `listConversationRelinkPages`, the
+    conversation relink's page pick, reads the source's `F 0x01` rows and the tried memos.
 - **Depends on:** None for the core members. Three cases also read takes (`countUnconsolidatedFacts`, `getFactsHealth`, the `listFactsByEntity` consolidation filter) and one needs the transactions family (keyset across a shared timestamp inside `transaction`). `findCandidateDuplicates` with an embedding refuses until vectors land; the keyword arm uses the keyword family's ranker. Source delete is not served yet (see "Page delete cascade"). A page rename moves facts and withdrawals keyed by the old slug: fill in `facts::rename_slug_rows` ("Rename slug rows").
 - **Estimate:** about 4 days.
 - **Notes:** `listFactsKeyset` cursors are microsecond ISO text; `grep` is ILIKE with wildcards treated literally. `migrateFactsToCanonical` rewrites `entity_slug`, `source_markdown_slug` and `row_num` only.

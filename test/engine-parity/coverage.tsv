@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 635/635
+# covered: 638/638
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -42,6 +42,7 @@
 # cli_reads_ops: 7/7
 # facts_doctor: 10/10
 # fact_relink_attempts: 3/3
+# fact_relink_writes: 3/3
 # facts_cycle: 11/11
 # facts_purge: 13/13
 # facts_repair: 10/10
@@ -84,7 +85,7 @@ findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	91	yes	yes	yes	serves
+softDeletePage	pages	yes	92	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -288,11 +289,11 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	37	yes	yes	yes	serves
-insertFacts	facts	yes	32	no	yes	yes	serves
+insertFact	facts	yes	39	yes	yes	yes	serves
+insertFacts	facts	yes	34	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
-expireFact	facts	yes	20	no	yes	yes	serves
-listFactsByEntity	facts	yes	15	yes	yes	yes	serves
+expireFact	facts	yes	21	no	yes	yes	serves
+listFactsByEntity	facts	yes	17	yes	yes	yes	serves
 listFactsSince	facts	yes	9	yes	yes	yes	serves
 listFactsKeyset	facts	yes	2	no	yes	yes	serves
 listFactsBySession	facts	yes	3	yes	yes	yes	serves
@@ -519,22 +520,25 @@ listUnattributedFacts	cli_reads_ops	yes	2	no	yes	yes	serves
 listWantedPages	cli_reads_ops	yes	6	no	yes	yes	serves
 listConversationFactRows	facts_doctor	yes	1	no	yes	yes	serves
 countRedactedFacts	facts_doctor	yes	1	no	yes	yes	serves
-listOutsideContentFenceCounts	facts_doctor	yes	1	no	yes	yes	serves
+listOutsideContentFenceCounts	facts_doctor	yes	2	no	yes	yes	serves
 countAtomFacts	facts_doctor	yes	1	no	yes	yes	serves
 listUnpreviewedTrustFacts	facts_doctor	yes	2	no	yes	yes	serves
 countUnlinkedFactsByOrigin	facts_doctor	yes	2	no	yes	yes	serves
 countUnlinkedFactStats	facts_doctor	yes	2	no	yes	yes	serves
 countFactRelinkOutcomes	facts_doctor	yes	1	no	yes	yes	serves
-listUnlinkedConversationSlugs	facts_doctor	yes	2	no	yes	yes	serves
+listUnlinkedConversationSlugs	facts_doctor	yes	3	no	yes	yes	serves
 countFactEmbeddingCoverage	facts_doctor	yes	1	no	yes	yes	serves
-upsertFactRelinkAttempt	fact_relink_attempts	yes	7	no	yes	yes	serves
+upsertFactRelinkAttempt	fact_relink_attempts	yes	8	no	yes	yes	serves
 listFactRelinkOutcomes	fact_relink_attempts	yes	3	no	yes	yes	serves
 deleteFactRelinkMemos	fact_relink_attempts	yes	1	no	yes	yes	serves
+placeRelinkedFact	fact_relink_writes	yes	2	no	yes	yes	serves
+linkConversationFact	fact_relink_writes	yes	1	no	yes	yes	serves
+listConversationRelinkPages	fact_relink_writes	yes	1	no	yes	yes	serves
 listActiveFactsForEntity	facts_cycle	yes	1	no	yes	yes	serves
 listFreshExtractionOutcomes	facts_cycle	yes	1	no	yes	yes	serves
 listFenceRowGroups	facts_cycle	yes	1	no	yes	yes	serves
 readFactSubject	facts_cycle	yes	1	no	yes	yes	serves
-listFactsForPage	facts_cycle	yes	1	no	yes	yes	serves
+listFactsForPage	facts_cycle	yes	3	no	yes	yes	serves
 countLegacyFactsPending	facts_cycle	yes	1	no	yes	yes	serves
 countUnconsolidatedFactsBySource	facts_cycle	yes	1	no	yes	yes	serves
 findBulkFactDays	facts_cycle	yes	1	no	yes	yes	serves
