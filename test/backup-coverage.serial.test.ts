@@ -39,6 +39,7 @@ import {
   saveBackupStatus,
   type BackupStatus,
 } from '../src/core/backup/status-file.ts';
+import { countBrainLivePages as countBrainLivePagesSql } from '../src/core/engine-sql/health.ts';
 
 const ENV_KEYS = [
   'GBRAIN_HOME',
@@ -131,6 +132,7 @@ function stubEngine(opts: {
 } = {}): BrainEngine {
   return {
     kind: opts.kind ?? 'pglite',
+    countBrainLivePages() { return countBrainLivePagesSql(this as never); },
     executeRaw: async (sql: string) => {
       opts.onCall?.();
       if (sql.includes('FROM persistence_brain')) return [{ enabled: opts.managed === true }];
@@ -469,6 +471,7 @@ describe('getBackupStatus — cache choke point', () => {
     let throwCalls = 0;
     const throwing = {
       kind: 'pglite',
+      countBrainLivePages() { return countBrainLivePagesSql(this as never); },
       executeRaw: async () => {
         throwCalls++;
         throw new Error('boom');
@@ -531,6 +534,7 @@ describe('computeBackupCoverage — pages count unestablished', () => {
   function pagesRowEngine(pagesRows: unknown[]): BrainEngine {
     return {
       kind: 'pglite',
+      countBrainLivePages() { return countBrainLivePagesSql(this as never); },
       executeRaw: async (sql: string) => {
         if (sql.includes('FROM pages')) return pagesRows;
         if (sql.includes('FROM sources')) return [];
@@ -803,6 +807,7 @@ describe('computeBackupCoverage: API connector sources', () => {
   test('a failing persistence read degrades the verdict instead of exempting the connector', async () => {
     const engine = {
       kind: 'pglite',
+      countBrainLivePages() { return countBrainLivePagesSql(this as never); },
       executeRaw: async (sql: string) => {
         if (sql.includes('FROM persistence_brain')) throw new Error('persistence table unreadable');
         if (sql.includes('FROM pages')) return [{ n: 1 }];
@@ -952,6 +957,7 @@ describe('degraded verdict never clobbers a probed cache', () => {
       saveBackupStatus(warn);
       const broken = {
         kind: 'pglite',
+        countBrainLivePages() { return countBrainLivePagesSql(this as never); },
         executeRaw: async () => {
           throw new Error('engine down');
         },

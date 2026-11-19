@@ -470,6 +470,12 @@ impl Store {
         Ok(count)
     }
 
+    /// `countBrainLivePages` (`engine-sql/health.ts`): live pages in every source.
+    pub fn count_brain_live_pages(&self) -> Result<u64> {
+        let read = self.read()?;
+        Ok(all_pages(&*read)?.iter().filter(|p| live(p)).count() as u64)
+    }
+
     /// `logIngest`: appends one row. A NULL column fails as Postgres's NOT NULL check does, in
     /// column order.
     pub fn log_ingest(&self, input: &IngestInput) -> Result<()> {

@@ -52,6 +52,12 @@ impl Brain {
         })
     }
 
+    /// `countBrainLivePages()`: resolves the count.
+    #[napi]
+    pub fn count_brain_live_pages<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.count_brain_live_pages())
+    }
+
     /// `logIngest({ source_id?, source_type, source_ref, pages_updated_json, summary })`.
     #[napi]
     pub fn log_ingest<'env>(&self, env: &'env Env, entry: Value) -> napi::Result<Object<'env>> {

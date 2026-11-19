@@ -4612,6 +4612,7 @@
         "consolidateFact": "none",
         "cosinesByChunkIds": "none",
         "countAtomFacts": "none",
+        "countBrainLivePages": "none",
         "countChunklessPagesWithContent": "direct",
         "countCodeChunkPages": "none",
         "countDeadDreamSubmissionRows": "none",

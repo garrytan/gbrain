@@ -10,6 +10,7 @@ import { __setBackupStatusPathForTests, loadBackupStatus, saveBackupStatus } fro
 import { checkBackupCoverage } from '../src/commands/doctor/checks/backup-coverage.ts';
 import { BACKUP_REMOTE_PROBE_CAP } from '../src/core/backup/repository.ts';
 import { makeGitFixture } from './helpers/git-fixture.ts';
+import { countBrainLivePages as countBrainLivePagesSql } from '../src/core/engine-sql/health.ts';
 
 let tmp: string; let oldHome: string | undefined;
 const now = new Date('2026-09-22T12:00:00Z');
@@ -28,6 +29,7 @@ const engine = (roots: string[]) => {
   const sources = () => roots.map((root, i) => ({ id: `fixture-${i}`, name: 'fixture', local_path: root, archived: false, config: {} }));
   // loadAllSources reads the typed member; the page count still runs executeRaw.
   return { kind: 'pglite', listSourceRecords: async () => sources(),
+    countBrainLivePages() { return countBrainLivePagesSql(this as never); },
     executeRaw: async (sql: string) => sql.includes('FROM pages') ? [{ n: 1 }] : sources() } as unknown as BrainEngine;
 };
 function spyLsRemote() {

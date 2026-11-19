@@ -299,3 +299,12 @@ export async function countOnboardSignal(
   const rows = await exec.executeRaw<{ count: string | number }>(text, params, { signal: opts.signal });
   return rows.length > 0 ? Number(rows[0].count) : 0;
 }
+
+/** Live pages brain-wide, no source scope (backup coverage). Null when the row or its count is missing. */
+export async function countBrainLivePages(exec: LegacyUnscopedRead): Promise<number | null> {
+  const rows = await exec.executeRaw<{ n: number }>(
+    'SELECT COUNT(*)::int AS n FROM pages WHERE deleted_at IS NULL',
+  );
+  const n = rows[0]?.n;
+  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+}
