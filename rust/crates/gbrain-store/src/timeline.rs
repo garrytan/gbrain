@@ -429,7 +429,7 @@ impl Store {
                 }
                 return Err(missing("addTimelineEntry", "page", slug, source_id));
             };
-            let Some(date) = date else {
+            let Some(date) = date.clone() else {
                 return Err(not_null("date"));
             };
             let Some(summary) = entry.summary.as_deref() else {

@@ -46,8 +46,11 @@
 //! Time: every timestamp is UTC microseconds from the store's clock, read once per call, as one
 //! Postgres transaction reads one `now()`. A millisecond duration becomes `round(ms * 1000)` µs.
 //!
-//! The one write transaction is the lock: two claims never see the same `waiting` row, which is
-//! what `FOR UPDATE SKIP LOCKED` gives the SQL engines. `FOR KEY SHARE` on a lease (the fence) has
+//! Two claims never take the same `waiting` row, which is what `FOR UPDATE SKIP LOCKED` gives the
+//! SQL engines. With one writer, the write transaction is the lock. With concurrent writes on, a
+//! claim reads the claim index up to the row it takes; when another claim, completion or
+//! submission commits a change to that part of the index first, the claim conflicts and runs
+//! again on the new state, so it takes the next job. `FOR KEY SHARE` on a lease (the fence) has
 //! nothing to wait for here, so `assertCycleLease` is a read.
 //!
 //! Deleting a job does what the foreign keys do: its inbox rows go (`ON DELETE CASCADE`) and its

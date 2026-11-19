@@ -55,6 +55,92 @@ fn job(b: &Brain, id: i64) -> Value {
     b.get_job(id).unwrap().expect("job exists")
 }
 
+/// Workers claim and complete while a submitter keeps adding jobs. With concurrent writes on, a
+/// claim that loses a race to another claim, a completion or a submission runs again.
+#[test]
+fn many_workers_with_jobs_arriving_claim_and_complete_each_job_once() {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    for workers in [4usize, 16, 64] {
+        let b = brain("jobs-arrivals");
+        let first: Vec<i64> = (0..64)
+            .map(|i| add(&b, "work", json!({ "priority": i % 3 })))
+            .collect();
+        let arrived = Mutex::new(Vec::new());
+        let submitting = AtomicBool::new(true);
+        let claimed: Vec<Vec<i64>> = std::thread::scope(|s| {
+            s.spawn(|| {
+                for i in 0..64 {
+                    let id = add(&b, "work", json!({ "priority": i % 2 }));
+                    arrived.lock().unwrap().push(id);
+                }
+                submitting.store(false, Ordering::SeqCst);
+            });
+            let handles: Vec<_> = (0..workers)
+                .map(|w| {
+                    let (b, submitting) = (&b, &submitting);
+                    s.spawn(move || {
+                        let token = format!("worker-{w}:token");
+                        let spec = claim_spec(&token, &["work"]);
+                        let mut mine = Vec::new();
+                        loop {
+                            // Read the flag first: a None after the last submission means done.
+                            let more = submitting.load(Ordering::SeqCst);
+                            match b.claim_next_job(&spec).unwrap() {
+                                Some(row) => {
+                                    let id = row["id"].as_i64().unwrap();
+                                    let done = b.complete_job(id, &token, None).unwrap();
+                                    assert!(
+                                        done.is_some(),
+                                        "the claimer could not complete job {id}"
+                                    );
+                                    mine.push(id);
+                                }
+                                // An empty claim is a write: back off so the submitter gets in.
+                                None if more => {
+                                    std::thread::sleep(std::time::Duration::from_millis(2))
+                                }
+                                None => return mine,
+                            }
+                        }
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        let all: BTreeSet<i64> = first
+            .into_iter()
+            .chain(arrived.into_inner().unwrap())
+            .collect();
+        assert_eq!(all.len(), 128);
+        let mut union = BTreeSet::new();
+        for id in claimed.iter().flatten() {
+            assert!(
+                union.insert(*id),
+                "{workers} workers: job {id} was claimed twice"
+            );
+        }
+        assert_eq!(
+            union, all,
+            "{workers} workers: every job is claimed exactly once"
+        );
+        for id in &all {
+            let row = job(&b, *id);
+            assert_eq!(row["status"], "completed");
+            assert_eq!(row["claim_generation"], 1);
+            assert_eq!(row["attempts_started"], 1);
+        }
+        if let Some(stats) = b.occ_stats() {
+            eprintln!(
+                "{workers} workers: {} commits, {} conflicts, hot keys {:?}",
+                stats.commits,
+                stats.conflicts,
+                stats.hot_keys.iter().take(3).collect::<Vec<_>>()
+            );
+        }
+    }
+}
+
 #[test]
 fn two_workers_claiming_at_once_never_get_the_same_job() {
     let b = brain("jobs-race");

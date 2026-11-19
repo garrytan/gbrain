@@ -70,7 +70,7 @@ export interface PageScope {
 /** The store class (crates/gbrain-napi/src/store_binding.rs). Every method is documented in rust/README.md. */
 export interface Brain {
   readonly isOpen: boolean;
-  open(path: string, options?: { schemaVersion?: number; createdBy?: string }): Promise<BrainInfo>;
+  open(path: string, options?: { schemaVersion?: number; createdBy?: string; concurrentWrites?: boolean }): Promise<BrainInfo>;
   close(): Promise<void>;
   info(): Promise<BrainInfo>;
   getConfig(key: string): Promise<string | null>;
