@@ -210,6 +210,8 @@ pub struct SingleFactQuery {
     pub page_slug: Option<String>,
     /// `remoteProvenanceFloorSql('facts')` when the caller passes `remoteFloor`.
     pub remote_floor: Option<PrivacyPolicy>,
+    /// The highest-id match instead of the lowest.
+    pub newest: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -438,7 +440,8 @@ impl Store {
     /// the lowest-id active row of the entity (NULL equals NULL) and visibility with the same
     /// fingerprint whose speaker slot fits (`attributedTo` unset, the row's unset, or equal) and
     /// that sits on `pageSlug` (a non-empty slug) or, with no `pageSlug`, on no owned memory page.
-    /// An empty `pageSlug` matches nothing. The row is `SELECT *`.
+    /// An empty `pageSlug` matches nothing. With `newest` it is the highest-id row instead. The row
+    /// is `SELECT *`.
     pub fn find_active_single_fact(&self, q: &SingleFactQuery) -> Result<Value> {
         const OP: &str = "findActiveSingleFact";
         no_nul(OP, &[("sourceId", &q.source_id), ("fact", &q.fact)])?;
@@ -461,7 +464,13 @@ impl Store {
                     .is_none_or(|who| row.attributed_to.as_ref().is_none_or(|a| a == who))
                 && fits_page
                 && fact_fingerprint(&row.fact) == hash
-                && found.as_ref().is_none_or(|best| row.id < best.id)
+                && found.as_ref().is_none_or(|best| {
+                    if q.newest {
+                        row.id > best.id
+                    } else {
+                        row.id < best.id
+                    }
+                })
                 && !hidden_by_policy(&*read, &row, &q.remote_floor)?
             {
                 found = Some(row);
