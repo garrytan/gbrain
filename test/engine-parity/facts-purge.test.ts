@@ -18,6 +18,7 @@
 import { describe, expect } from 'bun:test';
 import { createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { CALLER_ENTITIES, callerFactRows, putCallerPages, readAsCallers } from './fact-callers.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END } from '../../src/core/facts-fence.ts';
 
@@ -272,6 +273,33 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     expect(all).toEqual(['on-open', 'on-private']);
     expect(open).toEqual(['on-open']);
     return { all, open };
+  });
+
+  parityTest('listSimilarActiveFacts under excludePrivate applies a caller\'s reader identity, own member page and private-readable grant', { methods: ['listSimilarActiveFacts'] }, async (engine) => {
+    const seed = new Seed(engine);
+    await putCallerPages(engine);
+    // A neighbour shares the anchor's entity and visibility: one anchor per entity, each fence row on its entity.
+    const anchors: number[] = [];
+    for (const [slug] of CALLER_ENTITIES) {
+      anchors.push(await seed.one(`anchor:${slug}`, { fact: `anchor ${slug}`, entity_slug: slug, visibility: 'world', embedding: vec(1, 0), embedding_model: 'm1' }));
+    }
+    await seed.fence(callerFactRows().map((r, i) => ({
+      ...r, label: r.fact, visibility: 'world' as const, embedding: vec(1, 0.01 * (i + 1)), embedding_model: 'm1',
+    })));
+    const kept = await readAsCallers(async () => {
+      const out: string[] = [];
+      for (const factId of anchors) {
+        out.push(...seed.label((await engine.listSimilarActiveFacts({ sourceId: SRC, factId, remote: false, excludePrivate: true, minCosine: 0.9, limit: 50 })).rows));
+      }
+      return sorted(out);
+    });
+    const open = ['entity:people/open-example', 'prov:notes/open'];
+    const member = 'prov:memory/members/alice-example';
+    expect(kept.none).toEqual(open);
+    expect(kept.stranger).toEqual(open);
+    expect(kept.member).toEqual(sorted([...open, member, 'entity:people/readers-example', 'entity:people/team-example']));
+    expect(kept.granted).toEqual(sorted([...open, member, 'entity:people/readers-example', 'entity:people/private-example']));
+    return kept;
   });
 
   parityTest('findActiveSingleFact answers the lowest-id active fact of the claim, entity, visibility, speaker slot and page', { methods: ['findActiveSingleFact'] }, async (engine) => {

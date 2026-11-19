@@ -44,6 +44,8 @@ These do not show in the parity cases. Each is a documented edge, not a normalis
   up to six fraction digits, `Z` or `+HH[:MM]`) is refused, not parsed by Postgres rules.
 - `excludePrivate` on `getOntology` and `findOntologyConflicts` applies the private-provenance
   policy of `facts.md` ("Private-provenance policy"), as `privateFactFilterForReader('facts')`
-  does at `src/core/pglite-engine.ts:2225` and `:2269`. `requireSafeChunks`, `minTrust`, `suppressFlagged` and
+  does at `src/core/pglite-engine.ts:2225` and `:2269`. A caller with only a reader identity and a
+  private-readable grant is served (`callerReaders`): the entity gate reads both; this form has no
+  member-page CASE. Any other caller whose policy differs refuses. `requireSafeChunks`, `minTrust`, `suppressFlagged` and
   `takesHoldersAllowList` are ignored, as no Rust row carries those signals.
 - The Rust `now()` is one value per member call. PGLite takes one value per statement.

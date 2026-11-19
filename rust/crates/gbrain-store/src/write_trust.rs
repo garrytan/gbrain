@@ -1,5 +1,5 @@
-//! The write trust context: the store's stand-in for the six transaction-local settings PGLite's
-//! trust triggers and fence reads read with `current_setting(name, true)`.
+//! The write trust context: the store's stand-in for the nine transaction-local settings PGLite's
+//! trust triggers, write attribution triggers and fence reads read with `current_setting(name, true)`.
 //!
 //! | Setting | Read as |
 //! |---|---|
@@ -9,12 +9,17 @@
 //! | `gbrain.write_trust_backfill` | `on` turns the backfill rule on ([`WriteTrust::backfill`]) |
 //! | `gbrain.write_trust_keep` | the tables whose content changes keep the tier ([`WriteTrust::keep`]) |
 //! | `gbrain.write_open_facts` | the fact ids `gbrain repair open-facts` opens ([`FenceContext::opened`]) |
+//! | `gbrain.write_request` | the request the write runs for ([`WriteAttribution::request_id`]) |
+//! | `gbrain.write_principal_kind` | the kind of the writing principal ([`WriteAttribution::principal_kind`]) |
+//! | `gbrain.write_principal_id` | the id of the writing principal ([`WriteAttribution::principal_id`]) |
 //!
 //! The context holds the text each setting was last set to, as `set_config(name, value, true)`
 //! does; a setting never set reads as `None` (SQL NULL) and one set to `''` reads as `''`. The
 //! fence reads take it through [`Store::fence_context`]. The trust stamp (`trust::stamp`) takes it
 //! through [`Store::write_trust`]: `Store::write` opens [`stamp_context`] with it for the write, and
-//! the page writer (`pages::write_page`) stamps each page it stores with it.
+//! the page writer (`pages::write_page`) stamps each page it stores with it. The timeline writer
+//! (`timeline::put_entry`) stamps each entry's write receipt with its [`WriteTrust::attribution`],
+//! as `gbrain_stamp_write_attribution` (persistence/attribution-schema.ts) does.
 //!
 //! Lifetime: PGLite ends the settings with the transaction (`SET LOCAL`). Each store has its own
 //! context: a store bound to a transaction (`Store::begin_transaction`) starts with an empty one,
@@ -26,7 +31,9 @@
 //! refused when it is set (`invalid_argument`), with the context unchanged: a tier or promotion
 //! name that is no tier (PGLite raises `22023` in the stamp trigger, and the fence read ranks it 0),
 //! a `write_origin` that is not JSON (PGLite raises at `::jsonb` in the trigger), and a setting
-//! name outside the six (the engine routes no other name here). TypeScript sets none of these.
+//! name outside the nine (the engine routes no other name here). TypeScript sets none of these. A
+//! `write_request` that is not a UUID is kept as set, as `set_config` keeps it; the timeline write
+//! refuses it, as the attribution trigger raises at its `::uuid` cast (`timeline::receipt`).
 //!
 //! Keys: none. The context is per open store, in memory, never written.
 
@@ -52,16 +59,38 @@ pub const WRITE_TRUST_BACKFILL: &str = "gbrain.write_trust_backfill";
 pub const WRITE_TRUST_KEEP: &str = "gbrain.write_trust_keep";
 /// `gbrain.write_open_facts`.
 pub const WRITE_OPEN_FACTS: &str = "gbrain.write_open_facts";
+/// `gbrain.write_request`.
+pub const WRITE_REQUEST: &str = "gbrain.write_request";
+/// `gbrain.write_principal_kind`.
+pub const WRITE_PRINCIPAL_KIND: &str = "gbrain.write_principal_kind";
+/// `gbrain.write_principal_id`.
+pub const WRITE_PRINCIPAL_ID: &str = "gbrain.write_principal_id";
 
-/// The six settings, in the order the module table lists them.
-pub const WRITE_TRUST_SETTINGS: [&str; 6] = [
+/// The nine settings, in the order the module table lists them.
+pub const WRITE_TRUST_SETTINGS: [&str; 9] = [
     WRITE_TRUST_TIER,
     WRITE_ORIGIN,
     WRITE_TRUST_PROMOTION,
     WRITE_TRUST_BACKFILL,
     WRITE_TRUST_KEEP,
     WRITE_OPEN_FACTS,
+    WRITE_REQUEST,
+    WRITE_PRINCIPAL_KIND,
+    WRITE_PRINCIPAL_ID,
 ];
+
+/// The actor of one write, as the attribution trigger reads it: each setting with `''` read as
+/// unset (`NULLIF(current_setting(name, true), '')`). The request id is lower case, as a `uuid`
+/// reads back; the receipt writer refuses one that is not a UUID.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WriteAttribution {
+    /// `gbrain.write_request`: the persistence request, or `None` for a write with no journal request.
+    pub request_id: Option<String>,
+    /// `gbrain.write_principal_kind`. `None` is a write with no principal: inserts stay unattributed.
+    pub principal_kind: Option<String>,
+    /// `gbrain.write_principal_id`.
+    pub principal_id: Option<String>,
+}
 
 /// The settings text of one open store (`Store::write_context`).
 #[derive(Debug, Default)]
@@ -73,7 +102,7 @@ impl WriteContextSlot {
     }
 }
 
-/// The setting `name` is, or `invalid_argument` when it is none of the six.
+/// The setting `name` is, or `invalid_argument` when it is none of the nine.
 fn setting(name: &str) -> Result<&'static str> {
     WRITE_TRUST_SETTINGS
         .into_iter()
@@ -118,7 +147,7 @@ fn opened_ids(setting: Option<&str>) -> Vec<u64> {
 
 impl Store {
     /// `applyTransactionSettings(names, values)` for the write trust settings: sets each named
-    /// setting to the value at its index. All or nothing: a name outside the six, a value the trust
+    /// setting to the value at its index. All or nothing: a name outside the nine, a value the trust
     /// rules refuse, or lists of different lengths is `invalid_argument` and changes nothing.
     pub fn apply_write_trust(&self, names: &[String], values: &[String]) -> Result<()> {
         if names.len() != values.len() {
@@ -142,7 +171,7 @@ impl Store {
     }
 
     /// `readTransactionSettings(names)` for the write trust settings: the text each named setting
-    /// was last set to, in `names` order; `None` where it was never set. A name outside the six is
+    /// was last set to, in `names` order; `None` where it was never set. A name outside the nine is
     /// `invalid_argument`.
     pub fn read_write_trust(&self, names: &[String]) -> Result<Vec<Option<String>>> {
         let names = names
@@ -189,7 +218,18 @@ impl Store {
             promotion: TrustTier::from_setting(text(WRITE_TRUST_PROMOTION))?,
             backfill: text(WRITE_TRUST_BACKFILL) == Some("on"),
             keep: TrustTable::keep_list(text(WRITE_TRUST_KEEP)),
+            attribution: attribution(&text),
         })
+    }
+}
+
+/// The three attribution settings as the trigger reads them (`NULLIF(.., '')`).
+fn attribution<'a>(text: &impl Fn(&str) -> Option<&'a str>) -> WriteAttribution {
+    let set = |name: &str| text(name).filter(|v| !v.is_empty()).map(str::to_string);
+    WriteAttribution {
+        request_id: set(WRITE_REQUEST).map(|id| id.to_ascii_lowercase()),
+        principal_kind: set(WRITE_PRINCIPAL_KIND),
+        principal_id: set(WRITE_PRINCIPAL_ID),
     }
 }
 
@@ -339,6 +379,9 @@ mod tests {
                 "on",
                 "facts,nope,takes",
                 "7,007, 8,x,9",
+                "0B9C4F0E-1A2B-4C3D-8E4F-5A6B7C8D9E01",
+                "application",
+                "host:test",
             ]),
         )
         .unwrap();
@@ -358,12 +401,54 @@ mod tests {
                 promotion: Some(TrustTier::OperatorCurated),
                 backfill: true,
                 keep: vec![TrustTable::Facts, TrustTable::Takes],
+                attribution: WriteAttribution {
+                    request_id: Some("0b9c4f0e-1a2b-4c3d-8e4f-5a6b7c8d9e01".into()),
+                    principal_kind: Some("application".into()),
+                    principal_id: Some("host:test".into()),
+                },
             }
+        );
+        assert_eq!(
+            s.read_write_trust(&strings(&[WRITE_REQUEST])).unwrap(),
+            vec![Some("0B9C4F0E-1A2B-4C3D-8E4F-5A6B7C8D9E01".to_string())]
         );
         s.clear_write_trust();
         let fence = s.fence_context();
         assert_eq!((fence.writer, fence.opened), (None, vec![]));
         assert_eq!(s.write_trust().unwrap(), WriteTrust::default());
+    }
+
+    #[test]
+    fn a_request_that_is_not_a_uuid_is_kept_as_set() {
+        let s = store();
+        s.apply_write_trust(&strings(&[WRITE_REQUEST]), &strings(&["req-1"]))
+            .unwrap();
+        assert_eq!(
+            s.read_write_trust(&strings(&[WRITE_REQUEST])).unwrap(),
+            vec![Some("req-1".to_string())]
+        );
+        assert_eq!(
+            s.write_trust().unwrap().attribution.request_id.as_deref(),
+            Some("req-1")
+        );
+    }
+
+    #[test]
+    fn an_empty_attribution_setting_reads_as_unset() {
+        let s = store();
+        s.apply_write_trust(
+            &strings(&[WRITE_REQUEST, WRITE_PRINCIPAL_KIND, WRITE_PRINCIPAL_ID]),
+            &strings(&["", "", "host:orphan"]),
+        )
+        .unwrap();
+        assert_eq!(
+            s.write_trust().unwrap().attribution,
+            WriteAttribution {
+                request_id: None,
+                principal_kind: None,
+                principal_id: Some("host:orphan".into()),
+            }
+        );
     }
 
     #[test]
@@ -392,8 +477,8 @@ mod tests {
             ),
             (vec![WRITE_OPEN_FACTS, WRITE_ORIGIN], vec!["1", "{not json"]),
             (
-                vec![WRITE_OPEN_FACTS, "gbrain.write_request"],
-                vec!["1", "r1"],
+                vec![WRITE_OPEN_FACTS, "gbrain.write_sources"],
+                vec!["1", "[]"],
             ),
             (vec![WRITE_OPEN_FACTS], vec![]),
         ] {

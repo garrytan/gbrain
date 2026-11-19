@@ -77,12 +77,22 @@ const OOS = {
   factsTrust: 'out-of-scope:facts-trust (born in engine-sql/facts-trust.ts; pinned by test/engine-parity/facts-trust.test.ts)',
   trustWithdrawals: 'out-of-scope:trust-withdrawals (born in engine-sql/trust-withdrawals.ts; pinned by test/engine-parity/trust-withdrawals.test.ts)',
   trustWriteGate: 'out-of-scope:trust-write-gate (born in engine-sql/trust-write-gate.ts; pinned by test/engine-parity/trust-write-gate.test.ts)',
+  trustTierReads: 'out-of-scope:trust-tier-reads (born in engine-sql/trust-tier-reads.ts; pinned by test/engine-parity/trust-tier-reads.test.ts)',
   openLoops: 'out-of-scope:open-loops (born in engine-sql/open-loops.ts; pinned by test/engine-parity/open-loops.test.ts)',
   minionJobs: 'out-of-scope:minion-jobs (born in engine-sql/jobs.ts and engine-sql/jobs-queue.ts; pinned by test/engine-parity/jobs.test.ts and jobs-queue.test.ts)',
   takesReads: 'out-of-scope:takes-reads (born in engine-sql/takes-reads.ts; pinned by test/engine-parity/takes.test.ts, code-eval-salience.test.ts and test/engine-sql-takes-reads.test.ts)',
 } as const;
 
 export const DOMAIN_OF: Record<string, string> = {
+  'listCorePageRows': OOS.trustTierReads,
+  'listTrustScanRows': OOS.trustTierReads,
+  'countUnscannedTrustRows': OOS.trustTierReads,
+  'readBeliefHistoryRows': OOS.trustTierReads,
+  'listVisibleBeliefLifetimes': OOS.trustTierReads,
+  'listVersionTrustTiers': OOS.trustTierReads,
+  'listVersionReasonWriters': OOS.trustTierReads,
+  'listValidTimeIdentities': OOS.trustTierReads,
+  'pickValidTimeEdition': OOS.trustTierReads,
   'closeOpenLoop': OOS.openLoops,
   'listOpenLoops': OOS.openLoops,
   'upsertOpenLoop': OOS.openLoops,
@@ -176,6 +186,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listGuestSourceIds': OOS.cliReadsImport,
   'hasGuestSource': OOS.cliReadsImport,
   'readPageTrustRows': OOS.cliReadsImport,
+  'readRowTrustRows': OOS.cliReadsImport,
   'readDatabaseClock': OOS.cliReadsImport,
   'listLinkPageMetadata': OOS.cliReadsImport,
   'listStoredTimelineRows': OOS.cliReadsImport,
@@ -525,8 +536,10 @@ export const DOMAIN_OF: Record<string, string> = {
   'writeMiscReads': OOS.helper, 'writeMiscRead': OOS.helper,
   // the write journal (typed admission, claim, completion, limit and hold reads)
   'readJournalLimitRows': OOS.journal, 'readHeldPageRows': OOS.journal, 'readHeldCoverageRows': OOS.journal,
-  'readWriteRequest': OOS.journal, 'readWriteRequestById': OOS.journal, 'lockPersistenceCounters': OOS.journal,
+  'readWriteRequest': OOS.journal, 'readWriteRequestById': OOS.journal, 'readWriteRequestProgress': OOS.journal, 'countOutstandingBySource': OOS.journal, 'ownsSchemaTables': OOS.journal, 'readCounterRows': OOS.journal, 'readAdmissionRate': OOS.journal, 'lockPersistenceCounters': OOS.journal,
   'insertWriteRequest': OOS.journal, 'stampWriteClaim': OOS.journal, 'lockWriteRequest': OOS.journal, 'completeWriteRow': OOS.journal,
+  'listHostConsumerRows': OOS.journal, 'probeLiveConsumerRows': OOS.journal, 'renewConsumerRow': OOS.journal, 'deleteConsumerRow': OOS.journal,
+  'stampWorktreeHeartbeats': OOS.journal,
   // entity and mention reads the CLI made through executeRaw
   'readMentionLastPass': OOS.entityReads, 'countPagesDueForMentions': OOS.entityReads, 'readIdentitySiblingCandidates': OOS.entityReads,
   'findExactSlug': OOS.entityReads, 'readExtractionLagCounts': OOS.entityReads, 'readIgnoredPrivacyLabelPages': OOS.entityReads,
@@ -536,7 +549,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'claimHousekeepingTurn': OOS.journal, 'completeHousekeepingTurn': OOS.journal, 'readReceiptBudget': OOS.journal,
   'listCompactableReceipts': OOS.journal, 'listReservationsAfter': OOS.journal, 'listTrueUpRequests': OOS.journal,
   'readCapacityForecastInputs': OOS.journal, 'listPendingSegmentedProjections': OOS.journal, 'selectProjectionWindowJobs': OOS.journal,
-  'listGatedMirrorRequests': OOS.effectScans, 'listEffectRecoveries': OOS.effectScans,
+  'listGatedMirrorRequests': OOS.effectScans, 'listEffectRecoveries': OOS.effectScans, 'selectClaimableEffect': OOS.effectScans,
   'logIngest': OOS.ingest, 'getIngestLog': OOS.ingest,
   'logEvalCandidate': OOS.eval, 'listEvalCandidates': OOS.eval, 'deleteEvalCandidatesBefore': OOS.eval,
   'logEvalCaptureFailure': OOS.eval, 'listEvalCaptureFailures': OOS.eval,
@@ -1329,4 +1342,5 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('selectProjectionWindowJobs', [['default', (e) => e.selectProjectionWindowJobs({ after: { source_incarnation: JOURNAL_REQUEST, slug: SLUG }, highWater: null }, true)]]),
   ...variants('listGatedMirrorRequests', [['default', (e) => e.listGatedMirrorRequests(JOURNAL_REQUEST, 'segmented_mirror_writer_gate', ['segmented_mirror_writer_gate', 'withdrawal_mirror_failed'])]]),
   ...variants('listEffectRecoveries', [['default', (e) => e.listEffectRecoveries(JOURNAL_REQUEST, null, 10)], ['after', (e) => e.listEffectRecoveries(JOURNAL_REQUEST, '12', 10)]]),
+  ...variants('selectClaimableEffect', [['default', (e) => e.transaction((tx: any) => tx.selectClaimableEffect(JOURNAL_REQUEST, []))], ['dead', (e) => e.transaction((tx: any) => tx.selectClaimableEffect(JOURNAL_REQUEST, ['1:n:2']))]]),
 ];

@@ -74,7 +74,7 @@ export const removeManualLinkTransitions: StoreMember<[rel: { from: string; to: 
 
 export const listRelationshipNoteRows: StoreMember<[subjects: ReadonlyArray<PageRef>, opts: { excludePrivate: boolean }],
   LinkTemporalSql.RelationshipNoteRow[]> = async (brain, subjects, opts) => {
-    const excludePrivate = storePagePolicy('listRelationshipNoteRows', opts?.excludePrivate) ?? null;
+    const excludePrivate = storePagePolicy('listRelationshipNoteRows', opts?.excludePrivate, { callerReaders: true }) ?? null;
     if (!subjects.length) return [];
     return storeCall({ member: 'listRelationshipNoteRows' }, () => brain.listRelationshipNoteRows({
       subjects: subjects.map(s => ({ slug: s.slug, source_id: s.source_id })), excludePrivate }));
@@ -86,7 +86,7 @@ export const edgeValidityCounts: StoreMember<[opts: { sourceIds?: readonly strin
 
 export const listPageStatusByRef: StoreMember<[refs: ReadonlyArray<PageRef>, scope: { excludePrivate: boolean; includeQuarantined?: boolean }],
   Array<{ source_id: string; slug: string; status: unknown }>> = async (brain, refs, scope) => {
-    const excludePrivate = storePagePolicy('listPageStatusByRef', scope?.excludePrivate) ?? null;
+    const excludePrivate = storePagePolicy('listPageStatusByRef', scope?.excludePrivate, { callerReaders: true }) ?? null;
     if (!refs.length) return [];
     return storeCall({ member: 'listPageStatusByRef' }, () => brain.listPageStatusByRef({
       refs: refs.map(r => ({ slug: r.slug, source_id: r.source_id })), excludePrivate, includeQuarantined: scope?.includeQuarantined === true }));
@@ -95,7 +95,7 @@ export const listPageStatusByRef: StoreMember<[refs: ReadonlyArray<PageRef>, sco
 export const listRecordMetadataRows: StoreMember<[pageIds: readonly number[],
   scope: { referrerSources: readonly string[]; excludePrivate: boolean; includeQuarantined?: boolean }], LinkTemporalSql.RecordMetadataRows> =
   async (brain, pageIds, scope) => {
-    const excludePrivate = storePagePolicy('listRecordMetadataRows', scope?.excludePrivate) ?? null;
+    const excludePrivate = storePagePolicy('listRecordMetadataRows', scope?.excludePrivate, { callerReaders: true }) ?? null;
     if (!pageIds.length) return { status: [], links: [] };
     return storeCall({ member: 'listRecordMetadataRows' }, () => brain.listRecordMetadataRows({
       pageIds: ids(pageIds), referrerSources: [...scope.referrerSources], excludePrivate,
@@ -133,7 +133,8 @@ export const ensureFactsKeywordIndex: StoreMember<[lang: string, notice?: (line:
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Retrieval coverage. The store keeps no embedding budget, so no page is held. The other reads send the scope with the
-// store's private-page policy, the trust floor and the flagged-page filter (the store reads each page's stamped tier and
+// store's private-page policy (a caller's reader identity and private-readable grant included), the trust floor and the
+// flagged-page filter (the store reads each page's stamped tier and
 // write-gate receipts), and `requireSafeChunks` changes nothing because these reads count pages, not chunks.
 // ---------------------------------------------------------------------------------------------------------------------
 
@@ -142,7 +143,7 @@ function coverageScope(member: string, scope: ProjectionReadinessScope = {}) {
   return {
     sourceId: scope.sourceId ?? null,
     sourceIds: scope.sourceIds ? [...scope.sourceIds] : null,
-    excludePrivate: storePagePolicy(member, scope.excludePrivate) ?? null,
+    excludePrivate: storePagePolicy(member, scope.excludePrivate, { callerReaders: true }) ?? null,
     pageKind: scope.pageKind ?? null,
     types: scope.types ? [...scope.types] : null,
     excludeSlugPrefixes: [...(scope.excludeSlugPrefixes ?? [])],

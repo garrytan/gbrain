@@ -7,7 +7,8 @@
  * One batched lookup per call; a failed lookup labels the rows `unknown` /
  * `unrecorded` rather than dropping them or leaving them unlabeled.
  */
-import type { BrainEngine } from '../engine.ts';
+import type { BrainEngine, RowTrustLookup } from '../engine.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { admitsTrust, compareTrust, minTrust, storedTrustTier, type TrustTier } from '../trust/tier.ts';
 import { chunkFenceMarker, FENCE_TRUST_ORIGIN, fenceTrustMarker, heldRowSql, lowestFenceTrustMarker } from './fence-overlay.ts';
 import { decodeFenceCell, isSeparatorRow, parseRowCells } from '../fence-shared.ts';
@@ -25,7 +26,7 @@ interface PageRef {
 }
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
-type TrustExec = Pick<BrainEngine, 'executeRaw' | 'readPageTrustRows'>;
+type TrustExec = Pick<BrainEngine, 'executeRaw' | 'readPageTrustRows' | 'readRowTrustRows'>;
 
 const key = (source: string | null | undefined, slug: string) => `${source ?? 'default'}\u0000${slug}`;
 
@@ -212,28 +213,30 @@ async function applyFenceRowTrust<T extends PageRef>(engine: Exec, rows: T[]): P
   });
 }
 
-const ROW_TABLES = { facts: 'facts', takes: 'takes', timeline_entries: 'timeline_entries' } as const;
+type RowTrustExec = Pick<BrainEngine, 'readRowTrustRows'>;
 
 /**
  * Sets `trust_tier` + `origin` on fact, take or timeline rows by id (one
- * batched read). Rows whose tier cannot be read are labeled `unknown` /
- * `unrecorded`, never left looking confirmed.
+ * batched typed read, `readRowTrustRows`). Rows whose tier cannot be read are
+ * labeled `unknown` / `unrecorded`, never left looking confirmed. A database
+ * error reads as that label; an engine that refuses the read
+ * (`engine_capability_missing`) refuses the caller too, so a brain that cannot
+ * read row trust never answers as if every row were unrecorded.
  */
 export async function stampRowTrust<T extends object>(
-  engine: Exec, table: keyof typeof ROW_TABLES, rows: T[], idOf: (row: T) => number | string,
+  engine: RowTrustExec, table: RowTrustLookup['table'], rows: T[], idOf: (row: T) => number | string,
 ): Promise<Array<T & TrustFields>> {
   if (rows.length === 0) return [];
   const ids = [...new Set(rows.map(r => Number(idOf(r))).filter(Number.isFinite))];
   const byId = new Map<number, TrustFields>();
   try {
-    const contested = table === 'timeline_entries' ? 'NULL' : contestedRefSql(table, 'r');
-    const found = await engine.executeRaw<{ id: number | string; trust_tier: string; write_origin: unknown; flagged: boolean; contested: string | null }>(
-      `SELECT r.id, r.trust_tier, r.write_origin, ${activationSuppressedSql(table, 'r')} AS flagged, ${contested} AS contested FROM ${ROW_TABLES[table]} r WHERE r.id = ANY($1::bigint[])`, [ids]);
-    for (const row of found) {
+    for (const row of await engine.readRowTrustRows({ table, ids })) {
       const fields = withFlag(trustFields(row.trust_tier, row.write_origin), row.flagged);
       const c = parseContested(row.contested);
       byId.set(Number(row.id), c ? { ...fields, contested: c } : fields);
     }
-  } catch { /* labeled unknown below */ }
+  } catch (err) {
+    rethrowCapabilityRefusal(err); /* otherwise labeled unknown below */
+  }
   return rows.map(row => ({ ...row, ...(byId.get(Number(idOf(row))) ?? { trust_tier: 'unknown' as const, origin: 'unrecorded' }) }));
 }

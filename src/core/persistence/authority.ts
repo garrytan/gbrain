@@ -287,18 +287,24 @@ async function authorizeStoredTakeHolders(engine: AuthorityEngine, row: WriteReq
 }
 /**
  * #6007: one access check answers identical read-only statements once (the
- * current and the stored authority read the same writer row and visibility).
+ * current and the stored authority read the same writer row and visibility),
+ * and the plain typed writer read (`readLocalWriterRow`) once too.
  * The memo lives for that single check and holds no locking reads.
  */
 function onceReads(engine: BrainEngine): BrainEngine {
-  const reads = new Map<string, Promise<unknown[]>>();
+  const reads = new Map<string, Promise<unknown>>();
+  const once = <T>(id: string, read: () => Promise<T>): Promise<T> => {
+    let value = reads.get(id) as Promise<T> | undefined;
+    if (!value) { value = read(); reads.set(id, value); value.catch(() => reads.delete(id)); }
+    return value;
+  };
   return new Proxy(engine, { get(target, key) {
+    // The writer row is the typed readLocalWriterRow member, answered once like the statement text it replaced.
+    if (key === 'readLocalWriterRow') return sharedWriterRow(target, reads, once);
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) => {
       if (/\bFOR (?:SHARE|UPDATE)\b/i.test(sql)) return target.executeRaw(sql, params, opts);
       const id = JSON.stringify([sql, params ?? null]);
-      let read = reads.get(id);
-      if (!read) { read = target.executeRaw(sql, params, opts); reads.set(id, read); read.catch(() => reads.delete(id)); }
-      return read;
+      return once(id, () => target.executeRaw(sql, params, opts));
     };
     const value = Reflect.get(target, key, target);
     return typeof value === 'function' ? value.bind(target) : value;

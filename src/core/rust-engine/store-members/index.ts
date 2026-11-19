@@ -53,6 +53,8 @@ import * as factsCycle from './facts-cycle.ts';
 import * as factsPurge from './facts-purge.ts';
 import * as factsRepair from './facts-repair.ts';
 import * as factsTrust from './facts-trust.ts';
+import * as factsTrustReads from './facts-trust-reads.ts';
+import * as trustTierReads from './trust-tier-reads.ts';
 import * as jobs from './jobs.ts';
 import * as housekeeping from './housekeeping.ts';
 import * as effectScans from './effect-scans.ts';
@@ -90,7 +92,10 @@ export const STORE_MEMBERS = {
   ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages,
   ...cliEntities,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
-  ...factsDoctor, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust, ...factRelinkAttempts, ...factRelinkWrites,
+  ...factsDoctor, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust, ...factsTrustReads, ...factRelinkAttempts,
+  ...factRelinkWrites,
+  // Typed reads of stamped trust tiers (rust/docs/store/trust.md, "Tier reads").
+  ...trustTierReads,
   // The persistence brain identity the store already keeps (rust/docs/store/journal.md).
   ...persistenceIdentity,
   // Search telemetry (rust/docs/store/telemetry.md).

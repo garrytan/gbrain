@@ -13,7 +13,7 @@ typed claims. Each member gives the answer PGLite gives today, odd behavior incl
 | `expireFact` | Expires an unexpired row; `supersededBy` must name an existing row (`facts_superseded_by_fkey`); `successorFrom` closes validity. |
 | `listFactsByEntity`, `listFactsSince`, `listFactsBySession` | Filtered lists, newest first, with `limit` and `offset`. `grep` is a pre-built ILIKE pattern, folded with Postgres `lower()` one code point at a time. |
 | `listFactsKeyset` | Oldest first by `(created_at, id)` after a microsecond ISO cursor. |
-| `listSupersessions` | Superseded rows, newest supersession first. |
+| `listSupersessions` | Superseded rows, newest supersession first. With a read eligibility (`eligible`, `minTrust`, `suppressFlagged`) it applies `projectionEligibleSql('facts')`: it also hides a row whose live provenance page is quarantined, a row below the trust floor and, under suppression, a flagged agent-written-or-lower row (`trust::TrustPolicy`). The store keeps no `needs_rederive` queue, so that clause hides nothing. |
 | `countUnconsolidatedFacts`, `getFactsHealth` | Counts of active rows (and the five entities with the most). |
 | `findCandidateDuplicates` | The recency arm: active same-entity rows, newest first, capped by `k`. The keyword arm (`keyword`, `factText`): the same rows less audit checkpoints, kept when `to_tsvector('english', fact)` matches the OR of the claim's `plainto_tsquery` lexemes (`keyword::or_of_lexemes`; none matches nothing), ordered by `ts_rank_cd` descending, then `created_at` and `id` descending. The cosine arm (`embedding`, no `keyword`): the same rows less audit checkpoints, kept when comparable (a vector from `embeddingModel`, `embedded_text_hash = md5(fact)`, the query's width), ordered by `halfvec` cosine distance to the query (cast to `halfvec` too; NaN last; equal distances by id). The keyword arm with an `embedding` keeps only the comparable rows and does not read the vector. An `embedding` with no (or an empty) `embeddingModel` finds nothing. The member refuses the keyword arm when `GBRAIN_FTS_LANGUAGE` is not `english`. |
 | `consolidateFact` | Stamps `consolidated_at` and `consolidated_into`. |
@@ -55,10 +55,33 @@ their own page (`page_hidden`; see [salience.md](salience.md#private-pages-exclu
 | Derived origin: an atom whose `source_slug` page is explicitly private; a derived page with an input whose `visibility` (atom default private) is not world, or whose input origin is explicitly private; a `life-chronicle` event whose `event.depth` is missing, has no page, or names a private page (fail closed). | `derivedOriginPrivateSql`, 733 (the `gbrain_concept_inputs_private` form from `CONCEPT_INPUTS_PRIVATE_SINCE` = 311, `src/core/schema-migrations/v311-concept-inputs-private.ts:23`); `chronicleOriginNotVisibleSql`, 759 |
 | Declared lineage: any `derived_from` slug (string or array, `.md` stripped, nulls skipped) whose page is explicitly private. | `declaredLineagePrivateSql`, 687 |
 
-The member sends `{ honorAliases, entityPrivacy }` only when the policy text PGLite would render
+The member sends `{ honorAliases, entityPrivacy }` when the policy text PGLite would render
 now equals its no-caller rendering (`withoutCallerAccess`, 443), the concept-input branch
-compared as one token. A caller whose member pages, grants or lineage design widen the text is
-refused with `engine_capability_missing` (`src/core/rust-engine/store-members/private-provenance.ts`).
+compared as one token. The store knows two fact forms: `privateProvenanceFilterUnderPolicy` (the
+fact lists, the relevance pool and `listSimilarActiveFacts`) and `privateFactFilterForCaller` (what
+`privateFactFilterForReader` renders for a caller that is not the owner: `countWorldFacts` and the
+ontology reads). With no caller the two are the same policy in a different order.
+
+Every fact family opts in with `callerReaders`: a caller whose text equals the rendering for a
+record of only its reader identity and private-readable grant is served, and the member sends
+`identity` and `privateReadableSources`. The entity gate (`page_hidden` on the entity page) reads
+both. The provenance gate reads neither, with one exception in the first form: its member-page CASE
+judges the caller's own member page (`memory/members/<member>`, the actor's member or the first
+`member:` principal) with the identity. The member then sends that slug as `memberPage`, and
+`hidden_by_private_provenance` reads the identity on that page only (`provenance_identity`). The
+second form has no CASE and sends no `memberPage`. Any other caller (folder rules, audiences,
+lineage, labelled-only members) is refused with
+`engine_capability_missing` (`src/core/rust-engine/store-members/private-provenance.ts`). The store
+has no keyed-slug entity rule (an `entity_slug` with no `/`, judged at a name-key page directory by
+`privateEntityFilterForCaller`).
+
+A page read under `excludePrivate` sends the page policy (`storePagePolicy`). A page family that opts in with
+`callerReaders` also sends the caller's reader identity and private-readable grant, when the caller's text equals
+the rendering for a record of only those two fields. `page_hidden` then lets a page whose `readable_by` names one of
+the identity's principals pass the member-access part (`access_readers`, the twin of `gbrain_access_readers` in
+migration v282: trimmed of edge spaces and ASCII lower-cased, a bare id read as `member:<id>`, a malformed value read
+as `!nobody`), and a page of a granted source that is not a pinned question pass the privacy part
+(`orPrivateReadableSource`). The fact policy sends them as described above.
 
 Aliases and renames: each origin slug of the origin rule (atom `source_slug`, concept input
 `source_slug` under the input's source, chronicle `event.depth`, each `derived_from` slug) also
@@ -160,9 +183,10 @@ then by slug in byte order (COLLATE "C"), and the list stops at `limit`.
 
 ## Group 5: doctor checks (`facts/doctor.rs`)
 
-Ten members back the doctor checks. Eight are served by `facts/doctor.rs`; two refuse in the
-TypeScript store member with `engine_capability_missing`, and the three unlinked-fact reads
-refuse their `hasAttempts: true` form.
+Ten members back the doctor checks. Eight are served by `facts/doctor.rs`, one
+(`listUnpreviewedTrustFacts`) by `facts/trust_reads.rs` (below), and `countFactRelinkOutcomes`
+refuses in the TypeScript store member with `engine_capability_missing`. The three unlinked-fact
+reads refuse their `hasAttempts: true` form.
 
 | Member | Rust | Missing data when refused |
 |---|---|---|
@@ -170,7 +194,7 @@ refuse their `hasAttempts: true` form.
 | `countRedactedFacts` | served | |
 | `listOutsideContentFenceCounts` | served | |
 | `countAtomFacts` | served | |
-| `listUnpreviewedTrustFacts` | refused | no store read yet: the store keeps the write-gate holds and the `facts.trust_tier` and `facts.write_origin` columns it reads |
+| `listUnpreviewedTrustFacts` | served by `facts/trust_reads.rs` | |
 | `countUnlinkedFactsByOrigin` | served for `hasAttempts: false` | `hasAttempts: true` reads the `fact_relink_attempts` table |
 | `countUnlinkedFactStats` | served for `hasAttempts: false` | `hasAttempts: true` reads the `fact_relink_attempts` table |
 | `countFactRelinkOutcomes` | refused | the `fact_relink_attempts` table |
@@ -207,7 +231,7 @@ Each member is one store call (a scan of the fact rows, no SQL). The TypeScript 
 | `findBulkFactDays` | the bulk days of unarchived sources under a `rule`, with top sources and self-dated claims | served; refused when a count threshold is not an integer or the share is not finite |
 | `maxFenceRowNum` | the largest `row_num` of a page coordinate, 0 for none | served |
 | `listStoredFenceFactRows` | the numbered rows of a page coordinate, oldest id first | served |
-| `countWorldFacts` | the entity card's unexpired fact count under its visibility and privacy | served; a trust floor (`eligibility.floor`) and `suppressFlagged` apply `trust::TrustPolicy` to the fact's stamped tier and its write-gate receipts; refused for `excludePrivate` when the caller's rendering is not the store's policy. Deleted and quarantined pages are always hidden, and `needs_rederive` is treated as empty, as in `takes.rs` |
+| `countWorldFacts` | the entity card's unexpired fact count under its visibility and privacy | served; a trust floor (`eligibility.floor`) and `suppressFlagged` apply `trust::TrustPolicy` to the fact's stamped tier and its write-gate receipts; `excludePrivate` serves a caller with a reader identity and a private-readable grant (`callerReaders`) and refuses any other caller whose rendering is not the store's policy. Deleted and quarantined pages are always hidden, and `needs_rederive` is treated as empty, as in `takes.rs` |
 
 ## Group 5: purge, withdrawal, relink and fence repair (`facts/purge.rs`)
 
@@ -224,7 +248,7 @@ plan row or leftover. An unbacked entity is an entity slug with no `/` and no li
 | `planFactPurgeIds` | `[{ id }]` of one visibility with the fingerprint, in id order: the subject's rows (all with `*`) and every unbacked-entity row. |
 | `listRelinkCandidateRows` | Active rows of the source with no entity and no fence key (`row_num`, `source_markdown_slug`) after `afterId`, from `since` when set, in id order, at most `limit`. |
 | `countRelinkCandidates` | Active no-entity rows of the source that hold a fence key. |
-| `listSimilarActiveFacts` | `{ anchor, rows }`: the anchor's `has_embedding` and entity (null for an unknown id), then, when it has a vector, the other active rows of its entity and visibility with the same `embedding_model` and cosine at least `minCosine`, nearest first then by id, at most `limit`. `remote` keeps world rows. `excludePrivate` takes the store's privacy policy and refuses a caller whose policy widens it. A NaN similarity goes out as the string `NaN`; vectors of different lengths are `invalid_argument`. |
+| `listSimilarActiveFacts` | `{ anchor, rows }`: the anchor's `has_embedding` and entity (null for an unknown id), then, when it has a vector, the other active rows of its entity and visibility with the same `embedding_model` and cosine at least `minCosine`, nearest first then by id, at most `limit`. `remote` keeps world rows. `excludePrivate` takes the store's privacy policy, serves a caller with a reader identity and a private-readable grant (`callerReaders`, with the member-page CASE) and refuses any other caller whose policy widens it. A NaN similarity goes out as the string `NaN`; vectors of different lengths are `invalid_argument`. |
 | `findActiveSingleFact` | The lowest-id active row with the same entity (null matches null), visibility, fingerprint and speaker slot (a null speaker on either side matches) on `pageSlug`, or, with a null `pageSlug`, on no owned memory page; an empty `pageSlug` matches nothing. The row has every column of `SELECT *`. Refuses with `remoteFloor`. |
 | `listUnfencedFactRows` | Active rows with no fence key and no `dimension`, of one source or all, by source, entity (bytewise, no entity last) and id, with `page_exists` (a live page of the entity). |
 | `listHeldFenceFactRows` | A page's active fence rows by `row_num` then id, less rows whose `source` starts with `cli:extract-conversation-facts`. |
@@ -236,8 +260,8 @@ the columns the store has not got: `source_window`, `last_written_at` and the `w
 `last_write_*` columns.
 
 Refused with `engine_capability_missing`: `listFactsReconcileBacklog` (its reconcile ledger table
-`page_facts_reconcile` is not in the store) and `listSingleFactMetadata` (no store read yet: the
-store keeps the `trust_tier` it reads; it also reads the remote floor).
+`page_facts_reconcile` is not in the store). `listSingleFactMetadata` is served by
+`facts/trust_reads.rs` (below), except under the remote provenance floor.
 
 ## Group 5: repair classifiers and loop retirement (`facts/repair.rs`)
 
@@ -279,6 +303,16 @@ Rules of the four served members:
 - A folder rule is never read: the store holds no access tables, so no page is folder-restricted.
 - The privacy helpers (`provenance_slug`, `snapshot_allows`, `alias_private`, `derivation_private`) are
   re-implemented in `repair.rs` rather than shared with `privacy.rs`.
+
+## Group 5: stamped trust reads (`facts/trust_reads.rs`)
+
+Two reads of the `trust_tier` and `write_origin` the store stamps on every fact row. Neither needs a
+key range of its own: they read the fact rows and the write-gate holds (`trust/write_gate.rs`).
+
+| Member | Site | Served | Notes |
+|---|---|---|---|
+| `listSingleFactMetadata` | `facts/purge.ts` | yes, without the remote floor | `id = ANY(ids)` within `sourceId`: a repeated id answers once and an id no row has answers nothing. The SQL has no `ORDER BY`; the store answers in id order. The member refuses `remoteFloor: true` and an id that is not an `int4`. |
+| `listUnpreviewedTrustFacts` | doctor `trust-release-unpreviewed` | yes | Unexpired `user_confirmed` facts whose `write_origin` names the `trust_release` channel and has no `fields_previewed`, each joined to the newest released fact hold with the same source, slug, fence row (`payload->>'row_num'` as text, so `"3"` matches row 3) and request id (`IS NOT DISTINCT FROM`). A fact with no such hold drops out. In id order, at most `limit`; every row carries `total`, the count before the limit. The member refuses a limit that is not a non-negative integer. |
 
 ## Group 5: search relevance and trust reads (`facts/trust.rs`)
 

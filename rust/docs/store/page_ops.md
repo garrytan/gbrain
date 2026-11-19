@@ -11,7 +11,8 @@ A read scope (`PageReadScope`) is `{ sourceId?, sourceIds?, live?, excludePrivat
 wins over a non-empty `sourceId`; with neither, every source. `live: true` also hides deleted pages,
 pages whose frontmatter has a `quarantine` key and pages of a missing or archived source. The
 TypeScript members send `live: true` whenever the caller passes a scope object. `excludePrivate` applies the page
-policy of `facts/privacy.rs` (`storePagePolicy` refuses a caller whose policy the store does not model).
+policy of `facts/privacy.rs`, a caller's reader identity and private-readable grant included (`storePagePolicy`
+with `callerReaders`; it refuses a caller whose policy the store does not model).
 `minTrust` (the page's stamped tier at or above the floor) and `suppressFlagged` (no instruction-family write-gate receipt on an agent-written-or-lower page) apply `pageEligibleSql` through `trust::TrustPolicy` (`trust/eligibility.rs`); an unknown tier name is `invalid_argument`. `requireSafeChunks` is ignored, as these statements never read it.
 
 | JS | Resolves | Mirrors |

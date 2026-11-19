@@ -28,21 +28,6 @@ use serde_json::{Map, Value, json};
 const FIXTURE: &str = include_str!("fixtures/graph-parity.json");
 const UNDEF: &str = "$undef";
 
-/// Columns PGLite's `getTimeline` returns beyond `TimelineEntry` (the write-provenance and
-/// trust columns of `timeline_entries`). They are null or `"unknown"` for every row the
-/// typed writes make; Rust does not emit them (README "Divergences").
-const PGLITE_ONLY_TIMELINE_KEYS: &[&str] = &[
-    "write_request_id",
-    "write_principal_kind",
-    "write_principal_id",
-    "last_write_request_id",
-    "last_write_principal_kind",
-    "last_write_principal_id",
-    "last_written_at",
-    "trust_tier",
-    "write_origin",
-];
-
 fn is_undef(value: &Value) -> bool {
     value.as_str() == Some(UNDEF)
 }
@@ -260,25 +245,11 @@ fn view(result: Result<Value, StoreError>, view: Option<&str>) -> Value {
     }
 }
 
-/// PGLite's expected value, with only the error class kept and the PGLite-only timeline
-/// columns removed (after checking they hold nothing).
-fn expected(op: &str, mut want: Value) -> Value {
+/// PGLite's expected value, with only the error class kept. Timeline rows keep every column,
+/// the write receipt and trust columns included: Rust stamps both on each write.
+fn expected(want: Value) -> Value {
     if let Some(class) = want.get("error").cloned() {
         return json!({ "error": class });
-    }
-    if op == "getTimeline"
-        && let Some(rows) = want["ok"].as_array_mut()
-    {
-        for row in rows {
-            let row = row.as_object_mut().unwrap();
-            for key in PGLITE_ONLY_TIMELINE_KEYS {
-                let held = row.remove(*key).unwrap_or(Value::Null);
-                assert!(
-                    held.is_null() || held == "unknown",
-                    "PGLite timeline column {key} holds {held}; Rust does not model it"
-                );
-            }
-        }
     }
     want
 }
@@ -307,7 +278,7 @@ fn rust_reads_and_writes_match_the_pglite_golden_results() {
             let op = step[0].as_str().unwrap();
             let args = step[1].as_array().unwrap();
             let got = view(run(&store, op, args), step.get(2).and_then(Value::as_str));
-            let want = expected(op, want.clone());
+            let want = expected(want.clone());
             steps_run += 1;
             if got != want {
                 failures.push(format!(

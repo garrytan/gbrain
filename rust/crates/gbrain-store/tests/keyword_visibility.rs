@@ -135,23 +135,25 @@ fn keyword_reads_hide_private_pages_and_pages_short_of_the_safe_fence() {
     let honored = PrivacyPolicy {
         honor_aliases: true,
         entity_privacy: true,
+        ..Default::default()
     };
     let visibility_only = PrivacyPolicy {
         honor_aliases: false,
         entity_privacy: true,
+        ..Default::default()
     };
 
     let count = |o: &KeywordOptions| b.store.count_keyword_pages("zephyr", o).unwrap();
     assert_eq!(count(&scope(None, false)), 5);
-    assert_eq!(count(&scope(Some(honored), true)), 1);
-    assert_eq!(count(&scope(Some(honored), false)), 2);
-    assert_eq!(count(&scope(Some(visibility_only), true)), 2);
+    assert_eq!(count(&scope(Some(honored.clone()), true)), 1);
+    assert_eq!(count(&scope(Some(honored.clone()), false)), 2);
+    assert_eq!(count(&scope(Some(visibility_only.clone()), true)), 2);
     assert_eq!(count(&scope(None, true)), 4);
 
     let chunks = |o: &KeywordOptions| slugs(&b.store.search_keyword_chunks("zephyr", o).unwrap());
-    assert_eq!(chunks(&scope(Some(honored), true)), ["notes/open"]);
+    assert_eq!(chunks(&scope(Some(honored.clone()), true)), ["notes/open"]);
     assert_eq!(
-        chunks(&scope(Some(visibility_only), true)),
+        chunks(&scope(Some(visibility_only.clone()), true)),
         ["notes/alias", "notes/open"]
     );
     assert!(!chunks(&scope(None, true)).contains(&"notes/unsafe".to_string()));
@@ -159,7 +161,7 @@ fn keyword_reads_hide_private_pages_and_pages_short_of_the_safe_fence() {
     let arm =
         |o: &KeywordOptions| slugs(&b.store.search_keyword_arm("zephyr", "zephyr", o).unwrap());
     assert_eq!(
-        arm(&scope(Some(honored), false)),
+        arm(&scope(Some(honored.clone()), false)),
         ["notes/open", "notes/unsafe"]
     );
 
@@ -175,7 +177,7 @@ fn keyword_reads_hide_private_pages_and_pages_short_of_the_safe_fence() {
         slugs(lists[0]["rows"].as_array().unwrap())
     };
     assert_eq!(titles(&scope(None, false)).len(), 5);
-    assert_eq!(titles(&scope(Some(honored), true)), ["notes/open"]);
+    assert_eq!(titles(&scope(Some(honored.clone()), true)), ["notes/open"]);
 }
 
 #[test]

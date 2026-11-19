@@ -3,7 +3,7 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: listSourceRecords, readSourceIncarnation, hasCompanyBrainReceipt, readGuestSourceRow, listGuestSourceIds,
- *    hasGuestSource, readPageTrustRows, readDatabaseClock, listLinkPageMetadata, listStoredTimelineRows and
+ *    hasGuestSource, readPageTrustRows, readRowTrustRows, readDatabaseClock, listLinkPageMetadata, listStoredTimelineRows and
  *    filterPagesAtRevision return the same observable result on every engine arm (PGLite always; Postgres with
  *    DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: an engine that answers one of these differently changes which sources an import loads, which writes a
@@ -193,6 +193,54 @@ describe('engine parity: CLI import reads', () => {
       'unknown-flagged': { tier: 'unknown', flagged: true },
     });
     return flags;
+  });
+
+  parityTest('readRowTrustRows reads the tier, origin and activation flag each timeline write stamped; an unknown id reads none', { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'addTimelineEntry', 'getTimeline', 'upsertWriteGateReceipt', 'readRowTrustRows'] }, async (engine) => {
+    await note(engine, 'people/trust-example');
+    const add = (summary: string, date: string) => (tx: BrainEngine) => tx.addTimelineEntry('people/trust-example', { date, summary });
+    await declaredWrite(engine, 'agent_written', { channel: 'agent' }, add('agent flagged', '2026-07-01'));
+    await engine.addTimelineEntry('people/trust-example', { date: '2026-07-02', summary: 'unknown flagged' });
+    await declaredWrite(engine, 'tool_observed', { channel: 'tool' }, add('tool flagged', '2026-07-03'));
+    await declaredWrite(engine, 'agent_written', { channel: 'agent' }, add('other family', '2026-07-04'));
+    await declaredWrite(engine, 'agent_written', null, add('no receipt', '2026-07-05'));
+    const families: Record<string, string[]> = {
+      'agent flagged': ['override'], 'unknown flagged': ['credential', 'other'], 'tool flagged': ['exfiltration'], 'other family': ['other'],
+    };
+    // Receipt targets and the lookup need the row ids; they are written and read, never returned or compared.
+    const entries = await engine.getTimeline('people/trust-example');
+    for (const row of entries) {
+      const f = families[row.summary];
+      if (!f) continue;
+      await engine.upsertWriteGateReceipt({
+        target_table: 'timeline_entries', target_id: String(row.id), source_id: 'default', content_hash: 'h1', tier: 'agent_written',
+        detector_version: 1, verdict: 'flag', reason_families: f, reasons: f.map(x => `${x} found`), detector_error: false, request_id: null,
+      });
+    }
+    const summaryOf = new Map(entries.map(e => [Number(e.id), e.summary]));
+    const missing = Math.max(...summaryOf.keys()) + 1000;
+    const rows = await engine.readRowTrustRows({ table: 'timeline_entries', ids: [...summaryOf.keys(), missing] });
+    const trust = Object.fromEntries(sorted(rows.map(r => [summaryOf.get(Number(r.id)), {
+      tier: r.trust_tier, origin: r.write_origin, flagged: r.flagged, contested: r.contested,
+    }] as const), ([summary]) => String(summary)));
+    expect(rows.length).toBe(5);
+    expect(trust).toEqual({
+      'agent flagged': { tier: 'agent_written', origin: { channel: 'agent' }, flagged: true, contested: null },
+      'no receipt': { tier: 'agent_written', origin: null, flagged: false, contested: null },
+      'other family': { tier: 'agent_written', origin: { channel: 'agent' }, flagged: false, contested: null },
+      'tool flagged': { tier: 'tool_observed', origin: { channel: 'tool' }, flagged: false, contested: null },
+      'unknown flagged': { tier: 'unknown', origin: null, flagged: true, contested: null },
+    });
+    return { trust, none: await engine.readRowTrustRows({ table: 'timeline_entries', ids: [] }) };
+  });
+
+  // The store keeps no trust tier on a take and no supersede proposals for a fact, so the Rust engine refuses those
+  // tables before it reads anything (store-members/cli-reads-import.ts); PGLite and Postgres answer them.
+  parityTest('readRowTrustRows reads fact and take rows by id', { methods: ['putPage', 'insertFact', 'readRowTrustRows'] }, async (engine) => {
+    await engine.putPage('people/fact-example', { type: 'person', title: 'F', compiled_truth: 'F', timeline: '' });
+    const fact = await engine.insertFact({ fact: 'a fact', entity_slug: 'people/fact-example', visibility: 'world', source: 'test', embedding: null }, { source_id: 'default' });
+    const facts = await engine.readRowTrustRows({ table: 'facts', ids: [fact.id] });
+    const takes = await engine.readRowTrustRows({ table: 'takes', ids: [] });
+    return { facts: facts.map(r => ({ tier: r.trust_tier, flagged: r.flagged, contested: r.contested })), takes };
   });
 
   parityTest('readDatabaseClock returns the UTC clock with microseconds', { methods: ['readDatabaseClock'] }, async (engine) => {

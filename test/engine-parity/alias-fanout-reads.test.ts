@@ -102,15 +102,19 @@ describe('engine parity: alias fan-out reads', () => {
   );
 
   parityTest(
-    'findPagesByTitles under excludePrivate for a caller with a reader identity: SQL arms apply the caller policy, the Rust store refuses',
+    'findPagesByTitles under excludePrivate applies a caller\'s reader identity and private-readable grant',
     { methods: ['putPage', 'softDeletePage', 'findPagesByTitles'] },
     async (engine, backend) => {
       await titled(engine, backend);
-      const rows = await withCallerAccess({ identity: ['alice-example'], hidePrivate: true },
-        () => engine.findPagesByTitles(['acme example'], ['default'], ['person'], { excludePrivate: true }));
-      expect(rows.map((r) => r.slug)).toContain('people/acme-a');
-      expect(rows.map((r) => r.slug)).not.toContain('people/acme-private');
-      return rows;
+      const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess(access, async () =>
+        (await engine.findPagesByTitles(['acme example'], ['default'], ['person'], { excludePrivate: true })).map((r) => r.slug));
+      const member = await read({ identity: ['member:alice-example', 'group:team-a'], hidePrivate: true });
+      const granted = await read({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true });
+      const stranger = await read({ identity: ['member:bob-example'], hidePrivate: true });
+      expect(member).toEqual(['people/acme-a', 'people/acme-b', 'people/acme-readers']);
+      expect(granted).toEqual(['people/acme-a', 'people/acme-b', 'people/acme-private', 'people/acme-readers']);
+      expect(stranger).toEqual(['people/acme-a', 'people/acme-b']);
+      return { member, granted, stranger };
     },
   );
 
@@ -312,7 +316,9 @@ describe('alias fan-out: a refused Rust read reads as no rows', () => {
     const viaStore: BrainEngine['findPagesByTitles'] = (...args) =>
       (STORE_MEMBERS.findPagesByTitles as (b: unknown, ...a: unknown[]) => Promise<never>)(brain, ...args)
         .catch((e: unknown) => { refusals.push(e); throw e; });
-    const widened = <T>(fn: () => Promise<T>) => withCallerAccess({ identity: ['alice-example'], hidePrivate: true }, fn);
+    const widened = <T>(fn: () => Promise<T>) => withCallerAccess({
+      identity: ['member:alice-example'], folderCoverage: [{ source_id: 'default', prefix: 'people/' }], hidePrivate: true,
+    }, fn);
     const run = (engine: BrainEngine) => widened(() => withRequestConfigSnapshot(engine,
       () => resolveQueryEntities(engine, 'Acme Example renewal', { sourceId: 'default', excludePrivate: true })));
 

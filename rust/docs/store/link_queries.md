@@ -73,7 +73,9 @@ policy hides fails the filter, live or not, in `getBacklinkCounts`, `getAdjacenc
 `relationalChainHop` and `supersedingPageSlugs`. `findOrphanPages` drops a hidden candidate and ignores an inbound link
 from a hidden page or with a hidden origin (`privateLinkOriginFilterForCaller` tests the origin's privacy only, not
 whether it is live). The origin clause (`originFilter`) passes a link with no origin, or one whose origin page passes the
-live filter.
+live filter. The policy carries a caller's reader identity and private-readable grant (the `callerReaders`
+opt-in), in these reads and in `listLivePageSummaries`, `listPagesTitledIn` and `countInboundLinks`; any other caller
+whose policy differs (folder grants, lineage, an owner read) refuses.
 
 ## Derived-link replacement
 
