@@ -2067,6 +2067,17 @@
         ],
         "flagOnScopes": []
       },
+      "insertWithdrawalEffects#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "insertWriteRequest#default": {
         "flagOffLanes": [
           "tx"
@@ -5217,6 +5228,7 @@
         "insertSubagentMessage": "none",
         "insertTopologyChange": "none",
         "insertTrustProposal": "none",
+        "insertWithdrawalEffects": "none",
         "insertWriteRequest": "none",
         "installChunkEmbeddings": "none",
         "invalidateContentDriftEmbeddings": "none",

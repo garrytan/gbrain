@@ -160,6 +160,17 @@ the reads a write receipt makes). A request id that is not a uuid refuses with t
 The effect worker claims and settles these rows (see "Effect worker"). The receipt names a row that
 exists, and the write's reservation stays charged until the effect ends.
 
+## Withdrawal effects
+
+`brain.insertWithdrawalEffects({ requestId, sourceId, data })` queues the effects a forget under a write
+request leaves (`insertWithdrawalEffects`, the statement `recordFactWithdrawal` sent through `executeRaw`):
+one `withdrawal-mirror`, `git` and `embedding` row, in that order, each `queued` with `data`, a null
+revision, the source's incarnation and a null worktree (no worktree binds a source here). It resolves the
+kinds it inserted. An unknown source inserts nothing, as the statement's `FROM sources` yields no row; a
+kind already stored for the request is kept. A request id that is not a uuid refuses with the uuid syntax
+message, and a request with no row refuses `constraint_violation` (the foreign key). Inside `transaction`
+it is one more write of the withdrawal's store write, so the effects commit with the withdrawal.
+
 ## Effect worker
 
 The statements the effect worker sends to claim one effect and to settle its claim

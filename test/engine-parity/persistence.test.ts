@@ -509,6 +509,39 @@ describe('engine parity: write journal', () => {
     return answers;
   });
 
+  parityTest('insertWithdrawalEffects queues a withdrawal\'s three effects in the withdrawal\'s transaction, keeps a queued kind, skips an unknown source and refuses a missing request', {
+    methods: ['insertWithdrawalEffects', 'transaction', 'readRequestEffects', 'selectClaimableEffect', 'transactionDirect', 'declarePersistence', 'readSourceMembership',
+      'lockPersistenceCounters', 'insertWriteRequest'],
+  }, async (engine) => {
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    const id = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b5');
+    const r1 = 'e0000000-0000-4000-8000-0000000000e1', r2 = 'e0000000-0000-4000-8000-0000000000e2';
+    const targets = [{ slug: 'people/b', page_id: 2, revision: r2 }, { slug: 'people/a', page_id: 1, revision: r1 }];
+    await engine.transaction(async tx => {
+      await tx.insertWithdrawalEffects({ requestId: id, sourceId: 'default', targets });
+      await tx.insertWithdrawalEffects({ requestId: id, sourceId: 'default', targets: [] });
+      await tx.insertWithdrawalEffects({ requestId: 'b0000000-0000-4000-8000-0000000000ff', sourceId: 'no-such-source', targets });
+    });
+    const refusal = async (requestId: string) => {
+      try { await engine.transaction(tx => tx.insertWithdrawalEffects({ requestId, sourceId: 'default', targets })); return 'ok'; }
+      catch (e) { return /invalid input syntax for type uuid|violates foreign key constraint "persistence_effects_request_id_fkey"/.exec(String((e as Error).message))?.[0] ?? String(e); }
+    };
+    const refusals = { missing: await refusal('b0000000-0000-4000-8000-0000000000fe'), notUuid: await refusal('not-a-uuid') };
+    const head = await engine.transactionDirect(async tx => {
+      await tx.declarePersistence();
+      return tx.selectClaimableEffect<Record<string, unknown>>(HOST, []);
+    });
+    const waiting = (kind: string) => ({ kind, state: 'queued', error_code: null, outcome: null, recovering: false });
+    const answers = { effects: await engine.readRequestEffects(id), stray: await engine.readRequestEffects('b0000000-0000-4000-8000-0000000000ff'),
+      head: { kind: head?.kind, data: head?.data, revision: head?.revision, source_id: head?.source_id, incarnation: head?.source_incarnation === incarnation,
+        worktree_id: head?.worktree_id }, refusals };
+    expect(answers).toEqual({ effects: [waiting('embedding'), waiting('git'), waiting('withdrawal-mirror')], stray: [],
+      head: { kind: 'withdrawal-mirror', data: { version: 2, targets: [{ slug: 'people/a', page_id: 1, revision: r1 }, { slug: 'people/b', page_id: 2, revision: r2 }] },
+        revision: null, source_id: 'default', incarnation: true, worktree_id: null },
+      refusals: { missing: 'violates foreign key constraint "persistence_effects_request_id_fkey"', notUuid: 'invalid input syntax for type uuid' } });
+    return answers;
+  });
+
   parityTest('readRequestEffects reads a request\'s queued effects in kind order, or only its Git effect, and refuses a non-uuid id', {
     methods: ['readRequestEffects', 'insertPublicationEffects', 'transactionDirect', 'declarePersistence', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest'],
   }, async (engine) => {

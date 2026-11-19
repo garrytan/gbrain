@@ -263,6 +263,18 @@ impl Brain {
         })
     }
 
+    /// `insertWithdrawalEffects({ requestId, sourceId, data })`: the kinds inserted, in insert order.
+    #[napi]
+    pub fn insert_withdrawal_effects<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.insert_withdrawal_effects(&required(spec, "insertWithdrawalEffects spec")?)
+        })
+    }
+
     /// `releaseUnpublishedClaim({ id, token, reason, charge })`: `true` when the claim was released.
     #[napi]
     pub fn release_unpublished_claim<'env>(

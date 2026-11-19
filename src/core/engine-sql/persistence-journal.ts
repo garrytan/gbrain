@@ -307,3 +307,35 @@ export async function insertPublicationEffects(exec: SqlExecutor, spec: Publicat
   const rows = await exec.executeRaw<{ kind: string }>(PUBLICATION_EFFECTS_SQL, publicationEffectsParams(spec));
   return rows.map(row => row.kind);
 }
+
+/**
+ * The effects a managed-request withdrawal queues (facts/withdrawal.ts `recordFactWithdrawal`): the text it sent
+ * through `executeRaw`, byte for byte. One row per kind, stamped with the source's incarnation and its bound worktree;
+ * an unknown source inserts nothing and a kind already queued for the request is kept.
+ */
+export const WITHDRAWAL_EFFECTS_SQL = `INSERT INTO persistence_effects(request_id,kind,data,source_id,source_incarnation,worktree_id)
+          SELECT $1::uuid,k.kind,$3::text::jsonb,s.id,s.incarnation,b.worktree_id
+          FROM sources s LEFT JOIN persistence_source_bindings b ON b.source_id=s.id AND b.source_incarnation=s.incarnation
+          CROSS JOIN (VALUES ('withdrawal-mirror'),('git'),('embedding')) AS k(kind)
+          WHERE s.id=$2 ON CONFLICT(request_id,kind) DO NOTHING`;
+
+/** One page a withdrawal changed, as its effects name it. */
+export interface WithdrawalEffectTarget { slug: string; page_id: number; revision: string }
+
+/** What `insertWithdrawalEffects` inserts for a withdrawal under write request `requestId`. */
+export interface WithdrawalEffectsSpec { requestId: string; sourceId: string; targets: readonly WithdrawalEffectTarget[] }
+
+/** The data every effect of a withdrawal carries: version 2, its targets in slug order. */
+export function withdrawalEffectsData(spec: WithdrawalEffectsSpec): { version: 2; targets: WithdrawalEffectTarget[] } {
+  return { version: 2, targets: [...spec.targets].sort((a, b) => a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0) };
+}
+
+/** The withdrawal effects insert's parameters; the data binds as one text parameter, so postgres.js does not double-encode it. */
+export function withdrawalEffectsParams(spec: WithdrawalEffectsSpec): unknown[] {
+  return [spec.requestId, spec.sourceId, JSON.stringify(withdrawalEffectsData(spec))];
+}
+
+/** Queues a withdrawal's `withdrawal-mirror`, `git` and `embedding` effects (see `WITHDRAWAL_EFFECTS_SQL`). */
+export async function insertWithdrawalEffects(exec: SqlExecutor, spec: WithdrawalEffectsSpec): Promise<void> {
+  await exec.executeRaw(WITHDRAWAL_EFFECTS_SQL, withdrawalEffectsParams(spec));
+}

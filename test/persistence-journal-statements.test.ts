@@ -22,11 +22,12 @@
  * The effect claim's candidate read in src/core/engine-sql/persistence-effect-scans.ts does too: its dead-owner test and
  * refresh fence are pinned below against the effect-journal and worktree-refresh fragments. So does the publication's
  * effects insert in persistence-journal.ts: its text and its auto-link gate key are pinned against effect-journal.ts.
+ * The managed-request withdrawal's effects insert is pinned against the text facts/withdrawal.ts sent.
  * The completion's synchronous-commit statement in persistence-declaration.ts is pinned against journal.ts `completeWrite`.
  */
 import { describe, expect, test } from 'bun:test';
 import { CLAIM_STAMP_SQL, COMPLETE_WRITE_PURGE_PROBE_SQL, COMPLETE_WRITE_SQL, PUBLICATION_EFFECTS_SQL, publicationEffectsParams,
-  REMOTE_AUTO_LINKS_CONFIG_KEY } from '../src/core/engine-sql/persistence-journal.ts';
+  REMOTE_AUTO_LINKS_CONFIG_KEY, WITHDRAWAL_EFFECTS_SQL, withdrawalEffectsParams } from '../src/core/engine-sql/persistence-journal.ts';
 import { REMOTE_AUTO_LINKS_KEY } from '../src/core/persistence/effect-model.ts';
 import { asciiLowerSql, edgeTrimSql } from '../src/core/edge-whitespace.ts';
 import { REFRESH_BARRIER_CLAIM_PREDICATE, SYNC_KIND } from '../src/core/persistence/journal.ts';
@@ -229,6 +230,26 @@ describe('the publication effects insert copies the effect journal statement', (
     const effects = [{ kind: 'embedding', data: { slug: 'notes/a', page_id: 1 } }, { kind: 'links', data: { slug: 'notes/a' }, gated: true }];
     expect(publicationEffectsParams({ requestId: 'r', revision: null, sourceId: 'default', sourceIncarnation: 'i', worktreeId: null, effects }))
       .toEqual(['r', null, 'default', 'i', null, JSON.stringify(effects), 'mcp.remote_auto_links']);
+  });
+});
+
+describe('the withdrawal effects insert copies the withdrawal statement', () => {
+  // The statement facts/withdrawal.ts recordFactWithdrawal sent through executeRaw before it called insertWithdrawalEffects.
+  const withdrawalText = `INSERT INTO persistence_effects(request_id,kind,data,source_id,source_incarnation,worktree_id)
+          SELECT $1::uuid,k.kind,$3::text::jsonb,s.id,s.incarnation,b.worktree_id
+          FROM sources s LEFT JOIN persistence_source_bindings b ON b.source_id=s.id AND b.source_incarnation=s.incarnation
+          CROSS JOIN (VALUES ('withdrawal-mirror'),('git'),('embedding')) AS k(kind)
+          WHERE s.id=$2 ON CONFLICT(request_id,kind) DO NOTHING`;
+
+  test('insertWithdrawalEffects sends the withdrawal text', () => {
+    expect(WITHDRAWAL_EFFECTS_SQL).toBe(withdrawalText);
+  });
+
+  test('the data binds as one text parameter with its targets in slug order, as the withdrawal bound it', () => {
+    const targets = [{ slug: 'people/b', page_id: 2, revision: 'r2' }, { slug: 'people/a', page_id: 1, revision: 'r1' }];
+    expect(withdrawalEffectsParams({ requestId: 'q', sourceId: 'default', targets }))
+      .toEqual(['q', 'default', JSON.stringify({ version: 2, targets: [targets[1], targets[0]] })]);
+    expect(targets[0].slug).toBe('people/b');
   });
 });
 
