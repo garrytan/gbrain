@@ -108,6 +108,13 @@ impl Store {
     /// `restorePageDeletedAt(pageId, deletedAt)`: sets the page's `deleted_at` back. A change
     /// moves the revision and drops the seal, as PGLite's `pages_knowledge_revision` trigger does.
     /// A missing page is a no-op.
+    ///
+    /// PGLite's `pages_derivation_scope_delete` trigger also notes the page for each derivation
+    /// purge request of its source (`page_segment_derivation_purge_pages`) when `deleted_at` goes
+    /// from null to a time. The store keeps no purge requests (`recordDerivationPurge` refuses
+    /// `raw_sql` on a Rust brain), so that set is always empty here and the note writes nothing,
+    /// as it writes nothing on PGLite with no request open. The purge sweep that adds the requests
+    /// must add the note here too.
     pub fn restore_page_deleted_at(&self, page_id: i64, deleted_at: &str) -> Result<()> {
         let micros = parse_iso(deleted_at).ok_or_else(|| {
             StoreError::invalid(format!(

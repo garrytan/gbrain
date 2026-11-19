@@ -202,6 +202,7 @@ export const RUST_ENGINE_MEMBERS = {
   setMaterializingRevision: 'page_body',
   restorePageUpdatedAt: 'page_body',
   readPageTrustStamp: 'page_body',
+  restorePageTrustStamp: 'page_body',
   readSegmentedRewritePage: 'page_body',
   restorePageDeletedAt: 'page_body',
   lockSegmentedGenerationPage: 'page_body',

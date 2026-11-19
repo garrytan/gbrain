@@ -100,7 +100,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'stageSegmentChunks', 'createSegmentedPageShell', 'flipBodyGeneration', 'sealSegmentedPage', 'openBodyStaging', 'setBodyStagingState', 'sweepSegments',
     'readSegmentDerivations', 'upsertSegmentDerivations', 'retireSegmentDerivations',
     'lockBodyStagingState', 'deleteUnstagedSegmentChunks', 'readSegmentedLivePage', 'readSegmentedSealed', 'listChunkedOccurrences', 'readRetiredChunkVectors', 'hasStaleSegmentChunks', 'retireStaleSegmentChunks',
-    'readSegmentedProjectionPage', 'listSegmentedRechunkCandidates', 'readSegmentedRechunkPage', 'listOccurrenceChunks', 'readMaterializingRevision', 'setMaterializingRevision', 'restorePageUpdatedAt', 'readPageTrustStamp',
+    'readSegmentedProjectionPage', 'listSegmentedRechunkCandidates', 'readSegmentedRechunkPage', 'listOccurrenceChunks', 'readMaterializingRevision', 'setMaterializingRevision', 'restorePageUpdatedAt', 'readPageTrustStamp', 'restorePageTrustStamp',
     'readSegmentedRewritePage', 'restorePageDeletedAt', 'lockSegmentedGenerationPage', 'splitManifestGeneration', 'publishRebuiltGeneration', 'setSegmentedVersionHash', 'deleteRewrittenDerivationRows',
     'readSegmentedEmbedPage', 'hasLiveSegmentedPage', 'countSegmentedEmbedRows', 'listSegmentedStaleRows', 'readSegmentChunkInputHashes', 'installSegmentedVectors', 'listLiveEmbedSegments', 'listSegmentChunkRows'],
   versions: ['createVersion', 'getVersions', 'revertToVersion', 'readLatestVersionId', 'stampVersionChangeReason'],

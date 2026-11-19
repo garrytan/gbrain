@@ -569,7 +569,7 @@ pub(crate) fn read_page_by_id(read: &dyn KvRead, id: u64) -> Result<Option<PageR
 /// The record's `trust_tier` and `write_origin` are stamped first, as PGLite's
 /// `trust_tier_stamp` trigger stamps every row written to `pages` (see [`stamp_page_trust`]).
 pub(crate) fn write_page(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()> {
-    write_page_as(tx, record, false)
+    write_page_as(tx, record, false, false)
 }
 
 /// `write_page` for a statement that SETs `title` and `timeline` whatever their values: PGLite's search vector trigger
@@ -577,12 +577,24 @@ pub(crate) fn write_page(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()
 /// have grown since (a timeline entry added, an entry's cutoff passed, a lead published), so the check and the
 /// sealed search timeline's forgetting run every time.
 pub(crate) fn write_page_setting_vector(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()> {
-    write_page_as(tx, record, true)
+    write_page_as(tx, record, true, false)
 }
 
-fn write_page_as(tx: &mut dyn KvWrite, record: &PageRecord, sets_vector: bool) -> Result<()> {
+/// `write_page` for a statement that SETs `trust_tier` and `write_origin` themselves
+/// (`UPDATE pages SET trust_tier=…, write_origin=…`): the stamp starts from the record's tier and
+/// origin instead of the stored ones, as PGLite's trigger sees that statement's NEW row.
+pub(crate) fn write_page_setting_trust(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()> {
+    write_page_as(tx, record, false, true)
+}
+
+fn write_page_as(
+    tx: &mut dyn KvWrite,
+    record: &PageRecord,
+    sets_vector: bool,
+    sets_trust: bool,
+) -> Result<()> {
     let before = read_page_by_id(&*tx, record.id)?;
-    let stamped = stamp_page_trust(before.as_ref(), record)?;
+    let stamped = stamp_page_trust(before.as_ref(), record, sets_trust)?;
     let record = &stamped;
     // A write that sets the title or timeline fires PGLite's search vector trigger. It builds the vector before the
     // row is stored, and its error ("string is too long for tsvector") aborts the write. A write that does not set
@@ -613,9 +625,15 @@ fn write_page_as(tx: &mut dyn KvWrite, record: &PageRecord, sets_vector: bool) -
 /// page's tier or origin itself (PGLite's `putPage` and the other page writes leave both columns
 /// out of their `SET`), so the update starts from the stored tier and origin, whatever the record
 /// carries: a record built before an earlier write in the same transaction restamped the page
-/// cannot lower or replace them. The content columns are `TrustTable::Pages.content_columns`, with
-/// the frontmatter compared without the trust-ephemeral keys.
-fn stamp_page_trust(before: Option<&PageRecord>, record: &PageRecord) -> Result<PageRecord> {
+/// cannot lower or replace them. The one exception is `sets_trust` ([`write_page_setting_trust`]):
+/// the update starts from the record's tier and origin, and the origin counts as set by the write.
+/// The content columns are `TrustTable::Pages.content_columns`, with the frontmatter compared
+/// without the trust-ephemeral keys.
+fn stamp_page_trust(
+    before: Option<&PageRecord>,
+    record: &PageRecord,
+    sets_trust: bool,
+) -> Result<PageRecord> {
     use crate::trust::{
         OriginStamp, StampRow, TrustTable, TrustTier, page_frontmatter_content, stamp,
     };
@@ -639,14 +657,15 @@ fn stamp_page_trust(before: Option<&PageRecord>, record: &PageRecord) -> Result<
                 || old.deleted_at_us != record.deleted_at_us
                 || page_frontmatter_content(&old.frontmatter)
                     != page_frontmatter_content(&record.frontmatter);
+            let set = if sets_trust { record } else { old };
             (
                 StampRow::Update {
                     old: tier_of(old),
-                    new: tier_of(old),
+                    new: tier_of(set),
                     content_changed,
-                    origin_set: false,
+                    origin_set: sets_trust,
                 },
-                old.write_origin.clone(),
+                set.write_origin.clone(),
             )
         }
     };

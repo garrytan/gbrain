@@ -222,6 +222,16 @@ export async function readPageTrustStamp(tx: Raw, page: PageTrustRef): Promise<P
   return row ?? null;
 }
 
+/**
+ * Set page `pageId`'s trust_tier and write_origin back to a stamp read before a fence append's page write
+ * (trust/fence-append.ts withPageTierKept). The tier trigger runs on it: a lowering holds, a raise needs a covering
+ * promotion. A JSON string origin is stored as given (it is the jsonb text), any other as its JSON text.
+ */
+export async function restorePageTrustStamp(tx: Raw, pageId: number, trustTier: string, writeOrigin: unknown): Promise<void> {
+  const origin = writeOrigin === null || writeOrigin === undefined ? null : typeof writeOrigin === 'string' ? writeOrigin : JSON.stringify(writeOrigin);
+  await tx.executeRaw('UPDATE pages SET trust_tier=$2, write_origin=$3::text::jsonb WHERE id=$1', [pageId, trustTier, origin]);
+}
+
 /** The page a live fence rewrite reads (page-body/segment-rewrite.ts), deleted or not, with its tags in order. */
 export interface SegmentedRewritePageRow {
   id: number; slug: string; source_id: string; title: string; type: string; page_kind: string; frontmatter: JsonObject | null;
@@ -246,11 +256,11 @@ export interface RewrittenDerivationScope {
   live: readonly number[];
 }
 
-/** Page `pageId` as a live fence rewrite reads it, deleted or not, or null. */
+/** Page `pageId` as a live fence rewrite reads it, deleted or not, or null. Tags sort bytewise (COLLATE "C") on every engine. */
 export async function readSegmentedRewritePage(tx: Raw, pageId: number): Promise<SegmentedRewritePageRow | null> {
   const [row] = await tx.executeRaw<SegmentedRewritePageRow>(`SELECT p.id,p.slug,p.source_id,p.title,
       p.type,p.page_kind,p.frontmatter,p.body_generation,p.body_bytes,p.body_flags,p.body_storage,p.deleted_at,p.contextual_retrieval_mode,p.corpus_generation,
-      COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id),'[]'::jsonb) AS tags FROM pages p WHERE p.id=$1`, [pageId]);
+      COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id=p.id),'[]'::jsonb) AS tags FROM pages p WHERE p.id=$1`, [pageId]);
   return row ?? null;
 }
 

@@ -155,7 +155,7 @@ describe('engine parity: segmented fence rewrites', () => {
     });
 
   parityTest('a fence append keeps the page tier and origin through a lowering and a raising write',
-    { methods: ['transaction', 'putPage', 'readPageTrustStamp'] },
+    { methods: ['transaction', 'putPage', 'readPageTrustStamp', 'restorePageTrustStamp'] },
     async (engine) => {
       const write = (slug: string, tier: TrustTier, channel: string, truth: string, keep: boolean) => engine.transaction(tx =>
         withWriteTrust(tx, { tier, origin: { channel } }, async () => {

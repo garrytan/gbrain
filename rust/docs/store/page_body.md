@@ -174,8 +174,9 @@ segmented-embed members (`page-body/segmented-embedding.ts`) are in
 | `readMaterializingRevision()`, `setMaterializingRevision(revision)` | the `gbrain.materializing_revision` setting, kept in the transaction's settings map; `null` and a no-op outside a transaction |
 | `restorePageUpdatedAt(pageId, updatedUs)` | sets `updated_at` back (a re-chunk is not an edit); a missing page is a no-op |
 | `readPageTrustStamp(ref)` | `trust_tier` (`unknown` when none) and `write_origin`; `{ sourceId, slug }` names a live page, `{ id }` any page |
-| `readSegmentedRewritePage(pageId)` | the page row a live fence rewrite reads, deleted or not, with its tags sorted; an inline page reads at generation 0; `null` when missing |
-| `restorePageDeletedAt(pageId, deletedAt)` | sets `deleted_at` back after the rewrite's flip; a change gives the page a new knowledge revision and clears its text projection revision, as the pages trigger does; a missing page is a no-op |
+| `restorePageTrustStamp(pageId, trustTier, writeOrigin)` | puts back the tier and origin a fence append read before its page write (`withPageTierKept`), through the trust stamp: a lowering holds, a raise needs a covering promotion; nothing else of the page changes; a missing page is a no-op |
+| `readSegmentedRewritePage(pageId)` | the page row a live fence rewrite reads, deleted or not, with its tags in byte order (Postgres sorts them `COLLATE "C"`); an inline page reads at generation 0; `null` when missing |
+| `restorePageDeletedAt(pageId, deletedAt)` | sets `deleted_at` back after the rewrite's flip; a change gives the page a new knowledge revision and clears its text projection revision, as the pages trigger does. The pages trigger also notes the page for each open derivation purge request of its source; the store keeps no purge requests (`recordDerivationPurge` refuses), so there is nothing to note. A missing page is a no-op |
 | `lockSegmentedGenerationPage(pageId)` | the page's slug, source, body flags, storage and generation. Writes are serialized, so no row lock |
 | `splitManifestGeneration(pageId, generation, stagingId)` | copies the manifest rows that span `generation + 1` into the staging, ends the published rows at `generation`, and deletes the rows that start at it |
 | `publishRebuiltGeneration(pageId, generation, stagingId)` | publishes the staging's rows; the rows that start at `generation` end at `generation + 1` |
@@ -257,10 +258,6 @@ stay, as in PGLite, for the sweep. Deleting a source removes its texts and stagi
 foreign key to the texts has no cascade).
 
 ## Known differences from PGLite
-
-- `readSegmentedRewritePage` sorts tags bytewise; Postgres sorts them by the database collation.
-- `restorePageDeletedAt` does not mark the derivation scope entry that Postgres's
-  `pages_derivation_scope_delete` trigger marks when `deleted_at` goes from null to a time.
 
 - `stageSegmentChunks` reads occurrence ids, ordinals and byte spans as unsigned numbers; a negative
   one refuses `invalid_argument`. PGLite's columns are signed, but its occurrence ids come from a

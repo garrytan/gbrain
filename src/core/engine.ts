@@ -3270,6 +3270,8 @@ export interface BrainEngine {
   restorePageUpdatedAt(pageId: number, updatedUs: string): Promise<void>;
   /** A fence append: the trust tier and write origin of the live page at a source and slug, or of a page by id, or null (engine-sql/segmented-writes.ts). */
   readPageTrustStamp(page: PageTrustRef): Promise<PageTrustStamp | null>;
+  /** A fence append: set page `pageId`'s trust tier and write origin back to a stamp read before its write; the tier trigger rules apply (engine-sql/segmented-writes.ts). */
+  restorePageTrustStamp(pageId: number, trustTier: string, writeOrigin: unknown): Promise<void>;
   /** A fence rewrite: page `pageId` with its body columns, contextual stamp and tags, deleted or not, or null (engine-sql/segmented-writes.ts). */
   readSegmentedRewritePage(pageId: number): Promise<SegmentedRewritePageRow | null>;
   /** A fence rewrite: set page `pageId`'s deleted_at back to `deletedAt` (engine-sql/segmented-writes.ts). */

@@ -110,11 +110,17 @@ describe('engine-sql/segmented-writes sends each caller its old statement', () =
       { sql: `UPDATE pages SET updated_at = 'epoch'::timestamptz + $2::bigint * interval '1 microsecond' WHERE id=$1`, params: [7, '1700000000000000'] }]);
   });
 
-  test('fence-append.ts: the trust stamp by source and slug, and by id', async () => {
+  test('fence-append.ts: the trust stamp by source and slug, and by id, and its restore', async () => {
     expect(await sends(tx => sw.readPageTrustStamp(tx, { sourceId: 'default', slug: 'a' }))).toEqual([
       { sql: 'SELECT id, trust_tier, write_origin FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', params: ['default', 'a'] }]);
     expect(await sends(tx => sw.readPageTrustStamp(tx, { id: 7 }))).toEqual([
       { sql: 'SELECT id, trust_tier, write_origin FROM pages WHERE id=$1', params: [7] }]);
+    const restore = 'UPDATE pages SET trust_tier=$2, write_origin=$3::text::jsonb WHERE id=$1';
+    expect(await sends(tx => sw.restorePageTrustStamp(tx, 7, 'operator_curated', { channel: 'owner' }))).toEqual([
+      { sql: restore, params: [7, 'operator_curated', '{"channel":"owner"}'] }]);
+    expect(await sends(tx => sw.restorePageTrustStamp(tx, 7, 'agent_written', '{"channel":"agent"}'))).toEqual([
+      { sql: restore, params: [7, 'agent_written', '{"channel":"agent"}'] }]);
+    expect(await sends(tx => sw.restorePageTrustStamp(tx, 7, 'unknown', null))).toEqual([{ sql: restore, params: [7, 'unknown', null] }]);
   });
 
   test('segment-rewrite.ts and segment-derive.ts: the fence rewrite statements', async () => {
@@ -123,7 +129,7 @@ describe('engine-sql/segmented-writes sends each caller its old statement', () =
     const staging = 'u-1', next = 4;
     expect(await sends(tx => sw.readSegmentedRewritePage(tx, 7))).toEqual([{ sql: `SELECT p.id,p.slug,p.source_id,p.title,
       p.type,p.page_kind,p.frontmatter,p.body_generation,p.body_bytes,p.body_flags,p.body_storage,p.deleted_at,p.contextual_retrieval_mode,p.corpus_generation,
-      COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id),'[]'::jsonb) AS tags FROM pages p WHERE p.id=$1`, params: [7] }]);
+      COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id=p.id),'[]'::jsonb) AS tags FROM pages p WHERE p.id=$1`, params: [7] }]);
     expect(await sends(tx => sw.restorePageDeletedAt(tx, 7, '2026-01-01T00:00:00.000Z'))).toEqual([
       { sql: 'UPDATE pages SET deleted_at=$2 WHERE id=$1', params: [7, '2026-01-01T00:00:00.000Z'] }]);
     expect(await sends(tx => sw.lockSegmentedGenerationPage(tx, 7))).toEqual([

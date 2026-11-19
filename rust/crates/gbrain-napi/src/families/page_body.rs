@@ -454,6 +454,21 @@ impl Brain {
         })
     }
 
+    /// `restorePageTrustStamp(pageId, trustTier, writeOrigin)`: puts a fence append's prior tier
+    /// and origin back under the trust stamp rules.
+    #[napi]
+    pub fn restore_page_trust_stamp<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        trust_tier: String,
+        write_origin: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.restore_page_trust_stamp(page_id, &trust_tier, write_origin)
+        })
+    }
+
     /// `readSegmentedRewritePage(pageId)`: the page a live fence rewrite reads, or null.
     #[napi]
     pub fn read_segmented_rewrite_page<'env>(

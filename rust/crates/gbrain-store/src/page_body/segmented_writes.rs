@@ -3,7 +3,8 @@
 //! answer to one statement of `src/core/engine-sql/segmented-writes.ts`: the staging state a create
 //! checks, the chunk rows a replace's dead preparation left, the live page and its seal, the chunk
 //! probes and the stale-row retirement of the projection, the re-chunk's candidates, page row and
-//! stored chunks, the page's `updated_at` restore and its trust stamp. Each write is one
+//! stored chunks, the page's `updated_at` restore, and its trust stamp with the restore a fence
+//! append makes of it. Each write is one
 //! `Store::write`.
 //!
 //! Stale rows. Postgres's `STALE_CHUNKS_SQL` names the chunk rows generation `g` (live occurrences
@@ -19,7 +20,9 @@ use super::{
 use crate::chunks::{ChunkRecord, delete_chunks_matching, read_chunks};
 use crate::env::iso;
 use crate::kv::KvRead;
-use crate::pages::{PageRecord, all_pages, read_page, read_page_by_id, write_page};
+use crate::pages::{
+    PageRecord, all_pages, read_page, read_page_by_id, write_page, write_page_setting_trust,
+};
 use crate::{Result, Store, StoreError, get_json};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -505,6 +508,34 @@ impl Store {
             write_origin: p.write_origin,
         }))
     }
+
+    /// `restorePageTrustStamp(pageId, trustTier, writeOrigin)`: sets the page's tier and origin
+    /// back to what a fence append read before its page write (`withPageTierKept`), through the
+    /// trust stamp as PGLite's trigger runs it on that `UPDATE`: a lowering always holds, a raise
+    /// holds only under a promotion that covers it (`gbrain.write_trust_promotion`) and is refused
+    /// with no write trust declared. Nothing else of the page changes. A missing page is a no-op.
+    pub fn restore_page_trust_stamp(
+        &self,
+        page_id: i64,
+        trust_tier: &str,
+        write_origin: Option<Value>,
+    ) -> Result<()> {
+        use crate::trust::TrustTier;
+        let tier = TrustTier::parse(trust_tier).ok_or_else(|| {
+            StoreError::invalid(format!(
+                "restorePageTrustStamp trustTier: {trust_tier:?} is not a trust tier"
+            ))
+        })?;
+        let write_origin = write_origin.filter(|origin| !origin.is_null());
+        self.write(|tx| {
+            let Some(mut page) = page_by_id(&*tx, page_id)? else {
+                return Ok(());
+            };
+            page.trust_tier = (tier != TrustTier::Unknown).then(|| tier.as_str().to_owned());
+            page.write_origin = write_origin.clone();
+            write_page_setting_trust(tx, &page)
+        })
+    }
 }
 
 fn page_id_i64(id: u64) -> Result<i64> {
@@ -791,5 +822,55 @@ mod tests {
                 })
                 .is_err()
         );
+    }
+
+    #[test]
+    fn a_trust_restore_lowers_freely_raises_only_under_a_promotion_and_changes_nothing_else() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        let by_id = PageTrustRef {
+            source_id: None,
+            slug: None,
+            id: Some(id),
+        };
+        let stamp = |store: &Store| store.read_page_trust_stamp(&by_id).unwrap().unwrap();
+        let page = store.read_segmented_rechunk_page(id).unwrap().unwrap();
+        assert_eq!(stamp(&store).trust_tier, "unknown");
+        // A raise with no write trust declared is refused and leaves the page alone.
+        let err = store
+            .restore_page_trust_stamp(id, "operator_curated", Some(json!({"channel": "owner"})))
+            .unwrap_err();
+        assert_eq!(err.code, crate::trust::TRUST_RAISE_REFUSED);
+        assert_eq!(stamp(&store).trust_tier, "unknown");
+        // Under a promotion that covers it, the raise holds with the restored origin.
+        store
+            .apply_write_trust(
+                &["gbrain.write_trust_promotion".into()],
+                &["operator_curated".into()],
+            )
+            .unwrap();
+        store
+            .restore_page_trust_stamp(id, "operator_curated", Some(json!({"channel": "owner"})))
+            .unwrap();
+        let raised = stamp(&store);
+        assert_eq!(raised.trust_tier, "operator_curated");
+        assert_eq!(raised.write_origin, Some(json!({"channel": "owner"})));
+        store.clear_write_trust();
+        // A lowering needs nothing; a null origin is stored as none.
+        store
+            .restore_page_trust_stamp(id, "agent_written", Some(Value::Null))
+            .unwrap();
+        let lowered = stamp(&store);
+        assert_eq!(lowered.trust_tier, "agent_written");
+        assert_eq!(lowered.write_origin, None);
+        // Nothing else of the page moved: not its revision, its seal or its updated_at.
+        assert_eq!(
+            store.read_segmented_rechunk_page(id).unwrap().unwrap(),
+            page
+        );
+        assert!(store.restore_page_trust_stamp(id, "nope", None).is_err());
+        store
+            .restore_page_trust_stamp(999_999, "agent_written", None)
+            .unwrap();
     }
 }

@@ -1045,7 +1045,6 @@ src/core/trust/backfill.ts	execute_raw	15
 src/core/trust/channel.ts	execute_raw	1
 src/core/trust/claim.ts	execute_raw	9
 src/core/trust/derived-gate.ts	execute_raw	1
-src/core/trust/fence-append.ts	execute_raw	1
 src/core/trust/fence-guard.ts	execute_raw	8
 src/core/trust/held-removals.ts	execute_raw	4
 src/core/trust/label-lowerings.ts	execute_raw	1

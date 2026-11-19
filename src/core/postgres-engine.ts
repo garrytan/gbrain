@@ -1196,6 +1196,7 @@ export class PostgresEngine implements BrainEngine {
   setMaterializingRevision(revision: string) { return segmentedWritesImpl.setMaterializingRevision(this, revision); }
   restorePageUpdatedAt(pageId: number, updatedUs: string) { return segmentedWritesImpl.restorePageUpdatedAt(this, pageId, updatedUs); }
   readPageTrustStamp(page: segmentedWritesImpl.PageTrustRef) { return segmentedWritesImpl.readPageTrustStamp(this, page); }
+  restorePageTrustStamp(pageId: number, trustTier: string, writeOrigin: unknown) { return segmentedWritesImpl.restorePageTrustStamp(this, pageId, trustTier, writeOrigin); }
   readSegmentedRewritePage(pageId: number) { return segmentedWritesImpl.readSegmentedRewritePage(this, pageId); }
   restorePageDeletedAt(pageId: number, deletedAt: string) { return segmentedWritesImpl.restorePageDeletedAt(this, pageId, deletedAt); }
   lockSegmentedGenerationPage(pageId: number) { return segmentedWritesImpl.lockSegmentedGenerationPage(this, pageId); }

@@ -5562,6 +5562,7 @@
         "resolveTake": "none",
         "restorePage": "none",
         "restorePageDeletedAt": "none",
+        "restorePageTrustStamp": "none",
         "restorePageUpdatedAt": "none",
         "resumeJob": "none",
         "retireSegmentDerivations": "none",

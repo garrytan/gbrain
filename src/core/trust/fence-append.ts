@@ -18,10 +18,9 @@ import type { BrainEngine } from '../engine.ts';
 import { withTrustPromotion } from '../persistence/context.ts';
 import { compareTrust, isTrustTier } from './tier.ts';
 
-type Exec = Pick<BrainEngine, 'executeRaw' | 'readPageTrustStamp' | 'readTransactionSettings' | 'applyTransactionSettings'>;
+type Exec = Pick<BrainEngine, 'readPageTrustStamp' | 'restorePageTrustStamp' | 'readTransactionSettings' | 'applyTransactionSettings'>;
 
 const sameOrigin = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
-const originText = (value: unknown) => value === null || value === undefined ? null : typeof value === 'string' ? value : JSON.stringify(value);
 
 /** Runs `fn` (the page write of a fence append) and restores the page's prior trust_tier and write_origin. */
 export async function withPageTierKept<T>(tx: Exec, page: { sourceId: string; slug: string }, fn: () => Promise<T>): Promise<T> {
@@ -30,8 +29,7 @@ export async function withPageTierKept<T>(tx: Exec, page: { sourceId: string; sl
   if (!prior || !isTrustTier(prior.trust_tier)) return result;
   const after = await tx.readPageTrustStamp({ id: Number(prior.id) });
   if (!after || !isTrustTier(after.trust_tier) || (after.trust_tier === prior.trust_tier && sameOrigin(after.write_origin, prior.write_origin))) return result;
-  const restore = () => tx.executeRaw('UPDATE pages SET trust_tier=$2, write_origin=$3::text::jsonb WHERE id=$1',
-    [prior.id, prior.trust_tier, originText(prior.write_origin)]);
+  const restore = () => tx.restorePageTrustStamp(Number(prior.id), prior.trust_tier, prior.write_origin);
   if (compareTrust(prior.trust_tier, after.trust_tier) > 0) await withTrustPromotion(tx, prior.trust_tier, restore);
   else await restore();
   return result;

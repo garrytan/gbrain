@@ -85,6 +85,10 @@ export const restorePageUpdatedAt: StoreMember<[pageId: number, updatedUs: strin
 export const readPageTrustStamp: StoreMember<[page: PageTrustRef], PageTrustStamp | null> = (brain, page) =>
   storeCall({ member: 'readPageTrustStamp' }, () => brain.readPageTrustStamp('id' in page ? { id: page.id } : { sourceId: page.sourceId, slug: page.slug }));
 
+export const restorePageTrustStamp: StoreMember<[pageId: number, trustTier: string, writeOrigin: unknown], void> = async (brain, pageId, trustTier, writeOrigin) => {
+  await storeCall({ member: 'restorePageTrustStamp' }, () => brain.restorePageTrustStamp(pageId, trustTier, writeOrigin ?? null));
+};
+
 export const readSegmentedRewritePage: StoreMember<[pageId: number], SegmentedRewritePageRow | null> = (brain, pageId) =>
   storeCall({ member: 'readSegmentedRewritePage' }, () => brain.readSegmentedRewritePage(pageId));
 
