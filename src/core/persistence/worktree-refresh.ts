@@ -1549,6 +1549,5 @@ export async function activeWorktreeRefreshes(engine: BrainEngine, sourceId?: st
 
 /** Doctor `worktree_refresh_stuck`: active refreshes older than `minutes`. */
 export async function stuckWorktreeRefreshes(engine: BrainEngine, minutes = 15): Promise<Array<Pick<WorktreeRefreshRow, 'id' | 'state' | 'source_ids' | 'updated_at'>>> {
-  return engine.executeRaw(`SELECT id,state,source_ids,updated_at FROM persistence_worktree_refreshes
-    WHERE state IN ${ACTIVE_REFRESH_STATES_SQL} AND created_at < now()-($1::double precision*interval '1 minute') ORDER BY created_at`, [minutes]);
+  return engine.listStuckWorktreeRefreshes(minutes) as Promise<Array<Pick<WorktreeRefreshRow, 'id' | 'state' | 'source_ids' | 'updated_at'>>>;
 }

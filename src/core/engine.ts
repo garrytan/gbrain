@@ -12,6 +12,7 @@ import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, Extrac
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
 import type * as EmbeddingCatalogSql from './engine-sql/embedding-catalog.ts';
 import type * as DoctorReadsSql from './engine-sql/doctor-reads.ts';
+import type * as DoctorPersistenceSql from './engine-sql/doctor-persistence.ts';
 import type { FactRelinkAttempt, FactRelinkOutcome, FactRelinkUpsertOpts } from './engine-sql/fact-relink-attempts.ts';
 import type { ConversationFactLink, ConversationRelinkPagesQuery, RelinkPlacement } from './engine-sql/fact-relink-writes.ts';
 import type * as FactsCycleSql from './engine-sql/facts-cycle.ts';
@@ -4173,4 +4174,82 @@ export interface BrainEngine {
   // Doctor reads (engine-sql/doctor-reads.ts): the statements doctor checks ran through executeRaw.
   /** Rows of a page-child relation (`<table>.<column>`) whose page row is gone; a NULL reference of a SET NULL column is not one. */
   countPageChildOrphans(target: DoctorReadsSql.PageChildTarget): Promise<number>;
+
+  // Doctor persistence reads (engine-sql/doctor-persistence.ts): the statements the persistence checks ran through executeRaw.
+  /** Every counter row of the brain and of each principal, in key order. */
+  listCapacityCounters(): Promise<DoctorPersistenceSql.CapacityCounterRow[]>;
+  /** The three sources holding the most outstanding slots (of one principal when given), most stalled (ten minutes or older) first. */
+  listOutstandingHolders(principal: DoctorPersistenceSql.RequestPrincipal | null): Promise<DoctorPersistenceSql.OutstandingHolderRow[]>;
+  /** Rows in `persistence_requests`: the planner's estimate (Postgres, `estimate`) or the exact count. */
+  countPersistenceRequestRows(estimate: boolean): Promise<{ rows: string } | undefined>;
+  /** The lifetime request ids of the brain and of each principal, in key order. */
+  listLifetimeCounters(): Promise<DoctorPersistenceSql.LifetimeCounterRow[]>;
+  /** Admissions inside the last 7 days among the newest 10,000 (of one principal when given), and the oldest of those. */
+  readAdmissionSample(principal: DoctorPersistenceSql.RequestPrincipal | null): Promise<DoctorPersistenceSql.AdmissionSample | undefined>;
+  /** The oldest 100 running requests with their claim state, age, root progress inside `maxClaimMs` and the queue behind them. */
+  listRunningRequestStalls(maxClaimMs: number): Promise<DoctorPersistenceSql.RunningRequestStallRow[]>;
+  /** Hosts with a live full or promoted consumer heartbeat (renewed in the last 5 minutes) and the age of the oldest. */
+  readLiveConsumerSummary(): Promise<DoctorPersistenceSql.LiveConsumerSummary | undefined>;
+  /** Each terminal-bytes counter beside the receipts and topology changes it should equal, and the true-up clamp setting. */
+  readCounterDrift(clampedKey: string): Promise<DoctorPersistenceSql.CounterDriftRow[]>;
+  /** The newest request sequence, or null on an empty journal. */
+  readMaxRequestSequence(): Promise<string | null>;
+  /** Maintenance submit_job slugs refused `threshold` times or more with the same write and code inside `windowHours`. */
+  listRefusalBreakerRows(sourceId: string, windowHours: number, threshold: number, limit: number): Promise<DoctorPersistenceSql.RefusalBreakerRow[]>;
+  /** Slugs with a source_changed receipt after sequence `floor` (up to 100), with the total of them. */
+  listRecentDriftReceiptSlugs(sourceId: string, floor: string, message: string): Promise<Array<{ slug: string; total: number }>>;
+  /** Slugs with a source_changed receipt at or below sequence `floor` (up to 101), under a `timeoutMs` bound. */
+  listOlderDriftReceiptSlugs(sourceId: string, floor: string, message: string, timeoutMs: number): Promise<Array<{ slug: string }>>;
+  /** Writes in the last 7 days the database refused: by the managed-writer guard, by another trigger, and unclassified P0001. */
+  readPublicationRefusals(): Promise<DoctorPersistenceSql.PublicationRefusalRow | undefined>;
+  /** Effects that recorded a parked target and are not settled (of `sourceIds` when given). */
+  countParkedEffects(sourceIds: string[] | null): Promise<number>;
+  /** The first 20 parked effects with their request, and whether the binding they were parked under is gone. */
+  listParkedEffects(sourceIds: string[] | null): Promise<DoctorPersistenceSql.ParkedEffectRow[]>;
+  /** Held Git effects per source and worktree: retrying and parked counts, the codes of `codes` that hold them and the oldest request. */
+  listGitPushHoldRows(codes: string[], sourceIds: string[] | null): Promise<DoctorPersistenceSql.GitPushHoldRow[]>;
+  /** Queued writer_busy effects per source: how many waited longer than `stallMs`, how many are busy, since when, and the most retries. */
+  listStalledCatchupRows(sourceIds: string[] | null, stallMs: number): Promise<DoctorPersistenceSql.StalledCatchupRow[]>;
+  /** Parked Git targets per source, error code and former binding. */
+  listParkedGroupRows(sourceIds: string[] | null): Promise<DoctorPersistenceSql.ParkedGroupRow[]>;
+  /** Committed writes' stale queued or failed embedding effects: all, the failed, and the retry-queued. */
+  readStaleEmbeddingCounts(sourceIds: string[] | null): Promise<DoctorPersistenceSql.StaleEmbeddingCounts>;
+  /** The first 10 stale embedding effects. */
+  listStaleEmbeddingEffects(sourceIds: string[] | null): Promise<DoctorPersistenceSql.StaleEmbeddingEffectRow[]>;
+  /** Source bindings whose source is gone or was re-created, by source id, up to `limit` when given. */
+  listOrphanBindingRows(limit: number | null): Promise<DoctorPersistenceSql.OrphanBindingRow[]>;
+  /** The persistence identity as text, or null when the schema has no `persistence_brain` row. */
+  readPersistenceBrainIdText(): Promise<string | null>;
+  /** Every managed worktree id. */
+  listWorktreeIds(): Promise<string[]>;
+  /** The local paths of the active sources and of the worktrees `hostId` binds. */
+  listManagedRoots(hostId: string | null): Promise<DoctorPersistenceSql.ManagedRootRow[]>;
+  /** Sources with live database-only pages: the page count, whether the source has a binding, and its local path. */
+  listUnboundSourcePages(): Promise<DoctorPersistenceSql.UnboundSourcePageRow[]>;
+  /** The writer-version migration cutoff, or null when none is recorded. */
+  readWriterVersionCutoff(): Promise<unknown>;
+  /** Committed requests of the last `days`, grouped per role, host, principal and version. */
+  listRecentWriterVersions(days: number): Promise<DoctorPersistenceSql.RecentWriterVersionRow[]>;
+  /** Request ids of the page, fact and take purges of the last `days` (up to `cap`). */
+  listRecentPurgeRequests(days: number, cap: number): Promise<string[]>;
+  /** Active worktree refreshes older than `minutes`. */
+  listStuckWorktreeRefreshes(minutes: number): Promise<DoctorPersistenceSql.StuckWorktreeRefreshRow[]>;
+  /** Every active source's binding with its worktree owner (of `sourceIds` when given). */
+  listSourceBindingsForMovement(sourceIds: string[] | null): Promise<DoctorPersistenceSql.MovementBindingRow[]>;
+  /** The first 500 running claims that carry an owner, on worktrees `hostId` owns or on no worktree. */
+  listRunningClaimOwners(hostId: string): Promise<DoctorPersistenceSql.RunningClaimOwnerRow[]>;
+  /** Worktree bindings owned by a host other than `hostId`. */
+  listOwnerBindings(hostId: string): Promise<DoctorPersistenceSql.OwnerBindingRow[]>;
+  /** The newest consumer heartbeat of each of `hostIds`. */
+  listConsumerOwners(hostIds: string[]): Promise<DoctorPersistenceSql.ConsumerOwnerRow[]>;
+  /** Page versions a managed import archived under a database write, newest first (up to `limit`), narrowed to `slugs` when given. */
+  listOverwriteCandidates(sourceId: string, limit: number, slugs: string[] | null): Promise<Array<Record<string, unknown>>>;
+  /** The caller writes of `sourceIds` a managed-writer guard or a file drift refused, with the intent's pin and revision state, by sequence. */
+  listCallerRefusalRows(sourceIds: string[], operations: string[]): Promise<DoctorPersistenceSql.CallerRefusalRow[]>;
+  /** The refused receipts of `sourceIds` that compaction already emptied. */
+  countCompactedCallerRefusals(sourceIds: string[], operations: string[]): Promise<number>;
+  /** Per source, the put_page writes committed in the last 24 hours that adopted a local edit, and the paths. */
+  listLocalEditAdoptions(): Promise<DoctorPersistenceSql.LocalEditAdoptionRow[]>;
+  /** The recorded derivation-result sweeps of fact purges, oldest first. */
+  listDerivationPurgeSweeps(): Promise<DoctorPersistenceSql.DerivationPurgeSweepRow[]>;
 }

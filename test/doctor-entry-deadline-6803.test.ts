@@ -24,6 +24,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import postgres from '#postgres';
 import type { BrainEngine } from '../src/core/engine.ts';
+import * as doctorPersistence from '../src/core/engine-sql/doctor-persistence.ts';
+import { DOCTOR_PERSISTENCE_MEMBERS } from '../src/core/engine-sql/doctor-persistence.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { buildChecks, type Check } from '../src/commands/doctor.ts';
 import { CHEAP_INCIDENT_CHECKS, DOCTOR_CHECK_REGISTRY, LOST_WRITE_CHECKS, runDoctorRegistry } from '../src/commands/doctor/registry.ts';
@@ -56,7 +58,7 @@ function ctxFor(engine: BrainEngine | null, args: string[]): DoctorContext {
  */
 function instrumented(engine: BrainEngine, opts: { slow?: { match: RegExp; ms: number }; count?: RegExp } = {}): BrainEngine & { counted: number; settled: () => Promise<void> } {
   const state = { counted: 0, delayed: new Set<Promise<unknown>>() };
-  return new Proxy(engine, {
+  const proxy: BrainEngine = new Proxy(engine, {
     get(target, key) {
       if (key === 'counted') return state.counted;
       if (key === 'settled') return async () => { await Promise.allSettled([...state.delayed]); };
@@ -70,10 +72,16 @@ function instrumented(engine: BrainEngine, opts: { slow?: { match: RegExp; ms: n
           return run;
         };
       }
+      // A typed persistence read runs its statement through this wrapper's executeRaw, so the delay and the count see it.
+      if (typeof key === 'string' && (DOCTOR_PERSISTENCE_MEMBERS as readonly string[]).includes(key)) {
+        const impl = (doctorPersistence as unknown as Record<string, (raw: unknown, ...args: unknown[]) => unknown>)[key]!;
+        return (...args: unknown[]) => impl((sql: string, params?: unknown[], o?: unknown) => (proxy.executeRaw as (...a: unknown[]) => unknown)(sql, params, o), ...args);
+      }
       const value = Reflect.get(target, key, target);
       return typeof value === 'function' ? value.bind(target) : value;
     },
-  }) as BrainEngine & { counted: number; settled: () => Promise<void> };
+  });
+  return proxy as BrainEngine & { counted: number; settled: () => Promise<void> };
 }
 
 const byName = (checks: Check[], name: string) => checks.find((c) => c.name === name);

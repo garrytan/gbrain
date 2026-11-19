@@ -26,13 +26,7 @@ export interface StalledCatchup {
 }
 
 export async function readStalledCatchups(engine: BrainEngine, sourceIds?: string[], stallMs = CATCHUP_STALL_MS): Promise<StalledCatchup[]> {
-  const rows = await engine.executeRaw<{ source_id: string; stalled: number; busy: number; since: string | Date; retries: number }>(
-    `SELECT e.source_id,
-            count(*) FILTER (WHERE (e.data->>'busy_since')::timestamptz < now() - ($2::double precision * interval '1 millisecond'))::int AS stalled,
-            count(*)::int AS busy, min((e.data->>'busy_since')::timestamptz) AS since, COALESCE(max((e.data->>'busy_retries')::int), 0)::int AS retries
-       FROM persistence_effects e
-      WHERE e.state='queued' AND e.error_code='writer_busy' AND e.data ? 'busy_since' AND ($1::text[] IS NULL OR e.source_id=ANY($1::text[]))
-      GROUP BY e.source_id ORDER BY e.source_id`, [sourceIds ?? null, stallMs]);
+  const rows = await engine.listStalledCatchupRows(sourceIds ?? null, stallMs);
   return rows.filter(row => Number(row.stalled) > 0).map(row => ({
     source_id: row.source_id, stalled_effects: Number(row.stalled), busy_effects: Number(row.busy), busy_since: new Date(row.since).toISOString(),
     busy_retries: Number(row.retries),

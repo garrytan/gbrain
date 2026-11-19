@@ -45,11 +45,7 @@ export interface OwnerWithoutHeartbeat { kind: string | null; pid: number; nonce
 export async function ownersWithoutHeartbeat(engine: BrainEngine, hostId: string, rows?: readonly ListedConsumer[]): Promise<OwnerWithoutHeartbeat[]> {
   if (engine.kind === 'pglite') return [];
   const consumers = rows ?? await listHostConsumers(engine, hostId);
-  const claims = await engine.executeRaw<{ source_id: string; owner: unknown; lapsed: boolean | null }>(
-    `SELECT r.source_id,r.claim_phase->'owner' AS owner,r.claim_expires_at<now() AS lapsed FROM persistence_requests r
-      LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id
-      WHERE r.state='running' AND r.claim_phase->'owner' IS NOT NULL AND (r.worktree_id IS NULL OR w.owner_host_id=$1::uuid)
-      ORDER BY r.sequence LIMIT 500`, [hostId]);
+  const claims = await engine.listRunningClaimOwners(hostId);
   const seen = new Map<string, OwnerWithoutHeartbeat>();
   for (const claim of claims) {
     const owner = (typeof claim.owner === 'string' ? JSON.parse(claim.owner) : claim.owner) as { kind?: string; pid?: number; nonce?: string; version?: string } | null;
@@ -108,13 +104,9 @@ export async function hostIdentityMismatches(engine: BrainEngine, me: LocalHostI
   seams: { now?: number; exists?: (path: string) => boolean; marked?: (path: string) => boolean; hostJsonMintedAt?: number | null } = {}): Promise<HostIdentityMismatch[]> {
   const exists = seams.exists ?? (path => { try { return existsSync(path) && statSync(path).isDirectory(); } catch { return false; } });
   const marked = seams.marked ?? hasManagedRootMarker;
-  const bindings = await engine.executeRaw<OwnerBinding>(`SELECT w.id::text AS worktree_id,w.owner_host_id::text AS owner_host_id,h.local_path,w.created_at::text AS created_at,
-      (SELECT array_agg(b.source_id ORDER BY b.source_id) FROM persistence_source_bindings b WHERE b.worktree_id=w.id) AS source_ids
-    FROM persistence_worktrees w JOIN persistence_host_bindings h ON h.worktree_id=w.id AND h.host_id=w.owner_host_id
-    WHERE w.owner_host_id IS NOT NULL AND w.owner_host_id<>$1::uuid AND w.state<>'recovering' ORDER BY w.created_at`, [me.id]);
+  const bindings = await engine.listOwnerBindings(me.id);
   if (!bindings.length) return [];
-  const owners = engine.kind === 'pglite' ? [] : await engine.executeRaw<OwnerRow>(`SELECT DISTINCT ON (host_id) host_id::text AS host_id,host_json_path,persistence_home,minted_under,renewed_at::text AS renewed_at
-    FROM persistence_consumers WHERE host_id=ANY($1::uuid[]) ORDER BY host_id,renewed_at DESC`, [[...new Set(bindings.map(b => b.owner_host_id))]]);
+  const owners = engine.kind === 'pglite' ? [] : await engine.listConsumerOwners([...new Set(bindings.map(b => b.owner_host_id))]);
   const myMintedAt = seams.hostJsonMintedAt === undefined ? mintedAt(me.path) : seams.hostJsonMintedAt;
   const out: HostIdentityMismatch[] = [];
   for (const binding of bindings) {
