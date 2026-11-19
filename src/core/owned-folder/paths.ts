@@ -9,8 +9,8 @@ import { realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { OperationError } from '../ops/contract.ts';
 
-/** The reserved top-level folder of the default source's checkout. Not `.gbrain/`, which holds access.yml. */
-export const OWNED_FOLDER_ROOT = '.gbrain-owned';
+export { OWNED_FOLDER_ROOT } from './root.ts';
+import { OWNED_FOLDER_ROOT } from './root.ts';
 
 /** Source kinds whose pages live in an owned folder. Signal, WhatsApp and Notes add theirs in their own PRs. */
 export const OWNED_FOLDER_KINDS: readonly string[] = ['imessage'];
@@ -33,7 +33,7 @@ export function isOwnedRelPath(path: string): boolean {
 export function ownedPathRefused(paths: readonly string[], what: string): OperationError {
   return new OperationError('owned_folder_conflict',
     `${what} ${paths.slice(0, 3).join(', ')}${paths.length > 3 ? ` and ${paths.length - 3} more` : ''}: ${OWNED_FOLDER_ROOT}/ belongs to the sources that own it, and nothing else reads or writes it.`,
-    `Leave ${OWNED_FOLDER_ROOT}/ to its source. To stop those pages being written, remove the source (gbrain sources remove <id>); to see what it holds, run gbrain sources status <id>.`,
+    `Leave ${OWNED_FOLDER_ROOT}/ to its source: gbrain sources status shows which source keeps its pages there, and removing that source stops them.`,
     'docs/guides/apple-setup.md#where-the-pages-live');
 }
 

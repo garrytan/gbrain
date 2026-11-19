@@ -18,7 +18,7 @@ import { SLUG_WORD_CHARS, SLUG_VARIATION_SELECTORS_RE } from './cjk.ts';
 import { existsSync, statSync, realpathSync } from 'fs';
 import { join as pathJoin, resolve as pathResolve } from 'path';
 import type { BrainEngine } from './engine.ts';
-import { OWNED_FOLDER_ROOT } from './owned-folder/paths.ts';
+import { OWNED_FOLDER_ROOT } from './owned-folder/root.ts';
 
 export interface SyncManifest {
   added: string[];

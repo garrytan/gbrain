@@ -14,7 +14,7 @@ import { invalidateGitListingCache, knownOutsideGitRepo, noteGitFailure } from '
 import { hasUnresolvedDbOnlyDeclaration, loadStorageConfig } from './storage-config.ts';
 import { GIT_READ_ENV, gitChildEnv } from './git-env.ts';
 import { recordCommit, recordIntent } from './git/commit-ledger.ts';
-import { OWNED_FOLDER_ROOT } from './owned-folder/paths.ts';
+import { OWNED_FOLDER_ROOT } from './owned-folder/root.ts';
 
 /**
  * v0.32.7 CJK wave (codex post-merge F4): resolve a slug by `pages.source_path`

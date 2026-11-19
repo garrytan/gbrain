@@ -59,6 +59,24 @@ test('isPathPruned reserves the folder whatever --include-hidden says', () => {
   expect(isPathPruned('notes/a.md', ['**'])).toBe(false);
 });
 
+// The walk is engine-independent (isPathPruned), so this runs on PGLite only.
+test('full, incremental and --include-hidden ** syncs of the default source import nothing from the folder (pglite)', async () => {
+  const owned = async () => (await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pages WHERE source_id='default' AND (slug LIKE '%gbrain-owned%' OR slug LIKE 'imessage/%' OR compiled_truth LIKE '%Lunch at noon%')"))[0]!.n;
+  const repo = checkout();
+  await engine.executeRaw("UPDATE sources SET local_path=$1 WHERE id='default'", [repo]);
+  await performSync(engine, { sourceId: 'default', repoPath: repo, noPull: true, noEmbed: true, noExtract: true, full: true });
+  expect(await owned()).toBe(0);
+  writeFileSync(join(repo, OWNED), '# chat\n\nLunch at noon, moved.\n');
+  writeFileSync(join(repo, 'notes/b.md'), '# B\n');
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'more');
+  await performSync(engine, { sourceId: 'default', repoPath: repo, noPull: true, noEmbed: true, noExtract: true });
+  await performSync(engine, { sourceId: 'default', repoPath: repo, noPull: true, noEmbed: true, noExtract: true, full: true, includeHidden: ['**'] });
+  expect(await owned()).toBe(0);
+  const [b] = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pages WHERE source_id='default' AND slug='notes/b'");
+  expect(b!.n).toBe(1);
+});
+
 for (const kind of testBackends()) describe(`the default source leaves the owned folder alone (${kind})`, () => {
   let pglite: BrainEngine | undefined;
   let close: (() => Promise<void>) | undefined;
@@ -72,22 +90,6 @@ for (const kind of testBackends()) describe(`the default source leaves the owned
 
   const owned = async () => (await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pages WHERE source_id='default' AND (slug LIKE '%gbrain-owned%' OR slug LIKE 'imessage/%' OR compiled_truth LIKE '%Lunch at noon%')"))[0]!.n;
 
-  test('full, incremental and --include-hidden ** syncs import nothing from it', async () => {
-    const repo = checkout();
-    await engine.executeRaw("UPDATE sources SET local_path=$1 WHERE id='default'", [repo]);
-    await performSync(engine, { sourceId: 'default', repoPath: repo, noPull: true, noEmbed: true, noExtract: true, full: true });
-    expect(await owned()).toBe(0);
-    writeFileSync(join(repo, OWNED), '# chat\n\nLunch at noon, moved.\n');
-    writeFileSync(join(repo, 'notes/b.md'), '# B\n');
-    git(repo, 'add', '-A');
-    git(repo, 'commit', '-q', '-m', 'more');
-    await performSync(engine, { sourceId: 'default', repoPath: repo, noPull: true, noEmbed: true, noExtract: true });
-    await performSync(engine, { sourceId: 'default', repoPath: repo, noPull: true, noEmbed: true, noExtract: true, full: true, includeHidden: ['**'] });
-    expect(await owned()).toBe(0);
-    const [b] = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pages WHERE source_id='default' AND slug='notes/b'");
-    expect(b!.n).toBe(1);
-  });
-
   test('a sync root, an import target and an uploaded file inside it are refused', async () => {
     const repo = checkout();
     const inside = join(repo, '.gbrain-owned/imessage-x');
@@ -99,17 +101,16 @@ for (const kind of testBackends()) describe(`the default source leaves the owned
     spawnSync('ln', ['-s', inside, linked]);
     expect(String(((await capture(() => runImport(engine, [linked, '--no-embed']))).error as Error)?.message)).toContain('.gbrain-owned/');
     // A stdio session started in the checkout: the upload path is relative to it and passes the working-directory confinement.
-    await withEnv({ [HOOK_CWD_ENV]: repo }, async () => {
-      captureHookSessionCwd();
-      try {
+    try {
+      await withEnv({ [HOOK_CWD_ENV]: repo }, async () => {
+        captureHookSessionCwd();
         const out = await dispatchToolCall(engine, 'file_upload', { path: OWNED }, { remote: true, transport: 'stdio', sourceId: 'default' });
         expect(out.isError).toBe(true);
         expect(out.content.map(c => c.text).join('\n')).toContain('owned_folder_conflict');
-      } finally {
-        delete process.env[HOOK_CWD_ENV];
-        captureHookSessionCwd();
-      }
-    });
+      });
+    } finally {
+      captureHookSessionCwd();
+    }
     expect(await owned()).toBe(0);
   });
 
