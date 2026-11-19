@@ -1,7 +1,0 @@
-**`gbrain dream --phase patterns` no longer fails on every run when a managed brain has more unverified pattern pages than its write cap, two smaller bugs from outside reports are fixed, and a flaky performance test is steadier.**
-
-### Fixed
-- On a managed brain, `gbrain dream --phase patterns` published every leftover pattern page in one write batch. A backlog larger than the brain's outstanding-write cap was refused at the cap, nothing was saved, and the phase failed the same way on every run. Long maintenance batches are now written in parts that each fit inside the cap, so the backlog drains in one run. The cap and its default are unchanged. Reported by @superyuriy, first fixed by @Masashi-Ono0611 (#9708).
-- A `--json` command run from a directory whose `.env` sets a protected key now prints one JSON document. It used to print a second `command_failed` document after the real one. Reported and first fixed by @Masashi-Ono0611 (#9717).
-- The thin-client launcher that `gbrain connect --install` writes from a source checkout now says how to restore missing dependencies (`bun install --frozen-lockfile --ignore-scripts` in that checkout) instead of printing a module-not-found stack. Reported by @Kkkkkuro, first fixed by @Masashi-Ono0611 (#9665).
-- The entity-card performance test for a company with 10,000 links no longer fails on busy CI runners. It now measures only the work that grows with the number of referrers and holds that to a tighter limit, so a slow read still fails it.
