@@ -51,6 +51,7 @@
 //! family writes no page record, so it never sets the member-access flag itself; a page write in the
 //! same write closure still does.
 
+use crate::cli_reads::pg_jsonb;
 use crate::cli_reads::pg_text::{jsonb_text as jsonb_text_of, pg_lower};
 use crate::dream::{int4, jsonb, jsonb_check};
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, STORE_CORRUPT, StoreError};
@@ -126,6 +127,17 @@ struct GenerationRecord {
     held_context: Option<Value>,
     #[serde(default)]
     proposal: Option<Value>,
+    /// `held_context::text`, `proposal::text` and `(completeness->'fence')::text` as Postgres
+    /// prints them, kept from the written JSON text (`pg_jsonb`): the digits of a number as
+    /// `numeric` keeps them, and a JSON `null` apart from SQL NULL (a stored `null` value reads
+    /// back as None, so `Some("null")` beside it is the JSON null). A record written before these
+    /// fields renders its text from the value (`JsonbColumn`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    held_context_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    proposal_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fence_text: Option<String>,
     #[serde(default)]
     proposal_bytes: Option<i32>,
     attempts: i32,
@@ -418,6 +430,75 @@ fn int8(op: &str, column: &str, value: f64) -> Result<i64> {
     Ok(value as i64)
 }
 
+/// `column::text` of JSON text bound to a `::text::jsonb` cast that `jsonb_text` took as `value`.
+fn kept_text(text: &str, value: &Value) -> String {
+    pg_jsonb::parse(text).map_or_else(|| jsonb_text_of(value), |parsed| parsed.text())
+}
+
+/// `(completeness->'fence')::text` of the completeness JSON text, or None without a `fence` key.
+fn fence_text(text: &str, completeness: &Value) -> Option<String> {
+    match pg_jsonb::parse(text) {
+        Some(parsed) => parsed.get("fence").map(pg_jsonb::Jsonb::text),
+        None => completeness.get("fence").map(jsonb_text_of),
+    }
+}
+
+/// A nullable jsonb column of a record: its value and its kept text.
+struct JsonbColumn<'a> {
+    value: &'a Option<Value>,
+    text: &'a Option<String>,
+}
+
+impl JsonbColumn<'_> {
+    /// The column's value: `Some(Value::Null)` for a JSON null, None for SQL NULL.
+    fn value(&self) -> Option<Value> {
+        match (self.value, self.text) {
+            (Some(value), _) => Some(value.clone()),
+            (None, Some(_)) => Some(Value::Null),
+            (None, None) => None,
+        }
+    }
+
+    /// `column::text`, or None for SQL NULL.
+    fn text(&self) -> Option<String> {
+        self.text
+            .clone()
+            .or_else(|| self.value.as_ref().map(jsonb_text_of))
+    }
+}
+
+impl GenerationRecord {
+    fn held_context_column(&self) -> JsonbColumn<'_> {
+        JsonbColumn {
+            value: &self.held_context,
+            text: &self.held_context_text,
+        }
+    }
+
+    fn proposal_column(&self) -> JsonbColumn<'_> {
+        JsonbColumn {
+            value: &self.proposal,
+            text: &self.proposal_text,
+        }
+    }
+
+    /// `(completeness->'fence')::text`, or None without a `fence` key.
+    fn fence_text(&self) -> Option<String> {
+        let fence = self.completeness.as_object()?.get("fence")?;
+        Some(
+            self.fence_text
+                .clone()
+                .unwrap_or_else(|| jsonb_text_of(fence)),
+        )
+    }
+
+    /// `SET proposal=NULL`.
+    fn null_proposal(&mut self) {
+        self.proposal = None;
+        self.proposal_text = None;
+    }
+}
+
 /// JSON text bound to a `::text::jsonb` cast: parsed, checked and in `jsonb` key order.
 fn jsonb_text(op: &str, column: &str, text: &str) -> Result<Value> {
     let value: Value = serde_json::from_str(text).map_err(|e| {
@@ -520,6 +601,7 @@ impl Store {
             .map(|v| int8(OP, "restore_of", v))
             .transpose()?;
         let completeness = jsonb_text(OP, "completeness", &row.completeness)?;
+        let completeness_fence = fence_text(&row.completeness, &completeness);
         let mut ledger = Vec::with_capacity(items.len());
         for item in items {
             no_nul(
@@ -596,6 +678,9 @@ impl Store {
                 held_reason: None,
                 held_context: None,
                 proposal: None,
+                held_context_text: None,
+                proposal_text: None,
+                fence_text: completeness_fence.clone(),
                 proposal_bytes: None,
                 attempts: 0,
                 superseded_by: None,
@@ -669,11 +754,17 @@ impl Store {
                 ));
             }
             let held_context = jsonb_text(OP, "held_context", &row.context)?;
+            let held_context_text = kept_text(&row.context, &held_context);
             let proposal = row
                 .proposal
                 .as_deref()
                 .map(|text| jsonb_text(OP, "proposal", text))
                 .transpose()?;
+            let proposal_text = row
+                .proposal
+                .as_deref()
+                .zip(proposal.as_ref())
+                .map(|(text, value)| kept_text(text, value));
             crate::sources::require_source(&*tx, &key.source_id)?;
             let id = crate::pages::next_id(tx, ID_COUNTER)?;
             let record = GenerationRecord {
@@ -693,6 +784,9 @@ impl Store {
                 held_reason: Some(row.reason.clone()),
                 held_context: Some(held_context),
                 proposal,
+                held_context_text: Some(held_context_text),
+                proposal_text,
+                fence_text: None,
                 proposal_bytes: Some(proposal_bytes),
                 attempts: 1,
                 superseded_by: None,
@@ -1026,18 +1120,18 @@ impl Store {
                 }
             }
             for record in &mut kept {
-                let named = record.proposal.as_ref().is_some_and(|proposal| {
-                    record.owner_key.ends_with(&suffix) || proposes_key(proposal, slug)
+                let named = record.proposal_column().value().is_some_and(|proposal| {
+                    record.owner_key.ends_with(&suffix) || proposes_key(&proposal, slug)
                 });
                 if named {
-                    record.proposal = None;
+                    record.null_proposal();
                     record.updated_at_us = now;
                     put_json(tx, &record_key(record.id), &*record)?;
                     generations += 1;
                 }
             }
             for record in &mut kept {
-                if record.owner_key == owner && drop_fence(&mut record.completeness) {
+                if record.owner_key == owner && drop_fence(record) {
                     record.updated_at_us = now;
                     put_json(tx, &record_key(record.id), &*record)?;
                     generations += 1;
@@ -1058,10 +1152,11 @@ impl Store {
         for needle in needles {
             no_nul(OP, &[("needle", needle)])?;
         }
-        let carries = |value: &Value| {
-            let text = pg_lower(&jsonb_text_of(value));
+        let carries_text = |text: &str| {
+            let text = pg_lower(text);
             needles.iter().any(|needle| text.contains(needle.as_str()))
         };
+        let carries = |value: &Value| carries_text(&jsonb_text_of(value));
         let now = self.env.now_micros();
         self.write(|tx| {
             let (mut items, mut generations) = (0u64, 0u64);
@@ -1077,23 +1172,26 @@ impl Store {
                 }
             }
             for record in &mut records {
-                if record.proposal.as_ref().is_some_and(&carries)
-                    || record.held_context.as_ref().is_some_and(&carries)
+                if record
+                    .proposal_column()
+                    .text()
+                    .is_some_and(|t| carries_text(&t))
+                    || record
+                        .held_context_column()
+                        .text()
+                        .is_some_and(|t| carries_text(&t))
                 {
-                    record.proposal = None;
+                    record.null_proposal();
                     record.held_context = None;
+                    record.held_context_text = None;
                     record.updated_at_us = now;
                     put_json(tx, &record_key(record.id), &*record)?;
                     generations += 1;
                 }
             }
             for record in &mut records {
-                let fenced = record
-                    .completeness
-                    .as_object()
-                    .and_then(|o| o.get("fence"))
-                    .is_some_and(&carries);
-                if fenced && drop_fence(&mut record.completeness) {
+                let fenced = record.fence_text().is_some_and(|t| carries_text(&t));
+                if fenced && drop_fence(record) {
                     record.updated_at_us = now;
                     put_json(tx, &record_key(record.id), &*record)?;
                     generations += 1;
@@ -1141,8 +1239,10 @@ fn proposes_key(proposal: &Value, slug: &str) -> bool {
 }
 
 /// `completeness - 'fence'` where `completeness->'fence' IS NOT NULL`: true when the key was there.
-fn drop_fence(completeness: &mut Value) -> bool {
-    completeness
+fn drop_fence(record: &mut GenerationRecord) -> bool {
+    record.fence_text = None;
+    record
+        .completeness
         .as_object_mut()
         .is_some_and(|o| o.remove("fence").is_some())
 }
@@ -1551,5 +1651,57 @@ mod tests {
                 .scrub_generation_text_rows("default", &["a\0b".to_string()])
                 .is_err()
         );
+    }
+
+    #[test]
+    fn the_text_scrub_reads_the_digits_and_the_json_null_postgres_keeps() {
+        let store = store();
+        let scrub = |needle: &str| {
+            store
+                .scrub_generation_text_rows("default", &[needle.to_string()])
+                .unwrap()["derived_generations"]
+                .clone()
+        };
+        let mut numbers = held("h1", "no_proof");
+        numbers.context = r#"{"n":1.50,"m":-0.0}"#.into();
+        store.record_held_generation_row(&key(), &numbers).unwrap();
+        let fenced = GenerationKey {
+            kind: "other".into(),
+            ..key()
+        };
+        let mut row = activation("op1", 1.0);
+        row.completeness = r#"{"fence":{"n":100e-2}}"#.into();
+        store
+            .activate_generation_rows(&fenced, None, &row, &[owned("notes/a")])
+            .unwrap();
+        // `jsonb` keeps `1.50`, prints `-0.0` as `0.0` and `100e-2` as `1.00`.
+        assert_eq!(scrub(r#""n": 1.5}"#), json!(0));
+        assert_eq!(scrub("1.00}"), json!(1));
+        assert_eq!(scrub(r#""m": -0.0"#), json!(0));
+        assert_eq!(scrub(r#""m": 0.0"#), json!(1));
+        assert_eq!(row_of(&store, &key(), "held").unwrap().held_context, None);
+
+        // A JSON `null` context and proposal are values (`IS NOT NULL`) whose text is `null`.
+        let nulls = GenerationKey {
+            owner_key: "input:n".into(),
+            ..key()
+        };
+        let mut both = held("h2", "no_proof");
+        both.context = "null".into();
+        both.proposal = Some("null".into());
+        store.record_held_generation_row(&nulls, &both).unwrap();
+        let record = row_of(&store, &nulls, "held").unwrap();
+        assert_eq!(record.proposal_column().value(), Some(Value::Null));
+        assert_eq!(record.held_context_column().text().as_deref(), Some("null"));
+        assert_eq!(scrub("null"), json!(1));
+        let record = row_of(&store, &nulls, "held").unwrap();
+        assert_eq!(
+            (
+                record.proposal_column().value(),
+                record.held_context_column().text()
+            ),
+            (None, None)
+        );
+        assert_eq!(scrub("null"), json!(0));
     }
 }

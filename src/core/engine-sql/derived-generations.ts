@@ -4,8 +4,8 @@
  * not publish records (`recordHeld`), and the producer-path statements of `publishGeneration`: the identical-replay
  * check, the held rows of one input (`heldForInput`), the stopped `attempts_exhausted` row (`exhaustedHold`), the
  * attempt counter (`recordAttempt`) and the retirement valve (`readValve`, `bumpValve`). One SQL implementation for both engines; each statement is the text publish.ts
- * sent through `executeRaw`, byte for byte, with the same parameters, on the engine's own `executeRaw`. Only its home
- * moved. The Rust engine serves them from its `derived_generations` family (rust/crates/gbrain-store/src/generations.rs).
+ * sent through `executeRaw`, with the same parameters and a total row order that sorts text by bytes (`COLLATE "C"`, as PGLite and the Rust engine sort it), on the engine's own `executeRaw`.
+ * The Rust engine serves them from its `derived_generations` family (rust/crates/gbrain-store/src/generations.rs).
  */
 import type { EngineRawRead } from './cli-reads-ops.ts';
 
@@ -71,7 +71,7 @@ export interface GenerationValveRow { retired: number | null; owned: number }
 /** The live row of a key: $1 source, $2 kind, $3 owner key. */
 const LIVE_ROW_SQL = `SELECT id, generation, input_pin, input_size, locator FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='live'`;
 /** The items a generation owns: $1 the generation id. */
-const LIVE_ITEMS_SQL = `SELECT item_key, identity_hash FROM derived_generation_items WHERE generation_id=$1 AND action IN ('published','kept','adopted','revived')`;
+const LIVE_ITEMS_SQL = `SELECT item_key, identity_hash FROM derived_generation_items WHERE generation_id=$1 AND action IN ('published','kept','adopted','revived') ORDER BY item_key COLLATE "C"`;
 /** Supersedes the live row $1. */
 const SUPERSEDE_SQL = `UPDATE derived_generations SET state='superseded', updated_at=now() WHERE id=$1 AND state='live'`;
 /** Inserts the new live row and returns its id. */

@@ -3,7 +3,7 @@
  * of each generation, the item keys each generation still owns, and the live generation id of a key.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Protects: the three statements fence-restore.ts always sent, byte for byte with the same parameters, now that they
+ *  - Protects: the three statements fence-restore.ts always sent, with the same parameters and byte order, now that they
  *    are engine members (engine-sql/generation-fence-restore.ts), and a Rust brain answers the same walk: a generation
  *    without a recorded fence reads null, a retired item is not owned, the plan revives what only the earlier generation
  *    owned and retires what only the live one owns, and the apply answers `changed` for a stale live id and the refusal
@@ -37,10 +37,10 @@ const required = process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1';
 const rustRun = existsSync(rustArmAddonPath()) || required ? test : test.skip;
 const postgresRun = testBackends().includes('postgres') ? test : test.skip;
 
-/** The statements fence-restore.ts sent through executeRaw at 0120895e02, byte for byte. */
+/** The statements fence-restore.ts sent through executeRaw at 0120895e02, plus a byte-order ORDER BY. */
 const OLD = {
-  blocks: `SELECT id, completeness->'fence' AS fence FROM derived_generations WHERE id = ANY($1::bigint[])`,
-  owned: `SELECT generation_id, item_key FROM derived_generation_items WHERE generation_id = ANY($1::bigint[]) AND action <> 'retired'`,
+  blocks: `SELECT id, completeness->'fence' AS fence FROM derived_generations WHERE id = ANY($1::bigint[]) ORDER BY id`,
+  owned: `SELECT generation_id, item_key FROM derived_generation_items WHERE generation_id = ANY($1::bigint[]) AND action <> 'retired' ORDER BY generation_id, item_key COLLATE "C"`,
   live: `SELECT id FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='live'`,
 };
 const NAME = new Map(Object.entries(OLD).map(([name, sql]) => [sql, name]));

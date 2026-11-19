@@ -240,13 +240,20 @@ impl Store {
         let rows = selected(self, OP, source_ids, kind, "held", filter)?;
         let mut out = Vec::with_capacity(rows.len());
         for record in rows {
-            let items = match &record.proposal {
-                None | Some(Value::Null) => Value::Null,
+            // `jsonb_array_length(proposal)`: NULL for SQL NULL; an object is a non-array and any
+            // other value, a JSON `null` included, a scalar.
+            let items = match record.proposal_column().value() {
+                None => Value::Null,
                 Some(Value::Array(items)) => json!(items.len()),
-                Some(_) => {
+                Some(value) => {
+                    let what = if value.is_object() {
+                        "non-array"
+                    } else {
+                        "scalar"
+                    };
                     return Err(StoreError::new(
                         INVALID_ARGUMENT,
-                        format!("{OP}: cannot get array length of a non-array"),
+                        format!("{OP}: cannot get array length of a {what}"),
                     ));
                 }
             };
@@ -463,5 +470,32 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0]["item_key"], "walk/a");
         assert_eq!(items[0]["generation_id"].as_f64(), Some(live));
+    }
+
+    #[test]
+    fn the_held_list_sizes_a_proposal_as_jsonb_array_length_does() {
+        let sources = vec!["default".to_string()];
+        let all = RepairFilter::default();
+        for (proposal, outcome) in [
+            (None, Ok(Value::Null)),
+            (Some("[1,2]"), Ok(json!(2))),
+            (Some("null"), Err("scalar")),
+            (Some(r#""s""#), Err("scalar")),
+            (Some(r#"{"a":1}"#), Err("non-array")),
+        ] {
+            let store = store();
+            hold(&store, "a", proposal);
+            let got = store.list_held_generation_rows(&sources, "repair_walk", &all);
+            match outcome {
+                Ok(items) => assert_eq!(got.unwrap()[0]["items"], items, "{proposal:?}"),
+                Err(what) => assert_eq!(
+                    got.unwrap_err().to_string(),
+                    format!(
+                        "invalid_argument: listHeldGenerationRows: cannot get array length of a {what}"
+                    ),
+                    "{proposal:?}"
+                ),
+            }
+        }
     }
 }

@@ -3,7 +3,7 @@
  * typed engine members: the fence item keys a fact_fence generation of the page recorded, the probe for a stored
  * version without a body, one batch of the stored versions that carry a facts fence, and the move of kept fact rows
  * off the row numbers a fence row claims. One SQL implementation for both engines; each statement is the text
- * fence-evidence.ts sent through `executeRaw`, byte for byte, with the same parameters, on the engine's own
+ * fence-evidence.ts sent through `executeRaw`, with the same parameters and a total row order that sorts text by bytes (`COLLATE "C"`, as PGLite and the Rust engine sort it), on the engine's own
  * `executeRaw` (the move runs on the caller's transaction engine). The ledger and version reads are internal evidence
  * reads of one page, not caller page reads, so they take no page read policy, as the statements never did. The Rust
  * engine serves them from its ledger, version and fact rows (rust/crates/gbrain-store/src/generations/fence_evidence.rs
@@ -15,9 +15,10 @@ import type { GenerationRowKey } from './derived-generations.ts';
 /** A stored version that carries a facts fence marker. `id` is BIGINT (text on Postgres). */
 export interface FenceVersionBodyRow { id: number | string; compiled_truth: string; timeline: string | null }
 
-const RECORDED_ITEM_KEYS_SQL = `SELECT DISTINCT i.item_key FROM derived_generation_items i
+const RECORDED_ITEM_KEYS_SQL = `SELECT DISTINCT i.item_key COLLATE "C" AS item_key FROM derived_generation_items i
       JOIN derived_generations g ON g.id = i.generation_id
-     WHERE g.source_id = $1 AND g.kind = $2 AND g.owner_key = $3 AND g.state <> 'held' AND i.action <> 'retired' AND i.item_key = ANY($4::text[])`;
+     WHERE g.source_id = $1 AND g.kind = $2 AND g.owner_key = $3 AND g.state <> 'held' AND i.action <> 'retired' AND i.item_key = ANY($4::text[])
+     ORDER BY item_key`;
 
 const BODYLESS_VERSION_SQL = `SELECT 1 FROM page_versions v JOIN pages p ON p.id = v.page_id
       WHERE p.source_id = $1 AND p.slug = $2 AND v.compiled_truth IS NULL LIMIT 1`;
