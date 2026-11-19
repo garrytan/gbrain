@@ -57,6 +57,11 @@ One difference remains: PGLite stamps `folder_rule_ids` when a page is written a
 the store judges a page against the rules it holds when the read runs. The two agree after `restampSource`, which is
 the state a finished policy change leaves.
 
+The folder test has no `PrivacyPolicy` field: it reads the store's rules and pending prefixes,
+and `member_access_allows` ANDs it with the owner-only test (`owner_only`, absent means `closed`).
+So a policy with every defaulted field missing still hides a folder-restricted page, and no
+owner-only form reopens one (`a_policy_missing_its_defaulted_fields_still_hides_a_folder_restricted_page`).
+
 ## Tests
 
 - `crates/gbrain-store/src/access_rules.rs` (unit tests): reads in key order, the flag on a rule or pending put, the

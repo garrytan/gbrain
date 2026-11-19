@@ -768,4 +768,39 @@ mod tests {
             Some("member:".len() + 64)
         );
     }
+
+    /// The owner-only contract reads an absent `ownerOnly` as `closed`. The folder-rule filter has
+    /// no policy field: it reads the store's rules, and `member_access_allows` ANDs it with the
+    /// owner-only test, so a policy with every defaulted field missing still hides a
+    /// folder-restricted page, and an open owner-only form does not reopen it.
+    #[test]
+    fn a_policy_missing_its_defaulted_fields_still_hides_a_folder_restricted_page() {
+        use super::{PrivacyPolicy, page_hidden};
+        use crate::owner_only::OwnerOnlyForm;
+        let store = store();
+        let open_page = put(&store, "notes/open");
+        let private = put(&store, "private/diary");
+        store.put_access_policy_state("default").unwrap();
+        store
+            .put_access_rule(rule("private", "private/", true))
+            .unwrap();
+        let read = store.read().unwrap();
+        let minimal: PrivacyPolicy =
+            serde_json::from_str(r#"{"honorAliases":false,"entityPrivacy":false}"#).unwrap();
+        assert_eq!(minimal.owner_only, OwnerOnlyForm::Closed);
+        assert!(!minimal.open && minimal.identity.is_empty());
+        assert!(page_hidden(&*read, &private, &minimal).unwrap());
+        assert!(!page_hidden(&*read, &open_page, &minimal).unwrap());
+        for form in ["off", "fn", "closed"] {
+            let named: PrivacyPolicy = serde_json::from_str(&format!(
+                r#"{{"honorAliases":false,"entityPrivacy":false,"identity":["member:alice-example"],"ownerOnly":"{form}","open":true}}"#
+            ))
+            .unwrap();
+            assert!(
+                page_hidden(&*read, &private, &named).unwrap(),
+                "owner-only form {form} must not reopen a folder-restricted page"
+            );
+            assert!(!page_hidden(&*read, &open_page, &named).unwrap());
+        }
+    }
 }
