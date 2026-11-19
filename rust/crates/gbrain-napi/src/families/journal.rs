@@ -9,7 +9,7 @@ use napi::bindgen_prelude::Object;
 use napi_derive::napi;
 use serde_json::Value;
 
-use gbrain_store::persistence::Settle;
+use gbrain_store::persistence::{Settle, TrueUpReservation};
 
 use crate::store_binding::{Brain, required};
 
@@ -413,6 +413,21 @@ impl Brain {
         ids: Vec<String>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_true_up_requests(&ids))
+    }
+
+    /// `trueUpReservations(rows)`: the bytes the true-up gave back, as text.
+    #[napi]
+    pub fn true_up_reservations<'env>(
+        &self,
+        env: &'env Env,
+        rows: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.true_up_reservations(&required::<Vec<TrueUpReservation>>(
+                rows,
+                "trueUpReservations rows",
+            )?)
+        })
     }
 
     /// `listGatedMirrorRequests(hostId)`: the requests to requeue; `[]` (no worktree here).

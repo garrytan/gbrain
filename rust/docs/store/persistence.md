@@ -62,21 +62,21 @@ Rows have a null `worktree_id`, so the worktree terms of the claim statements ar
 answers them for a null worktree. `select_claimable_write` (the claim head read) exists in the store
 but has no binding.
 
-## Steps that refuse by name
+## Steps that need one transaction
 
-Three coordinator steps need one engine transaction, which this engine does not serve yet (the
-`transactions` capability). Each refuses before it opens one, with `engine_capability_missing`,
-`capability=transactions` and the step's name and reason in the detail, and writes nothing:
+Three coordinator steps run as one engine transaction. Each calls `requireTransactions`
+(`src/core/rust-engine/errors.ts`) before it opens one: an engine whose capability set lacks
+`transactions` refuses with `engine_capability_missing`, `capability=transactions` and the step's name
+and reason in the detail, and writes nothing. This engine serves `transactions`, so the check passes;
+an engine without a capability set (Postgres, PGLite, a transaction handle) passes too.
 
 | Step | Why it needs a transaction |
 | --- | --- |
 | `claimNextWrite` (journal.ts) | it selects the head under `FOR UPDATE SKIP LOCKED` and stamps the claim in one transaction |
 | `compactReceipt` (journal.ts) | it rechecks the receipt under its row lock and releases the counters in one transaction |
-| `trueUpRequests` (receipt-true-up.ts) | it locks the counters and compare-and-sets the reservations in one transaction |
+| `trueUpRequests` (receipt-true-up.ts) | it locks the counters, then `trueUpReservations` compare-and-sets the reservations and releases the freed bytes |
 
-The check is `requireTransactions` in `src/core/rust-engine/errors.ts`; an engine without a
-capability set (Postgres, PGLite, a transaction handle) passes. A true-up with nothing to shrink returns
-`0` before the check.
+A true-up with nothing to shrink returns `0` before the check.
 
 ## Topology changes
 
@@ -105,7 +105,8 @@ The consumer's housekeeping after a write (`persistence-housekeeping.ts`).
 | `brain.readReceiptBudget(retentionKey, floorDays)` | `{ retention, used, cutoff }`: the config value, the brain counter's terminal bytes, and now minus `floorDays` | `readReceiptBudget` |
 | `brain.listCompactableReceipts(retentionDays)` | compactable receipts completed more than `retentionDays` ago that are not an unresolved caller refusal, oldest first, at most 100. The open-sync-cursor and newest-sync-receipt exclusions never match (no managed-sync rows, no worktree) | `listCompactableReceipts` |
 | `brain.listReservationsAfter(after, limit)` | `{ id, sequence, compacted }` past `after`, in sequence order | `listReservationsAfter` |
-| `brain.listTrueUpRequests(ids)` | the true-up candidates; effect bytes are `0` and no effect is unfinished (no `persistence_effects` rows) | `listTrueUpRequests` |
+| `brain.listTrueUpRequests(ids)` | the terminal requests among `ids`, in no set order, with `effect_bytes` (the request's effect rows summed as `EFFECT_BYTES_SQL` sums them, as text) and `unfinished` (an effect is `queued` or `running`) | `listTrueUpRequests` |
+| `brain.trueUpReservations(rows)` | the bytes given back, as text. Each `{ id, old, kept, effects }` whose request still reserves `old`, still has `effects` effect bytes and has no `queued` or `running` effect now reserves `kept`. The freed bytes, summed per counter (the brain and the request's principal), leave the counters that exist, clamped at zero; each clamped counter adds one to config `persistence.true_up.clamped`. A changed or unknown request changes nothing. `invalid` for a malformed id or effect byte count | `trueUpReservations` |
 | `brain.readCapacityForecastInputs(light)` | the counters, the per-day rows (the principal rows, then the lifecycle receipts grouped by writer and UTC day), the history and, unless `light`, the reclaim rows. `tableBytes` is `null` (no relation size) | `readCapacityForecastInputs` |
 | `brain.listPendingSegmentedProjections(filter)` | the queued jobs of segmented pages that a projector can take now, as `listPendingSegmentedProjections` returns them | `listPendingSegmentedProjections` |
 | `brain.selectProjectionWindowJobs(cursor, retryCooldown)` | the window rows (the recency lane, then the wrapped key-order lane), with `high_water` as Postgres prints a `timestamptz`; the one row of nulls for an empty queue | `selectProjectionWindowJobs` |

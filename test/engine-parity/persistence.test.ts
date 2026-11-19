@@ -774,7 +774,11 @@ describe('engine parity: write journal', () => {
 
 /** Admits a queued request and completes it as committed outside a transaction; returns its journal id. */
 async function completeDirect(engine: BrainEngine, requestId: string): Promise<string> {
-  const id = await admitDirect(engine, requestId);
+  return completeAdmitted(engine, await admitDirect(engine, requestId));
+}
+
+/** Completes an admitted request as committed outside a transaction; returns its journal id. */
+async function completeAdmitted(engine: BrainEngine, id: string): Promise<string> {
   await engine.stampWriteClaim(id, TOKEN, 60_000, JSON.stringify({ phase: 'parity' }));
   await engine.completeWriteRow({
     id, state: 'committed', outcome: { status: 'parity' }, errorCode: null, errorMessage: null, consumerVersion: 'parity',
@@ -841,6 +845,52 @@ describe('engine parity: write-journal housekeeping', () => {
       terminalReservation: Number(r.terminal_reservation), compacted: r.compacted, effectBytes: r.effect_bytes, unfinished: r.unfinished })), none };
     expect(answers).toEqual({ rows: [{ done: true, principal: 'local_cli:parity-writer', outcome: { status: 'parity' }, authority: { scopes: ['write'] },
       terminalReservation: 800, compacted: false, effectBytes: '0', unfinished: false }], none: [] });
+    return answers;
+  });
+
+  parityTest('trueUpReservations shrinks a settled request once, skips a stale or unsettled one, and releases the freed bytes', {
+    methods: ['trueUpReservations', 'listTrueUpRequests', 'transaction', 'transactionDirect', 'declarePersistence', 'insertPublicationEffects', 'readCounterRows',
+      'getConfig', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow'],
+  }, async (engine) => {
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    const settled = await completeDirect(engine, 'b0000000-0000-4000-8000-0000000000b1');
+    const pending = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b2');
+    await engine.transactionDirect(async tx => {
+      await tx.declarePersistence();
+      await tx.insertPublicationEffects({ requestId: pending, revision: null, sourceId: 'default', sourceIncarnation: incarnation, worktreeId: null,
+        effects: [{ kind: 'embedding', data: { slug: 'notes/parity', page_id: 1 } }] });
+    });
+    await completeAdmitted(engine, pending);
+    const listed = await engine.listTrueUpRequests<{ id: string; terminal_reservation: string | number; effect_bytes: string; unfinished: boolean }>([settled, pending]);
+    const pendingBytes = listed.find(r => r.id === pending)!.effect_bytes;
+    const trueUp = (rows: Array<{ id: string; old: number; kept: number; effects: string }>) => engine.transaction(async tx => {
+      await tx.declarePersistence();
+      await tx.lockPersistenceCounters(KEYS);
+      return tx.trueUpReservations(rows);
+    });
+    const terminal = async () => Object.fromEntries(Object.entries(counters(await engine.readCounterRows(KEYS))).map(([k, v]) => [k, v.terminalBytes]));
+    const before = await terminal();
+    const stale = await trueUp([{ id: settled, old: 4096, kept: 300, effects: '0' }]);
+    const effectsChanged = await trueUp([{ id: settled, old: 800, kept: 300, effects: '5' }]);
+    const unsettled = await trueUp([{ id: pending, old: 4096, kept: 300, effects: pendingBytes }]);
+    const unknown = await trueUp([{ id: 'a0000000-0000-4000-8000-0000000000a9', old: 800, kept: 300, effects: '0' }]);
+    const shrunk = await trueUp([{ id: settled, old: 800, kept: 300, effects: '0' }]);
+    const again = await trueUp([{ id: settled, old: 800, kept: 300, effects: '0' }]);
+    const none = await trueUp([]);
+    const after = await engine.listTrueUpRequests<{ id: string; terminal_reservation: string | number }>([settled, pending]);
+    const answers = {
+      listed: listed.map(r => ({ settled: r.id === settled, reservation: Number(r.terminal_reservation), effectBytes: r.effect_bytes, unfinished: r.unfinished }))
+        .sort((a, b) => Number(b.settled) - Number(a.settled)),
+      pendingBytesOverFloor: Number(pendingBytes) > 1024, before, stale, effectsChanged, unsettled, unknown, shrunk, again, none,
+      reservations: after.map(r => ({ settled: r.id === settled, reservation: Number(r.terminal_reservation) })).sort((a, b) => Number(b.settled) - Number(a.settled)), counters: await terminal(),
+      clamped: await engine.getConfig('persistence.true_up.clamped'),
+    };
+    expect(answers).toEqual({
+      listed: [{ settled: true, reservation: 800, effectBytes: '0', unfinished: false }, { settled: false, reservation: 4096, effectBytes: pendingBytes, unfinished: true }],
+      pendingBytesOverFloor: true, before: { 'principal:local_cli:parity-writer': 4896, brain: 4896 }, stale: 0, effectsChanged: 0, unsettled: 0, unknown: 0,
+      shrunk: 500, again: 0, none: 0, reservations: [{ settled: true, reservation: 300 }, { settled: false, reservation: 4096 }],
+      counters: { 'principal:local_cli:parity-writer': 4396, brain: 4396 }, clamped: null,
+    });
     return answers;
   });
 
