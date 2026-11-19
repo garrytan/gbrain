@@ -210,7 +210,7 @@ Each phase gate includes these items, and they must stay green:
 | Item | Command | Purpose |
 |---|---|---|
 | C1 | `bun run verify` | Typecheck and all guard scripts. |
-| C2 | Full unit suite on PGLite (CI `test.yml`, 36 unit shards + 4 serial) | No PGLite regression. |
+| C2 | Full unit suite on PGLite (CI `test.yml`, 40 unit shards + 4 serial) | No PGLite regression. |
 | C3 | `bun run test:e2e` with `DATABASE_URL` (direct and PgBouncer lanes, `scripts/e2e-backend-matrix.txt`) | No Postgres regression. |
 | C4 | `bun run ci:local` (or `ci:ubicloud`) | The full gate, as the release runs it. |
 | C5 | The `executeRaw` ratchet from PR 0.6 | The count of unported raw SQL sites does not go up. |
