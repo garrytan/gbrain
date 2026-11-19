@@ -1,12 +1,12 @@
 /**
  * The CLI search and graph reads (BrainEngine scanExactBatch, nextLivePageAfter, listExactIdentityCandidates,
- * rankEntities, listExtractionPendingPages), served by gbrain-store `cli_reads::reads`. What the store does not keep
+ * rankEntities, readRankCoverage, readExactSnippetChunks, listExactRescanChunks, listExtractionPendingPages), served by gbrain-store `cli_reads::reads`. What the store does not keep
  * (trust tiers, page aliases) and what each member answers for it:
  * rust/docs/store/cli-reads-ops.md.
  */
-import type { ExtractionPendingRow } from '../../engine-sql/cli-reads-ops.ts';
+import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, RankCoverageRow } from '../../engine-sql/cli-reads-ops.ts';
 import type { ExactIdentityRow, ExactIdentityStatementOpts } from '../../engine-sql/exact-identity.ts';
-import type { RankEntitiesStatementOpts, RankEntityRow } from '../../engine-sql/graph-rank.ts';
+import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from '../../engine-sql/graph-rank.ts';
 import type { ExactBatchRow, ExactScanOpts } from '../../search/exact-scan.ts';
 import { storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
@@ -57,3 +57,28 @@ export const rankEntities: StoreMember<[opts: RankEntitiesStatementOpts, timeout
 
 export const listExtractionPendingPages: StoreMember<[opts: { sourceIds?: string[]; sourceId?: string; limit: number; offset: number }], ExtractionPendingRow[]> =
   (brain, opts) => storeCall({ member: 'listExtractionPendingPages' }, () => brain.listExtractionPendingPages(opts));
+
+/**
+ * rank_entities' remote coverage for one source. `excludePrivate` sends the caller's page policy, so a page the caller
+ * cannot read never makes coverage behind; the store keeps no mention-pass state, so with `mentionTypes` every
+ * readable page owes a mention pass.
+ */
+export const readRankCoverage: StoreMember<[opts: RankCoverageStatementOpts, timeoutMs: number], RankCoverageRow> = (brain, opts) => {
+  const taken = takeOptions('readRankCoverage', opts, ['sourceId', 'versionTs', 'mentionTypes', 'excludePrivate']);
+  const excludePrivate = storePagePolicy('readRankCoverage', taken.excludePrivate, { callerReaders: true });
+  return storeCall({ member: 'readRankCoverage' }, () => brain.readRankCoverage({
+    sourceId: taken.sourceId, versionTs: taken.versionTs, mentionTypes: taken.mentionTypes, excludePrivate: excludePrivate ?? null,
+  }));
+};
+
+/** search_exact's held-snippet check: per key, its visible stored chunk when it holds the snippet; `excludePrivate` sends the caller's page policy. */
+export const readExactSnippetChunks: StoreMember<[keys: readonly ExactSnippetKey[], opts: { excludePrivate: boolean }], ExactSnippetChunkRow[]> = (brain, keys, opts) => {
+  const excludePrivate = storePagePolicy('readExactSnippetChunks', opts?.excludePrivate, { callerReaders: true });
+  return storeCall({ member: 'readExactSnippetChunks' }, () => brain.readExactSnippetChunks({ keys, excludePrivate: excludePrivate ?? null }));
+};
+
+/** search_exact's rescan: the visible chunks past the safe-chunk fence of `pageIds`; `excludePrivate` sends the caller's page policy. */
+export const listExactRescanChunks: StoreMember<[pageIds: readonly number[], opts: { excludePrivate: boolean }], ExactRescanChunkRow[]> = (brain, pageIds, opts) => {
+  const excludePrivate = storePagePolicy('listExactRescanChunks', opts?.excludePrivate, { callerReaders: true });
+  return storeCall({ member: 'listExactRescanChunks' }, () => brain.listExactRescanChunks({ pageIds, excludePrivate: excludePrivate ?? null }));
+};

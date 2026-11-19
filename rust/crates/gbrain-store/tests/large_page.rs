@@ -25,15 +25,21 @@ fn an_inline_page_measures_its_body_columns_in_utf8_bytes() {
     put(&store, "notes/inline", "café body", "- € event");
     put(&store, "notes/plain", "plain body", "");
     assert_eq!(
-        store.read_stored_body_bytes("notes/inline", "default").unwrap(),
+        store
+            .read_stored_body_bytes("notes/inline", "default")
+            .unwrap(),
         Some(("café body".len() + "- € event".len()) as i64)
     );
     assert_eq!(
-        store.read_stored_body_bytes("notes/plain", "default").unwrap(),
+        store
+            .read_stored_body_bytes("notes/plain", "default")
+            .unwrap(),
         Some(10)
     );
     assert_eq!(
-        store.read_stored_body_bytes("notes/inline", "other").unwrap(),
+        store
+            .read_stored_body_bytes("notes/inline", "other")
+            .unwrap(),
         None
     );
 }
@@ -43,13 +49,19 @@ fn a_missing_or_soft_deleted_page_has_no_stored_size() {
     let dir = TempDir::new("large-page");
     let store = open(&dir);
     put(&store, "notes/gone", "gone body", "");
-    store.soft_delete_page("notes/gone", Some("default")).unwrap();
+    store
+        .soft_delete_page("notes/gone", Some("default"))
+        .unwrap();
     assert_eq!(
-        store.read_stored_body_bytes("notes/gone", "default").unwrap(),
+        store
+            .read_stored_body_bytes("notes/gone", "default")
+            .unwrap(),
         None
     );
     assert_eq!(
-        store.read_stored_body_bytes("notes/missing", "default").unwrap(),
+        store
+            .read_stored_body_bytes("notes/missing", "default")
+            .unwrap(),
         None
     );
 }

@@ -98,7 +98,10 @@ function readablePageSql(opts: Pick<RankEntitiesStatementOpts, 'sourceIds' | 're
  * link extraction, and (with mentionTypes) a mention pass? Pages the caller
  * cannot read never move the state.
  */
-export function rankCoverageStatement(opts: { sourceId: string; excludePrivate: boolean; versionTs: string; mentionTypes?: string[] }): { text: string; params: unknown[] } {
+/** `rankCoverageStatement` options: one source, the caller's privacy, the link-extractor watermark and, when mentions count, the alias-derived page types. */
+export interface RankCoverageStatementOpts { sourceId: string; excludePrivate: boolean; versionTs: string; mentionTypes?: string[] }
+
+export function rankCoverageStatement(opts: RankCoverageStatementOpts): { text: string; params: unknown[] } {
   const readable = readablePageSql({ sourceIds: [opts.sourceId], remote: { excludePrivate: opts.excludePrivate } });
   const mentionDue = opts.mentionTypes
     ? sqlFragment`EXISTS (SELECT 1 FROM pages p LEFT JOIN page_mention_state s ON s.page_id = p.id

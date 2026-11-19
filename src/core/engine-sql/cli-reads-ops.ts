@@ -1,7 +1,8 @@
 /**
  * Read-command statements that ran through `engine.executeRaw` from the ops
  * layer (docs/research/rust-cli-executeraw-map.md, "Read-command queries"):
- * search-exact, wanted, whois, rank-entities and extraction-pending.
+ * search-exact (with its held-snippet chunk reads), wanted, whois,
+ * rank-entities (with its remote coverage) and extraction-pending.
  *
  * Every function takes the engine's own `executeRaw`, so each statement runs
  * on exactly the path it ran on before it moved here: on Postgres a
@@ -11,7 +12,8 @@
  */
 import { buildExactBatchStatement, type ExactBatchRow, type ExactScanOpts } from '../search/exact-scan.ts';
 import { exactIdentityStatement, type ExactIdentityRow, type ExactIdentityStatementOpts } from './exact-identity.ts';
-import { rankEntitiesStatement, type RankEntitiesStatementOpts, type RankEntityRow } from './graph-rank.ts';
+import { rankCoverageStatement, rankEntitiesStatement, type RankCoverageStatementOpts, type RankEntitiesStatementOpts, type RankEntityRow } from './graph-rank.ts';
+import { chunkVisibleFilter, safeChunksFilter } from '../search/safe-chunks.ts';
 import { unverifiedExtractionFragment } from '../extraction-review.ts';
 import { buildVisibilityClause } from '../search/sql-ranking.ts';
 import { privatePagesFilterForCaller, privateProvenanceFilterUnderPolicy } from '../search/private-visibility.ts';
@@ -45,6 +47,55 @@ export async function listExactIdentityCandidates(raw: EngineRawRead, opts: Exac
 export async function rankEntities(raw: EngineRawRead, opts: RankEntitiesStatementOpts, timeoutMs: number): Promise<RankEntityRow[]> {
   const { text, params } = rankEntitiesStatement(opts);
   return raw<RankEntityRow>(text, params, { timeoutMs });
+}
+
+/** One source's remote rank coverage: a readable page still owes link extraction, or (with mention types) a mention pass. */
+export interface RankCoverageRow { link_behind: boolean; mention_due: boolean }
+
+/** rank_entities' remote coverage for one source (engine-sql/graph-rank.ts `rankCoverageStatement`) under a `timeoutMs` statement deadline. */
+export async function readRankCoverage(raw: EngineRawRead, opts: RankCoverageStatementOpts, timeoutMs: number): Promise<RankCoverageRow> {
+  const { text, params } = rankCoverageStatement(opts);
+  const [row] = await raw<RankCoverageRow>(text, params, { timeoutMs });
+  return { link_behind: row?.link_behind === true, mention_due: row?.mention_due === true };
+}
+
+/** One exact-scan snippet to place in its stored chunk: the page, the chunk index and the snippet text. */
+export interface ExactSnippetKey { pageId: number; chunkIndex: number; snippet: string }
+/** The stored chunk a snippet was cut from; `i` is the 1-based position of its key. */
+export interface ExactSnippetChunkRow { i: number; chunk_text: string }
+/** One visible, safe-fenced chunk of a page the exact scan reads again. */
+export interface ExactRescanChunkRow { page_id: number; chunk_index: number; chunk_source: string; chunk_text: string }
+
+/**
+ * search_exact's held-snippet check: per key, the text of its chunk when the chunk is visible (served projection, not
+ * ahead of the page's body generation) and holds the snippet, by key position. With `excludePrivate` a private page
+ * the caller may not read gives no row.
+ */
+export async function readExactSnippetChunks(raw: EngineRawRead, keys: readonly ExactSnippetKey[], opts: { excludePrivate: boolean }): Promise<ExactSnippetChunkRow[]> {
+  if (!keys.length) return [];
+  const privacy = trustedSql(opts.excludePrivate ? ` AND ${privatePagesFilterForCaller('p')}` : '');
+  const { text, params } = renderFragment(sqlFragment`SELECT k.i, cc.chunk_text
+      FROM unnest(${keys.map(k => k.pageId)}::int[], ${keys.map(k => k.chunkIndex)}::int[], ${keys.map(k => k.snippet)}::text[]) WITH ORDINALITY AS k(page_id, chunk_index, snippet, i)
+      JOIN pages p ON p.id = k.page_id JOIN content_chunks cc ON cc.page_id = k.page_id AND cc.chunk_index = k.chunk_index
+      WHERE ${trustedSql(chunkVisibleFilter('p', 'cc'))} AND strpos(cc.chunk_text, k.snippet) > 0${privacy}
+      ORDER BY k.i`);
+  const rows = await raw<{ i: number | string; chunk_text: string }>(text, params);
+  return rows.map(r => ({ i: Number(r.i), chunk_text: r.chunk_text }));
+}
+
+/**
+ * search_exact's rescan: every visible chunk past the safe-chunk fence of `pageIds`, by page id then chunk index. With
+ * `excludePrivate` a private page the caller may not read gives no rows.
+ */
+export async function listExactRescanChunks(raw: EngineRawRead, pageIds: readonly number[], opts: { excludePrivate: boolean }): Promise<ExactRescanChunkRow[]> {
+  if (!pageIds.length) return [];
+  const privacy = trustedSql(opts.excludePrivate ? ` AND ${privatePagesFilterForCaller('p')}` : '');
+  const { text, params } = renderFragment(sqlFragment`SELECT cc.page_id, cc.chunk_index, cc.chunk_source, cc.chunk_text
+      FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+      WHERE cc.page_id = ANY(${[...pageIds]}::int[]) AND ${trustedSql(chunkVisibleFilter('p', 'cc'))} AND ${trustedSql(safeChunksFilter('p'))}${privacy}
+      ORDER BY cc.page_id, cc.chunk_index`);
+  const rows = await raw<{ page_id: number | string; chunk_index: number | string; chunk_source: string; chunk_text: string }>(text, params);
+  return rows.map(r => ({ page_id: Number(r.page_id), chunk_index: Number(r.chunk_index), chunk_source: r.chunk_source, chunk_text: r.chunk_text }));
 }
 
 export interface ExtractionPendingRow {

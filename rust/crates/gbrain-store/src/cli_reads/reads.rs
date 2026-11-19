@@ -46,14 +46,14 @@ const NON_RANKING_LINK_TYPES: &[&str] = &["amends"];
 // ---------------------------------------------------------------------------------------------
 
 /// `servedTextProjectionFilter`: the current projection, or the pre-activation marker.
-fn served(page: &PageRecord) -> bool {
+pub(super) fn served(page: &PageRecord) -> bool {
     match page.text_projection_revision.as_deref() {
         Some(rev) => rev == page.knowledge_revision || rev == ACTIVATION_SERVED_REVISION,
         None => false,
     }
 }
 
-fn has_key(page: &PageRecord, key: &str) -> bool {
+pub(super) fn has_key(page: &PageRecord, key: &str) -> bool {
     page.frontmatter.contains_key(key)
 }
 
@@ -64,13 +64,13 @@ fn row_count(value: i64, what: &str) -> Result<usize> {
 }
 
 /// Source archive flags, read once per source. A page whose source is missing is not joined.
-struct Sources<'a> {
+pub(super) struct Sources<'a> {
     read: &'a dyn KvRead,
     archived: HashMap<String, Option<bool>>,
 }
 
 impl<'a> Sources<'a> {
-    fn new(read: &'a dyn KvRead) -> Self {
+    pub(super) fn new(read: &'a dyn KvRead) -> Self {
         Self {
             read,
             archived: HashMap::new(),
@@ -88,7 +88,7 @@ impl<'a> Sources<'a> {
     }
 
     /// `JOIN sources s ... AND NOT s.archived`.
-    fn live(&mut self, id: &str) -> Result<bool> {
+    pub(super) fn live(&mut self, id: &str) -> Result<bool> {
         Ok(self.archived(id)? == Some(false))
     }
 }

@@ -24,7 +24,11 @@ fn put(store: &Store, slug: &str, frontmatter: Value) {
 fn a_page_without_readable_by_leaves_the_flag_unset() {
     let dir = TempDir::new("access-flag");
     let store = open(&dir);
-    put(&store, "notes/open", json!({"tags": ["a"], "meta": {"readable_by": ["x"]}}));
+    put(
+        &store,
+        "notes/open",
+        json!({"tags": ["a"], "meta": {"readable_by": ["x"]}}),
+    );
     assert_eq!(store.get_config(FLAG).unwrap(), None);
 }
 
@@ -32,10 +36,16 @@ fn a_page_without_readable_by_leaves_the_flag_unset() {
 fn a_page_with_readable_by_sets_the_flag_and_it_stays_set() {
     let dir = TempDir::new("access-flag");
     let store = open(&dir);
-    put(&store, "notes/closed", json!({"readable_by": ["alice-example"]}));
+    put(
+        &store,
+        "notes/closed",
+        json!({"readable_by": ["alice-example"]}),
+    );
     assert_eq!(store.get_config(FLAG).unwrap().as_deref(), Some("1"));
     put(&store, "notes/closed", json!({}));
-    store.soft_delete_page("notes/closed", Some("default")).unwrap();
+    store
+        .soft_delete_page("notes/closed", Some("default"))
+        .unwrap();
     assert_eq!(store.get_config(FLAG).unwrap().as_deref(), Some("1"));
 }
 
@@ -44,6 +54,10 @@ fn a_flag_set_to_another_value_is_set_to_one() {
     let dir = TempDir::new("access-flag");
     let store = open(&dir);
     store.set_config(FLAG, "0").unwrap();
-    put(&store, "notes/closed", json!({"readable_by": "group:team-a"}));
+    put(
+        &store,
+        "notes/closed",
+        json!({"readable_by": "group:team-a"}),
+    );
     assert_eq!(store.get_config(FLAG).unwrap().as_deref(), Some("1"));
 }
