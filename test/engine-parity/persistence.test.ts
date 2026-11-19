@@ -158,6 +158,17 @@ describe('engine parity: write journal', () => {
     return { request };
   });
 
+  parityTest('readGitHoldReportInputs finds no hold summary and reads the source mirror flag as text', { methods: ['readGitHoldReportInputs'] }, async (engine, backend) => {
+    const before = await engine.readGitHoldReportInputs('default', 'default:1');
+    expect(before).toEqual({ summary: null, mirror: null });
+    const absent = await engine.readGitHoldReportInputs('no-such-source', 'no-such-source:1');
+    expect(absent).toEqual({ summary: null, mirror: null });
+    await createSource(engine, backend, 'mirror-flag', { mirror_read_only: true });
+    const mirrored = await engine.readGitHoldReportInputs('mirror-flag', 'mirror-flag:1');
+    expect(mirrored).toEqual({ summary: null, mirror: 'true' });
+    return { before, absent, mirrored };
+  });
+
   parityTest('one request is admitted, read, claimed, locked and completed, and its counters are charged then released', {
     methods: ['readLedgerSource', 'transaction', 'lockPersistenceCounters', 'insertWriteRequest', 'readWriteRequest', 'readWriteRequestById', 'stampWriteClaim', 'lockWriteRequest', 'completeWriteRow'],
   }, async (engine) => {

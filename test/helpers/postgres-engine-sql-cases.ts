@@ -198,6 +198,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readSourceIncarnation': OOS.cliReadsImport,
   'readGitHoldRecords': OOS.callerRawSql,
   'readGitHoldRetryRequest': OOS.callerRawSql,
+  'readGitHoldReportInputs': OOS.callerRawSql,
   'readSyncDispatchRow': OOS.callerRawSql,
   'hasCompanyBrainReceipt': OOS.cliReadsImport,
   'readGuestSourceRow': OOS.cliReadsImport,

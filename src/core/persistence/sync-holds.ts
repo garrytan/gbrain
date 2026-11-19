@@ -60,7 +60,7 @@ import { HOLD_ATTEMPTS_NEEDS_HUMAN, HOLD_ESCALATE_MS } from './sync-fault-class.
 import { retiredSyncSetting, type RetiredSyncKeyName } from '../sync-config-keys.ts';
 
 import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP } from '../engine-sql/persistence-journal.ts';
-import { GIT_HOLD_RETRY_OP, readGitHoldRecords as readGitHoldRecordsOver, readGitHoldRetryRequest as readGitHoldRetryRequestOver, type GitHoldRecordsQuery } from '../engine-sql/sync-hold-reads.ts';
+import { GIT_HOLD_RETRY_OP, readGitHoldRecords as readGitHoldRecordsOver, readGitHoldRetryRequest as readGitHoldRetryRequestOver, readGitHoldReportInputs as readGitHoldReportInputsOver, type GitHoldRecordsQuery, type GitHoldReportInputs } from '../engine-sql/sync-hold-reads.ts';
 export { GIT_HOLD_OP, GIT_HOLD_RETRY_OP, GIT_HOLD_SUMMARY_OP };
 export const SYNC_IMPORT_PROVENANCE_OP = 'sync-import-provenance';
 /** One row per source incarnation: the blocked requests recent managed syncs converted in place. */
@@ -79,6 +79,11 @@ type Exec = Pick<BrainEngine, 'executeRaw'>;
 type HoldsReader = Pick<BrainEngine, 'readGitHoldRecords'> | Exec;
 /** An engine (its typed readGitHoldRetryRequest) or an executeRaw-only view of one. */
 type RetryReader = Pick<BrainEngine, 'readGitHoldRetryRequest'> | Exec;
+/** An engine (its typed readGitHoldReportInputs and readGitHoldRecords) or an executeRaw-only view of one; the fence auto-repair read still needs executeRaw. */
+type ReportReader = Pick<BrainEngine, 'readGitHoldReportInputs' | 'readGitHoldRecords' | 'executeRaw'> | Exec;
+
+const readGitHoldReportInputsFor = (engine: ReportReader, sourceId: string, fingerprint: string): Promise<GitHoldReportInputs> =>
+  'readGitHoldReportInputs' in engine ? engine.readGitHoldReportInputs(sourceId, fingerprint) : readGitHoldReportInputsOver(engine, sourceId, fingerprint);
 
 export type GitHoldCode = ContentRefusal['code'] | 'rename_held' | 'parser_regression' | 'managed_image_sync_unsupported' | 'concurrent_write' | 'preparation_stalled' | 'worktree_dirty' | 'file_drift'
   | 'legacy_slug_conflict' | 'write_interrupted' | 'origin_conflict'
@@ -1445,17 +1450,12 @@ export function fencesNormalizedReport(sourceId: string, tally: FencesTally | un
  * source's outstanding total, escalation, and the exact inspect and repair
  * commands. Remote callers get the counts and a relay instruction only.
  */
-export async function buildHoldReport(engine: Exec, input: { sourceId: string; incarnation: string; runId: string; remote: boolean;
+export async function buildHoldReport(engine: ReportReader, input: { sourceId: string; incarnation: string; runId: string; remote: boolean;
   policy: SyncHoldPolicy | Promise<SyncHoldPolicy>; screened: number; pendingScreen?: boolean; needsHuman?: (record: GitHoldRecord, auto: FenceAutoRepair | undefined) => boolean }): Promise<Pick<import('../../commands/sync.ts').SyncResult,
   'held' | 'held_count' | 'held_needs_human' | 'holds_outstanding' | 'holds_escalated' | 'holds_truncated' | 'holds_pending_screen' | 'holds_fix'>> {
   // #6712 PR 4b: the summary, this run's holds and the policy (a caller may pass its read in flight) in one round trip.
-  const [[summary], sourceHolds, policy, [source]] = await Promise.all([engine.executeRaw<{ count: number | string; images: number | string; fences: number | string; stalled: number | string; concurrent: number | string; dirty: number | string; drift: number | string }>(`SELECT COALESCE((completed_keys->0->>'count')::int,0) AS count,
-      COALESCE((completed_keys->0->>'drift')::int,0) AS drift,
-      COALESCE((completed_keys->0->>'images')::int,0) AS images, COALESCE((completed_keys->0->>'fences')::int,0) AS fences, COALESCE((completed_keys->0->>'stalled')::int,0) AS stalled,
-      COALESCE((completed_keys->0->>'concurrent')::int,0) AS concurrent, COALESCE((completed_keys->0->>'dirty')::int,0) AS dirty
-    FROM op_checkpoints WHERE op=$1 AND fingerprint=$2`,
-  [GIT_HOLD_SUMMARY_OP, summaryFingerprint(input.sourceId, input.incarnation)]), readGitSourceHolds(engine, { sourceIds: [input.sourceId], runId: input.runId }), input.policy,
-    engine.executeRaw<{ mirror: string | null }>("SELECT config->>'mirror_read_only' AS mirror FROM sources WHERE id=$1", [input.sourceId])]);
+  const [{ summary, mirror }, sourceHolds, policy] = await Promise.all([readGitHoldReportInputsFor(engine, input.sourceId, summaryFingerprint(input.sourceId, input.incarnation)),
+    readGitSourceHolds(engine, { sourceIds: [input.sourceId], runId: input.runId }), input.policy]);
   const outstanding = Number(summary?.count ?? 0);
   const runHolds = sourceHolds[0]?.holds ?? [];
   if (!outstanding && !runHolds.length) return {};
@@ -1472,7 +1472,7 @@ export async function buildHoldReport(engine: Exec, input: { sourceId: string; i
   // #7199: this run's holds whose verdict waits on a person (sync-status.ts holdVerdict).
   const needsHuman = input.needsHuman ? runHolds.filter(hold => input.needsHuman!(hold, auto)).length : 0;
   const steps = holdRepairSteps(input.sourceId, { fences, others: Math.max(0, outstanding - fences - stalled - concurrent - dirty - drift - slugConflicts), ...(stalled ? { stalled } : {}),
-    ...(concurrent ? { concurrent } : {}), ...(dirty ? { dirty } : {}), ...(drift ? { drift } : {}), ...(slugConflicts ? { slug_conflicts: slugConflicts } : {}), ...(source?.mirror === 'true' ? { mirror: true } : {}) }, auto);
+    ...(concurrent ? { concurrent } : {}), ...(dirty ? { dirty } : {}), ...(drift ? { drift } : {}), ...(slugConflicts ? { slug_conflicts: slugConflicts } : {}), ...(mirror === 'true' ? { mirror: true } : {}) }, auto);
   // #6278: the escalation text is routed by code: stalled holds point at the writer, not at a generator.
   const runStalled = runHolds.filter(hold => stalledWeight(hold)).length;
   const escalation = runStalled * 2 > runHolds.length

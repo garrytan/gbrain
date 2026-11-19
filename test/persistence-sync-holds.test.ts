@@ -20,7 +20,7 @@ import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { readManagedSyncFailures } from '../src/core/persistence/sync-failures.ts';
 import { sha256 } from '../src/core/persistence/digest.ts';
-import { GIT_HOLD_OP, SYNC_IMPORT_PROVENANCE_OP, gitHoldItem, readGitHoldRetryPaths, readGitSourceHolds, recordContentHoldRepair, requestGitHoldRetry } from '../src/core/persistence/sync-holds.ts';
+import { GIT_HOLD_OP, SYNC_IMPORT_PROVENANCE_OP, buildHoldReport, gitHoldItem, readGitHoldRetryPaths, readSyncHoldPolicy, readGitSourceHolds, recordContentHoldRepair, requestGitHoldRetry } from '../src/core/persistence/sync-holds.ts';
 import { CONTENT_REPAIR_LANE_VERSION } from '../src/core/persistence/sync-fault-class.ts';
 import { printSyncResult, type SyncOpts, type SyncResult } from '../src/commands/sync.ts';
 import { readGitHoldStatuses } from '../src/core/persistence/connector-status.ts';
@@ -470,6 +470,26 @@ test('a retry-held request is read back through the typed engine member, not cal
   await requestGitHoldRetry(engine, s.id, incarnation!, ['notes/a.md', 'notes/ok.md']);
   expect((await readGitHoldRetryPaths(strict, s.id, incarnation!)).sort()).toEqual(['notes/a.md', 'notes/ok.md']);
   expect(await readGitHoldRetryPaths(strict, s.id, `${incarnation}-other`)).toEqual([]);
+}));
+
+test('a sync hold report reads its summary and the mirror flag through the typed engine member, not caller raw SQL', () => each(async engine => {
+  const s = await source(engine, { 'notes/a.md': FOLDED, 'notes/ok.md': note('Ok') });
+  expect((await s.sync()).held_count).toBe(1);
+  const [held] = await s.holds();
+  // The two statements buildHoldReport ran before they moved to readGitHoldReportInputs; a Rust brain refuses caller raw SQL.
+  const moved = (sql: string) => sql.includes("COALESCE((completed_keys->0->>'count')::int,0) AS count,") || sql === "SELECT config->>'mirror_read_only' AS mirror FROM sources WHERE id=$1";
+  const strict = new Proxy(engine, { get(target, key) {
+    if (key === 'executeRaw') return (sql: string, params?: unknown[]) => moved(sql) ? Promise.reject(new Error('caller raw SQL in the hold report')) : target.executeRaw(sql, params);
+    const value = Reflect.get(target, key, target);
+    return typeof value === 'function' ? value.bind(target) : value;
+  } }) as BrainEngine;
+  const input = { sourceId: s.id, incarnation: held!.incarnation, runId: held!.run_id ?? '', remote: false, policy: readSyncHoldPolicy(engine), screened: 2 };
+  const report = await buildHoldReport(strict, input);
+  expect(report).toMatchObject({ held_count: 1, holds_outstanding: 1 });
+  expect(report.held?.map(item => item.path)).toEqual(['notes/a.md']);
+  expect(report).toEqual(await buildHoldReport(engine, input));
+  await engine.executeRaw(`UPDATE sources SET config = jsonb_set(COALESCE(config, '{}'::jsonb), '{mirror_read_only}', 'true'::jsonb) WHERE id = $1`, [s.id]);
+  expect(JSON.stringify(await buildHoldReport(strict, input))).toEqual(JSON.stringify(await buildHoldReport(engine, input)));
 }));
 
 test('escalation flags a source past its threshold; sync.holds=fail restores blocking; retry-held re-screens an unchanged hold', () => each(async engine => withEnv({ GBRAIN_SYNC_HOLD_ESCALATE_COUNT: '1' }, async () => {

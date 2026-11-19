@@ -1,11 +1,11 @@
 /**
- * The git sync hold reads persistence/sync-holds.ts readGitSourceHolds and readGitHoldRetryPaths ran through
+ * The git sync hold reads persistence/sync-holds.ts readGitSourceHolds, readGitHoldRetryPaths and buildHoldReport ran through
  * `executeRaw` (Rust engine lane 11).
  * The statement text is the caller's, byte for byte (test/engine-sql-caller-raw-sql-pins.test.ts), so PGLite and
  * Postgres answer exactly as before. A Rust brain keeps no hold rows: its git sync path, the only hold writer, refuses
  * (src/core/rust-engine/store-members/persistence.ts).
  */
-import { GIT_HOLD_OP } from './persistence-journal.ts';
+import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP } from './persistence-journal.ts';
 
 /** The op_checkpoints op of a `gbrain sources retry-held` request: the held paths the next sync re-screens. */
 export const GIT_HOLD_RETRY_OP = 'sync-hold-retry';
@@ -36,4 +36,32 @@ export const GIT_HOLD_RETRY_SQL = 'SELECT completed_keys FROM op_checkpoints WHE
 export async function readGitHoldRetryRequest(exec: HoldRead, fingerprint: string): Promise<Array<{ paths?: unknown }> | null> {
   const [row] = await exec.executeRaw<{ completed_keys: Array<{ paths?: unknown }> }>(GIT_HOLD_RETRY_SQL, [GIT_HOLD_RETRY_OP, fingerprint]);
   return row ? row.completed_keys : null;
+}
+
+/** One source incarnation's hold summary counters (zero when a counter is absent). */
+export interface GitHoldSummaryRow {
+  count: number | string; images: number | string; fences: number | string; stalled: number | string;
+  concurrent: number | string; dirty: number | string; drift: number | string;
+}
+
+/** $1 the summary op, $2 the source incarnation's fingerprint. */
+export const GIT_HOLD_SUMMARY_SQL = `SELECT COALESCE((completed_keys->0->>'count')::int,0) AS count,
+      COALESCE((completed_keys->0->>'drift')::int,0) AS drift,
+      COALESCE((completed_keys->0->>'images')::int,0) AS images, COALESCE((completed_keys->0->>'fences')::int,0) AS fences, COALESCE((completed_keys->0->>'stalled')::int,0) AS stalled,
+      COALESCE((completed_keys->0->>'concurrent')::int,0) AS concurrent, COALESCE((completed_keys->0->>'dirty')::int,0) AS dirty
+    FROM op_checkpoints WHERE op=$1 AND fingerprint=$2`;
+
+/** $1 the source id: the text of its `mirror_read_only` config key. */
+export const SOURCE_MIRROR_READ_ONLY_SQL = "SELECT config->>'mirror_read_only' AS mirror FROM sources WHERE id=$1";
+
+/** What a sync hold report reads besides the holds: the summary counters (null when the incarnation has none) and the source's mirror flag text (null when unset or the source is absent). */
+export interface GitHoldReportInputs { summary: GitHoldSummaryRow | null; mirror: string | null }
+
+/** The hold report's summary and mirror flag for one source and its incarnation's fingerprint, read in parallel. */
+export async function readGitHoldReportInputs(exec: HoldRead, sourceId: string, fingerprint: string): Promise<GitHoldReportInputs> {
+  const [[summary], [source]] = await Promise.all([
+    exec.executeRaw<GitHoldSummaryRow>(GIT_HOLD_SUMMARY_SQL, [GIT_HOLD_SUMMARY_OP, fingerprint]),
+    exec.executeRaw<{ mirror: string | null }>(SOURCE_MIRROR_READ_ONLY_SQL, [sourceId]),
+  ]);
+  return { summary: summary ?? null, mirror: source?.mirror ?? null };
 }

@@ -5425,6 +5425,7 @@
         "readFieldUsageSamples": "none",
         "readFolderAccess": "none",
         "readGitHoldRecords": "none",
+        "readGitHoldReportInputs": "none",
         "readGitHoldRetryRequest": "none",
         "readGlobalMaintenanceDeaths": "none",
         "readGraduationGateRow": "none",

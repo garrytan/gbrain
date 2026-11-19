@@ -18,7 +18,8 @@ import type { LocalWriterInsert, LocalWriterRow } from '../../engine-sql/persist
 import type { AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OutstandingBySource, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
 import type { LedgerSource } from '../../engine-sql/belief.ts';
-import type { GitHoldRecordsQuery } from '../../engine-sql/sync-hold-reads.ts';
+import type { GitHoldRecordsQuery, GitHoldReportInputs } from '../../engine-sql/sync-hold-reads.ts';
+import type { SourceStateRow } from '../../engine-sql/write-misc.ts';
 import type { WriteRequest } from '../../persistence/model.ts';
 import { PAGE_BODY_CONFIG_KEYS } from '../../page-body/limits.ts';
 import { requestRow, topologyRow } from '../store-codec.ts';
@@ -76,6 +77,16 @@ export const readGitHoldRecords: StoreMember<[opts?: GitHoldRecordsQuery], Array
 
 /** No retry request exists on this engine: `gbrain sources retry-held` writes it through caller raw SQL, which refuses. */
 export const readGitHoldRetryRequest: StoreMember<[fingerprint: string], null> = async () => null;
+
+/**
+ * No hold summary exists on this engine (see readHeldPageRows). The mirror flag is the text of the source's
+ * `mirror_read_only` config key, as `config->>'mirror_read_only'` reads it; null when unset or the source is absent.
+ */
+export const readGitHoldReportInputs: StoreMember<[sourceId: string, fingerprint: string], GitHoldReportInputs> = async (brain, sourceId) => {
+  const source: SourceStateRow | null = await storeCall({ member: 'readGitHoldReportInputs', sourceId }, () => brain.readSourceState(sourceId));
+  const flag = source?.config?.mirror_read_only;
+  return { summary: null, mirror: flag === undefined || flag === null ? null : typeof flag === 'string' ? flag : JSON.stringify(flag) };
+};
 
 
 /** The request a principal admitted under `requestId`, or null. */
