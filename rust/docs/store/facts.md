@@ -274,7 +274,9 @@ attempt time is now. An outcome outside `complete`, `deferred`, `invalid` and `c
 `invalid_input`, as the table's CHECK does. `selectFactsReconcileDrain` runs in one write: it settles as `complete`,
 in page-id order and at most `settleLimit`, the source's due live pages whose body and timeline are present and lack
 the marker and that own no fence row; then it answers at most `pageLimit` slugs of the source's other due live pages
-that are not `invalid` at their current revision, never-attempted first, then oldest attempt, then page id. The extract_facts phase's commit step locks the page with
+that are not `invalid` at their current revision, never-attempted first, then oldest attempt, then page id. A hard
+page delete removes the page's row (`cascade::remove_page_rows` calls `facts::reconcile::remove_page_rows`, the
+`ON DELETE CASCADE`); a soft delete keeps it. The extract_facts phase's commit step locks the page with
 `lockReconcileRevision` (raw SQL) before its in-transaction settle, so on Rust that step stops on the typed `raw_sql`
 refusal; the settle itself runs in a Rust transaction.
 `listSingleFactMetadata` is served by `facts/trust_reads.rs` (below), except under the remote provenance floor.

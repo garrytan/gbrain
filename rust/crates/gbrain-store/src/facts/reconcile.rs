@@ -8,7 +8,8 @@
 //!
 //! The store reads the watermark (`listFactsReconcileBacklog`) and writes it for the extract_facts
 //! phase (`settleFactsReconcile`, `selectFactsReconcileDrain`; their SQL is in
-//! engine-sql/facts-purge.ts). The extract_facts
+//! engine-sql/facts-purge.ts). A hard page delete removes the page's row (`remove_page_rows`, the
+//! `ON DELETE CASCADE` from `pages`); a soft delete keeps it, as Postgres does. The extract_facts
 //! phase settles `complete` inside its write transaction after it locks the page row with
 //! `lockReconcileRevision`, which is raw SQL: on Rust that step stops on the typed `raw_sql`
 //! refusal, so only the settles outside it (and the drain) reach this store from that phase.
@@ -144,6 +145,11 @@ pub(crate) fn put_reconcile(
     record: &ReconcileRecord,
 ) -> Result<()> {
     crate::put_json(tx, &key(page_id), record)
+}
+
+/// The page-delete hook (cascade.rs): a hard page delete removes the page's watermark row.
+pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()> {
+    tx.delete(&key(page.id))
 }
 
 /// A live page is due when it has no watermark or one for another revision (`DUE`).
@@ -370,6 +376,20 @@ mod tests {
                 any_revision: revision.is_none(),
             })
             .unwrap();
+    }
+
+    #[test]
+    fn a_hard_page_delete_removes_the_watermark_and_a_soft_delete_keeps_it() {
+        let store = crate::test_support::store();
+        let hard = put(&store, "notes/hard", "x");
+        let soft = put(&store, "notes/soft", "x");
+        settle(&store, "notes/hard", "complete", None);
+        settle(&store, "notes/soft", "complete", None);
+        store.soft_delete_page("notes/soft", None).unwrap();
+        store.delete_page("notes/hard", None).unwrap();
+        let read = store.read().unwrap();
+        assert!(read_reconcile(&*read, hard.id, "t").unwrap().is_none());
+        assert!(read_reconcile(&*read, soft.id, "t").unwrap().is_some());
     }
 
     #[test]
