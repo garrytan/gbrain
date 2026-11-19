@@ -2,6 +2,7 @@
 
 ## Rust engine relink lane follow-ups (filed 2026-11-18)
 
+- [ ] **P3 — rust-relink-memo: the relink on Rust runs with no tried-row memo until the facts capability is reported; recordReextractMemo still has one raw SELECT.** **What:** on the Rust engine `hasRelinkAttemptsTable` (`src/core/facts/conversation-memo.ts`) answers "absent" (the store has no `fact_relink_attempts` table until the `facts` capability is reported), so `gbrain facts relink --conversation` re-tries pages it already tried, and `recordReextractMemo` keeps a raw `SELECT` of the page's completion outcome row after the probe. **Fix:** when Rust reports `facts`, move that `SELECT` to a typed member and add a Rust-arm parity case for the memo. **Effort:** S. **Priority:** P3.
 - [ ] **P3 — timeline-row-delete-dedupe: one SQL helper for the two timeline row deletes.** **What:** `deleteTimelineRows` (`src/core/engine-sql/timeline-reads.ts`) and `removeTimelineRows` (`src/core/engine-sql/timeline.ts`) run the same guarded `DELETE FROM timeline_entries` (a page's non-event rows that still match on id, date, source, summary and detail, returning each date and its `removed` mark) as two copies. **Fix:** make both members call one shared SQL helper, with no change in output on any engine (the parity and engine-sql cases of both members stay green unchanged). **Effort:** S. **Priority:** P3.
 
 ## Rust engine alias-trust follow-ups (filed 2026-11-18)
