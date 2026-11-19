@@ -253,6 +253,12 @@ export const DOMAIN_OF: Record<string, string> = {
   'readPageAliasRows': OOS.aliasFanoutReads,
   'readEntityAliasRows': OOS.callerRawSql,
   'readEntityOpenLoops': OOS.callerRawSql,
+  'entityIdentityRead': OOS.helper,
+  'linkEntityIdentityRow': OOS.callerRawSql,
+  'unlinkEntityIdentityRow': OOS.callerRawSql,
+  'listEntityIdentityRows': OOS.callerRawSql,
+  'readEntityIdentityIdsForPages': OOS.callerRawSql,
+  'readCanonicalTwin': OOS.callerRawSql,
   'wordLexemes': OOS.linkReads,
   'readLinkRelationshipEvidence': OOS.linkTemporal,
   'writeLinkRelationshipState': OOS.linkTemporal,
@@ -1346,6 +1352,21 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ]),
   ...variants('readEntityAliasRows', [['default', (e) => e.readEntityAliasRows(SRC, [SLUG, 'people/bob-example'])]]),
   ...variants('readEntityOpenLoops', [['default', (e) => e.readEntityOpenLoops(SLUG, SRC, 3)]]),
+  ...variants('linkEntityIdentityRow', [
+    ['canonical', (e) => e.linkEntityIdentityRow({ entityId: 'alice', slug: SLUG, sourceId: SRC, confidence: 1, establishedBy: 'manual', canonical: true }), [pageId]],
+    ['keep', (e) => e.linkEntityIdentityRow({ entityId: 'alice', slug: SLUG, sourceId: SRC, confidence: 0.5, establishedBy: 'manual', canonical: null }), [pageId]],
+    // No page row: the lookup runs, the expected page-not-found error ends the call before any write.
+    ['missing', (e) => e.linkEntityIdentityRow({ entityId: 'alice', slug: SLUG, sourceId: SRC, confidence: 1, establishedBy: 'manual', canonical: null })
+      .catch((err: unknown) => { if (!String(err).includes('page not found')) throw err; })],
+  ]),
+  ...variants('unlinkEntityIdentityRow', [['default', (e) => e.unlinkEntityIdentityRow({ entityId: 'alice', slug: SLUG, sourceId: SRC })]]),
+  ...variants('listEntityIdentityRows', [
+    ['all', (e) => e.listEntityIdentityRows({})],
+    ['entity', (e) => e.listEntityIdentityRows({ entityId: 'alice' })],
+    ['seed+grant+private', (e) => e.listEntityIdentityRows({ entityId: 'alice', slug: SLUG, slugSourceId: SRC, allowedSources: SRCS, excludePrivate: true })],
+  ]),
+  ...variants('readEntityIdentityIdsForPages', [['default', (e) => e.readEntityIdentityIdsForPages([{ sourceId: SRC, slug: SLUG }, { sourceId: 'src-b', slug: SLUG2 }])]]),
+  ...variants('readCanonicalTwin', [['default', (e) => e.readCanonicalTwin(SRC, SLUG)]]),
   ...variants('readEntityInboundEdges', [
     ['local', (e) => e.readEntityInboundEdges(SLUG, SRC, { excludePrivate: false, originSameSource: false })],
     ['remote+private', (e) => e.readEntityInboundEdges(SLUG, SRC, { excludePrivate: true, originSameSource: true })],
