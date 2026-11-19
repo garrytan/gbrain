@@ -1676,7 +1676,7 @@ addon, and refusing a missing or mismatched one, belong to the loader (below), n
 
 - **Capabilities.** The engine reports a capability only when it serves every `BrainEngine` member of that
   capability (`src/core/rust-engine/store-capabilities.ts`). Today that is `config`, `sources`, `tags`, `schema`, `keyword_search`, `vector_search`, `embeddings`, `links`, `graph`,
-  `takes`, `salience` and `ingest_log`.
+  `takes`, `salience`, `ingest_log`, `code_edges`, `contradictions`, `dream_verdicts`, `files` and `raw_data`.
   Each member it does not serve refuses `engine_capability_missing` with the capability as `reason` (`raw_sql`,
   `pages`, `search`, ...), the member in `detail`, and `written=nothing`, before any work.
   `src/core/rust-engine/members.ts` maps every member to its capability; the type fails when a new `BrainEngine`
@@ -1704,6 +1704,14 @@ addon, and refusing a missing or mismatched one, belong to the loader (below), n
 store cannot read refuses `rust_store_unreadable` with its reason (`gbrain errors <code>`). A served member on an engine
 that is not connected refuses `engine_closed`. These members run on the store (`src/core/rust-engine/store-members/`):
 
+- Contradictions, dream, raw files and code edges: `writeContradictionsRun`, `loadContradictionsTrend`,
+  `getContradictionCacheEntry`, `putContradictionCacheEntry`, `sweepContradictionCache`, `getDreamVerdict`,
+  `putDreamVerdict`, `sweepDreamVerdicts`, `putRawData`, `getRawData`, `upsertFile`, `getFile`, `listFilesForPage`,
+  `addCodeEdges`, `deleteCodeEdgesForChunks`, `getCallersOf`, `getCalleesOf` and `getEdgesByChunk`. They make the
+  `contradictions`, `dream_verdicts`, `raw_data`, `files` and `code_edges` capabilities complete. `getRawData` and the
+  code-edge reads refuse `excludePrivate: true` with `engine_capability_missing` instead of ignoring it. Each store
+  write is one transaction, so a refusal leaves nothing written. Per-member contracts are in
+  `rust/docs/store/` (`contradictions.md`, `dream.md`, `raw_files.md`, `code_edges.md`).
 - Config, sources and tags: `getConfig`, `setConfig`, `unsetConfig`, `listConfigKeys`, `getAllConfig`,
   `getConfigValues`, `listAllSources`, `updateSourceConfig`, `getSource`, `listSourceLocalPaths`,
   `getSourceStrictness`, `addTag`, `removeTag`, `getTags`, `pruneFrontmatterTags`, `addPageTagsById`. These are the
