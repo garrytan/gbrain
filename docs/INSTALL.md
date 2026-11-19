@@ -110,7 +110,7 @@ export ANTHROPIC_API_KEY=sk-ant-...   # automatic fact extraction + chat models;
 
 For a brain initialized with `--no-embedding`, adding a key alone does not enable
 embeddings. Follow the CLI's explicit activation path, for example
-`gbrain init --force --embedding-model voyage:voyage-4`, after reviewing the
+`gbrain embeddings enable --embedding-model voyage:voyage-4`, after reviewing the
 provider and dimension choice. Keyword retrieval needs none of these keys.
 
 `gbrain config get <key>` redacts secrets and database passwords by default, because its output lands in transcripts and shell history; scripts that need the real value pass `--raw`.

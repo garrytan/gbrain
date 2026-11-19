@@ -55,7 +55,7 @@ describe('config plane: state and reason per capability', () => {
       const e = entry(entries, 'embeddings');
       expect(e.state).toBe('disabled_by_choice');
       expect(e.reason).toBe('embedding_disabled');
-      expect(e.fix?.argv?.slice(0, 4)).toEqual(['gbrain', 'init', '--force', '--embedding-model']);
+      expect(e.fix?.argv?.slice(0, 4)).toEqual(['gbrain', 'embeddings', 'enable', '--embedding-model']);
     });
   });
 
@@ -113,19 +113,19 @@ describe('embeddingEnablement', () => {
   const run = (cfg: GBrainConfig, keys: Record<string, string>, env: Record<string, string> = {}) =>
     withKeys({ ...keys, ...env }, () => embeddingEnablement(cfg));
 
-  test('default path: keyed provider, in-place init with the resolved datastore and width', async () => {
+  test('default path: keyed provider, in-place embeddings enable with the resolved width', async () => {
     const a = await run({ engine: 'pglite', embedding_disabled: true } as GBrainConfig, { VOYAGE_API_KEY: 'v' }, { GBRAIN_HOME: '/home/u' });
-    expect(a.argv).toEqual(['gbrain', 'init', '--force', '--embedding-model', 'voyage:voyage-4', '--embedding-dimensions', '1024', '--path', '/home/u/.gbrain/brain.pglite']);
+    expect(a.argv).toEqual(['gbrain', 'embeddings', 'enable', '--embedding-model', 'voyage:voyage-4', '--embedding-dimensions', '1024']);
     expect(a).toMatchObject({ actor: 'agent', consent: ['credentials', 'paid'], requires_exclusive: true });
     expect(a.why).toContain('Pages, facts and keyword search are kept');
     expect(a.why).toContain('queued for vectors');
     expect(a.argv?.join(' ')).not.toContain('mv ');
   });
 
-  test('custom path and Postgres target their own datastore', async () => {
-    expect((await run(pglite({ embedding_disabled: true }), { VOYAGE_API_KEY: 'v' })).argv?.slice(-2)).toEqual(['--path', '/brains/main.pglite']);
+  test('custom path and Postgres print the same command; embeddings enable opens the configured datastore', async () => {
+    expect((await run(pglite({ embedding_disabled: true }), { VOYAGE_API_KEY: 'v' })).argv).toEqual(['gbrain', 'embeddings', 'enable', '--embedding-model', 'voyage:voyage-4', '--embedding-dimensions', '1024']);
     const pg = await run({ engine: 'postgres', database_url: 'postgres://x/y', embedding_disabled: true } as GBrainConfig, { VOYAGE_API_KEY: 'v' });
-    expect(pg.argv).toEqual(['gbrain', 'init', '--force', '--embedding-model', 'voyage:voyage-4', '--embedding-dimensions', '1024']);
+    expect(pg.argv).toEqual(['gbrain', 'embeddings', 'enable', '--embedding-model', 'voyage:voyage-4', '--embedding-dimensions', '1024']);
   });
 
   test('mounted brain routes through `embeddings enable --brain`, never init --path', async () => {
@@ -239,7 +239,7 @@ describe('exclusive fixes and lock ownership', () => {
       expect(r.lock_owner).toEqual({ pid: 999_999, transport: 'stdio', started_at: new Date(1_700_000_000_000).toISOString(), is_self: false });
       const fix = entry(r.entries, 'embeddings').fix!;
       expect(fix.argv).toEqual(['kill', '999999']);
-      expect(fix.then?.argv?.[1]).toBe('init');
+      expect(fix.then?.argv?.slice(1, 3)).toEqual(['embeddings', 'enable']);
     });
   });
 

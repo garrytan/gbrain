@@ -180,17 +180,18 @@ function keyInput(recipe: Recipe): ActionInput[] {
   }));
 }
 
-/** The datastore the enable command must target, resolved before any argv is built. */
-export function enableArgv(cfg: GBrainConfig, model: string, width: number): string[] {
+/**
+ * The enable command. `gbrain embeddings enable` opens the configured datastore itself (or the mounted brain named by
+ * `--brain`), so the argv names no path and is the same on every engine; `_cfg` stays for callers that pass it.
+ */
+export function enableArgv(_cfg: GBrainConfig, model: string, width: number): string[] {
   const brainId = brainIdInMemory();
   if (brainId !== 'host') {
     return ['gbrain', 'embeddings', 'enable', '--brain', brainId, '--embedding-model', model, '--embedding-dimensions', String(width)];
   }
-  // A Rust brain turns vectors on in place: `embeddings enable` keeps the Rust engine (init --force would rebuild it).
-  if (cfg.engine === 'rust') return ['gbrain', 'embeddings', 'enable', '--embedding-model', model, '--embedding-dimensions', String(width)];
-  const base = ['gbrain', 'init', '--force', '--embedding-model', model, '--embedding-dimensions', String(width)];
-  if (cfg.engine === 'postgres') return base;
-  return [...base, '--path', cfg.database_path ?? gbrainPath('brain.pglite')];
+  // Every engine turns vectors on in place with the same command, so a fix copied between brains stays right.
+  // `init --force ... --path` would rewrite a Rust brain's config to an empty PGLite brain, so no engine prints it.
+  return ['gbrain', 'embeddings', 'enable', '--embedding-model', model, '--embedding-dimensions', String(width)];
 }
 
 function datastoreLabel(cfg: GBrainConfig): string {
