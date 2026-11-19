@@ -25,7 +25,8 @@ import { forgetSharedPacks } from './knowledge-guard.ts';
 import { assertSkillCapability, assertStoredSkillCapability, publicationEnabled, readSharedSkillPolicy, setSharedSkillPolicy } from './policy.ts';
 import { SHARED_SKILL_LIMITS, type SharedSkillFile, type SharedSkillPolicy, type SharedSkillPutInput, type SkillMetadata, type StoredSkillFile, type StoredSkillRevision } from './model.ts';
 import { assertSharedSkillRetentionCapacity, pruneSharedSkillRevisionsInTransaction, sharedSkillRetentionCapacity, sharedSkillRetentionStatus } from './retention.ts';
-import { discardRustStaging, isRustBrain, publishRustCanonicalFiles, rustCheck, rustHeadKeys, rustHeads, rustPack, rustRetention, rustSource, rustWritePack, stageRustCanonicalFiles } from './rust-publication.ts';
+import { isRustBrain, rustCheck, rustHeadKeys, rustHeads, rustPack, rustRetention, rustSource, rustWritePack } from './rust-publication.ts';
+import { discardRustStaging, publishRustCanonicalFiles, stageRustCanonicalFiles } from './rust-canonical-files.ts';
 import { capabilityMissing } from '../rust-engine/errors.ts';
 
 interface PackRow { pack_id: string; revision: string; manifest: Record<string, unknown>; manifest_hash: string; }
