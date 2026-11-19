@@ -578,7 +578,7 @@ async function insertConversationFacts(tx: BrainEngine, sourceId: string, slug: 
   rows = await inheritRelinkedEntities(tx, sourceId, slug, rows);
   const matches = await tx.executeRaw<{ ord: number | string }>(`SELECT n.ord FROM unnest($2::text[], $3::text[], $4::text[], $5::text[]) WITH ORDINALITY AS n(fact, visibility, entity_slug, source, ord)
     WHERE NOT ${outcomeMarkerSql('n')} AND EXISTS (SELECT 1 FROM fact_purges p WHERE p.source_id=$1 AND p.visibility=n.visibility
-      AND (p.subject IN ('*', n.entity_slug) OR ${unbackedEntitySql('n', '$1')}) AND p.fact_hash=gbrain_fact_fingerprint(n.fact))`,
+      AND (p.subject IN ('*', n.entity_slug) OR ${unbackedEntitySql('n', '$1')}) AND p.fact_hash IN (gbrain_fact_fingerprint(n.fact), gbrain_fact_fingerprint_v2(n.fact)))`,
   [sourceId, rows.map(row => ensureWellFormed(row.fact)), rows.map(row => row.visibility ?? 'private'), rows.map(row => row.entity_slug ? ensureWellFormed(row.entity_slug) : null), rows.map(row => row.source ?? null)]);
   const purged = new Set(matches.map(match => Number(match.ord) - 1));
   rows = await insertableSlots(tx, sourceId, slug, rows.filter((_, i) => !purged.has(i)));

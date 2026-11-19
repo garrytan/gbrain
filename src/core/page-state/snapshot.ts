@@ -1,4 +1,5 @@
 import { fenceClaimHashes, overlayWithdrawalBody } from '../facts/withdrawal-overlay.ts';
+import { FACT_SPACE_CLASS } from '../facts/withdrawal-schema.ts';
 import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
 import type { ReadQuery } from '../search/read-enrichment.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
@@ -40,9 +41,9 @@ export async function overlayCanonicalBodies(query: ReadQuery, body: string, tim
   if (!withdrawals.length && !pending) return { compiled_truth: body, timeline };
   if (!body.includes('gbrain:facts:begin') && !timeline.includes('gbrain:facts:begin')) return { compiled_truth: body, timeline };
   const [normalized] = await query<{ body: string; timeline: string }>(`SELECT
-    (SELECT string_agg(regexp_replace(lower(line),'[[:space:]]+',' ','g'),chr(10) ORDER BY ord)
+    (SELECT string_agg(regexp_replace(lower(line),'${FACT_SPACE_CLASS}+',' ','g'),chr(10) ORDER BY ord)
       FROM unnest(string_to_array($1::text,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS body,
-    (SELECT string_agg(regexp_replace(lower(line),'[[:space:]]+',' ','g'),chr(10) ORDER BY ord)
+    (SELECT string_agg(regexp_replace(lower(line),'${FACT_SPACE_CLASS}+',' ','g'),chr(10) ORDER BY ord)
       FROM unnest(string_to_array($2::text,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS timeline`, [body, timeline]);
   const resolved = pending ? await resolveGlobalPurges(query, pending.sourceId, pending.marker, [normalized.body ?? '', normalized.timeline ?? '']) : [];
   const all = resolved.length ? [...withdrawals, ...resolved] : withdrawals;
@@ -104,9 +105,9 @@ async function readSnapshotStatement(query: ReadQuery, slug: string, opts?: Page
     (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation,
     COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags,
     wd.snapshot_withdrawals, wd.snapshot_global_purges,
-    CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord)
+    CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '${FACT_SPACE_CLASS}+', ' ', 'g'), chr(10) ORDER BY ord)
       FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_body,
-    CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord)
+    CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '${FACT_SPACE_CLASS}+', ' ', 'g'), chr(10) ORDER BY ord)
       FROM unnest(string_to_array(p.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_timeline
     FROM chosen p
     CROSS JOIN LATERAL (SELECT COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at)

@@ -39,7 +39,7 @@ async function staleReason(engine: BrainEngine, p: ReviewProposalRow): Promise<s
   if (p.kind !== 'withdraw') return null;
   const [anchor] = await engine.executeRaw<{ withdrawn: boolean }>(
     `SELECT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = f.source_id AND w.visibility = f.visibility
-        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact))
+        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v2(f.fact), gbrain_fact_fingerprint_v1(f.fact))
         AND ${withdrawalCoversFactSql('w', 'f')}) AS withdrawn
        FROM facts f WHERE f.id = $1 AND f.source_id = $2`, [Number(p.a_ref), p.source_id]);
   if (!anchor?.withdrawn) return 'the withdrawn claim is no longer withdrawn';

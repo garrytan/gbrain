@@ -95,7 +95,7 @@ async function memberPageWithdrawal(engine: BrainEngine, sourceId: string, input
     AND NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = f.source_id AND pp.slug = f.source_markdown_slug AND NOT ${reads('pp')})
     AND NOT EXISTS (SELECT 1 FROM pages ep WHERE ep.source_id = f.source_id AND ep.slug = f.entity_slug AND NOT ${reads('ep')})))`;
   const [row] = await engine.executeRaw<WithdrawalRow>(`SELECT w.subject,w.visibility,w.withdrawn_at::text AS withdrawn_at FROM fact_withdrawals w
-    WHERE w.source_id=$1 AND w.visibility=$2 AND w.fact_hash IN (gbrain_fact_fingerprint($3),gbrain_fact_fingerprint_v1($3))
+    WHERE w.source_id=$1 AND w.visibility=$2 AND w.fact_hash IN (gbrain_fact_fingerprint($3),gbrain_fact_fingerprint_v2($3),gbrain_fact_fingerprint_v1($3))
       AND (w.subject=$5::text OR ((w.subject='*' OR w.subject=$4::text) AND EXISTS (SELECT 1 FROM facts f
         WHERE f.source_id=w.source_id AND f.visibility=w.visibility AND f.expired_at IS NOT NULL
           AND gbrain_fact_fingerprint(f.fact)=gbrain_fact_fingerprint($3) AND ${withdrawalReachedFactSql('w', 'f')} AND ${readable})))
@@ -116,7 +116,7 @@ export async function factWithdrawnRefusal(engine: BrainEngine, sourceId: string
         COALESCE(bool_or(${seen(5)}), false) AS visible,
         COALESCE(bool_or(NOT ${seen(5)}), false) AS hidden
       FROM facts f JOIN fact_withdrawals w ON w.source_id=f.source_id AND w.visibility=f.visibility
-        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact))
+        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v2(f.fact),gbrain_fact_fingerprint_v1(f.fact))
         AND ${withdrawalReachedFactSql('w', 'f')}
       WHERE f.source_id=$1 AND f.visibility=$2 AND f.expired_at IS NOT NULL
         AND gbrain_fact_fingerprint(f.fact)=gbrain_fact_fingerprint($3) AND (w.subject='*' OR w.subject=$4::text OR w.subject=$5::text)`,
@@ -125,8 +125,8 @@ export async function factWithdrawnRefusal(engine: BrainEngine, sourceId: string
   }
   const [row] = await engine.executeRaw<WithdrawalRow>(`SELECT w.subject,w.visibility,w.withdrawn_at::text AS withdrawn_at
     FROM fact_withdrawals w LEFT JOIN facts f ON f.source_id=w.source_id AND f.visibility=w.visibility AND f.expired_at IS NOT NULL
-      AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact)) AND ${withdrawalReachedFactSql('w', 'f')}
-    WHERE w.source_id=$1 AND w.visibility=$2 AND w.fact_hash IN (gbrain_fact_fingerprint($3),gbrain_fact_fingerprint_v1($3))
+      AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v2(f.fact),gbrain_fact_fingerprint_v1(f.fact)) AND ${withdrawalReachedFactSql('w', 'f')}
+    WHERE w.source_id=$1 AND w.visibility=$2 AND w.fact_hash IN (gbrain_fact_fingerprint($3),gbrain_fact_fingerprint_v2($3),gbrain_fact_fingerprint_v1($3))
       AND (w.subject='*' OR w.subject=$4::text OR w.subject=$6::text)
     GROUP BY w.subject,w.visibility,w.withdrawn_at
     HAVING $5::boolean=false OR COALESCE(bool_or(${seen(6)}), false) OR NOT COALESCE(bool_or(f.id IS NOT NULL), false)
@@ -230,7 +230,7 @@ export async function decideReplacement(engine: BrainEngine, sourceId: string, i
     'Pass the fact_id of an active fact from recall (facts[].fact_id) about the same entity, or omit replaces to save a new fact.');
   const [target] = await engine.executeRaw<FactCandidate & { withdrawn: boolean }>(`SELECT f.*,
       EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
-        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact))
+        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v2(f.fact),gbrain_fact_fingerprint_v1(f.fact))
         AND ${withdrawalCoversFactSql('w', 'f')}) AS withdrawn
     FROM facts f WHERE f.id=$1 AND f.source_id=$2${!opts.excludePrivate ? '' : ownPage ? ` AND (f.source_markdown_slug = $3 OR ${remoteProvenanceFloorSql('f')})` : ` AND ${remoteProvenanceFloorSql('f')}`}${opts.lock ? ' FOR UPDATE OF f' : ''}`,
     opts.excludePrivate && ownPage ? [targetId, sourceId, ownPage] : [targetId, sourceId]);

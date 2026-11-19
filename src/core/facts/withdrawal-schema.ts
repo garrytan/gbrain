@@ -17,10 +17,29 @@ export function normalizeLoweredClaim(claim: string): string {
   return out.replace(/ +/g, ' ').replace(/\.(?=[. ]|$)/g, ' ').replace(/ +/g, ' ').replace(/^ | $/g, '');
 }
 
+/**
+ * Whitespace the fact fingerprint and the fence overlay fold, as an explicit regex class: the code points Rust
+ * `is_pg_space` (rust/crates/gbrain-store/src/cli_reads/pg_text.rs) and PGLite's `[[:space:]]` take. Postgres
+ * `[[:space:]]` follows the database locale (en_US.utf8 leaves out U+0085 and adds U+1680), so a locale class would
+ * give one claim two fingerprints across engines (v330).
+ */
+export const FACT_SPACE_CLASS = '[\\x09-\\x0d \\u0085\\u2000-\\u2006\\u2008-\\u200a\\u2028\\u2029\\u205f\\u3000]';
+
 // Built-ins are schema-qualified instead of pinning search_path on these SQL
 // functions, which must stay inlinable (an index expression uses them); the
 // results are byte-identical (test/fact-fingerprint-search-path.test.ts).
-const NORMALIZE_CLAIM_SQL = `pg_catalog.btrim(pg_catalog.regexp_replace(pg_catalog.regexp_replace(pg_catalog.regexp_replace(pg_catalog.translate(pg_catalog.lower(claim), '${FINGERPRINT_PUNCTUATION.replace(/'/g, "''")}', '${' '.repeat([...FINGERPRINT_PUNCTUATION].length)}'), '[[:space:]]+', ' ', 'g'), '\\.(?=[. ]|$)', ' ', 'g'), ' +', ' ', 'g'), ' ')`;
+const normalizeClaimSql = (space: string) => `pg_catalog.btrim(pg_catalog.regexp_replace(pg_catalog.regexp_replace(pg_catalog.regexp_replace(pg_catalog.translate(pg_catalog.lower(claim), '${FINGERPRINT_PUNCTUATION.replace(/'/g, "''")}', '${' '.repeat([...FINGERPRINT_PUNCTUATION].length)}'), '${space}+', ' ', 'g'), '\\.(?=[. ]|$)', ' ', 'g'), ' +', ' ', 'g'), ' ')`;
+const NORMALIZE_CLAIM_SQL = normalizeClaimSql(FACT_SPACE_CLASS);
+const fingerprintBody = (space: string) => `pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(${normalizeClaimSql(space)}, 'UTF8')), 'hex')`;
+
+/**
+ * The v2 fingerprint (`gbrain_fact_fingerprint` before v330: whitespace by the locale's `[[:space:]]`) of SQL
+ * expression `claim`, spelled with built-ins only so a guard function can match a legacy ledger hash at any migration
+ * point, before v330 creates gbrain_fact_fingerprint_v2.
+ */
+export function factFingerprintV2Sql(claim: string): string {
+  return fingerprintBody('[[:space:]]').replace(/\bclaim\b/g, () => claim);
+}
 
 /** The fingerprint SQL functions, also re-created on their own by the search_path migration. */
 export const FACT_FINGERPRINT_FUNCTION_STATEMENTS = [
@@ -34,7 +53,13 @@ export const FACT_FINGERPRINT_FUNCTION_STATEMENTS = [
   // functions with a restricted search_path, so the index expression must
   // reference only built-ins.
   `CREATE OR REPLACE FUNCTION gbrain_fact_fingerprint(claim TEXT) RETURNS TEXT
-    LANGUAGE SQL IMMUTABLE STRICT AS $fn$ SELECT pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(${NORMALIZE_CLAIM_SQL}, 'UTF8')), 'hex') $fn$`,
+    LANGUAGE SQL IMMUTABLE STRICT AS $fn$ SELECT ${fingerprintBody(FACT_SPACE_CLASS)} $fn$`,
+  // v330: the current fingerprint under its version name, and the locale-folded one every ledger hash Postgres
+  // stored before v330 carries. A ledger hash matches a claim by any of fingerprint, _v2 and _v1.
+  `CREATE OR REPLACE FUNCTION gbrain_fact_fingerprint_v3(claim TEXT) RETURNS TEXT
+    LANGUAGE SQL IMMUTABLE STRICT AS $fn$ SELECT ${fingerprintBody(FACT_SPACE_CLASS)} $fn$`,
+  `CREATE OR REPLACE FUNCTION gbrain_fact_fingerprint_v2(claim TEXT) RETURNS TEXT
+    LANGUAGE SQL IMMUTABLE STRICT AS $fn$ SELECT ${fingerprintBody('[[:space:]]')} $fn$`,
 ] as const;
 
 /**
@@ -47,7 +72,8 @@ export const FACT_FINGERPRINT_FUNCTION_STATEMENTS = [
  * claim. A withdrawal matches a fact when `subject = '*' OR subject =
  * entity_slug`. Fingerprints fold case, whitespace and punctuation (v174);
  * ledger rows written earlier carry the exact v1 fingerprint and keep
- * matching through gbrain_fact_fingerprint_v1.
+ * matching through gbrain_fact_fingerprint_v1, and rows Postgres wrote before
+ * v330 folded whitespace by locale and keep matching through _v2.
  */
 /**
  * GBRA-574 A1: whether row `r`'s entity is unbacked, as SQL: a bare name key (no directory, the form conversation
@@ -90,7 +116,7 @@ export const FACT_WITHDRAWAL_PRESERVE_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION
           WHERE source_id = NEW.source_id AND visibility = NEW.visibility
             AND (CASE WHEN starts_with(COALESCE(NEW.source_markdown_slug, ''), 'memory/members/') THEN subject = NEW.source_markdown_slug
               ELSE subject = '*' OR subject = NEW.entity_slug OR (${unbackedEntitySql('NEW')} AND NOT ${ownedMemorySubjectSql('subject')}) END)
-            AND fact_hash IN (gbrain_fact_fingerprint(NEW.fact), gbrain_fact_fingerprint_v1(NEW.fact));
+            AND fact_hash IN (gbrain_fact_fingerprint(NEW.fact), ${factFingerprintV2Sql('NEW.fact')}, gbrain_fact_fingerprint_v1(NEW.fact));
         IF withdrawn IS NOT NULL THEN
           NEW.expired_at := withdrawn;
           NEW.valid_until := LEAST(COALESCE(NEW.valid_until, withdrawn), withdrawn);

@@ -54,13 +54,15 @@ The `fact_withdrawals` ledger (src/core/facts/withdrawal-schema.ts). One record 
 `t 0x01 source \0 visibility \0 subject \0 fact_hash` -> `{"withdrawn_at_us": <i64>}`
 
 `fact_hash` is `gbrain_fact_fingerprint(claim)` (`trust::fingerprint::fact_fingerprint`). Rows written before v174
-hold `gbrain_fact_fingerprint_v1(claim)`, and every read matches both. Deleting a source removes its rows (the table's
+hold `gbrain_fact_fingerprint_v1(claim)`, and every read matches both. Postgres rows written before v330 can hold
+`gbrain_fact_fingerprint_v2(claim)` (whitespace by the database locale); the SQL reads match that hash too. The store
+never wrote one: it folds the explicit `is_pg_space` list, which `gbrain_fact_fingerprint` folds on every engine. Deleting a source removes its rows (the table's
 `ON DELETE CASCADE`, through `cascade::remove_source_rows`). A slug rename does not move them; the rename callers call
 `moveFactWithdrawalSubject`.
 
 | Member | Store method | PGLite statement |
 | --- | --- | --- |
-| `hasCoveringFactWithdrawal` | `has_covering_fact_withdrawal`: four point reads (`*` and the subject, the hash and the v1 hash of the claim) | `SELECT 1 … fact_hash IN ($3, v1($5)) AND (subject='*' OR subject=$4)` |
+| `hasCoveringFactWithdrawal` | `has_covering_fact_withdrawal`: four point reads (`*` and the subject, the hash and the v1 hash of the claim) | `SELECT 1 … fact_hash IN ($3, v2($5), v1($5)) AND (subject='*' OR subject=$4)` |
 | `insertFactWithdrawal` | `insert_fact_withdrawal`: false when the key exists, which keeps its time | `INSERT … COALESCE($5::timestamptz, now()) ON CONFLICT DO NOTHING RETURNING` |
 | `listFactWithdrawalDates` | `list_fact_withdrawal_dates`: per claim, point reads (subject given) or a scan of source and visibility (subject null); the minimum time per row number, sorted by row number | `min(withdrawn_at) … GROUP BY row_num` (no order) |
 | `moveFactWithdrawalSubject` | `move_fact_withdrawal_subject`: same slugs do nothing; otherwise each row moves unless the new subject already has the key | `MOVE_WITHDRAWAL_SUBJECT_SQL` |

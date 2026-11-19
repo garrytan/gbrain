@@ -7,6 +7,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { Page } from '../types.ts';
 import { rowToPage } from '../utils.ts';
+import { FACT_SPACE_CLASS } from '../facts/withdrawal-schema.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
 
@@ -80,14 +81,14 @@ export async function readExportPageRows(tx: Raw, ids: readonly string[]): Promi
 export interface NormalizedFenceLines { i: number; body: string | null; timeline: string | null }
 
 /**
- * Each body and timeline lower-cased with every run of `[[:space:]]` made one space, line by line (overlayCanonicalBodies'
- * rule), so a withdrawal overlay can match fact rows the way Postgres compares them.
+ * Each body and timeline lower-cased with every run of FACT_SPACE_CLASS made one space, line by line (overlayCanonicalBodies'
+ * rule), so a withdrawal overlay can match fact rows the way gbrain_fact_fingerprint folds them on every engine.
  */
 export async function normalizeFenceLines(tx: Raw, bodies: readonly string[], timelines: readonly string[]): Promise<NormalizedFenceLines[]> {
   return tx.executeRaw<NormalizedFenceLines>(`SELECT t.i::int AS i,
-    (SELECT string_agg(regexp_replace(lower(line),'[[:space:]]+',' ','g'),chr(10) ORDER BY ord)
+    (SELECT string_agg(regexp_replace(lower(line),'${FACT_SPACE_CLASS}+',' ','g'),chr(10) ORDER BY ord)
       FROM unnest(string_to_array(t.body,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS body,
-    (SELECT string_agg(regexp_replace(lower(line),'[[:space:]]+',' ','g'),chr(10) ORDER BY ord)
+    (SELECT string_agg(regexp_replace(lower(line),'${FACT_SPACE_CLASS}+',' ','g'),chr(10) ORDER BY ord)
       FROM unnest(string_to_array(t.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS timeline
     FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS t(body, timeline, i)`,
   [bodies, timelines]);

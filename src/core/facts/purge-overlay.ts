@@ -30,10 +30,10 @@ export async function dropPurgedFenceRows(engine: BrainEngine, sourceId: string,
     for (const block of withdrawalFenceBlocks(body).reverse()) {
       if (block.parsed.warnings.length || !block.parsed.facts.length) continue;
       const rows = await engine.executeRaw<{ row_num: number }>(`WITH incoming AS MATERIALIZED (
-          SELECT i.row_num, i.visibility, gbrain_fact_fingerprint(i.claim) AS fp
+          SELECT i.row_num, i.visibility, gbrain_fact_fingerprint(i.claim) AS fp, gbrain_fact_fingerprint_v2(i.claim) AS fp_v2
           FROM jsonb_to_recordset($2::text::jsonb) AS i(row_num integer, claim text, visibility text))
         SELECT DISTINCT incoming.row_num FROM incoming JOIN fact_purges p ON p.source_id=$1
-          AND p.visibility=incoming.visibility AND p.fact_hash=incoming.fp
+          AND p.visibility=incoming.visibility AND p.fact_hash IN (incoming.fp, incoming.fp_v2)
           AND ($3::text IS NULL OR p.subject='*' OR p.subject=$3::text)`,
       [sourceId, JSON.stringify(block.parsed.facts.map(f => ({ row_num: f.rowNum, claim: f.claim, visibility: f.visibility }))), subject ?? null]);
       if (!rows.length) continue;
@@ -46,7 +46,7 @@ export async function dropPurgedFenceRows(engine: BrainEngine, sourceId: string,
     if (parsed.warnings.length || !parsed.takes.length) return body;
     const rows = await engine.executeRaw<{ row_num: number }>(`SELECT DISTINCT i.row_num
       FROM jsonb_to_recordset($2::text::jsonb) AS i(row_num integer, claim text)
-      JOIN take_purges p ON p.source_id=$1 AND p.claim_hash=gbrain_fact_fingerprint(i.claim)
+      JOIN take_purges p ON p.source_id=$1 AND p.claim_hash IN (gbrain_fact_fingerprint(i.claim), gbrain_fact_fingerprint_v2(i.claim))
         AND ($3::text IS NULL OR p.subject='*' OR p.subject=$3::text)`,
     [sourceId, JSON.stringify(parsed.takes.map(t => ({ row_num: t.rowNum, claim: t.claim }))), subject ?? null]);
     if (!rows.length) return body;

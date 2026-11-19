@@ -94,7 +94,7 @@ export function poolWhere(scope: FactPoolScope, filters: FactPoolFilters | undef
 function endedFactSql(): SqlFragment {
   return sqlFragment`(f.superseded_by IS NOT NULL OR (f.expired_at IS NULL AND f.valid_until <= now()))
   AND NOT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = f.source_id AND w.visibility = f.visibility
-    AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact)) AND ${trustedSql(withdrawalCoversFactSql('w', 'f'))})
+    AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v2(f.fact), gbrain_fact_fingerprint_v1(f.fact)) AND ${trustedSql(withdrawalCoversFactSql('w', 'f'))})
   AND (f.source_markdown_slug IS NULL OR (f.dimension IS NOT NULL AND NOT ${trustedSql(conversationSlotSql())})
     OR EXISTS (SELECT 1 FROM pages hp WHERE hp.source_id = f.source_id AND hp.slug = f.source_markdown_slug))
   AND (f.source_markdown_slug IS NOT NULL OR f.source <> ALL(${[...pageExtractionSources()]}::text[])

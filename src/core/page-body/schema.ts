@@ -198,7 +198,7 @@ const sqlList = (values: readonly string[]) => values.map(v => `'${v}'`).join(',
 /**
  * Folds the lowercase forms a database writes depending on context or locale, applied after lowering on both sides:
  * Greek final sigma (lower('ΚΩΣΤΑΣ') is 'κωστασ' while stored text keeps 'κωστας') and the dot JavaScript and ICU keep
- * after a lowered Turkish İ ('i̇'). gbrain_fact_normalize itself stays as it is: fact fingerprints are stored.
+ * after a lowered Turkish İ ('i̇'). gbrain_fact_normalize keeps its lowering as it is: fact fingerprints are stored.
  */
 export const foldSql = (expr: string) => `replace(translate(${expr}, 'ς', 'σ'), 'i\u0307', 'i')`;
 

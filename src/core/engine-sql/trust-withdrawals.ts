@@ -18,7 +18,7 @@ export interface WithdrawalKeyRow { visibility: string; fact_hash: string; subje
 
 export async function hasCoveringFactWithdrawal(exec: LegacyUnscopedRead, sourceId: string, visibility: string, factHash: string, claim: string, subject: string): Promise<boolean> {
   const rows = await exec.executeRaw(`SELECT 1 FROM fact_withdrawals
-    WHERE source_id=$1 AND visibility=$2 AND fact_hash IN ($3,gbrain_fact_fingerprint_v1($5)) AND (subject='*' OR subject=$4) LIMIT 1`,
+    WHERE source_id=$1 AND visibility=$2 AND fact_hash IN ($3,gbrain_fact_fingerprint_v2($5),gbrain_fact_fingerprint_v1($5)) AND (subject='*' OR subject=$4) LIMIT 1`,
   [sourceId, visibility, factHash, subject, claim]);
   return rows.length > 0;
 }
@@ -35,11 +35,12 @@ export async function insertFactWithdrawal(exec: SqlExecutor, sourceId: string, 
 export async function listFactWithdrawalDates(exec: LegacyUnscopedRead, sourceId: string, claims: readonly WithdrawalClaimRow[], subject: string | null): Promise<WithdrawalDateRow[]> {
   if (!claims.length) return [];
   const rows = await exec.executeRaw<{ row_num: number; withdrawn_at: Date | string }>(
-    `WITH incoming AS MATERIALIZED (SELECT i.visibility, gbrain_fact_fingerprint(i.claim) AS fp, gbrain_fact_fingerprint_v1(i.claim) AS fp_v1, i.row_num
+    `WITH incoming AS MATERIALIZED (SELECT i.visibility, gbrain_fact_fingerprint(i.claim) AS fp, gbrain_fact_fingerprint_v2(i.claim) AS fp_v2,
+        gbrain_fact_fingerprint_v1(i.claim) AS fp_v1, i.row_num
         FROM jsonb_to_recordset($2::text::jsonb) AS i(row_num integer,claim text,visibility text))
       SELECT incoming.row_num, min(w.withdrawn_at) AS withdrawn_at FROM incoming
       JOIN fact_withdrawals w ON w.source_id=$1 AND w.visibility=incoming.visibility
-        AND w.fact_hash IN (incoming.fp,incoming.fp_v1)
+        AND w.fact_hash IN (incoming.fp,incoming.fp_v2,incoming.fp_v1)
         AND ($3::text IS NULL OR w.subject = '*' OR w.subject = $3::text)
       GROUP BY incoming.row_num`,
     [sourceId, JSON.stringify(claims.map(c => ({ row_num: c.row_num, claim: c.claim, visibility: c.visibility }))), subject],
