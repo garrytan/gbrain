@@ -4,8 +4,9 @@
  *
  * `countMcpResolvedTakes` reads the caller's source and holder scope. Under `excludePrivate` the SQL adds the page
  * policy of the caller in context (`privatePagesFilterForCaller('p')`): `storePagePolicy` sends the flags the store
- * applies when the caller is the one the store models, and refuses with `engine_capability_missing` for a caller
- * whose member pages, grants or lineage widen the policy.
+ * applies, with the caller's reader identity and private-readable grant (the same caller the scorecard it decorates
+ * serves), and refuses with `engine_capability_missing` for a caller whose folder rules, audience or lineage widen
+ * the policy.
  */
 import type { McpResolvedSpec, PurgeTakesSpec } from '../../engine-sql/takes-reads.ts';
 import { storeCall, type StoreMember } from './common.ts';
@@ -26,7 +27,7 @@ export const listTakeRowsForPage: StoreMember<[pageId: number], Array<{ row_num:
   storeCall({ member: 'listTakeRowsForPage' }, () => brain.listTakeRowsForPage(pageId));
 
 export const countMcpResolvedTakes: StoreMember<[spec: McpResolvedSpec], number> = (brain, spec) => {
-  const excludePrivate = storePagePolicy('countMcpResolvedTakes', spec.excludePrivate);
+  const excludePrivate = storePagePolicy('countMcpResolvedTakes', spec.excludePrivate, { callerReaders: true });
   return storeCall({ member: 'countMcpResolvedTakes' }, () => brain.countMcpResolvedTakes({
     sourceIds: spec.sourceIds ? [...spec.sourceIds] : null,
     holders: spec.holders ? [...spec.holders] : null,
