@@ -57,6 +57,15 @@ export function requireTransactions(engine: object, step: string, why: string): 
  * handles (no capability set) pass.
  */
 export function requireManagedPersistence(engine: object, step: string, why: string): void {
+  if (!managesWorktrees(engine)) throw capabilityMissing('managed_persistence', `${step} (${why})`);
+}
+
+/**
+ * Whether `engine` can hold managed-checkout state at all. Without `managed_persistence` no worktree, refresh or
+ * worktree-owned write can exist (their admission refuses above), so an owner scan over them has nothing to find and
+ * returns empty instead of reading. PGLite, Postgres and transaction handles (no capability set) answer true.
+ */
+export function managesWorktrees(engine: object): boolean {
   const caps = (engine as { capabilities?: ReadonlySet<Capability> }).capabilities;
-  if (caps && !caps.has('managed_persistence')) throw capabilityMissing('managed_persistence', `${step} (${why})`);
+  return !caps || caps.has('managed_persistence');
 }

@@ -19,6 +19,7 @@ import { PENDING_IMPORT } from './pending-import.ts';
 import { declarePersistenceProtocol } from './protocol.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
 import { readConfigValue } from '../config-values.ts';
+import { managesWorktrees } from '../rust-engine/errors.ts';
 
 const GIT_ENV = { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'Never', LC_ALL: 'C', GIT_OPTIONAL_LOCKS: '0' };
 const DIFF_TIMEOUT_MS = 30_000;
@@ -147,6 +148,8 @@ export const overdueDeferredWorkSql = (host: string) => `(EXISTS (SELECT 1 FROM 
  * the ceiling counted from its admission (holdOverdue). An expired remember says whether a sync will replay it: only one that named its entity is replayed (failed-writes.ts).
  */
 export async function expireDeferredWrites(engine: BrainEngine, hostId: string, signal?: AbortSignal): Promise<WriteRequest[]> {
+  // Deferred and import-held writes both belong to a managed worktree (overdueDeferredFrom, overdueImportFrom).
+  if (!managesWorktrees(engine)) return [];
   const maxWaitMs = refreshBarrierMaxWaitMs(await readConfigValue(engine, REFRESH_BARRIER_MAX_WAIT_KEY, { signal }));
   const expired = await engine.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r ${overdueDeferredFrom('$1', '$2::double precision')}
     ORDER BY r.sequence LIMIT 100`, [hostId, maxWaitMs], { signal });
