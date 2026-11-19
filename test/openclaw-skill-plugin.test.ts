@@ -607,7 +607,7 @@ describe.skipIf(!NODE)('the gbrain-skill-resolver plugin under Node', () => {
 });
 
 describe.skipIf(!NODE)('doctor skill_resolver: the OpenClaw plugin', () => {
-  test('re-checks OpenClaw\'s skill list: a skill it no longer lists or now hides warns with the setup command, and doctor edits no OpenClaw config', async () => {
+  test('re-checks OpenClaw\'s skill list: a skill it no longer lists or now hides warns, its fix stops suggesting it without installing anything, and no OpenClaw config changes', async () => {
     const b = box();
     const list = (skills: object[]) => { const f = join(b.root, 'skills-list-' + Math.random().toString(36).slice(2) + '.json'); writeFileSync(f, JSON.stringify({ workspaceDir: join(b.state, 'workspace'), skills })); return { SKILLS_LIST_JSON: f }; };
     const all = ['deploy-service', 'email-triage', 'calendar-sync'].map((name) => ({ name, modelVisible: true }));
@@ -622,11 +622,18 @@ describe.skipIf(!NODE)('doctor skill_resolver: the OpenClaw plugin', () => {
     expect(cut.message).toContain('skills.limits.maxCandidatesPerRoot');
     expect(cut.message).toContain('skills.limits.maxSkillsLoadedPerSource');
     expect(cut.message).toContain('email-triage');
-    expect(cut.fix.argv).toEqual(['gbrain', 'setup', 'openclaw', '--skill-loading', 'resolve', '--agent', 'main']);
+    expect(cut.fix.argv).toEqual(['gbrain', 'setup', 'openclaw', '--skills-index-only']);
     const hidden = await doctor(list(all.map((s) => (s.name === 'calendar-sync' ? { ...s, modelVisible: false } : s))));
     expect(hidden).toMatchObject({ status: 'warn', details: { code: 'skill_resolver_host_hidden' } });
     expect(hidden.message).toContain('calendar-sync');
     expect(hidden.fix.argv).toEqual(cut.fix.argv);
+    const hiddenList = list(all.map((s) => (s.name === 'calendar-sync' ? { ...s, modelVisible: false } : s)));
+    const turnRule = readFileSync(join(b.state, 'gbrain', 'gbrain-turn-rule', 'index.js'), 'utf8');
+    const fixed = await runCli([...hidden.fix.argv.slice(1), '--gbrain-bin', b.bin], { env: { ...b.env, ...hiddenList } });
+    expect(fixed.exitCode, fixed.stderr).toBe(0);
+    expect(readState(b).agents.main.exclude_ids).toEqual(['calendar-sync']);
+    expect((await doctor(hiddenList)).status).toBe('ok');
+    expect(readFileSync(join(b.state, 'gbrain', 'gbrain-turn-rule', 'index.js'), 'utf8')).toBe(turnRule);
     expect(readFileSync(join(b.state, 'openclaw.json'), 'utf8')).toBe(config);
     expect(readFileSync(b.calls, 'utf8').slice(before.length).split('\n').filter((l) => l && !l.startsWith('skills list'))).toEqual([]);
   });

@@ -128,8 +128,8 @@ export function skillResolverCheck(v: SkillResolverView | null): Check | null {
   const oc = v.openclaw ? describeOpenclawSkill(v.openclaw).problem : null;
   if (oc) {
     return { name, status: 'warn', message: `${describeSkillResolver(v)} OpenClaw: ${oc.what}.`, details: { ...details, code: oc.code },
-      fix: { argv: oc.argv ?? ['gbrain', 'setup', 'openclaw', '--skills-index-only'], consent: [], actor: 'agent', requires_exclusive: false, verify: doctorVerify(name), docs: `docs/guides/skill-resolver.md#${oc.code}`,
-        why: oc.argv ? "Re-reads OpenClaw's skill list for the agent and rewrites only the plugin state, so those skills are no longer suggested; it changes no OpenClaw config." : 'Rebuilds the OpenClaw catalogs, the library and the plugin state without running any OpenClaw command; gbrain setup openclaw --skill-loading resolve reinstalls the plugin itself.' } };
+      fix: { argv: ['gbrain', 'setup', 'openclaw', '--skills-index-only'], consent: [], actor: 'agent', requires_exclusive: false, verify: doctorVerify(name), docs: `docs/guides/skill-resolver.md#${oc.code}`,
+        why: "Rebuilds the OpenClaw catalogs, the library and the plugin state, re-reading OpenClaw's skill list (read-only) so skills it hides or no longer lists stop being suggested; it installs nothing and changes no OpenClaw config. gbrain setup openclaw --skill-loading resolve reinstalls the plugin itself." } };
   }
   const pi = v.pi ? describePiSkillView(v.pi).problem : null;
   if (pi) {

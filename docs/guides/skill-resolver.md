@@ -220,8 +220,10 @@ agent's `exclude_ids` and is never suggested, and setup names it. If the
 command fails, or lists none of the catalog's skills (usually a different
 workspace), nothing is filtered and setup says so. Run setup again after you
 change which skills an agent can use; `gbrain doctor --only skill_resolver`
-asks OpenClaw again (read-only) and warns, with that setup command, when the
-plugin still suggests a skill OpenClaw now hides or no longer lists. A
+asks OpenClaw again (read-only) and warns when the plugin still suggests a
+skill OpenClaw now hides or no longer lists; its fix,
+`gbrain setup openclaw --skills-index-only`, re-reads that list and rewrites
+only the plugin state. A
 `--skill-loading` re-run that changes nothing runs no install command for
 either plugin.
 
@@ -802,6 +804,6 @@ the root, then run setup again. gbrain never edits these limits itself.
 
 Doctor found skills the plugin still suggests that OpenClaw now hides from the
 agent's model (not eligible on this host, outside the agent's skill filter, or
-model invocation off). Run `gbrain setup openclaw --skill-loading resolve
---agent <id>` again (doctor prints it), so setup re-reads OpenClaw's list and
-stops suggesting them.
+model invocation off). Run `gbrain setup openclaw --skills-index-only` (doctor
+prints it): it re-reads OpenClaw's list and stops suggesting them, installing
+nothing.

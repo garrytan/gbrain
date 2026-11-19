@@ -82,7 +82,7 @@ export async function openclawSkillView(home: string, now = Date.now()): Promise
 }
 
 /** One line for doctor's message, and the problem to warn about (null when healthy). */
-export function describeOpenclawSkill(v: OpenclawSkillView): { line: string; problem: { code: string; what: string; argv?: string[] } | null } {
+export function describeOpenclawSkill(v: OpenclawSkillView): { line: string; problem: { code: string; what: string } | null } {
   const on = v.agents.filter((a) => a.mode !== 'off');
   const agents = v.agents.map((a) => `${a.id} ${a.mode}, ${a.skills} skills, ${a.fresh === null ? 'no catalog' : a.fresh ? 'fresh' : `stale (${a.stale_reason})`}, ${a.pins} pinned`).join('; ');
   const r = v.recent;
@@ -90,7 +90,7 @@ export function describeOpenclawSkill(v: OpenclawSkillView): { line: string; pro
   const reads = r.reads ? `, ${r.reads_of_suggested}/${r.reads} skill reads were suggested` : '';
   const errs = Object.entries(r.errors).map(([c, n]) => `${c} x${n}`).join(', ');
   const line = `openclaw plugin ${v.plugin}, library ${v.library}; ${agents || 'no agent'}${r.turns ? `; last 24h ${r.turns} turns${miss}${reads}${errs ? `, ${errs}` : ''}` : ''}`;
-  let problem: { code: string; what: string; argv?: string[] } | null = null;
+  let problem: { code: string; what: string } | null = null;
   const drift = on.find((a) => a.host && (a.host.cut.length || a.host.hidden.length));
   const names = (ids: string[]) => `${ids.slice(0, 5).join(', ')}${ids.length > 5 ? ` and ${ids.length - 5} more` : ''}`;
   if (on.length && v.plugin !== 'installed') problem = { code: 'skill_resolver_plugin_not_installed', what: v.plugin === 'absent' ? 'the plugin files are missing' : "OpenClaw's config does not load, enable and allow the plugin" };
@@ -98,10 +98,9 @@ export function describeOpenclawSkill(v: OpenclawSkillView): { line: string; pro
   else if (on.some((a) => a.fresh === null)) problem = { code: 'skill_index_missing', what: 'an agent has no catalog' };
   else if (drift?.host) {
     const { cut, hidden } = drift.host;
-    const argv = ['gbrain', 'setup', 'openclaw', '--skill-loading', drift.mode === 'live' ? 'resolve' : 'shadow', '--agent', drift.id];
     problem = cut.length
-      ? { code: 'skill_resolver_host_load_cut', what: `agent ${drift.id}: OpenClaw no longer lists ${cut.length} skill(s) the plugin still suggests (dropped at load by skills.limits.maxCandidatesPerRoot or skills.limits.maxSkillsLoadedPerSource), so skills_read cannot open them: ${names(cut)}`, argv }
-      : { code: 'skill_resolver_host_hidden', what: `agent ${drift.id}: OpenClaw now hides ${hidden.length} skill(s) the plugin still suggests from this agent's model (ineligible on this host, outside its skill filter, or model invocation off): ${names(hidden)}`, argv };
+      ? { code: 'skill_resolver_host_load_cut', what: `agent ${drift.id}: OpenClaw no longer lists ${cut.length} skill(s) the plugin still suggests (dropped at load by skills.limits.maxCandidatesPerRoot or skills.limits.maxSkillsLoadedPerSource), so skills_read cannot open them: ${names(cut)}` }
+      : { code: 'skill_resolver_host_hidden', what: `agent ${drift.id}: OpenClaw now hides ${hidden.length} skill(s) the plugin still suggests from this agent's model (ineligible on this host, outside its skill filter, or model invocation off): ${names(hidden)}` };
   }
   else if (r.miss_rate !== null && r.miss_rate > OPENCLAW_MISS_RATE_WARN && r.turns >= 20) problem = { code: 'skill_resolve_timeout', what: `${(r.miss_rate * 100).toFixed(1)}% of turns missed the 50 ms deadline and got no suggestions` };
   return { line, problem };

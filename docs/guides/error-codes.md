@@ -5466,7 +5466,7 @@ More: [docs/guides/skill-resolver.md#skill_resolver_config_unreadable](../../doc
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| OpenClaw now hides some skills the plugin still suggests from the agent's model (ineligible on this host, outside the agent's skill filter, or model invocation off). | The request itself was wrong or no longer matches the brain; nothing was changed. | Run gbrain setup openclaw --skill-loading resolve --agent <id> again, so setup re-reads OpenClaw's skill list and stops suggesting them. | agent | `repeat the read that failed` | 1 | no |
+| OpenClaw now hides some skills the plugin still suggests from the agent's model (ineligible on this host, outside the agent's skill filter, or model invocation off). | The request itself was wrong or no longer matches the brain; nothing was changed. | Run gbrain setup openclaw --skills-index-only, which re-reads OpenClaw's skill list and stops suggesting them without installing anything. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/skill-resolver.md#skill_resolver_host_hidden](../../docs/guides/skill-resolver.md#skill_resolver_host_hidden)
 
