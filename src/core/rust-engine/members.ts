@@ -743,6 +743,7 @@ export const RUST_ENGINE_MEMBERS = {
   listVisibleBeliefLifetimes: 'belief_ledger',
   listVersionTrustTiers: 'page_versions',
   listVersionReasonWriters: 'page_versions',
+  listPageRefsByIds: 'pages',
   listValidTimeIdentities: 'pages',
   pickValidTimeEdition: 'page_versions',
   listAmendmentsNotApplied: 'links',
