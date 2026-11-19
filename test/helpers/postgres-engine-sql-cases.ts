@@ -554,12 +554,12 @@ export const DOMAIN_OF: Record<string, string> = {
   'listActiveAccessMembers': OOS.writeMisc,
   'expireMemoryProposals': OOS.writeMisc,
   'attachSourcePath': OOS.writeMisc,
-  'listAwaitingMemoryProposals': OOS.writeMisc,
+  'listAwaitingMemoryProposals': OOS.writeMisc, 'readMemoryProposal': OOS.writeMisc,
   'purgeMemoryProposals': OOS.writeMisc,
   'writeMiscReads': OOS.helper, 'writeMiscRead': OOS.helper,
   // the write journal (typed admission, claim, completion, limit and hold reads)
   'readJournalLimitRows': OOS.journal, 'readHeldPageRows': OOS.journal, 'readHeldCoverageRows': OOS.journal,
-  'readWriteRequest': OOS.journal, 'readWriteRequestById': OOS.journal, 'readWriteRequestProgress': OOS.journal, 'countOutstandingBySource': OOS.journal, 'ownsSchemaTables': OOS.journal, 'readCounterRows': OOS.journal, 'readAdmissionRate': OOS.journal, 'lockPersistenceCounters': OOS.journal,
+  'readWriteRequest': OOS.journal, 'readWriteRequestById': OOS.journal, 'listWriteRequestRows': OOS.journal, 'readWriteRequestProgress': OOS.journal, 'countOutstandingBySource': OOS.journal, 'ownsSchemaTables': OOS.journal, 'readCounterRows': OOS.journal, 'readAdmissionRate': OOS.journal, 'lockPersistenceCounters': OOS.journal,
   'insertWriteRequest': OOS.journal, 'stampWriteClaim': OOS.journal, 'lockWriteRequest': OOS.journal, 'completeWriteRow': OOS.journal,
   'listHostConsumerRows': OOS.journal, 'probeLiveConsumerRows': OOS.journal, 'renewConsumerRow': OOS.journal, 'deleteConsumerRow': OOS.journal,
   'stampWorktreeHeartbeats': OOS.journal,
@@ -1313,6 +1313,10 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ]),
   ...variants('readWriteRequest', [['default', (e) => e.readWriteRequest('local_cli', 'writer-1', JOURNAL_REQUEST)]]),
   ...variants('readWriteRequestById', [['default', (e) => e.readWriteRequestById(JOURNAL_REQUEST)]]),
+  ...variants('listWriteRequestRows', [
+    ['default', (e) => e.listWriteRequestRows('local_cli', 'writer-1', SRC, { before: null, limit: 51, slugPrefixes: null, operations: null, slugAllowList: null })],
+    ['fenced', (e) => e.listWriteRequestRows('local_cli', 'writer-1', SRC, { before: '7', limit: 3, slugPrefixes: ['notes/'], operations: ['put_page'], slugAllowList: ['notes/*'] })],
+  ]),
   ...variants('lockPersistenceCounters', [['default', (e) => e.transaction((tx: any) => tx.lockPersistenceCounters(JOURNAL_KEYS))]]),
   ...variants('insertWriteRequest', [['default', (e) => e.transaction((tx: any) => tx.insertWriteRequest({
     principalKind: 'local_cli', principalId: 'writer-1', requestId: JOURNAL_REQUEST, operation: 'put_page', sourceId: SRC,

@@ -79,9 +79,11 @@ export function proposalDigest(sent: Record<string, unknown>): string {
   return sha256(JSON.stringify(Object.keys(sent).sort().filter(k => sent[k] !== undefined).map(k => [k, sent[k]])));
 }
 
-export async function getProposal(engine: SqlEngine, principal: Principal, requestId: string): Promise<MemoryProposal | null> {
-  const [row] = await engine.executeRaw<Record<string, unknown>>(
-    'SELECT * FROM memory_proposals WHERE principal_kind=$1 AND principal_id=$2 AND request_id=$3::uuid', [principal.kind, principal.id, requestId]);
+/** The engine a proposal read needs: the typed proposal read (engine-sql/write-misc.ts) beside the statements still sent raw. */
+type ProposalEngine = SqlEngine & Pick<BrainEngine, 'readMemoryProposal'>;
+
+export async function getProposal(engine: Pick<BrainEngine, 'readMemoryProposal'>, principal: Principal, requestId: string): Promise<MemoryProposal | null> {
+  const row = await engine.readMemoryProposal(principal.kind, principal.id, requestId);
   return row ? normalize(row) : null;
 }
 
@@ -153,12 +155,12 @@ const expiryReason = (limits: ProposalLimits) => `No owner decision within ${lim
 type CloseFields = { reason: string | null; code?: string | null; decidedBy: string };
 
 /** Closes an awaiting_owner proposal; returns the row as it is afterwards (unchanged when another decision got there first). */
-async function closeProposal(engine: SqlEngine, row: MemoryProposal, state: Exclude<ProposalState, 'awaiting_owner' | 'approved'>, fields: CloseFields): Promise<MemoryProposal> {
+async function closeProposal(engine: ProposalEngine, row: MemoryProposal, state: Exclude<ProposalState, 'awaiting_owner' | 'approved'>, fields: CloseFields): Promise<MemoryProposal> {
   return (await decideClose(engine, row, state, fields)).row;
 }
 
 /** closeProposal, also saying whether this call's own conditional UPDATE made the change (decided) or another decision got there first. */
-async function decideClose(engine: SqlEngine, row: MemoryProposal, state: Exclude<ProposalState, 'awaiting_owner' | 'approved'>,
+async function decideClose(engine: ProposalEngine, row: MemoryProposal, state: Exclude<ProposalState, 'awaiting_owner' | 'approved'>,
   fields: CloseFields): Promise<{ row: MemoryProposal; decided: boolean }> {
   const [updated] = await engine.executeRaw<Record<string, unknown>>(`UPDATE memory_proposals SET state=$4, reason=$5, error_code=$6, decided_by=$7,
       decided_at=now(), updated_at=now() WHERE principal_kind=$1 AND principal_id=$2 AND request_id=$3::uuid AND state='awaiting_owner' RETURNING *`,
@@ -174,7 +176,7 @@ async function overdue(engine: SqlEngine, row: MemoryProposal): Promise<boolean>
 }
 
 /** The proposer withdraws an awaiting proposal (cancel_write_request); a closed one is returned as it is. */
-export async function cancelOwnProposal(engine: SqlEngine, row: MemoryProposal): Promise<MemoryProposal> {
+export async function cancelOwnProposal(engine: ProposalEngine, row: MemoryProposal): Promise<MemoryProposal> {
   if (row.state !== 'awaiting_owner') return row;
   return closeProposal(engine, row, 'cancelled', { reason: 'Cancelled by the proposer.', code: null, decidedBy: 'proposer' });
 }

@@ -47,12 +47,15 @@ use serde_json::{Map, Value, json};
 mod effect_scans;
 mod housekeeping;
 mod projection_queue;
+mod receipt_list;
 mod topology;
+
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn};
 pub use projection_queue::{
     ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };
 pub(crate) use projection_queue::{activation_started_us, queue_page_projection};
+pub use receipt_list::WriteRequestListFilter;
 pub use topology::TopologyChangeInsert;
 
 /// The byte after `keys::PERSISTENCE` of a counter row.
