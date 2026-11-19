@@ -11,7 +11,7 @@
 import { describe, expect, test } from 'bun:test';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { callerAccessAllowedSql, privatePagesFilterForCaller, readPolicyFragment, withCallerAccess } from '../src/core/search/private-visibility.ts';
-import { ANY_OWNER_ONLY_SQL, ownerOnlySourceSql } from '../src/core/access/owner-only.ts';
+import { ANY_OWNER_ONLY_SQL, OWNER_ONLY_LINEAGE_PRESENT_SQL, ownerOnlyLineageReadable, ownerOnlySourceSql } from '../src/core/access/owner-only.ts';
 import { makeFakeSql } from './helpers/fake-postgres-sql.ts';
 
 const CALLERS = {
@@ -59,7 +59,9 @@ describe('page visibility guards send the hand-written Postgres statement', () =
       const old = await sent(/access_members/, e => under(() => e.executeRaw(
         `SELECT EXISTS (SELECT 1 FROM access_members WHERE labelled_only) AS any_labelled, (${`SELECT (page_readers IS NOT NULL OR folder_rule_ids IS NOT NULL) FROM pages
       WHERE source_id=$1 AND slug=$2 AND NOT (${readPolicyFragment('pages', [], true)}) LIMIT 1`}) AS identity_may_open,
-          ${ownerOnlySourceSql('$1')} AS owner_only_source, ${ANY_OWNER_ONLY_SQL} AS owner_only_any`, ['default', 'notes/a'])));
+          ${ownerOnlySourceSql('$1')} AS owner_only_source, ${
+          // #9689: the any-owner-only test reads the v320 lineage function (marks a hard delete left) unless the schema predates it.
+          ownerOnlyLineageReadable(e) ? OWNER_ONLY_LINEAGE_PRESENT_SQL : ANY_OWNER_ONLY_SQL} AS owner_only_any`, ['default', 'notes/a'])));
       const typed = await sent(/access_members/, e => under(() => e.readWriteVisibilityProbe('default', 'notes/a')));
       expect(old).toHaveLength(1);
       // The same statement, with the source id bound again for the owner-only source test instead of reusing $1.
