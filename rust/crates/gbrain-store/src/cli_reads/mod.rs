@@ -10,6 +10,7 @@ pub mod doctor_derived;
 pub mod doctor_derived_health;
 pub mod doctor_derived_ledgers;
 pub mod doctor_facts_trust;
+pub mod doctor_fence;
 pub mod doctor_pages;
 pub mod doctor_persistence;
 pub mod doctor_search;

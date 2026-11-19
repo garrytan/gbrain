@@ -50,6 +50,7 @@ mod projection_queue;
 pub(crate) mod topology;
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn};
 pub(crate) use housekeeping::{HousekeepingRow, turn_key};
+pub(crate) use projection_queue::parse_timestamptz;
 pub use projection_queue::{
     ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };
