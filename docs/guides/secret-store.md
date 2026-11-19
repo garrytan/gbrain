@@ -133,7 +133,7 @@ one `gbrain files` uses), gbrain also uploads an encrypted export of the store t
   the places the backup recorded for it that this brain lacks are added, so a later purge of one page never removes an
   original another page still holds. A restore only adds rows and never deletes one it did not write, and it ties a restored place to
   the page at its backed-up slug only when that page holds the entry's marker (`<REDACTED:<rule>:<id>>`), so a page
-  that merely took an old slug, or quotes the id, never gets the original. The marker counts when it sits in the page
+  that merely took an old slug, or quotes only the id, never gets the original. The marker counts when it sits in the page
   itself or in a timeline entry or fact filed on or about that page, so a copy another page wrote into that page's
   timeline counts too. A page whose body is stored in segments is read segment by segment. The restore ties the place
   to the exact page it checked and holds that page until it commits, so a rename running at the same time cannot hand

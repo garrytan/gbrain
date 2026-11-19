@@ -2,7 +2,6 @@ import type { BrainEngine } from '../engine.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import { MOVE_WITHDRAWAL_SUBJECT_SQL } from '../facts/withdrawal-schema.ts';
 import { dropRekeyDuplicates } from '../facts/ontology-rekey.ts';
-import { pageHoldsSql } from '../secret-store/marker-sql.ts';
 
 /**
  * Record `old -> new` in slug_aliases when a page is renamed, inside the
@@ -82,7 +81,7 @@ export async function recordSlugLineAlias(tx: Pick<BrainEngine, 'transaction'>, 
  * caller's rename transaction. The new slug is free (the page UPDATE
  * succeeded), so fence rows or aliases still keyed to it belong to a purged
  * page and yield to the moved ones. A secret occurrence moves only when it is the renamed page's own (its
- * page_id is that page or the stale row a fallback rename retires, or it has none and the page now at the new slug holds its marker where SQL reads it): an occurrence another page holds under
+ * page_id is that page, or the stale row a fallback rename retires, or none): an occurrence another page holds under
  * an older slug stays with that page. An ontology observation the new slug
  * already holds is dropped before its key moves (B-10, dropRekeyDuplicates).
  * A brain whose schema predates the facts or alias tables skips them inside a
@@ -109,8 +108,7 @@ export async function moveSlugBindings(
        AND EXISTS (SELECT 1 FROM page_aliases o WHERE o.source_id = $1 AND o.slug = $2 AND o.alias_norm = a.alias_norm AND o.origin = a.origin)`),
     sql(`UPDATE page_aliases SET slug = $3 WHERE source_id = $1 AND slug = $2`),
     sql(`UPDATE secret_store_occurrence SET slug = $3 WHERE source_id = $1 AND slug = $2 AND commit_sha IS NULL
-       AND (page_id IN (SELECT id FROM pages WHERE source_id = $1 AND slug IN ($2, $3)) OR (page_id IS NULL
-         AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id = $1 AND p.slug = $3 AND ${pageHoldsSql('p', 'secret_store_occurrence.entry_id')})))`),
+       AND (page_id IS NULL OR page_id IN (SELECT id FROM pages WHERE source_id = $1 AND slug IN ($2, $3)))`),
   ];
   for (const statement of statements) {
     try {

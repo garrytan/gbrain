@@ -406,14 +406,15 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
       });
     }, 120_000);
 
-    test('a rename leaves an occurrence with no page under the old slug when the renamed page does not hold its marker', async () => {
+    test('a rename moves a place with no page along with the page, so a page that later takes the old slug gets nothing', async () => {
       await brain(async b => {
         const from = `notes/from-${randomUUID().slice(0, 6)}`, to = `notes/to-${randomUUID().slice(0, 6)}`;
         await b.engine.putPage(from, { type: 'note', title: 'Took the slug', compiled_truth: 'No marker here.', timeline: '', frontmatter: {} }, { sourceId: b.sourceId });
         const leftover = (await seal(b.engine, { sourceId: b.sourceId, rule: 'github_token', value: value(`lo${randomUUID().slice(0, 6)}`) })).id;
         await recordOccurrence(b.engine, { entryId: leftover, sourceId: b.sourceId, slug: from, field: 'compiled_truth', origin: 'repair' });
         await b.engine.updateSlug(from, to, { sourceId: b.sourceId });
-        expect((await b.engine.executeRaw<{ slug: string }>('SELECT slug FROM secret_store_occurrence WHERE entry_id = $1', [leftover])).map(r => r.slug)).toEqual([from]);
+        await b.engine.putPage(from, { type: 'note', title: 'New page at the old slug', compiled_truth: 'Unrelated.', timeline: '', frontmatter: {} }, { sourceId: b.sourceId });
+        expect((await b.engine.executeRaw<{ slug: string }>('SELECT slug FROM secret_store_occurrence WHERE entry_id = $1', [leftover])).map(r => r.slug)).toEqual([to]);
       });
     }, 120_000);
 
@@ -447,7 +448,7 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
       });
     }, 120_000);
 
-    test('a fallback rename leaves a place with no page under the stale slug when only the stale row, not the new one, holds its marker', async () => {
+    test('a fallback rename moves a place with no page off the stale slug it retires', async () => {
       await brain(async b => {
         const stale = 'notes/stale-' + randomUUID().slice(0, 6), dest = 'notes/dest-' + randomUUID().slice(0, 6);
         const id = (await seal(b.engine, { sourceId: b.sourceId, rule: 'github_token', value: value('fr' + randomUUID().slice(0, 6)) })).id;
@@ -455,7 +456,7 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
         await b.engine.putPage(dest, { type: 'note', title: 'New body', compiled_truth: 'New body without it.', timeline: '', frontmatter: {} }, { sourceId: b.sourceId });
         await recordOccurrence(b.engine, { entryId: id, sourceId: b.sourceId, slug: stale, field: 'compiled_truth', origin: 'repair' });
         await carryRenameIdentity(b.engine, b.sourceId, stale, dest);
-        expect((await b.engine.executeRaw<{ slug: string }>('SELECT slug FROM secret_store_occurrence WHERE entry_id = $1', [id])).map(r => r.slug)).toEqual([stale]);
+        expect((await b.engine.executeRaw<{ slug: string }>('SELECT slug FROM secret_store_occurrence WHERE entry_id = $1', [id])).map(r => r.slug)).toEqual([dest]);
       });
     }, 120_000);
 

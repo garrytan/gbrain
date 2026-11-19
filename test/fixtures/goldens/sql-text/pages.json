@@ -1994,12 +1994,10 @@
               "string",
               "string",
               "string",
-              "string",
-              "string",
               "string"
             ],
-            "sql": "UPDATE secret_store_occurrence SET slug = $1 WHERE source_id = $2 AND slug = $3 AND commit_sha IS NULL AND (page_id IN (SELECT id FROM pages WHERE source_id = $4 AND slug IN ($5, $6)) OR (page_id IS NULL AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id = $7 AND p.slug = $8 AND ((p.title || ' ' || coalesce(p.compiled_truth, '') || ' ' || coalesce(p.timeline, '') || ' ' || p.frontmatter::text) ~ ('<REDACTED:[a-z0-9_]{1,64}:' || secret_store_occurrence.entry_id || '>') OR EXISTS (SELECT 1 FROM raw_data hr WHERE hr.page_id = p.id AND (hr.data::text) ~ ('<REDACTED:[a-z0-9_]{1,64}:' || secret_store_occurrence.entry_id || '>')) OR EXISTS (SELECT 1 FROM timeline_entries ht WHERE (ht.page_id = p.id OR ht.event_page_id = p.id) AND (ht.summary || ' ' || ht.detail || ' ' || ht.source) ~ ('<REDACTED:[a-z0-9_]{1,64}:' || secret_store_occurrence.entry_id || '>')) OR EXISTS (SELECT 1 FROM takes hk WHERE hk.page_id = p.id AND (coalesce(hk.claim, '') || ' ' || coalesce(hk.source, '') || ' ' || coalesce(hk.resolved_source, '')) ~ ('<REDACTED:[a-z0-9_]{1,64}:' || secret_store_occurrence.entry_id || '>')) OR EXISTS (SELECT 1 FROM links hl WHERE hl.from_page_id = p.id AND (hl.context) ~ ('<REDACTED:[a-z0-9_]{1,64}:' || secret_store_occurrence.entry_id || '>')) OR EXISTS (SELECT 1 FROM facts hf WHERE hf.source_id = p.source_id AND (hf.source_markdown_slug = p.slug OR (hf.source_markdown_slug IS NULL AND hf.entity_slug = p.slug)) AND (coalesce(hf.fact, '') || ' ' || coalesce(hf.context, '') || ' ' || coalesce(hf.value::text, '')) ~ ('<REDACTED:[a-z0-9_]{1,64}:' || secret_store_occurrence.entry_id || '>'))))))",
-            "textSha256": "7205db903a8862b256fa5e8e97c157222008f4b9a57e5da290be109930dfea47"
+            "sql": "UPDATE secret_store_occurrence SET slug = $1 WHERE source_id = $2 AND slug = $3 AND commit_sha IS NULL AND (page_id IS NULL OR page_id IN (SELECT id FROM pages WHERE source_id = $4 AND slug IN ($5, $6)))",
+            "textSha256": "dc82a72d28c14eaf8b2e4848234a3c3ce9b4281001969f91ef6f47a969eb4e3c"
           },
           {
             "event": "savepoint-release",
