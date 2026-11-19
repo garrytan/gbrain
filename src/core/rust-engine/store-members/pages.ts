@@ -75,13 +75,31 @@ export const restorePage: StoreMember<[slug: string, opts?: { sourceId?: string 
   storeCall({ member: 'restorePage', slug }, () => brain.restorePage(slug, takeOptions('restorePage', opts, ['sourceId'])));
 
 const LIST_FILTERS = ['type', 'tag', 'limit', 'offset', 'updated_after', 'updatedAfterKeyset', 'slugAfter', 'slugPrefix',
-  'excludeSlugPrefixes', 'includeDeleted', 'sort', 'sourceId', 'sourceIds', 'excludePrivate'] as const;
+  'excludeSlugPrefixes', 'includeDeleted', 'sort', 'sourceId', 'sourceIds', 'excludePrivate', 'listColumnsOnly'] as const;
+
+/**
+ * A page as PGLite's `listPages({ listColumnsOnly: true })` row reads: only the list columns (id, source, slug, type,
+ * title, dates, effective date, a segmented body's storage and size), with a blank body and timeline and empty
+ * frontmatter. Every other page field is absent.
+ */
+function listColumns(page: Page): Page {
+  const { id, source_id, slug, type, title, created_at, updated_at, updated_at_iso, deleted_at, effective_date,
+    effective_date_source, body_storage, body_bytes } = page;
+  return {
+    id, source_id, slug, type, title, compiled_truth: '', timeline: '', frontmatter: {}, created_at, updated_at,
+    ...(updated_at_iso !== undefined && { updated_at_iso }),
+    ...(deleted_at !== undefined && { deleted_at }),
+    ...(effective_date !== undefined && { effective_date }),
+    ...(effective_date_source !== undefined && { effective_date_source }),
+    ...(body_storage === 'segmented' && { body_storage, body_bytes }),
+  };
+}
 
 export const listPages: StoreMember<[filters?: PageFilters], Page[]> = async (brain, filters) => {
-  // `listColumnsOnly` blanks the body and timeline in PGLite's rows, which the store does not do, so it refuses.
-  const options = pageScope('listPages', filters, LIST_FILTERS);
+  // The store reads whole pages; `listColumnsOnly` keeps PGLite's list projection of each (listColumns).
+  const { listColumnsOnly, ...options } = pageScope('listPages', filters, LIST_FILTERS);
   const pages: Page[] = await storeCall({ member: 'listPages' }, () => brain.listPages(options));
-  return pages.map((page) => toListPage(page));
+  return pages.map((page) => (listColumnsOnly === true ? listColumns(toListPage(page)) : toListPage(page)));
 };
 
 /**

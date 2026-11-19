@@ -672,6 +672,30 @@ describe('engine parity: pages', () => {
     },
   );
 
+  parityTest(
+    'listPages under listColumnsOnly returns the list columns with a blank body, and hides private pages under excludePrivate',
+    { methods: ['listPages', 'putPage', 'softDeletePage'] },
+    async (engine, backend) => {
+      await seedPrivate(engine, backend);
+      // The list projection: which fields a row carries, and the values that do not depend on the arm's clock or ids.
+      const row = (page: Page) => ({
+        fields: Object.keys(page).filter((key) => (page as unknown as Record<string, unknown>)[key] !== undefined).sort(),
+        at: `${page.source_id}:${page.slug}`,
+        ...pick(page, ['type', 'title', 'compiled_truth', 'timeline', 'frontmatter', 'effective_date', 'effective_date_source']),
+        deleted: page.deleted_at != null,
+      });
+      const list = async (filters: Parameters<BrainEngine['listPages']>[0]) => (await engine.listPages(filters)).map(row);
+      const out = {
+        all: await list({ listColumnsOnly: true, sort: 'slug', includeDeleted: true }),
+        hidden: await list({ listColumnsOnly: true, sort: 'slug', excludePrivate: true, limit: 3 }),
+        typed: await list({ listColumnsOnly: true, type: 'person', sort: 'slug', sourceId: 'alt' }),
+      };
+      expect(out.all.every((page) => page.compiled_truth === '' && page.timeline === '')).toBe(true);
+      expect(out.hidden.map((page) => page.at)).not.toContain('default:people/private-example');
+      return out;
+    },
+  );
+
   parityTest('same slug in two sources stays separate', { methods: ['putPage', 'getPage', 'deletePage', 'resolveSlugs'] }, async (engine, backend) => {
     await createSource(engine, backend, 'work');
     await engine.putPage('notes/a', NOTE);
