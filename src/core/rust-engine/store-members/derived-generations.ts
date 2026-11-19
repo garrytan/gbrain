@@ -13,6 +13,10 @@ import type { LedgerScrubCounts } from '../../engine-sql/generation-ledger.ts';
 import type {
   GenerationActivationRecord, GenerationActivationState, GenerationOrphanRow, PendingGenerationMemberRow,
 } from '../../engine-sql/generation-activations.ts';
+import type {
+  GenerationRepairFilter, GenerationRepairItemRow, HeldGenerationListRow, HeldGenerationProposalRow, RestorableGenerationRow, SourceIncarnationListRow,
+  UnmatchedGenerationRow,
+} from '../../engine-sql/generation-repair.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /** The live generation of `key` with its owned items, or null. */
@@ -101,3 +105,36 @@ export const listPendingGenerationMembers: StoreMember<[sourceIds: readonly stri
 export const listGenerationOrphanCandidates: StoreMember<[sourceIds: readonly string[], kind: string | null], GenerationOrphanRow[]> =
   async (brain, sourceIds, kind) =>
     storeCall({ member: 'listGenerationOrphanCandidates' }, () => brain.listGenerationOrphanCandidates([...sourceIds], kind));
+
+/** The ledger items of the generations `generationIds`. */
+export const readGenerationItemsByIds: StoreMember<[generationIds: readonly number[]], GenerationRepairItemRow[]> = async (brain, generationIds) =>
+  storeCall({ member: 'readGenerationItemsByIds' }, () => brain.readGenerationItemsByIds([...generationIds]));
+
+/** The live generations of `kind` whose completeness lists unmatched predecessors, filtered, in id order. */
+export const listUnmatchedGenerationRows: StoreMember<[sourceIds: readonly string[], kind: string, filter: GenerationRepairFilter], UnmatchedGenerationRow[]> =
+  async (brain, sourceIds, kind, filter) =>
+    storeCall({ member: 'listUnmatchedGenerationRows' }, () => brain.listUnmatchedGenerationRows([...sourceIds], kind, { ...filter }));
+
+/** The live generations of `kind` with the superseded generation each replaced, filtered, in id order. */
+export const listRestorableGenerationRows: StoreMember<[sourceIds: readonly string[], kind: string, filter: GenerationRepairFilter], RestorableGenerationRow[]> =
+  async (brain, sourceIds, kind, filter) =>
+    storeCall({ member: 'listRestorableGenerationRows' }, () => brain.listRestorableGenerationRows([...sourceIds], kind, { ...filter }));
+
+/** The held rows of `kind`, filtered, in id order. */
+export const listHeldGenerationRows: StoreMember<[sourceIds: readonly string[], kind: string, filter: GenerationRepairFilter], HeldGenerationListRow[]> =
+  async (brain, sourceIds, kind, filter) =>
+    storeCall({ member: 'listHeldGenerationRows' }, () => brain.listHeldGenerationRows([...sourceIds], kind, { ...filter }));
+
+/** The proposal and hold id of the held row `id`, or null. */
+export const readHeldGenerationProposal: StoreMember<[id: number], HeldGenerationProposalRow | null> = async (brain, id) =>
+  storeCall({ member: 'readHeldGenerationProposal' }, () => brain.readHeldGenerationProposal(id));
+
+/** The incarnation of each known source of `sourceIds`, in id order: one `readSourceIncarnation` per distinct id. */
+export const listSourceIncarnations: StoreMember<[sourceIds: readonly string[]], SourceIncarnationListRow[]> = async (brain, sourceIds) => {
+  const rows: SourceIncarnationListRow[] = [];
+  for (const id of [...new Set(sourceIds)].sort()) {
+    const row = await storeCall<{ incarnation: string } | null>({ member: 'listSourceIncarnations', sourceId: id }, () => brain.readSourceIncarnation(id));
+    if (row) rows.push({ id, incarnation: row.incarnation });
+  }
+  return rows;
+};

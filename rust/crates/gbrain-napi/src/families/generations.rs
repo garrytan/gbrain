@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
 use gbrain_store::generations::{
-    ActivationInput, ActivationRecordInput, GenerationKey, HeldInput, LedgerItemInput,
+    ActivationInput, ActivationRecordInput, GenerationKey, HeldInput, LedgerItemInput, RepairFilter,
 };
 
 #[napi]
@@ -290,5 +290,72 @@ impl Brain {
         self.run(env, move |s| {
             s.list_generation_orphan_candidates(&source_ids, kind.as_deref())
         })
+    }
+
+    /// `readGenerationItemsByIds(ids)`: resolves the ledger items of those generations.
+    #[napi]
+    pub fn read_generation_items_by_ids<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_generation_items_by_ids(&ids))
+    }
+
+    /// `listUnmatchedGenerationRows(sourceIds, kind, filter)`: resolves the live rows with
+    /// unmatched predecessors.
+    #[napi]
+    pub fn list_unmatched_generation_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+        kind: String,
+        filter: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let filter: RepairFilter = required(filter, "listUnmatchedGenerationRows filter")?;
+            s.list_unmatched_generation_rows(&source_ids, &kind, &filter)
+        })
+    }
+
+    /// `listRestorableGenerationRows(sourceIds, kind, filter)`: resolves the live rows with their
+    /// superseded predecessors.
+    #[napi]
+    pub fn list_restorable_generation_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+        kind: String,
+        filter: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let filter: RepairFilter = required(filter, "listRestorableGenerationRows filter")?;
+            s.list_restorable_generation_rows(&source_ids, &kind, &filter)
+        })
+    }
+
+    /// `listHeldGenerationRows(sourceIds, kind, filter)`: resolves the held rows.
+    #[napi]
+    pub fn list_held_generation_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+        kind: String,
+        filter: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let filter: RepairFilter = required(filter, "listHeldGenerationRows filter")?;
+            s.list_held_generation_rows(&source_ids, &kind, &filter)
+        })
+    }
+
+    /// `readHeldGenerationProposal(id)`: resolves `{ proposal, hold_id }` or null.
+    #[napi]
+    pub fn read_held_generation_proposal<'env>(
+        &self,
+        env: &'env Env,
+        id: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_held_generation_proposal(id))
     }
 }

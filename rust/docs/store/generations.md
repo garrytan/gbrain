@@ -28,6 +28,11 @@ The key layout is in the module header of `rust/crates/gbrain-store/src/generati
 | `brain.settleGenerationMember(activationId, slug)` | `null`. Clears the `pending` flag of item `slug` in the activation's generation | `settleGenerationMember` |
 | `brain.listPendingGenerationMembers(sourceIds, kind)` | `[{ source_id, kind, owner_key, generation_id, activation_id, slug, item_action, identity }]` for the activated members whose live generation still marks the item pending, one kind when `kind` is not `null`, in byte order of source, kind, owner and slug | `listPendingGenerationMembers` |
 | `brain.listGenerationOrphanCandidates(sourceIds, kind)` | `[{ source_id, kind, owner_key, activation_id, slug, created_at }]` for the pending members whose page is live, whose activation no unfinished write request names, and whose page no live generation of the same kind owns (a retired item does not count) | `listGenerationOrphanCandidates` |
+| `brain.readGenerationItemsByIds(ids)` | `[{ generation_id, item_key, identity_hash, action, preimage }]`, every ledger item of those generations, in id and item key order (Postgres sends no ORDER BY) | `readGenerationItemsByIds` |
+| `brain.listUnmatchedGenerationRows(sourceIds, kind, filter)` | `[{ id, source_id, owner_key, activation_id, unmatched }]` for the live rows whose `completeness.unmatched` is an array, in id order | `listUnmatchedGenerationRows` |
+| `brain.listRestorableGenerationRows(sourceIds, kind, filter)` | `[{ id, source_id, owner_key, generation, prev_id, prev_generation }]`, each live row with each superseded row whose `superseded_by` names it (in any source or kind, as the SQL join does), in id order | `listRestorableGenerationRows` |
+| `brain.listHeldGenerationRows(sourceIds, kind, filter)` | `[{ id, source_id, owner_key, held_reason, hold_id, input_pin, attempts, proposal_bytes, items }]`; `items` is the proposal's length, null without one, and a non-array proposal is `invalid_argument` (as `jsonb_array_length` refuses it) | `listHeldGenerationRows` |
+| `brain.readHeldGenerationProposal(id)` | `{ proposal, hold_id }` of the row while it is held, or `null` | `readHeldGenerationProposal` |
 | `brain.listFenceHoldRows(sourceIds, kinds, ownerKey?)` | the held rows of those sources and kinds (one owner when given), `{ source_id, kind, owner_key, held_reason, held_context, created_at }`, oldest first; `created_at` is Postgres `timestamptz` text | `listFenceHoldRows` |
 | `brain.clearFenceHoldRows(key)` | `null`. Deletes the key's held row when its reason is `fence_absent` or `no_proof` | `clearFenceHoldRows` |
 
@@ -51,6 +56,12 @@ The activation rows live under `h 0x08 id` with a reverse index `h 0x09 generati
 row sets its activations' `generation_id` to null (`ON DELETE SET NULL`). The orphan list reads the write journal and
 the page records. One difference stays: an activation id that is not a UUID matches no write request in the store,
 where Postgres's `a.id::uuid` cast may refuse the statement; managed.ts always writes UUIDs.
+
+The repair lists take the filter `{ runId?, since?, ownerKey?, id? }` (`generations/repair.rs`): each present field
+narrows the rows as its SQL fragment does, a row with a null `run_id` never matches a run, and `since` must be an ISO
+instant (other text is `invalid_argument`, where Postgres's `::timestamptz` cast accepts more forms; repair.ts always
+passes a concrete ISO instant, `GenerationsSelection.since`). `listSourceIncarnations` is not a store
+method: the TypeScript member reads `readSourceIncarnation` once per distinct id and sorts by id in code-unit order.
 
 JSON values (`completeness`, `held_context`, `proposal`, `preimage`) read back in jsonb key order. A source delete
 removes the source's rows of all five tables (`cascade.rs`).

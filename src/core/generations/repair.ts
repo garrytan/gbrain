@@ -22,6 +22,7 @@
  * --yes` applies exactly that set, rechecking each key under its locks (`changed_since_preview` otherwise).
  */
 import type { BrainEngine } from '../engine.ts';
+import type { GenerationRepairFilter } from '../engine-sql/generation-repair.ts';
 import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
@@ -98,22 +99,17 @@ interface CleanupEntry {
 type Entry = RestoreEntry | ReleaseEntry | CleanupEntry;
 interface EntryItem extends RepairItem { entry: Entry; hash: string; last: boolean; selection: GenerationsSelection }
 
-function selectorSql(selection: GenerationsSelection, params: unknown[], alias: string): string {
-  const parts: string[] = [];
-  const add = (sql: string, value: unknown) => { params.push(value); parts.push(sql.replace('?', `$${params.length}`)); };
-  if (selection.run) add(`${alias}.run_id = ?`, selection.run);
-  if (selection.since) add(`${alias}.created_at >= ?::timestamptz`, selection.since);
-  if (selection.key) add(`${alias}.owner_key = ?`, selection.key);
-  if (selection.generation !== undefined) add(`${alias}.id = ?`, selection.generation);
-  return parts.length ? ` AND ${parts.join(' AND ')}` : '';
+/** The selectors the operator passed, as the typed filter of the generation lists (engine-sql/generation-repair.ts). */
+function selectorFilter(selection: GenerationsSelection): GenerationRepairFilter {
+  return { ...(selection.run ? { runId: selection.run } : {}), ...(selection.since ? { since: selection.since } : {}),
+    ...(selection.key ? { ownerKey: selection.key } : {}), ...(selection.generation !== undefined ? { id: selection.generation } : {}) };
 }
 
 const keyOf = (kind: string, sourceId: string, ownerKey: string): GenerationKey => ({ kind, sourceId, ownerKey });
 
 /** What restoring the live generation `liveId` of `key` to its predecessor would do, read now. */
 async function planRestore(db: BrainEngine, adapter: GenerationAdapter<unknown>, key: GenerationKey, liveId: number, prevId: number) {
-  const items = await db.executeRaw<{ generation_id: number; item_key: string; identity_hash: string; action: string; preimage: Record<string, unknown> | null }>(
-    'SELECT generation_id, item_key, identity_hash, action, preimage FROM derived_generation_items WHERE generation_id = ANY($1::bigint[])', [[liveId, prevId]]);
+  const items = await db.readGenerationItemsByIds([liveId, prevId]);
   const owned = (id: number) => new Map(items.filter(item => Number(item.generation_id) === id && item.action !== 'retired').map(item => [item.item_key, item.identity_hash]));
   const target = owned(prevId);
   const current = owned(liveId);
@@ -142,11 +138,7 @@ async function planRestore(db: BrainEngine, adapter: GenerationAdapter<unknown>,
 
 /** The earlier outputs live generations of an in-place kind left live unmatched, still live, unedited and still theirs. */
 async function unmatchedPredecessors(db: BrainEngine, adapter: GenerationAdapter<unknown>, sources: string[], selection: GenerationsSelection) {
-  const params: unknown[] = [sources, adapter.kind];
-  const where = selectorSql(selection, params, 'g');
-  const rows = await db.executeRaw<{ id: number; source_id: string; owner_key: string; activation_id: string | null; unmatched: Array<{ slug: string; why: string; missing: CleanupEntry['missing'] }> }>(
-    `SELECT g.id, g.source_id, g.owner_key, g.activation_id, g.completeness->'unmatched' AS unmatched FROM derived_generations g
-      WHERE g.source_id = ANY($1::text[]) AND g.kind = $2 AND g.state = 'live' AND jsonb_typeof(g.completeness->'unmatched') = 'array'${where} ORDER BY g.id`, params);
+  const rows = await db.listUnmatchedGenerationRows(sources, adapter.kind, selectorFilter(selection));
   const out: Array<Omit<CleanupEntry, 'mode' | 'id' | 'refused'>> = [];
   for (const row of rows) {
     const key = keyOf(adapter.kind, row.source_id, row.owner_key);
@@ -163,7 +155,7 @@ async function unmatchedPredecessors(db: BrainEngine, adapter: GenerationAdapter
 }
 
 async function selectEntries(db: BrainEngine, adapter: GenerationAdapter<unknown>, sources: string[], selection: GenerationsSelection, id?: number): Promise<Entry[]> {
-  const params: unknown[] = [sources, adapter.kind];
+  const filter: GenerationRepairFilter = id === undefined ? selectorFilter(selection) : { id };
   if (selection.mode === 'cleanup') {
     const since = selection.since ? Date.parse(selection.since) : null;
     const keyed = (row: { owner_key: string }) => !selection.key || row.owner_key === selection.key;
@@ -179,11 +171,7 @@ async function selectEntries(db: BrainEngine, adapter: GenerationAdapter<unknown
     ].map((row, index) => ({ mode: 'cleanup' as const, id: index + 1, ...row, refused: [] }));
   }
   if (selection.mode === 'restore') {
-    const where = id === undefined ? selectorSql(selection, params, 'g') : (params.push(id), ` AND g.id = $${params.length}`);
-    const rows = await db.executeRaw<{ id: number; source_id: string; owner_key: string; generation: number; prev_id: number; prev_generation: number }>(
-      `SELECT g.id, g.source_id, g.owner_key, g.generation, p.id AS prev_id, p.generation AS prev_generation
-         FROM derived_generations g JOIN derived_generations p ON p.superseded_by = g.id AND p.state = 'superseded'
-        WHERE g.source_id = ANY($1::text[]) AND g.kind = $2 AND g.state = 'live'${where} ORDER BY g.id`, params);
+    const rows = await db.listRestorableGenerationRows(sources, adapter.kind, filter);
     const entries: Entry[] = [];
     for (const row of rows) {
       const key = keyOf(adapter.kind, row.source_id, row.owner_key);
@@ -194,17 +182,14 @@ async function selectEntries(db: BrainEngine, adapter: GenerationAdapter<unknown
     }
     return entries;
   }
-  const where = id === undefined ? selectorSql(selection, params, 'g') : (params.push(id), ` AND g.id = $${params.length}`);
   const config = await readGenerationsConfig(db);
-  const rows = await db.executeRaw<{ id: number; source_id: string; owner_key: string; held_reason: HeldReason; hold_id: string; input_pin: string | null;
-    attempts: number; proposal_bytes: number | null; items: number | null }>(
-    `SELECT g.id, g.source_id, g.owner_key, g.held_reason, g.hold_id, g.input_pin, g.attempts, g.proposal_bytes, jsonb_array_length(g.proposal) AS items
-       FROM derived_generations g WHERE g.source_id = ANY($1::text[]) AND g.kind = $2 AND g.state = 'held'${where} ORDER BY g.id`, params);
+  const rows = await db.listHeldGenerationRows(sources, adapter.kind, filter);
   return rows.map(row => {
-    const refused = !RELEASABLE_HELD_REASONS.has(row.held_reason) ? [`${row.owner_key}: ${row.held_reason} is not releasable`]
+    const reason = row.held_reason as HeldReason;
+    const refused = !RELEASABLE_HELD_REASONS.has(reason) ? [`${row.owner_key}: ${reason} is not releasable`]
       : row.items === null ? [`${row.owner_key}: no retained proposal`]
-      : row.held_reason === 'oversize' && Number(row.items) > config.maxItems ? [`${row.owner_key}: oversize until generations.max_items is raised`] : [];
-    return { mode: 'release-held' as const, id: Number(row.id), source_id: row.source_id, owner_key: row.owner_key, reason: row.held_reason, hold_id: row.hold_id,
+      : reason === 'oversize' && Number(row.items) > config.maxItems ? [`${row.owner_key}: oversize until generations.max_items is raised`] : [];
+    return { mode: 'release-held' as const, id: Number(row.id), source_id: row.source_id, owner_key: row.owner_key, reason, hold_id: row.hold_id,
       input_pin: row.input_pin, attempts: Number(row.attempts), proposal_bytes: row.proposal_bytes === null ? null : Number(row.proposal_bytes), items: Number(row.items ?? 0), refused };
   });
 }
@@ -221,7 +206,7 @@ function describeEntry(entry: Entry): string {
 }
 
 async function hashParts(engine: BrainEngine, scope: RepairScope, selection: GenerationsSelection, entries: Entry[]) {
-  const sources = await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+  const sources = await engine.listSourceIncarnations(scope.source_ids);
   return { kind: 'generations-v1', brain_id: scope.brain_id, sources, selection, entries };
 }
 
@@ -296,11 +281,11 @@ async function applyEntry(ctx: OperationContext, adapter: GenerationAdapter<unkn
   if (approved.refused.length) return { applied: false, outcome: 'refused', reason: approved.refused.join(', ') };
   const key = keyOf(adapter.kind, approved.source_id, approved.owner_key);
   if (approved.mode === 'release-held') {
-    const [row] = await ctx.engine.executeRaw<{ proposal: ProposedItem[] | null; hold_id: string }>(
-      `SELECT proposal, hold_id FROM derived_generations WHERE id=$1 AND state='held'`, [approved.id]);
+    const row = await ctx.engine.readHeldGenerationProposal(approved.id);
     if (!row || row.hold_id !== approved.hold_id || !row.proposal) return changed('the held result changed or was released since the preview');
-    if (await managedPersistenceEnabled(ctx.engine)) return releaseManaged(ctx.engine, adapter, key, approved, row.proposal);
-    const outcome = await publishGeneration(ctx.engine, adapter, { key, items: row.proposal, runId: `release:${approved.hold_id}`, release: { holdId: approved.hold_id, reason: approved.reason } });
+    const proposal = row.proposal as ProposedItem[];
+    if (await managedPersistenceEnabled(ctx.engine)) return releaseManaged(ctx.engine, adapter, key, approved, proposal);
+    const outcome = await publishGeneration(ctx.engine, adapter, { key, items: proposal, runId: `release:${approved.hold_id}`, release: { holdId: approved.hold_id, reason: approved.reason } });
     if (outcome.state === 'held') return { applied: false, outcome: 'refused', reason: `${approved.owner_key}: still held (${outcome.reason})` };
     return { applied: true, outcome: 'released', detail: { generation: outcome.generation, ...(outcome.state === 'published' ? { retired: outcome.retired.length } : {}) } };
   }

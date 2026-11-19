@@ -2606,6 +2606,28 @@
         ],
         "flagOnScopes": []
       },
+      "listHeldGenerationRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listHeldGenerationRows#filtered": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listLinkSources#default": {
         "flagOffLanes": [
           "pool"
@@ -2895,6 +2917,39 @@
         ],
         "flagOnScopes": []
       },
+      "listRestorableGenerationRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listRestorableGenerationRows#filtered": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listSourceIncarnations#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listSourceLocalPaths#default": {
         "flagOffLanes": [
           "pool"
@@ -3118,6 +3173,28 @@
         "flagOnScopes": []
       },
       "listTrueUpRequests#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listUnmatchedGenerationRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listUnmatchedGenerationRows#filtered": {
         "flagOffLanes": [
           "pool"
         ],
@@ -3569,6 +3646,17 @@
         ],
         "flagOnScopes": []
       },
+      "readGenerationItemsByIds#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readGenerationValve#default": {
         "flagOffLanes": [
           "pool"
@@ -3614,6 +3702,17 @@
         "flagOnScopes": []
       },
       "readHeldGenerationContext#none": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readHeldGenerationProposal#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -5634,6 +5733,7 @@
         "listGuestSourceIds": "none",
         "listHeldFenceCells": "none",
         "listHeldFenceFactRows": "none",
+        "listHeldGenerationRows": "none",
         "listHostConsumerRows": "none",
         "listJobAttachmentNames": "none",
         "listJobAttachments": "none",
@@ -5669,12 +5769,14 @@
         "listRelinkCandidateRows": "none",
         "listReservationsAfter": "none",
         "listRestatedPrivateCopies": "none",
+        "listRestorableGenerationRows": "none",
         "listRetiredDeactivations": "none",
         "listSessionFactTwins": "none",
         "listSessionFactsForClassification": "none",
         "listSharedSkillPackRoots": "none",
         "listSimilarActiveFacts": "none",
         "listSingleFactMetadata": "none",
+        "listSourceIncarnations": "none",
         "listSourceLocalPaths": "none",
         "listSourceRecords": "none",
         "listSourceRoutingRows": "none",
@@ -5712,6 +5814,7 @@
         "listUnattributedFacts": "none",
         "listUnfencedFactRows": "none",
         "listUnlinkedConversationSlugs": "none",
+        "listUnmatchedGenerationRows": "none",
         "listUnpreviewedTrustFacts": "none",
         "listUnreviewedJobs": "none",
         "listUnwithdrawnFacts": "none",
@@ -5825,12 +5928,14 @@
         "readFenceOriginGone": "none",
         "readFieldUsageSamples": "none",
         "readGenerationActivationState": "none",
+        "readGenerationItemsByIds": "none",
         "readGenerationValve": "none",
         "readGlobalMaintenanceDeaths": "none",
         "readGraduationGateRow": "none",
         "readGuestSourceRow": "none",
         "readHeldCoverageRows": "none",
         "readHeldGenerationContext": "none",
+        "readHeldGenerationProposal": "none",
         "readHeldPageRows": "none",
         "readIdentitySiblingCandidates": "none",
         "readIgnoredPrivacyLabelPages": "none",

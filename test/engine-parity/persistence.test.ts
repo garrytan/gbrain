@@ -335,6 +335,50 @@ describe('engine parity: write journal', () => {
     return answers;
   });
 
+  parityTest('the repair generations reads select by run, time, key and id, and read the held proposal', {
+    methods: ['transaction', 'activateGenerationRows', 'recordHeldGenerationRow', 'readGenerationItemsByIds', 'listUnmatchedGenerationRows',
+      'listRestorableGenerationRows', 'listHeldGenerationRows', 'readHeldGenerationProposal', 'listSourceIncarnations'],
+  }, async (engine) => {
+    const key = (ownerKey: string) => ({ sourceId: 'default', kind: 'repair_parity', ownerKey });
+    const row = (generation: number, runId: string, completeness: string) => ({ generation, runId, operationId: `repair-parity-${runId}-${generation}`, inputPin: 'p',
+      inputSize: 1, completeness, setHash: 'h', restoreOf: null, activationId: null, locator: null });
+    const item = (action: string) => [{ item_key: 'notes/x', identity_hash: 'id-x', action, preimage: action === 'kept' ? { x: 1 } : null, preimage_bytes: null, pending: false }];
+    const ids = await engine.transaction(async tx => {
+      const prev = await tx.activateGenerationRows(key('a'), null, row(1, 'ra', '{}'), item('published'));
+      const live = await tx.activateGenerationRows(key('a'), prev, row(2, 'ra', '{"unmatched":[{"slug":"notes/old","why":"no_subject","missing":null}]}'), item('kept'));
+      await tx.activateGenerationRows(key('b'), null, row(1, 'rb', '{}'), []);
+      await tx.recordHeldGenerationRow(key('c'), { holdId: 'hold-c', runId: 'ra', inputPin: null, inputSize: null, setHash: 'h', reason: 'shrunk', context: '{}',
+        proposal: '[{"slug":"notes/p"}]', proposalBytes: 20 });
+      return { prev, live };
+    });
+    const held = await engine.listHeldGenerationRows(['default'], 'repair_parity', { runId: 'ra' });
+    const heldId = Number(held[0]?.id);
+    const name = (id: unknown) => Number(id) === ids.live ? 'live' : Number(id) === ids.prev ? 'prev' : Number(id) === heldId ? 'held' : 'other';
+    const answers = {
+      items: (await engine.readGenerationItemsByIds([ids.live, ids.prev])).map(r => ({ ...r, generation_id: name(r.generation_id) })).sort((x, y) => x.generation_id.localeCompare(y.generation_id)),
+      unmatched: (await engine.listUnmatchedGenerationRows(['default'], 'repair_parity', { runId: 'ra', ownerKey: 'a' })).map(r => ({ ...r, id: name(r.id) })),
+      restorable: (await engine.listRestorableGenerationRows(['default'], 'repair_parity', { id: ids.live })).map(r => ({ ...r, id: name(r.id), prev_id: name(r.prev_id),
+        generation: Number(r.generation), prev_generation: Number(r.prev_generation) })),
+      noneSince: await engine.listRestorableGenerationRows(['default'], 'repair_parity', { since: '2999-01-01T00:00:00Z' }),
+      held: held.map(r => ({ id: name(r.id), owner_key: r.owner_key, held_reason: r.held_reason, items: Number(r.items) })),
+      proposal: await engine.readHeldGenerationProposal(heldId),
+      proposalOfLive: await engine.readHeldGenerationProposal(ids.live),
+      sources: (await engine.listSourceIncarnations(['default', 'elsewhere'])).map(r => r.id),
+    };
+    expect(answers).toEqual({
+      items: [{ generation_id: 'live', item_key: 'notes/x', identity_hash: 'id-x', action: 'kept', preimage: { x: 1 } },
+        { generation_id: 'prev', item_key: 'notes/x', identity_hash: 'id-x', action: 'published', preimage: null }],
+      unmatched: [{ id: 'live', source_id: 'default', owner_key: 'a', activation_id: null, unmatched: [{ slug: 'notes/old', why: 'no_subject', missing: null }] }],
+      restorable: [{ id: 'live', source_id: 'default', owner_key: 'a', generation: 2, prev_id: 'prev', prev_generation: 1 }],
+      noneSince: [],
+      held: [{ id: 'held', owner_key: 'c', held_reason: 'shrunk', items: 1 }],
+      proposal: { proposal: [{ slug: 'notes/p' }], hold_id: 'hold-c' },
+      proposalOfLive: null,
+      sources: ['default'],
+    });
+    return answers;
+  });
+
   parityTest('forgetting a fact reprojects its page\'s facts fence: the generation key lock, then the generation read', {
     methods: ['transaction', 'putPage', 'listFenceRetireCandidates', 'lockGenerationKey'],
   }, async (engine) => {

@@ -738,6 +738,7 @@ test/rust-derived-generations.test.ts
 test/rust-fence-generations.test.ts
 test/rust-generation-managed.test.ts
 test/rust-generation-publish.test.ts
+test/rust-generation-repair.test.ts
 test/rust-generation-scrub.test.ts
 test/salience-enrich-parity.test.ts
 test/schema-missing-tables.test.ts

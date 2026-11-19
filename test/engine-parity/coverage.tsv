@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 727/727
+# covered: 733/733
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 12/12
-# persistence_journal: 90/90
+# persistence_journal: 96/96
 # entity_reads: 6/6
 # cycle_locks: 10/10
 # minion_jobs: 8/8
@@ -74,7 +74,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	69	no	yes	yes	serves
+transaction	lifecycle	yes	70	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -379,8 +379,8 @@ lockGenerationKey	persistence_journal	yes	2	no	yes	yes	serves
 clearFenceHoldRows	persistence_journal	yes	1	no	yes	yes	serves
 readFenceHoldFiles	persistence_journal	yes	1	no	yes	yes	serves
 readLiveGenerationRow	persistence_journal	yes	1	no	yes	yes	serves
-activateGenerationRows	persistence_journal	yes	4	no	yes	yes	serves
-recordHeldGenerationRow	persistence_journal	yes	3	no	yes	yes	serves
+activateGenerationRows	persistence_journal	yes	5	no	yes	yes	serves
+recordHeldGenerationRow	persistence_journal	yes	4	no	yes	yes	serves
 heldGenerationRowsForInput	persistence_journal	yes	1	no	yes	yes	serves
 readHeldGenerationContext	persistence_journal	yes	2	no	yes	yes	serves
 liveGenerationForOperation	persistence_journal	yes	1	no	yes	yes	serves
@@ -396,6 +396,12 @@ readGenerationActivationState	persistence_journal	yes	1	no	yes	yes	serves
 settleGenerationMember	persistence_journal	yes	1	no	yes	yes	serves
 listPendingGenerationMembers	persistence_journal	yes	1	no	yes	yes	serves
 listGenerationOrphanCandidates	persistence_journal	yes	1	no	yes	yes	serves
+readGenerationItemsByIds	persistence_journal	yes	1	no	yes	yes	serves
+listUnmatchedGenerationRows	persistence_journal	yes	1	no	yes	yes	serves
+listRestorableGenerationRows	persistence_journal	yes	1	no	yes	yes	serves
+listHeldGenerationRows	persistence_journal	yes	1	no	yes	yes	serves
+readHeldGenerationProposal	persistence_journal	yes	1	no	yes	yes	serves
+listSourceIncarnations	persistence_journal	yes	1	no	yes	yes	serves
 readWriteRequest	persistence_journal	yes	3	no	yes	yes	serves
 readWriteRequestById	persistence_journal	yes	8	no	yes	yes	serves
 readWriteRequestProgress	persistence_journal	yes	1	no	yes	yes	serves

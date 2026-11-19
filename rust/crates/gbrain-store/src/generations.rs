@@ -28,6 +28,9 @@
 //!   their generation index (`generations/activations.rs`, members recordGenerationActivation,
 //!   markGenerationActivated, readGenerationActivationState, settleGenerationMember,
 //!   listPendingGenerationMembers and listGenerationOrphanCandidates).
+//! - The reads of `gbrain repair generations` add no keys (`generations/repair.rs`, members
+//!   readGenerationItemsByIds, listUnmatchedGenerationRows, listRestorableGenerationRows,
+//!   listHeldGenerationRows and readHeldGenerationProposal).
 //!
 //! Time: `created_at` and `updated_at` are UTC microseconds from the store's clock; in a
 //! transaction that is the transaction's clock, as Postgres `now()` is the transaction's start.
@@ -54,7 +57,9 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
 mod activations;
+mod repair;
 pub use activations::ActivationRecordInput;
+pub use repair::RepairFilter;
 
 const RECORD: u8 = 0x01;
 const POINTER: u8 = 0x02;
