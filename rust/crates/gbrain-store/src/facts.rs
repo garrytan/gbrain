@@ -936,6 +936,13 @@ pub struct FactQuery {
     pub after: Option<KeysetAfter>,
     /// `excludePrivate`: the private-provenance policy (`facts/privacy.rs`).
     pub exclude_private: Option<PrivacyPolicy>,
+    /// The caller passed a read eligibility: `projectionEligibleSql('facts')` replaces the
+    /// deleted-page clause, so a row whose live provenance page is quarantined is hidden too.
+    pub eligible: bool,
+    /// `eligibility.floor`: `trustFloorSql` over the fact's stored tier; null sets none.
+    pub min_trust: Option<String>,
+    /// `eligibility.suppressFlagged`: drop a fact `activationSuppressedSql('facts')` flags.
+    pub suppress_flagged: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -1235,7 +1242,13 @@ impl FactQuery {
         }
     }
 
-    fn admits(&self, read: &dyn KvRead, row: &FactRecord, now: i64) -> Result<bool> {
+    fn admits(
+        &self,
+        read: &dyn KvRead,
+        row: &FactRecord,
+        now: i64,
+        trust: &TrustPolicy,
+    ) -> Result<bool> {
         let eq = |want: &Option<String>, have: &Option<String>| want.is_none() || want == have;
         if !(eq(&self.entity_slug, &row.entity_slug)
             && eq(&self.source_markdown_slug, &row.source_markdown_slug)
@@ -1257,7 +1270,9 @@ impl FactQuery {
             return Ok(false);
         }
         Ok(!hidden_by_deleted_page(read, row)?
-            && !hidden_by_policy(read, row, &self.exclude_private)?)
+            && !hidden_by_policy(read, row, &self.exclude_private)?
+            && !(self.eligible && hidden_by_quarantine(read, row)?)
+            && trust.admits(read, "facts", row.id, row.tier())?)
     }
 
     fn check(&self, op: &str) -> Result<()> {
@@ -1305,11 +1320,12 @@ impl Store {
     ) -> Result<Vec<Value>> {
         q.check(op)?;
         let limit = count_arg(op, "limit", q.limit)?;
+        let trust = TrustPolicy::parse(q.min_trust.as_deref(), q.suppress_flagged)?;
         let read = self.read()?;
         let now = self.env.now_micros();
         let mut rows = Vec::new();
         for row in q.candidates(&*read)? {
-            if q.source_id == row.source_id && extra(&row) && q.admits(&*read, &row, now)? {
+            if q.source_id == row.source_id && extra(&row) && q.admits(&*read, &row, now, &trust)? {
                 rows.push(row);
             }
         }
