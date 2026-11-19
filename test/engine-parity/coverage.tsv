@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 654/654
+# covered: 655/655
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -15,7 +15,7 @@
 # link_temporal: 12/12
 # search_vector: 4/4
 # retrieval_coverage: 5/5
-# chunks: 37/37
+# chunks: 38/38
 # extraction: 7/7
 # links: 23/23
 # tags: 5/5
@@ -81,13 +81,13 @@ getPage	pages	yes	83	yes	yes	yes	serves
 readPageSnapshot	pages	yes	17	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	345	yes	yes	yes	serves
+putPage	pages	yes	346	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	101	yes	yes	yes	serves
+softDeletePage	pages	yes	102	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -169,6 +169,7 @@ countOversizedEmbedSkips	chunks	yes	1	no	yes	yes	serves
 countOrphanChunks	chunks	yes	1	no	yes	yes	serves
 countCodeChunkPages	chunks	yes	1	no	yes	yes	serves
 codeChunksExist	chunks	yes	2	no	yes	yes	serves
+hasUnsealedPages	chunks	yes	1	no	yes	yes	serves
 currentCodeChunksExist	chunks	yes	2	no	yes	yes	serves
 listQualifiedSymbolNames	chunks	yes	1	no	yes	yes	serves
 listWithdrawalChunks	chunks	yes	1	no	yes	yes	serves
@@ -176,7 +177,7 @@ deleteChunksForPages	chunks	yes	1	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	3	no	yes	yes	serves
 upsertChunks	chunks	yes	25	yes	yes	yes	serves
-sealChunks	chunks	yes	43	no	yes	yes	serves
+sealChunks	chunks	yes	44	no	yes	yes	serves
 getChunks	chunks	yes	28	yes	yes	yes	serves
 getChunkPage	chunks	yes	6	no	yes	yes	serves
 getChunkWindows	chunks	yes	3	no	yes	yes	serves
