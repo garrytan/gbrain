@@ -1,4 +1,4 @@
-//! Jobs: `oauth_clients` spend columns and `mcp_spend_log` (rust/docs/store/spend-log.md). Same shape as `spend.rs`.
+//! Jobs: `oauth_clients` (every column) and `mcp_spend_log` (rust/docs/store/spend-log.md). Same shape as `spend.rs`.
 
 use gbrain_store::jobs::{ClientInsert, ClientReserve, GroupReserve, LogInsert};
 use napi::Env;
@@ -103,6 +103,16 @@ impl Brain {
             let row: ClientInsert = required(row, "insertOauthClient row")?;
             s.insert_oauth_client(&row)
         })
+    }
+
+    /// `readOauthClient(clientId)`: the whole row as an object (times as ISO text), or null.
+    #[napi]
+    pub fn read_oauth_client<'env>(
+        &self,
+        env: &'env Env,
+        client_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_oauth_client(&client_id))
     }
 
     /// `updateOauthClientBudget(clientId, usd)`: whether the client exists.

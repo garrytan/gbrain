@@ -17,7 +17,7 @@ the store serves the same members. The call sites are `budget-meter.ts` (`reserv
 | `brain.settleSpendWithLog(id, actualCents, operation, tokenName)` | `{ outcome: 'settled' }`, `{ outcome: 'already_settled' }` or `{ outcome: 'missing' }` |
 | `brain.insertSpendLog(row)` | null. `row` is `{ client_id, token_name, operation, spend_cents, provider, model }` |
 | `brain.sumClientSpendSince(clientId, since)` | the client's ledger sum from `since` on, in cents (0 with no row) |
-| `brain.insertOauthClient(row)` | null. `row` is `{ client_id, client_name, scope, budget_usd_per_day, bound_tools, deleted_at }` |
+| `brain.insertOauthClient(row)` | null. `row` is any of the table's columns; `client_id` and `client_name` are required (see [oauth-clients.md](oauth-clients.md)) |
 | `brain.updateOauthClientBudget(clientId, usd)` | whether the client exists; `usd` null clears the cap |
 | `brain.readClientBudgetUsd(clientId)` | the cap as Postgres prints it (`"5.00"`), null for no cap or no such client |
 | `brain.readAgentClientSpend()` | `[{ client_id, client_name, cap_usd_per_day, spent_cents_today, pending_cents, unknown_count, inflight_count }]` |
@@ -43,11 +43,12 @@ Rules each member keeps from the SQL:
   decimal text of the number, 10^8 or more is `constraint_violation`.
 - The agent view lists live clients whose `scope` has the token `agent` (split on spaces) or whose `bound_tools` is not
   null, with the UTC day's ledger sum, the open holds, the unknown ones and the open `subagent` jobs the client owns.
-- `insertOauthClient` with a client id already taken is `constraint_violation`.
+- `insertOauthClient` with a client id already taken is `constraint_violation`. The row and its constraints are in
+  [oauth-clients.md](oauth-clients.md).
 
 Keys (tag `m`): `0x28 id -> record` (the ledger; sequence `mcp_spend_log`), `0x29 kind owner \0 created_at id -> amount` (the
 ledger by owner in time order: `kind` is `c` for a client, `b` for a budget key; a day's sum is a reverse scan that stops
-at the day), `0x2A client_id -> record` (the client). jobs-spend.md's `0x27 kind owner \0 reservation_id` is the index of
+at the day), `0x2A client_id -> record` (the client, every column). jobs-spend.md's `0x27 kind owner \0 reservation_id` is the index of
 open holds that the admissions sum, kept by every write of a hold.
 
 Differences from PGLite and PostgreSQL:
@@ -60,10 +61,9 @@ Differences from PGLite and PostgreSQL:
   not counted by an admission until it settles; there is no backfill.
 - The agent view sorts by client name bytewise, then client id; PostgreSQL sorts names by the database collation (the id
   tiebreak is added on both).
-- The store keeps only `client_id`, `client_name`, `scope`, `bound_tools`, `budget_usd_per_day` and `deleted_at` of
-  `oauth_clients`. The `oauth_clients_complete_agent_grant` check (an `agent` scope needs a complete grant) is not kept;
-  the parity case for the agent view qualifies clients by `bound_tools` only for that reason, and `tests/spend_log.rs`
-  covers the scope token.
+- The store keeps the whole `oauth_clients` row and enforces its constraints, `oauth_clients_complete_agent_grant`
+  among them ([oauth-clients.md](oauth-clients.md)). The agent view qualifies a client by the `agent` scope token or by
+  `bound_tools`; a client with the token always has tools, as the constraint requires.
 - A delegated reservation (`validateAdmission` in `delegated-spend.ts`) still reads `effectiveDelegation` through raw SQL,
   so it is refused on a Rust brain.
 

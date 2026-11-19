@@ -453,6 +453,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'insertOauthClient': OOS.minionJobs,
   'updateOauthClientBudget': OOS.minionJobs,
   'readAgentClientSpend': OOS.minionJobs,
+  // oauth_clients rows (engine-sql/oauth-clients.ts)
+  'readOauthClient': OOS.minionJobs,
   // group B (subagent transcript and tool ledger)
   'listSubagentMessages': OOS.minionJobs,
   'countSubagentMessages': OOS.minionJobs,

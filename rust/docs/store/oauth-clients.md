@@ -1,0 +1,48 @@
+# The brain store: the `oauth_clients` row
+
+Part of the Minion jobs family ([jobs.md](jobs.md), next to [spend-log.md](spend-log.md)); the rules in
+[rust/README.md](../../README.md) ("The brain store") apply.
+
+The store keeps a client as its whole row: the 41 columns the table has after every migration, in the table's own order.
+The SQL for the PGLite and PostgreSQL engines is in `src/core/engine-sql/oauth-clients.ts` (`insertOauthClient`,
+`readOauthClient`) and `src/core/engine-sql/spend-log.ts` (`updateOauthClientBudget`, `readClientBudgetUsd`); the store
+serves the same members, and the spend ledger reads the same record ([spend-log.md](spend-log.md)).
+
+| Member | Returns |
+| --- | --- |
+| `brain.insertOauthClient(row)` | null. `row` is any of the table's columns; `client_id` and `client_name` are required. A column left out takes the table's default |
+| `brain.readOauthClient(clientId)` | the row as `SELECT * FROM oauth_clients WHERE client_id = $1` returns it, or null |
+| `brain.updateOauthClientBudget(clientId, usd)` | whether the client exists; `usd` null clears the cap. The rewritten row is checked again |
+
+Defaults when a column is left out: `grant_types` `{client_credentials}` (an explicit null stays null), `federated_read`
+and `grant_repair_reasons` `{}`, `bound_max_concurrent` 1, `delegated_namespace` `prefixes`, `grant_revision` 0,
+`private_pages` and `private_facts` `none`, `created_at` the store clock, every other column null. `created_at`,
+`deleted_at` and `reads_unscoped` come back as `Date` on the TypeScript side and travel as ISO text.
+
+## Constraints
+
+A write that breaks one is `constraint_violation` in the store, with the Postgres message. The TypeScript store member
+(`src/core/rust-engine/store-members/jobs-oauth-clients.ts`) gives the error the SQLSTATE and constraint name a caller
+reads on PGLite and PostgreSQL: `code` and `constraint` / `constraint_name` / `table` / `table_name`.
+
+| Refusal | SQLSTATE | Constraint |
+| --- | --- | --- |
+| an `agent` scope word without a complete grant | 23514 | `oauth_clients_complete_agent_grant` |
+| `min_trust`, `private_pages`, `private_facts`, `registered_via`, `source_grant` outside their lists | 23514 | `oauth_clients_min_trust_check`, `oauth_clients_private_pages_check`, `oauth_clients_private_facts_check`, `oauth_clients_registered_via_check`, `oauth_clients_source_grant_check` |
+| a client id already taken | 23505 | `oauth_clients_pkey` |
+| a `source_id` the store has no source for | 23503 | `oauth_clients_source_id_fkey` |
+
+A complete agent grant (src/core/grants/schema.ts, `GRANT_CONSTRAINTS_SQL`) has bound tools (not null, not empty), a
+`source_id` that equals `bound_source_id` and is in `federated_read`, a delegated namespace that fits its slug prefixes
+(`job` with none, `prefixes` with at least one) and `bound_max_concurrent` above 0. The scope word is matched as
+Postgres matches `(^|[[:space:]])agent([[:space:]]|$)`: a space, tab, newline, vertical tab, form feed or carriage
+return around it. A refused write leaves no row.
+
+Keys: `m 0x2A client_id -> record` (the whole row as JSON; times in microseconds, the cap in hundredths of a dollar).
+
+Differences from PGLite and PostgreSQL:
+
+- The error's `detail` (`Failing row contains ...`) is not produced; the message, code and constraint name are.
+- Not kept: the `trust_generation_update` trigger, the two secondary indexes (`idx_oauth_clients_source_id`,
+  `idx_oauth_clients_federated_read`) and the `ON DELETE RESTRICT` of `sources` (the foreign key is checked on a client write
+  only, so removing a source a client names is not refused here).

@@ -5054,6 +5054,7 @@
         "readMcpLogPruneCutoff": "none",
         "readMcpRollupPrunedBefore": "none",
         "readMentionLastPass": "none",
+        "readOauthClient": "none",
         "readOldestWaitingAge": "none",
         "readPageAliasRows": "none",
         "readPageOrigin": "none",
