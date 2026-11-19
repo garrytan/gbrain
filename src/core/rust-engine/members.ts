@@ -362,6 +362,9 @@ export const RUST_ENGINE_MEMBERS = {
   listUnlinkedConversationSlugs: 'facts',
   countFactEmbeddingCoverage: 'facts',
   countStaleFactEmbeddings: 'facts',
+  countSegmentedCensusPages: 'facts',
+  listFactsPageBodies: 'facts',
+  readFactTableCatalog: 'facts',
 
   // embeddings: the vector catalog (engine-sql/embedding-catalog.ts), read from the per-vector records
   readChunkVectorColumn: 'embeddings',
@@ -424,6 +427,21 @@ export const RUST_ENGINE_MEMBERS = {
   countPurgedPageFacts: 'facts',
   listUnwithdrawnFacts: 'facts',
   listWorldFactsFromPrivateSources: 'facts',
+  listActiveSourceIds: 'facts',
+  readRepairBrainId: 'facts',
+  listAgentSessionTakeCandidates: 'facts',
+  listSettledSessionFacts: 'facts',
+  reattributeSessionFacts: 'facts',
+  retireSessionTakes: 'facts',
+  listFenceRewriteRows: 'facts',
+  listOtherAttributedFactIds: 'facts',
+  listInactiveTakeIds: 'facts',
+  expireCapturedFacts: 'facts',
+  listExpiredFactIds: 'facts',
+  listPagelessEntityFacts: 'facts',
+  listSourceIncarnations: 'facts',
+  readEntityRehomeState: 'facts',
+  rehomeEntityFacts: 'facts',
 
   // facts: search relevance and trust reads (engine-sql/facts-trust.ts)
   listFactsForRelevance: 'facts',
@@ -434,6 +452,16 @@ export const RUST_ENGINE_MEMBERS = {
   listLexicalContestCandidates: 'facts',
   listRestatedPrivateCopies: 'facts',
   countDerivedFactTaint: 'facts',
+  readFactEntitySlugById: 'facts',
+  readSupersessionReplacement: 'facts',
+  linkSupersededFact: 'facts',
+  listLivePageTitles: 'facts',
+  listPageAliasNames: 'facts',
+  listCaptureDuplicateCandidates: 'facts',
+  computeFactFingerprints: 'facts',
+  listClaimConflictPairs: 'facts',
+  countClaimConflictPairs: 'facts',
+  listUnarchivedSourceIds: 'facts',
 
   // takes
   addTakesBatch: 'takes',

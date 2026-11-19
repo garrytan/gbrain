@@ -3321,6 +3321,12 @@ export interface BrainEngine {
   countFactEmbeddingCoverage(opts: { sourceId?: string | null; model: string; dims: number }): Promise<FactsDoctorSql.FactEmbeddingCoverageRow[]>;
   /** The embeddable facts whose vector is not current for `model` and `dims` or the text, over every source or `sourceId`, with the sum of their lengths in characters. */
   countStaleFactEmbeddings(opts: { model: string; dims: number; sourceId?: string | null }): Promise<{ count: number; chars: number }>;
+  /** fence_integrity: live markdown pages of these sources stored in segments with no checkout file walked; null when no row answers. */
+  countSegmentedCensusPages(sourceIds: string[], checkedOutSourceIds: string[]): Promise<{ n: number } | null>;
+  /** facts_undated_lines: every live `type: facts` page with whether it is segmented and the bounded prefix of its body, by (source, slug). */
+  listFactsPageBodies(): Promise<FactsDoctorSql.FactsPageBodyRow[]>;
+  /** unlinked_facts: the `facts` and `fact_relink_attempts` table names the brain has (null for one it lacks). */
+  readFactTableCatalog(): Promise<{ facts: string | null; attempts: string | null } | null>;
 
   // Embedding catalog (engine-sql/embedding-catalog.ts): what the embedding commands read about the vector columns. Postgres
   // and PGLite read their catalog; the Rust engine reads its per-vector records (an empty store has no column yet).
@@ -3420,6 +3426,36 @@ export interface BrainEngine {
   listUnwithdrawnFacts(sourceIds: string[], slug: string | null, fenceKind: string): Promise<FactsRepairSql.UnwithdrawnFactRow[]>;
   /** Active `world` facts held in, or extracted from, a page that is private by its visibility, declared lineage or a privacy alias, optionally only `ids`, in id order; `readable` is whether the holding page hides the row from a remote caller. */
   listWorldFactsFromPrivateSources(sourceIds: string[], ids: number[] | null): Promise<FactsRepairSql.WorldFactFromPrivateSourceRow[]>;
+  /** The ids of the sources that are not archived, in id order (the repair previews that name `--source` when more than one). */
+  listActiveSourceIds(): Promise<Array<{ id: string }>>;
+  /** The brain id a repair preview hashes (`persistence_brain.brain_id`), or null when the brain has no such row. */
+  readRepairBrainId(): Promise<string | null>;
+  /** Active, unresolved `fact`/`self` takes of these sources with the facts consolidated into each, one grouped pass, in (source, slug, id) order; `ids` null is every take. */
+  listAgentSessionTakeCandidates(sourceIds: string[], ids: number[] | null, noteMark: string): Promise<FactsRepairSql.AgentSessionTakeCandidateRow[]>;
+  /** The named facts of the source already attributed to `other` and neither expired nor superseded, with their context. */
+  listSettledSessionFacts(sourceId: string, ids: number[]): Promise<Array<{ id: number | string; context: string | null }>>;
+  /** Re-attributes the named database-only user facts of the source to `other`, appending each note once after `separator`; returns the changed ids. Run it on the transaction. */
+  reattributeSessionFacts(sourceId: string, facts: Array<{ id: number; note: string }>, separator: string): Promise<Array<{ id: number | string }>>;
+  /** Retires the named active `fact`/`self` takes of the source whose contributing facts are all non-user; returns the retired ids. Run it on the transaction. */
+  retireSessionTakes(sourceId: string, takeIds: number[]): Promise<Array<{ id: number | string }>>;
+  /** The named unexpired facts of the source with their claim and fence row number. */
+  listFenceRewriteRows(sourceId: string, ids: number[]): Promise<Array<{ id: number | string; fact: string; row_num: number }>>;
+  /** The named facts of the source attributed to `other`. */
+  listOtherAttributedFactIds(sourceId: string, ids: number[]): Promise<Array<{ id: number | string }>>;
+  /** The named takes that are inactive. */
+  listInactiveTakeIds(ids: number[]): Promise<Array<{ id: number | string }>>;
+  /** Expires the named active database-only facts of the source, putting `context` before their own; returns the expired ids. Run it on the transaction. */
+  expireCapturedFacts(sourceId: string, ids: number[], context: string): Promise<Array<{ id: number | string }>>;
+  /** The named facts of the source that are expired. */
+  listExpiredFactIds(sourceId: string, ids: number[]): Promise<Array<{ id: number | string }>>;
+  /** Per page-less `entity_slug` of these sources: the database-only fact ids and the count of fence-held facts, in (source, slug) order. */
+  listPagelessEntityFacts(sourceIds: string[]): Promise<FactsRepairSql.PagelessEntityFactRow[]>;
+  /** The id and incarnation (as text) of each named source, in id order. */
+  listSourceIncarnations(sourceIds: string[]): Promise<Array<{ id: string; incarnation: string }>>;
+  /** Whether the `from` and `to` pages are live in the source and the database-only fact ids keyed under `from`. Run it on the transaction. */
+  readEntityRehomeState(sourceId: string, fromSlug: string, toSlug: string): Promise<FactsRepairSql.EntityRehomeState | null>;
+  /** Re-keys the database-only facts of the source from `fromSlug` to `toSlug`. Run it on the transaction. */
+  rehomeEntityFacts(sourceId: string, fromSlug: string, toSlug: string): Promise<void>;
 
   // Facts statements, search relevance and trust reads (engine-sql/facts-trust.ts). Each runs the statement its caller ran through executeRaw.
   /** One arm of the search fact pool: the keyword arm, or a named entity's active (`entity`) or ended (`entity_ended`) facts, under the caller's read policy; `similarity` is the cosine to `vector` where comparable. */
@@ -3438,6 +3474,26 @@ export interface BrainEngine {
   listRestatedPrivateCopies(opts: { sourceId: string; claim: string; entity: string | null; writer: import('./trust/tier.ts').TrustTier }): Promise<Array<{ id: number; visibility: string; trust_tier: string }>>;
   /** How many facts carry taint inputs in their write origin, and how many of those are external_untrusted. */
   countDerivedFactTaint(): Promise<{ derived: number; external: number }>;
+  /** The `entity_slug` a stored fact has; null when it has none or no fact has the id. */
+  readFactEntitySlugById(id: number): Promise<string | null>;
+  /** The replacement fact's fence row, whether both facts sit on one page, both validity starts and the old end; null when either id is gone. */
+  readSupersessionReplacement(newId: number, oldId: number): Promise<FactsTrustSql.SupersessionReplacementRow | null>;
+  /** Links the old fact to the one that replaced it (`superseded_by`). Run it on the maintenance transaction. */
+  linkSupersededFact(oldId: number, newId: number): Promise<void>;
+  /** The slug and title of each named live page of the source. */
+  listLivePageTitles(sourceId: string, slugs: string[]): Promise<Array<{ slug: string; title: string | null }>>;
+  /** The normalized aliases of the named pages; throws on a brain older than v110 (no `page_aliases`). */
+  listPageAliasNames(sourceId: string, slugs: string[]): Promise<Array<{ slug: string; alias_norm: string }>>;
+  /** The newest `scanLimit` live facts of the source whose fingerprint equals the candidate's, in these visibilities, spoken by nobody else, leaving out member-owned pages. */
+  listCaptureDuplicateCandidates(opts: { sourceId: string; visibilities: string[]; fact: string; attributedTo: string | null; replacingPage: string | null; scanLimit: number }): Promise<FactsTrustSql.CaptureDuplicateCandidateRow[]>;
+  /** The fingerprint of each text, in order (`gbrain_fact_fingerprint`). */
+  computeFactFingerprints(texts: string[]): Promise<string[]>;
+  /** Unproposed same-bucket claim conflicts in the source, by (new id, old id), at most `cap` rows. */
+  listClaimConflictPairs(sourceId: string, auditSources: string[], cap: number): Promise<Array<Record<string, unknown>>>;
+  /** How many unproposed claim conflicts the source holds, or null when no row answers. */
+  countClaimConflictPairs(sourceId: string, auditSources: string[]): Promise<{ n: number | string } | null>;
+  /** The ids of every source that is not archived, in id order (the claim-conflict sweep's default scope). */
+  listUnarchivedSourceIds(): Promise<Array<{ id: string }>>;
 
 
   /** True when the source's `config.canonical` is `git` (a git-canonical source); false for anything else, including an unknown id. */

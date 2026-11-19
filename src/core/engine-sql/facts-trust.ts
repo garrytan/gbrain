@@ -7,6 +7,7 @@
 import type { TrustTier } from '../trust/tier.ts';
 import { TRUST_TIER_RANK, trustRankSql } from '../trust/tier.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
+import { claimBucketSql } from '../facts/typed-claim.ts';
 import { CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
 import { PAGE_EXTRACTION_SOURCE_LIST, contextHeadSql } from '../facts/gone-page-facts.ts';
 import { factsFtsDocument, getFtsLanguage } from '../fts-language.ts';
@@ -331,4 +332,124 @@ export async function countDerivedFactTaint(raw: EngineRawRead): Promise<{ deriv
     `SELECT count(*) FILTER (WHERE write_origin ? 'taint_inputs') AS derived,
             count(*) FILTER (WHERE write_origin ? 'taint_inputs' AND trust_tier = 'external_untrusted') AS external FROM facts`);
   return { derived: Number(row?.derived ?? 0), external: Number(row?.external ?? 0) };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Write-path and capture statements (facts/write-single.ts, capture-dedup.ts, claim-conflicts.ts)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** The `entity_slug` a stored fact reads back with; null when it has none or no fact has the id. */
+export async function readFactEntitySlugById(raw: EngineRawRead, id: number): Promise<string | null> {
+  const [row] = await raw<{ entity_slug: string | null }>('SELECT entity_slug FROM facts WHERE id=$1', [id]);
+  return row?.entity_slug ?? null;
+}
+
+export interface SupersessionReplacementRow {
+  row_num: number | null; same_page: boolean; valid_from: Date | string; old_from: Date | string; old_until: Date | string | null;
+}
+
+/** The replacement fact's fence row, whether both facts sit on one page, and both validity starts and the old end; null when either id is gone. */
+export async function readSupersessionReplacement(raw: EngineRawRead, newId: number, oldId: number): Promise<SupersessionReplacementRow | null> {
+  const [replacement] = await raw<SupersessionReplacementRow>(
+    `SELECT n.row_num, n.source_markdown_slug IS NOT DISTINCT FROM o.source_markdown_slug AS same_page, n.valid_from, o.valid_from AS old_from, o.valid_until AS old_until
+         FROM facts n, facts o WHERE n.id = $1 AND o.id = $2`, [newId, oldId]);
+  return replacement ?? null;
+}
+
+/** Links the old fact to the fact that replaced it (`superseded_by`). Runs in the caller's maintenance transaction. */
+export async function linkSupersededFact(raw: EngineRawRead, oldId: number, newId: number): Promise<void> {
+  await raw('UPDATE facts SET superseded_by = $1 WHERE id = $2', [newId, oldId]);
+}
+
+/** The slug and title of each named live page of the source. */
+export async function listLivePageTitles(raw: EngineRawRead, sourceId: string, slugs: string[]): Promise<Array<{ slug: string; title: string | null }>> {
+  return raw<{ slug: string; title: string | null }>(
+    'SELECT slug,title FROM pages WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL', [sourceId, slugs]);
+}
+
+/** The normalized aliases of the named pages of the source. Throws on a brain older than v110 (no `page_aliases` table); the caller keeps titles only. */
+export async function listPageAliasNames(raw: EngineRawRead, sourceId: string, slugs: string[]): Promise<Array<{ slug: string; alias_norm: string }>> {
+  return raw<{ slug: string; alias_norm: string }>(
+    'SELECT slug,alias_norm FROM page_aliases WHERE source_id=$1 AND slug=ANY($2::text[])', [sourceId, slugs]);
+}
+
+export interface CaptureDuplicateCandidateRow {
+  id: number; entity_slug: string | null; source: string; source_session: string | null; created_at: Date | string;
+}
+
+const CAPTURE_DUP_HEAD = `SELECT id,entity_slug,source,source_session,created_at FROM facts WHERE source_id=$1 AND visibility=ANY($2::text[])
+      AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint($3) AND expired_at IS NULL AND (valid_until IS NULL OR valid_until>now())
+      AND ($4::text IS NULL OR attributed_to IS NULL OR attributed_to=$4)
+      AND ($5::text IS NULL OR source_markdown_slug IS DISTINCT FROM $5 OR source NOT LIKE 'cli:extract-conversation-facts%')
+      AND NOT `;
+const CAPTURE_DUP_ORDER = `
+      ORDER BY created_at DESC, id DESC LIMIT `;
+
+/**
+ * Newest first, at most `scanLimit`: the live facts of the source whose fingerprint equals the candidate's, in these visibilities,
+ * spoken by nobody else (`attributedTo` null skips the filter), leaving out a page's own conversation-extractor rows while
+ * `replacingPage` names it, and any fact on a member's owned page. The hand-numbered `$1..$5` are the statement's own.
+ */
+export async function listCaptureDuplicateCandidates(raw: EngineRawRead,
+  opts: { sourceId: string; visibilities: string[]; fact: string; attributedTo: string | null; replacingPage: string | null; scanLimit: number }): Promise<CaptureDuplicateCandidateRow[]> {
+  if (!Number.isFinite(opts.scanLimit)) throw new Error('listCaptureDuplicateCandidates: scanLimit must be a number');
+  const limit = `${opts.scanLimit}`;
+  const { text } = renderFragment(sqlFragment`${trustedSql(CAPTURE_DUP_HEAD)}${trustedSql(onOwnedMemoryPageSql('facts'))}${trustedSql(CAPTURE_DUP_ORDER)}${trustedSql(limit)}`);
+  return raw<CaptureDuplicateCandidateRow>(text, [opts.sourceId, opts.visibilities, opts.fact, opts.attributedTo ?? null, opts.replacingPage ?? null]);
+}
+
+/** The fingerprint of each text, in order (`gbrain_fact_fingerprint`, the SQL function the dedup rule matches on). */
+export async function computeFactFingerprints(raw: EngineRawRead, texts: string[]): Promise<string[]> {
+  return (await raw<{ fp: string }>(
+    'SELECT gbrain_fact_fingerprint(c) AS fp FROM unnest($1::text[]) WITH ORDINALITY AS t(c, n) ORDER BY n', [texts])).map(r => r.fp);
+}
+
+const ACTIVE_CLAIMS_HEAD = `WITH f AS (
+  SELECT id, entity_slug, visibility, claim_metric, claim_value, claim_unit, claim_period, valid_from, source_markdown_slug, `;
+const ACTIVE_CLAIMS_TAIL = ` AS bucket
+    FROM facts
+   WHERE source_id = $1 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now())
+     AND entity_slug IS NOT NULL AND claim_metric IS NOT NULL AND claim_value IS NOT NULL AND source <> ALL($2::text[]))
+SELECT `;
+const PAIR_JOIN_HEAD = `
+FROM f n JOIN f o
+    ON o.entity_slug = n.entity_slug AND o.visibility = n.visibility AND o.claim_metric = n.claim_metric
+   AND o.claim_unit IS NOT DISTINCT FROM n.claim_unit AND o.claim_period IS NOT DISTINCT FROM n.claim_period
+   AND o.bucket = n.bucket AND o.claim_value <> n.claim_value
+   AND (NOT (`;
+const PAIR_JOIN_TAIL = `) OR o.source_markdown_slug = n.source_markdown_slug)
+   AND (o.valid_from < n.valid_from OR (o.valid_from = n.valid_from AND o.id < n.id))
+ WHERE NOT EXISTS (SELECT 1 FROM decide_proposals p WHERE p.source_id = $1
+         AND LEAST(p.new_fact_id, p.old_fact_id) = LEAST(n.id, o.id) AND GREATEST(p.new_fact_id, p.old_fact_id) = GREATEST(n.id, o.id))
+   AND NOT EXISTS (SELECT 1 FROM trust_proposals tp WHERE tp.status = 'pending' AND tp.action = 'supersede_fact'
+         AND tp.target_table = 'facts' AND tp.related_table = 'facts'
+         AND ((tp.target_id = o.id AND tp.related_id = n.id) OR (tp.target_id = n.id AND tp.related_id = o.id)))`;
+const CLAIM_PAIR_COLUMNS = 'n.id AS new_fact_id, o.id AS old_fact_id, n.entity_slug, n.visibility, n.claim_metric, n.claim_unit, n.claim_period, n.bucket, n.claim_value AS new_value, o.claim_value AS old_value';
+const CLAIM_PAIR_ORDER = `
+ ORDER BY n.id, o.id
+ LIMIT $3`;
+
+/** The shared conflict-pair statement: the active typed claims of the source, joined to every older same-bucket different-value pair no proposal covers. */
+function claimPairs(select: SqlFragment, tail: SqlFragment): string {
+  return renderFragment(sqlFragment`${trustedSql(ACTIVE_CLAIMS_HEAD)}${trustedSql(claimBucketSql('facts'))}${trustedSql(ACTIVE_CLAIMS_TAIL)}${select}${trustedSql(PAIR_JOIN_HEAD)}${trustedSql(onOwnedMemoryPageSql('n'))} OR ${trustedSql(onOwnedMemoryPageSql('o'))}${trustedSql(PAIR_JOIN_TAIL)}${tail}`).text;
+}
+
+/**
+ * Unproposed same-bucket claim conflicts in the source, ordered by (new id, old id), at most `cap` rows (`$1` source, `$2` the audit
+ * sources the lane never compares, `$3` the cap; the caller asks for one more than it keeps to learn whether any were left).
+ */
+export async function listClaimConflictPairs(raw: EngineRawRead, sourceId: string, auditSources: string[], cap: number): Promise<Array<Record<string, unknown>>> {
+  const text = claimPairs(sqlFragment`${trustedSql(CLAIM_PAIR_COLUMNS)}`, sqlFragment`${trustedSql(CLAIM_PAIR_ORDER)}`);
+  return raw<Record<string, unknown>>(text, [sourceId, auditSources, cap]);
+}
+
+/** How many unproposed claim conflicts the source holds (the same statement as listClaimConflictPairs, counted, `$1` source and `$2` audit sources). */
+export async function countClaimConflictPairs(raw: EngineRawRead, sourceId: string, auditSources: string[]): Promise<{ n: number | string } | null> {
+  const [count] = await raw<{ n: number | string }>(claimPairs(sqlFragment`${trustedSql('COUNT(*) AS n')}`, sqlFragment``), [sourceId, auditSources]);
+  return count ?? null;
+}
+
+/** The ids of every source that is not archived, in id order (the claim-conflict sweep's default scope). */
+export async function listUnarchivedSourceIds(raw: EngineRawRead): Promise<Array<{ id: string }>> {
+  return raw<{ id: string }>('SELECT id FROM sources WHERE NOT archived ORDER BY id');
 }

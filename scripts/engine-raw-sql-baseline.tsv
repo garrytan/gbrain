@@ -53,8 +53,6 @@ src/commands/doctor/checks/embedding-health.ts	execute_raw	4
 src/commands/doctor/checks/entity-duplicates.ts	execute_raw	2
 src/commands/doctor/checks/extraction-input.ts	execute_raw	2
 src/commands/doctor/checks/extraction-sync.ts	execute_raw	11
-src/commands/doctor/checks/facts-pages.ts	execute_raw	1
-src/commands/doctor/checks/fence-integrity.ts	execute_raw	1
 src/commands/doctor/checks/folder-access.ts	execute_raw	3
 src/commands/doctor/checks/foreign-writers.ts	execute_raw	2
 src/commands/doctor/checks/frontmatter-hook.ts	execute_raw	1
@@ -116,7 +114,6 @@ src/commands/doctor/checks/transcript-secrets.ts	execute_raw	1
 src/commands/doctor/checks/trust-sources-unclaimed.ts	execute_raw	1
 src/commands/doctor/checks/unbound-source.ts	execute_raw	1
 src/commands/doctor/checks/unindexed-files.ts	execute_raw	1
-src/commands/doctor/checks/unlinked-facts.ts	execute_raw	1
 src/commands/doctor/checks/unscoped-multi-user-token.ts	execute_raw	2
 src/commands/doctor/checks/vector-plan.ts	execute_raw	4
 src/commands/doctor/last-known.ts	execute_raw	2
@@ -400,8 +397,6 @@ src/core/extraction-lag.ts	execute_raw	1
 src/core/extraction-watermark.ts	execute_raw	5
 src/core/facts/absorb-log.ts	execute_raw	1
 src/core/facts/backstop.ts	execute_raw	1
-src/core/facts/capture-dedup.ts	execute_raw	4
-src/core/facts/claim-conflicts.ts	execute_raw	3
 src/core/facts/contested-claims.ts	execute_raw	1
 src/core/facts/conversation-entity-hints.ts	execute_raw	1
 src/core/facts/conversation-incremental.ts	execute_raw	1
@@ -434,7 +429,6 @@ src/core/facts/single-prepare.ts	execute_raw	5
 src/core/facts/slot-tagging.ts	execute_raw	1	GBRA-574 #9668: the live person-page read that picks slot-tagging candidates, written before this ratchet landed; moves behind a typed facts engine method with its area
 src/core/facts/subject-infer.ts	execute_raw	1
 src/core/facts/unfenced-facts.ts	execute_raw	3
-src/core/facts/write-single.ts	execute_raw	3
 src/core/facts/writeback-settings.ts	execute_raw	1
 src/core/feedback/store.ts	execute_raw	19
 src/core/fence-repair/attempts.ts	execute_raw	3
@@ -847,12 +841,10 @@ src/core/reindex-consent.ts	execute_raw	1
 src/core/remediation/run.ts	execute_raw	1
 src/core/repair/accepted-takes.ts	execute_raw	4
 src/core/repair/access.ts	execute_raw	2
-src/core/repair/agent-session-facts.ts	execute_raw	9
 src/core/repair/aliases.ts	execute_raw	3
 src/core/repair/atom-fence-rows.ts	execute_raw	3
 src/core/repair/atoms-restore.ts	execute_raw	5
 src/core/repair/attribution-backfill.ts	execute_raw	7
-src/core/repair/captured-facts.ts	execute_raw	6
 src/core/repair/connector-fences.ts	execute_raw	2
 src/core/repair/consolidate-ties.ts	execute_raw	3
 src/core/repair/contact-rows.ts	execute_raw	4
@@ -862,7 +854,6 @@ src/core/repair/core.ts	execute_raw	5
 src/core/repair/duplicate-facts.ts	execute_raw	6
 src/core/repair/extractor-facts.ts	execute_raw	8
 src/core/repair/fact-claim-dates.ts	execute_raw	3
-src/core/repair/facts-rehome.ts	execute_raw	4
 src/core/repair/failed-writes.ts	execute_raw	19
 src/core/repair/fences.ts	execute_raw	4
 src/core/repair/file-drift-class.ts	execute_raw	12	came from #9614 and #9615 (whole-class held file-drift preview and apply), opened before this ratchet: the preview reads the held file_drift checkpoints and the source incarnation, and the apply adds its lease, progress and manifest reads and writes; these move behind typed engine methods with the next change in the repair area
