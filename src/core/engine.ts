@@ -3519,6 +3519,75 @@ export interface BrainEngine {
   expireFactsByWithdrawal(sourceId: string, visibility: string, fact: string, subject: string): Promise<Array<{ id: number }>>;
   /** Stores a fact purge tombstone; false when the same (source, visibility, subject, fingerprint) one exists. */
   insertFactPurge(row: FactsPurgeSql.FactPurgeInsert): Promise<boolean>;
+  // The facts purge statements of gone-page-facts.ts, purge-reasons.ts, held-fact-move.ts and purge-verify.ts (engine-sql/facts-purge.ts). Each runs the statement its caller ran through executeRaw.
+  /** Expires the facts a retention purge takes with its deleted pages (filed on them, their conversation slots, extracted from them, about them and held by no page): four updates in order over the paired source ids and slugs. Writes facts; run it in the purge transaction. */
+  expireFactsOfGonePages(sourceIds: string[], slugs: string[]): Promise<void>;
+  /** The source's checkout path, null for none or no such source. Reads sources. */
+  readPurgeSourceLocalPath(sourceId: string): Promise<string | null>;
+  /** Tombstones each (commit, path) pair, none twice; the number added. Writes reason_purge_tombstones. */
+  insertReasonPurgeTombstones(sourceId: string, commits: string[], paths: string[]): Promise<number>;
+  /** The source's Git effects whose data carries the claim in one of its three forms, in id order, locked for the redaction. Reads persistence_effects. */
+  listGitEffectsCarryingReason(sourceId: string, needle: string, escaped: string, foldedJson: string): Promise<FactsPurgeSql.PurgeGitEffectRow[]>;
+  /** The slug's Git effects that carry a commit line or trailers, in id order, locked for the strip. Reads persistence_effects. */
+  listPageGitEffectsForStrip(sourceId: string, slug: string): Promise<FactsPurgeSql.PurgeGitEffectRow[]>;
+  /** Replaces one effect's data (`effectId` is the bigint id as text). Writes persistence_effects. */
+  setPurgeEffectData(effectId: string, data: Record<string, unknown>): Promise<void>;
+  /** The change reasons the page's versions and its requests (intent and outcome) recorded, each once, null included. Reads page_versions and persistence_requests. */
+  listPageChangeReasons(sourceId: string, slug: string, pageId: number): Promise<Array<{ reason: string | null }>>;
+  /** The slug's requests whose intent or outcome records a reason, oldest first (10000 at most). Reads persistence_requests. */
+  listRequestsRecordingReasons(sourceId: string, slug: string): Promise<FactsPurgeSql.IntentRedactionTarget[]>;
+  /** Whether a soft-deleted page holds the slug. Reads pages. */
+  heldEntityPageDeleted(sourceId: string, slug: string): Promise<boolean>;
+  /** Whether the access state is readable, an exact page rule covers the entity and a folder rule restricts it. Reads access_rules, access_pending_coverage and the access functions; the caller decides what a failed read means. */
+  readHeldAccessState(sourceId: string, entity: string): Promise<FactsPurgeSql.HeldAccessState[]>;
+  /** Whether a live page holds the slug. Reads pages. */
+  heldTargetPageLive(sourceId: string, slug: string): Promise<boolean>;
+  /** Every live held row on every holding page of the source, by holding page, entity and id. Reads facts and pages. */
+  listHeldFactRows(sourceId: string): Promise<FactsPurgeSql.HeldFactRow[]>;
+  /** The struck held rows, one per holding page and row number, none an active fact reuses. Reads facts and pages. */
+  listStruckHeldRows(sourceId: string): Promise<FactsPurgeSql.StruckHeldRow[]>;
+  /** Whether every reader of the source can read the live page; null for no live page. Reads pages and the access rules. */
+  readHeldRowVisibility(sourceId: string, slug: string): Promise<{ visible: boolean } | null>;
+  /** Whether a rule now narrows a held row's entity below its holding page's readers. Reads facts, pages and the access functions. */
+  heldMoveDue(sourceId: string): Promise<boolean>;
+  /** One config row's value, null when unset. Reads config. */
+  readHeldConfigValue(name: string): Promise<string | null>;
+  /** A live page's file path and URI, null for none; `timeoutMs` ends the read on the server. Reads pages. */
+  readHeldPageLocation(sourceId: string, slug: string, opts?: { timeoutMs?: number }): Promise<{ source_path: string | null; source_uri: string | null } | null>;
+  /** The segmented saved versions a held-fact request recorded as not edited; 0 for none. Reads persistence_requests. */
+  readHeldVersionsEdited(requestId: string): Promise<number>;
+  /** The source's live pages stored in segments, in id order, `limit` of them. Reads pages. */
+  listSegmentedPageBodies(sourceId: string, limit: number): Promise<Array<{ page_id: number; slug: string; generation: null; version_id: null }>>;
+  /** The source's retained versions stored in segments, in id order, `limit` of them. Reads page_versions and pages. */
+  listSegmentedVersionBodies(sourceId: string, limit: number): Promise<Array<{ page_id: number; slug: string; generation: number; version_id: number }>>;
+  /** Bounds the statements of the transaction it runs in to `ms` milliseconds (set_config, local). */
+  setPurgeProbeTimeout(ms: number): Promise<void>;
+  /** One batch of stored derivation results after the cursor (page, pipeline, occurrence): the rows scanned, the claim candidates, those a sweep covers and holds the claim, and those it does not, and the last key. Reads page_segment_derivations and pages. */
+  probePurgeDerivations(sourceId: string, needles: string[], pageIds: number[], patterns: string[], cursor: FactsPurgeSql.DerivationKey | null, rows: number): Promise<FactsPurgeSql.PurgeDerivationProbeRow>;
+  /** The next 1000 belief events of the source after id `after` with a recorded value, in id order. Reads belief_events. */
+  listBeliefEventsForPurgeProbe(sourceId: string, after: number): Promise<Array<{ id: number; subject_kind: string; subject_key: string; value: unknown }>>;
+  /** The next 1000 live facts of the source after id `after` that have a context, in id order. Reads facts. */
+  listFactContextsForPurgeProbe(sourceId: string, after: number): Promise<Array<{ id: number; context: string }>>;
+  /** The distinct relative file paths (64 at most) of the pages and their versions, none absolute or climbing out. Reads pages and page_versions. */
+  listPageSourcePathsForPurge(pageIds: number[]): Promise<Array<{ source_path: string }>>;
+  /** The five same-model facts of the source nearest to the embedding, each with whether it contains the claim. Reads facts. */
+  listNearestFactsForPurge(embedding: string, sourceId: string, model: string, fact: string): Promise<Array<{ id: number; similarity: number; contains_claim: boolean }>>;
+  /** The source's live atom and dream pages that no derivation edge explains. Reads pages and derivation_inputs. */
+  countLegacyDerivedPages(sourceId: string): Promise<number>;
+  /** Compacts the tables a purge touches (query_cache too when asked); rejects when the VACUUM fails. PGLite only: Postgres leaves it to the operator. */
+  vacuumPurgedTables(withQueryCache: boolean): Promise<void>;
+  /** The first 20 slugs, in order, of the source's live pages whose text in the store states one of the lowered needles. Reads the store and pages. */
+  listPageProseHits(store: FactsPurgeSql.PageProseStore, sourceId: string, loweredNeedles: string[]): Promise<Array<{ slug: string }>>;
+  /** The source's checkout path as the page purge receipt reads it, null for none. Reads sources. */
+  readPurgeReceiptSourcePath(sourceId: string): Promise<string | null>;
+  /** How many tombstones the page purge left for the slug. Reads page_purges. */
+  countPagePurgeTombstones(sourceId: string, slug: string): Promise<number>;
+  /** The newest delete_page request of the source with this request id, null for none. Reads persistence_requests. */
+  readDeletePageRequest(sourceId: string, requestId: string): Promise<FactsPurgeSql.DeletePageRequestRow | null>;
+  /** The request's effects in kind order, each with whether any target is parked. Reads persistence_effects. */
+  listPurgeEffects(requestId: string): Promise<Array<{ kind: string; state: string; error_code: string | null; parked: boolean }>>;
+  /** The facts and takes that still carry the purged claim's fingerprint under the subject (`*` for any), outcome markers apart. Reads facts and takes. */
+  countPurgeFingerprintResidue(sourceId: string, factHash: string, subject: string): Promise<{ facts: number; takes: number }>;
 
   // Facts statements, repair classifiers and loop retirement (engine-sql/facts-repair.ts). Each runs the statement its caller ran through executeRaw.
   /** Closed loops whose commitment fact is still active and retirable (same source, no other open loop references it), in id order; `loopId` null is every loop. Reads open_loops. */

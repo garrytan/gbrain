@@ -8,14 +8,23 @@ import { FACTS_FENCE_BEGIN } from '../facts-fence.ts';
 import { outcomeMarkerSql } from '../facts/audit-sources.ts';
 import { ownedMemorySubjectSql, unbackedEntitySql } from '../facts/withdrawal-schema.ts';
 import { onOwnedMemoryPageSql } from '../access/member-facts.ts';
-import { privateProvenanceFilterUnderPolicy, remoteProvenanceFloorSql } from '../search/private-visibility.ts';
+import { privateProvenanceFilterUnderPolicy, privatePagesFilterFragment, remoteProvenanceFloorSql } from '../search/private-visibility.ts';
 import type { FactAttribution, FactRow } from '../engine.ts';
 import type { FenceRowInput, UnfencedFactRow } from '../facts/unfenced-facts.ts';
+import { holdingSlugSql } from '../facts-fence.ts';
+import { extractedFromPageSql } from '../facts/gone-page-facts.ts';
+import { CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
+import { derivationAfterSql, type DerivationKey } from '../page-body/segment-derive.ts';
+import { derivationClaimCandidateSql, derivationHoldsClaimSql, derivationSweepScopeSql } from '../page-body/schema.ts';
+import type { IntentRedactionTarget } from '../persistence/intent-redaction.ts';
+import type { WriteRequest } from '../persistence/model.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 import type { EngineRawRead } from './cli-reads-ops.ts';
 
 export type { EngineRawRead } from './cli-reads-ops.ts';
 export type { UnfencedFactRow } from '../facts/unfenced-facts.ts';
+export type { IntentRedactionTarget } from '../persistence/intent-redaction.ts';
+export type { DerivationKey } from '../page-body/segment-derive.ts';
 
 /** `p` is due: no reconcile row, or one for another revision (facts/reconcile-watermark.ts reads it too). */
 export const DUE = `(r.page_id IS NULL OR r.reconciled_revision IS DISTINCT FROM p.knowledge_revision)`;
@@ -273,4 +282,332 @@ export async function expireFactsByWithdrawal(raw: EngineRawRead, sourceId: stri
     WHERE facts.source_id=${sourceId} AND facts.visibility=${visibility} AND gbrain_fact_fingerprint(facts.fact)=gbrain_fact_fingerprint(${fact})
       AND (q.subject='*' OR facts.entity_slug=q.subject OR (${trustedSql(unbackedEntitySql('facts'))} AND NOT ${trustedSql(ownedMemorySubjectSql('q.subject'))}) OR (${trustedSql(onOwnedMemoryPageSql('facts'))} AND facts.source_markdown_slug=q.subject)) AND facts.expired_at IS NULL RETURNING facts.id`);
   return raw<{ id: number }>(text, params);
+}
+
+/** Hand-numbered placeholders spliced into statements that also carry a vetted builder, so the rendered text keeps the caller's own `$N`. */
+const P = { p1: '$1', p2: '$2', p3: '$3', p4: '$4', p5: '$5', p6: '$6', p7: '$7', p8: '$8' } as const;
+
+// ---------------------------------------------------------------------------------------------------------------------
+// gone-page-facts.ts: the facts a retention purge expires with their pages
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** `$1` source ids and `$2` slugs, paired by position. */
+const GONE = 'unnest($1::text[], $2::text[]) AS g(source_id, slug)';
+const EXPIRE_FILED_SQL = `UPDATE facts f SET expired_at = now(), row_num = NULL FROM ${GONE}
+  WHERE f.source_id = g.source_id AND f.source_markdown_slug = g.slug AND f.expired_at IS NULL AND f.dimension IS NULL`;
+const EXPIRE_FILED_SLOT_SQL = `UPDATE facts f SET expired_at = now(), row_num = NULL, dimension = NULL, value = NULL, value_hash = NULL, dim_status = NULL
+  FROM ${GONE} WHERE f.source_id = g.source_id AND f.source_markdown_slug = g.slug AND f.expired_at IS NULL AND f.dimension IS NOT NULL AND f.row_num IS NOT NULL AND ${CONVERSATION_SLOT_SQL}`;
+const EXPIRE_EXTRACTED_SQL = `UPDATE facts f SET expired_at = now(), row_num = NULL FROM ${GONE}
+  WHERE f.source_id = g.source_id AND f.expired_at IS NULL AND ${extractedFromPageSql('f', 'g.slug')}`;
+const EXPIRE_ABOUT_SQL = `UPDATE facts f SET expired_at = now(), row_num = NULL FROM ${GONE}
+  WHERE f.source_id = g.source_id AND f.entity_slug = g.slug AND f.expired_at IS NULL
+    AND NOT EXISTS (SELECT 1 FROM pages hp WHERE hp.source_id = f.source_id AND hp.slug = f.source_markdown_slug AND hp.slug <> g.slug)`;
+
+/**
+ * expireGonePageFacts: the four updates a purge runs after it deletes the page rows, in order, each on the same pairs of
+ * source ids (`$1`) and slugs (`$2`): the facts filed on the pages, their conversation slots, the facts extracted from them,
+ * and the facts about them that no page holds. Each is its own update, so each uses its slug index.
+ */
+export async function expireFactsOfGonePages(raw: EngineRawRead, sourceIds: string[], slugs: string[]): Promise<void> {
+  const params = [sourceIds, slugs];
+  await raw(EXPIRE_FILED_SQL, params);
+  await raw(EXPIRE_FILED_SLOT_SQL, params);
+  await raw(EXPIRE_EXTRACTED_SQL, params);
+  await raw(EXPIRE_ABOUT_SQL, params);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// purge-reasons.ts: the change reasons a purge redacts and tombstones
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** A Git effect row with the request that queued it, locked `FOR UPDATE OF e` by the reads below. */
+export interface PurgeGitEffectRow { id: string; state: string; request_id: string; data: Record<string, unknown> }
+
+/** scanPurgeTrailers: the checkout of the source, null for none or a source without one. */
+export async function readPurgeSourceLocalPath(raw: EngineRawRead, sourceId: string): Promise<string | null> {
+  const [source] = await raw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id = $1', [sourceId]);
+  return source?.local_path ?? null;
+}
+
+/** recordReasonTombstones: records each (commit, path) pair, none twice; the number added. */
+export async function insertReasonPurgeTombstones(raw: EngineRawRead, sourceId: string, commits: string[], paths: string[]): Promise<number> {
+  return (await raw(`INSERT INTO reason_purge_tombstones(source_id, commit_sha, path)
+    SELECT $1, t.c, t.p FROM unnest($2::text[], $3::text[]) AS t(c, p) ON CONFLICT DO NOTHING RETURNING 1`,
+  [sourceId, commits, paths])).length;
+}
+
+/**
+ * redactGitEffectReasons: the source's Git effects whose data carries the claim in any of its three forms, locked for the
+ * redaction; `foldedJson` is the folded needle as JSON text without its quotes.
+ */
+export async function listGitEffectsCarryingReason(raw: EngineRawRead, sourceId: string, needle: string, escaped: string, foldedJson: string): Promise<PurgeGitEffectRow[]> {
+  return raw<PurgeGitEffectRow>(`SELECT e.id::text AS id, e.state, r.request_id::text AS request_id, e.data
+    FROM persistence_effects e JOIN persistence_requests r ON r.id = e.request_id
+    WHERE e.source_id = $1 AND e.kind = 'git' AND (strpos(lower(e.data::text), $2) > 0 OR strpos(lower(e.data::text), $3) > 0 OR strpos(lower(e.data::text), $4) > 0)
+    ORDER BY e.id FOR UPDATE OF e`, [sourceId, needle, escaped, foldedJson]);
+}
+
+/** stripPageGitNotes: every Git effect of the slug that carries a commit line or trailers, locked for the strip. */
+export async function listPageGitEffectsForStrip(raw: EngineRawRead, sourceId: string, slug: string): Promise<PurgeGitEffectRow[]> {
+  return raw<PurgeGitEffectRow>(`SELECT e.id::text AS id, e.state, r.request_id::text AS request_id, e.data
+    FROM persistence_effects e JOIN persistence_requests r ON r.id = e.request_id
+    WHERE e.source_id = $1 AND e.kind = 'git' AND e.data->>'slug' = $2
+      AND ((e.data->'commit_line') IS NOT NULL OR (e.data->'commit_trailers') IS NOT NULL OR (e.data->'commit_trailer') IS NOT NULL) ORDER BY e.id FOR UPDATE OF e`, [sourceId, slug]);
+}
+
+/** redactGitEffectReasons, stripPageGitNotes: replaces one effect's data (`effectId` is the bigint as text). */
+export async function setPurgeEffectData(raw: EngineRawRead, effectId: string, data: Record<string, unknown>): Promise<void> {
+  await raw('UPDATE persistence_effects SET data = $2::text::jsonb WHERE id = $1::bigint', [effectId, JSON.stringify(data)]);
+}
+
+/** pageChangeReasons: the reasons the page's snapshots and its requests (intent and outcome) recorded, each once. */
+export async function listPageChangeReasons(raw: EngineRawRead, sourceId: string, slug: string, pageId: number): Promise<Array<{ reason: string | null }>> {
+  return raw<{ reason: string | null }>(`SELECT change_reason AS reason FROM page_versions WHERE page_id = $1
+    UNION SELECT intent->>'reason' FROM persistence_requests WHERE source_id = $2 AND slug = $3
+    UNION SELECT outcome->'reason_recorded'->>'reason' FROM persistence_requests WHERE source_id = $2 AND slug = $3`, [pageId, sourceId, slug]);
+}
+
+/** requestsRecordingReasons: the slug's requests whose intent or outcome records a reason, oldest first, compacted ones included. */
+export async function listRequestsRecordingReasons(raw: EngineRawRead, sourceId: string, slug: string): Promise<IntentRedactionTarget[]> {
+  return raw<IntentRedactionTarget>(`SELECT id::text AS id, principal_kind, principal_id FROM persistence_requests
+    WHERE source_id = $1 AND slug = $2 AND ((intent->>'reason') IS NOT NULL OR (outcome->'reason_recorded') IS NOT NULL) ORDER BY sequence LIMIT 10000`, [sourceId, slug]);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// held-fact-move.ts: the facts a holding page keeps for an entity that has no page yet
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** One held fact row with the holding page that carries it. */
+export type HeldFactRow = UnfencedFactRow & { from_slug: string };
+/** One struck held row: its holding page, entity, row number and claim. */
+export interface StruckHeldRow { from_slug: string; entity_slug: string; row_num: number; fact: string }
+
+/** The held rows on the holding pages of `$1`: a row with a row number and an entity that is no holding page, on a holding page. */
+const onHolding = sqlFragment`f.source_id = ${trustedSql(P.p1)} AND f.source_markdown_slug IN (SELECT hp.slug FROM pages hp WHERE hp.source_id = ${trustedSql(P.p1)} AND ${trustedSql(holdingSlugSql('hp.slug'))})
+    AND f.row_num IS NOT NULL AND f.dimension IS NULL AND f.entity_slug IS NOT NULL AND NOT ${trustedSql(holdingSlugSql('f.entity_slug'))}`;
+
+/** holdingHome: whether the entity's page exists and is soft-deleted, so its facts are not held. */
+export async function heldEntityPageDeleted(raw: EngineRawRead, sourceId: string, slug: string): Promise<boolean> {
+  return (await raw('SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NOT NULL', [sourceId, slug])).length > 0;
+}
+
+/** The access state of `entity` as the holding-page decision reads it. */
+export interface HeldAccessState { unreadable: boolean; page_rule: boolean; restricted: boolean }
+
+/** holdingPageFor: whether the access state is readable, an exact page rule covers the entity, and a folder rule restricts it. */
+export async function readHeldAccessState(raw: EngineRawRead, sourceId: string, entity: string): Promise<HeldAccessState[]> {
+  return raw<HeldAccessState>(
+    `SELECT gbrain_access_state_unreadable() AS unreadable,
+       (EXISTS (SELECT 1 FROM access_rules r WHERE r.source_id=$1 AND r.prefix=$2)
+         OR EXISTS (SELECT 1 FROM access_pending_coverage c WHERE c.source_id=$1 AND c.prefix=$2)) AS page_rule,
+       (gbrain_access_folder_rules($1, $2) IS NOT NULL OR gbrain_access_pending_covers($1, $2)) AS restricted`, [sourceId, entity]);
+}
+
+/** heldFactTarget: whether a live page holds the slug. */
+export async function heldTargetPageLive(raw: EngineRawRead, sourceId: string, slug: string): Promise<boolean> {
+  return (await raw('SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, slug])).length > 0;
+}
+
+/** planHeldMoves: every live held row on every holding page, in the order the move runs them. */
+export async function listHeldFactRows(raw: EngineRawRead, sourceId: string): Promise<HeldFactRow[]> {
+  const { text } = renderFragment(sqlFragment`SELECT id, source_id, entity_slug, fact, kind, visibility, notability, context, valid_from, valid_until, source, confidence,
+            claim_metric, claim_value, claim_unit, claim_period, attributed_to, true AS page_exists, source_markdown_slug AS from_slug
+       FROM facts f WHERE ${onHolding} AND f.expired_at IS NULL ORDER BY f.source_markdown_slug, f.entity_slug, f.id`);
+  return raw<HeldFactRow>(text, [sourceId]);
+}
+
+/** planHeldMoves: the struck held rows, one per holding page and row number; a row an active fact reuses is not struck. */
+export async function listStruckHeldRows(raw: EngineRawRead, sourceId: string): Promise<StruckHeldRow[]> {
+  const { text } = renderFragment(sqlFragment`SELECT DISTINCT ON (f.source_markdown_slug, f.row_num) f.source_markdown_slug AS from_slug, f.entity_slug, f.row_num, f.fact FROM facts f
+      WHERE ${onHolding} AND f.expired_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM facts a WHERE a.source_id = f.source_id
+        AND a.source_markdown_slug = f.source_markdown_slug AND a.row_num = f.row_num AND a.expired_at IS NULL)
+      ORDER BY f.source_markdown_slug, f.row_num, f.id DESC`);
+  return raw<StruckHeldRow>(text, [sourceId]);
+}
+
+/** planHeldMoves: whether every reader of the source can read the live page; null for no live page. */
+export async function readHeldRowVisibility(raw: EngineRawRead, sourceId: string, slug: string): Promise<{ visible: boolean } | null> {
+  const { text, params } = renderFragment(sqlFragment`SELECT ${trustedSql(privatePagesFilterFragment('p'))} AS visible FROM pages p WHERE p.source_id=${sourceId} AND p.slug=${slug} AND p.deleted_at IS NULL`);
+  const [page] = await raw<{ visible: boolean }>(text, params);
+  return page ?? null;
+}
+
+/** moveRuledSharedHeld: whether a rule now narrows a held row's entity below its holding page's readers. */
+export async function heldMoveDue(raw: EngineRawRead, sourceId: string): Promise<boolean> {
+  const { text } = renderFragment(sqlFragment`SELECT EXISTS (SELECT 1 FROM facts f WHERE f.source_id = ${trustedSql(P.p1)}
+      AND f.source_markdown_slug IN (SELECT hp.slug FROM pages hp WHERE hp.source_id = ${trustedSql(P.p1)} AND ${trustedSql(holdingSlugSql('hp.slug'))})
+      AND f.row_num IS NOT NULL AND f.dimension IS NULL AND f.entity_slug IS NOT NULL AND NOT ${trustedSql(holdingSlugSql('f.entity_slug'))}
+      AND (NOT COALESCE(gbrain_access_folder_rules(f.source_id, f.entity_slug), '{}') <@ COALESCE(gbrain_access_folder_rules(f.source_id, f.source_markdown_slug), '{}')
+        OR (gbrain_access_pending_covers(f.source_id, f.entity_slug) AND NOT gbrain_access_pending_covers(f.source_id, f.source_markdown_slug)))) AS due`);
+  const [row] = await raw<{ due: boolean }>(text, [sourceId]);
+  return Boolean(row?.due);
+}
+
+/** planningView's getConfig: one config row's value, null when unset. */
+export async function readHeldConfigValue(raw: EngineRawRead, name: string): Promise<string | null> {
+  const [row] = await raw<{ value: string }>('SELECT value FROM config WHERE key = $1', [name]);
+  return row?.value ?? null;
+}
+
+/** moveHeldFacts: a live page's file path and URI, null for none; `opts.timeoutMs` ends the read on the server. */
+export async function readHeldPageLocation(raw: EngineRawRead, sourceId: string, slug: string, opts?: { timeoutMs?: number }): Promise<{ source_path: string | null; source_uri: string | null } | null> {
+  const [page] = await raw<{ source_path: string | null; source_uri: string | null }>(
+    'SELECT source_path, source_uri FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, slug], opts);
+  return page ?? null;
+}
+
+/** moveHeldFacts: the segmented saved versions a held-fact request recorded as not edited; 0 when none. */
+export async function readHeldVersionsEdited(raw: EngineRawRead, requestId: string): Promise<number> {
+  const [edited] = await raw<{ n: number | null }>(`SELECT (outcome->'held_versions_edited'->>'segmented_versions_not_edited')::int AS n
+        FROM persistence_requests WHERE request_id = $1::uuid`, [requestId]);
+  return Number(edited?.n ?? 0);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// purge-verify.ts: the probes of a purge receipt
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** segmentedProse: the live pages stored in segments, in id order, `limit` of them. */
+export async function listSegmentedPageBodies(raw: EngineRawRead, sourceId: string, limit: number): Promise<Array<{ page_id: number; slug: string; generation: null; version_id: null }>> {
+  return raw<{ page_id: number; slug: string; generation: null; version_id: null }>(`SELECT id AS page_id,slug,NULL AS generation,NULL AS version_id FROM pages
+      WHERE source_id=$1 AND deleted_at IS NULL AND body_storage='segmented' ORDER BY id LIMIT $2`, [sourceId, limit]);
+}
+
+/** segmentedProse: the retained versions stored in segments, in id order, `limit` of them. */
+export async function listSegmentedVersionBodies(raw: EngineRawRead, sourceId: string, limit: number): Promise<Array<{ page_id: number; slug: string; generation: number; version_id: number }>> {
+  return raw<{ page_id: number; slug: string; generation: number; version_id: number }>(`SELECT v.page_id,p.slug,v.body_generation AS generation,v.id AS version_id
+      FROM page_versions v JOIN pages p ON p.id=v.page_id WHERE p.source_id=$1 AND v.body_storage='segmented' ORDER BY v.id LIMIT $2`, [sourceId, limit]);
+}
+
+/** The receipt's probes: bounds the statements of the transaction this runs in to `ms` milliseconds. */
+export async function setPurgeProbeTimeout(raw: EngineRawRead, ms: number): Promise<void> {
+  await raw("SELECT set_config('statement_timeout',$1,true)", [`${ms}ms`]);
+}
+
+/** One batch of the derivation probe: the rows scanned and the claim-candidate, swept and kept counts, and the last key walked. */
+export interface PurgeDerivationProbeRow {
+  scanned: number; normalized: number; swept: number; kept: number; last_page: number | null; last_pipeline: string | null; last_occurrence: string | null;
+}
+
+/**
+ * derivationTextReport: one batch of the stored derivation results after `cursor` (page, pipeline, occurrence) that hold a
+ * needle: `pageIds` are the pages the sweep covers, `patterns` the claim forms, `rows` the batch size.
+ */
+export async function probePurgeDerivations(raw: EngineRawRead, sourceId: string, needles: string[], pageIds: number[], patterns: string[],
+  cursor: DerivationKey | null, rows: number): Promise<PurgeDerivationProbeRow> {
+  const { text } = renderFragment(sqlFragment`WITH batch AS MATERIALIZED (
+            SELECT d.page_id, d.pipeline, d.occurrence_id, ${trustedSql(derivationSweepScopeSql('d', 'p', P.p3))} AS swept FROM page_segment_derivations d
+            JOIN pages p ON p.id=d.page_id WHERE p.source_id=${trustedSql(P.p1)} AND ${trustedSql(derivationAfterSql('d', [P.p5, P.p6, P.p7]))}
+            ORDER BY d.page_id, d.pipeline, d.occurrence_id LIMIT ${trustedSql(P.p8)}
+          ), checked AS MATERIALIZED (
+            SELECT b.swept, c.candidate, CASE WHEN c.candidate THEN ${trustedSql(derivationHoldsClaimSql('d', P.p2, P.p4))} ELSE false END AS hit
+            FROM batch b JOIN page_segment_derivations d ON d.page_id=b.page_id AND d.pipeline=b.pipeline AND d.occurrence_id=b.occurrence_id
+            CROSS JOIN LATERAL (SELECT ${trustedSql(derivationClaimCandidateSql('d', P.p4))} AS candidate) c
+          ), last AS (
+            SELECT b.page_id, b.pipeline, b.occurrence_id::text AS occurrence_id FROM batch b ORDER BY b.page_id DESC, b.pipeline DESC, b.occurrence_id DESC LIMIT 1
+          ) SELECT (SELECT count(*)::int FROM batch) AS scanned, count(*) FILTER (WHERE candidate)::int AS normalized,
+            count(*) FILTER (WHERE hit AND swept)::int AS swept, count(*) FILTER (WHERE hit AND NOT swept)::int AS kept,
+            (SELECT page_id FROM last) AS last_page, (SELECT pipeline FROM last) AS last_pipeline, (SELECT occurrence_id FROM last) AS last_occurrence
+          FROM checked`);
+  const [counted] = await raw<PurgeDerivationProbeRow>(text, [sourceId, needles, pageIds, patterns, cursor?.[0] ?? null, cursor?.[1] ?? null, cursor?.[2] ?? null, rows]);
+  return counted!;
+}
+
+/** ledgerReports: the next 1000 recorded values of the source's belief events after id `after`, in id order. */
+export async function listBeliefEventsForPurgeProbe(raw: EngineRawRead, sourceId: string, after: number): Promise<Array<{ id: number; subject_kind: string; subject_key: string; value: unknown }>> {
+  return raw<{ id: number; subject_kind: string; subject_key: string; value: unknown }>(`SELECT id, subject_kind, subject_key, value
+      FROM belief_events WHERE source_id = $1 AND id > $2 AND value IS NOT NULL ORDER BY id LIMIT 1000`, [sourceId, after]);
+}
+
+/** ledgerReports: the next 1000 live facts of the source after id `after` that have a context, in id order. */
+export async function listFactContextsForPurgeProbe(raw: EngineRawRead, sourceId: string, after: number): Promise<Array<{ id: number; context: string }>> {
+  return raw<{ id: number; context: string }>(`SELECT id, context FROM facts WHERE source_id = $1 AND id > $2 AND expired_at IS NULL
+      AND COALESCE(context, '') <> '' ORDER BY id LIMIT 1000`, [sourceId, after]);
+}
+
+/** pageFilePaths: the distinct relative file paths of the pages and their versions (64 at most), none absolute or climbing out. */
+export async function listPageSourcePathsForPurge(raw: EngineRawRead, pageIds: number[]): Promise<Array<{ source_path: string }>> {
+  return raw<{ source_path: string }>(`SELECT DISTINCT source_path FROM (
+      SELECT source_path FROM pages WHERE id=ANY($1::int[]) UNION ALL SELECT source_path FROM page_versions WHERE page_id=ANY($1::int[])) s
+    WHERE source_path IS NOT NULL AND source_path<>'' AND source_path NOT LIKE '/%' AND source_path NOT LIKE '%..%' LIMIT 64`, [pageIds]);
+}
+
+/** vectorProbe: the five same-model facts of the source nearest to `embedding`, and whether each contains the claim. */
+export async function listNearestFactsForPurge(raw: EngineRawRead, embedding: string, sourceId: string, model: string, fact: string): Promise<Array<{ id: number; similarity: number; contains_claim: boolean }>> {
+  return raw<{ id: number; similarity: number; contains_claim: boolean }>(`SELECT id,(1-(embedding <=> $1::halfvec))::float8 AS similarity,
+        strpos(gbrain_fact_normalize(fact),gbrain_fact_normalize($4))>0 AS contains_claim
+      FROM facts WHERE source_id=$2 AND embedding_model=$3 AND embedding IS NOT NULL
+      ORDER BY embedding <=> $1::halfvec LIMIT 5`, [embedding, sourceId, model, fact]);
+}
+
+/** verifyFactPurge: the live atom and dream pages of the source that no derivation edge explains. */
+export async function countLegacyDerivedPages(raw: EngineRawRead, sourceId: string): Promise<number> {
+  const [legacy] = await raw<{ n: number }>(`SELECT count(*)::int AS n FROM pages p WHERE p.source_id=$1 AND p.deleted_at IS NULL
+    AND (p.type='atom' OR p.frontmatter->>'dream_generated'='true')
+    AND NOT EXISTS (SELECT 1 FROM derivation_inputs d WHERE d.derived_table='pages' AND d.derived_id=p.id::text)`, [sourceId]);
+  return Number(legacy?.n ?? 0);
+}
+
+/** verifyFactPurge, PGLite only: compacts the tables a purge touches (`query_cache` too when it exists); rejects when the VACUUM fails. */
+export async function vacuumPurgedTables(raw: EngineRawRead, withQueryCache: boolean): Promise<void> {
+  await raw(withQueryCache
+    ? 'VACUUM facts, takes, pages, content_chunks, page_versions, persistence_requests, query_cache'
+    : 'VACUUM facts, takes, pages, content_chunks, page_versions, persistence_requests');
+}
+
+/** The page text stores a page purge's receipt searches for the purged page's claims. */
+export type PageProseStore = 'pages' | 'content_chunks' | 'page_versions' | 'timeline_entries';
+
+/** `$1` the source, `$2` the lowered needles; each lists the live pages whose own text in that store states one. */
+const PROSE_IN: Record<PageProseStore, string> = {
+  pages: `SELECT DISTINCT p.slug FROM pages p WHERE p.source_id=$1 AND p.deleted_at IS NULL
+        AND EXISTS (SELECT 1 FROM unnest($2::text[]) n WHERE strpos(lower(p.compiled_truth),n)>0 OR strpos(lower(COALESCE(p.timeline,'')),n)>0) ORDER BY 1 LIMIT 20`,
+  content_chunks: `SELECT DISTINCT p.slug FROM content_chunks c JOIN pages p ON p.id=c.page_id WHERE p.source_id=$1
+        AND EXISTS (SELECT 1 FROM unnest($2::text[]) n WHERE strpos(lower(c.chunk_text),n)>0) ORDER BY 1 LIMIT 20`,
+  page_versions: `SELECT DISTINCT p.slug FROM page_versions v JOIN pages p ON p.id=v.page_id WHERE p.source_id=$1
+        AND EXISTS (SELECT 1 FROM unnest($2::text[]) n WHERE strpos(lower(v.compiled_truth),n)>0 OR strpos(lower(COALESCE(v.timeline,'')),n)>0) ORDER BY 1 LIMIT 20`,
+  timeline_entries: `SELECT DISTINCT p.slug FROM timeline_entries t JOIN pages p ON p.id=t.page_id WHERE p.source_id=$1
+        AND EXISTS (SELECT 1 FROM unnest($2::text[]) n WHERE strpos(lower(t.summary),n)>0 OR strpos(lower(COALESCE(t.detail,'')),n)>0) ORDER BY 1 LIMIT 20`,
+};
+
+/** purgePageReceipt: the first 20 slugs, in order, of the source's live pages whose text in `store` states one of the lowered needles. */
+export async function listPageProseHits(raw: EngineRawRead, store: PageProseStore, sourceId: string, loweredNeedles: string[]): Promise<Array<{ slug: string }>> {
+  return raw<{ slug: string }>(PROSE_IN[store], [sourceId, loweredNeedles]);
+}
+
+/** pageReceipt: the checkout of the source, null for none; the receipt's own read, spelled `id=$1`. */
+export async function readPurgeReceiptSourcePath(raw: EngineRawRead, sourceId: string): Promise<string | null> {
+  const [source] = await raw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1', [sourceId]);
+  return source?.local_path ?? null;
+}
+
+/** pageReceipt: how many tombstones the page purge left for the slug. */
+export async function countPagePurgeTombstones(raw: EngineRawRead, sourceId: string, slug: string): Promise<number> {
+  const [tombstones] = await raw<{ n: number }>('SELECT count(*)::int AS n FROM page_purges WHERE source_id=$1 AND slug=$2', [sourceId, slug]);
+  return Number(tombstones?.n ?? 0);
+}
+
+/** The columns of a request the page purge receipt reads. */
+export type DeletePageRequestRow = Pick<WriteRequest, 'id' | 'request_id' | 'state' | 'source_id' | 'outcome'>;
+
+/** pageReceipt: the newest delete_page request with this request id, null for none. */
+export async function readDeletePageRequest(raw: EngineRawRead, sourceId: string, requestId: string): Promise<DeletePageRequestRow | null> {
+  const [row] = await raw<DeletePageRequestRow>(`SELECT id,request_id,state,source_id,outcome FROM persistence_requests
+    WHERE source_id=$1 AND request_id=$2::uuid AND operation='delete_page' ORDER BY created_at DESC LIMIT 1`, [sourceId, requestId]);
+  return row ?? null;
+}
+
+/** purgeCompletion: the request's effects in kind order, each with whether any target is parked. */
+export async function listPurgeEffects(raw: EngineRawRead, requestId: string): Promise<Array<{ kind: string; state: string; error_code: string | null; parked: boolean }>> {
+  return raw<{ kind: string; state: string; error_code: string | null; parked: boolean }>(`SELECT kind,state,error_code,
+    jsonb_array_length(COALESCE(data->'parked','[]'::jsonb))>0 AS parked FROM persistence_effects WHERE request_id=$1::uuid ORDER BY kind`, [requestId]);
+}
+
+/** purgeCompletion: the facts and takes that still carry the purged claim's fingerprint under `subject` ('*' for any), outcome markers apart. */
+export async function countPurgeFingerprintResidue(raw: EngineRawRead, sourceId: string, factHash: string, subject: string): Promise<{ facts: number; takes: number }> {
+  const { text } = renderFragment(sqlFragment`SELECT
+      (SELECT count(*)::int FROM facts WHERE source_id=${trustedSql(P.p1)} AND gbrain_fact_fingerprint(fact)=${trustedSql(P.p2)} AND (${trustedSql(P.p3)}='*' OR entity_slug=${trustedSql(P.p3)}) AND NOT ${trustedSql(outcomeMarkerSql('facts'))}) AS facts,
+      (SELECT count(*)::int FROM takes k JOIN pages p ON p.id=k.page_id WHERE p.source_id=${trustedSql(P.p1)} AND gbrain_fact_fingerprint(k.claim)=${trustedSql(P.p2)} AND (${trustedSql(P.p3)}='*' OR p.slug=${trustedSql(P.p3)})) AS takes`);
+  const [probe] = await raw<{ facts: number; takes: number }>(text, [sourceId, factHash, subject]);
+  return { facts: Number(probe?.facts ?? 0), takes: Number(probe?.takes ?? 0) };
 }
