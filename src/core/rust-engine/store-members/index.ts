@@ -3,7 +3,6 @@
  * prototype (rust-engine.ts); a member in `RUST_ENGINE_MEMBERS` that is not here refuses with `engine_capability_missing`.
  */
 import type { BrainEngine } from '../../engine.ts';
-import type { StoreMember } from './common.ts';
 import * as chunks from './chunks.ts';
 import * as config from './config.ts';
 import * as graph from './graph.ts';
@@ -80,9 +79,8 @@ import * as telemetry from './telemetry.ts';
 import * as importMembers from './import-members.ts';
 import * as fieldUsage from './field-usage.ts';
 import * as writeContext from './write-context.ts';
-
-/** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
-const initSchema: StoreMember<[], void> = async () => undefined;
+// The store creates its tables when it opens; initSchema seeds the embedding config rows PGLite's schema text seeds.
+import { initSchema } from './init-schema.ts';
 
 export const STORE_MEMBERS = {
   initSchema,
