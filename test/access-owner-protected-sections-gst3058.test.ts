@@ -21,6 +21,7 @@ import { mintLegacyToken } from '../src/core/token-mint.ts';
 import { buildOperationContext, dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { operations } from '../src/core/operations.ts';
 import { markCliResult } from '../src/cli/room.ts';
+import { applyCliOpNotices } from '../src/cli/op-notices.ts';
 import { buildBrainTools } from '../src/core/minions/tools/brain-allowlist.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { credentialHolders, setOwner } from '../src/core/access/owner.ts';
@@ -264,6 +265,9 @@ for (const kind of testBackends()) {
     const localMark = async (params: Record<string, unknown>) => {
       const local = await operations.find(o => o.name === 'get_page')!.handler(buildOperationContext(engine, params, { remote: false }), params);
       const marked = (await markCliResult(engine, 'get_page', local, BOB, { sourceId: 'default' })).result as Record<string, unknown>;
+      // markCliResult queues its room notices on the process-wide CLI channel, which the CLI drains after each op.
+      // Drain them here as the CLI does, so they never reach a later test file in the same process.
+      applyCliOpNotices(marked, true);
       return { priv: JSON.stringify(marked).includes(PRIV), mark: marked.room_access };
     };
 
