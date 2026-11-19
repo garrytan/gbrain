@@ -6,13 +6,13 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 662/662
+# covered: 663/663
 # lifecycle: 9/9
 # pages: 39/39
 # search: 7/7
 # search_reads: 9/9
 # link_reads: 11/11
-# link_temporal: 12/12
+# link_temporal: 13/13
 # search_vector: 4/4
 # retrieval_coverage: 5/5
 # chunks: 37/37
@@ -81,7 +81,7 @@ getPage	pages	yes	83	yes	yes	yes	serves
 readPageSnapshot	pages	yes	22	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	373	yes	yes	yes	serves
+putPage	pages	yes	374	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
@@ -155,6 +155,7 @@ listRelationshipNoteRows	link_temporal	yes	9	no	yes	yes	serves
 edgeValidityCounts	link_temporal	yes	1	no	yes	yes	serves
 listPageStatusByRef	link_temporal	yes	3	no	yes	yes	serves
 listRecordMetadataRows	link_temporal	yes	3	no	yes	yes	serves
+readReferrerGroupRows	link_temporal	yes	1	no	yes	yes	serves
 countSearchVectorRows	search_vector	yes	1	no	yes	yes	serves
 replaceSearchVectorTriggerFunction	search_vector	yes	1	no	yes	yes	serves
 backfillSearchVectors	search_vector	yes	1	no	yes	yes	serves
@@ -208,7 +209,7 @@ markPagesAttendanceBlocked	extraction	yes	2	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	89	yes	yes	yes	serves
+addLink	links	yes	90	yes	yes	yes	serves
 addLinksBatch	links	yes	18	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	13	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves

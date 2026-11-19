@@ -7,7 +7,8 @@ use common::TempDir;
 use gbrain_store::link_queries::{
     ApplyTemporalInput, EdgeValidityInput, EvidenceInput, InboundCountInput, KeysForOriginInput,
     KeysForPagesInput, KeysTouchingInput, ManualRelationship, ManualWriteInput, NoteRowsInput,
-    PageStatusInput, RecordMetadataInput, RelationshipKey, StaleKeysInput, StateWrite,
+    PageStatusInput, RecordMetadataInput, ReferrerGroupInput, RelationshipKey, StaleKeysInput,
+    StateWrite,
 };
 use gbrain_store::links::AddLinkOptions;
 use gbrain_store::pages::{PageInput, PutPageOptions};
@@ -526,4 +527,79 @@ fn entity_inbound_edges_carry_the_scope_relationship_in_link_order() {
     let (n, rows) = read(json!({"honorAliases": false, "entityPrivacy": true}));
     assert_eq!(n, 3);
     assert_eq!(rows[0]["temporal_ranges"], Value::Null);
+}
+
+#[test]
+fn referrer_groups_by_canonical_type() {
+    let b = Brain::new("lt-referrers");
+    let dated = |slug: &str, page_type: &str, date: &str, frontmatter: Value| {
+        let input: PageInput = de(json!({
+            "type": page_type, "title": slug, "compiled_truth": format!("{slug} body"), "frontmatter": frontmatter,
+            "effective_date": format!("{date}T00:00:00.000Z"), "effective_date_source": "date",
+        }));
+        let options: PutPageOptions = de(json!({"sourceId": "default", "index": false}));
+        b.store.put_page(slug, &input, &options).unwrap();
+    };
+    b.page("acme");
+    dated("bob", "person", "2026-03-01", json!({}));
+    dated("alice", "person", "2026-03-01", json!({}));
+    dated("standup", "call", "2026-02-01", json!({}));
+    dated("review", "meeting", "2026-04-01", json!({}));
+    dated("loose", "", "2026-01-01", json!({}));
+    dated(
+        "secret",
+        "person",
+        "2026-05-01",
+        json!({"visibility": "private"}),
+    );
+    dated("held", "person", "2026-05-02", json!({"quarantine": true}));
+    for slug in [
+        "bob", "alice", "standup", "review", "loose", "secret", "held",
+    ] {
+        b.link(slug, "acme", "mentions");
+    }
+    let read = |exclude: Value, per_group: u64| {
+        let input: ReferrerGroupInput = de(json!({
+            "targetSources": ["default"], "targetSlugs": ["acme"], "referrerSources": ["default"],
+            "storedTypes": ["call"], "canonicalTypes": ["meeting"], "excludePrivate": exclude,
+            "perGroup": per_group,
+        }));
+        let rows = serde_json::to_value(b.store.read_referrer_group_rows(&input).unwrap()).unwrap();
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .map(|r| {
+                format!(
+                    "{}:{}:{}",
+                    r["canonical_type"].as_str().unwrap(),
+                    r["slug"].as_str().unwrap(),
+                    r["gtotal"]
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        read(Value::Null, 10),
+        [
+            "meeting:review:2",
+            "meeting:standup:2",
+            "person:secret:3",
+            "person:alice:3",
+            "person:bob:3",
+            "untyped:loose:1"
+        ]
+    );
+    assert_eq!(
+        read(json!({"honorAliases": false, "entityPrivacy": true}), 1),
+        ["meeting:review:2", "person:alice:2", "untyped:loose:1"]
+    );
+    let input: ReferrerGroupInput = de(json!({
+        "targetSources": ["default"], "targetSlugs": ["acme"], "referrerSources": ["default"], "perGroup": 1,
+    }));
+    let row = serde_json::to_value(&b.store.read_referrer_group_rows(&input).unwrap()[0]).unwrap();
+    assert_eq!(
+        row,
+        json!({"id": row["id"], "slug": "standup", "source_id": "default", "type": "call", "canonical_type": "call",
+               "d": "2026-02-01T00:00:00.000000Z", "gtotal": 1})
+    );
 }

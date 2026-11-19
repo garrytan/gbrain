@@ -24,6 +24,7 @@ writes the rows the builder returns.
 | `brain.listRelationshipNoteRows({ subjects, excludePrivate })` | the state relations of the subjects with live targets | `listRelationshipNoteRows` |
 | `brain.edgeValidityCounts({ sourceIds, staleLimit })` | `{ byStatus, stale, proposals }` | `edgeValidityCounts` |
 | `brain.listPageStatusByRef(...)` / `brain.listRecordMetadataRows(...)` | the frontmatter `status` of each ref / the status and supersession links of referring pages | `listPageStatusByRef` / `listRecordMetadataRows` |
+| `brain.readReferrerGroupRows(input)` | the live pages that link to the targets, grouped by canonical type (a pack alias maps to its canonical type, an empty type is `untyped`), newest first (`effective_date`, else `updated_at`; ties by source and slug), at most `perGroup` per group, each with its group's total | `readReferrerGroupRows` |
 | `brain.countSearchVectorRows()` | `{ pages, chunks }`: every page (deleted ones too) and every chunk | `countSearchVectorRows` |
 | `brain.countPendingProjectionPages({ scope, relevance })` | `{ total, could_affect, capped, top_counted?, could_affect_images }`: the live pages in scope whose text projection waits and needs work, at most 1000 | `countPendingProjectionPages` |
 | `brain.projectionRebuildProgress(scope)` | `{ done, total, pages_per_second }` while `protocol_activation` jobs are queued, else null | `projectionRebuildProgress` |
@@ -36,10 +37,12 @@ writes the rows the builder returns.
   `day`, `month` or `year`. Any other value is refused with `constraint_violation` (the tables' CHECKs).
 - `valid_ranges` is stored and returned in the text form Postgres prints for a `datemultirange` (`{[2019-02-01,2025-03-01)}`).
 - The privacy policy of the world scope (`originPolicy`, `excludePrivate`) uses the store's page privacy rules
-  (`facts::page_hidden`), the same rules `privatePagesFilterFragment` composes in SQL. `listRelationshipNoteRows`, `listPageStatusByRef` and
-  `listRecordMetadataRows` carry a caller's reader identity and private-readable grant in the policy (the
+  (`facts::page_hidden`), the same rules `privatePagesFilterFragment` composes in SQL. `listRelationshipNoteRows`, `listPageStatusByRef`,
+  `listRecordMetadataRows` and `readReferrerGroupRows` carry a caller's reader identity and private-readable grant in the policy (the
   `callerReaders` opt-in of `storePagePolicy`); any other caller whose policy differs (folder grants, lineage, an owner
   read) refuses.
+- `readReferrerGroupRows` applies the read-eligibility trust floor (`minTrust`) and hides quarantined referrers unless
+  `includeQuarantined`; under `excludePrivate`, a referrer whose only links come from a hidden origin page is not counted.
 - A repeated refresh over unchanged evidence writes nothing and returns 0.
 - `applyLinkTemporalRows` replaces the origin's derived transitions: the old rows go before the new rows are written. On
   Postgres the SQL statements are pipelined, which keeps their order only on one connection, so the Postgres member opens a
@@ -53,7 +56,7 @@ writes the rows the builder returns.
 | `link-temporal-apply.ts` | linkRelationshipKeysForOrigin, applyLinkTemporalRows, writeManualLinkTransitions, removeManualLinkTransitions | equal |
 | `link-relationship-notes.ts` | listRelationshipNoteRows | equal |
 | `doctor/checks/edge-validity.ts` | edgeValidityCounts | equal |
-| `mentions/referrers.ts` | listPageStatusByRef, listRecordMetadataRows | equal |
+| `mentions/referrers.ts` | listPageStatusByRef, listRecordMetadataRows, readReferrerGroupRows | equal (the referenced-by card still refuses: its page-detail read is raw SQL) |
 | `search/retrieval-coverage.ts` | countEmbeddingHeldPages | equal (always 0: the store keeps no embedding budget rows) |
 | `search/retrieval-coverage.ts` | countPendingProjectionPages, projectionRebuildProgress | equal (a capped count refuses: see Known differences) |
 | `search/projection-readiness.ts` | readProjectionReadinessGeneration, readProjectionReadiness | equal statuses, cached until the next write |

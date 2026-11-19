@@ -23,14 +23,14 @@
 
 import type { BrainEngine } from '../engine.ts';
 import { boundedBodyPrefixSql } from '../page-window/bounded-lead.ts';
-import { privatePagesFilterFastForCaller, privatePagesFilterForCaller, privateLinkOriginFilterForCaller } from '../search/private-visibility.ts';
 import { isIdentityUnionEnabled, listEntityIdentities } from '../entity-identity.ts';
 import { stripTakesFence } from '../takes-fence.ts';
 import { stripFactsFence } from '../facts-fence.ts';
 import { redactFindings } from '../secret-scan.ts';
 import { typeAliasPairs, type PackTypes } from './policy.ts';
-import { quarantineFilterFragment, isQuarantined } from '../quarantine.ts';
-import { activationSuppressedSql, pageEligibleSql } from '../eligibility/sql.ts';
+import { isQuarantined } from '../quarantine.ts';
+import { activationSuppressedSql } from '../eligibility/sql.ts';
+import { dateText, referrerFilters, referrersCte } from './referrers-sql.ts';
 import { trustFields, type TrustFields } from '../eligibility/labels.ts';
 import type { ReadEligibility } from '../eligibility/policy.ts';
 
@@ -86,47 +86,6 @@ async function targetPages(engine: BrainEngine, scope: ReferrerScope, union?: bo
   }
   return { sources: targets.map(t => t.source_id), slugs: targets.map(t => t.slug) };
 }
-
-/**
- * The shared CTE `typed`: one row per referring page with its canonical type
- * and date. Params $1..$5 are fixed (target sources, target slugs, referrer
- * sources, stored type aliases, their canonical types; all bound as text[]).
- * The target's own privacy is checked once in `tgt`, and the referring page
- * ids are collected once in `refs`, so a hub with thousands of inbound links
- * costs one hashed membership test per candidate page.
- */
-/** The caller's read filters, shared by the single-target CTE and its batched variant. */
-function referrerFilters(scope: Pick<ReferrerScope, 'excludePrivate' | 'eligibility' | 'includeQuarantined'>) {
-  return {
-    targetPriv: scope.excludePrivate ? ` AND ${privatePagesFilterForCaller('t')}` : '',
-    linkPriv: scope.excludePrivate ? ` AND ${privateLinkOriginFilterForCaller('l')}` : '',
-    pagePriv: scope.excludePrivate ? ` AND ${privatePagesFilterFastForCaller('f')}` : '',
-    pageTrust: ` AND ${pageEligibleSql('f', scope.eligibility)}${scope.includeQuarantined ? '' : ` AND ${quarantineFilterFragment('f')}`}`,
-  };
-}
-
-function referrersCte(scope: ReferrerScope): string {
-  const { targetPriv, linkPriv, pagePriv, pageTrust } = referrerFilters(scope);
-  return `WITH tgt AS MATERIALIZED (
-      SELECT t.id FROM pages t JOIN unnest($1::text[], $2::text[]) AS k(s, g) ON t.source_id = k.s AND t.slug = k.g
-       WHERE t.deleted_at IS NULL${targetPriv}
-    ),
-    refs AS MATERIALIZED (
-      SELECT DISTINCT l.from_page_id AS id FROM links l WHERE l.to_page_id IN (SELECT id FROM tgt)${linkPriv}
-    ),
-    typed AS MATERIALIZED (
-      SELECT f.id, f.slug, f.source_id, f.type,
-             COALESCE(f.effective_date, f.updated_at) AS d,
-             COALESCE(($5::text[])[array_position($4::text[], f.type)], NULLIF(f.type, ''), 'untyped') AS canonical_type
-        FROM pages f
-       WHERE f.id IN (SELECT id FROM refs)
-         AND f.deleted_at IS NULL AND f.source_id = ANY($3::text[])
-         AND f.id NOT IN (SELECT id FROM tgt)${pagePriv}${pageTrust}
-    )`;
-}
-
-/** A timestamp as UTC ISO text with microseconds (a cursor compares at full precision). */
-const dateText = (column: string) => `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 
 function preview(body: string | null, keep: ('private' | 'world')[]): string {
   if (!body) return '';
@@ -229,16 +188,12 @@ export interface ReferenceGroup {
 export async function readReferrerGroups(engine: BrainEngine, scope: ReferrerScope): Promise<{ total: number; groups: ReferenceGroup[] }> {
   const t = await targetPages(engine, scope);
   const pairs = typeAliasPairs(scope.pack);
-  // Per-type totals by hash aggregate, then a bounded top-N per type (no full sort of the referrers).
-  const raw = await engine.executeRaw<RawRow>(
-    `${referrersCte(scope)},
-     counts AS (SELECT canonical_type, count(*)::int AS n FROM typed GROUP BY canonical_type)
-     SELECT x.id, x.slug, x.source_id, x.type, c.canonical_type, ${dateText('x.d')} AS d, c.n AS gtotal
-       FROM counts c CROSS JOIN LATERAL (
-         SELECT * FROM typed t WHERE t.canonical_type = c.canonical_type ORDER BY t.d DESC NULLS LAST, t.source_id, t.slug LIMIT $6
-       ) x
-      ORDER BY c.canonical_type, x.d DESC NULLS LAST, x.source_id, x.slug`,
-    [t.sources, t.slugs, scope.referrerSources, pairs.stored, pairs.canonical, GROUP_ROW_CAP]);
+  // Per-type totals, then a bounded top-N per type (engine-sql/link-temporal.ts readReferrerGroupRows).
+  const raw: RawRow[] = await engine.readReferrerGroupRows(t, {
+    referrerSources: scope.referrerSources, storedTypes: pairs.stored, canonicalTypes: pairs.canonical,
+    excludePrivate: scope.excludePrivate, eligibility: scope.eligibility, includeQuarantined: scope.includeQuarantined,
+    perGroup: GROUP_ROW_CAP,
+  });
   const byType = new Map<string, RawRow[]>();
   for (const r of raw) byType.set(r.canonical_type, [...(byType.get(r.canonical_type) ?? []), r]);
   const order = [...byType.entries()].sort(([a, x], [b, y]) => (y[0]!.d ?? '').localeCompare(x[0]!.d ?? '') || a.localeCompare(b));

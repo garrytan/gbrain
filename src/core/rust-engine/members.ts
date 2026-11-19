@@ -255,6 +255,7 @@ export const RUST_ENGINE_MEMBERS = {
   edgeValidityCounts: 'links',
   listPageStatusByRef: 'links',
   listRecordMetadataRows: 'links',
+  readReferrerGroupRows: 'links',
   // reindex-search-vector's steps (engine-sql/search-vector.ts): no-ops under the store's one language
   countSearchVectorRows: 'keyword_search',
   replaceSearchVectorTriggerFunction: 'keyword_search',

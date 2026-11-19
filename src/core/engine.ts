@@ -1531,6 +1531,7 @@ export interface BrainEngine {
   edgeValidityCounts(opts: { sourceIds?: readonly string[]; staleLimit: number }): Promise<LinkTemporalSql.EdgeValidityCounts | null>;
   listPageStatusByRef(refs: ReadonlyArray<{ source_id: string; slug: string }>, scope: { excludePrivate: boolean; includeQuarantined?: boolean }): Promise<Array<{ source_id: string; slug: string; status: unknown }>>;
   listRecordMetadataRows(pageIds: readonly number[], scope: { referrerSources: readonly string[]; excludePrivate: boolean; includeQuarantined?: boolean }): Promise<LinkTemporalSql.RecordMetadataRows>;
+  readReferrerGroupRows(target: { sources: readonly string[]; slugs: readonly string[] }, scope: LinkTemporalSql.ReferrerGroupScope): Promise<LinkTemporalSql.ReferrerGroupRow[]>;
   /** reindex-search-vector's steps (SQL in engine-sql/search-vector.ts and search-vector-backfill.ts). */
   countSearchVectorRows(): Promise<{ pages: number; chunks: number }>;
   replaceSearchVectorTriggerFunction(target: 'pages' | 'chunks', lang: string): Promise<void>;

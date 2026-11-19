@@ -306,6 +306,38 @@ describe('engine parity: link temporal state', () => {
   );
 
   parityTest(
+    'mentions/referrers: referrer group rows map pack aliases, cap each group and honor the caller scope',
+    { methods: ['putPage', 'addLink', 'readReferrerGroupRows'] },
+    async (engine) => {
+      const on = (date: string, extra: Partial<PageInput> = {}): Partial<PageInput> =>
+        ({ ...extra, effective_date: new Date(`${date}T00:00:00Z`), effective_date_source: 'date' });
+      await engine.putPage('companies/acme-example', page('Acme', { type: 'company' }));
+      await engine.putPage('meetings/standup', page('Standup', on('2026-02-01', { type: 'call' })));
+      await engine.putPage('meetings/review', page('Review', on('2026-04-01', { type: 'meeting' })));
+      await engine.putPage('notes/loose', page('Loose', on('2026-01-15', { type: '' as PageInput['type'] })));
+      for (const n of [1, 2, 3]) await engine.putPage(`notes/n0${n}`, page(`N${n}`, on(`2026-01-0${n}`)));
+      await engine.putPage('notes/secret', page('Secret', on('2026-05-01', { frontmatter: { visibility: 'private' } })));
+      await engine.putPage('notes/held', page('Held', on('2026-05-02', { frontmatter: { quarantine: { reason: 'test' } } })));
+      for (const from of ['meetings/standup', 'meetings/review', 'notes/loose', 'notes/n01', 'notes/n02', 'notes/n03', 'notes/secret', 'notes/held']) {
+        await engine.addLink(from, 'companies/acme-example', 'mentions acme', 'mentions', 'manual');
+      }
+      const read = async (scope: { excludePrivate: boolean; includeQuarantined?: boolean; perGroup: number }) =>
+        (await engine.readReferrerGroupRows({ sources: ['default'], slugs: ['companies/acme-example'] }, {
+          referrerSources: ['default'], storedTypes: ['call'], canonicalTypes: ['meeting'], ...scope,
+        })).map(({ id, ...r }) => ({ ...r, idType: typeof id }));
+      const local = await read({ excludePrivate: false, perGroup: 2 });
+      const remote = await read({ excludePrivate: true, perGroup: 10 });
+      const quarantined = await read({ excludePrivate: false, includeQuarantined: true, perGroup: 1 });
+      expect(local.map(r => `${r.canonical_type}:${r.slug}:${r.gtotal}`)).toEqual(
+        ['meeting:meetings/review:2', 'meeting:meetings/standup:2', 'note:notes/secret:4', 'note:notes/n03:4', 'untyped:notes/loose:1']);
+      expect(local[1]).toMatchObject({ type: 'call', canonical_type: 'meeting', d: '2026-02-01T00:00:00.000000Z', idType: 'number' });
+      expect(remote.filter(r => r.canonical_type === 'note').map(r => r.slug)).toEqual(['notes/n03', 'notes/n02', 'notes/n01']);
+      expect(quarantined.find(r => r.canonical_type === 'note')).toMatchObject({ slug: 'notes/held', gtotal: 5 });
+      return { local, remote, quarantined };
+    },
+  );
+
+  parityTest(
     'mentions/referrers and relationship notes under excludePrivate apply a caller\'s reader identity and private-readable grant',
     { methods: ['putPage', 'addLink', 'readPageSnapshot', 'replaceDerivedLinks', 'listPageStatusByRef', 'listRecordMetadataRows',
       'listRelationshipNoteRows'] },

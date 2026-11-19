@@ -4,7 +4,8 @@
  * engines. The callers are link-relationships.ts, link-temporal-apply.ts,
  * link-relationship-notes.ts, doctor's edge_validity check and the referrer
  * record metadata of mentions/referrers.ts; the state itself is built by the
- * pure `buildRelationshipStateWrite` there. The Rust store answers the same
+ * pure `buildRelationshipStateWrite` there. The entity card's referrer groups read here too; their text is
+ * mentions/referrers-sql.ts's. The Rust store answers the same
  * members (rust/docs/store/link_temporal.md).
  *
  * Every statement here ran on master from the caller named on its function.
@@ -24,6 +25,8 @@ import {
   type AssertionRow, type ExistingRow, type RelationshipEvidence, type RelationshipKey, type RelationshipStateWrite, type TransitionRow,
 } from '../link-relationships.ts';
 import { pipelined } from '../page-state/transactions.ts';
+import { referrerGroupsSql } from '../mentions/referrers-sql.ts';
+import type { ReadEligibility } from '../eligibility/policy.ts';
 import type { SqlExecutor } from './executor.ts';
 
 type Exec = Pick<SqlExecutor, 'executeRaw'>;
@@ -407,4 +410,45 @@ export async function listRecordMetadataRows(exec: Exec, pageIds: readonly numbe
         ORDER BY l.from_page_id, t.slug`).catch(() => []),
   ]);
   return { status, links };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The entity card's referrer groups (mentions/referrers.ts readReferrerGroups)
+// ---------------------------------------------------------------------------------------------------------------------
+
+export interface ReferrerGroupScope {
+  /** Sources a referring page may live in (the caller's read scope). */
+  referrerSources: readonly string[];
+  /** Pack type aliases and the canonical type each maps to (mentions/policy.ts typeAliasPairs), index for index. */
+  storedTypes: readonly string[];
+  canonicalTypes: readonly string[];
+  excludePrivate: boolean;
+  eligibility?: ReadEligibility;
+  includeQuarantined?: boolean;
+  /** Rows kept per canonical type. */
+  perGroup: number;
+}
+
+/** One referring page: its canonical type, its date (`COALESCE(effective_date, updated_at)`, UTC microsecond text) and its group's total. */
+export interface ReferrerGroupRow {
+  id: number;
+  slug: string;
+  source_id: string;
+  type: string | null;
+  canonical_type: string;
+  d: string | null;
+  gtotal: number;
+}
+
+/**
+ * The live pages in `referrerSources` that link to a live target page (other than the targets), grouped by canonical
+ * type: the newest `perGroup` of each by `(d DESC, source_id, slug)`, groups by canonical type, each row with its
+ * group's total. An untrusted read leaves out a hidden target, a link whose origin page is hidden and a hidden
+ * referrer; the eligibility and quarantine apply before the cap.
+ */
+export async function readReferrerGroupRows(exec: Exec, target: { sources: readonly string[]; slugs: readonly string[] },
+  scope: ReferrerGroupScope): Promise<ReferrerGroupRow[]> {
+  const rows = await exec.executeRaw<ReferrerGroupRow>(referrerGroupsSql(scope),
+    [[...target.sources], [...target.slugs], [...scope.referrerSources], [...scope.storedTypes], [...scope.canonicalTypes], scope.perGroup]);
+  return rows.map(r => ({ ...r, id: Number(r.id), gtotal: Number(r.gtotal) }));
 }

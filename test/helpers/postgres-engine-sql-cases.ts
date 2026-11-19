@@ -272,6 +272,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'edgeValidityCounts': OOS.linkTemporal,
   'listPageStatusByRef': OOS.linkTemporal,
   'listRecordMetadataRows': OOS.linkTemporal,
+  'readReferrerGroupRows': OOS.linkTemporal,
   'countSearchVectorRows': OOS.linkTemporal,
   'replaceSearchVectorTriggerFunction': OOS.linkTemporal,
   'backfillSearchVectors': OOS.linkTemporal,
