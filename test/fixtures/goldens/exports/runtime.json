@@ -586,6 +586,7 @@
         "readSharedSkillDeliveryBatch",
         "readSharedSkillMember",
         "readSharedSkillPolicyRow",
+        "readSharedSkillRevision",
         "readSharedSkillServingEpoch",
         "readSourceChunkerVersion",
         "readSourceIncarnation",
@@ -743,6 +744,8 @@
         "writeLinkRelationshipState",
         "writeManualLinkTransitions",
         "writeMiscReads",
+        "writeSharedSkillPolicy",
+        "writeSharedSkillRevision",
         "writeTextProjectionSeal"
       ],
       "PostgresEngine": [
@@ -1332,6 +1335,7 @@
         "readSharedSkillDeliveryBatch",
         "readSharedSkillMember",
         "readSharedSkillPolicyRow",
+        "readSharedSkillRevision",
         "readSharedSkillServingEpoch",
         "readSourceChunkerVersion",
         "readSourceIncarnation",
@@ -1498,6 +1502,8 @@
         "writeManualLinkTransitions",
         "writeMiscRead",
         "writeMiscReads",
+        "writeSharedSkillPolicy",
+        "writeSharedSkillRevision",
         "writeTextProjectionSeal"
       ]
     },

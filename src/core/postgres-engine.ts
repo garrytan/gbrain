@@ -1244,14 +1244,17 @@ export class PostgresEngine implements BrainEngine {
   readLocalWriterRow(id: string, opts?: { lock?: boolean }) { return this.preparationRead(exec => persistenceStateImpl.readLocalWriterRow(unscopedExecutor(exec, 'persistence: local writer read ran unscoped through executeRaw'), id, opts), opts?.lock); }
   readOAuthClientReceiptGrant(clientId: string, opts?: { lock?: boolean }) { return this.preparationRead(exec => accessGrantsImpl.readOAuthClientReceiptGrant(unscopedExecutor(exec, 'access grants: a receipt client grant read ran unscoped through executeRaw'), clientId, opts), opts?.lock); }
   readAccessTokenReceiptGrant(tokenId: string, opts?: { lock?: boolean }) { return this.preparationRead(exec => accessGrantsImpl.readAccessTokenReceiptGrant(unscopedExecutor(exec, 'access grants: a receipt token grant read ran unscoped through executeRaw'), tokenId, opts), opts?.lock); }
-  readOAuthClientMemberGrant(clientId: string) { return this.preparationRead(exec => accessGrantsImpl.readOAuthClientMemberGrant(unscopedExecutor(exec, 'access grants: a member client grant read ran unscoped through executeRaw'), clientId), true); }
-  readAccessTokenMemberGrant(tokenId: string) { return this.preparationRead(exec => accessGrantsImpl.readAccessTokenMemberGrant(unscopedExecutor(exec, 'access grants: a member token grant read ran unscoped through executeRaw'), tokenId), true); }
+  readOAuthClientMemberGrant(clientId: string, opts?: { lock?: boolean }) { return this.preparationRead(exec => accessGrantsImpl.readOAuthClientMemberGrant(unscopedExecutor(exec, 'access grants: a member client grant read ran unscoped through executeRaw'), clientId, opts), true); }
+  readAccessTokenMemberGrant(tokenId: string, opts?: { lock?: boolean }) { return this.preparationRead(exec => accessGrantsImpl.readAccessTokenMemberGrant(unscopedExecutor(exec, 'access grants: a member token grant read ran unscoped through executeRaw'), tokenId, opts), true); }
   readLocalWriterMemberGrant(id: string) { return this.preparationRead(exec => accessGrantsImpl.readLocalWriterMemberGrant(unscopedExecutor(exec, 'access grants: a member local writer grant read ran unscoped through executeRaw'), id), true); }
   readSharedSkillServingEpoch() { return this.preparationRead(exec => accessGrantsImpl.readSharedSkillServingEpoch(unscopedExecutor(exec, 'access grants: the serving epoch read ran unscoped through executeRaw'))); }
   // Shared-skill membership (engine-sql/shared-skill-members.ts)
   readSharedSkillCatalogIdentity() { return sharedSkillMembersImpl.readSharedSkillCatalogIdentity(this.engineSql); }
   listSharedSkillCatalogHeads(q: SharedSkillMembersSql.SharedSkillHeadQuery) { return sharedSkillMembersImpl.listSharedSkillCatalogHeads(this.engineSql, q); }
   readSharedSkillPolicyRow(sourceId: string, incarnation: string, lock: boolean) { return sharedSkillMembersImpl.readSharedSkillPolicyRow(this.engineSql, sourceId, incarnation, lock); }
+  writeSharedSkillPolicy(w: SharedSkillMembersSql.SharedSkillPolicyWrite) { return sharedSkillMembersImpl.writeSharedSkillPolicy(this.engineSql, w); }
+  writeSharedSkillRevision(w: SharedSkillMembersSql.SharedSkillRevisionWrite) { return sharedSkillMembersImpl.writeSharedSkillRevision(this.engineSql, w); }
+  readSharedSkillRevision(k: SharedSkillMembersSql.SharedSkillRevisionKey) { return sharedSkillMembersImpl.readSharedSkillRevision(this.engineSql, k); }
   listSharedSkillFollowSources(allowed: string[] | null, sourceIds: string[] | null) { return sharedSkillMembersImpl.listSharedSkillFollowSources(this.engineSql, allowed, sourceIds); }
   lockSharedSkillBrainId() { return sharedSkillMembersImpl.lockSharedSkillBrainId(this.engineSql); }
   readSharedSkillMember(by: SharedSkillMembersSql.SharedSkillMemberLookup) { return sharedSkillMembersImpl.readSharedSkillMember(this.engineSql, by); }
@@ -1282,7 +1285,7 @@ export class PostgresEngine implements BrainEngine {
   lockWriteRequest(id: string) { return persistenceJournalImpl.lockWriteRequest(this.autocommitSql, id); }
   completeWriteRow(completion: persistenceJournalImpl.WriteCompletion) { return persistenceJournalImpl.completeWriteRow(this.autocommitSql, completion); }
   cancelWriteRow(cancel: persistenceJournalImpl.WriteCancellation) { return persistenceJournalImpl.cancelWriteRow(this.autocommitSql, cancel); }
-  readSourceMembership(sourceId: string, opts?: { lock?: boolean }) { return this.preparationRead(exec => persistenceClaimsImpl.readSourceMembership(exec, sourceId, opts), opts?.lock); }
+  readSourceMembership(sourceId: string, opts?: { lock?: boolean | 'update' }) { return this.preparationRead(exec => persistenceClaimsImpl.readSourceMembership(exec, sourceId, opts), !!opts?.lock); }
   findTopologyChanges(principalId: string, requestIds: string[]) { return persistenceClaimsImpl.findTopologyChanges(unscopedExecutor(this.engineSql, 'persistence: topology probe ran unscoped through the transaction executeRaw'), principalId, requestIds); }
   readTopologyChange(principalId: string, requestId: string) { return persistenceClaimsImpl.readTopologyChange(unscopedExecutor(this.engineSql, 'persistence: topology receipt read ran unscoped through the transaction executeRaw'), principalId, requestId); }
   insertTopologyChange(row: persistenceClaimsImpl.TopologyChangeInsert) { return persistenceClaimsImpl.insertTopologyChange(this.autocommitSql, row); }

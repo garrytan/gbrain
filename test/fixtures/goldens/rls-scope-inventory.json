@@ -5576,6 +5576,7 @@
         "readSharedSkillDeliveryBatch": "none",
         "readSharedSkillMember": "none",
         "readSharedSkillPolicyRow": "none",
+        "readSharedSkillRevision": "none",
         "readSharedSkillServingEpoch": "none",
         "readSourceChunkerVersion": "none",
         "readSourceIncarnation": "none",
@@ -5742,6 +5743,8 @@
         "writeManualLinkTransitions": "none",
         "writeMiscRead": "none",
         "writeMiscReads": "none",
+        "writeSharedSkillPolicy": "none",
+        "writeSharedSkillRevision": "none",
         "writeTextProjectionSeal": "none"
       }
     }

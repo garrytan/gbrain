@@ -150,9 +150,8 @@ async function detail(active: OperationContext, params: SharedSkillSelector) {
     throw opError('invalid_params', 'Invalid skill revision.', 'Pass revision as the UUID list_skills or get_skill returned, or omit it for the current head.',
       { fix: skillHeadFix(selected.source_id, selected.pack_id, selected.name) });
   }
-  const [row] = await active.engine.executeRaw<StoredSkillRevision>(`SELECT * FROM shared_skill_revisions
-    WHERE source_id=$1 AND source_incarnation=$2::uuid AND pack_id=$3 AND name=$4 AND revision=$5::uuid AND NOT deleted`,
-  [selected.source_id, selected.source_incarnation, selected.pack_id, selected.name, revision]);
+  const row = await active.engine.readSharedSkillRevision({ sourceId: selected.source_id, incarnation: selected.source_incarnation,
+    packId: selected.pack_id, name: selected.name, revision });
   if (!row || active.remote !== false && row.metadata.private) {
     throw opError('revision_unavailable', 'The exact authorized revision is unavailable.',
       `That revision of ${selected.pack_id}/${selected.name} was deleted, pruned or is private. Read the current head instead (omit revision).`,

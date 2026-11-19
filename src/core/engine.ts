@@ -4,6 +4,7 @@ import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
 import type * as AccessGrantsSql from './engine-sql/access-grants.ts';
 import type * as AccessMembersSql from './engine-sql/access-members.ts';
 import type * as SharedSkillMembersSql from './engine-sql/shared-skill-members.ts';
+import type { StoredSkillRevision } from './shared-skills/model.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
 import type * as JobsWake from './engine-sql/jobs-wake.ts';
@@ -3400,10 +3401,10 @@ export interface BrainEngine {
   readOAuthClientReceiptGrant(clientId: string, opts?: { lock?: boolean }): Promise<AccessGrantsSql.ReceiptClientGrant | undefined>;
   /** An access token's receipt grant row, revoked or not, or undefined; `lock` reads it `FOR SHARE`. */
   readAccessTokenReceiptGrant(tokenId: string, opts?: { lock?: boolean }): Promise<AccessGrantsSql.ReceiptTokenGrant | undefined>;
-  /** A live (not deleted) OAuth client's membership grant row read `FOR SHARE`, or undefined. */
-  readOAuthClientMemberGrant(clientId: string): Promise<AccessGrantsSql.MemberClientGrant | undefined>;
-  /** A live (not revoked) access token's grant columns read `FOR SHARE`, or undefined. */
-  readAccessTokenMemberGrant(tokenId: string): Promise<AccessGrantsSql.MemberTokenGrant | undefined>;
+  /** A live (not deleted) OAuth client's membership grant row read `FOR SHARE` (unless `lock` is false), or undefined. */
+  readOAuthClientMemberGrant(clientId: string, opts?: { lock?: boolean }): Promise<AccessGrantsSql.MemberClientGrant | undefined>;
+  /** A live (not revoked) access token's grant columns read `FOR SHARE` (unless `lock` is false), or undefined. */
+  readAccessTokenMemberGrant(tokenId: string, opts?: { lock?: boolean }): Promise<AccessGrantsSql.MemberTokenGrant | undefined>;
   /** A local writer's grant ceiling and revoked_at read `FOR SHARE`, revoked or not, or undefined. */
   readLocalWriterMemberGrant(id: string): Promise<AccessGrantsSql.MemberLocalWriterGrant | undefined>;
   /** The shared-skill serving epoch, or null when the brain has no shared-skill state row. */
@@ -3416,6 +3417,12 @@ export interface BrainEngine {
   listSharedSkillCatalogHeads(query: SharedSkillMembersSql.SharedSkillHeadQuery): Promise<SharedSkillMembersSql.SharedSkillHeadRow[]>;
   /** A source incarnation's stored publication policy and epoch, or undefined; `lock` reads it `FOR SHARE`. */
   readSharedSkillPolicyRow(sourceId: string, incarnation: string, lock: boolean): Promise<{ epoch: string; policy: unknown } | undefined>;
+  /** Upserts a source incarnation's publication policy under a new epoch and appends its audit row. */
+  writeSharedSkillPolicy(write: SharedSkillMembersSql.SharedSkillPolicyWrite): Promise<void>;
+  /** Inserts a published revision and moves its head; the SQL engines' publication guard refuses it outside a coordinated write. */
+  writeSharedSkillRevision(write: SharedSkillMembersSql.SharedSkillRevisionWrite): Promise<void>;
+  /** One stored shared-skill revision that is not deleted, or undefined. */
+  readSharedSkillRevision(key: SharedSkillMembersSql.SharedSkillRevisionKey): Promise<StoredSkillRevision | undefined>;
   /** The live sources in both id lists (null matches all), by id, at most 65 rows. */
   listSharedSkillFollowSources(allowed: string[] | null, sourceIds: string[] | null): Promise<Array<{ id: string; incarnation: string }>>;
   /** The persistent brain id locked `FOR UPDATE`, or undefined without the row. */
@@ -3475,8 +3482,8 @@ export interface BrainEngine {
   /** Cancels a request still queued as the caller read it, in one step: lock, check, complete, release its counters; null when it does not exist. */
   cancelWriteRow(cancel: WriteCancellation): Promise<WriteCancelResult | null>;
   // Write-claim statements (engine-sql/persistence-claims.ts): the text journal.ts, authority.ts and consumer.ts sent through executeRaw.
-  /** A source's incarnation and archive flag, or null; `lock` reads it FOR SHARE until the transaction ends. */
-  readSourceMembership(sourceId: string, opts?: { lock?: boolean }): Promise<SourceMembership | null>;
+  /** A source's incarnation and archive flag, or null; `lock` reads it FOR SHARE (`'update'`: FOR UPDATE) until the transaction ends. */
+  readSourceMembership(sourceId: string, opts?: { lock?: boolean | 'update' }): Promise<SourceMembership | null>;
   /** `[{ request_id }]` for the first of `requestIds` a topology change of local writer `principalId` used, or []. */
   findTopologyChanges(principalId: string, requestIds: string[]): Promise<Array<{ request_id: string }>>;
   readTopologyChange(principalId: string, requestId: string): Promise<TopologyChange | null>;

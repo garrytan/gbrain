@@ -10,6 +10,7 @@
  * callers read them through Number() before.
  */
 import type { SqlExecutor } from './executor.ts';
+import type { StoredSkillRevision } from '../shared-skills/model.ts';
 
 /** The catalog identity: the persistent brain id, the secret the catalog tokens are keyed with, the serving epoch. */
 export interface SharedSkillCatalogIdentity { brain_id: string; token_secret: string; serving_epoch: string }
@@ -96,6 +97,53 @@ export async function readSharedSkillPolicyRow(exec: SqlExecutor, sourceId: stri
     ? 'SELECT epoch,policy FROM shared_skill_policies WHERE source_id=$1 AND source_incarnation=$2::uuid FOR SHARE'
     : 'SELECT epoch,policy FROM shared_skill_policies WHERE source_id=$1 AND source_incarnation=$2::uuid';
   const [row] = await exec.executeRaw<{ epoch: string; policy: unknown }>(sql, [sourceId, incarnation]);
+  return row;
+}
+
+/** A source incarnation's new publication policy and its audit row (shared-skills/policy.ts setSharedSkillPolicy). */
+export interface SharedSkillPolicyWrite {
+  sourceId: string; incarnation: string; epoch: string; policy: unknown;
+  principalKind: string; principalId: string; previousEpoch: string;
+}
+
+/** One published revision and the head it moves (shared-skills/publication.ts apply). */
+export interface SharedSkillRevisionWrite {
+  sourceId: string; incarnation: string; packId: string; name: string; revision: string;
+  metadata: unknown; files: unknown; deleted: boolean; policyEpoch: string; requestId: string;
+}
+
+/** The key of one stored revision (shared-skills/catalog.ts get_skill). */
+export interface SharedSkillRevisionKey { sourceId: string; incarnation: string; packId: string; name: string; revision: string }
+
+/** Upserts the source incarnation's policy under the new epoch, then appends its audit row. */
+export async function writeSharedSkillPolicy(exec: SqlExecutor, w: SharedSkillPolicyWrite): Promise<void> {
+  await exec.executeRaw(`INSERT INTO shared_skill_policies(source_id,source_incarnation,epoch,policy) VALUES($1,$2::uuid,$3::uuid,$4::text::jsonb)
+      ON CONFLICT(source_id,source_incarnation) DO UPDATE SET epoch=excluded.epoch,policy=excluded.policy,updated_at=now()`,
+  [w.sourceId, w.incarnation, w.epoch, JSON.stringify(w.policy)]);
+  await exec.executeRaw(`INSERT INTO shared_skill_policy_audit(source_id,source_incarnation,principal_kind,principal_id,previous_epoch,epoch,policy)
+      VALUES($1,$2::uuid,$3,$4,$5,$6::uuid,$7::text::jsonb)`,
+  [w.sourceId, w.incarnation, w.principalKind, w.principalId, w.previousEpoch, w.epoch, JSON.stringify(w.policy)]);
+}
+
+/**
+ * Inserts the revision, then upserts its head. The publication guard trigger refuses both outside a coordinated
+ * write of the source on an activated brain (code 42501); a revision that exists already is the primary key's 23505.
+ */
+export async function writeSharedSkillRevision(exec: SqlExecutor, w: SharedSkillRevisionWrite): Promise<void> {
+  await exec.executeRaw(`INSERT INTO shared_skill_revisions(source_id,source_incarnation,pack_id,name,revision,metadata,files,deleted,policy_epoch,request_id)
+          VALUES($1,$2::uuid,$3,$4,$5::uuid,$6::text::jsonb,$7::text::jsonb,$8,$9,$10::uuid)`,
+  [w.sourceId, w.incarnation, w.packId, w.name, w.revision, JSON.stringify(w.metadata), JSON.stringify(w.files), w.deleted, w.policyEpoch, w.requestId]);
+  await exec.executeRaw(`INSERT INTO shared_skill_heads(source_id,source_incarnation,pack_id,name,revision,metadata,deleted,policy_epoch)
+          VALUES($1,$2::uuid,$3,$4,$5::uuid,$6::text::jsonb,$7,$8) ON CONFLICT(source_id,source_incarnation,pack_id,name)
+          DO UPDATE SET revision=excluded.revision,metadata=excluded.metadata,deleted=excluded.deleted,policy_epoch=excluded.policy_epoch,updated_at=now()`,
+  [w.sourceId, w.incarnation, w.packId, w.name, w.revision, JSON.stringify(w.metadata), w.deleted, w.policyEpoch]);
+}
+
+/** One stored revision that is not deleted, or undefined. */
+export async function readSharedSkillRevision(exec: SqlExecutor, k: SharedSkillRevisionKey): Promise<StoredSkillRevision | undefined> {
+  const [row] = await exec.executeRaw<StoredSkillRevision>(`SELECT source_id,source_incarnation,pack_id,name,revision,metadata,files,deleted,policy_epoch FROM shared_skill_revisions
+    WHERE source_id=$1 AND source_incarnation=$2::uuid AND pack_id=$3 AND name=$4 AND revision=$5::uuid AND NOT deleted`,
+  [k.sourceId, k.incarnation, k.packId, k.name, k.revision]);
   return row;
 }
 

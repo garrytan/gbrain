@@ -502,13 +502,8 @@ export async function prepareSharedSkillMutation(engine: BrainEngine, row: Write
     },
     async apply(tx) {
       for (const revision of revisions) {
-        await tx.executeRaw(`INSERT INTO shared_skill_revisions(source_id,source_incarnation,pack_id,name,revision,metadata,files,deleted,policy_epoch,request_id)
-          VALUES($1,$2::uuid,$3,$4,$5::uuid,$6::text::jsonb,$7::text::jsonb,$8,$9,$10::uuid)`,
-        [row.source_id, row.source_incarnation, intent.pack_id, revision.name, revision.revision, JSON.stringify(revision.metadata), JSON.stringify(revision.files), revision.deleted, intent.policy_epoch, row.id]);
-        await tx.executeRaw(`INSERT INTO shared_skill_heads(source_id,source_incarnation,pack_id,name,revision,metadata,deleted,policy_epoch)
-          VALUES($1,$2::uuid,$3,$4,$5::uuid,$6::text::jsonb,$7,$8) ON CONFLICT(source_id,source_incarnation,pack_id,name)
-          DO UPDATE SET revision=excluded.revision,metadata=excluded.metadata,deleted=excluded.deleted,policy_epoch=excluded.policy_epoch,updated_at=now()`,
-        [row.source_id, row.source_incarnation, intent.pack_id, revision.name, revision.revision, JSON.stringify(revision.metadata), revision.deleted, intent.policy_epoch]);
+        await tx.writeSharedSkillRevision({ sourceId: row.source_id, incarnation: row.source_incarnation, packId: intent.pack_id, name: revision.name,
+          revision: revision.revision, metadata: revision.metadata, files: revision.files, deleted: revision.deleted, policyEpoch: intent.policy_epoch, requestId: row.id });
       }
       await tx.executeRaw(`INSERT INTO shared_skill_packs(source_id,source_incarnation,pack_id,revision,manifest,manifest_hash)
         VALUES($1,$2::uuid,$3,$4::uuid,$5::text::jsonb,$6) ON CONFLICT(source_id,source_incarnation)
