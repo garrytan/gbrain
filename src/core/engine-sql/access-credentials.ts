@@ -364,3 +364,23 @@ export async function readActiveAccessTokenByHash(tx: Raw, hash: string, caller:
 export async function touchAccessTokenLastUsed(tx: Raw, id: string, unified: boolean): Promise<void> {
   await tx.executeRaw(unified ? BEARER_SQL.touch_unified : BEARER_SQL.touch_legacy, [id]);
 }
+
+/**
+ * The expired-credential sweep serve --http runs at startup (oauth-provider.ts sweepExpiredTokens), byte for byte as the
+ * SqlQuery tag sent it at afc2094edd. `RETURNING 1` counts the deleted rows the same way on both engines.
+ */
+export const OAUTH_SWEEP_SQL = {
+  tokens: `
+      DELETE FROM oauth_tokens WHERE expires_at < $1 RETURNING 1
+    `,
+  codes: `
+      DELETE FROM oauth_codes WHERE expires_at < $1 RETURNING 1
+    `,
+} as const;
+
+/** Delete the OAuth tokens and codes that expired before `nowEpochSeconds`; the count of both. */
+export async function deleteExpiredOauthCredentials(tx: Raw, nowEpochSeconds: number): Promise<number> {
+  const tokens = await tx.executeRaw(OAUTH_SWEEP_SQL.tokens, [nowEpochSeconds]);
+  const codes = await tx.executeRaw(OAUTH_SWEEP_SQL.codes, [nowEpochSeconds]);
+  return tokens.length + codes.length;
+}

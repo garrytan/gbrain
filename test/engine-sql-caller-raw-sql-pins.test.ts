@@ -660,6 +660,15 @@ const PINS: Pin[] = [
         WHERE id IN (SELECT id FROM access_tokens WHERE id = $1::uuid
           AND (last_used_at IS NULL OR last_used_at < now() - interval '60 seconds') FOR UPDATE SKIP LOCKED)`],
   },
+  {
+    from: 'src/core/oauth-provider.ts:1144 sweepExpiredTokens (at afc2094edd)',
+    case: { method: 'deleteExpiredOauthCredentials', variant: 'default', run: e => e.deleteExpiredOauthCredentials(1_700_000_000) },
+    texts: [`
+      DELETE FROM oauth_tokens WHERE expires_at < $1 RETURNING 1
+    `, `
+      DELETE FROM oauth_codes WHERE expires_at < $1 RETURNING 1
+    `],
+  },
 ];
 
 /** entity-card.ts CARD_ROW_COLUMNS at 7470c703ed, verbatim. */
@@ -768,4 +777,26 @@ describe('the bearer check sends the same statements through an engine as throug
       expect(member).toEqual(template);
     });
   }
+});
+
+describe('the expired-credential sweep sends the same statements through an engine as through a SqlQuery', () => {
+  // serve --http passes its engine, so sweepExpiredTokens runs deleteExpiredOauthCredentials; a provider built with only
+  // `sql` keeps the template statements. Both send the same text and params and return the same count.
+  const swept = async (run: (e: any) => Promise<number>) => {
+    let count: number | undefined;
+    const capture = await withPinnedSqlEnvironment(undefined, () => runCase({
+      method: 'sweepExpiredTokens', variant: 'default', run: async e => { count = await run(e); },
+      rows: [[/DELETE FROM oauth_tokens/, [{ '?column?': 1 }, { '?column?': 1 }]], [/DELETE FROM oauth_codes/, [{ '?column?': 1 }]]],
+    }));
+    expect(capture.error).toBeUndefined();
+    return { count, sent: capture.trace.filter(s => s.kind === 'query').map(s => ({ text: s.text, params: s.params })) };
+  };
+  test('two expired tokens and one expired code', async () => {
+    const template = await swept(e => new GBrainOAuthProvider({ sql: sqlQueryForEngine(e) }).sweepExpiredTokens());
+    const member = await swept(e => new GBrainOAuthProvider({ sql: sqlQueryForEngine(e), engine: e }).sweepExpiredTokens());
+    expect(template.sent.length).toBe(2);
+    expect(template.count).toBe(3);
+    expect({ ...member, sent: member.sent.map(s => ({ ...s, params: s.params.map(() => 'now') })) })
+      .toEqual({ ...template, sent: template.sent.map(s => ({ ...s, params: s.params.map(() => 'now') })) });
+  });
 });

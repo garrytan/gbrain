@@ -150,7 +150,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
     // credential reads and the scoped client registration (engine-sql/access-credentials.ts)
     'listAccessTokens', 'readActiveAccessTokenGrant', 'accessTokenLive', 'oauthClientLive', 'readOauthClientColumns',
     'setOauthClientTokenTtl', 'insertOauthClientGrant', 'readTokenLifetimeClampedClients', 'readScopeSourceConfigs',
-    'readOauthAccessTokenRows', 'readActiveAccessTokenByHash', 'touchAccessTokenLastUsed'],
+    'readOauthAccessTokenRows', 'readActiveAccessTokenByHash', 'touchAccessTokenLastUsed',
+    'deleteExpiredOauthCredentials'],
   // minion_status: lane L5 group B, job counts and last-run reads for the status surfaces (engine-sql/jobs-status.ts)
   minion_status: ['readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt', 'countTtlCancelledByName',
     'readWaitingScopeState', 'countRecentCompletedJobs', 'listRecentFailedJobErrors', 'readQueuedPageChars', 'readSourceJobCounts',

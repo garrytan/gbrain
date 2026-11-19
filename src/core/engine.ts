@@ -3862,6 +3862,8 @@ export interface BrainEngine {
   readActiveAccessTokenByHash(hash: string, caller: TokenByHashCaller): Promise<Record<string, unknown> | null>;
   /** Stamp a token's `last_used_at`, debounced to once a minute (a store that keeps no last use writes nothing). */
   touchAccessTokenLastUsed(id: string, unified: boolean): Promise<void>;
+  /** Delete the OAuth tokens and codes that expired before `nowEpochSeconds`; the count of both (a store that keeps none deletes none). */
+  deleteExpiredOauthCredentials(nowEpochSeconds: number): Promise<number>;
 
   /** The ids of the enabled, untombstoned audience-kind members, by id. */
   listAudienceAccessMembers(): Promise<string[]>;

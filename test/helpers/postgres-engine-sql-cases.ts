@@ -646,6 +646,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readOauthAccessTokenRows': OOS.callerRawSql,
   'readActiveAccessTokenByHash': OOS.callerRawSql,
   'touchAccessTokenLastUsed': OOS.callerRawSql,
+  'deleteExpiredOauthCredentials': OOS.callerRawSql,
   'listAudienceAccessMembers': OOS.callerRawSql,
   'readAccessGroups': OOS.callerRawSql,
   'listPagesNamingReader': OOS.callerRawSql,

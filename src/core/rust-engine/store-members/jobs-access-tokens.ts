@@ -54,3 +54,6 @@ export const readActiveAccessTokenByHash: StoreMember<[hash: string, caller: Tok
 
 /** The store keeps no `last_used_at`, so the stamp writes nothing. */
 export const touchAccessTokenLastUsed: StoreMember<[id: string, unified: boolean], void> = async () => {};
+
+/** The store keeps no OAuth tokens or codes (rust/docs/store/access-tokens.md), so the expired-credential sweep deletes none. */
+export const deleteExpiredOauthCredentials: StoreMember<[nowEpochSeconds: number], number> = async () => 0;
