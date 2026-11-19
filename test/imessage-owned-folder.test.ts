@@ -265,6 +265,26 @@ for (const kind of testBackends()) describe(`owned folder (${kind})`, () => {
     expect(existsSync(file)).toBe(false);
   });
 
+  test('a push redaction whose rebuild never became HEAD is not adopted: the day stays this writer\'s and status keeps the batch in HEAD', async () => {
+    const { repo, id, cfg, folder } = await setup();
+    const fake = mac();
+    fake.chats[0]!.messages[2]!.text = `key ${'AKIA'}${'ABCDEFGHIJKLMNOP'} here`;
+    await withEnv({ GBRAIN_SECRETS_ON_PUSH: undefined }, () => run(id, cfg, fake));
+    const file = join(folder, dayFile(ALICE, 1));
+    const outcome = await withEnv({ GBRAIN_HOME: join(home, `gbrain-home-${id}`), GBRAIN_SECRETS_ON_PUSH: undefined },
+      async () => redactUnpushed(repo, { base: '', sealer: spoolSealer(repo, null) })) as RedactOutcome;
+    expect(outcome.new_head).not.toBe(outcome.old_head);
+    expect(git(repo, 'reset', '-q', '--hard', outcome.old_head!).status).toBe(0);
+    expect(readFileSync(file, 'utf8')).not.toContain('<REDACTED:');
+    expect((await readPagesIn(engine, [id])).get(id)!.last_batch).toBe(outcome.old_head);
+    const c1 = commits(repo);
+    fake.chats[0]!.messages.push({ rowid: 13, at: at(1, 9), text: 'Parking on level two.' });
+    await withEnv({ GBRAIN_SECRETS_ON_PUSH: undefined }, () => run(id, cfg, fake, { now: NOW + 60_000 }));
+    expect(commits(repo)).toBe(c1 + 1);
+    expect(readFileSync(file, 'utf8')).toContain('Parking on level two.');
+    expect((await stateOf(id)).owned!.held ?? {}).toEqual({});
+  });
+
   test('the first write after a failed one is not blocked by the empty folders it left; the README names the remote gbrain pushes to', async () => {
     const { repo, remote, id, cfg, folder } = await setup();
     mkdirSync(join(folder, 'imessage', imessageChatKey(ALICE)), { recursive: true });

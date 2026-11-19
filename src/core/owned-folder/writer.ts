@@ -75,28 +75,38 @@ const headBlob = (root: string, path: string): string | null => git(root, ['rev-
  * files and index to the redacted blobs, ledgering each rebuilt commit as `redact_rebuild` superseding the old one. A
  * recorded blob that a rebuild replaced moves to its redacted successor, and `last_batch` to its rebuilt commit, so the
  * redacted file is still this writer's. Ledger records are read in order, so a rebuild of a rebuild follows the chain.
- * A superseded commit Git no longer has (its backup ref expired) is skipped. Returns whether `state` changed.
+ * Records are written before the rebuild moves the branch, so a remapped blob is adopted only when it is the HEAD blob,
+ * and `last_batch` only when the rebuilt commit is in HEAD. A superseded commit Git no longer has (its backup ref
+ * expired) is skipped. Returns whether `state` changed.
  */
 export function adoptRedactions(root: string, rel: string, state: OwnedFolderState): boolean {
   const loc = ledgerLocation(root);
   if (!loc) return false;
   let records: ReturnType<typeof readLedger>;
   try { records = readLedger(loc.common); } catch { return false; }
-  let changed = false;
+  const files = { ...state.files };
+  let batch = state.last_batch;
   for (const record of records) {
     if (record.e !== 'commit' || record.writer !== 'redact_rebuild' || record.held) continue;
     for (const old of record.supersedes ?? []) {
-      if (state.last_batch === old) { state.last_batch = record.sha; changed = true; }
+      if (batch === old) batch = record.sha;
       const diff = git(root, ['diff-tree', '-r', '-z', '--no-renames', old, record.sha, '--', rel]);
       if (diff.code !== 0) continue;
       const parts = diff.stdout.split('\0');
       for (let i = 0; i + 1 < parts.length; i += 2) {
         const [, , from, to] = parts[i]!.split(' ');
         const p = relative(rel, parts[i + 1]!).split('\\').join('/');
-        if (from && to && !/^0+$/.test(to) && state.files[p] === from) { state.files[p] = to; changed = true; }
+        if (from && to && !/^0+$/.test(to) && files[p] === from) files[p] = to;
       }
     }
   }
+  let changed = false;
+  for (const [p, blob] of Object.entries(files)) {
+    if (blob === state.files[p] || blob !== headBlob(root, `${rel}/${p}`)) continue;
+    state.files[p] = blob;
+    changed = true;
+  }
+  if (batch && batch !== state.last_batch && git(root, ['merge-base', '--is-ancestor', batch, 'HEAD']).code === 0) { state.last_batch = batch; changed = true; }
   return changed;
 }
 
