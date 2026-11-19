@@ -572,19 +572,6 @@ export async function listSupersessions(
     return rows.map(rowToFact);
   }
 
-/**
- * The hot-memory watermark (facts/meta-hook.ts): the source's withdrawal count and latest withdrawal time, then a digest
- * of every folder rule and pending-coverage row. Any recorded withdrawal or installed rulebook changes it.
- */
-export async function readHotMemoryWatermark(exec: LegacyUnscopedRead, sourceId: string): Promise<string> {
-  const [row] = (await exec.run<{ n: number; at: string | null; rules: string | null }>(sqlFragment`
-    SELECT count(*)::int AS n, max(withdrawn_at)::text AS at,
-       (SELECT md5(coalesce(string_agg(source_id || '/' || rule_id || '/' || prefix || '/' || array_to_string(readable_by, ',') || '/' || revision::text, '|' ORDER BY source_id COLLATE "C", rule_id COLLATE "C"), '')) FROM access_rules)
-         || ':' || (SELECT md5(coalesce(string_agg(source_id || '/' || prefix || '/' || reason || '/' || coalesce(revision::text, ''), '|' ORDER BY source_id COLLATE "C", prefix COLLATE "C", reason COLLATE "C"), '')) FROM access_pending_coverage) AS rules
-     FROM fact_withdrawals WHERE source_id = ${sourceId}`)).rows;
-  return `${row?.n ?? 0}:${row?.at ?? ''}:${row?.rules ?? ''}`;
-}
-
 export async function countUnconsolidatedFacts(exec: LegacyUnscopedRead, source_id: string): Promise<number> {
     // Audit checkpoint rows never set consolidated_at, so without the source
     // exclusion each one counts as forever-pending consolidation backlog.

@@ -27,7 +27,6 @@ import { storePrivacyPolicy } from './private-provenance.ts';
 import { storeVisibility } from './fact-visibility.ts';
 import { privateProvenanceFilterUnderPolicy } from '../../search/private-visibility.ts';
 import { withDates } from '../store-codec.ts';
-import { createHash } from 'node:crypto';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 type FactRow = Awaited<ReturnType<BrainEngine['listFactsByEntity']>>[number];
@@ -246,24 +245,6 @@ export const pageCollapseFacts: Member<'pageCollapseFacts'> = async (brain, ids,
   }
   if (ids.length === 0) return [];
   return storeCall({ member: 'pageCollapseFacts' }, () => brain.pageCollapseFacts(ids, bodyIds));
-};
-
-type WithdrawalKey = Awaited<ReturnType<BrainEngine['listFactWithdrawalKeys']>>[number];
-/** Past this many withdrawal keys the watermark stays '' and the hot-memory cache falls back to its TTL alone. */
-const WATERMARK_KEY_CAP = 10_000;
-/** md5('') twice: the store keeps no folder rules and no pending coverage, so that part never moves. */
-const NO_RULES = 'd41d8cd98f00b204e9800998ecf8427e:d41d8cd98f00b204e9800998ecf8427e';
-
-/**
- * The key count, a digest of the store's withdrawal keys, then the constant rule part. A fresh source reads
- * `0::<rules>` as PGLite does; after a withdrawal the token differs in spelling from PGLite's (a digest in place of
- * the latest time) but changes just as it does.
- */
-export const readHotMemoryWatermark: Member<'readHotMemoryWatermark'> = async (brain, sourceId) => {
-  const keys = await storeCall({ member: 'readHotMemoryWatermark', sourceId }, () => brain.listFactWithdrawalKeys(sourceId, WATERMARK_KEY_CAP + 1)) as WithdrawalKey[];
-  if (keys.length > WATERMARK_KEY_CAP) return '';
-  const digest = keys.length === 0 ? '' : createHash('md5').update(JSON.stringify(keys.map((k) => [k.visibility, k.fact_hash, k.subject]))).digest('hex');
-  return `${keys.length}:${digest}:${NO_RULES}`;
 };
 
 export const countUnconsolidatedFacts: Member<'countUnconsolidatedFacts'> = (brain, sourceId) =>
