@@ -14,7 +14,7 @@
  * same locked transaction as the decisions they depend on. A planned automatic group is written only when every member
  * page still exists at the generation the sweep read and sits in no other group; otherwise it is skipped and the next
  * sweep plans it again. Every apply also removes the automatic groups a decision now covers (a member of a "same"
- * decision, whose confirm takes over, or two members of one "different" decision) and any left with one member.
+ * decision, whose confirm takes over, or two members of one "different" decision) and any left with one member, no canonical member or a deleted member.
  *
  * Every apply takes one transaction-scoped advisory lock on Postgres, so applies run one at a time; an apply given the
  * revision of the rows its caller read writes nothing when they changed since (a projection planned from an older read).
@@ -202,7 +202,11 @@ export async function applyIdentityDecisions(exec: SqlExecutor, input: ApplyIden
   autoUnlinked += Number((await exec.query<{ n: number | string }>(`
     WITH gone AS (DELETE FROM entity_identities ei
      WHERE ei.established_by = 'dedupe:auto'
-       AND (SELECT count(*) FROM entity_identities o WHERE o.entity_id = ei.entity_id) < 2
+       AND ei.entity_id IN (
+         SELECT o.entity_id FROM entity_identities o LEFT JOIN pages p ON p.id = o.page_id
+          WHERE o.established_by = 'dedupe:auto'
+          GROUP BY o.entity_id
+         HAVING count(*) < 2 OR NOT bool_or(o.canonical) OR bool_or(p.id IS NULL OR p.deleted_at IS NOT NULL))
      RETURNING ei.entity_id)
     SELECT count(DISTINCT entity_id) AS n FROM gone`)).rows[0]?.n ?? 0);
   const unlinked = (await exec.query(`

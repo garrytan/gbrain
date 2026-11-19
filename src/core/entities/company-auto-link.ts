@@ -66,15 +66,15 @@ export async function autoLinkCompanies(engine: BrainEngine, opts: { near?: Dupl
     .filter(p => p.identity?.established_by === AUTO_LINK_ORIGIN && !planned.has(p.identity.entity_id))
     .map(p => p.identity!.entity_id))];
   const gone = !!touched && [...touched].some(k => !pages.has(k));
-  if (touched && (unlink.length || (gone && (await engine.executeRaw<{ n: number }>(
-    `SELECT 1 AS n FROM entity_identities ei JOIN pages p ON p.id = ei.page_id WHERE ei.established_by = 'dedupe:auto'
-      GROUP BY ei.entity_id HAVING NOT bool_or(ei.canonical) OR bool_or(p.deleted_at IS NOT NULL) LIMIT 1`)).length > 0))) {
-    return autoLinkCompanies(engine, { log: opts.log });
-  }
+  if (touched && unlink.length) return autoLinkCompanies(engine, { log: opts.log });
   const byPage = new Map([...pages.values()].map(p => [p.page_id, p.identity?.entity_id]));
   const fresh = link.filter(g => !g.members.every(m => byPage.get(m.page_id) === g.entity_id));
   if (!fresh.length && !unlink.length && !gone) return none({ planned: link.length });
   const r = await engine.applyIdentityDecisions({ expectRevision: read.revision, auto: { link: fresh, unlink } });
   if (r.stale) return none({ planned: link.length, skipped: link.length, skipped_sweep: 'stale' });
+  if (touched && r.auto?.unlinked) {
+    const all = await autoLinkCompanies(engine, { log: opts.log });
+    return { ...all, unlinked: all.unlinked + r.auto.unlinked };
+  }
   return { scope, planned: link.length, linked: r.auto?.linked ?? 0, unlinked: r.auto?.unlinked ?? 0, skipped: r.auto?.skipped ?? 0 };
 }

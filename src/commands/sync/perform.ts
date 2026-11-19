@@ -41,10 +41,11 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
 }
 
 /** The pages a sync changed: its list, or for a managed or plain-folder sync, which keeps none, the source's pages updated since it started. */
-async function changedSlugs(engine: BrainEngine, sourceId: string, result: SyncResult, since: string | null): Promise<readonly string[]> {
+async function changedSlugs(engine: BrainEngine, sourceId: string, result: SyncResult, since: string | null): Promise<readonly string[] | 'all'> {
   if (result.pagesAffected.length || !since || result.status === 'up_to_date') return result.pagesAffected;
   try {
-    return (await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id = $1 AND updated_at >= $2::timestamptz', [sourceId, since])).map(r => r.slug);
+    const pages = await engine.listPages({ sourceId, updated_after: since, includeDeleted: true, listColumnsOnly: true, sort: 'slug', limit: 1000 });
+    return pages.length === 1000 ? 'all' : pages.map(p => p.slug);
   } catch { return result.pagesAffected; }
 }
 
