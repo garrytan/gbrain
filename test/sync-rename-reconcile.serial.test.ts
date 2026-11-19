@@ -1527,18 +1527,18 @@ describe('#3583 review: a throwing bookmark advance can no longer lose a sentine
     writeFileSync(join(repo, 'people/newfile.md'), personMd('New', 'New person.'));
     execSync('git add -A && git commit -m "unrelated addition"', { cwd: repo, stdio: 'pipe' });
 
-    const origAdvance = engine.advanceSourceLastCommit;
-    (engine as unknown as { advanceSourceLastCommit: typeof engine.advanceSourceLastCommit }).advanceSourceLastCommit =
+    const origAdvance = engine.advanceSourceCommit;
+    (engine as unknown as { advanceSourceCommit: typeof engine.advanceSourceCommit }).advanceSourceCommit =
       (async () => {
         throw new Error('injected advance outage');
-      }) as typeof engine.advanceSourceLastCommit;
+      }) as typeof engine.advanceSourceCommit;
     let threw = false;
     try {
       await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
     } catch {
       threw = true;
     } finally {
-      (engine as unknown as { advanceSourceLastCommit: typeof engine.advanceSourceLastCommit }).advanceSourceLastCommit = origAdvance;
+      (engine as unknown as { advanceSourceCommit: typeof engine.advanceSourceCommit }).advanceSourceCommit = origAdvance;
     }
     expect(threw).toBe(true);
 

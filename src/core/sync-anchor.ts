@@ -266,7 +266,7 @@ export async function writeSyncAnchor(
       }
       const newestContentAt = newestContentEpochMs === undefined ? undefined
         : newestContentEpochMs === null ? null : new Date(newestContentEpochMs).toISOString();
-      await engine.advanceSourceLastCommit(sourceId, value, newestContentAt);
+      await engine.advanceSourceCommit(sourceId, value, newestContentAt);
       // GBRA-133 PR 2a: the host that advanced a classic source is the one whose resident notifier watches it.
       await (await import('./notifier/store.ts')).recordLocalSyncer(engine, sourceId);
     } else {

@@ -384,7 +384,7 @@ listSourceWantedMarkers	persistence_journal	yes	1	no	yes	yes	serves
 readSourceSyncShape	persistence_journal	yes	3	no	yes	yes	serves
 readNotifierFirstDue	persistence_journal	yes	2	no	yes	yes	serves
 readDrainHolderProgress	persistence_journal	yes	1	no	yes	yes	serves
-advanceSourceLastCommit	persistence_journal	yes	2	no	yes	yes	serves
+advanceSourceCommit	persistence_journal	yes	2	no	yes	yes	serves
 readSourceLastCommit	persistence_journal	yes	1	no	yes	yes	serves
 declarePersistence	persistence_journal	yes	5	no	yes	yes	serves
 readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves

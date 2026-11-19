@@ -21,13 +21,13 @@
       "raw": 1
     },
     "addTimelineEntry#default": {},
-    "advanceSourceLastCommit#default": {
+    "advanceSourceCommit#default": {
       "raw": 1
     },
-    "advanceSourceLastCommit#newest-cleared": {
+    "advanceSourceCommit#newest-cleared": {
       "raw": 1
     },
-    "advanceSourceLastCommit#newest-content": {
+    "advanceSourceCommit#newest-content": {
       "raw": 1
     },
     "batchLoadEmotionalInputs#default": {},

@@ -31,7 +31,7 @@
 //! one is given, and keeps `first_due_at` unless the source was re-created (another
 //! incarnation). Deleting the source deletes its markers (`remove_source_rows`).
 //!
-//! A source keeps the `last_commit` its sync anchor advanced (`advance_source_last_commit`), or
+//! A source keeps the `last_commit` its sync anchor advanced (`advance_source_commit`), or
 //! `None` before the first advance, which every marker term reads as Postgres reads a NULL column:
 //! a freshness marker stays due while it names no head or another head, the prune deletes a
 //! freshness or pull marker that names the source's head, and the settle deletes a freshness

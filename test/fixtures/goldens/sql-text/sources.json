@@ -2,7 +2,7 @@
   "golden": {
     "domain": "sources",
     "methods": {
-      "advanceSourceLastCommit": {
+      "advanceSourceCommit": {
         "default": [
           {
             "lane": "pool",

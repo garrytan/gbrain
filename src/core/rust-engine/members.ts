@@ -123,7 +123,7 @@ export const RUST_ENGINE_MEMBERS = {
   lockSourceRow: 'sources',
   countSourcePages: 'sources',
   insertSource: 'sources',
-  advanceSourceLastCommit: 'sources',
+  advanceSourceCommit: 'sources',
   readSourceLastCommit: 'sources',
   listSourceRecords: 'sources',
   readSourceIncarnation: 'sources',

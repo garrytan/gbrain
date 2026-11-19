@@ -505,7 +505,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listAllSources': 'sources', 'listSourceLocalPaths': 'sources', 'countRepoBoundSources': 'sources', 'updateSourceConfig': 'sources',
   'listLocalPathSources': 'sources', 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'getSource': 'sources',
   'listStaleSyncSourceIds': 'sources', 'readSourceRow': 'sources', 'lockSourceRow': 'sources', 'readSourceChunkerVersion': 'sources',
-  'setSourceChunkerVersion': 'sources', 'isSourceClaimed': 'sources', 'advanceSourceLastCommit': 'sources',
+  'setSourceChunkerVersion': 'sources', 'isSourceClaimed': 'sources', 'advanceSourceCommit': 'sources',
   'readSourceLastCommit': 'sources',
   'countSourcePages': 'sources', 'insertSource': 'sources',
   // files
@@ -995,7 +995,7 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('isSourceClaimed', [['default', (e) => e.isSourceClaimed(SRC)]]),
   ...variants('readSourceLastCommit', [['default', (e) => e.readSourceLastCommit(SRC)]]),
   ...variants('setSourceChunkerVersion', [['default', (e) => e.setSourceChunkerVersion(SRC, '7')]]),
-  ...variants('advanceSourceLastCommit', [['default', (e) => e.advanceSourceLastCommit(SRC, 'abc123')], ['newest-content', (e) => e.advanceSourceLastCommit(SRC, 'abc123', '2026-01-02T03:04:05.000Z')], ['newest-cleared', (e) => e.advanceSourceLastCommit(SRC, 'abc123', null)]]),
+  ...variants('advanceSourceCommit', [['default', (e) => e.advanceSourceCommit(SRC, 'abc123')], ['newest-content', (e) => e.advanceSourceCommit(SRC, 'abc123', '2026-01-02T03:04:05.000Z')], ['newest-cleared', (e) => e.advanceSourceCommit(SRC, 'abc123', null)]]),
   ...variants('countSourcePages', [['default', (e) => e.countSourcePages(SRC)], ['includeDeleted', (e) => e.countSourcePages(SRC, { includeDeleted: true })]]),
   ...variants('insertSource', [['default', (e) => e.insertSource({ id: SRC, name: SRC, local_path: '/srv/brain/src', config: { federated: true } })]]),
 

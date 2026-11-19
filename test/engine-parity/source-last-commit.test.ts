@@ -1,5 +1,5 @@
 /**
- * BrainEngine parity — a source's last_commit: advanceSourceLastCommit (engine-sql/sources.ts), written through its real
+ * BrainEngine parity — a source's last_commit: advanceSourceCommit (engine-sql/sources.ts), written through its real
  * caller writeSyncAnchor (sync-anchor.ts), and every notifier read that compares with it: readSourceFreshness
  * (notifier/status.ts), readDueWantedMarkers, pruneSatisfiedWantedMarkers, settleFreshnessMarker, readNotifierStatusRows
  * and readNotifierFirstDue (sync-pending.ts readFirstDue), plus getSource and listSourceRecords. Three arms: PGLite
@@ -42,7 +42,7 @@ const isoOf = (v: unknown) => (v === null || v === undefined ? null : new Date(v
 
 describe('engine parity: a source keeps the last_commit its sync anchor advanced', () => {
   parityTest('a last_commit advance stamps the source, and freshness, the markers and the first-due clock read it', {
-    methods: ['advanceSourceLastCommit', 'getSource', 'listSourceRecords', 'readNotifierStatusRows', 'readDueWantedMarkers',
+    methods: ['advanceSourceCommit', 'getSource', 'listSourceRecords', 'readNotifierStatusRows', 'readDueWantedMarkers',
       'pruneSatisfiedWantedMarkers', 'settleFreshnessMarker', 'readNotifierFirstDue'],
   }, async (engine, backend) => {
     const host = hostIdFor(engine);

@@ -699,16 +699,14 @@ fn a_last_commit_advance_stamps_the_source_and_due_prune_and_settle_compare_mark
     let store = open(&dir);
     source(&store, "alpha");
     assert_eq!(store.read_source_last_commit("alpha").unwrap(), None);
+    store.advance_source_commit("nobody", "aaa", None).unwrap();
     assert!(
-        !store
-            .advance_source_last_commit("nobody", "aaa", None)
-            .unwrap()
+        store.get_source("nobody").unwrap().is_none(),
+        "an unknown source is not made"
     );
-    assert!(
-        store
-            .advance_source_last_commit("alpha", "aaa", Some(Some("2026-01-02T03:04:05.000Z")))
-            .unwrap()
-    );
+    store
+        .advance_source_commit("alpha", "aaa", Some(Some("2026-01-02T03:04:05.000Z")))
+        .unwrap();
     let got = store.get_source("alpha").unwrap().unwrap();
     assert_eq!(got.last_commit.as_deref(), Some("aaa"));
     assert_eq!(
@@ -730,21 +728,19 @@ fn a_last_commit_advance_stamps_the_source_and_due_prune_and_settle_compare_mark
         Some("2026-01-02T03:04:05.000000Z")
     );
     // No newest time keeps the stored one; null clears it.
-    store
-        .advance_source_last_commit("alpha", "bbb", None)
-        .unwrap();
+    store.advance_source_commit("alpha", "bbb", None).unwrap();
     assert_eq!(record(&store).last_commit.as_deref(), Some("bbb"));
     assert_eq!(
         record(&store).newest_content_at.as_deref(),
         Some("2026-01-02T03:04:05.000000Z")
     );
     store
-        .advance_source_last_commit("alpha", "bbb", Some(None))
+        .advance_source_commit("alpha", "bbb", Some(None))
         .unwrap();
     assert_eq!(record(&store).newest_content_at, None);
     assert!(
         store
-            .advance_source_last_commit("alpha", "bbb", Some(Some("not a time")))
+            .advance_source_commit("alpha", "bbb", Some(Some("not a time")))
             .is_err()
     );
     // The host and status rows read it.

@@ -9,7 +9,7 @@
  *
  * The store keeps the lease row with Postgres's fencing rule, one notifier row per source and one marker row per source
  * and intent. It keeps no managed worktree bindings, so every source row reads `bound` false and `owner` and `root`
- * null. Each source row reads the source's `last_commit` (advanceSourceLastCommit), and a freshness marker that names
+ * null. Each source row reads the source's `last_commit` (advanceSourceCommit), and a freshness marker that names
  * that head is not due.
  *
  * What each member answers and why: rust/docs/store/persistence.md ("Commit notifier").

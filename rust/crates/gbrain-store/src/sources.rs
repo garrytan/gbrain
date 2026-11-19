@@ -62,7 +62,7 @@ impl From<SourceRecord> for SourceRow {
 }
 
 /// One source as `getSource` returns it: `SourceDetailRow` of `src/core/engine.ts`, dates as ISO
-/// strings. `last_commit` is the one the sync anchor advanced (`advance_source_last_commit`). The
+/// strings. `last_commit` is the one the sync anchor advanced (`advance_source_commit`). The
 /// store keeps no `contextual_retrieval_mode` or `trust_frontmatter_overrides`: only source admin
 /// SQL writes those columns, and it does not run on a Rust brain, so they read as the column
 /// defaults (null, false).
@@ -276,16 +276,16 @@ impl Store {
         })
     }
 
-    /// `advanceSourceLastCommit(id, value, newestContentAt?)`: stamps `last_commit` and
+    /// `advanceSourceCommit(id, commit, newestContentAt?)`: stamps `last_commit` and
     /// `last_sync_at` (the process clock), and `newest_content_at` when `newest` is given
     /// (`Some(None)` clears it). Archived sources advance too, as the UPDATE does not filter them.
-    /// Returns whether the source exists; an unknown source changes nothing.
-    pub fn advance_source_last_commit(
+    /// An unknown source changes nothing, as the `UPDATE ... WHERE id` of the SQL engines does.
+    pub fn advance_source_commit(
         &self,
         id: &str,
-        value: &str,
+        commit: &str,
         newest: Option<Option<&str>>,
-    ) -> Result<bool> {
+    ) -> Result<()> {
         let newest = match newest {
             Some(Some(text)) => Some(Some(parse_iso(text).ok_or_else(|| {
                 StoreError::invalid("newestContentAt must be an ISO timestamp ending in Z")
@@ -295,15 +295,14 @@ impl Store {
         };
         self.write(|tx| {
             let Some(mut record) = read_source(&*tx, id)? else {
-                return Ok(false);
+                return Ok(());
             };
-            record.last_commit = Some(value.to_string());
+            record.last_commit = Some(commit.to_string());
             record.last_sync_at_us = Some(self.env.now_micros());
             if let Some(newest) = newest {
                 record.newest_content_at_us = newest;
             }
-            put_json(tx, &source_key(id), &record)?;
-            Ok(true)
+            put_json(tx, &source_key(id), &record)
         })
     }
 

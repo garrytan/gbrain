@@ -291,12 +291,12 @@ const PINS: Pin[] = [
   },
   {
     from: 'src/core/sync-anchor.ts:272 writeSyncAnchor, with a newest content time (at 87bd59b208)',
-    case: { method: 'advanceSourceLastCommit', variant: 'newest-content', run: e => e.advanceSourceLastCommit('source-a', 'abc123', '2026-01-02T03:04:05.000Z') },
+    case: { method: 'advanceSourceCommit', variant: 'newest-content', run: e => e.advanceSourceCommit('source-a', 'abc123', '2026-01-02T03:04:05.000Z') },
     texts: ['UPDATE sources SET last_commit = $1, last_sync_at = now(), newest_content_at = $3 WHERE id = $2'],
   },
   {
     from: 'src/core/sync-anchor.ts:277 writeSyncAnchor, without a newest content time (at 87bd59b208)',
-    case: { method: 'advanceSourceLastCommit', variant: 'default', run: e => e.advanceSourceLastCommit('source-a', 'abc123') },
+    case: { method: 'advanceSourceCommit', variant: 'default', run: e => e.advanceSourceCommit('source-a', 'abc123') },
     texts: ['UPDATE sources SET last_commit = $1, last_sync_at = now() WHERE id = $2'],
   },  {
     from: 'src/core/notifier/resident.ts:50 sqlNotifierStore liveJobs (at e98683e983)',

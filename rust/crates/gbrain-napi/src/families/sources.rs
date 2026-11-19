@@ -63,28 +63,21 @@ impl Brain {
         self.run(env, move |s| s.set_source_archived(&id, archived))
     }
 
-    /// `advanceSourceLastCommit(id, value, { newestContentAt? })`: whether the source exists. An
-    /// absent `newestContentAt` keeps the stored one; `null` clears it.
+    /// `advanceSourceCommit(id, commit, setNewest, newestContentAt)`: records the commit a sync
+    /// reached and stamps `last_sync_at`. `newest_content_at` changes only when `set_newest` is
+    /// true; a null `newest_content_at` then clears it.
     #[napi]
-    pub fn advance_source_last_commit<'env>(
+    pub fn advance_source_commit<'env>(
         &self,
         env: &'env Env,
         id: String,
-        value: String,
-        options: Value,
+        commit: String,
+        set_newest: bool,
+        newest_content_at: Option<String>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            let newest = match options.get("newestContentAt") {
-                None => None,
-                Some(Value::Null) => Some(None),
-                Some(Value::String(text)) => Some(Some(text.as_str())),
-                Some(_) => {
-                    return Err(gbrain_store::StoreError::invalid(
-                        "advanceSourceLastCommit newestContentAt must be a string or null",
-                    ));
-                }
-            };
-            s.advance_source_last_commit(&id, &value, newest)
+            let newest = set_newest.then_some(newest_content_at.as_deref());
+            s.advance_source_commit(&id, &commit, newest)
         })
     }
 

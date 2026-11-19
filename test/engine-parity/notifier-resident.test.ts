@@ -82,7 +82,7 @@ describe('engine parity: the resident notifier reads', () => {
   });
 
   parityTest('lastCommit reads the commit the source last synced', {
-    methods: ['readSourceLastCommit', 'advanceSourceLastCommit'],
+    methods: ['readSourceLastCommit', 'advanceSourceCommit'],
   }, async (engine, backend) => {
     for (const id of ['alpha', 'beta']) await createSource(engine, backend, id, {}, `/srv/brain/${id}`);
     await writeSyncAnchor(engine, 'alpha', 'last_commit', SYNCED);
