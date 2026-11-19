@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 648/648
+# covered: 662/662
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -31,8 +31,8 @@
 # stats_ingest: 5/5
 # sync_aliases: 10/10
 # config: 6/6
-# import_guards: 10/10
-# persistence_journal: 40/40
+# import_guards: 12/12
+# persistence_journal: 52/52
 # entity_reads: 6/6
 # cycle_locks: 7/7
 # minion_jobs: 8/8
@@ -73,8 +73,8 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	53	no	yes	yes	serves
-transactionDirect	lifecycle	yes	2	no	yes	yes	serves
+transaction	lifecycle	yes	63	no	yes	yes	serves
+transactionDirect	lifecycle	yes	3	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 getPage	pages	yes	76	yes	yes	yes	serves
@@ -339,45 +339,51 @@ replaceDerivedAliases	sync_aliases	yes	11	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
-getConfig	config	yes	10	no	yes	yes	serves
+getConfig	config	yes	11	no	yes	yes	serves
 setConfig	config	yes	23	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
-getConfigValues	config	yes	5	no	yes	yes	serves
+getConfigValues	config	yes	6	no	yes	yes	serves
 readManagedModeRows	import_guards	yes	1	no	yes	yes	serves
 getSourceStrictness	import_guards	yes	2	no	yes	yes	serves
 readPersistenceBrainId	import_guards	yes	4	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	3	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	4	no	yes	yes	serves
-readTransactionSettings	import_guards	yes	12	no	yes	yes	serves
-applyTransactionSettings	import_guards	yes	30	no	yes	yes	serves
+readTransactionSettings	import_guards	yes	13	no	yes	yes	serves
+applyTransactionSettings	import_guards	yes	31	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
+readCurrentWriteTrust	import_guards	yes	1	no	yes	yes	serves
+setWriteContext	import_guards	yes	1	no	yes	yes	serves
 readLedgerSource	import_guards	yes	8	no	yes	yes	serves
 isFolderRestricted	import_guards	yes	3	no	yes	yes	serves
-declarePersistence	persistence_journal	yes	5	no	yes	yes	serves
+declarePersistence	persistence_journal	yes	13	no	yes	yes	serves
 readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldPageRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldCoverageRows	persistence_journal	yes	1	no	yes	yes	serves
-readWriteRequest	persistence_journal	yes	3	no	yes	yes	serves
-readWriteRequestById	persistence_journal	yes	5	no	yes	yes	serves
+readWriteRequest	persistence_journal	yes	5	no	yes	yes	serves
+readWriteRequestById	persistence_journal	yes	6	no	yes	yes	serves
 readWriteRequestProgress	persistence_journal	yes	1	no	yes	yes	serves
 countOutstandingBySource	persistence_journal	yes	2	no	yes	yes	serves
 ownsSchemaTables	persistence_journal	yes	1	no	yes	yes	serves
+readOAuthClientWriteGrant	persistence_journal	yes	1	no	yes	yes	serves
+readAccessTokenWriteGrant	persistence_journal	yes	1	no	yes	yes	serves
+shareLockWriteCredential	persistence_journal	yes	1	no	yes	yes	serves
 readCounterRows	persistence_journal	yes	2	no	yes	yes	serves
-readAdmissionRate	persistence_journal	yes	2	no	yes	yes	serves
-lockPersistenceCounters	persistence_journal	yes	17	no	yes	yes	serves
-insertWriteRequest	persistence_journal	yes	17	no	yes	yes	serves
-stampWriteClaim	persistence_journal	yes	13	no	yes	yes	serves
+readAdmissionRate	persistence_journal	yes	3	no	yes	yes	serves
+lockPersistenceCounters	persistence_journal	yes	22	no	yes	yes	serves
+insertWriteRequest	persistence_journal	yes	27	no	yes	yes	serves
+stampWriteClaim	persistence_journal	yes	16	no	yes	yes	serves
 lockWriteRequest	persistence_journal	yes	2	no	yes	yes	serves
-completeWriteRow	persistence_journal	yes	10	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	18	no	yes	yes	serves
+completeWriteRow	persistence_journal	yes	12	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	31	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	2	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	2	no	yes	yes	serves
 insertTopologyChange	persistence_journal	yes	4	no	yes	yes	serves
 renewWriteClaim	persistence_journal	yes	1	no	yes	yes	serves
 expireStaleWriteClaims	persistence_journal	yes	1	no	yes	yes	serves
 hasClaimableWrite	persistence_journal	yes	1	no	yes	yes	serves
+selectClaimableWrite	persistence_journal	yes	1	no	yes	yes	serves
 listHostConsumerRows	persistence_journal	yes	2	no	yes	yes	serves
 probeLiveConsumerRows	persistence_journal	yes	1	no	yes	yes	serves
 renewConsumerRow	persistence_journal	yes	1	no	yes	yes	serves
@@ -395,6 +401,14 @@ selectProjectionWindowJobs	persistence_journal	yes	3	no	yes	yes	serves
 listGatedMirrorRequests	persistence_journal	yes	1	no	yes	yes	serves
 listEffectRecoveries	persistence_journal	yes	1	no	yes	yes	serves
 selectClaimableEffect	persistence_journal	yes	1	no	yes	yes	serves
+listOverdueHeldWrites	persistence_journal	yes	1	no	yes	yes	serves
+lockOverdueHold	persistence_journal	yes	1	no	yes	yes	serves
+listOwnerRecoveryHeads	persistence_journal	yes	1	no	yes	yes	serves
+listResumableRefreshes	persistence_journal	yes	1	no	yes	yes	serves
+listSourceLastCommits	persistence_journal	yes	1	no	yes	yes	serves
+readWriterVersionCutoff	persistence_journal	yes	1	no	yes	yes	serves
+listWriterVersions	persistence_journal	yes	1	no	yes	yes	serves
+recentWriterVersions	persistence_journal	yes	1	no	yes	yes	serves
 readMentionLastPass	entity_reads	yes	1	no	yes	yes	serves
 countPagesDueForMentions	entity_reads	yes	1	no	yes	yes	serves
 readIdentitySiblingCandidates	entity_reads	yes	3	no	yes	yes	serves

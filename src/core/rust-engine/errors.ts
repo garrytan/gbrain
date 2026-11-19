@@ -49,3 +49,36 @@ export function requireTransactions(engine: object, step: string, why: string): 
   const caps = (engine as { capabilities?: ReadonlySet<Capability> }).capabilities;
   if (caps && !caps.has('transactions')) throw capabilityMissing('transactions', `${step} (${why})`);
 }
+
+/**
+ * The named refusal of a managed-checkout persistence step (worktree admission, the refresh barrier, an import hold,
+ * grouped admission, the background owner check) on an engine without `managed_persistence` (the Rust engine). The
+ * step calls it before it reads or locks anything, so nothing of the write ran. PGLite, Postgres and transaction
+ * handles (no capability set) pass.
+ */
+export function requireManagedPersistence(engine: object, step: string, why: string): void {
+  if (!managesWorktrees(engine)) throw capabilityMissing('managed_persistence', `${step} (${why})`);
+}
+
+/**
+ * Whether `engine` can hold managed-checkout state at all. Without `managed_persistence` no worktree, refresh or
+ * worktree-owned write can exist (their admission refuses above), so an owner scan over them has nothing to find and
+ * returns empty instead of reading. PGLite, Postgres and transaction handles (no capability set) answer true.
+ */
+export function managesWorktrees(engine: object): boolean {
+  return reports(engine, 'managed_persistence');
+}
+
+/**
+ * Whether `engine` serves raw SQL. The owner's idle probe asks it before its one raw statement, so an engine without
+ * `raw_sql` (the Rust engine) answers from typed members. PGLite, Postgres and transaction handles answer true.
+ */
+export function servesRawSql(engine: object): boolean {
+  return reports(engine, 'raw_sql');
+}
+
+/** True unless `engine` carries a capability set without `capability`; an object with no set (a handle, a fake) passes. */
+function reports(engine: object, capability: Capability): boolean {
+  const caps = (engine as { capabilities?: ReadonlySet<Capability> }).capabilities;
+  return typeof caps?.has !== 'function' || caps.has(capability);
+}

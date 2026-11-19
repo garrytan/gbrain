@@ -272,6 +272,19 @@ impl Brain {
         })
     }
 
+    /// `selectClaimableWrite({ excludeRoots, fifoRoots, laneRoots, priority })`: the request row
+    /// `claimNextWrite` claims next, or `null`.
+    #[napi]
+    pub fn select_claimable_write<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.select_claimable_write(&required(spec, "selectClaimableWrite spec")?)
+        })
+    }
+
     /// `readCounterRows(keys)`: the counter rows that exist, in key order, unlocked.
     #[napi]
     pub fn read_counter_rows<'env>(
@@ -412,6 +425,52 @@ impl Brain {
         self.run(env, move |s| s.select_claimable_effect(&host_id))
     }
 
+    /// `listOverdueHeldWrites(hostId, maxWaitMs, hold)`: the deferred writes past their hold; `[]`
+    /// (no worktree here). The wait limit only narrows the rows, so it is not sent.
+    #[napi]
+    pub fn list_overdue_held_writes<'env>(
+        &self,
+        env: &'env Env,
+        host_id: String,
+        hold: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_overdue_held_writes(&host_id, &hold))
+    }
+
+    /// `lockOverdueHold(hold)`: whether the hold still stands; `false` (no refresh row or
+    /// worktree import hold here).
+    #[napi]
+    pub fn lock_overdue_hold<'env>(
+        &self,
+        env: &'env Env,
+        hold: String,
+        id: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.lock_overdue_hold(&hold, id.as_deref()))
+    }
+
+    /// `listOwnerRecoveryHeads(hostId, excluded)`: the recovering write heads; `[]` (no worktree
+    /// here). The excluded worktree ids only narrow the rows, so they are not sent.
+    #[napi]
+    pub fn list_owner_recovery_heads<'env>(
+        &self,
+        env: &'env Env,
+        host_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_owner_recovery_heads(&host_id))
+    }
+
+    /// `listResumableRefreshes(hostId, budgetMs)`: the interrupted refreshes; `[]` (no refresh row
+    /// here). The sync budget only marks rows stale, so it is not sent.
+    #[napi]
+    pub fn list_resumable_refreshes<'env>(
+        &self,
+        env: &'env Env,
+        host_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_resumable_refreshes(&host_id))
+    }
+
     #[napi]
     pub fn list_compactable_receipts<'env>(
         &self,
@@ -419,6 +478,32 @@ impl Brain {
         retention_days: f64,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_compactable_receipts(retention_days))
+    }
+
+    /// `readWriterVersionCutoff()`: the brain's creation time as ISO text, or `null`.
+    #[napi]
+    pub fn read_writer_version_cutoff<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_writer_version_cutoff())
+    }
+
+    /// `listWriterVersions(limit)`: `{ role, host_id, principal, version, last_seen }` rows.
+    #[napi]
+    pub fn list_writer_versions<'env>(
+        &self,
+        env: &'env Env,
+        limit: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_writer_versions(limit))
+    }
+
+    /// `recentWriterVersions(days)`: the same rows with a `requests` count.
+    #[napi]
+    pub fn recent_writer_versions<'env>(
+        &self,
+        env: &'env Env,
+        days: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.recent_writer_versions(days))
     }
 
     #[napi]

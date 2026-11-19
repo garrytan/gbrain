@@ -72,6 +72,7 @@ test/capture-consent-admission.test.ts
 test/capture-dispatch-provenance-6524.test.ts
 test/chronicle-backfill-max-usd.test.ts
 test/claim-fifo-foreground-waiting.test.ts
+test/claim-head-deferred-decisions.test.ts
 test/claim-lease-holder-only-6712.test.ts
 test/claude-cli-output-cap.test.ts
 test/cli-page-writes.test.ts
@@ -167,6 +168,7 @@ test/engine-parity/link-temporal.test.ts
 test/engine-parity/links.test.ts
 test/engine-parity/open-loops.test.ts
 test/engine-parity/page-visibility.test.ts
+test/engine-parity/owner-recovery-scans.test.ts
 test/engine-parity/pages.test.ts
 test/engine-parity/persistence-declaration.test.ts
 test/engine-parity/persistence.test.ts
@@ -199,6 +201,7 @@ test/engine-parity/wanted-links.test.ts
 test/engine-parity/write-guards.test.ts
 test/engine-parity/write-misc.test.ts
 test/engine-parity/writer-registration.test.ts
+test/engine-parity/writer-versions.test.ts
 test/engine-sql-fact-relink-attempts.test.ts
 test/engine-sql-fact-relink-writes.test.ts
 test/engine-sql-facts-keyset.test.ts
@@ -639,6 +642,7 @@ test/persistence-sync-fence-holds.test.ts
 test/persistence-sync-holds.test.ts
 test/persistence-sync-lease.test.ts
 test/persistence-sync-metafile-pages.test.ts
+test/persistence-topology-recovery-unmanaged.test.ts
 test/persistence-write-interrupted.test.ts
 test/persistence-write-stall.test.ts
 test/persistence-writer-fences.test.ts

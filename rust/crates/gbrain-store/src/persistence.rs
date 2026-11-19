@@ -46,8 +46,10 @@ use serde_json::{Map, Value, json};
 
 mod effect_scans;
 mod housekeeping;
+mod owner_scans;
 mod projection_queue;
 mod topology;
+mod writer_versions;
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn};
 pub use projection_queue::{
     ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
@@ -1104,9 +1106,8 @@ impl Store {
         has_claimable_write_in(&*self.read()?, &*self.env, spec)
     }
 
-    /// The row `claimNextWrite` would claim next, or `None`. No TypeScript member calls it yet:
-    /// `claimNextWrite` runs its select and stamp inside `transactionDirect`, which this engine
-    /// does not serve; the stamp half is `stamp_write_claim`.
+    /// `selectClaimableWrite(spec)`: the row `claimNextWrite` claims next, or `None`; the claim's
+    /// stamp is `stamp_write_claim`.
     pub fn select_claimable_write(&self, spec: &ClaimableSpec) -> Result<Option<Value>> {
         select_claimable_write_in(&*self.read()?, &*self.env, spec)
     }
