@@ -5,8 +5,8 @@
  * The store keeps no OAuth clients and no access tokens, so their grant reads refuse with engine_capability_missing
  * rather than answer "no row": a caller never mistakes an engine that cannot read a grant for a grant that is gone.
  * The local writer grant comes from the writer registration the store keeps; the store runs one write transaction at
- * a time, so the FOR SHARE the SQL engines take changes nothing here. The store keeps no shared-skill state table:
- * its serving epoch is a UUID derived from the brain id, fixed for the life of the brain (the store has no restore
+ * a time, so the FOR SHARE the SQL engines take changes nothing here. The store's shared-skill state keeps only the
+ * catalog token secret (shared-skill-members.ts); its serving epoch is a UUID derived from the brain id, fixed for the life of the brain (the store has no restore
  * that would rotate it), and null when the brain has no id, so membership denies. The trust generation read lives in
  * trust-withdrawals.ts.
  */
