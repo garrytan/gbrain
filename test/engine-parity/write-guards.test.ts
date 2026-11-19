@@ -1,17 +1,20 @@
 /**
  * BrainEngine parity — the page write guards (engine-sql/write-guards.ts): the origin read, the origin claim read,
- * the origin bind, the ingest stamp, the import seal, the valid-time body read and the segment storage probe.
+ * the origin bind, the ingest stamp, the import seal, the valid-time body read, the append path's tail-digest body
+ * read and the segment storage probe.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: readPageOrigin, listOriginClaims, bindPageOrigin, stampPageIngest, sealImportedPage, readLivePageBody
- *    and hasSegmentStorage return the same observable result, and leave the same page columns, on every engine arm
- *    (PGLite always; Postgres with DATABASE_URL; the Rust arm through test/engine-parity/harness.ts).
+ *  - Contract: readPageOrigin, listOriginClaims, bindPageOrigin, stampPageIngest, sealImportedPage, readLivePageBody,
+ *    readInlinePageRegions and hasSegmentStorage return the same observable result, and leave the same page columns,
+ *    on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm through
+ *    test/engine-parity/harness.ts).
  *  - Regression: an engine that answers one of these differently (a tombstone read as absent, a claim from a deleted
  *    page or from the page being written, a bind that overwrites an origin it was told to keep, a seal that moves the
  *    text projection of a stale revision) lets two pages claim one file or loses a page's provenance; the Rust engine
  *    has no SQL, so each statement has to exist as a typed member.
  *  - Why existing coverage misses it: these statements ran through `executeRaw` inside origin-guard.ts,
- *    page-prepare.ts, projections.ts, valid-time-advisory.ts and journal.ts, which the parity cases cannot call (D18).
+ *    page-prepare.ts, projections.ts, valid-time-advisory.ts, journal.ts and tail-digest.ts, which the parity cases
+ *    cannot call (D18).
  *  - Seam: none in the cases. Typed members only (no executeRaw: D18). Page ids are compared as "the page putPage
  *    wrote", time stamps as presence.
  */
@@ -164,6 +167,27 @@ describe('engine parity: page write guards', () => {
     expect(answers).toEqual({
       body: { frontmatter: { valid_from: '2026-01-01' }, compiled_truth: 'An origin example.', timeline: '- 2026-01-02: body', body_storage: 'inline', hashIsPages: true },
       gone: null, otherSource: null,
+    });
+    return answers;
+  });
+
+  parityTest('readInlinePageRegions reads a page\'s stored body columns by id, a tombstone included, and null otherwise', {
+    methods: ['putPage', 'getPage', 'softDeletePage', 'readInlinePageRegions'],
+  }, async (engine) => {
+    await engine.putPage('notes/regions', { ...NOTE, timeline: '- 2026-01-02: a region' });
+    await engine.putPage('notes/regions-gone', { ...NOTE, compiled_truth: 'A deleted body.' });
+    const id = await idOf(engine, 'notes/regions');
+    const goneId = await idOf(engine, 'notes/regions-gone');
+    await engine.softDeletePage('notes/regions-gone');
+    const answers = {
+      live: await engine.readInlinePageRegions(id),
+      tombstone: await engine.readInlinePageRegions(goneId),
+      missing: await engine.readInlinePageRegions(id + goneId + 1000),
+    };
+    expect(answers).toEqual({
+      live: { compiled_truth: 'An origin example.', timeline: '- 2026-01-02: a region' },
+      tombstone: { compiled_truth: 'A deleted body.', timeline: '' },
+      missing: null,
     });
     return answers;
   });

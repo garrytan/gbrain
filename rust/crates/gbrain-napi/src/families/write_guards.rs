@@ -93,6 +93,19 @@ impl Brain {
         self.run(env, move |s| s.read_live_page_body(&slug, &source_id))
     }
 
+    /// `readInlinePageRegions(pageId)`: `{ compiled_truth, timeline }` of the page, or `null`.
+    #[napi]
+    pub fn read_inline_page_regions<'env>(
+        &self,
+        env: &'env Env,
+        page_id: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let page_id: u64 = required(page_id, "readInlinePageRegions pageId")?;
+            s.read_inline_page_regions(page_id)
+        })
+    }
+
     /// `hasSegmentStorage()`: whether any segment text or body staging is stored.
     #[napi]
     pub fn has_segment_storage<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {

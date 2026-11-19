@@ -608,7 +608,6 @@ src/core/page-body/segment-rewrite.ts	execute_raw	9
 src/core/page-body/segmented-embedding.ts	execute_raw	8
 src/core/page-body/splice.ts	execute_raw	2
 src/core/page-body/streamed-import.ts	execute_raw	1
-src/core/page-body/tail-digest.ts	execute_raw	1
 src/core/page-embedding-budget.ts	execute_raw	13
 src/core/page-embedding-lease.ts	execute_raw	4
 src/core/page-searchability.ts	execute_raw	3

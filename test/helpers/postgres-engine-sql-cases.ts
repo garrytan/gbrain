@@ -303,6 +303,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'stampPageIngest': OOS.writeGuards,
   'sealImportedPage': OOS.writeGuards,
   'readLivePageBody': OOS.writeGuards,
+  'readInlinePageRegions': OOS.writeGuards,
   'readPageHiddenFromCaller': OOS.pageVisibility,
   'readCallerPageAccess': OOS.pageVisibility,
   'readWriteVisibilityProbe': OOS.pageVisibility,

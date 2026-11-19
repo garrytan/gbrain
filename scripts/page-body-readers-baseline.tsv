@@ -213,6 +213,7 @@ src/core/engine-sql/salience.ts	listEnrichCandidates	sql	META
 src/core/engine-sql/search-reads.ts	generatedPagesIn	sql	LEAD	moved from search/provenance-demotion.ts readGeneratedPages (same statement, typed engine method)
 src/core/engine-sql/timeline-reads.ts	listTimelineOrphanPages	sql	STREAM	the orphan prune's page list, moved from timeline-extract.ts pruneTimelineOrphans: compiled_truth and timeline of inline pages
 src/core/engine-sql/timeline.ts	getTimeline	sql	NONE	not the page body: SELECT * FROM pages inside a LATERAL used for the page id only
+src/core/engine-sql/write-guards.ts	readInlinePageRegions	sql	INLINE	moved from page-body/tail-digest.ts inlineRegions: callers branch on storage: inline pages only, within the segmented threshold
 src/core/engine-sql/write-guards.ts	readLivePageBody	sql	INLINE	moved from valid-time-advisory.ts withValidTimeAdvisory: reads the written page's body columns, NULL for a segmented page (bodyKey then compares content_hash)
 src/core/enrichment-service.ts	planEntity	call:putPage	INLINE	
 src/core/enrichment-service.ts	planEntity	call:serializeMarkdown	INLINE	
@@ -402,7 +403,6 @@ src/core/page-body/segmenter.ts	Segmenter.piece	field	NONE	not the page body: st
 src/core/page-body/segmenter.ts	cutBlocked	field	NONE	not the page body: st.timeline is the segmenter's timeline-run parser state
 src/core/page-body/streamed-import.ts	importScanned	field	LEAD	bounded heads of the streamed file's regions for the sanity and type checks; the body itself streams to the segmenter
 src/core/page-body/tail-digest.ts	inlineRegions	field	INLINE	callers branch on storage: inline pages only, within the segmented threshold
-src/core/page-body/tail-digest.ts	inlineRegions	sql	INLINE	callers branch on storage: inline pages only, within the segmented threshold
 src/core/page-body/tail-digest.ts	inlineTailDigest	field	INLINE	get_page body:'none' of an inline page; a segmented page uses page-window/segmented.ts tailDigest
 src/core/page-embedding-budget.ts	planPageEmbedding	field	META	lane 1e file: body_bytes for segmented pages
 src/core/page-embedding-budget.ts	readPageSizeStates	sql	META	lane 1e file: body_bytes for segmented pages

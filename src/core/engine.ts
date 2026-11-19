@@ -49,7 +49,7 @@ import type { FenceFactRow, FenceRowsTarget } from './engine-sql/trust-fence.ts'
 import type { TrustTable } from './trust/schema.ts';
 import type { NewTrustProposal, TrustProposalFilter, TrustProposalRow, TrustProposalStatus, TrustProposalTransition } from './engine-sql/trust-proposals.ts';
 import type { GraduationGateRow, ManagedRootBindingRow, PersistenceTable, RetiredDeactivationRow } from './engine-sql/connect-gate.ts';
-import type { ImportedPageSeal, LivePageBodyRow, OriginClaimRow, PageIngestStamp, PageOriginRow, PageOriginTarget } from './engine-sql/write-guards.ts';
+import type { ImportedPageSeal, InlinePageRegionsRow, LivePageBodyRow, OriginClaimRow, PageIngestStamp, PageOriginRow, PageOriginTarget } from './engine-sql/write-guards.ts';
 import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from './engine-sql/page-visibility.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
@@ -3038,6 +3038,8 @@ export interface BrainEngine {
   sealImportedPage(slug: string, seal: ImportedPageSeal): Promise<{ id: number } | null>;
   /** A live page's frontmatter, body columns, body storage and content hash (the valid-time advisory's after image), or null. */
   readLivePageBody(slug: string, opts: { sourceId: string }): Promise<LivePageBodyRow | null>;
+  /** A page's stored body columns by id, live or a tombstone, read raw (the append tail digest), or null (engine-sql/write-guards.ts). */
+  readInlinePageRegions(pageId: number): Promise<InlinePageRegionsRow | null>;
   // Page visibility guards (engine-sql/page-visibility.ts): the current caller's page policy, rendered in its access record.
   /** Whether a row of the page (live or soft-deleted) fails the current caller's policy: `read` (access, then privacy) or `access` alone. */
   readPageHiddenFromCaller(sourceId: string, slug: string, opts: { policy: PagePolicyPart }): Promise<boolean>;

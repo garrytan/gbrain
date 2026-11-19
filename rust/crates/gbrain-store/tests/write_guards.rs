@@ -1,5 +1,6 @@
 //! Page write guards: the observable behaviour of `readPageOrigin`, `listOriginClaims`,
-//! `bindPageOrigin`, `stampPageIngest`, `sealImportedPage` and `readLivePageBody`, matched to the
+//! `bindPageOrigin`, `stampPageIngest`, `sealImportedPage`, `readLivePageBody` and
+//! `readInlinePageRegions`, matched to the
 //! PGLite engine (`engine-sql/write-guards.ts`).
 
 mod common;
@@ -272,4 +273,24 @@ fn read_live_page_body_reads_an_inline_page_and_skips_tombstones() {
         store.read_live_page_body("notes/body", "default").unwrap(),
         None
     );
+}
+
+#[test]
+fn read_inline_page_regions_reads_a_page_by_id_a_tombstone_included() {
+    let dir = TempDir::new("wg-regions");
+    let store = open(&dir);
+    let id = put(&store, "notes/regions", None);
+    let regions = store.read_inline_page_regions(id).unwrap().unwrap();
+    assert_eq!(
+        (
+            regions.compiled_truth.as_deref(),
+            regions.timeline.as_deref()
+        ),
+        (Some("Body."), Some(""))
+    );
+    store
+        .soft_delete_page("notes/regions", Some("default"))
+        .unwrap();
+    assert_eq!(store.read_inline_page_regions(id).unwrap(), Some(regions));
+    assert_eq!(store.read_inline_page_regions(id + 1000).unwrap(), None);
 }
