@@ -97,9 +97,9 @@ export const readGitHoldReportInputs: StoreMember<[sourceId: string, fingerprint
 /** The store keeps no change reasons and purges none, so no (commit, path) is tombstoned. */
 export const readReasonPurgeTombstones: StoreMember<[sourceId: string], ReasonPurgeTombstone[]> = async () => [];
 
-/** The store purges no facts, so a known source's purge epoch stays 0; an unknown source has none (null). */
+/** The source's stored purge epoch (0 until a purge raises it); an unknown source has none (null). */
 export const readSourcePurgeEpoch: StoreMember<[sourceId: string], string | number | null> = async (brain, sourceId) =>
-  (await storeCall({ member: 'readSourcePurgeEpoch', sourceId }, () => brain.getSource(sourceId))) ? 0 : null;
+  (await storeCall({ member: 'readSourcePurgeEpoch', sourceId }, () => brain.readSourcePurgeEpoch(sourceId))) ?? null;
 
 /** The source row's sync point (getSource) and the journal's outstanding requests of its current incarnation. */
 export const readWriteWatermarkRow: StoreMember<[sourceId: string], WriteWatermarkRow> = async (brain, sourceId) => {

@@ -69,6 +69,16 @@ impl Brain {
         self.run(env, move |s| s.get_source(&id))
     }
 
+    /// `readSourcePurgeEpoch(id)`: the source's stored purge epoch, or `null` for an unknown source.
+    #[napi]
+    pub fn read_source_purge_epoch<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_source_purge_epoch(&id))
+    }
+
     /// `countRepoBoundSources()`: live sources with a non-empty local path.
     #[napi]
     pub fn count_repo_bound_sources<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
