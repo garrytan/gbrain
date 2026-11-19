@@ -712,7 +712,7 @@ example `families/timeline.rs` and `store-members/timeline.ts`) for the details.
 
 ### page_ops
 
-Batch page reads and writes the pages capability still refuses.
+Batch page reads and writes of the `pages` and `page_versions` capabilities (served; `pages` stays unreported while its other members refuse).
 
 - **Files:** `gbrain-store/src/page_ops.rs`, `gbrain-napi/src/families/page_ops.rs`, `store-members/page-ops.ts`.
 - **Tag:** `p` (`PAGE_OPS`). Cascade on page delete: no.

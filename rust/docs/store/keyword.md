@@ -69,8 +69,7 @@ deleted is itself owner-only lineage (strict form), it marks that page and each 
 good, even when the source is later flipped off. The marks live under `M owner_only_mark/pages/<page id>`. Removing
 only the provenance link, or turning the owner-only flag off with nothing deleted, records no mark, as in SQL. The
 store keeps no `derivation_inputs`, so a page that only that table ties to an owner-only row is not hidden by it. The
-engine serves no source delete, `deletePages` or `purgeDeletedPages` yet (they refuse with `engine_capability_missing`),
-so `deletePage` is the one path that deletes an owner-only page here.
+engine serves no source delete yet, so a page is deleted by `deletePage`, `deletePages` or `purgeDeletedPages` here.
 
 The safe-chunks rule keeps a page only when its recorded `chunker_version` is at least the safe fence chunker (4), as
 SQL's `chunker_version >= 4`: a page with no recorded version is dropped too (the comparison is NULL). The store stamps
