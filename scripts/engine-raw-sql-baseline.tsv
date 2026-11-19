@@ -434,7 +434,7 @@ src/core/facts/purge-reasons.ts	execute_raw	8
 src/core/facts/purge-verify.ts	execute_raw	20
 src/core/facts/purge.ts	execute_raw	37	GBRA-574 F #9674 (opened before this ratchet): +1 the purge plan reads whether a fact sits on an unbacked name tag
 src/core/facts/question-recall.ts	execute_raw	1
-src/core/facts/reconcile-watermark.ts	execute_raw	4
+src/core/facts/reconcile-watermark.ts	execute_raw	1
 src/core/facts/relink-publish.ts	execute_raw	4
 src/core/facts/relink.ts	execute_raw	1
 src/core/facts/retire.ts	execute_raw	1
