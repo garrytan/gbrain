@@ -11,6 +11,9 @@
  * than `english`, a visibility list that the member-page or grant rules widen, and inputs whose PGLite outcome the store cannot reproduce (a non-finite
  * `claim_value`, `row_num` or `superseded_by_row`, a fractional offset, a keyset time in another text form).
  *
+ * A read eligibility policy goes to the store on the list reads and `listSupersessions`: it hides the facts of a
+ * quarantined provenance page and applies the trust floor and flag suppression (`projectionEligibleSql('facts')`).
+ *
  * A vector travels as the literal PGLite inlines (`'[a,b,...]'`); the store casts it to the column's `halfvec` and
  * returns stored vectors as number lists, which become `Float32Array`s here.
  */
