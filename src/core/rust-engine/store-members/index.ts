@@ -108,6 +108,7 @@ import { initSchema } from './init-schema.ts';
 import * as accessGrants from './access-grants.ts';
 import * as accessMembers from './access-members.ts';
 import * as decideStore from './decide-store.ts';
+import * as sharedSkillMembers from './shared-skill-members.ts';
 
 
 export const STORE_MEMBERS = {
@@ -197,6 +198,8 @@ export const STORE_MEMBERS = {
   ...collateReads,
   // The page-set reads of the size states, chat census, link ownership, company-brain evidence, shelf and attendance repair (rust/docs/store/collate_sets.md).
   ...collateSets,
+  // The shared-skill members and delivery batches join_brain, sync_brain_skills and leave_brain use (rust/docs/store/shared-skill-members.md).
+  ...sharedSkillMembers,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;
