@@ -79,24 +79,26 @@ export async function expandReadShared(sql: SqlQuery, stored: readonly string[],
  * stay on `archivedSources`, so naming one still answers unknown_source rather than permission_denied. The switch does
  * not apply when off, on the deny-all `none` (also every drifted or malformed grant), or on a token with no source
  * list, which already reads the floor. The write source never changes; `member` is read only for a switched key.
- * Throws when the source rows cannot be read, so the token fails closed.
+ * Throws when the archived sources cannot be read, so the token fails closed.
  */
 export async function tokenReadSources(sql: SqlQuery, grant: PrincipalGrant, member: () => Promise<string | null>):
-  Promise<{ sourceId: string; allowedSources?: string[]; hasSourceGrant: boolean; readShared?: true; archivedSources?: string[] }> {
+  Promise<{ sourceId: string; allowedSources?: string[]; hasSourceGrant: boolean; readShared?: true; readSharedUnresolved?: true; archivedSources?: string[] }> {
   const base = authSourcesFromGrant(grant);
   if (grant.sources.kind === 'none' || grant.sources.kind === 'default') return base;
-  const rows = await sharedRows(sql);
-  const live = new Set(rows.map(r => r.id));
+  const archivedIds = new Set((await sql`SELECT id FROM sources WHERE archived IS TRUE`).map(r => String(r.id)));
   const named = base.allowedSources ?? [base.sourceId];
-  const stored = named.filter(id => live.has(id));
-  const archived = named.filter(id => !live.has(id));
+  const stored = named.filter(id => !archivedIds.has(id));
+  const archived = named.filter(id => archivedIds.has(id));
   const archivedSources = archived.length ? { archivedSources: archived } : {};
-  const shared = grant.readShared === true ? { readShared: true as const } : {};
-  const denied = { sourceId: NO_SOURCES, allowedSources: [], hasSourceGrant: true, ...shared, ...archivedSources };
-  if (!live.has(base.sourceId)) return denied;
-  const sources = grant.readShared === true ? [...new Set([...stored, ...sharedSetFromRows(rows, await member())])] : stored;
-  if (grant.readShared !== true && !base.allowedSources) return { ...base, ...archivedSources };
-  return { sourceId: base.sourceId, allowedSources: sources, hasSourceGrant: true, ...shared, ...archivedSources };
+  if (archivedIds.has(base.sourceId)) {
+    return { sourceId: NO_SOURCES, allowedSources: [], hasSourceGrant: true, ...(grant.readShared === true ? { readShared: true as const } : {}), ...archivedSources };
+  }
+  if (grant.readShared === true) {
+    const expanded = await expandReadShared(sql, stored, await member());
+    return { sourceId: base.sourceId, allowedSources: expanded.sources, hasSourceGrant: true, readShared: true, ...(expanded.unresolved ? { readSharedUnresolved: true as const } : {}), ...archivedSources };
+  }
+  if (!base.allowedSources) return { ...base, ...archivedSources };
+  return { sourceId: base.sourceId, allowedSources: stored, hasSourceGrant: true, ...archivedSources };
 }
 
 /**
