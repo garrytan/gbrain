@@ -158,16 +158,45 @@ describe('Rust engine on the store', () => {
     expect(await tag(true)).toBeUndefined();
   });
 
-  withAddon('excludePrivate refuses for a caller whose member identity changes the page policy PGLite renders', async () => {
+  withAddon('excludePrivate refuses for a caller whose folder-rule grants change the page policy PGLite renders', async () => {
     const { engine } = await open();
     await engine.putPage('notes/a', page);
-    const asMember = <T>(fn: () => Promise<T>) => withCallerAccess({ identity: ['member:alice-example'] }, fn);
+    // A reader identity alone is served (the callerReaders opt-in); a satisfied folder rule still refuses.
+    const asReader = <T>(fn: () => Promise<T>) => withCallerAccess({ identity: ['member:alice-example'] }, fn);
+    expect(await code(() => asReader(() => engine.getRecentSalience({ days: 7, excludePrivate: true })))).toBeUndefined();
+    const asMember = <T>(fn: () => Promise<T>) =>
+      withCallerAccess({ identity: ['member:alice-example'], satisfiedRuleIds: ['default:team-notes'] }, fn);
     const refs = [{ slug: 'notes/a', source_id: 'default' }];
     expect(await code(() => asMember(() => engine.getRecentSalience({ days: 7, excludePrivate: true })))).toBe('engine_capability_missing');
     expect(await code(() => asMember(() => engine.getSalienceScores(refs, { excludePrivate: true })))).toBe('engine_capability_missing');
     expect(await code(() => asMember(() => engine.findAnomalies({ since: '2026-01-02', excludePrivate: true })))).toBe('engine_capability_missing');
     // Without excludePrivate the caller's record does not matter: the read applies no page policy.
     expect(await code(() => asMember(() => engine.getRecentSalience({ days: 7 })))).toBeUndefined();
+  });
+
+  withAddon('excludePrivate on the fact reads serves a reader identity and grant but refuses folder rules, audiences, lineage and labelled-only', async () => {
+    const { engine } = await open();
+    await engine.putPage('notes/a', page);
+    await engine.insertFacts([{ fact: 'f', entity_slug: 'people/a-example', source_markdown_slug: 'notes/a', row_num: 1, kind: 'fact', visibility: 'world', source: 'fence' }] as never, { source_id: 'default' });
+    const reads: Record<string, () => Promise<unknown>> = {
+      listFactsSince: () => engine.listFactsSince('default', new Date('2020-01-01T00:00:00Z'), { excludePrivate: true }),
+      countWorldFacts: () => engine.countWorldFacts({ sourceId: 'default', entitySlugs: ['people/a-example'], worldOnly: false, excludePrivate: true }),
+      getOntology: () => engine.getOntology('people/a-example', { excludePrivate: true }),
+    };
+    const reader = { identity: ['member:alice-example'], privateReadableSources: ['default'] };
+    // Option C scope: each of these changes the fact policy text, and the store has no form for it.
+    const refused = {
+      folderRule: { ...reader, satisfiedRuleIds: ['default:team-notes'] },
+      audience: { audience: ['member:alice-example', 'member:bob-example'], audienceIdentities: [['member:alice-example'], ['member:bob-example']] },
+      lineage: { ...reader, lineage: true },
+      labelledOnly: { ...reader, labelledOnly: true },
+    };
+    for (const [name, read] of Object.entries(reads)) {
+      expect([name, await code(() => withCallerAccess(reader, read))]).toEqual([name, undefined]);
+      for (const [kind, access] of Object.entries(refused)) {
+        expect([name, kind, await code(() => withCallerAccess(access, read))]).toEqual([name, kind, 'engine_capability_missing']);
+      }
+    }
   });
 
   withAddon('a chunk vector of the wrong width is refused, and writes nothing', async () => {

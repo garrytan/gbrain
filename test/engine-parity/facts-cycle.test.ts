@@ -18,6 +18,7 @@
 import { describe, expect } from 'bun:test';
 import { archiveSource, createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { CALLER_ENTITIES, callerFactRows, putCallerPages, readAsCallers } from './fact-callers.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -286,7 +287,27 @@ describe('engine parity: facts command, cycle and fence reads', () => {
     return floored;
   });
 
-  parityTest('countWorldFacts with excludePrivate drops facts of a private-provenance page, which the Rust store refuses (its rendering is not the baseline\'s)', { methods: ['countWorldFacts'] }, async (engine) => {
+  parityTest('countWorldFacts with excludePrivate applies a caller\'s reader identity and private-readable grant', { methods: ['countWorldFacts'] }, async (engine) => {
+    await putCallerPages(engine);
+    await fenced(engine, callerFactRows());
+    // One count per entity: the open entity holds one fact per provenance page, each other entity one fact.
+    const kept = await readAsCallers(async () => {
+      const out: Record<string, number> = {};
+      for (const [slug] of CALLER_ENTITIES) {
+        out[slug] = await engine.countWorldFacts({ sourceId: 'default', entitySlugs: [slug], worldOnly: false, excludePrivate: true });
+      }
+      return out;
+    });
+    const none = { 'people/open-example': 2, 'people/private-example': 0, 'people/readers-example': 0, 'people/team-example': 0, 'people/bob-only-example': 0 };
+    expect(kept.none).toEqual(none);
+    expect(kept.stranger).toEqual(none);
+    // This policy reads no identity on the provenance page, the caller's own member page included.
+    expect(kept.member).toEqual({ ...none, 'people/readers-example': 1, 'people/team-example': 1 });
+    expect(kept.granted).toEqual({ ...none, 'people/readers-example': 1, 'people/private-example': 1 });
+    return kept;
+  });
+
+  parityTest('countWorldFacts with excludePrivate drops facts of a private-provenance page', { methods: ['countWorldFacts'] }, async (engine) => {
     await engine.putPage('people/a-example', note('A'));
     await engine.putPage('notes/private', note('P', { visibility: 'private' }));
     await fact(engine, 'w', { entity_slug: 'people/a-example' });

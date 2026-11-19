@@ -19,6 +19,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { ignoredPrivacyLabelRunNotice, sourceHasRepo } from '../../src/core/search/ignored-privacy-labels.ts';
 import { createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -95,6 +96,29 @@ describe('engine parity: entity and mention reads', () => {
       const result = { open: await read(false), kept: await read(true) };
       expect(result.kept).toEqual(['people/alice-example', 'people/alice-founder', 'people/alice-q']);
       expect(result.open).toEqual([...result.kept.slice(0, 2), 'people/alice-private', 'people/alice-q', 'people/alice-readers', 'people/alice-restricted']);
+      return result;
+    });
+
+  parityTest('readIdentitySiblingCandidates with excludePrivate applies a caller\'s reader identity and private-readable grant',
+    { methods: ['readIdentitySiblingCandidates'] }, async (engine, backend) => {
+      await seed(engine, backend);
+      const person = (frontmatter: Record<string, unknown>) =>
+        ({ type: 'person', title: 'Alice', compiled_truth: 'Alice body.', frontmatter }) as Parameters<BrainEngine['putPage']>[1];
+      await engine.putPage('people/alice-private', person({ visibility: 'private' }), { sourceId: 'default' });
+      await engine.putPage('people/alice-readers', person({ readable_by: ['alice-example'] }), { sourceId: 'default' });
+      await engine.putPage('people/alice-team', person({ readable_by: 'group:team-a' }), { sourceId: 'default' });
+      await engine.putPage('people/alice-bob-only', person({ readable_by: ['bob-example'] }), { sourceId: 'default' });
+      const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess(access, () =>
+        engine.readIdentitySiblingCandidates('default', { types: ['person'], subject: 'alice', limit: 10, excludePrivate: true })
+          .then(rows => rows.map(r => r.slug)));
+      const result = {
+        member: await read({ identity: ['member:alice-example', 'group:team-a'], hidePrivate: true }),
+        granted: await read({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true }),
+        stranger: await read({ identity: ['member:carol-example'], hidePrivate: true }),
+      };
+      expect(result.stranger).toEqual(['people/alice-example', 'people/alice-founder', 'people/alice-q']);
+      expect(sorted(result.member)).toEqual(sorted([...result.stranger, 'people/alice-readers', 'people/alice-team']));
+      expect(sorted(result.granted)).toEqual(sorted([...result.stranger, 'people/alice-private', 'people/alice-readers']));
       return result;
     });
 

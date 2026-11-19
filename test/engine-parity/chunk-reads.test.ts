@@ -26,6 +26,7 @@ import type { ChunkInput, PageInput } from '../../src/core/types.ts';
 import { createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { chunk, installChunks } from './chunk-fixtures.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -400,6 +401,41 @@ describe('engine parity: chunk reads', () => {
       ]);
       expect(out.all.find(r => r.ord === 0)).toMatchObject({ effective_date: '2026-03-04T00:00:00.000Z', effective_date_source: 'date', effective_date_is_date: true });
       return out;
+    },
+  );
+
+  parityTest(
+    'code reads, code chunk probes and frozen hits under excludePrivate apply a caller\'s reader identity and private-readable grant',
+    { methods: ['putPage', 'sealChunks', 'findCodeDefinitions', 'listSymbolTypesForName', 'findCodeRefChunks', 'codeChunksExist', 'currentCodeChunksExist', 'resolveFrozenHits'] },
+    async (engine) => {
+      const pages = [
+        ['src/open', {}], ['src/private', { visibility: 'private' }], ['src/readers', { readable_by: ['alice-example'] }],
+        ['src/team', { readable_by: 'group:team-a' }], ['src/bob-only', { readable_by: ['bob-example'] }],
+        ['src/pinned', { visibility: 'private', pinned_question: true }],
+      ] as const;
+      for (const [slug, frontmatter] of pages) {
+        await sealedCode(engine, slug, [sym(0, `function run() { /* ${slug} */ }`, 'run', 'function')], undefined, {
+          frontmatter: { file: `${slug}.ts`, ...frontmatter },
+        });
+      }
+      const hits = pages.map(([slug], ord) => ({ source_id: 'default', slug, chunk_id: 0, ord }));
+      // A safe-chunk read refuses on Rust (no chunker-version fence), so the scope turns it off.
+      const scope = { excludePrivate: true, requireSafeChunks: false, sourceId: 'default' };
+      const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess(access, async () => ({
+        defs: sorted((await engine.findCodeDefinitions('run', scope)).map(r => r.slug)),
+        types: await engine.listSymbolTypesForName('run', scope),
+        refs: sorted((await engine.findCodeRefChunks('run', scope)).map(r => r.slug)),
+        stored: await engine.codeChunksExist('default', { excludePrivate: true }),
+        current: await engine.currentCodeChunksExist(scope, 'with_symbol'),
+        frozen: sorted((await engine.resolveFrozenHits(hits, { excludePrivate: true, requireSafeChunks: false })).map(r => r.slug)),
+      }));
+      const member = await read({ identity: ['member:alice-example', 'group:team-a'], hidePrivate: true });
+      const granted = await read({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true });
+      const stranger = await read({ identity: ['member:carol-example'], hidePrivate: true });
+      expect(stranger.defs).toEqual(['src/open']);
+      expect(member.defs).toEqual(['src/open', 'src/readers', 'src/team']);
+      expect(granted.frozen).toEqual(['src/open', 'src/private', 'src/readers']);
+      return { member, granted, stranger };
     },
   );
 });

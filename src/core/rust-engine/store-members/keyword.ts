@@ -106,7 +106,7 @@ function keywordOptions(member: Member, query: string, opts: (SearchOpts & { tim
   if (o.where) out.where = whereFields(member, o.where);
   if ((o.exclude_slugs as string[] | undefined)?.length) out.excludeSlugs = (o.exclude_slugs as string[]).map(String);
   if (pageGrain && o.keywordPhrase === true) out.phrase = true;
-  const policy = storePagePolicy(member, o.excludePrivate);
+  const policy = storePagePolicy(member, o.excludePrivate, { callerReaders: true });
   if (policy) out.excludePrivate = policy;
   if (requiresSafeChunks(opts)) out.requireSafeChunks = true;
   if (o.minTrust) out.minTrust = String(o.minTrust);

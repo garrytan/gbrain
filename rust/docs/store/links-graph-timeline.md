@@ -63,8 +63,9 @@ Where this engine differs from PGLite:
   paths) reject `invalid_argument` instead of being ignored, and so does a raw `eligibility` value
   on `getTimeline`. The TypeScript shell must not send them here.
 - `getTimeline` serves `excludePrivate`. The TypeScript member reads the page policy from the
-  rendered SQL (`storePagePolicy`) and passes it as `excludePrivate`. It refuses a caller whose
-  member pages, grants or lineage widen the policy. Under the policy a page that
+  rendered SQL (`storePagePolicy`) and passes it as `excludePrivate`. A caller whose record holds
+  only a reader identity and a private-readable grant is served with both (the `callerReaders`
+  opt-in); it refuses any other caller whose policy differs (folder grants, lineage, an owner read). Under the policy a page that
   `privatePagesFilterForCaller('p')` hides reads no rows. An entry drops when
   `privateTimelineEventFilterForCaller('te')` hides its event page (`page_hidden` in
   facts/privacy.rs). That filter is an `EXISTS` on the event page id alone, so an event page in

@@ -28,8 +28,9 @@ Code: `rust/crates/gbrain-store/src/timeline_queries.rs`, the napi methods in
 | `listTimelineOrphanPages({ afterId, limit, sourceId? })` | served (site read) |
 
 `excludePrivate` is served on the four chronicle reads. The TypeScript member reads the page policy from the rendered
-SQL (`storePagePolicy`) and passes it as `excludePrivate`; it refuses a caller whose member pages, grants or lineage
-widen the policy. Under the policy a row drops when `privatePagesFilterForCaller('p')` hides its depth page, or when
+SQL (`storePagePolicy`) and passes it as `excludePrivate`. A caller whose record holds only a reader identity and a
+private-readable grant is served with both (the `callerReaders` opt-in); it refuses any other caller whose policy
+differs (folder grants, lineage, an owner read). Under the policy a row drops when `privatePagesFilterForCaller('p')` hides its depth page, or when
 `privateTimelineEventFilterForCaller('te')` hides its event page (`page_hidden` in facts/privacy.rs for both). The
 event test is an `EXISTS` on the event page by id with no source scope, so an event page outside the scope (whose
 fields the join nulls out) still hides the row when the policy hides it. `requireSafeChunks`, `minTrust` and

@@ -3,8 +3,9 @@
 //!
 //! Built: [`stamp`] (the trust-tier trigger rules as one pure function, for the writers of pages,
 //! facts, takes and timeline entries to call), [`withdrawals`] (the `fact_withdrawals` ledger),
-//! [`write_gate`] (the write gate's `write_gate_receipts` and `write_gate_holds`) and [`proposals`]
-//! (the `trust_proposals` decision queue).
+//! [`write_gate`] (the write gate's `write_gate_receipts` and `write_gate_holds`), [`proposals`]
+//! (the `trust_proposals` decision queue) and [`tier_reads`] (the typed reads of stamped tiers that
+//! core memory, the trust scan and page history made through `executeRaw`; no key of their own).
 //! Everything else still reaches its tables through `executeRaw`, which the Rust engine refuses.
 //! See rust/docs/store/trust.md.
 //!
@@ -39,6 +40,8 @@ mod eligibility;
 mod fingerprint;
 pub mod proposals;
 mod row_trust;
+pub mod tier_reads;
+pub mod valid_time;
 pub mod withdrawals;
 pub mod write_gate;
 

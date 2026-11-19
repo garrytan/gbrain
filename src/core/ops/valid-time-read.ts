@@ -19,8 +19,8 @@ import { inlineBodyBytes } from './get-page-body.ts';
 import { pageTrustForRead, readQuarantined } from './get-page-projection.ts';
 import { admitsTrust, type TrustTier } from '../trust/tier.ts';
 import { isCalendarDate } from '../link-validity.ts';
-import { replacedBecauseSql } from '../engine-sql/pages.ts';
-import { callerReadersAllowedSql, privacyForCaller, privateLinkOriginFilterFragment, privatePagesFilterForCaller, privatePagesFilterFragment, privateSnapshotFilterFragment, remoteReadFloorSql, resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
+import { VALID_TIME_CURRENT_ORD, type ValidTimeIdentityRow } from '../engine-sql/trust-tier-reads.ts';
+import { resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
 import { fenceTranscriptText, isQuotedPageType, neutralizeToolCalls, quotesStored } from '../search/transcript-quote.ts';
 import { quotedPageMeta } from './get-page-projection.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
@@ -33,7 +33,7 @@ import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { segmentedReadDocument } from '../page-window/segmented.ts';
 import { PAGE_INLINE_MAX_BYTES } from '../page-size-policy.ts';
 import { LARGE_PAGE_VERSIONS_KEPT } from '../page-body/limits.ts';
-import { validDateSql, validTimeVerdict, type ValidTimeVerdict, type ValidTimeWhy } from '../valid-time.ts';
+import { validTimeVerdict, type ValidTimeVerdict, type ValidTimeWhy } from '../valid-time.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { Page } from '../types.ts';
 
@@ -44,10 +44,10 @@ const AS_OF_UNSUPPORTED = ['fuzzy', 'include_deleted', 'include_timeline_entries
   'lines', 'bytes', 'around_chunk_id', 'context_lines', 'view', 'outline_from', 'section', 'grep', 'context'] as const;
 const INSTANT = /^[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}/;
 /** Sorts after every page_versions id (a SERIAL int): the current page's place in recorded order. */
-const CURRENT_ORD = 2147483648;
+const CURRENT_ORD = VALID_TIME_CURRENT_ORD;
 const AMENDMENTS_CAP = 20;
 
-interface Identity { id: number; source_id: string; slug: string; source_path: string | null; local_path: string | null; world: boolean }
+type Identity = ValidTimeIdentityRow;
 interface PickRow {
   version_id: number | null; ord: number; replaced_at: string | null; valid_from: string; valid_until: string | null; visible: boolean;
   reason: string | null; successor_pruned: boolean; segmented: boolean; recorded_since: string | null; introduced_because: string | null; chosen: boolean;
@@ -91,22 +91,15 @@ function refuseCombinations(ctx: OperationContext, p: Record<string, unknown>): 
 
 /** The one page the read is about: a slug in more than one granted source refuses and asks for source_id. */
 async function resolveIdentity(tx: BrainEngine, ctx: OperationContext, slug: string, scope: { sourceId?: string; sourceIds?: string[] }, excludePrivate: boolean, asOf: string): Promise<Identity> {
-  const rows = await tx.executeRaw<Identity>(`SELECT p.id, p.source_id, p.slug, p.source_path, s.local_path, ${privatePagesFilterFragment('p')} AS world
-      FROM pages p JOIN sources s ON s.id = p.source_id
-     WHERE p.slug = $1 AND p.deleted_at IS NULL AND ($2::text IS NULL OR p.source_id = $2) AND ($3::text[] IS NULL OR p.source_id = ANY($3::text[]))
-       ${excludePrivate ? `AND ${privatePagesFilterForCaller('p')}` : ''}
-     ORDER BY p.source_id LIMIT 6`, [slug, scope.sourceId ?? null, scope.sourceIds ?? null]);
+  const rows = await tx.listValidTimeIdentities({ slug, sourceId: scope.sourceId ?? null, sourceIds: scope.sourceIds ?? null, excludePrivate });
   if (rows.length > 1) {
     const sources = rows.map(r => r.source_id);
     throw opError('invalid_params', `get_page: ${slug} exists in several sources (${sources.join(', ')}); an as_of read follows one page's history.`,
       'Pass source_id to name the page.', { fix: readFix(`Reads the page in source ${sources[0]}.`, { mcp: { tool: 'get_page', arguments: { slug, source_id: sources[0], as_of: asOf } } }) });
   }
   if (!rows[0]) throw pageNotFoundError(ctx, slug, { includeDeleted: false, sourceIdParam: scope.sourceId });
-  return { ...rows[0], id: Number(rows[0].id), world: rows[0].world === true };
+  return rows[0];
 }
-
-const bodyKey = (a: string) => `CASE WHEN ${a}.body_storage = 'segmented' THEN 's:' || COALESCE(${a}.content_hash, '')
-  ELSE md5(COALESCE(${a}.compiled_truth, '') || chr(1) || COALESCE(${a}.timeline, '')) END`;
 
 /**
  * The pick: one statement over the current page and its retained versions. With `pinOrd` it measures that row instead
@@ -114,42 +107,7 @@ const bodyKey = (a: string) => `CASE WHEN ${a}.body_storage = 'segmented' THEN '
  * pick's recorded neighbours that keep its body under another valid_from.
  */
 async function pick(tx: BrainEngine, pageId: number, asOf: string, excludePrivate: boolean, pinOrd: number | null): Promise<PickResult> {
-  const vd = (a: string, key: string) => validDateSql(`${a}.frontmatter->>'${key}'`);
-  const [r] = await tx.executeRaw<Record<string, unknown>>(`WITH rows AS (
-      SELECT pv.id AS version_id, pv.id::bigint AS ord, pv.snapshot_at AS replaced_at, ${vd('pv', 'valid_from')} AS valid_from, ${vd('pv', 'valid_until')} AS valid_until,
-             ${bodyKey('pv')} AS body_key, (${callerReadersAllowedSql('pv', 'snapshot')} AND ${privacyForCaller('p', privateSnapshotFilterFragment('pv'))}) AS visible,
-             ${replacedBecauseSql('pv', excludePrivate)} AS reason, pv.trust_tier AS tier,
-             COALESCE(pv.successor_pruned, false) AS successor_pruned, COALESCE(pv.body_storage = 'segmented', false) AS segmented,
-             (pv.body_storage IS DISTINCT FROM 'segmented' AND octet_length(COALESCE(pv.compiled_truth, '')) + octet_length(COALESCE(pv.timeline, '')) > $3) AS large,
-             pv.source_path IS NOT NULL AS filed
-        FROM page_versions pv JOIN pages p ON p.id = pv.page_id WHERE pv.page_id = $1
-      UNION ALL
-      SELECT NULL, ${CURRENT_ORD}::bigint, NULL, ${vd('p', 'valid_from')}, ${vd('p', 'valid_until')}, ${bodyKey('p')}, ${privatePagesFilterForCaller('p')}, NULL, p.trust_tier,
-             false, COALESCE(p.body_storage = 'segmented', false), false, p.source_path IS NOT NULL
-        FROM pages p WHERE p.id = $1),
-    seq AS (
-      SELECT r.*, lag(r.replaced_at) OVER w AS recorded_since, lag(CASE WHEN NOT r.successor_pruned${excludePrivate ? ' AND r.visible' : ''} THEN r.reason END) OVER w AS introduced_because, lead(r.tier) OVER w AS successor_tier,
-             lag(r.ord) OVER w AS prev_ord, lead(r.ord) OVER w AS next_ord
-        FROM rows r WINDOW w AS (ORDER BY r.ord)),
-    pick AS (
-      SELECT s.*, (s.valid_from <= $2::text) AS chosen FROM seq s
-       WHERE s.valid_from IS NOT NULL AND ($4::bigint IS NULL OR s.ord = $4::bigint)
-       ORDER BY (s.valid_from <= $2::text) DESC, CASE WHEN s.valid_from <= $2::text THEN s.valid_from END DESC,
-                CASE WHEN s.valid_from > $2::text THEN s.valid_from END ASC, s.ord DESC
-       LIMIT 1)
-    SELECT k.version_id, k.ord, k.replaced_at, k.valid_from, k.valid_until, k.visible, k.reason, k.successor_pruned, k.segmented,
-           k.recorded_since, k.introduced_because, k.chosen, k.tier, k.successor_tier,
-           (SELECT array_agg(c.ord ORDER BY c.ord) FROM (SELECT s.ord FROM seq s
-              WHERE s.valid_from IS NOT NULL AND s.ord <> k.ord AND (
-                (s.ord > k.ord AND s.valid_from < k.valid_from)
-                OR (s.ord IN (k.prev_ord, k.next_ord) AND s.body_key = (SELECT b.body_key FROM seq b WHERE b.ord = k.ord) AND s.valid_from <> k.valid_from))
-              ORDER BY s.ord LIMIT 5) c) AS competing,
-           (SELECT count(*) FROM seq WHERE valid_from IS NULL) AS undated,
-           (SELECT count(*) FROM seq WHERE version_id IS NOT NULL AND large) AS large_versions,
-           (SELECT count(*) FROM seq WHERE version_id IS NOT NULL AND segmented) AS segmented_versions,
-           (SELECT bool_or(filed) FROM seq) AS any_filed,
-           p.version_history_gap_at AS gap_at, p.created_at
-      FROM pages p LEFT JOIN pick k ON true WHERE p.id = $1`, [pageId, asOf, PAGE_INLINE_MAX_BYTES, pinOrd]);
+  const r = await tx.pickValidTimeEdition({ pageId, asOf, excludePrivate, pinOrd, inlineMaxBytes: PAGE_INLINE_MAX_BYTES });
   const row: PickRow | null = r && r.ord != null ? {
     version_id: r.version_id == null ? null : Number(r.version_id), ord: Number(r.ord), replaced_at: iso(r.replaced_at), valid_from: String(r.valid_from),
     valid_until: r.valid_until == null ? null : String(r.valid_until), visible: r.visible === true, reason: (r.reason as string | null) ?? null,
@@ -175,15 +133,8 @@ function verdictOf(asOf: string, picked: PickResult): ValidTimeVerdict {
 
 /** Amendment records (`amends` links to the page) dated after the edition took effect and on or before the date: as_of does not fold them in. */
 async function amendmentsNotApplied(tx: BrainEngine, pageId: number, editionFrom: string, asOf: string, excludePrivate: boolean, scope: { sourceId?: string; sourceIds?: string[] }) {
-  const sources = scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : null);
-  const rows = await tx.executeRaw<{ slug: string; source_id: string; since: string | null }>(`SELECT f.slug, f.source_id, min(to_char(r.first_start, 'YYYY-MM-DD')) AS since
-      FROM links l JOIN pages f ON f.id = l.from_page_id AND f.deleted_at IS NULL${excludePrivate ? ` AND ${remoteReadFloorSql('f')}` : ''}
-      LEFT JOIN link_relationships r ON r.from_page_id = l.from_page_id AND r.to_page_id = l.to_page_id AND r.link_type = l.link_type AND r.scope = $4
-     WHERE l.to_page_id = $1 AND l.link_type = 'amends'${excludePrivate ? ` AND ${privateLinkOriginFilterFragment('l')}` : ''}
-       AND ($5::text[] IS NULL OR f.source_id = ANY($5::text[]))
-       AND (r.first_start IS NULL OR (r.first_start > $2::date AND r.first_start <= $3::date))
-     GROUP BY f.slug, f.source_id ORDER BY f.slug LIMIT ${AMENDMENTS_CAP}`, [pageId, editionFrom, asOf, excludePrivate ? 'world' : 'all', sources]).catch(() => []);
-  return rows.map(r => ({ slug: r.slug, source_id: r.source_id, since: r.since ?? null }));
+  const sourceIds = scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : null);
+  return tx.listAmendmentsNotApplied({ pageId, editionFrom, asOf, excludePrivate, sourceIds, limit: AMENDMENTS_CAP });
 }
 
 /** The serialized frontmatter edit that sets valid_from to the `<DATE>` placeholder: the existing line, or a new first key. */
@@ -239,14 +190,11 @@ async function loadEdition(tx: BrainEngine, identity: Identity, row: PickRow): P
     return { current, edition: { versionId: null, title: p.title, type: p.type, tags: snap.tags, frontmatter: (p.frontmatter ?? {}) as Record<string, unknown>,
       compiled_truth: segmented ? '' : p.compiled_truth ?? '', timeline: segmented ? '' : p.timeline ?? '', revision: snap.revision, segmented, generation: snap.bodyGeneration } };
   }
-  const [v] = await tx.executeRaw<Record<string, unknown>>(`SELECT id, title, type, tags, frontmatter, compiled_truth, timeline, knowledge_revision::text AS revision,
-      body_storage, body_generation FROM page_versions WHERE id = $1 AND page_id = $2`, [row.version_id, identity.id]);
+  const v = await tx.readPageVersionEdition({ pageId: identity.id, versionId: row.version_id });
   if (!v) return null;
-  const tags = Array.isArray(v.tags) ? v.tags.map(String) : typeof v.tags === 'string' ? JSON.parse(v.tags) as string[] : [];
-  const fm = (typeof v.frontmatter === 'string' ? JSON.parse(v.frontmatter) : v.frontmatter ?? {}) as Record<string, unknown>;
-  return { current, edition: { versionId: Number(v.id), title: String(v.title ?? identity.slug), type: String(v.type ?? ''), tags, frontmatter: fm,
-    compiled_truth: String(v.compiled_truth ?? ''), timeline: String(v.timeline ?? ''), revision: String(v.revision ?? ''),
-    segmented: v.body_storage === 'segmented', ...(v.body_generation != null ? { generation: Number(v.body_generation) } : {}) } };
+  return { current, edition: { versionId: v.id, title: v.title ?? identity.slug, type: v.type ?? '', tags: v.tags, frontmatter: v.frontmatter,
+    compiled_truth: v.compiled_truth ?? '', timeline: v.timeline ?? '', revision: v.revision ?? '',
+    segmented: v.body_storage === 'segmented', ...(v.body_generation !== null ? { generation: v.body_generation } : {}) } };
 }
 
 /**
@@ -300,9 +248,8 @@ async function pinnedOrd(tx: BrainEngine, ctx: OperationContext, identity: Ident
     throw opError('invalid_params', `get_page: cursor is not an as_of window cursor for page ${identity.slug}.`, 'Pass the next_cursor of the previous as_of read, with the same slug, source_id and as_of.');
   }
   if (c.revision.startsWith('v:')) return { ord: Number(c.revision.slice(2)), offset: c.offset, maxBytes: c.max_bytes };
-  const [row] = await tx.executeRaw<{ current: boolean; version_id: number | null }>(`SELECT (p.knowledge_revision::text = $2) AS current,
-      (SELECT max(v.id) FROM page_versions v WHERE v.page_id = p.id AND v.knowledge_revision::text = $2) AS version_id FROM pages p WHERE p.id = $1`, [identity.id, c.revision]);
-  const ord = row?.current === true ? CURRENT_ORD : row?.version_id != null ? Number(row.version_id) : -1;
+  const row = await tx.readCursorEdition({ pageId: identity.id, revision: c.revision });
+  const ord = row?.current === true ? CURRENT_ORD : row?.version_id != null ? row.version_id : -1;
   return { ord, offset: c.offset, maxBytes: c.max_bytes };
 }
 
@@ -317,7 +264,7 @@ export async function getPageAsOf(ctx: OperationContext, p: Record<string, unkno
   await assertExplicitSourceLive(ctx, sourceIdParam);
   const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
   const read = await ctx.engine.transaction(async tx => {
-    await tx.executeRaw('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+    await tx.beginSnapshotRead();
     const identity = await resolveIdentity(tx, ctx, slug, scope, excludePrivate, asOf);
     const pin = p.cursor !== undefined ? await pinnedOrd(tx, ctx, identity, p.cursor) : null;
     let picked = await pick(tx, identity.id, asOf, excludePrivate, pin?.ord ?? null);

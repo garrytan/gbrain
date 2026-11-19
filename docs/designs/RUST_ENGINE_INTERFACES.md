@@ -812,7 +812,7 @@ Slug renames and page aliases.
 - **Depends on:** `updateSlug` moves the page key (`P`) from the old slug to the new one through core's `pages::rename_page` (built; "Core hooks"). This family versions the page first (`pages::snapshot_in`), then calls `rename_page`, then records the alias, moves its own slug bindings (`page_aliases`, statements 7 and 8 of "Rename slug rows"), and calls `cascade::rename_slug_rows` for the facts records. Links, chunks, tags, timeline and versions follow the page id and need no change.
 - **Estimate:** about 5 to 6 days.
 - **Notes:** Same capability (`pages`) as page_ops and extraction. `resolveSlugWithAliasDetailed` returns how the slug was found; keep its result fields exact.
-- **Known gap:** the Rust store keeps no `alias_text` and no `case_sensitive` flag on `page_aliases` rows, so `resolveCaseSensitiveAliases` is always empty, `readPageAliasRows` gives `alias_text: null`, and `replaceDerivedAliases` stays unserved until alias storage exists (`rust/docs/store/alias_fanout_reads.md`). `findPagesByTitles` with `excludePrivate` refuses with `engine_capability_missing` for a caller whose reader identity widens the page policy; the caller's fail-open fallback reads that as no rows.
+- **Known gap:** the Rust store keeps no `alias_text` and no `case_sensitive` flag on `page_aliases` rows, so `resolveCaseSensitiveAliases` is always empty, `readPageAliasRows` gives `alias_text: null`, and `replaceDerivedAliases` stays unserved until alias storage exists (`rust/docs/store/alias_fanout_reads.md`). `findPagesByTitles`, `resolveAliases` and `aliasCanonicalRefs` with `excludePrivate` serve a caller's reader identity and private-readable grant; they refuse with `engine_capability_missing` for a caller whose policy differs in any other way (folder rules, lineage, an owner read), and the caller's fail-open fallback reads that as no rows.
 - **Parity cases (11, in `sync-aliases.test.ts` and `alias-trust.test.ts`):**
   - `sync-aliases.test.ts`: updateSlug renames a page in place, keeps its chunks, and returns 0 when the old slug is absent
   - `sync-aliases.test.ts`: updateSlug is source-scoped and rejects a path-traversal new slug
@@ -822,7 +822,7 @@ Slug renames and page aliases.
   - `sync-aliases.test.ts`: rewriteLinks after updateSlug is a no-op: links follow the page id, not the slug
   - `alias-trust.test.ts`: resolveAliases drops aliases of pages below the floor or flagged, and their titles no longer shadow a derived alias
   - `alias-trust.test.ts`: resolveAliases under excludePrivate drops aliases of hidden pages, and a hidden title no longer shadows a derived alias
-  - `alias-trust.test.ts`: resolveAliases under excludePrivate for a caller with a reader identity: SQL arms apply the caller policy, the Rust store refuses
+  - `alias-trust.test.ts`: resolveAliases under excludePrivate applies a caller's reader identity and private-readable grant
   - `alias-trust.test.ts`: the search alias fan-out resolves an entity by its alias under excludePrivate and a trust floor
   - `alias-trust.test.ts`: resolveAliases lists mixed-case and non-ASCII aliases, and the pages of one alias, in byte order
 
@@ -868,6 +868,9 @@ Facts and their supersession chains.
     open loops, `F 0x0A` and `F 0x0B` the `fact_relink_attempts` record (`upsertFactRelinkAttempt`,
     `listFactRelinkOutcomes`, `deleteFactRelinkMemos`, and the tried, paid and no-subject memos the doctor's unlinked
     reads use). The attempts have no foreign key, so a fact or page delete leaves them, as in Postgres.
+    The relink writes `placeRelinkedFact` and `linkConversationFact` change `F 0x01` rows through `write_fact`, so
+    the fence key `F 0x05` refuses a held position as the unique index does. `listConversationRelinkPages`, the
+    conversation relink's page pick, reads the source's `F 0x01` rows and the tried memos.
 - **Depends on:** None for the core members. Three cases also read takes (`countUnconsolidatedFacts`, `getFactsHealth`, the `listFactsByEntity` consolidation filter) and one needs the transactions family (keyset across a shared timestamp inside `transaction`). `findCandidateDuplicates` with an embedding refuses until vectors land; the keyword arm uses the keyword family's ranker. Source delete is not served yet (see "Page delete cascade"). A page rename moves facts and withdrawals keyed by the old slug: fill in `facts::rename_slug_rows` ("Rename slug rows").
 - **Estimate:** about 4 days.
 - **Notes:** `listFactsKeyset` cursors are microsecond ISO text; `grep` is ILIKE with wildcards treated literally. `migrateFactsToCanonical` rewrites `entity_slug`, `source_markdown_slug` and `row_num` only.
@@ -1726,15 +1729,27 @@ and write provenance on content rows, and the trust records.
   - No caller, still refused: `currentCodeChunksExist` and the code symbol members (the context read policy sends
     no floor), `findOrphanPages` and `listLinkSources`.
   - Ignored on purpose, as their SQL does: the raw-files, stats, ontology, timeline and chunk-page reads.
-  - Not yet built: `listSingleFactMetadata` (a write-path read under the remote floor) and
-    `listUnpreviewedTrustFacts` (the doctor check) have no store read. Reads of `trust_tier` through `executeRaw`
-    (core memory, the eligibility scan, belief history, admin, valid time) need typed members. `resolveAliases`
-    serves the floor, the flagged-page filter and `excludePrivate` on both the alias page and its title shadow
-    (`alias-trust.test.ts`); it still refuses `excludePrivate` for a caller whose member pages, grants or lineage
-    widen the page policy, and the search fan-out reads that refusal as no aliases. The fact read
-    eligibility refusal (`listSupersessions` and its family) has production callers and is a follow-up. The takes
-    members keep their refusal.
-  - Pinned by `test/engine-parity/trust-reads.test.ts` on all three engines.
+  - Built: `listSingleFactMetadata` (refused only under the remote floor) and `listUnpreviewedTrustFacts` read the
+    stamped tier and origin (`facts/trust_reads.rs`), and `listSupersessions` honours a read eligibility.
+  - Built: the `executeRaw` reads of `trust_tier` in core memory, the eligibility scan, belief history, page history
+    (`get_versions`) and valid time are typed members (`engine-sql/trust-tier-reads.ts`). The Rust store serves
+    `listCorePageRows`, the pages and facts arms of `listTrustScanRows` and `countUnscannedTrustRows`,
+    `listVersionTrustTiers` and `listVersionReasonWriters` (`trust/tier_reads.rs`), and the valid-time page lookup
+    `listValidTimeIdentities`, `pickValidTimeEdition`, `readPageVersionEdition`, `readCursorEdition` (`trust/valid_time.rs`)
+    and `listAmendmentsNotApplied`
+    (`link_queries/link_temporal.rs`). `pageAwaitsRederive`, the purge check of `get_page`, `fetch` and `known_as_of`,
+    answers false: the store keeps no `needs_rederive` queue. `beginSnapshotRead` (`engine-sql/transaction-settings.ts`) starts the valid-time,
+    fuzzy `get_page` and export transactions as one `REPEATABLE READ` snapshot; the Rust member sets nothing, because a
+    store transaction holds the one writer from its start, and it does not enforce `READ ONLY`. It refuses the takes and timeline
+    scan tables and a pick over a history PGLite would have pruned (TODOS.md `rust-version-prune`), and the belief
+    history members refuse for the missing belief ledger (TODOS.md `rust-belief-ledger`).
+  - `resolveAliases` serves the floor, the flagged-page filter and `excludePrivate` on both the alias page and its
+    title shadow (`alias-trust.test.ts`), a caller's reader identity and private-readable grant included; it still
+    refuses `excludePrivate` for a caller whose member pages, grants or lineage widen the page policy, and the search
+    fan-out reads that refusal as no aliases.
+  - Not yet built: the scan cursor, the claim and `max(id)` reads of the eligibility scan, and the admin slug and lifetime reads still go through `executeRaw`. The takes members keep
+    their refusal.
+  - Pinned by `test/engine-parity/trust-reads.test.ts` and `test/engine-parity/trust-tier-reads.test.ts` on all three engines.
 
 ### catalog probes (core)
 

@@ -32,6 +32,7 @@ export const RUST_ENGINE_MEMBERS = {
   // transactions
   readTransactionSettings: 'transactions',
   applyTransactionSettings: 'transactions',
+  beginSnapshotRead: 'transactions',
   transaction: 'transactions',
   transactionDirect: 'transactions',
   lockPageKeys: 'transactions',
@@ -337,6 +338,11 @@ export const RUST_ENGINE_MEMBERS = {
   listFactRelinkOutcomes: 'facts',
   deleteFactRelinkMemos: 'facts',
 
+  // facts: relink writes and the conversation relink's page pick (engine-sql/fact-relink-writes.ts)
+  placeRelinkedFact: 'facts',
+  linkConversationFact: 'facts',
+  listConversationRelinkPages: 'facts',
+
   // facts: command, cycle and fence reads (engine-sql/facts-cycle.ts)
   listActiveFactsForEntity: 'facts',
   listFreshExtractionOutcomes: 'facts',
@@ -509,6 +515,11 @@ export const RUST_ENGINE_MEMBERS = {
   listRetiredDeactivations: 'persistence_journal',
   readWriteRequest: 'persistence_journal',
   readWriteRequestById: 'persistence_journal',
+  readWriteRequestProgress: 'persistence_journal',
+  countOutstandingBySource: 'persistence_journal',
+  ownsSchemaTables: 'persistence_journal',
+  readCounterRows: 'persistence_journal',
+  readAdmissionRate: 'persistence_journal',
   lockPersistenceCounters: 'persistence_journal',
   insertWriteRequest: 'persistence_journal',
   stampWriteClaim: 'persistence_journal',
@@ -525,6 +536,11 @@ export const RUST_ENGINE_MEMBERS = {
   renewWriteClaim: 'persistence_journal',
   expireStaleWriteClaims: 'persistence_journal',
   hasClaimableWrite: 'persistence_journal',
+  listHostConsumerRows: 'persistence_journal',
+  probeLiveConsumerRows: 'persistence_journal',
+  renewConsumerRow: 'persistence_journal',
+  deleteConsumerRow: 'persistence_journal',
+  stampWorktreeHeartbeats: 'persistence_journal',
   claimHousekeepingTurn: 'persistence_journal',
   completeHousekeepingTurn: 'persistence_journal',
   readReceiptBudget: 'persistence_journal',
@@ -533,6 +549,7 @@ export const RUST_ENGINE_MEMBERS = {
   listTrueUpRequests: 'persistence_journal',
   listGatedMirrorRequests: 'persistence_journal',
   listEffectRecoveries: 'persistence_journal',
+  selectClaimableEffect: 'persistence_journal',
   readCapacityForecastInputs: 'persistence_journal',
   listPendingSegmentedProjections: 'persistence_journal',
   selectProjectionWindowJobs: 'persistence_journal',
@@ -699,6 +716,20 @@ export const RUST_ENGINE_MEMBERS = {
   queueWakeForget: 'minion_queue',
   claimWakeForgets: 'minion_queue',
   settleWakeForget: 'minion_queue',
+  // Group D (trust tier reads)
+  listCorePageRows: 'pages',
+  listTrustScanRows: 'facts',
+  countUnscannedTrustRows: 'facts',
+  readBeliefHistoryRows: 'belief_ledger',
+  listVisibleBeliefLifetimes: 'belief_ledger',
+  listVersionTrustTiers: 'page_versions',
+  listVersionReasonWriters: 'page_versions',
+  listValidTimeIdentities: 'pages',
+  pickValidTimeEdition: 'page_versions',
+  listAmendmentsNotApplied: 'links',
+  readPageVersionEdition: 'page_versions',
+  readCursorEdition: 'page_versions',
+  pageAwaitsRederive: 'pages',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

@@ -25,6 +25,8 @@ import { createSource, parityArms, pick, sorted } from './harness.ts';
 import { withWriteAttribution } from '../../src/core/persistence/context.ts';
 import type { WriteAttribution } from '../../src/core/persistence/attribution.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { CALLER_ENTITIES, CALLER_PROVENANCE, OPEN_PAGE, putCallerPages, readAsCallers } from './fact-callers.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -162,6 +164,58 @@ describe('engine parity: timeline entries', () => {
       expect(keptAlt).toEqual([]);
       expect(Object.values(hidden)).toEqual([[], [], []]);
       return { all, kept, keptDefault, keptAlt, keptLimited, keptWindow, hidden };
+    },
+  );
+
+  parityTest(
+    'getTimeline under excludePrivate applies a caller\'s reader identity and private-readable grant',
+    { methods: ['getTimeline', 'addTimelineEntry', 'upsertEventProjection', 'putPage'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'alt');
+      const page = (slug: string, type: string, frontmatter: Record<string, unknown>, opts?: { sourceId?: string }) =>
+        engine.putPage(slug, { type: type as 'person', title: slug, compiled_truth: `${slug} body`, timeline: '', frontmatter }, opts);
+      await page('people/alice-example', 'person', {});
+      await page('people/private-example', 'person', { visibility: 'private' });
+      await page('people/alt-private-example', 'person', { visibility: 'private' }, { sourceId: 'alt' });
+      await page('people/readers-example', 'person', { readable_by: ['alice-example'] });
+      await page('people/team-example', 'person', { readable_by: 'group:team-a' });
+      await page('people/bob-only-example', 'person', { readable_by: ['bob-example'] });
+      await page('people/pinned-example', 'person', { visibility: 'private', pinned_question: true });
+      for (const [eventSlug, frontmatter] of [
+        ['life/events/open', {}], ['life/events/private', { visibility: 'private' }],
+        ['life/events/readers', { readable_by: ['alice-example'] }], ['life/events/bob-only', { readable_by: ['bob-example'] }],
+      ] as const) {
+        await engine.putPage(eventSlug, {
+          type: 'event', title: eventSlug, compiled_truth: `${eventSlug} body`, timeline: '',
+          frontmatter: { ...frontmatter, event: { kind: 'meeting', who: ['people/alice-example'] } },
+          effective_date: new Date('2026-06-18T09:00:00Z'), effective_date_source: 'event_date',
+        });
+        await engine.upsertEventProjection({ depthSlug: 'people/alice-example', eventSlug, date: '2026-06-18', summary: eventSlug });
+      }
+      const own = ['people/private-example', 'people/readers-example', 'people/team-example', 'people/bob-only-example', 'people/pinned-example'];
+      for (const slug of own) await engine.addTimelineEntry(slug, { date: '2026-06-15', summary: `${slug} plain` });
+      await engine.addTimelineEntry('people/alt-private-example', { date: '2026-06-15', summary: 'alt plain' }, { sourceId: 'alt' });
+      const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess(access, async () => {
+        const rows: Record<string, string[]> = {};
+        for (const slug of ['people/alice-example', ...own, 'people/alt-private-example']) {
+          rows[slug] = (await engine.getTimeline(slug, { excludePrivate: true })).map((e) => e.summary);
+        }
+        return rows;
+      });
+      const member = await read({ identity: ['member:alice-example', 'group:team-a'], hidePrivate: true });
+      const granted = await read({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true });
+      const stranger = await read({ identity: ['member:carol-example'], hidePrivate: true });
+      expect(stranger['people/alice-example']).toEqual(['life/events/open']);
+      expect(sorted(member['people/alice-example'])).toEqual(['life/events/open', 'life/events/readers']);
+      expect(member['people/readers-example']).toEqual(['people/readers-example plain']);
+      expect(member['people/team-example']).toEqual(['people/team-example plain']);
+      expect(member['people/bob-only-example']).toEqual([]);
+      expect(member['people/private-example']).toEqual([]);
+      expect(granted['people/private-example']).toEqual(['people/private-example plain']);
+      expect(granted['people/pinned-example']).toEqual([]);
+      expect(granted['people/alt-private-example']).toEqual([]);
+      expect(sorted(granted['people/alice-example'])).toEqual(['life/events/open', 'life/events/private', 'life/events/readers']);
+      return { member, granted, stranger };
     },
   );
 
@@ -750,6 +804,34 @@ describe('engine parity: excludePrivate on the chronicle reads', () => {
       return { alice, aliceKept, aliceDefault, aliceAlt, charlie, charlieKept, hidden, hiddenKept };
     },
   );
+
+  parityTest(
+    'the chronicle reads under excludePrivate apply a caller\'s reader identity and private-readable grant',
+    { methods: ['putPage', 'upsertEventProjection', 'addTimelineEntry', 'getTimelineForDate', 'getSince', 'getOnThisDay', 'getLastSeen'] },
+    async (engine, backend) => {
+      await seedPrivacy(engine, backend);
+      const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess(access, async () => ({
+        day: summaries(await engine.getTimelineForDate('2026-06-18', { excludePrivate: true })),
+        week: summaries(await engine.getTimelineForDate('2026-06-18', { week: true, excludePrivate: true })),
+        since: summaries(await engine.getSince('2026-06-18', { excludePrivate: true })),
+        onThisDay: summaries(await engine.getOnThisDay({ date: '2026-06-18', excludePrivate: true })),
+        charlie: await engine.getLastSeen('people/charlie-example', { asof: '2026-06-25', excludePrivate: true }),
+        hidden: await engine.getLastSeen('people/hidden-person', { asof: '2026-06-25', excludePrivate: true }),
+      }));
+      const member = await read({ identity: ['member:alice-example', 'group:team-a'], hidePrivate: true });
+      const granted = await read({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true });
+      const stranger = await read({ identity: ['member:bob-example'], hidePrivate: true });
+      expect(stranger.day).toEqual(['2026-06-18 open plain', '2026-06-18 alt open plain', '2026-06-18 open depth, open event']);
+      expect(member.day).toContain('2026-06-18 depth with readers, open event');
+      expect(member.day).toContain('2026-06-18 open depth, event with readers');
+      expect(member.day).not.toContain('2026-06-18 private depth, open event');
+      expect(granted.day).toContain('2026-06-18 private depth, open event');
+      expect(granted.onThisDay).toContain('2025-06-18 private last year');
+      expect(granted.onThisDay).not.toContain('2025-06-18 alt private last year');
+      expect(granted.hidden.last_date).not.toBeNull();
+      return { member, granted, stranger };
+    },
+  );
 });
 
 describe('engine parity: ontology', () => {
@@ -839,6 +921,54 @@ describe('engine parity: ontology', () => {
       expect(defaultOnly.find((d) => d.dimension === 'role')?.entities).toBe(2);
       expect(missing).toEqual([]);
       return { all, defaultOnly, federated, missing };
+    },
+  );
+
+  parityTest(
+    'getOntology and findOntologyConflicts under excludePrivate apply a caller\'s reader identity and private-readable grant',
+    { methods: ['putPage', 'mergeOntologyFact', 'getOntology', 'findOntologyConflicts'] },
+    async (engine) => {
+      await putCallerPages(engine);
+      const merge = (entitySlug: string, dimension: string, value: string, source: string, validFrom: string) =>
+        engine.mergeOntologyFact({ entitySlug, dimension, value, source, validFrom, visibility: 'world' });
+      // A newer value merged first and an older one merged after both stay current: a conflict that shows only while
+      // both values are visible. Each provenance page holds the older role and an employer of an entity with no page;
+      // each entity page's entity holds two roles from two open pages.
+      const provEntity = (i: number) => `people/prov-${i}-example`;
+      for (const [i, [slug]] of CALLER_PROVENANCE.entries()) {
+        await merge(provEntity(i), 'role', 'open', OPEN_PAGE, '2026-05-01');
+        await merge(provEntity(i), 'role', 'page', slug, '2026-01-01');
+        await merge(provEntity(i), 'employer', 'page', slug, '2025-01-01');
+      }
+      const SECOND_OPEN = 'notes/second-open';
+      await engine.putPage(SECOND_OPEN, { type: 'note', title: SECOND_OPEN, compiled_truth: 'Open.', timeline: '', frontmatter: {} });
+      for (const [slug] of CALLER_ENTITIES) {
+        await merge(slug, 'role', 'newer', OPEN_PAGE, '2026-05-01');
+        await merge(slug, 'role', 'older', SECOND_OPEN, '2026-01-01');
+      }
+      const kept = await readAsCallers(async () => {
+        const ontology: string[] = [];
+        for (const [i, [slug]] of CALLER_PROVENANCE.entries()) {
+          for (const r of await engine.getOntology(provEntity(i), { excludePrivate: true })) ontology.push(`${slug}:${r.dimension}=${r.value}`);
+        }
+        for (const [slug] of CALLER_ENTITIES) {
+          for (const r of await engine.getOntology(slug, { excludePrivate: true })) ontology.push(`${slug}:${r.dimension}=${r.value}`);
+        }
+        const conflicts = conflictView(await engine.findOntologyConflicts({ excludePrivate: true }))
+          .map((c) => `${c.entity_slug}:${c.dimension}`);
+        return { ontology: ontology.sort(), conflicts: conflicts.sort() };
+      });
+      // This policy reads no identity on the provenance page: only the open page's employer shows, for every caller.
+      const provenance = [...CALLER_PROVENANCE.map(([slug]) => `${slug}:role=open`), `${OPEN_PAGE}:employer=page`];
+      const view = (entities: string[]) => ({
+        ontology: [...provenance, ...entities.map((e) => `${e}:role=newer`)].sort(),
+        conflicts: entities.map((e) => `${e}:role`).sort(),
+      });
+      expect(kept.none).toEqual(view(['people/open-example']));
+      expect(kept.stranger).toEqual(kept.none);
+      expect(kept.member).toEqual(view(['people/open-example', 'people/readers-example', 'people/team-example']));
+      expect(kept.granted).toEqual(view(['people/open-example', 'people/readers-example', 'people/private-example']));
+      return kept;
     },
   );
 

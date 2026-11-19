@@ -15,6 +15,7 @@ import { DOCTOR_CHECK_REGISTRY } from '../src/commands/doctor/registry.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { VERSION } from '../src/version.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { consumerRowsThroughRaw } from './helpers/consumer-rows-through-raw.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-build-drift-'));
 afterAll(() => rmSync(home, { recursive: true, force: true }));
@@ -27,6 +28,7 @@ const row = (over: { kind?: string; pid?: number; version?: string; renewedAgoMs
 function stub(rows: unknown[], kind: 'postgres' | 'pglite' = 'postgres') {
   const sql: string[] = [];
   const engine = { kind, executeRaw: async (statement: string) => { sql.push(statement); return rows; } } as unknown as BrainEngine;
+  Object.assign(engine, consumerRowsThroughRaw(engine as never));
   return { engine, sql };
 }
 async function runEntry(engine: BrainEngine): Promise<Check> {
