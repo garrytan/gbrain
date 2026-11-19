@@ -4,7 +4,8 @@ Part of the store contract in [rust/README.md](../../README.md) ("The brain stor
 
 `remember` and `forget` (`src/core/persistence/memory-mutations.ts`) read a source, a fact and a page set before they
 admit a write; a remote `forget` also reads the target's tier (`guardRemoteForget`, `src/core/trust/supersede-handlers.ts`),
-and every `forget` reads the fact it names (`readForgetTarget` in `src/core/persistence/forget-prepare.ts`). PGLite and Postgres run the SQL in `src/core/engine-sql/memory-mutation-reads.ts`. The store answers
+and every `forget` reads the fact it names (`readForgetTarget` in `src/core/persistence/forget-prepare.ts`) and what its
+withdrawal reaches (`isFactEntityUnbacked`, `readLinkedFactCopies`, `hasHiddenFactCopy` and `ownerReachesFact` there). PGLite and Postgres run the SQL in `src/core/engine-sql/memory-mutation-reads.ts`. The store answers
 from the source, fact and page records the other families write
 (`crates/gbrain-store/src/memory_mutation_reads.rs`). It keeps no records of its own and adds no key prefix.
 
@@ -17,6 +18,10 @@ from the source, fact and page records the other families write
 | `brain.factReadableUnder({ id, sourceId, anyVisibility, minTrust, suppressFlagged, excludePrivate })` | whether the caller reads the fact | `factReadableUnder` |
 | `brain.readRemoteForgetTier({ factId, sourceId, remoteFloor })` | the fact's stored `trust_tier` when it belongs to the source and is `world`, else null; `remoteFloor` is null or `{ honorAliases, restricted }` | `readRemoteForgetTier` |
 | `brain.readForgetTarget({ id, sourceId, worldOnly, remoteFloor, ownPage })` | `{ id, entity_slug, source_markdown_slug, row_num, expired_at, trust_tier }` for the fact the forget names, or null; `remoteFloor` is null or `{ honorAliases, restricted }`, `ownPage` is null or `{ slug, reader }` | `readForgetTarget` |
+| `brain.isFactEntityUnbacked(id, sourceId)` | whether the fact belongs to the source and names an entity with no `/` and no live page of that slug | `isFactEntityUnbacked` |
+| `brain.readLinkedFactCopies({ id, sourceId, worldOnly, remoteFloor })` | `[{ id, entity_slug }]`, the copies of the fact's claim on other entities, by id, at most five; `remoteFloor` is null or `{ honorAliases, restricted }` | `readLinkedFactCopies` |
+| `brain.hasHiddenFactCopy({ id, sourceId, remoteFloor })` | whether a copy of the claim the withdrawal reaches fails the floor; `remoteFloor` is `{ honorAliases, restricted }` | `hasHiddenFactCopy` |
+| `brain.ownerReachesFact({ id, sourceId })` | whether an owner with no member identity reaches the fact | `ownerReachesFact` |
 
 ## Rules
 
@@ -35,6 +40,14 @@ from the source, fact and page records the other families write
   `world` or `worldOnly` is false, and, with `remoteFloor`, passes the same provenance-page check as
   `readRemoteForgetTier`. `expired_at` comes back as an ISO string, which the TypeScript member turns into a `Date`.
   The engines' `lock` (`FOR UPDATE`) changes nothing in the store: its transactions are serial.
+- A copy of fact `u` is another active fact (no `expired_at`, `valid_until` unset or later than now) of `u`'s source
+  and visibility whose claim has `u`'s fingerprint (`gbrain_fact_fingerprint`). `readLinkedFactCopies` keeps copies
+  that name a non-null entity other than `u`'s, only `world` ones with `worldOnly`, and with `remoteFloor` only ones the
+  floor of `readRemoteForgetTier` does not hide; ordered by id, at most five. `hasHiddenFactCopy` looks at every copy
+  when `u` names no entity or an unbacked one, else at copies on `u`'s entity, and answers whether the floor hides one.
+- `ownerReachesFact` answers for an owner with no member identity, whose read rule (`ownerReadPolicyFragment`) is
+  `FALSE`: the fact belongs to the source, is not on a member page or the scope page, and no page record, a deleted one
+  included, exists at its `source_markdown_slug` or `entity_slug`.
 - A negative fact id reads as no fact (null or false), as the SQL `WHERE id=$1` does.
 - The TypeScript member (`src/core/rust-engine/store-members/memory-mutation-reads.ts`) refuses with
   `engine_capability_missing`:
@@ -45,6 +58,8 @@ from the source, fact and page records the other families write
   - `readRemoteForgetTier` under `remoteFloor` when `remoteProvenanceFloorSql('facts')` renders other text than with
     no caller record or with a fresh record carrying only the caller's `restricted`, `owner` and schema version (a
     labelled-only caller, folder coverage or a relaxed privacy setting);
-  - `readForgetTarget` under `remoteFloor` (without `ownPage`) on the same terms.
-- Pinned by `test/engine-parity/memory-mutation-reads.test.ts` on every arm and by
+  - `readForgetTarget` under `remoteFloor` (without `ownPage`), `readLinkedFactCopies` under `remoteFloor` and
+    `hasHiddenFactCopy` on the same terms;
+  - `ownerReachesFact` for an owner bound to a member, whose pages GST-2490's owner read rule judges.
+- Pinned by `test/engine-parity/memory-mutation-reads.test.ts` and `test/engine-parity/forget-reach-reads.test.ts` on every arm and by
   `crates/gbrain-store/tests/memory_mutation_reads.rs`.

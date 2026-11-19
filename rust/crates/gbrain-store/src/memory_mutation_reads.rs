@@ -1,22 +1,27 @@
 //! The reads `remember` and `forget` make before admission (src/core/engine-sql/memory-mutation-reads.ts):
 //! `readSourceWriteRow`, `readSourceLocalPath`, `readFactEntitySlug`, `hasLiveFileBackedPage`,
-//! `factReadableUnder`, `readRemoteForgetTier` and `readForgetTarget`. Each answers from the source, fact and page records the other families write.
+//! `factReadableUnder`, `readRemoteForgetTier` and `readForgetTarget`, and the reads a forget makes to decide what its
+//! withdrawal reaches (src/core/persistence/forget-prepare.ts): `isFactEntityUnbacked`, `readLinkedFactCopies`,
+//! `hasHiddenFactCopy` and `ownerReachesFact`. Each answers from the source, fact and page records the other families write.
 //!
 //! The TypeScript member (src/core/rust-engine/store-members/memory-mutation-reads.ts) refuses what the store does not
 //! model: a fact id that is not an integer, and a `factReadableUnder` read whose visibility rule a member page or a
 //! private-facts grant widens for the caller, and a `readRemoteForgetTier` read whose remote provenance floor is not
 //! the no-caller one or a caller record's restricted, unrestricted or owner one (the same refusal covers
-//! `readForgetTarget` under its floor).
+//! `readForgetTarget`, `readLinkedFactCopies` and `hasHiddenFactCopy` under their floor), and `ownerReachesFact` for an
+//! owner bound to a member, whose pages the owner read rule (GST-2490 lineage) judges.
 
 use crate::Store;
 use crate::cli_reads::pg_text::fm_text;
 use crate::env::iso;
 use crate::error::Result;
 use crate::facts::PrivacyPolicy;
+use crate::facts::purge::unbacked;
 use crate::facts::{
-    access_readers, hidden_by_deleted_page, hidden_by_policy, hidden_by_provenance_page,
-    hidden_by_quarantine, read_fact,
+    FactRecord, access_readers, fact_fingerprint, hidden_by_deleted_page, hidden_by_policy,
+    hidden_by_provenance_page, hidden_by_quarantine, read_fact, source_rows,
 };
+use crate::kv::KvRead;
 use crate::links::no_nul;
 use crate::pages::read_page;
 use crate::sources::read_source;
@@ -82,6 +87,68 @@ pub struct ForgetTargetQuery {
 pub struct OwnPage {
     pub slug: String,
     pub reader: String,
+}
+
+/// `readLinkedFactCopies(spec)`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LinkedCopiesQuery {
+    pub id: i64,
+    pub source_id: String,
+    /// `worldOnly`: only `world` copies.
+    pub world_only: bool,
+    /// `remoteFloor`: only copies whose provenance page passes the floor.
+    pub remote_floor: Option<RemoteFloor>,
+}
+
+/// `hasHiddenFactCopy(spec)`: the floor always applies.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HiddenCopyQuery {
+    pub id: i64,
+    pub source_id: String,
+    pub remote_floor: RemoteFloor,
+}
+
+/// `ownerReachesFact(spec)` for an owner with no member identity (the TypeScript member refuses the rest).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OwnerReachQuery {
+    pub id: i64,
+    pub source_id: String,
+}
+
+/// Whether `floor` hides `row` (its provenance page fails the remote provenance floor).
+fn floor_hides(read: &dyn KvRead, row: &FactRecord, floor: &RemoteFloor) -> Result<bool> {
+    let policy = PrivacyPolicy {
+        honor_aliases: floor.honor_aliases,
+        ..PrivacyPolicy::default()
+    };
+    hidden_by_provenance_page(read, row, &policy, floor.restricted)
+}
+
+/// Fact `id` when it belongs to `source_id`.
+fn source_fact(read: &dyn KvRead, id: i64, source_id: &str) -> Result<Option<FactRecord>> {
+    let Ok(id) = u64::try_from(id) else {
+        return Ok(None);
+    };
+    Ok(read_fact(read, id)?.filter(|row| row.source_id == source_id))
+}
+
+/// The other active facts of `u`'s source and visibility whose claim has `u`'s fingerprint, by id.
+fn active_copies(read: &dyn KvRead, u: &FactRecord, now: i64) -> Result<Vec<FactRecord>> {
+    let print = fact_fingerprint(&u.fact);
+    let mut out: Vec<FactRecord> = source_rows(read, &u.source_id)?
+        .into_iter()
+        .filter(|l| {
+            l.id != u.id
+                && l.visibility == u.visibility
+                && l.active(now)
+                && fact_fingerprint(&l.fact) == print
+        })
+        .collect();
+    out.sort_by_key(|l| l.id);
+    Ok(out)
 }
 
 impl Store {
@@ -244,5 +311,92 @@ impl Store {
                 "trust_tier": row.tier().as_str(),
             })
         }))
+    }
+
+    /// `isFactEntityUnbacked`: whether fact `id` of `source_id` names an entity with no `/` and no
+    /// live page of that slug in the source (`unbackedEntitySql`); false for an unknown fact.
+    pub fn is_fact_entity_unbacked(&self, id: i64, source_id: &str) -> Result<bool> {
+        no_nul("isFactEntityUnbacked", &[("sourceId", source_id)])?;
+        let read = self.read()?;
+        match source_fact(&*read, id, source_id)? {
+            Some(row) => unbacked(&*read, &row),
+            None => Ok(false),
+        }
+    }
+
+    /// `readLinkedFactCopies`: the other active facts of fact `id`'s source and visibility whose
+    /// claim has its fingerprint and that name another, non-null entity, by id, at most five; only
+    /// `world` ones with `world_only`, and with `remote_floor` only ones the floor does not hide.
+    pub fn read_linked_fact_copies(&self, q: &LinkedCopiesQuery) -> Result<Vec<Value>> {
+        no_nul("readLinkedFactCopies", &[("sourceId", &q.source_id)])?;
+        let read = self.read()?;
+        let Some(u) = source_fact(&*read, q.id, &q.source_id)? else {
+            return Ok(Vec::new());
+        };
+        let mut out = Vec::new();
+        for l in active_copies(&*read, &u, self.env.now_micros())? {
+            let Some(entity) = l.entity_slug.as_deref() else {
+                continue;
+            };
+            if u.entity_slug.as_deref() == Some(entity) || (q.world_only && l.visibility != "world")
+            {
+                continue;
+            }
+            if let Some(floor) = &q.remote_floor
+                && floor_hides(&*read, &l, floor)?
+            {
+                continue;
+            }
+            out.push(json!({ "id": l.id, "entity_slug": entity }));
+            if out.len() == 5 {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    /// `hasHiddenFactCopy`: whether an active copy of fact `id`'s claim (same source, visibility
+    /// and fingerprint; any entity when the fact names none or an unbacked one, else the same
+    /// entity) is one the remote provenance floor hides.
+    pub fn has_hidden_fact_copy(&self, q: &HiddenCopyQuery) -> Result<bool> {
+        no_nul("hasHiddenFactCopy", &[("sourceId", &q.source_id)])?;
+        let read = self.read()?;
+        let Some(u) = source_fact(&*read, q.id, &q.source_id)? else {
+            return Ok(false);
+        };
+        let any_entity = u.entity_slug.is_none() || unbacked(&*read, &u)?;
+        for l in active_copies(&*read, &u, self.env.now_micros())? {
+            let reached = any_entity || (l.entity_slug.is_some() && l.entity_slug == u.entity_slug);
+            if reached && floor_hides(&*read, &l, &q.remote_floor)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// `ownerReachesFact` for an owner with no member identity, whose read rule reads no page:
+    /// fact `id` of `source_id` sits on no owned memory page and no page record (a deleted one
+    /// too) exists at its `source_markdown_slug` or `entity_slug`.
+    pub fn owner_reaches_fact(&self, q: &OwnerReachQuery) -> Result<bool> {
+        no_nul("ownerReachesFact", &[("sourceId", &q.source_id)])?;
+        let read = self.read()?;
+        let Some(row) = source_fact(&*read, q.id, &q.source_id)? else {
+            return Ok(false);
+        };
+        if row.on_owned_memory_page() {
+            return Ok(false);
+        }
+        for slug in [
+            row.source_markdown_slug.as_deref(),
+            row.entity_slug.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if read_page(&*read, &q.source_id, slug)?.is_some() {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 }

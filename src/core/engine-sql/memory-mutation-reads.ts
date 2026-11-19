@@ -14,11 +14,17 @@
  *   (guardRemoteForget, src/core/trust/supersede-handlers.ts), optionally under the remote provenance floor.
  * - `readForgetTarget`: the fact a forget names (src/core/persistence/forget-prepare.ts) under the caller's visibility,
  *   optionally under the remote provenance floor, or on a member's own page; locked FOR UPDATE with `lock`.
+ * - `isFactEntityUnbacked`, `readLinkedFactCopies` and `hasHiddenFactCopy`: whether a forget's withdrawal reaches other
+ *   copies of the claim (refuseForgetReachingOtherCopies, src/core/persistence/forget-prepare.ts).
+ * - `ownerReachesFact`: whether the brain owner's own credential reaches a fact (forget-prepare.ts, GST-2346 D1).
  */
-import type { BrainEngine, FactReadableSpec, ForgetTargetRow, ForgetTargetSpec, SourceWriteRow } from '../engine.ts';
-import { MEMBER_PAGE_PREFIX, factVisibilitySql } from '../access/member-facts.ts';
+import type {
+  BrainEngine, FactReadableSpec, ForgetTargetRow, ForgetTargetSpec, LinkedFactCopiesSpec, LinkedFactCopy, OwnerReachSpec, SourceWriteRow,
+} from '../engine.ts';
+import { MEMBER_PAGE_PREFIX, factVisibilitySql, onOwnedMemoryPageSql } from '../access/member-facts.ts';
+import { unbackedEntitySql } from '../facts/withdrawal-schema.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
-import { privateProvenanceFilterUnderPolicy, remoteProvenanceFloorSql } from '../search/private-visibility.ts';
+import { ownerReadPolicyFragment, privateProvenanceFilterUnderPolicy, readPolicyFragment, remoteProvenanceFloorSql } from '../search/private-visibility.ts';
 import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
@@ -94,4 +100,50 @@ export async function readForgetTarget(exec: Raw, spec: ForgetTargetSpec): Promi
   const [row] = await rows<ForgetTargetRow>(exec,
     sqlFragment`SELECT id,entity_slug,source_markdown_slug,row_num,expired_at,trust_tier FROM facts\n    WHERE id=${spec.id} AND source_id=${spec.sourceId} AND ${scope}${trustedSql(spec.lock ? ' FOR UPDATE' : '')}`);
   return row ?? null;
+}
+
+/** Whether fact `id` of `sourceId` names an unbacked entity (unbackedEntitySql: a name key with no live page). */
+export async function isFactEntityUnbacked(exec: Raw, id: number, sourceId: string): Promise<boolean> {
+  const [row] = await rows<{ unbacked: boolean }>(exec,
+    sqlFragment`SELECT ${trustedSql(unbackedEntitySql('u'))} AS unbacked FROM facts u WHERE u.id=${id} AND u.source_id=${sourceId}`);
+  return row?.unbacked === true;
+}
+
+/**
+ * The other active facts of fact `id`'s source and visibility whose claim has its fingerprint and that name another,
+ * non-null entity, by id, at most five: only world ones with `worldOnly`, and with `remoteFloor` only ones that pass the
+ * remote provenance floor (remoteProvenanceFloorSql, rendered for the caller in context).
+ */
+export async function readLinkedFactCopies(exec: Raw, spec: LinkedFactCopiesSpec): Promise<LinkedFactCopy[]> {
+  const floor = spec.remoteFloor ? ` AND ${remoteProvenanceFloorSql('l')}` : '';
+  return rows<LinkedFactCopy>(exec, sqlFragment`SELECT l.id,l.entity_slug FROM facts u
+      JOIN facts l ON l.source_id=u.source_id AND l.visibility=u.visibility AND l.entity_slug IS NOT NULL AND l.entity_slug IS DISTINCT FROM u.entity_slug AND l.id<>u.id
+        AND l.expired_at IS NULL AND (l.valid_until IS NULL OR l.valid_until > now())
+        AND gbrain_fact_fingerprint(l.fact)=gbrain_fact_fingerprint(u.fact)
+      WHERE u.id=${spec.id} AND u.source_id=${spec.sourceId} AND (${spec.worldOnly}::boolean=false OR l.visibility='world')${trustedSql(floor)}
+      ORDER BY l.id LIMIT 5`);
+}
+
+/**
+ * Whether an active copy of fact `id`'s claim (same source, visibility and fingerprint; any entity when the fact names
+ * none or an unbacked one, else the same entity) fails the remote provenance floor, rendered for the caller in context.
+ */
+export async function hasHiddenFactCopy(exec: Raw, spec: { id: number; sourceId: string }): Promise<boolean> {
+  const found = await rows(exec, sqlFragment`SELECT 1 FROM facts u
+    JOIN facts l ON l.source_id=u.source_id AND l.visibility=u.visibility AND l.id<>u.id
+      AND (u.entity_slug IS NULL OR ${trustedSql(unbackedEntitySql('u'))} OR l.entity_slug=u.entity_slug)
+      AND l.expired_at IS NULL AND (l.valid_until IS NULL OR l.valid_until > now())
+      AND gbrain_fact_fingerprint(l.fact)=gbrain_fact_fingerprint(u.fact)
+    WHERE u.id=${spec.id} AND u.source_id=${spec.sourceId} AND NOT (${trustedSql(remoteProvenanceFloorSql('l'))}) LIMIT 1`);
+  return found.length > 0;
+}
+
+/**
+ * Whether fact `id` of `sourceId` sits on no owned memory page and every page of its source and entity slugs passes the
+ * owner's read rule (ownerReadPolicyFragment) and read policy (readPolicyFragment) for `identity` and `satisfied`.
+ */
+export async function ownerReachesFact(exec: Raw, spec: OwnerReachSpec): Promise<boolean> {
+  const found = await rows(exec, sqlFragment`SELECT 1 FROM facts WHERE id=${spec.id} AND source_id=${spec.sourceId} AND NOT ${trustedSql(onOwnedMemoryPageSql('facts'))}
+    AND NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id=facts.source_id AND pp.slug IN (facts.source_markdown_slug, facts.entity_slug) AND NOT (${trustedSql(ownerReadPolicyFragment('pp', spec.identity, spec.satisfied))} AND ${trustedSql(readPolicyFragment('pp', spec.identity, true, spec.satisfied))}))`);
+  return found.length > 0;
 }

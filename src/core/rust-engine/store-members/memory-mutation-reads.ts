@@ -3,7 +3,8 @@
  * the store (rust/crates/gbrain-store/src/memory_mutation_reads.rs): `readSourceWriteRow` and `readSourceLocalPath`
  * over the source record, `readFactEntitySlug`, `factReadableUnder`, `readRemoteForgetTier` and `readForgetTarget`
  * over the fact rows, and `hasLiveFileBackedPage` over the page records. `readForgetTarget`'s `lock` (FOR UPDATE)
- * changes nothing here: one store call reads under the store's own lock.
+ * changes nothing here: one store call reads under the store's own lock. `isFactEntityUnbacked`, `readLinkedFactCopies`,
+ * `hasHiddenFactCopy` and `ownerReachesFact` (what a forget's withdrawal reaches) read the fact and page records.
  *
  * Refused (`engine_capability_missing`):
  *  - a fact id that is not an integer, rather than guess at Postgres's bind error;
@@ -13,13 +14,17 @@
  *  - `readRemoteForgetTier` under `remoteFloor` for a caller whose remote provenance floor (remoteProvenanceFloorSql)
  *    is none of the forms the store models: the floor with no caller record, or a caller record on a brain with or
  *    without member-access restrictions, for the owner or not, at the caller's schema version. A labelled-only caller,
- *    folder coverage or a relaxed privacy setting renders other text. `readForgetTarget` under `remoteFloor` refuses the same.
+ *    folder coverage or a relaxed privacy setting renders other text. `readForgetTarget` and `readLinkedFactCopies`
+ *    under `remoteFloor`, and `hasHiddenFactCopy` (always under the floor), refuse the same;
+ *  - `ownerReachesFact` for an owner bound to a member (ownerReadPolicyFragment renders GST-2490's owner read rule rather
+ *    than FALSE), which the store does not model.
  */
-import type { BrainEngine, ForgetTargetRow } from '../../engine.ts';
+import type { BrainEngine, ForgetTargetRow, LinkedFactCopy } from '../../engine.ts';
 import { MEMBER_PAGE_PREFIX, factVisibilitySql } from '../../access/member-facts.ts';
 import { withDates } from '../store-codec.ts';
 import {
   currentCallerAccess, privacyAliasSql, privateProvenanceFilterUnderPolicy, remoteProvenanceFloorSql, withCallerAccess, withoutCallerAccess,
+  ownerReadPolicyFragment,
 } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { normalizeConceptInputs, storePrivacyPolicy } from './private-provenance.ts';
@@ -104,4 +109,32 @@ export const readForgetTarget: Member<'readForgetTarget'> = async (brain, spec) 
     ownPage: own ? { slug: own, reader: `member:${own.slice(MEMBER_PAGE_PREFIX.length)}` } : null,
   }));
   return row ? withDates(row as ForgetTargetRow, ['expired_at']) : null;
+};
+
+export const isFactEntityUnbacked: Member<'isFactEntityUnbacked'> = (brain, id, sourceId) => {
+  requireInteger('isFactEntityUnbacked', id);
+  return storeCall({ member: 'isFactEntityUnbacked' }, () => brain.isFactEntityUnbacked(id, sourceId));
+};
+
+export const readLinkedFactCopies: Member<'readLinkedFactCopies'> = async (brain, spec) => {
+  const member = 'readLinkedFactCopies';
+  requireInteger(member, spec.id);
+  const remoteFloor = spec.remoteFloor ? storeRemoteFloor(member) : null;
+  return storeCall({ member }, () => brain.readLinkedFactCopies({ id: spec.id, sourceId: spec.sourceId, worldOnly: spec.worldOnly, remoteFloor })) as Promise<LinkedFactCopy[]>;
+};
+
+export const hasHiddenFactCopy: Member<'hasHiddenFactCopy'> = (brain, spec) => {
+  const member = 'hasHiddenFactCopy';
+  requireInteger(member, spec.id);
+  const remoteFloor = storeRemoteFloor(member);
+  return storeCall({ member }, () => brain.hasHiddenFactCopy({ id: spec.id, sourceId: spec.sourceId, remoteFloor }));
+};
+
+export const ownerReachesFact: Member<'ownerReachesFact'> = (brain, spec) => {
+  const member = 'ownerReachesFact';
+  requireInteger(member, spec.id);
+  if (ownerReadPolicyFragment('pp', spec.identity, spec.satisfied) !== 'FALSE') {
+    refuseMember(member, 'an owner bound to a member, whose pages the owner read rule (GST-2490 lineage) judges, which the store does not model');
+  }
+  return storeCall({ member }, () => brain.ownerReachesFact({ id: spec.id, sourceId: spec.sourceId }));
 };

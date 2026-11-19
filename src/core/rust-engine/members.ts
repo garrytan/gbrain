@@ -737,6 +737,10 @@ export const RUST_ENGINE_MEMBERS = {
   factReadableUnder: 'facts',
   readRemoteForgetTier: 'facts',
   readForgetTarget: 'facts',
+  isFactEntityUnbacked: 'facts',
+  readLinkedFactCopies: 'facts',
+  hasHiddenFactCopy: 'facts',
+  ownerReachesFact: 'facts',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

@@ -683,7 +683,7 @@ src/core/persistence/facts-prepare.ts	execute_raw	5
 src/core/persistence/file-claims.ts	execute_raw	2
 src/core/persistence/file-repair.ts	execute_raw	4
 src/core/persistence/filesystem-guard.ts	execute_raw	1
-src/core/persistence/forget-prepare.ts	execute_raw	6	GBRA-574 F #9674 (opened before this ratchet): +1 forget reads whether the claim sits on an unbacked name tag
+src/core/persistence/forget-prepare.ts	execute_raw	2	GBRA-574 F #9674 (opened before this ratchet): +1 forget reads whether the claim sits on an unbacked name tag
 src/core/persistence/git-conversion.ts	execute_raw	16
 src/core/persistence/git-declared.ts	execute_raw	7
 src/core/persistence/git-door.ts	execute_raw	1

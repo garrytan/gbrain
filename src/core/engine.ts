@@ -189,6 +189,12 @@ export interface FactReadableSpec {
 export interface ForgetTargetSpec { id: number; sourceId: string; worldOnly: boolean; remoteFloor: boolean; lock: boolean; ownPage: string | null }
 /** The fact row `readForgetTarget` answers. */
 export interface ForgetTargetRow { id: number; entity_slug: string | null; source_markdown_slug: string | null; row_num: number | null; expired_at: Date | null; trust_tier: string | null }
+/** `readLinkedFactCopies`: the copies of fact `id`'s claim on other entities; `worldOnly` keeps world ones, `remoteFloor` adds the remote provenance floor. */
+export interface LinkedFactCopiesSpec { id: number; sourceId: string; worldOnly: boolean; remoteFloor: boolean }
+/** One copy `readLinkedFactCopies` answers. */
+export interface LinkedFactCopy { id: number; entity_slug: string }
+/** `ownerReachesFact`: the owner's member identity and the folder rules it satisfies. */
+export interface OwnerReachSpec { id: number; sourceId: string; identity: readonly string[]; satisfied: readonly string[] }
 /** `readGuestSourceRow`: the source's guest_sources row (null fields without one) and whether row-level security hides guest_sources. */
 export interface GuestSourceLookupRow { hidden: boolean; source_id: string | null; writers: string[] | null; trust_ceiling: string | null }
 /** `readPageTrustRows` input: page ids, and (source_id, slug) keys read live unless `includeDeleted`. */
@@ -3915,6 +3921,14 @@ export interface BrainEngine {
   readRemoteForgetTier(spec: { factId: number; sourceId: string; remoteFloor: boolean }): Promise<string | null>;
   /** The fact a forget names under the caller's visibility (ForgetTargetSpec); null when the caller does not see it. */
   readForgetTarget(spec: ForgetTargetSpec): Promise<ForgetTargetRow | null>;
+  /** Whether one fact of a source names an unbacked entity (a name key with no live page). */
+  isFactEntityUnbacked(id: number, sourceId: string): Promise<boolean>;
+  /** The active copies of a fact's claim on other entities a forget would also withdraw, by id, at most five (LinkedFactCopiesSpec). */
+  readLinkedFactCopies(spec: LinkedFactCopiesSpec): Promise<LinkedFactCopy[]>;
+  /** Whether an active copy of a fact's claim the forget would reach fails the remote provenance floor. */
+  hasHiddenFactCopy(spec: { id: number; sourceId: string }): Promise<boolean>;
+  /** Whether the brain owner's own credential reaches a fact: no owned memory page, and its pages pass the owner's read rule. */
+  ownerReachesFact(spec: OwnerReachSpec): Promise<boolean>;
 
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 5 populates, Layer 7 consumes)

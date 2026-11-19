@@ -268,6 +268,7 @@
           "hasExtractedEvents: (sourceId: string, pageId: number) => Promise<boolean>",
           "hasFactWithdrawalForSubject: (sourceId: string, subject: string) => Promise<boolean>",
           "hasGuestSource: () => Promise<boolean>",
+          "hasHiddenFactCopy: (spec: { id: number; sourceId: string; }) => Promise<boolean>",
           "hasLiveFileBackedPage: (sourceId: string, slugs: readonly string[]) => Promise<boolean>",
           "hasOverdueWatchdogSuspect: (queue: string, names: readonly string[], waitMs: number) => Promise<boolean>",
           "hasPersistenceTable: (table: PersistenceTable) => Promise<boolean>",
@@ -293,6 +294,7 @@
           "insertWriteRequest: (row: WriteRequestInsert) => Promise<WriteRequest>",
           "invalidateContentDriftEmbeddings: (opts?: { sourceId?: string; }) => Promise<number>",
           "invalidateStaleSignatureEmbeddings: (opts: { signature: string; sourceId?: string; includeNullSignature?: boolean; }) => Promise<number>",
+          "isFactEntityUnbacked: (id: number, sourceId: string) => Promise<boolean>",
           "isFolderRestricted: (sourceId: string, slug: string) => Promise<boolean>",
           "keywordBoundedRead: <T>(read: (db: Pick<BrainEngine, \"executeRaw\">) => Promise<T>) => Promise<T>",
           "killTimedOutJobs: () => Promise<JobRow[]>",
@@ -469,6 +471,7 @@
           "nextLivePageAfter: (afterPageId: number) => Promise<{ id: number; slug: string; source_id: string; } | null>",
           "openBodyStaging: (input: BodyStagingInput) => Promise<void>",
           "openWakeWatch: (watch: WakeWatchInsert) => Promise<number>",
+          "ownerReachesFact: (spec: OwnerReachSpec) => Promise<boolean>",
           "ownsSchemaTables: () => Promise<boolean>",
           "pageAwaitsRederive: (pageId: number) => Promise<boolean>",
           "pageCollapseFacts: (ids: number[], bodyIds: number[]) => Promise<PageCollapseFactRow[]>",
@@ -533,6 +536,7 @@
           "readLedgerSource: (sourceId: string, opts?: { batch?: boolean; }) => Promise<LedgerSource | null>",
           "readLegacyJobAuthority: () => Promise<LegacyJobAuthorityRead>",
           "readLinkRelationshipEvidence: (keys: readonly RelationshipKey[]) => Promise<RelationshipEvidence>",
+          "readLinkedFactCopies: (spec: LinkedFactCopiesSpec) => Promise<LinkedFactCopy[]>",
           "readLivePageBody: (slug: string, opts: { sourceId: string; }) => Promise<LivePageBodyRow | null>",
           "readLocalWriterRow: (id: string, opts?: { lock?: boolean; }) => Promise<LocalWriterRow | undefined>",
           "readManagedModeRows: () => Promise<Array<{ enabled: unknown; }>>",
@@ -1752,6 +1756,7 @@
           "hasExtractedEvents: (sourceId: string, pageId: number) => Promise<boolean>",
           "hasFactWithdrawalForSubject: (sourceId: string, subject: string) => Promise<boolean>",
           "hasGuestSource: () => Promise<boolean>",
+          "hasHiddenFactCopy: (spec: { id: number; sourceId: string; }) => Promise<boolean>",
           "hasLiveFileBackedPage: (sourceId: string, slugs: readonly string[]) => Promise<boolean>",
           "hasOverdueWatchdogSuspect: (queue: string, names: readonly string[], waitMs: number) => Promise<boolean>",
           "hasPersistenceTable: (table: PersistenceTable) => Promise<boolean>",
@@ -1777,6 +1782,7 @@
           "insertWriteRequest: (row: WriteRequestInsert) => Promise<WriteRequest>",
           "invalidateContentDriftEmbeddings: (opts?: { sourceId?: string; }) => Promise<number>",
           "invalidateStaleSignatureEmbeddings: (opts: { signature: string; sourceId?: string; includeNullSignature?: boolean; }) => Promise<number>",
+          "isFactEntityUnbacked: (id: number, sourceId: string) => Promise<boolean>",
           "isFolderRestricted: (sourceId: string, slug: string) => Promise<boolean>",
           "keywordBoundedRead: <T>(read: (db: Pick<BrainEngine, \"executeRaw\">) => Promise<T>) => Promise<T>",
           "killTimedOutJobs: () => Promise<JobRow[]>",
@@ -1954,6 +1960,7 @@
           "onCheckout: (listener: () => void) => () => void",
           "openBodyStaging: (input: BodyStagingInput) => Promise<void>",
           "openWakeWatch: (watch: WakeWatchInsert) => Promise<number>",
+          "ownerReachesFact: (spec: OwnerReachSpec) => Promise<boolean>",
           "ownsSchemaTables: () => Promise<boolean>",
           "pageAwaitsRederive: (pageId: number) => Promise<boolean>",
           "pageCollapseFacts: (ids: number[], bodyIds: number[]) => Promise<PageCollapseFactRow[]>",
@@ -2074,6 +2081,7 @@
           "readLedgerSource: (sourceId: string, opts?: { batch?: boolean; }) => Promise<LedgerSource | null>",
           "readLegacyJobAuthority: () => Promise<LegacyJobAuthorityRead>",
           "readLinkRelationshipEvidence: (keys: readonly RelationshipKey[]) => Promise<RelationshipEvidence>",
+          "readLinkedFactCopies: (spec: LinkedFactCopiesSpec) => Promise<LinkedFactCopy[]>",
           "readLivePageBody: (slug: string, opts: { sourceId: string; }) => Promise<LivePageBodyRow | null>",
           "readLocalWriterRow: (id: string, opts?: { lock?: boolean; }) => Promise<LocalWriterRow | undefined>",
           "readManagedModeRows: () => Promise<{ enabled: unknown; }[]>",
@@ -4776,6 +4784,7 @@
           "hasExtractedEvents: (sourceId: string, pageId: number) => Promise<boolean>",
           "hasFactWithdrawalForSubject: (sourceId: string, subject: string) => Promise<boolean>",
           "hasGuestSource: () => Promise<boolean>",
+          "hasHiddenFactCopy: (spec: { id: number; sourceId: string; }) => Promise<boolean>",
           "hasLiveFileBackedPage: (sourceId: string, slugs: readonly string[]) => Promise<boolean>",
           "hasOverdueWatchdogSuspect: (queue: string, names: readonly string[], waitMs: number) => Promise<boolean>",
           "hasPersistenceTable: (table: PersistenceTable) => Promise<boolean>",
@@ -4801,6 +4810,7 @@
           "insertWriteRequest: (row: WriteRequestInsert) => Promise<WriteRequest>",
           "invalidateContentDriftEmbeddings: (opts?: { sourceId?: string; }) => Promise<number>",
           "invalidateStaleSignatureEmbeddings: (opts: { signature: string; sourceId?: string; includeNullSignature?: boolean; }) => Promise<number>",
+          "isFactEntityUnbacked: (id: number, sourceId: string) => Promise<boolean>",
           "isFolderRestricted: (sourceId: string, slug: string) => Promise<boolean>",
           "keywordBoundedRead: <T>(read: (db: Pick<BrainEngine, \"executeRaw\">) => Promise<T>) => Promise<T>",
           "killTimedOutJobs: () => Promise<JobRow[]>",
@@ -4977,6 +4987,7 @@
           "nextLivePageAfter: (afterPageId: number) => Promise<{ id: number; slug: string; source_id: string; } | null>",
           "openBodyStaging: (input: BodyStagingInput) => Promise<void>",
           "openWakeWatch: (watch: JobsWake.WakeWatchInsert) => Promise<number>",
+          "ownerReachesFact: (spec: OwnerReachSpec) => Promise<boolean>",
           "ownsSchemaTables: () => Promise<boolean>",
           "pageAwaitsRederive: (pageId: number) => Promise<boolean>",
           "pageCollapseFacts: (ids: number[], bodyIds: number[]) => Promise<PageCollapseFactRow[]>",
@@ -5041,6 +5052,7 @@
           "readLedgerSource: (sourceId: string, opts?: { batch?: boolean; }) => Promise<LedgerSource | null>",
           "readLegacyJobAuthority: () => Promise<LegacyJobAuthorityRead>",
           "readLinkRelationshipEvidence: (keys: readonly RelationshipKey[]) => Promise<RelationshipEvidence>",
+          "readLinkedFactCopies: (spec: LinkedFactCopiesSpec) => Promise<LinkedFactCopy[]>",
           "readLivePageBody: (slug: string, opts: { sourceId: string; }) => Promise<LivePageBodyRow | null>",
           "readLocalWriterRow: (id: string, opts?: { lock?: boolean; }) => Promise<LocalWriterRow | undefined>",
           "readManagedModeRows: () => Promise<Array<{ enabled: unknown; }>>",
@@ -5508,6 +5520,24 @@
         "name": "LinkPageMetadataRow"
       },
       {
+        "kind": "interface",
+        "members": [
+          "id: number",
+          "remoteFloor: boolean",
+          "sourceId: string",
+          "worldOnly: boolean"
+        ],
+        "name": "LinkedFactCopiesSpec"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "entity_slug: string",
+          "id: number"
+        ],
+        "name": "LinkedFactCopy"
+      },
+      {
         "kind": "variable",
         "name": "MAX_SEARCH_LIMIT",
         "signature": [
@@ -5541,6 +5571,16 @@
           "visibility?: FactVisibility | undefined"
         ],
         "name": "NewFact"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "id: number",
+          "identity: readonly string[]",
+          "satisfied: readonly string[]",
+          "sourceId: string"
+        ],
+        "name": "OwnerReachSpec"
       },
       {
         "kind": "interface",
@@ -8906,6 +8946,7 @@
           "hasExtractedEvents: (sourceId: string, pageId: number) => Promise<boolean>",
           "hasFactWithdrawalForSubject: (sourceId: string, subject: string) => Promise<boolean>",
           "hasGuestSource: () => Promise<boolean>",
+          "hasHiddenFactCopy: (spec: { id: number; sourceId: string; }) => Promise<boolean>",
           "hasLiveFileBackedPage: (sourceId: string, slugs: readonly string[]) => Promise<boolean>",
           "hasOverdueWatchdogSuspect: (queue: string, names: readonly string[], waitMs: number) => Promise<boolean>",
           "hasPersistenceTable: (table: connectGateImpl.PersistenceTable) => Promise<boolean>",
@@ -8931,6 +8972,7 @@
           "insertWriteRequest: (row: persistenceJournalImpl.WriteRequestInsert) => Promise<WriteRequest>",
           "invalidateContentDriftEmbeddings: (opts?: { sourceId?: string; }) => Promise<number>",
           "invalidateStaleSignatureEmbeddings: (opts: { signature: string; sourceId?: string; includeNullSignature?: boolean; }) => Promise<number>",
+          "isFactEntityUnbacked: (id: number, sourceId: string) => Promise<boolean>",
           "isFolderRestricted: (sourceId: string, slug: string) => Promise<boolean>",
           "keywordBoundedRead: <T>(read: (db: Pick<BrainEngine, \"executeRaw\">) => Promise<T>) => Promise<T>",
           "killTimedOutJobs: () => Promise<jobsImpl.JobRow[]>",
@@ -9107,6 +9149,7 @@
           "nextLivePageAfter: (afterPageId: number) => Promise<{ id: number; slug: string; source_id: string; } | null>",
           "openBodyStaging: (input: BodyStagingInput) => Promise<void>",
           "openWakeWatch: (watch: jobsWake.WakeWatchInsert) => Promise<number>",
+          "ownerReachesFact: (spec: OwnerReachSpec) => Promise<boolean>",
           "ownsSchemaTables: () => Promise<boolean>",
           "pageAwaitsRederive: (pageId: number) => Promise<boolean>",
           "pageCollapseFacts: (ids: number[], bodyIds: number[]) => Promise<searchReadsImpl.PageCollapseFactRow[]>",
@@ -9216,6 +9259,7 @@
           "readLedgerSource: (sourceId: string, opts?: { batch?: boolean; }) => Promise<beliefImpl.LedgerSource | null>",
           "readLegacyJobAuthority: () => Promise<jobsChecks.LegacyJobAuthorityRead>",
           "readLinkRelationshipEvidence: (keys: readonly RelationshipKey[]) => Promise<RelationshipEvidence>",
+          "readLinkedFactCopies: (spec: LinkedFactCopiesSpec) => Promise<LinkedFactCopy[]>",
           "readLivePageBody: (slug: string, opts: { sourceId: string; }) => Promise<writeGuardsImpl.LivePageBodyRow | null>",
           "readLocalWriterRow: (id: string, opts?: { lock?: boolean; }) => Promise<persistenceStateImpl.LocalWriterRow | undefined>",
           "readManagedModeRows: () => Promise<{ enabled: unknown; }[]>",

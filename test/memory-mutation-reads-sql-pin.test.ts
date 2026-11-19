@@ -8,15 +8,18 @@
  * the remote forget guard's tier read (guardRemoteForget, src/core/trust/supersede-handlers.ts) with and without the
  * remote provenance floor, and the forget target read (src/core/persistence/forget-prepare.ts) in each form: any or world
  * visibility, the remote floor, a member's own page (whose slug now binds twice, $3 and $4, where the raw text reused $3)
- * and FOR UPDATE.
+ * and FOR UPDATE; and the reads that decide what a forget's withdrawal reaches (refuseForgetReachingOtherCopies and
+ * ownerReachesFact, forget-prepare.ts): the unbacked check, the linked copies with and without the floor, the hidden
+ * copy and the owner reach for an owner with and without a member identity.
  * Fails when a member reorders a clause, renumbers a placeholder or binds a value as text.
  * No database: the engine runs on the recording fake.
  */
 import { expect, test } from 'bun:test';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
-import { factVisibilitySql } from '../src/core/access/member-facts.ts';
+import { factVisibilitySql, onOwnedMemoryPageSql } from '../src/core/access/member-facts.ts';
+import { unbackedEntitySql } from '../src/core/facts/withdrawal-schema.ts';
 import { projectionEligibleSql } from '../src/core/eligibility/sql.ts';
-import { privateProvenanceFilterUnderPolicy, remoteProvenanceFloorSql } from '../src/core/search/private-visibility.ts';
+import { ownerReadPolicyFragment, privateProvenanceFilterUnderPolicy, readPolicyFragment, remoteProvenanceFloorSql } from '../src/core/search/private-visibility.ts';
 import { makeFakeSql } from './helpers/fake-postgres-sql.ts';
 
 function recordingEngine() {
@@ -95,4 +98,44 @@ test('readForgetTarget sends the forget target read, under the floor, on a membe
     text: `${head}visibility='private' AND source_markdown_slug=$3 AND EXISTS (SELECT 1 FROM pages member_page\n      WHERE member_page.source_id=facts.source_id AND member_page.slug=$4 AND member_page.deleted_at IS NULL AND member_page.page_readers && ARRAY[$5::text])`,
     params: [5, 'src-a', own, own, 'member:alice-example'],
   });
+});
+
+test('the forget reach reads send the old refuseForgetReachingOtherCopies statements', async () => {
+  const { engine, last } = recordingEngine();
+  await engine.isFactEntityUnbacked(5, 'src-a');
+  expect(last()).toEqual({ text: `SELECT ${unbackedEntitySql('u')} AS unbacked FROM facts u WHERE u.id=$1 AND u.source_id=$2`, params: [5, 'src-a'] });
+  const linked = (floor: string) => `SELECT l.id,l.entity_slug FROM facts u
+      JOIN facts l ON l.source_id=u.source_id AND l.visibility=u.visibility AND l.entity_slug IS NOT NULL AND l.entity_slug IS DISTINCT FROM u.entity_slug AND l.id<>u.id
+        AND l.expired_at IS NULL AND (l.valid_until IS NULL OR l.valid_until > now())
+        AND gbrain_fact_fingerprint(l.fact)=gbrain_fact_fingerprint(u.fact)
+      WHERE u.id=$1 AND u.source_id=$2 AND ($3::boolean=false OR l.visibility='world')${floor}
+      ORDER BY l.id LIMIT 5`;
+  await engine.readLinkedFactCopies({ id: 5, sourceId: 'src-a', worldOnly: false, remoteFloor: false });
+  expect(last()).toEqual({ text: linked(''), params: [5, 'src-a', false] });
+  await engine.readLinkedFactCopies({ id: 5, sourceId: 'src-a', worldOnly: true, remoteFloor: true });
+  expect(last()).toEqual({ text: linked(` AND ${remoteProvenanceFloorSql('l')}`), params: [5, 'src-a', true] });
+  await engine.hasHiddenFactCopy({ id: 5, sourceId: 'src-a' });
+  expect(last()).toEqual({
+    text: `SELECT 1 FROM facts u
+    JOIN facts l ON l.source_id=u.source_id AND l.visibility=u.visibility AND l.id<>u.id
+      AND (u.entity_slug IS NULL OR ${unbackedEntitySql('u')} OR l.entity_slug=u.entity_slug)
+      AND l.expired_at IS NULL AND (l.valid_until IS NULL OR l.valid_until > now())
+      AND gbrain_fact_fingerprint(l.fact)=gbrain_fact_fingerprint(u.fact)
+    WHERE u.id=$1 AND u.source_id=$2 AND NOT (${remoteProvenanceFloorSql('l')}) LIMIT 1`,
+    params: [5, 'src-a'],
+  });
+});
+
+test('ownerReachesFact sends the old owner reach statement, with and without a member identity', async () => {
+  const { engine, last } = recordingEngine();
+  const old = (identity: readonly string[], satisfied: readonly string[]) => {
+    const page = `(${ownerReadPolicyFragment('pp', identity, satisfied)} AND ${readPolicyFragment('pp', identity, true, satisfied)})`;
+    return `SELECT 1 FROM facts WHERE id=$1 AND source_id=$2 AND NOT ${onOwnedMemoryPageSql('facts')}
+    AND NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id=facts.source_id AND pp.slug IN (facts.source_markdown_slug, facts.entity_slug) AND NOT ${page})`;
+  };
+  await engine.ownerReachesFact({ id: 5, sourceId: 'src-a', identity: [], satisfied: [] });
+  expect(last()).toEqual({ text: old([], []), params: [5, 'src-a'] });
+  const identity = ['member:alice-example'];
+  await engine.ownerReachesFact({ id: 5, sourceId: 'src-a', identity, satisfied: ['rule-1'] });
+  expect(last()).toEqual({ text: old(identity, ['rule-1']), params: [5, 'src-a'] });
 });

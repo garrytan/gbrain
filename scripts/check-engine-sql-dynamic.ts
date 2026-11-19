@@ -73,6 +73,10 @@ const VETTED_BUILDERS: Record<string, string> = {
   ownedMemorySubjectSql: 'src/core/facts/withdrawal-schema.ts: constant owned-memory-subject predicate over a caller column expression; engine-sql passes only the constant column q.subject',
   remoteProvenanceFloorSql: 'src/core/search/private-visibility.ts: constant remote provenance floor (private-provenance filter plus labelled-only) over a caller facts alias',
 
+  // memory-mutation-reads.ts builders (ownerReachesFact)
+  ownerReadPolicyFragment: 'src/core/search/private-visibility.ts: the owner read rule over a caller page alias; it splices an identity only after validIdentity and rule ids only after validQualifiedRuleId (each a quoted literal of a checked shape), else FALSE',
+  readPolicyFragment: 'src/core/search/private-visibility.ts: the member read policy over a caller page alias; readersAllowedSql splices identities only after validIdentity and folderRulesAllowedSql rule ids only after validQualifiedRuleId, each as a quoted literal of a checked shape',
+
   // trust-tier-reads.ts builders
   remoteReadFloorSql: 'src/core/search/private-visibility.ts: privatePagesFilterFragment, plus the constant labelledOnlySql conjunct for a labelled-only caller, over a caller page alias; no values',
 

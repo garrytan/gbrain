@@ -213,7 +213,7 @@ impl FactRecord {
     }
 
     /// `onOwnedMemoryPageSql`: the row sits on a member page or the scope page.
-    fn on_owned_memory_page(&self) -> bool {
+    pub(crate) fn on_owned_memory_page(&self) -> bool {
         let slug = self.source_markdown_slug.as_deref().unwrap_or("");
         slug.starts_with(MEMBER_PAGE_PREFIX) || slug == SCOPE_PAGE_SLUG
     }
