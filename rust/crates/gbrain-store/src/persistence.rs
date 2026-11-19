@@ -50,12 +50,14 @@ mod effect_scans;
 mod effect_worker;
 mod effects;
 mod housekeeping;
+mod idle_probe;
 mod projection_queue;
 mod topology;
 mod writer_versions;
 pub use effect_worker::{EffectClaim, EffectSettle, Settle};
 pub use effects::{PublicationEffectsSpec, QueuedEffect};
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn};
+pub use idle_probe::IdleProbeSpec;
 pub use projection_queue::{
     ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };

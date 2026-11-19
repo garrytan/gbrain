@@ -501,6 +501,15 @@ impl Brain {
         self.run(env, move |s| s.has_rearmable_targets(&request_ids, &code))
     }
 
+    /// `probeIdleWork(spec)`: whether any worker of this host has work, and where the resident
+    /// projection window stands (`{ work, projection_work, projection_last, high_water }`).
+    #[napi]
+    pub fn probe_idle_work<'env>(&self, env: &'env Env, spec: Value) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.probe_idle_work(&required(spec, "probeIdleWork spec")?)
+        })
+    }
+
     /// One effect settle statement, `action` naming the member (`renewEffectClaim`,
     /// `advanceEffectRow`, `completeEffectRow`, `retryEffectRow`, `retryBusyEffectRow`,
     /// `requeueEffectRow`, `parkEffectRow`, `failEffectRow`): `true` when it matched the claim.

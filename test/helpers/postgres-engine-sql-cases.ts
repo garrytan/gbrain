@@ -555,7 +555,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readCapacityForecastInputs': OOS.journal, 'listPendingSegmentedProjections': OOS.journal, 'selectProjectionWindowJobs': OOS.journal,
   'readWriterVersionCutoff': OOS.writerVersions, 'listWriterVersions': OOS.writerVersions, 'recentWriterVersions': OOS.writerVersions,
   'listGatedMirrorRequests': OOS.effectScans, 'listEffectRecoveries': OOS.effectScans, 'selectClaimableEffect': OOS.effectScans, 'readRequestEffects': OOS.effectScans,
-  'stampEffectClaim': OOS.effectWorker, 'renewEffectClaim': OOS.effectWorker, 'advanceEffectRow': OOS.effectWorker, 'completeEffectRow': OOS.effectWorker, 'retryEffectRow': OOS.effectWorker, 'retryBusyEffectRow': OOS.effectWorker, 'requeueEffectRow': OOS.effectWorker, 'parkEffectRow': OOS.effectWorker, 'failEffectRow': OOS.effectWorker, 'readMirrorGateRows': OOS.effectWorker, 'lockEffectGuard': OOS.effectWorker, 'hasRearmableTargets': OOS.effectWorker,
+  'stampEffectClaim': OOS.effectWorker, 'renewEffectClaim': OOS.effectWorker, 'advanceEffectRow': OOS.effectWorker, 'completeEffectRow': OOS.effectWorker, 'retryEffectRow': OOS.effectWorker, 'retryBusyEffectRow': OOS.effectWorker, 'requeueEffectRow': OOS.effectWorker, 'parkEffectRow': OOS.effectWorker, 'failEffectRow': OOS.effectWorker, 'readMirrorGateRows': OOS.effectWorker, 'lockEffectGuard': OOS.effectWorker, 'hasRearmableTargets': OOS.effectWorker, 'probeIdleWork': OOS.effectWorker,
   'logIngest': OOS.ingest, 'getIngestLog': OOS.ingest,
   'logEvalCandidate': OOS.eval, 'listEvalCandidates': OOS.eval, 'deleteEvalCandidatesBefore': OOS.eval,
   'logEvalCaptureFailure': OOS.eval, 'listEvalCaptureFailures': OOS.eval,
@@ -1376,4 +1376,5 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('readMirrorGateRows', [['default', (e) => e.readMirrorGateRows([JOURNAL_REQUEST])]]),
   ...variants('lockEffectGuard', [['brain', (e) => e.transaction((tx: any) => tx.lockEffectGuard(null))], ['worktree', (e) => e.transaction((tx: any) => tx.lockEffectGuard(JOURNAL_REQUEST))]]),
   ...variants('hasRearmableTargets', [['default', (e) => e.hasRearmableTargets([JOURNAL_REQUEST], 'withdrawal_mirror_failed')]]),
+  ...variants('probeIdleWork', [['default', (e) => e.probeIdleWork({ hostId: 'f0000000-0000-4000-8000-0000000000e2', excludedRoots: [], publishing: false, retryingTopologies: [], laneRoots: [], cursor: { after: { source_incarnation: JOURNAL_REQUEST, slug: '' }, highWater: null }, abandonedBefore: '2026-11-19T00:00:00.000Z', foregroundPriority: true })]]),
 ];

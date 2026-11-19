@@ -33,11 +33,12 @@ export function foregroundPriorityText(priority: boolean | null | undefined): st
 }
 
 /**
- * `claimableWriteSql(priority)` (journal.ts) with no lane roots: the rows `claimNextWrite` may claim. `hostId` and
- * `excludeRoots` bind as $1 and $2, the text the journal writes.
+ * `claimableWriteSql(priority, lanes)` (journal.ts): the rows `claimNextWrite` may claim. `hostId` and `excludeRoots`
+ * bind as $1 and $2, the text the journal writes; with no `laneRoots` the lane list is the empty literal, as there.
  */
-export function claimableWriteFragment(priority: boolean | null | undefined, hostId: string, excludeRoots: string[]): SqlFragment {
+export function claimableWriteFragment(priority: boolean | null | undefined, hostId: string, excludeRoots: string[], laneRoots?: string[]): SqlFragment {
   const p = trustedSql(PRIORITY_SQL[priorityKey(priority)]);
+  const lanes = laneRoots === undefined ? sqlFragment`'{}'::text[]` : sqlFragment`${laneRoots}::text[]`;
   return sqlFragment`(r.state='queued' OR (r.state='deferred' AND (r.deferred_refresh_id IS NOT NULL OR r.deferred_import_from IS NOT NULL)
         AND (r.deferred_refresh_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktree_refreshes released
           WHERE released.id=r.deferred_refresh_id AND released.released_at IS NOT NULL))
@@ -56,7 +57,7 @@ export function claimableWriteFragment(priority: boolean | null | undefined, hos
         WHERE r.worktree_id IS NOT NULL AND earlier.worktree_id=r.worktree_id AND earlier.sequence<r.sequence
         AND earlier.state IN ('queued','running','recovering') AND NOT ((${p}) AND NOT COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%'
   AND (earlier.state='queued' OR (earlier.state='running' AND earlier.intent ? 'lane'
-    AND earlier.worktree_id::text=ANY('{}'::text[])))
+    AND earlier.worktree_id::text=ANY(${lanes})))
   AND earlier.recovery IS NULL AND COALESCE(earlier.intent->>'kind','') LIKE 'managed_sync_%' AND NOT (earlier.source_id=r.source_id AND (earlier.slug=r.slug
   OR earlier.page_id=r.page_id OR earlier.intent->'renameFrom'->>'slug'=r.slug))))
       AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier
@@ -64,7 +65,7 @@ export function claimableWriteFragment(priority: boolean | null | undefined, hos
         AND earlier.sequence<r.sequence
         AND earlier.state IN ('queued','running','recovering') AND NOT ((${p}) AND NOT COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%'
   AND (earlier.state='queued' OR (earlier.state='running' AND earlier.intent ? 'lane'
-    AND earlier.worktree_id::text=ANY('{}'::text[])))
+    AND earlier.worktree_id::text=ANY(${lanes})))
   AND earlier.recovery IS NULL AND COALESCE(earlier.intent->>'kind','') LIKE 'managed_sync_%' AND NOT (earlier.source_id=r.source_id AND (earlier.slug=r.slug
   OR earlier.page_id=r.page_id OR earlier.intent->'renameFrom'->>'slug'=r.slug))))
       AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier

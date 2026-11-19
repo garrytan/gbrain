@@ -37,6 +37,7 @@ import { claimableWriteFragment, EXPIRE_CLAIMS_SQL, foregroundPriorityText, hasC
 import { renderFragment } from '../src/core/engine-sql/fragment.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { defineNormalizer, expectGolden } from './helpers/golden.ts';
+import { idleProbeStatement, type IdleProbeSpec } from '../src/core/engine-sql/persistence-idle-probe.ts';
 import { overdueDeferredWorkSql } from '../src/core/persistence/refresh-barrier.ts';
 import { claimableWriteSql, foregroundPrioritySql } from '../src/core/persistence/journal.ts';
 import { PERSISTENCE_PROTOCOL_PREDICATE } from '../src/core/persistence/protocol.ts';
@@ -290,5 +291,109 @@ describe('the effect worker statements are one text on both engines', () => {
     const pglite = await record(PGLiteEngine.prototype);
     expect(await record(PostgresEngine.prototype)).toEqual(pglite);
     expectGolden('sql-text-extra/persistence-effect-worker', pglite, defineNormalizer<Record<string, unknown[][]>>('effect-worker-statements-v1', m => m));
+  });
+});
+
+describe('the idle probe is one text on both engines', () => {
+  // consumer.ts hasWork built this statement inline before it called probeIdleWork. `original` is that builder, kept
+  // here verbatim over the source fragments (journal.ts, refresh-barrier.ts, page-state/projections.ts), so the engine-sql
+  // copy (persistence-idle-probe.ts) cannot drift from what the consumer sent.
+  function original(spec: IdleProbeSpec): { sql: string; params: unknown[] } {
+    const priority = foregroundPrioritySql();
+    const cursor = { after: spec.cursor.after, highWater: spec.cursor.highWater } as ProjectionScanCursor;
+    const params: unknown[] = [spec.hostId, spec.excludedRoots, spec.publishing, spec.retryingTopologies, spec.laneRoots];
+    const windowCtes = residentWindowCtes(cursor, params, PROJECTION_RETRY_READY_SQL);
+    if (spec.abandonedBefore) params.push(spec.abandonedBefore);
+    const abandoned = spec.abandonedBefore ? `
+      OR EXISTS (SELECT 1 FROM persistence_requests r WHERE r.state='running' AND r.recovery IS NULL AND r.publication_started=false AND r.updated_at<$${params.length}::timestamptz)
+      OR EXISTS (SELECT 1 FROM persistence_effects e WHERE e.state='running' AND e.recovery IS NULL AND e.updated_at<$${params.length}::timestamptz)` : '';
+    return { sql: `WITH ${windowCtes},
+    pwork AS (SELECT EXISTS (SELECT 1 FROM (SELECT source_incarnation,slug FROM recent UNION ALL SELECT source_incarnation,slug FROM win) j
+      CROSS JOIN LATERAL (SELECT s.id FROM sources s WHERE s.incarnation=j.source_incarnation AND NOT s.archived OFFSET 0) s
+      CROSS JOIN LATERAL (SELECT 1 FROM (SELECT p.id FROM pages p WHERE p.source_id=s.id AND p.slug=j.slug OFFSET 0) k
+        JOIN pages p ON p.id=k.id WHERE p.deleted_at IS NULL AND p.page_kind IN ('markdown','code')) p) AS found)
+    SELECT (SELECT found FROM pwork) AS projection_work,
+      (SELECT json_build_object('source_incarnation',source_incarnation,'slug',slug) FROM win ORDER BY ord DESC LIMIT 1) AS projection_last,
+      (SELECT at FROM high_water) AS high_water, (
+      EXISTS (SELECT 1 FROM persistence_requests r LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id
+        WHERE ${claimableWriteSql(priority, '$5::text[]')}
+        AND ($3::boolean OR r.blocked_reason IS DISTINCT FROM 'writer_pool_capacity'))
+      OR EXISTS (SELECT 1 FROM persistence_requests r JOIN persistence_worktrees w ON w.id=r.worktree_id
+        WHERE w.owner_host_id=$1::uuid AND r.recovery IS NOT NULL AND NOT (r.worktree_id::text=ANY($2::text[])))
+      OR EXISTS (SELECT 1 FROM persistence_requests r WHERE r.state='running' AND r.recovery IS NULL
+        AND r.publication_started=false AND r.claim_expires_at<now()
+        AND (r.worktree_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktrees w WHERE w.id=r.worktree_id AND w.owner_host_id=$1::uuid)))
+      OR EXISTS (SELECT 1 FROM persistence_effects e LEFT JOIN persistence_worktrees w ON w.id=e.worktree_id
+        WHERE (e.state='queued' OR e.state='running' AND e.claim_expires_at<now()) AND e.next_attempt_at<=now()
+        AND (e.worktree_id IS NULL OR w.owner_host_id=$1::uuid) AND (e.worktree_id IS NULL OR ${refreshFenceClear('e')}) AND e.recovery IS NULL
+        AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
+        AND (e.kind='withdrawal-mirror' OR NOT EXISTS (SELECT 1 FROM persistence_effects mirror
+          WHERE mirror.request_id=e.request_id AND mirror.kind='withdrawal-mirror' AND mirror.state<>'committed')))
+      OR EXISTS (SELECT 1 FROM persistence_effects e JOIN persistence_worktrees w ON w.id=e.worktree_id
+        WHERE e.recovery IS NOT NULL AND w.owner_host_id=$1::uuid AND e.next_attempt_at<=now())
+      OR (SELECT found FROM pwork)
+      OR EXISTS (SELECT 1 FROM page_projection_jobs j JOIN sources s ON s.incarnation=j.source_incarnation AND NOT s.archived
+        JOIN pages p ON p.source_id=s.id AND p.slug=j.slug AND p.deleted_at IS NULL AND p.body_storage='segmented'
+        WHERE ${PROJECTION_RETRY_READY_SQL})
+      OR EXISTS (SELECT 1 FROM persistence_topology_changes c
+        JOIN persistence_worktrees w ON w.id=(c.recovery->>'worktreeId')::uuid
+        WHERE c.recovery IS NOT NULL AND w.owner_host_id=$1::uuid AND NOT (c.id::text=ANY($4::text[])))
+      OR ${overdueDeferredWorkSql('$1')}${abandoned}
+    ) AS work`, params };
+  }
+  const H = 'f0000000-0000-4000-8000-0000000000e2';
+  const specs: [string, IdleProbeSpec][] = [
+    ['first', { hostId: H, excludedRoots: [], publishing: false, retryingTopologies: [], laneRoots: [], cursor: { after: { source_incarnation: 'b0000000-0000-4000-8000-0000000000b1', slug: '' }, highWater: null }, abandonedBefore: null, foregroundPriority: null }],
+    ['later', { hostId: H, excludedRoots: ['db:x'], publishing: true, retryingTopologies: ['9'], laneRoots: ['w'], cursor: { after: { source_incarnation: 'b0000000-0000-4000-8000-0000000000b1', slug: 'notes/a' }, highWater: '2026-11-19 00:00:00+00' }, abandonedBefore: '2026-11-19T00:00:00.000Z', foregroundPriority: true }],
+    ['fifo', { hostId: H, excludedRoots: [], publishing: false, retryingTopologies: [], laneRoots: [], cursor: { after: { source_incarnation: 'b0000000-0000-4000-8000-0000000000b1', slug: '' }, highWater: null }, abandonedBefore: null, foregroundPriority: false }],
+  ];
+
+  // The engine-sql copy binds each value where it is read (renderFragment numbers them); the consumer hand-numbered
+  // $1..$9 and reused them. Writing each placeholder as the value it binds makes the two comparable value for value.
+  function bound({ sql, params }: { sql: string; params: unknown[] }): string {
+    return sql.replace(/\$(\d+)/g, (_, n: string) => {
+      const i = Number(n) - 1;
+      expect(i).toBeLessThan(params.length);
+      return `<${JSON.stringify(params[i])}>`;
+    });
+  }
+
+  test('the statement is the one the consumer built, value for value, for every switch and window state', async () => {
+    for (const [, spec] of specs) {
+      const env = spec.foregroundPriority === null ? undefined : String(spec.foregroundPriority);
+      await withEnv({ GBRAIN_SYNC_FOREGROUND_PRIORITY: env }, () => {
+        const ours = idleProbeStatement(spec);
+        expect(bound(ours)).toBe(bound(original(spec)));
+        // Every bound value is read: renderFragment numbers $1..$n in order, once each.
+        expect([...ours.sql.matchAll(/\$(\d+)/g)].map(m => Number(m[1]))).toEqual(ours.params.map((_, i) => i + 1));
+      });
+    }
+  });
+
+  test('PGLite and Postgres send it on the lane they are given, with the same bound values', async () => {
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    const { PostgresEngine } = await import('../src/core/postgres-engine.ts');
+    async function record(proto: object): Promise<Record<string, unknown[][]>> {
+      const out: Record<string, unknown[][]> = {};
+      for (const [name, spec] of specs) for (const route of ['engine', 'direct', 'lane'] as const) {
+        const sent: unknown[][] = [];
+        const send = (via: string) => async (sql: string, params?: unknown[]) => { sent.push([via, sql, params ?? []]); return []; };
+        const engine = Object.create(proto, { executeRaw: { value: send('engine') }, executeRawDirect: { value: send('direct') } });
+        const lane = { executeRaw: send('lane') } as never;
+        await engine.probeIdleWork(spec, route === 'lane' ? { lane } : { direct: route === 'direct' });
+        out[`${name}#${route}`] = sent;
+      }
+      return out;
+    }
+    const pglite = await record(PGLiteEngine.prototype);
+    const postgres = await record(PostgresEngine.prototype);
+    // PGLite has no direct lane: its direct route is the engine itself.
+    for (const [name] of specs) expect(postgres[`${name}#direct`]!.map(([, ...rest]) => rest)).toEqual(pglite[`${name}#direct`]!.map(([, ...rest]) => rest));
+    expect(postgres[`first#direct`]![0]![0]).toBe('direct');
+    expect(pglite[`first#direct`]![0]![0]).toBe('engine');
+    const shared = (m: Record<string, unknown[][]>) => Object.fromEntries(Object.entries(m).filter(([k]) => !k.endsWith('#direct')));
+    expect(shared(postgres)).toEqual(shared(pglite));
+    expectGolden('sql-text-extra/persistence-idle-probe', shared(pglite), defineNormalizer<Record<string, unknown[][]>>('idle-probe-statements-v1', m => m));
   });
 });

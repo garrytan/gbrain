@@ -18,7 +18,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 /// A `::uuid` parameter, lower-cased; anything else refuses with the Postgres cast's own words.
-fn pg_uuid(text: &str) -> Result<String> {
+pub(super) fn pg_uuid(text: &str) -> Result<String> {
     if is_uuid(text) {
         Ok(text.to_lowercase())
     } else {

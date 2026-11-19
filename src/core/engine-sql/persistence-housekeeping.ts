@@ -269,11 +269,28 @@ export interface ProjectionWindowRow {
  * budgets (100 recent, 400 window) inlined; the recency lane, then the key window from `cursor`.
  */
 export function projectionWindowFragment(cursor: Pick<ProjectionScanCursor, 'after' | 'highWater'>, retryCooldown: boolean): SqlFragment {
+  return sqlFragment`WITH ${residentWindowCtesFragment(cursor, retryCooldown)}
+    SELECT r.lane,r.ord,r.source_incarnation::text AS source_incarnation,r.slug,r.revision::text AS revision,h.at AS high_water
+    FROM high_water h LEFT JOIN (SELECT source_incarnation,slug,revision,updated_at,lane,ord FROM recent
+      UNION ALL SELECT source_incarnation,slug,revision,updated_at,lane,ord FROM win) r ON true
+    ORDER BY r.lane,r.ord`;
+}
+
+/** `PROJECTION_RETRY_READY_SQL` (projections.ts) as a fragment: a queue row `j` out of its retry cooldown. */
+export function projectionRetryReadyFragment(): SqlFragment {
+  return sqlFragment`${trustedSql(PROJECTION_RETRY_READY_TEXT)}`;
+}
+
+/**
+ * `residentWindowCtes(cursor, params, filter)` (page-state/projection-window.ts) written out: the `mark`, `recent`,
+ * `fwd`, `wrap`, `win` and `high_water` CTEs, the filter `PROJECTION_RETRY_READY_TEXT` or TRUE.
+ */
+export function residentWindowCtesFragment(cursor: Pick<ProjectionScanCursor, 'after' | 'highWater'>, retryCooldown: boolean): SqlFragment {
   const filter = retryCooldown ? trustedSql(PROJECTION_RETRY_READY_TEXT) : trustedSql('TRUE');
   const cols = trustedSql('j.source_incarnation,j.slug,j.revision,j.updated_at,j.reason');
   const inc = cursor.after.source_incarnation;
   const slug = cursor.after.slug;
-  return sqlFragment`WITH mark AS (SELECT COALESCE(${cursor.highWater}::text::timestamptz,(SELECT max(updated_at) FROM page_projection_jobs)) AS at),
+  return sqlFragment`mark AS (SELECT COALESCE(${cursor.highWater}::text::timestamptz,(SELECT max(updated_at) FROM page_projection_jobs)) AS at),
     recent AS (SELECT ${cols},'recent'::text AS lane,0 AS ord FROM page_projection_jobs j, mark
       WHERE j.updated_at > mark.at - interval '10 minutes' AND ${filter} ORDER BY j.updated_at DESC LIMIT 100),
     fwd AS (SELECT ${cols} FROM page_projection_jobs j WHERE (j.source_incarnation,j.slug COLLATE "C") > (${inc}::uuid,${slug} COLLATE "C") AND ${filter}
@@ -283,11 +300,7 @@ export function projectionWindowFragment(cursor: Pick<ProjectionScanCursor, 'aft
     win AS (SELECT *,'window'::text AS lane,(row_number() OVER (ORDER BY part,source_incarnation,slug COLLATE "C"))::int AS ord FROM (
       SELECT * FROM ((SELECT *,0 AS part FROM fwd ORDER BY source_incarnation,slug COLLATE "C") UNION ALL (SELECT *,1 AS part FROM wrap ORDER BY source_incarnation,slug COLLATE "C")) u
       ORDER BY part,source_incarnation,slug COLLATE "C" LIMIT 400) w),
-    high_water AS (SELECT max(updated_at)::text AS at FROM page_projection_jobs)
-    SELECT r.lane,r.ord,r.source_incarnation::text AS source_incarnation,r.slug,r.revision::text AS revision,h.at AS high_water
-    FROM high_water h LEFT JOIN (SELECT source_incarnation,slug,revision,updated_at,lane,ord FROM recent
-      UNION ALL SELECT source_incarnation,slug,revision,updated_at,lane,ord FROM win) r ON true
-    ORDER BY r.lane,r.ord`;
+    high_water AS (SELECT max(updated_at)::text AS at FROM page_projection_jobs)`;
 }
 
 /** Runs `projectionWindowFragment`; on an empty queue it returns one row of nulls that carries the high water. */

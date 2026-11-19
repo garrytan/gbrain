@@ -613,6 +613,32 @@ describe('engine parity: write journal', () => {
     return answers;
   });
 
+  parityTest('the idle probe sees a queued write and an effect, and an excluded root hides the write', {
+    methods: ['probeIdleWork', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'insertPublicationEffects', 'transactionDirect', 'declarePersistence'],
+  }, async (engine) => {
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    const spec = (excludedRoots: string[] = []) => ({ hostId: HOST, excludedRoots, publishing: false, retryingTopologies: [], laneRoots: [],
+      cursor: { after: { source_incarnation: incarnation, slug: '' }, highWater: null }, abandonedBefore: null, foregroundPriority: null });
+    const probe = async (excludedRoots?: string[]) => {
+      const row = await engine.probeIdleWork(spec(excludedRoots));
+      return row && { work: row.work, projection_work: row.projection_work, projection_last: row.projection_last };
+    };
+    const empty = await probe();
+    const id = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b5');
+    const queued = await probe();
+    const excluded = await probe([`db:${incarnation}`]);
+    await engine.transactionDirect(async tx => {
+      await tx.declarePersistence();
+      return tx.insertPublicationEffects({ requestId: id, revision: null, sourceId: 'default', sourceIncarnation: incarnation, worktreeId: null,
+        effects: [{ kind: 'withdrawal-mirror', data: { slugs: ['notes/parity'] } }] });
+    });
+    const effect = await probe([`db:${incarnation}`]);
+    const answers = { empty, queued, excluded, effect };
+    const idle = { work: false, projection_work: false, projection_last: null };
+    expect(answers).toEqual({ empty: idle, queued: { ...idle, work: true }, excluded: idle, effect: { ...idle, work: true } });
+    return answers;
+  });
+
   parityTest('completeWrite with no lock held asks for synchronous commit, declares, locks and ends the claimed request', {
     methods: ['requireSynchronousCommit', 'declarePersistence', 'transaction', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest',
       'stampWriteClaim', 'lockWriteRequest', 'completeWriteRow', 'readWriteRequestById'],

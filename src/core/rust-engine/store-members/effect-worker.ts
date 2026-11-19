@@ -2,8 +2,8 @@
  * The effect worker statements the Rust store answers (engine-sql/persistence-effect-worker.ts): the claim stamp
  * (stampEffectClaim), the lease renewal (renewEffectClaim), the statements that settle a claim (advanceEffectRow,
  * completeEffectRow, retryEffectRow, retryBusyEffectRow, requeueEffectRow, parkEffectRow, failEffectRow) and the
- * withdrawal-mirror gate read (readMirrorGateRows), the effect guard's locks (lockEffectGuard), and the re-arm probe
- * (hasRearmableTargets).
+ * withdrawal-mirror gate read (readMirrorGateRows), the effect guard's locks (lockEffectGuard), the re-arm probe
+ * (hasRearmableTargets) and the consumer's idle probe (probeIdleWork).
  *
  * Each settle statement matches only the effect still claimed under the token, as the Postgres `WHERE id=$1 AND
  * execution_token=$2::uuid` does, and refuses the arguments the Postgres casts refuse (an id that is not a bigint, a
@@ -13,6 +13,7 @@
  * What each member answers and why: rust/docs/store/persistence.md ("Effect worker").
  */
 import type { EffectClaim, EffectClaimRef, EffectWorktreeOwner, MirrorGateRow } from '../../engine-sql/persistence-effect-worker.ts';
+import type { IdleProbeRow, IdleProbeSpec } from '../../engine-sql/persistence-idle-probe.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -60,3 +61,15 @@ export const lockEffectGuard: StoreMember<[worktreeId: string | null], EffectWor
 /** Whether a target parked under `code` waits on a committed withdrawal mirror; a non-uuid request id refuses as `::uuid[]` does. */
 export const hasRearmableTargets: StoreMember<[requestIds: readonly string[], code: string], boolean> = (brain, requestIds, code) =>
   storeCall({ member: 'hasRearmableTargets' }, () => brain.hasRearmableTargets([...requestIds], code));
+
+/**
+ * The consumer's idle probe (engine-sql/persistence-idle-probe.ts). No worktree exists on this engine, so the worktree,
+ * effect-recovery, topology-recovery and overdue-deferred terms find no row; the lane and the direct route are the
+ * store itself.
+ */
+export const probeIdleWork: StoreMember<[spec: IdleProbeSpec, opts?: { signal?: AbortSignal; lane?: unknown; direct?: boolean }], IdleProbeRow | null> =
+  (brain, spec) => storeCall({ member: 'probeIdleWork' }, () => brain.probeIdleWork({
+    hostId: spec.hostId, excludedRoots: [...spec.excludedRoots], publishing: spec.publishing, retryingTopologies: [...spec.retryingTopologies],
+    laneRoots: [...spec.laneRoots], cursor: { after: { ...spec.cursor.after }, highWater: spec.cursor.highWater },
+    abandonedBefore: spec.abandonedBefore, foregroundPriority: spec.foregroundPriority,
+  }));

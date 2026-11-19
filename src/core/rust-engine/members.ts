@@ -568,6 +568,7 @@ export const RUST_ENGINE_MEMBERS = {
   readMirrorGateRows: 'persistence_journal',
   lockEffectGuard: 'persistence_journal',
   hasRearmableTargets: 'persistence_journal',
+  probeIdleWork: 'persistence_journal',
   readCapacityForecastInputs: 'persistence_journal',
   readWriterVersionCutoff: 'persistence_journal',
   listWriterVersions: 'persistence_journal',

@@ -194,6 +194,28 @@ committed. A request id or host id that is not a uuid refuses with
 `invalid input syntax for type uuid: "<id>"`, and an effect id that is not a bigint with the bigint
 syntax message.
 
+## Idle probe
+
+`brain.probeIdleWork(spec)` answers the consumer's idle probe (`persistence-idle-probe.ts`):
+`{ work, projection_work, projection_last, high_water }`. `spec` holds `hostId`, `excludedRoots`,
+`publishing`, `retryingTopologies`, `laneRoots`, the projection `cursor`, `abandonedBefore` and
+`foregroundPriority`. `work` is true when one of these holds:
+
+- a queued write is claimable (the claim rules above, with `excludedRoots` and `laneRoots`) and is
+  not blocked for writer pool capacity, unless `publishing` is set;
+- a running write that has not published, with no recovery, has an expired claim;
+- an effect is due as the probe states it: `queued`, or `running` with an expired claim, due now, on no
+  worktree, not recovering, and a withdrawal mirror or of a request whose withdrawal mirror is committed;
+- the projection window (`selectProjectionWindowJobs` with the retry cooldown) holds a job of a source
+  that is not archived whose page is live markdown or code (`projection_work`);
+- a segmented page has a projection job past its retry cooldown;
+- with `abandonedBefore`, a running write or effect with no recovery was last written before it.
+
+The worktree recovery, effect recovery on a worktree, topology recovery and overdue deferred terms join
+a worktree, and a Rust brain has none, so they find no row. `projection_last` is the last key window row
+(`null` when the window is empty) and `high_water` is the newest job's `updated_at` text. A host id that
+is not a uuid refuses with the uuid cast message.
+
 ## Projection queue
 
 Every page write updates the queue in the same store transaction, as PGLite's
