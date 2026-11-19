@@ -137,7 +137,11 @@ function takeCensusRef<R extends Run & { response?: any }>(run: R): R {
 async function mcpCall(brain: Brain, method: string, params: Record<string, unknown>, trace?: string): Promise<Run & { response?: any }> {
   const started = Date.now();
   const cmd = ['bun', ...(trace ? ['--preload', PRELOAD] : []), CLI, 'serve'];
-  const proc = Bun.spawn(cmd, { cwd: brain.dir, env: childEnv(brain, trace), stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
+  // GBRAIN_NO_ONBOARD_NUDGE: at boot `serve` starts the onboarding refresher (src/mcp/server.ts), whose first check
+  // loads the active schema pack into the pack cache. It races the tools/call on every engine, so reload_schema_pack
+  // answered [gbrain-base] or [] by timing alone. Turning the refresher off makes MCP rows depend on the call only.
+  const env = { ...childEnv(brain, trace), GBRAIN_NO_ONBOARD_NUDGE: '1' };
+  const proc = Bun.spawn(cmd, { cwd: brain.dir, env, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
   const send = (msg: unknown) => { proc.stdin!.write(JSON.stringify(msg) + '\n'); proc.stdin!.flush?.(); };
   send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'gbrain-rust-census', version: '1' } } });
   let timedOut = false;

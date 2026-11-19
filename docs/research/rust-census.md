@@ -67,6 +67,11 @@ and the packages without a rerun). The part between the GENERATED markers is rew
 - Some `differs` rows are expected differences, not bugs: `engine status` prints a PGLite lock field, `migrate` and
   `pglite-repair` describe PGLite data directories, `config` and `smoke-test` name the engine or a health score that
   follows from refusals elsewhere.
+- Known boot race in `gbrain serve`, the same on every engine: the onboarding refresher's first check loads the
+  active schema pack into the in-process pack cache, and it can finish before or after the case's tools/call. So
+  `reload_schema_pack` answered `invalidated: [gbrain-base]` or `[]` by timing alone. The census sets
+  `GBRAIN_NO_ONBOARD_NUDGE=1` for every MCP case, which turns the refresher off. The product fix (wait for the first
+  refresh) is in TODOS.md as onboarding-refresher-pack-cache-race.
 - The Postgres column compares Postgres with PGLite. It is advisory: most differences are engine-specific fields
   (data directory, lock, connection) and timings; the Postgres rows were not triaged.
 
