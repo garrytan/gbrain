@@ -194,3 +194,50 @@ fn an_outcome_marker_is_not_refused_on_insert() {
     assert!(!refused(batch(&b, marker(TERMINAL, 2))));
     assert!(refused(batch(&b, marker("fence", 3))));
 }
+
+#[test]
+fn the_claim_checks_read_both_ledgers_for_their_subjects() {
+    let b = brain("purge-claim-checks");
+    page(&b, SLUG);
+    let bees = hash_of(&b, "Ana keeps bees", 1);
+    let paints = hash_of(&b, "Ana paints", 2);
+    b.insert_fact_purge(&tombstone("world", "*", &bees))
+        .unwrap();
+    b.insert_fact_purge(&tombstone("private", SLUG, &paints))
+        .unwrap();
+    b.insert_fact_withdrawal("default", "private", "Ana reads", SLUG, None)
+        .unwrap();
+    b.insert_fact_withdrawal("default", "world", "Ana cooks", "members/ana", None)
+        .unwrap();
+    let purged = |vis, claim, entity| b.is_fact_purged("default", vis, claim, entity).unwrap();
+    assert!(purged("world", "  ANA keeps   bees. ", None));
+    assert!(!purged("private", "Ana keeps bees", Some(SLUG)));
+    assert!(purged("private", "Ana paints", Some(SLUG)));
+    assert!(!purged("private", "Ana paints", None));
+    assert!(!purged("public", "Ana keeps bees", None));
+    let withdrawn = |vis, claim, entity, member| {
+        b.is_fact_withdrawn("default", vis, claim, entity, member)
+            .unwrap()
+    };
+    assert!(withdrawn(None, "Ana reads", Some(SLUG), None));
+    assert!(!withdrawn(Some("world"), "Ana reads", Some(SLUG), None));
+    assert!(withdrawn(Some("private"), "Ana reads", None, Some(SLUG)));
+    assert!(withdrawn(
+        Some("world"),
+        "Ana cooks",
+        None,
+        Some("members/ana")
+    ));
+    assert!(!withdrawn(Some("world"), "Ana cooks", Some(OTHER), None));
+    assert!(withdrawn(None, "Ana paints", Some(SLUG), None));
+    assert!(!withdrawn(None, "Ana paints", None, Some(SLUG)));
+    assert!(withdrawn(Some("world"), "Ana keeps bees", None, None));
+    assert!(
+        !b.is_fact_withdrawn("missing", None, "Ana reads", Some(SLUG), None)
+            .unwrap()
+    );
+    let nul = b
+        .is_fact_purged("default", "world", "a\0b", None)
+        .unwrap_err();
+    assert_eq!(nul.code, INVALID_ARGUMENT);
+}

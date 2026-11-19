@@ -1,5 +1,5 @@
 /**
- * Trust: the fact withdrawal ledger members (BrainEngine hasCoveringFactWithdrawal, insertFactWithdrawal,
+ * Trust: the fact withdrawal ledger members (BrainEngine hasCoveringFactWithdrawal, isFactWithdrawn, isFactPurged, insertFactWithdrawal,
  * listFactWithdrawalDates, moveFactWithdrawalSubject, hasFactWithdrawalForSubject, listFactWithdrawalKeys,
  * readFactCacheWatermark, readTrustGeneration), over `rust/crates/gbrain-store/src/trust/withdrawals.rs`. The
  * watermark's access digest is that of empty folder access tables: the store keeps none. The trust generation is the
@@ -14,6 +14,12 @@ type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infe
 
 export const hasCoveringFactWithdrawal: Member<'hasCoveringFactWithdrawal'> = (brain, sourceId, visibility, factHash, claim, subject) =>
   storeCall({ member: 'hasCoveringFactWithdrawal', sourceId }, () => brain.hasCoveringFactWithdrawal(sourceId, visibility, factHash, claim, subject));
+
+export const isFactWithdrawn: Member<'isFactWithdrawn'> = (brain, sourceId, visibility, claim, entitySlug, memberPage) =>
+  storeCall({ member: 'isFactWithdrawn', sourceId }, () => brain.isFactWithdrawn(sourceId, visibility ?? null, claim, entitySlug ?? null, memberPage ?? null));
+
+export const isFactPurged: Member<'isFactPurged'> = (brain, sourceId, visibility, claim, entitySlug) =>
+  storeCall({ member: 'isFactPurged', sourceId }, () => brain.isFactPurged(sourceId, visibility, claim, entitySlug ?? null));
 
 export const insertFactWithdrawal: Member<'insertFactWithdrawal'> = (brain, sourceId, visibility, claim, subject, withdrawnAt) =>
   storeCall({ member: 'insertFactWithdrawal', sourceId }, () => brain.insertFactWithdrawal(sourceId, visibility, claim, subject, withdrawnAt ?? null));

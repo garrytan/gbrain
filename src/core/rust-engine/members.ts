@@ -489,6 +489,8 @@ export const RUST_ENGINE_MEMBERS = {
   // trust: the fact withdrawal ledger (engine-sql/trust-withdrawals.ts)
   hasCoveringFactWithdrawal: 'facts',
   insertFactWithdrawal: 'facts',
+  isFactWithdrawn: 'facts',
+  isFactPurged: 'facts',
   listFactWithdrawalDates: 'facts',
   moveFactWithdrawalSubject: 'facts',
   hasFactWithdrawalForSubject: 'facts',

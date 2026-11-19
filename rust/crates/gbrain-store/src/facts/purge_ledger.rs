@@ -5,12 +5,15 @@
 //! fact_hash \0` with the JSON value [`PurgeRecord`]; the key is the table's primary key. `subject`
 //! `*` covers every subject. `fact_hash` is the claim's fingerprint (`gbrain_fact_fingerprint`).
 //!
-//! Three things read it:
+//! Four things read it:
 //!
 //! - the fact guard ([`refuse_purged`]), which [`super::write_fact`] runs on every insert and on
 //!   every update that changes `fact`, `source_id`, `visibility` or `entity_slug`, as the
 //!   `gbrain_guard_inserted_facts` and `gbrain_refuse_purged_fact` triggers do;
-//! - the fence overlay's `purged` ([`purged_for_page`]);
+//! - the claim checks every writer runs before it saves (`isFactPurged`, [`Store::is_fact_purged`],
+//!   and the purge half of `isFactWithdrawn`, `Store::is_fact_withdrawn` in `trust::withdrawals`),
+//!   through [`purged_claim`];
+//! - the fence overlay's `purged` ([`purged_claim`] with the page as the entity);
 //! - the persistence journal and the belief ledger's purge probe ([`has_fact_purges`]).
 //!
 //! Deleting a source removes its tombstones (`ON DELETE CASCADE`, [`remove_source_rows`]).
@@ -82,17 +85,19 @@ pub(crate) fn has_fact_purges(read: &dyn KvRead, source_id: &str) -> Result<bool
     Ok(found)
 }
 
-/// The fence overlay's `purged`: a tombstone at `visibility` names the claim's fingerprint under
-/// subject `*` or the page `slug`.
-pub(crate) fn purged_for_page(
+/// `SELECT 1 FROM fact_purges WHERE source_id = $source AND visibility = $visibility AND fact_hash =
+/// gbrain_fact_fingerprint(claim) AND (subject = '*' OR subject = entity)`: a tombstone at
+/// `visibility` names the claim's fingerprint under subject `*` or `entity`; a None entity matches
+/// only `*`. The fence overlay passes the page as the entity.
+pub(crate) fn purged_claim(
     read: &dyn KvRead,
     source_id: &str,
     visibility: &str,
-    slug: &str,
     claim: &str,
+    entity: Option<&str>,
 ) -> Result<bool> {
     let hash = fact_fingerprint(claim);
-    for subject in ["*", slug] {
+    for subject in std::iter::once("*").chain(entity) {
         if exists(read, &[source_id, visibility, subject, &hash])? {
             return Ok(true);
         }
@@ -221,6 +226,27 @@ impl Store {
             )?;
             Ok(true)
         })
+    }
+
+    /// `isFactPurged`: whether a tombstone of the source at `visibility` names the fingerprint of
+    /// `claim` for subject `*` or `entity_slug`. A visibility outside the CHECK matches nothing.
+    pub fn is_fact_purged(
+        &self,
+        source_id: &str,
+        visibility: &str,
+        claim: &str,
+        entity_slug: Option<&str>,
+    ) -> Result<bool> {
+        no_nul(
+            "isFactPurged",
+            &[
+                ("sourceId", source_id),
+                ("visibility", visibility),
+                ("claim", claim),
+                ("entitySlug", entity_slug.unwrap_or("")),
+            ],
+        )?;
+        purged_claim(&*self.read()?, source_id, visibility, claim, entity_slug)
     }
 
     /// Whether the source has any fact purge tombstone (`readLedgerSource`'s `purgesPossible`).

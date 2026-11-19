@@ -457,9 +457,10 @@ foreign key does. `purge_fact` (facts/purge.ts) writes its main tombstone throug
 tombstones, the take and page purges, the purge epoch and the rest of the purge still run through `executeRaw`, which
 this engine refuses, so a full `purge_fact` does not run on Rust yet.
 
-Readers: the fence overlay's `purged`; `completeWriteRow`'s `purge_has_facts` (any tombstone of the source;
-`purge_has_pages` stays false, as the store keeps no page purges); and `readLedgerSource`'s `purgesPossible`
-(`brain.hasFactPurges`). The purge epoch stays 0.
+Readers: the fence overlay's `purged`; `isFactPurged` (`is_fact_purged`: point reads for subject `*` and the entity)
+and the purge half of `isFactWithdrawn` ([trust.md](trust.md)), which every fact writer runs before it saves;
+`completeWriteRow`'s `purge_has_facts` (any tombstone of the source; `purge_has_pages` stays false, as the store keeps
+no page purges); and `readLedgerSource`'s `purgesPossible` (`brain.hasFactPurges`). The purge epoch stays 0.
 
 The guard: every fact write (`write_fact`) refuses with `purged_content` (`purged_content: this claim was purged
 from this source and cannot be saved again`, the triggers' message) when a tombstone of the row's source and

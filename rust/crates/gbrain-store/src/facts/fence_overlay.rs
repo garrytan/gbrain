@@ -7,7 +7,7 @@
 //! activation-suppressed, whether a held fact hold of the page carries the row's fingerprint, and, with `hideHeld`,
 //! whether the row is held from a world-only fact reader (`held_cells::held` for an uncut claim). `purged` is whether a
 //! fact purge tombstone at the row's visibility names its fingerprint under subject `*` or the page
-//! (`purge_ledger::purged_for_page`).
+//! (`purge_ledger::purged_claim`).
 //! See rust/docs/store/facts.md, "The fence overlay".
 
 use super::{FactRecord, held_cells, page_rows};
@@ -107,12 +107,12 @@ impl Store {
                 ),
                 None => (None, None),
             };
-            let purged = super::purge_ledger::purged_for_page(
+            let purged = super::purge_ledger::purged_claim(
                 &*read,
                 &input.source_id,
                 &row.visibility,
-                &input.slug,
                 &row.claim,
+                Some(&input.slug),
             )?;
             let held = row.fp.as_ref().is_some_and(|fp| held_fps.contains(fp));
             let narrower = input.hide_held

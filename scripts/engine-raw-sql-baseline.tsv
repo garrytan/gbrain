@@ -445,7 +445,7 @@ src/core/facts/slot-tagging.ts	execute_raw	1	GBRA-574 #9668: the live person-pag
 src/core/facts/subject-infer.ts	execute_raw	1
 src/core/facts/unfenced-facts.ts	execute_raw	3
 src/core/facts/withdrawal-discovery.ts	execute_raw	8
-src/core/facts/withdrawal.ts	execute_raw	11
+src/core/facts/withdrawal.ts	execute_raw	9
 src/core/facts/write-single.ts	execute_raw	3
 src/core/facts/writeback-settings.ts	execute_raw	1
 src/core/feedback/store.ts	execute_raw	19

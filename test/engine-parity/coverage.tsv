@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 660/660
+# covered: 662/662
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -52,7 +52,7 @@
 # code_edges: 9/9
 # eval_capture: 5/5
 # salience_enrich: 6/6
-# trust: 17/17
+# trust: 19/19
 # open_loops: 3/3
 # cli_reads_import: 12/12
 # wanted_links: 2/2
@@ -81,7 +81,7 @@ getPage	pages	yes	93	yes	yes	yes	serves
 readPageSnapshot	pages	yes	27	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	396	yes	yes	yes	serves
+putPage	pages	yes	397	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
@@ -294,7 +294,7 @@ getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
 insertFact	facts	yes	42	yes	yes	yes	serves
-insertFacts	facts	yes	48	no	yes	yes	serves
+insertFacts	facts	yes	49	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	27	no	yes	yes	serves
 listFactsByEntity	facts	yes	20	yes	yes	yes	serves
@@ -556,7 +556,7 @@ maxFenceRowNum	facts_cycle	yes	1	no	yes	yes	serves
 listStoredFenceFactRows	facts_cycle	yes	1	no	yes	yes	serves
 countWorldFacts	facts_cycle	yes	5	no	yes	yes	serves
 countFactFingerprintLeftovers	facts_purge	yes	1	no	yes	yes	serves
-loadPurgeTarget	facts_purge	yes	7	no	yes	yes	serves
+loadPurgeTarget	facts_purge	yes	8	no	yes	yes	serves
 planFactPurgeIds	facts_purge	yes	1	no	yes	yes	serves
 listFactsReconcileBacklog	facts_purge	yes	1	no	yes	yes	refuses:facts
 listRelinkCandidateRows	facts_purge	yes	1	no	yes	yes	serves
@@ -568,7 +568,7 @@ listUnfencedFactRows	facts_purge	yes	1	no	yes	yes	serves
 listHeldFenceFactRows	facts_purge	yes	1	no	yes	yes	serves
 listWithdrawalSlugs	facts_purge	yes	2	no	yes	yes	serves
 expireFactsByWithdrawal	facts_purge	yes	1	no	yes	yes	serves
-insertFactPurge	facts_purge	yes	2	no	yes	yes	serves
+insertFactPurge	facts_purge	yes	3	no	yes	yes	serves
 loopFactDrift	facts_repair	yes	2	no	yes	yes	serves
 closedLoopWithActiveFact	facts_repair	yes	2	no	yes	yes	serves
 listSessionFactsForClassification	facts_repair	yes	1	no	yes	yes	serves
@@ -625,7 +625,9 @@ getRecentSalience	salience_enrich	yes	7	yes	yes	yes	serves
 listEnrichCandidates	salience_enrich	yes	3	yes	yes	yes	serves
 findAnomalies	salience_enrich	yes	7	yes	yes	yes	serves
 hasCoveringFactWithdrawal	trust	yes	1	no	yes	yes	serves
-insertFactWithdrawal	trust	yes	7	no	yes	yes	serves
+insertFactWithdrawal	trust	yes	8	no	yes	yes	serves
+isFactWithdrawn	trust	yes	1	no	yes	yes	serves
+isFactPurged	trust	yes	1	no	yes	yes	serves
 listFactWithdrawalDates	trust	yes	2	no	yes	yes	serves
 moveFactWithdrawalSubject	trust	yes	1	no	yes	yes	serves
 hasFactWithdrawalForSubject	trust	yes	1	no	yes	yes	serves

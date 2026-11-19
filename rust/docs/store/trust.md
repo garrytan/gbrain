@@ -63,6 +63,8 @@ hold `gbrain_fact_fingerprint_v1(claim)`, and every read matches both. Deleting 
 | Member | Store method | PGLite statement |
 | --- | --- | --- |
 | `hasCoveringFactWithdrawal` | `has_covering_fact_withdrawal`: four point reads (`*` and the subject, the hash and the v1 hash of the claim) | `SELECT 1 … fact_hash IN ($3, v1($5)) AND (subject='*' OR subject=$4)` |
+| `isFactWithdrawn` | `is_fact_withdrawn`: point reads for each visibility (the given one, or both when null), the hash and the v1 hash of the claim, and subject `*`, the entity and the member page; then the purge tombstones (hash only; `*` and the entity). A null entity or member page matches nothing | `SELECT 1 FROM fact_withdrawals … UNION ALL SELECT 1 FROM fact_purges … LIMIT 1` |
+| `isFactPurged` | `is_fact_purged` (facts/purge_ledger.rs): point reads for subject `*` and the entity; a visibility outside the CHECK matches nothing | `SELECT 1 FROM fact_purges … AND (subject='*' OR subject=$4) LIMIT 1` |
 | `insertFactWithdrawal` | `insert_fact_withdrawal`: false when the key exists, which keeps its time | `INSERT … COALESCE($5::timestamptz, now()) ON CONFLICT DO NOTHING RETURNING` |
 | `listFactWithdrawalDates` | `list_fact_withdrawal_dates`: per claim, point reads (subject given) or a scan of source and visibility (subject null); the minimum time per row number, sorted by row number | `min(withdrawn_at) … GROUP BY row_num` (no order) |
 | `moveFactWithdrawalSubject` | `move_fact_withdrawal_subject`: same slugs do nothing; otherwise each row moves unless the new subject already has the key | `MOVE_WITHDRAWAL_SUBJECT_SQL` |
@@ -107,7 +109,7 @@ Rust guesses and gaps (1x parity):
 
 Not built (they still run through `executeRaw`, which the Rust engine refuses): the reads that also read `fact_purges`
 (the store keeps that table now, rust/docs/store/facts.md "The fact purge ledger", but these reads do not read it yet:
-`isFactWithdrawn`, the ambiguous-fence check, the export snapshot), the reads that join `facts` (the effect-target
+the ambiguous-fence check, the export snapshot), the reads that join `facts` (the effect-target
 request, the single-fact prepare, the repair and review lanes), the meta-hook watermark, and the `facts` insert guard
 `gbrain_preserve_fact_withdrawal` (the facts family's insert calls it once the facts family lands on this line).
 
